@@ -17,34 +17,43 @@
 //! 1. **Same timestamp, no sequence gap**: append the payload to the open
 //!    unit.
 //! 2. **Marker bit set**: close the open unit (emit it, unless poisoned —
-//!    see rule 4) after appending this packet's payload.
+//!    see rules 4 and 6) after appending this packet's payload.
 //! 3. **Timestamp change without a marker**: §4.2 — a receiver that observes
 //!    a new RTP timestamp knows the previous KLVunit is complete even absent
 //!    a marker. Close the open unit first (emitting it, unless poisoned),
-//!    then open a new one at the new timestamp.
+//!    then open a new one at the new timestamp. This check runs
+//!    unconditionally, even while the open unit is poisoned (rules 4, 6) —
+//!    a poisoned unit must still respond to a timestamp change, or a sender
+//!    that advances the timestamp without ever setting a marker (or whose
+//!    marker packet is lost) would wedge the depacketizer permanently.
 //! 4. **Sequence gap** (`delta != 1`; duplicates, `delta == 0`, are ignored):
-//!    the open unit is dropped (`units_dropped` ticks once for this event).
-//!    Whatever unit starts accumulating from this point on — whether it is
-//!    the gap-revealing packet itself or, if that packet's payload exceeds
-//!    the oversize cap, is skipped per rule 6 — cannot be confirmed to
+//!    the open unit is dropped. Whatever unit starts accumulating from this
+//!    point on — the gap-revealing packet itself — cannot be confirmed to
 //!    truly be a fresh KLVunit's first fragment (we cannot tell; RFC 6597
 //!    offers no way to know), so it is marked **poisoned**: it keeps
 //!    accumulating state (so later timestamp/marker boundaries are still
-//!    detected correctly) but its bytes are never buffered and, when it
-//!    reaches its own boundary, it is silently discarded — not pushed to
-//!    the ready queue, and not counted again (the one `units_dropped` tick
-//!    for this whole gap event already happened above).
-//! 5. **SSRC change**: a source restart. The open unit is dropped
-//!    (`units_dropped` ticks) and sequence-number tracking resets; unlike
-//!    rule 4, the packet that revealed the SSRC change is a genuinely fresh,
+//!    detected correctly, per rule 3) but its bytes are never buffered and,
+//!    when it reaches its own boundary, it is silently discarded — not
+//!    pushed to the ready queue, and not counted again. `units_dropped`
+//!    ticks exactly once per loss episode: dropping an open unit that is
+//!    *already* an empty poisoned placeholder (e.g. a second gap, or an
+//!    SSRC change, before the first poisoned placeholder ever reached a
+//!    boundary) does not tick again — there is nothing new being lost,
+//!    just the same ongoing episode continuing.
+//! 5. **SSRC change**: a source restart. The open unit is dropped (ticking
+//!    `units_dropped` under the same single-tick-per-episode discipline as
+//!    rule 4) and sequence-number tracking resets; unlike rule 4, the
+//!    packet that revealed the SSRC change is a genuinely fresh,
 //!    trustworthy start (a new SSRC is an unambiguous RTP source boundary),
 //!    so it opens a clean, unpoisoned unit.
 //! 6. **Oversize unit** (open unit length would exceed [`MAX_KLV_UNIT_BYTES`]):
-//!    drop the unit, tick both `units_dropped_oversize` and `units_dropped`,
-//!    and ignore the remainder of that unit up to and including its marker
-//!    (a KLVunit this large cannot be a conformant encoding; continuing to
-//!    accumulate would just grow memory for bytes that are discarded
-//!    anyway).
+//!    release the accumulated bytes immediately and mark the unit
+//!    **poisoned in place** (ticking `units_dropped_oversize` and
+//!    `units_dropped` once) — exactly the same "poisoned but still open"
+//!    handling as rule 4, so rule 3's timestamp-boundary detection and rule
+//!    2's marker detection keep resolving it normally. A KLVunit this large
+//!    cannot be a conformant encoding, so there is no point accumulating
+//!    further bytes for it, but boundary detection must never stop.
 //! 7. **Empty payload**: ignored — ticks no counter and touches no other
 //!    state, since the packet is not malformed, merely vacuous.
 
@@ -111,7 +120,10 @@ pub(crate) struct KlvDepacketizer {
     /// True if the open unit must be silently discarded (not emitted, not
     /// separately counted) at its next boundary — set when a sequence gap
     /// starts a new unit whose first-fragment status cannot be confirmed
-    /// (rule 4).
+    /// (rule 4), or when the open unit has already exceeded
+    /// [`MAX_KLV_UNIT_BYTES`] (rule 6). In both cases `unit_ts` is left
+    /// `Some` (the unit stays open) so timestamp/marker boundary detection
+    /// keeps working normally — only the bytes are abandoned.
     unit_poisoned: bool,
     /// Last RTP sequence number seen (rule 4 gap/duplicate detection).
     last_seq: Option<u16>,
@@ -122,10 +134,6 @@ pub(crate) struct KlvDepacketizer {
     /// always within the same `feed` call, since a non-empty payload always
     /// ends up opening or continuing a unit by the end of `feed`.
     gap_pending: bool,
-    /// Set after an oversize drop (rule 6): ignore all further payload for
-    /// the doomed unit until (and including) the packet carrying the
-    /// marker.
-    skip_until_marker: bool,
     /// Fully reassembled units waiting to be consumed.
     ready: VecDeque<KlvUnit>,
     stats: KlvDepayStats,
@@ -143,7 +151,6 @@ impl KlvDepacketizer {
             last_seq: None,
             ssrc: None,
             gap_pending: false,
-            skip_until_marker: false,
             ready: VecDeque::new(),
             stats: KlvDepayStats::default(),
         }
@@ -166,7 +173,6 @@ impl KlvDepacketizer {
                 }
                 self.last_seq = None;
                 self.gap_pending = false;
-                self.skip_until_marker = false;
                 self.ssrc = Some(header.ssrc);
             }
             Some(_) => {}
@@ -187,21 +193,15 @@ impl KlvDepacketizer {
                     self.stats.units_dropped += 1;
                 }
                 self.gap_pending = true;
-                self.skip_until_marker = false;
             }
         }
         self.last_seq = Some(header.seq);
 
-        // ── Rule 6 continuation: an already-doomed unit, just waiting for
-        // its marker to resync. ────────────────────────────────────────────
-        if self.skip_until_marker {
-            if header.marker {
-                self.skip_until_marker = false;
-            }
-            return;
-        }
-
-        // ── Rule 3: a timestamp change closes whatever is open first. ─────
+        // ── Rule 3: a timestamp change closes whatever is open first. This
+        // runs unconditionally — even a poisoned unit (rules 4, 6) must
+        // respond to a timestamp change, or a sender that never sets a
+        // marker again (or whose marker packet is lost) would wedge this
+        // depacketizer permanently. ─────────────────────────────────────────
         if self.unit_ts.is_some_and(|ts| ts != header.timestamp) {
             self.close_unit();
         }
@@ -215,18 +215,18 @@ impl KlvDepacketizer {
         }
 
         if self.unit_poisoned {
-            // Bytes are discarded unconditionally — see rule 4.
+            // Bytes are discarded unconditionally — see rules 4 and 6.
+        } else if self.unit_buf.len().saturating_add(payload.len()) > MAX_KLV_UNIT_BYTES {
+            // ── Rule 6: oversize, checked before the append actually grows
+            // the buffer past the limit. Poison in place — `unit_ts` stays
+            // `Some` so rule 3's timestamp-boundary detection and rule 2's
+            // marker detection keep resolving this unit normally; this is
+            // exactly rule 4's "poisoned but still open" handling. ────────
+            self.unit_buf = Vec::new();
+            self.unit_poisoned = true;
+            self.stats.units_dropped_oversize += 1;
+            self.stats.units_dropped += 1;
         } else {
-            // ── Rule 6: size cap, checked before the append actually grows
-            // the buffer past the limit. ─────────────────────────────────
-            if self.unit_buf.len().saturating_add(payload.len()) > MAX_KLV_UNIT_BYTES {
-                self.unit_ts = None;
-                self.unit_buf = Vec::new();
-                self.stats.units_dropped_oversize += 1;
-                self.stats.units_dropped += 1;
-                self.skip_until_marker = !header.marker;
-                return;
-            }
             self.unit_buf.extend_from_slice(payload);
         }
 
@@ -263,23 +263,29 @@ impl KlvDepacketizer {
     // ── Internal helpers ───────────────────────────────────────────────────
 
     /// Discard the open unit, if any, resetting all per-unit state. Returns
-    /// `true` if a unit was actually open (so the caller can decide whether
-    /// to tick a counter — rules 4 and 5 both drop-and-count, but via
-    /// different call sites with different follow-up state changes).
+    /// `true` if a *real* unit was dropped — one that was not already a
+    /// poisoned, empty placeholder left open by an earlier loss in the same
+    /// episode (rules 4 and 6 poison a unit in place rather than closing it
+    /// immediately; dropping that placeholder a second time — e.g. a
+    /// second gap, or an SSRC change, before it ever reaches a boundary —
+    /// must not tick `units_dropped` again for what is really one ongoing
+    /// loss episode). Called by rule 4 (sequence gap) and rule 5 (SSRC
+    /// change), both of which tick the counter only when this returns
+    /// `true`.
     fn take_open(&mut self) -> bool {
-        if self.unit_ts.take().is_some() {
-            self.unit_buf = Vec::new();
-            self.unit_poisoned = false;
-            true
-        } else {
-            false
+        if self.unit_ts.take().is_none() {
+            return false;
         }
+        let was_poisoned = self.unit_poisoned;
+        self.unit_buf = Vec::new();
+        self.unit_poisoned = false;
+        !was_poisoned
     }
 
     /// Complete the open unit, if any (rules 2 and 3). A poisoned unit
-    /// (rule 4) is discarded silently — no ready push, no counter tick,
-    /// since its one `units_dropped` tick already happened when the gap
-    /// that poisoned it was detected.
+    /// (rule 4 or rule 6) is discarded silently — no ready push, no counter
+    /// tick, since its one `units_dropped` tick already happened when it
+    /// was poisoned.
     fn close_unit(&mut self) {
         let Some(rtp_timestamp) = self.unit_ts.take() else {
             return;
@@ -369,6 +375,21 @@ mod tests {
     }
 
     #[test]
+    fn second_gap_on_a_poisoned_unit_does_not_double_count() {
+        let mut d = KlvDepacketizer::new();
+        d.feed(&h(1, 1000, false), b"ab");
+        d.feed(&h(3, 1000, false), b"cd"); // first gap (seq 2 lost): drops "ab", opens a poisoned placeholder
+        assert_eq!(d.stats().units_dropped, 1);
+        d.feed(&h(6, 1000, false), b"ef"); // second gap (seq 4,5 lost) while that placeholder is still open
+        assert_eq!(
+            d.stats().units_dropped,
+            1,
+            "one ongoing loss episode must tick once, not twice"
+        );
+        assert!(d.next_unit().is_none());
+    }
+
+    #[test]
     fn duplicate_packet_is_ignored() {
         let mut d = KlvDepacketizer::new();
         d.feed(&h(1, 1000, false), b"ab");
@@ -398,6 +419,32 @@ mod tests {
         d.feed(&h(17, 1000, true), b"end");
         assert!(d.next_unit().is_none());
         assert_eq!(d.stats().units_dropped_oversize, 1);
+    }
+
+    #[test]
+    fn oversize_skip_ends_on_timestamp_change_without_marker() {
+        let mut d = KlvDepacketizer::new();
+        let chunk = vec![0u8; 65_000];
+        for i in 0..17u16 {
+            d.feed(&h(i, 1000, false), &chunk);
+        } // oversize triggers inside this loop, same as oversize_unit_is_dropped_and_counted
+        // The doomed unit's own marker never arrives; the sender instead
+        // moves on to a new timestamp, and the new unit's first packet
+        // doesn't carry the marker either.
+        d.feed(&h(17, 2000, false), b"xy");
+        assert!(
+            d.next_unit().is_none(),
+            "new unit not closed yet — no marker seen"
+        );
+        d.feed(&h(18, 2000, true), b"zw");
+        let unit = d.next_unit().expect(
+            "the timestamp change must have ended the oversize-skipped unit, \
+             letting this new one open cleanly",
+        );
+        assert_eq!(unit.bytes, b"xyzw");
+        assert_eq!(unit.rtp_timestamp, 2000);
+        assert_eq!(d.stats().units_dropped_oversize, 1);
+        assert_eq!(d.stats().units_dropped, 1);
     }
 
     #[test]
