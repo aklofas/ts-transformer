@@ -1356,7 +1356,7 @@ impl Drop for RtpRecvTransport {
 /// Used by [`RtpRecvTransport::recv_bytes`] to gate payloads before they
 /// reach the demuxer. A failed check ticks `malformed_packets`.
 #[inline]
-fn is_valid_mp2t_payload(payload: &[u8]) -> bool {
+pub(crate) fn is_valid_mp2t_payload(payload: &[u8]) -> bool {
     !payload.is_empty() && payload.len() % 188 == 0 && payload[0] == 0x47
 }
 

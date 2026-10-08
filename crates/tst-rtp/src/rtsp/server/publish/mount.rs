@@ -10,7 +10,7 @@
 //! binding's receiver work against a publish mount unchanged.
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -52,6 +52,13 @@ pub(crate) struct PublishMountState {
     /// `recv_bytes` from any thread, exactly like a real
     /// TCP-interleaved transport's cancel handle.
     app_cancel: Arc<RtpCancelHandle>,
+    /// Set once [`Self::take_app_rx`] has handed out the receiver.
+    /// [`Self::emit`] gates its application-side send on this flag — a
+    /// late `into_recv_transport()` caller must not read a backlog
+    /// queued before it took the transport (possibly from an earlier
+    /// publisher generation). Before the take, `emit` feeds only the
+    /// reader fanout and never ticks `frames_dropped_app`.
+    app_taken: AtomicBool,
     /// Shared with the `RtpRecvTransport` built from this mount so
     /// [`Self::close`] can record `CleanTeardown` before dropping
     /// `app_tx` — the same first-writer-wins remap
@@ -89,6 +96,7 @@ impl PublishMountState {
             app_tx: Mutex::new(Some(tx)),
             app_rx: Mutex::new(Some(rx)),
             app_cancel: RtpCancelHandle::new(),
+            app_taken: AtomicBool::new(false),
             app_end_reason: EndReasonSlot::default(),
             publisher: Mutex::new(None),
             generation: AtomicU64::new(0),
@@ -110,21 +118,27 @@ impl PublishMountState {
     /// fanout never blocks or drops here (a lagging reader's own fanout
     /// task tracks its drops via `frames_dropped_readers`, same as a
     /// muxer-backed mount).
+    ///
+    /// Before [`Self::take_app_rx`] has run, the application side isn't
+    /// attempted at all (see `app_taken`'s doc) — `frames_emitted` still
+    /// counts the frame (readers got it), but `frames_dropped_app` does
+    /// not, since nothing was dropped: there was no queue to drop from.
     #[allow(dead_code)]
     pub(crate) fn emit(&self, ts: Bytes, rtp: Bytes) {
         let _ = self.fanout.send(ts); // no readers → Err, fine
-        let dropped = match self
-            .app_tx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-        {
-            Some(tx) => matches!(
-                tx.try_send(rtp),
-                Err(std::sync::mpsc::TrySendError::Full(_))
-            ),
-            None => false, // closed: the app side is gone, nothing to count
-        };
+        let dropped = self.app_taken.load(Ordering::Acquire)
+            && match self
+                .app_tx
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+            {
+                Some(tx) => matches!(
+                    tx.try_send(rtp),
+                    Err(std::sync::mpsc::TrySendError::Full(_))
+                ),
+                None => false, // closed: the app side is gone, nothing to count
+            };
         self.tick(|s| {
             s.frames_emitted += 1;
             if dropped {
@@ -164,7 +178,11 @@ impl PublishMountState {
     /// [`PublishMountHandle::into_recv_transport`] — take-once, so a
     /// second call (from another clone of the handle) sees `None`.
     pub(crate) fn take_app_rx(&self) -> Option<std::sync::mpsc::Receiver<Bytes>> {
-        self.app_rx.lock().unwrap_or_else(|e| e.into_inner()).take()
+        let rx = self.app_rx.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if rx.is_some() {
+            self.app_taken.store(true, Ordering::Release);
+        }
+        rx
     }
 
     /// Permanently close the application transport: drops `app_tx` so a
@@ -421,6 +439,29 @@ mod tests {
         assert_eq!(&buf[..n], &pkt[12..]);
         assert_eq!(reader.try_recv().unwrap(), pkt.slice(12..));
         assert_eq!(m.stats.lock().unwrap().frames_emitted, 1);
+    }
+
+    #[test]
+    fn emit_before_take_reaches_readers_only_a_late_taker_sees_no_backlog() {
+        let m = PublishMountState::new("/p", 16);
+        for _ in 0..5 {
+            m.emit(rtp_mp2t(1).slice(12..), rtp_mp2t(1));
+        }
+        let mut t = PublishMountHandle { state: m.clone() }
+            .into_recv_transport()
+            .unwrap();
+        let sixth = rtp_mp2t(1);
+        m.emit(sixth.slice(12..), sixth.clone());
+        let mut buf = vec![0u8; 4096];
+        let n = t.recv_bytes(&mut buf).unwrap();
+        assert_eq!(
+            &buf[..n],
+            &sixth[12..],
+            "first read is the 6th frame, not a backlog"
+        );
+        let s = m.stats_snapshot();
+        assert_eq!(s.frames_dropped_app, 0);
+        assert_eq!(s.frames_emitted, 6);
     }
 
     #[test]
