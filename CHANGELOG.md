@@ -176,8 +176,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and **`RtspServer.next_publisher(timeout=None)`** hand out mounts an
   ANNOUNCE created on demand; `None` on a timeout, `RtspError(SERVER)` once
   the server stops (a parked call wakes on `stop()` or the `with` exit).
-  The wait releases the GIL and, with `timeout=None`, handles signals every
-  second, so Ctrl-C interrupts it.
+  The wait releases the GIL and handles signals every second while it
+  waits, so Ctrl-C interrupts it.
 - **`RtspServer.remove_mount(path)`** removes a mount of any kind;
   `RtspError(MOUNT)` when no mount is registered at the path.
 - **`ServerStats`** gains `active_publishers`,
