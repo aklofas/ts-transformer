@@ -12,6 +12,8 @@ Submodule contents are populated by `tstrans._native.rtp`:
   `DigestAlgorithm`, `TransportPref`, `RtspVersion`
 - `RtspServer`, `MountHandle`, `RtspServerConfig`,
   `ServerStats`, `MountStats`, `RtspServerCancelHandle`
+- `PublishMount`, `PublishMountStats`, `PublisherInfo`, `PublishShape`,
+  `ClockAlignment` (the RTSP publisher role)
 """
 
 from __future__ import annotations
@@ -62,6 +64,42 @@ class StreamEndReason(enum.IntEnum):
     CANCELLED = 6
 
 
+class PublishShape(enum.IntEnum):
+    """Wire shape a publisher's ANNOUNCE declared. Mirrors
+    `tst_rtp::rtsp::server::publish::PublishShape`.
+
+    Returned by `PublisherInfo.shape`. `MP2T` is one MPEG-TS-over-RTP
+    track (RFC 2250); `ELEMENTARY` is one H.264 (RFC 6184) video track,
+    optionally with one KLV (RFC 6597) track — `PublisherInfo.klv` says
+    which. Numeric values are pinned across the C, Python, and JVM
+    bindings. Pure Python for the same reason as `StreamEndReason`: it
+    only ever flows Rust→Python as a return value.
+    """
+
+    MP2T = 0
+    ELEMENTARY = 1
+
+
+class ClockAlignment(enum.IntEnum):
+    """How a publish mount aligns its announced tracks to one clock.
+    Mirrors `tst_rtp::rtsp::server::publish::ClockAlignment`.
+
+    Returned by `PublishMountStats.alignment`. Only an elementary
+    publisher with a KLV track needs alignment; an MP2T or video-only
+    mount reads `NOT_APPLICABLE`. `PENDING`: KLV is held until RTCP
+    sender reports arrive for both tracks or the two-second fallback
+    engages (also after a source restart). `PROVISIONAL`: aligned by
+    first-packet coincidence. `SENDER_REPORT`: aligned through RTCP
+    sender reports. Numeric values are pinned across the C, Python, and
+    JVM bindings.
+    """
+
+    NOT_APPLICABLE = 0
+    PENDING = 1
+    PROVISIONAL = 2
+    SENDER_REPORT = 3
+
+
 # RTP transport types.
 Sender = _rtp.Sender
 Receiver = _rtp.Receiver
@@ -93,6 +131,11 @@ MountHandle = _rtp.MountHandle
 ServerStats = _rtp.ServerStats
 MountStats = _rtp.MountStats
 RtspServerCancelHandle = _rtp.RtspServerCancelHandle
+
+# RTSP publisher role (ANNOUNCE / RECORD ingest on RtspServer).
+PublishMount = _rtp.PublishMount
+PublishMountStats = _rtp.PublishMountStats
+PublisherInfo = _rtp.PublisherInfo
 
 # RFC 6184 — H.264 depacketizer + blocking receiver.
 ParameterSetInjection = _rtp.ParameterSetInjection
@@ -151,6 +194,13 @@ class RtspServerConfig:
     """Path to a PEM server private key file (for `rtsps://` binds).
     Set together with `tls_cert`."""
 
+    accept_unregistered_publishers: bool = False
+    """Accept an ANNOUNCE on a path with no registered mount by creating
+    a publish mount there on demand; `RtspServer.next_publisher()` hands
+    each one to the application. Off by default. Each on-demand
+    publisher can hold tens of MB, so configure `auth` and size
+    `max_sessions` before turning this on for a reachable port."""
+
     def __post_init__(self) -> None:
         if self.max_sessions <= 0:
             raise ValueError(
@@ -170,6 +220,11 @@ class RtspServerConfig:
             raise ValueError(
                 f"RtspServerConfig.graceful_shutdown_drain_ms must be >= 0; "
                 f"got {self.graceful_shutdown_drain_ms}"
+            )
+        if not isinstance(self.accept_unregistered_publishers, bool):
+            raise TypeError(
+                f"RtspServerConfig.accept_unregistered_publishers must be a bool; "
+                f"got {type(self.accept_unregistered_publishers).__name__}"
             )
         cert_set = self.tls_cert is not None
         key_set = self.tls_key is not None
@@ -208,6 +263,12 @@ __all__: list[str] = [
     "MountStats",
     "RtspServerCancelHandle",
     "RtspServerConfig",
+    # RTSP publisher role
+    "PublishMount",
+    "PublishMountStats",
+    "PublisherInfo",
+    "PublishShape",
+    "ClockAlignment",
     # RFC 6184 H.264 receiver
     "ParameterSetInjection",
     "H264DepayConfig",
