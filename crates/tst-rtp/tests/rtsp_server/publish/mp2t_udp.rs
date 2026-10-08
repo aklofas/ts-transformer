@@ -15,7 +15,9 @@ use crate::fixtures::raw_rtsp_publisher::*;
 /// port differs from the announced one and all must be admitted. (Foreign
 /// IPs, garbage-first datagrams and same-IP port changes are unit-tested
 /// in `udp_ingest.rs`.) Loopback UDP may drop under load: ≥ 19 of 20 must
-/// arrive, each one a byte-identical sent bundle.
+/// arrive, each one a byte-identical sent bundle. The fixture bundles are
+/// at most 1316 bytes, which the server's re-chunking passes through as
+/// one bundle each, so a per-datagram comparison holds.
 #[test]
 fn mp2t_udp_publisher_reaches_app() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();

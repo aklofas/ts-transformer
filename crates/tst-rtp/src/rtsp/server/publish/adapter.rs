@@ -2,14 +2,16 @@
 //!
 //! Each wire shape a publisher may announce (§1 classification table in
 //! [`super::PublishShape`]) gets its own [`PublishAdapter`] impl, fed
-//! RTP/RTCP packets by the session's track dispatch (a later task). This
-//! module ships the one shape in scope today: MP2T passthrough.
+//! RTP/RTCP packets by the session's track dispatch (interleaved `$`
+//! frames and UDP ingest). This module ships the one shape in scope
+//! today: MP2T passthrough.
 
 use std::sync::Arc;
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 
-use crate::packet::{RTP_PT_MP2T, RtpHeader};
+use crate::packet::{RTP_HEADER_LEN, RTP_PT_MP2T, RtpHeader};
+use crate::rtsp::server::mount::RTP_PAYLOAD_SIZE;
 
 use super::mount::PublishMountState;
 
@@ -26,42 +28,48 @@ use super::mount::PublishMountState;
 /// frames and UDP ingest).
 pub(crate) trait PublishAdapter: Send {
     /// One RTP packet from `track` (index into the announce's track table).
-    /// Never fails; drops count. Called by the session's track dispatch
-    /// (interleaved `$` frames and UDP ingest).
-    #[allow(dead_code)]
+    /// Never fails; drops count.
     fn on_rtp(&mut self, track: usize, packet: &[u8]);
-    /// One RTCP packet from `track`'s RTCP channel/socket. Called from
-    /// the interleaved `$`-frame arm and from the UDP ingest tasks.
+    /// One RTCP packet from `track`'s RTCP channel/socket.
     fn on_rtcp(&mut self, track: usize, packet: &[u8]);
     /// Publisher ended: push out whatever is pending. Called by
-    /// `PublishSession::end` — reached today.
+    /// `PublishSession::end`.
     fn flush(&mut self);
 }
 
 /// RFC 2250 passthrough: the single announced track carries whole TS
-/// packets as the RTP payload. The TS payload goes to PLAY readers
-/// as-is; the whole RTP packet goes to the application transport with
-/// its payload-type bits forced to 33 so
-/// [`crate::transport::RtpRecvTransport`]'s PT pin holds regardless of
-/// which PT the publisher's SDP declared (33 directly, or a dynamic PT
-/// mapped to `MP2T/90000` — see the classification table).
+/// packets as the RTP payload.
 ///
-/// Stateless across calls other than the mount handle and the PT this
-/// instance was built to expect — there is nothing to reassemble: one
-/// RTP packet is one TS bundle.
+/// A publisher may bundle up to 348 TS packets per RTP packet, but the
+/// mount's two sinks are bounded in frames, and a UDP PLAY reader's
+/// datagram should stay unfragmented. So the TS payload is re-chunked
+/// into bundles of at most [`RTP_PAYLOAD_SIZE`] bytes (7 TS packets), the
+/// framing a muxer-backed mount emits:
+///
+/// - PLAY readers get each bundle as a zero-copy slice of the packet.
+/// - The application transport gets each bundle behind a synthesized
+///   12-byte RTP header: V=2, no padding, extension or CSRCs, marker 0,
+///   PT 33 (whatever PT the publisher's SDP declared, so
+///   [`crate::transport::RtpRecvTransport`]'s PT pin holds), the source
+///   packet's timestamp and SSRC, and a sequence number from this
+///   adapter's own counter (one source packet may become several
+///   bundles, so the source sequence number cannot be reused).
+///
+/// The only state across calls is that counter: there is nothing to
+/// reassemble.
 pub(crate) struct Mp2tAdapter {
-    // Both fields are read only from `on_rtp`'s body, which is itself
-    // unreached until Tasks 7/8 drive live RTP through it (see the
-    // `#[allow(dead_code)]` on `PublishAdapter::on_rtp`).
-    #[allow(dead_code)]
     mount: Arc<PublishMountState>,
-    #[allow(dead_code)]
     expected_pt: u8,
+    next_seq: u16,
 }
 
 impl Mp2tAdapter {
     pub(crate) fn new(mount: Arc<PublishMountState>, expected_pt: u8) -> Self {
-        Self { mount, expected_pt }
+        Self {
+            mount,
+            expected_pt,
+            next_seq: 0,
+        }
     }
 }
 
@@ -93,26 +101,37 @@ impl PublishAdapter for Mp2tAdapter {
                 return;
             }
         };
-        let payload = &packet[parsed.payload_offset..parsed.payload_end];
-        if !crate::transport::is_valid_mp2t_payload(payload) {
+        let (start, end) = (parsed.payload_offset, parsed.payload_end);
+        if !crate::transport::is_valid_mp2t_payload(&packet[start..end]) {
             self.mount.tick(|s| s.malformed_packets += 1);
             return;
         }
-        // App side: whole packet, PT bits forced to 33 so
-        // RtpRecvTransport's pin holds even for a dynamic-PT publisher.
-        let mut app = packet.to_vec();
-        app[1] = (app[1] & 0x80) | RTP_PT_MP2T;
-        self.mount
-            .emit(Bytes::copy_from_slice(payload), Bytes::from(app));
+        // One copy of the packet; readers get slices of it.
+        let source = Bytes::copy_from_slice(packet);
+        let mut header = RtpHeader::new(0, parsed.header.timestamp, parsed.header.ssrc);
+        header.payload_type = RTP_PT_MP2T;
+        let mut at = start;
+        while at < end {
+            let chunk_end = (at + RTP_PAYLOAD_SIZE).min(end);
+            let ts = source.slice(at..chunk_end);
+            header.seq = self.next_seq;
+            self.next_seq = self.next_seq.wrapping_add(1);
+            let mut app = BytesMut::with_capacity(RTP_HEADER_LEN + ts.len());
+            app.put_bytes(0, RTP_HEADER_LEN);
+            header.encode_into(&mut app[..RTP_HEADER_LEN]);
+            app.put_slice(&ts);
+            self.mount.emit(ts, app.freeze());
+            at = chunk_end;
+        }
     }
 
     fn on_rtcp(&mut self, _track: usize, _packet: &[u8]) {
         // RFC 2250 carries no KLV/AU timing that needs an RTCP anchor;
-        // nothing to do until a later task adds clock alignment.
+        // the MP2T shape has no clock alignment to feed.
     }
 
     fn flush(&mut self) {
-        // Stateless: nothing buffered to push out.
+        // Nothing buffered to push out.
     }
 }
 
@@ -140,18 +159,63 @@ mod tests {
     }
 
     #[test]
-    fn valid_packet_feeds_readers_with_payload_and_app_with_whole_packet() {
+    fn valid_packet_feeds_readers_with_payload_and_app_with_a_pt33_packet() {
         let m = mount();
         let mut reader = m.fanout.subscribe();
+        let mut t = crate::rtsp::server::publish::mount::PublishMountHandle { state: m.clone() }
+            .into_recv_transport()
+            .unwrap();
         let mut a = Mp2tAdapter::new(m.clone(), 33);
         let pkt = rtp(33, &ts(3));
         a.on_rtp(0, &pkt);
         assert_eq!(reader.try_recv().unwrap().as_ref(), &pkt[12..]);
+        let mut buf = vec![0u8; 2048];
+        let n = tst_core::transport::RecvTransport::recv_bytes(&mut t, &mut buf).unwrap();
+        assert_eq!(&buf[..n], &pkt[12..]);
         let s = m.stats_snapshot();
         assert_eq!(
             (s.rtp_packets_received, s.bytes_received, s.frames_emitted),
             (1, pkt.len() as u64, 1)
         );
+    }
+
+    #[test]
+    fn a_large_packet_is_rechunked_into_payload_size_bundles() {
+        let m = mount();
+        let mut reader = m.fanout.subscribe();
+        // Read the app side raw (headers included) through the mount's
+        // own receiver, bypassing the transport's header strip.
+        let app_rx = m.take_app_rx().unwrap();
+        let mut a = Mp2tAdapter::new(m.clone(), 96);
+        let payload = ts(20);
+        let mut pkt = rtp(96, &payload);
+        pkt[1] |= 0x80; // marker set on the source; never copied to a bundle
+        a.on_rtp(0, &pkt);
+        a.on_rtp(0, &rtp(96, &ts(1)));
+
+        let readers: Vec<Bytes> = std::iter::from_fn(|| reader.try_recv().ok()).collect();
+        let sizes: Vec<usize> = readers.iter().map(|b| b.len()).collect();
+        assert_eq!(sizes, [1316, 1316, 1128, 188]);
+        let joined: Vec<u8> = readers[..3]
+            .iter()
+            .flat_map(|b| b.iter().copied())
+            .collect();
+        assert_eq!(joined, payload);
+
+        let app: Vec<Bytes> = app_rx.try_iter().collect();
+        assert_eq!(app.len(), 4);
+        for (i, (packet, ts)) in app.iter().zip(&readers).enumerate() {
+            let h = RtpHeader::decode(packet).unwrap();
+            assert_eq!(h.payload_offset, RTP_HEADER_LEN, "bundle {i}: plain header");
+            assert_eq!(&packet[RTP_HEADER_LEN..], &ts[..], "bundle {i}");
+            assert_eq!(h.header.payload_type, RTP_PT_MP2T, "bundle {i}");
+            assert!(!h.header.marker, "bundle {i}");
+            assert_eq!(h.header.seq, i as u16, "bundle {i}: adapter's own counter");
+            assert_eq!(h.header.timestamp, 0x1000, "bundle {i}: source timestamp");
+            assert_eq!(h.header.ssrc, 0xDEAD_BEEF, "bundle {i}: source ssrc");
+        }
+        let s = m.stats_snapshot();
+        assert_eq!((s.rtp_packets_received, s.frames_emitted), (2, 4));
     }
 
     #[test]

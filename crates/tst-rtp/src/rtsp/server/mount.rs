@@ -549,7 +549,7 @@ impl MountHandle {
 
 /// Default RTP MPEG-TS payload size (7 × 188-byte TS packets). Matches
 /// `DEFAULT_PKT_SIZE`.
-const RTP_PAYLOAD_SIZE: usize = 1316;
+pub(crate) const RTP_PAYLOAD_SIZE: usize = 1316;
 
 /// Drain TS bytes from the locked muxer via `Muxer::pull` and broadcast
 /// each non-empty chunk through the mount's fanout channel.
