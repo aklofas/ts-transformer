@@ -279,9 +279,8 @@ impl PublishMountState {
 /// plus 64 frames of headroom for PSI, PCR and KLV — 6 577 frames, about
 /// 8.7 MB of 1 328-byte RTP packets when full. The queue holds only what
 /// the application has not read yet, so a draining application never
-/// approaches it. The headroom does not cover held KLV released in the
-/// same burst as the AU (up to the 4 MiB KLV hold budget); see
-/// [`PublishMountStats::frames_dropped_app`].
+/// approaches it. Held KLV released in the same burst narrows the
+/// headroom; see [`PublishMountStats::frames_dropped_app`].
 pub(crate) fn app_queue_bound() -> usize {
     let max_au = crate::h264::H264DepayConfig::default().max_au_bytes;
     let frame_packets = crate::rtsp::server::mount::RTP_PAYLOAD_SIZE / 188;
@@ -397,12 +396,11 @@ pub struct PublishMountStats {
     /// Frames dropped because the application transport's queue was full.
     /// The queue holds 6 577 frames (about 8.7 MB): one maximum-size
     /// (8 MiB) elementary access unit, re-muxed, plus 64 frames of
-    /// headroom. It fills only when the application stops reading. KLV
-    /// held for alignment can leave in the same burst as a large access
-    /// unit, up to the KLV hold budget (4 MiB, about 3 257 frames), so
-    /// only an 8 MiB access unit released together with about 4 MiB of
-    /// held KLV can overflow the queue of an application that is not
-    /// draining it.
+    /// headroom. It fills only when the application stops reading. Held
+    /// KLV released in the same burst (up to the 4 MiB / 4 096-unit hold,
+    /// about 3 500 frames) narrows the headroom: an access unit above
+    /// about 4 MB released together with a full hold can overflow the
+    /// queue of an application that is not draining it.
     pub frames_dropped_app: u64,
     /// Frames dropped across PLAY readers that lagged behind the fan-out.
     pub frames_dropped_readers: u64,
@@ -421,7 +419,7 @@ pub struct PublishMountStats {
     /// KLV units an elementary-shape adapter dropped: damaged or oversize
     /// on the wire, past the hold's bounds (4 096 units or 4 MiB, held
     /// for alignment and waiting for the video together; two seconds
-    /// without a video track, or two seconds placed but not reached by
+    /// without a video track, or ten seconds placed but not reached by
     /// the video), held at a source restart, placed before the video's
     /// first frame, or refused by the muxer.
     pub klv_units_dropped: u64,
