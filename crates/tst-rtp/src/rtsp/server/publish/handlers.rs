@@ -362,6 +362,8 @@ pub(crate) fn handle_record(
             idx,
             rtp.clone(),
             rtcp.clone(),
+            session.peer_addr.ip(),
+            track.announced.payload_type,
             publish.adapter.clone(),
             publish.mount.clone(),
             publish.last_media_ms.clone(),

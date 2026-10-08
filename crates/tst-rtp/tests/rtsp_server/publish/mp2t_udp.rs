@@ -9,11 +9,12 @@ use tst_rtp::RtspServer;
 
 use crate::fixtures::raw_rtsp_publisher::*;
 
-/// The server latches the full source address of the first RTP datagram
-/// (not the announced `client_port`), so every datagram is sent from ONE
-/// socket whose port differs from the announced one and all must be
-/// admitted. (A second source being rejected is unit-tested in
-/// `udp_ingest.rs`.) Loopback UDP may drop under load: ≥ 19 of 20 must
+/// The server admits RTP from the publisher's control-connection IP and
+/// learns the source port from the first valid datagram (not from the
+/// announced `client_port`), so every datagram is sent from a socket whose
+/// port differs from the announced one and all must be admitted. (Foreign
+/// IPs, garbage-first datagrams and same-IP port changes are unit-tested
+/// in `udp_ingest.rs`.) Loopback UDP may drop under load: ≥ 19 of 20 must
 /// arrive, each one a byte-identical sent bundle.
 #[test]
 fn mp2t_udp_publisher_reaches_app() {
@@ -62,6 +63,7 @@ fn mp2t_udp_publisher_reaches_app() {
     }
     assert!(got >= 19, "only {got} of 20 datagrams reached the app");
     assert_eq!(mount.stats().malformed_packets, 0);
+    assert_eq!(mount.stats().source_rejected, 0);
     assert_eq!(p.teardown("/pub"), 200);
     server.stop().ok();
 }

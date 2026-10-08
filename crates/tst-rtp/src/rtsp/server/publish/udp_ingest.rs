@@ -6,40 +6,95 @@
 //! `udp_spawned` flag on `PublishTrack`). It owns that track's
 //! SETUP-bound RTP+RTCP socket pair for as long as the publisher
 //! records: both sockets are polled in one `tokio::select!`, RTP
-//! packets latch the publisher's source address, and RTCP packets are
+//! datagrams pass the source check in [`admit`], and RTCP packets are
 //! handed to the adapter unconditionally.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::net::UdpSocket;
 use tokio_util::sync::CancellationToken;
 
+use crate::packet::RtpHeader;
+
 use super::adapter::PublishAdapter;
 use super::mount::PublishMountState;
 use super::session::PublishSession;
 
+/// What [`admit`] decided for one RTP datagram.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Admit {
+    /// From the publisher's IP and a valid RTP packet of the track's
+    /// payload type: deliver it (the latch now names its source).
+    Accept,
+    /// From an IP other than the publisher's control connection: drop
+    /// it and count it in `source_rejected`.
+    RejectForeignIp,
+    /// From the publisher's IP but not an RTP packet of the track's
+    /// payload type: the latch is untouched; the adapter drops it and
+    /// counts it in `malformed_packets`.
+    RejectGarbage,
+}
+
+/// Source check for one RTP datagram from `from`. `peer_ip` is the IP of
+/// the publisher's RTSP control connection; `packet_ok` says the
+/// datagram decodes as RTP with the track's announced payload type.
+///
+/// Only datagrams from `peer_ip` are admitted, so a third host cannot
+/// feed or blind the mount. The port is learned rather than taken from
+/// the announced `client_port` (NAT often rewrites it): the first valid
+/// packet latches its full source address, and a later valid packet from
+/// the same IP but another port re-latches (a NAT rebinding mid-stream).
+/// Garbage never latches. IPv4-mapped IPv6 addresses compare equal to
+/// their IPv4 form, so a dual-stack listener does not reject its own
+/// publisher.
+pub(crate) fn admit(
+    latched: &mut Option<SocketAddr>,
+    peer_ip: IpAddr,
+    from: SocketAddr,
+    packet_ok: bool,
+) -> Admit {
+    if from.ip().to_canonical() != peer_ip.to_canonical() {
+        return Admit::RejectForeignIp;
+    }
+    if !packet_ok {
+        return Admit::RejectGarbage;
+    }
+    if *latched != Some(from) {
+        if let Some(previous) = *latched {
+            tracing::debug!(
+                target: "tst_rtp::server::publish",
+                %previous,
+                %from,
+                "publisher RTP source port changed; re-latched"
+            );
+        }
+        *latched = Some(from);
+    }
+    Admit::Accept
+}
+
 /// Run one track's UDP RTP+RTCP ingest loop until `cancel` fires or a
 /// socket read fails.
 ///
-/// Source latching: the first RTP datagram's source address is latched
-/// into `peer`; a later RTP datagram from a different address is
-/// dropped and ticked as `malformed_packets` ("source rejected"). RTCP
-/// datagrams are forwarded to the adapter's `on_rtcp` unconditionally —
-/// RFC 3550 §6.4 allows a participant's RTP and RTCP source ports to
-/// differ (and NAT can rewrite either independently), so this loop
-/// never tries to correlate an RTCP sender against the RTP-latched
-/// `peer`; RTCP carries its own SSRC-based identity, and rejecting it
-/// here would just lose SR/RR reports for no attribution benefit.
+/// RTP datagrams go through [`admit`] against `peer_ip` (the publisher's
+/// control-connection IP) and `expected_pt` (the track's announced
+/// payload type). RTCP datagrams are forwarded to the adapter's `on_rtcp`
+/// unconditionally: RFC 3550 §6.4 allows a participant's RTP and RTCP
+/// source ports to differ (and NAT can rewrite either independently),
+/// and RTCP carries its own SSRC-based identity.
 ///
-/// Counting happens inside the adapter (`on_rtp` ticks
-/// `rtp_packets_received`/`bytes_received` itself) — this loop never
-/// double-counts those.
+/// Counting of accepted packets happens inside the adapter (`on_rtp`
+/// ticks `rtp_packets_received`/`bytes_received` itself); this loop only
+/// counts `source_rejected`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_udp_ingest(
     track: usize,
     rtp: Arc<UdpSocket>,
     rtcp: Arc<UdpSocket>,
+    peer_ip: IpAddr,
+    expected_pt: u8,
     adapter: Arc<Mutex<Box<dyn PublishAdapter>>>,
     mount: Arc<PublishMountState>,
     last_media_ms: Arc<AtomicU64>,
@@ -48,25 +103,29 @@ pub(crate) fn spawn_udp_ingest(
     tokio::spawn(async move {
         let mut rtp_buf = vec![0u8; 65_536];
         let mut rtcp_buf = vec![0u8; 65_536];
-        let mut peer: Option<SocketAddr> = None;
+        let mut latched: Option<SocketAddr> = None;
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,
                 r = rtp.recv_from(&mut rtp_buf) => match r {
                     Ok((n, from)) => {
-                        match peer {
-                            None => peer = Some(from),
-                            Some(p) if p != from => {
-                                mount.tick(|s| s.malformed_packets += 1);
+                        let packet = &rtp_buf[..n];
+                        let packet_ok = RtpHeader::decode(packet)
+                            .is_ok_and(|p| p.header.payload_type == expected_pt);
+                        match admit(&mut latched, peer_ip, from, packet_ok) {
+                            Admit::RejectForeignIp => {
+                                mount.tick(|s| s.source_rejected += 1);
                                 continue;
                             }
-                            _ => {}
+                            Admit::RejectGarbage => {}
+                            Admit::Accept => {
+                                last_media_ms.store(PublishSession::now_ms(), Ordering::Relaxed);
+                            }
                         }
-                        last_media_ms.store(PublishSession::now_ms(), Ordering::Relaxed);
                         adapter
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
-                            .on_rtp(track, &rtp_buf[..n]);
+                            .on_rtp(track, packet);
                     }
                     Err(e) => {
                         tracing::debug!(
@@ -94,8 +153,63 @@ mod tests {
     use crate::rtsp::server::publish::adapter::Mp2tAdapter;
     use std::time::Duration;
 
+    #[test]
+    fn admit_garbage_first_does_not_latch() {
+        let peer: IpAddr = "10.0.0.5".parse().unwrap();
+        let src: SocketAddr = "10.0.0.5:4000".parse().unwrap();
+        let mut latched = None;
+        assert_eq!(admit(&mut latched, peer, src, false), Admit::RejectGarbage);
+        assert_eq!(latched, None, "garbage never latches");
+        assert_eq!(admit(&mut latched, peer, src, true), Admit::Accept);
+        assert_eq!(latched, Some(src));
+    }
+
+    #[test]
+    fn admit_rejects_a_foreign_ip_valid_or_not_before_and_after_the_latch() {
+        let peer: IpAddr = "10.0.0.5".parse().unwrap();
+        let foreign: SocketAddr = "10.0.0.66:4000".parse().unwrap();
+        let mut latched = None;
+        assert_eq!(
+            admit(&mut latched, peer, foreign, true),
+            Admit::RejectForeignIp
+        );
+        assert_eq!(latched, None, "a foreign first packet does not latch");
+        let src: SocketAddr = "10.0.0.5:4000".parse().unwrap();
+        assert_eq!(admit(&mut latched, peer, src, true), Admit::Accept);
+        assert_eq!(
+            admit(&mut latched, peer, foreign, false),
+            Admit::RejectForeignIp
+        );
+        assert_eq!(latched, Some(src));
+    }
+
+    #[test]
+    fn admit_relatches_a_new_port_on_the_same_ip() {
+        let peer: IpAddr = "10.0.0.5".parse().unwrap();
+        let first: SocketAddr = "10.0.0.5:4000".parse().unwrap();
+        let rebound: SocketAddr = "10.0.0.5:51234".parse().unwrap();
+        let mut latched = None;
+        assert_eq!(admit(&mut latched, peer, first, true), Admit::Accept);
+        assert_eq!(admit(&mut latched, peer, rebound, true), Admit::Accept);
+        assert_eq!(latched, Some(rebound));
+        // Garbage from the old port does not move the latch back.
+        assert_eq!(
+            admit(&mut latched, peer, first, false),
+            Admit::RejectGarbage
+        );
+        assert_eq!(latched, Some(rebound));
+    }
+
+    #[test]
+    fn admit_treats_an_ipv4_mapped_source_as_its_ipv4_peer() {
+        let peer: IpAddr = "127.0.0.1".parse().unwrap();
+        let mapped: SocketAddr = "[::ffff:127.0.0.1]:4000".parse().unwrap();
+        let mut latched = None;
+        assert_eq!(admit(&mut latched, peer, mapped, true), Admit::Accept);
+    }
+
     #[tokio::test]
-    async fn udp_ingest_latches_the_first_source_and_rejects_others() {
+    async fn udp_ingest_relatches_a_same_ip_port_change_and_counts_garbage_as_malformed() {
         let mount = PublishMountState::new("/p", 8);
         let adapter: Arc<Mutex<Box<dyn PublishAdapter>>> =
             Arc::new(Mutex::new(Box::new(Mp2tAdapter::new(mount.clone(), 33))));
@@ -108,6 +222,8 @@ mod tests {
             0,
             rtp,
             rtcp,
+            "127.0.0.1".parse().unwrap(),
+            33,
             adapter,
             mount.clone(),
             last.clone(),
@@ -121,13 +237,16 @@ mod tests {
             v.extend(std::iter::repeat_n(0u8, 187));
             v
         };
+        b.send_to(&[0xFFu8; 40], target).await.unwrap(); // garbage first: no latch
+        tokio::time::sleep(Duration::from_millis(50)).await;
         a.send_to(&pkt, target).await.unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
-        b.send_to(&pkt, target).await.unwrap(); // different source: rejected
+        b.send_to(&pkt, target).await.unwrap(); // same IP, new port: re-latched
         a.send_to(&pkt, target).await.unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
         let s = mount.stats_snapshot();
-        assert_eq!(s.frames_emitted, 2);
+        assert_eq!(s.frames_emitted, 3);
+        assert_eq!(s.source_rejected, 0);
         assert_eq!(s.malformed_packets, 1);
         assert!(last.load(Ordering::Relaxed) > 0);
         cancel.cancel();
