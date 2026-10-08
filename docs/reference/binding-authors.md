@@ -653,6 +653,7 @@ cell is either shipped, or deferred with the trigger that reopens it in
 | `FileTransport::finish()` | ✅ | n/a — `FileTransport` is a Rust-only capture transport; no binding exposes it | n/a | n/a |
 | `DemuxerConfig::sync_buf_cap` | ✅ | ✅ `tst_demux_config_set_sync_buf_cap` (ABI 0.22) | ✅ `DemuxerConfig.sync_buf_cap` | ✅ `DemuxerConfig.Builder.syncBufCap(long)` |
 | Cross-thread cancel entry point | ✅ every transport (`cancel_handle()` is `Some` everywhere since 0.7.0) | ✅ `tst_<transport>_<shell>_cancel` for srt/rtp (since 0.6–0.21) and tcp/udp/rist (ABI 0.22) | ✅ `cancel_handle()` on every shell | ✅ `cancelHandle()` on every shell |
+| RTSP publisher role (`add_publish_mount`, `next_publisher`, `remove_mount`, publish-mount transport, stats and publisher info, `accept_unregistered_publishers`) | ✅ | ✅ `tst_rtsp_server_*` + `tst_rtsp_publish_mount_*` (ABI 0.23) | In progress for 0.8.0 (this release) | In progress for 0.8.0 (this release) |
 
 **Rule for new cells.** A ship-now cell must be under a day per binding
 (a `with_ref`/`with_mut` body plus one error projection, with a red-first

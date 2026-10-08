@@ -315,6 +315,63 @@ On the decode side the C ABI carries one typed KLV set: ST 0601, through `tst_st
 
 See the [HLS guide](/docs/guides/hls.md) for serving guidance, the KLV ride-along carriage modes, and latency tuning.
 
+## RTSP publisher ingest (`TST_HAS_RTP`)
+
+The RTSP server's publisher role (ABI 23) lets an encoder push into the server with ANNOUNCE / SETUP `mode=record` / RECORD, and hands each pushed stream to the application as MPEG-TS through an ordinary `TstRtpDemuxReceiver`. The same mount keeps serving PLAY readers from the published bytes. A publish mount accepts one publisher at a time, in either of two shapes: one MPEG-TS-over-RTP track (`TST_RTSP_PUBLISH_SHAPE_MP2T`, bytes pass through), or elementary H.264 with an optional KLV track (`TST_RTSP_PUBLISH_SHAPE_ELEMENTARY`, re-muxed by the server into one program, video PID 0x100, KLV PID 0x101).
+
+Server entry points:
+
+```c
+void tst_rtsp_server_builder_accept_unregistered_publishers(struct TstRtspServerBuilder *builder, bool accept);
+struct tst_rtsp_publish_mount_t *tst_rtsp_server_add_publish_mount(struct TstRtspServer *server, const char *path);
+int tst_rtsp_server_next_publisher(struct TstRtspServer *server, uint64_t timeout_ms, struct tst_rtsp_publish_mount_t **out);
+int tst_rtsp_server_remove_mount(struct TstRtspServer *server, const char *path);
+int tst_rtsp_server_local_addr(const struct TstRtspServer *server, char *buf, size_t len);
+int tst_rtsp_server_active_publishers(struct TstRtspServer *server, uint64_t *out);
+int tst_rtsp_server_total_rtp_packets_received(struct TstRtspServer *server, uint64_t *out);
+int tst_rtsp_server_total_rtp_bytes_received(struct TstRtspServer *server, uint64_t *out);
+```
+
+Publish-mount handle:
+
+```c
+const char *tst_rtsp_publish_mount_path(const struct tst_rtsp_publish_mount_t *mount);
+int tst_rtsp_publish_mount_peer_count(const struct tst_rtsp_publish_mount_t *mount, uint64_t *out);
+int tst_rtsp_publish_mount_generation(const struct tst_rtsp_publish_mount_t *mount, uint64_t *out);
+int tst_rtsp_publish_mount_get_stats(const struct tst_rtsp_publish_mount_t *mount, struct tst_rtsp_publish_mount_stats_t *out);
+int tst_rtsp_publish_mount_publisher_info(const struct tst_rtsp_publish_mount_t *mount, struct tst_rtsp_publisher_info_t *out);
+int tst_rtsp_publish_mount_cancel(struct tst_rtsp_publish_mount_t *mount);
+struct TstRtpDemuxReceiver *tst_rtsp_publish_mount_into_demux_receiver(struct tst_rtsp_publish_mount_t *mount, const struct tst_demux_config_t *demux_cfg);
+void tst_rtsp_publish_mount_free(struct tst_rtsp_publish_mount_t *mount);
+```
+
+Two ways to get a mount:
+
+- **Registered names.** `tst_rtsp_server_add_publish_mount` registers a path up front (`TST_E_RTSP_MOUNT` for a duplicate or invalid path). An ANNOUNCE to any other path answers `404`.
+- **On demand.** With `tst_rtsp_server_builder_accept_unregistered_publishers(builder, true)`, an ANNOUNCE to an unregistered path creates a publish mount and queues its handle. `tst_rtsp_server_next_publisher` hands each one out, in ANNOUNCE order, to exactly one caller. Up to 64 handles wait in that queue and the server holds up to 256 on-demand mounts; an ANNOUNCE past either bound answers `503`. Anyone who can reach the port can create mounts, so add `tst_rtsp_server_builder_auth_basic` or `_auth_digest_*` where that matters.
+
+Return codes worth branching on:
+
+| Code | Where | Meaning |
+|---|---|---|
+| `TST_E_BUFFER_FULL` (−4) | `tst_rtsp_server_next_publisher` | No mount arrived before the timeout; `*out` is NULL. Retry. Always the result when on-demand publishers are off. |
+| `TST_E_CLOSED` (−7) | every server entry point | The server is stopped. A `next_publisher` call parked on another thread wakes with it when `tst_rtsp_server_stop` runs. |
+| `TST_E_CLOSED` (−7) | `_into_demux_receiver`, then `tst_rtp_demux_receiver_next_event` | A second take of the mount's transport; or, on the receiver, an explicit cancel (`tst_rtsp_publish_mount_cancel` or `tst_rtp_demux_receiver_cancel`). |
+| `TST_E_END_OF_STREAM` (−12) | `tst_rtp_demux_receiver_next_event` | The mount was closed by `tst_rtsp_server_remove_mount` or `tst_rtsp_server_stop`; what was already queued is delivered first. |
+| `TST_E_RTSP_MOUNT` (−25) | `_add_publish_mount`, `_remove_mount` | Duplicate or invalid path, or no mount registered at the path. |
+
+Rules the types do not enforce:
+
+- **Take-once transport.** `tst_rtsp_publish_mount_into_demux_receiver` takes the mount's transport once across every handle to that mount; later calls return NULL with `TST_E_CLOSED`. The receiver outlives publisher churn: between publishers it stays open and silent, and the next publisher's bytes arrive as ordinary continuity discontinuities.
+- **Freeing a handle never closes the mount.** `tst_rtsp_publish_mount_free` releases the handle only. An on-demand mount stays registered after its publisher leaves until `tst_rtsp_server_remove_mount` removes it, which also sends a live publisher RTSP Notice 5402 and disconnects it.
+- **Stop, not the hard cancel, ends the mounts.** `tst_rtsp_server_stop` closes every publish mount, so each bound receiver reads `TST_E_END_OF_STREAM`, and it wakes a parked `next_publisher`. The hard cancel (`tst_rtsp_cancel_handle_cancel`) does neither: receivers stay parked and `next_publisher` keeps timing out. Shut down with stop, join the threads reading the receivers, then close the receivers, free the mount handles, and free the server last. Never call `tst_rtsp_server_free` while another thread is inside one of the server's calls.
+- **Expired handles.** `next_publisher` can return a handle whose mount was removed while it waited in the queue. Its receiver reads `TST_E_END_OF_STREAM` at once.
+- **One `next_publisher` caller at a time.** Concurrent callers are served one at a time, so a call made while another waits can overrun its own timeout.
+- **Counters ride getters.** `tst_server_stats_t` keeps its layout; the publisher counters are out-parameter getters, and per-mount numbers are in `tst_rtsp_publish_mount_stats_t` (`alignment` is one of the four `tst_rtsp_clock_alignment` values). The mount getters keep working after the mount is closed.
+- **Port 0.** `tst_rtsp_server_local_addr` writes the bound address, NUL-terminated and truncated to fit (64 bytes holds any address), so a server built on port 0 can report the port the kernel picked.
+
+ffmpeg pushes elementary tracks and cannot push KLV over RTSP; GStreamer's `rtspclientsink` can push MPEG-TS or H.264 + KLV. The C example [`recv_rtsp_publish.c`](/bindings/c/examples/receiving/recv_rtsp_publish.c) runs the whole loop, with push commands in its header; the [publisher ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md) covers the same flow from Rust.
+
 ## Language-specific gotchas
 
 **`_close` lifecycle contract.** Every handle has a `tst_<thing>_close()` function. The contract:
