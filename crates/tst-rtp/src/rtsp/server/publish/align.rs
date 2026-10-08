@@ -11,8 +11,9 @@
 //! `(ntp, rtp)` pair lets every held unit's RTP timestamp be converted to an
 //! NTP instant and then to the video track's RTP clock at that instant. If
 //! two seconds pass without both reports, alignment falls back to
-//! first-packet coincidence instead (the first KLV unit lands at the video
-//! line's PTS 0) — [`ClockAlignment::Provisional`] rather than
+//! first-packet coincidence instead (the first KLV unit, or the oldest one
+//! still held if older ones aged out before the video started, lands at
+//! the video line's PTS 0) — [`ClockAlignment::Provisional`] rather than
 //! [`ClockAlignment::SenderReport`]. A later report pair always recomputes
 //! the mapping and may move KLV units' PTS as a result (no continuity
 //! requirement for metadata); a move of more than
@@ -177,8 +178,9 @@ pub(crate) struct Aligner {
     /// The depacketizer's PTS zero, from [`Self::on_video_au`].
     video_origin: Option<VideoOrigin>,
     /// Unwrapped RTP timestamp of the first KLV unit since the aligner
-    /// started (or since the video line was re-anchored) — the anchor for
-    /// first-packet-coincidence fallback.
+    /// started (or since the video line was re-anchored), moved to the
+    /// oldest unit still held when [`Self::evict_stale`] ages units out —
+    /// the anchor for first-packet-coincidence fallback.
     klv_first: Option<i64>,
     /// KLV units held until alignment is known. Bounded at
     /// [`ALIGN_HOLD_MAX_UNITS`] and [`ALIGN_HOLD_MAX_BYTES`], drop-oldest;
@@ -427,10 +429,18 @@ impl Aligner {
     /// to wait for: evict held (unplaced) units older than
     /// [`ALIGN_FALLBACK`]. Placed units have their own age bound, in
     /// [`Self::take_due`].
+    ///
+    /// An eviction also moves the fallback anchor (`klv_first`) to the
+    /// oldest unit still held, or clears it when nothing is held so the
+    /// next unit sets it: the fallback places by first-packet
+    /// coincidence, and the evicted units are no longer the first ones
+    /// the video will meet. Nothing placed depends on the old anchor,
+    /// since evictions happen only before any video origin exists.
     fn evict_stale(&mut self, now: Instant) {
         if self.video_origin.is_some() {
             return;
         }
+        let mut evicted = false;
         while self
             .hold
             .front()
@@ -439,12 +449,16 @@ impl Aligner {
             let h = self.hold.pop_front().expect("front exists");
             self.held_bytes -= h.unit.bytes.len();
             self.dropped += 1;
+            evicted = true;
+        }
+        if evicted {
+            self.klv_first = self.hold.front().map(|h| h.t_k);
         }
     }
 
     /// If no offset is known yet and [`ALIGN_FALLBACK`] has elapsed since
     /// the first held unit, establish the first-packet-coincidence offset
-    /// (the first KLV unit lands at the video line's PTS 0, or where the
+    /// (the anchor unit, `klv_first`, lands at the video line's PTS 0, or where the
     /// line was re-anchored — see `VideoOrigin::fallback_anchor`). This is always the first establishment of
     /// an offset, so it never counts a step.
     fn maybe_engage_fallback(&mut self, now: Instant) {
@@ -763,6 +777,63 @@ mod tests {
         assert_eq!(a.held_bytes, 20 * 50_000);
         assert_eq!(a.dropped(), 80);
         assert_eq!(a.mode(), ClockAlignment::Pending);
+    }
+
+    /// KLV every 100 ms from t = 0, video from t = 5 s: by then the
+    /// held units older than two seconds were evicted, so the fallback
+    /// must anchor on the oldest unit still held (t = 3 s), not on the
+    /// evicted first one. Returns the aligner just after the first video
+    /// AU and the drop count before it.
+    fn klv_five_seconds_before_video(t0: Instant) -> (Aligner, u64) {
+        let mut a = Aligner::new();
+        for i in 0..50u32 {
+            let now = t0 + Duration::from_millis(100 * u64::from(i));
+            assert!(a.on_klv_unit(unit(i * 9_000), now).is_empty());
+        }
+        let evicted = a.dropped();
+        a.on_video_au(1_000_000, 0);
+        (a, evicted)
+    }
+
+    #[test]
+    fn the_fallback_anchors_on_the_oldest_unit_still_held_after_evictions() {
+        let t0 = Instant::now();
+        let (mut a, evicted) = klv_five_seconds_before_video(t0);
+        assert_eq!(evicted, 30, "units from 0 to 2.9 s aged out");
+        // Video at 25 fps (3 600 ticks a frame) and KLV every 100 ms, from
+        // t = 5 s to just under 8 s, with no sender reports.
+        let mut out = Vec::new();
+        for ms in (5_000..7_960u64).step_by(20) {
+            let now = t0 + Duration::from_millis(ms);
+            if ms % 40 == 0 {
+                let pts = (ms as i64 - 5_000) * 90;
+                a.on_video_au(1_000_000 + pts as u32, pts);
+                a.on_video_muxed(pts);
+                out.extend(a.poll(now));
+            }
+            if ms % 100 == 0 {
+                out.extend(a.on_klv_unit(unit(ms as u32 * 90), now));
+            }
+        }
+        assert_eq!(a.mode(), ClockAlignment::Provisional);
+        let (first, first_pts) = out.first().expect("units were emitted");
+        assert_eq!(first.rtp_timestamp, 270_000, "the oldest surviving unit");
+        assert!(
+            (0..=3_600).contains(first_pts),
+            "first unit at PTS {first_pts}, within one frame of the origin"
+        );
+        assert_eq!(a.dropped(), evicted, "only the pre-video evictions");
+    }
+
+    #[test]
+    fn drain_s_forced_fallback_uses_the_anchor_left_by_evictions() {
+        let t0 = Instant::now();
+        let (mut a, evicted) = klv_five_seconds_before_video(t0);
+        let out = a.drain(t0 + Duration::from_millis(5_000));
+        assert_eq!(out.len(), 20);
+        assert_eq!(out[0], (unit(270_000), 0));
+        assert_eq!(out[19], (unit(441_000), 171_000));
+        assert_eq!(a.dropped(), evicted);
     }
 
     #[test]
