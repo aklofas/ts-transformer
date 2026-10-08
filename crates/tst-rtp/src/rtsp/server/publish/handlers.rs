@@ -678,7 +678,7 @@ mod tests {
         // be closed, so a RECORD arriving in the window is refused.
         let server = crate::rtsp::server::RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
         let st = server.state.clone();
-        let m = super::super::mount::PublishMountState::new("/pub", 8, Default::default());
+        let m = super::super::mount::PublishMountState::new("/pub", 8, st.publish_counters.clone());
         st.mounts
             .lock()
             .unwrap()
