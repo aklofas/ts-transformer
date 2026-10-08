@@ -1284,6 +1284,7 @@ pub tst_rtp::rtsp::server::publish::PublishMountStats::alignment: tst_rtp::Clock
 pub tst_rtp::rtsp::server::publish::PublishMountStats::alignment_steps: u64
 pub tst_rtp::rtsp::server::publish::PublishMountStats::aus_dropped: u64
 pub tst_rtp::rtsp::server::publish::PublishMountStats::aus_emitted: u64
+pub tst_rtp::rtsp::server::publish::PublishMountStats::aus_reordered: u64
 pub tst_rtp::rtsp::server::publish::PublishMountStats::bytes_received: u64
 pub tst_rtp::rtsp::server::publish::PublishMountStats::frames_dropped_app: u64
 pub tst_rtp::rtsp::server::publish::PublishMountStats::frames_dropped_readers: u64
@@ -2555,6 +2556,7 @@ pub tst_rtp::PublishMountStats::alignment: tst_rtp::ClockAlignment
 pub tst_rtp::PublishMountStats::alignment_steps: u64
 pub tst_rtp::PublishMountStats::aus_dropped: u64
 pub tst_rtp::PublishMountStats::aus_emitted: u64
+pub tst_rtp::PublishMountStats::aus_reordered: u64
 pub tst_rtp::PublishMountStats::bytes_received: u64
 pub tst_rtp::PublishMountStats::frames_dropped_app: u64
 pub tst_rtp::PublishMountStats::frames_dropped_readers: u64

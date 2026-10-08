@@ -208,6 +208,7 @@ impl PublishMountState {
             frames_dropped_readers: self.frames_dropped_readers.load(Ordering::Relaxed),
             aus_emitted: inner.aus_emitted,
             aus_dropped: inner.aus_dropped,
+            aus_reordered: inner.aus_reordered,
             klv_units_emitted: inner.klv_units_emitted,
             klv_units_dropped: inner.klv_units_dropped,
             alignment: inner.alignment,
@@ -269,6 +270,7 @@ pub(crate) struct PublishMountStatsInner {
     pub(crate) frames_dropped_app: u64,
     pub(crate) aus_emitted: u64,
     pub(crate) aus_dropped: u64,
+    pub(crate) aus_reordered: u64,
     pub(crate) klv_units_emitted: u64,
     pub(crate) klv_units_dropped: u64,
     pub(crate) alignment: ClockAlignment,
@@ -286,6 +288,7 @@ impl Default for PublishMountStatsInner {
             frames_dropped_app: 0,
             aus_emitted: 0,
             aus_dropped: 0,
+            aus_reordered: 0,
             klv_units_emitted: 0,
             klv_units_dropped: 0,
             alignment: ClockAlignment::NotApplicable,
@@ -320,6 +323,12 @@ pub struct PublishMountStats {
     pub aus_emitted: u64,
     /// Access units an elementary-shape adapter dropped.
     pub aus_dropped: u64,
+    /// Access units an elementary-shape adapter muxed with a PTS below one
+    /// it had already muxed: a publisher sending B-frames (RTP carries
+    /// presentation times in decode order). They are still muxed, but the
+    /// re-muxed TS carries a PTS and no DTS, so a player slaved to its PCR
+    /// may show them late. Nonzero means the publisher uses B-frames.
+    pub aus_reordered: u64,
     /// KLV units emitted by an elementary-shape adapter.
     pub klv_units_emitted: u64,
     /// KLV units an elementary-shape adapter dropped.
