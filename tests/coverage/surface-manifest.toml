@@ -13485,3 +13485,15 @@ reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/
 item = "tst_rtp::rtsp::server::RtspServer::add_publish_mount"
 reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
 
+[[exempt]]
+item = "tst_rtp::builder::RtspServerBuilder::accept_unregistered_publishers"
+reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+
+[[exempt]]
+item = "tst_rtp::rtsp::server::RtspServer::next_publisher"
+reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+
+[[exempt]]
+item = "tst_rtp::rtsp::server::RtspServer::remove_mount"
+reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+
