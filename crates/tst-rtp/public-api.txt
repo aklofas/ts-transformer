@@ -216,6 +216,7 @@ pub tst_rtp::error::RtspServerError::Io(core::io::error::ErrorKind)
 pub tst_rtp::error::RtspServerError::NotStarted
 pub tst_rtp::error::RtspServerError::Shutdown
 pub tst_rtp::error::RtspServerError::Tls(alloc::string::String)
+pub tst_rtp::error::RtspServerError::TransportTaken
 pub tst_rtp::error::RtspServerError::UrlParse(tst_rtp::url::UrlError)
 impl core::convert::From<tst_rtp::error::RtspServerError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::error::RtspServerError) -> Self
@@ -1000,6 +1001,7 @@ pub struct tst_rtp::rtsp::client::transport_negotiation::TransportResponse
 pub tst_rtp::rtsp::client::transport_negotiation::TransportResponse::client_port: core::option::Option<(u16, u16)>
 pub tst_rtp::rtsp::client::transport_negotiation::TransportResponse::interleaved: core::option::Option<(u8, u8)>
 pub tst_rtp::rtsp::client::transport_negotiation::TransportResponse::kind: tst_rtp::rtsp::client::transport_negotiation::RtspTransportKind
+pub tst_rtp::rtsp::client::transport_negotiation::TransportResponse::mode: core::option::Option<alloc::string::String>
 pub tst_rtp::rtsp::client::transport_negotiation::TransportResponse::server_port: core::option::Option<(u16, u16)>
 pub tst_rtp::rtsp::client::transport_negotiation::TransportResponse::ssrc: core::option::Option<u32>
 impl core::clone::Clone for tst_rtp::rtsp::client::transport_negotiation::TransportResponse
@@ -1060,13 +1062,16 @@ impl core::marker::Unpin for tst_rtp::rtsp::client::RtspClient
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::RtspClient
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::RtspClient
 impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::RtspClient
+pub mod tst_rtp::rtsp::framing
 pub mod tst_rtp::rtsp::message
 #[non_exhaustive] pub enum tst_rtp::rtsp::message::RtspMethod
+pub tst_rtp::rtsp::message::RtspMethod::Announce
 pub tst_rtp::rtsp::message::RtspMethod::Describe
 pub tst_rtp::rtsp::message::RtspMethod::GetParameter
 pub tst_rtp::rtsp::message::RtspMethod::Options
 pub tst_rtp::rtsp::message::RtspMethod::Pause
 pub tst_rtp::rtsp::message::RtspMethod::Play
+pub tst_rtp::rtsp::message::RtspMethod::Record
 pub tst_rtp::rtsp::message::RtspMethod::Setup
 pub tst_rtp::rtsp::message::RtspMethod::Teardown
 impl core::clone::Clone for tst_rtp::rtsp::message::RtspMethod
@@ -1214,6 +1219,111 @@ impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount::MountStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount::MountStats
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount::MountStats
 pub mod tst_rtp::rtsp::server::multicast
+pub mod tst_rtp::rtsp::server::publish
+#[non_exhaustive] pub enum tst_rtp::rtsp::server::publish::ClockAlignment
+pub tst_rtp::rtsp::server::publish::ClockAlignment::NotApplicable
+pub tst_rtp::rtsp::server::publish::ClockAlignment::Provisional
+pub tst_rtp::rtsp::server::publish::ClockAlignment::SenderReport
+impl core::clone::Clone for tst_rtp::ClockAlignment
+pub fn tst_rtp::ClockAlignment::clone(&self) -> tst_rtp::ClockAlignment
+impl core::cmp::Eq for tst_rtp::ClockAlignment
+impl core::cmp::PartialEq for tst_rtp::ClockAlignment
+pub fn tst_rtp::ClockAlignment::eq(&self, &tst_rtp::ClockAlignment) -> bool
+impl core::default::Default for tst_rtp::ClockAlignment
+pub fn tst_rtp::ClockAlignment::default() -> Self
+impl core::fmt::Debug for tst_rtp::ClockAlignment
+pub fn tst_rtp::ClockAlignment::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_rtp::ClockAlignment
+impl core::marker::StructuralPartialEq for tst_rtp::ClockAlignment
+impl core::marker::Freeze for tst_rtp::ClockAlignment
+impl core::marker::Send for tst_rtp::ClockAlignment
+impl core::marker::Sync for tst_rtp::ClockAlignment
+impl core::marker::Unpin for tst_rtp::ClockAlignment
+impl core::marker::UnsafeUnpin for tst_rtp::ClockAlignment
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::ClockAlignment
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::ClockAlignment
+#[non_exhaustive] pub enum tst_rtp::rtsp::server::publish::PublishShape
+pub tst_rtp::rtsp::server::publish::PublishShape::Elementary
+pub tst_rtp::rtsp::server::publish::PublishShape::Elementary::klv: bool
+pub tst_rtp::rtsp::server::publish::PublishShape::Mp2t
+impl core::clone::Clone for tst_rtp::rtsp::server::publish::PublishShape
+pub fn tst_rtp::rtsp::server::publish::PublishShape::clone(&self) -> tst_rtp::rtsp::server::publish::PublishShape
+impl core::cmp::Eq for tst_rtp::rtsp::server::publish::PublishShape
+impl core::cmp::PartialEq for tst_rtp::rtsp::server::publish::PublishShape
+pub fn tst_rtp::rtsp::server::publish::PublishShape::eq(&self, &tst_rtp::rtsp::server::publish::PublishShape) -> bool
+impl core::fmt::Debug for tst_rtp::rtsp::server::publish::PublishShape
+pub fn tst_rtp::rtsp::server::publish::PublishShape::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_rtp::rtsp::server::publish::PublishShape
+impl core::marker::StructuralPartialEq for tst_rtp::rtsp::server::publish::PublishShape
+impl core::marker::Freeze for tst_rtp::rtsp::server::publish::PublishShape
+impl core::marker::Send for tst_rtp::rtsp::server::publish::PublishShape
+impl core::marker::Sync for tst_rtp::rtsp::server::publish::PublishShape
+impl core::marker::Unpin for tst_rtp::rtsp::server::publish::PublishShape
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::publish::PublishShape
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::publish::PublishShape
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::publish::PublishShape
+pub struct tst_rtp::rtsp::server::publish::PublishMountHandle
+impl tst_rtp::PublishMountHandle
+pub fn tst_rtp::PublishMountHandle::cancel(&self)
+pub fn tst_rtp::PublishMountHandle::generation(&self) -> u64
+pub fn tst_rtp::PublishMountHandle::into_recv_transport(self) -> core::result::Result<tst_rtp::transport::RtpRecvTransport, tst_rtp::error::RtspServerError>
+pub fn tst_rtp::PublishMountHandle::mount_path(&self) -> &str
+pub fn tst_rtp::PublishMountHandle::peer_count(&self) -> usize
+pub fn tst_rtp::PublishMountHandle::publisher(&self) -> core::option::Option<tst_rtp::PublisherInfo>
+pub fn tst_rtp::PublishMountHandle::stats(&self) -> tst_rtp::PublishMountStats
+impl core::clone::Clone for tst_rtp::PublishMountHandle
+pub fn tst_rtp::PublishMountHandle::clone(&self) -> tst_rtp::PublishMountHandle
+impl core::marker::Freeze for tst_rtp::PublishMountHandle
+impl core::marker::Send for tst_rtp::PublishMountHandle
+impl core::marker::Sync for tst_rtp::PublishMountHandle
+impl core::marker::Unpin for tst_rtp::PublishMountHandle
+impl core::marker::UnsafeUnpin for tst_rtp::PublishMountHandle
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::PublishMountHandle
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::PublishMountHandle
+#[non_exhaustive] pub struct tst_rtp::rtsp::server::publish::PublishMountStats
+pub tst_rtp::rtsp::server::publish::PublishMountStats::alignment: tst_rtp::ClockAlignment
+pub tst_rtp::rtsp::server::publish::PublishMountStats::alignment_steps: u64
+pub tst_rtp::rtsp::server::publish::PublishMountStats::aus_dropped: u64
+pub tst_rtp::rtsp::server::publish::PublishMountStats::aus_emitted: u64
+pub tst_rtp::rtsp::server::publish::PublishMountStats::bytes_received: u64
+pub tst_rtp::rtsp::server::publish::PublishMountStats::frames_dropped_app: u64
+pub tst_rtp::rtsp::server::publish::PublishMountStats::frames_dropped_readers: u64
+pub tst_rtp::rtsp::server::publish::PublishMountStats::frames_emitted: u64
+pub tst_rtp::rtsp::server::publish::PublishMountStats::generation: u64
+pub tst_rtp::rtsp::server::publish::PublishMountStats::klv_units_dropped: u64
+pub tst_rtp::rtsp::server::publish::PublishMountStats::klv_units_emitted: u64
+pub tst_rtp::rtsp::server::publish::PublishMountStats::malformed_packets: u64
+pub tst_rtp::rtsp::server::publish::PublishMountStats::peer_count: usize
+pub tst_rtp::rtsp::server::publish::PublishMountStats::rtp_packets_received: u64
+impl core::clone::Clone for tst_rtp::PublishMountStats
+pub fn tst_rtp::PublishMountStats::clone(&self) -> tst_rtp::PublishMountStats
+impl core::default::Default for tst_rtp::PublishMountStats
+pub fn tst_rtp::PublishMountStats::default() -> tst_rtp::PublishMountStats
+impl core::fmt::Debug for tst_rtp::PublishMountStats
+pub fn tst_rtp::PublishMountStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::PublishMountStats
+impl core::marker::Send for tst_rtp::PublishMountStats
+impl core::marker::Sync for tst_rtp::PublishMountStats
+impl core::marker::Unpin for tst_rtp::PublishMountStats
+impl core::marker::UnsafeUnpin for tst_rtp::PublishMountStats
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::PublishMountStats
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::PublishMountStats
+#[non_exhaustive] pub struct tst_rtp::rtsp::server::publish::PublisherInfo
+pub tst_rtp::rtsp::server::publish::PublisherInfo::generation: u64
+pub tst_rtp::rtsp::server::publish::PublisherInfo::peer: core::net::socket_addr::SocketAddr
+pub tst_rtp::rtsp::server::publish::PublisherInfo::shape: tst_rtp::rtsp::server::publish::PublishShape
+pub tst_rtp::rtsp::server::publish::PublisherInfo::since: std::time::SystemTime
+impl core::clone::Clone for tst_rtp::PublisherInfo
+pub fn tst_rtp::PublisherInfo::clone(&self) -> tst_rtp::PublisherInfo
+impl core::fmt::Debug for tst_rtp::PublisherInfo
+pub fn tst_rtp::PublisherInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::PublisherInfo
+impl core::marker::Send for tst_rtp::PublisherInfo
+impl core::marker::Sync for tst_rtp::PublisherInfo
+impl core::marker::Unpin for tst_rtp::PublisherInfo
+impl core::marker::UnsafeUnpin for tst_rtp::PublisherInfo
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::PublisherInfo
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::PublisherInfo
 pub mod tst_rtp::rtsp::server::session
 pub struct tst_rtp::rtsp::server::session::ServerSessionState
 pub tst_rtp::rtsp::server::session::ServerSessionState::auth_failures: u8
@@ -1238,6 +1348,7 @@ pub struct tst_rtp::rtsp::server::RtspServer
 impl tst_rtp::rtsp::server::RtspServer
 pub fn tst_rtp::rtsp::server::RtspServer::add_mount(&self, &str, tst_core::mpegts::mux::config::MuxerConfig) -> core::result::Result<tst_rtp::rtsp::server::mount::MountHandle, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::add_multicast_mount(&self, &str, tst_core::mpegts::mux::config::MuxerConfig, &str) -> core::result::Result<tst_rtp::rtsp::server::mount::MountHandle, tst_rtp::error::RtspServerError>
+pub fn tst_rtp::rtsp::server::RtspServer::add_publish_mount(&self, &str) -> core::result::Result<tst_rtp::PublishMountHandle, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::bind(&str) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::bind_with(tst_rtp::url::RtspUrl) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::cancel_handle(&self) -> tst_rtp::cancel::RtspServerCancelHandle
@@ -1651,6 +1762,28 @@ impl core::marker::Unpin for tst_rtp::rtsp::auth::AuthChallenge
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::auth::AuthChallenge
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::auth::AuthChallenge
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::auth::AuthChallenge
+#[non_exhaustive] pub enum tst_rtp::ClockAlignment
+pub tst_rtp::ClockAlignment::NotApplicable
+pub tst_rtp::ClockAlignment::Provisional
+pub tst_rtp::ClockAlignment::SenderReport
+impl core::clone::Clone for tst_rtp::ClockAlignment
+pub fn tst_rtp::ClockAlignment::clone(&self) -> tst_rtp::ClockAlignment
+impl core::cmp::Eq for tst_rtp::ClockAlignment
+impl core::cmp::PartialEq for tst_rtp::ClockAlignment
+pub fn tst_rtp::ClockAlignment::eq(&self, &tst_rtp::ClockAlignment) -> bool
+impl core::default::Default for tst_rtp::ClockAlignment
+pub fn tst_rtp::ClockAlignment::default() -> Self
+impl core::fmt::Debug for tst_rtp::ClockAlignment
+pub fn tst_rtp::ClockAlignment::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_rtp::ClockAlignment
+impl core::marker::StructuralPartialEq for tst_rtp::ClockAlignment
+impl core::marker::Freeze for tst_rtp::ClockAlignment
+impl core::marker::Send for tst_rtp::ClockAlignment
+impl core::marker::Sync for tst_rtp::ClockAlignment
+impl core::marker::Unpin for tst_rtp::ClockAlignment
+impl core::marker::UnsafeUnpin for tst_rtp::ClockAlignment
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::ClockAlignment
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::ClockAlignment
 #[non_exhaustive] pub enum tst_rtp::ConnectError
 pub tst_rtp::ConnectError::HostNotLiteral
 pub tst_rtp::ConnectError::HostNotLiteral::detail: alloc::string::String
@@ -1760,6 +1893,26 @@ impl core::marker::Unpin for tst_rtp::h264::depacketizer::ParameterSetInjection
 impl core::marker::UnsafeUnpin for tst_rtp::h264::depacketizer::ParameterSetInjection
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::h264::depacketizer::ParameterSetInjection
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::h264::depacketizer::ParameterSetInjection
+#[non_exhaustive] pub enum tst_rtp::PublishShape
+pub tst_rtp::PublishShape::Elementary
+pub tst_rtp::PublishShape::Elementary::klv: bool
+pub tst_rtp::PublishShape::Mp2t
+impl core::clone::Clone for tst_rtp::rtsp::server::publish::PublishShape
+pub fn tst_rtp::rtsp::server::publish::PublishShape::clone(&self) -> tst_rtp::rtsp::server::publish::PublishShape
+impl core::cmp::Eq for tst_rtp::rtsp::server::publish::PublishShape
+impl core::cmp::PartialEq for tst_rtp::rtsp::server::publish::PublishShape
+pub fn tst_rtp::rtsp::server::publish::PublishShape::eq(&self, &tst_rtp::rtsp::server::publish::PublishShape) -> bool
+impl core::fmt::Debug for tst_rtp::rtsp::server::publish::PublishShape
+pub fn tst_rtp::rtsp::server::publish::PublishShape::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_rtp::rtsp::server::publish::PublishShape
+impl core::marker::StructuralPartialEq for tst_rtp::rtsp::server::publish::PublishShape
+impl core::marker::Freeze for tst_rtp::rtsp::server::publish::PublishShape
+impl core::marker::Send for tst_rtp::rtsp::server::publish::PublishShape
+impl core::marker::Sync for tst_rtp::rtsp::server::publish::PublishShape
+impl core::marker::Unpin for tst_rtp::rtsp::server::publish::PublishShape
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::publish::PublishShape
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::publish::PublishShape
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::publish::PublishShape
 #[non_exhaustive] pub enum tst_rtp::RtcpError
 pub tst_rtp::RtcpError::CnameTooLong(usize)
 pub tst_rtp::RtcpError::LengthOverflow(usize)
@@ -1940,11 +2093,13 @@ impl core::marker::UnsafeUnpin for tst_rtp::error::RtspError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::error::RtspError
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::error::RtspError
 #[non_exhaustive] pub enum tst_rtp::RtspMethod
+pub tst_rtp::RtspMethod::Announce
 pub tst_rtp::RtspMethod::Describe
 pub tst_rtp::RtspMethod::GetParameter
 pub tst_rtp::RtspMethod::Options
 pub tst_rtp::RtspMethod::Pause
 pub tst_rtp::RtspMethod::Play
+pub tst_rtp::RtspMethod::Record
 pub tst_rtp::RtspMethod::Setup
 pub tst_rtp::RtspMethod::Teardown
 impl core::clone::Clone for tst_rtp::rtsp::message::RtspMethod
@@ -1998,6 +2153,7 @@ pub tst_rtp::RtspServerError::Io(core::io::error::ErrorKind)
 pub tst_rtp::RtspServerError::NotStarted
 pub tst_rtp::RtspServerError::Shutdown
 pub tst_rtp::RtspServerError::Tls(alloc::string::String)
+pub tst_rtp::RtspServerError::TransportTaken
 pub tst_rtp::RtspServerError::UrlParse(tst_rtp::url::UrlError)
 impl core::convert::From<tst_rtp::error::RtspServerError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::error::RtspServerError) -> Self
@@ -2376,6 +2532,68 @@ impl core::marker::Unpin for tst_rtp::packet::Parsed
 impl core::marker::UnsafeUnpin for tst_rtp::packet::Parsed
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::packet::Parsed
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::packet::Parsed
+pub struct tst_rtp::PublishMountHandle
+impl tst_rtp::PublishMountHandle
+pub fn tst_rtp::PublishMountHandle::cancel(&self)
+pub fn tst_rtp::PublishMountHandle::generation(&self) -> u64
+pub fn tst_rtp::PublishMountHandle::into_recv_transport(self) -> core::result::Result<tst_rtp::transport::RtpRecvTransport, tst_rtp::error::RtspServerError>
+pub fn tst_rtp::PublishMountHandle::mount_path(&self) -> &str
+pub fn tst_rtp::PublishMountHandle::peer_count(&self) -> usize
+pub fn tst_rtp::PublishMountHandle::publisher(&self) -> core::option::Option<tst_rtp::PublisherInfo>
+pub fn tst_rtp::PublishMountHandle::stats(&self) -> tst_rtp::PublishMountStats
+impl core::clone::Clone for tst_rtp::PublishMountHandle
+pub fn tst_rtp::PublishMountHandle::clone(&self) -> tst_rtp::PublishMountHandle
+impl core::marker::Freeze for tst_rtp::PublishMountHandle
+impl core::marker::Send for tst_rtp::PublishMountHandle
+impl core::marker::Sync for tst_rtp::PublishMountHandle
+impl core::marker::Unpin for tst_rtp::PublishMountHandle
+impl core::marker::UnsafeUnpin for tst_rtp::PublishMountHandle
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::PublishMountHandle
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::PublishMountHandle
+#[non_exhaustive] pub struct tst_rtp::PublishMountStats
+pub tst_rtp::PublishMountStats::alignment: tst_rtp::ClockAlignment
+pub tst_rtp::PublishMountStats::alignment_steps: u64
+pub tst_rtp::PublishMountStats::aus_dropped: u64
+pub tst_rtp::PublishMountStats::aus_emitted: u64
+pub tst_rtp::PublishMountStats::bytes_received: u64
+pub tst_rtp::PublishMountStats::frames_dropped_app: u64
+pub tst_rtp::PublishMountStats::frames_dropped_readers: u64
+pub tst_rtp::PublishMountStats::frames_emitted: u64
+pub tst_rtp::PublishMountStats::generation: u64
+pub tst_rtp::PublishMountStats::klv_units_dropped: u64
+pub tst_rtp::PublishMountStats::klv_units_emitted: u64
+pub tst_rtp::PublishMountStats::malformed_packets: u64
+pub tst_rtp::PublishMountStats::peer_count: usize
+pub tst_rtp::PublishMountStats::rtp_packets_received: u64
+impl core::clone::Clone for tst_rtp::PublishMountStats
+pub fn tst_rtp::PublishMountStats::clone(&self) -> tst_rtp::PublishMountStats
+impl core::default::Default for tst_rtp::PublishMountStats
+pub fn tst_rtp::PublishMountStats::default() -> tst_rtp::PublishMountStats
+impl core::fmt::Debug for tst_rtp::PublishMountStats
+pub fn tst_rtp::PublishMountStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::PublishMountStats
+impl core::marker::Send for tst_rtp::PublishMountStats
+impl core::marker::Sync for tst_rtp::PublishMountStats
+impl core::marker::Unpin for tst_rtp::PublishMountStats
+impl core::marker::UnsafeUnpin for tst_rtp::PublishMountStats
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::PublishMountStats
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::PublishMountStats
+#[non_exhaustive] pub struct tst_rtp::PublisherInfo
+pub tst_rtp::PublisherInfo::generation: u64
+pub tst_rtp::PublisherInfo::peer: core::net::socket_addr::SocketAddr
+pub tst_rtp::PublisherInfo::shape: tst_rtp::rtsp::server::publish::PublishShape
+pub tst_rtp::PublisherInfo::since: std::time::SystemTime
+impl core::clone::Clone for tst_rtp::PublisherInfo
+pub fn tst_rtp::PublisherInfo::clone(&self) -> tst_rtp::PublisherInfo
+impl core::fmt::Debug for tst_rtp::PublisherInfo
+pub fn tst_rtp::PublisherInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::PublisherInfo
+impl core::marker::Send for tst_rtp::PublisherInfo
+impl core::marker::Sync for tst_rtp::PublisherInfo
+impl core::marker::Unpin for tst_rtp::PublisherInfo
+impl core::marker::UnsafeUnpin for tst_rtp::PublisherInfo
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::PublisherInfo
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::PublisherInfo
 pub struct tst_rtp::ReceiverReport
 pub tst_rtp::ReceiverReport::report_blocks: alloc::vec::Vec<tst_rtp::rtcp::ReportBlock>
 pub tst_rtp::ReceiverReport::ssrc: u32
@@ -2797,6 +3015,7 @@ pub struct tst_rtp::RtspServer
 impl tst_rtp::rtsp::server::RtspServer
 pub fn tst_rtp::rtsp::server::RtspServer::add_mount(&self, &str, tst_core::mpegts::mux::config::MuxerConfig) -> core::result::Result<tst_rtp::rtsp::server::mount::MountHandle, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::add_multicast_mount(&self, &str, tst_core::mpegts::mux::config::MuxerConfig, &str) -> core::result::Result<tst_rtp::rtsp::server::mount::MountHandle, tst_rtp::error::RtspServerError>
+pub fn tst_rtp::rtsp::server::RtspServer::add_publish_mount(&self, &str) -> core::result::Result<tst_rtp::PublishMountHandle, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::bind(&str) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::bind_with(tst_rtp::url::RtspUrl) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::cancel_handle(&self) -> tst_rtp::cancel::RtspServerCancelHandle
@@ -3030,6 +3249,7 @@ pub struct tst_rtp::TransportResponse
 pub tst_rtp::TransportResponse::client_port: core::option::Option<(u16, u16)>
 pub tst_rtp::TransportResponse::interleaved: core::option::Option<(u8, u8)>
 pub tst_rtp::TransportResponse::kind: tst_rtp::rtsp::client::transport_negotiation::RtspTransportKind
+pub tst_rtp::TransportResponse::mode: core::option::Option<alloc::string::String>
 pub tst_rtp::TransportResponse::server_port: core::option::Option<(u16, u16)>
 pub tst_rtp::TransportResponse::ssrc: core::option::Option<u32>
 impl core::clone::Clone for tst_rtp::rtsp::client::transport_negotiation::TransportResponse

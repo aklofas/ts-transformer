@@ -715,7 +715,7 @@ jobs:
           # count, measured fresh on this tree.
           # 187->189 (2026-09-22): tst_pipeline::binding::owned::HandleState
           # and tst_pipeline::binding::kind::BindingErrorKind.
-          BASELINE=189
+          BASELINE=193
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
             echo "non_exhaustive count regressed: expected >= $BASELINE, observed $OBSERVED" >&2
