@@ -862,6 +862,37 @@ mod tests {
     }
 
     #[test]
+    fn klv_held_without_video_is_dropped_and_counted_at_flush() {
+        // H.264 + KLV announced, but only KLV ever arrives: there is no
+        // video line, so flush abandons the held units — and counts them.
+        let mount = PublishMountState::new("/p", 8);
+        let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
+        a.on_rtp(1, &klv_packet(1, 77_000, &klv_set(1)));
+        a.on_rtp(1, &klv_packet(2, 77_900, &klv_set(2)));
+        a.on_rtp(1, &klv_packet(3, 78_800, &klv_set(3)));
+        assert_eq!(mount.stats_snapshot().klv_units_dropped, 0, "held");
+        a.flush();
+        let s = mount.stats_snapshot();
+        assert_eq!((s.klv_units_emitted, s.klv_units_dropped), (0, 3));
+    }
+
+    #[test]
+    fn max_klv_unit_is_the_muxers_klv_ceiling() {
+        // The depacketizer's cap must be exactly what this adapter's muxer
+        // takes: a unit at the cap muxes, one byte more is KlvTooLarge.
+        let mount = PublishMountState::new("/p", 8);
+        let mut a = EsAdapter::new(mount, &video_track(), Some(&klv_track())).unwrap();
+        let max = crate::rtsp::server::publish::klv_depacketizer::MAX_KLV_UNIT_BYTES;
+        a.muxer
+            .push_klv(&vec![0u8; max], Pts90khz::new(0), 0)
+            .expect("a unit at the cap muxes");
+        assert!(matches!(
+            a.muxer.push_klv(&vec![0u8; max + 1], Pts90khz::new(0), 0),
+            Err(MuxError::KlvTooLarge { .. })
+        ));
+    }
+
+    #[test]
     fn muxer_buffer_full_drops_the_au_and_continues() {
         let mount = PublishMountState::new("/p", 8);
         let mut t = app_transport(&mount);
