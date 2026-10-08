@@ -81,3 +81,21 @@ unchanged (310) and the test leaf-name multiset is byte-identical before/after
 | `rtsp_server_session_keepalive.rs` | `rtsp_server/session_keepalive.rs` |
 | `rtsp_server_shutdown.rs` | `rtsp_server/shutdown.rs` |
 | `rtsp_server_tls.rs` | `rtsp_server/tls.rs` |
+
+### `rtsp_server/publish/` — RTSP publisher role (ANNOUNCE / SETUP `mode=record` / RECORD), MP2T
+
+New members (no former top-level file), registered at the `rtsp_server.rs`
+root as `#[path = "rtsp_server/publish/<file>.rs"] mod publish_<file>;` — one
+`#[path] mod` per file, no `publish/mod.rs`. Filter with
+`cargo test -p tst-rtp --test rtsp_server publish_`.
+
+| file | covers |
+| --- | --- |
+| `rtsp_server/publish/mp2t_interleaved.rs` | TCP-interleaved publisher → app transport + PLAY reader, byte-identical |
+| `rtsp_server/publish/mp2t_udp.rs` | UDP publisher (source latched from the first datagram) → app transport |
+| `rtsp_server/publish/second_publisher.rs` | second ANNOUNCE on a live mount is 403 |
+| `rtsp_server/publish/republish.rs` | mount outlives publishers (TEARDOWN, dropped connection), `generation` |
+| `rtsp_server/publish/rtsps_record.rs` | interleaved RECORD over `rtsps://` (`rtsp-server-tls`) |
+| `rtsp_server/publish/lifecycle.rs` | cancel, publisher TEARDOWN, server stop Notice 5402, idle reaping vs media liveness |
+| `rtsp_server/publish/conformance.rs` | shared receive-side conformance kit on the app transport |
+| `fixtures/raw_rtsp_publisher.rs` | raw-socket publisher (`RawPublisher`, plain + TLS), `SDP_MP2T`, `rtp_wrap`, `ts_fixture_packets` |
