@@ -25,7 +25,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with `Closed`; a publisher leaving does neither.
 - The publisher's MPEG-TS reaches the application and PLAY readers in
   bundles of at most seven TS packets, whatever bundle size the publisher
-  sent.
+  sent. The application transport queues up to 6 577 bundles (about
+  8.7 MB) before dropping the newest (`PublishMountStats::frames_dropped_app`):
+  enough for one 8 MiB elementary access unit, which the server re-muxes
+  in a single burst.
 - Elementary-track publishers: one H.264 track (RFC 6184), optionally one
   KLV track (RFC 6597 `smpte336m`), are re-muxed into MPEG-TS (video PID
   0x100, KLV PID 0x101 async with PTS). KLV is placed on the video
