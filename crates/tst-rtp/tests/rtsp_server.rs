@@ -55,6 +55,10 @@ mod interleaved_frame_boundary;
 mod unsupported_method;
 #[path = "rtsp_server/publish/conformance.rs"]
 mod publish_conformance;
+#[path = "rtsp_server/publish/es_h264.rs"]
+mod publish_es_h264;
+#[path = "rtsp_server/publish/es_h264_klv.rs"]
+mod publish_es_h264_klv;
 #[path = "rtsp_server/publish/lifecycle.rs"]
 mod publish_lifecycle;
 #[path = "rtsp_server/publish/mp2t_interleaved.rs"]
