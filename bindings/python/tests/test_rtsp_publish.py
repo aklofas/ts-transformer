@@ -24,6 +24,7 @@ regression fails instead of hanging the suite.
 
 from __future__ import annotations
 
+import _thread
 import socket
 import struct
 import sys
@@ -52,6 +53,7 @@ from tstrans.rtp import (
     PublishShape,
     RtspServer,
     RtspServerConfig,
+    StreamEndReason,
 )
 
 SDP_MP2T = (
@@ -316,6 +318,7 @@ def test_cancel_closes_the_receiver_with_closed_kind():
             with pytest.raises(RtpError) as ei:
                 next(rx)
             assert ei.value.kind == RtpErrorKind.CLOSED
+            assert rx.end_reason() == StreamEndReason.CANCELLED
         finally:
             rx.close()
 
@@ -334,6 +337,7 @@ def test_remove_mount_ends_a_parked_receiver_with_end_of_stream():
                 pytest.fail("remove_mount did not wake the parked receiver")
             # END_OF_STREAM reaches an iterator as StopIteration.
             assert isinstance(out.get("exc"), StopIteration), out
+            assert rx.end_reason() == StreamEndReason.CLEAN_TEARDOWN
         finally:
             rx.close()
 
@@ -411,12 +415,17 @@ def test_muxed_bundles_produce_a_video_event():
         try:
             for bundle in _muxed_bundles(60):
                 pub.send_rtp(bundle)
-            saw_video = False
+            video = None
             for ev in rx:
                 if isinstance(ev, DemuxEvent.Video):
-                    saw_video = True
+                    video = ev
                     break
-            assert saw_video
+            assert video is not None
+            # The first video event is the first pushed AU: an IDR slice
+            # (NAL header 0x65) behind an Annex-B start code.
+            payload = video.raw
+            assert payload, "empty video payload"
+            assert b"\x00\x00\x00\x01\x65" in payload, payload[:16].hex()
         finally:
             watchdog.cancel()
             pub.close()
@@ -482,6 +491,34 @@ def test_context_exit_wakes_parked_next_publisher_and_receiver():
         assert isinstance(rout.get("exc"), StopIteration), rout
     finally:
         rx.close()
+
+
+def test_next_publisher_none_timeout_is_interruptible():
+    """Ctrl-C reaches a `next_publisher(None)` parked on the main thread:
+    the wait is sliced and pending signals are handled between slices."""
+    server = _start()
+    fired = threading.Event()
+
+    def unpark() -> None:
+        fired.set()
+        server.stop()
+
+    interrupt = threading.Timer(0.2, _thread.interrupt_main)
+    # A regression unparks through stop() instead of hanging. The signal
+    # stays pending until the call returns, so a KeyboardInterrupt alone
+    # does not prove the slice loop handled it: assert the watchdog did
+    # not have to fire.
+    watchdog = threading.Timer(JOIN_S, unpark)
+    try:
+        interrupt.start()
+        watchdog.start()
+        with pytest.raises(KeyboardInterrupt):
+            server.next_publisher(None)
+        assert not fired.is_set(), "the interrupt was only handled after stop() unparked the call"
+    finally:
+        interrupt.cancel()
+        watchdog.cancel()
+        server.stop()
 
 
 # ---------------------------------------------------------------------------

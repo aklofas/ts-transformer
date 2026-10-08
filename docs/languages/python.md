@@ -1100,7 +1100,7 @@ How each call ends:
 
 Rules the types do not enforce:
 
-- **Take-once transport.** The receiver outlives publisher churn: between
+- **Receiver across publishers.** The receiver outlives publisher churn: between
   publishers it stays open and silent, and the next publisher's bytes arrive
   as ordinary continuity discontinuities.
 - **Stop, not the hard cancel, ends the mounts.** `stop()` and the `with`
