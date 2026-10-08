@@ -273,6 +273,45 @@ pub(crate) fn build_notice_5402_announce(
     out
 }
 
+/// Shared test-only `ServerState` builder. Both `handlers::tests` and
+/// `publish::handlers::tests` need one; this is the single definition
+/// so they don't duplicate the (fairly long) field list.
+#[cfg(test)]
+pub(crate) fn test_state() -> Arc<ServerState> {
+    let builder = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    Arc::new(ServerState {
+        builder,
+        cancel_token: CancellationToken::new(),
+        hard_cancel: RtspServerCancelHandle::new(),
+        mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
+        active_sessions: AtomicUsize::new(0),
+        total_rtp_packets_sent: AtomicU64::new(0),
+        total_rtp_bytes_sent: AtomicU64::new(0),
+        started: AtomicBool::new(true),
+        shutdown: AtomicBool::new(false),
+        local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),
+        sessions: std::sync::Mutex::new(Vec::new()),
+        notice_cseq: AtomicU64::new(1_000_000),
+        #[cfg(feature = "rtsp-server-tls")]
+        tls_config: std::sync::Mutex::new(None),
+        startup_tx: std::sync::Mutex::new(None),
+    })
+}
+
+/// Shared test-only one-program H.264 `MuxerConfig` — the config a local
+/// (muxer-backed) mount needs to construct against in a test. Shared by
+/// `handlers::tests` and `publish::handlers::tests` for the same reason
+/// as [`test_state`].
+#[cfg(test)]
+pub(crate) fn test_muxer_cfg() -> tst_core::mpegts::mux::MuxerConfig {
+    use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+    prog.add_video(0x1011, VideoCodec::H264);
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    b.build().unwrap()
+}
+
 impl RtspServer {
     /// Internal — called from [`crate::builder::RtspServerBuilder::build`].
     /// Constructs the tokio Runtime and the shared `ServerState`.

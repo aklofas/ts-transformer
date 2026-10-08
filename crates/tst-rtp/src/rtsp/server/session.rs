@@ -25,6 +25,8 @@ use crate::rtsp::server::ServerState;
 use crate::rtsp::server::auth::generate_nonce;
 use crate::rtsp::server::fanout::PeerDropCounter;
 use crate::rtsp::server::handlers;
+use crate::rtsp::server::publish;
+use crate::rtsp::server::publish::session::PublishSession;
 
 /// RAII guard for one reserved `active_sessions` slot.
 ///
@@ -149,6 +151,14 @@ pub struct ServerSessionState {
     /// Defaults to `0.0.0.0:0` for unit-test sessions that don't go
     /// through `handle_connection_inner`.
     pub(crate) peer_addr: std::net::SocketAddr,
+    /// Publisher session state once this connection's ANNOUNCE has
+    /// claimed a publish mount's publisher slot. `None` pre-ANNOUNCE, or
+    /// after TEARDOWN (`handle_teardown` takes it and calls
+    /// `PublishSession::end` explicitly). Dropping a `Some` value here —
+    /// on any other exit path — runs `PublishSession`'s own `Drop`
+    /// (which also calls `end`), so a publisher session is always ended
+    /// exactly once no matter how the connection goes away.
+    pub(crate) publish: Option<PublishSession>,
 }
 
 impl ServerSessionState {
@@ -168,6 +178,7 @@ impl ServerSessionState {
             peer_drop_counter: None,
             tcp_write: None,
             peer_addr: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+            publish: None,
         }
     }
 
@@ -494,17 +505,13 @@ where
                     | RtspMethod::Setup
                     | RtspMethod::Play
                     | RtspMethod::Pause
-                    | RtspMethod::Teardown => {
+                    | RtspMethod::Teardown
+                    | RtspMethod::Announce
+                    | RtspMethod::Record => {
                         session.auth_failures = 0;
                     }
                     RtspMethod::Options | RtspMethod::GetParameter => {
                         // Non-auth-gated: do not touch the failure counter.
-                    }
-                    RtspMethod::Announce | RtspMethod::Record => {
-                        // `dispatch` always answers 455 for these today (the
-                        // real handlers land in a later task), so this arm
-                        // can't be reached yet; that task decides which
-                        // group they join once a 2xx is possible.
                     }
                 }
             }
@@ -609,10 +616,10 @@ fn dispatch(
     match req.method {
         RtspMethod::Options => handlers::handle_options(req, state),
         RtspMethod::Describe => handlers::handle_describe(req, state, session),
-        RtspMethod::Announce => handlers::handle_not_valid_in_state(req),
+        RtspMethod::Announce => publish::handlers::handle_announce(req, state, session),
         RtspMethod::Setup => handlers::handle_setup(req, state, session),
         RtspMethod::Play => handlers::handle_play(req, state, session),
-        RtspMethod::Record => handlers::handle_not_valid_in_state(req),
+        RtspMethod::Record => publish::handlers::handle_record(req, state, session),
         RtspMethod::Pause => handlers::handle_pause(req, state, session),
         RtspMethod::Teardown => handlers::handle_teardown(req, state, session),
         RtspMethod::GetParameter => handlers::handle_get_parameter(req, state, session),

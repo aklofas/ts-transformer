@@ -13,11 +13,6 @@ use crate::packet::{RTP_PT_MP2T, RtpHeader};
 
 use super::mount::PublishMountState;
 
-// `PublishAdapter` and `Mp2tAdapter` are reached today only through this
-// module's own tests — the session's track dispatch (Task 6 of this arc)
-// is what constructs an adapter and drives `on_rtp`/`on_rtcp`/`flush` from
-// live RTSP traffic. The `#[allow(dead_code)]` on each stays harmless
-// once that wiring lands.
 /// Adapts incoming RTP/RTCP packets on a published mount into demuxed
 /// events.
 ///
@@ -25,14 +20,22 @@ use super::mount::PublishMountState;
 /// is dropped and counted (via the mount's `malformed_packets` stat),
 /// mirroring how [`crate::transport::RtpRecvTransport::recv_bytes`]
 /// treats a bad payload on the receive side.
-#[allow(dead_code)]
+///
+/// Constructed by `handle_announce` (Task 6); `on_rtp`/`on_rtcp` are
+/// driven from live RTSP traffic by the session's track dispatch
+/// (Tasks 7/8 of this arc — interleaved `$` frames and UDP ingest).
 pub(crate) trait PublishAdapter: Send {
     /// One RTP packet from `track` (index into the announce's track table).
-    /// Never fails; drops count.
+    /// Never fails; drops count. Called by Task 7/8's track dispatch —
+    /// unreached (and so unreachable from any impl) until that lands.
+    #[allow(dead_code)]
     fn on_rtp(&mut self, track: usize, packet: &[u8]);
-    /// One RTCP packet from `track`'s RTCP channel/socket.
+    /// One RTCP packet from `track`'s RTCP channel/socket. Same
+    /// unreached status as `on_rtp` until Tasks 7/8 land.
+    #[allow(dead_code)]
     fn on_rtcp(&mut self, track: usize, packet: &[u8]);
-    /// Publisher ended: push out whatever is pending.
+    /// Publisher ended: push out whatever is pending. Called by
+    /// `PublishSession::end` — reached today.
     fn flush(&mut self);
 }
 
@@ -47,14 +50,17 @@ pub(crate) trait PublishAdapter: Send {
 /// Stateless across calls other than the mount handle and the PT this
 /// instance was built to expect — there is nothing to reassemble: one
 /// RTP packet is one TS bundle.
-#[allow(dead_code)]
 pub(crate) struct Mp2tAdapter {
+    // Both fields are read only from `on_rtp`'s body, which is itself
+    // unreached until Tasks 7/8 drive live RTP through it (see the
+    // `#[allow(dead_code)]` on `PublishAdapter::on_rtp`).
+    #[allow(dead_code)]
     mount: Arc<PublishMountState>,
+    #[allow(dead_code)]
     expected_pt: u8,
 }
 
 impl Mp2tAdapter {
-    #[allow(dead_code)]
     pub(crate) fn new(mount: Arc<PublishMountState>, expected_pt: u8) -> Self {
         Self { mount, expected_pt }
     }

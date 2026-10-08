@@ -162,16 +162,6 @@ impl MountEntry {
             MountEntry::Publish(_) => None,
         }
     }
-
-    /// The publish-mount state, if this entry is one. `handle_setup`
-    /// uses this to refuse a reader's SETUP against a publish mount
-    /// (Task 6 installs the real behaviour).
-    pub(crate) fn as_publish(&self) -> Option<&Arc<PublishMountState>> {
-        match self {
-            MountEntry::Publish(p) => Some(p),
-            MountEntry::Local(_) => None,
-        }
-    }
 }
 
 /// Snapshot of [`MountHandle::stats`].
