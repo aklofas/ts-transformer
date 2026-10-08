@@ -2,24 +2,28 @@
 //! alignment").
 //!
 //! Each elementary track's RTP timestamp has its own random origin. The
-//! video track is the master: its PTS line starts at zero at the first
-//! emitted AU. KLV units carry a different, unrelated RTP clock and must be
+//! video track is the master: its PTS line starts at the depacketizer's
+//! PTS zero. KLV units carry a different, unrelated RTP clock and must be
 //! placed on that same PTS line before they can be muxed alongside the
 //! video. [`Aligner`] holds KLV units (bounded, drop-oldest) until an RTCP
 //! sender report has arrived for both tracks, at which point each report's
 //! `(ntp, rtp)` pair lets every held unit's RTP timestamp be converted to an
 //! NTP instant and then to the video track's RTP clock at that instant. If
 //! two seconds pass without both reports, alignment falls back to
-//! first-packet coincidence instead (the held KLV queue's first unit lands
-//! at the video origin's PTS 0) — [`ClockAlignment::Provisional`] rather
-//! than [`ClockAlignment::SenderReport`]. A later report pair always
-//! recomputes the mapping and may move KLV units' PTS as a result (no
-//! continuity requirement for metadata); each such move ticks
-//! [`Aligner::steps`].
+//! first-packet coincidence instead (the first KLV unit lands at the video
+//! line's PTS 0) — [`ClockAlignment::Provisional`] rather than
+//! [`ClockAlignment::SenderReport`]. A later report pair always recomputes
+//! the mapping and may move KLV units' PTS as a result (no continuity
+//! requirement for metadata); a move of more than
+//! [`STEP_TOLERANCE_TICKS`] ticks [`Aligner::steps`].
 //!
-//! RTP timestamps are 32-bit and wrap; each track keeps its own
-//! nearest-continuation unwrap state inside [`TrackClock`] so that math
-//! done in `i64` ticks stays monotonic across a wrap.
+//! RTP timestamps are 32-bit and wrap. Each track keeps one
+//! nearest-continuation unwrap chain in [`TrackClock`], and EVERY RTP value
+//! the aligner uses goes through its track's chain in arrival order: KLV
+//! units and KLV sender reports through the KLV chain, video sender reports
+//! and the video origin through the video chain. All offset and PTS math
+//! then happens in unwrapped `i64` ticks, so a wrap of either clock
+//! mid-session moves nothing.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -28,7 +32,7 @@ use super::klv_depacketizer::KlvUnit;
 use super::mount::ClockAlignment;
 use crate::rtcp::SenderReport;
 
-/// How long [`Aligner`] waits, from the first held KLV unit, for sender
+/// How long [`Aligner`] waits, from the oldest held KLV unit, for sender
 /// reports on both tracks before falling back to first-packet coincidence.
 pub(crate) const ALIGN_FALLBACK: Duration = Duration::from_secs(2);
 
@@ -36,22 +40,25 @@ pub(crate) const ALIGN_FALLBACK: Duration = Duration::from_secs(2);
 /// alignment. Bounded, drop-oldest — see [`Aligner::on_klv_unit`].
 pub(crate) const ALIGN_HOLD_MAX_UNITS: usize = 4096;
 
-/// Per-track RTCP sender-report state plus 32-bit RTP timestamp unwrapping.
-///
-/// `sr` and `first_rtp` hold raw (not unwrapped) values straight off the
-/// wire — they are each other's reference points over spans short enough
-/// that a wrap between them is not a real concern, and keeping them raw
-/// matches what [`SenderReport`] and the first observed unit actually said.
-/// Continuity unwrapping (needed because a *held* unit's timestamp is
-/// compared against the *previous* unit's, potentially long after both
-/// arrived) lives in `last`.
+/// A new sender-report mapping that moves the KLV-to-video offset by at
+/// most this many ticks (1 ms at 90 kHz) replaces the old one without
+/// counting a step. Each report is sampled independently from the
+/// sender's wall clock and RTP clock, so consecutive pairs routinely
+/// differ by a tick or two; only a real move is worth counting.
+pub(crate) const STEP_TOLERANCE_TICKS: i64 = 90;
+
+/// A video PTS zero (`rtp − pts`) that moves by more than this many ticks
+/// is a re-anchored depacketizer (a new video SSRC), not the same line.
+const ORIGIN_TOLERANCE_TICKS: u32 = 1;
+
+/// One track's RTP clock: its 32-bit unwrap chain and its latest RTCP
+/// sender report, with the report's RTP value already unwrapped through
+/// the chain.
 #[derive(Debug, Default)]
 pub(crate) struct TrackClock {
-    /// This track's most recent RTCP sender report, as `(ntp 32.32, rtp)`.
-    sr: Option<(u64, u32)>,
-    /// Raw RTP timestamp of the first unit ever seen on this track — the
-    /// anchor for first-packet-coincidence fallback.
-    first_rtp: Option<u32>,
+    /// This track's most recent RTCP sender report, as `(ntp 32.32,
+    /// unwrapped rtp)`.
+    sr: Option<(u64, i64)>,
     /// Nearest-continuation unwrap state: the last raw value fed to
     /// [`Self::unwrap`] and the unwrapped `i64` it produced.
     last: Option<(u32, i64)>,
@@ -59,11 +66,7 @@ pub(crate) struct TrackClock {
 
 impl TrackClock {
     fn new() -> Self {
-        Self {
-            sr: None,
-            first_rtp: None,
-            last: None,
-        }
+        Self::default()
     }
 
     /// Unwrap `raw` against this track's running continuity state using the
@@ -84,26 +87,57 @@ impl TrackClock {
     }
 }
 
+/// The video track's PTS zero point.
+#[derive(Debug, Clone, Copy)]
+struct VideoOrigin {
+    /// `rtp − pts` as the depacketizer reported it, mod 2^32: how a
+    /// re-anchored depacketizer is recognised.
+    raw_zero: u32,
+    /// The same zero in the video chain's unwrapped space.
+    unwrapped: i64,
+    /// Where first-packet coincidence puts the first KLV unit, in the
+    /// video chain's unwrapped space: the zero itself (PTS 0, spec §2's
+    /// `pts_k = t_k − t_k_first`) for the session's first origin, and the
+    /// re-anchoring AU's own RTP time after a new video source, so the
+    /// fallback lands KLV where the video line now is rather than at its
+    /// start.
+    fallback_anchor: i64,
+}
+
+/// A KLV unit waiting for alignment, with its RTP timestamp already
+/// unwrapped through the KLV chain.
+#[derive(Debug)]
+struct Held {
+    unit: KlvUnit,
+    t_k: i64,
+}
+
 /// Places KLV units on the video track's PTS line using RTCP sender
 /// reports, with a first-packet-coincidence fallback. See the
 /// [module docs](self).
 pub(crate) struct Aligner {
     video: TrackClock,
     klv: TrackClock,
-    /// RTP timestamp of the first emitted video AU (the depacketizer's PTS
-    /// zero point). Recorded once, on the first [`Self::on_video_au`] call.
-    video_rtp_origin: Option<u32>,
+    /// The depacketizer's PTS zero, from [`Self::on_video_au`].
+    video_origin: Option<VideoOrigin>,
+    /// Unwrapped RTP timestamp of the first KLV unit since the aligner
+    /// started (or since the video line was re-anchored) — the anchor for
+    /// first-packet-coincidence fallback.
+    klv_first: Option<i64>,
     /// KLV units held until alignment is known. Bounded at
     /// [`ALIGN_HOLD_MAX_UNITS`], drop-oldest.
-    hold: VecDeque<KlvUnit>,
+    hold: VecDeque<Held>,
     /// When the first currently-held unit was received — the clock the
     /// [`ALIGN_FALLBACK`] window runs against.
     started: Option<Instant>,
     mode: ClockAlignment,
     steps: u64,
-    /// `unwrap(klv_rtp) + offset == video_rtp` (both 90 kHz), once known —
-    /// from a sender-report pair or the first-packet-coincidence fallback.
+    /// `unwrap(klv_rtp) + offset == unwrap(video_rtp)` (both 90 kHz), once
+    /// known — from a sender-report pair or the first-packet-coincidence
+    /// fallback.
     offset: Option<i64>,
+    /// KLV units the aligner discarded.
+    dropped: u64,
 }
 
 impl Aligner {
@@ -111,35 +145,40 @@ impl Aligner {
         Self {
             video: TrackClock::new(),
             klv: TrackClock::new(),
-            video_rtp_origin: None,
+            video_origin: None,
+            klv_first: None,
             hold: VecDeque::new(),
             started: None,
             mode: ClockAlignment::NotApplicable,
             steps: 0,
             offset: None,
+            dropped: 0,
         }
     }
 
     /// Record the video track's RTCP sender report and recompute the
     /// sender-report offset if the KLV track's report is also known.
     pub(crate) fn on_video_sr(&mut self, sr: &SenderReport) {
-        self.video.sr = Some((sr.ntp_timestamp, sr.rtp_timestamp));
+        let rtp = self.video.unwrap(sr.rtp_timestamp);
+        self.video.sr = Some((sr.ntp_timestamp, rtp));
         self.recompute_sr_offset();
     }
 
     /// Record the KLV track's RTCP sender report and recompute the
     /// sender-report offset if the video track's report is also known.
     pub(crate) fn on_klv_sr(&mut self, sr: &SenderReport) {
-        self.klv.sr = Some((sr.ntp_timestamp, sr.rtp_timestamp));
+        let rtp = self.klv.unwrap(sr.rtp_timestamp);
+        self.klv.sr = Some((sr.ntp_timestamp, rtp));
         self.recompute_sr_offset();
     }
 
     /// With both sender reports known, recompute
-    /// `offset = (rtp_video_sr - rtp_klv_sr) + (ntp_klv_sr - ntp_video_sr) in ticks`.
-    /// The first time an offset becomes known this establishes alignment
-    /// (mode becomes [`ClockAlignment::SenderReport`]) without counting a
-    /// step; a later report pair that changes an already-known offset
-    /// replaces it and ticks [`Self::steps`].
+    /// `offset = (rtp_video_sr - rtp_klv_sr) + (ntp_klv_sr - ntp_video_sr) in ticks`,
+    /// both RTP values unwrapped. The first time an offset becomes known
+    /// this establishes alignment (mode becomes
+    /// [`ClockAlignment::SenderReport`]) without counting a step; a later
+    /// report pair replaces an already-known offset and ticks
+    /// [`Self::steps`] when it moved by more than [`STEP_TOLERANCE_TICKS`].
     fn recompute_sr_offset(&mut self) {
         let (Some((ntp_v, rtp_v)), Some((ntp_k, rtp_k))) = (self.video.sr, self.klv.sr) else {
             return;
@@ -147,30 +186,58 @@ impl Aligner {
         // NTP values are 32.32 fixed-point seconds; the delta in 90 kHz
         // ticks is computed in i128 to avoid overflow, then narrowed.
         let ntp_delta_ticks = (((ntp_k as i128) - (ntp_v as i128)) * 90_000) >> 32;
-        let candidate = (rtp_v as i64 - rtp_k as i64) + ntp_delta_ticks as i64;
-        match self.offset {
-            Some(old) if old == candidate => {
-                // Unchanged — still authoritative, no step.
-                self.mode = ClockAlignment::SenderReport;
-            }
-            Some(_) => {
-                self.offset = Some(candidate);
-                self.mode = ClockAlignment::SenderReport;
-                self.steps += 1;
-            }
-            None => {
-                self.offset = Some(candidate);
-                self.mode = ClockAlignment::SenderReport;
-            }
+        let candidate = (rtp_v - rtp_k) + ntp_delta_ticks as i64;
+        if self
+            .offset
+            .is_some_and(|old| (candidate - old).abs() > STEP_TOLERANCE_TICKS)
+        {
+            self.steps += 1;
         }
+        self.offset = Some(candidate);
+        self.mode = ClockAlignment::SenderReport;
     }
 
-    /// Record the video track's PTS zero point. Only the first call has any
-    /// effect — later AUs don't move the origin.
-    pub(crate) fn on_video_au(&mut self, rtp_timestamp: u32) {
-        if self.video_rtp_origin.is_none() {
-            self.video_rtp_origin = Some(rtp_timestamp);
-        }
+    /// Record the video track's PTS zero point from an emitted AU's RTP
+    /// timestamp and PTS. The first call sets the origin; later calls with
+    /// the same zero (`rtp − pts`, mod 2^32) change nothing. A CHANGED zero
+    /// means the depacketizer re-anchored on a new video source (an SSRC
+    /// change): the new zero is adopted, the video chain restarts from it,
+    /// and everything tied to the old video clock is discarded — the video
+    /// sender report, the offset, the fallback anchor and the held units
+    /// (counted in [`Self::dropped`]: placed against the old clock they
+    /// would land on the wrong part of the line). Alignment reads
+    /// [`ClockAlignment::NotApplicable`] (held) until a fresh video report
+    /// or the fallback window re-establishes it.
+    pub(crate) fn on_video_au(&mut self, rtp_timestamp: u32, pts: i64) {
+        let raw_zero = rtp_timestamp.wrapping_sub(pts as u32);
+        let restarted = if let Some(o) = self.video_origin {
+            let moved = (raw_zero.wrapping_sub(o.raw_zero) as i32).unsigned_abs();
+            if moved <= ORIGIN_TOLERANCE_TICKS {
+                return;
+            }
+            tracing::debug!(
+                target: "tst_rtp::server::publish",
+                held = self.hold.len(),
+                "video PTS zero moved (new video source); KLV alignment restarts"
+            );
+            self.video = TrackClock::new();
+            self.offset = None;
+            self.mode = ClockAlignment::NotApplicable;
+            self.klv_first = None;
+            self.started = None;
+            self.dropped += self.hold.len() as u64;
+            self.hold.clear();
+            true
+        } else {
+            false
+        };
+        let rtp = self.video.unwrap(rtp_timestamp);
+        let unwrapped = rtp - pts;
+        self.video_origin = Some(VideoOrigin {
+            raw_zero,
+            unwrapped,
+            fallback_anchor: if restarted { rtp } else { unwrapped },
+        });
     }
 
     /// Queue a KLV unit; returns every unit now placeable, in order, as
@@ -179,54 +246,54 @@ impl Aligner {
     /// established an offset — at which point every held unit (this one
     /// included) is drained in one pass.
     pub(crate) fn on_klv_unit(&mut self, u: KlvUnit, now: Instant) -> Vec<(KlvUnit, i64)> {
-        if self.klv.first_rtp.is_none() {
-            self.klv.first_rtp = Some(u.rtp_timestamp);
-        }
+        let t_k = self.klv.unwrap(u.rtp_timestamp);
+        self.klv_first.get_or_insert(t_k);
         if self.started.is_none() {
             self.started = Some(now);
         }
         if self.hold.len() >= ALIGN_HOLD_MAX_UNITS {
             self.hold.pop_front();
         }
-        self.hold.push_back(u);
+        self.hold.push_back(Held { unit: u, t_k });
         self.release(now)
     }
 
     /// If no offset is known yet and [`ALIGN_FALLBACK`] has elapsed since
     /// the first held unit, establish the first-packet-coincidence offset
-    /// (the first held unit lands at the video origin's PTS 0): `offset =
-    /// video_rtp_origin - klv_first_rtp`. This is always the first
-    /// establishment of an offset, so it never counts a step.
+    /// (the first KLV unit lands at the video line's PTS 0, or where the
+    /// line was re-anchored — see `VideoOrigin::fallback_anchor`). This is always the first establishment of
+    /// an offset, so it never counts a step.
     fn maybe_engage_fallback(&mut self, now: Instant) {
         if self.offset.is_some() {
             return;
         }
-        let (Some(started), Some(origin), Some(first_rtp)) =
-            (self.started, self.video_rtp_origin, self.klv.first_rtp)
-        else {
+        let Some(started) = self.started else {
             return;
         };
         if now.saturating_duration_since(started) >= ALIGN_FALLBACK {
-            self.offset = Some(origin as i64 - first_rtp as i64);
+            self.engage_fallback();
+        }
+    }
+
+    fn engage_fallback(&mut self) {
+        if let (Some(origin), Some(first)) = (self.video_origin, self.klv_first) {
+            self.offset = Some(origin.fallback_anchor - first);
             self.mode = ClockAlignment::Provisional;
         }
     }
 
     /// Place everything currently held, if alignment is known. Shared by
-    /// [`Self::on_klv_unit`], [`Self::poll`] and the test-only
-    /// `on_klv_sr_then_release`/[`Self::drain`] flush path.
+    /// [`Self::on_klv_unit`], [`Self::poll`] and [`Self::drain`].
     fn release(&mut self, now: Instant) -> Vec<(KlvUnit, i64)> {
         self.maybe_engage_fallback(now);
-        let (Some(origin), Some(offset)) = (self.video_rtp_origin, self.offset) else {
+        let (Some(origin), Some(offset)) = (self.video_origin, self.offset) else {
             return Vec::new();
         };
-        let mut placed = Vec::with_capacity(self.hold.len());
-        while let Some(u) = self.hold.pop_front() {
-            let t_k = self.klv.unwrap(u.rtp_timestamp);
-            let pts = t_k + offset - origin as i64;
-            placed.push((u, pts));
-        }
-        placed
+        self.started = None;
+        self.hold
+            .drain(..)
+            .map(|h| (h.unit, h.t_k + offset - origin.unwrapped))
+            .collect()
     }
 
     /// Place held units on elapsed time alone: the same step
@@ -244,20 +311,22 @@ impl Aligner {
         self.steps
     }
 
+    /// KLV units the aligner discarded, cumulative.
+    pub(crate) fn dropped(&self) -> u64 {
+        self.dropped
+    }
+
     /// Flush: place whatever is held, using the current mapping if one is
     /// already known, otherwise forcing the first-packet-coincidence
     /// fallback now (ignoring the [`ALIGN_FALLBACK`] window) so an
     /// end-of-stream flush doesn't lose units that never got a sender
     /// report. Still a no-op while the video origin is unknown — there is
     /// no line to place anything on.
-    pub(crate) fn drain(&mut self) -> Vec<(KlvUnit, i64)> {
+    pub(crate) fn drain(&mut self, now: Instant) -> Vec<(KlvUnit, i64)> {
         if self.offset.is_none() {
-            if let (Some(origin), Some(first_rtp)) = (self.video_rtp_origin, self.klv.first_rtp) {
-                self.offset = Some(origin as i64 - first_rtp as i64);
-                self.mode = ClockAlignment::Provisional;
-            }
+            self.engage_fallback();
         }
-        self.release(Instant::now())
+        self.release(now)
     }
 }
 
@@ -302,7 +371,7 @@ mod tests {
     fn units_are_held_until_both_reports_then_placed_on_the_video_line() {
         let mut a = Aligner::new();
         let t0 = Instant::now();
-        a.on_video_au(90_000); // video origin = 90 000 (PTS 0)
+        a.on_video_au(90_000, 0); // video origin = 90 000 (PTS 0)
         assert!(a.on_klv_unit(unit(500_000), t0).is_empty(), "held");
         assert_eq!(a.mode(), ClockAlignment::NotApplicable);
         // video SR: ntp 100.0 s ↔ rtp 180 000 ; klv SR: ntp 100.5 s ↔ rtp 500 000
@@ -318,7 +387,7 @@ mod tests {
     fn fallback_after_two_seconds_without_reports() {
         let mut a = Aligner::new();
         let t0 = Instant::now();
-        a.on_video_au(1_000);
+        a.on_video_au(1_000, 0);
         assert!(a.on_klv_unit(unit(7_000), t0).is_empty());
         let placed = a.on_klv_unit(unit(7_900), t0 + ALIGN_FALLBACK + Duration::from_millis(1));
         // first-packet coincidence: first klv unit ↔ pts 0; second is 900 ticks later
@@ -330,7 +399,7 @@ mod tests {
     fn poll_releases_held_units_after_the_fallback() {
         let mut a = Aligner::new();
         let t0 = Instant::now();
-        a.on_video_au(1_000);
+        a.on_video_au(1_000, 0);
         assert!(a.on_klv_unit(unit(7_000), t0).is_empty());
         assert!(
             a.poll(t0 + ALIGN_FALLBACK - Duration::from_millis(1))
@@ -345,7 +414,7 @@ mod tests {
     fn a_later_report_pair_replaces_the_mapping_and_counts_a_step() {
         let mut a = Aligner::new();
         let t0 = Instant::now();
-        a.on_video_au(0);
+        a.on_video_au(0, 0);
         a.on_video_sr(&sr(10, 0, 0));
         a.on_klv_sr(&sr(10, 0, 0));
         assert_eq!(a.on_klv_unit(unit(900), t0), vec![(unit(900), 900)]);
@@ -361,7 +430,7 @@ mod tests {
     fn hold_queue_is_bounded_drop_oldest() {
         let mut a = Aligner::new();
         let t0 = Instant::now();
-        a.on_video_au(0);
+        a.on_video_au(0, 0);
         for i in 0..(ALIGN_HOLD_MAX_UNITS as u32 + 5) {
             assert!(a.on_klv_unit(unit(i), t0).is_empty());
         }
@@ -371,11 +440,94 @@ mod tests {
         assert_eq!(placed[0].0.rtp_timestamp, 5, "oldest five dropped");
     }
 
+    /// Ideal publisher: both tracks' 90 kHz clocks locked to NTP, an SR
+    /// pair every 5 s, one KLV unit a second for 200 s, the video PTS zero
+    /// at t = 0. Every unit must land at exactly `t × 90 000`, and no SR
+    /// may count as a step: the mapping never really changes.
+    fn assert_exact_line_across_a_wrap(v0: u32, k0: u32) {
+        let v = |t: u32| v0.wrapping_add(t * 90_000);
+        let k = |t: u32| k0.wrapping_add(t * 90_000);
+        let mut a = Aligner::new();
+        let now = Instant::now();
+        a.on_video_au(v(0), 0);
+        for t in 0..=200u32 {
+            if t % 5 == 0 {
+                a.on_video_sr(&sr(1000 + u64::from(t), 0, v(t)));
+                a.on_klv_sr(&sr(1000 + u64::from(t), 0, k(t)));
+            }
+            let placed = a.on_klv_unit(unit(k(t)), now);
+            assert_eq!(
+                placed,
+                vec![(unit(k(t)), i64::from(t) * 90_000)],
+                "t = {t} s"
+            );
+        }
+        assert_eq!(a.steps(), 0);
+        assert_eq!(a.mode(), ClockAlignment::SenderReport);
+    }
+
+    #[test]
+    fn klv_clock_wrapping_mid_session_keeps_the_pts_line() {
+        // The KLV clock wraps about 100 s in, with SR pairs on both sides.
+        assert_exact_line_across_a_wrap(1_000_000, u32::MAX - 90_000 * 100);
+    }
+
+    #[test]
+    fn video_clock_wrapping_mid_session_keeps_the_pts_line() {
+        // The video clock wraps about 100 s in, with SR pairs on both sides.
+        assert_exact_line_across_a_wrap(u32::MAX - 90_000 * 100, 1_000_000);
+    }
+
+    #[test]
+    fn a_new_video_source_discards_the_stale_report_until_a_fresh_one() {
+        let mut a = Aligner::new();
+        let t0 = Instant::now();
+        a.on_video_au(10_000, 0);
+        a.on_video_sr(&sr(100, 0, 10_000));
+        a.on_klv_sr(&sr(100, 0, 50_000));
+        assert_eq!(a.on_klv_unit(unit(59_000), t0), vec![(unit(59_000), 9_000)]);
+        // The encoder restarts on a new SSRC with a new random RTP origin.
+        // The depacketizer keeps its PTS line monotonic, so the zero
+        // (`rtp − pts`) moves: 7 000 000 − 12 003.
+        a.on_video_au(7_000_000, 12_003);
+        assert_eq!(a.mode(), ClockAlignment::NotApplicable);
+        // A later AU of the same source changes nothing.
+        a.on_video_au(7_003_003, 15_006);
+        // The old video report no longer describes the video clock: held.
+        assert!(a.on_klv_unit(unit(140_900), t0).is_empty());
+        // A fresh video report: ntp 101.0 s ↔ the new clock's 7 000 000.
+        // The KLV clock reads 50 000 + 90 000 = 140 000 at ntp 101.0, so
+        // the unit at 140 900 is 900 ticks later: video rtp 7 000 900,
+        // PTS 7 000 900 − (7 000 000 − 12 003) = 12 903.
+        a.on_video_sr(&sr(101, 0, 7_000_000));
+        assert_eq!(a.poll(t0), vec![(unit(140_900), 12_903)]);
+        assert_eq!(a.mode(), ClockAlignment::SenderReport);
+        assert_eq!(a.steps(), 0, "a re-established mapping is not a step");
+        assert_eq!(a.dropped(), 0);
+    }
+
+    #[test]
+    fn a_new_video_source_drops_held_units_and_restarts_the_fallback() {
+        let mut a = Aligner::new();
+        let t0 = Instant::now();
+        a.on_video_au(10_000, 0);
+        assert!(a.on_klv_unit(unit(1), t0).is_empty());
+        a.on_video_au(9_000_000, 3_003);
+        assert_eq!(a.dropped(), 1, "the held unit is discarded and counted");
+        // The fallback window restarts from the next held unit.
+        let t1 = t0 + Duration::from_secs(10);
+        assert!(a.on_klv_unit(unit(5_000), t1).is_empty());
+        let placed = a.poll(t1 + ALIGN_FALLBACK);
+        // Coincidence with the re-anchoring AU, not the line's start.
+        assert_eq!(placed, vec![(unit(5_000), 3_003)]);
+        assert_eq!(a.mode(), ClockAlignment::Provisional);
+    }
+
     #[test]
     fn rtp_timestamp_wrap_is_unwrapped() {
         let mut a = Aligner::new();
         let t0 = Instant::now();
-        a.on_video_au(u32::MAX - 1000);
+        a.on_video_au(u32::MAX - 1000, 0);
         a.on_video_sr(&sr(1, 0, u32::MAX - 1000));
         a.on_klv_sr(&sr(1, 0, u32::MAX - 1000));
         assert_eq!(

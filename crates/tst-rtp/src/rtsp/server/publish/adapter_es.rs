@@ -103,6 +103,8 @@ pub(crate) struct EsAdapter {
     aligner: Aligner,
     /// `aligner.steps()` already folded into the mount stats.
     steps_seen: u64,
+    /// `aligner.dropped()` already folded into the mount stats.
+    aligner_dropped_seen: u64,
     muxer: Muxer,
     /// An IDR has reached the muxer; AUs before it are dropped.
     seen_keyframe: bool,
@@ -193,6 +195,7 @@ impl EsAdapter {
             }),
             aligner: Aligner::new(),
             steps_seen: 0,
+            aligner_dropped_seen: 0,
             muxer,
             seen_keyframe: false,
             seq: 0,
@@ -225,11 +228,12 @@ impl EsAdapter {
         // The aligner's video origin must be the depacketizer's PTS zero:
         // the RTP timestamp of the first AU it STARTED, which may have
         // been dropped as poisoned (a stream joined mid-FU, a gap in the
-        // first AU). Derive it from this AU's timestamp and PTS rather
-        // than assuming the first emitted AU sits at PTS 0. Only the first
-        // call takes effect; later ones yield the same value.
+        // first AU). The aligner derives it from this AU's timestamp and
+        // PTS rather than assuming the first emitted AU sits at PTS 0.
+        // Later AUs yield the same zero, unless the depacketizer
+        // re-anchored on a new video SSRC.
         self.aligner
-            .on_video_au(au.rtp_timestamp.wrapping_sub(au.pts.as_ticks() as u32));
+            .on_video_au(au.rtp_timestamp, au.pts.as_ticks());
         self.mux_au(au);
         // Held KLV may be due on elapsed time alone (the aligner's
         // fallback window) while only video arrives.
@@ -350,6 +354,9 @@ impl EsAdapter {
         let steps = self.aligner.steps();
         let ds = steps - self.steps_seen;
         self.steps_seen = steps;
+        let aligner_dropped = self.aligner.dropped();
+        let dk = dk + (aligner_dropped - self.aligner_dropped_seen);
+        self.aligner_dropped_seen = aligner_dropped;
         let alignment = if self.klv.is_some() {
             self.aligner.mode()
         } else {
@@ -461,7 +468,7 @@ impl PublishAdapter for EsAdapter {
             self.place_klv(placed);
         }
         self.drain_klv(now);
-        let placed = self.aligner.drain();
+        let placed = self.aligner.drain(now);
         self.place_klv(placed);
         self.drain_muxer();
         self.sync_stats();
