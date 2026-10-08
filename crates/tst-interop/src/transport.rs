@@ -14,6 +14,11 @@
 //! URL-overlay pattern `srt_socket` follows from
 //! `sending/sender_from_url.rs`.
 //!
+//! `make_recv` also takes the harness-only `rtsp-publish://host:port/mount`
+//! scheme: it stands up an RTSP server with one publish mount so an
+//! external publisher can RECORD into `recv` (see `RtspPublishListener`).
+//! It is not a library URL.
+//!
 //! # Byte-transparency tee
 //!
 //! `Teeing` wraps a constructed transport and hashes+counts every byte
@@ -172,6 +177,9 @@ pub fn make_recv(url: &str) -> Result<Box<dyn RecvTransport>, String> {
             .map_err(|e| format!("rist listen {url}: {e}")),
         "srt" => srt_socket(url)
             .map(|s| Box::new(tst_srt::SrtTransport::new(s)) as Box<dyn RecvTransport>),
+        "rtsp-publish" => {
+            RtspPublishListener::start(url).map(|t| Box::new(t) as Box<dyn RecvTransport>)
+        }
         other => Err(format!("unsupported scheme for recv: {other}://")),
     }
 }
@@ -355,6 +363,85 @@ impl RecvTransport for BoundedUdpRecv {
 
     fn socket_stats(&self) -> Option<SocketStats> {
         self.inner.socket_stats()
+    }
+}
+
+/// Receive side of the harness-only `rtsp-publish://host:port/mount`
+/// scheme: an `RtspServer` bound on `host:port` with one publish mount at
+/// `/mount`, so an external RTSP publisher (ANNOUNCE + RECORD) can push
+/// into `tst-interop recv`. Not a library URL — `tst-rtp` exposes the
+/// publisher role through `RtspServer::add_publish_mount`; this scheme
+/// only exists so the harness's URL-driven `recv` can stand one up.
+///
+/// Every `RecvTransport` call goes to the mount's application
+/// transport. The server must outlive that transport, so it is held here
+/// and dropped AFTER it: fields drop in declaration order, `inner` first.
+/// Dropping the server closes the mount, which ends a transport still
+/// held elsewhere with `Closed`.
+///
+/// Bounded receive (see the module doc): the transport gets the same
+/// [`UDP_RECV_POLL`] recv timeout `BoundedUdpRecv` polls with, so a mount
+/// with no publisher yet (or between publishers — the application
+/// transport stays open across publisher churn) reports `Backpressure`
+/// instead of blocking forever.
+struct RtspPublishListener {
+    inner: tst_rtp::RtpRecvTransport,
+    _server: tst_rtp::RtspServer,
+}
+
+impl RtspPublishListener {
+    fn start(url: &str) -> Result<Self, String> {
+        let rest = url
+            .strip_prefix("rtsp-publish://")
+            .ok_or_else(|| format!("not an rtsp-publish:// URL: {url}"))?;
+        let (authority, mount) = rest
+            .split_once('/')
+            .filter(|(_, m)| !m.is_empty())
+            .ok_or_else(|| {
+                format!("rtsp-publish URL needs a mount path (host:port/mount): {url}")
+            })?;
+        let server = tst_rtp::RtspServer::bind(&format!("rtsp://{authority}"))
+            .map_err(|e| format!("rtsp-publish bind {url}: {e}"))?;
+        let handle = server
+            .add_publish_mount(&format!("/{mount}"))
+            .map_err(|e| format!("rtsp-publish mount {url}: {e}"))?;
+        server
+            .start()
+            .map_err(|e| format!("rtsp-publish start {url}: {e}"))?;
+        let mut inner = handle
+            .into_recv_transport()
+            .map_err(|e| format!("rtsp-publish transport {url}: {e}"))?;
+        inner.set_recv_timeout(Some(UDP_RECV_POLL));
+        Ok(Self {
+            inner,
+            _server: server,
+        })
+    }
+}
+
+impl RecvTransport for RtspPublishListener {
+    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        self.inner.recv_bytes(buf)
+    }
+
+    fn max_payload(&self) -> usize {
+        self.inner.max_payload()
+    }
+
+    fn is_alive(&self) -> bool {
+        self.inner.is_alive()
+    }
+
+    fn close(&mut self) {
+        self.inner.close();
+    }
+
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
+        RecvTransport::cancel_handle(&self.inner)
+    }
+
+    fn socket_stats(&self) -> Option<SocketStats> {
+        RecvTransport::socket_stats(&self.inner)
     }
 }
 

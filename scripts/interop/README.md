@@ -1464,7 +1464,8 @@ alongside the totals. A compact capture carries no `klv_rich` block at all.
   bind" (see e.g. `crates/tst-rist/src/url.rs`'s module doc).
 - **RTSP-consume has no `tst-interop` transport leg at all.**
   `crates/tst-interop/src/transport.rs`'s `make_recv` only dispatches
-  `udp`/`tcp`/`tcps`/`rist`/`srt` — there is no `rtsp://` connect-side
+  `udp`/`tcp`/`tcps`/`rist`/`srt` (plus the publish listener below) —
+  there is no `rtsp://` connect-side
   support (RTSP only appears as a *serve* scheme, driven by `send`; see
   `serve.rs`'s module doc for why HLS/RTSP work that way). So
   `rtsp-consume/vlc-serve-ffmpeg-pull` is peer-to-peer only: `tst-interop`
@@ -1474,6 +1475,17 @@ alongside the totals. A compact capture carries no `klv_rich` block at all.
   a likely `known_flaky` candidate — VLC's `--sout` RTSP
   serving is fiddly and this cell doesn't exercise this crate's own RTSP
   code at all either way.
+- **`rtsp-publish://host:port/mount` is a harness-only `recv` scheme, not
+  a library URL.** `tst-interop recv --url rtsp-publish://127.0.0.1:PORT/cam`
+  binds an RTSP server on `PORT`, registers one publish mount at `/cam`
+  (`RtspServer::add_publish_mount`) and judges whatever an external
+  publisher (ffmpeg `-f rtsp`, GStreamer `rtspclientsink`) ANNOUNCEs and
+  RECORDs into `rtsp://127.0.0.1:PORT/cam`. Applications use the
+  publisher role through the `RtspServer` API; no library URL parser
+  accepts this scheme. Start `recv` first: the server only exists while
+  `recv` runs. A publisher that ends leaves the mount open and silent, so
+  the capture ends on `recv`'s own deadline, not on the publisher's
+  TEARDOWN.
 
 ## Adding a cell
 
