@@ -1,8 +1,7 @@
 //! Publisher direction of [`RtspServer`](crate::rtsp::server::RtspServer):
 //! ANNOUNCE / SETUP `mode=record` / RECORD (RFC 2326 §10.3, §10.11, §12.39).
 //! A published mount re-serves PLAY readers and hands the application an
-//! [`RtpRecvTransport`](crate::transport::RtpRecvTransport). Design:
-//! `docs/specs/2026-10-08-rtsp-publisher-role-design.md`.
+//! [`RtpRecvTransport`](crate::transport::RtpRecvTransport).
 
 pub(crate) mod adapter;
 pub(crate) mod handlers;

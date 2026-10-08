@@ -3,7 +3,7 @@
 //! `challenge_response`), OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE,
 //! TEARDOWN, and GET_PARAMETER are all fully implemented. ANNOUNCE and
 //! RECORD (publisher direction) are implemented in
-//! [`super::publish::handlers`]; `handle_setup` routes a `mode=record`
+//! `super::publish::handlers`; `handle_setup` routes a `mode=record`
 //! SETUP there too, and `handle_teardown`/`handle_pause` have publisher
 //! arms below.
 

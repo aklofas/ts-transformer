@@ -108,8 +108,8 @@ fn publisher_teardown_leaves_app_transport_open() {
 
 /// `stop()` sends the publisher the Notice 5402 ANNOUNCE before closing its
 /// connection, and a parked application recv is woken by `mount.cancel()`.
-// Task 16: stop() will also Close the app transport (today it does not wake
-// a parked app recv; this test pins only what PR 1 delivers).
+// Not yet: stop() will also close the app transport (today it does not wake
+// a parked app recv, so this test pins only the notice and the cancel path).
 #[test]
 fn server_stop_sends_notice_to_publisher_and_cancel_wakes_app() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();

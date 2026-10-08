@@ -21,18 +21,17 @@ use super::mount::PublishMountState;
 /// mirroring how [`crate::transport::RtpRecvTransport::recv_bytes`]
 /// treats a bad payload on the receive side.
 ///
-/// Constructed by `handle_announce` (Task 6); `on_rtp`/`on_rtcp` are
-/// driven from live RTSP traffic by the session's track dispatch
-/// (Tasks 7/8 of this arc — interleaved `$` frames and UDP ingest).
+/// Constructed by `handle_announce`; `on_rtp`/`on_rtcp` are driven from
+/// live RTSP traffic by the session's track dispatch (interleaved `$`
+/// frames and UDP ingest).
 pub(crate) trait PublishAdapter: Send {
     /// One RTP packet from `track` (index into the announce's track table).
-    /// Never fails; drops count. Called by Task 7/8's track dispatch —
-    /// unreached (and so unreachable from any impl) until that lands.
+    /// Never fails; drops count. Called by the session's track dispatch
+    /// (interleaved `$` frames and UDP ingest).
     #[allow(dead_code)]
     fn on_rtp(&mut self, track: usize, packet: &[u8]);
     /// One RTCP packet from `track`'s RTCP channel/socket. Called from
-    /// the interleaved `$`-frame arm (Task 7) and from Task 8's UDP
-    /// ingest tasks.
+    /// the interleaved `$`-frame arm and from the UDP ingest tasks.
     fn on_rtcp(&mut self, track: usize, packet: &[u8]);
     /// Publisher ended: push out whatever is pending. Called by
     /// `PublishSession::end` — reached today.

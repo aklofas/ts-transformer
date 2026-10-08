@@ -15,7 +15,7 @@ pub(crate) enum TrackKind {
 
 #[derive(Debug, Clone)]
 pub(crate) struct AnnouncedTrack {
-    /// SDP media index. The publisher handlers (Task 6) resolve tracks
+    /// SDP media index. The publisher handlers resolve tracks
     /// by position in `tracks: Vec<_>` and by `control` instead — this
     /// field is kept for diagnostics and stays unread until something
     /// needs the original SDP media ordinal.
@@ -25,7 +25,7 @@ pub(crate) struct AnnouncedTrack {
     pub(crate) payload_type: u8,
     pub(crate) kind: TrackKind,
     /// Read only by this module's own tests until the `Elementary`
-    /// shape has a real adapter (PR 2 of this arc) that consults the
+    /// shape has a real adapter that consults the
     /// H.264 fmtp params.
     #[allow(dead_code)]
     pub(crate) h264_fmtp: Option<H264FmtpParams>,

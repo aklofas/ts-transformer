@@ -343,7 +343,7 @@ where
                 // A publisher's media is liveness too: a TCP-interleaved
                 // publisher already re-arms this sleep by landing bytes on
                 // the read above (next iteration starts a fresh timer), but
-                // a UDP-transport publisher (Task 8) sends its RTP on a
+                // a UDP-transport publisher sends its RTP on a
                 // different socket this read loop never touches — without
                 // this check such a publisher would be reaped on schedule
                 // despite media flowing.
@@ -1222,7 +1222,7 @@ mod session_tests {
         }
     }
 
-    // --- Publisher-direction interleaved `$`-frame tests (Task 7) -----
+    // --- Publisher-direction interleaved `$`-frame tests -----------
     //
     // These drive `handle_connection` over a real loopback TCP connection,
     // exactly like `session_responds_to_options` above, but through the
