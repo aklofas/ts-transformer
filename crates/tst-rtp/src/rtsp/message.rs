@@ -198,8 +198,8 @@ pub(crate) fn rtsp_frame_decision(buf: &[u8]) -> RtspFraming {
 /// What the server answers when a buffer holds a COMPLETE request frame
 /// (per [`rtsp_frame_decision`]) that [`RtspRequest::parse`] nevertheless
 /// rejects: `501 Not Implemented` for a well-formed request line whose
-/// method token we do not implement (`SET_PARAMETER`, `RECORD`,
-/// `ANNOUNCE`, …), `400 Bad Request` for everything else. `cseq` echoes the
+/// method token we do not implement (`SET_PARAMETER`, `REDIRECT`,
+/// …), `400 Bad Request` for everything else. `cseq` echoes the
 /// request's `CSeq` only when it is present and a clean `1*DIGIT` value —
 /// never a value we would have to sanitize before putting it on the wire.
 ///
@@ -253,7 +253,15 @@ pub(crate) fn classify_unparseable_request(frame: &[u8]) -> UnparseableRequestRe
         !method.is_empty() && method.bytes().all(|b| b.is_ascii_uppercase() || b == b'_');
     let implemented = matches!(
         method,
-        "OPTIONS" | "DESCRIBE" | "SETUP" | "PLAY" | "PAUSE" | "TEARDOWN" | "GET_PARAMETER"
+        "OPTIONS"
+            | "DESCRIBE"
+            | "ANNOUNCE"
+            | "SETUP"
+            | "PLAY"
+            | "RECORD"
+            | "PAUSE"
+            | "TEARDOWN"
+            | "GET_PARAMETER"
     );
     if known_version && has_uri && method_is_token && !implemented {
         UnparseableRequestReply {
@@ -348,8 +356,10 @@ pub struct RtspRequest {
 pub enum RtspMethod {
     Options,
     Describe,
+    Announce,
     Setup,
     Play,
+    Record,
     Pause,
     Teardown,
     GetParameter,
@@ -428,8 +438,10 @@ impl RtspRequest {
         let method_str = match self.method {
             RtspMethod::Options => "OPTIONS",
             RtspMethod::Describe => "DESCRIBE",
+            RtspMethod::Announce => "ANNOUNCE",
             RtspMethod::Setup => "SETUP",
             RtspMethod::Play => "PLAY",
+            RtspMethod::Record => "RECORD",
             RtspMethod::Pause => "PAUSE",
             RtspMethod::Teardown => "TEARDOWN",
             RtspMethod::GetParameter => "GET_PARAMETER",
@@ -676,8 +688,10 @@ impl RtspRequest {
         let method = match method_str {
             "OPTIONS" => RtspMethod::Options,
             "DESCRIBE" => RtspMethod::Describe,
+            "ANNOUNCE" => RtspMethod::Announce,
             "SETUP" => RtspMethod::Setup,
             "PLAY" => RtspMethod::Play,
+            "RECORD" => RtspMethod::Record,
             "PAUSE" => RtspMethod::Pause,
             "TEARDOWN" => RtspMethod::Teardown,
             "GET_PARAMETER" => RtspMethod::GetParameter,
@@ -1206,6 +1220,18 @@ mod request_parse_tests {
     }
 
     #[test]
+    fn announce_and_record_parse_and_encode() {
+        let (req, _) =
+            RtspRequest::parse(b"ANNOUNCE rtsp://h/pub RTSP/1.0\r\nCSeq: 2\r\n\r\n").unwrap();
+        assert_eq!(req.method, RtspMethod::Announce);
+        let (req, _) =
+            RtspRequest::parse(b"RECORD rtsp://h/pub RTSP/1.0\r\nCSeq: 4\r\n\r\n").unwrap();
+        assert_eq!(req.method, RtspMethod::Record);
+        let enc = RtspRequest::new(RtspMethod::Record, "rtsp://h/pub", RtspVersion::V1_0).encode();
+        assert!(enc.starts_with(b"RECORD rtsp://h/pub RTSP/1.0\r\n"));
+    }
+
+    #[test]
     fn encode_response_round_trips_minimal() {
         let mut headers = HashMap::new();
         headers.insert("cseq".into(), "1".into());
@@ -1319,6 +1345,17 @@ mod request_parse_tests {
             );
             assert_eq!((r.status, r.reason), (501, "Not Implemented"));
             assert_eq!(r.cseq.as_deref(), Some("1"));
+        }
+
+        #[test]
+        fn announce_is_no_longer_501() {
+            let frame = b"ANNOUNCE rtsp://h/pub RTSP/1.0\r\nCSeq: 7\r\n\r\n";
+            // A frame that parses never reaches the classifier; assert the parse succeeds.
+            assert!(RtspRequest::parse(frame).is_ok());
+            let r = classify_unparseable_request(
+                b"SET_PARAMETER rtsp://h/pub RTSP/1.0\r\nCSeq: 7\r\n\r\n",
+            );
+            assert_eq!(r.status, 501);
         }
 
         #[test]

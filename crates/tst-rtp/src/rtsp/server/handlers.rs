@@ -36,6 +36,11 @@ pub(crate) fn error_response(req: &RtspRequest, status: u16, reason: &str) -> Rt
     }
 }
 
+/// 455 for a method that is valid only in a state this session is not in.
+pub(crate) fn handle_not_valid_in_state(req: &RtspRequest) -> RtspResponse {
+    error_response(req, 455, "Method Not Valid in This State")
+}
+
 /// Build a 401 Unauthorized response with a fresh `WWW-Authenticate`
 /// challenge for the configured auth scheme. Mutates `session.auth_nonce`
 /// if `stale = true` (rotates the nonce for a stale-challenge retry per
@@ -108,7 +113,7 @@ pub(crate) fn handle_options(req: &RtspRequest, state: &Arc<ServerState>) -> Rts
     headers.insert("server".into(), server_header());
     headers.insert(
         "public".into(),
-        "OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER".into(),
+        "OPTIONS, DESCRIBE, ANNOUNCE, SETUP, PLAY, RECORD, PAUSE, TEARDOWN, GET_PARAMETER".into(),
     );
     RtspResponse {
         version: req.version,
@@ -912,8 +917,10 @@ mod tests {
         for m in [
             "OPTIONS",
             "DESCRIBE",
+            "ANNOUNCE",
             "SETUP",
             "PLAY",
+            "RECORD",
             "PAUSE",
             "TEARDOWN",
             "GET_PARAMETER",
