@@ -331,6 +331,38 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_max_sessions(
     });
 }
 
+/// Let an ANNOUNCE to an unregistered path create a publish mount on
+/// demand. Each such mount is handed out once by
+/// `tst_rtsp_server_next_publisher`; the announcing publisher already holds
+/// it. Default: false (an ANNOUNCE to an unregistered path answers `404`).
+///
+/// Security: with this on, anyone who can reach the port (and pass its
+/// auth, when configured) can create mounts. An on-demand mount stays in the
+/// server after its publisher leaves, until `tst_rtsp_server_remove_mount`
+/// removes it; at most 256 exist at once, and an ANNOUNCE that would create
+/// one more answers `503`. A connected elementary-track publisher can hold
+/// about 46 MB, so configure auth and size
+/// `tst_rtsp_server_builder_max_sessions` before enabling this on a
+/// reachable port.
+///
+/// Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
+/// sets last-error `TST_E_INVALID_CONFIG`.
+///
+/// # Safety
+///
+/// `builder` must be NULL or returned by `tst_rtsp_server_builder_new`, not
+/// yet freed or consumed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_rtsp_server_builder_accept_unregistered_publishers(
+    builder: *mut TstRtspServerBuilder,
+    accept: bool,
+) {
+    ffi_catch((), || match unsafe { builder.as_mut() } {
+        Some(b) => b.accept_unregistered_publishers = accept,
+        None => set_last_error(TstError::InvalidConfig, "builder is null"),
+    });
+}
+
 /// Set the session timeout in seconds.
 ///
 /// The server advertises this value to clients in the `Session:

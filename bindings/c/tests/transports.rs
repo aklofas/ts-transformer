@@ -1,4 +1,4 @@
-//! Domain harness: C ABI transport open smokes: HLS, RIST, RTP, TCP, UDP
+//! Domain harness: C ABI transport open smokes: HLS, RIST, RTP, RTSP publish, TCP, UDP
 //! (consolidated from the former per-file tests/*.rs — see tests/MOVEMENT_MAP.md).
 //!
 //! Each `mod` below is one former top-level integration-test file, now
@@ -15,6 +15,8 @@ mod rist_open_smoke;
 mod rtp_cancel_first;
 #[path = "transports/rtp_open_smoke.rs"]
 mod rtp_open_smoke;
+#[path = "transports/rtsp_publish_smoke.rs"]
+mod rtsp_publish_smoke;
 #[path = "transports/tcp_open_smoke.rs"]
 mod tcp_open_smoke;
 #[path = "transports/udp_close_cancels_first.rs"]

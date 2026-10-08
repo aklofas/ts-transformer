@@ -585,6 +585,29 @@ ALLOWLIST=(
     "tst_rtsp_mount_audio_handle"
     "tst_rtsp_mount_subtitle_handle"
 
+    # --- RTSP publisher role (ABI 23) ---
+    #     TstRtspPublishMount wraps tst_rtp::PublishMountHandle; the server
+    #     entry points delegate to RtspServer::{add_publish_mount,
+    #     next_publisher, remove_mount, stats} and the builder setter to
+    #     RtspServerBuilder::accept_unregistered_publishers, all in tst-rtp
+    #     (not in tst-pipeline / tst-srt / tst-core). The three counter
+    #     getters and the path getter / free are C-only.
+    "tst_rtsp_server_builder_accept_unregistered_publishers"
+    "tst_rtsp_server_add_publish_mount"
+    "tst_rtsp_server_next_publisher"
+    "tst_rtsp_server_remove_mount"
+    "tst_rtsp_server_active_publishers"
+    "tst_rtsp_server_total_rtp_packets_received"
+    "tst_rtsp_server_total_rtp_bytes_received"
+    "tst_rtsp_publish_mount_path"
+    "tst_rtsp_publish_mount_peer_count"
+    "tst_rtsp_publish_mount_generation"
+    "tst_rtsp_publish_mount_get_stats"
+    "tst_rtsp_publish_mount_publisher_info"
+    "tst_rtsp_publish_mount_cancel"
+    "tst_rtsp_publish_mount_into_demux_receiver"
+    "tst_rtsp_publish_mount_free"
+
     # --- Annex B <-> length-prefixed + parameter-set extraction
     #     (ABI 21). tst_annexb_to_length_prefixed has a real 1:1 cross-ref
     #     on nal_framing::annexb_to_length_prefixed, and

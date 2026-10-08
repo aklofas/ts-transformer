@@ -301,7 +301,7 @@ baseline (by design)" for the full rationale.
   incompatible change to the ABI shape. **0** today.
 - `TST_ABI_VERSION_MINOR` — incremented on additive, source-compatible
   changes (new event kinds, new C entry points, new error codes).
-  **22** today. History (additive bumps only — major stays at 0 pre-1.0):
+  **23** today. History (additive bumps only — major stays at 0 pre-1.0):
     - `1`: receiver-surface initial drop.
     - `2`: `ManagedDemuxReceiver` wired into
       `tst-c`; `TST_EVENT_KIND_RECONNECT_DISCONTINUITY = 6` added; TS-bytes
@@ -510,6 +510,31 @@ baseline (by design)" for the full rationale.
         pending bytes to the live transport, report the first drain error,
         then close. Unlike `_close` they do NOT cancel first and do NOT
         free. See the shell parity matrix below.
+    - `23` (2026-10) — additive; no existing symbol, signature, or struct
+      layout changed, and no new error codes. The RTSP server's publisher
+      role, all `TST_HAS_RTP`:
+      - **`tst_rtsp_server_builder_accept_unregistered_publishers`** —
+        an ANNOUNCE to an unregistered path creates a publish mount on
+        demand.
+      - **`tst_rtsp_server_add_publish_mount`**,
+        **`tst_rtsp_server_next_publisher`** (`TST_E_BUFFER_FULL` with
+        `*out = NULL` on a timeout, `TST_E_CLOSED` once stopped; a
+        `tst_rtsp_server_stop` on another thread wakes a parked call) and
+        **`tst_rtsp_server_remove_mount`** (`TST_E_RTSP_MOUNT` when no
+        mount is registered at the path).
+      - New opaque handle `tst_rtsp_publish_mount_t` with
+        `tst_rtsp_publish_mount_{path,peer_count,generation,get_stats,
+        publisher_info,cancel,into_demux_receiver,free}`. The transport is
+        take-once (a second `_into_demux_receiver` is NULL with
+        `TST_E_CLOSED`); `_free` never closes the mount.
+      - New structs `tst_rtsp_publish_mount_stats_t` (every field of
+        `PublishMountStats`) and `tst_rtsp_publisher_info_t`; new enums
+        `tst_rtsp_publish_shape` and `tst_rtsp_clock_alignment`.
+      - The server's publisher counters ride getters
+        (`tst_rtsp_server_active_publishers`,
+        `tst_rtsp_server_total_rtp_packets_received`,
+        `tst_rtsp_server_total_rtp_bytes_received`): `tst_server_stats_t`
+        keeps its layout.
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that
   preserve both shape and behaviour.
 
