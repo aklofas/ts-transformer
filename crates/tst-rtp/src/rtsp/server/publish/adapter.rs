@@ -30,9 +30,9 @@ pub(crate) trait PublishAdapter: Send {
     /// unreached (and so unreachable from any impl) until that lands.
     #[allow(dead_code)]
     fn on_rtp(&mut self, track: usize, packet: &[u8]);
-    /// One RTCP packet from `track`'s RTCP channel/socket. Same
-    /// unreached status as `on_rtp` until Tasks 7/8 land.
-    #[allow(dead_code)]
+    /// One RTCP packet from `track`'s RTCP channel/socket. Called from
+    /// the interleaved `$`-frame arm (Task 7) and from Task 8's UDP
+    /// ingest tasks.
     fn on_rtcp(&mut self, track: usize, packet: &[u8]);
     /// Publisher ended: push out whatever is pending. Called by
     /// `PublishSession::end` — reached today.

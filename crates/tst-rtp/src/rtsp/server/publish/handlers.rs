@@ -309,6 +309,14 @@ pub(crate) fn handle_setup_record(
 
 /// RECORD handler — RFC 2326 §10.11. Auth-gated.
 ///
+/// Spawns one UDP ingest task (Task 8, `super::udp_ingest::spawn_udp_ingest`)
+/// per `TrackTransport::Udp` track that doesn't already have one running —
+/// gated per-track by `PublishTrack::udp_spawned`, so a later RECORD on
+/// the same session (RFC 2326 §10.11 allows one) never spawns a
+/// duplicate. Interleaved tracks spawn nothing; their RTP/RTCP already
+/// arrives on the control connection and is dispatched by the session
+/// loop's `$`-frame arm.
+///
 /// Rejection codes:
 /// - 401 Unauthorized — auth check fails.
 /// - 455 Method Not Valid in This State — no publisher on this session,
@@ -328,6 +336,26 @@ pub(crate) fn handle_record(
         return handle_not_valid_in_state(req);
     }
     publish.recording = true;
+    for idx in 0..publish.tracks.len() {
+        let track = &publish.tracks[idx];
+        if track.udp_spawned {
+            continue;
+        }
+        let Some(TrackTransport::Udp { rtp, rtcp }) = &track.transport else {
+            continue;
+        };
+        let handle = super::udp_ingest::spawn_udp_ingest(
+            idx,
+            rtp.clone(),
+            rtcp.clone(),
+            publish.adapter.clone(),
+            publish.mount.clone(),
+            publish.last_media_ms.clone(),
+            publish.udp_cancel.clone(),
+        );
+        publish.udp_tasks.push(handle);
+        publish.tracks[idx].udp_spawned = true;
+    }
     ok_response(req, session.session_id.as_deref())
 }
 
@@ -338,6 +366,7 @@ mod tests {
     use crate::rtsp::server::session::ServerSessionState;
     use crate::rtsp::server::test_state;
     use crate::url::RtspVersion;
+    use std::time::Duration;
 
     const SDP_MP2T: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 33\r\na=control:streamid=0\r\n";
 
@@ -676,5 +705,53 @@ mod tests {
             s.publish.as_ref().unwrap().tracks[0].transport,
             Some(TrackTransport::Udp { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn record_spawns_one_udp_ingest_task_idempotently_and_teardown_ends_it() {
+        let (st, _m) = state_with_publish_mount();
+        *st.local_addr.lock().unwrap() = Some("127.0.0.1:8554".parse().unwrap());
+        let mut s = ServerSessionState::new();
+        handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s);
+        let mut setup = req(RtspMethod::Setup, "rtsp://h/pub/streamid=0");
+        setup.headers.insert(
+            "transport".into(),
+            "RTP/AVP/UDP;unicast;client_port=24350-24351;mode=record".into(),
+        );
+        let r = crate::rtsp::server::handlers::handle_setup(&setup, &st, &mut s);
+        assert_eq!(r.status, 200, "{:?}", r.headers);
+
+        let mut rec = req(RtspMethod::Record, "rtsp://h/pub");
+        rec.headers
+            .insert("session".into(), s.session_id.clone().unwrap());
+        let r = handle_record(&rec, &st, &mut s);
+        assert_eq!(r.status, 200);
+        assert_eq!(s.publish.as_ref().unwrap().udp_tasks.len(), 1);
+
+        // RFC 2326 §10.11 allows a later RECORD on the same session —
+        // it must not spawn a second ingest task for the same track.
+        let r2 = handle_record(&rec, &st, &mut s);
+        assert_eq!(r2.status, 200);
+        assert_eq!(s.publish.as_ref().unwrap().udp_tasks.len(), 1);
+
+        // Take the handle out before TEARDOWN: `PublishSession::end`
+        // cancels `udp_cancel` (which this held task observes through
+        // its own `select!`) and then aborts anything still left in
+        // `udp_tasks` as a backstop — pulling it out first means this
+        // assertion is exercising the graceful cancel path, not the
+        // abort backstop.
+        let j = s.publish.as_mut().unwrap().udp_tasks.pop().unwrap();
+
+        let r3 = crate::rtsp::server::handlers::handle_teardown(
+            &req(RtspMethod::Teardown, "rtsp://h/pub"),
+            &st,
+            &mut s,
+        );
+        assert_eq!(r3.status, 200);
+        assert!(s.publish.is_none());
+        tokio::time::timeout(Duration::from_secs(2), j)
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
