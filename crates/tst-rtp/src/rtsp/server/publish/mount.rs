@@ -66,6 +66,19 @@ pub(crate) struct ServerCounters {
     pub(crate) rtp_bytes_received: AtomicU64,
 }
 
+/// The publisher slot of a publish mount, under one mutex so a claim and a
+/// close never interleave.
+#[derive(Default)]
+pub(crate) struct PublisherSlot {
+    /// The publisher holding the mount, if any.
+    pub(crate) info: Option<PublisherInfo>,
+    /// [`PublishMountState::close`] has run: the slot can never be claimed
+    /// again, so an ANNOUNCE that found the mount before
+    /// `remove_mount`/`stop()` closed it is refused (`403`) rather than
+    /// counted as a publisher of a mount nothing reads.
+    pub(crate) closed: bool,
+}
+
 /// Internal per-mount state for a publish mount. Held inside
 /// `ServerState::mounts` as `Arc<PublishMountState>` (via
 /// `MountEntry::Publish`). Public surface is via [`PublishMountHandle`]
@@ -107,7 +120,7 @@ pub(crate) struct PublishMountState {
     /// `pub(crate)` so the publisher handlers' own test module
     /// (`publish::handlers::tests`, a sibling of this module) can assert
     /// directly on the slot and generation counter.
-    pub(crate) publisher: Mutex<Option<PublisherInfo>>,
+    pub(crate) publisher: Mutex<PublisherSlot>,
     pub(crate) generation: AtomicU64,
     stats: Mutex<PublishMountStatsInner>,
     /// Mount-level dropped-frame total for PLAY readers lagging behind
@@ -158,7 +171,7 @@ impl PublishMountState {
             app: Mutex::new(AppSide::default()),
             app_cancel: RtpCancelHandle::new(),
             app_end_reason: EndReasonSlot::default(),
-            publisher: Mutex::new(None),
+            publisher: Mutex::new(PublisherSlot::default()),
             generation: AtomicU64::new(0),
             stats: Mutex::new(PublishMountStatsInner::default()),
             frames_dropped_readers: Arc::new(AtomicU64::new(0)),
@@ -197,15 +210,16 @@ impl PublishMountState {
 
     /// Claim the publisher slot. Returns the claimed slot's generation, or
     /// `None` if another publisher already holds it (the slot is exclusive
-    /// — only one ANNOUNCE/RECORD session may feed a mount at a time).
+    /// — only one ANNOUNCE/RECORD session may feed a mount at a time) or
+    /// the mount was closed (see [`PublisherSlot::closed`]).
     pub(crate) fn try_begin_publisher(&self, mut info: PublisherInfo) -> Option<u64> {
         let mut g = self.publisher.lock().unwrap_or_else(|e| e.into_inner());
-        if g.is_some() {
+        if g.closed || g.info.is_some() {
             return None;
         }
         let generation = self.generation.load(Ordering::Relaxed);
         info.generation = generation;
-        *g = Some(info);
+        g.info = Some(info);
         self.counters
             .active_publishers
             .fetch_add(1, Ordering::Relaxed);
@@ -220,6 +234,7 @@ impl PublishMountState {
         self.publisher
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .info
             .as_ref()
             .is_some_and(|i| i.generation == generation)
     }
@@ -231,7 +246,13 @@ impl PublishMountState {
     /// idle until the next publisher begins.
     pub(crate) fn end_publisher(&self) {
         let mut g = self.publisher.lock().unwrap_or_else(|e| e.into_inner());
-        if g.take().is_some() {
+        self.release_slot(&mut g);
+    }
+
+    /// Empty the slot under its held mutex: bump `generation` and the
+    /// server's publisher count if a publisher held it, else nothing.
+    fn release_slot(&self, slot: &mut PublisherSlot) {
+        if slot.info.take().is_some() {
             self.generation.fetch_add(1, Ordering::Relaxed);
             self.counters
                 .active_publishers
@@ -279,11 +300,15 @@ impl PublishMountState {
     /// handed out observes a clean disconnect, reported as
     /// `TransportError::Closed` — not `Broken` — because
     /// `app_end_reason` records `CleanTeardown` first (see the field
-    /// doc). Also ends the current publisher, if any. Called by
-    /// [`crate::rtsp::server::RtspServer::stop`] and
-    /// [`crate::rtsp::server::RtspServer::remove_mount`] — not by
-    /// `end_publisher`, which must NOT close the transport (a reader
-    /// stays attached across publisher churn).
+    /// doc). Also ends the current publisher, if any, and refuses every
+    /// later claim (see [`PublisherSlot::closed`]). Called by
+    /// [`crate::rtsp::server::RtspServer::stop`],
+    /// [`crate::rtsp::server::RtspServer::remove_mount`] and the server's
+    /// `Drop` — not by `end_publisher`, which must NOT close the transport
+    /// (a reader stays attached across publisher churn).
+    ///
+    /// Takes the `app` mutex, releases it, then takes the `publisher`
+    /// mutex: the two are never held together.
     pub(crate) fn close(&self) {
         self.app_end_reason.record(StreamEndReason::CleanTeardown);
         {
@@ -291,7 +316,9 @@ impl PublishMountState {
             app.closed = true;
             app.tx = None;
         }
-        self.end_publisher();
+        let mut slot = self.publisher.lock().unwrap_or_else(|e| e.into_inner());
+        slot.closed = true;
+        self.release_slot(&mut slot);
     }
 
     /// Test-only: whether the application-facing channel exists.
@@ -535,6 +562,7 @@ impl PublishMountHandle {
             .publisher
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .info
             .clone()
     }
 
@@ -619,8 +647,20 @@ mod tests {
         assert_eq!(m.generation.load(std::sync::atomic::Ordering::Relaxed), 0);
         m.end_publisher();
         assert_eq!(m.generation.load(std::sync::atomic::Ordering::Relaxed), 1);
-        assert!(m.publisher.lock().unwrap().is_none());
+        assert!(m.publisher.lock().unwrap().info.is_none());
         assert_eq!(m.try_begin_publisher(info(1)), Some(1));
+    }
+
+    #[test]
+    fn a_closed_mount_refuses_a_claim_and_counts_no_publisher() {
+        // An ANNOUNCE that found the mount before `remove_mount` closed it
+        // claims after the close: refused, never counted.
+        let counters = Arc::new(ServerCounters::default());
+        let m = PublishMountState::new_on_demand("/p", 16, counters.clone());
+        m.close();
+        assert_eq!(m.try_begin_publisher(info(0)), None);
+        assert_eq!(counters.active_publishers.load(Ordering::Relaxed), 0);
+        assert!(m.publisher.lock().unwrap().info.is_none());
     }
 
     #[test]

@@ -502,6 +502,9 @@ impl RtspServer {
     /// later `add_mount` / `add_multicast_mount` / `add_publish_mount` (or
     /// an on-demand ANNOUNCE).
     ///
+    /// A publish mount is closed first, as soon as it leaves the table: its
+    /// publisher slot is released and can never be claimed again.
+    ///
     /// Every session that has completed a SETUP on the mount, readers and
     /// a publish mount's publisher alike, is sent the RFC 7826 §13.5.1
     /// Notice 5402
@@ -527,7 +530,10 @@ impl RtspServer {
     /// the same request (for example a `500` while building the
     /// elementary-stream re-muxer): that mount stays in the table, idle,
     /// with its handle queued for [`Self::next_publisher`], until this
-    /// call removes it.
+    /// call removes it. Removing an on-demand mount whose handle is still
+    /// queued does not withdraw the handle: [`Self::next_publisher`] can
+    /// still return it, and its transport reads `TransportError::Closed`
+    /// at once. Treat such a handle as already expired.
     ///
     /// Blocks the calling thread on the server's runtime for the Notice
     /// writes: never call it from inside a tokio runtime (see
@@ -537,11 +543,12 @@ impl RtspServer {
     /// and are not cancelled. A publisher between its ANNOUNCE and its first
     /// SETUP loses its publisher slot and is refused at SETUP (`404`; `455`
     /// if a publish mount has been registered at the path again, `461` if
-    /// a local mount has). A SETUP answered while
-    /// this call runs can still complete: a reader then keeps its
-    /// subscription to the removed mount's fanout until it ends on its own,
-    /// and a publisher's RECORD is refused with `455` because the mount no
-    /// longer holds its publisher slot.
+    /// a local mount has). An ANNOUNCE that found the mount before it left
+    /// the table and claims it afterwards is refused with `403`. A SETUP
+    /// answered while this call runs can still complete: a reader then
+    /// keeps its subscription to the removed mount's fanout until it ends
+    /// on its own, and a publisher's RECORD is refused with `455` because
+    /// the closed mount no longer holds its publisher slot.
     ///
     /// # Errors
     /// - [`RtspServerError::MountNotFound`] — no mount is registered at
@@ -562,6 +569,15 @@ impl RtspServer {
             .ok_or_else(|| RtspServerError::MountNotFound {
                 path: path.to_string(),
             })?;
+        // Close a publish mount before the sessions snapshot, with the
+        // mounts lock already released: from here on its publisher slot is
+        // empty and cannot be claimed again, so a RECORD from a session the
+        // snapshot misses is refused (455), and a session that recorded
+        // before this point has its mount mirror set and is in the
+        // snapshot.
+        if let crate::rtsp::server::mount::MountEntry::Publish(m) = &entry {
+            m.close();
+        }
         let sessions: Vec<Arc<ActiveSession>> = self
             .state
             .sessions
@@ -578,12 +594,9 @@ impl RtspServer {
             })
             .unwrap_or_default();
         self.notify_and_cancel(&sessions);
-        match entry {
-            crate::rtsp::server::mount::MountEntry::Publish(m) => m.close(),
-            // The broadcast sender lives in `MountState`, which outstanding
-            // `MountHandle`s keep alive; readers ended with their sessions.
-            crate::rtsp::server::mount::MountEntry::Local(_) => {}
-        }
+        // A local mount needs nothing more: its broadcast sender lives in
+        // `MountState`, which outstanding `MountHandle`s keep alive, and its
+        // readers ended with their sessions.
         Ok(())
     }
 
@@ -598,6 +611,11 @@ impl RtspServer {
     /// Concurrent callers are served one at a time, each mount to exactly
     /// one of them. A call made while another caller is waiting can
     /// therefore wait longer than its own `timeout`.
+    ///
+    /// The returned handle can name a mount that [`Self::remove_mount`]
+    /// already removed while its handle waited in the queue. Its transport
+    /// then reads `TransportError::Closed` at once; treat it as already
+    /// expired.
     ///
     /// # Errors
     /// - [`RtspServerError::Shutdown`] — the server was stopped, including
