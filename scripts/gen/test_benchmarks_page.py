@@ -106,12 +106,17 @@ class RenderShape(unittest.TestCase):
         self.assertRegex(sub, r"Ceiling:\s*\d+\s*scale")
 
     def test_hold_section_has_transport_rows_and_verdict_names(self):
+        # Named verdicts (worker_exits, cpu_headroom, …) still render one row
+        # each; per-process verdicts (rss_slope_srt-0_send, …) are rolled up
+        # — see HoldRollup below.
         r, p = load()
         md = bp.render(r, p)
         hold = r["hold"]
         for t in hold["decl"]["n_hold"]:
             self.assertRegex(md, rf"\|\s*{t}\s*\|")
         for v in hold["step"]["verdicts"] + hold["hold_verdicts"]:
+            if bp._PERPROC_VERDICT.match(v["name"]):
+                continue
             self.assertIn(v["name"], md)
 
     def test_hold_none_renders_no_hold_message(self):
@@ -120,6 +125,35 @@ class RenderShape(unittest.TestCase):
         r["hold"] = None
         md = bp.render(r, p)
         self.assertIn("No hold in this run.", md)
+
+
+class HoldRollup(unittest.TestCase):
+    """Per-process hold verdicts (rss_slope / fd_count_flat / thread_count_flat
+    for every stream's send/recv/proxy process) collapse into one row per
+    (class, transport, role) instead of one row per process — a hold with a
+    few hundred streams would otherwise render over a thousand rows."""
+
+    def test_perprocess_verdicts_do_not_render_individually(self):
+        r, p = load()
+        md = bp.render(r, p)
+        self.assertNotIn("rss_slope_srt-0_send", md)
+        self.assertNotIn("fd_count_flat_tcp-0_recv", md)
+        self.assertNotIn("thread_count_flat_srt-0_proxy", md)
+
+    def test_rollup_has_one_row_per_class_transport_role(self):
+        r, p = load()
+        md = bp.render(r, p)
+        # srt has proxy/recv/send in the fixture; tcp has only recv/send.
+        self.assertRegex(md, r"\|\s*rss_slope\s*\|\s*srt proxy\s*\|\s*1\s*\|\s*1\s*\|\s*0\s*\|")
+        self.assertRegex(md, r"\|\s*fd_count_flat\s*\|\s*tcp recv\s*\|\s*1\s*\|\s*1\s*\|\s*0\s*\|")
+        self.assertRegex(md, r"\|\s*thread_count_flat\s*\|\s*srt proxy\s*\|\s*1\s*\|\s*1\s*\|\s*0\s*\|")
+        self.assertNotRegex(md, r"\|\s*rss_slope\s*\|\s*tcp proxy\s*\|")  # tcp has no proxy row in the fixture
+
+    def test_rollup_note_points_at_the_archive(self):
+        r, p = load()
+        md = bp.render(r, p)
+        self.assertIn("Per-process rows are rolled up", md)
+        self.assertIn("hold/step-results.json", md)
 
 
 class LimitationCollapse(unittest.TestCase):
