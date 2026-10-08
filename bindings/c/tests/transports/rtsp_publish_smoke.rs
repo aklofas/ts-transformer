@@ -21,7 +21,7 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 
 use tstrans::error::TstError;
-use tstrans::event::{TstEvent, TstEventKind};
+use tstrans::event::{TstEvent, TstEventKind, TstStreamKindTag};
 use tstrans::rtp::{
     tst_rtp_demux_receiver_cancel, tst_rtp_demux_receiver_close, tst_rtp_demux_receiver_next_event,
 };
@@ -182,6 +182,27 @@ fn mp2t_rtp_packets(n: usize) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// The first video access unit an offline `Demuxer` reads from the TS
+/// bytes the RTP packets carry (each packet minus its 12-byte header): the
+/// reference for what the live receiver must deliver.
+fn first_video_offline(packets: &[Vec<u8>]) -> Vec<u8> {
+    use tst_core::mpegts::demux::{DemuxEvent, Demuxer, SamplePayload};
+    let mut dx = Demuxer::new();
+    for p in packets {
+        dx.feed(&p[12..]).expect("offline demux feed");
+    }
+    while let Some(ev) = dx.next_event() {
+        if let DemuxEvent::Sample {
+            payload: SamplePayload::Video { raw, .. },
+            ..
+        } = ev
+        {
+            return raw.to_vec();
+        }
+    }
+    panic!("the offline reference demuxed no video access unit");
+}
+
 /// One RFC 2326 §10.12 interleaved frame.
 fn send_frame(tcp: &mut TcpStream, ch: u8, payload: &[u8]) {
     let mut f = vec![b'$', ch];
@@ -304,8 +325,10 @@ fn rtsp_publish_mount_end_to_end() {
     assert_eq!(test_last_error_code(), TstError::Closed as i32);
 
     let (mut tcp, ch) = publish_mp2t(port, "/pub");
-    for pkt in mp2t_rtp_packets(5) {
-        send_frame(&mut tcp, ch, &pkt);
+    let packets = mp2t_rtp_packets(5);
+    let reference = first_video_offline(&packets);
+    for pkt in &packets {
+        send_frame(&mut tcp, ch, pkt);
     }
     tcp.flush().unwrap();
 
@@ -363,18 +386,36 @@ fn rtsp_publish_mount_end_to_end() {
     assert_eq!(unsafe { tst_rtsp_server_get_stats(server, &mut ss) }, 0);
     assert_eq!(ss.mounts, 1);
 
-    // The demux receiver sees the program the publisher sent.
+    // The demux receiver sees the program the publisher sent, and its first
+    // video access unit matches the offline demux of the same bytes.
     let dog = Watchdog::arm(rx, Duration::from_secs(5));
     let mut ev = TstEvent::default();
     let mut got_pmt = false;
+    let mut video = None;
     while unsafe { tst_rtp_demux_receiver_next_event(rx, &mut ev) } == 0 {
         if ev.kind == TstEventKind::ProgramMap as i32 {
             got_pmt = true;
-            break;
+        }
+        if ev.kind == TstEventKind::Sample as i32 {
+            // SAFETY: `kind == Sample` selects the `sample` union arm.
+            let sample = unsafe { ev.u.sample };
+            if sample.stream_kind == TstStreamKindTag::Video as i32 {
+                assert!(!sample.payload.is_null());
+                // SAFETY: arena-owned, valid until the next call on `rx`.
+                let bytes =
+                    unsafe { std::slice::from_raw_parts(sample.payload, sample.payload_len) };
+                video = Some(bytes.to_vec());
+                break;
+            }
         }
     }
     dog.finish();
     assert!(got_pmt, "no PROGRAM_MAP event from the published stream");
+    let video = video.expect("no video sample from the published stream");
+    assert_eq!(
+        video, reference,
+        "the published video access unit differs from the offline reference"
+    );
 
     // remove_mount closes the mount: the receiver drains, then reads
     // END_OF_STREAM (the mount ended; an explicit cancel would read CLOSED).
@@ -413,7 +454,8 @@ fn rtsp_publish_mount_end_to_end() {
 
 /// The on-demand path: an ANNOUNCE to an unregistered path creates a mount
 /// that `next_publisher` hands out; a call parked in `next_publisher` wakes
-/// with CLOSED when another thread stops the server.
+/// with CLOSED when another thread stops the server, and the stop ends the
+/// on-demand mount's demux receiver with END_OF_STREAM.
 #[test]
 fn rtsp_publish_next_publisher_on_demand_and_stop_wakes_parked_call() {
     let (server, port) = start_server(true);
@@ -434,7 +476,29 @@ fn rtsp_publish_next_publisher_on_demand_and_stop_wakes_parked_call() {
         info.present,
         "the announcing publisher holds the on-demand mount"
     );
+    // Take the on-demand mount's transport, then park a receiver on it: the
+    // publisher holds the mount but sends nothing, so the read waits.
+    let demux = unsafe { tst_rtsp_publish_mount_into_demux_receiver(out, std::ptr::null()) };
+    assert!(
+        !demux.is_null(),
+        "into_demux_receiver failed: {}",
+        test_last_error_code()
+    );
     unsafe { tst_rtsp_publish_mount_free(out) };
+    let demux_addr = demux as usize;
+    let (recv_tx, recv_done) = std::sync::mpsc::channel();
+    let (recv_ready_tx, recv_ready) = std::sync::mpsc::channel();
+    let receiver = std::thread::spawn(move || {
+        let mut ev = TstEvent::default();
+        recv_ready_tx.send(()).unwrap();
+        let rc = loop {
+            let rc = unsafe { tst_rtp_demux_receiver_next_event(demux_addr as *mut _, &mut ev) };
+            if rc != 0 {
+                break rc;
+            }
+        };
+        recv_tx.send(rc).unwrap();
+    });
 
     // Park a call on another thread, then stop the server from this one.
     let addr = server as usize;
@@ -444,22 +508,53 @@ fn rtsp_publish_next_publisher_on_demand_and_stop_wakes_parked_call() {
         let mut out: *mut tstrans::TstRtspPublishMount = 0x1 as *mut _;
         ready_tx.send(()).unwrap();
         let rc = unsafe { tst_rtsp_server_next_publisher(addr as *mut _, 30_000, &mut out) };
-        tx.send((rc, out.is_null())).unwrap();
+        // The last error is per thread: read it here, where the call ran.
+        let msg = unsafe { CStr::from_ptr(tstrans::error::tst_get_last_error_str()) }
+            .to_string_lossy()
+            .into_owned();
+        tx.send((rc, out.is_null(), msg)).unwrap();
     });
     ready_rx
         .recv_timeout(Duration::from_secs(10))
         .expect("parked thread started");
-    // Ordering aid only (not asserted): give the side thread time to enter
-    // the wait, so the stop below exercises the wake path rather than the
-    // already-stopped check.
+    recv_ready
+        .recv_timeout(Duration::from_secs(10))
+        .expect("receiver thread started");
+    // Ordering aid: give the side threads time to enter their waits. The
+    // last-error assertion below checks that the stop really woke the
+    // parked call.
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(unsafe { tst_rtsp_server_stop(server, 0) }, 0);
-    let (rc, out_null) = rx
+    let (rc, out_null, msg) = rx
         .recv_timeout(Duration::from_secs(10))
         .expect("stop() must wake a parked next_publisher");
     parked.join().unwrap();
     assert_eq!(rc, TstError::Closed as i32);
     assert!(out_null);
+    // A call that entered before the stop reads "server is stopped"; one
+    // that only reached the handle after the stop reads "server is stopped
+    // or freed" and never parked.
+    assert_eq!(
+        msg, "server is stopped",
+        "next_publisher returned through the already-stopped check, not the wake"
+    );
+
+    // The stop ends the on-demand mount's receiver with END_OF_STREAM.
+    let end = match recv_done.recv_timeout(Duration::from_secs(10)) {
+        Ok(rc) => rc,
+        Err(_) => {
+            // Last resort so a regression fails instead of hanging.
+            unsafe { tst_rtp_demux_receiver_cancel(demux) };
+            panic!("tst_rtsp_server_stop did not end the bound receiver");
+        }
+    };
+    receiver.join().unwrap();
+    assert_eq!(
+        end,
+        TstError::EndOfStream as i32,
+        "a stopped server's publish-mount receiver ends END_OF_STREAM"
+    );
+    unsafe { tst_rtp_demux_receiver_close(demux) };
 
     // After stop: every server call reads CLOSED.
     let mut out: *mut tstrans::TstRtspPublishMount = std::ptr::null_mut();
