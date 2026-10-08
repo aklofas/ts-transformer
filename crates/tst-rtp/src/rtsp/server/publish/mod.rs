@@ -4,6 +4,7 @@
 //! [`RtpRecvTransport`](crate::transport::RtpRecvTransport).
 
 pub(crate) mod adapter;
+pub(crate) mod adapter_es;
 pub(crate) mod align;
 pub(crate) mod handlers;
 pub(crate) mod klv_depacketizer;

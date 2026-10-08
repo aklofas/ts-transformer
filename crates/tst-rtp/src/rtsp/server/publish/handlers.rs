@@ -29,9 +29,10 @@ use crate::sdp::Sdp;
 
 use super::PublishShape;
 use super::adapter::{Mp2tAdapter, PublishAdapter};
+use super::adapter_es::EsAdapter;
 use super::mount::{PublishMountState, PublisherInfo};
 use super::session::{PublishSession, TrackTransport};
-use super::shape::{ShapeReject, classify_announce};
+use super::shape::{ShapeReject, TrackKind, classify_announce};
 
 /// 200 OK with CSeq + Server headers, and a bare `Session: <id>` when
 /// `session_id` is given. ANNOUNCE doesn't allocate a session id (the
@@ -69,13 +70,13 @@ fn ok_response(req: &RtspRequest, session_id: Option<&str>) -> RtspResponse {
 /// - 400 Bad Request — missing/non-`application/sdp` Content-Type, an
 ///   empty body, or a structurally unusable SDP (`ShapeReject::BadRequest`).
 /// - 415 Unsupported Media Type — a well-formed SDP whose track
-///   combination matches no accepted shape (`ShapeReject::Unsupported`),
-///   or (today) an `Elementary` shape, which has no H.264(+KLV) adapter
-///   yet.
+///   combination matches no accepted shape (`ShapeReject::Unsupported`).
 /// - 404 Not Found — mount path not registered.
 /// - 461 Unsupported Transport — the mount exists but is a local
 ///   (muxer-backed) mount, which never accepts a publisher.
 /// - 403 Forbidden — the mount already has a publisher.
+/// - 500 Internal Server Error — the elementary shape's muxer could not
+///   be built (the publisher slot is released again).
 pub(crate) fn handle_announce(
     req: &RtspRequest,
     state: &Arc<ServerState>,
@@ -135,15 +136,6 @@ pub(crate) fn handle_announce(
             None => return error_response(req, 404, "Not Found"),
         }
     };
-    // Reject an `Elementary` shape BEFORE claiming the publisher slot —
-    // until a real H.264(+KLV) adapter exists, ANNOUNCE can only
-    // classify it, never feed it, so there is
-    // nothing to hold the slot for. Claiming it first and immediately
-    // freeing it would still bump the mount's generation and could 403 a
-    // concurrent well-formed ANNOUNCE for no reason.
-    let PublishShape::Mp2t = announced.shape else {
-        return error_response(req, 415, "Unsupported Media Type");
-    };
     let info = PublisherInfo {
         peer: session.peer_addr,
         shape: announced.shape,
@@ -153,10 +145,31 @@ pub(crate) fn handle_announce(
     if !mount.try_begin_publisher(info) {
         return error_response(req, 403, "Forbidden");
     }
-    let adapter: Box<dyn PublishAdapter> = Box::new(Mp2tAdapter::new(
-        mount.clone(),
-        announced.tracks[0].payload_type,
-    ));
+    let adapter: Box<dyn PublishAdapter> = match announced.shape {
+        PublishShape::Mp2t => Box::new(Mp2tAdapter::new(
+            mount.clone(),
+            announced.tracks[0].payload_type,
+        )),
+        PublishShape::Elementary { klv } => {
+            // `classify_announce` only yields `Elementary` with exactly one
+            // H.264 track, plus exactly one KLV track when `klv` is set.
+            let track = |kind| announced.tracks.iter().find(|t| t.kind == kind);
+            let video = track(TrackKind::H264).expect("classified: one H.264 track");
+            let klv_track = klv.then(|| track(TrackKind::Klv).expect("classified: one KLV track"));
+            match EsAdapter::new(mount.clone(), video, klv_track) {
+                Ok(a) => Box::new(a),
+                Err(e) => {
+                    tracing::error!(
+                        target: "tst_rtp::server::publish",
+                        error = %e,
+                        "publish muxer construction failed"
+                    );
+                    mount.end_publisher();
+                    return error_response(req, 500, "Internal Server Error");
+                }
+            }
+        }
+    };
     session.publish = Some(PublishSession::new(mount, announced, adapter));
     ok_response(req, None)
 }
@@ -425,6 +438,19 @@ mod tests {
         let p = s.publish.as_ref().unwrap();
         assert_eq!(p.shape, PublishShape::Mp2t);
         assert_eq!(p.tracks.len(), 1);
+        assert!(m.publisher.lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn announce_elementary_h264_klv_enters_publisher_role() {
+        const SDP_ES: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=control:streamid=0\r\nm=application 0 RTP/AVP 97\r\na=rtpmap:97 smpte336m/90000\r\na=control:streamid=1\r\n";
+        let (st, m) = state_with_publish_mount();
+        let mut s = ServerSessionState::new();
+        let r = handle_announce(&announce("rtsp://h/pub", SDP_ES), &st, &mut s);
+        assert_eq!(r.status, 200);
+        let p = s.publish.as_ref().unwrap();
+        assert_eq!(p.shape, PublishShape::Elementary { klv: true });
+        assert_eq!(p.tracks.len(), 2);
         assert!(m.publisher.lock().unwrap().is_some());
     }
 

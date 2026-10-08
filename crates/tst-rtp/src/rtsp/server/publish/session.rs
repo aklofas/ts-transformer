@@ -49,8 +49,7 @@ pub(crate) struct PublishTrack {
 pub(crate) struct PublishSession {
     pub(crate) mount: Arc<PublishMountState>,
     /// Read in this module's own tests today; production reads it once
-    /// an `Elementary` shape has a real adapter and
-    /// once stats reporting names the active shape.
+    /// stats reporting names the active shape.
     #[allow(dead_code)]
     pub(crate) shape: super::PublishShape,
     pub(crate) tracks: Vec<PublishTrack>,
