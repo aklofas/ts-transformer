@@ -1300,6 +1300,7 @@ pub tst_rtp::rtsp::server::publish::PublishMountStats::malformed_packets: u64
 pub tst_rtp::rtsp::server::publish::PublishMountStats::peer_count: usize
 pub tst_rtp::rtsp::server::publish::PublishMountStats::rtp_packets_received: u64
 pub tst_rtp::rtsp::server::publish::PublishMountStats::source_rejected: u64
+pub tst_rtp::rtsp::server::publish::PublishMountStats::ssrc_changes: u64
 impl core::clone::Clone for tst_rtp::PublishMountStats
 pub fn tst_rtp::PublishMountStats::clone(&self) -> tst_rtp::PublishMountStats
 impl core::default::Default for tst_rtp::PublishMountStats
@@ -2577,6 +2578,7 @@ pub tst_rtp::PublishMountStats::malformed_packets: u64
 pub tst_rtp::PublishMountStats::peer_count: usize
 pub tst_rtp::PublishMountStats::rtp_packets_received: u64
 pub tst_rtp::PublishMountStats::source_rejected: u64
+pub tst_rtp::PublishMountStats::ssrc_changes: u64
 impl core::clone::Clone for tst_rtp::PublishMountStats
 pub fn tst_rtp::PublishMountStats::clone(&self) -> tst_rtp::PublishMountStats
 impl core::default::Default for tst_rtp::PublishMountStats

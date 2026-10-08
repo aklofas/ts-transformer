@@ -241,6 +241,7 @@ impl PublishMountState {
             klv_units_dropped: inner.klv_units_dropped,
             alignment: inner.alignment,
             alignment_steps: inner.alignment_steps,
+            ssrc_changes: inner.ssrc_changes,
             generation: self.generation.load(Ordering::Relaxed),
             peer_count: self.fanout.receiver_count(),
         }
@@ -328,6 +329,7 @@ pub(crate) struct PublishMountStatsInner {
     pub(crate) klv_units_dropped: u64,
     pub(crate) alignment: ClockAlignment,
     pub(crate) alignment_steps: u64,
+    pub(crate) ssrc_changes: u64,
 }
 
 impl Default for PublishMountStatsInner {
@@ -346,6 +348,7 @@ impl Default for PublishMountStatsInner {
             klv_units_dropped: 0,
             alignment: ClockAlignment::NotApplicable,
             alignment_steps: 0,
+            ssrc_changes: 0,
         }
     }
 }
@@ -393,6 +396,13 @@ pub struct PublishMountStats {
     pub alignment: ClockAlignment,
     /// Times a new clock mapping replaced the previous one.
     pub alignment_steps: u64,
+    /// Source restarts on an elementary publisher's tracks: each time a
+    /// video or KLV track's RTP SSRC changed mid-session, counted once per
+    /// change per track. The track's depacketizer and its clock alignment
+    /// restart (KLV units held at that moment are dropped and counted in
+    /// [`Self::klv_units_dropped`]); RTCP sender reports are only taken
+    /// from a track's current SSRC.
+    pub ssrc_changes: u64,
     /// Publishers that have ended on this mount.
     pub generation: u64,
     /// Live PLAY readers subscribed to the mount's fan-out.
