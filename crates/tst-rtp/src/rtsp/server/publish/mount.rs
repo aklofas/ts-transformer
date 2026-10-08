@@ -36,7 +36,7 @@ pub(crate) struct PublishMountState {
     /// the mpsc receiver observe `Disconnected`.
     ///
     /// Read only by [`Self::emit`] (the publisher ingest adapter) and
-    /// [`Self::close`] (server `stop()`).
+    /// [`Self::close`] (server `stop()` and `remove_mount()`).
     app_tx: Mutex<Option<std::sync::mpsc::SyncSender<Bytes>>>,
     /// Consumer side of the application-facing bridge. Taken exactly
     /// once by [`PublishMountHandle::into_recv_transport`] — a second
@@ -176,7 +176,8 @@ impl PublishMountState {
     /// `TransportError::Closed` — not `Broken` — because
     /// `app_end_reason` records `CleanTeardown` first (see the field
     /// doc). Also ends the current publisher, if any. Called by
-    /// [`crate::rtsp::server::RtspServer::stop`] — not by
+    /// [`crate::rtsp::server::RtspServer::stop`] and
+    /// [`crate::rtsp::server::RtspServer::remove_mount`] — not by
     /// `end_publisher`, which must NOT close the transport (a reader
     /// stays attached across publisher churn).
     pub(crate) fn close(&self) {
@@ -426,7 +427,8 @@ impl PublishMountHandle {
     /// The transport outlives publisher churn: when a publisher ends it
     /// stays open and silent until the next one. [`Self::cancel`] ends it
     /// with `TransportError::ExplicitClose`;
-    /// [`crate::rtsp::server::RtspServer::stop`] ends it with
+    /// [`crate::rtsp::server::RtspServer::stop`] and
+    /// [`crate::rtsp::server::RtspServer::remove_mount`] end it with
     /// `TransportError::Closed`.
     pub fn into_recv_transport(self) -> Result<RtpRecvTransport, RtspServerError> {
         let rx = self

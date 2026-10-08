@@ -191,6 +191,10 @@ pub enum RtspServerError {
     #[error("duplicate mount path '{path}'")]
     DuplicateMount { path: String },
 
+    /// `remove_mount("/path")` named a path no mount is registered under.
+    #[error("no mount at path '{path}'")]
+    MountNotFound { path: String },
+
     /// `MuxerConfig` failed validation (no programs declared, etc.) or
     /// some other configuration-time invariant was violated.
     #[error("invalid mount config: {detail}")]
@@ -223,8 +227,10 @@ pub enum MountError {
     #[error("muxer error: {0}")]
     Mux(#[from] tst_core::error::MuxError),
 
-    /// The mount's parent server has been shut down (or the mount was
-    /// explicitly removed in a future API).
+    /// The mount's muxer lock is poisoned (an earlier push panicked while
+    /// holding it). Removing the mount with `RtspServer::remove_mount` does
+    /// not produce this: the handle of a removed mount keeps accepting
+    /// pushes, which reach nobody.
     #[error("mount closed")]
     Closed,
 }
