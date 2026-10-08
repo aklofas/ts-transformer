@@ -107,11 +107,10 @@ fn publisher_teardown_leaves_app_transport_open() {
 }
 
 /// `stop()` sends the publisher the Notice 5402 ANNOUNCE before closing its
-/// connection, and a parked application recv is woken by `mount.cancel()`.
-// Not yet: stop() will also close the app transport (today it does not wake
-// a parked app recv, so this test pins only the notice and the cancel path).
+/// connection, and ends the application transport: a parked `recv_bytes`
+/// returns `Closed`.
 #[test]
-fn server_stop_sends_notice_to_publisher_and_cancel_wakes_app() {
+fn server_stop_closes_app_transport() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
     let mount = server.add_publish_mount("/pub").unwrap();
     server.start().unwrap();
@@ -121,6 +120,7 @@ fn server_stop_sends_notice_to_publisher_and_cancel_wakes_app() {
     let mut p = RawPublisher::connect(port);
     record_interleaved(&mut p, "/pub");
     let parked = park(app);
+    std::thread::sleep(Duration::from_millis(200)); // let it park
 
     // stop() blocks through its graceful drain; run it off the test thread.
     let stopper = std::thread::spawn(move || {
@@ -140,11 +140,11 @@ fn server_stop_sends_notice_to_publisher_and_cancel_wakes_app() {
         rest.len()
     );
 
-    mount.cancel();
     let r = parked
         .recv_timeout(Duration::from_secs(5))
-        .expect("cancel woke the parked recv");
-    assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
+        .expect("stop() woke the parked recv");
+    assert!(matches!(r, Err(TransportError::Closed)), "got {r:?}");
+    assert!(mount.publisher().is_none());
     drop(stopper.join().unwrap());
 }
 

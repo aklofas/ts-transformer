@@ -36,10 +36,7 @@ pub(crate) struct PublishMountState {
     /// the mpsc receiver observe `Disconnected`.
     ///
     /// Read only by [`Self::emit`] (the publisher ingest adapter) and
-    /// [`Self::close`] (not yet called outside this module's tests; mount
-    /// removal will call it) — see the `#[allow(dead_code)]` note on
-    /// `impl PublishMountState` below.
-    #[allow(dead_code)]
+    /// [`Self::close`] (server `stop()`).
     app_tx: Mutex<Option<std::sync::mpsc::SyncSender<Bytes>>>,
     /// Consumer side of the application-facing bridge. Taken exactly
     /// once by [`PublishMountHandle::into_recv_transport`] — a second
@@ -107,12 +104,6 @@ impl PublishMountState {
         })
     }
 
-    // The publisher ingest adapter calls `emit` (interleaved `$` frames
-    // and UDP ingest); `close` is reached only from this module's tests
-    // until mount removal calls it. `tick` is `emit`'s shared
-    // stats-mutation path. `try_begin_publisher`/`end_publisher` are
-    // reached from `handle_announce` / `PublishSession::end`. The
-    // `#[allow(dead_code)]` attributes stay harmless once every call lands.
     /// One frame to both sinks. `ts` = TS payload for readers; `rtp` =
     /// whole RTP packet (PT 33) for the app. A full application channel
     /// drops `rtp` (newest) and ticks `frames_dropped_app`; the reader
@@ -124,7 +115,6 @@ impl PublishMountState {
     /// attempted at all (see `app_taken`'s doc) — `frames_emitted` still
     /// counts the frame (readers got it), but `frames_dropped_app` does
     /// not, since nothing was dropped: there was no queue to drop from.
-    #[allow(dead_code)]
     pub(crate) fn emit(&self, ts: Bytes, rtp: Bytes) {
         let _ = self.fanout.send(ts); // no readers → Err, fine
         let dropped = self.app_taken.load(Ordering::Acquire)
@@ -190,10 +180,9 @@ impl PublishMountState {
     /// `TransportError::Closed` — not `Broken` — because
     /// `app_end_reason` records `CleanTeardown` first (see the field
     /// doc). Also ends the current publisher, if any. Called by
-    /// `remove_mount` / server `stop()` (a later task) — not by
+    /// [`crate::rtsp::server::RtspServer::stop`] — not by
     /// `end_publisher`, which must NOT close the transport (a reader
     /// stays attached across publisher churn).
-    #[allow(dead_code)]
     pub(crate) fn close(&self) {
         self.app_end_reason.record(StreamEndReason::CleanTeardown);
         self.app_tx.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -201,7 +190,6 @@ impl PublishMountState {
     }
 
     /// Mutate the stats accumulator under its mutex.
-    #[allow(dead_code)]
     pub(crate) fn tick(&self, f: impl FnOnce(&mut PublishMountStatsInner)) {
         let mut s = self.stats.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut s);
@@ -377,6 +365,12 @@ impl PublishMountHandle {
     /// so [`Self::cancel`] and `PublishMountState::close` reach it from
     /// any thread, at any time — including after this handle (and the
     /// transport itself) have been dropped.
+    ///
+    /// The transport outlives publisher churn: when a publisher ends it
+    /// stays open and silent until the next one. [`Self::cancel`] ends it
+    /// with `TransportError::ExplicitClose`;
+    /// [`crate::rtsp::server::RtspServer::stop`] ends it with
+    /// `TransportError::Closed`.
     pub fn into_recv_transport(self) -> Result<RtpRecvTransport, RtspServerError> {
         let rx = self
             .state
