@@ -9,7 +9,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added — tst-rtp: RTSP publisher role (ANNOUNCE / RECORD ingest), MP2T
+### Added — tst-rtp: RTSP publisher role (ANNOUNCE / RECORD ingest), MP2T and elementary H.264 + KLV
 
 - `RtspServer::add_publish_mount(path)` registers a mount a publisher can
   ANNOUNCE into (RFC 2326 §10.3), SETUP with `mode=record` (TCP-interleaved
@@ -17,8 +17,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`PublishMountHandle::into_recv_transport`, once per mount) carrying the
   publisher's MPEG-TS, and keeps serving PLAY readers. One publisher per
   mount (`403` to a second); the mount outlives publishers
-  (`PublishMountHandle::generation`). Elementary-track publishers,
-  on-demand mounts and the bindings follow in this release.
+  (`PublishMountHandle::generation`). On-demand mounts and the bindings
+  follow in this release.
 - A second `into_recv_transport` on the same mount returns the new
   `RtspServerError::TransportTaken`. `PublishMountHandle::cancel` ends the
   application transport with `ExplicitClose`; `RtspServer::stop` ends it
@@ -26,9 +26,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The publisher's MPEG-TS reaches the application and PLAY readers in
   bundles of at most seven TS packets, whatever bundle size the publisher
   sent.
-- A UDP publisher's RTP is admitted only from its RTSP control
+- Elementary-track publishers: one H.264 track (RFC 6184), optionally one
+  KLV track (RFC 6597 `smpte336m`), are re-muxed into MPEG-TS (video PID
+  0x100, KLV PID 0x101 async with PTS). KLV is placed on the video
+  timeline from the publisher's RTCP sender reports
+  (`PublishMountStats::alignment`; `Provisional` after 2 s without
+  reports). An ANNOUNCE of this shape, answered `415` until now, is
+  accepted; other track mixes still answer `415`.
+- A UDP publisher's RTP and RTCP are admitted only from its RTSP control
   connection's IP; the source port is learned from the first valid packet
-  and may change. Datagrams from other IPs are counted in
+  and may change. Datagrams from other IPs, RTCP included, are counted in
   `PublishMountStats::source_rejected`.
 - A TCP-interleaved publisher gets the channel pair it asked for when that
   pair is free on its connection.

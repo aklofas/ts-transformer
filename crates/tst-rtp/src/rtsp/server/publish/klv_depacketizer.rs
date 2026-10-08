@@ -100,7 +100,7 @@ pub(crate) struct KlvDepayStats {
 /// `feed` never panics on any input byte pattern — adversarial payloads are
 /// handled by silently discarding and ticking the appropriate stat counter.
 ///
-/// See the [module-level doc](self) for the full 7-rule state-machine
+/// See the `klv_depacketizer` module doc for the full 7-rule state-machine
 /// contract.
 pub struct KlvDepacketizer {
     /// RTP timestamp of the open unit, if one is open.
