@@ -37,6 +37,21 @@ pub(crate) trait PublishAdapter: Send {
     fn flush(&mut self);
 }
 
+/// The application-side packet for one TS bundle: a plain 12-byte RTP
+/// header (V=2, no padding, extension or CSRCs, marker 0, PT 33, the given
+/// sequence number, timestamp and SSRC) followed by `payload`. PT 33 is
+/// what [`crate::transport::RtpRecvTransport`] pins, whatever PT the
+/// publisher announced.
+pub(crate) fn synth_rtp_packet(seq: u16, timestamp: u32, ssrc: u32, payload: &[u8]) -> Bytes {
+    let mut header = RtpHeader::new(seq, timestamp, ssrc);
+    header.payload_type = RTP_PT_MP2T;
+    let mut app = BytesMut::with_capacity(RTP_HEADER_LEN + payload.len());
+    app.put_bytes(0, RTP_HEADER_LEN);
+    header.encode_into(&mut app[..RTP_HEADER_LEN]);
+    app.put_slice(payload);
+    app.freeze()
+}
+
 /// RFC 2250 passthrough: the single announced track carries whole TS
 /// packets as the RTP payload.
 ///
@@ -108,19 +123,18 @@ impl PublishAdapter for Mp2tAdapter {
         }
         // One copy of the packet; readers get slices of it.
         let source = Bytes::copy_from_slice(packet);
-        let mut header = RtpHeader::new(0, parsed.header.timestamp, parsed.header.ssrc);
-        header.payload_type = RTP_PT_MP2T;
         let mut at = start;
         while at < end {
             let chunk_end = (at + RTP_PAYLOAD_SIZE).min(end);
             let ts = source.slice(at..chunk_end);
-            header.seq = self.next_seq;
+            let app = synth_rtp_packet(
+                self.next_seq,
+                parsed.header.timestamp,
+                parsed.header.ssrc,
+                &ts,
+            );
             self.next_seq = self.next_seq.wrapping_add(1);
-            let mut app = BytesMut::with_capacity(RTP_HEADER_LEN + ts.len());
-            app.put_bytes(0, RTP_HEADER_LEN);
-            header.encode_into(&mut app[..RTP_HEADER_LEN]);
-            app.put_slice(&ts);
-            self.mount.emit(ts, app.freeze());
+            self.mount.emit(ts, app);
             at = chunk_end;
         }
     }
