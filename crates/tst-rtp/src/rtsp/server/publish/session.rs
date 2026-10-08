@@ -52,10 +52,6 @@ pub(crate) struct PublishSession {
     /// ANNOUNCE; `handle_record` refuses once the mount no longer holds
     /// it for this session (see `PublishMountState::holds_publisher`).
     pub(crate) slot_generation: u64,
-    /// Read in this module's own tests today; production reads it once
-    /// stats reporting names the active shape.
-    #[allow(dead_code)]
-    pub(crate) shape: super::PublishShape,
     pub(crate) tracks: Vec<PublishTrack>,
     pub(crate) recording: bool,
     pub(crate) adapter: Arc<Mutex<Box<dyn PublishAdapter>>>,
@@ -97,7 +93,6 @@ impl PublishSession {
         announced: AnnounceShape,
         adapter: Box<dyn PublishAdapter>,
     ) -> Self {
-        let shape = announced.shape;
         let tracks = announced
             .tracks
             .into_iter()
@@ -110,7 +105,6 @@ impl PublishSession {
         Self {
             mount,
             slot_generation,
-            shape,
             tracks,
             recording: false,
             adapter: Arc::new(Mutex::new(adapter)),

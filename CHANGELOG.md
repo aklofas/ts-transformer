@@ -30,10 +30,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   application calls `remove_mount`. Removing idle names is the
   application's job: the table holds at most 256 on-demand mounts, taken
   or not, and an ANNOUNCE past that answers `503`. Registered mounts are
-  unaffected and never count.
+  unaffected and never count. A mount whose transport has not been taken
+  costs about 15 KB; taking the transport preallocates about 263 KB for
+  its queue, which can hold up to about 8.7 MB if the application stops
+  reading it.
   `RtspServer::stop` wakes a waiting `next_publisher` with `Shutdown`.
 - `RtspServer::remove_mount(path)` removes a mount of any kind and frees
-  the path. Every session that has completed a SETUP on it, reader or
+  the path. Like `stop()` and dropping the server, it blocks the calling
+  thread and must not be called from inside a tokio runtime. Every session that has completed a SETUP on it, reader or
   publisher, gets the Notice 5402 ANNOUNCE and is closed; a publish
   mount's application transport then reads `Closed`. A publisher between
   ANNOUNCE and its first SETUP gets no Notice, loses its slot and is
@@ -60,8 +64,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   KLV track (RFC 6597 `smpte336m`), are re-muxed into MPEG-TS (video PID
   0x100, KLV PID 0x101 async with PTS). KLV is placed on the video
   timeline from the publisher's RTCP sender reports
-  (`PublishMountStats::alignment`; `Provisional` after 2 s without
-  reports). Other track mixes answer `415`.
+  (`PublishMountStats::alignment`: `Pending` while KLV is held,
+  `SenderReport` once both tracks' reports arrive, `Provisional` after
+  2 s without them; `NotApplicable` for MP2T and video-only publishers).
+  A placed KLV unit is muxed once the video has reached its PTS, so KLV
+  stamped ahead of the video never drags the PCR ahead of the video
+  frames still to come; one the video has not reached 2 s after it was
+  placed is dropped and counted. Other track mixes answer `415`.
+- An SSRC change on an elementary publisher's video or KLV track (a
+  source restart) restarts that track's depacketizer and KLV alignment:
+  KLV units held at that moment are dropped and counted, alignment reads
+  `Pending` until fresh sender reports or the fallback re-establish it,
+  and the fallback places the new source where the video line is at the
+  restart. Sender reports are taken only from a track's current SSRC.
+  `PublishMountStats::ssrc_changes` counts each change.
 - An H.264 or KLV track must announce a 90000 clock rate (RFC 6184
   mandates it for H.264); any other rate answers `415`.
 - B-frame publishers: the re-muxed TS carries PTS only; a DTS-deriving

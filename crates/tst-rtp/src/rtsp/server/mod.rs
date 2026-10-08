@@ -191,6 +191,12 @@ pub(crate) fn unregister_session(state: &Arc<ServerState>, entry: &Arc<ActiveSes
 /// 3. **Hard cross-thread — `cancel_handle()`** — returns an
 ///    [`RtspServerCancelHandle`] that can be cancelled from any thread.
 ///    Equivalent to Drop's hard-cancel without dropping the handle.
+///
+/// Dropping the server, [`Self::stop`] and [`Self::remove_mount`] block
+/// the calling thread on the server's internal runtime. Call them from a
+/// plain thread, never from inside a tokio runtime (an async task, or a
+/// `block_on` closure): tokio panics when a runtime is blocked on or shut
+/// down from within one.
 pub struct RtspServer {
     pub(crate) state: Arc<ServerState>,
     pub(crate) runtime: Option<Runtime>,
@@ -516,6 +522,10 @@ impl RtspServer {
     /// elementary-stream re-muxer): that mount stays in the table, idle,
     /// with its handle queued for [`Self::next_publisher`], until this
     /// call removes it.
+    ///
+    /// Blocks the calling thread on the server's runtime for the Notice
+    /// writes: never call it from inside a tokio runtime (see
+    /// [`RtspServer`]).
     ///
     /// Sessions that have not completed a SETUP on the mount get no Notice
     /// and are not cancelled. A publisher between its ANNOUNCE and its first
@@ -850,6 +860,9 @@ impl RtspServer {
     /// `TransportError::Closed`. A [`Self::next_publisher`] call waiting
     /// on another thread wakes with [`RtspServerError::Shutdown`], and an
     /// ANNOUNCE that would create an on-demand mount answers `503`.
+    ///
+    /// Blocks the calling thread on the server's runtime, drain included:
+    /// never call it from inside a tokio runtime (see [`RtspServer`]).
     ///
     /// # Errors
     /// - [`RtspServerError::NotStarted`] if called before `start()`.
