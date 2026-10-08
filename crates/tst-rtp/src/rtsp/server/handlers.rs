@@ -156,10 +156,8 @@ pub(crate) fn handle_describe(
     };
     drop(mounts);
 
-    let (kind_is_multicast, multicast_addr) = match &mount.kind {
-        crate::rtsp::server::mount::MountKind::Multicast { group, .. } => (true, Some(*group)),
-        _ => (false, None),
-    };
+    let kind_is_multicast = mount.is_multicast();
+    let multicast_addr = mount.multicast_group();
 
     let local_addr = match *state.local_addr.lock().unwrap() {
         Some(addr) => addr,
@@ -300,6 +298,14 @@ pub(crate) fn handle_setup(
     };
     drop(mounts);
 
+    // A publish mount re-serves PLAY readers from its publisher's TS
+    // bytes, but a reader's SETUP against it isn't wired yet — Task 6
+    // installs the real behaviour (today's rejection is temporary, not
+    // a permanent "no readers" rule).
+    if mount.as_publish().is_some() {
+        return error_response(req, 461, "Unsupported Transport");
+    }
+
     // Parse the Transport request header. The wire response stays a bare
     // 400 either way (a client gains nothing from the distinction); the
     // debug lines exist so a server operator can tell a missing header
@@ -331,10 +337,7 @@ pub(crate) fn handle_setup(
         };
 
     // Per RFC 7826 §13.3: TCP-interleaved is incompatible with multicast.
-    let is_multicast = matches!(
-        mount.kind,
-        crate::rtsp::server::mount::MountKind::Multicast { .. }
-    );
+    let is_multicast = mount.is_multicast();
     if is_multicast
         && matches!(
             parsed.kind,
@@ -355,10 +358,8 @@ pub(crate) fn handle_setup(
                 // Multicast SETUP: server points the client at the
                 // group; the per-mount multicast sender task is
                 // already publishing there.
-                let (group, ttl) = match &mount.kind {
-                    crate::rtsp::server::mount::MountKind::Multicast { group, ttl, .. } => {
-                        (*group, *ttl)
-                    }
+                let (group, ttl) = match (mount.multicast_group(), mount.multicast_ttl()) {
+                    (Some(group), Some(ttl)) => (group, ttl),
                     _ => unreachable!("multicast path gated above"),
                 };
                 // Guard: group port 65535 has no valid RTCP companion
@@ -602,10 +603,7 @@ pub(crate) fn handle_play(
     // seq/rtptime are not meaningful for a multicast mount (the server
     // has been sending since the mount was created); report zeros per
     // the shared-stream convention.
-    let is_multicast = matches!(
-        mount.kind,
-        crate::rtsp::server::mount::MountKind::Multicast { .. }
-    );
+    let is_multicast = mount.is_multicast();
     if is_multicast {
         return play_response_ok(req, &session_id, 0, 0);
     }
@@ -615,10 +613,9 @@ pub(crate) fn handle_play(
         return error_response(req, 454, "Session Not Found");
     };
     use crate::rtsp::client::transport_negotiation::RtspTransportKind;
-    let drop_counter = crate::rtsp::server::fanout::PeerDropCounter::with_mount_total(
-        std::sync::Arc::clone(&mount.frames_dropped),
-    );
-    let rx = mount.fanout.subscribe();
+    let drop_counter =
+        crate::rtsp::server::fanout::PeerDropCounter::with_mount_total(mount.frames_dropped());
+    let rx = mount.fanout().subscribe();
     let peer_transport = match transport.kind {
         RtspTransportKind::Udp => {
             let Some((rtp_sock, _rtcp_sock)) = session.udp_sockets.clone() else {
@@ -1095,7 +1092,7 @@ mod tests {
 
     // ── SETUP handler tests ───────────────────────────────────────────────
 
-    use crate::rtsp::server::mount::{MountKind, MountState};
+    use crate::rtsp::server::mount::{MountEntry, MountKind, MountState};
     use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 
     fn make_muxer_cfg() -> MuxerConfig {
@@ -1114,7 +1111,7 @@ mod tests {
             .mounts
             .lock()
             .unwrap()
-            .insert("/live".into(), mount_state);
+            .insert("/live".into(), MountEntry::Local(mount_state));
         state
     }
 
@@ -1139,7 +1136,7 @@ mod tests {
             .mounts
             .lock()
             .unwrap()
-            .insert("/mc".into(), mount_state);
+            .insert("/mc".into(), MountEntry::Local(mount_state));
         state
     }
 
@@ -1204,7 +1201,7 @@ mod tests {
             .unwrap()
             .get("/live")
             .unwrap()
-            .fanout
+            .fanout()
             .clone();
         // The cancelled task drops its broadcast receiver when it exits at
         // its next frame boundary (its next poll here: nothing is in flight).

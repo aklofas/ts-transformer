@@ -968,6 +968,17 @@ impl RtpRecvTransport {
         }
     }
 
+    /// Replace the cancel handle (publisher mounts share one handle between
+    /// the `PublishMountHandle` and the transport it hands out). Only
+    /// consumed under `rtsp-server` (the only caller is
+    /// `PublishMountHandle::into_recv_transport`); gated to match so a
+    /// `--no-default-features` build has no orphaned method.
+    #[cfg(feature = "rtsp-server")]
+    pub(crate) fn with_cancel_handle(mut self, cancel: Arc<RtpCancelHandle>) -> Self {
+        self.cancel = cancel;
+        self
+    }
+
     /// Variant of [`Self::from_mpsc_placeholder`] that also spawns a
     /// background `rtsp-rtcp-ingest` thread to drain `rtcp_rx` (the
     /// RTCP channel demuxed by the RTSP client's interleaved pump) and

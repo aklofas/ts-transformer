@@ -988,7 +988,7 @@ mod session_tests {
     /// (a 2xx on an auth-gated method) rather than 404.
     #[tokio::test]
     async fn auth_failures_reset_on_successful_auth() {
-        use crate::rtsp::server::mount::{MountKind, MountState};
+        use crate::rtsp::server::mount::{MountEntry, MountKind, MountState};
         use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1008,7 +1008,11 @@ mod session_tests {
             b.add_program(prog.build());
             let mux_cfg = b.build().unwrap();
             let mount = MountState::new("/test", MountKind::Unicast, mux_cfg, 16).unwrap();
-            state.mounts.lock().unwrap().insert("/test".into(), mount);
+            state
+                .mounts
+                .lock()
+                .unwrap()
+                .insert("/test".into(), MountEntry::Local(mount));
             state
                 .active_sessions
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

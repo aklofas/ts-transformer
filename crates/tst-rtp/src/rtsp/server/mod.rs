@@ -39,10 +39,10 @@ pub(crate) struct ServerState {
     /// Hard-cancel signal (independent from graceful). Exposed publicly
     /// via [`RtspServer::cancel_handle`].
     pub(crate) hard_cancel: RtspServerCancelHandle,
-    /// Mount path → mount state; populated via `RtspServer::add_mount`.
-    pub(crate) mounts: std::sync::Mutex<
-        std::collections::HashMap<String, Arc<crate::rtsp::server::mount::MountState>>,
-    >,
+    /// Mount path → mount entry; populated via `RtspServer::add_mount` /
+    /// `add_multicast_mount` / `add_publish_mount`.
+    pub(crate) mounts:
+        std::sync::Mutex<std::collections::HashMap<String, crate::rtsp::server::mount::MountEntry>>,
     /// Live count of accepted (and not-yet-closed) client sessions.
     pub(crate) active_sessions: AtomicUsize,
     /// Cumulative RTP packets sent across all peers + all mounts.
@@ -191,6 +191,24 @@ impl std::fmt::Debug for RtspServer {
     }
 }
 
+/// Shared path validation for `add_mount` / `add_multicast_mount` /
+/// `add_publish_mount`: must start with `/` and avoid the URL-reserved
+/// characters that would make the `extract_mount_path` lookup in
+/// `handlers.rs` ambiguous.
+fn validate_mount_path(path: &str) -> Result<(), RtspServerError> {
+    if path.is_empty() || !path.starts_with('/') {
+        return Err(RtspServerError::InvalidMountPath {
+            detail: format!("path must start with '/'; got '{path}'"),
+        });
+    }
+    if path.contains('?') || path.contains('#') {
+        return Err(RtspServerError::InvalidMountPath {
+            detail: format!("path contains URL-reserved character: '{path}'"),
+        });
+    }
+    Ok(())
+}
+
 /// Random 32-bit SSRC seed for multicast mounts. Uses `getrandom`;
 /// falls back to zero on the (impossible-in-practice) error path.
 ///
@@ -319,16 +337,7 @@ impl RtspServer {
         if self.state.shutdown.load(Ordering::Relaxed) {
             return Err(RtspServerError::Shutdown);
         }
-        if path.is_empty() || !path.starts_with('/') {
-            return Err(RtspServerError::InvalidMountPath {
-                detail: format!("path must start with '/'; got '{path}'"),
-            });
-        }
-        if path.contains('?') || path.contains('#') {
-            return Err(RtspServerError::InvalidMountPath {
-                detail: format!("path contains URL-reserved character: '{path}'"),
-            });
-        }
+        validate_mount_path(path)?;
         let mount_state = crate::rtsp::server::mount::MountState::new(
             path,
             crate::rtsp::server::mount::MountKind::Unicast,
@@ -341,8 +350,48 @@ impl RtspServer {
                 path: path.to_string(),
             });
         }
-        mounts.insert(path.to_string(), mount_state.clone());
+        mounts.insert(
+            path.to_string(),
+            crate::rtsp::server::mount::MountEntry::Local(mount_state.clone()),
+        );
         Ok(crate::rtsp::server::mount::MountHandle { state: mount_state })
+    }
+
+    /// Register a publish mount under `path`. The server now accepts
+    /// ANNOUNCE/RECORD against this path (RFC 2326 §10.3 / §10.11); the
+    /// returned [`crate::rtsp::server::publish::PublishMountHandle`]
+    /// hands the application an [`crate::transport::RtpRecvTransport`]
+    /// fed by whichever publisher currently holds the mount, and the
+    /// mount re-serves PLAY readers from the same TS bytes.
+    ///
+    /// # Errors
+    /// - [`RtspServerError::InvalidMountPath`] — same rules as
+    ///   [`Self::add_mount`].
+    /// - [`RtspServerError::DuplicateMount`] — path already registered.
+    /// - [`RtspServerError::Shutdown`] — server stopped.
+    pub fn add_publish_mount(
+        &self,
+        path: &str,
+    ) -> Result<crate::rtsp::server::publish::PublishMountHandle, RtspServerError> {
+        if self.state.shutdown.load(Ordering::Relaxed) {
+            return Err(RtspServerError::Shutdown);
+        }
+        validate_mount_path(path)?;
+        let st = crate::rtsp::server::publish::mount::PublishMountState::new(
+            path,
+            self.state.builder.fanout_capacity,
+        );
+        let mut mounts = self.state.mounts.lock().expect("mounts mutex");
+        if mounts.contains_key(path) {
+            return Err(RtspServerError::DuplicateMount {
+                path: path.to_string(),
+            });
+        }
+        mounts.insert(
+            path.to_string(),
+            crate::rtsp::server::mount::MountEntry::Publish(st.clone()),
+        );
+        Ok(crate::rtsp::server::publish::PublishMountHandle { state: st })
     }
 
     /// Register a multicast mount. The provided `group_url` is an
@@ -377,16 +426,7 @@ impl RtspServer {
         if self.state.shutdown.load(Ordering::Relaxed) {
             return Err(RtspServerError::Shutdown);
         }
-        if path.is_empty() || !path.starts_with('/') {
-            return Err(RtspServerError::InvalidMountPath {
-                detail: format!("path must start with '/'; got '{path}'"),
-            });
-        }
-        if path.contains('?') || path.contains('#') {
-            return Err(RtspServerError::InvalidMountPath {
-                detail: format!("path contains URL-reserved character: '{path}'"),
-            });
-        }
+        validate_mount_path(path)?;
         let mcast = crate::url::MulticastGroup::parse(group_url).map_err(|e| {
             RtspServerError::InvalidMulticastGroup {
                 addr: group_url.to_string(),
@@ -409,7 +449,10 @@ impl RtspServer {
                 path: path.to_string(),
             });
         }
-        mounts.insert(path.to_string(), mount_state.clone());
+        mounts.insert(
+            path.to_string(),
+            crate::rtsp::server::mount::MountEntry::Local(mount_state.clone()),
+        );
         // Spawn the per-mount multicast sender task. The send socket is
         // built async on the runtime; we use spawn so add_multicast_mount
         // can return synchronously. If the socket build fails, the task
@@ -1025,6 +1068,40 @@ mod add_multicast_mount_tests {
             }
             _ => panic!("expected Multicast"),
         }
+    }
+}
+
+#[cfg(test)]
+mod add_publish_mount_tests {
+    use super::*;
+    use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
+
+    fn make_muxer_cfg() -> MuxerConfig {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x1011, VideoCodec::H264);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    }
+
+    #[test]
+    fn add_publish_mount_registers_and_rejects_duplicates() {
+        let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+        let h = server.add_publish_mount("/pub").unwrap();
+        assert_eq!(h.mount_path(), "/pub");
+        assert!(matches!(
+            server.add_publish_mount("/pub"),
+            Err(RtspServerError::DuplicateMount { .. })
+        ));
+        assert!(matches!(
+            server.add_mount("/pub", make_muxer_cfg()),
+            Err(RtspServerError::DuplicateMount { .. })
+        ));
+        assert!(matches!(
+            server.add_publish_mount("nope"),
+            Err(RtspServerError::InvalidMountPath { .. })
+        ));
+        assert_eq!(server.stats().mounts, 1);
     }
 }
 

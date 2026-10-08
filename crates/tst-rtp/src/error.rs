@@ -207,6 +207,12 @@ pub enum RtspServerError {
     /// Public method invoked after `stop()` completed (or after `cancel()`).
     #[error("RTSP server has been shut down")]
     Shutdown,
+
+    /// `PublishMountHandle::into_recv_transport` was already called on
+    /// another clone of this mount's handle — the application transport
+    /// exists once.
+    #[error("publish mount transport already taken")]
+    TransportTaken,
 }
 
 /// Failure shape for `MountHandle` push methods.

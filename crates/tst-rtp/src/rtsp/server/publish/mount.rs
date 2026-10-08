@@ -1,1 +1,496 @@
-//! Published-mount state and the handles given back to the application (filled by a later task).
+//! Published-mount state and the handles given back to the application.
+//!
+//! A publish mount's byte flow has two sinks fed from one `emit` call:
+//! the mount's `broadcast::Sender<Bytes>` (TS payload bytes, the same
+//! fanout a muxer-backed [`super::super::mount::MountState`] uses to
+//! re-serve PLAY readers) and an application-facing bounded mpsc channel
+//! (whole RTP packets, PT 33) that [`PublishMountHandle::into_recv_transport`]
+//! hands out as an [`RtpRecvTransport`] — the SAME constructor the RTSP
+//! *client*'s TCP-interleaved path uses, so `DemuxReceiver` and every
+//! binding's receiver work against a publish mount unchanged.
+
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
+
+use bytes::Bytes;
+
+use crate::cancel::RtpCancelHandle;
+use crate::error::RtspServerError;
+use crate::rtsp::client::end_reason::{EndReasonSlot, StreamEndReason};
+use crate::transport::RtpRecvTransport;
+
+/// Internal per-mount state for a publish mount. Held inside
+/// `ServerState::mounts` as `Arc<PublishMountState>` (via
+/// `MountEntry::Publish`). Public surface is via [`PublishMountHandle`]
+/// only.
+pub(crate) struct PublishMountState {
+    pub(crate) path: String,
+    /// Broadcast sender — TS payload bytes, re-serving PLAY readers.
+    /// Fed by [`Self::emit`]'s `ts` argument, same as a muxer-backed
+    /// mount's `MountState::fanout`.
+    pub(crate) fanout: tokio::sync::broadcast::Sender<Bytes>,
+    /// Producer side of the application-facing bridge. `None` once
+    /// [`Self::close`] has run — a dropped `SyncSender` is what makes
+    /// the mpsc receiver observe `Disconnected`.
+    ///
+    /// Read today only by [`Self::emit`] and [`Self::close`], which are
+    /// themselves reached only from this module's own tests until the
+    /// publisher ingest adapter (Task 5) and `remove_mount` (Task 16)
+    /// call them from non-test code — see the `#[allow(dead_code)]`
+    /// note on `impl PublishMountState` below.
+    #[allow(dead_code)]
+    app_tx: Mutex<Option<std::sync::mpsc::SyncSender<Bytes>>>,
+    /// Consumer side of the application-facing bridge. Taken exactly
+    /// once by [`PublishMountHandle::into_recv_transport`] — a second
+    /// call sees `None` and returns `RtspServerError::TransportTaken`.
+    app_rx: Mutex<Option<std::sync::mpsc::Receiver<Bytes>>>,
+    /// Shared with every `RtpRecvTransport` built from this mount (there
+    /// is at most one live at a time, enforced by `app_rx` being
+    /// take-once) so [`PublishMountHandle::cancel`] can wake a parked
+    /// `recv_bytes` from any thread, exactly like a real
+    /// TCP-interleaved transport's cancel handle.
+    app_cancel: Arc<RtpCancelHandle>,
+    /// Shared with the `RtpRecvTransport` built from this mount so
+    /// [`Self::close`] can record `CleanTeardown` before dropping
+    /// `app_tx` — the same first-writer-wins remap
+    /// `recv_bytes_inner` already applies to the RTSP client's
+    /// interleaved pump disconnecting cleanly (see
+    /// `interleaved_pump.rs`'s `Ok(0)` arm). Without this, a dropped
+    /// `SyncSender` is indistinguishable from a wire failure and the
+    /// transport would report `Broken`, not `Closed`.
+    app_end_reason: EndReasonSlot,
+    publisher: Mutex<Option<PublisherInfo>>,
+    generation: AtomicU64,
+    stats: Mutex<PublishMountStatsInner>,
+    /// Mount-level dropped-frame total for PLAY readers lagging behind
+    /// the fanout — mirrors `MountState::frames_dropped`. Lives outside
+    /// `stats` so a lagging peer's fanout task can bump it without
+    /// contending on the push-path stats mutex.
+    pub(crate) frames_dropped_readers: Arc<AtomicU64>,
+}
+
+impl PublishMountState {
+    /// Construct a fresh `PublishMountState`. `fanout_capacity` sizes
+    /// the PLAY-reader broadcast (mirrors `MountState::new`); the
+    /// application-facing bridge is sized at
+    /// [`crate::rtsp::client::interleaved_pump::DATA_QUEUE_BOUND`] — the
+    /// same bound the RTSP client's interleaved pump uses for its data
+    /// channel, so a publish mount's backpressure behavior (drop-newest
+    /// past the bound, never block the publisher) matches that path.
+    pub(crate) fn new(path: &str, fanout_capacity: usize) -> Arc<Self> {
+        let (fanout, _rx) = tokio::sync::broadcast::channel(fanout_capacity.max(1));
+        let (tx, rx) =
+            std::sync::mpsc::sync_channel(crate::rtsp::client::interleaved_pump::DATA_QUEUE_BOUND);
+        Arc::new(Self {
+            path: path.to_string(),
+            fanout,
+            app_tx: Mutex::new(Some(tx)),
+            app_rx: Mutex::new(Some(rx)),
+            app_cancel: RtpCancelHandle::new(),
+            app_end_reason: EndReasonSlot::default(),
+            publisher: Mutex::new(None),
+            generation: AtomicU64::new(0),
+            stats: Mutex::new(PublishMountStatsInner::default()),
+            frames_dropped_readers: Arc::new(AtomicU64::new(0)),
+        })
+    }
+
+    // `emit`, `try_begin_publisher`, `end_publisher`, `close`, and `tick`
+    // are reached today only through this module's own tests — the
+    // publisher ingest adapter (Task 5 of this arc) calls `emit` and
+    // `try_begin_publisher`/`end_publisher` from the RECORD session
+    // lifecycle, and `remove_mount` (Task 16) calls `close`. `tick` is
+    // every one of those methods' shared stats-mutation path. The
+    // `#[allow(dead_code)]` on each stays harmless once those calls land.
+    /// One frame to both sinks. `ts` = TS payload for readers; `rtp` =
+    /// whole RTP packet (PT 33) for the app. A full application channel
+    /// drops `rtp` (newest) and ticks `frames_dropped_app`; the reader
+    /// fanout never blocks or drops here (a lagging reader's own fanout
+    /// task tracks its drops via `frames_dropped_readers`, same as a
+    /// muxer-backed mount).
+    #[allow(dead_code)]
+    pub(crate) fn emit(&self, ts: Bytes, rtp: Bytes) {
+        let _ = self.fanout.send(ts); // no readers → Err, fine
+        let dropped = match self
+            .app_tx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            Some(tx) => matches!(
+                tx.try_send(rtp),
+                Err(std::sync::mpsc::TrySendError::Full(_))
+            ),
+            None => false, // closed: the app side is gone, nothing to count
+        };
+        self.tick(|s| {
+            s.frames_emitted += 1;
+            if dropped {
+                s.frames_dropped_app += 1;
+            }
+        });
+    }
+
+    /// Claim the publisher slot. Returns `false` if another publisher
+    /// already holds it (the slot is exclusive — only one ANNOUNCE/RECORD
+    /// session may feed a mount at a time).
+    #[allow(dead_code)]
+    pub(crate) fn try_begin_publisher(&self, mut info: PublisherInfo) -> bool {
+        let mut g = self.publisher.lock().unwrap_or_else(|e| e.into_inner());
+        if g.is_some() {
+            return false;
+        }
+        info.generation = self.generation.load(Ordering::Relaxed);
+        *g = Some(info);
+        true
+    }
+
+    /// Release the publisher slot (RECORD session ended). Bumps
+    /// `generation` so a stale publisher reference is observably out of
+    /// date; does NOT close the application transport — a reader
+    /// waiting on `into_recv_transport`'s output just sees the stream
+    /// idle until the next publisher begins.
+    #[allow(dead_code)]
+    pub(crate) fn end_publisher(&self) {
+        let mut g = self.publisher.lock().unwrap_or_else(|e| e.into_inner());
+        if g.take().is_some() {
+            self.generation.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Take the consumer side of the application-facing bridge. Used by
+    /// [`PublishMountHandle::into_recv_transport`] — take-once, so a
+    /// second call (from another clone of the handle) sees `None`.
+    pub(crate) fn take_app_rx(&self) -> Option<std::sync::mpsc::Receiver<Bytes>> {
+        self.app_rx.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
+    /// Permanently close the application transport: drops `app_tx` so a
+    /// parked (or future) `recv_bytes` on the transport this mount
+    /// handed out observes a clean disconnect, reported as
+    /// `TransportError::Closed` — not `Broken` — because
+    /// `app_end_reason` records `CleanTeardown` first (see the field
+    /// doc). Also ends the current publisher, if any. Called by
+    /// `remove_mount` / server `stop()` (a later task) — not by
+    /// `end_publisher`, which must NOT close the transport (a reader
+    /// stays attached across publisher churn).
+    #[allow(dead_code)]
+    pub(crate) fn close(&self) {
+        self.app_end_reason.record(StreamEndReason::CleanTeardown);
+        self.app_tx.lock().unwrap_or_else(|e| e.into_inner()).take();
+        self.end_publisher();
+    }
+
+    /// Mutate the stats accumulator under its mutex.
+    #[allow(dead_code)]
+    pub(crate) fn tick(&self, f: impl FnOnce(&mut PublishMountStatsInner)) {
+        let mut s = self.stats.lock().unwrap_or_else(|e| e.into_inner());
+        f(&mut s);
+    }
+
+    /// Snapshot of cumulative + live mount stats. Mutates nothing.
+    pub(crate) fn stats_snapshot(&self) -> PublishMountStats {
+        let inner = self.stats.lock().unwrap_or_else(|e| e.into_inner());
+        PublishMountStats {
+            rtp_packets_received: inner.rtp_packets_received,
+            bytes_received: inner.bytes_received,
+            malformed_packets: inner.malformed_packets,
+            frames_emitted: inner.frames_emitted,
+            frames_dropped_app: inner.frames_dropped_app,
+            frames_dropped_readers: self.frames_dropped_readers.load(Ordering::Relaxed),
+            aus_emitted: inner.aus_emitted,
+            aus_dropped: inner.aus_dropped,
+            klv_units_emitted: inner.klv_units_emitted,
+            klv_units_dropped: inner.klv_units_dropped,
+            alignment: inner.alignment,
+            alignment_steps: inner.alignment_steps,
+            generation: self.generation.load(Ordering::Relaxed),
+            peer_count: self.fanout.receiver_count(),
+        }
+    }
+}
+
+/// Which publisher currently (or most recently) holds the mount's
+/// publisher slot.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PublisherInfo {
+    pub peer: SocketAddr,
+    pub shape: super::PublishShape,
+    pub since: SystemTime,
+    pub generation: u64,
+}
+
+/// Whether / how the publish mount's PTS/DTS have been aligned to a
+/// shared clock. `NotApplicable` until a later task's clock-alignment
+/// work lands (RTCP SR-anchored alignment); kept `#[non_exhaustive]` so
+/// that work can add variants without a breaking change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ClockAlignment {
+    NotApplicable,
+    Provisional,
+    SenderReport,
+}
+
+impl Default for ClockAlignment {
+    fn default() -> Self {
+        Self::NotApplicable
+    }
+}
+
+/// Internal stats accumulator. Public [`PublishMountStats`] snapshot
+/// derived from this plus [`PublishMountState::frames_dropped_readers`],
+/// `generation`, and the fanout's live subscriber count.
+#[derive(Debug, Clone)]
+pub(crate) struct PublishMountStatsInner {
+    pub(crate) rtp_packets_received: u64,
+    pub(crate) bytes_received: u64,
+    pub(crate) malformed_packets: u64,
+    pub(crate) frames_emitted: u64,
+    pub(crate) frames_dropped_app: u64,
+    pub(crate) aus_emitted: u64,
+    pub(crate) aus_dropped: u64,
+    pub(crate) klv_units_emitted: u64,
+    pub(crate) klv_units_dropped: u64,
+    pub(crate) alignment: ClockAlignment,
+    pub(crate) alignment_steps: u64,
+}
+
+impl Default for PublishMountStatsInner {
+    fn default() -> Self {
+        Self {
+            rtp_packets_received: 0,
+            bytes_received: 0,
+            malformed_packets: 0,
+            frames_emitted: 0,
+            frames_dropped_app: 0,
+            aus_emitted: 0,
+            aus_dropped: 0,
+            klv_units_emitted: 0,
+            klv_units_dropped: 0,
+            alignment: ClockAlignment::NotApplicable,
+            alignment_steps: 0,
+        }
+    }
+}
+
+/// Snapshot of [`PublishMountHandle::stats`].
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct PublishMountStats {
+    pub rtp_packets_received: u64,
+    pub bytes_received: u64,
+    pub malformed_packets: u64,
+    pub frames_emitted: u64,
+    pub frames_dropped_app: u64,
+    pub frames_dropped_readers: u64,
+    pub aus_emitted: u64,
+    pub aus_dropped: u64,
+    pub klv_units_emitted: u64,
+    pub klv_units_dropped: u64,
+    pub alignment: ClockAlignment,
+    pub alignment_steps: u64,
+    pub generation: u64,
+    pub peer_count: usize,
+}
+
+/// Public mount surface for a publish mount. Returned by
+/// [`crate::rtsp::server::RtspServer::add_publish_mount`]. Cloning is
+/// cheap (clones the `Arc`); the application transport, however, is
+/// take-once — see [`Self::into_recv_transport`].
+#[derive(Clone)]
+pub struct PublishMountHandle {
+    pub(crate) state: Arc<PublishMountState>,
+}
+
+impl PublishMountHandle {
+    /// The mount path registered via `add_publish_mount("/path")`.
+    pub fn mount_path(&self) -> &str {
+        &self.state.path
+    }
+
+    /// Live subscriber count on the reader broadcast channel (PLAY
+    /// readers re-served from the publisher's TS bytes).
+    pub fn peer_count(&self) -> usize {
+        self.state.fanout.receiver_count()
+    }
+
+    /// Current publisher generation — bumped every time a publisher's
+    /// RECORD session ends (see `PublishMountState::end_publisher`).
+    pub fn generation(&self) -> u64 {
+        self.state.generation.load(Ordering::Relaxed)
+    }
+
+    /// The current publisher, if one holds the mount's publisher slot.
+    pub fn publisher(&self) -> Option<PublisherInfo> {
+        self.state
+            .publisher
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Snapshot of cumulative + live mount stats. Mutates nothing.
+    pub fn stats(&self) -> PublishMountStats {
+        self.state.stats_snapshot()
+    }
+
+    /// Ends the application side only: fires the shared cancel handle
+    /// also installed on the `RtpRecvTransport` this mount hands out
+    /// (see [`Self::into_recv_transport`]), waking a parked `recv_bytes`
+    /// with `TransportError::ExplicitClose`. Does not affect PLAY
+    /// readers or the publisher slot.
+    pub fn cancel(&self) {
+        self.state.app_cancel.cancel();
+    }
+
+    /// Take the application-facing transport. Take-once across every
+    /// clone of this handle — a second call returns
+    /// [`RtspServerError::TransportTaken`].
+    ///
+    /// The returned [`RtpRecvTransport`] is built through the same
+    /// `from_mpsc_placeholder` constructor the RTSP *client*'s
+    /// TCP-interleaved path uses, so `DemuxReceiver` and every binding's
+    /// receiver work against it unchanged. Its cancel handle and
+    /// end-reason slot are swapped for this mount's shared ones (mirrors
+    /// [`crate::rtsp::client::session::RtspSession::into_recv_transport`])
+    /// so [`Self::cancel`] and `PublishMountState::close` reach it from
+    /// any thread, at any time — including after this handle (and the
+    /// transport itself) have been dropped.
+    pub fn into_recv_transport(self) -> Result<RtpRecvTransport, RtspServerError> {
+        let rx = self
+            .state
+            .take_app_rx()
+            .ok_or(RtspServerError::TransportTaken)?;
+        let mut t = RtpRecvTransport::from_mpsc_placeholder(rx)
+            .with_cancel_handle(self.state.app_cancel.clone());
+        t.set_end_reason_slot(self.state.app_end_reason.clone());
+        Ok(t)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::SocketAddr;
+    use std::time::Duration;
+    use tst_core::transport::{RecvTransport, TransportError};
+
+    fn info(g: u64) -> PublisherInfo {
+        PublisherInfo {
+            peer: "127.0.0.1:5000".parse::<SocketAddr>().unwrap(),
+            shape: super::super::PublishShape::Mp2t,
+            since: std::time::SystemTime::now(),
+            generation: g,
+        }
+    }
+    fn rtp_mp2t(n: usize) -> bytes::Bytes {
+        let mut v = vec![0x80u8, 33, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1];
+        for _ in 0..n {
+            v.push(0x47);
+            v.extend(std::iter::repeat_n(0u8, 187));
+        }
+        v.into()
+    }
+
+    #[test]
+    fn publisher_slot_is_exclusive_and_generation_counts_ends() {
+        let m = PublishMountState::new("/p", 16);
+        assert!(m.try_begin_publisher(info(0)));
+        assert!(!m.try_begin_publisher(info(0)), "second publisher refused");
+        assert_eq!(m.generation.load(std::sync::atomic::Ordering::Relaxed), 0);
+        m.end_publisher();
+        assert_eq!(m.generation.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(m.publisher.lock().unwrap().is_none());
+        assert!(m.try_begin_publisher(info(1)));
+    }
+
+    #[test]
+    fn emit_reaches_app_transport_and_readers() {
+        let m = PublishMountState::new("/p", 16);
+        let mut reader = m.fanout.subscribe();
+        let h = PublishMountHandle { state: m.clone() };
+        let mut t = h.clone().into_recv_transport().unwrap();
+        let pkt = rtp_mp2t(2);
+        m.emit(pkt.slice(12..), pkt.clone());
+        let mut buf = vec![0u8; 4096];
+        let n = t.recv_bytes(&mut buf).unwrap();
+        assert_eq!(&buf[..n], &pkt[12..]);
+        assert_eq!(reader.try_recv().unwrap(), pkt.slice(12..));
+        assert_eq!(m.stats.lock().unwrap().frames_emitted, 1);
+    }
+
+    #[test]
+    fn transport_can_be_taken_once() {
+        let m = PublishMountState::new("/p", 16);
+        let h = PublishMountHandle { state: m.clone() };
+        let _t = h.clone().into_recv_transport().unwrap();
+        assert!(matches!(
+            h.into_recv_transport(),
+            Err(crate::error::RtspServerError::TransportTaken)
+        ));
+    }
+
+    #[test]
+    fn full_app_channel_drops_newest_and_counts() {
+        let m = PublishMountState::new("/p", 16);
+        let h = PublishMountHandle { state: m.clone() };
+        let _t = h.clone().into_recv_transport().unwrap(); // nobody drains
+        let pkt = rtp_mp2t(1);
+        for _ in 0..(crate::rtsp::client::interleaved_pump::DATA_QUEUE_BOUND + 3) {
+            m.emit(pkt.slice(12..), pkt.clone());
+        }
+        assert_eq!(m.stats.lock().unwrap().frames_dropped_app, 3);
+    }
+
+    #[test]
+    fn close_makes_the_transport_read_closed_and_cancel_wakes_a_parked_recv() {
+        let m = PublishMountState::new("/p", 16);
+        let h = PublishMountHandle { state: m.clone() };
+        let mut t = h.clone().into_recv_transport().unwrap();
+        let mut buf = vec![0u8; 2048];
+        // cancel from another thread while parked
+        let h2 = h.clone();
+        let j = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            h2.cancel();
+        });
+        assert!(matches!(
+            t.recv_bytes(&mut buf),
+            Err(TransportError::ExplicitClose)
+        ));
+        j.join().unwrap();
+        // a fresh mount: close() → Closed
+        let m2 = PublishMountState::new("/q", 16);
+        let mut t2 = PublishMountHandle { state: m2.clone() }
+            .into_recv_transport()
+            .unwrap();
+        m2.close();
+        assert!(matches!(
+            t2.recv_bytes(&mut buf),
+            Err(TransportError::Closed)
+        ));
+    }
+
+    #[test]
+    fn mount_publisher_ending_does_not_close_the_transport() {
+        let m = PublishMountState::new("/p", 16);
+        let mut t = PublishMountHandle { state: m.clone() }
+            .into_recv_transport()
+            .unwrap();
+        t.set_recv_timeout(Some(Duration::from_millis(150)));
+        assert!(m.try_begin_publisher(info(0)));
+        m.end_publisher();
+        let mut buf = vec![0u8; 2048];
+        assert!(
+            matches!(
+                t.recv_bytes(&mut buf),
+                Err(TransportError::Backpressure { .. })
+            ),
+            "idle, still open"
+        );
+    }
+}
