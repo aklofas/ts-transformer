@@ -15,19 +15,15 @@ pub(crate) enum TrackKind {
 
 #[derive(Debug, Clone)]
 pub(crate) struct AnnouncedTrack {
-    /// SDP media index. The publisher handlers resolve tracks
-    /// by position in `tracks: Vec<_>` and by `control` instead — this
-    /// field is kept for diagnostics and stays unread until something
-    /// needs the original SDP media ordinal.
-    #[allow(dead_code)]
+    /// SDP media index — also this track's position in
+    /// `AnnounceShape::tracks` (built in SDP order), which is the `track`
+    /// index the session hands a `PublishAdapter`.
     pub(crate) index: usize,
     pub(crate) control: Option<String>,
     pub(crate) payload_type: u8,
     pub(crate) kind: TrackKind,
-    /// Read only by this module's own tests until the `Elementary`
-    /// shape has a real adapter that consults the
-    /// H.264 fmtp params.
-    #[allow(dead_code)]
+    /// The H.264 track's fmtp parameters; the elementary adapter seeds
+    /// its depacketizer with `sprop-parameter-sets`.
     pub(crate) h264_fmtp: Option<H264FmtpParams>,
 }
 

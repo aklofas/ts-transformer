@@ -6,8 +6,8 @@
 //! `udp_spawned` flag on `PublishTrack`). It owns that track's
 //! SETUP-bound RTP+RTCP socket pair for as long as the publisher
 //! records: both sockets are polled in one `tokio::select!`, RTP
-//! datagrams pass the source check in [`admit`], and RTCP packets are
-//! handed to the adapter unconditionally.
+//! datagrams pass the source check in [`admit`], and RTCP datagrams pass
+//! the IP half of it ([`same_ip`]) before reaching the adapter.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -55,7 +55,7 @@ pub(crate) fn admit(
     from: SocketAddr,
     packet_ok: bool,
 ) -> Admit {
-    if from.ip().to_canonical() != peer_ip.to_canonical() {
+    if !same_ip(from, peer_ip) {
         return Admit::RejectForeignIp;
     }
     if !packet_ok {
@@ -75,15 +75,24 @@ pub(crate) fn admit(
     Admit::Accept
 }
 
+/// `from` is the publisher's IP. IPv4-mapped IPv6 addresses compare
+/// equal to their IPv4 form.
+pub(crate) fn same_ip(from: SocketAddr, peer_ip: IpAddr) -> bool {
+    from.ip().to_canonical() == peer_ip.to_canonical()
+}
+
 /// Run one track's UDP RTP+RTCP ingest loop until `cancel` fires or a
 /// socket read fails.
 ///
 /// RTP datagrams go through [`admit`] against `peer_ip` (the publisher's
 /// control-connection IP) and `expected_pt` (the track's announced
 /// payload type). RTCP datagrams are forwarded to the adapter's `on_rtcp`
-/// unconditionally: RFC 3550 §6.4 allows a participant's RTP and RTCP
-/// source ports to differ (and NAT can rewrite either independently),
-/// and RTCP carries its own SSRC-based identity.
+/// only when they come from `peer_ip` too ([`same_ip`]; others count in
+/// `source_rejected`): sender reports steer the elementary adapter's
+/// KLV alignment, so a third host must not be able to feed them. The
+/// RTCP port is not checked — RFC 3550 §6.4 allows a participant's RTP
+/// and RTCP source ports to differ, and NAT can rewrite either
+/// independently.
 ///
 /// Counting of accepted packets happens inside the adapter (`on_rtp`
 /// ticks `rtp_packets_received`/`bytes_received` itself); this loop only
@@ -136,7 +145,16 @@ pub(crate) fn spawn_udp_ingest(
                         break;
                     }
                 },
-                r = rtcp.recv_from(&mut rtcp_buf) => if let Ok((n, _)) = r {
+                r = rtcp.recv_from(&mut rtcp_buf) => if let Ok((n, from)) = r {
+                    if !same_ip(from, peer_ip) {
+                        tracing::debug!(
+                            target: "tst_rtp::server::publish",
+                            from = ?from,
+                            "publisher RTCP from a foreign IP; dropped"
+                        );
+                        mount.tick(|s| s.source_rejected += 1);
+                        continue;
+                    }
                     adapter
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
@@ -206,6 +224,69 @@ mod tests {
         let mapped: SocketAddr = "[::ffff:127.0.0.1]:4000".parse().unwrap();
         let mut latched = None;
         assert_eq!(admit(&mut latched, peer, mapped, true), Admit::Accept);
+    }
+
+    /// Counts RTCP packets the ingest loop hands over.
+    struct RtcpCounter(Arc<AtomicU64>);
+    impl PublishAdapter for RtcpCounter {
+        fn on_rtp(&mut self, _: usize, _: &[u8]) {}
+        fn on_rtcp(&mut self, _: usize, _: &[u8]) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+        fn flush(&mut self) {}
+    }
+
+    /// Spawn an ingest loop for `peer_ip`, send one RTCP datagram from
+    /// 127.0.0.1, and return `(rtcp delivered, source_rejected)` once the
+    /// datagram has been handled either way.
+    async fn rtcp_from_loopback(peer_ip: &str) -> (u64, u64) {
+        let mount = PublishMountState::new("/p", 8);
+        let delivered = Arc::new(AtomicU64::new(0));
+        let adapter: Arc<Mutex<Box<dyn PublishAdapter>>> =
+            Arc::new(Mutex::new(Box::new(RtcpCounter(delivered.clone()))));
+        let rtp = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let rtcp = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let target = rtcp.local_addr().unwrap();
+        let cancel = CancellationToken::new();
+        let j = spawn_udp_ingest(
+            1,
+            rtp,
+            rtcp,
+            peer_ip.parse().unwrap(),
+            33,
+            adapter,
+            mount.clone(),
+            Arc::new(AtomicU64::new(0)),
+            cancel.clone(),
+        );
+        let s = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        s.send_to(&[0x80, 200, 0, 6], target).await.unwrap();
+        let handled =
+            || delivered.load(Ordering::Relaxed) + mount.stats_snapshot().source_rejected > 0;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !handled() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("RTCP datagram handled");
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(2), j)
+            .await
+            .unwrap()
+            .unwrap();
+        (
+            delivered.load(Ordering::Relaxed),
+            mount.stats_snapshot().source_rejected,
+        )
+    }
+
+    #[tokio::test]
+    async fn udp_rtcp_is_delivered_only_from_the_publishers_ip() {
+        assert_eq!(rtcp_from_loopback("127.0.0.1").await, (1, 0));
+        // 127.0.0.1 is not the publisher: a third host cannot steer
+        // alignment with forged sender reports.
+        assert_eq!(rtcp_from_loopback("10.0.0.5").await, (0, 1));
     }
 
     #[tokio::test]

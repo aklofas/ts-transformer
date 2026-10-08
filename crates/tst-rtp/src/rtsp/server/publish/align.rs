@@ -30,14 +30,10 @@ use crate::rtcp::SenderReport;
 
 /// How long [`Aligner`] waits, from the first held KLV unit, for sender
 /// reports on both tracks before falling back to first-packet coincidence.
-// Not yet referenced outside tests — consumed by the elementary publish adapter.
-#[allow(dead_code)]
 pub(crate) const ALIGN_FALLBACK: Duration = Duration::from_secs(2);
 
 /// Maximum number of KLV units [`Aligner`] holds while waiting for
 /// alignment. Bounded, drop-oldest — see [`Aligner::on_klv_unit`].
-// Not yet referenced outside tests — consumed by the elementary publish adapter.
-#[allow(dead_code)]
 pub(crate) const ALIGN_HOLD_MAX_UNITS: usize = 4096;
 
 /// Per-track RTCP sender-report state plus 32-bit RTP timestamp unwrapping.
@@ -49,8 +45,6 @@ pub(crate) const ALIGN_HOLD_MAX_UNITS: usize = 4096;
 /// Continuity unwrapping (needed because a *held* unit's timestamp is
 /// compared against the *previous* unit's, potentially long after both
 /// arrived) lives in `last`.
-// Not yet referenced outside tests — consumed by the elementary publish adapter.
-#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub(crate) struct TrackClock {
     /// This track's most recent RTCP sender report, as `(ntp 32.32, rtp)`.
@@ -93,8 +87,6 @@ impl TrackClock {
 /// Places KLV units on the video track's PTS line using RTCP sender
 /// reports, with a first-packet-coincidence fallback. See the
 /// [module docs](self).
-// Not yet referenced outside tests — consumed by the elementary publish adapter.
-#[allow(dead_code)]
 pub(crate) struct Aligner {
     video: TrackClock,
     klv: TrackClock,
@@ -115,8 +107,6 @@ pub(crate) struct Aligner {
 }
 
 impl Aligner {
-    // Not yet referenced outside tests — consumed by the elementary publish adapter.
-    #[allow(dead_code)]
     pub(crate) fn new() -> Self {
         Self {
             video: TrackClock::new(),
@@ -132,8 +122,6 @@ impl Aligner {
 
     /// Record the video track's RTCP sender report and recompute the
     /// sender-report offset if the KLV track's report is also known.
-    // Not yet referenced outside tests — consumed by the elementary publish adapter.
-    #[allow(dead_code)]
     pub(crate) fn on_video_sr(&mut self, sr: &SenderReport) {
         self.video.sr = Some((sr.ntp_timestamp, sr.rtp_timestamp));
         self.recompute_sr_offset();
@@ -141,8 +129,6 @@ impl Aligner {
 
     /// Record the KLV track's RTCP sender report and recompute the
     /// sender-report offset if the video track's report is also known.
-    // Not yet referenced outside tests — consumed by the elementary publish adapter.
-    #[allow(dead_code)]
     pub(crate) fn on_klv_sr(&mut self, sr: &SenderReport) {
         self.klv.sr = Some((sr.ntp_timestamp, sr.rtp_timestamp));
         self.recompute_sr_offset();
@@ -181,8 +167,6 @@ impl Aligner {
 
     /// Record the video track's PTS zero point. Only the first call has any
     /// effect — later AUs don't move the origin.
-    // Not yet referenced outside tests — consumed by the elementary publish adapter.
-    #[allow(dead_code)]
     pub(crate) fn on_video_au(&mut self, rtp_timestamp: u32) {
         if self.video_rtp_origin.is_none() {
             self.video_rtp_origin = Some(rtp_timestamp);
@@ -194,8 +178,6 @@ impl Aligner {
     /// known and either a sender-report pair or the two-second fallback has
     /// established an offset — at which point every held unit (this one
     /// included) is drained in one pass.
-    // Not yet referenced outside tests — consumed by the elementary publish adapter.
-    #[allow(dead_code)]
     pub(crate) fn on_klv_unit(&mut self, u: KlvUnit, now: Instant) -> Vec<(KlvUnit, i64)> {
         if self.klv.first_rtp.is_none() {
             self.klv.first_rtp = Some(u.rtp_timestamp);
@@ -247,14 +229,10 @@ impl Aligner {
         placed
     }
 
-    // Not yet referenced outside tests — consumed by the elementary publish adapter.
-    #[allow(dead_code)]
     pub(crate) fn mode(&self) -> ClockAlignment {
         self.mode
     }
 
-    // Not yet referenced outside tests — consumed by the elementary publish adapter.
-    #[allow(dead_code)]
     pub(crate) fn steps(&self) -> u64 {
         self.steps
     }
@@ -265,8 +243,6 @@ impl Aligner {
     /// end-of-stream flush doesn't lose units that never got a sender
     /// report. Still a no-op while the video origin is unknown — there is
     /// no line to place anything on.
-    // Not yet referenced outside tests — consumed by the elementary publish adapter.
-    #[allow(dead_code)]
     pub(crate) fn drain(&mut self) -> Vec<(KlvUnit, i64)> {
         if self.offset.is_none() {
             if let (Some(origin), Some(first_rtp)) = (self.video_rtp_origin, self.klv.first_rtp) {

@@ -63,15 +63,11 @@ use crate::packet::RtpHeader;
 
 /// Maximum accumulated size of one open KLVunit. See rule 6 in the
 /// [module docs](self).
-// Not yet referenced outside tests — consumed by the elementary publish adapter.
-#[allow(dead_code)]
 pub(crate) const MAX_KLV_UNIT_BYTES: usize = 1024 * 1024;
 
 /// One fully reassembled KLVunit (RFC 6597 §4.1): the raw bytes of a single
 /// KLV Local Set or Universal Set encoding, plus the RTP timestamp shared by
 /// every packet that contributed to it.
-// Not yet referenced outside tests — consumed by the elementary publish adapter.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct KlvUnit {
     pub(crate) bytes: Vec<u8>,
@@ -81,8 +77,6 @@ pub(crate) struct KlvUnit {
 /// Counters for monitoring [`KlvDepacketizer`].
 ///
 /// Returned by value from [`KlvDepacketizer::stats`] (the struct is `Copy`).
-// Not yet referenced outside tests — consumed by the elementary publish adapter.
-#[allow(dead_code)]
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct KlvDepayStats {
     /// Number of complete, unpoisoned KLVunits emitted.
@@ -108,8 +102,6 @@ pub(crate) struct KlvDepayStats {
 ///
 /// See the [module-level doc](self) for the full 7-rule state-machine
 /// contract.
-// Not yet referenced outside tests — consumed by the elementary publish adapter.
-#[allow(dead_code)]
 pub(crate) struct KlvDepacketizer {
     /// RTP timestamp of the open unit, if one is open.
     unit_ts: Option<u32>,
@@ -141,8 +133,6 @@ pub(crate) struct KlvDepacketizer {
 
 impl KlvDepacketizer {
     /// Construct a new, empty depacketizer.
-    // Not yet referenced outside tests — consumed by the elementary publish adapter.
-    #[allow(dead_code)]
     pub(crate) fn new() -> Self {
         Self {
             unit_ts: None,
@@ -157,8 +147,6 @@ impl KlvDepacketizer {
     }
 
     /// Feed one RTP packet into the depacketizer.
-    // Not yet referenced outside tests — consumed by the elementary publish adapter.
-    #[allow(dead_code)]
     pub(crate) fn feed(&mut self, header: &RtpHeader, payload: &[u8]) {
         // ── Rule 7: empty payload is ignored outright ─────────────────────
         if payload.is_empty() {
@@ -237,8 +225,6 @@ impl KlvDepacketizer {
     }
 
     /// Pull the next completed KLVunit, if one is available.
-    // Not yet referenced outside tests — consumed by the elementary publish adapter.
-    #[allow(dead_code)]
     pub(crate) fn next_unit(&mut self) -> Option<KlvUnit> {
         self.ready.pop_front()
     }
@@ -246,16 +232,12 @@ impl KlvDepacketizer {
     /// Force completion of any open unit and return it.
     ///
     /// The caller should drain [`Self::next_unit`] before calling this.
-    // Not yet referenced outside tests — consumed by the elementary publish adapter.
-    #[allow(dead_code)]
     pub(crate) fn flush(&mut self) -> Option<KlvUnit> {
         self.close_unit();
         self.ready.pop_front()
     }
 
     /// Return a snapshot of the current statistics.
-    // Not yet referenced outside tests — consumed by the elementary publish adapter.
-    #[allow(dead_code)]
     pub(crate) fn stats(&self) -> KlvDepayStats {
         self.stats
     }
