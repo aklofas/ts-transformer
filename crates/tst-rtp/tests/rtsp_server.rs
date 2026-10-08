@@ -53,3 +53,17 @@ mod idle_timeout;
 mod interleaved_frame_boundary;
 #[path = "rtsp_server/unsupported_method.rs"]
 mod unsupported_method;
+#[path = "rtsp_server/publish/conformance.rs"]
+mod publish_conformance;
+#[path = "rtsp_server/publish/lifecycle.rs"]
+mod publish_lifecycle;
+#[path = "rtsp_server/publish/mp2t_interleaved.rs"]
+mod publish_mp2t_interleaved;
+#[path = "rtsp_server/publish/mp2t_udp.rs"]
+mod publish_mp2t_udp;
+#[path = "rtsp_server/publish/republish.rs"]
+mod publish_republish;
+#[path = "rtsp_server/publish/rtsps_record.rs"]
+mod publish_rtsps_record;
+#[path = "rtsp_server/publish/second_publisher.rs"]
+mod publish_second_publisher;

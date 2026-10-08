@@ -4,7 +4,6 @@
 //! caller's `set_read_timeout`.
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 
 /// One H.264 program on PID 0x1011 — the mount config every server test uses.
@@ -18,7 +17,9 @@ pub fn make_muxer_cfg() -> MuxerConfig {
 
 /// Write one request, read until the end of the response head (CRLFCRLF).
 /// Panics with the server's behaviour in the message if it closes first.
-pub fn request(tcp: &mut TcpStream, req: &str) -> String {
+/// Generic over the stream so the raw publisher fixture can drive it over
+/// a rustls client stream as well as a plain `TcpStream`.
+pub fn request<S: Read + Write>(tcp: &mut S, req: &str) -> String {
     tcp.write_all(req.as_bytes()).expect("request written");
     let mut buf = Vec::new();
     let mut chunk = [0u8; 1024];
