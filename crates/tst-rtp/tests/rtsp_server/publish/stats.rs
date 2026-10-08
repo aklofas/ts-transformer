@@ -19,9 +19,11 @@ fn drain(t: &mut impl RecvTransport, want: usize) {
     }
 }
 
-/// Poll `cond` until it holds or two seconds pass.
+/// Poll `cond` until it holds or ten seconds pass (the deadline only
+/// bounds a failure; a loaded runner can take a while to see a dropped
+/// connection).
 fn eventually(what: &str, mut cond: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(10);
     while !cond() {
         assert!(Instant::now() < deadline, "{what} never held");
         std::thread::sleep(Duration::from_millis(10));

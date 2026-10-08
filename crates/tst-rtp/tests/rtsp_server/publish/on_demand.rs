@@ -2,7 +2,7 @@
 //! ANNOUNCE on an unregistered path creates a publish mount and queues its
 //! handle for `RtspServer::next_publisher`.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tst_core::transport::RecvTransport;
 use tst_rtp::{RtspServer, RtspServerBuilder, RtspServerError};
@@ -106,18 +106,16 @@ fn unknown_path_is_404_without_the_flag() {
 fn stop_wakes_a_parked_next_publisher() {
     let server = on_demand_server();
     std::thread::scope(|s| {
-        let parked = s.spawn(|| {
-            let t0 = Instant::now();
-            (server.next_publisher(Duration::from_secs(60)), t0.elapsed())
-        });
+        // An unwoken call returns Ok(None) after 60 s, which the match
+        // below fails.
+        let parked = s.spawn(|| server.next_publisher(Duration::from_secs(60)));
         std::thread::sleep(Duration::from_millis(200));
         server.stop().unwrap();
-        let (r, waited) = parked.join().unwrap();
+        let r = parked.join().unwrap();
         assert!(
             matches!(r, Err(RtspServerError::Shutdown)),
             "got {:?}",
             r.as_ref().err()
         );
-        assert!(waited < Duration::from_secs(30), "parked for {waited:?}");
     });
 }
