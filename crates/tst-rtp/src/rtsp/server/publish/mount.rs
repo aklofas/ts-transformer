@@ -281,14 +281,22 @@ pub struct PublisherInfo {
 }
 
 /// How a publish mount aligns the timestamps of its announced tracks to
-/// one clock. Only elementary shapes with a metadata track need it; an
-/// MP2T mount reads `NotApplicable`.
+/// one clock. Only elementary shapes with a metadata (KLV) track need it;
+/// an MP2T or video-only mount reads `NotApplicable`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ClockAlignment {
-    /// The mount's shape carries its own timing (MP2T), or no publisher
-    /// has announced tracks that need aligning.
+    /// Nothing to align: the mount's shape carries its own timing (MP2T),
+    /// the publisher announced video only, or no publisher has announced
+    /// yet.
     NotApplicable,
+    /// The publisher announced a KLV track, but its clock is not yet
+    /// related to the video clock: KLV units are held (not emitted) until
+    /// RTCP sender reports arrive for both tracks or the two-second
+    /// first-packet-coincidence fallback engages. Also reported after a
+    /// video or KLV source restart (an SSRC change) until alignment is
+    /// re-established. A mount that stays here receives no KLV.
+    Pending,
     /// Tracks are aligned by first-packet coincidence because RTCP sender
     /// reports for every track did not arrive in time.
     Provisional,

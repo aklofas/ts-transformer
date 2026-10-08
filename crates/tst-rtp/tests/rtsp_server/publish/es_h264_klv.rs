@@ -238,7 +238,7 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
     });
     assert_eq!(s.rtp_packets_received, 35);
     assert_eq!(s.klv_units_emitted, 0, "KLV must be held without reports");
-    assert_eq!(s.alignment, ClockAlignment::NotApplicable);
+    assert_eq!(s.alignment, ClockAlignment::Pending);
 
     // Keep the KLV source live until the two-second fallback engages.
     let deadline = Instant::now() + Duration::from_secs(5);

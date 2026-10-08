@@ -160,7 +160,7 @@ impl Aligner {
             klv_first: None,
             hold: VecDeque::new(),
             held_bytes: 0,
-            mode: ClockAlignment::NotApplicable,
+            mode: ClockAlignment::Pending,
             steps: 0,
             offset: None,
             dropped: 0,
@@ -217,8 +217,8 @@ impl Aligner {
     /// sender report, the offset, the fallback anchor and the held units
     /// (counted in [`Self::dropped`]: placed against the old clock they
     /// would land on the wrong part of the line). Alignment reads
-    /// [`ClockAlignment::NotApplicable`] (held) until a fresh video report
-    /// or the fallback window re-establishes it.
+    /// [`ClockAlignment::Pending`] (held) until a fresh video report or
+    /// the fallback window re-establishes it.
     pub(crate) fn on_video_au(&mut self, rtp_timestamp: u32, pts: i64) {
         let raw_zero = rtp_timestamp.wrapping_sub(pts as u32);
         let restarted = if let Some(o) = self.video_origin {
@@ -233,7 +233,7 @@ impl Aligner {
             );
             self.video = TrackClock::new();
             self.offset = None;
-            self.mode = ClockAlignment::NotApplicable;
+            self.mode = ClockAlignment::Pending;
             self.klv_first = None;
             self.discard_held();
             true
@@ -427,7 +427,7 @@ mod tests {
         let t0 = Instant::now();
         a.on_video_au(90_000, 0); // video origin = 90 000 (PTS 0)
         assert!(a.on_klv_unit(unit(500_000), t0).is_empty(), "held");
-        assert_eq!(a.mode(), ClockAlignment::NotApplicable);
+        assert_eq!(a.mode(), ClockAlignment::Pending);
         // video SR: ntp 100.0 s ↔ rtp 180 000 ; klv SR: ntp 100.5 s ↔ rtp 500 000
         a.on_video_sr(&sr(100, 0, 180_000));
         let placed = a.on_klv_sr_then_release(&sr(100, 1 << 31, 500_000), t0); // helper = on_klv_sr + drain of now-placeable
@@ -579,7 +579,7 @@ mod tests {
         assert_eq!(a.hold.len(), 20);
         assert_eq!(a.held_bytes, 20 * 50_000);
         assert_eq!(a.dropped(), 80);
-        assert_eq!(a.mode(), ClockAlignment::NotApplicable);
+        assert_eq!(a.mode(), ClockAlignment::Pending);
     }
 
     #[test]
@@ -644,7 +644,7 @@ mod tests {
         // The depacketizer keeps its PTS line monotonic, so the zero
         // (`rtp − pts`) moves: 7 000 000 − 12 003.
         a.on_video_au(7_000_000, 12_003);
-        assert_eq!(a.mode(), ClockAlignment::NotApplicable);
+        assert_eq!(a.mode(), ClockAlignment::Pending);
         // A later AU of the same source changes nothing.
         a.on_video_au(7_003_003, 15_006);
         // The old video report no longer describes the video clock: held.
