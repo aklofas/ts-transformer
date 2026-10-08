@@ -1224,6 +1224,7 @@ pub mod tst_rtp::rtsp::server::multicast
 pub mod tst_rtp::rtsp::server::publish
 #[non_exhaustive] pub enum tst_rtp::rtsp::server::publish::ClockAlignment
 pub tst_rtp::rtsp::server::publish::ClockAlignment::NotApplicable
+pub tst_rtp::rtsp::server::publish::ClockAlignment::Pending
 pub tst_rtp::rtsp::server::publish::ClockAlignment::Provisional
 pub tst_rtp::rtsp::server::publish::ClockAlignment::SenderReport
 impl core::clone::Clone for tst_rtp::ClockAlignment
@@ -1770,6 +1771,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::auth::AuthChalle
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::auth::AuthChallenge
 #[non_exhaustive] pub enum tst_rtp::ClockAlignment
 pub tst_rtp::ClockAlignment::NotApplicable
+pub tst_rtp::ClockAlignment::Pending
 pub tst_rtp::ClockAlignment::Provisional
 pub tst_rtp::ClockAlignment::SenderReport
 impl core::clone::Clone for tst_rtp::ClockAlignment

@@ -13,7 +13,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use crate::packet::{RTP_HEADER_LEN, RTP_PT_MP2T, RtpHeader};
 use crate::rtsp::server::mount::RTP_PAYLOAD_SIZE;
 
-use super::mount::PublishMountState;
+use super::mount::{ClockAlignment, PublishMountState};
 
 /// Adapts incoming RTP/RTCP packets on a published mount into demuxed
 /// events.
@@ -80,6 +80,9 @@ pub(crate) struct Mp2tAdapter {
 
 impl Mp2tAdapter {
     pub(crate) fn new(mount: Arc<PublishMountState>, expected_pt: u8) -> Self {
+        // A previous elementary publisher's alignment must not linger in
+        // the mount stats: MPEG-TS carries its own timing.
+        mount.tick(|s| s.alignment = ClockAlignment::NotApplicable);
         Self {
             mount,
             expected_pt,
@@ -170,6 +173,16 @@ mod tests {
         let mut v = vec![0x80, pt, 0, 7, 0, 0, 0x10, 0, 0xDE, 0xAD, 0xBE, 0xEF];
         v.extend_from_slice(payload);
         v
+    }
+
+    #[test]
+    fn an_mp2t_publisher_resets_a_previous_publishers_alignment() {
+        use crate::rtsp::server::publish::mount::ClockAlignment;
+        let m = mount();
+        // A previous elementary publisher left the mount aligned.
+        m.tick(|s| s.alignment = ClockAlignment::SenderReport);
+        let _a = Mp2tAdapter::new(m.clone(), 33);
+        assert_eq!(m.stats_snapshot().alignment, ClockAlignment::NotApplicable);
     }
 
     #[test]

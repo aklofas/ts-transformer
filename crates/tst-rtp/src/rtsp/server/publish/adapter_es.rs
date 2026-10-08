@@ -189,9 +189,15 @@ impl EsAdapter {
             parameter_set_injection: ParameterSetInjection::BeforeIdr,
             ..Default::default()
         };
-        // A new publisher starts unaligned; a previous publisher's mode
-        // must not linger in the mount stats.
-        mount.tick(|s| s.alignment = ClockAlignment::NotApplicable);
+        // A new publisher starts unaligned (`Pending` with a KLV track,
+        // `NotApplicable` without one); a previous publisher's mode must
+        // not linger in the mount stats.
+        let alignment = if klv.is_some() {
+            ClockAlignment::Pending
+        } else {
+            ClockAlignment::NotApplicable
+        };
+        mount.tick(|s| s.alignment = alignment);
         Self {
             mount,
             video_index: video.index,
@@ -700,6 +706,24 @@ mod tests {
     }
 
     #[test]
+    fn a_klv_publisher_starts_pending_and_a_video_only_one_not_applicable() {
+        let mount = PublishMountState::new("/p", 8);
+        let _a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
+        assert_eq!(mount.stats_snapshot().alignment, ClockAlignment::Pending);
+        // The next publisher on the same mount announces video only.
+        let mut a = EsAdapter::new(mount.clone(), &video_track(), None).unwrap();
+        assert_eq!(
+            mount.stats_snapshot().alignment,
+            ClockAlignment::NotApplicable
+        );
+        a.on_rtp(0, &payload::single(1, 0, 0x65, 400, VIDEO_PT));
+        assert_eq!(
+            mount.stats_snapshot().alignment,
+            ClockAlignment::NotApplicable
+        );
+    }
+
+    #[test]
     fn app_side_packets_are_pt33_with_the_adapters_own_contiguous_sequence() {
         let mount = PublishMountState::new("/p", 8);
         let app_rx = mount.take_app_rx().unwrap();
@@ -867,7 +891,9 @@ mod tests {
         a.on_rtp(0, &payload::single(1, 1_000, 0x65, 400, VIDEO_PT));
         a.on_rtp(1, &klv_packet(1, 77_000, &klv_set(1)));
         a.on_rtp(1, &klv_packet(2, 77_900, &klv_set(2)));
-        assert_eq!(mount.stats_snapshot().klv_units_emitted, 0, "held");
+        let s = mount.stats_snapshot();
+        assert_eq!(s.klv_units_emitted, 0, "held");
+        assert_eq!(s.alignment, ClockAlignment::Pending);
         a.flush();
         let d = demux_app(&mut t);
         let rel: Vec<i64> = d
