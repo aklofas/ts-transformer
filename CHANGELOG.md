@@ -27,9 +27,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   create mounts. The 64 bound counts only handles the application has not
   yet taken: an on-demand mount stays in the mount table after its
   publisher leaves and after its handle is taken or dropped, until the
-  application calls `remove_mount` (removing idle names is the
-  application's job; a cap on on-demand mounts, 256 then `503`, follows).
-  Registered mounts are unaffected.
+  application calls `remove_mount`. Removing idle names is the
+  application's job: the table holds at most 256 on-demand mounts, taken
+  or not, and an ANNOUNCE past that answers `503`. Registered mounts are
+  unaffected and never count.
   `RtspServer::stop` wakes a waiting `next_publisher` with `Shutdown`.
 - `RtspServer::remove_mount(path)` removes a mount of any kind and frees
   the path. Every reader and publisher session on it gets the Notice 5402
