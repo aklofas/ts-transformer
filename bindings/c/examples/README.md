@@ -368,6 +368,27 @@ raw/TS receiver) surfaces. Receiver-side C examples ship under
   `_play`, `into_demux_receiver` bridge to typed event loop, SIGINT
   cancel, and cleanup. Canonical pattern for consuming a gimbaled-platform
   camera stream over RTSP.
+- [`receiving/recv_rtsp_publish.c`](receiving/recv_rtsp_publish.c) —
+  the RTSP server's publisher role, the push direction: encoders
+  (ffmpeg, GStreamer) push with ANNOUNCE / RECORD, any announced name
+  becomes a publish mount on demand, and `tst_rtsp_server_next_publisher`
+  hands each one to a demux thread through
+  `tst_rtsp_publish_mount_into_demux_receiver`. Prints the bound address
+  (`tst_rtsp_server_local_addr`), video AUs, the first KLV record, and
+  per-mount stats every 5 s; Ctrl-C stops the server, which ends every
+  mount's receiver with `TST_E_END_OF_STREAM`. The C twin of
+  [`recv_rtsp_publish.rs`](../../../examples/receiving/recv_rtsp_publish.rs).
+  Requires `TST_HAS_RTP`; links `-lpthread`.
+
+  ```sh
+  LD_LIBRARY_PATH=../../target/debug /tmp/recv_rtsp_publish rtsp://127.0.0.1:8554
+  # another terminal:
+  ffmpeg -re -f lavfi -i testsrc=size=320x240:rate=15 -t 6 \
+      -c:v libx264 -preset ultrafast -tune zerolatency \
+      -f rtsp rtsp://127.0.0.1:8554/demo
+  # -> "[/demo] new publish mount", "[/demo] video AU #1 ... rai=1",
+  #    every 30th AU, a stats line every 5 s
+  ```
 - [`receiving/recv_srt_events.c`](receiving/recv_srt_events.c) — the
   MANAGED (auto-reconnecting) SRT demux receiver reference example: full
   `tst_event_t` kind coverage including `TST_EVENT_KIND_RECONNECT_DISCONTINUITY`
