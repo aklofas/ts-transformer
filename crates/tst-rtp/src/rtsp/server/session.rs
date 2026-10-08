@@ -772,6 +772,7 @@ mod session_tests {
                 #[cfg(feature = "rtsp-server-tls")]
                 tls_config: std::sync::Mutex::new(None),
                 startup_tx: std::sync::Mutex::new(None),
+                publish_queue_tx: std::sync::Mutex::new(None),
             });
             // Mimic the accept loop: reserve a slot, then move the guard
             // into the session task.
@@ -839,6 +840,7 @@ mod session_tests {
                 #[cfg(feature = "rtsp-server-tls")]
                 tls_config: std::sync::Mutex::new(None),
                 startup_tx: std::sync::Mutex::new(None),
+                publish_queue_tx: std::sync::Mutex::new(None),
             });
             // Mimic the accept loop: reserve a slot, then move the guard
             // into the session task.
@@ -902,6 +904,7 @@ mod session_tests {
             #[cfg(feature = "rtsp-server-tls")]
             tls_config: std::sync::Mutex::new(None),
             startup_tx: std::sync::Mutex::new(None),
+            publish_queue_tx: std::sync::Mutex::new(None),
         })
     }
 

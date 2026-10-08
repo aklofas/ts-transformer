@@ -18,13 +18,13 @@ use bytes::Bytes;
 
 use crate::rtsp::client::transport_negotiation::{RtspTransportKind, TransportResponse};
 use crate::rtsp::message::{RtspRequest, RtspResponse};
-use crate::rtsp::server::ServerState;
 use crate::rtsp::server::handlers::{
     bind_server_udp_pair, check_auth, control_segment, error_response, extract_mount_path,
     generate_session_id, handle_not_valid_in_state, last_path_segment, server_header,
 };
 use crate::rtsp::server::mount::MountEntry;
 use crate::rtsp::server::session::ServerSessionState;
+use crate::rtsp::server::{ServerState, validate_mount_path};
 use crate::sdp::Sdp;
 
 use super::PublishShape;
@@ -71,7 +71,11 @@ fn ok_response(req: &RtspRequest, session_id: Option<&str>) -> RtspResponse {
 ///   empty body, or a structurally unusable SDP (`ShapeReject::BadRequest`).
 /// - 415 Unsupported Media Type — a well-formed SDP whose track
 ///   combination matches no accepted shape (`ShapeReject::Unsupported`).
-/// - 404 Not Found — mount path not registered.
+/// - 404 Not Found — mount path not registered (and on-demand mounts
+///   are off, or the path is not one a mount could be registered under).
+/// - 503 Service Unavailable — on-demand mounts are on but the queue of
+///   mounts the application has not taken yet is full, or the server is
+///   stopping; no mount is created.
 /// - 461 Unsupported Transport — the mount exists but is a local
 ///   (muxer-backed) mount, which never accepts a publisher.
 /// - 403 Forbidden — the mount already has a publisher.
@@ -123,7 +127,7 @@ pub(crate) fn handle_announce(
     };
     let mount_path = extract_mount_path(&req.uri);
     let mount = {
-        let mounts = match state.mounts.lock() {
+        let mut mounts = match state.mounts.lock() {
             Ok(m) => m,
             Err(_) => return error_response(req, 500, "Internal Server Error"),
         };
@@ -132,7 +136,14 @@ pub(crate) fn handle_announce(
             Some(MountEntry::Local(_)) => {
                 return error_response(req, 461, "Unsupported Transport");
             }
-            // An on-demand (auto-create-on-ANNOUNCE) branch belongs here.
+            None if state.builder.accept_unregistered_publishers
+                && validate_mount_path(&mount_path).is_ok() =>
+            {
+                match create_on_demand_mount(state, &mut mounts, &mount_path) {
+                    Some(m) => m,
+                    None => return error_response(req, 503, "Service Unavailable"),
+                }
+            }
             None => return error_response(req, 404, "Not Found"),
         }
     };
@@ -172,6 +183,40 @@ pub(crate) fn handle_announce(
     };
     session.publish = Some(PublishSession::new(mount, announced, adapter));
     ok_response(req, None)
+}
+
+/// Create an on-demand publish mount at `path`, queue its handle for
+/// [`crate::rtsp::server::RtspServer::next_publisher`], and only then insert
+/// it into `mounts`, so a full (or closed) queue leaves no orphan mount
+/// behind. Returns `None` when the queue refused it.
+///
+/// The caller holds the `mounts` lock across the lookup that found no
+/// entry and this insert, and `try_send` never blocks, so two ANNOUNCEs
+/// racing on one new path cannot both create it: the second finds the
+/// first's mount in the table and reuses it (its publisher slot then
+/// decides 200 or 403).
+fn create_on_demand_mount(
+    state: &Arc<ServerState>,
+    mounts: &mut HashMap<String, MountEntry>,
+    path: &str,
+) -> Option<Arc<PublishMountState>> {
+    let m = PublishMountState::new(path, state.builder.fanout_capacity);
+    let queued = state
+        .publish_queue_tx
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(|tx| tx.try_send(m.clone()).is_ok());
+    if !queued {
+        tracing::debug!(
+            target: "tst_rtp::server::publish",
+            path,
+            "on-demand mount refused: queue full or server stopping"
+        );
+        return None;
+    }
+    mounts.insert(path.to_string(), MountEntry::Publish(m.clone()));
+    Some(m)
 }
 
 /// SETUP (`mode=record`) handler — reached only via
@@ -923,5 +968,115 @@ mod tests {
             crate::rtsp::server::handlers::handle_setup(&wrong, &st, &mut s).status,
             454
         );
+    }
+
+    #[test]
+    fn on_demand_off_unknown_path_is_404_and_creates_nothing() {
+        let (st, rx) = crate::rtsp::server::test_state_on_demand(false);
+        let mut s = ServerSessionState::new();
+        assert_eq!(
+            handle_announce(&announce("rtsp://h/new", SDP_MP2T), &st, &mut s).status,
+            404
+        );
+        assert!(st.mounts.lock().unwrap().is_empty());
+        assert!(rx.try_recv().is_err(), "nothing queued");
+    }
+
+    #[test]
+    fn on_demand_on_unknown_path_creates_and_queues_a_publish_mount() {
+        let (st, rx) = crate::rtsp::server::test_state_on_demand(true);
+        let mut s = ServerSessionState::new();
+        assert_eq!(
+            handle_announce(&announce("rtsp://h/new", SDP_MP2T), &st, &mut s).status,
+            200
+        );
+        let in_table = match st.mounts.lock().unwrap().get("/new") {
+            Some(MountEntry::Publish(m)) => m.clone(),
+            _ => panic!("/new is not a publish mount"),
+        };
+        let queued = rx.try_recv().expect("the new mount was queued");
+        assert!(Arc::ptr_eq(&queued, &in_table));
+        assert_eq!(queued.path, "/new");
+        assert!(queued.publisher.lock().unwrap().is_some());
+        assert!(s.publish.is_some());
+    }
+
+    #[test]
+    fn on_demand_full_queue_is_503_and_leaves_no_mount() {
+        let (st, rx) = crate::rtsp::server::test_state_on_demand(true);
+        for i in 0..crate::rtsp::server::PUBLISH_QUEUE_BOUND {
+            let mut s = ServerSessionState::new();
+            let uri = format!("rtsp://h/p{i}");
+            assert_eq!(
+                handle_announce(&announce(&uri, SDP_MP2T), &st, &mut s).status,
+                200,
+                "announce {i}"
+            );
+        }
+        let mut s = ServerSessionState::new();
+        let r = handle_announce(&announce("rtsp://h/overflow", SDP_MP2T), &st, &mut s);
+        assert_eq!(r.status, 503);
+        assert!(s.publish.is_none());
+        let mounts = st.mounts.lock().unwrap();
+        assert!(!mounts.contains_key("/overflow"), "no orphan mount");
+        assert_eq!(mounts.len(), crate::rtsp::server::PUBLISH_QUEUE_BOUND);
+        drop(mounts);
+        // Draining one slot lets the next on-demand ANNOUNCE in.
+        rx.try_recv().unwrap();
+        let mut s = ServerSessionState::new();
+        assert_eq!(
+            handle_announce(&announce("rtsp://h/overflow", SDP_MP2T), &st, &mut s).status,
+            200
+        );
+    }
+
+    #[test]
+    fn on_demand_closed_queue_is_503() {
+        let (st, _rx) = crate::rtsp::server::test_state_on_demand(true);
+        // What `RtspServer::stop` does: take the queue's sender.
+        st.publish_queue_tx.lock().unwrap().take();
+        let mut s = ServerSessionState::new();
+        assert_eq!(
+            handle_announce(&announce("rtsp://h/new", SDP_MP2T), &st, &mut s).status,
+            503
+        );
+        assert!(st.mounts.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn on_demand_racing_announces_on_one_new_path_create_one_mount() {
+        let (st, rx) = crate::rtsp::server::test_state_on_demand(true);
+        let barrier = std::sync::Barrier::new(8);
+        let statuses: Vec<u16> = std::thread::scope(|sc| {
+            let joins: Vec<_> = (0..8)
+                .map(|_| {
+                    sc.spawn(|| {
+                        let mut s = ServerSessionState::new();
+                        barrier.wait();
+                        let st_code =
+                            handle_announce(&announce("rtsp://h/race", SDP_MP2T), &st, &mut s)
+                                .status;
+                        // Keep the publisher (its Drop releases the slot)
+                        // until every thread has announced.
+                        (st_code, s)
+                    })
+                })
+                .collect();
+            let results: Vec<_> = joins.into_iter().map(|j| j.join().unwrap()).collect();
+            results.into_iter().map(|(c, _s)| c).collect()
+        });
+        assert_eq!(
+            statuses.iter().filter(|&&c| c == 200).count(),
+            1,
+            "{statuses:?}"
+        );
+        assert_eq!(
+            statuses.iter().filter(|&&c| c == 403).count(),
+            7,
+            "{statuses:?}"
+        );
+        assert_eq!(st.mounts.lock().unwrap().len(), 1);
+        assert!(rx.try_recv().is_ok());
+        assert!(rx.try_recv().is_err(), "queued exactly once");
     }
 }

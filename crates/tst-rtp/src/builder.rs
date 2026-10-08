@@ -483,6 +483,7 @@ impl std::fmt::Debug for ServerAuthConfig {
 ///   drop oldest beyond this)
 /// - `graceful_shutdown_drain`: 100 ms
 /// - `tls_handshake_timeout`: 30 s (`rtsps://` only)
+/// - `accept_unregistered_publishers`: off
 /// - No auth, no TLS — caller adds via `auth_*()` / `tls_cert()`.
 #[cfg(feature = "rtsp-server")]
 pub struct RtspServerBuilder {
@@ -492,6 +493,7 @@ pub struct RtspServerBuilder {
     pub(crate) session_timeout: Duration,
     pub(crate) fanout_capacity: usize,
     pub(crate) graceful_shutdown_drain: Duration,
+    pub(crate) accept_unregistered_publishers: bool,
     #[cfg(feature = "rtsp-server-tls")]
     pub(crate) tls_cert_path: Option<PathBuf>,
     #[cfg(feature = "rtsp-server-tls")]
@@ -528,6 +530,7 @@ impl RtspServerBuilder {
             session_timeout: Duration::from_secs(60),
             fanout_capacity: 256,
             graceful_shutdown_drain: Duration::from_millis(100),
+            accept_unregistered_publishers: false,
             #[cfg(feature = "rtsp-server-tls")]
             tls_cert_path: None,
             #[cfg(feature = "rtsp-server-tls")]
@@ -612,6 +615,26 @@ impl RtspServerBuilder {
     /// session-end Notice has been emitted. Defaults to 100 ms.
     pub fn graceful_shutdown_drain(&mut self, t: Duration) -> &mut Self {
         self.graceful_shutdown_drain = t;
+        self
+    }
+
+    /// Let an ANNOUNCE on a path no mount is registered under create a
+    /// publish mount there. The new mount's handle is queued for
+    /// [`RtspServer::next_publisher`](crate::rtsp::server::RtspServer::next_publisher);
+    /// the queue holds 64 handles the application has not taken yet, and
+    /// an ANNOUNCE that would create a 65th mount answers `503 Service
+    /// Unavailable` without creating it. A later ANNOUNCE on a path an
+    /// earlier one created reuses that mount and queues nothing. Defaults
+    /// to off: an ANNOUNCE on an unregistered path answers `404`.
+    ///
+    /// Security: with this on, anyone who can reach the server's port
+    /// (and pass its auth, when auth is configured) can create mounts, up
+    /// to the queue bound until the application drains it. Mounts
+    /// registered with
+    /// [`RtspServer::add_publish_mount`](crate::rtsp::server::RtspServer::add_publish_mount)
+    /// are unaffected.
+    pub fn accept_unregistered_publishers(&mut self, yes: bool) -> &mut Self {
+        self.accept_unregistered_publishers = yes;
         self
     }
 

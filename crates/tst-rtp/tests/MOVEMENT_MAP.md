@@ -99,6 +99,7 @@ root as `#[path = "rtsp_server/publish/<file>.rs"] mod publish_<file>;` — one
 | `rtsp_server/publish/lifecycle.rs` | cancel, publisher TEARDOWN, server stop Notice 5402, idle reaping vs media liveness |
 | `rtsp_server/publish/es_h264.rs` | ffmpeg-shaped H.264 publisher (sprop SDP, `Range: npt=0.000-`, SR first), interleaved → app `DemuxReceiver` + PLAY reader; UDP → app |
 | `rtsp_server/publish/es_h264_klv.rs` | GStreamer-shaped H.264 + KLV publisher: KLV PTS from sender reports (spec §2 formula, ±1 tick), `Provisional` fallback without them |
+| `rtsp_server/publish/on_demand.rs` | `accept_unregistered_publishers`: ANNOUNCE on an unknown path queues a mount for `next_publisher`; 404 without the flag; `stop()` wakes a parked `next_publisher` |
 | `rtsp_server/publish/conformance.rs` | shared receive-side conformance kit on the app transport |
 | `fixtures/raw_rtsp_publisher.rs` | raw-socket publisher (`RawPublisher`, plain + TLS), `SDP_MP2T`, `rtp_wrap`, `ts_fixture_packets`; elementary shapes `SDP_H264`, `SDP_H264_KLV`, `h264_rtp_packets`, `klv_rtp_packet`, `klv_unit`, `sr_packet`, `demux_until_quiet` |
 | `fixtures/h264_payloader.rs` | test-only RFC 6184 payloader (`packetize`, `expected_annexb`, `build_rtp_packet`), re-exported by `h264/common.rs` |
