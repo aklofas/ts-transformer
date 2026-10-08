@@ -138,6 +138,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`TST_E_BUFFER_FULL` with `*out = NULL` on a timeout, `TST_E_CLOSED`
   once stopped; `tst_rtsp_server_stop` wakes a parked call) and
   `tst_rtsp_server_remove_mount` (`TST_E_RTSP_MOUNT` for an unknown path).
+- **`tst_rtsp_server_local_addr`** writes the server's bound listen
+  address into a caller buffer, NUL-terminated and truncating, so a server
+  started on port `0` can report the port the kernel picked. `TST_E_CLOSED`
+  after `tst_rtsp_server_stop`.
 - **Publish-mount handle** `tst_rtsp_publish_mount_t`:
   `tst_rtsp_publish_mount_{path,peer_count,generation,get_stats,
   publisher_info,cancel,into_demux_receiver,free}`. The transport is
