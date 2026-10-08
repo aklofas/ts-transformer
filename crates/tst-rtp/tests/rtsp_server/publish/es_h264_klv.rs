@@ -1,6 +1,7 @@
-//! Elementary H.264 + KLV publisher in GStreamer's shape: two tracks
-//! (`stream=0` H.264, `stream=1` RFC 6597 `smpte336m/90000`), each SETUP
-//! over TCP-interleaved on its own channel pair. The server re-muxes video
+//! Elementary H.264 + KLV publisher in GStreamer's shape: two tracks, the
+//! RFC 6597 `SMPTE336M/90000` KLV track (`stream=1`, PT 96) announced and
+//! SET UP before the H.264 track (`stream=0`, PT 99), each over
+//! TCP-interleaved on its own channel pair. The server re-muxes video
 //! on PID 0x100 and KLV on PID 0x101, placing each KLV unit on the video
 //! PTS line from the two tracks' RTCP sender reports (spec §2 "Track
 //! alignment"), or by first-packet coincidence when the reports never come.
@@ -15,8 +16,8 @@ use crate::fixtures::raw_rtsp_publisher::*;
 
 const VIDEO_PID: u16 = 0x100;
 const KLV_PID: u16 = 0x101;
-const VIDEO_PT: u8 = 96;
-const KLV_PT: u8 = 97;
+const VIDEO_PT: u8 = 99;
+const KLV_PT: u8 = 96;
 const VIDEO_SSRC: u32 = 0x1111_0001;
 const KLV_SSRC: u32 = 0x2222_0002;
 /// Video RTP timestamp of AU 0 — the depacketizer's PTS zero.
@@ -103,14 +104,14 @@ fn stats_when(
 }
 
 /// A publisher on `/pub` that has announced [`SDP_H264_KLV`], SETUP both
-/// tracks over interleaved, and RECORDed. Returns it with the video and
+/// tracks over interleaved in GStreamer's order (KLV first), and RECORDed. Returns it with the video and
 /// KLV `(rtp, rtcp)` channel pairs the server allocated.
 fn two_track_publisher(port: u16) -> (RawPublisher, (u8, u8), (u8, u8)) {
     let mut p = RawPublisher::connect(port);
     assert_eq!(p.announce("/pub", SDP_H264_KLV), 200);
-    let (status, video) = p.setup_interleaved_pair("/pub", "stream=0");
-    assert_eq!(status, 200);
     let (status, klv) = p.setup_interleaved_pair("/pub", "stream=1");
+    assert_eq!(status, 200);
+    let (status, video) = p.setup_interleaved_pair("/pub", "stream=0");
     assert_eq!(status, 200);
     let (video, klv) = (video.expect("video pair"), klv.expect("klv pair"));
     let used = [video.0, video.1, klv.0, klv.1];

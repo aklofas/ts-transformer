@@ -37,10 +37,15 @@ pub const SPROP_PPS_B64: &str = "aM4PGSA=";
 /// `sprop-parameter-sets`, `a=control:streamid=0`.
 pub const SDP_H264: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=No Name\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\na=tool:libavformat 60.16.100\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1; sprop-parameter-sets=Z/QADJGWgUH7ARAAAAMAEAAAAwHg8UKq,aM4PGSA=; profile-level-id=F4000C\r\na=control:streamid=0\r\n";
 
-/// GStreamer `rtspclientsink` shape for an elementary H.264 + KLV push: the
-/// same video track as [`SDP_H264`] under `a=control:stream=0`, plus an
-/// RFC 6597 KLV track (`smpte336m/90000`, PT 97) under `a=control:stream=1`.
-pub const SDP_H264_KLV: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=Session streamed with GStreamer\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1; sprop-parameter-sets=Z/QADJGWgUH7ARAAAAMAEAAAAwHg8UKq,aM4PGSA=; profile-level-id=F4000C\r\na=control:stream=0\r\nm=application 0 RTP/AVP 97\r\na=rtpmap:97 smpte336m/90000\r\na=control:stream=1\r\n";
+/// GStreamer 1.24.2 `rtspclientsink` capture of an elementary H.264 + KLV
+/// push (`tsdemux` → `h264parse` / `meta/x-klv` → `rtspclientsink`). The
+/// KLV track is announced FIRST: RFC 6597 `SMPTE336M/90000` (upper case)
+/// on dynamic PT 96 under `a=control:stream=1`, then H.264 on PT 99 under
+/// `a=control:stream=0`. GStreamer SETs UP the tracks in that order.
+/// Verbatim except `sprop-parameter-sets`: the capture carried the PPS only
+/// (the SPS travelled in band); this carries [`SPROP_SPS_B64`] and
+/// [`SPROP_PPS_B64`] so the out-of-band parameter sets still parse.
+pub const SDP_H264_KLV: &str = "v=0\r\no=- 2559276897 1 IN IP4 127.0.0.1\r\ns=Session streamed with GStreamer\r\ni=rtspclientsink\r\nt=0 0\r\na=tool:GStreamer\r\nm=application 0 RTP/AVP 96\r\nc=IN IP4 0.0.0.0\r\na=rtpmap:96 SMPTE336M/90000\r\na=control:stream=1\r\na=ts-refclk:local\r\na=mediaclk:sender\r\na=ssrc:2807290026 cname:user4152540281@host-d1ba556f\r\nm=video 0 RTP/AVP 99\r\nc=IN IP4 0.0.0.0\r\na=rtpmap:99 H264/90000\r\na=fmtp:99 packetization-mode=1;sprop-parameter-sets=Z/QADJGWgUH7ARAAAAMAEAAAAwHg8UKq,aM4PGSA=\r\na=control:stream=0\r\na=ts-refclk:local\r\na=mediaclk:sender\r\na=ssrc:2996025368 cname:user4152540281@host-d1ba556f\r\n";
 
 /// Plain TCP or (with `tls`) a rustls client stream over TCP.
 enum Stream {
