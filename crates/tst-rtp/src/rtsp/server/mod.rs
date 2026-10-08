@@ -488,7 +488,8 @@ impl RtspServer {
     /// is off.
     ///
     /// Concurrent callers are served one at a time, each mount to exactly
-    /// one of them.
+    /// one of them. A call made while another caller is waiting can
+    /// therefore wait longer than its own `timeout`.
     ///
     /// # Errors
     /// - [`RtspServerError::Shutdown`] — the server was stopped, including

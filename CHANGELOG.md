@@ -24,8 +24,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   holds 64 handles the application has not taken; an ANNOUNCE past that
   answers `503` and creates nothing. Off by default (`404`). With it on,
   anyone who can reach the port (and pass auth, when configured) can
-  create mounts, 64 at a time until the application takes them; registered
-  mounts are unaffected.
+  create mounts. The 64 bound counts only handles the application has not
+  yet taken: an on-demand mount stays in the mount table after its
+  publisher leaves and after its handle is taken or dropped, until the
+  application calls `remove_mount` (removing idle names is the
+  application's job; a cap on on-demand mounts, 256 then `503`, follows).
+  Registered mounts are unaffected.
   `RtspServer::stop` wakes a waiting `next_publisher` with `Shutdown`.
 - A second `into_recv_transport` on the same mount returns the new
   `RtspServerError::TransportTaken`. `PublishMountHandle::cancel` ends the

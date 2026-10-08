@@ -628,8 +628,12 @@ impl RtspServerBuilder {
     /// to off: an ANNOUNCE on an unregistered path answers `404`.
     ///
     /// Security: with this on, anyone who can reach the server's port
-    /// (and pass its auth, when auth is configured) can create mounts, up
-    /// to the queue bound until the application drains it. Mounts
+    /// (and pass its auth, when auth is configured) can create mounts. The
+    /// 64 bound counts only handles the application has not yet taken: an
+    /// on-demand mount stays in the mount table after its publisher leaves
+    /// and after its handle is taken or dropped, until the application
+    /// calls `remove_mount`. Removing idle names is the application's job;
+    /// a cap on on-demand mounts (256, then `503`) follows. Mounts
     /// registered with
     /// [`RtspServer::add_publish_mount`](crate::rtsp::server::RtspServer::add_publish_mount)
     /// are unaffected.
