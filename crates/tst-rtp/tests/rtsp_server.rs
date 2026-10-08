@@ -73,3 +73,5 @@ mod publish_republish;
 mod publish_rtsps_record;
 #[path = "rtsp_server/publish/second_publisher.rs"]
 mod publish_second_publisher;
+#[path = "rtsp_server/publish/stats.rs"]
+mod publish_stats;

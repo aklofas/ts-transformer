@@ -10,7 +10,7 @@
 //! binding's receiver work against a publish mount unchanged.
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -41,6 +41,29 @@ struct AppSide {
     /// channel whose sender is already dropped, so the transport reads
     /// `Closed`.
     closed: bool,
+}
+
+/// Server-wide publisher counters behind [`crate::rtsp::server::ServerStats`]'s
+/// `active_publishers`, `total_rtp_packets_received` and
+/// `total_rtp_bytes_received`. One instance lives in `ServerState`; every
+/// publish mount holds an `Arc` of it, so the receive path ticks it
+/// without taking any server lock.
+///
+/// Relaxed atomics, updated next to (not under) the mount's stats mutex:
+/// a snapshot read while a packet is being counted may see the server
+/// totals one packet apart from the per-mount counters.
+#[derive(Debug, Default)]
+pub(crate) struct ServerCounters {
+    /// Publish mounts whose publisher slot is held. Moved only by the
+    /// slot's own transitions under its mutex
+    /// ([`PublishMountState::try_begin_publisher`] and
+    /// [`PublishMountState::end_publisher`], which every release path
+    /// reaches), so it cannot drift from the slots.
+    pub(crate) active_publishers: AtomicUsize,
+    /// RTP packets received from publishers, across every publish mount.
+    pub(crate) rtp_packets_received: AtomicU64,
+    /// Bytes of those RTP packets, headers included.
+    pub(crate) rtp_bytes_received: AtomicU64,
 }
 
 /// Internal per-mount state for a publish mount. Held inside
@@ -92,6 +115,8 @@ pub(crate) struct PublishMountState {
     /// `stats` so a lagging peer's fanout task can bump it without
     /// contending on the push-path stats mutex.
     pub(crate) frames_dropped_readers: Arc<AtomicU64>,
+    /// The server's publisher counters (see [`ServerCounters`]).
+    counters: Arc<ServerCounters>,
 }
 
 impl PublishMountState {
@@ -100,17 +125,31 @@ impl PublishMountState {
     /// application-facing bridge, created when the transport is taken, is
     /// sized at [`app_queue_bound`] frames (drop-newest past the bound,
     /// never block the publisher).
-    pub(crate) fn new(path: &str, fanout_capacity: usize) -> Arc<Self> {
-        Self::build(path, fanout_capacity, false)
+    /// `counters` is the server's [`ServerCounters`].
+    pub(crate) fn new(
+        path: &str,
+        fanout_capacity: usize,
+        counters: Arc<ServerCounters>,
+    ) -> Arc<Self> {
+        Self::build(path, fanout_capacity, false, counters)
     }
 
     /// [`Self::new`] for a mount an ANNOUNCE creates on demand
     /// (`on_demand` set).
-    pub(crate) fn new_on_demand(path: &str, fanout_capacity: usize) -> Arc<Self> {
-        Self::build(path, fanout_capacity, true)
+    pub(crate) fn new_on_demand(
+        path: &str,
+        fanout_capacity: usize,
+        counters: Arc<ServerCounters>,
+    ) -> Arc<Self> {
+        Self::build(path, fanout_capacity, true, counters)
     }
 
-    fn build(path: &str, fanout_capacity: usize, on_demand: bool) -> Arc<Self> {
+    fn build(
+        path: &str,
+        fanout_capacity: usize,
+        on_demand: bool,
+        counters: Arc<ServerCounters>,
+    ) -> Arc<Self> {
         let (fanout, _rx) = tokio::sync::broadcast::channel(fanout_capacity.max(1));
         Arc::new(Self {
             path: path.to_string(),
@@ -123,6 +162,7 @@ impl PublishMountState {
             generation: AtomicU64::new(0),
             stats: Mutex::new(PublishMountStatsInner::default()),
             frames_dropped_readers: Arc::new(AtomicU64::new(0)),
+            counters,
         })
     }
 
@@ -166,6 +206,9 @@ impl PublishMountState {
         let generation = self.generation.load(Ordering::Relaxed);
         info.generation = generation;
         *g = Some(info);
+        self.counters
+            .active_publishers
+            .fetch_add(1, Ordering::Relaxed);
         Some(generation)
     }
 
@@ -190,7 +233,26 @@ impl PublishMountState {
         let mut g = self.publisher.lock().unwrap_or_else(|e| e.into_inner());
         if g.take().is_some() {
             self.generation.fetch_add(1, Ordering::Relaxed);
+            self.counters
+                .active_publishers
+                .fetch_sub(1, Ordering::Relaxed);
         }
+    }
+
+    /// Count one RTP packet of `len` bytes received from the publisher,
+    /// on the mount and in the server totals (see [`ServerCounters`] for
+    /// how far apart the two may read).
+    pub(crate) fn count_received(&self, len: usize) {
+        self.counters
+            .rtp_packets_received
+            .fetch_add(1, Ordering::Relaxed);
+        self.counters
+            .rtp_bytes_received
+            .fetch_add(len as u64, Ordering::Relaxed);
+        self.tick(|s| {
+            s.rtp_packets_received += 1;
+            s.bytes_received += len as u64;
+        });
     }
 
     /// Create the application-facing bridge and take its consumer side.
@@ -548,7 +610,7 @@ mod tests {
 
     #[test]
     fn publisher_slot_is_exclusive_and_generation_counts_ends() {
-        let m = PublishMountState::new("/p", 16);
+        let m = PublishMountState::new("/p", 16, Default::default());
         assert_eq!(m.try_begin_publisher(info(0)), Some(0));
         assert!(
             m.try_begin_publisher(info(0)).is_none(),
@@ -562,8 +624,33 @@ mod tests {
     }
 
     #[test]
+    fn server_counters_follow_the_publisher_slot_and_the_receive_path() {
+        let counters = Arc::new(ServerCounters::default());
+        let a = PublishMountState::new("/a", 16, counters.clone());
+        let b = PublishMountState::new_on_demand("/b", 16, counters.clone());
+        let active = || counters.active_publishers.load(Ordering::Relaxed);
+        assert!(a.try_begin_publisher(info(0)).is_some());
+        assert!(a.try_begin_publisher(info(0)).is_none());
+        assert_eq!(active(), 1, "a refused claim counts nothing");
+        assert!(b.try_begin_publisher(info(0)).is_some());
+        assert_eq!(active(), 2);
+        a.end_publisher();
+        a.end_publisher();
+        assert_eq!(active(), 1, "a second end is a no-op");
+        b.close();
+        b.close();
+        assert_eq!(active(), 0, "close releases a held slot once");
+        a.count_received(100);
+        b.count_received(28);
+        assert_eq!(counters.rtp_packets_received.load(Ordering::Relaxed), 2);
+        assert_eq!(counters.rtp_bytes_received.load(Ordering::Relaxed), 128);
+        let s = a.stats_snapshot();
+        assert_eq!((s.rtp_packets_received, s.bytes_received), (1, 100));
+    }
+
+    #[test]
     fn emit_reaches_app_transport_and_readers() {
-        let m = PublishMountState::new("/p", 16);
+        let m = PublishMountState::new("/p", 16, Default::default());
         let mut reader = m.fanout.subscribe();
         let h = PublishMountHandle { state: m.clone() };
         let mut t = h.clone().into_recv_transport().unwrap();
@@ -578,7 +665,7 @@ mod tests {
 
     #[test]
     fn emit_before_take_reaches_readers_only_a_late_taker_sees_no_backlog() {
-        let m = PublishMountState::new("/p", 16);
+        let m = PublishMountState::new("/p", 16, Default::default());
         for _ in 0..5 {
             m.emit(rtp_mp2t(1).slice(12..), rtp_mp2t(1));
         }
@@ -601,7 +688,7 @@ mod tests {
 
     #[test]
     fn the_application_channel_is_allocated_when_the_transport_is_taken() {
-        let m = PublishMountState::new_on_demand("/p", 16);
+        let m = PublishMountState::new_on_demand("/p", 16, Default::default());
         assert!(
             !m.app_channel_allocated(),
             "an untaken mount holds no channel"
@@ -618,7 +705,7 @@ mod tests {
 
     #[test]
     fn close_before_the_take_still_ends_the_transport_with_closed() {
-        let m = PublishMountState::new("/p", 16);
+        let m = PublishMountState::new("/p", 16, Default::default());
         m.close();
         let h = PublishMountHandle { state: m.clone() };
         let mut t = h.clone().into_recv_transport().unwrap();
@@ -637,7 +724,7 @@ mod tests {
 
     #[test]
     fn transport_can_be_taken_once() {
-        let m = PublishMountState::new("/p", 16);
+        let m = PublishMountState::new("/p", 16, Default::default());
         let h = PublishMountHandle { state: m.clone() };
         let _t = h.clone().into_recv_transport().unwrap();
         assert!(matches!(
@@ -648,7 +735,7 @@ mod tests {
 
     #[test]
     fn full_app_channel_drops_newest_and_counts() {
-        let m = PublishMountState::new("/p", 16);
+        let m = PublishMountState::new("/p", 16, Default::default());
         let h = PublishMountHandle { state: m.clone() };
         let _t = h.clone().into_recv_transport().unwrap(); // nobody drains
         let pkt = rtp_mp2t(1);
@@ -667,7 +754,7 @@ mod tests {
 
     #[test]
     fn close_makes_the_transport_read_closed_and_cancel_wakes_a_parked_recv() {
-        let m = PublishMountState::new("/p", 16);
+        let m = PublishMountState::new("/p", 16, Default::default());
         let h = PublishMountHandle { state: m.clone() };
         let mut t = h.clone().into_recv_transport().unwrap();
         let mut buf = vec![0u8; 2048];
@@ -683,7 +770,7 @@ mod tests {
         ));
         j.join().unwrap();
         // a fresh mount: close() → Closed
-        let m2 = PublishMountState::new("/q", 16);
+        let m2 = PublishMountState::new("/q", 16, Default::default());
         let mut t2 = PublishMountHandle { state: m2.clone() }
             .into_recv_transport()
             .unwrap();
@@ -696,7 +783,7 @@ mod tests {
 
     #[test]
     fn mount_publisher_ending_does_not_close_the_transport() {
-        let m = PublishMountState::new("/p", 16);
+        let m = PublishMountState::new("/p", 16, Default::default());
         let mut t = PublishMountHandle { state: m.clone() }
             .into_recv_transport()
             .unwrap();

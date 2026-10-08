@@ -1376,9 +1376,12 @@ impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::RtspServer
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::RtspServer
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::RtspServer
 #[non_exhaustive] pub struct tst_rtp::rtsp::server::ServerStats
+pub tst_rtp::rtsp::server::ServerStats::active_publishers: usize
 pub tst_rtp::rtsp::server::ServerStats::active_sessions: usize
 pub tst_rtp::rtsp::server::ServerStats::mounts: usize
+pub tst_rtp::rtsp::server::ServerStats::total_rtp_bytes_received: u64
 pub tst_rtp::rtsp::server::ServerStats::total_rtp_bytes_sent: u64
+pub tst_rtp::rtsp::server::ServerStats::total_rtp_packets_received: u64
 pub tst_rtp::rtsp::server::ServerStats::total_rtp_packets_sent: u64
 impl core::clone::Clone for tst_rtp::rtsp::server::ServerStats
 pub fn tst_rtp::rtsp::server::ServerStats::clone(&self) -> tst_rtp::rtsp::server::ServerStats
@@ -3211,9 +3214,12 @@ impl core::marker::UnsafeUnpin for tst_rtp::rtcp::SenderReport
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtcp::SenderReport
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtcp::SenderReport
 #[non_exhaustive] pub struct tst_rtp::ServerStats
+pub tst_rtp::ServerStats::active_publishers: usize
 pub tst_rtp::ServerStats::active_sessions: usize
 pub tst_rtp::ServerStats::mounts: usize
+pub tst_rtp::ServerStats::total_rtp_bytes_received: u64
 pub tst_rtp::ServerStats::total_rtp_bytes_sent: u64
+pub tst_rtp::ServerStats::total_rtp_packets_received: u64
 pub tst_rtp::ServerStats::total_rtp_packets_sent: u64
 impl core::clone::Clone for tst_rtp::rtsp::server::ServerStats
 pub fn tst_rtp::rtsp::server::ServerStats::clone(&self) -> tst_rtp::rtsp::server::ServerStats

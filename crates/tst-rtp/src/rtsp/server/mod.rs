@@ -65,6 +65,9 @@ pub(crate) struct ServerState {
     pub(crate) total_rtp_packets_sent: AtomicU64,
     /// Cumulative RTP bytes sent across all peers + all mounts.
     pub(crate) total_rtp_bytes_sent: AtomicU64,
+    /// Publisher counters, shared with every publish mount so its receive
+    /// path ticks them lock-free.
+    pub(crate) publish_counters: Arc<crate::rtsp::server::publish::mount::ServerCounters>,
     /// `start()` flips this once; `start()` returns AlreadyStarted on the
     /// second call.
     pub(crate) started: AtomicBool,
@@ -320,6 +323,7 @@ pub(crate) fn test_state() -> Arc<ServerState> {
         active_sessions: AtomicUsize::new(0),
         total_rtp_packets_sent: AtomicU64::new(0),
         total_rtp_bytes_sent: AtomicU64::new(0),
+        publish_counters: Arc::default(),
         started: AtomicBool::new(true),
         shutdown: AtomicBool::new(false),
         local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),
@@ -386,6 +390,7 @@ impl RtspServer {
             active_sessions: AtomicUsize::new(0),
             total_rtp_packets_sent: AtomicU64::new(0),
             total_rtp_bytes_sent: AtomicU64::new(0),
+            publish_counters: Arc::default(),
             started: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
             local_addr: std::sync::Mutex::new(None),
@@ -478,6 +483,7 @@ impl RtspServer {
         let st = crate::rtsp::server::publish::mount::PublishMountState::new(
             path,
             self.state.builder.fanout_capacity,
+            self.state.publish_counters.clone(),
         );
         let mut mounts = self.state.mounts.lock().expect("mounts mutex");
         if mounts.contains_key(path) {
@@ -1076,6 +1082,21 @@ impl RtspServer {
             total_rtp_packets_sent: self.state.total_rtp_packets_sent.load(Ordering::Relaxed),
             total_rtp_bytes_sent: self.state.total_rtp_bytes_sent.load(Ordering::Relaxed),
             mounts: self.state.mounts.lock().map(|m| m.len()).unwrap_or(0),
+            active_publishers: self
+                .state
+                .publish_counters
+                .active_publishers
+                .load(Ordering::Relaxed),
+            total_rtp_packets_received: self
+                .state
+                .publish_counters
+                .rtp_packets_received
+                .load(Ordering::Relaxed),
+            total_rtp_bytes_received: self
+                .state
+                .publish_counters
+                .rtp_bytes_received
+                .load(Ordering::Relaxed),
         }
     }
 }
@@ -1102,6 +1123,19 @@ pub struct ServerStats {
     pub total_rtp_packets_sent: u64,
     pub total_rtp_bytes_sent: u64,
     pub mounts: usize,
+    /// Publish mounts that currently have a publisher (an ANNOUNCE that
+    /// claimed the mount and has not yet ended by TEARDOWN, a dropped
+    /// connection, `remove_mount` or `stop()`).
+    pub active_publishers: usize,
+    /// RTP packets received from publishers across every publish mount,
+    /// cumulative over the server's life. Counted with relaxed atomics
+    /// beside each mount's own counter, so a snapshot taken while packets
+    /// arrive may differ from the sum of the mounts' `rtp_packets_received`
+    /// by the packets in flight.
+    pub total_rtp_packets_received: u64,
+    /// Bytes of those RTP packets, headers included; same consistency as
+    /// `total_rtp_packets_received`.
+    pub total_rtp_bytes_received: u64,
 }
 
 #[cfg(test)]

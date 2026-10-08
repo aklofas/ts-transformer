@@ -220,7 +220,11 @@ fn create_on_demand_mount(
         );
         return None;
     }
-    let m = PublishMountState::new_on_demand(path, state.builder.fanout_capacity);
+    let m = PublishMountState::new_on_demand(
+        path,
+        state.builder.fanout_capacity,
+        state.publish_counters.clone(),
+    );
     let queued = state
         .publish_queue_tx
         .lock()
@@ -493,7 +497,7 @@ mod tests {
         Arc<super::super::mount::PublishMountState>,
     ) {
         let st = test_state();
-        let m = super::super::mount::PublishMountState::new("/pub", 8);
+        let m = super::super::mount::PublishMountState::new("/pub", 8, Default::default());
         st.mounts
             .lock()
             .unwrap()
@@ -741,7 +745,7 @@ mod tests {
     #[test]
     fn setup_record_on_a_different_mount_is_455() {
         let (st, _m) = state_with_publish_mount();
-        let m2 = super::super::mount::PublishMountState::new("/pub2", 8);
+        let m2 = super::super::mount::PublishMountState::new("/pub2", 8, Default::default());
         st.mounts
             .lock()
             .unwrap()
@@ -1093,7 +1097,7 @@ mod tests {
         // A registered publish mount never counts toward the cap.
         st.mounts.lock().unwrap().insert(
             "/registered".into(),
-            MountEntry::Publish(PublishMountState::new("/registered", 8)),
+            MountEntry::Publish(PublishMountState::new("/registered", 8, Default::default())),
         );
         for i in 0..crate::rtsp::server::ON_DEMAND_MOUNT_CAP {
             let mut s = ServerSessionState::new();

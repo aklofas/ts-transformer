@@ -93,10 +93,7 @@ impl Mp2tAdapter {
 
 impl PublishAdapter for Mp2tAdapter {
     fn on_rtp(&mut self, _track: usize, packet: &[u8]) {
-        self.mount.tick(|s| {
-            s.rtp_packets_received += 1;
-            s.bytes_received += packet.len() as u64;
-        });
+        self.mount.count_received(packet.len());
         let parsed = match RtpHeader::decode(packet) {
             Ok(p) if p.header.payload_type == self.expected_pt => p,
             Ok(p) => {
@@ -158,7 +155,7 @@ mod tests {
     use crate::rtsp::server::publish::mount::PublishMountState;
 
     fn mount() -> Arc<PublishMountState> {
-        PublishMountState::new("/p", 8)
+        PublishMountState::new("/p", 8, Default::default())
     }
     fn ts(n: usize) -> Vec<u8> {
         let mut v = Vec::new();

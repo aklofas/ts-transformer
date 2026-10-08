@@ -268,7 +268,7 @@ mod tests {
     use crate::rtsp::server::publish::shape::TrackKind;
 
     fn two_track_session() -> PublishSession {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let track = |control: &str| AnnouncedTrack {
             index: 0,
             control: Some(control.into()),

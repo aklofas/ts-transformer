@@ -421,10 +421,7 @@ impl EsAdapter {
 
 impl PublishAdapter for EsAdapter {
     fn on_rtp(&mut self, track: usize, packet: &[u8]) {
-        self.mount.tick(|s| {
-            s.rtp_packets_received += 1;
-            s.bytes_received += packet.len() as u64;
-        });
+        self.mount.count_received(packet.len());
         let Some(route) = self.route(track) else {
             tracing::debug!(
                 target: "tst_rtp::server::publish",
@@ -741,7 +738,7 @@ mod tests {
 
     #[test]
     fn h264_only_publisher_is_remuxed_and_starts_on_the_first_idr() {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut t = app_transport(&mount);
         let mut a = EsAdapter::new(mount.clone(), &video_track(), None).unwrap();
         // One P-frame before the IDR (must be dropped), then IDR + 3 P at
@@ -771,7 +768,7 @@ mod tests {
 
     #[test]
     fn a_klv_publisher_starts_pending_and_a_video_only_one_not_applicable() {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let _a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
         assert_eq!(mount.stats_snapshot().alignment, ClockAlignment::Pending);
         // The next publisher on the same mount announces video only.
@@ -789,7 +786,7 @@ mod tests {
 
     #[test]
     fn app_side_packets_are_pt33_with_the_adapters_own_contiguous_sequence() {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let app_rx = mount.take_app_rx().unwrap();
         let mut a = EsAdapter::new(mount.clone(), &video_track(), None).unwrap();
         for p in payload::fragmented(10, 0, 0x65, 5000, VIDEO_PT, 1000) {
@@ -812,7 +809,7 @@ mod tests {
 
     #[test]
     fn klv_units_land_at_video_relative_pts() {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut t = app_transport(&mount);
         let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
         // video SR: ntp 100.0 s ↔ rtp 180 000 ; klv SR: ntp 100.5 s ↔ rtp 500 000.
@@ -842,7 +839,7 @@ mod tests {
 
     #[test]
     fn klv_aligns_to_the_depacketizers_zero_when_the_first_au_is_poisoned() {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut t = app_transport(&mount);
         let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
         a.on_rtcp(0, &sr(100, 0, 180_000));
@@ -884,7 +881,7 @@ mod tests {
     fn default_muxer_takes_an_au_above_its_stock_buffer() {
         // 3 MB > the muxer's stock 10 000-packet (~1.84 MB) queue, < the
         // depacketizer's 8 MiB AU cap.
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut a = EsAdapter::new(mount.clone(), &video_track(), None).unwrap();
         for p in payload::fragmented(1, 0, 0x65, 3_000_000, VIDEO_PT, 60_000) {
             a.on_rtp(0, &p);
@@ -901,7 +898,7 @@ mod tests {
         // real application thread would. Nothing may be dropped.
         use tst_pipeline::{DemuxReceiver, ShellErrorKind};
         const IDR_LEN: usize = 3_000_000;
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut t = app_transport(&mount);
         t.set_recv_timeout(Some(Duration::from_secs(5)));
         let reader = std::thread::spawn(move || {
@@ -949,7 +946,7 @@ mod tests {
     fn held_klv_is_placed_and_emitted_on_flush() {
         // No sender reports and the publisher ends inside the fallback
         // window: flush forces first-packet coincidence.
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut t = app_transport(&mount);
         let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
         a.on_rtp(0, &payload::single(1, 1_000, 0x65, 400, VIDEO_PT));
@@ -976,7 +973,7 @@ mod tests {
         use std::sync::Mutex;
         // One KLV unit, no sender reports, then video only: the fallback
         // must fire on elapsed time, not wait for another KLV unit.
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut t = app_transport(&mount);
         let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
         let t0 = Instant::now();
@@ -1005,7 +1002,7 @@ mod tests {
 
     #[test]
     fn klv_placed_before_the_video_origin_is_dropped_not_muxed() {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut t = app_transport(&mount);
         let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
         // Both SRs at ntp 100.0: video rtp 90 000 ↔ klv rtp 100 000.
@@ -1027,7 +1024,7 @@ mod tests {
     fn klv_held_without_video_is_dropped_and_counted_at_flush() {
         // H.264 + KLV announced, but only KLV ever arrives: there is no
         // video line, so flush abandons the held units — and counts them.
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
         a.on_rtp(1, &klv_packet(1, 77_000, &klv_set(1)));
         a.on_rtp(1, &klv_packet(2, 77_900, &klv_set(2)));
@@ -1040,7 +1037,7 @@ mod tests {
 
     #[test]
     fn a_klv_ssrc_change_drops_the_held_units_and_restarts_alignment() {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut t = app_transport(&mount);
         let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
         a.on_rtp(0, &payload::single(1, 1_000, 0x65, 400, VIDEO_PT));
@@ -1077,7 +1074,7 @@ mod tests {
 
     #[test]
     fn a_video_ssrc_change_is_counted_once() {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut a = EsAdapter::new(mount.clone(), &video_track(), None).unwrap();
         a.on_rtp(0, &payload::single(1, 0, 0x65, 400, VIDEO_PT));
         a.on_rtp(0, &payload::single(2, 3_003, 0x41, 300, VIDEO_PT));
@@ -1098,7 +1095,7 @@ mod tests {
     fn a_sender_report_from_a_foreign_ssrc_is_ignored() {
         // A new video source's report arriving before its first packet
         // must not feed the current source's clock.
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut t = app_transport(&mount);
         let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
         a.on_rtcp(0, &sr(100, 0, 180_000));
@@ -1171,7 +1168,7 @@ mod tests {
 
     #[test]
     fn klv_stamped_ahead_of_the_video_waits_and_never_drags_the_pcr_ahead() {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let app_rx = mount.take_app_rx().unwrap();
         let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
         // One instant on both clocks: KLV RTP == video RTP.
@@ -1234,7 +1231,7 @@ mod tests {
     fn max_klv_unit_is_the_muxers_klv_ceiling() {
         // The depacketizer's cap must be exactly what this adapter's muxer
         // takes: a unit at the cap muxes, one byte more is KlvTooLarge.
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut a = EsAdapter::new(mount, &video_track(), Some(&klv_track())).unwrap();
         let max = crate::rtsp::server::publish::klv_depacketizer::MAX_KLV_UNIT_BYTES;
         a.muxer
@@ -1250,7 +1247,7 @@ mod tests {
     fn b_frames_are_counted_as_reordered_and_still_muxed() {
         // Decode order I P B B P B B (presentation 0 3 1 2 6 4 5, in 3003
         // ticks): every B arrives below a PTS already muxed.
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut t = app_transport(&mount);
         let mut a = EsAdapter::new(mount.clone(), &video_track(), None).unwrap();
         let order = [0u32, 3, 1, 2, 6, 4, 5];
@@ -1270,7 +1267,7 @@ mod tests {
 
     #[test]
     fn muxer_buffer_full_drops_the_au_and_continues() {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut t = app_transport(&mount);
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
         prog.add_video(0x100, VideoCodec::H264);
@@ -1298,7 +1295,7 @@ mod tests {
 
     #[test]
     fn foreign_pt_and_unknown_tracks_are_malformed_and_rtcp_other_than_sr_is_ignored() {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
         a.on_rtp(0, &payload::single(1, 0, 0x65, 50, KLV_PT)); // video track, KLV PT
         a.on_rtp(1, &klv_packet(1, 0, &[1])[..3]); // truncated header
