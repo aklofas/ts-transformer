@@ -54,5 +54,12 @@ test              = false
 doc               = false
 bench             = false
 
+[[bin]]
+name              = "rtp_klv_depacketize"
+path              = "fuzz_targets/rtp_klv_depacketize.rs"
+test              = false
+doc               = false
+bench             = false
+
 [workspace]
 members = []
