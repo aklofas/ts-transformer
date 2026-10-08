@@ -670,6 +670,12 @@ impl RtspServer {
     /// for the ANNOUNCE write — there's no `Session:` value to put on
     /// the wire — and proceed straight to per-session cancel.
     ///
+    /// Publisher sessions are treated like readers (notice, cancel).
+    /// Every publish mount's application transport (see
+    /// [`crate::rtsp::server::publish::PublishMountHandle::into_recv_transport`])
+    /// is then ended: a parked or later `recv_bytes` on it returns
+    /// `TransportError::Closed`.
+    ///
     /// # Errors
     /// - [`RtspServerError::NotStarted`] if called before `start()`.
     pub fn stop(&self) -> Result<(), RtspServerError> {
@@ -767,6 +773,25 @@ impl RtspServer {
                 "graceful shutdown: signaling session"
             );
             s.cancel.cancel();
+        }
+        // End every publish mount's application transport: a parked (or
+        // later) `recv_bytes` on it reads `Closed`. Idempotent with the
+        // publisher session's own `end_publisher` on its way out.
+        let publish_mounts: Vec<_> = self
+            .state
+            .mounts
+            .lock()
+            .map(|g| {
+                g.values()
+                    .filter_map(|m| match m {
+                        crate::rtsp::server::mount::MountEntry::Publish(p) => Some(p.clone()),
+                        crate::rtsp::server::mount::MountEntry::Local(_) => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for m in &publish_mounts {
+            m.close();
         }
         // Also fire the global cancel so the listener stops accepting
         // new connections and any per-task observers exit promptly.
