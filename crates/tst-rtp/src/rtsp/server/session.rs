@@ -340,6 +340,20 @@ where
                 }
             },
             _ = tokio::time::sleep(idle_bound) => {
+                // A publisher's media is liveness too: a TCP-interleaved
+                // publisher already re-arms this sleep by landing bytes on
+                // the read above (next iteration starts a fresh timer), but
+                // a UDP-transport publisher (Task 8) sends its RTP on a
+                // different socket this read loop never touches — without
+                // this check such a publisher would be reaped on schedule
+                // despite media flowing.
+                let media_recent = session
+                    .publish
+                    .as_ref()
+                    .is_some_and(|p| p.media_within(idle_bound));
+                if media_recent {
+                    continue 'serve;
+                }
                 tracing::warn!(
                     target: "tst_rtp::server",
                     peer = %peer,
@@ -358,6 +372,49 @@ where
             }
         };
         buf.extend_from_slice(&chunk[..n]);
+
+        // Publisher direction (RFC 2326 §10.12 interleaving): once a
+        // mode=record SETUP exists on this session, the stream may carry
+        // `$<ch><len>` frames between (and pipelined around) RTSP
+        // requests. Drain every complete frame at the buffer head before
+        // the RTSP framing below ever sees it — the 64 KiB unterminated-
+        // header cap must never fire on a `$`-headed buffer. An
+        // incomplete frame waits for the next read (`continue 'serve`
+        // skips straight back to the read above, bypassing the RTSP
+        // parse entirely for this iteration). Frames on unknown channels
+        // are counted and dropped (publisher bug or probe), never fatal.
+        if let Some(publish) = session.publish.as_ref() {
+            while buf.first() == Some(&b'$') {
+                match crate::rtsp::framing::parse_binary_frame_header(&buf) {
+                    None => break, // need more bytes
+                    Some((ch, total_len)) => {
+                        let payload = &buf[4..total_len];
+                        match publish.track_for_channel(ch) {
+                            Some((track, false)) => {
+                                publish
+                                    .adapter
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .on_rtp(track, payload);
+                                publish
+                                    .last_media_ms
+                                    .store(PublishSession::now_ms(), Ordering::Relaxed);
+                            }
+                            Some((track, true)) => publish
+                                .adapter
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .on_rtcp(track, payload),
+                            None => publish.mount.tick(|s| s.malformed_packets += 1),
+                        }
+                        buf.drain(..total_len);
+                    }
+                }
+            }
+            if buf.first() == Some(&b'$') {
+                continue 'serve; // partial frame, read more
+            }
+        }
 
         // Body-aware cap, coherent with the client `send_and_read` loop and
         // both interleaved pumps (all four share `rtsp_frame_decision` + the
@@ -1163,5 +1220,300 @@ mod session_tests {
             );
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
+    }
+
+    // --- Publisher-direction interleaved `$`-frame tests (Task 7) -----
+    //
+    // These drive `handle_connection` over a real loopback TCP connection,
+    // exactly like `session_responds_to_options` above, but through the
+    // full ANNOUNCE → SETUP(mode=record) → RECORD publisher handshake so
+    // the session's `publish` field is populated and the `$` arm added to
+    // `serve_requests` actually engages.
+
+    /// SDP for the one shape the MP2T publish adapter accepts — same text
+    /// as `publish::handlers::tests::SDP_MP2T`, duplicated here because
+    /// that one is private to its own test module.
+    const SDP_MP2T: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 33\r\na=control:streamid=0\r\n";
+
+    /// Bound port of a test listener driving `handle_connection` on its
+    /// one accepted connection, built the same way as
+    /// `session_responds_to_options`'s inline setup.
+    struct PublisherTestServer {
+        port: u16,
+    }
+
+    /// `test_state()` + one `/pub` publish mount + a loopback listener
+    /// that runs `handle_connection` on the first connection it accepts
+    /// (mirrors `session_responds_to_options`'s inline server task).
+    /// Returns the listener's port (for `connect`) and the mount's
+    /// `Arc` (for building the application-side transport and reading
+    /// stats).
+    async fn state_with_publish_mount_and_listener()
+    -> (PublisherTestServer, Arc<publish::mount::PublishMountState>) {
+        use crate::rtsp::server::mount::MountEntry;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let state = crate::rtsp::server::test_state();
+        let mount = publish::mount::PublishMountState::new("/pub", 8);
+        state
+            .mounts
+            .lock()
+            .unwrap()
+            .insert("/pub".into(), MountEntry::Publish(mount.clone()));
+
+        tokio::spawn(async move {
+            let (tcp, peer) = listener.accept().await.unwrap();
+            state
+                .active_sessions
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let slot = SessionSlot::new(state.clone());
+            let _ = handle_connection(state, tcp, peer, slot).await;
+        });
+
+        (PublisherTestServer { port }, mount)
+    }
+
+    async fn connect(server: &PublisherTestServer) -> TcpStream {
+        tokio::net::TcpStream::connect(("127.0.0.1", server.port))
+            .await
+            .unwrap()
+    }
+
+    /// Read from `c` until a complete RTSP response head (`CRLFCRLF`)
+    /// has arrived; return it decoded as text. Binary `$` frames the
+    /// server consumes internally are never written back to the client,
+    /// so this never has to tell a frame apart from a response — see the
+    /// module doc on the `$` arm this test file exercises.
+    async fn read_response(c: &mut TcpStream) -> String {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = c.read(&mut chunk).await.unwrap();
+            assert!(n > 0, "connection closed before a complete response");
+            buf.extend_from_slice(&chunk[..n]);
+            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    async fn write_and_read(c: &mut TcpStream, req: &str) -> String {
+        c.write_all(req.as_bytes()).await.unwrap();
+        read_response(c).await
+    }
+
+    fn announce_request(path: &str, sdp: &str) -> String {
+        format!(
+            "ANNOUNCE rtsp://h{path} RTSP/1.0\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{sdp}",
+            sdp.len()
+        )
+    }
+
+    /// The value of header `name` (case-insensitive), trimmed. Mirrors
+    /// `tests/fixtures/raw_rtsp.rs::header` (that one lives in the
+    /// integration-test crate, unreachable from this lib unit-test
+    /// module).
+    fn header_of<'a>(response: &'a str, name: &str) -> &'a str {
+        response
+            .lines()
+            .find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.trim().eq_ignore_ascii_case(name).then(|| v.trim())
+            })
+            .unwrap_or_else(|| panic!("no {name} header in {response:?}"))
+    }
+
+    fn session_id_of(response: &str) -> String {
+        header_of(response, "Session")
+            .split(';')
+            .next()
+            .unwrap()
+            .trim()
+            .to_owned()
+    }
+
+    /// The `(rtp, rtcp)` interleaved channel pair the SETUP response
+    /// actually allocated. `next_interleaved_pair` is a process-global
+    /// counter shared with every other SETUP in this test binary (see
+    /// its doc in `handlers.rs`), so a freshly ANNOUNCE'd/SETUP'd session
+    /// in this process cannot assume it got channels 0-1 — the pair must
+    /// be read back from the response, not assumed, or these tests would
+    /// be flaky under `cargo test` depending on what ran before them.
+    fn interleaved_pair_of(response: &str) -> (u8, u8) {
+        let transport = header_of(response, "Transport");
+        let spec = transport
+            .split(';')
+            .find_map(|p| p.strip_prefix("interleaved="))
+            .unwrap_or_else(|| panic!("no interleaved=A-B in {transport:?}"));
+        let (a, b) = spec.split_once('-').unwrap();
+        (a.parse().unwrap(), b.parse().unwrap())
+    }
+
+    /// `$<ch><len_be16><payload>` — one RFC 7826 §14 interleaved frame.
+    fn frame(ch: u8, payload: &[u8]) -> Vec<u8> {
+        let mut v = vec![b'$', ch];
+        v.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+        v.extend_from_slice(payload);
+        v
+    }
+
+    /// One RTP packet (PT 33, the MP2T adapter's expected PT for
+    /// `SDP_MP2T`'s `m=video 0 RTP/AVP 33`) carrying `n` TS packets as
+    /// its payload. Same shape as `publish::mount::tests::rtp_mp2t`
+    /// (private to that module, so re-declared here per the task brief).
+    fn rtp_mp2t_packet(n: usize) -> Vec<u8> {
+        let mut v = vec![0x80u8, 33, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1];
+        for _ in 0..n {
+            v.push(0x47);
+            v.extend(std::iter::repeat_n(0u8, 187));
+        }
+        v
+    }
+
+    fn setup_record_request(sid_cseq: u32) -> String {
+        format!(
+            "SETUP rtsp://h/pub/streamid=0 RTSP/1.0\r\nCSeq: {sid_cseq}\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n"
+        )
+    }
+
+    /// Drives ANNOUNCE → SETUP(mode=record) → RECORD over `c` and
+    /// returns the session id plus the actually-allocated `(rtp, rtcp)`
+    /// interleaved pair (see [`interleaved_pair_of`]'s doc for why this
+    /// cannot be assumed to be `0-1`).
+    async fn announce_setup_record(c: &mut TcpStream) -> (String, (u8, u8)) {
+        write_and_read(c, &announce_request("/pub", SDP_MP2T)).await;
+        let r = write_and_read(c, &setup_record_request(3)).await;
+        assert!(r.starts_with("RTSP/1.0 200"), "SETUP: {r}");
+        let sid = session_id_of(&r);
+        let pair = interleaved_pair_of(&r);
+        let r = write_and_read(
+            c,
+            &format!("RECORD rtsp://h/pub RTSP/1.0\r\nCSeq: 4\r\nSession: {sid}\r\n\r\n"),
+        )
+        .await;
+        assert!(r.starts_with("RTSP/1.0 200"), "RECORD: {r}");
+        (sid, pair)
+    }
+
+    #[tokio::test]
+    async fn interleaved_frames_reach_the_publish_mount_and_a_split_frame_reassembles() {
+        use tst_core::transport::RecvTransport;
+
+        let (state, mount) = state_with_publish_mount_and_listener().await;
+        let mut app = publish::mount::PublishMountHandle {
+            state: mount.clone(),
+        }
+        .into_recv_transport()
+        .unwrap();
+        let mut c = connect(&state).await;
+        let (sid, (rtp_ch, rtcp_ch)) = announce_setup_record(&mut c).await;
+
+        // Frame 1: RTCP SR on the session's RTCP channel (ignored by the
+        // MP2T adapter), Frame 2: RTP on the session's RTP channel —
+        // written in two halves with a pipelined OPTIONS behind it, to
+        // exercise the "incomplete frame waits for the next read" path.
+        let rtp = rtp_mp2t_packet(2);
+        let sr = [
+            0x80, 200, 0, 6, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let mut wire = frame(rtcp_ch, &sr);
+        wire.extend(frame(rtp_ch, &rtp));
+        let split = wire.len() - 100;
+        c.write_all(&wire[..split]).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let mut tail = wire[split..].to_vec();
+        tail.extend_from_slice(
+            format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: 5\r\nSession: {sid}\r\n\r\n")
+                .as_bytes(),
+        );
+        c.write_all(&tail).await.unwrap();
+        let r = read_response(&mut c).await;
+        assert!(
+            r.starts_with("RTSP/1.0 200") && header_of(&r, "Cseq") == "5",
+            "{r}"
+        );
+        let mut buf = vec![0u8; 4096];
+        let got = tokio::task::spawn_blocking(move || {
+            let n = app.recv_bytes(&mut buf).unwrap();
+            buf.truncate(n);
+            buf
+        })
+        .await
+        .unwrap();
+        assert_eq!(got, rtp[12..].to_vec());
+        assert_eq!(mount.stats_snapshot().rtp_packets_received, 1);
+    }
+
+    #[tokio::test]
+    async fn unknown_interleaved_channel_is_counted_not_fatal() {
+        let (state, mount) = state_with_publish_mount_and_listener().await;
+        let mut c = connect(&state).await;
+        let (sid, (rtp_ch, rtcp_ch)) = announce_setup_record(&mut c).await;
+        // Guaranteed distinct from both allocated channels regardless of
+        // their value: +3 and +2 (mod 256) are both nonzero offsets from
+        // the rtcp channel (rtp_ch + 1), and +3 is a nonzero offset from
+        // rtp_ch itself.
+        let unknown_ch = rtp_ch.wrapping_add(3);
+        assert_ne!(unknown_ch, rtp_ch);
+        assert_ne!(unknown_ch, rtcp_ch);
+
+        let mut wire = frame(unknown_ch, &rtp_mp2t_packet(1));
+        wire.extend_from_slice(
+            format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: 5\r\nSession: {sid}\r\n\r\n")
+                .as_bytes(),
+        );
+        c.write_all(&wire).await.unwrap();
+        let r = read_response(&mut c).await;
+        assert!(
+            r.starts_with("RTSP/1.0 200") && header_of(&r, "Cseq") == "5",
+            "{r}"
+        );
+        assert_eq!(mount.stats_snapshot().malformed_packets, 1);
+    }
+
+    #[tokio::test]
+    async fn frames_before_record_are_accepted() {
+        use tst_core::transport::RecvTransport;
+
+        let (state, mount) = state_with_publish_mount_and_listener().await;
+        let mut app = publish::mount::PublishMountHandle {
+            state: mount.clone(),
+        }
+        .into_recv_transport()
+        .unwrap();
+        let mut c = connect(&state).await;
+        write_and_read(&mut c, &announce_request("/pub", SDP_MP2T)).await;
+        let r = write_and_read(&mut c, &setup_record_request(3)).await;
+        assert!(r.starts_with("RTSP/1.0 200"), "SETUP: {r}");
+        let sid = session_id_of(&r);
+        let (rtp_ch, _rtcp_ch) = interleaved_pair_of(&r);
+
+        // A frame lands BEFORE RECORD — `session.publish` already exists
+        // from ANNOUNCE, and SETUP has already allocated the channel, so
+        // the `$` arm must route it even though `recording` is still
+        // false (RFC 2326 §10.11 gates RECORD on SETUP, not the reverse).
+        let rtp = rtp_mp2t_packet(1);
+        let mut wire = frame(rtp_ch, &rtp);
+        wire.extend_from_slice(
+            format!("RECORD rtsp://h/pub RTSP/1.0\r\nCSeq: 4\r\nSession: {sid}\r\n\r\n").as_bytes(),
+        );
+        c.write_all(&wire).await.unwrap();
+        let r = read_response(&mut c).await;
+        assert!(
+            r.starts_with("RTSP/1.0 200") && header_of(&r, "Cseq") == "4",
+            "{r}"
+        );
+        let mut buf = vec![0u8; 4096];
+        let got = tokio::task::spawn_blocking(move || {
+            let n = app.recv_bytes(&mut buf).unwrap();
+            buf.truncate(n);
+            buf
+        })
+        .await
+        .unwrap();
+        assert_eq!(got, rtp[12..].to_vec());
+        assert_eq!(mount.stats_snapshot().rtp_packets_received, 1);
     }
 }
