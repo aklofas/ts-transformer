@@ -179,7 +179,8 @@ impl RawPublisher {
         let extra = format!(
             "Transport: RTP/AVP;unicast;client_port={}-{};mode=record\r\n",
             client_port,
-            client_port + 1
+            // A kernel-picked port can be 65535; never overflow in a test.
+            client_port.saturating_add(1)
         );
         let r = self.exchange("SETUP", &format!("{mount}/{control}"), &extra, "");
         let status = status_of(&r);

@@ -19,6 +19,34 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mount (`403` to a second); the mount outlives publishers
   (`PublishMountHandle::generation`). Elementary-track publishers,
   on-demand mounts and the bindings follow in this release.
+- A second `into_recv_transport` on the same mount returns the new
+  `RtspServerError::TransportTaken`. `PublishMountHandle::cancel` ends the
+  application transport with `ExplicitClose`; `RtspServer::stop` ends it
+  with `Closed`; a publisher leaving does neither.
+- The publisher's MPEG-TS reaches the application and PLAY readers in
+  bundles of at most seven TS packets, whatever bundle size the publisher
+  sent.
+- A UDP publisher's RTP is admitted only from its RTSP control
+  connection's IP; the source port is learned from the first valid packet
+  and may change. Datagrams from other IPs are counted in
+  `PublishMountStats::source_rejected`.
+- A TCP-interleaved publisher gets the channel pair it asked for when that
+  pair is free on its connection.
+- One connection holds one role: a reader SETUP or PLAY on a publisher's
+  connection, or an ANNOUNCE on a reader's, answers `455`.
+
+### Changed — tst-rtp: RTSP server
+
+- **`TransportResponse` gains a public `mode` field** (the Transport
+  header's `mode=` parameter, lowercased). The struct is not
+  `#[non_exhaustive]`, so code that builds it with a struct literal must
+  add the field.
+- `OPTIONS` now advertises `ANNOUNCE` and `RECORD` in `Public:` to every
+  client.
+- The mount lookup now strips a trailing `stream=N` path segment
+  (gst-rtsp-server's control convention), as it already did `trackID=N`
+  and `streamid=N`. A reader mount registered with a path that literally
+  ends in such a segment (`/x/stream=1`) no longer resolves.
 
 ### Added — JVM binding: HLS publishing (`org.tstrans.hls`)
 

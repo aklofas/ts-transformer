@@ -161,12 +161,14 @@ fn idle_publisher_is_reaped_but_media_only_publisher_is_not() {
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
 
-    let announced = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let announced_port = announced.local_addr().unwrap().port();
+    // Two announced client ports (never sent from), each from a bound
+    // socket so neither is in use by anything else.
+    let announced_a = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let announced_b = UdpSocket::bind("127.0.0.1:0").unwrap();
     let mut pa = RawPublisher::connect(port);
-    let a_rtp = record_udp(&mut pa, "/a", announced_port);
+    let a_rtp = record_udp(&mut pa, "/a", announced_a.local_addr().unwrap().port());
     let mut pb = RawPublisher::connect(port);
-    record_udp(&mut pb, "/b", announced_port + 2);
+    record_udp(&mut pb, "/b", announced_b.local_addr().unwrap().port());
 
     let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
     let bundle = &ts_fixture_packets(1)[0];

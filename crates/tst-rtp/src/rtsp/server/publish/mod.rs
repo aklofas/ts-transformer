@@ -19,5 +19,9 @@ pub enum PublishShape {
     /// One MPEG-TS-over-RTP track (RFC 2250, PT 33 or a dynamic PT mapped to `MP2T/90000`).
     Mp2t,
     /// Elementary tracks: one H.264 (RFC 6184) video track, optionally one KLV (RFC 6597) track.
-    Elementary { klv: bool },
+    Elementary {
+        /// The announce carries a KLV (RFC 6597, `smpte336m`) track beside
+        /// the video.
+        klv: bool,
+    },
 }
