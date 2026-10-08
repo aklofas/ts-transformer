@@ -416,7 +416,7 @@ int main(int argc, char **argv) {
                 /* Nobody can read this mount now, so remove it for the same
                  * reason as the MAX_MOUNTS branch above: a registered mount
                  * nobody drains keeps its publisher pushing into nothing. */
-                tst_rtsp_server_remove_mount(server, slot->path);
+                tst_rtsp_server_remove_mount(server, path);
                 tst_rtsp_publish_mount_free(mount);
                 continue;
             }
@@ -424,7 +424,7 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "[%s] pthread_create failed\n", slot->path);
                 tst_rtp_demux_receiver_close(slot->rx);
                 /* No thread will drain the mount: remove it (see above). */
-                tst_rtsp_server_remove_mount(server, slot->path);
+                tst_rtsp_server_remove_mount(server, path);
                 tst_rtsp_publish_mount_free(mount);
                 continue;
             }
