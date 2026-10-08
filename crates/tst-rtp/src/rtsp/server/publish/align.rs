@@ -50,7 +50,11 @@
 //! with the units still waiting for alignment, and a placed unit the
 //! video has not reached [`PLACED_WAIT_MAX`] after its placement is
 //! dropped and counted.
-//! [`Aligner::drain`] releases every placed unit regardless.
+//! [`Aligner::drain`] releases every placed unit up to
+//! [`PLACED_WAIT_MAX`] (in 90 kHz ticks) past the last muxed video PTS,
+//! and drops and counts the rest: a unit further ahead than that could
+//! never have been reached in its lifetime, so muxing it at flush would
+//! only move the muxer's PCR away from the video.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -73,6 +77,10 @@ pub(crate) const ALIGN_FALLBACK: Duration = Duration::from_secs(2);
 /// guarantee is unchanged: a unit still leaves only once the video has
 /// reached it (or is dropped).
 pub(crate) const PLACED_WAIT_MAX: Duration = Duration::from_secs(10);
+
+/// [`PLACED_WAIT_MAX`] in 90 kHz ticks: how far past the last muxed video
+/// PTS [`Aligner::drain`] still releases a placed unit.
+pub(crate) const PLACED_WAIT_MAX_TICKS: i64 = PLACED_WAIT_MAX.as_millis() as i64 * 90;
 
 /// Maximum number of KLV units [`Aligner`] holds, waiting for alignment
 /// and placed but waiting for the video together. Bounded, drop-oldest —
@@ -179,8 +187,9 @@ pub(crate) struct Aligner {
     video_origin: Option<VideoOrigin>,
     /// Unwrapped RTP timestamp of the first KLV unit since the aligner
     /// started (or since the video line was re-anchored), moved to the
-    /// oldest unit still held when [`Self::evict_stale`] ages units out —
-    /// the anchor for first-packet-coincidence fallback.
+    /// oldest unit still held when [`Self::evict_stale`] ages units out or
+    /// [`Self::drop_oldest`] drops them before an offset is known — the
+    /// anchor for first-packet-coincidence fallback.
     klv_first: Option<i64>,
     /// KLV units held until alignment is known. Bounded at
     /// [`ALIGN_HOLD_MAX_UNITS`] and [`ALIGN_HOLD_MAX_BYTES`], drop-oldest;
@@ -215,7 +224,8 @@ pub(crate) struct Aligner {
     /// Highest video PTS pushed into the muxer, from
     /// [`Self::on_video_muxed`]: placed units at or below it leave.
     video_reach: Option<i64>,
-    /// Placed units the aligner discarded (budget or age).
+    /// Placed units the aligner discarded (budget, age, or too far past
+    /// the muxed video at flush).
     dropped_placed: u64,
 }
 
@@ -407,7 +417,9 @@ impl Aligner {
 
     /// Drop the oldest unit the aligner holds, counting it: the front of
     /// `placed` if any (it arrived before everything in `hold`), else the
-    /// front of `hold`.
+    /// front of `hold`. While no offset is known the dropped held unit was
+    /// the fallback anchor (`klv_first`), so the anchor moves to the
+    /// oldest unit still held, as in [`Self::evict_stale`].
     fn drop_oldest(&mut self) {
         if let Some(p) = self.placed.pop_front() {
             self.placed_bytes -= p.unit.bytes.len();
@@ -415,6 +427,9 @@ impl Aligner {
         } else if let Some(h) = self.hold.pop_front() {
             self.held_bytes -= h.unit.bytes.len();
             self.dropped += 1;
+            if self.offset.is_none() {
+                self.klv_first = self.hold.front().map(|h| h.t_k);
+            }
         }
     }
 
@@ -556,10 +571,19 @@ impl Aligner {
     /// already known, otherwise forcing the first-packet-coincidence
     /// fallback now (ignoring the [`ALIGN_FALLBACK`] window) so an
     /// end-of-stream flush doesn't lose units that never got a sender
-    /// report, and release every placed unit whether or not the video has
-    /// reached it. While the video origin is unknown there is no line to
-    /// place anything on: every held unit is abandoned and counted in
-    /// [`Self::dropped`] (units already placed are still released).
+    /// report, and release, in arrival order, every placed unit within
+    /// [`PLACED_WAIT_MAX`] of the last muxed video PTS whether or not the
+    /// video has reached it. A placed unit waits at most
+    /// [`PLACED_WAIT_MAX`] for the video to reach it, so one further ahead
+    /// than that at flush time could never have been reached in its
+    /// lifetime: releasing it would only move the muxer's clock (the PCR
+    /// follows the PTS of what is pushed), never align anything. It is
+    /// dropped and counted in [`Self::dropped`] instead. Before any video
+    /// has been muxed there is no video line to jump away from, so every
+    /// placed unit is released at its placed PTS. While the video origin
+    /// is unknown there is no line to place anything on: every held unit
+    /// is abandoned and counted in [`Self::dropped`] (units already
+    /// placed are still released under the same bound).
     pub(crate) fn drain(&mut self, now: Instant) -> Vec<(KlvUnit, i64)> {
         if self.video_origin.is_none() {
             self.discard_held();
@@ -568,7 +592,22 @@ impl Aligner {
         }
         self.place_held(now);
         self.placed_bytes = 0;
-        self.placed.drain(..).map(|p| (p.unit, p.pts)).collect()
+        let reach = self.video_reach;
+        let mut out = Vec::with_capacity(self.placed.len());
+        for p in self.placed.drain(..) {
+            if reach.is_some_and(|r| p.pts > r.saturating_add(PLACED_WAIT_MAX_TICKS)) {
+                tracing::debug!(
+                    target: "tst_rtp::server::publish",
+                    pts = p.pts,
+                    video = ?reach,
+                    "placed KLV unit beyond the muxed video at flush; dropped"
+                );
+                self.dropped_placed += 1;
+            } else {
+                out.push((p.unit, p.pts));
+            }
+        }
+        out
     }
 }
 
@@ -730,6 +769,25 @@ mod tests {
         assert_eq!(placed.len(), ALIGN_HOLD_MAX_UNITS);
         assert_eq!(placed[0].0.rtp_timestamp, 5, "oldest five dropped");
         assert_eq!(a.dropped(), 5, "and counted");
+    }
+
+    #[test]
+    fn the_fallback_anchors_on_the_oldest_unit_left_by_the_unit_budget() {
+        // No reports: the hold overflows before the fallback window ends,
+        // so the oldest units go. The fallback must anchor on the oldest
+        // unit still held, not on a dropped one.
+        let mut a = Aligner::caught_up();
+        let t0 = Instant::now();
+        a.on_video_au(0, 0);
+        for i in 0..(ALIGN_HOLD_MAX_UNITS as u32 + 5) {
+            assert!(a.on_klv_unit(unit(i * 10), t0).is_empty());
+        }
+        assert_eq!(a.dropped(), 5);
+        let placed = a.poll(t0 + ALIGN_FALLBACK);
+        assert_eq!(a.mode(), ClockAlignment::Provisional);
+        assert_eq!(placed.len(), ALIGN_HOLD_MAX_UNITS);
+        assert_eq!(placed[0], (unit(50), 0), "the oldest kept unit at PTS 0");
+        assert_eq!(placed[1], (unit(60), 10));
     }
 
     fn big_unit(ts: u32, len: usize) -> KlvUnit {
@@ -1161,6 +1219,55 @@ mod tests {
         assert!(a.on_klv_unit(unit(45_000), t0).is_empty());
         assert_eq!(a.drain(t0), vec![(unit(45_000), 45_000)]);
         assert_eq!(a.placed_bytes, 0);
+    }
+
+    #[test]
+    fn drain_drops_placed_units_further_than_the_wait_bound_past_the_muxed_video() {
+        let mut a = aligned_at_zero();
+        let t0 = Instant::now();
+        let r = 900_000;
+        a.on_video_muxed(r);
+        let beyond = (r + PLACED_WAIT_MAX_TICKS + 1) as u32;
+        assert!(a.on_klv_unit(unit(beyond), t0).is_empty());
+        assert!(a.drain(t0).is_empty(), "a unit the video could never reach");
+        assert_eq!(a.dropped(), 1, "dropped and counted");
+        assert_eq!(a.placed_bytes, 0);
+        assert!(a.placed.is_empty());
+    }
+
+    #[test]
+    fn drain_releases_a_placed_unit_exactly_the_wait_bound_past_the_muxed_video() {
+        let mut a = aligned_at_zero();
+        let t0 = Instant::now();
+        let r = 900_000;
+        a.on_video_muxed(r);
+        let at_bound = r + PLACED_WAIT_MAX_TICKS;
+        let beyond = at_bound + 1;
+        // Arrival order: beyond, at the bound, then one the video reached.
+        assert!(a.on_klv_unit(unit(beyond as u32), t0).is_empty());
+        assert!(a.on_klv_unit(unit(at_bound as u32), t0).is_empty());
+        assert!(a.on_klv_unit(unit(r as u32 + 1), t0).is_empty());
+        assert_eq!(
+            a.drain(t0),
+            vec![
+                (unit(at_bound as u32), at_bound),
+                (unit(r as u32 + 1), r + 1)
+            ]
+        );
+        assert_eq!(a.dropped(), 1);
+        assert_eq!(a.placed_bytes, 0);
+    }
+
+    #[test]
+    fn drain_before_any_video_is_muxed_releases_at_the_placed_pts() {
+        // Nothing muxed yet: no video line the KLV could pull the PCR
+        // away from, so even a unit far ahead leaves at its placed PTS.
+        let mut a = aligned_at_zero();
+        let t0 = Instant::now();
+        let far = (10 * PLACED_WAIT_MAX_TICKS) as u32;
+        assert!(a.on_klv_unit(unit(far), t0).is_empty());
+        assert_eq!(a.drain(t0), vec![(unit(far), i64::from(far))]);
+        assert_eq!(a.dropped(), 0);
     }
 
     #[test]
