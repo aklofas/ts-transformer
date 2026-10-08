@@ -25,7 +25,7 @@ pub(crate) enum TrackTransport {
     Interleaved { rtp: u8, rtcp: u8 },
     /// Server-bound UDP RTP+RTCP socket pair the publisher sends to.
     /// Read by `handle_record`'s spawn of
-    /// [`super::udp_ingest::spawn_udp_ingest`] (Task 8).
+    /// [`super::udp_ingest::spawn_udp_ingest`].
     Udp {
         rtp: Arc<tokio::net::UdpSocket>,
         rtcp: Arc<tokio::net::UdpSocket>,
@@ -37,7 +37,7 @@ pub(crate) struct PublishTrack {
     pub(crate) announced: AnnouncedTrack,
     pub(crate) transport: Option<TrackTransport>,
     /// Set once `handle_record` has spawned this track's UDP ingest task
-    /// (Task 8) — keeps a later RECORD on the same session (RFC 2326
+    /// — keeps a later RECORD on the same session (RFC 2326
     /// §10.11 allows one) from spawning a duplicate. Always stays
     /// `false` for a track whose transport is `Interleaved` (nothing to
     /// spawn there).
@@ -49,27 +49,27 @@ pub(crate) struct PublishTrack {
 pub(crate) struct PublishSession {
     pub(crate) mount: Arc<PublishMountState>,
     /// Read in this module's own tests today; production reads it once
-    /// an `Elementary` shape has a real adapter (PR 2 of this arc) and
+    /// an `Elementary` shape has a real adapter and
     /// once stats reporting names the active shape.
     #[allow(dead_code)]
     pub(crate) shape: super::PublishShape,
     pub(crate) tracks: Vec<PublishTrack>,
     pub(crate) recording: bool,
     pub(crate) adapter: Arc<Mutex<Box<dyn PublishAdapter>>>,
-    /// Cancelled by [`Self::end`] to stop any UDP ingest tasks Task 8
-    /// spawns per `TrackTransport::Udp` track — read (cloned) by
+    /// Cancelled by [`Self::end`] to stop any UDP ingest tasks spawned
+    /// per `TrackTransport::Udp` track — read (cloned) by
     /// `handle_record` and handed to each
     /// [`super::udp_ingest::spawn_udp_ingest`] call.
     pub(crate) udp_cancel: CancellationToken,
-    /// `JoinHandle`s for this session's UDP ingest tasks (Task 8), one
+    /// `JoinHandle`s for this session's UDP ingest tasks, one
     /// per `TrackTransport::Udp` track, pushed by `handle_record`.
     /// [`Self::end`] cancels `udp_cancel` first (letting each task exit
     /// through its own `select!`'s cancel arm) and then aborts any
     /// still running, as a backstop.
     pub(crate) udp_tasks: Vec<tokio::task::JoinHandle<()>>,
     /// Instant-based millis of the last RTP packet accepted on any
-    /// track — written by the session loop's interleaved `$` arm (Task 7)
-    /// and by Task 8's UDP ingest tasks; read by [`Self::media_within`].
+    /// track — written by the session loop's interleaved `$` arm
+    /// and by the UDP ingest tasks; read by [`Self::media_within`].
     /// `AtomicU64` so a UDP ingest task can update it without taking a
     /// lock.
     pub(crate) last_media_ms: Arc<AtomicU64>,
@@ -173,7 +173,7 @@ impl PublishSession {
     }
 
     /// Milliseconds since the process-wide media-liveness epoch. Shared
-    /// by the session loop's interleaved `$`-frame arm and Task 8's UDP
+    /// by the session loop's interleaved `$`-frame arm and the UDP
     /// ingest tasks — both stamp [`Self::last_media_ms`] with this same
     /// clock, so [`Self::media_within`] never compares values taken from
     /// two different origins.

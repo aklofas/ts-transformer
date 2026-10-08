@@ -70,8 +70,8 @@ fn ok_response(req: &RtspRequest, session_id: Option<&str>) -> RtspResponse {
 ///   empty body, or a structurally unusable SDP (`ShapeReject::BadRequest`).
 /// - 415 Unsupported Media Type — a well-formed SDP whose track
 ///   combination matches no accepted shape (`ShapeReject::Unsupported`),
-///   or (today) an `Elementary` shape — PR 2 of this arc adds the real
-///   H.264(+KLV) adapter.
+///   or (today) an `Elementary` shape, which has no H.264(+KLV) adapter
+///   yet.
 /// - 404 Not Found — mount path not registered.
 /// - 461 Unsupported Transport — the mount exists but is a local
 ///   (muxer-backed) mount, which never accepts a publisher.
@@ -129,16 +129,16 @@ pub(crate) fn handle_announce(
             Some(MountEntry::Local(_)) => {
                 return error_response(req, 461, "Unsupported Transport");
             }
-            // Task 15 adds the on-demand (auto-create-on-ANNOUNCE) branch here.
+            // An on-demand (auto-create-on-ANNOUNCE) branch belongs here.
             None => return error_response(req, 404, "Not Found"),
         }
     };
     // Reject an `Elementary` shape BEFORE claiming the publisher slot —
-    // PR 2 of this arc replaces this with the real H.264(+KLV) adapter;
-    // today ANNOUNCE can only classify it, never feed it, so there is
+    // until a real H.264(+KLV) adapter exists, ANNOUNCE can only
+    // classify it, never feed it, so there is
     // nothing to hold the slot for. Claiming it first and immediately
     // freeing it would still bump the mount's generation and could 403 a
-    // concurrent well-formed ANNOUNCE for no reason (fix round 1 rider).
+    // concurrent well-formed ANNOUNCE for no reason.
     let PublishShape::Mp2t = announced.shape else {
         return error_response(req, 415, "Unsupported Media Type");
     };
@@ -309,7 +309,7 @@ pub(crate) fn handle_setup_record(
 
 /// RECORD handler — RFC 2326 §10.11. Auth-gated.
 ///
-/// Spawns one UDP ingest task (Task 8, `super::udp_ingest::spawn_udp_ingest`)
+/// Spawns one UDP ingest task (`super::udp_ingest::spawn_udp_ingest`)
 /// per `TrackTransport::Udp` track that doesn't already have one running —
 /// gated per-track by `PublishTrack::udp_spawned`, so a later RECORD on
 /// the same session (RFC 2326 §10.11 allows one) never spawns a

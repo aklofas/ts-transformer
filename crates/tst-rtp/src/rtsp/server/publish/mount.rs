@@ -35,11 +35,10 @@ pub(crate) struct PublishMountState {
     /// [`Self::close`] has run — a dropped `SyncSender` is what makes
     /// the mpsc receiver observe `Disconnected`.
     ///
-    /// Read today only by [`Self::emit`] and [`Self::close`], which are
-    /// themselves reached only from this module's own tests until the
-    /// publisher ingest adapter (Task 5) and `remove_mount` (Task 16)
-    /// call them from non-test code — see the `#[allow(dead_code)]`
-    /// note on `impl PublishMountState` below.
+    /// Read only by [`Self::emit`] (the publisher ingest adapter) and
+    /// [`Self::close`] (not yet called outside this module's tests; mount
+    /// removal will call it) — see the `#[allow(dead_code)]` note on
+    /// `impl PublishMountState` below.
     #[allow(dead_code)]
     app_tx: Mutex<Option<std::sync::mpsc::SyncSender<Bytes>>>,
     /// Consumer side of the application-facing bridge. Taken exactly
@@ -108,14 +107,12 @@ impl PublishMountState {
         })
     }
 
-    // `emit`, `close`, and `tick` are reached today only through this
-    // module's own tests — the publisher ingest adapter (Tasks 7/8 of
-    // this arc, once RTP/RTCP packets actually flow) calls `emit`, and
-    // `remove_mount` (Task 16) calls `close`. `tick` is `emit`'s shared
-    // stats-mutation path. `try_begin_publisher`/`end_publisher` are now
-    // reached from `handle_announce` / `PublishSession::end` (Task 6).
-    // The `#[allow(dead_code)]` on the remaining three stays harmless
-    // once their calls land.
+    // The publisher ingest adapter calls `emit` (interleaved `$` frames
+    // and UDP ingest); `close` is reached only from this module's tests
+    // until mount removal calls it. `tick` is `emit`'s shared
+    // stats-mutation path. `try_begin_publisher`/`end_publisher` are
+    // reached from `handle_announce` / `PublishSession::end`. The
+    // `#[allow(dead_code)]` attributes stay harmless once every call lands.
     /// One frame to both sinks. `ts` = TS payload for readers; `rtp` =
     /// whole RTP packet (PT 33) for the app. A full application channel
     /// drops `rtp` (newest) and ticks `frames_dropped_app`; the reader
