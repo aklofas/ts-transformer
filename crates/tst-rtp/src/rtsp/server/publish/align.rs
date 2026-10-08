@@ -481,6 +481,46 @@ mod tests {
     }
 
     #[test]
+    fn report_jitter_within_a_millisecond_is_not_a_step() {
+        let mut a = Aligner::new();
+        let t0 = Instant::now();
+        a.on_video_au(0, 0);
+        a.on_video_sr(&sr(10, 0, 0));
+        a.on_klv_sr(&sr(10, 0, 0));
+        // One tick of sampling jitter on the next KLV report: no step.
+        a.on_klv_sr(&sr(11, 0, 90_001));
+        assert_eq!(a.steps(), 0);
+        // A 100-tick move (> 90 ticks, 1 ms) is a step.
+        a.on_klv_sr(&sr(12, 0, 180_100));
+        assert_eq!(a.steps(), 1);
+        assert_eq!(
+            a.on_klv_unit(unit(180_100), t0),
+            vec![(unit(180_100), 180_000)]
+        );
+    }
+
+    #[test]
+    fn reports_after_the_fallback_switch_to_the_report_mapping_with_one_step() {
+        let mut a = Aligner::new();
+        let t0 = Instant::now();
+        a.on_video_au(1_000, 0);
+        assert!(a.on_klv_unit(unit(7_000), t0).is_empty());
+        let late = t0 + ALIGN_FALLBACK;
+        assert_eq!(
+            a.on_klv_unit(unit(7_900), late),
+            vec![(unit(7_000), 0), (unit(7_900), 900)]
+        );
+        assert_eq!((a.mode(), a.steps()), (ClockAlignment::Provisional, 0));
+        // Reports arrive late: ntp 10.0 ↔ video 1 000 and KLV 2 500. KLV
+        // 8 800 is 6 300 ticks after that instant: video 7 300, PTS 6 300
+        // (the provisional mapping would have said 1 800).
+        a.on_video_sr(&sr(10, 0, 1_000));
+        a.on_klv_sr(&sr(10, 0, 2_500));
+        assert_eq!((a.mode(), a.steps()), (ClockAlignment::SenderReport, 1));
+        assert_eq!(a.on_klv_unit(unit(8_800), late), vec![(unit(8_800), 6_300)]);
+    }
+
+    #[test]
     fn hold_queue_is_bounded_drop_oldest() {
         let mut a = Aligner::new();
         let t0 = Instant::now();

@@ -96,11 +96,12 @@ pub struct H264Au {
     /// Annex B–framed NALU bytes (one or more NALUs concatenated with
     /// `[0,0,0,1]` start codes).
     pub annexb: Vec<u8>,
-    /// 90 kHz decode-order timestamp derived from the RTP timestamp.
+    /// 90 kHz presentation timestamp, delivered in decode order, derived
+    /// from the RTP timestamp.
     ///
     /// Zero-based at the first started AU (even one later dropped as
     /// poisoned, so the first emitted AU need not read 0); unwrapped across the 32-bit RTP
-    /// timestamp rollover. Because RTP timestamps reflect decode order, B-frame
+    /// timestamp rollover. Because RTP timestamps are presentation times sent in decode order, B-frame
     /// content produces non-monotonic PTS values — the depacketizer passes them
     /// through unaltered. DTS is not derivable from RTP; callers with B-frame
     /// sources must derive DTS themselves for `push_video_to_with_dts`.
