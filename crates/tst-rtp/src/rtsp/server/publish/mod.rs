@@ -5,6 +5,7 @@
 
 pub(crate) mod adapter;
 pub(crate) mod handlers;
+pub(crate) mod klv_depacketizer;
 pub(crate) mod mount;
 pub(crate) mod session;
 pub(crate) mod shape;
