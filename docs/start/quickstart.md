@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // delivering it, and closing ends the connection with whatever it
     // still holds (`linger` only waits for the ACK), so pause first.
     std::thread::sleep(Duration::from_millis(500));
-    socket.close()?;
+    socket.close();
     Ok(())
 }
 ```

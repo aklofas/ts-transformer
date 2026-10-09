@@ -19,10 +19,7 @@ The native extension resolves every member it can raise at
 `import tstrans`, so a table/enum mismatch is an `ImportError`, never a
 surprise in an `except` clause. Members retired by that alignment were kept as
 deprecated aliases through 0.7.x and are removed in 0.8.0 (the 0.7.0
-CHANGELOG has the old→new table). An alias IS its successor, so it carries the
-successor's `.name` and `.value`: on the `IntEnum`s the integer is the one
-the old member had, on the string-valued `DemuxErrorKind` the string changed
-(see its docstring).
+CHANGELOG has the old→new table).
 
 `KlvEncodeErrorKind` accompanies the `klv.encode_*` Python wrappers.
 """

@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let msg = format!("hello {i}");
         socket.send(msg.as_bytes())?;
     }
-    socket.close()?;
+    socket.close();
     Ok(())
 }
 ```
