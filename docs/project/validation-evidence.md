@@ -39,9 +39,11 @@ exercised — a missing tool degrades its cells to `SKIPPED`, never a fake
 pass or fail. Both scripts are validated on linux-x86_64; linux-aarch64 is
 expected to work (no arch-specific code) but hasn't been validated yet —
 `run-matrix.sh` additionally depends on per-arch apt/deb availability of
-the peer tools above, while `soak.sh` needs no third-party media tools at
-all, both legs being `tst-interop` talking to itself through its own
-impairment proxy.
+the peer tools above. `soak.sh`'s SRT and RIST legs need no third-party
+media tools, being `tst-interop` talking to itself through its own
+impairment proxy; its `rtsp-publish` leg needs GStreamer's
+`gst-launch-1.0` with `rtspclientsink`, and `--no-rtsp-publish` runs
+without it.
 
 ## The transport + format interop matrix
 
@@ -123,6 +125,8 @@ edited. There is no ffmpeg publisher cell. ffmpeg's RTSP muxer cannot
 publish the harness's synthetic stream (`dimensions not set` from its
 minimal SPS) and cannot publish KLV over RTSP at all; see
 [`scripts/interop/README.md`](/scripts/interop/README.md) gap item 10.
+"Publisher role (RTSP ANNOUNCE/RECORD ingest)" below collects these cells
+with the role's fuzz and soak evidence.
 
 **The 157-cell census before that addition (92 PASS, 0 FAIL, 65
 EXPECTED-UNSUPPORTED, 0 SKIPPED) was identical at realistic and at compact
@@ -307,7 +311,7 @@ property and asserts the named failure (`crates/tst-interop/tests/mutations.rs`)
 
 ## Soak evidence
 
-`soak.sh` runs two concurrent, hours-long legs of `tst-interop` pushing
+`soak.sh` runs two concurrent, hours-long transport legs of `tst-interop` pushing
 synthetic MPEG-TS/KLV traffic through an impaired proxy: an SRT leg
 wrapped in `tst_pipeline::ManagedTransport` (so it must reconnect across a
 90-second full-drop outage window injected every 6 hours) and a RIST leg
@@ -320,7 +324,10 @@ keyframes, 2-10 KiB inter frames, ~1.7 Mb/s at 30 fps) — so the soak
 measures endurance under a real encoder's traffic shape and burst
 pattern, and the two evidence bodies on this page are measured on the
 same stream. `tst-interop report soak` renders a pass/fail verdict plus
-RSS-growth slopes per process.
+RSS-growth slopes per process. Since 2026-10-08 a third leg, `rtsp-publish`,
+runs beside them: an external RTSP publisher pushing into the RTSP server's
+publish mount, ending and re-ANNOUNCEing on a schedule. It is described
+under "Publisher role" below, with the rest of that role's evidence.
 
 The impairment itself changed shape on 2026-09-14 (see "The current soak
 shape" below), and the 0.7.0 release soak below runs it. The earlier
@@ -877,6 +884,169 @@ Background mode and so exercised the blocking path) — and
 the full artifact set (30-second-cadence RSS samples, per-leg
 send/recv/proxy reports, per-process logs, `soak-results.json`) is
 retained offline by the maintainer.
+
+## Publisher role (RTSP ANNOUNCE/RECORD ingest)
+
+`RtspServer`'s publish mounts accept a publisher's ANNOUNCE, SETUP
+`mode=record` and RECORD, and hand the received stream to the application
+as an `RtpRecvTransport` (see the
+[publisher-ingest cookbook recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md)).
+Three instruments cover the role: two interop matrix cells with a real
+third-party publisher, three fuzz targets on the server's ingest parsers,
+and a soak leg that repeatedly ends a publisher and re-ANNOUNCEs into the
+same mount. Each is described below in the order it ran, with what it
+found.
+
+### Interop cells
+
+Both cells run GStreamer 1.24.2's `rtspclientsink` against `tst-interop
+recv --url rtsp-publish://127.0.0.1:<port>/mount`, a harness-only scheme
+that binds an `RtspServer` with one publish mount and judges what the mount
+delivers. They are part of the 159-cell census above
+([run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566):
+94 PASS, 0 FAIL, 65 EXPECTED-UNSUPPORTED, 0 SKIPPED), and both passed on
+their first CI run.
+
+- **`rtsp-publish/gst-push-mp2t`** proves byte identity. The publisher
+  sends MPEG-TS over RTP (RFC 2250, payload type 33). The cell's tier is
+  `transparent`: `recv --strict` must pass, and the received stream's
+  SHA-256 must equal the source file's.
+- **`rtsp-publish/gst-push-es-klv`** proves the elementary path. The
+  publisher sends H.264 and KLV as two RTP tracks, and the server re-muxes
+  them into its own transport stream. The cell's tier is `remux`, judged
+  against a `klv-sync` source with `recv --remuxed`. Locally it received
+  240 of 240 video access units and 80 of 80 KLV records, with 0
+  non-conformant events. Its KLV set digest equals the source's, so every
+  KLV record survived the trip through RTP and the re-mux unchanged.
+
+**What `--remuxed` skips, and why it is declared.** The server picks its
+own PIDs (PMT 0x1000, video 0x100, KLV 0x101 as `PrivateData`), so the
+oracles keyed on the generator's layout fail by construction. `--remuxed`
+skips only those: per-PID wire media, PMT stream types and descriptors,
+per-PID wire-versus-demux counts, the PTS-wrap check, audio and AV1
+carriage, and the KLV carriage kind. The recv report lists them under
+`skipped_oracles`, and the cell log reads `expect klv-sync, --remuxed`.
+Every content oracle still runs: access-unit, keyframe and KLV counts, the
+KLV set digest, the codec, programs and PMTs seen, PTS monotonicity, PCR
+cadence and non-conformant events. A unit test shows that a re-muxed
+capture missing half its content still fails the video floor under
+`--remuxed`.
+
+**Why the elementary cell uses a `klv-sync` source.** KLV over RTP needs a
+timestamp per unit. The baseline profile's asynchronous KLV PES carries no
+PTS, so GStreamer's `tsdemux` hands its KLV payloader untimed buffers, and
+every KLV RTP packet goes out with one timestamp (observed: all 80 packets
+of an 8 s clip). The server cannot place such units on the video timeline.
+A `klv-sync` source carries a PTS per record, and its KLV RTP timestamps
+advance by 9000 per record. The cell is still recorded under `baseline`,
+the axis it belongs to.
+
+**There is no ffmpeg publisher cell.** ffmpeg 6.1.1's RTSP muxer stops
+with `dimensions not set` because it cannot read a picture size from the
+generator's minimal H.264 SPS. A real 1280x720 SPS lets ffmpeg publish,
+but it also makes 25 H.264 `decode/*` cells fail, because the decoders
+then start decoding the synthetic slice payloads. ffmpeg's RTSP muxer also
+has no KLV payloader. ffmpeg publisher evidence is therefore manual: see
+[`scripts/interop/README.md`](/scripts/interop/README.md) gap item 10.
+
+**A finding the elementary cell produced, fixed.** Before the
+`klv-sync` source was chosen, two of five runs of the elementary cell
+against the untimed baseline KLV showed a PCR anomaly of roughly 14 000
+and 17 500 seconds. When a publisher ended, the server released every KLV
+unit still waiting for the video at its placed PTS, however far ahead of
+the video that was. Every PLAY reader and the application transport saw
+the jump. The server now releases only units within 10 s of the last
+muxed video PTS when a publisher ends. It drops the rest and counts them
+in `PublishMountStats::klv_units_dropped`. Unit tests pin both sides of
+the bound and the case where no video was muxed yet.
+
+### Fuzz targets
+
+Three `cargo-fuzz` targets cover the publisher's ingest parsers.
+`tests/coverage/fuzz-targets.toml` lists all 36 targets in the workspace.
+
+| Target | Drives |
+| --- | --- |
+| `rtp_klv_depacketize` | the RFC 6597 KLV depacketizer |
+| `rtsp_server_publish_framing` | the server session's `$`-frame drain, then its RTSP request framing, as the session read loop runs them |
+| `sdp_announce_classify` | SDP parsing, then the classification of an ANNOUNCE into a supported shape or a refusal |
+
+A 20-second run of `rtsp_server_publish_framing` finished clean:
+
+```text
+Done 2348854 runs in 21 second(s)
+```
+
+**`sdp_announce_classify` found a panic, fixed.** After about 687 000
+executions it crashed in the third-party `sdp-types` 0.1.8 parser, an
+internal assertion failure on an 8-byte body:
+
+```text
+v=0\n\xff\n\0=
+```
+
+Any peer allowed to ANNOUNCE could send that body. Before the fix, the
+server session thread panicked and the connection hung open with no
+answer. A server's DESCRIBE answer could likewise unwind through an
+`RtspClient` caller's thread. The fix has two layers:
+
+- `sdp-types` moves to 0.2.0, whose parser returns an error for that
+  input.
+- `Sdp::parse` also catches a panic from the parser and returns
+  `RtspError::BadSdp`, because the parser runs on unauthenticated peer
+  bytes. The server answers the ANNOUNCE with 400 and keeps the
+  connection.
+
+Three regression tests use the 8-byte body: the parser alone, a server
+ANNOUNCE followed by a clean publish on the same connection, and a client
+DESCRIBE. After the fix, a 120-second run was clean, and the saved crash
+inputs replay clean:
+
+```text
+Done 5741244 runs in 121 second(s)
+```
+
+### Soak leg (`rtsp-publish`)
+
+`soak.sh` runs a third leg beside SRT and RIST. GStreamer's
+`rtspclientsink` publishes MPEG-TS into a `tst-interop recv` publish
+mount, and a new publisher session takes over at a fixed period. The leg
+is designed as follows:
+
+- **One stream, many publishers.** The script generates one stream for
+  the whole run and cuts it at PAT packets into one segment per publisher
+  generation. Each segment is pushed as its own publisher session.
+  Concatenated, the segments are the source byte for byte, so `recv
+  --strict` judges one unbroken stream across every change of publisher.
+  The summary also reports whether the received stream's SHA-256 equals
+  the source's.
+- **Graceful drops.** Each generation ends at its segment's end of
+  stream, and the session then closes. The next publisher ANNOUNCEs into
+  the mount, which stays open between publishers. An abrupt publisher
+  loss is not exercised on this leg. The server's integration tests cover
+  a publisher that drops its connection with no TEARDOWN.
+- **Generations from the mount, not from the script.** The recv report
+  carries the mount's own `PublishMountStats`, read while the server still
+  runs. The `publisher_generations_rtsp-publish` verdict requires
+  `generation >= publisher_generations - 1`, where `publisher_generations`
+  is the declared number of segments. The last publisher may still be
+  connected at recv's deadline.
+- **Declared like the other legs.** `soak-config.json` declares the leg's
+  profile, KLV mode, publisher command, segment length and segment count
+  before any worker launches. The leg has no impairment proxy and no
+  corruption tap, so those verdicts read "not applicable" with the reason.
+  Its RSS is sampled for `recv` and for the publisher loop.
+
+The first one-hour run used the default 600-second period: six segments
+from a 3564-second stream, the `baseline` profile with rich KLV.
+
+- Built from: TODO(harvest: source commit from provenance.json, and the run's start and end time in UTC)
+- Publisher generations: TODO(harvest: generations ended on the mount, against the floor of 5, from publisher_generations_rtsp-publish)
+- Verdicts: TODO(harvest: overall_pass, total verdicts, gating PASS and FAIL counts, provisional count, from soak-results.json)
+- Stream identity: TODO(harvest: whether recv's stream SHA-256 matched source.sha256, and recv's video access-unit and KLV record counts)
+- RSS: TODO(harvest: rss_slope_rtsp-publish_recv and rss_slope_rtsp-publish_publisher in KiB/h, provisional below 72 h)
+
+The run's full artifact set is retained offline by the maintainer.
 
 ## Stress and ceilings
 

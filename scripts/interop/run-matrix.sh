@@ -1127,7 +1127,7 @@ rtsp_publish_cells() {
 # ---------------------------------------------------------------------
 # Format-axis per-profile groups
 # ---------------------------------------------------------------------
-# Unlike the six *_cells functions above (transport axis, intentionally
+# Unlike the seven *_cells functions above (transport axis, intentionally
 # pinned to the "baseline" profile only — see the per-profile loop
 # below), these three run once per entry in --profiles.
 
@@ -1224,8 +1224,9 @@ srt_live_cells_for_profile() {
 # different one.
 run_axes_for_profile() {
   # Transport axis stays pinned to "baseline" regardless of how many
-  # profiles --profiles lists — matches the ~25-cell transport-axis
-  # inventory built and verified (8 PASS/17 FAIL/0 SKIPPED);
+  # profiles --profiles lists — matches the 27-cell transport-axis
+  # inventory (the original 25 built and verified at 8 PASS/17 FAIL/0
+  # SKIPPED, plus the two rtsp-publish cells);
   # scaling it by profile too would multiply that count by up to 12x
   # for no new signal the format axis below doesn't already cover more
   # precisely (analyze/decode/srt-live are the per-profile probes).
