@@ -1504,7 +1504,7 @@ pub mod soak {
         /// and nothing else in a run's artifacts says which one it was.
         #[serde(default)]
         pub reconnect_mode: Option<String>,
-        /// A publish leg's publisher command line ([`PUBLISH_LEGS`]).
+        /// A publish leg's publisher command line (`PUBLISH_LEGS`).
         /// Recorded for provenance, not checked. `None` on every other
         /// leg — and rejected there at parse time.
         #[serde(default)]
@@ -2099,7 +2099,7 @@ pub mod soak {
         pub process_exits: Vec<ProcessExit>,
         pub worker_exits: BTreeMap<String, i32>,
         pub legs: Vec<LegResult>,
-        /// The publish legs ([`PUBLISH_LEGS`]), apart from `legs` because
+        /// The publish legs (`PUBLISH_LEGS`), apart from `legs` because
         /// they have no proxy or sender to report on. `#[serde(default)]`
         /// so a results file written before publish legs existed still
         /// loads.
@@ -2164,7 +2164,7 @@ pub mod soak {
         /// `"rist"` is included whenever that leg's three report files
         /// were supplied.
         pub legs: Vec<(String, LegArtifacts)>,
-        /// `(leg name, artifacts)` for each publish leg ([`PUBLISH_LEGS`])
+        /// `(leg name, artifacts)` for each publish leg (`PUBLISH_LEGS`)
         /// the run had — empty when it had none.
         pub publish_legs: Vec<(String, PublishLegArtifacts)>,
         pub rss_slope_threshold_kb_per_hour: Option<f64>,
