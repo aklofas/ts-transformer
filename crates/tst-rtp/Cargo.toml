@@ -23,7 +23,7 @@ bytes        = "1"
 # getrandom is the minimal dep — sized for one-shot construction-time use.
 getrandom    = "0.2"
 md-5         = { version = "0.10", default-features = false }
-sdp-types    = "0.1"
+sdp-types    = "0.2"
 secrecy      = { workspace = true }
 sha2         = { version = "0.10", default-features = false }
 # Constant-time byte comparison for RTSP auth credential verification.

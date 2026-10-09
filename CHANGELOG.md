@@ -240,6 +240,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   server now releases only units within 10 s (the placed-unit wait bound)
   of the last muxed video PTS; the rest are dropped and counted in
   `PublishMountStats::klv_units_dropped`.
+- **A malformed SDP from a peer no longer panics the server session or the
+  client call.** An eight-byte body made the `sdp-types` 0.1.8 parser fail
+  an internal assertion, so a publisher's ANNOUNCE could end its server
+  session task and a server's DESCRIBE answer unwound through the
+  `RtspClient` caller's thread. `sdp-types` moves to 0.2.0, which returns an
+  error for that input, and `Sdp::parse` also catches a panic from the
+  parser and returns `RtspError::BadSdp` (the server answers ANNOUNCE with
+  400 and keeps the connection). Found by the new `sdp_announce_classify`
+  fuzz target.
 
 ### Added — JVM binding: HLS publishing (`org.tstrans.hls`)
 

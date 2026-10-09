@@ -34,3 +34,24 @@ fn setup_play_tcp_interleaved_succeeds() {
     drop(client);
     drop(h);
 }
+
+/// A server answering DESCRIBE with a malformed SDP body (the smallest input
+/// known to make an SDP parser assert internally) yields `BadSdp` on the
+/// caller's thread rather than a panic.
+#[test]
+fn malformed_describe_sdp_is_bad_sdp() {
+    let cfg = FixtureConfig {
+        sdp_body: b"v=0\n\xff\n\0=".to_vec(),
+        ..FixtureConfig::default()
+    };
+    let h = FixtureHandle::spawn(cfg);
+    let url = format!("rtsp://127.0.0.1:{}/test", h.port);
+    let mut client = tst_rtp::RtspClient::connect(&url).unwrap();
+    let res = client.describe();
+    assert!(
+        matches!(res, Err(tst_rtp::RtspError::BadSdp { .. })),
+        "expected BadSdp, got {res:?}"
+    );
+    drop(client);
+    drop(h);
+}

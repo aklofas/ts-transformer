@@ -22,7 +22,7 @@ use tst_core::klv::st0601::{self, UasDatalinkLs};
 use tst_rtp::SenderReport;
 
 use super::h264_payloader::{build_rtp_packet, packetize};
-use super::raw_rtsp::{header, make_muxer_cfg, request, session_id};
+use super::raw_rtsp::{header, make_muxer_cfg, request_bytes, session_id};
 
 /// A single PT 33 (MP2T/90000, RFC 2250) track, `a=control:streamid=0`.
 pub const SDP_MP2T: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=publish\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 33\r\na=rtpmap:33 MP2T/90000\r\na=control:streamid=0\r\n";
@@ -153,27 +153,39 @@ impl RawPublisher {
 
     /// Send `method uri` with `extra` header lines (each ending `\r\n`) and
     /// `body`; returns the response head.
-    fn exchange(&mut self, method: &str, path: &str, extra: &str, body: &str) -> String {
+    fn exchange(&mut self, method: &str, path: &str, extra: &str, body: &[u8]) -> String {
         self.cseq += 1;
         let session = match &self.session {
             Some(s) => format!("Session: {s}\r\n"),
             None => String::new(),
         };
-        let req = format!(
-            "{method} {} RTSP/1.0\r\nCSeq: {}\r\n{session}{extra}\r\n{body}",
+        let mut req = format!(
+            "{method} {} RTSP/1.0\r\nCSeq: {}\r\n{session}{extra}\r\n",
             self.uri(path),
             self.cseq
-        );
-        request(&mut self.stream, &req)
+        )
+        .into_bytes();
+        req.extend_from_slice(body);
+        request_bytes(&mut self.stream, &req)
     }
 
     /// ANNOUNCE `sdp` into `mount`; returns the status code.
     pub fn announce(&mut self, mount: &str, sdp: &str) -> u16 {
+        self.announce_bytes(mount, sdp.as_bytes())
+    }
+
+    /// [`Self::announce`] with a raw body, for SDP that is not UTF-8.
+    pub fn announce_bytes(&mut self, mount: &str, sdp: &[u8]) -> u16 {
         let extra = format!(
             "Content-Type: application/sdp\r\nContent-Length: {}\r\n",
             sdp.len()
         );
         status_of(&self.exchange("ANNOUNCE", mount, &extra, sdp))
+    }
+
+    /// OPTIONS; returns the status code.
+    pub fn options(&mut self, path: &str) -> u16 {
+        status_of(&self.exchange("OPTIONS", path, "", b""))
     }
 
     /// SETUP `mode=record` over TCP-interleaved. Returns the status and,
@@ -196,7 +208,7 @@ impl RawPublisher {
             "SETUP",
             &format!("{mount}/{control}"),
             "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n",
-            "",
+            b"",
         );
         let status = status_of(&r);
         if status != 200 {
@@ -224,7 +236,7 @@ impl RawPublisher {
             // A kernel-picked port can be 65535; never overflow in a test.
             client_port.saturating_add(1)
         );
-        let r = self.exchange("SETUP", &format!("{mount}/{control}"), &extra, "");
+        let r = self.exchange("SETUP", &format!("{mount}/{control}"), &extra, b"");
         let status = status_of(&r);
         if status != 200 {
             return (status, None);
@@ -239,18 +251,18 @@ impl RawPublisher {
 
     /// RECORD; returns the status code.
     pub fn record(&mut self, mount: &str) -> u16 {
-        status_of(&self.exchange("RECORD", mount, "", ""))
+        status_of(&self.exchange("RECORD", mount, "", b""))
     }
 
     /// RECORD with `Range: npt=0.000-`, the way ffmpeg sends it (spec
     /// appendix A); returns the status code.
     pub fn record_from_start(&mut self, mount: &str) -> u16 {
-        status_of(&self.exchange("RECORD", mount, "Range: npt=0.000-\r\n", ""))
+        status_of(&self.exchange("RECORD", mount, "Range: npt=0.000-\r\n", b""))
     }
 
     /// TEARDOWN; returns the status code.
     pub fn teardown(&mut self, mount: &str) -> u16 {
-        status_of(&self.exchange("TEARDOWN", mount, "", ""))
+        status_of(&self.exchange("TEARDOWN", mount, "", b""))
     }
 
     /// One RFC 2326 §10.12 interleaved frame: `$`, channel, BE16 length, payload.

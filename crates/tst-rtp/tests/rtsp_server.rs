@@ -59,6 +59,8 @@ mod publish_conformance;
 mod publish_es_h264;
 #[path = "rtsp_server/publish/es_h264_klv.rs"]
 mod publish_es_h264_klv;
+#[path = "rtsp_server/publish/malformed_sdp.rs"]
+mod publish_malformed_sdp;
 #[path = "rtsp_server/publish/lifecycle.rs"]
 mod publish_lifecycle;
 #[path = "rtsp_server/publish/mp2t_interleaved.rs"]
