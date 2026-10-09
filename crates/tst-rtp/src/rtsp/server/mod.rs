@@ -464,6 +464,14 @@ impl RtspServer {
             self.state.builder.fanout_capacity,
         )?;
         let mut mounts = self.state.mounts.lock().expect("mounts mutex");
+        // Re-checked under the mounts lock: `stop()` sets `shutdown` before
+        // it snapshots this table to close every publish mount, so a
+        // registration that passed the early check while `stop()` ran
+        // cannot insert a mount the snapshot missed (whose transport would
+        // then never see end-of-stream until the server was dropped).
+        if self.state.shutdown.load(Ordering::Acquire) {
+            return Err(RtspServerError::Shutdown);
+        }
         if mounts.contains_key(path) {
             return Err(RtspServerError::DuplicateMount {
                 path: path.to_string(),
@@ -502,6 +510,14 @@ impl RtspServer {
             self.state.publish_counters.clone(),
         );
         let mut mounts = self.state.mounts.lock().expect("mounts mutex");
+        // Re-checked under the mounts lock: `stop()` sets `shutdown` before
+        // it snapshots this table to close every publish mount, so a
+        // registration that passed the early check while `stop()` ran
+        // cannot insert a mount the snapshot missed (whose transport would
+        // then never see end-of-stream until the server was dropped).
+        if self.state.shutdown.load(Ordering::Acquire) {
+            return Err(RtspServerError::Shutdown);
+        }
         if mounts.contains_key(path) {
             return Err(RtspServerError::DuplicateMount {
                 path: path.to_string(),
@@ -706,6 +722,14 @@ impl RtspServer {
             self.state.builder.fanout_capacity,
         )?;
         let mut mounts = self.state.mounts.lock().expect("mounts mutex");
+        // Re-checked under the mounts lock: `stop()` sets `shutdown` before
+        // it snapshots this table to close every publish mount, so a
+        // registration that passed the early check while `stop()` ran
+        // cannot insert a mount the snapshot missed (whose transport would
+        // then never see end-of-stream until the server was dropped).
+        if self.state.shutdown.load(Ordering::Acquire) {
+            return Err(RtspServerError::Shutdown);
+        }
         if mounts.contains_key(path) {
             return Err(RtspServerError::DuplicateMount {
                 path: path.to_string(),
