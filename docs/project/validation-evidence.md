@@ -917,7 +917,9 @@ their first CI run.
   against a `klv-sync` source with `recv --remuxed`. Locally it received
   240 of 240 video access units and 80 of 80 KLV records, with 0
   non-conformant events. Its KLV set digest equals the source's, so every
-  KLV record survived the trip through RTP and the re-mux unchanged.
+  KLV record survived the trip through RTP and the re-mux unchanged. The
+  cell gates that: it computes the source file's digest with `verify` and
+  fails on any difference.
 
 **What `--remuxed` skips, and why it is declared.** The server picks its
 own PIDs (PMT 0x1000, video 0x100, KLV 0x101 as `PrivateData`), so the
@@ -926,9 +928,11 @@ skips only those: per-PID wire media, PMT stream types and descriptors,
 per-PID wire-versus-demux counts, the PTS-wrap check, audio and AV1
 carriage, and the KLV carriage kind. The recv report lists them under
 `skipped_oracles`, and the cell log reads `expect klv-sync, --remuxed`.
-Every content oracle still runs: access-unit, keyframe and KLV counts, the
-KLV set digest, the codec, programs and PMTs seen, PTS monotonicity, PCR
-cadence and non-conformant events. A unit test shows that a re-muxed
+The cell record carries the list and the judged profile, and the results
+table prints both on the row. Every content oracle still runs:
+access-unit, keyframe and KLV counts, the codec, programs and PMTs seen,
+PTS monotonicity, PCR cadence and non-conformant events, and the cell
+holds the KLV set digest to the source's. A unit test shows that a re-muxed
 capture missing half its content still fails the video floor under
 `--remuxed`.
 
@@ -1018,8 +1022,11 @@ is designed as follows:
   generation. Each segment is pushed as its own publisher session.
   Concatenated, the segments are the source byte for byte, so `recv
   --strict` judges one unbroken stream across every change of publisher.
-  The summary also reports whether the received stream's SHA-256 equals
-  the source's.
+  The `delivery_complete_rtsp-publish` verdict requires the received
+  stream's SHA-256 to equal the source's, declared in `soak-config.json`
+  before any worker launches. A lost or truncated last generation leaves no
+  discontinuity behind it and can still clear the count floors; the digest
+  catches it.
 - **Graceful drops.** Each generation ends at its segment's end of
   stream, and the session then closes. The next publisher ANNOUNCEs into
   the mount, which stays open between publishers. An abrupt publisher
@@ -1028,12 +1035,14 @@ is designed as follows:
 - **Generations from the mount, not from the script.** The recv report
   carries the mount's own `PublishMountStats`, read while the server still
   runs. The `publisher_generations_rtsp-publish` verdict requires
-  `generation >= publisher_generations - 1`, where `publisher_generations`
-  is the declared number of segments. The last publisher may still be
-  connected at recv's deadline.
+  `generation >= publisher_generations`, where `publisher_generations`
+  is the declared number of segments. The stream stops `30 + N` seconds
+  before the run, so the last publisher ends before recv's deadline; one
+  cut off there would also fail `worker_exits`.
 - **Declared like the other legs.** `soak-config.json` declares the leg's
-  profile, KLV mode, publisher command, segment length and segment count
-  before any worker launches. The leg has no impairment proxy and no
+  profile, KLV mode, publisher command, segment length, segment count and
+  source digest before any worker launches. A declared leg whose report is
+  not supplied to `report soak` fails `leg_evidence_<leg>`. The leg has no impairment proxy and no
   corruption tap, so those verdicts read "not applicable" with the reason.
   Its RSS is sampled for `recv` and for the publisher loop.
 

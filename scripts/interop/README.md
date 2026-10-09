@@ -158,9 +158,14 @@ mechanism string by definition.
     keyed on the generator's layout (per-PID wire media, PMT stream types
     and descriptors, KLV carriage kind, per-PID wire-vs-demux, PTS wrap
     on the video PID, audio and AV1 carriage) and lists them in the recv
-    report's `skipped_oracles`. Every content oracle still runs: AU,
-    keyframe and KLV counts, the KLV set digest, codec, programs and
-    PMTs seen, PTS monotonicity, PCR cadence, non-conformant events.
+    report's `skipped_oracles`. The cell record carries that list and the
+    profile the capture was judged against, and `results.md` prints both
+    on the row. Every content oracle still runs: AU, keyframe and KLV
+    counts, codec, programs and PMTs seen, PTS monotonicity, PCR cadence,
+    non-conformant events. The cell also computes the source file's KLV
+    set digest with `verify` and fails on `KLV set digest mismatch` unless
+    the received one equals it, so a lost or altered KLV record fails the
+    cell even where the count floor would let it pass.
   - `n/a` — decode-only probes (`rtsp-serve/vlc-probe`, every format-axis
     `decode/*` cell) with no capture file to compare against anything;
     PASS means "no error/fatal marker in the peer's own log" (plus mpv's
@@ -828,7 +833,9 @@ figure.
 one publish mount, and GStreamer's `rtspclientsink` RECORDs into it (RFC 2250
 MP2T over TCP-interleaved RTP, which the mount passes on byte for byte). There
 is no proxy and no `tst-interop send`. Before any worker launches, `soak.sh`
-generates one stream of the run's length less 30 s and cuts it at PAT packets
+generates one stream of the run's length less a `30 + N` s tail (`N` = the
+generation count; each publisher restart costs about a second) and cuts it at
+PAT packets
 into `TOTAL_SECONDS / PUBLISHER_DROP_PERIOD_S` segments. A shell loop (the
 `rtsp-publish-publisher` worker) pushes each segment as its own publisher
 session: at the segment's end the publisher exits, its session ends, and the
@@ -837,7 +844,7 @@ abrupt publisher loss, such as a reset with no TEARDOWN, is not exercised
 here and stays with the RTSP server's integration tests. The segments
 concatenate to the source, so the receiver
 judges one unbroken stream `--strict`, and its `stream_sha256` equals the
-source's (`rtsp-publish/source.sha256`) when every byte arrived. A publisher
+source's when every byte arrived. A publisher
 restart cannot end the capture: `recv`'s 15 s no-data deadline only applies
 before its first event.
 
@@ -851,16 +858,27 @@ free.
   `--profile auto`, not part of the seeded draw), the KLV set, `schedule:
   null`, `reconnect_mode: null`, the publisher command line,
   `publisher_drop_period_s` (the segment length, recorded) and
-  `publisher_generations` (how many publisher sessions the run launched).
-  `parse_soak_config` rejects a publish leg without a period or with fewer
-  than two generations, and a transport leg that declares a publisher.
+  `publisher_generations` (how many publisher sessions the run launched),
+  and `source_sha256`, the digest of the generated stream, written once the
+  stream exists and before any worker launches (also kept as
+  `rtsp-publish/source.sha256`). `parse_soak_config` rejects a publish leg
+  without a period, with fewer than two generations or with a malformed
+  digest, and a transport leg that declares any publisher field.
 - **Observed** — the recv report's `publish_mount` block: the mount's own
   counters, snapshotted before the server shuts down. `generation` counts
   publishers that ended.
 - **Checked** — **`publisher_generations_rtsp-publish`**, non-provisional:
-  `generation >= publisher_generations - 1` (the last publisher may still be
-  connected at the snapshot). Fails when
-  the report carries no `publish_mount` block. The leg also gets
+  `generation >= publisher_generations`, every declared generation ended.
+  The `30 + N` s tail is what guarantees it: the last publisher finishes
+  before `recv`'s deadline, and one cut off there would exit nonzero and fail
+  `worker_exits` as well. Fails when the report carries no `publish_mount`
+  block. **`delivery_complete_rtsp-publish`**, non-provisional: the recv
+  report's `metrics.stream_sha256` equals the declared `source_sha256`, so a
+  generation lost or cut short anywhere, the last one included, fails the
+  leg (the count floors alone cannot see a lost last generation). A config
+  written before `source_sha256` existed is judged against the
+  `source.sha256` file beside the recv report, and the verdict says so; with
+  neither, it fails. The leg also gets
   `recv_invariants_`, `profile_declared_` and `klv_declared_`, as a transport
   leg does. `schedule_declared_`, `reconnect_mode_declared_` and the six
   `corruption_*_` verdicts pass with a detail that begins "not applicable"
@@ -868,8 +886,12 @@ free.
   nothing on this leg could run it. RSS is sampled for `recv` and the
   publisher loop; the `publisher` rows are the loop's shell, not
   gst-launch-1.0. `soak-results.json` lists the leg under `publish_legs`, and
-  `summary.txt` prints the publisher count and whether the stream hash
-  matched.
+  `summary.txt` prints the publisher count and the delivery verdict.
+- **Every declared leg is judged** — a leg in `soak-config.json`'s `legs`
+  whose artefacts were not passed to `report soak` (a hand-run report that
+  forgets `--rtsp-publish-recv-report`, or the rist reports) gets a failing
+  `leg_evidence_<leg>` verdict, so `overall_pass` can never be true for a leg
+  nobody looked at.
 
 #### Lossy-mode transport loss
 

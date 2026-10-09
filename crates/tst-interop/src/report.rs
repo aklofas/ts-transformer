@@ -825,7 +825,31 @@ fn render_verdict(cell: &MergedCell) -> (&'static str, String) {
         }
         Verdict::SkippedToolMissing => ("⏭ SKIPPED", cell.failures.join("; ")),
     };
+    let notes = match (declared_relaxation(cell), notes.is_empty()) {
+        (None, _) => notes,
+        (Some(d), true) => d,
+        (Some(d), false) => format!("{d}; {notes}"),
+    };
     (label, escape_markdown_table_cell(&notes))
+}
+
+/// The relaxation a cell's receiver ran under, as the row declares it:
+/// the profile the capture was judged against when it is not the one
+/// the cell is recorded under, and the verdicts skipped. `None` for a
+/// cell judged in full against its own profile.
+fn declared_relaxation(cell: &MergedCell) -> Option<String> {
+    let m = cell.metrics.as_ref()?;
+    let mut parts = Vec::new();
+    if let Some(p) = m.judged_profile.as_deref().filter(|p| *p != cell.profile) {
+        parts.push(format!("judged against profile `{p}`"));
+    }
+    // Code spans, so a name such as `program_<n>_wire_media` is not read
+    // as an HTML tag by the renderer the table is pasted into.
+    if let Some(s) = m.skipped_oracles.as_deref().filter(|s| !s.is_empty()) {
+        let names: Vec<String> = s.iter().map(|o| format!("`{o}`")).collect();
+        parts.push(format!("skipped oracles: {}", names.join(", ")));
+    }
+    (!parts.is_empty()).then(|| format!("declared: {}", parts.join("; ")))
 }
 
 /// Render `results` as the published markdown evidence page: a `**Meta**`
@@ -1496,10 +1520,22 @@ pub mod soak {
         pub publisher_drop_period_s: Option<u64>,
         /// How many publisher sessions the run launched on a publish leg
         /// (one per stream segment). Required on a publish leg, at least
-        /// two; `publisher_generations_<leg>` requires `generations - 1`
-        /// of them to have ended. Rejected on every other leg.
+        /// two; `publisher_generations_<leg>` requires every one of them
+        /// to have ended. Rejected on every other leg.
         #[serde(default)]
         pub publisher_generations: Option<u64>,
+        /// A publish leg's source digest: the lowercase hex sha256 of the
+        /// whole stream the publishers pushed, generation after
+        /// generation. `delivery_complete_<leg>` holds the receiver's
+        /// `metrics.stream_sha256` to it, so a generation lost or cut
+        /// short anywhere, the last one included, fails the leg.
+        /// `soak.sh` writes it once the stream is generated, before any
+        /// worker launches. `#[serde(default)]` so a config written
+        /// before the field existed still parses; `report soak` then
+        /// falls back to the leg's `source.sha256` file. Rejected on every
+        /// other leg.
+        #[serde(default)]
+        pub source_sha256: Option<String>,
     }
 
     /// The declared half of the corruption tap's configuration, compared
@@ -1662,9 +1698,18 @@ pub mod soak {
                          publisher_generations >= 2 — one generation drops nothing"
                     ));
                 }
+                if let Some(sha) = &decl.source_sha256 {
+                    if !is_sha256_hex(sha) {
+                        return Err(format!(
+                            "soak-config.json: legs.{leg}.source_sha256 {sha:?} is not a \
+                             lowercase hex sha256 digest"
+                        ));
+                    }
+                }
             } else if decl.publisher.is_some()
                 || decl.publisher_drop_period_s.is_some()
                 || decl.publisher_generations.is_some()
+                || decl.source_sha256.is_some()
             {
                 return Err(format!(
                     "soak-config.json: legs.{leg} declares a publisher, but only a publish leg \
@@ -1689,6 +1734,13 @@ pub mod soak {
             .map_err(|e| format!("soak-config.json: corruption_spec: {e}"))?;
         }
         Ok(cfg)
+    }
+
+    /// 64 lowercase hex digits: the shape `sha256sum` prints and
+    /// `CellMetrics::stream_sha256` carries, so a declared digest in any
+    /// other spelling could never equal the received one.
+    fn is_sha256_hex(s: &str) -> bool {
+        s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
     }
 
     /// `profile_declared_<leg>`: the recv report was judged against the
@@ -2067,7 +2119,8 @@ pub mod soak {
         pub leg: String,
         pub publisher_drop_period_s: Option<u64>,
         /// The floor `publisher_generations_<leg>` held the mount's
-        /// `generation` to (`None` without a declared drop period).
+        /// `generation` to: the declared generation count, or `None`
+        /// without one.
         pub min_generations: Option<u64>,
         pub publish_mount: Option<PublishMountReport>,
         pub recv_pass: bool,
@@ -2075,7 +2128,8 @@ pub mod soak {
         pub recv_video_aus: u64,
     }
 
-    /// A publish leg's raw evidence: the receiver's report only. The
+    /// A publish leg's raw evidence: the receiver's report, and the
+    /// digest of the stream the publishers pushed. The
     /// publisher is an external tool that writes no report of its own;
     /// what it delivered is what the receiver judged, and how many
     /// publishers came and went is the mount's own count, carried in the
@@ -2083,6 +2137,11 @@ pub mod soak {
     #[derive(Debug, Clone)]
     pub struct PublishLegArtifacts {
         pub recv_report: VerifyReport,
+        /// The leg directory's `source.sha256` file, trimmed, or `None`
+        /// when there is none. Read only when the config declares no
+        /// [`LegDeclaration::source_sha256`] (a config written before
+        /// that field existed).
+        pub source_sha256_file: Option<String>,
     }
 
     /// One leg's raw evidence artifacts — `soak.sh` writes these as
@@ -3186,25 +3245,29 @@ pub mod soak {
             }
 
             // Judged against the generations the run DECLARED it launched,
-            // not a count re-derived from the run length: the mount counts
-            // a publisher once its session has ENDED, and the last one may
-            // still be connected when `recv` snapshots the mount at its
-            // deadline, hence `- 1`.
+            // not a count re-derived from the run length. The mount counts
+            // a publisher once its session has ENDED, and every one must
+            // have: `soak.sh` stops the stream 30 + N s before the run, so
+            // the last publisher finishes before `recv` snapshots the mount
+            // at its deadline. One still connected there would be cut off,
+            // exit nonzero and fail `worker_exits` as well.
             let period = declared.and_then(|d| d.publisher_drop_period_s);
             let launched = declared.and_then(|d| d.publisher_generations);
-            let min_generations = launched.map(|n| n.saturating_sub(1));
+            let min_generations = launched;
             let observed = recv.publish_mount.as_ref().map(|m| m.generation);
-            let (gen_pass, gen_detail) = match (launched, min_generations, observed) {
-                (Some(n), Some(min), Some(g)) => (
-                    g >= min,
+            let (gen_pass, gen_detail) = match (launched, observed) {
+                (Some(n), Some(g)) => (
+                    g >= n,
                     format!(
                         "{leg_name}: {g} publisher(s) ended on the mount, against a floor of \
-                         {min} = {n} declared generation(s) - 1 (the last may still be connected \
-                         at recv's deadline). Each generation ends gracefully — EOS, then the \
-                         session closes — so an abrupt publisher loss is not exercised here"
+                         {n} = every declared generation. The stream stops 30 + {n} s before the \
+                         run, so the last publisher ends before recv's deadline; one cut off \
+                         there would also exit nonzero and fail worker_exits. Each generation \
+                         ends gracefully — EOS, then the session closes — so an abrupt publisher \
+                         loss is not exercised here"
                     ),
                 ),
-                (Some(_), _, None) => (
+                (Some(_), None) => (
                     false,
                     format!(
                         "{leg_name}: the recv report carries no publish_mount block, so nothing \
@@ -3227,6 +3290,48 @@ pub mod soak {
                 detail: gen_detail,
             });
 
+            // Every byte of every generation arrived, in order. The
+            // generations concatenate to the source byte for byte, so the
+            // receiver's whole-capture digest equals the source's exactly
+            // when nothing was lost, cut short or reordered. The count
+            // floors in `recv_invariants` cannot see a lost LAST
+            // generation (no discontinuity follows it, and the rest still
+            // clears the floor); this can.
+            let got = &recv.metrics.stream_sha256;
+            let source = match declared.and_then(|d| d.source_sha256.as_deref()) {
+                Some(d) => Some((d, "declared in soak-config.json")),
+                None => artifacts
+                    .source_sha256_file
+                    .as_deref()
+                    .map(|d| (d, "declared via the source.sha256 artefact")),
+            };
+            verdicts.push(match source {
+                Some((want, how)) => SoakVerdict {
+                    name: format!("delivery_complete_{leg_name}"),
+                    pass: got == want,
+                    provisional: false,
+                    detail: format!(
+                        "{leg_name}: recv stream_sha256 {got} against the source's {want} \
+                         ({how}){}",
+                        if got == want {
+                            ""
+                        } else {
+                            " — some generation's bytes were lost, cut short or altered"
+                        }
+                    ),
+                },
+                None => SoakVerdict {
+                    name: format!("delivery_complete_{leg_name}"),
+                    pass: false,
+                    provisional: false,
+                    detail: format!(
+                        "{leg_name}: no source digest declared (no legs.{leg_name}.source_sha256 \
+                         in soak-config.json and no source.sha256 artefact), so nothing says \
+                         whether every generation's bytes arrived"
+                    ),
+                },
+            });
+
             publish_leg_results.push(PublishLegResult {
                 leg: leg_name.clone(),
                 publisher_drop_period_s: period,
@@ -3236,6 +3341,24 @@ pub mod soak {
                 recv_failures: recv.failures.clone(),
                 recv_video_aus: recv.metrics.video_aus,
             });
+        }
+
+        // A declared leg must be judged. Without this, a `report soak`
+        // run by hand that omits a leg's artefacts drops every one of its
+        // verdicts and its roles from `required_roles`, and the run can
+        // pass with the leg never looked at.
+        for leg in config.legs.keys() {
+            if !leg_names.contains(&leg.as_str()) {
+                verdicts.push(SoakVerdict {
+                    name: format!("leg_evidence_{leg}"),
+                    pass: false,
+                    provisional: false,
+                    detail: format!(
+                        "{leg}: declared in soak-config.json but no report supplied, so none of \
+                         its verdicts ran"
+                    ),
+                });
+            }
         }
 
         let overall_pass = verdicts.iter().all(|v| v.provisional || v.pass);
@@ -3364,9 +3487,19 @@ pub mod soak {
         if let Some(path) = rtsp_publish_recv_report {
             let recv_report: VerifyReport = serde_json::from_str(&read_to_string(path)?)
                 .map_err(|e| format!("parse {}: {e}", path.display()))?;
+            // `soak.sh` writes the source digest beside the recv report.
+            let source_sha256_file = path
+                .parent()
+                .map(|dir| dir.join("source.sha256"))
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
             publish_legs.push((
                 "rtsp-publish".to_string(),
-                PublishLegArtifacts { recv_report },
+                PublishLegArtifacts {
+                    recv_report,
+                    source_sha256_file,
+                },
             ));
         }
 
@@ -3495,6 +3628,8 @@ pub mod soak {
                 klv_rich: None,
                 since_reconnect: None,
                 managed_send: None,
+                judged_profile: None,
+                skipped_oracles: None,
             }
         }
 
@@ -5927,6 +6062,7 @@ pub mod soak {
                     publisher: None,
                     publisher_drop_period_s: None,
                     publisher_generations: None,
+                    source_sha256: None,
                 },
             );
         }
@@ -6363,8 +6499,13 @@ pub mod soak {
                 publisher: Some("gst-launch-1.0 filesrc ! tsparse ! rtspclientsink".to_string()),
                 publisher_drop_period_s: Some(600),
                 publisher_generations: generations,
+                source_sha256: Some(SOURCE_SHA.to_string()),
             }
         }
+
+        /// The digest every `publish_inputs` recv report carries, and the
+        /// one its declaration names.
+        const SOURCE_SHA: &str = "5f1c0e8a6b3d2f4e9a7c1b0d8e6f4a2c3b5d7e9f1a0c2e4b6d8f0a1c3e5b7d9f";
 
         /// [`healthy_inputs`] plus a healthy `rtsp-publish` leg: RSS for
         /// its two processes, clean exits for its two roles, a declared
@@ -6391,27 +6532,32 @@ pub mod soak {
                 .insert("rtsp-publish".to_string(), publish_declaration(launched));
             let mut recv_report = passing_recv_report(1000);
             recv_report.profile = Some("baseline".to_string());
+            recv_report.metrics.stream_sha256 = SOURCE_SHA.to_string();
             recv_report.publish_mount = generation.map(|generation| PublishMountReport {
                 generation,
                 ..PublishMountReport::default()
             });
             inputs.publish_legs.push((
                 "rtsp-publish".to_string(),
-                PublishLegArtifacts { recv_report },
+                PublishLegArtifacts {
+                    recv_report,
+                    source_sha256_file: None,
+                },
             ));
             inputs
         }
 
-        /// Six generations declared: a floor of 6 - 1 = 5. A
-        /// mount that counted exactly the floor passes, and the leg's
+        /// Six generations declared: a floor of all six. A mount that
+        /// counted exactly the floor passes, and the leg's
         /// not-applicable verdicts pass with their reason, so the whole
         /// run passes.
         #[test]
         fn publisher_generations_passes_at_the_floor() {
-            let r = build_soak_results(publish_inputs(Some(5), Some(6))).unwrap();
+            let r = build_soak_results(publish_inputs(Some(6), Some(6))).unwrap();
             let v = verdict(&r, "publisher_generations_rtsp-publish");
             assert!(v.pass, "{}", v.detail);
-            assert!(v.detail.contains("floor of 5"), "{}", v.detail);
+            assert!(v.detail.contains("floor of 6"), "{}", v.detail);
+            assert!(v.detail.contains("worker_exits"), "{}", v.detail);
             for name in [
                 "reconnect_mode_declared_rtsp-publish",
                 "schedule_declared_rtsp-publish",
@@ -6427,16 +6573,23 @@ pub mod soak {
             assert!(verdict(&r, "rss_sample_coverage_rtsp-publish_publisher").pass);
             assert!(verdict(&r, "worker_exits").pass);
             assert_eq!(r.publish_legs.len(), 1);
-            assert_eq!(r.publish_legs[0].min_generations, Some(5));
+            assert_eq!(r.publish_legs[0].min_generations, Some(6));
+            let v = verdict(&r, "delivery_complete_rtsp-publish");
+            assert!(v.pass && !v.provisional, "{}", v.detail);
+            assert!(
+                v.detail.contains("declared in soak-config.json"),
+                "{}",
+                v.detail
+            );
             assert!(r.overall_pass, "{:?}", r.verdicts);
         }
 
         #[test]
         fn publisher_generations_fails_one_below_the_floor() {
-            let r = build_soak_results(publish_inputs(Some(4), Some(6))).unwrap();
+            let r = build_soak_results(publish_inputs(Some(5), Some(6))).unwrap();
             let v = verdict(&r, "publisher_generations_rtsp-publish");
             assert!(!v.pass && !v.provisional, "{}", v.detail);
-            assert!(v.detail.contains("4 publisher(s)"), "{}", v.detail);
+            assert!(v.detail.contains("5 publisher(s)"), "{}", v.detail);
             assert!(!r.overall_pass);
         }
 
@@ -6481,7 +6634,7 @@ pub mod soak {
         /// missing the loop's RSS fails its data-present verdict.
         #[test]
         fn publish_leg_requires_its_recv_and_publisher_roles() {
-            let mut inputs = publish_inputs(Some(5), Some(6));
+            let mut inputs = publish_inputs(Some(6), Some(6));
             inputs.worker_exits.remove("rtsp-publish-publisher");
             inputs
                 .rss_samples
@@ -6501,7 +6654,7 @@ pub mod soak {
         /// could have run either, and fails.
         #[test]
         fn publish_leg_declaring_a_schedule_or_mode_fails_those_verdicts() {
-            let mut inputs = publish_inputs(Some(5), Some(6));
+            let mut inputs = publish_inputs(Some(6), Some(6));
             let decl = inputs.config.legs.get_mut("rtsp-publish").unwrap();
             decl.schedule = Some(ScheduleDeclaration {
                 seed: 1,
@@ -6571,20 +6724,20 @@ pub mod soak {
             assert!(err.contains("only a publish leg"), "{err}");
         }
 
-        /// Short periods: the floor is the declared count less one, never a
-        /// count re-derived from the run length (which could exceed what
-        /// the run launched). 7200 s at 60 s and 3600 s at 30 s both launch
-        /// 120 generations: 120 or 119 ended passes, 118 fails.
+        /// Short periods: the floor is the declared count, never a count
+        /// re-derived from the run length (which could exceed what the run
+        /// launched). 7200 s at 60 s and 3600 s at 30 s both launch 120
+        /// generations: 120 or more ended passes, 119 fails.
         #[test]
         fn short_period_runs_are_judged_against_the_declared_count() {
             for duration_s in [7200.0, 3600.0] {
-                for (ended, pass) in [(120, true), (119, true), (118, false)] {
+                for (ended, pass) in [(121, true), (120, true), (119, false)] {
                     let mut inputs = publish_inputs(Some(ended), Some(120));
                     inputs.config.expected_duration_s = duration_s;
                     let r = build_soak_results(inputs).unwrap();
                     let v = verdict(&r, "publisher_generations_rtsp-publish");
                     assert_eq!(v.pass, pass, "{duration_s}s, {ended} ended: {}", v.detail);
-                    assert!(v.detail.contains("floor of 119"), "{}", v.detail);
+                    assert!(v.detail.contains("floor of 120"), "{}", v.detail);
                 }
             }
         }
@@ -6601,8 +6754,11 @@ pub mod soak {
             let recv_report: VerifyReport =
                 serde_json::from_str(&json).expect("the older shape must parse");
             assert!(recv_report.publish_mount.is_none());
-            let mut inputs = publish_inputs(Some(5), Some(6));
-            inputs.publish_legs[0].1 = PublishLegArtifacts { recv_report };
+            let mut inputs = publish_inputs(Some(6), Some(6));
+            inputs.publish_legs[0].1 = PublishLegArtifacts {
+                recv_report,
+                source_sha256_file: None,
+            };
             let r = build_soak_results(inputs).expect("must judge, not error");
             let v = verdict(&r, "publisher_generations_rtsp-publish");
             assert!(
@@ -6610,6 +6766,126 @@ pub mod soak {
                 "{}",
                 v.detail
             );
+        }
+
+        /// The case the count floors cannot see: the last generation's
+        /// bytes never reached the receiver, so the mount still counted
+        /// every publisher and the rest of the stream cleared the floors,
+        /// but the received digest differs from the declared source's.
+        #[test]
+        fn delivery_complete_fails_on_a_different_received_digest() {
+            let mut inputs = publish_inputs(Some(6), Some(6));
+            inputs.publish_legs[0].1.recv_report.metrics.stream_sha256 = "0".repeat(64);
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "delivery_complete_rtsp-publish");
+            assert!(!v.pass && !v.provisional, "{}", v.detail);
+            assert!(v.detail.contains(SOURCE_SHA), "{}", v.detail);
+            assert!(verdict(&r, "publisher_generations_rtsp-publish").pass);
+            assert!(!r.overall_pass);
+        }
+
+        /// A config written before `source_sha256` existed: the digest
+        /// comes from the `source.sha256` file beside the recv report, and
+        /// the verdict says where it came from.
+        #[test]
+        fn delivery_complete_falls_back_to_the_source_sha256_artefact() {
+            let undeclared_with_file = |file: String| {
+                let mut inputs = publish_inputs(Some(6), Some(6));
+                inputs
+                    .config
+                    .legs
+                    .get_mut("rtsp-publish")
+                    .unwrap()
+                    .source_sha256 = None;
+                inputs.publish_legs[0].1.source_sha256_file = Some(file);
+                build_soak_results(inputs).unwrap()
+            };
+            let r = undeclared_with_file(SOURCE_SHA.to_string());
+            let v = verdict(&r, "delivery_complete_rtsp-publish");
+            assert!(v.pass, "{}", v.detail);
+            assert!(
+                v.detail.contains("declared via the source.sha256 artefact"),
+                "{}",
+                v.detail
+            );
+            assert!(r.overall_pass, "{:?}", r.verdicts);
+
+            let r = undeclared_with_file("1".repeat(64));
+            assert!(!verdict(&r, "delivery_complete_rtsp-publish").pass);
+            assert!(!r.overall_pass);
+        }
+
+        /// With neither a declared digest nor the file, nothing says what
+        /// the receiver should have got: a failure, not a pass.
+        #[test]
+        fn delivery_complete_fails_without_any_source_digest() {
+            let mut inputs = publish_inputs(Some(6), Some(6));
+            inputs
+                .config
+                .legs
+                .get_mut("rtsp-publish")
+                .unwrap()
+                .source_sha256 = None;
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "delivery_complete_rtsp-publish");
+            assert!(!v.pass && !v.provisional, "{}", v.detail);
+            assert!(
+                v.detail.contains("no source digest declared"),
+                "{}",
+                v.detail
+            );
+            assert!(!r.overall_pass);
+        }
+
+        /// A declared digest must be what `sha256sum` prints, and only a
+        /// publish leg has one.
+        #[test]
+        fn soak_config_validates_the_source_digest() {
+            let mut bad = publish_declaration(Some(6));
+            bad.source_sha256 = Some(SOURCE_SHA.to_uppercase());
+            let err = parse_soak_config(&config_with_publish_leg("rtsp-publish", bad))
+                .expect_err("an upper-case digest must be rejected");
+            assert!(err.contains("source_sha256"), "{err}");
+            let mut on_srt = publish_declaration(None);
+            on_srt.publisher = None;
+            on_srt.publisher_drop_period_s = None;
+            let err = parse_soak_config(&config_with_publish_leg("srt", on_srt))
+                .expect_err("a transport leg declaring a source digest must be rejected");
+            assert!(err.contains("only a publish leg"), "{err}");
+        }
+
+        /// A leg the config declares but whose report was never supplied
+        /// is not silently skipped: its own verdicts and roles would
+        /// otherwise vanish and the run could pass without it.
+        #[test]
+        fn a_declared_leg_without_artefacts_fails_the_run() {
+            let mut inputs = publish_inputs(Some(6), Some(6));
+            inputs.publish_legs.clear();
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "leg_evidence_rtsp-publish");
+            assert!(!v.pass && !v.provisional, "{}", v.detail);
+            assert!(v.detail.contains("no report supplied"), "{}", v.detail);
+            assert!(!r.overall_pass);
+
+            // Same for a transport leg.
+            let mut inputs = healthy_inputs();
+            inputs.config.legs.insert(
+                "rist".to_string(),
+                LegDeclaration {
+                    profile: "baseline".to_string(),
+                    schedule: None,
+                    klv_set: None,
+                    klv_seed: None,
+                    reconnect_mode: None,
+                    publisher: None,
+                    publisher_drop_period_s: None,
+                    publisher_generations: None,
+                    source_sha256: None,
+                },
+            );
+            let r = build_soak_results(inputs).unwrap();
+            assert!(!verdict(&r, "leg_evidence_rist").pass);
+            assert!(!r.overall_pass);
         }
     }
 }
@@ -7185,6 +7461,51 @@ mod tests {
         assert!(cell_pattern_matches("decode/*", "decode/mpv"));
         assert!(cell_pattern_matches("decode/*", "decode/"));
         assert!(!cell_pattern_matches("decode/*", "encode/mpv"));
+    }
+
+    /// A cell judged against another profile with oracles skipped
+    /// declares both on its own row: the keys `run-matrix.sh` adds to
+    /// the cell's metrics survive `report merge` and `report render`
+    /// prints them, on a PASS and beside a FAIL's reasons.
+    #[test]
+    fn a_relaxed_cell_declares_its_judged_profile_and_skipped_oracles() {
+        let cell_json = |verdict: &str, failures: &str| {
+            format!(
+                r#"{{"id": "rtsp-publish/gst-push-es-klv", "profile": "baseline",
+                    "peer": "gst-launch-1.0", "direction": "recv", "tier": "remux",
+                    "verdict": "{verdict}", "failures": [{failures}],
+                    "metrics": {{"video_aus": 240, "keyframes": 8, "klv_records": 240,
+                        "klv_set_sha256": "aa", "audio_frames": 0, "programs_seen": 1,
+                        "pts_monotonic": true, "misp_sei_seen": false, "bytes": 1,
+                        "stream_sha256": "00", "judged_profile": "klv-sync",
+                        "skipped_oracles": ["pmt_stream_type_", "KLV carriage"]}},
+                    "log": "logs/x.log"}}"#
+            )
+        };
+        let raw: RawCell = serde_json::from_str(&cell_json("PASS", "")).unwrap();
+        let results = build_results(vec![raw], &[], serde_json::json!({}));
+        let m = results.cells[0].metrics.as_ref().unwrap();
+        assert_eq!(m.judged_profile.as_deref(), Some("klv-sync"));
+        let round: Results =
+            serde_json::from_str(&serde_json::to_string(&results).unwrap()).unwrap();
+        let md = render_markdown(&round);
+        assert!(
+            md.contains(
+                "| ✅ PASS | declared: judged against profile `klv-sync`; skipped oracles: \
+                 `pmt_stream_type_`, `KLV carriage` |"
+            ),
+            "{md}"
+        );
+
+        let raw: RawCell =
+            serde_json::from_str(&cell_json("FAIL", r#""KLV set digest mismatch""#)).unwrap();
+        let md = render_markdown(&build_results(vec![raw], &[], serde_json::json!({})));
+        assert!(
+            md.contains(
+                "skipped oracles: `pmt_stream_type_`, `KLV carriage`; KLV set digest mismatch"
+            ),
+            "{md}"
+        );
     }
 
     // (g) render golden: small fixed Results -> exact expected markdown.

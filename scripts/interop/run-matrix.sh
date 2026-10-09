@@ -360,7 +360,7 @@ run_send_peer_recv() {
   fi
 }
 
-# run_peer_send_recv <id> <peer> <tier> <our_url> [--remuxed] [--expect P] -- <peer_cmd...>
+# run_peer_send_recv <id> <peer> <tier> <our_url> [--remuxed] [--expect P] [--klv-digest-of FILE] -- <peer_cmd...>
 #
 # The peer pushes (from $GEN_FILE, already baked into peer_cmd by the
 # caller); we listen/receive over <our_url>. Verdict: our recv must
@@ -374,11 +374,18 @@ run_send_peer_recv() {
 # `skipped_oracles` (the cell's log records the flag on the recv line).
 # --expect P judges the capture against profile P instead of $PROFILE,
 # for a cell whose peer pushes a file of another profile; the cell is
-# still recorded under $PROFILE, the axis it belongs to.
+# still recorded under $PROFILE, the axis it belongs to. Either flag is a
+# relaxation, so the cell record declares it: its metrics gain the recv
+# report's `profile` (as `judged_profile`) and `skipped_oracles`, and
+# `report render` prints both on the row.
+# --klv-digest-of FILE gates KLV content: the cell computes FILE's KLV
+# set digest with `verify` and fails with "KLV set digest mismatch"
+# unless the recv report's `metrics.klv_set_sha256` equals it. For a
+# remux cell, whose recv verdict holds KLV only to a count floor.
 run_peer_send_recv() {
   local id=$1 peer=$2 tier=$3 our_url=$4
   shift 4
-  local expect_profile=$PROFILE
+  local expect_profile=$PROFILE klv_src=""
   local -a recv_extra=()
   while [[ $# -gt 0 && "$1" != "--" ]]; do
     case "$1" in
@@ -388,6 +395,10 @@ run_peer_send_recv() {
         ;;
       --expect)
         expect_profile=$2
+        shift 2
+        ;;
+      --klv-digest-of)
+        klv_src=$2
         shift 2
         ;;
       *)
@@ -473,9 +484,31 @@ run_peer_send_recv() {
       reasons+=("byte-transparent tier: stream_sha256 mismatch (source $GEN_STREAM_SHA, received ${got_hash:-<unparseable>})")
     fi
   fi
+  if [[ -n "$klv_src" ]]; then
+    # The source's digest comes from the same Tally the receiver ran, so
+    # the two are the same order-insensitive hash over the same record
+    # bytes. `verify`'s own pass/fail is not the point here (only its
+    # digest is), so its exit status is logged, not judged.
+    local src_vjson="$WORK/$(slug "$id")-klv-src-verify.json" src_klv got_klv src_rc=0
+    "$BIN" verify --file "$klv_src" --expect "$expect_profile" --seconds "$SECONDS_ARG" \
+      --json "$src_vjson" >>"$log" 2>&1 || src_rc=$?
+    src_klv=$(jq -r '.metrics.klv_set_sha256 // ""' "$src_vjson" 2>/dev/null) || src_klv=""
+    got_klv=$(jq -r '.metrics.klv_set_sha256 // ""' "$recv_json" 2>/dev/null) || got_klv=""
+    echo "--- KLV set digest: source ${src_klv:-<none>} (verify exit $src_rc), received ${got_klv:-<none>} ---" >>"$log"
+    if [[ -z "$src_klv" || -z "$got_klv" || "$src_klv" != "$got_klv" ]]; then
+      reasons+=("KLV set digest mismatch (source ${src_klv:-<unparseable>}, received ${got_klv:-<unparseable>})")
+    fi
+  fi
 
   local mjson="$WORK/$(slug "$id")-metrics.json"
   metrics_only "$recv_json" "$mjson"
+  if [[ ${#recv_extra[@]} -gt 0 || "$expect_profile" != "$PROFILE" ]] && [[ -s "$mjson" ]]; then
+    # Declare the relaxation on the cell record itself: the recv report
+    # under $WORK is not part of the uploaded results.
+    jq --slurpfile r "$recv_json" \
+      '. + {judged_profile: $r[0].profile, skipped_oracles: $r[0].skipped_oracles}' \
+      "$mjson" >"$mjson.tmp" 2>/dev/null && mv "$mjson.tmp" "$mjson" || rm -f "$mjson.tmp"
+  fi
   if [[ ${#reasons[@]} -eq 0 ]]; then
     emit_pass "$id" "$peer" recv "$tier" "$log" "$mjson"
   else
@@ -1109,7 +1142,10 @@ rtsp_publish_cells() {
   # H.264 video, KLV in PES with a PTS), generated here, and judges the
   # capture against klv-sync, still recorded on the baseline axis. The
   # server re-muxes KLV as PrivateData, so the carriage-kind check is
-  # one of the layout oracles `--remuxed` skips.
+  # one of the layout oracles `--remuxed` skips. A remux verdict holds
+  # KLV only to a count floor, so --klv-digest-of also holds the
+  # received KLV set digest to the source file's: a lost or altered
+  # record fails the cell.
   local es_src="$WORK/rtsp-publish_gst-push-es-klv-src.ts"
   if [[ -z "${DECLARE_ONLY:-}" ]] && cell_selected "rtsp-publish/gst-push-es-klv"; then
     timeout --kill-after=5 "$(cell_timeout "$SECONDS_ARG")s" \
@@ -1117,7 +1153,7 @@ rtsp_publish_cells() {
   fi
   port=$(free_port tcp)
   run_peer_send_recv "rtsp-publish/gst-push-es-klv" gst-launch-1.0 remux \
-    "rtsp-publish://127.0.0.1:$port/mount" --remuxed --expect klv-sync -- \
+    "rtsp-publish://127.0.0.1:$port/mount" --remuxed --expect klv-sync --klv-digest-of "$es_src" -- \
     gst-launch-1.0 filesrc "location=$es_src" ! tsdemux name=d \
     d. ! queue ! h264parse ! s.sink_0 \
     d. ! queue ! meta/x-klv ! s.sink_1 \
