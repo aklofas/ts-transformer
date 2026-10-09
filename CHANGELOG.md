@@ -35,7 +35,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and video-only publishers). A placed KLV unit is muxed once the video
   has reached its PTS, so KLV stamped ahead of the video never drags the
   PCR ahead of the video frames still to come; one the video has not
-  reached 10 s after it was placed is dropped and counted.
+  reached 10 s after it was placed is dropped and counted. When a
+  publisher ends, only the units within 10 s of the last muxed video PTS
+  are released; the rest are dropped and counted in
+  `PublishMountStats::klv_units_dropped`. A publisher whose KLV RTP
+  timestamps never advance (GStreamer's `rtpklvpay` fed KLV without a
+  PTS) would otherwise leave units placed thousands of seconds ahead,
+  and releasing them would jump the re-muxed TS's PCR by that much for
+  every PLAY reader and the application transport.
 - **Source restarts.** An SSRC change on an elementary publisher's video
   or KLV track restarts that track's depacketizer and KLV alignment: KLV
   units held at that moment are dropped and counted, alignment reads
@@ -228,27 +235,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `streamid=N`. A reader mount registered with a path that literally
   ends in such a segment (`/x/stream=1`) no longer resolves.
 
-### Fixed — tst-rtp: RTSP publisher role
+### Fixed — tst-rtp
 
-- **No PCR jump when an elementary publisher's KLV clock is unusable.**
-  When a publisher ended, the server muxed every KLV unit still waiting
-  for the video at its placed PTS, however far ahead of the video that
-  was. A publisher whose KLV RTP timestamps do not advance (GStreamer's
-  `rtpklvpay` fed KLV without PTS) left units placed thousands of seconds
-  ahead, and the re-muxed TS's PCR jumped by that much for every PLAY
-  reader and the application transport. At the end of a publisher the
-  server now releases only units within 10 s (the placed-unit wait bound)
-  of the last muxed video PTS; the rest are dropped and counted in
-  `PublishMountStats::klv_units_dropped`.
-- **A malformed SDP from a peer no longer panics the server session or the
-  client call.** An eight-byte body made the `sdp-types` 0.1.8 parser fail
-  an internal assertion, so a publisher's ANNOUNCE could end its server
-  session task and a server's DESCRIBE answer unwound through the
-  `RtspClient` caller's thread. `sdp-types` moves to 0.2.0, which returns an
-  error for that input, and `Sdp::parse` also catches a panic from the
-  parser and returns `RtspError::BadSdp` (the server answers ANNOUNCE with
-  400 and keeps the connection). Found by the new `sdp_announce_classify`
-  fuzz target.
+- **`RtspClient::describe` no longer panics on a hostile server's SDP.**
+  In released versions an eight-byte DESCRIBE body made the `sdp-types`
+  0.1.8 parser fail an internal assertion, which unwound through the
+  `RtspClient` caller's thread. `sdp-types` moves to 0.2.0, which returns
+  an error for that input, and `Sdp::parse` also catches a panic from the
+  parser and returns `RtspError::BadSdp`. The new publisher role's
+  ANNOUNCE path parses SDP the same way: the server answers a malformed
+  ANNOUNCE with 400 and keeps the session and the connection. Found by
+  the new `sdp_announce_classify` fuzz target.
 
 ### Validation — RTSP publisher role
 
