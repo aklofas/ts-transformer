@@ -288,5 +288,6 @@ jobs:
             ${{ runner.temp }}/interop/inventory.json
             ${{ runner.temp }}/interop/cells
             ${{ runner.temp }}/interop/logs
+            ${{ runner.temp }}/interop/work/*-recv.json
           retention-days: 90
           if-no-files-found: warn

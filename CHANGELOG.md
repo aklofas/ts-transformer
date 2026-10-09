@@ -448,6 +448,7 @@ had to pin the sending host with a firewall rule.
 
 ### Changed — interop harness
 
+- Publisher cells record the mount's counters (`publish_mount`: RTP packets received, KLV units emitted/dropped, alignment mode and steps, app-channel drops) on the cell record, and the KLV digest-mismatch reason names them; `recv` reports now carry `alignment`, `alignment_steps`, `aus_reordered`, `aus_dropped`, `source_rejected`, `frames_dropped_readers` (archived reports without them still parse). The interop workflow uploads the per-cell recv reports.
 - **Stress and hold verdicts can no longer pass vacuously or over an aborted
   run** (`tst-interop`, the evidence harness). `report step|hold` gain
   `corruption_coverage` (every stream carries an attribution; ingested plus

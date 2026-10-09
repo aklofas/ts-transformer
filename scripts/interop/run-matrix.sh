@@ -496,12 +496,27 @@ run_peer_send_recv() {
     got_klv=$(jq -r '.metrics.klv_set_sha256 // ""' "$recv_json" 2>/dev/null) || got_klv=""
     echo "--- KLV set digest: source ${src_klv:-<none>} (verify exit $src_rc), received ${got_klv:-<none>} ---" >>"$log"
     if [[ -z "$src_klv" || -z "$got_klv" || "$src_klv" != "$got_klv" ]]; then
-      reasons+=("KLV set digest mismatch (source ${src_klv:-<unparseable>}, received ${got_klv:-<unparseable>})")
+      # Name where the loss happened: re-muxer, app channel or sender.
+      local pm_dropped pm_align pm_steps pm_app pm_rtp
+      pm_dropped=$(jq -r '.publish_mount.klv_units_dropped // "?"' "$recv_json" 2>/dev/null) || pm_dropped="?"
+      pm_align=$(jq -r '.publish_mount.alignment // "?"' "$recv_json" 2>/dev/null) || pm_align="?"
+      pm_steps=$(jq -r '.publish_mount.alignment_steps // "?"' "$recv_json" 2>/dev/null) || pm_steps="?"
+      pm_app=$(jq -r '.publish_mount.frames_dropped_app // "?"' "$recv_json" 2>/dev/null) || pm_app="?"
+      pm_rtp=$(jq -r '.publish_mount.rtp_packets_received // "?"' "$recv_json" 2>/dev/null) || pm_rtp="?"
+      reasons+=("KLV set digest mismatch (source ${src_klv:-<unparseable>}, received ${got_klv:-<unparseable>}; re-muxer dropped ${pm_dropped} KLV units, alignment=${pm_align} steps=${pm_steps}, app channel dropped ${pm_app} frames, ${pm_rtp} RTP packets received)")
     fi
   fi
 
   local mjson="$WORK/$(slug "$id")-metrics.json"
   metrics_only "$recv_json" "$mjson"
+  # Carry the publish mount's own counters on the cell record: the recv
+  # report under $WORK is not uploaded, and a KLV digest mismatch is
+  # unattributable without klv_units_dropped / frames_dropped_app /
+  # rtp_packets_received (one record was once lost on CI with the cause unknown).
+  if [[ -s "$mjson" ]] && jq -e '.publish_mount != null' "$recv_json" >/dev/null 2>&1; then
+    jq --slurpfile r "$recv_json" '. + {publish_mount: $r[0].publish_mount}' \
+      "$mjson" >"$mjson.tmp" 2>/dev/null && mv "$mjson.tmp" "$mjson" || rm -f "$mjson.tmp"
+  fi
   if [[ ${#recv_extra[@]} -gt 0 || "$expect_profile" != "$PROFILE" ]] && [[ -s "$mjson" ]]; then
     # Declare the relaxation on the cell record itself: the recv report
     # under $WORK is not part of the uploaded results.
