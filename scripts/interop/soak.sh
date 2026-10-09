@@ -35,10 +35,15 @@
 #     mount `tst-interop recv --url rtsp-publish://...` serves — no proxy,
 #     no tst-interop sender. The publisher session is ended and a new one
 #     ANNOUNCEs every PUBLISHER_DROP_PERIOD_S (default 600 s), and the
-#     receiver must judge the generations as one unbroken stream. See the
-#     leg's own block below; `--no-rtsp-publish` drops the leg (a host
-#     without GStreamer, or a run long enough that its pre-generated
-#     stream, ~0.85 GB per hour of run, will not fit on disk).
+#     receiver must judge the generations as one unbroken stream. Each
+#     drop is GRACEFUL — the publisher reaches the end of its segment,
+#     sends EOS and closes its session — so an abrupt publisher loss (a
+#     reset with no TEARDOWN, a crash) is not exercised here; that path
+#     stays with the RTSP server's own integration tests. See the leg's
+#     own block below; `--no-rtsp-publish` drops the leg (a host without
+#     GStreamer, or a run long enough that its pre-generated stream will
+#     not fit on disk: peak ~1.7 GB per hour of run, ~122 GB for 72 h —
+#     checked at launch, exit 2 when the outdir has < 1.2 x the peak free).
 #
 # # Realism knobs
 #
@@ -96,8 +101,9 @@
 #     exists to exercise `background`. `PUBLISHER_DROP_PERIOD_S` sets how
 #     often the rtsp-publish leg's publisher drops and re-ANNOUNCEs (the
 #     run must span at least two such periods); the leg declares the
-#     resulting segment length in `soak-config.json`
-#     (`legs.rtsp-publish.publisher_drop_period_s`). Set them in the
+#     resulting segment length and generation count in `soak-config.json`
+#     (`legs.rtsp-publish.publisher_drop_period_s` / `.publisher_generations`).
+#     Set them in the
 #     environment, e.g.
 #     `SRT_RECONNECT_MODE=background OUTAGE_PERIOD_S=300 OUTAGE_DUR_S=30
 #     bash soak.sh ...`.
@@ -168,10 +174,16 @@
 #
 #   SRT_RECONNECT_MODE=background nohup bash scripts/interop/soak.sh --outdir ~/interop-soak-$(date +%F) --seed 1 &
 #
+# (With the rtsp-publish leg on — the default — this 72 h line needs
+# GStreamer and ~122 GB free in the outdir at launch; add
+# `--no-rtsp-publish` to run the srt and rist legs alone.)
+#
 # Expected outputs under `--outdir`:
 #   rss.csv            - elapsed_s,leg,process,pid,rss_kb — every worker PID: send/proxy/recv
 #                         on the srt and rist legs, recv/publisher on rtsp-publish (8 PIDs;
-#                         6 under --no-rtsp-publish). `publisher` is the restart loop's shell.
+#                         6 under --no-rtsp-publish). `publisher` is the restart loop's
+#                         shell, not the publisher tool: gst-launch-1.0's own memory is
+#                         not sampled.
 #   proc.csv           - elapsed_s,leg,process,pid,utime_ticks,stime_ticks,threads,fds — the
 #                         same PIDs on the same tick as rss.csv: cumulative CPU time
 #                         (user/system clock ticks from /proc/<pid>/stat; divide by the
@@ -547,7 +559,14 @@ esac
 # TOTAL_SECONDS / PUBLISHER_DROP_PERIOD_S generations, which must be at
 # least two — one generation drops nothing.
 PUBLISHER_DROP_PERIOD_S="${PUBLISHER_DROP_PERIOD_S:-600}"
-[[ "$PUBLISHER_DROP_PERIOD_S" =~ ^[0-9]+$ ]] && [ "$PUBLISHER_DROP_PERIOD_S" -gt 0 ] || {
+[[ "$PUBLISHER_DROP_PERIOD_S" =~ ^[0-9]+$ ]] || {
+  echo "soak.sh: PUBLISHER_DROP_PERIOD_S must be a positive integer (seconds), got: $PUBLISHER_DROP_PERIOD_S" >&2
+  exit 2
+}
+# Canonical base 10 before any arithmetic, like --seed: `0600` would
+# otherwise be octal 384 and `090` would abort under set -e.
+PUBLISHER_DROP_PERIOD_S=$(canon_int "$PUBLISHER_DROP_PERIOD_S" 9223372036854775807 PUBLISHER_DROP_PERIOD_S)
+[[ "$PUBLISHER_DROP_PERIOD_S" -gt 0 ]] || {
   echo "soak.sh: PUBLISHER_DROP_PERIOD_S must be a positive integer (seconds), got: $PUBLISHER_DROP_PERIOD_S" >&2
   exit 2
 }
@@ -737,12 +756,15 @@ echo "soak: profiles — srt=$SRT_PROFILE rist=$RIST_PROFILE rtsp-publish=$PUBLI
 # rtsp-publish leg geometry (see that leg's block below). The publisher
 # pushes PUBLISH_CONTENT_S seconds of generated stream, cut into
 # PUBLISH_GENERATIONS segments, one publisher session each, so the
-# declared drop period is the segment length. The content stops
-# PUBLISH_TAIL_S short of the run: each restart costs the publisher a
-# fraction of a second (measured 0.15-0.6 s per relaunch on loopback),
-# and the last segment has to be fully delivered before `recv`'s own
-# deadline, `--seconds` after its first event.
-PUBLISH_TAIL_S=30
+# declared drop period is the segment length and the declared generation
+# count is PUBLISH_GENERATIONS — the count `report soak` judges against.
+# The content stops PUBLISH_TAIL_S short of the run: each restart costs
+# the publisher a fraction of a second (measured 0.15-0.6 s per relaunch
+# on loopback), and the last segment has to be fully delivered before
+# `recv`'s own deadline, `--seconds` after its first event. So the tail
+# is 30 s plus a full second per generation, which covers the measured
+# worst case at any period.
+PUBLISH_TAIL_S=$((30 + PUBLISH_GENERATIONS))
 PUBLISH_CONTENT_S=$((TOTAL_SECONDS - PUBLISH_TAIL_S))
 PUBLISH_SEGMENT_S=0
 if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
@@ -784,15 +806,17 @@ fi
 # The rtsp-publish leg's declaration, or null for a --no-rtsp-publish run
 # (then the leg is absent from `legs` altogether). It has no proxy, so no
 # schedule, and no managed sender, so no reconnect mode; what it declares
-# instead is the publisher it runs and how often that publisher drops.
+# instead is the publisher it runs, how often that publisher drops, and
+# how many publisher sessions the run launches.
 # The publisher's port is drawn at launch and recorded in its log.
 PUBLISHER_DECL="gst-launch-1.0 filesrc location=rtsp-publish/segments/gen-N.ts ! tsparse set-timestamps=true ! rtspclientsink location=rtsp://127.0.0.1:<port>/soak protocols=tcp"
 if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
   PUBLISH_LEG_DECL=$(jq -n --arg profile "$PUBLISH_PROFILE" --arg klv_set "$KLV_SET" \
     --argjson klv_seed "$SEED" --arg publisher "$PUBLISHER_DECL" \
-    --argjson period "$PUBLISH_SEGMENT_S" \
+    --argjson period "$PUBLISH_SEGMENT_S" --argjson generations "$PUBLISH_GENERATIONS" \
     '{profile: $profile, schedule: null, klv_set: $klv_set, klv_seed: $klv_seed,
-      reconnect_mode: null, publisher: $publisher, publisher_drop_period_s: $period}')
+      reconnect_mode: null, publisher: $publisher, publisher_drop_period_s: $period,
+      publisher_generations: $generations}')
 else
   PUBLISH_LEG_DECL=null
 fi
@@ -842,10 +866,30 @@ that could never pass its own completeness verdicts" >&2
 # the segments (recorded, not gated): recv's `metrics.stream_sha256`
 # equals it when every byte of every generation arrived. Segments are
 # cut by byte share, so their lengths in seconds only approximate
-# PUBLISH_SEGMENT_S. Disk: about 0.85 GB per hour of run while the
-# segments exist; the publisher deletes each one once it has pushed it.
+# PUBLISH_SEGMENT_S. The publisher deletes each segment once it has
+# pushed it.
+#
+# Disk: while the cutter runs, the source and every segment exist
+# together, so the peak is twice the stream: about 1.7 GB per hour of run
+# for baseline (~0.85 GB/h of stream), ~122 GB for a 72-hour run. Checked
+# before anything is written: a 10 s sample of the leg's own profile gives
+# the byte rate, and a run whose outdir has less than 1.2 x that peak free
+# exits 2 here, naming --no-rtsp-publish.
 PUBLISH_SEGMENTS=()
 if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
+  PUBLISH_SAMPLE="$OUTDIR/rtsp-publish/rate-sample.ts"
+  "$BIN" gen --profile "$PUBLISH_PROFILE" --seconds 10 --out "$PUBLISH_SAMPLE" \
+    --klv-set "$KLV_SET" --klv-seed "$SEED" --au-sizes realistic 2>/dev/null
+  PUBLISH_PEAK_KB=$(awk -v b="$(wc -c <"$PUBLISH_SAMPLE")" -v s="$PUBLISH_CONTENT_S" \
+    'BEGIN{printf "%d", 2 * b / 10 * s / 1024 + 1}')
+  rm -f "$PUBLISH_SAMPLE"
+  PUBLISH_FREE_KB=$(df -Pk "$OUTDIR" | awk 'NR==2{print $4}')
+  if awk -v f="$PUBLISH_FREE_KB" -v p="$PUBLISH_PEAK_KB" 'BEGIN{exit !(f < 1.2 * p)}'; then
+    echo "soak.sh: the rtsp-publish leg pre-generates its stream: peak ~$((PUBLISH_PEAK_KB / 1048576)) GiB \
+($PUBLISH_PEAK_KB KiB, source + segments) in $OUTDIR, which has $PUBLISH_FREE_KB KiB free (< 1.2 x peak) — \
+free space, shorten --hours, or pass --no-rtsp-publish" >&2
+    exit 2
+  fi
   echo "soak: generating the rtsp-publish leg's ${PUBLISH_CONTENT_S}s stream in $PUBLISH_GENERATIONS segments..." >&2
   PUBLISH_SOURCE="$OUTDIR/rtsp-publish/source.ts"
   "$BIN" gen --profile "$PUBLISH_PROFILE" --seconds "$PUBLISH_CONTENT_S" --out "$PUBLISH_SOURCE" \
@@ -1088,10 +1132,12 @@ record_pid rist-send $!
 # RTP, which the mount hands on byte for byte. One publisher session per
 # segment: at each segment's end gst-launch-1.0 sends EOS and exits, the
 # session ends, and the loop's next publisher ANNOUNCEs again — the drop
-# this leg exists to exercise, every PUBLISH_SEGMENT_S seconds. The mount
-# stays open between publishers, and recv's report counts the publishers
-# that ended (`publish_mount.generation`), which `report soak` holds to
-# floor(TOTAL_SECONDS / PUBLISH_SEGMENT_S) - 1 as
+# this leg exists to exercise, every PUBLISH_SEGMENT_S seconds. The drop
+# is graceful (EOS, then the session closes); an abrupt publisher loss is
+# not exercised here. The mount stays open between publishers, and recv's
+# report counts the publishers that ended (`publish_mount.generation`),
+# which `report soak` holds to the declared PUBLISH_GENERATIONS - 1 (the
+# last may still be connected at recv's deadline) as
 # `publisher_generations_rtsp-publish`.
 #
 # A restart gap cannot end the capture: recv's 15 s no-data deadline
