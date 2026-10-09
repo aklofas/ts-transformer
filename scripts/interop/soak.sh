@@ -102,7 +102,8 @@
 #     often the rtsp-publish leg's publisher drops and re-ANNOUNCEs (the
 #     run must span at least two such periods); the leg declares the
 #     resulting segment length and generation count in `soak-config.json`
-#     (`legs.rtsp-publish.publisher_drop_period_s` / `.publisher_generations`).
+#     (`legs.rtsp-publish.publisher_drop_period_s` / `.publisher_generations`),
+#     and the generated stream's digest (`.source_sha256`) once it exists.
 #     Set them in the
 #     environment, e.g.
 #     `SRT_RECONNECT_MODE=background OUTAGE_PERIOD_S=300 OUTAGE_DUR_S=30
@@ -214,8 +215,10 @@
 #                         is `null` here too.
 #   rtsp-publish/source.sha256 - sha256 of the stream the publisher pushed, cut
 #                         into rtsp-publish/segments/gen-N.ts (each deleted once
-#                         published); recv's stream_sha256 equals it when every
-#                         byte arrived. Recorded, not gated.
+#                         published); also declared in soak-config.json as
+#                         `legs.rtsp-publish.source_sha256`, and recv's
+#                         stream_sha256 must equal it
+#                         (`delivery_complete_rtsp-publish`).
 #   logs/*.log          - one file per launched process (each send/recv beats a
 #                         one-line "heartbeat" into its log every 60s — counters +
 #                         wire bytes — so a dead process is findable to the minute)
@@ -863,8 +866,10 @@ that could never pass its own completeness verdicts" >&2
 # the segments are the source byte for byte, so every generation
 # continues the previous one's PTS, PCR and continuity counters and the
 # receiver judges one unbroken stream. The source's sha256 is kept beside
-# the segments (recorded, not gated): recv's `metrics.stream_sha256`
-# equals it when every byte of every generation arrived. Segments are
+# the segments and declared in soak-config.json before any worker
+# launches: `report soak`'s `delivery_complete_rtsp-publish` requires
+# recv's `metrics.stream_sha256` to equal it, which holds only when every
+# byte of every generation arrived, the last one included. Segments are
 # cut by byte share, so their lengths in seconds only approximate
 # PUBLISH_SEGMENT_S. The publisher deletes each segment once it has
 # pushed it.
@@ -879,7 +884,8 @@ PUBLISH_SEGMENTS=()
 if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
   PUBLISH_SAMPLE="$OUTDIR/rtsp-publish/rate-sample.ts"
   "$BIN" gen --profile "$PUBLISH_PROFILE" --seconds 10 --out "$PUBLISH_SAMPLE" \
-    --klv-set "$KLV_SET" --klv-seed "$SEED" --au-sizes realistic 2>/dev/null
+    --klv-set "$KLV_SET" --klv-seed "$SEED" --au-sizes realistic ||
+    { echo "soak.sh: rate sample gen failed (see above)" >&2; exit 2; }
   PUBLISH_PEAK_KB=$(awk -v b="$(wc -c <"$PUBLISH_SAMPLE")" -v s="$PUBLISH_CONTENT_S" \
     'BEGIN{printf "%d", 2 * b / 10 * s / 1024 + 1}')
   rm -f "$PUBLISH_SAMPLE"
@@ -895,6 +901,14 @@ free space, shorten --hours, or pass --no-rtsp-publish" >&2
   "$BIN" gen --profile "$PUBLISH_PROFILE" --seconds "$PUBLISH_CONTENT_S" --out "$PUBLISH_SOURCE" \
     --klv-set "$KLV_SET" --klv-seed "$SEED" --au-sizes realistic
   sha256sum "$PUBLISH_SOURCE" | awk '{print $1}' >"$OUTDIR/rtsp-publish/source.sha256"
+  # Declared before any worker launches, like the rest of the leg; the
+  # file stays beside it for a report run against an older config.
+  jq --arg sha "$(cat "$OUTDIR/rtsp-publish/source.sha256")" \
+    '.legs["rtsp-publish"].source_sha256 = $sha' "$OUTDIR/soak-config.json" \
+    >"$OUTDIR/soak-config.json.tmp" &&
+    mv "$OUTDIR/soak-config.json.tmp" "$OUTDIR/soak-config.json" &&
+    "$BIN" report soak --config "$OUTDIR/soak-config.json" --validate-only ||
+    { echo "soak.sh: could not declare the rtsp-publish source digest in soak-config.json" >&2; exit 2; }
   python3 - "$PUBLISH_SOURCE" "$PUBLISH_GENERATIONS" "$OUTDIR/rtsp-publish/segments" <<'PY'
 import os, sys
 src, n, outdir = sys.argv[1], int(sys.argv[2]), sys.argv[3]
@@ -1136,9 +1150,10 @@ record_pid rist-send $!
 # is graceful (EOS, then the session closes); an abrupt publisher loss is
 # not exercised here. The mount stays open between publishers, and recv's
 # report counts the publishers that ended (`publish_mount.generation`),
-# which `report soak` holds to the declared PUBLISH_GENERATIONS - 1 (the
-# last may still be connected at recv's deadline) as
-# `publisher_generations_rtsp-publish`.
+# which `report soak` holds to the declared PUBLISH_GENERATIONS as
+# `publisher_generations_rtsp-publish`: the PUBLISH_TAIL_S tail lets the
+# last publisher end before recv's deadline (one cut off there exits
+# nonzero and fails `worker_exits` too).
 #
 # A restart gap cannot end the capture: recv's 15 s no-data deadline
 # applies only until its FIRST event; from then on its deadline is fixed
@@ -1389,12 +1404,11 @@ REPORT_RC=0
     echo "note: gap_messages_dropped/gap_bytes_dropped count what the gap buffer evicted after the sender"
     echo "      knew the link was down. What the transport had already accepted and never delivered in the"
     echo "      seconds before it noticed the break is not in them (measured: most of an outage's loss)."
-    jq -r '.publish_legs[]
+    jq -r '(.verdicts | map({(.name): .pass}) | add) as $v
+      | .publish_legs[]
       | "\(.leg): video AUs received=\(.recv_video_aus)  publishers ended=\(.publish_mount.generation // "unrecorded")"
-        + " (floor \(.min_generations // "none"))  recv stream_sha256 matches the source: "
-        + "\($sha == $src)"' \
-      --arg sha "$(jq -r '.metrics.stream_sha256 // ""' "$OUTDIR/rtsp-publish/recv-report.json" 2>/dev/null || true)" \
-      --arg src "$(cat "$OUTDIR/rtsp-publish/source.sha256" 2>/dev/null || true)" \
+        + " (floor \(.min_generations // "none"))  delivery_complete (recv stream_sha256 = source): "
+        + ($v["delivery_complete_" + .leg] | if . == null then "not judged" else tostring end)' \
       "$OUTDIR/soak-results.json"
     echo
     jq '{overall_pass, run_duration_s, expected_duration_s, warmup_s, rss_slope_threshold_kb_per_hour,

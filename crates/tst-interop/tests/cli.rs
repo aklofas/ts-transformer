@@ -601,6 +601,8 @@ fn healthy_cell_metrics(video_aus: u64) -> CellMetrics {
         klv_rich: None,
         since_reconnect: None,
         managed_send: None,
+        judged_profile: None,
+        skipped_oracles: None,
     }
 }
 

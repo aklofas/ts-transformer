@@ -323,6 +323,9 @@ pub fn send_over_transport(
         // cannot tell a managed one from a plain one; `run_managed`,
         // which built it, fills this in.
         managed_send: None,
+        // Cell-record declarations; `run-matrix.sh` adds them.
+        judged_profile: None,
+        skipped_oracles: None,
     })
 }
 

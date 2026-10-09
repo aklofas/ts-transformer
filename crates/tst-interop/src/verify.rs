@@ -54,9 +54,11 @@ pub enum VerifyMode {
 /// onto its own PIDs, with KLV as `PrivateData`): every oracle keyed on
 /// the generator's layout is skipped and named in
 /// `VerifyReport::skipped_oracles`, and every content oracle still runs
-/// — AU, keyframe and KLV counts (whole-capture and per program), the
-/// KLV set digest, codec, programs seen, PMT seen, PTS monotonicity, PCR
-/// cadence and non-conformant events.
+/// — AU, keyframe and KLV counts (whole-capture and per program), codec,
+/// programs seen, PMT seen, PTS monotonicity, PCR cadence and
+/// non-conformant events. The KLV set digest is still computed; holding
+/// it to the source's is the caller's (the interop matrix's
+/// `rtsp-publish/gst-push-es-klv` cell does).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WireLayout {
     #[default]
@@ -64,21 +66,28 @@ pub enum WireLayout {
     Remuxed,
 }
 
-/// The verdicts a [`WireLayout::Remuxed`] judgement skips, as the
-/// failure-string prefixes they would otherwise carry. Recorded in
+/// The verdicts a [`WireLayout::Remuxed`] judgement skips, recorded in
 /// `VerifyReport::skipped_oracles` so the relaxation is declared in the
-/// report, never silent.
+/// report, never silent. Every entry but one is a literal prefix of the
+/// failure strings that verdict writes, so an operator can grep a
+/// generator-layout report for it: `pmt_stream_type_` and
+/// `pmt_descriptor_` (the video, KLV and audio PMT entries), `wire_vs_demux_`
+/// and `pts_wrap_` (each followed by a PID or `observed`/`unexpected`),
+/// `av1_carriage_wire`, the three audio verdicts, and `KLV carriage`. The
+/// exception is `program_<n>_wire_media`, a verdict name: its failures
+/// begin `program_1_wire_media`, `program_2_wire_media` and so on, one per
+/// program.
 pub const REMUXED_SKIPPED_ORACLES: &[&str] = &[
-    "program_wire_media",
-    "pmt_stream_type",
-    "pmt_descriptor",
-    "wire_vs_demux",
-    "pts_wrap",
+    "program_<n>_wire_media",
+    "pmt_stream_type_",
+    "pmt_descriptor_",
+    "wire_vs_demux_",
+    "pts_wrap_",
     "av1_carriage_wire",
     "audio_codec_adts",
     "audio_cadence",
     "audio_pts_step",
-    "klv_carriage",
+    "KLV carriage",
 ];
 
 /// Which KLV record set the capture under judgement was generated with,
@@ -88,8 +97,8 @@ pub const REMUXED_SKIPPED_ORACLES: &[&str] = &[
 /// `fixtures::rich_presence(seed, seq)`, which is only computable by
 /// someone told the same `(set, seed)` the sender used.
 ///
-/// [`KlvExpect::compact`] is the default everywhere — the 157-cell
-/// interop matrix generates and judges compact records, and a compact
+/// [`KlvExpect::compact`] is the default everywhere — the interop
+/// matrix generates and judges compact records, and a compact
 /// capture has no presence schedule to check at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KlvExpect {
@@ -1271,6 +1280,10 @@ impl Tally {
             }),
             // A send-side account; a verifier sends nothing.
             managed_send: None,
+            // Cell-record declarations: `run-matrix.sh` copies them from
+            // this report's `profile` and `skipped_oracles`.
+            judged_profile: None,
+            skipped_oracles: None,
         };
 
         VerifyReport {
@@ -3248,6 +3261,27 @@ mod tests {
             );
         }
         assert!(full.skipped_oracles.is_empty());
+
+        // The declaration is exact: every failure the generator layout
+        // produced here is one `--remuxed` skips, so each must match a
+        // declared entry (a literal prefix, or `program_<n>_wire_media`).
+        let declared = |f: &str| {
+            REMUXED_SKIPPED_ORACLES
+                .iter()
+                .any(|o| match o.split_once("<n>") {
+                    Some((head, tail)) => {
+                        f.starts_with(head)
+                            && f.split(':').next().is_some_and(|v| v.ends_with(tail))
+                    }
+                    None => f.starts_with(o),
+                })
+        };
+        for f in &full.failures {
+            assert!(
+                declared(f),
+                "{f:?} is skipped under --remuxed but not declared"
+            );
+        }
 
         let remuxed = judge(WireLayout::Remuxed);
         assert!(remuxed.pass, "failures: {:?}", remuxed.failures);

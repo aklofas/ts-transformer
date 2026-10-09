@@ -92,6 +92,21 @@ pub struct CellMetrics {
     /// a report archived before the field existed loads as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_send: Option<ManagedSendStats>,
+    /// The profile the capture was judged against, set on a matrix cell
+    /// record whose receiver ran `recv --expect P` with a profile other
+    /// than the axis the cell is recorded under, or `recv --remuxed`.
+    /// Copied from the recv report's `profile` by `run-matrix.sh`; no
+    /// subcommand writes it, so a `send`/`recv`/`verify` report leaves it
+    /// `None`. With [`Self::skipped_oracles`], this is the cell row's own
+    /// declaration of the relaxation, which `report render` prints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judged_profile: Option<String>,
+    /// The verdicts the receiver skipped (`VerifyReport::skipped_oracles`,
+    /// non-empty under `recv --remuxed`), carried onto the cell record
+    /// beside [`Self::judged_profile`]. `None` on every report a
+    /// subcommand writes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped_oracles: Option<Vec<String>>,
 }
 
 /// What a `send --managed` run's `tst_pipeline::ManagedTransport` said

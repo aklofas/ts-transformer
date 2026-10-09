@@ -33,7 +33,7 @@ use std::net::{Shutdown, TcpListener, TcpStream, UdpSocket};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tst_core::transport::{BrokenCause, Transport, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, Transport, TransportError};
 
 use tst_interop::fixtures::{AuSizeMode, KlvSet};
 use tst_interop::verify::{KlvExpect, WireLayout};
@@ -1079,14 +1079,18 @@ impl Transport for RecordPublisher {
     }
 }
 
-/// `rtsp-publish://` end to end: `make_recv` starts a publish listener,
-/// a raw RTSP publisher RECORDs a whole baseline-profile stream into it
-/// over TCP-interleaved, and the receive loop judges what came out of the
-/// mount's application transport. Interleaved TCP is lossless and
-/// ordered, so the capture must pass AND be byte-identical to what the
-/// publisher's muxer sent.
-#[test]
-fn rtsp_publish_listener_receives_a_recorded_stream() {
+/// One `rtsp-publish://` session: `make` starts a publish listener on a
+/// free port, a raw RTSP publisher RECORDs a whole baseline-profile
+/// stream into it over TCP-interleaved, and the receive loop judges what
+/// came out of the mount's application transport. Returns the
+/// publisher's send metrics and the receiver's report; the receive
+/// transport has been dropped by then.
+fn record_one_publisher(
+    mut make: impl FnMut(&str) -> Result<Box<dyn RecvTransport>, String>,
+) -> (
+    tst_interop::report_types::CellMetrics,
+    tst_interop::report_types::VerifyReport,
+) {
     let profile = profiles::by_name("baseline").expect("baseline profile must exist");
 
     // Port 0 is unusable here (the publisher must know the port), so pick
@@ -1098,7 +1102,7 @@ fn rtsp_publish_listener_receives_a_recorded_stream() {
                 .and_then(|l| l.local_addr())
                 .expect("probe port")
                 .port();
-            match transport::make_recv(&format!("rtsp-publish://127.0.0.1:{port}/cam")) {
+            match make(&format!("rtsp-publish://127.0.0.1:{port}/cam")) {
                 Ok(t) => Some((port, t)),
                 Err(e) if e.contains("bind address in use") => None,
                 Err(e) => panic!("rtsp-publish listener: {e}"),
@@ -1153,7 +1157,15 @@ fn rtsp_publish_listener_receives_a_recorded_stream() {
         .join()
         .expect("receive thread panicked")
         .expect("recv_over_transport must succeed");
+    (send_metrics, recv_report)
+}
 
+/// `rtsp-publish://` end to end through `make_recv`. Interleaved TCP is
+/// lossless and ordered, so the capture must pass AND be byte-identical
+/// to what the publisher's muxer sent.
+#[test]
+fn rtsp_publish_listener_receives_a_recorded_stream() {
+    let (send_metrics, recv_report) = record_one_publisher(transport::make_recv);
     assert!(
         recv_report.pass,
         "recv failures: {:?}",
@@ -1170,5 +1182,35 @@ fn rtsp_publish_listener_receives_a_recorded_stream() {
     assert_eq!(
         send_metrics.klv_set_sha256, recv_report.metrics.klv_set_sha256,
         "sent and received KLV record sets must match"
+    );
+}
+
+/// The same session through `make_recv_probed`, the path `recv` takes and
+/// the soak's publish leg depends on: dropping the receive transport
+/// snapshots the mount's counters into the probe while the server still
+/// runs. The publisher closed its session well before the receive
+/// deadline, so the mount counted exactly one ended publisher.
+#[test]
+fn rtsp_publish_probe_reports_the_ended_publisher() {
+    let mut probe = None;
+    let (_, recv_report) = record_one_publisher(|url| {
+        let (t, p) = transport::make_recv_probed(url)?;
+        probe = p;
+        Ok(t)
+    });
+    assert!(
+        recv_report.pass,
+        "recv failures: {:?}",
+        recv_report.failures
+    );
+    let snapshot = probe
+        .expect("an rtsp-publish:// URL yields a probe")
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .expect("dropping the listener must snapshot the mount");
+    assert_eq!(
+        snapshot.generation, 1,
+        "one publisher RECORDed and ended: {snapshot:?}"
     );
 }
