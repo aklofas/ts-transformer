@@ -104,8 +104,9 @@ fn stats_when(
 }
 
 /// A publisher on `/pub` that has announced [`SDP_H264_KLV`], SETUP both
-/// tracks over interleaved in GStreamer's order (KLV first), and RECORDed. Returns it with the video and
-/// KLV `(rtp, rtcp)` channel pairs the server allocated.
+/// tracks over interleaved in GStreamer's order (KLV first), and
+/// RECORDed. Returns it with the video and KLV `(rtp, rtcp)` channel
+/// pairs the server allocated.
 fn two_track_publisher(port: u16) -> (RawPublisher, (u8, u8), (u8, u8)) {
     let mut p = RawPublisher::connect(port);
     assert_eq!(p.announce("/pub", SDP_H264_KLV), 200);

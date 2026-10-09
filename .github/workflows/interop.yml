@@ -30,6 +30,9 @@ on:
       # saw it (Monday cron). ~25 min warm; the
       # census assert (159/94/0/65/0) now gates those PRs too.
       - 'crates/tst-core/src/mpegts/**'
+      # The rtsp-publish/* cells are the only real-tool check of the RTSP
+      # server's publish path (ANNOUNCE/RECORD, the re-muxer, SDP parsing).
+      - 'crates/tst-rtp/src/rtsp/**'
 
 permissions:
   contents: read
