@@ -14,7 +14,12 @@
 //! first-packet coincidence instead (the first KLV unit, or the oldest one
 //! still held if older ones aged out before the video started, lands at
 //! the video line's PTS 0) — [`ClockAlignment::Provisional`] rather than
-//! [`ClockAlignment::SenderReport`]. A later report pair always recomputes
+//! [`ClockAlignment::SenderReport`]. A sender-report mapping is checked
+//! once, at the first KLV placement it makes: one that would place the
+//! unit more than [`SR_PLAUSIBILITY_TICKS`] from the newest video PTS seen
+//! is abandoned for the fallback (counted as one step; the same offset is
+//! not re-adopted). A mapping that has validated is kept through later
+//! video stalls. A later report pair always recomputes
 //! the mapping and may move KLV units' PTS as a result (no continuity
 //! requirement for metadata); a move of more than
 //! [`STEP_TOLERANCE_TICKS`] ticks [`Aligner::steps`].
@@ -99,6 +104,14 @@ pub(crate) const ALIGN_HOLD_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// sender's wall clock and RTP clock, so consecutive pairs routinely
 /// differ by a tick or two; only a real move is worth counting.
 pub(crate) const STEP_TOLERANCE_TICKS: i64 = 90;
+
+/// How far from the newest video PTS seen a sender-report mapping may put
+/// the first KLV unit it places before the mapping is judged unusable
+/// (30 s at 90 kHz). Wider than any encoder start-up skew between a
+/// KLV-first publisher's tracks, far narrower than any clock disagreement:
+/// the observed failures were hours to decades off. Separate from
+/// [`PLACED_WAIT_MAX`], which bounds how long a placed unit waits.
+pub(crate) const SR_PLAUSIBILITY_TICKS: i64 = 30 * 90_000;
 
 /// A video PTS zero (`rtp − pts`) that moves by more than this many ticks
 /// is a re-anchored depacketizer (a new video SSRC), not the same line.
@@ -205,6 +218,19 @@ pub(crate) struct Aligner {
     /// known — from a sender-report pair or the first-packet-coincidence
     /// fallback.
     offset: Option<i64>,
+    /// A sender-report offset [`Self::place_held`] found unusable (it
+    /// placed the newest held unit outside [`SR_PLAUSIBILITY_TICKS`]). A later
+    /// pair that recomputes within [`STEP_TOLERANCE_TICKS`] of it is
+    /// ignored, so the same two disagreeing clocks do not re-adopt and
+    /// re-abandon the mapping every RTCP interval.
+    rejected_offset: Option<i64>,
+    /// The current sender-report offset has passed the plausibility check
+    /// in [`Self::place_held`]; it is not checked again, so a later video
+    /// stall cannot abandon it.
+    offset_validated: bool,
+    /// The most recent sender-report offset that passed the plausibility
+    /// check: restored when a later pair's offset is rejected.
+    last_validated_offset: Option<i64>,
     /// Unplaced KLV units the aligner discarded.
     dropped: u64,
     /// A video source restart cleared `video_origin`: the next origin
@@ -241,6 +267,9 @@ impl Aligner {
             mode: ClockAlignment::Pending,
             steps: 0,
             offset: None,
+            rejected_offset: None,
+            offset_validated: false,
+            last_validated_offset: None,
             dropped: 0,
             reanchor_next: false,
             video_pts_max: None,
@@ -253,12 +282,17 @@ impl Aligner {
 
     /// Everything that relates the two clocks belongs to the old clock
     /// pair after either track's source restarts: the offset, the
-    /// fallback's KLV anchor, and the held units (placed through the old
-    /// clocks they would land on the wrong part of the line; counted in
-    /// [`Self::dropped`]). Alignment reads [`ClockAlignment::Pending`]
-    /// until a fresh report pair or the fallback re-establishes it.
+    /// fallback's KLV anchor, the sender-report plausibility state (the
+    /// rejected and last validated offsets), and the held units (placed
+    /// through the old clocks they would land on the wrong part of the
+    /// line; counted in [`Self::dropped`]). Alignment reads
+    /// [`ClockAlignment::Pending`] until a fresh report pair or the
+    /// fallback re-establishes it.
     fn forget_mapping(&mut self) {
         self.offset = None;
+        self.rejected_offset = None;
+        self.offset_validated = false;
+        self.last_validated_offset = None;
         self.mode = ClockAlignment::Pending;
         self.klv_first = None;
         self.discard_held();
@@ -329,6 +363,11 @@ impl Aligner {
     /// [`ClockAlignment::SenderReport`]) without counting a step; a later
     /// report pair replaces an already-known offset and ticks
     /// [`Self::steps`] when it moved by more than [`STEP_TOLERANCE_TICKS`].
+    /// A pair that recomputes within [`STEP_TOLERANCE_TICKS`] of an offset
+    /// [`Self::place_held`] already rejected is ignored. An adopted
+    /// candidate that moved by more than [`STEP_TOLERANCE_TICKS`] from the
+    /// current offset is a new mapping and must pass the plausibility check
+    /// again; report jitter on a validated mapping keeps it validated.
     fn recompute_sr_offset(&mut self) {
         let (Some((ntp_v, rtp_v)), Some((ntp_k, rtp_k))) = (self.video.sr, self.klv.sr) else {
             return;
@@ -338,10 +377,19 @@ impl Aligner {
         let ntp_delta_ticks = (((ntp_k as i128) - (ntp_v as i128)) * 90_000) >> 32;
         let candidate = (rtp_v - rtp_k) + ntp_delta_ticks as i64;
         if self
-            .offset
-            .is_some_and(|old| (candidate - old).abs() > STEP_TOLERANCE_TICKS)
+            .rejected_offset
+            .is_some_and(|r| (candidate - r).abs() <= STEP_TOLERANCE_TICKS)
         {
+            return;
+        }
+        let moved = self
+            .offset
+            .is_some_and(|old| (candidate - old).abs() > STEP_TOLERANCE_TICKS);
+        if moved {
             self.steps += 1;
+        }
+        if moved || self.mode != ClockAlignment::SenderReport {
+            self.offset_validated = false;
         }
         self.offset = Some(candidate);
         self.mode = ClockAlignment::SenderReport;
@@ -506,7 +554,54 @@ impl Aligner {
     }
 
     /// Move every held unit to `placed`, if alignment is known.
+    ///
+    /// A sender-report mapping is checked once, at the first placement it
+    /// makes: if it would put the newest held unit more than
+    /// [`SR_PLAUSIBILITY_TICKS`] from the newest video PTS seen, the pair's
+    /// clocks disagree with the video line (a wall-clock KLV stamper against
+    /// an uptime video stamper, say) and every unit would expire unreached
+    /// or be dropped as negative while `alignment` read healthy. Such an
+    /// offset is remembered so the same pair is not re-adopted, and the
+    /// last validated mapping is restored if there was one; otherwise the
+    /// aligner falls back to first-packet coincidence, counted as one step.
+    /// A mapping that validated is never re-checked, so a video stall
+    /// longer than the window cannot abandon it. The fallback's anchor
+    /// (`klv_first`) is set whenever a unit is held: every unit sets it on
+    /// arrival, and only [`Self::evict_stale`] (when nothing is left held)
+    /// and [`Self::forget_mapping`] (which also discards the hold) clear it.
     fn place_held(&mut self, now: Instant) {
+        if self.mode == ClockAlignment::SenderReport && !self.offset_validated {
+            if let (Some(origin), Some(offset), Some(vmax), Some(newest)) = (
+                self.video_origin,
+                self.offset,
+                self.video_pts_max,
+                self.hold.back(),
+            ) {
+                let implied = newest.t_k + offset - origin.unwrapped;
+                let window = SR_PLAUSIBILITY_TICKS;
+                if implied > vmax.saturating_add(window) || implied < vmax.saturating_sub(window) {
+                    tracing::debug!(
+                        target: "tst_rtp::server::publish",
+                        implied_pts = implied,
+                        video_pts_max = vmax,
+                        "sender-report mapping places KLV outside the plausibility window; \
+                         abandoning it"
+                    );
+                    self.rejected_offset = Some(offset);
+                    if let Some(last) = self.last_validated_offset {
+                        self.offset = Some(last);
+                        self.offset_validated = true;
+                    } else {
+                        self.offset = None;
+                        self.steps += 1;
+                        self.engage_fallback();
+                    }
+                } else {
+                    self.offset_validated = true;
+                    self.last_validated_offset = Some(offset);
+                }
+            }
+        }
         let (Some(origin), Some(offset)) = (self.video_origin, self.offset) else {
             return;
         };
@@ -1264,7 +1359,9 @@ mod tests {
         // away from, so even a unit far ahead leaves at its placed PTS.
         let mut a = aligned_at_zero();
         let t0 = Instant::now();
-        let far = (10 * PLACED_WAIT_MAX_TICKS) as u32;
+        // 20 s ahead: past the drain bound, inside the sender-report
+        // plausibility window, so the report mapping stands.
+        let far = (2 * PLACED_WAIT_MAX_TICKS) as u32;
         assert!(a.on_klv_unit(unit(far), t0).is_empty());
         assert_eq!(a.drain(t0), vec![(unit(far), i64::from(far))]);
         assert_eq!(a.dropped(), 0);
@@ -1297,5 +1394,117 @@ mod tests {
             vec![(unit(u32::MAX - 1000), 0)]
         );
         assert_eq!(a.on_klv_unit(unit(2000), t0), vec![(unit(2000), 3001)]);
+    }
+
+    #[test]
+    fn a_report_pair_from_disagreeing_clocks_falls_back_instead_of_dropping_every_unit() {
+        // Video at PTS 0 (origin rtp 90_000); the video SR says ntp 100 s, the
+        // KLV SR says ntp 3700 s for the same instant: a wall-clock KLV
+        // stamper against an uptime video stamper. The implied KLV position
+        // is 3600 s ahead of the video — unreachable within PLACED_WAIT_MAX.
+        let mut a = Aligner::new();
+        let t0 = Instant::now();
+        a.on_video_au(90_000, 0);
+        a.on_video_muxed(0);
+        a.on_video_sr(&sr(100, 0, 180_000));
+        a.on_klv_sr(&sr(3700, 0, 500_000));
+        assert_eq!(
+            a.mode(),
+            ClockAlignment::SenderReport,
+            "adopted before any unit tests it"
+        );
+        let mut out = a.on_klv_unit(unit(500_000), t0);
+        out.extend(a.poll(t0));
+        // Before the fix: nothing came out, the unit expired at PLACED_WAIT_MAX
+        // and mode still read SenderReport.
+        assert_eq!(
+            a.mode(),
+            ClockAlignment::Provisional,
+            "an unusable pair is abandoned"
+        );
+        assert_eq!(a.steps(), 1, "abandoning a mapping is one step");
+        assert_eq!(
+            a.dropped(),
+            0,
+            "the unit is placed by the fallback, not lost"
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out[0].1, 0,
+            "fallback places the first unit on the video line's PTS 0"
+        );
+    }
+
+    #[test]
+    fn the_same_implausible_pair_is_not_re_adopted_every_report_interval() {
+        let mut a = Aligner::new();
+        let t0 = Instant::now();
+        a.on_video_au(90_000, 0);
+        a.on_video_muxed(0);
+        a.on_video_sr(&sr(100, 0, 180_000));
+        a.on_klv_sr(&sr(3700, 0, 500_000));
+        let _ = a.on_klv_unit(unit(500_000), t0);
+        assert_eq!((a.mode(), a.steps()), (ClockAlignment::Provisional, 1));
+        // The next report pair from the same two clocks implies the same offset.
+        a.on_video_sr(&sr(105, 0, 630_000));
+        a.on_klv_sr(&sr(3705, 0, 950_000));
+        let _ = a.on_klv_unit(unit(950_000), t0 + Duration::from_secs(5));
+        assert_eq!(
+            a.mode(),
+            ClockAlignment::Provisional,
+            "stays on the fallback"
+        );
+        assert_eq!(
+            a.steps(),
+            1,
+            "a rejected offset is remembered, not re-stepped"
+        );
+        // A DIFFERENT, plausible pair is still adopted.
+        a.on_video_sr(&sr(110, 0, 1_080_000));
+        a.on_klv_sr(&sr(110, 0, 1_080_000));
+        assert_eq!(a.mode(), ClockAlignment::SenderReport);
+        assert_eq!(a.steps(), 2);
+    }
+
+    #[test]
+    fn a_report_pair_that_places_within_the_window_is_kept() {
+        let mut a = Aligner::new();
+        let t0 = Instant::now();
+        a.on_video_au(90_000, 0);
+        a.on_video_muxed(0);
+        a.on_video_sr(&sr(100, 0, 180_000));
+        a.on_klv_sr(&sr(100, 0, 180_000)); // same clock: KLV rtp 180_000 ≙ video rtp 180_000
+        let out = a.on_klv_unit(unit(90_000), t0); // KLV captured at the video's PTS 0
+        assert_eq!(a.mode(), ClockAlignment::SenderReport);
+        assert_eq!(a.steps(), 0);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].1, 0);
+    }
+
+    #[test]
+    fn a_validated_mapping_survives_a_video_stall_longer_than_the_window() {
+        let mut a = Aligner::new();
+        let t0 = Instant::now();
+        a.on_video_au(90_000, 0);
+        a.on_video_muxed(0);
+        a.on_video_sr(&sr(100, 0, 180_000));
+        a.on_klv_sr(&sr(100, 0, 180_000));
+        let out = a.on_klv_unit(unit(90_000), t0); // PTS 0: validates the mapping
+        assert_eq!(out.len(), 1);
+        // 40 s of KLV time later, no video AU since PTS 0: past the window.
+        let later = 90_000 + 40 * 90_000;
+        assert!(
+            a.on_klv_unit(unit(later), t0).is_empty(),
+            "waits for the video"
+        );
+        assert_eq!(a.mode(), ClockAlignment::SenderReport, "never re-checked");
+        assert_eq!(a.steps(), 0);
+        assert!(a.poll(t0 + PLACED_WAIT_MAX).is_empty());
+        assert!(
+            a.dropped() >= 1,
+            "expires via the placed-wait bound, not re-anchored"
+        );
+        assert_eq!(a.mode(), ClockAlignment::SenderReport);
+        assert_eq!(a.steps(), 0);
     }
 }
