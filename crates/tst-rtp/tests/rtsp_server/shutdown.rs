@@ -57,6 +57,18 @@ fn add_multicast_mount_after_stop_errors_shutdown() {
 }
 
 #[test]
+fn add_publish_mount_after_stop_errors_shutdown() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    server.start().unwrap();
+    server.stop().unwrap();
+    let r = server.add_publish_mount("/late");
+    assert!(
+        matches!(r, Err(RtspServerError::Shutdown)),
+        "post-stop add_publish_mount must return Shutdown",
+    );
+}
+
+#[test]
 fn cancel_handle_flip_observable() {
     // Hard-cancel path: cancel_handle().cancel() flips the public flag.
     // The internal runtime tear-down happens on Drop; this test verifies
