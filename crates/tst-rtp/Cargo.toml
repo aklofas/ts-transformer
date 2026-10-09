@@ -126,7 +126,8 @@ rcgen            = "0.13"
 # rtsp_client/ and h264/ tests that must keep passing under
 # `--no-default-features`. Dev-dependencies never ship in the built library —
 # `cargo tree -e normal` (the client-only tokio-free check) ignores this edge.
-# `test-util` gives the server's unit tests paused time
+# `test-util` gives every tst-rtp test, example and bench build paused time
 # (`#[tokio::test(start_paused = true)]`), so idle-bound tests advance a
-# virtual clock instead of sleeping.
+# virtual clock instead of sleeping. Dev builds only: the library's own
+# tokio dependency above does not enable it.
 tokio            = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "macros", "test-util"] }

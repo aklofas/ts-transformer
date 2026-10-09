@@ -1705,40 +1705,48 @@ mod session_tests {
 
     /// One byte every 5 s re-arms the per-read idle bound forever; the
     /// per-message deadline must close the connection within the idle
-    /// bound (30 s pre-SETUP) of the FIRST byte. Paused tokio time: the
+    /// bound (30 s pre-SETUP) of the first byte. Paused tokio time: the
     /// test advances the clock, nothing sleeps for real.
+    ///
+    /// Each 5 s gap is walked in 1 ms read probes (see
+    /// [`read_response_in_paused_steps`] for why a single long wait would
+    /// let the clock jump past the server's timers), and closure is
+    /// detected by those probes, never by write errors. The fixed server
+    /// closes 30 s after the first byte; the window 25..=40 s tolerates a
+    /// byte the server reads a whole step late. A server without the
+    /// deadline closes only 30 s after the LAST byte (90 s or later) and
+    /// fails the "still open" check at 65 s.
     #[tokio::test(start_paused = true)]
     async fn a_request_trickled_past_the_idle_bound_closes_the_session() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use std::time::Duration;
+        use tokio::io::AsyncWriteExt;
         let (state, _mount) = state_with_publish_mount_and_listener().await;
         let mut c = connect(&state).await;
         let t0 = tokio::time::Instant::now();
-        // Nine bytes, 5 s apart: 40 s of "request in progress".
-        for b in b"OPTIONS r".iter() {
+        let mut closed_at = None;
+        // Thirteen bytes, 5 s apart: 65 s of "request in progress".
+        'trickle: for b in b"OPTIONS rtsp:".iter() {
             if c.write_all(&[*b]).await.is_err() {
-                break; // the server already closed: fine
+                // A write to a peer that already closed: closure observed.
+                closed_at = Some(t0.elapsed());
+                break;
             }
-            // Let the server task read the byte before the clock moves: on
-            // the current-thread test runtime that takes an I/O-driver turn
-            // and then the server's own poll — two yields, measured; one
-            // left every read a full step late, so the server's deadline
-            // started 5 s after the client's. Scheduler turns, not time.
-            for _ in 0..8 {
-                tokio::task::yield_now().await;
+            for _ in 0..5_000 {
+                let mut probe = [0u8; 1];
+                match tokio::time::timeout(Duration::from_millis(1), c.read(&mut probe)).await {
+                    Ok(Ok(0)) | Ok(Err(_)) => {
+                        closed_at = Some(t0.elapsed());
+                        break 'trickle;
+                    }
+                    Ok(Ok(n)) => panic!("the server answered a partial request with {n} bytes"),
+                    Err(_) => {} // still open: one more 1 ms step
+                }
             }
-            tokio::time::advance(std::time::Duration::from_secs(5)).await;
-            tokio::task::yield_now().await;
         }
-        // The server shut the connection: the client reads EOF (or a reset).
-        let mut probe = [0u8; 1];
-        let eof = tokio::time::timeout(std::time::Duration::from_secs(5), c.read(&mut probe))
-            .await
-            .expect("the server must close within the idle bound of the first byte");
-        assert!(matches!(eof, Ok(0) | Err(_)), "expected EOF, got {eof:?}");
+        let closed_at = closed_at.expect("connection still open 65 s after the first byte");
         assert!(
-            t0.elapsed() <= std::time::Duration::from_secs(35),
-            "closed at {:?} after the first byte; the bound is 30 s",
-            t0.elapsed()
+            closed_at >= Duration::from_secs(25) && closed_at <= Duration::from_secs(40),
+            "closure observed at {closed_at:?} after the first byte; the bound is 30 s"
         );
     }
 
@@ -1746,18 +1754,49 @@ mod session_tests {
     /// message deadline must not fire for a request that framed.
     #[tokio::test(start_paused = true)]
     async fn complete_requests_spaced_inside_the_idle_bound_are_all_answered() {
+        use std::time::Duration;
+        use tokio::io::AsyncWriteExt;
         let (state, _mount) = state_with_publish_mount_and_listener().await;
         let mut c = connect(&state).await;
         for cseq in 1..=3u32 {
-            let r = write_and_read(
-                &mut c,
-                &format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\n\r\n"),
-            )
-            .await;
+            let req = format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\n\r\n");
+            c.write_all(req.as_bytes()).await.unwrap();
+            let r = read_response_in_paused_steps(&mut c, Duration::from_secs(5)).await;
             assert!(r.starts_with("RTSP/1.0 200"), "request {cseq}: {r}");
-            tokio::task::yield_now().await;
-            tokio::time::advance(std::time::Duration::from_secs(20)).await;
-            tokio::task::yield_now().await;
+            tokio::time::advance(Duration::from_secs(20)).await;
         }
+    }
+
+    /// Read one response head under paused time, in 1 ms virtual steps, for
+    /// at most `limit` of virtual time.
+    ///
+    /// A paused runtime that parks advances its clock to the NEXT pending
+    /// timer, even while a loopback wakeup for the server task is in flight
+    /// (measured on Linux: one `timeout(30 s, read)` let the clock jump
+    /// ~29 s before the server read the request, far enough to fire the
+    /// server's own idle bound). Polling in 1 ms steps keeps the nearest
+    /// timer 1 ms away, so every jump is at most 1 ms and the server's
+    /// timers only fire when the test means them to.
+    async fn read_response_in_paused_steps(
+        c: &mut TcpStream,
+        limit: std::time::Duration,
+    ) -> String {
+        use std::time::Duration;
+        let start = tokio::time::Instant::now();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+            assert!(
+                start.elapsed() < limit,
+                "no response within {limit:?} of virtual time"
+            );
+            match tokio::time::timeout(Duration::from_millis(1), c.read(&mut chunk)).await {
+                Ok(Ok(0)) => panic!("connection closed before a response"),
+                Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
+                Ok(Err(e)) => panic!("read failed: {e}"),
+                Err(_) => {} // nothing yet: one more 1 ms step
+            }
+        }
+        String::from_utf8_lossy(&buf).into_owned()
     }
 }
