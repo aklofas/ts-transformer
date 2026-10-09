@@ -816,7 +816,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
   `crates/tst-interop`'s synthetic profile set and `scripts/interop/
   run-matrix.sh` gains cells for it (ffmpeg `-c:s webvtt` extraction, hls.js
   / mediamtx playback), or a consumer emits WebVTT-in-TS to a third-party
-  player. (The interop matrix exists — 12 profiles, 157 cells — but no
+  player. (The interop matrix exists — 12 profiles, 159 cells — but no
   profile carries a subtitle stream.)
 
 ## CEA-708 interop
