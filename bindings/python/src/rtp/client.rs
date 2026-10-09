@@ -540,7 +540,8 @@ impl PyRtspClient {
         //    Retain the `RtspSession` so
         //    `RtspSession.into_demux_receiver` can consume its
         //    UDP-socket-pair (or TCP-interleaved mpsc rx) downstream.
-        let result = py.allow_threads(
+        let result = crate::util::allow_threads_parking(
+            py,
             || -> Result<(RustRtspClient, RustRtspSession), RustRtspError> {
                 let mut client = builder.connect()?;
                 let _opts = client.options()?;
@@ -611,7 +612,8 @@ impl PyRtspClient {
 
         builder = apply_tls_roots(py, builder, config)?;
 
-        let result = py.allow_threads(
+        let result = crate::util::allow_threads_parking(
+            py,
             || -> Result<(RustRtspClient, RustRtspSession, H264DepayConfig), RustRtspError> {
                 let mut client = builder.connect()?;
                 let _opts = client.options()?;
@@ -760,26 +762,28 @@ impl PyRtspSession {
     /// for a subsequent `play()`.
     fn pause(&mut self, py: Python<'_>) -> PyResult<()> {
         let client = self.client.clone();
-        let result = py.allow_threads(move || -> Result<(), RustRtspError> {
-            let mut guard = client.lock().map_err(|_| RustRtspError::SessionExpired)?;
-            match guard.as_mut() {
-                Some(c) => c.pause(),
-                None => Err(RustRtspError::SessionExpired),
-            }
-        });
+        let result =
+            crate::util::allow_threads_parking(py, move || -> Result<(), RustRtspError> {
+                let mut guard = client.lock().map_err(|_| RustRtspError::SessionExpired)?;
+                match guard.as_mut() {
+                    Some(c) => c.pause(),
+                    None => Err(RustRtspError::SessionExpired),
+                }
+            });
         result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Send PLAY (resume after `pause()`).
     fn play(&mut self, py: Python<'_>) -> PyResult<()> {
         let client = self.client.clone();
-        let result = py.allow_threads(move || -> Result<(), RustRtspError> {
-            let mut guard = client.lock().map_err(|_| RustRtspError::SessionExpired)?;
-            match guard.as_mut() {
-                Some(c) => c.play().map(|_info| ()),
-                None => Err(RustRtspError::SessionExpired),
-            }
-        });
+        let result =
+            crate::util::allow_threads_parking(py, move || -> Result<(), RustRtspError> {
+                let mut guard = client.lock().map_err(|_| RustRtspError::SessionExpired)?;
+                match guard.as_mut() {
+                    Some(c) => c.play().map(|_info| ()),
+                    None => Err(RustRtspError::SessionExpired),
+                }
+            });
         result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
@@ -793,15 +797,16 @@ impl PyRtspSession {
         }
         let client = self.client.clone();
         let torn = self.torn_down.clone();
-        let result = py.allow_threads(move || -> Result<(), RustRtspError> {
-            let mut guard = client.lock().map_err(|_| RustRtspError::SessionExpired)?;
-            let r = match guard.as_mut() {
-                Some(c) => c.teardown(),
-                None => Ok(()),
-            };
-            torn.store(true, Ordering::Relaxed);
-            r
-        });
+        let result =
+            crate::util::allow_threads_parking(py, move || -> Result<(), RustRtspError> {
+                let mut guard = client.lock().map_err(|_| RustRtspError::SessionExpired)?;
+                let r = match guard.as_mut() {
+                    Some(c) => c.teardown(),
+                    None => Ok(()),
+                };
+                torn.store(true, Ordering::Relaxed);
+                r
+            });
         result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 

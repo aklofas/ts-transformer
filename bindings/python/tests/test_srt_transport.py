@@ -288,27 +288,35 @@ def test_stats_repr_does_not_leak_internals() -> None:
 def test_context_manager() -> None:
     """`with Sender(...) as s:` calls close() on exit."""
     port = _free_tcp_port()
-    receiver_box: list[tstrans.srt.Receiver] = []
+    # Bound on the test thread, so the caller below cannot race the bind,
+    # and accepted with a deadline: a caller that connects and closes before
+    # the accept dequeues it can leave a plain accept parked forever (libsrt
+    # prunes the broken entry), which leaked a thread past the test.
+    lst = tstrans.srt.Builder(f"srt://:{port}?mode=listener").listener().listen()
+    sock_box: list[tstrans.srt.Socket] = []
 
     def accept_worker() -> None:
-        receiver_box.append(
-            tstrans.srt.Receiver.from_url(f"srt://:{port}?mode=listener")
-        )
+        try:
+            sock_box.append(lst.accept(timeout_ms=5000))
+        except SrtError:
+            pass  # timed out after a pruned connection: bounded, not a leak
 
     t = threading.Thread(target=accept_worker, daemon=True)
     t.start()
-    time.sleep(0.1)
-
-    with tstrans.srt.Sender.from_url(f"srt://127.0.0.1:{port}?mode=caller") as s:
-        assert "open" in repr(s)
-        assert s.is_alive()
-    # After the with-block, send_bytes must raise CLOSED.
-    with pytest.raises(SrtError) as exc_info:
-        s.send_bytes(b"\x47" + b"\x00" * 187)
-    assert exc_info.value.kind == SrtErrorKind.CLOSED
-    t.join(timeout=5.0)
-    if receiver_box:
-        receiver_box[0].close()
+    try:
+        with tstrans.srt.Sender.from_url(f"srt://127.0.0.1:{port}?mode=caller") as s:
+            assert "open" in repr(s)
+            assert s.is_alive()
+        # After the with-block, send_bytes must raise CLOSED.
+        with pytest.raises(SrtError) as exc_info:
+            s.send_bytes(b"\x47" + b"\x00" * 187)
+        assert exc_info.value.kind == SrtErrorKind.CLOSED
+        t.join(timeout=10.0)
+        assert not t.is_alive(), "listener accept leaked"
+    finally:
+        for sock in sock_box:
+            sock.close()
+        lst.close()
 
 
 def test_close_idempotent() -> None:

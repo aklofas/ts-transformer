@@ -278,7 +278,9 @@ impl PyMountHandle {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| self.inner.push_video(slice, rust_pts, key_frame));
+        let res = crate::util::allow_threads_parking(py, || {
+            self.inner.push_video(slice, rust_pts, key_frame)
+        });
         res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
@@ -296,7 +298,9 @@ impl PyMountHandle {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| self.inner.push_klv(slice, rust_pts, metadata_service_id));
+        let res = crate::util::allow_threads_parking(py, || {
+            self.inner.push_klv(slice, rust_pts, metadata_service_id)
+        });
         res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
@@ -312,7 +316,7 @@ impl PyMountHandle {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, frames)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| self.inner.push_audio(slice, rust_pts));
+        let res = crate::util::allow_threads_parking(py, || self.inner.push_audio(slice, rust_pts));
         res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
@@ -328,7 +332,8 @@ impl PyMountHandle {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| self.inner.push_subtitle(slice, rust_pts));
+        let res =
+            crate::util::allow_threads_parking(py, || self.inner.push_subtitle(slice, rust_pts));
         res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
@@ -344,7 +349,7 @@ impl PyMountHandle {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| self.inner.push_data(slice, rust_pts));
+        let res = crate::util::allow_threads_parking(py, || self.inner.push_data(slice, rust_pts));
         res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
@@ -370,7 +375,7 @@ impl PyMountHandle {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.inner
                 .push_video_to(handle_inner, slice, rust_pts, key_frame)
         });
@@ -391,7 +396,7 @@ impl PyMountHandle {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.inner
                 .push_klv_to(handle_inner, slice, rust_pts, metadata_service_id)
         });
@@ -411,7 +416,9 @@ impl PyMountHandle {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, frames)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| self.inner.push_audio_to(handle_inner, slice, rust_pts));
+        let res = crate::util::allow_threads_parking(py, || {
+            self.inner.push_audio_to(handle_inner, slice, rust_pts)
+        });
         res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
@@ -428,7 +435,9 @@ impl PyMountHandle {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| self.inner.push_subtitle_to(handle_inner, slice, rust_pts));
+        let res = crate::util::allow_threads_parking(py, || {
+            self.inner.push_subtitle_to(handle_inner, slice, rust_pts)
+        });
         res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
@@ -444,7 +453,9 @@ impl PyMountHandle {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| self.inner.push_data_to(handle_inner, slice, rust_pts));
+        let res = crate::util::allow_threads_parking(py, || {
+            self.inner.push_data_to(handle_inner, slice, rust_pts)
+        });
         res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
@@ -555,7 +566,7 @@ impl PyMountHandle {
     /// Drain any TS packets queued in the inner muxer and broadcast them
     /// through the mount's fanout channel. Always safe to call.
     pub fn flush(&self, py: Python<'_>) {
-        py.allow_threads(|| self.inner.flush());
+        crate::util::allow_threads_parking(py, || self.inner.flush());
     }
 
     /// Reset all flow counters on the mount to zero.
@@ -664,60 +675,58 @@ impl PyRtspServer {
         }
         // Construction is fast but does real work (tokio Runtime build +
         // socket bind); release the GIL so other Python threads can run.
-        let server = py
-            .allow_threads(
-                || -> Result<RustRtspServer, tst_rtp::error::RtspServerError> {
-                    let mut builder = RtspServerBuilder::new(&cfg.bind_url)?;
-                    builder
-                        .max_sessions(cfg.max_sessions)
-                        .session_timeout(Duration::from_secs(cfg.session_timeout_secs))
-                        .fanout_capacity(cfg.fanout_capacity)
-                        .graceful_shutdown_drain(Duration::from_millis(
-                            cfg.graceful_shutdown_drain_ms,
-                        ))
-                        .accept_unregistered_publishers(cfg.accept_unregistered_publishers);
-                    // Wire the cert + key paths through before build().
-                    // start() loads these synchronously and fails typed
-                    // on bad paths (the guard above just gives nicer
-                    // Python-side messages).
-                    #[cfg(feature = "tls")]
-                    if let (Some(cert), Some(key)) = (cfg.tls_cert.as_ref(), cfg.tls_key.as_ref()) {
-                        builder.tls_cert(
-                            std::path::PathBuf::from(cert),
-                            std::path::PathBuf::from(key),
-                        );
-                    }
-                    if let Some(auth) = cfg.auth.as_ref() {
-                        match auth.scheme {
-                            AuthScheme::Basic => {
-                                builder.auth_basic(
-                                    &auth.realm,
-                                    &auth.username,
-                                    SecretString::new(auth.password.clone().into()),
-                                );
-                            }
-                            AuthScheme::DigestMd5 => {
-                                builder.auth_digest_md5(
-                                    &auth.realm,
-                                    &auth.username,
-                                    SecretString::new(auth.password.clone().into()),
-                                );
-                            }
-                            AuthScheme::DigestSha256 => {
-                                builder.auth_digest_sha256(
-                                    &auth.realm,
-                                    &auth.username,
-                                    SecretString::new(auth.password.clone().into()),
-                                );
-                            }
+        let server = crate::util::allow_threads_parking(
+            py,
+            || -> Result<RustRtspServer, tst_rtp::error::RtspServerError> {
+                let mut builder = RtspServerBuilder::new(&cfg.bind_url)?;
+                builder
+                    .max_sessions(cfg.max_sessions)
+                    .session_timeout(Duration::from_secs(cfg.session_timeout_secs))
+                    .fanout_capacity(cfg.fanout_capacity)
+                    .graceful_shutdown_drain(Duration::from_millis(cfg.graceful_shutdown_drain_ms))
+                    .accept_unregistered_publishers(cfg.accept_unregistered_publishers);
+                // Wire the cert + key paths through before build().
+                // start() loads these synchronously and fails typed
+                // on bad paths (the guard above just gives nicer
+                // Python-side messages).
+                #[cfg(feature = "tls")]
+                if let (Some(cert), Some(key)) = (cfg.tls_cert.as_ref(), cfg.tls_key.as_ref()) {
+                    builder.tls_cert(
+                        std::path::PathBuf::from(cert),
+                        std::path::PathBuf::from(key),
+                    );
+                }
+                if let Some(auth) = cfg.auth.as_ref() {
+                    match auth.scheme {
+                        AuthScheme::Basic => {
+                            builder.auth_basic(
+                                &auth.realm,
+                                &auth.username,
+                                SecretString::new(auth.password.clone().into()),
+                            );
+                        }
+                        AuthScheme::DigestMd5 => {
+                            builder.auth_digest_md5(
+                                &auth.realm,
+                                &auth.username,
+                                SecretString::new(auth.password.clone().into()),
+                            );
+                        }
+                        AuthScheme::DigestSha256 => {
+                            builder.auth_digest_sha256(
+                                &auth.realm,
+                                &auth.username,
+                                SecretString::new(auth.password.clone().into()),
+                            );
                         }
                     }
-                    let server = builder.build()?;
-                    server.start()?;
-                    Ok(server)
-                },
-            )
-            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
+                }
+                let server = builder.build()?;
+                server.start()?;
+                Ok(server)
+            },
+        )
+        .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
 
         Ok(Self {
             inner: Arc::new(server),
@@ -742,9 +751,10 @@ impl PyRtspServer {
         let muxer_cfg = build_single_program_muxer_config(&program_config)?;
         let server = self.inner.clone();
         let path_owned = path.to_string();
-        let res = py
-            .allow_threads(move || server.add_mount(&path_owned, muxer_cfg))
-            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
+        let res = crate::util::allow_threads_parking(py, move || {
+            server.add_mount(&path_owned, muxer_cfg)
+        })
+        .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
         Ok(PyMountHandle { inner: res })
     }
 
@@ -775,9 +785,10 @@ impl PyRtspServer {
         }
         let server = self.inner.clone();
         let path_owned = path.to_string();
-        let res = py
-            .allow_threads(move || server.add_multicast_mount(&path_owned, muxer_cfg, &url))
-            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
+        let res = crate::util::allow_threads_parking(py, move || {
+            server.add_multicast_mount(&path_owned, muxer_cfg, &url)
+        })
+        .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
         Ok(PyMountHandle { inner: res })
     }
 
@@ -792,9 +803,9 @@ impl PyRtspServer {
     pub fn add_publish_mount(&self, py: Python<'_>, path: &str) -> PyResult<PyPublishMount> {
         let server = self.inner.clone();
         let path_owned = path.to_string();
-        let handle = py
-            .allow_threads(move || server.add_publish_mount(&path_owned))
-            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
+        let handle =
+            crate::util::allow_threads_parking(py, move || server.add_publish_mount(&path_owned))
+                .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
         Ok(PyPublishMount::new(handle))
     }
 
@@ -844,8 +855,7 @@ impl PyRtspServer {
                 Some(d) => d.saturating_duration_since(Instant::now()).min(SLICE),
             };
             let server = self.inner.clone();
-            let got = py
-                .allow_threads(move || server.next_publisher(wait))
+            let got = crate::util::allow_threads_parking(py, move || server.next_publisher(wait))
                 .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
             if let Some(handle) = got {
                 return Ok(Some(PyPublishMount::new(handle)));
@@ -870,7 +880,7 @@ impl PyRtspServer {
     pub fn remove_mount(&self, py: Python<'_>, path: &str) -> PyResult<()> {
         let server = self.inner.clone();
         let path_owned = path.to_string();
-        py.allow_threads(move || server.remove_mount(&path_owned))
+        crate::util::allow_threads_parking(py, move || server.remove_mount(&path_owned))
             .map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
@@ -902,7 +912,7 @@ impl PyRtspServer {
         // additions will route it through.
         let _ = drain_ms;
         let server = self.inner.clone();
-        py.allow_threads(move || server.stop())
+        crate::util::allow_threads_parking(py, move || server.stop())
             .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
         Ok(())
     }
@@ -936,7 +946,7 @@ impl PyRtspServer {
         // Best-effort stop: if the server wasn't started (extremely rare
         // in a `with` block) or already shut down, swallow NotStarted.
         let server = self.inner.clone();
-        match py.allow_threads(move || server.stop()) {
+        match crate::util::allow_threads_parking(py, move || server.stop()) {
             Ok(_) => Ok(false),
             Err(tst_rtp::error::RtspServerError::NotStarted) => Ok(false),
             Err(e) => Err(raise(py, &RTSP, BindingError::from(e))),

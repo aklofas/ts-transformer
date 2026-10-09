@@ -1112,6 +1112,14 @@ jobs:
         # mirrors the Rust tst_core Publisher trait.
         run: bash scripts/check/python/publisher-class-mirror.sh
 
+      - name: check-py-finalize-guard
+        # Every native call in the Python transport modules that can park
+        # releases the GIL through util::allow_threads_parking, so a thread
+        # waking after interpreter finalisation parks instead of aborting
+        # the process; the few bare sites are listed with a reason in
+        # scripts/ratchets/py-allow-threads-bare.tsv.
+        run: bash scripts/check/python/finalize-guard.sh
+
       - name: Install build prerequisites
         run: |
           sudo apt-get -o Acquire::Retries=5 update
@@ -1163,14 +1171,34 @@ jobs:
         # mypy in the venv. The script skips gracefully on an unbuilt tree.
         run: bash scripts/check/python/stubtest.sh
 
+      - name: Enable core dumps
+        # An abort at interpreter exit (exit 134) prints nothing that names
+        # the thread; a core + the backtrace step below does.
+        run: |
+          ulimit -c unlimited
+          echo "${{ github.workspace }}/core.%p" | sudo tee /proc/sys/kernel/core_pattern
+          sudo apt-get -o Acquire::Retries=5 install -y gdb
+
       - name: pytest default (non-pandas)
         # pyproject.toml sets `addopts = "-m 'not pandas'"` so this runs
         # the default marker set. Pandas-marked tests live in the
         # `python-pandas-extra` job; missing-extra ImportError smoke also
         # lives there (patches sys.modules to be extra-agnostic).
+        # `ulimit` is per-shell, so it is set again here.
+        shell: bash -e {0}
         run: |
+          ulimit -c unlimited
           cd bindings/python
           .venv/bin/pytest tests/ -v
+
+      - name: Backtrace any core (python exit abort)
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for c in ${{ github.workspace }}/core.*; do
+            echo "== $c"
+            gdb -batch -ex 'thread apply all bt' "$(readlink -f bindings/python/.venv/bin/python)" "$c" | head -200
+          done
 
   python-pandas-extra:
     name: tst-py with [pandas] extra

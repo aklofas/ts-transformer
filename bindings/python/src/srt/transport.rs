@@ -298,8 +298,7 @@ impl PySender {
                 },
             ));
         }
-        let transport = py
-            .allow_threads(|| parsed.connect_recv())
+        let transport = crate::util::allow_threads_parking(py, || parsed.connect_recv())
             .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         Ok(Self::from_transport(transport))
     }
@@ -311,7 +310,8 @@ impl PySender {
     fn send_bytes(&self, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<()> {
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice: &[u8] = coerced.as_bytes();
-        let res = py.allow_threads(|| self.owned.with_mut(|s| s.send_ts(slice)));
+        let res =
+            crate::util::allow_threads_parking(py, || self.owned.with_mut(|s| s.send_ts(slice)));
         pyres(py, &SRT, res)
     }
 
@@ -319,7 +319,7 @@ impl PySender {
     /// the GIL. Call it before `close()` when the tail matters — `close()`
     /// cancels first and does not drain the framing buffer.
     fn flush(&self, py: Python<'_>) -> PyResult<()> {
-        let res = py.allow_threads(|| self.owned.with_mut(|s| s.flush()));
+        let res = crate::util::allow_threads_parking(py, || self.owned.with_mut(|s| s.flush()));
         pyres(py, &SRT, res)
     }
 
@@ -331,7 +331,7 @@ impl PySender {
     /// Scheme-neutral 16-field wire stats. Waits (GIL released) for an
     /// in-flight `send_bytes` on another thread to release the slot.
     fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
-        let core = py.allow_threads(|| {
+        let core = crate::util::allow_threads_parking(py, || {
             self.owned
                 .with_ref(|s| s.socket_stats().unwrap_or_default())
         });
@@ -340,7 +340,9 @@ impl PySender {
 
     /// SRT-rich 17-field stats. `IoError::SocketClosed` surfaces as `CLOSED`.
     fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<PySrtStats>> {
-        let stats = py.allow_threads(|| self.owned.with_ref(|s| s.transport().stats()));
+        let stats = crate::util::allow_threads_parking(py, || {
+            self.owned.with_ref(|s| s.transport().stats())
+        });
         let stats = pyres(py, &SRT, stats)?;
         Py::new(py, PySrtStats::from_srt(&stats))
     }
@@ -445,8 +447,7 @@ impl PyReceiver {
         // `atexit(srt_cleanup)`. `_accept_guard` must outlive the accept.
         let slot = std::sync::Arc::new(tst_core::cancel::CancelSlot::new());
         let _accept_guard = crate::util::register_accept_slot(&slot);
-        let transport = py
-            .allow_threads(|| parsed.accept_one(&slot))
+        let transport = crate::util::allow_threads_parking(py, || parsed.accept_one(&slot))
             .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         Ok(Self::from_transport(transport))
     }
@@ -461,7 +462,8 @@ impl PyReceiver {
     #[pyo3(signature = (max_len = 1500))]
     fn recv_bytes(&self, py: Python<'_>, max_len: usize) -> PyResult<Py<PyBytes>> {
         let _cap = max_len.max(188);
-        let pkt = py.allow_threads(|| self.owned.with_mut(|r| r.next_packet()));
+        let pkt =
+            crate::util::allow_threads_parking(py, || self.owned.with_mut(|r| r.next_packet()));
         let bytes = pyres(py, &SRT, pkt)?;
         Ok(PyBytes::new_bound(py, &bytes).unbind())
     }
@@ -473,7 +475,7 @@ impl PyReceiver {
 
     /// Snapshot of the scheme-neutral 16-field wire stats.
     fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
-        let core = py.allow_threads(|| {
+        let core = crate::util::allow_threads_parking(py, || {
             self.owned
                 .with_ref(|r| r.socket_stats().unwrap_or_default())
         });
@@ -482,7 +484,9 @@ impl PyReceiver {
 
     /// Snapshot of the SRT-rich 17-field stats.
     fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<PySrtStats>> {
-        let stats = py.allow_threads(|| self.owned.with_ref(|r| r.transport().stats()));
+        let stats = crate::util::allow_threads_parking(py, || {
+            self.owned.with_ref(|r| r.transport().stats())
+        });
         let stats = pyres(py, &SRT, stats)?;
         Py::new(py, PySrtStats::from_srt(&stats))
     }

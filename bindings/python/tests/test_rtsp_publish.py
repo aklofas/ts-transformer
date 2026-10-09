@@ -25,6 +25,7 @@ regression fails instead of hanging the suite.
 from __future__ import annotations
 
 import _thread
+import signal
 import socket
 import struct
 import sys
@@ -496,6 +497,10 @@ def test_context_exit_wakes_parked_next_publisher_and_receiver():
 def test_next_publisher_none_timeout_is_interruptible():
     """Ctrl-C reaches a `next_publisher(None)` parked on the main thread:
     the wait is sliced and pending signals are handled between slices."""
+    if signal.getsignal(signal.SIGINT) is signal.SIG_IGN:
+        # A detached launch (nohup / setsid with stdin from /dev/null)
+        # inherits SIGINT as ignored, so Python installs no handler.
+        pytest.skip("SIGINT is ignored in this process; interrupt_main() is a no-op")
     server = _start()
     fired = threading.Event()
 

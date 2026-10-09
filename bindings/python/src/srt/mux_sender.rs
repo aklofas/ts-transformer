@@ -174,8 +174,7 @@ impl PyMuxSender {
         // `SocketConfig::default()` + the overlay with no
         // `merge_sender_defaults`, and keeping the preset off is the
         // behaviour-neutral re-point (see `srt::transport::PySender`).
-        let transport = py
-            .allow_threads(|| parsed.connect_recv())
+        let transport = crate::util::allow_threads_parking(py, || parsed.connect_recv())
             .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         Self::from_pipeline_mux(py, transport, &program_config)
     }
@@ -202,7 +201,7 @@ impl PyMuxSender {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.owned
                 .with_mut(|s| s.send_video(slice, rust_pts, key_frame))
         });
@@ -225,7 +224,7 @@ impl PyMuxSender {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.owned
                 .with_mut(|s| s.send_klv(slice, rust_pts, metadata_service_id))
         });
@@ -249,7 +248,9 @@ impl PyMuxSender {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, adts)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| self.owned.with_mut(|s| s.send_audio(slice, rust_pts)));
+        let res = crate::util::allow_threads_parking(py, || {
+            self.owned.with_mut(|s| s.send_audio(slice, rust_pts))
+        });
         match res {
             Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
@@ -268,7 +269,9 @@ impl PyMuxSender {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| self.owned.with_mut(|s| s.send_subtitle(slice, rust_pts)));
+        let res = crate::util::allow_threads_parking(py, || {
+            self.owned.with_mut(|s| s.send_subtitle(slice, rust_pts))
+        });
         match res {
             Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
@@ -293,7 +296,9 @@ impl PyMuxSender {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| self.owned.with_mut(|s| s.send_data(slice, rust_pts)));
+        let res = crate::util::allow_threads_parking(py, || {
+            self.owned.with_mut(|s| s.send_data(slice, rust_pts))
+        });
         match res {
             Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
@@ -316,7 +321,7 @@ impl PyMuxSender {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.owned
                 .with_mut(|s| s.send_video_to(handle_inner, slice, rust_pts, key_frame))
         });
@@ -340,7 +345,7 @@ impl PyMuxSender {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.owned
                 .with_mut(|s| s.send_klv_to(handle_inner, slice, rust_pts, metadata_service_id))
         });
@@ -363,7 +368,7 @@ impl PyMuxSender {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, adts)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.owned
                 .with_mut(|s| s.send_audio_to(handle_inner, slice, rust_pts))
         });
@@ -386,7 +391,7 @@ impl PyMuxSender {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.owned
                 .with_mut(|s| s.send_subtitle_to(handle_inner, slice, rust_pts))
         });
@@ -410,7 +415,7 @@ impl PyMuxSender {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.owned
                 .with_mut(|s| s.send_data_to(handle_inner, slice, rust_pts))
         });
@@ -476,7 +481,7 @@ impl PyMuxSender {
         let (sock, pipe) = pyok(
             py,
             &SRT,
-            py.allow_threads(|| {
+            crate::util::allow_threads_parking(py, || {
                 self.owned
                     .with_ref(|s| (s.socket_stats().unwrap_or_default(), s.stats()))
             }),
@@ -529,7 +534,7 @@ impl PyMuxSender {
     /// `cancel_handle().cancel()` (or `close()`) first if that is not
     /// wanted.
     fn finish(&self, py: Python<'_>) -> PyResult<()> {
-        match py.allow_threads(|| self.owned.with_ref(|s| s.finish())) {
+        match crate::util::allow_threads_parking(py, || self.owned.with_ref(|s| s.finish())) {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(mux_sender_err(py, e)),
             // Already closed: the slot is empty, which is the same answer

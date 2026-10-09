@@ -197,7 +197,9 @@ impl PyUdpTransport {
         pyres(
             py,
             &UDP,
-            py.allow_threads(|| self.owned.with_mut(|t| t.0.send_bytes(slice))),
+            crate::util::allow_threads_parking(py, || {
+                self.owned.with_mut(|t| t.0.send_bytes(slice))
+            }),
         )
     }
 
@@ -213,7 +215,7 @@ impl PyUdpTransport {
         let s = pyok(
             py,
             &UDP,
-            py.allow_threads(|| self.owned.with_ref(|t| t.0.stats())),
+            crate::util::allow_threads_parking(py, || self.owned.with_ref(|t| t.0.stats())),
         )?;
         Py::new(py, PyUdpStats::from(s))
     }
@@ -426,7 +428,7 @@ impl PyUdpRecvTransport {
     fn recv(&self, py: Python<'_>, timeout_ms: Option<u64>) -> PyResult<(Py<PyBytes>, String)> {
         let cancel = Arc::clone(&self.cancel);
         let deadline = timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms));
-        let outcome = py.allow_threads(|| {
+        let outcome = crate::util::allow_threads_parking(py, || {
             self.owned.with_mut(move |s| {
                 loop {
                     if cancel.is_cancelled() {
@@ -506,7 +508,7 @@ impl PyUdpRecvTransport {
         let s = pyok(
             py,
             &UDP,
-            py.allow_threads(|| self.owned.with_ref(|s| s.transport.stats())),
+            crate::util::allow_threads_parking(py, || self.owned.with_ref(|s| s.transport.stats())),
         )?;
         Py::new(py, PyUdpStats::from(s))
     }

@@ -239,7 +239,9 @@ impl PySender {
         pyres(
             py,
             &RTP,
-            py.allow_threads(|| self.owned.with_mut(|t| t.0.send_bytes(slice))),
+            crate::util::allow_threads_parking(py, || {
+                self.owned.with_mut(|t| t.0.send_bytes(slice))
+            }),
         )
     }
 
@@ -250,7 +252,7 @@ impl PySender {
         let core_stats = pyok(
             py,
             &RTP,
-            py.allow_threads(|| {
+            crate::util::allow_threads_parking(py, || {
                 self.owned
                     .with_ref(|t| t.0.socket_stats().unwrap_or_default())
             }),
@@ -389,7 +391,7 @@ impl PyReceiver {
     /// header already stripped).
     #[pyo3(signature = (timeout_ms = None))]
     fn recv(&self, py: Python<'_>, timeout_ms: Option<u64>) -> PyResult<Py<PyBytes>> {
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.owned.with_mut(|s| {
                 let n = match timeout_ms {
                     None => s.transport.recv_bytes(&mut s.scratch).map(Some),
@@ -450,7 +452,7 @@ impl PyReceiver {
         let core_stats = pyok(
             py,
             &RTP,
-            py.allow_threads(|| {
+            crate::util::allow_threads_parking(py, || {
                 self.owned
                     .with_ref(|s| s.transport.socket_stats().unwrap_or_default())
             }),

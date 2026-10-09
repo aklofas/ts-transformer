@@ -132,7 +132,7 @@ impl PyMuxPublisher {
             + Send,
         R: Send,
     {
-        py.allow_threads(|| {
+        crate::util::allow_threads_parking(py, || {
             let guard = self.inner.lock().map_err(|_| Locked::Poisoned)?;
             let inner = guard.as_ref().ok_or(Locked::Gone)?;
             f(inner).map_err(Locked::Inner)
@@ -296,17 +296,16 @@ impl PyMuxPublisher {
     /// should then `finish()` it (writes the final playlist + tears down
     /// the HTTP server). Raises `HlsError(CLOSED)` if already consumed.
     fn finish_into_publisher(&self, py: Python<'_>) -> PyResult<PyHlsPublisher> {
-        let hls = py
-            .allow_threads(|| {
-                let mp = {
-                    let mut guard = self.inner.lock().map_err(|_| Locked::Poisoned)?;
-                    let mp = guard.take().ok_or(Locked::Gone)?;
-                    self.finished.store(true, Ordering::Release);
-                    mp
-                };
-                mp.finish().map_err(Locked::Inner)
-            })
-            .map_err(|e| Self::raise_locked(py, e))?;
+        let hls = crate::util::allow_threads_parking(py, || {
+            let mp = {
+                let mut guard = self.inner.lock().map_err(|_| Locked::Poisoned)?;
+                let mp = guard.take().ok_or(Locked::Gone)?;
+                self.finished.store(true, Ordering::Release);
+                mp
+            };
+            mp.finish().map_err(Locked::Inner)
+        })
+        .map_err(|e| Self::raise_locked(py, e))?;
         Ok(PyHlsPublisher::from_inner(hls))
     }
 

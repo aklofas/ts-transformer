@@ -549,7 +549,7 @@ impl PyH264Receiver {
         py: Python<'_>,
         timeout_ms: Option<u64>,
     ) -> PyResult<Option<Py<PyH264AccessUnit>>> {
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.owned.with_mut(|h| match timeout_ms {
                 None => h.rx.recv_au(),
                 Some(ms) => h.rx.recv_au_timeout(Duration::from_millis(ms)),
@@ -584,7 +584,7 @@ impl PyH264Receiver {
         let s = pyok(
             py,
             &RTP,
-            py.allow_threads(|| self.owned.with_ref(|h| h.rx.depay_stats())),
+            crate::util::allow_threads_parking(py, || self.owned.with_ref(|h| h.rx.depay_stats())),
         )?;
         Py::new(py, PyH264DepayStats::from_rust(s))
     }
@@ -594,7 +594,7 @@ impl PyH264Receiver {
         let s = pyok(
             py,
             &RTP,
-            py.allow_threads(|| self.owned.with_ref(|h| h.rx.rtp_stats())),
+            crate::util::allow_threads_parking(py, || self.owned.with_ref(|h| h.rx.rtp_stats())),
         )?;
         Py::new(py, PyRtpStats::from_rust(s))
     }
@@ -604,7 +604,7 @@ impl PyH264Receiver {
         let s = pyok(
             py,
             &RTP,
-            py.allow_threads(|| self.owned.with_ref(|h| h.rx.socket_stats())),
+            crate::util::allow_threads_parking(py, || self.owned.with_ref(|h| h.rx.socket_stats())),
         )?;
         Py::new(py, PySocketStats::from_core(s))
     }
