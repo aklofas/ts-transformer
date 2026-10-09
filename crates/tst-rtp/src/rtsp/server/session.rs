@@ -418,33 +418,26 @@ where
         //   ≤ 64 KiB, body ≤ 1 MiB).
         loop {
             if let Some(publish) = session.publish.as_ref() {
-                if buf.first() == Some(&b'$') {
-                    let Some((ch, total_len)) =
-                        crate::rtsp::framing::parse_binary_frame_header(&buf)
-                    else {
-                        break; // partial frame: read more
-                    };
-                    let payload = &buf[4..total_len];
-                    match publish.track_for_channel(ch) {
-                        Some((track, false)) => {
-                            publish
-                                .adapter
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .on_rtp(track, payload);
-                            publish
-                                .last_media_ms
-                                .store(PublishSession::now_ms(), Ordering::Relaxed);
-                        }
-                        Some((track, true)) => publish
+                let mut route = |ch: u8, payload: &[u8]| match publish.track_for_channel(ch) {
+                    Some((track, false)) => {
+                        publish
                             .adapter
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
-                            .on_rtcp(track, payload),
-                        None => publish.mount.tick(|s| s.malformed_packets += 1),
+                            .on_rtp(track, payload);
+                        publish
+                            .last_media_ms
+                            .store(PublishSession::now_ms(), Ordering::Relaxed);
                     }
-                    buf.drain(..total_len);
-                    continue;
+                    Some((track, true)) => publish
+                        .adapter
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .on_rtcp(track, payload),
+                    None => publish.mount.tick(|s| s.malformed_packets += 1),
+                };
+                if !super::publish::drain_interleaved_head(&mut buf, &mut route) {
+                    break; // partial frame: read more
                 }
             }
 

@@ -28,13 +28,13 @@ pub(crate) struct AnnouncedTrack {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct AnnounceShape {
+pub struct AnnounceShape {
     pub(crate) shape: PublishShape,
     pub(crate) tracks: Vec<AnnouncedTrack>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ShapeReject {
+pub enum ShapeReject {
     /// 400 — structurally unusable (no media, >4 tracks, control ids missing/duplicated).
     BadRequest(&'static str),
     /// 415 — well-formed, but no accepted shape matches.
@@ -102,7 +102,7 @@ fn classify_track(index: usize, m: &SdpMedia) -> Result<AnnouncedTrack, ShapeRej
     })
 }
 
-pub(crate) fn classify_announce(sdp: &Sdp) -> Result<AnnounceShape, ShapeReject> {
+pub fn classify_announce(sdp: &Sdp) -> Result<AnnounceShape, ShapeReject> {
     if sdp.media.is_empty() {
         return Err(ShapeReject::BadRequest("SDP has no m= line"));
     }

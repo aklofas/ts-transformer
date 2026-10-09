@@ -149,7 +149,8 @@ pub(crate) fn pump_accumulation_exceeded(buf: &[u8]) -> bool {
 ///   [`RtspFraming::BadContentLength`]. Otherwise the exact end is
 ///   `header_end + 4 + content_length` (≤ 64 KiB + 1 MiB); if the buffer is
 ///   short → [`RtspFraming::NeedMore`], else [`RtspFraming::Complete`].
-pub(crate) enum RtspFraming {
+#[doc(hidden)]
+pub enum RtspFraming {
     /// Within bounds but incomplete — keep reading.
     NeedMore,
     /// Pre-terminator headers exceeded [`MAX_RTSP_MESSAGE_BYTES`] — reject.
@@ -165,7 +166,12 @@ pub(crate) enum RtspFraming {
 /// RTSP message. See [`RtspFraming`] for the phase semantics. Non-UTF8 header
 /// bytes are reported as a `BadContentLength` (they can't carry a valid
 /// `Content-Length` and must not be read toward EOF).
-pub(crate) fn rtsp_frame_decision(buf: &[u8]) -> RtspFraming {
+//
+// `#[doc(hidden)] pub` (with `RtspFraming`) so the fuzz workspace's
+// `rtsp_server_publish_framing` target frames requests the way the server
+// session loop does. Not part of the crate's stable public API.
+#[doc(hidden)]
+pub fn rtsp_frame_decision(buf: &[u8]) -> RtspFraming {
     let Some(header_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
         // Before the terminator: still accumulating headers.
         if buf.len() > MAX_RTSP_MESSAGE_BYTES {
