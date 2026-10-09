@@ -339,7 +339,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — tst-py
 
-- **Interpreter exit no longer aborts when a thread is still inside a native call.** A thread parked in a tstrans native (a receive, an accept, `next_publisher`, a managed reconnect wait) that woke after interpreter finalisation began re-took the GIL and was killed by CPython; the forced exit crossed the binding's panic trampoline and the process aborted with exit 134 (seen twice on CI after a fully passing test run). Once the exit hook has run, a parking native now parks the thread for good instead of re-entering Python, as CPython itself does with daemon threads. A new CI rail keeps every parking native on that path.
+- **Interpreter exit no longer aborts when a thread is still inside a native call.** A thread parked in a tstrans native (a receive, an accept, `next_publisher`, a managed reconnect wait) that woke after interpreter finalisation began re-took the GIL and was killed by CPython; the forced exit crossed the binding's panic trampoline and the process aborted with exit 134 (seen twice on CI after a fully passing test run). Once the exit hook has run, a parking native now parks the thread instead of re-entering Python, as CPython itself does with daemon threads; the process normally ends during that park. Behaviour change: a worker woken at exit no longer raises immediately; it parks for up to 3 s and returns (raising as any cancelled call does) only if the process is still alive, which is what lets an `atexit` handler registered before `import tstrans` that joins it complete. A new CI rail keeps every parking native on that path.
 
 ### Testing — RTSP publisher role
 

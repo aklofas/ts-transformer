@@ -90,7 +90,7 @@ const EXIT_SETTLE_MS: u64 = 250;
 /// after every non-daemon thread was joined and before interpreter
 /// finalisation. Read by [`allow_threads_parking`] and [`exiting`] on
 /// worker threads: once set, a thread that would re-take the GIL parks
-/// forever instead. CPython 3.12 `pthread_exit`s a thread re-acquiring
+/// instead (bounded by [`EXIT_PARK_MAX`]). CPython 3.12 `pthread_exit`s a thread re-acquiring
 /// the GIL during finalisation; that forced unwind crosses PyO3's
 /// `catch_unwind` trampoline and glibc aborts the process ("FATAL:
 /// exception not rethrown", exit 134). Parking is what CPython 3.14 does
@@ -108,12 +108,27 @@ pub(crate) fn exiting() -> bool {
         && EXIT_HOOK_THREAD.get() != Some(&std::thread::current().id())
 }
 
+/// How long [`allow_threads_parking`] holds a thread whose native call
+/// returned after the exit hook ran, before letting it re-take the GIL.
+///
+/// - If finalisation already began, the process is gone long before this
+///   (`exit_group` reaps the parked thread), so the abort race is closed in
+///   practice.
+/// - If the process is still alive after it, something is waiting for this
+///   worker — an `atexit` handler registered before `import tstrans` (it
+///   runs after the hook) joining it — so the thread returns, the call
+///   raises as any cancelled call does, and the join completes. Re-taking
+///   the GIL is safe then: `atexit` handlers are still running.
+/// - The residual window is a finalisation still in progress at exactly the
+///   deadline: milliseconds against seconds.
+const EXIT_PARK_MAX: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// `py.allow_threads(f)` for a native call that can park (network I/O, a
 /// wait, a join, or a lock another thread can hold across one). If the
-/// interpreter began exiting while `f` ran, this thread parks forever
-/// instead of re-taking the GIL — see [`INTERPRETER_EXITING`]. The value
-/// `f` returned is never used on that path; the process reclaims it at
-/// exit.
+/// interpreter began exiting while `f` ran, this thread parks for up to
+/// [`EXIT_PARK_MAX`] instead of re-taking the GIL at once — see
+/// [`INTERPRETER_EXITING`]; normally the process ends during that park.
+/// Only if it is still alive afterwards does the thread return `f`'s value.
 #[allow(dead_code)] // every transport surface calls this; dead only in a
 // transport-less `--no-default-features` build.
 pub(crate) fn allow_threads_parking<T, F>(py: Python<'_>, f: F) -> T
@@ -127,9 +142,15 @@ where
     py.allow_threads(move || {
         let r = f();
         if exiting() {
-            // `park()` may return spuriously; never fall through.
+            // `park_timeout` may return early (spuriously or on an
+            // `unpark`); keep parking until the deadline itself.
+            let deadline = std::time::Instant::now() + EXIT_PARK_MAX;
             loop {
-                std::thread::park();
+                let now = std::time::Instant::now();
+                if now >= deadline {
+                    break;
+                }
+                std::thread::park_timeout(deadline - now);
             }
         }
         r
