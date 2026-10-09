@@ -276,6 +276,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   SETUP, the advertised session timeout plus grace after) is now closed
   without a response. Complete requests at any cadence inside the bound
   are unaffected.
+- **A UDP publisher's last in-flight datagram cannot reach the mount after
+  the publisher ended.** `PublishSession::end` flushed the adapter, then
+  cancelled the UDP ingest tasks and freed the publisher slot; a task whose
+  poll had already won `select!` with a datagram could still feed the
+  flushed adapter — and, through it, the mount's PLAY readers and
+  application transport — after that point (an abort cannot interrupt a
+  running poll). The end now closes a gate under the adapter lock that
+  every later delivery checks before touching the adapter.
 
 ### Testing — RTSP publisher role
 
