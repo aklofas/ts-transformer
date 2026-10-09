@@ -589,6 +589,11 @@ impl RtspServerBuilder {
     /// Cap on concurrent client connections. Excess connections beyond
     /// this are accepted then immediately dropped with a `tracing::warn!`.
     /// Defaults to 64.
+    ///
+    /// A connection whose current request has not completed within the
+    /// idle bound (30 s before SETUP, the session timeout plus grace after)
+    /// is closed, so a trickling peer cannot hold a session slot or a
+    /// publisher slot past that bound.
     pub fn max_sessions(&mut self, n: usize) -> &mut Self {
         self.max_sessions = n.max(1);
         self

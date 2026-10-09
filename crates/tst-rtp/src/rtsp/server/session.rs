@@ -301,6 +301,14 @@ where
 {
     // Bounded read buffer — RTSP requests are typically << 4 KiB.
     let mut buf: Vec<u8> = Vec::with_capacity(8192);
+    // When the request (or `$` frame) now at the head of `buf` started
+    // arriving. `None` while `buf` is empty. The read-idle bound below is
+    // per READ; without this a peer trickling one byte per 29 s holds its
+    // session slot (and, after ANNOUNCE, a mount's publisher slot) until
+    // the 64 KiB header cap — about 22 days — and `max_sessions` such
+    // connections refuse every new peer before any of them authenticates.
+    // A message must frame within the same bound a silent peer gets.
+    let mut msg_started: Option<tokio::time::Instant> = None;
 
     'serve: loop {
         // Cancellation guard — hard cancel exits the loop immediately,
@@ -326,6 +334,12 @@ where
         } else {
             READ_IDLE_TIMEOUT
         };
+        // A message in progress shortens the wait to what is left of its own
+        // deadline; a peer with nothing in progress gets the full bound.
+        let read_bound = match msg_started {
+            Some(t0) => idle_bound.saturating_sub(t0.elapsed()),
+            None => idle_bound,
+        };
         let mut chunk = [0u8; 4096];
         let n = tokio::select! {
             r = read_half.read(&mut chunk) => match r {
@@ -339,7 +353,17 @@ where
                     break;
                 }
             },
-            _ = tokio::time::sleep(idle_bound) => {
+            _ = tokio::time::sleep(read_bound) => {
+                if msg_started.is_some() {
+                    tracing::warn!(
+                        target: "tst_rtp::server",
+                        peer = %peer,
+                        buffered = buf.len(),
+                        timeout_secs = idle_bound.as_secs(),
+                        "request not completed within the idle bound; closing session"
+                    );
+                    break;
+                }
                 // A publisher's media is liveness too: a TCP-interleaved
                 // publisher already re-arms this sleep by landing bytes on
                 // the read above (next iteration starts a fresh timer), but
@@ -372,6 +396,10 @@ where
             }
         };
         buf.extend_from_slice(&chunk[..n]);
+        if msg_started.is_none() {
+            msg_started = Some(tokio::time::Instant::now());
+        }
+        let len_after_read = buf.len();
 
         // Process the buffer head until neither an interleaved frame nor
         // a complete RTSP request can be taken from it. One loop, because
@@ -585,6 +613,17 @@ where
                 return Ok(());
             }
         }
+        // Re-arm the message clock for whatever the processing loop left:
+        // nothing → no message in progress; a partial message that was
+        // already there → keep its start; a new partial behind a request
+        // that was consumed → it started now.
+        msg_started = if buf.is_empty() {
+            None
+        } else if buf.len() < len_after_read {
+            Some(tokio::time::Instant::now())
+        } else {
+            msg_started
+        };
     }
     // Stop the fanout BEFORE shutting the write half so no RTP frame STARTS
     // after FIN (the Drop above is what cancels it; `abort` drops the task
@@ -1662,5 +1701,63 @@ mod session_tests {
         assert!(r.contains("interleaved=6-7"), "{r}");
         assert_eq!(app_recv(app).await, rtp[12..].to_vec());
         assert_eq!(mount.stats_snapshot().malformed_packets, 0);
+    }
+
+    /// One byte every 5 s re-arms the per-read idle bound forever; the
+    /// per-message deadline must close the connection within the idle
+    /// bound (30 s pre-SETUP) of the FIRST byte. Paused tokio time: the
+    /// test advances the clock, nothing sleeps for real.
+    #[tokio::test(start_paused = true)]
+    async fn a_request_trickled_past_the_idle_bound_closes_the_session() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (state, _mount) = state_with_publish_mount_and_listener().await;
+        let mut c = connect(&state).await;
+        let t0 = tokio::time::Instant::now();
+        // Nine bytes, 5 s apart: 40 s of "request in progress".
+        for b in b"OPTIONS r".iter() {
+            if c.write_all(&[*b]).await.is_err() {
+                break; // the server already closed: fine
+            }
+            // Let the server task read the byte before the clock moves: on
+            // the current-thread test runtime that takes an I/O-driver turn
+            // and then the server's own poll — two yields, measured; one
+            // left every read a full step late, so the server's deadline
+            // started 5 s after the client's. Scheduler turns, not time.
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+            tokio::time::advance(std::time::Duration::from_secs(5)).await;
+            tokio::task::yield_now().await;
+        }
+        // The server shut the connection: the client reads EOF (or a reset).
+        let mut probe = [0u8; 1];
+        let eof = tokio::time::timeout(std::time::Duration::from_secs(5), c.read(&mut probe))
+            .await
+            .expect("the server must close within the idle bound of the first byte");
+        assert!(matches!(eof, Ok(0) | Err(_)), "expected EOF, got {eof:?}");
+        assert!(
+            t0.elapsed() <= std::time::Duration::from_secs(35),
+            "closed at {:?} after the first byte; the bound is 30 s",
+            t0.elapsed()
+        );
+    }
+
+    /// A complete request every 20 s is a healthy keepalive cadence: the
+    /// message deadline must not fire for a request that framed.
+    #[tokio::test(start_paused = true)]
+    async fn complete_requests_spaced_inside_the_idle_bound_are_all_answered() {
+        let (state, _mount) = state_with_publish_mount_and_listener().await;
+        let mut c = connect(&state).await;
+        for cseq in 1..=3u32 {
+            let r = write_and_read(
+                &mut c,
+                &format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\n\r\n"),
+            )
+            .await;
+            assert!(r.starts_with("RTSP/1.0 200"), "request {cseq}: {r}");
+            tokio::task::yield_now().await;
+            tokio::time::advance(std::time::Duration::from_secs(20)).await;
+            tokio::task::yield_now().await;
+        }
     }
 }
