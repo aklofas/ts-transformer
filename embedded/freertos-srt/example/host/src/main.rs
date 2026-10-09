@@ -80,9 +80,7 @@ fn run_send(addr: &str) {
     if !drained {
         eprintln!("WARN[srt_recv_host_send]: send buffer did not report empty within 5s; proceeding anyway");
     }
-    if let Err(e) = sock.close() {
-        eprintln!("NOTE[srt_recv_host_send]: close after send: {e} (harmless if the peer closed first)");
-    }
+    sock.close();
     println!("PASS: srt_recv_host_send ({GOLDEN_LEN} bytes streamed to {addr})");
 }
 
