@@ -267,6 +267,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   were framed as a non-UTF-8 request at the reader's next keepalive, and
   the reader was answered `413` and disconnected 30–60 s after PLAY. Every
   session now drains interleaved frames; a reader's are dropped.
+- **A request must complete within the idle bound.** The read-idle timer
+  was re-armed by every byte, so a peer sending one byte every 29 s held
+  its session slot — and, after an ANNOUNCE, a mount's publisher slot —
+  for about 22 days (until the 64 KiB header cap), and `max_sessions`
+  such sockets refused every new peer before authentication. A connection
+  whose current request has not framed within the idle bound (30 s before
+  SETUP, the advertised session timeout plus grace after) is now closed
+  without a response. Complete requests at any cadence inside the bound
+  are unaffected.
 
 ### Testing — RTSP publisher role
 
