@@ -21,6 +21,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   aliased (the old→new table is in the 0.7.0 entry "Changed — Python
   binding"). `DemuxEvent.Klv` is unrelated and stays until 1.0.
 
+### Changed — tst-srt (BREAKING)
+
+- **`MaxBandwidth::Unlimited` → `MaxBandwidth::InputRelative`,
+  `MaxBandwidth::Auto` → `MaxBandwidth::Infinite`.** The values sent to
+  `SRTO_MAXBW` are unchanged (`0` = relative to the input rate, `-1` =
+  libsrt's "infinite", its default); only the names now say what libsrt
+  does with them. Neither old name survives, so an old use fails to
+  compile instead of silently changing the sending behaviour.
+  `Limited(bps)` and `?maxbw=` are unchanged.
+
 ### Added — tst-rtp: RTSP publisher role (ANNOUNCE / RECORD ingest), MP2T and elementary H.264 + KLV
 
 - **Publish mounts.** `RtspServer::add_publish_mount(path)` registers a

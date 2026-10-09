@@ -139,23 +139,23 @@ pub enum MaxBandwidth {
     /// Sends `0`, which libsrt reads as "relative to the input rate"
     /// (`SRTO_INPUTBW` × (1 + `SRTO_OHEADBW`/100), or in-buffer sampling
     /// when `SRTO_INPUTBW` is 0) — not "no cap".
-    Unlimited,
+    InputRelative,
     /// Sends `-1`, which libsrt reads as "infinite" (live mode caps at
     /// 1 Gbps) — libsrt's own default, not an input-rate derivation.
-    Auto,
+    Infinite,
     /// Sends the value as an absolute cap in bytes per second.
     /// `Limited(0)` (also what `?maxbw=0` produces) sends `0`, the same
-    /// relative-to-input behaviour as [`Self::Unlimited`]. A value above
+    /// relative-to-input behaviour as [`Self::InputRelative`]. A value above
     /// `i64::MAX` is clamped to `i64::MAX` (the option is a signed 64-bit
-    /// integer; a wrapped cast would turn `u64::MAX` into `-1` = [`Self::Auto`]).
+    /// integer; a wrapped cast would turn `u64::MAX` into `-1` = [`Self::Infinite`]).
     Limited(u64),
 }
 
 impl MaxBandwidth {
     pub(crate) fn as_libsrt_i64(self) -> i64 {
         match self {
-            MaxBandwidth::Unlimited => 0,
-            MaxBandwidth::Auto => -1,
+            MaxBandwidth::InputRelative => 0,
+            MaxBandwidth::Infinite => -1,
             MaxBandwidth::Limited(bps) => i64::try_from(bps).unwrap_or(i64::MAX),
         }
     }
@@ -358,8 +358,8 @@ mod tests {
 
     #[test]
     fn max_bandwidth_libsrt_repr() {
-        assert_eq!(MaxBandwidth::Unlimited.as_libsrt_i64(), 0);
-        assert_eq!(MaxBandwidth::Auto.as_libsrt_i64(), -1);
+        assert_eq!(MaxBandwidth::InputRelative.as_libsrt_i64(), 0);
+        assert_eq!(MaxBandwidth::Infinite.as_libsrt_i64(), -1);
         assert_eq!(MaxBandwidth::Limited(1_000_000).as_libsrt_i64(), 1_000_000);
     }
 

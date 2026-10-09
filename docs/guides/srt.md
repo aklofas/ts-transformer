@@ -292,9 +292,9 @@ see [guides/pipeline.md](/docs/guides/pipeline.md) for the full breakdown.
 
 - `MaxBandwidth` (`SRTO_MAXBW`): leave it unset to keep libsrt's default
   (`-1`: no limit; 1 Gbps cap in live mode). The variants set the raw
-  value: `Unlimited` → `0`, which libsrt treats as relative to the input
+  value: `InputRelative` → `0`, which libsrt treats as relative to the input
   rate (`input_bandwidth` + `overhead_bandwidth_pct`) — the setting libsrt
-  recommends for live streams with a fairly constant bitrate; `Auto` → `-1`;
+  recommends for live streams with a fairly constant bitrate; `Infinite` → `-1`;
   `Limited(n)` → an absolute cap of `n` bytes/s.
 - `Congestion::Live` vs. `Congestion::File`: `Live` drops late packets
   (TLPKTDROP) so the decoder isn't blocked on stale bytes — the right

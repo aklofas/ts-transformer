@@ -669,9 +669,9 @@ impl core::marker::UnsafeUnpin for tst_srt::options::KeyLength
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::options::KeyLength
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::options::KeyLength
 pub enum tst_srt::options::MaxBandwidth
-pub tst_srt::options::MaxBandwidth::Auto
+pub tst_srt::options::MaxBandwidth::Infinite
+pub tst_srt::options::MaxBandwidth::InputRelative
 pub tst_srt::options::MaxBandwidth::Limited(u64)
-pub tst_srt::options::MaxBandwidth::Unlimited
 impl core::clone::Clone for tst_srt::options::MaxBandwidth
 pub fn tst_srt::options::MaxBandwidth::clone(&self) -> tst_srt::options::MaxBandwidth
 impl core::cmp::Eq for tst_srt::options::MaxBandwidth
@@ -1126,9 +1126,9 @@ impl core::marker::UnsafeUnpin for tst_srt::options::KeyLength
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::options::KeyLength
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::options::KeyLength
 pub enum tst_srt::MaxBandwidth
-pub tst_srt::MaxBandwidth::Auto
+pub tst_srt::MaxBandwidth::Infinite
+pub tst_srt::MaxBandwidth::InputRelative
 pub tst_srt::MaxBandwidth::Limited(u64)
-pub tst_srt::MaxBandwidth::Unlimited
 impl core::clone::Clone for tst_srt::options::MaxBandwidth
 pub fn tst_srt::options::MaxBandwidth::clone(&self) -> tst_srt::options::MaxBandwidth
 impl core::cmp::Eq for tst_srt::options::MaxBandwidth
