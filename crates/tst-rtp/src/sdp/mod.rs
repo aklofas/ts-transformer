@@ -42,8 +42,33 @@ pub struct SdpMedia {
 impl Sdp {
     /// Parse SDP bytes. Wraps `sdp-types` and surfaces any parse error
     /// as `RtspError::BadSdp`.
+    ///
+    /// The bytes come from a peer before anything about it is trusted (a
+    /// publisher's ANNOUNCE body on the server, a DESCRIBE answer on the
+    /// client), and the parser is an external crate. A panic inside it
+    /// would let a peer end the server's session task or unwind through the
+    /// caller's thread with a few bytes, so the call runs under
+    /// [`std::panic::catch_unwind`] and a caught panic becomes `BadSdp` like
+    /// any other malformed input. The guard cannot help a build with
+    /// `panic = "abort"`: there the panic ends the process, and the real
+    /// protection is a parser that does not panic (the `sdp-types` version
+    /// this crate requires returns an error for the input that used to
+    /// assert).
     pub fn parse(bytes: &[u8]) -> Result<Self, RtspError> {
-        let parsed = sdp_types::Session::parse(bytes).map_err(|e| RtspError::BadSdp {
+        let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            sdp_types::Session::parse(bytes)
+        }))
+        .map_err(|_| {
+            tracing::debug!(
+                target: "tst_rtp::sdp",
+                len = bytes.len(),
+                "sdp parser panicked on malformed input"
+            );
+            RtspError::BadSdp {
+                detail: "sdp parser panicked on malformed input".to_owned(),
+            }
+        })?
+        .map_err(|e| RtspError::BadSdp {
             detail: format!("{e:?}"),
         })?;
         let session_connection = parsed
@@ -161,6 +186,18 @@ a=control:trackID=0\r\n\
 m=audio 0 RTP/AVP 97\r\n\
 a=rtpmap:97 MPEG4-GENERIC/48000/2\r\n\
 a=control:trackID=1\r\n";
+
+    /// The 8-byte input on which `sdp-types` 0.1.8 trips an internal
+    /// `assert_eq!`: a peer controls these bytes (ANNOUNCE body, DESCRIBE
+    /// answer), so it must be an error, never a panic.
+    #[test]
+    fn malformed_sdp_is_a_bad_sdp_error_not_a_panic() {
+        let res = Sdp::parse(b"v=0\n\xff\n\0=");
+        assert!(
+            matches!(res, Err(RtspError::BadSdp { .. })),
+            "expected BadSdp, got {res:?}"
+        );
+    }
 
     #[test]
     fn parse_single_mp2t() {

@@ -20,7 +20,12 @@ pub fn make_muxer_cfg() -> MuxerConfig {
 /// Generic over the stream so the raw publisher fixture can drive it over
 /// a rustls client stream as well as a plain `TcpStream`.
 pub fn request<S: Read + Write>(tcp: &mut S, req: &str) -> String {
-    tcp.write_all(req.as_bytes()).expect("request written");
+    request_bytes(tcp, req.as_bytes())
+}
+
+/// [`request`] for a request whose body is not UTF-8 (a hostile SDP).
+pub fn request_bytes<S: Read + Write>(tcp: &mut S, req: &[u8]) -> String {
+    tcp.write_all(req).expect("request written");
     let mut buf = Vec::new();
     let mut chunk = [0u8; 1024];
     loop {
@@ -29,7 +34,8 @@ pub fn request<S: Read + Write>(tcp: &mut S, req: &str) -> String {
             .expect("server answered within the read timeout");
         assert!(
             n > 0,
-            "server closed the connection before answering {req:?}"
+            "server closed the connection before answering {:?}",
+            String::from_utf8_lossy(req)
         );
         buf.extend_from_slice(&chunk[..n]);
         if buf.windows(4).any(|w| w == b"\r\n\r\n") {
