@@ -568,6 +568,9 @@ EXPECTED-UNSUPPORTED, 0 SKIPPED, no stale expectation. Locally (GStreamer
 1.24.2, `--seconds 8`) the elementary cell received 240 of 240 video AUs
 and 80 of 80 KLV records with a KLV set digest equal to the source's, and
 0 non-conformant events.
+`docs/project/validation-evidence.md`'s "Publisher role" section collects
+these cells with the role's fuzz targets and the soak's `rtsp-publish` leg
+(see "Publish leg" below).
 
 10. **No ffmpeg publisher cell: ffmpeg cannot publish this harness's
     stream, and cannot publish KLV over RTSP at all.** ffmpeg's RTP/RTSP
@@ -656,7 +659,7 @@ it said it would.
 
 | flag | default | what it does |
 |---|---|---|
-| `--profile auto\|NAME` | `auto` | `auto` draws two DISTINCT profiles from the seed, one per leg. `NAME` pins both legs to one profile. |
+| `--profile auto\|NAME` | `auto` | `auto` draws two DISTINCT profiles from the seed, one per transport leg, and runs the `rtsp-publish` leg on `baseline` (it is not part of the draw, so a seed's srt and rist profiles are unchanged). `NAME` pins every leg to one profile. |
 | `--schedule-phases K` | `12` | Phases in the seeded impairment schedule both proxies walk. |
 | `--schedule-phase-s S` | `TOTAL_SECONDS / K` (floor 1) | Seconds each phase stays in force. |
 | `--fixed-impairment` | off | Reverts both proxies to the old single fixed level (`--loss`/`--jitter`/`--delay`/`--reorder`). |
@@ -664,11 +667,14 @@ it said it would.
 | `--no-rtsp-publish` | leg on | Runs without the `rtsp-publish` leg (no GStreamer needed, no pre-generated stream on disk). |
 | `PUBLISHER_DROP_PERIOD_S` | `600` | How often the `rtsp-publish` leg's publisher session ends and a new one ANNOUNCEs. The run must span at least two periods. |
 
-Corruption and rich ST 0601 KLV are **on by default** on both legs. The tap
-runs at `rate=5,min_gap=1000` with per-leg seed offsets (`SEED+1` on srt,
-`SEED+2` on rist) writing one `corruption.jsonl` per leg, read back by that
-leg's own receiver. Rich KLV runs `--klv-set rich --klv-seed $SEED` on send
-AND recv of both legs.
+Corruption and rich ST 0601 KLV are **on by default** on both transport
+legs. The tap runs at `rate=5,min_gap=1000` with per-leg seed offsets
+(`SEED+1` on srt, `SEED+2` on rist) writing one `corruption.jsonl` per leg,
+read back by that leg's own receiver. Rich KLV runs `--klv-set rich
+--klv-seed $SEED` on send AND recv of both transport legs. The
+`rtsp-publish` leg generates its stream with the same rich KLV and judges it
+with the same oracles, but has no corruption tap: the publisher is an
+external tool replaying a pristine stream.
 
 `--profile NAME` is the REPRODUCTION form (bisecting a failure a drawn
 profile exposed). `--no-corrupt` and `--fixed-impairment` are the two BISECT
