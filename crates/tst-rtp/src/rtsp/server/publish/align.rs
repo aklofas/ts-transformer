@@ -19,7 +19,10 @@
 //! unit more than [`SR_PLAUSIBILITY_TICKS`] from the newest video PTS seen
 //! is abandoned for the fallback (counted as one step; the same offset is
 //! not re-adopted). A mapping that has validated is kept through later
-//! video stalls. A later report pair always recomputes
+//! video stalls. A unit placed within [`STEP_TOLERANCE_TICKS`] before
+//! PTS 0 lands on PTS 0: the report offset is rounded to whole ticks, so
+//! the unit captured at the video origin can otherwise be implied a tick
+//! early. A later report pair always recomputes
 //! the mapping and may move KLV units' PTS as a result (no continuity
 //! requirement for metadata); a move of more than
 //! [`STEP_TOLERANCE_TICKS`] ticks [`Aligner::steps`].
@@ -168,6 +171,24 @@ struct VideoOrigin {
     /// fallback lands KLV where the video line now is rather than at its
     /// start.
     fallback_anchor: i64,
+}
+
+/// The video-line PTS of a KLV unit at unwrapped RTP time `t_k`, given the
+/// KLV-to-video `offset` and the video origin's unwrapped RTP time.
+///
+/// The sender-report offset is rounded to whole ticks (each report's RTP
+/// stamp is rounded on its own, and the NTP delta floors), so the unit
+/// captured at the video origin can be implied a tick or two before PTS 0,
+/// which the adapter drops as "placed before the video origin". Within
+/// [`STEP_TOLERANCE_TICKS`] before the origin it IS the origin; anything
+/// earlier keeps its negative PTS for the adapter to drop.
+fn placed_pts(t_k: i64, offset: i64, origin: i64) -> i64 {
+    let pts = t_k + offset - origin;
+    if (-STEP_TOLERANCE_TICKS..0).contains(&pts) {
+        0
+    } else {
+        pts
+    }
 }
 
 /// A KLV unit waiting for alignment, with its RTP timestamp already
@@ -577,7 +598,7 @@ impl Aligner {
                 self.video_pts_max,
                 self.hold.back(),
             ) {
-                let implied = newest.t_k + offset - origin.unwrapped;
+                let implied = placed_pts(newest.t_k, offset, origin.unwrapped);
                 let window = SR_PLAUSIBILITY_TICKS;
                 if implied > vmax.saturating_add(window) || implied < vmax.saturating_sub(window) {
                     tracing::debug!(
@@ -608,7 +629,7 @@ impl Aligner {
         self.placed_bytes += self.held_bytes;
         self.held_bytes = 0;
         self.placed.extend(self.hold.drain(..).map(|h| Placed {
-            pts: h.t_k + offset - origin.unwrapped,
+            pts: placed_pts(h.t_k, offset, origin.unwrapped),
             unit: h.unit,
             at: now,
         }));
@@ -1506,5 +1527,42 @@ mod tests {
         );
         assert_eq!(a.mode(), ClockAlignment::SenderReport);
         assert_eq!(a.steps(), 0);
+    }
+
+    /// A sender-report pair's offset is rounded to whole ticks, so the KLV
+    /// unit captured at the video origin can be implied one tick before
+    /// PTS 0; the adapter drops negative PTS. Within the step tolerance
+    /// before the origin it IS the origin.
+    #[test]
+    fn a_unit_implied_a_tick_before_the_origin_is_placed_at_zero() {
+        let mut a = Aligner::new();
+        let t0 = Instant::now();
+        a.on_video_au(90_000, 0);
+        a.on_video_muxed(0);
+        // Same clock; the pair's rounding puts the mapping one tick low.
+        a.on_video_sr(&sr(100, 0, 180_000));
+        a.on_klv_sr(&sr(100, 0, 180_001));
+        let out = a.on_klv_unit(unit(90_000), t0);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].1, 0, "a tick before the origin is the origin");
+        assert_eq!(a.mode(), ClockAlignment::SenderReport);
+        assert_eq!(a.dropped(), 0);
+    }
+
+    #[test]
+    fn a_unit_well_before_the_origin_stays_negative_for_the_adapter_to_drop() {
+        let mut a = Aligner::new();
+        let t0 = Instant::now();
+        a.on_video_au(90_000, 0);
+        a.on_video_muxed(0);
+        a.on_video_sr(&sr(100, 0, 180_000));
+        a.on_klv_sr(&sr(100, 0, 180_000));
+        // Captured 1 s before the first video frame.
+        let out = a.on_klv_unit(unit(0), t0);
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out[0].1, -90_000,
+            "a real pre-origin unit keeps its negative PTS"
+        );
     }
 }
