@@ -819,8 +819,7 @@ with Receiver("rtp://239.0.0.1:5004") as rx:
 cancel fires. RTP/UDP is connectionless — a remote sender closing does NOT
 end a `recv()` loop; stop on a sentinel or via `cancel_handle().cancel()`,
 which wakes a parked `send` / `recv` with `RtpError(CLOSED)` within
-~100 ms (`RtpErrorKind.CANCELLED` remains as a deprecated alias of
-`CLOSED` for 0.7.x). The RTP `CancelHandle` has `cancel()` and
+~100 ms. The RTP `CancelHandle` has `cancel()` and
 `is_cancelled()` (shared per shell). A literal `rtp://host:0` receiver binds (the kernel
 picks an ephemeral port; RTCP is off by default on this surface), but it
 is impractical: the raw receiver exposes no local-address getter, so
@@ -933,8 +932,7 @@ always wins over a configured URL deadline for that one call). `RtspClientConfig
 URL accepts the same `?recv_timeout=` key; it carries through
 `into_demux_receiver()` / `into_h264_receiver()` automatically.
 `BACKPRESSURE` is retryable — the transport and session are both still
-alive, unlike `CLOSED` or `BROKEN`. (`RtpErrorKind.TIMEOUT` remains as a
-deprecated alias of `BACKPRESSURE` for 0.7.x.)
+alive, unlike `CLOSED` or `BROKEN`.
 
 An `rtp://` receive URL also takes `?rcvbuf=` (kernel receive buffer, e.g. `8M` for high-bitrate streams) and `?source=<ip>` (accept datagrams from one sending host only); see [Performance and reliability](/docs/troubleshooting.md#performance-and-reliability).
 
@@ -1807,8 +1805,7 @@ output directly when absolute byte offsets matter.
   Rust variant in SCREAMING_SNAKE, and `import tstrans` fails (not a
   later `except`) if the two ever disagree. The 0.7.0 old→new table is in
   the CHANGELOG's 0.7.0 "Changed — Python binding" entry; the retired
-  spellings survive as deprecated aliases of their successors through
-  0.7.x and are removed in 0.8.0.
+  spellings were deprecated aliases through 0.7.x and are removed in 0.8.0.
   A poisoned handle raises `RuntimeError`; a panic inside a MUTATING call
   raises `pyo3_runtime.PanicException` and closes the object (later calls
   raise `CLOSED`; before 0.7.0 the object stayed usable); a panic inside a

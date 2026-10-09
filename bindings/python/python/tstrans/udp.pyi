@@ -41,15 +41,11 @@ class UdpErrorKind(IntEnum):
     """Discriminator for ``UdpError.kind``. The ``tstrans.udp`` subset of the
     Rust ``tst_pipeline::binding::BindingErrorKind`` table: ``URL`` / ``IO`` /
     ``INVALID_CONFIG`` from ``tst_udp::UdpErrorKind``, ``CLOSED`` / ``BROKEN`` /
-    ``BACKPRESSURE`` / ``TOO_LARGE`` from the transport.
-
-    Deprecated alias (0.7.x only, removed in 0.8.0): ``PAYLOAD_TOO_LARGE`` →
-    ``TOO_LARGE``."""
+    ``BACKPRESSURE`` / ``TOO_LARGE`` from the transport."""
 
     URL = 0
     IO = 2
     TOO_LARGE = 4
-    PAYLOAD_TOO_LARGE = 4  # deprecated alias (0.7.x): use TOO_LARGE
     CLOSED = 5
     INVALID_CONFIG = 6
     BACKPRESSURE = 7

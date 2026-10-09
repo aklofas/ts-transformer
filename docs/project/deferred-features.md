@@ -2348,7 +2348,7 @@ Entries whose feature shipped. Kept for the record (the decision that closed the
   `timeout_ms: Optional[int]` keyword args on `recv()`/`recv_au()`
   (layered on top of, not replacing, the URL-configured persistent
   deadline) and a typed `RtpError(TIMEOUT)` — renamed `BACKPRESSURE` in
-  0.7.0, with `TIMEOUT` kept as a deprecated alias. The JVM mirrors it
+  0.7.0; `TIMEOUT` was a deprecated alias through 0.7.x, removed in 0.8.0. The JVM mirrors it
   with `recv(Integer timeoutMs)` / `recvAu(Integer timeoutMs)`
   overloads plus a typed rtp recv-deadline kind (renamed `BACKPRESSURE`
   in 0.7.0), and additionally ships a checked `DemuxReceiver.recvEvent()`

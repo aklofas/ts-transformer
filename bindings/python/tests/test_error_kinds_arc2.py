@@ -155,8 +155,8 @@ EXPECTED = {
     },
 }
 
-# alias name → canonical member name (deprecated for 0.7.x, removed in 0.8.0)
-ALIASES = {
+# alias name → the member it aliased; kept for 0.7.x, removed in 0.8.0
+REMOVED_ALIASES = {
     exc.SrtErrorKind: {"WOULD_BLOCK": "BACKPRESSURE"},
     exc.RtpErrorKind: {
         "TRANSPORT": "BROKEN",
@@ -189,15 +189,13 @@ def test_canonical_member_set_is_exactly_the_arc2_table(enum_cls) -> None:
     assert canonical == EXPECTED[enum_cls], f"{enum_cls.__name__} drifted from the canonical kind table"
 
 
-@pytest.mark.parametrize("enum_cls", list(ALIASES), ids=lambda e: e.__name__)
-def test_deprecated_aliases_resolve_to_their_successor(enum_cls) -> None:
-    for alias, target in ALIASES[enum_cls].items():
-        assert enum_cls.__members__[alias] is enum_cls[target], (
-            f"{enum_cls.__name__}.{alias} must alias {target}"
-        )
-        assert alias not in {m.name for m in enum_cls}, f"{alias} must be an alias, not a member"
-    assert "deprecated" in (enum_cls.__doc__ or "").lower(), (
-        f"{enum_cls.__name__} docstring must name the deprecated aliases"
+@pytest.mark.parametrize("enum_cls", list(REMOVED_ALIASES), ids=lambda e: e.__name__)
+def test_the_0_7_x_aliases_are_gone(enum_cls) -> None:
+    for alias, target in REMOVED_ALIASES[enum_cls].items():
+        assert alias not in enum_cls.__members__, f"{enum_cls.__name__}.{alias} was removed in 0.8.0"
+        assert target in enum_cls.__members__, f"{enum_cls.__name__}.{target} must remain"
+    assert "deprecated alias" not in (enum_cls.__doc__ or "").lower(), (
+        f"{enum_cls.__name__} docstring still advertises removed aliases"
     )
 
 

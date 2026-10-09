@@ -9,6 +9,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed — tst-py (BREAKING): the 0.7.x deprecated kind aliases
+
+- The 15 aliases 0.7.0 kept for one release are gone, as that release
+  announced: `SrtErrorKind.WOULD_BLOCK`; `RtpErrorKind.TRANSPORT` /
+  `MALFORMED_PACKET` / `CANCELLED` / `TIMEOUT`; `UdpErrorKind`,
+  `TcpErrorKind`, `RistErrorKind` `.PAYLOAD_TOO_LARGE`;
+  `RistErrorKind.RECV_TIMEOUT` / `.IO`; `DemuxErrorKind.INTERNAL` /
+  `.BAD_PMT` / `.BAD_PES` / `.SYNC_LOSS`;
+  `KlvEncodeErrorKind.VTARGET_PACK_EMPTY`. Use the successor each
+  aliased (the old→new table is in the 0.7.0 entry "Changed — Python
+  binding"). `DemuxEvent.Klv` is unrelated and stays until 1.0.
+
 ### Added — tst-rtp: RTSP publisher role (ANNOUNCE / RECORD ingest), MP2T and elementary H.264 + KLV
 
 - **Publish mounts.** `RtspServer::add_publish_mount(path)` registers a
