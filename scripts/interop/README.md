@@ -550,6 +550,7 @@ recv --url rtsp-publish://127.0.0.1:<port>/mount`, a harness-only scheme
 that binds an `RtspServer` with one publish mount and judges what the
 mount delivers. `recv` starts first; a publisher that ends leaves the
 mount open and silent, so the capture ends on `recv`'s own deadline.
+Each publisher cell's record carries the mount's own counters (`metrics.publish_mount`: RTP packets received, KLV units emitted/dropped, alignment mode and steps, app-channel drops), and the per-cell recv reports are uploaded with the evidence, so a digest mismatch names where the loss happened.
 
 | Cell | Publisher | Tier | Judged |
 |---|---|---|---|

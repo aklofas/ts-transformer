@@ -309,11 +309,86 @@ pub struct PublishMountReport {
     pub klv_units_emitted: u64,
     pub klv_units_dropped: u64,
     pub ssrc_changes: u64,
+    /// Packets refused by the mount's `source=` filter.
+    #[serde(default)]
+    pub source_rejected: u64,
+    /// Frames dropped on the reader side of the mount.
+    #[serde(default)]
+    pub frames_dropped_readers: u64,
+    /// Access units dropped by the aligner.
+    #[serde(default)]
+    pub aus_dropped: u64,
+    /// Access units the aligner had to reorder.
+    #[serde(default)]
+    pub aus_reordered: u64,
+    /// `ClockAlignment` variant name as `recv` saw it at the end of the
+    /// capture; empty in reports written before this field existed.
+    #[serde(default)]
+    pub alignment: String,
+    /// Alignment steps (clock re-anchors) the mount applied.
+    #[serde(default)]
+    pub alignment_steps: u64,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A publish-mount report exactly as `recv` wrote it before the
+    /// alignment fields existed (the 2026-10-08 soak archive).
+    const ARCHIVED_PUBLISH_MOUNT: &str = r#"{
+        "generation": 6, "rtp_packets_received": 10, "bytes_received": 1000,
+        "malformed_packets": 0, "frames_emitted": 9, "frames_dropped_app": 0,
+        "aus_emitted": 0, "klv_units_emitted": 0, "klv_units_dropped": 0,
+        "ssrc_changes": 0
+    }"#;
+
+    #[test]
+    fn archived_publish_mount_report_without_alignment_fields_still_deserializes() {
+        let r: PublishMountReport = serde_json::from_str(ARCHIVED_PUBLISH_MOUNT).unwrap();
+        assert_eq!(r.generation, 6);
+        assert_eq!(
+            r.alignment, "",
+            "absent in the archive -> empty, never an error"
+        );
+        assert_eq!(
+            (
+                r.alignment_steps,
+                r.aus_reordered,
+                r.aus_dropped,
+                r.source_rejected,
+                r.frames_dropped_readers
+            ),
+            (0, 0, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn publish_mount_report_round_trips_the_alignment_fields() {
+        let r = PublishMountReport {
+            generation: 1,
+            rtp_packets_received: 2,
+            bytes_received: 3,
+            malformed_packets: 0,
+            frames_emitted: 4,
+            frames_dropped_app: 0,
+            aus_emitted: 5,
+            klv_units_emitted: 6,
+            klv_units_dropped: 1,
+            ssrc_changes: 0,
+            source_rejected: 7,
+            frames_dropped_readers: 8,
+            aus_dropped: 9,
+            aus_reordered: 10,
+            alignment: "SenderReport".into(),
+            alignment_steps: 11,
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(s.contains("\"alignment\":\"SenderReport\""));
+        let back: PublishMountReport = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.alignment_steps, 11);
+        assert_eq!(back.aus_reordered, 10);
+    }
 
     /// A send report exactly as written before `managed_send` existed.
     const ARCHIVED_SEND_REPORT: &str = r#"{

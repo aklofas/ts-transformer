@@ -468,6 +468,12 @@ impl Drop for RtspPublishListener {
             klv_units_emitted: s.klv_units_emitted,
             klv_units_dropped: s.klv_units_dropped,
             ssrc_changes: s.ssrc_changes,
+            source_rejected: s.source_rejected,
+            frames_dropped_readers: s.frames_dropped_readers,
+            aus_dropped: s.aus_dropped,
+            aus_reordered: s.aus_reordered,
+            alignment: format!("{:?}", s.alignment),
+            alignment_steps: s.alignment_steps,
         });
     }
 }
