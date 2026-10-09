@@ -44,15 +44,11 @@ class TcpErrorKind(IntEnum):
     Rust ``tst_pipeline::binding::BindingErrorKind`` table: ``URL`` / ``IO`` /
     ``CLOSED`` / ``CONNECT_TIMEOUT`` / ``INVALID_CONFIG`` / ``TLS`` /
     ``TLS_DISABLED`` from ``tst_tcp::TcpErrorKind``, ``BROKEN`` /
-    ``BACKPRESSURE`` / ``TOO_LARGE`` from the transport.
-
-    Deprecated alias (0.7.x only, removed in 0.8.0): ``PAYLOAD_TOO_LARGE`` →
-    ``TOO_LARGE``."""
+    ``BACKPRESSURE`` / ``TOO_LARGE`` from the transport."""
 
     URL = 0
     IO = 1
     TOO_LARGE = 2
-    PAYLOAD_TOO_LARGE = 2  # deprecated alias (0.7.x): use TOO_LARGE
     CLOSED = 3
     CONNECT_TIMEOUT = 4
     INVALID_CONFIG = 5
