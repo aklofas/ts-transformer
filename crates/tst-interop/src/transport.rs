@@ -17,7 +17,9 @@
 //! `make_recv` also takes the harness-only `rtsp-publish://host:port/mount`
 //! scheme: it stands up an RTSP server with one publish mount so an
 //! external publisher can RECORD into `recv` (see `RtspPublishListener`).
-//! It is not a library URL.
+//! It is not a library URL. [`make_recv_probed`] additionally hands back
+//! a [`PublishMountProbe`] for that scheme, so `recv` can report the
+//! mount's own counters.
 //!
 //! # Byte-transparency tee
 //!
@@ -79,6 +81,8 @@ use sha2::{Digest, Sha256};
 use tst_core::transport::{
     BrokenCause, RecvTransport, SocketStats, Transport, TransportCancel, TransportError,
 };
+
+use crate::report_types::PublishMountReport;
 
 /// Default `SRTO_RCVTIMEO` applied to every SRT socket/listener this
 /// module builds, unless the URL's `x-recvtimeout` overrides it.
@@ -167,6 +171,25 @@ pub fn make_send(url: &str) -> Result<Box<dyn Transport>, String> {
     }
 }
 
+/// Read-back slot for an `rtsp-publish://` capture's mount counters. The
+/// listener fills it when it is dropped, while its RTSP server still runs
+/// (see [`crate::report_types::PublishMountReport`] for why then), so it
+/// is `Some` once the transport [`make_recv_probed`] returned is gone.
+pub type PublishMountProbe = Arc<Mutex<Option<PublishMountReport>>>;
+
+/// [`make_recv`], plus a [`PublishMountProbe`] for the `rtsp-publish://`
+/// scheme (`None` for every other scheme).
+pub fn make_recv_probed(
+    url: &str,
+) -> Result<(Box<dyn RecvTransport>, Option<PublishMountProbe>), String> {
+    if scheme_of(url)? == "rtsp-publish" {
+        let probe = PublishMountProbe::default();
+        let listener = RtspPublishListener::start(url, Arc::clone(&probe))?;
+        return Ok((Box::new(listener), Some(probe)));
+    }
+    make_recv(url).map(|t| (t, None))
+}
+
 /// Build the receiving (listener/pull) half of `url`'s scheme.
 pub fn make_recv(url: &str) -> Result<Box<dyn RecvTransport>, String> {
     match scheme_of(url)? {
@@ -179,9 +202,8 @@ pub fn make_recv(url: &str) -> Result<Box<dyn RecvTransport>, String> {
             .map_err(|e| format!("rist listen {url}: {e}")),
         "srt" => srt_socket(url)
             .map(|s| Box::new(tst_srt::SrtTransport::new(s)) as Box<dyn RecvTransport>),
-        "rtsp-publish" => {
-            RtspPublishListener::start(url).map(|t| Box::new(t) as Box<dyn RecvTransport>)
-        }
+        "rtsp-publish" => RtspPublishListener::start(url, PublishMountProbe::default())
+            .map(|t| Box::new(t) as Box<dyn RecvTransport>),
         other => Err(format!("unsupported scheme for recv: {other}://")),
     }
 }
@@ -386,13 +408,19 @@ impl RecvTransport for BoundedUdpRecv {
 /// with no publisher yet (or between publishers — the application
 /// transport stays open across publisher churn) reports `Backpressure`
 /// instead of blocking forever.
+///
+/// The mount handle is `Clone`; the listener keeps a clone (the original
+/// is consumed by `into_recv_transport`) so `Drop` can snapshot the
+/// mount's counters into `probe` before the server goes away.
 struct RtspPublishListener {
     inner: tst_rtp::RtpRecvTransport,
+    mount: tst_rtp::PublishMountHandle,
+    probe: PublishMountProbe,
     _server: tst_rtp::RtspServer,
 }
 
 impl RtspPublishListener {
-    fn start(url: &str) -> Result<Self, String> {
+    fn start(url: &str, probe: PublishMountProbe) -> Result<Self, String> {
         let rest = url
             .strip_prefix("rtsp-publish://")
             .ok_or_else(|| format!("not an rtsp-publish:// URL: {url}"))?;
@@ -410,14 +438,37 @@ impl RtspPublishListener {
         server
             .start()
             .map_err(|e| format!("rtsp-publish start {url}: {e}"))?;
+        let mount = handle.clone();
         let mut inner = handle
             .into_recv_transport()
             .map_err(|e| format!("rtsp-publish transport {url}: {e}"))?;
         inner.set_recv_timeout(Some(UDP_RECV_POLL));
         Ok(Self {
             inner,
+            mount,
+            probe,
             _server: server,
         })
+    }
+}
+
+/// Runs before any field drops, so the server is still up: a publisher
+/// still connected now has not ended, and the snapshot must not count it.
+impl Drop for RtspPublishListener {
+    fn drop(&mut self) {
+        let s = self.mount.stats();
+        *self.probe.lock().unwrap_or_else(|e| e.into_inner()) = Some(PublishMountReport {
+            generation: s.generation,
+            rtp_packets_received: s.rtp_packets_received,
+            bytes_received: s.bytes_received,
+            malformed_packets: s.malformed_packets,
+            frames_emitted: s.frames_emitted,
+            frames_dropped_app: s.frames_dropped_app,
+            aus_emitted: s.aus_emitted,
+            klv_units_emitted: s.klv_units_emitted,
+            klv_units_dropped: s.klv_units_dropped,
+            ssrc_changes: s.ssrc_changes,
+        });
     }
 }
 

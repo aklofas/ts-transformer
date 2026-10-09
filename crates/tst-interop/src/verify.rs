@@ -1293,6 +1293,8 @@ impl Tally {
                     .map(|s| s.to_string())
                     .collect(),
             },
+            // `recv` stamps this for an `rtsp-publish://` capture.
+            publish_mount: None,
         }
     }
 }

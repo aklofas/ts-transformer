@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Multi-day endurance ("soak") run: two concurrent legs of the
-# tst-interop driver pushing synthetic MPEG-TS/KLV traffic through an
-# impaired UDP proxy for hours at a time, sampling process RSS along
+# Multi-day endurance ("soak") run: concurrent legs of the tst-interop
+# driver pushing synthetic MPEG-TS/KLV traffic through an impaired UDP
+# proxy (and, on a third leg, an external RTSP publisher pushing into a
+# tst-interop receiver) for hours at a time, sampling process RSS along
 # the way, then handing everything to `tst-interop report soak` for a
 # verdict. This is the "impaired endurance" half of the published
 # interop evidence (run-matrix.sh's transport/format matrix is the
@@ -29,6 +30,15 @@
 #     data loss, not a reconnect exercise. The rist leg's job here is
 #     purely "does sustained loss/jitter/reorder over many hours behave
 #     the same as it does over a five-second interop-matrix cell."
+#   - `rtsp-publish` leg: GStreamer's `rtspclientsink` publishes
+#     (ANNOUNCE + RECORD, MP2T over TCP-interleaved RTP) into the publish
+#     mount `tst-interop recv --url rtsp-publish://...` serves — no proxy,
+#     no tst-interop sender. The publisher session is ended and a new one
+#     ANNOUNCEs every PUBLISHER_DROP_PERIOD_S (default 600 s), and the
+#     receiver must judge the generations as one unbroken stream. See the
+#     leg's own block below; `--no-rtsp-publish` drops the leg (a host
+#     without GStreamer, or a run long enough that its pre-generated
+#     stream, ~0.85 GB per hour of run, will not fit on disk).
 #
 # # Realism knobs
 #
@@ -64,7 +74,7 @@
 #     `crates/tst-interop/src/corrupt.rs`. Each leg gets its own seed
 #     offset and its own `corruption.jsonl`, so the two taps never
 #     produce the same damage at the same offsets.
-#   - Rich KLV (always, both legs): `--klv-set rich --klv-seed $SEED`
+#   - Rich KLV (always, every leg): `--klv-set rich --klv-seed $SEED`
 #     replaces the 4-tag fixture record with an ST 0601 record of up to
 #     36 tags (mean ~27) carrying a nested ST 0102 security set on a
 #     seeded presence schedule, so the run exercises real metadata
@@ -83,7 +93,12 @@
 #     declared-vs-observed verdict only checks the run did what was
 #     declared, and a run that silently inherited a default would pass
 #     that verdict while exercising the wrong mode — the 0.7.0 RC soak
-#     exists to exercise `background`. Set them in the environment, e.g.
+#     exists to exercise `background`. `PUBLISHER_DROP_PERIOD_S` sets how
+#     often the rtsp-publish leg's publisher drops and re-ANNOUNCEs (the
+#     run must span at least two such periods); the leg declares the
+#     resulting segment length in `soak-config.json`
+#     (`legs.rtsp-publish.publisher_drop_period_s`). Set them in the
+#     environment, e.g.
 #     `SRT_RECONNECT_MODE=background OUTAGE_PERIOD_S=300 OUTAGE_DUR_S=30
 #     bash soak.sh ...`.
 #
@@ -114,14 +129,17 @@
 # `ninja-build` for the third, or the very first `cargo build` below
 # fails with an unhelpful "cmake: command not found"/"meson: command
 # not found" instead of a clear prerequisite error. Unlike run-matrix.sh,
-# this script needs NO third-party MEDIA tools at all (no ffmpeg/
-# tsduck/vlc/mpv/gstreamer) — every process it launches is `tst-interop`
-# talking to itself through its own impairment proxy.
+# this script needs only ONE third-party media tool: the rtsp-publish
+# leg's publisher, `gst-launch-1.0` with the `rtspclientsink` element
+# (gstreamer1.0-tools + gstreamer1.0-rtsp; checked before the build, and
+# `--no-rtsp-publish` runs without it). Every other process it launches
+# is `tst-interop` talking to itself through its own impairment proxy.
 #
 #   git clone --recurse-submodules https://github.com/aklofas/ts-transformer.git
 #   cd ts-transformer            # the clone root IS the workspace root
 #   curl https://sh.rustup.rs -sSf | sh -s -- -y   # if rustup isn't already installed
-#   sudo apt install -y jq python3 build-essential cmake meson ninja-build clang libclang-dev
+#   sudo apt install -y jq python3 build-essential cmake meson ninja-build clang libclang-dev \
+#     gstreamer1.0-tools gstreamer1.0-plugins-bad gstreamer1.0-rtsp
 #   SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop
 #
 # (`clang`/`libclang-dev`: bindgen — run by both sys crates' build
@@ -151,9 +169,11 @@
 #   SRT_RECONNECT_MODE=background nohup bash scripts/interop/soak.sh --outdir ~/interop-soak-$(date +%F) --seed 1 &
 #
 # Expected outputs under `--outdir`:
-#   rss.csv            - elapsed_s,leg,process,pid,rss_kb (6 PIDs, 3 process names, both legs)
+#   rss.csv            - elapsed_s,leg,process,pid,rss_kb — every worker PID: send/proxy/recv
+#                         on the srt and rist legs, recv/publisher on rtsp-publish (8 PIDs;
+#                         6 under --no-rtsp-publish). `publisher` is the restart loop's shell.
 #   proc.csv           - elapsed_s,leg,process,pid,utime_ticks,stime_ticks,threads,fds — the
-#                         same 6 PIDs on the same tick as rss.csv: cumulative CPU time
+#                         same PIDs on the same tick as rss.csv: cumulative CPU time
 #                         (user/system clock ticks from /proc/<pid>/stat; divide by the
 #                         `clk_tck` recorded in provenance.json for seconds), thread count
 #                         and open-descriptor count. RECORDED, NOT GATED — `report soak`
@@ -176,6 +196,14 @@
 #   {srt,rist}/corruption.jsonl - the sender's own log of every injection it
 #                         made, read back by that leg's receiver (absent
 #                         under --no-corrupt)
+#   rtsp-publish/recv-report.json - the publish leg's receiver report; its
+#                         `publish_mount` block carries the mount's counters
+#                         (`generation` = publishers that ended). klv_set_sha256
+#                         is `null` here too.
+#   rtsp-publish/source.sha256 - sha256 of the stream the publisher pushed, cut
+#                         into rtsp-publish/segments/gen-N.ts (each deleted once
+#                         published); recv's stream_sha256 equals it when every
+#                         byte arrived. Recorded, not gated.
 #   logs/*.log          - one file per launched process (each send/recv beats a
 #                         one-line "heartbeat" into its log every 60s — counters +
 #                         wire bytes — so a dead process is findable to the minute)
@@ -276,6 +304,7 @@ SCHEDULE_PHASES=12
 # Empty = derive from TOTAL_SECONDS / SCHEDULE_PHASES once --hours is
 # known (both are parsed below, in either order).
 SCHEDULE_PHASE_S=""
+RTSP_PUBLISH=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -301,6 +330,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --fixed-impairment)
       FIXED_IMPAIRMENT=1
+      shift
+      ;;
+    --no-rtsp-publish)
+      RTSP_PUBLISH=0
       shift
       ;;
     --schedule-phases)
@@ -437,8 +470,19 @@ for dep in jq python3 awk; do
     exit 2
   }
 done
+# The rtsp-publish leg's publisher is GStreamer's rtspclientsink (package
+# gstreamer1.0-rtsp on Debian/Ubuntu). Checked here, before the build, so
+# a host without it is told at once rather than after minutes of cargo.
+if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
+  { have gst-launch-1.0 && gst-inspect-1.0 rtspclientsink >/dev/null 2>&1; } || {
+    echo "soak.sh: the rtsp-publish leg needs gst-launch-1.0 with the rtspclientsink element \
+(gstreamer1.0-tools + gstreamer1.0-rtsp) — install them, or pass --no-rtsp-publish to run without that leg" >&2
+    exit 2
+  }
+fi
 
 mkdir -p "$OUTDIR/srt" "$OUTDIR/rist" "$OUTDIR/logs" "$OUTDIR/pids"
+[[ "$RTSP_PUBLISH" -eq 0 ]] || mkdir -p "$OUTDIR/rtsp-publish/segments"
 RSS_CSV="$OUTDIR/rss.csv"
 printf 'elapsed_s,leg,process,pid,rss_kb\n' >"$RSS_CSV"
 # Two more time series from the same sampler tick — see the header's
@@ -498,6 +542,21 @@ case "$SRT_RECONNECT_MODE" in
     exit 2
     ;;
 esac
+# How often the rtsp-publish leg's publisher session ends and a new one
+# ANNOUNCEs (see that leg's block below). The run is cut into
+# TOTAL_SECONDS / PUBLISHER_DROP_PERIOD_S generations, which must be at
+# least two — one generation drops nothing.
+PUBLISHER_DROP_PERIOD_S="${PUBLISHER_DROP_PERIOD_S:-600}"
+[[ "$PUBLISHER_DROP_PERIOD_S" =~ ^[0-9]+$ ]] && [ "$PUBLISHER_DROP_PERIOD_S" -gt 0 ] || {
+  echo "soak.sh: PUBLISHER_DROP_PERIOD_S must be a positive integer (seconds), got: $PUBLISHER_DROP_PERIOD_S" >&2
+  exit 2
+}
+PUBLISH_GENERATIONS=$((TOTAL_SECONDS / PUBLISHER_DROP_PERIOD_S))
+if [[ "$RTSP_PUBLISH" -eq 1 && "$PUBLISH_GENERATIONS" -lt 2 ]]; then
+  echo "soak.sh: PUBLISHER_DROP_PERIOD_S ($PUBLISHER_DROP_PERIOD_S) leaves fewer than two publisher \
+generations in a ${TOTAL_SECONDS}s run — lower it, or pass --no-rtsp-publish" >&2
+  exit 2
+fi
 # The four FIXED-impairment knobs. Used only under --fixed-impairment:
 # the default run drives both proxies from a seeded --schedule instead,
 # whose phases override all four per phase (which is why the proxy
@@ -532,7 +591,7 @@ CORRUPT_SPEC="rate=5,min_gap=1000"
 SRT_CORRUPT_SEED=$((SEED + 1))
 RIST_CORRUPT_SEED=$((SEED + 2))
 
-# The KLV set both ends of both legs run. Named here, above the config
+# The KLV set both ends of every leg run. Named here, above the config
 # write, because the run DECLARES it (see `klv_declared_<leg>`): a leg
 # whose receiver was launched in compact mode runs no rich-KLV oracle at
 # all, and every rich verdict would be skipped rather than failed.
@@ -593,7 +652,7 @@ SETTLE=2
 PROXY_ADDR_POLL_TIMEOUT_S=10
 # Both proxies launch (and start their OWN --run-seconds countdown)
 # strictly BEFORE the sampler's own $START_EPOCH is captured — by the
-# time all six processes plus two `wait_for_bound_addr` polls have
+# time every worker plus two `wait_for_bound_addr` polls have
 # fired, real process-spawn + scheduling overhead (confirmed
 # empirically: measured up to ~6.5s for the srt leg, ~2.5s for rist)
 # means a proxy's own `--run-seconds` deadline, though sized to line up
@@ -619,7 +678,7 @@ SAMPLER_END_SLACK_S=35
 # reads this file. `git` is optional here — a tarball checkout records
 # `null`s rather than failing the launch.
 #
-# `argv` is this script's own argument vector; `env` is the four knobs the
+# `argv` is this script's own argument vector; `env` is the five knobs the
 # header documents plus RUST_LOG, i.e. everything that can change the run
 # without appearing in argv. `clk_tck` is what proc.csv's CPU tick columns
 # divide by to become seconds (`getconf CLK_TCK`, 100 on every Linux this
@@ -628,10 +687,10 @@ ARGV_JSON=$(printf '%s\n' "${SCRIPT_ARGV[@]}" | jq -Rn '[inputs]')
 ENV_JSON=$(jq -n \
   --arg outage_period_s "$OUTAGE_PERIOD_S" --arg outage_dur_s "$OUTAGE_DUR_S" \
   --arg srt_reconnect_mode "$SRT_RECONNECT_MODE" --arg loss_pct "$LOSS_PCT" \
-  --arg rust_log "$RUST_LOG" \
+  --arg publisher_drop_period_s "$PUBLISHER_DROP_PERIOD_S" --arg rust_log "$RUST_LOG" \
   '{OUTAGE_PERIOD_S: $outage_period_s, OUTAGE_DUR_S: $outage_dur_s,
     SRT_RECONNECT_MODE: $srt_reconnect_mode, LOSS_PCT: $loss_pct,
-    RUST_LOG: $rust_log}')
+    PUBLISHER_DROP_PERIOD_S: $publisher_drop_period_s, RUST_LOG: $rust_log}')
 write_provenance "$REPO_ROOT" "$OUTDIR/provenance.json" "$ARGV_JSON" "$ENV_JSON"
 
 # The build comes BEFORE the config declaration (it used to follow it)
@@ -663,7 +722,37 @@ else
   SRT_PROFILE=$PROFILE
   RIST_PROFILE=$PROFILE
 fi
-echo "soak: profiles — srt=$SRT_PROFILE rist=$RIST_PROFILE (--profile $PROFILE, seed $SEED)" >&2
+# The rtsp-publish leg is not part of the seeded draw (adding a third leg
+# to it would change which profiles the srt and rist legs get for an
+# existing seed). Under `auto` it runs `baseline`, the profile the
+# interop matrix's rtsp-publish/gst-push-mp2t cell pushes through the same
+# publisher; a named --profile pins it like the other two.
+if [[ "$PROFILE" == "auto" ]]; then
+  PUBLISH_PROFILE=baseline
+else
+  PUBLISH_PROFILE=$PROFILE
+fi
+echo "soak: profiles — srt=$SRT_PROFILE rist=$RIST_PROFILE rtsp-publish=$PUBLISH_PROFILE (--profile $PROFILE, seed $SEED)" >&2
+
+# rtsp-publish leg geometry (see that leg's block below). The publisher
+# pushes PUBLISH_CONTENT_S seconds of generated stream, cut into
+# PUBLISH_GENERATIONS segments, one publisher session each, so the
+# declared drop period is the segment length. The content stops
+# PUBLISH_TAIL_S short of the run: each restart costs the publisher a
+# fraction of a second (measured 0.15-0.6 s per relaunch on loopback),
+# and the last segment has to be fully delivered before `recv`'s own
+# deadline, `--seconds` after its first event.
+PUBLISH_TAIL_S=30
+PUBLISH_CONTENT_S=$((TOTAL_SECONDS - PUBLISH_TAIL_S))
+PUBLISH_SEGMENT_S=0
+if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
+  [[ "$PUBLISH_CONTENT_S" -ge "$PUBLISH_GENERATIONS" ]] || {
+    echo "soak.sh: a ${TOTAL_SECONDS}s run is too short for the rtsp-publish leg's ${PUBLISH_TAIL_S}s tail — \
+lengthen --hours, or pass --no-rtsp-publish" >&2
+    exit 2
+  }
+  PUBLISH_SEGMENT_S=$((PUBLISH_CONTENT_S / PUBLISH_GENERATIONS))
+fi
 
 # Declared BEFORE any evidence exists — `report soak` judges the run
 # against these, never against what the artifacts happen to span. `legs`
@@ -692,6 +781,21 @@ else
     --argjson phase_s "$SCHEDULE_PHASE_S" \
     '{seed: $seed, phases: $phases, phase_s: $phase_s}')
 fi
+# The rtsp-publish leg's declaration, or null for a --no-rtsp-publish run
+# (then the leg is absent from `legs` altogether). It has no proxy, so no
+# schedule, and no managed sender, so no reconnect mode; what it declares
+# instead is the publisher it runs and how often that publisher drops.
+# The publisher's port is drawn at launch and recorded in its log.
+PUBLISHER_DECL="gst-launch-1.0 filesrc location=rtsp-publish/segments/gen-N.ts ! tsparse set-timestamps=true ! rtspclientsink location=rtsp://127.0.0.1:<port>/soak protocols=tcp"
+if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
+  PUBLISH_LEG_DECL=$(jq -n --arg profile "$PUBLISH_PROFILE" --arg klv_set "$KLV_SET" \
+    --argjson klv_seed "$SEED" --arg publisher "$PUBLISHER_DECL" \
+    --argjson period "$PUBLISH_SEGMENT_S" \
+    '{profile: $profile, schedule: null, klv_set: $klv_set, klv_seed: $klv_seed,
+      reconnect_mode: null, publisher: $publisher, publisher_drop_period_s: $period}')
+else
+  PUBLISH_LEG_DECL=null
+fi
 jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
   --argjson slack "$SAMPLER_END_SLACK_S" \
   --argjson corruption "$CORRUPTION_DECL" \
@@ -700,15 +804,18 @@ jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
   --argjson schedule "$SCHEDULE_DECL" \
   --arg klv_set "$KLV_SET" --argjson klv_seed "$SEED" \
   --arg srt_reconnect_mode "$SRT_RECONNECT_MODE" \
+  --argjson publish_leg "$PUBLISH_LEG_DECL" \
   '{expected_duration_s: $dur, rss_cadence_s: $cad, warmup_fraction: 0.1667,
     sampler_end_slack_s: $slack, expected_worker_exits: {},
     corruption: $corruption, corruption_spec: $corruption_spec,
-    legs: {srt: {profile: $srt_profile, schedule: $schedule,
+    legs: ({srt: {profile: $srt_profile, schedule: $schedule,
                  klv_set: $klv_set, klv_seed: $klv_seed,
                  reconnect_mode: $srt_reconnect_mode},
            rist: {profile: $rist_profile, schedule: $schedule,
                   klv_set: $klv_set, klv_seed: $klv_seed,
-                  reconnect_mode: null}}}' >"$OUTDIR/soak-config.json"
+                  reconnect_mode: null}}
+          + (if $publish_leg == null then {} else {"rtsp-publish": $publish_leg} end))}' \
+  >"$OUTDIR/soak-config.json"
 
 # Fail fast on a declared config that could never pass its own
 # completeness verdicts (e.g. an `--hours` value small enough that the
@@ -722,6 +829,57 @@ jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
 that could never pass its own completeness verdicts" >&2
   exit 2
 }
+
+# The rtsp-publish leg's stream, generated and cut BEFORE any worker
+# launches so the launch timing below stays as tight as the other legs'.
+# One stream of PUBLISH_CONTENT_S seconds, the same generator settings as
+# the other legs (rich KLV on this run's seed, realistic AU sizes), cut
+# into PUBLISH_GENERATIONS segments at PAT packets — a segment that
+# starts on a PAT is a stream a fresh publisher can open. Concatenated,
+# the segments are the source byte for byte, so every generation
+# continues the previous one's PTS, PCR and continuity counters and the
+# receiver judges one unbroken stream. The source's sha256 is kept beside
+# the segments (recorded, not gated): recv's `metrics.stream_sha256`
+# equals it when every byte of every generation arrived. Segments are
+# cut by byte share, so their lengths in seconds only approximate
+# PUBLISH_SEGMENT_S. Disk: about 0.85 GB per hour of run while the
+# segments exist; the publisher deletes each one once it has pushed it.
+PUBLISH_SEGMENTS=()
+if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
+  echo "soak: generating the rtsp-publish leg's ${PUBLISH_CONTENT_S}s stream in $PUBLISH_GENERATIONS segments..." >&2
+  PUBLISH_SOURCE="$OUTDIR/rtsp-publish/source.ts"
+  "$BIN" gen --profile "$PUBLISH_PROFILE" --seconds "$PUBLISH_CONTENT_S" --out "$PUBLISH_SOURCE" \
+    --klv-set "$KLV_SET" --klv-seed "$SEED" --au-sizes realistic
+  sha256sum "$PUBLISH_SOURCE" | awk '{print $1}' >"$OUTDIR/rtsp-publish/source.sha256"
+  python3 - "$PUBLISH_SOURCE" "$PUBLISH_GENERATIONS" "$OUTDIR/rtsp-publish/segments" <<'PY'
+import os, sys
+src, n, outdir = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+size = os.path.getsize(src)
+if size % 188:
+    sys.exit(f"soak: {src} is not a whole number of TS packets")
+packets = size // 188
+# Segment k + 1 opens on the first PAT at or after packet packets * k / n.
+targets = [packets * k // n for k in range(1, n)]
+seg = 1
+out = open(os.path.join(outdir, "gen-1.ts"), "wb")
+with open(src, "rb") as f:
+    for i in range(packets):
+        p = f.read(188)
+        is_pat = p[0] == 0x47 and p[1] & 0x40 and ((p[1] & 0x1F) << 8 | p[2]) == 0
+        if seg < n and i >= targets[seg - 1] and is_pat:
+            out.close()
+            seg += 1
+            out = open(os.path.join(outdir, f"gen-{seg}.ts"), "wb")
+        out.write(p)
+out.close()
+if seg != n:
+    sys.exit(f"soak: found a PAT for only {seg} of {n} segments")
+PY
+  rm -f "$PUBLISH_SOURCE"
+  for ((k = 1; k <= PUBLISH_GENERATIONS; k++)); do
+    PUBLISH_SEGMENTS+=("$OUTDIR/rtsp-publish/segments/gen-$k.ts")
+  done
+fi
 
 declare -A PIDS
 
@@ -921,8 +1079,88 @@ RIST_PROXY_ADDR=$(wait_for_bound_addr "$RIST_PROXY_STDOUT" "$PROXY_ADDR_POLL_TIM
 record_pid rist-send $!
 
 # ---------------------------------------------------------------------
-# Sampler: every 30s, VmRSS of all 6 PIDs -> rss.csv; on the same tick,
-# CPU ticks/threads/fds per PID -> proc.csv and host load/memory -> host.csv
+# rtsp-publish leg: publisher loop -> recv's publish mount (no proxy)
+# ---------------------------------------------------------------------
+#
+# `recv` binds an RTSP server with one publish mount (`rtsp-publish://`)
+# and an external publisher RECORDs into it: GStreamer's rtspclientsink,
+# pushing the segments cut above as RFC 2250 MP2T over TCP-interleaved
+# RTP, which the mount hands on byte for byte. One publisher session per
+# segment: at each segment's end gst-launch-1.0 sends EOS and exits, the
+# session ends, and the loop's next publisher ANNOUNCEs again — the drop
+# this leg exists to exercise, every PUBLISH_SEGMENT_S seconds. The mount
+# stays open between publishers, and recv's report counts the publishers
+# that ended (`publish_mount.generation`), which `report soak` holds to
+# floor(TOTAL_SECONDS / PUBLISH_SEGMENT_S) - 1 as
+# `publisher_generations_rtsp-publish`.
+#
+# A restart gap cannot end the capture: recv's 15 s no-data deadline
+# applies only until its FIRST event; from then on its deadline is fixed
+# at first event + --seconds + 2 s, and silence between publishers does
+# not move it (`recv::recv_over_transport_with_layout`).
+#
+# Judged --strict, like the matrix's rtsp-publish/gst-push-mp2t cell: the
+# path is lossless (loopback TCP, no proxy) and the generations
+# concatenate to one unbroken stream, so a discontinuity is a finding.
+# No corruption tap: the publisher replays a generated file, it is not a
+# tst-interop sender. --no-klv-digest for the same RSS reason as the other
+# legs.
+#
+# Worker roles: `rtsp-publish-recv`, and `rtsp-publish-publisher` = the
+# loop below, a long-lived subshell. Each gst-launch-1.0 it starts exits
+# by design at the end of its generation, so the tool is never a worker
+# itself; a generation that exits nonzero (or overruns its segment by 60 s
+# and is killed) is logged and makes the loop exit 1 at the end of the run,
+# which fails `worker_exits`. After the last generation the loop idles
+# until TOTAL_SECONDS after its own start, so the sampler and supervisor
+# see it alive for the whole run like every other worker.
+if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
+  RTSP_PUBLISH_PORT=$(free_port tcp)
+  RTSP_PUBLISH_URL="rtsp://127.0.0.1:$RTSP_PUBLISH_PORT/soak"
+  "$BIN" recv --url "rtsp-publish://127.0.0.1:$RTSP_PUBLISH_PORT/soak" --expect "$PUBLISH_PROFILE" \
+    --seconds "$TOTAL_SECONDS" --json "$OUTDIR/rtsp-publish/recv-report.json" --no-klv-digest \
+    --strict "${KLV_ARGS[@]}" \
+    >"$OUTDIR/logs/rtsp-publish-recv.log" 2>&1 &
+  record_pid rtsp-publish-recv $!
+  sleep "$SETTLE"
+
+  publisher_loop() {
+    local end=$(($(date +%s) + TOTAL_SECONDS)) k=0 failed=0 rc seg gst_pid=""
+    trap '[[ -z "$gst_pid" ]] || kill "$gst_pid" 2>/dev/null; exit 143' TERM
+    echo "publisher: ${#PUBLISH_SEGMENTS[@]} generation(s) of ~${PUBLISH_SEGMENT_S}s into $RTSP_PUBLISH_URL"
+    for seg in "${PUBLISH_SEGMENTS[@]}"; do
+      k=$((k + 1))
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) publisher: generation $k ANNOUNCE ($seg)"
+      # In the background and reaped with `wait`, so the TERM trap above
+      # runs at once on a fail-fast kill instead of after the generation.
+      timeout --kill-after=5 "$((PUBLISH_SEGMENT_S + 60))" \
+        gst-launch-1.0 filesrc "location=$seg" ! tsparse set-timestamps=true ! \
+        rtspclientsink "location=$RTSP_PUBLISH_URL" protocols=tcp &
+      gst_pid=$!
+      rc=0
+      wait "$gst_pid" || rc=$?
+      gst_pid=""
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) publisher: generation $k ended rc=$rc"
+      [[ "$rc" -eq 0 ]] || failed=$((failed + 1))
+      rm -f "$seg"
+    done
+    until [[ $(date +%s) -ge $end ]]; do
+      sleep 5 &
+      gst_pid=$!
+      wait "$gst_pid" || true
+      gst_pid=""
+    done
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) publisher: done, $failed of $k generation(s) failed"
+    [[ "$failed" -eq 0 ]]
+  }
+  publisher_loop >"$OUTDIR/logs/rtsp-publish-publisher.log" 2>&1 &
+  record_pid rtsp-publish-publisher $!
+fi
+
+# ---------------------------------------------------------------------
+# Sampler: every 30s, VmRSS of every worker PID -> rss.csv; on the same
+# tick, CPU ticks/threads/fds per PID -> proc.csv and host load/memory ->
+# host.csv
 # ---------------------------------------------------------------------
 
 START_EPOCH=$(date +%s)
@@ -954,6 +1192,7 @@ record_pid sampler $!
 # exits inside that grace window are normal staggering and are left to
 # the ordinary waits below.
 ALL_ROLES=(srt-recv srt-proxy srt-send rist-recv rist-proxy rist-send)
+[[ "$RTSP_PUBLISH" -eq 0 ]] || ALL_ROLES+=(rtsp-publish-recv rtsp-publish-publisher)
 PREMATURE_DEATH=""
 until [[ $(date +%s) -ge $((DEADLINE - SUPERVISOR_GRACE_S)) || -n "$PREMATURE_DEATH" ]]; do
   for role in "${ALL_ROLES[@]}" sampler; do
@@ -1052,6 +1291,7 @@ REPORT_ARGS=(
   --rist-send-report "$OUTDIR/rist/send-report.json"
   --out "$OUTDIR/soak-results.json"
 )
+[[ "$RTSP_PUBLISH" -eq 0 ]] || REPORT_ARGS+=(--rtsp-publish-recv-report "$OUTDIR/rtsp-publish/recv-report.json")
 [[ -z "$RSS_SLOPE_THRESHOLD" ]] || REPORT_ARGS+=(--rss-slope-threshold-kb-per-hour "$RSS_SLOPE_THRESHOLD")
 
 REPORT_RC=0
@@ -1061,7 +1301,12 @@ REPORT_RC=0
   echo "=== soak summary ==="
   echo "outdir: $OUTDIR"
   echo "hours: $HOURS  seed: $SEED  outage_period_s: $OUTAGE_PERIOD_S  outage_dur_s: $OUTAGE_DUR_S"
-  echo "profiles: srt=$SRT_PROFILE rist=$RIST_PROFILE (--profile $PROFILE)  klv_set: rich  au_sizes: realistic"
+  echo "profiles: srt=$SRT_PROFILE rist=$RIST_PROFILE rtsp-publish=$PUBLISH_PROFILE (--profile $PROFILE)  klv_set: rich  au_sizes: realistic"
+  if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
+    echo "rtsp-publish: $PUBLISH_GENERATIONS publisher generation(s) of ~${PUBLISH_SEGMENT_S}s (PUBLISHER_DROP_PERIOD_S=$PUBLISHER_DROP_PERIOD_S), source sha256 $(cat "$OUTDIR/rtsp-publish/source.sha256")"
+  else
+    echo "rtsp-publish: leg disabled (--no-rtsp-publish)"
+  fi
   echo "reconnect_mode (declared): srt=$SRT_RECONNECT_MODE  rist=none (sender not managed)"
   if [[ "$FIXED_IMPAIRMENT" -eq 1 ]]; then
     echo "impairment: FIXED  loss_pct: $LOSS_PCT  jitter_ms: $JITTER_MS  delay_ms: $DELAY_MS  reorder: $REORDER"
@@ -1098,9 +1343,16 @@ REPORT_RC=0
     echo "note: gap_messages_dropped/gap_bytes_dropped count what the gap buffer evicted after the sender"
     echo "      knew the link was down. What the transport had already accepted and never delivered in the"
     echo "      seconds before it noticed the break is not in them (measured: most of an outage's loss)."
+    jq -r '.publish_legs[]
+      | "\(.leg): video AUs received=\(.recv_video_aus)  publishers ended=\(.publish_mount.generation // "unrecorded")"
+        + " (floor \(.min_generations // "none"))  recv stream_sha256 matches the source: "
+        + "\($sha == $src)"' \
+      --arg sha "$(jq -r '.metrics.stream_sha256 // ""' "$OUTDIR/rtsp-publish/recv-report.json" 2>/dev/null || true)" \
+      --arg src "$(cat "$OUTDIR/rtsp-publish/source.sha256" 2>/dev/null || true)" \
+      "$OUTDIR/soak-results.json"
     echo
     jq '{overall_pass, run_duration_s, expected_duration_s, warmup_s, rss_slope_threshold_kb_per_hour,
-         rss_slopes, coverage, process_exits, worker_exits, legs, limitations}' "$OUTDIR/soak-results.json"
+         rss_slopes, coverage, process_exits, worker_exits, legs, publish_legs, limitations}' "$OUTDIR/soak-results.json"
   else
     echo "no soak-results.json (report soak rc=$REPORT_RC — run did not produce a complete artifact set)"
   fi

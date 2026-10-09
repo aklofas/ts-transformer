@@ -263,6 +263,37 @@ pub struct VerifyReport {
     /// Empty (and omitted from the JSON) for a full judgement.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skipped_oracles: Vec<String>,
+    /// The `rtsp-publish://` mount's own counters as `recv` left them,
+    /// snapshotted before the RTSP server shut down (see
+    /// [`PublishMountReport`]). `None` for every other scheme, and for a
+    /// report written before this field existed — hence
+    /// `#[serde(default)]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publish_mount: Option<PublishMountReport>,
+}
+
+/// The publish mount's cumulative counters (`tst_rtp::PublishMountStats`)
+/// at the end of an `rtsp-publish://` capture, across every publisher that
+/// pushed into it. `report soak` judges `generation` — publishers that
+/// ENDED on the mount — against the run's declared publisher drop period;
+/// the rest is recorded beside it, not gated.
+///
+/// Snapshotted while the server still runs: shutting the server down ends
+/// a publisher that is still connected, which would count one more ended
+/// publisher than the run itself produced.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PublishMountReport {
+    /// Publishers that have ended on this mount.
+    pub generation: u64,
+    pub rtp_packets_received: u64,
+    pub bytes_received: u64,
+    pub malformed_packets: u64,
+    pub frames_emitted: u64,
+    pub frames_dropped_app: u64,
+    pub aus_emitted: u64,
+    pub klv_units_emitted: u64,
+    pub klv_units_dropped: u64,
+    pub ssrc_changes: u64,
 }
 
 #[cfg(test)]

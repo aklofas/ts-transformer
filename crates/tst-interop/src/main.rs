@@ -1424,6 +1424,7 @@ fn run_report_render(args: &[String]) -> ! {
 /// `report soak --rss FILE --config FILE --exits FILE --proxy-stats FILE
 /// --recv-report FILE --send-report FILE --outage-period-s N
 /// [--rist-proxy-stats FILE --rist-recv-report FILE --rist-send-report FILE]
+/// [--rtsp-publish-recv-report FILE]
 /// [--rss-slope-threshold-kb-per-hour F] --out FILE`
 ///
 /// Turns `soak.sh`'s raw artifacts into `soak-results.json` — see
@@ -1437,6 +1438,12 @@ fn run_report_render(args: &[String]) -> ! {
 /// all (that leg has no outage schedule, hence no matching
 /// `--rist-outage-period-s` flag) — omit all three for a single-leg
 /// (srt-only) run, e.g. a local smoke test.
+///
+/// `--rtsp-publish-recv-report` is the `rtsp-publish` leg's recv report:
+/// an external publisher RECORDing into `recv`'s publish mount, dropped
+/// and relaunched on a declared period. It has no proxy and no send
+/// report — its publisher count comes from the report's `publish_mount`
+/// block. Omit it for a run without that leg.
 ///
 /// `report soak --config FILE --validate-only` (no other flag accepted)
 /// parses and validates `soak-config.json` alone — `soak.sh` calls this
@@ -1461,6 +1468,7 @@ fn run_report_soak(args: &[String]) -> ! {
     let mut rist_proxy_stats: Option<PathBuf> = None;
     let mut rist_recv_report: Option<PathBuf> = None;
     let mut rist_send_report: Option<PathBuf> = None;
+    let mut rtsp_publish_recv_report: Option<PathBuf> = None;
     let mut rss_slope_threshold: Option<f64> = None;
     let mut out: Option<PathBuf> = None;
     let mut validate_only = false;
@@ -1546,6 +1554,14 @@ fn run_report_soak(args: &[String]) -> ! {
                 )));
                 i += 2;
             }
+            "--rtsp-publish-recv-report" => {
+                rtsp_publish_recv_report = Some(PathBuf::from(require_value(
+                    args,
+                    i,
+                    "report soak: --rtsp-publish-recv-report",
+                )));
+                i += 2;
+            }
             "--rss-slope-threshold-kb-per-hour" => {
                 let v = require_value(args, i, "report soak: --rss-slope-threshold-kb-per-hour");
                 rss_slope_threshold = Some(v.parse().unwrap_or_else(|_| {
@@ -1581,6 +1597,7 @@ fn run_report_soak(args: &[String]) -> ! {
             || rist_proxy_stats.is_some()
             || rist_recv_report.is_some()
             || rist_send_report.is_some()
+            || rtsp_publish_recv_report.is_some()
             || rss_slope_threshold.is_some()
             || out.is_some();
         if other_flag_given {
@@ -1673,6 +1690,7 @@ fn run_report_soak(args: &[String]) -> ! {
         &send_report,
         outage_period_s,
         rist,
+        rtsp_publish_recv_report.as_deref(),
         rss_slope_threshold,
         &out,
     )

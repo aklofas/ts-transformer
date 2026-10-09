@@ -593,8 +593,10 @@ and 80 of 80 KLV records with a KLV set digest equal to the source's, and
 ## Multi-day soak (`soak.sh`)
 
 `soak.sh` is the other half of the published interop evidence: a long-running
-two-leg (SRT + RIST) endurance run through an impaired proxy, judged by
-`tst-interop report soak` rather than by the cell-based matrix above. See
+endurance run, judged by `tst-interop report soak` rather than by the
+cell-based matrix above. Two legs (SRT + RIST) run through an impaired proxy;
+a third, `rtsp-publish`, has an external RTSP publisher push into the
+receiver's publish mount and drop on a schedule (see "Publish leg" below). See
 `soak.sh`'s own header comment for the full topology, prerequisites, and the
 detached-launch recipe (`setsid`/`nohup` + `disown` — never a supervising
 tool/session wrapper, which can enforce its own lifetime cap short of the
@@ -622,9 +624,10 @@ thread or descriptor leak is visible before anyone writes a verdict for it.
   `report soak --config <file>` is mandatory; a missing file is a hard
   error, not a fallback to inference.
 - **`exits.json`** — one reaped exit status per worker role (`srt-send`,
-  `srt-proxy`, `srt-recv`, `rist-send`, `rist-proxy`, `rist-recv` — exactly
-  those six; the RSS sampler is killed by `soak.sh` itself on schedule and
-  is never recorded here), written at teardown, including any worker that
+  `srt-proxy`, `srt-recv`, `rist-send`, `rist-proxy`, `rist-recv`, plus
+  `rtsp-publish-recv` and `rtsp-publish-publisher` unless the run passed
+  `--no-rtsp-publish`; the RSS sampler is killed by `soak.sh` itself on
+  schedule and is never recorded here), written at teardown, including any worker that
   died inside the supervisor's end-of-run grace window. `report soak
   --exits <file>` is likewise mandatory.
 
@@ -658,6 +661,8 @@ it said it would.
 | `--schedule-phase-s S` | `TOTAL_SECONDS / K` (floor 1) | Seconds each phase stays in force. |
 | `--fixed-impairment` | off | Reverts both proxies to the old single fixed level (`--loss`/`--jitter`/`--delay`/`--reorder`). |
 | `--no-corrupt` | tap on | Turns off the per-leg sender corruption tap. |
+| `--no-rtsp-publish` | leg on | Runs without the `rtsp-publish` leg (no GStreamer needed, no pre-generated stream on disk). |
+| `PUBLISHER_DROP_PERIOD_S` | `600` | How often the `rtsp-publish` leg's publisher session ends and a new one ANNOUNCEs. The run must span at least two periods. |
 
 Corruption and rich ST 0601 KLV are **on by default** on both legs. The tap
 runs at `rate=5,min_gap=1000` with per-leg seed offsets (`SEED+1` on srt,
@@ -810,6 +815,44 @@ had accepted and never delivered in the seconds before it noticed the break
 is in neither of them, and has been measured as most of an outage's loss.
 The sent and received access-unit totals on the same line are the fuller
 figure.
+
+#### Publish leg (`rtsp-publish`)
+
+`recv --url rtsp-publish://127.0.0.1:<port>/soak` binds an RTSP server with
+one publish mount, and GStreamer's `rtspclientsink` RECORDs into it (RFC 2250
+MP2T over TCP-interleaved RTP, which the mount passes on byte for byte). There
+is no proxy and no `tst-interop send`. Before any worker launches, `soak.sh`
+generates one stream of the run's length less 30 s and cuts it at PAT packets
+into `TOTAL_SECONDS / PUBLISHER_DROP_PERIOD_S` segments. A shell loop (the
+`rtsp-publish-publisher` worker) pushes each segment as its own publisher
+session: at the segment's end the publisher exits, its session ends, and the
+next one ANNOUNCEs. The segments concatenate to the source, so the receiver
+judges one unbroken stream `--strict`, and its `stream_sha256` equals the
+source's (`rtsp-publish/source.sha256`) when every byte arrived. A publisher
+restart cannot end the capture: `recv`'s 15 s no-data deadline only applies
+before its first event.
+
+- **Declared** — `legs.rtsp-publish` carries the profile (`baseline` under
+  `--profile auto`, not part of the seeded draw), the KLV set, `schedule:
+  null`, `reconnect_mode: null`, the publisher command line, and
+  `publisher_drop_period_s`, the segment length. `parse_soak_config` rejects
+  a publish leg without a period that leaves at least two generations, and a
+  transport leg that declares a publisher.
+- **Observed** — the recv report's `publish_mount` block: the mount's own
+  counters, snapshotted before the server shuts down. `generation` counts
+  publishers that ended.
+- **Checked** — **`publisher_generations_rtsp-publish`**, non-provisional:
+  `generation >= floor(expected_duration_s / publisher_drop_period_s) - 1`
+  (the last publisher may still be connected at the snapshot). Fails when
+  the report carries no `publish_mount` block. The leg also gets
+  `recv_invariants_`, `profile_declared_` and `klv_declared_`, as a transport
+  leg does. `schedule_declared_`, `reconnect_mode_declared_` and the six
+  `corruption_*_` verdicts pass with a detail that begins "not applicable"
+  and says why, except that a declared schedule or reconnect mode fails, since
+  nothing on this leg could run it. RSS is sampled for `recv` and the
+  publisher loop. `soak-results.json` lists the leg under `publish_legs`, and
+  `summary.txt` prints the publisher count and whether the stream hash
+  matched.
 
 #### Lossy-mode transport loss
 
