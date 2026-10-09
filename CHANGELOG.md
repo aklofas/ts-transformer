@@ -293,6 +293,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — RTSP publisher role
 
+- Auth on ANNOUNCE, SETUP `mode=record` and RECORD is tested under Basic and Digest-MD5 (`tests/rtsp_server/publish/auth.rs`); both `check_auth` calls and the Digest method tokens were previously deletable with every suite green.
 - **Validation:** the interop census is 159 cells, 94 PASS / 0 FAIL / 65
   documented / 0 SKIPPED, at realistic access-unit sizes
   ([run 37875160134](https://github.com/aklofas/ts-transformer/actions/runs/37875160134), the

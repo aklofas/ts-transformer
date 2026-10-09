@@ -55,6 +55,8 @@ mod idle_timeout;
 mod interleaved_frame_boundary;
 #[path = "rtsp_server/unsupported_method.rs"]
 mod unsupported_method;
+#[path = "rtsp_server/publish/auth.rs"]
+mod publish_auth;
 #[path = "rtsp_server/publish/conformance.rs"]
 mod publish_conformance;
 #[path = "rtsp_server/publish/es_h264.rs"]
