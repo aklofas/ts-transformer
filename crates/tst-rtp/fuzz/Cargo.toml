@@ -61,5 +61,19 @@ test              = false
 doc               = false
 bench             = false
 
+[[bin]]
+name              = "rtsp_server_publish_framing"
+path              = "fuzz_targets/rtsp_server_publish_framing.rs"
+test              = false
+doc               = false
+bench             = false
+
+[[bin]]
+name              = "sdp_announce_classify"
+path              = "fuzz_targets/sdp_announce_classify.rs"
+test              = false
+doc               = false
+bench             = false
+
 [workspace]
 members = []

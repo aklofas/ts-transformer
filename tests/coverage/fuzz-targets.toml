@@ -135,6 +135,14 @@ crate = "tst-rtp"
 name = "rtsp_request_decode"
 
 [[target]]
+crate = "tst-rtp"
+name = "rtsp_server_publish_framing"
+
+[[target]]
+crate = "tst-rtp"
+name = "sdp_announce_classify"
+
+[[target]]
 crate = "tst-srt"
 name = "url_parse"
 
