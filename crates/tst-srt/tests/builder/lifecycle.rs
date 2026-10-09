@@ -53,5 +53,5 @@ fn explicit_close_succeeds() {
     // verification intent (close doesn't crash) while eliminating the
     // race.
     accept.join();
-    socket.close().expect("close");
+    socket.close();
 }

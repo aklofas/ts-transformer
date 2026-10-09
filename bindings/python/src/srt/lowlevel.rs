@@ -582,7 +582,7 @@ impl PySocket {
         if let Some(socket) = taken {
             // SrtSocket::close consumes self and is documented as always-Ok.
             py.allow_threads(|| {
-                let _ = socket.close();
+                socket.close();
             });
         }
     }
@@ -638,7 +638,10 @@ impl tst_pipeline::binding::Close for ListenerHeld {
 
     fn close(&mut self) -> Result<(), Self::Error> {
         match self.0.take() {
-            Some(l) => l.close(),
+            Some(l) => {
+                l.close();
+                Ok(())
+            }
             None => Ok(()),
         }
     }

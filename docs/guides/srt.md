@@ -41,7 +41,7 @@ The connection model mirrors `std::net::TcpStream` / `TcpListener`:
   `listener.accept()` blocks until the next peer's handshake completes
   and returns `(Socket, SocketAddr)`.
 - Drop closes the socket. `Socket::close` and `Listener::close` exist
-  for callers who want the explicit result.
+  for callers who want to close before drop.
 
 Caller, sending five messages then closing:
 

@@ -11,7 +11,7 @@ use std::time::Duration;
 use tst_srt::{MaxBandwidth, SocketBuilder};
 
 #[test]
-fn unlimited_max_bandwidth_reaches_libsrt_as_zero() {
+fn input_relative_max_bandwidth_reaches_libsrt_as_zero() {
     require_loopback!();
     let lb = crate::common::Loopback::bind();
     let port = lb.port;
