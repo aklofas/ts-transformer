@@ -62,3 +62,34 @@ pub fn drain_interleaved_head(buf: &mut Vec<u8>, route: &mut dyn FnMut(u8, &[u8]
     }
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::drain_interleaved_head;
+
+    #[test]
+    fn a_partial_frame_at_the_head_waits_and_drains_nothing() {
+        let mut buf = b"$\x00\x00\x10abc".to_vec(); // declares 16 bytes, holds 3
+        let mut routed = Vec::new();
+        let mut route = |ch: u8, p: &[u8]| routed.push((ch, p.to_vec()));
+        assert!(!drain_interleaved_head(&mut buf, &mut route), "needs more");
+        assert_eq!(buf, b"$\x00\x00\x10abc", "nothing drained");
+        buf.extend_from_slice(&[0u8; 13]);
+        assert!(drain_interleaved_head(&mut buf, &mut route));
+        // Exactly one frame, and only after the rest arrived.
+        assert_eq!(routed.len(), 1);
+        assert_eq!(routed[0].0, 0);
+        assert_eq!(routed[0].1.len(), 16);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn frames_before_an_rtsp_request_are_drained_and_the_request_is_left() {
+        let mut buf = b"$\x01\x00\x02ab$\x00\x00\x01cOPTIONS * RTSP/1.0\r\n\r\n".to_vec();
+        let mut routed = Vec::new();
+        let mut route = |ch: u8, p: &[u8]| routed.push((ch, p.to_vec()));
+        assert!(drain_interleaved_head(&mut buf, &mut route));
+        assert_eq!(routed, vec![(1u8, b"ab".to_vec()), (0u8, b"c".to_vec())]);
+        assert_eq!(buf, b"OPTIONS * RTSP/1.0\r\n\r\n");
+    }
+}
