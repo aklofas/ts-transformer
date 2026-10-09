@@ -237,6 +237,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — tst-rtp
 
+- **Mount paths refuse control bytes.** `validate_mount_path` (every
+  `add_*_mount` and an on-demand ANNOUNCE) now rejects a path containing
+  any byte below 0x20 or 0x7F. Before, a peer could ANNOUNCE
+  `/a<NUL>b` on an on-demand server and get a mount whose name no C caller
+  could pass to `tst_rtsp_server_remove_mount` (the C handle's path read as
+  `""`), pinning one of the 256 on-demand slots until `stop()`; a bare LF in
+  a path also reached the Notice 5402 request line verbatim. The C mount
+  factories now fail with `TST_E_INVALID_CONFIG` instead of defaulting the
+  path to `""` if a NUL ever reached them.
+- **ANNOUNCE refuses H.264 `packetization-mode=2`** with `415`. The
+  depacketizer drops the interleaved-mode packet types (STAP-B, MTAP,
+  FU-B), so such a publisher was accepted and then lost every packet.
+  Modes 0 and 1 are unchanged; the client side already refused mode 2.
 - **`RtspClient::describe` no longer panics on a hostile server's SDP.**
   In released versions an eight-byte DESCRIBE body made the `sdp-types`
   0.1.8 parser fail an internal assertion, which unwound through the

@@ -93,6 +93,18 @@ fn classify_track(index: usize, m: &SdpMedia) -> Result<AnnouncedTrack, ShapeRej
         }
     };
     let h264_fmtp = (kind == TrackKind::H264).then(|| H264FmtpParams::parse(m, pt));
+    // RFC 6184 §5.4 mode 2 (interleaved) uses STAP-B / MTAP / FU-B packets,
+    // which the depacketizer rejects; accepting the track would admit a
+    // publisher whose every packet is then dropped. Refuse at negotiation,
+    // as the client side (`setup_h264_auto`) already does.
+    if h264_fmtp
+        .as_ref()
+        .is_some_and(|f| f.packetization_mode == 2)
+    {
+        return Err(ShapeReject::Unsupported(
+            "H264 packetization-mode 2 (interleaved) is not supported",
+        ));
+    }
     Ok(AnnouncedTrack {
         index,
         control: m.control.clone(),
@@ -149,6 +161,29 @@ mod tests {
         Sdp::parse(body.replace('\n', "\r\n").as_bytes()).unwrap()
     }
     const HEAD: &str = "v=0\no=- 0 0 IN IP4 127.0.0.1\ns=x\nc=IN IP4 127.0.0.1\nt=0 0\n";
+
+    #[test]
+    fn announce_rejects_h264_packetization_mode_2() {
+        let s = sdp(&format!(
+            "{HEAD}m=video 0 RTP/AVP 96\na=rtpmap:96 H264/90000\n\
+             a=fmtp:96 packetization-mode=2\na=control:a\n"
+        ));
+        assert!(
+            matches!(classify_announce(&s), Err(ShapeReject::Unsupported(_))),
+            "mode 2 (interleaved) packets are dropped by the depacketizer; refuse at ANNOUNCE"
+        );
+        // Modes 0 and 1 stay accepted.
+        for mode in ["0", "1"] {
+            let s = sdp(&format!(
+                "{HEAD}m=video 0 RTP/AVP 96\na=rtpmap:96 H264/90000\n\
+                 a=fmtp:96 packetization-mode={mode}\na=control:a\n"
+            ));
+            assert!(
+                classify_announce(&s).is_ok(),
+                "mode {mode} must stay accepted"
+            );
+        }
+    }
 
     #[test]
     fn mp2t_static_pt_33_without_rtpmap() {

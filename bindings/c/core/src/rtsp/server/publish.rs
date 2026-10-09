@@ -100,12 +100,21 @@ fn path_arg<'a>(path: *const c_char) -> Result<&'a str, i32> {
     }
 }
 
-/// Box a `PublishMountHandle` as a C handle.
+/// Box a `PublishMountHandle` as a C handle. NULL (with
+/// `TST_E_INVALID_CONFIG` recorded) if the mount path cannot be a C
+/// string; `validate_mount_path` refuses control bytes, so this is a
+/// defensive edge, never a silent empty path.
 fn into_c_mount(inner: tst_rtp::PublishMountHandle) -> *mut TstRtspPublishMount {
-    // A validated mount path never holds a NUL; fall back to an empty
-    // string rather than fail the call if one ever did.
-    let path_c = CString::new(inner.mount_path()).unwrap_or_default();
-    Box::into_raw(Box::new(TstRtspPublishMount { inner, path_c }))
+    match CString::new(inner.mount_path()) {
+        Ok(path_c) => Box::into_raw(Box::new(TstRtspPublishMount { inner, path_c })),
+        Err(_) => {
+            set_last_error(
+                TstError::InvalidConfig,
+                "publish mount path contains a NUL byte",
+            );
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// Borrow a mount handle, recording `TST_E_INVALID_CONFIG` on NULL.
@@ -268,6 +277,9 @@ pub unsafe extern "C" fn tst_rtsp_server_next_publisher(
             Ok(Some(h)) => {
                 // SAFETY: as above.
                 unsafe { *out = into_c_mount(h) };
+                if unsafe { (*out).is_null() } {
+                    return TstError::InvalidConfig as libc::c_int;
+                }
                 TstError::Success as libc::c_int
             }
             Ok(None) => {

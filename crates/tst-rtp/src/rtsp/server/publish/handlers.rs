@@ -1103,6 +1103,25 @@ mod tests {
     }
 
     #[test]
+    fn an_on_demand_path_with_a_control_byte_is_refused_and_creates_nothing() {
+        for uri in ["rtsp://h/a\tb", "rtsp://h/a\nb", "rtsp://h/a\0b"] {
+            let (st, rx) = crate::rtsp::server::test_state_on_demand(true);
+            let mut s = ServerSessionState::new();
+            let r = handle_announce(&announce(uri, SDP_MP2T), &st, &mut s);
+            assert_eq!(
+                r.status, 404,
+                "{uri:?}: a mount with a control byte was created"
+            );
+            assert!(
+                st.mounts.lock().unwrap().is_empty(),
+                "{uri:?}: table must stay empty"
+            );
+            assert!(rx.try_recv().is_err(), "{uri:?}: nothing may be queued");
+            assert!(s.publish.is_none());
+        }
+    }
+
+    #[test]
     fn on_demand_on_unknown_path_creates_and_queues_a_publish_mount() {
         let (st, rx) = crate::rtsp::server::test_state_on_demand(true);
         let mut s = ServerSessionState::new();

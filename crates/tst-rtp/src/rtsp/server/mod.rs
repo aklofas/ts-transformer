@@ -246,6 +246,18 @@ pub(crate) fn validate_mount_path(path: &str) -> Result<(), RtspServerError> {
             detail: format!("path contains URL-reserved character: '{path}'"),
         });
     }
+    // An on-demand ANNOUNCE hands this function the request URI's path
+    // verbatim, and `RtspRequest::parse` only requires UTF-8, so a peer can
+    // put NUL, TAB, CR, LF or DEL here. Such a name would reach the
+    // hand-rolled Notice 5402 request line, every log line, and the C
+    // binding's `CString` (which cannot hold a NUL, so the C caller could
+    // never name the mount to remove it). Refuse the whole control range.
+    // The detail deliberately does not echo the path.
+    if path.bytes().any(|b| b < 0x20 || b == 0x7F) {
+        return Err(RtspServerError::InvalidMountPath {
+            detail: "path contains a control byte".to_string(),
+        });
+    }
     Ok(())
 }
 
@@ -1342,6 +1354,23 @@ mod add_mount_tests {
         let mut b = MuxerConfig::builder();
         b.add_program(prog.build());
         b.build().unwrap()
+    }
+
+    #[test]
+    fn a_mount_path_with_a_control_byte_is_invalid() {
+        for p in ["/a\0b", "/a\tb", "/a\nb", "/a\rb", "/a\x7fb", "/\x01"] {
+            assert!(
+                matches!(
+                    validate_mount_path(p),
+                    Err(RtspServerError::InvalidMountPath { .. })
+                ),
+                "{p:?} must be refused"
+            );
+        }
+        assert!(
+            validate_mount_path("/a-b_c.d~e").is_ok(),
+            "visible ASCII stays valid"
+        );
     }
 
     #[test]
