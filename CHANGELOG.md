@@ -259,6 +259,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ANNOUNCE path parses SDP the same way: the server answers a malformed
   ANNOUNCE with 400 and keeps the session and the connection. Found by
   the new `sdp_announce_classify` fuzz target.
+- **TCP readers that send RTCP receiver reports keep their session.** A
+  PLAY reader over TCP-interleaved transport (VLC and live555 with
+  `--rtsp-tcp`, GStreamer `rtspsrc` with TCP) sends its receiver reports
+  as `$` frames on its RTCP channel. The server drained `$` frames only on
+  publisher sessions, so a reader's report bytes stayed at the buffer head,
+  were framed as a non-UTF-8 request at the reader's next keepalive, and
+  the reader was answered `413` and disconnected 30–60 s after PLAY. Every
+  session now drains interleaved frames; a reader's are dropped.
 
 ### Testing — RTSP publisher role
 

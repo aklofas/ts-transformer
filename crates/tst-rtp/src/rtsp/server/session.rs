@@ -380,15 +380,15 @@ where
         // frame between the requests must be drained before the second
         // request is framed.
         //
-        // - Publisher direction: once ANNOUNCE has put the session in
-        //   the publisher role, a `$`-headed buffer is an interleaved
-        //   frame. A complete one is routed to its track (unknown channels
-        //   are counted and dropped, never fatal) and the loop goes round
-        //   again; a partial one waits for the next read. The RTSP framing
-        //   below — and its 64 KiB unterminated-header cap — never sees a
-        //   `$`-headed buffer on a publisher session, so binary payload
-        //   (which may well contain `\r\n\r\n`) is never parsed as a
-        //   request.
+        // - Interleaved frames, every session: a `$`-headed buffer is an
+        //   interleaved frame. On a publisher session (ANNOUNCE done) a
+        //   complete one is routed to its track (unknown channels are
+        //   counted and dropped, never fatal); on a reader session it is
+        //   dropped (RTCP receiver reports). Either way the loop goes round
+        //   again, and a partial one waits for the next read. The RTSP
+        //   framing below — and its 64 KiB unterminated-header cap — never
+        //   sees a `$`-headed buffer, so binary payload (which may well
+        //   contain `\r\n\r\n`) is never parsed as a request.
         //
         // - RTSP direction: body-aware cap, coherent with the client
         //   `send_and_read` loop and both interleaved pumps (all share
@@ -417,28 +417,41 @@ where
         //   timeout. `NeedMore` loops back to read more (bounded: header
         //   ≤ 64 KiB, body ≤ 1 MiB).
         loop {
-            if let Some(publish) = session.publish.as_ref() {
-                let mut route = |ch: u8, payload: &[u8]| match publish.track_for_channel(ch) {
-                    Some((track, false)) => {
-                        publish
+            let drained = match session.publish.as_ref() {
+                Some(publish) => {
+                    let mut route = |ch: u8, payload: &[u8]| match publish.track_for_channel(ch) {
+                        Some((track, false)) => {
+                            publish
+                                .adapter
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .on_rtp(track, payload);
+                            publish
+                                .last_media_ms
+                                .store(PublishSession::now_ms(), Ordering::Relaxed);
+                        }
+                        Some((track, true)) => publish
                             .adapter
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
-                            .on_rtp(track, payload);
-                        publish
-                            .last_media_ms
-                            .store(PublishSession::now_ms(), Ordering::Relaxed);
-                    }
-                    Some((track, true)) => publish
-                        .adapter
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .on_rtcp(track, payload),
-                    None => publish.mount.tick(|s| s.malformed_packets += 1),
-                };
-                if !super::publish::drain_interleaved_head(&mut buf, &mut route) {
-                    break; // partial frame: read more
+                            .on_rtcp(track, payload),
+                        None => publish.mount.tick(|s| s.malformed_packets += 1),
+                    };
+                    super::publish::drain_interleaved_head(&mut buf, &mut route)
                 }
+                None => {
+                    // A reader's interleaved frames (RTCP receiver reports on
+                    // its RTCP channel, RFC 7826 section 14, which live555, VLC
+                    // and GStreamer send over TCP) are consumed and dropped:
+                    // nothing ingests them yet. Left at the head they were
+                    // framed as a non-UTF-8 request and earned a 413 at the
+                    // reader's next keepalive.
+                    let mut drop_frame = |_ch: u8, _payload: &[u8]| {};
+                    super::publish::drain_interleaved_head(&mut buf, &mut drop_frame)
+                }
+            };
+            if !drained {
+                break; // partial frame: read more
             }
 
             if reject_if_over_cap(&buf, peer, &write_half).await {
