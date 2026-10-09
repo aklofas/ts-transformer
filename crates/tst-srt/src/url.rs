@@ -544,7 +544,7 @@ fn apply_latency(overlay: &mut UrlOverlay, key: &'static str, value: &str) -> Re
 
 fn apply_maxbw(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlError> {
     // SRTO_MAXBW is i64; we expose non-negative as Limited(u64).
-    // The `-1` sentinel (`MaxBandwidth::Auto`, libsrt's infinite) is not
+    // The `-1` sentinel (`MaxBandwidth::Infinite`, libsrt's infinite) is not
     // URL-settable; `?maxbw=0` sends 0 (relative to the input rate).
     let n = parse_int_nonneg::<u64>("maxbw", value)?;
     overlay.max_bandwidth = Some(MaxBandwidth::Limited(n));

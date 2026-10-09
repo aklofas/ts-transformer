@@ -764,14 +764,9 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## `MaxBandwidth` variant naming vs libsrt sentinels
 
-- **Status:** Deferred — the names are kept. `MaxBandwidth::Unlimited`
-  sends `0` to `SRTO_MAXBW`, which libsrt reads as "relative to the input
-  rate", and `MaxBandwidth::Auto` sends `-1`, which libsrt reads as no
-  cap (libsrt's default; live mode still limits at 1 Gbps). The rustdoc
-  on each variant states the value it sends.
-- **Why deferred:** remapping the variants to match their names would
-  change the sending behaviour of every current user of either variant.
-- **Trigger to revisit:** the next breaking release.
+- **Status:** Resolved in 0.8.0: renamed to `InputRelative` (0) and
+  `Infinite` (−1); neither old name survives, so a stale use fails to
+  compile instead of changing behaviour.
 
 ## Typed WebVTT cue substrate (`mpegts::webvtt::format_pes_payload` + `WebVttCue`)
 
