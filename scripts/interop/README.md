@@ -569,7 +569,10 @@ under `baseline`, the axis it belongs to.
 Both cells passed on their first CI run,
 [run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566)
 (2026-10-08), whose full census is 159 cells: 94 PASS, 0 FAIL, 65
-EXPECTED-UNSUPPORTED, 0 SKIPPED, no stale expectation. Locally (GStreamer
+EXPECTED-UNSUPPORTED, 0 SKIPPED, no stale expectation, and again on
+[run 37875160134](https://github.com/aklofas/ts-transformer/actions/runs/37875160134)
+(2026-10-09), with the same census and the elementary cell's KLV set
+digest checked against its source file. Locally (GStreamer
 1.24.2, `--seconds 8`) the elementary cell received 240 of 240 video AUs
 and 80 of 80 KLV records with a KLV set digest equal to the source's, and
 0 non-conformant events.

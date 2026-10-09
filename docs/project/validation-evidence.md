@@ -111,10 +111,11 @@ oracle proves" below for the individual checks.
 
 **Current census: 159 cells — 94 PASS, 0 FAIL, 65 EXPECTED-UNSUPPORTED, 0
 SKIPPED — measured at realistic access-unit sizes**
-([run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566),
-`workflow_dispatch`, 2026-10-08 at `945911d4`, `--seconds 10`, shape
+([run 37875160134](https://github.com/aklofas/ts-transformer/actions/runs/37875160134),
+`workflow_dispatch`, 2026-10-09 at `41ed12e4`, `--seconds 10`, shape
 `full-159`, empty allowed-skip list, no stale expectation). The two cells
-added on 2026-10-08 both pass. Each has a GStreamer `rtspclientsink`
+added on 2026-10-08 both pass, as they did on their first CI run
+([run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566), 2026-10-08 at `945911d4`, the same census). Each has a GStreamer `rtspclientsink`
 publishing into `tst-interop recv`'s RTSP publish mount:
 `rtsp-publish/gst-push-mp2t` (MPEG-TS over RTP, byte-identical end to
 end) and `rtsp-publish/gst-push-es-klv` (H.264 + KLV as two RTP tracks,
@@ -175,13 +176,17 @@ local dev-box state, no vendored corpus) via
 [`.github/workflows/interop.yml`](https://github.com/aklofas/ts-transformer/blob/main/.github/workflows/interop.yml):
 weekly on a schedule (Mondays 05:00 UTC), on every `workflow_dispatch`, and
 on any PR touching `crates/tst-interop/`, `scripts/interop/`,
-`crates/tst-core/src/mpegts/`, or the workflow file itself. The verified run cited above is
+`crates/tst-core/src/mpegts/`, the RTSP client and server
+(`crates/tst-rtp/src/rtsp/`), or the workflow file itself. The verified
+run cited above is
+[run 37875160134](https://github.com/aklofas/ts-transformer/actions/runs/37875160134)
+(the 2026-10-09 `workflow_dispatch` at `41ed12e4`), which completed
+`success` with the census-completeness assert, the 159 / 94 / 0 / 65 / 0
+census, and 159 per-cell result records with zero `FAIL` and no
+expectation drift: all 65 documented-gap rows reproduced. The first run
+with the RTSP publisher cells,
 [run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566)
-(the 2026-10-08 `workflow_dispatch` at `945911d4`, the first run with the
-RTSP publisher cells), which completed `success` with the
-census-completeness assert, the 159 / 94 / 0 / 65 / 0 census, and 159
-per-cell result records with zero `FAIL` and no expectation drift: all 65
-documented-gap rows reproduced. The first public run at realistic
+(2026-10-08 at `945911d4`), reached the same census. The first public run at realistic
 access-unit sizes,
 [run 34830892357](https://github.com/aklofas/ts-transformer/actions/runs/34830892357)
 (2026-09-14 at `dc912eea`, the 157 / 92 / 0 / 65 / 0 census), the last
@@ -903,9 +908,9 @@ Both cells run GStreamer 1.24.2's `rtspclientsink` against `tst-interop
 recv --url rtsp-publish://127.0.0.1:<port>/mount`, a harness-only scheme
 that binds an `RtspServer` with one publish mount and judges what the mount
 delivers. They are part of the 159-cell census above
-([run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566):
+([run 37875160134](https://github.com/aklofas/ts-transformer/actions/runs/37875160134):
 94 PASS, 0 FAIL, 65 EXPECTED-UNSUPPORTED, 0 SKIPPED), and both passed on
-their first CI run.
+their first CI run ([run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566)) as well.
 
 - **`rtsp-publish/gst-push-mp2t`** proves byte identity. The publisher
   sends MPEG-TS over RTP (RFC 2250, payload type 33). The cell's tier is
@@ -919,7 +924,8 @@ their first CI run.
   non-conformant events. Its KLV set digest equals the source's, so every
   KLV record survived the trip through RTP and the re-mux unchanged. The
   cell gates that: it computes the source file's digest with `verify` and
-  fails on any difference.
+  fails on any difference. In the final-tree CI run the cell logged equal
+  source and received digests.
 
 **What `--remuxed` skips, and why it is declared.** The server picks its
 own PIDs (PMT 0x1000, video 0x100, KLV 0x101 as `PrivateData`), so the
@@ -1046,14 +1052,54 @@ is designed as follows:
   corruption tap, so those verdicts read "not applicable" with the reason.
   Its RSS is sampled for `recv` and for the publisher loop.
 
-The first one-hour run used the default 600-second period: six segments
-from a 3564-second stream, the `baseline` profile with rich KLV.
+The first one-hour run, on 2026-10-09 from 01:13:50Z to 02:14Z UTC, used the
+default 600-second period. It cut a 3564-second stream into six segments
+and ran the `baseline` profile with rich KLV. The SRT and RIST legs drew
+`audio` and `av1-klv-b` from seed 1. The run was built from the tree
+`v0.7.0-135-gb6545e60`, before the `delivery_complete` verdict and the
+declared source digest existed.
 
-- Built from: TODO(harvest: source commit from provenance.json, and the run's start and end time in UTC)
-- Publisher generations: TODO(harvest: generations ended on the mount, against the floor of 5, from publisher_generations_rtsp-publish)
-- Verdicts: TODO(harvest: overall_pass, total verdicts, gating PASS and FAIL counts, provisional count, from soak-results.json)
-- Stream identity: TODO(harvest: whether recv's stream SHA-256 matched source.sha256, and recv's video access-unit and KLV record counts)
-- RSS: TODO(harvest: rss_slope_rtsp-publish_recv and rss_slope_rtsp-publish_publisher in KiB/h, provisional below 72 h)
+**The run's harness verdict is `overall_pass=false`, and the publisher leg
+passed every verdict it owns.** The figures below are from the run's own
+`soak-results.json`, written at the end of the run by the `report soak` of
+the tree it was built from. That report has no `delivery_complete` or
+`leg_evidence` verdict, and it judged the generations against a floor of 5
+(one less than the declared count). Of its 57 verdicts, 44 are gating
+PASS, 3 are gating FAIL and 10 are provisional PASS. All three FAILs are on the SRT
+leg's receiver and are harness defects:
+
+- `recv_invariants_srt` and `worker_exits` share one cause. The receiver's
+  final verify failed `audio_codec_adts` on one audio PES whose first ADTS
+  byte the corruption tap had flipped. The audio prefix oracle has no path
+  to excuse injected damage.
+- `zero_process_exits` comes from one empty RSS reading for the SRT
+  receiver at 1350 s. Its CPU counters kept advancing on that tick, and it
+  ran to the end of the run.
+
+[The analysis of both](/docs/project/2026-10-09-soak-rtsp-publish-srt-audio-attribution.md)
+covers the injection, the sampler rows and the fix shape for each. The
+RIST leg passed every gating verdict.
+
+The `rtsp-publish` leg's figures:
+
+| Measure | Result |
+| --- | --- |
+| Publisher generations | 6 ended on the mount, 6 declared, all six publishers exited 0 |
+| Stream identity | received SHA-256 equals the source's (`7b3647a4…c136`) |
+| Received content | 106 920 video access units (3564 s × 30 fps), 3564 keyframes, 35 640 rich KLV records |
+| Errors | 0 discontinuities, 0 non-conformant events, 0 malformed RTP packets |
+| RSS slope, `recv` | 92.4 KiB/h over 98 samples (provisional below 72 h) |
+| RSS slope, publisher loop | 0.0 KiB/h over 98 samples (provisional below 72 h) |
+
+A second report, `soak-results-rejudged.json`, re-judges the same
+artefacts with the current `report soak`. It gives 58 verdicts with the
+same three FAILs. Its `delivery_complete_rtsp-publish` passes, but the
+source digest it compares against comes from the run's `source.sha256`
+artefact, not from a declaration. This run's `soak-config.json` predates
+the declared digest. `publisher_generations_rtsp-publish` passes at 6 of
+6, under the current floor of every declared generation. No
+`leg_evidence` verdict appears, because every declared leg's report was
+supplied.
 
 The run's full artifact set is retained offline by the maintainer.
 

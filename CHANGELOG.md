@@ -247,19 +247,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ANNOUNCE with 400 and keeps the session and the connection. Found by
   the new `sdp_announce_classify` fuzz target.
 
-### Validation — RTSP publisher role
+### Testing — RTSP publisher role
 
 - **Validation:** the interop census is 159 cells, 94 PASS / 0 FAIL / 65
   documented / 0 SKIPPED, at realistic access-unit sizes
-  ([run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566)).
+  ([run 37875160134](https://github.com/aklofas/ts-transformer/actions/runs/37875160134), the
+  same census as the cells' first run, [run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566)).
   It adds two cells in which GStreamer's `rtspclientsink` publishes into an
   `RtspServer` publish mount, and the other 157 kept their verdicts.
   - `rtsp-publish/gst-push-mp2t` (MPEG-TS over RTP) arrives byte-identical.
   - `rtsp-publish/gst-push-es-klv` (H.264 + KLV tracks, re-muxed by the
     server) delivered every video access unit and KLV record in a local
-    run, and its KLV set digest equals the source's. It is judged with the new `tst-interop recv
-    --remuxed`, which skips only the oracles keyed on the generator's PID
-    layout and lists them in the report.
+    run, and its KLV set digest equals the source's. It is judged with the
+    new `tst-interop recv --remuxed`, which skips only the oracles keyed on
+    the generator's PID layout and lists them in the report.
   - There is no ffmpeg publisher cell: ffmpeg's RTSP muxer cannot read a
     picture size from the generator's minimal H.264 SPS, and has no KLV
     payloader.
@@ -267,15 +268,29 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Two new fuzz targets, `rtsp_server_publish_framing` and
   `sdp_announce_classify`, cover the server's ingest framing and ANNOUNCE
   classification (36 targets in the workspace). The second found the
-  `sdp-types` panic fixed above; the elementary interop cell found the KLV
-  flush PCR jump fixed above. `soak.sh` gains an `rtsp-publish` leg: one
-  generated stream cut into per-publisher segments, each publisher ending
-  gracefully and the next re-ANNOUNCEing into the same mount, judged
-  `--strict` as one unbroken stream, with publisher generations counted by
-  the mount itself. Its first one-hour run: TODO(harvest: overall_pass and
-  verdict counts, generations ended against the floor of 5, whether the
-  received stream hash matched the source). Full figures are in
-  `docs/project/validation-evidence.md`.
+  `sdp-types` panic fixed above. The elementary interop cell found the PCR
+  jump that the flush-time KLV bound, described under "Added — tst-rtp: RTSP
+  publisher role", prevents.
+
+  `soak.sh` gains an `rtsp-publish` leg. One generated stream is cut into
+  per-publisher segments, each publisher ends gracefully, and the next
+  re-ANNOUNCEs into the same mount. The receiver judges the whole run
+  `--strict` as one unbroken stream, and the mount itself counts the
+  publisher generations. Its first one-hour run has a harness verdict of
+  `overall_pass=false`: 57 verdicts, 44 gating PASS, 3 gating FAIL and
+  10 provisional PASS, in the run's own report.
+  - The publisher leg passed every verdict it owns. All 6 declared
+    publishers ended on the mount, and the received stream's SHA-256
+    equals the source's. The receiver counted 106 920 video access units
+    and 35 640 KLV records, with 0 discontinuities.
+  - The RIST leg passed every gating verdict.
+  - The three FAILs are the SRT receiver's and are harness defects. Its
+    audio prefix oracle cannot excuse an ADTS byte the corruption tap
+    flipped, which fails its verify and its exit status. One empty RSS
+    sample was counted as a process exit. The analysis is in
+    `docs/project/2026-10-09-soak-rtsp-publish-srt-audio-attribution.md`.
+
+  Full figures are in `docs/project/validation-evidence.md`.
 
 ### Added — JVM binding: HLS publishing (`org.tstrans.hls`)
 
