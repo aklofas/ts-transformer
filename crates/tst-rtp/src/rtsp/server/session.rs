@@ -1799,4 +1799,132 @@ mod session_tests {
         }
         String::from_utf8_lossy(&buf).into_owned()
     }
+
+    /// A UDP publisher's media is liveness for an IDLE control connection,
+    /// never for a half-sent request: with media flowing (one admitted RTP
+    /// datagram stamps `last_media_ms`, a real-time clock the paused test
+    /// clock never moves, so the media reads "recent" throughout), a
+    /// request trickled onto the control connection is still closed at the
+    /// post-SETUP idle bound of its first byte. Without the message
+    /// deadline's close, `media_recent` re-arms the sleep and the
+    /// connection stays open as long as bytes and media keep coming.
+    #[tokio::test(start_paused = true)]
+    async fn a_trickled_request_is_closed_even_while_udp_media_keeps_the_publisher_live() {
+        use std::time::Duration;
+        use tokio::io::AsyncWriteExt;
+        let (server, mount) = state_with_publish_mount_and_listener().await;
+        let mut c = connect(&server).await;
+        // The listener helper serves `test_state()`, so its bound after
+        // SETUP is the default session timeout's.
+        let bound =
+            post_setup_idle_bound(crate::rtsp::server::test_state().builder.session_timeout);
+
+        async fn exchange(c: &mut TcpStream, req: &str) -> String {
+            c.write_all(req.as_bytes()).await.unwrap();
+            read_response_in_paused_steps(c, Duration::from_secs(5)).await
+        }
+        let r = exchange(&mut c, &announce_request("/pub", SDP_MP2T)).await;
+        assert!(r.starts_with("RTSP/1.0 200"), "ANNOUNCE: {r}");
+        let media = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let p = media.local_addr().unwrap().port();
+        let r = exchange(
+            &mut c,
+            &format!(
+                "SETUP rtsp://h/pub/streamid=0 RTSP/1.0\r\nCSeq: 3\r\nTransport: RTP/AVP;unicast;client_port={p}-{};mode=record\r\n\r\n",
+                p + 1
+            ),
+        )
+        .await;
+        assert!(r.starts_with("RTSP/1.0 200"), "SETUP: {r}");
+        let server_rtp: u16 = r
+            .split("server_port=")
+            .nth(1)
+            .and_then(|t| t.split('-').next())
+            .and_then(|t| t.parse().ok())
+            .unwrap_or_else(|| panic!("server_port in the SETUP answer: {r}"));
+        let session_id = r
+            .lines()
+            .find_map(|l| l.strip_prefix("Session: "))
+            .map(|v| v.split(';').next().unwrap().trim().to_owned())
+            .unwrap_or_else(|| panic!("Session header in the SETUP answer: {r}"));
+        let r = exchange(
+            &mut c,
+            &format!("RECORD rtsp://h/pub RTSP/1.0\r\nCSeq: 4\r\nSession: {session_id}\r\n\r\n"),
+        )
+        .await;
+        assert!(r.starts_with("RTSP/1.0 200"), "RECORD: {r}");
+
+        // One admitted datagram: media is now "recent" for the whole test.
+        // The ingest stamps `PublishSession::now_ms()`, milliseconds since a
+        // lazily created real-time epoch, and 0 means "no media yet". Run
+        // alone, this datagram's stamp would be the epoch's first use and
+        // land in its first millisecond, reading as "never". So start the
+        // epoch and spin, in real time, until it is at least 1 ms old.
+        while PublishSession::now_ms() == 0 {
+            std::hint::spin_loop();
+        }
+        media
+            .send_to(&rtp_mp2t_packet(1), ("127.0.0.1", server_rtp))
+            .await
+            .unwrap();
+        let mut steps = 0;
+        while mount.stats_snapshot().rtp_packets_received == 0 {
+            steps += 1;
+            assert!(steps <= 5_000, "the UDP ingest never admitted the datagram");
+            let _ =
+                tokio::time::timeout(Duration::from_millis(1), std::future::pending::<()>()).await;
+        }
+
+        // Trickle one byte per 5 s for the bound plus 30 s. Unlike the
+        // trickle test above, the clock moves by explicit 1 ms `advance`s
+        // and closure is probed with `try_read`, so this task never waits
+        // on a timer. A server that lets media liveness pre-empt the
+        // message deadline does not park: its read bound is spent, so it
+        // re-enters `sleep(0)` in a loop, and auto-advance (which only
+        // happens on a park) would freeze the clock until the real-time
+        // media stamp aged out, hiding the failure. Explicit steps keep
+        // the clock moving either way.
+        let n_bytes = ((bound + Duration::from_secs(30)).as_secs() / 5) as usize;
+        let request: Vec<u8> = b"OPTIONS rtsp://h/"
+            .iter()
+            .copied()
+            .chain(std::iter::repeat(b'a'))
+            .take(n_bytes)
+            .collect();
+        let t0 = tokio::time::Instant::now();
+        let mut closed_at = None;
+        'trickle: for b in &request {
+            if c.write_all(&[*b]).await.is_err() {
+                closed_at = Some(t0.elapsed());
+                break;
+            }
+            for _ in 0..5_000 {
+                tokio::time::advance(Duration::from_millis(1)).await;
+                let mut probe = [0u8; 1];
+                match c.try_read(&mut probe) {
+                    Ok(0) => {
+                        closed_at = Some(t0.elapsed());
+                        break 'trickle;
+                    }
+                    Ok(n) => panic!("the server answered a partial request with {n} bytes"),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {} // still open
+                    Err(_) => {
+                        closed_at = Some(t0.elapsed()); // reset: closed
+                        break 'trickle;
+                    }
+                }
+            }
+        }
+        let closed_at = closed_at.unwrap_or_else(|| {
+            panic!(
+                "connection still open {:?} after the first byte (bound {bound:?})",
+                t0.elapsed()
+            )
+        });
+        assert!(
+            closed_at >= bound - Duration::from_secs(5)
+                && closed_at <= bound + Duration::from_secs(10),
+            "closure observed at {closed_at:?} after the first byte; the bound is {bound:?}"
+        );
+    }
 }
