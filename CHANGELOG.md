@@ -383,6 +383,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
   Full figures are in `docs/project/validation-evidence.md`.
 
+- The interop PR filter now covers `crates/tst-rtp/src/{sdp,h264,rtcp}/**` as well as `rtsp/**`; the ASan/TSan jobs enable `tst-rtp/rtsp-server-tls` so `rtsps_record.rs` runs sanitized.
+
 ### Added — JVM binding: HLS publishing (`org.tstrans.hls`)
 
 - **`org.tstrans.hls`** mirrors `tstrans.hls` class for class: `HlsPublisher`
@@ -561,7 +563,8 @@ had to pin the sending host with a firewall rule.
   writes the terminal playlist (`#EXT-X-ENDLIST` for EVENT/VOD). A stale
   `playlist.m3u8.tmp` left by a crash is purged on construction with the
   other stale output. Without the `serve` feature the crate is now a
-  complete live origin on disk.
+  complete live origin on disk. A cut now fails with the playlist write's
+  I/O error if the playlist cannot be written.
 
 ### Testing — interop proxy
 

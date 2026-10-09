@@ -577,6 +577,7 @@ digest checked against its source file. Locally (GStreamer
 1.24.2, `--seconds 8`) the elementary cell received 240 of 240 video AUs
 and 80 of 80 KLV records with a KLV set digest equal to the source's, and
 0 non-conformant events.
+The elementary cell judges KLV content (count floor + set digest), not KLV timing; see the evidence page's publisher section.
 `docs/project/validation-evidence.md`'s "Publisher role" section collects
 these cells with the role's fuzz targets and the soak's `rtsp-publish` leg
 (see "Publish leg" below).

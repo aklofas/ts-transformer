@@ -926,6 +926,14 @@ their first CI run ([run 37858440566](https://github.com/aklofas/ts-transformer/
   cell gates that: it computes the source file's digest with `verify` and
   fails on any difference. In the final-tree CI run the cell logged equal
   source and received digests.
+  The cell holds KLV **content**, not KLV **timing**: no interop oracle
+  relates a KLV unit's PTS to the video PTS it was placed against, so
+  where the server puts a unit on the video timeline is pinned by the
+  aligner's unit tests (`align.rs`) only. A timing oracle for `klv-sync`
+  sources under `--remuxed` is after-tag work. The soak's `rtsp-publish`
+  leg is MP2T passthrough and never reaches the re-muxer.
+
+Sanitizers (ASan + TSan, nightly jobs) ran green on the final tree `43834194` in [run 37883341432](https://github.com/aklofas/ts-transformer/actions/runs/37883341432) (dispatched 2026-10-09).
 
 **What `--remuxed` skips, and why it is declared.** The server picks its
 own PIDs (PMT 0x1000, video 0x100, KLV 0x101 as `PrivateData`), so the

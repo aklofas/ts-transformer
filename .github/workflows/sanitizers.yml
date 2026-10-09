@@ -114,7 +114,7 @@ jobs:
         run: |
           cargo +nightly nextest run --profile sanitizer \
             -p tst-core -p tst-pipeline \
-            -p tst-rtp -p tst-udp -p tst-tcp -p tst-hls \
+            -p tst-rtp --features tst-rtp/rtsp-server-tls -p tst-udp -p tst-tcp -p tst-hls \
             --no-fail-fast \
             -Z build-std=std,panic_abort \
             --target x86_64-unknown-linux-gnu
@@ -341,7 +341,7 @@ jobs:
         run: |
           cargo +nightly nextest run --profile sanitizer \
             -p tst-core -p tst-pipeline \
-            -p tst-rtp -p tst-udp -p tst-tcp -p tst-hls \
+            -p tst-rtp --features tst-rtp/rtsp-server-tls -p tst-udp -p tst-tcp -p tst-hls \
             --no-fail-fast \
             -Z build-std=std,panic_abort \
             --target x86_64-unknown-linux-gnu

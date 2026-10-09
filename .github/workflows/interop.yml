@@ -31,8 +31,13 @@ on:
       # census assert (159/94/0/65/0) now gates those PRs too.
       - 'crates/tst-core/src/mpegts/**'
       # The rtsp-publish/* cells are the only real-tool check of the RTSP
-      # server's publish path (ANNOUNCE/RECORD, the re-muxer, SDP parsing).
+      # server's publish path (ANNOUNCE/RECORD, the re-muxer, SDP parsing,
+      # the H.264 depacketizer and the sender-report parsing that feeds
+      # alignment).
       - 'crates/tst-rtp/src/rtsp/**'
+      - 'crates/tst-rtp/src/sdp/**'
+      - 'crates/tst-rtp/src/h264/**'
+      - 'crates/tst-rtp/src/rtcp/**'
 
 permissions:
   contents: read

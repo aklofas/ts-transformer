@@ -51,7 +51,7 @@ vary from frame to frame, such as the frame length, are not compared.
 The receiver's report records only the count, which is 1. It does not record where the
 mismatching PES was. The sender's corruption log identifies the PES instead.
 
-The SRT leg's tap made 1597 injections, and 56 of them were on the audio PID 4161:
+The SRT leg's tap made 1597 injections, and 55 of them were on the audio PID 4161:
 
 | Class | Count |
 | --- | --- |
@@ -75,7 +75,7 @@ bytes 67..87 before: 00 00 01 C0 00 73 80 80 05 21 21 43 F3 01 | FF F9 4C 80 0D 
 bytes 67..87 after:  00 00 01 C0 00 73 80 80 05 21 21 43 F3 01 | 9A F9 4C 80 0D 7F FC
 ```
 
-The flip turned the syncword's first byte from `0xFF` into `0x9A`. The other 55
+The flip turned the syncword's first byte from `0xFF` into `0x9A`. The other 54
 injections on PID 4161 cannot change the compared bytes:
 
 - **Other `body_flip`s:** the remaining 19 flip bytes at offset 85 or later, past the two
