@@ -458,6 +458,7 @@ pub(crate) fn handle_record(
             session.peer_addr.ip(),
             track.announced.payload_type,
             publish.adapter.clone(),
+            publish.adapter_ended.clone(),
             publish.mount.clone(),
             publish.last_media_ms.clone(),
             publish.udp_cancel.clone(),

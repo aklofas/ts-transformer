@@ -7,7 +7,7 @@
 //! and TEARDOWN/disconnect ends it — see [`PublishSession::end`] and its
 //! `Drop` twin.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -55,6 +55,11 @@ pub(crate) struct PublishSession {
     pub(crate) tracks: Vec<PublishTrack>,
     pub(crate) recording: bool,
     pub(crate) adapter: Arc<Mutex<Box<dyn PublishAdapter>>>,
+    /// Set by [`Self::end`] under the adapter mutex and read by
+    /// [`super::udp_ingest::deliver`] under the same mutex: the gate that
+    /// keeps a UDP poll already past `select!` from feeding the adapter
+    /// after its final flush.
+    pub(crate) adapter_ended: Arc<AtomicBool>,
     /// Cancelled by [`Self::end`] to stop any UDP ingest tasks spawned
     /// per `TrackTransport::Udp` track — read (cloned) by
     /// `handle_record` and handed to each
@@ -108,6 +113,7 @@ impl PublishSession {
             tracks,
             recording: false,
             adapter: Arc::new(Mutex::new(adapter)),
+            adapter_ended: Arc::new(AtomicBool::new(false)),
             udp_cancel: CancellationToken::new(),
             udp_tasks: Vec::new(),
             last_media_ms: Arc::new(AtomicU64::new(0)),
@@ -243,10 +249,14 @@ impl PublishSession {
             return;
         }
         self.ended = true;
-        self.adapter
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .flush();
+        {
+            // Flush and close the gate under one hold of the adapter lock:
+            // a UDP delivery that acquires it next sees `adapter_ended`
+            // and drops its packet instead of feeding a flushed adapter.
+            let mut g = self.adapter.lock().unwrap_or_else(|e| e.into_inner());
+            self.adapter_ended.store(true, Ordering::SeqCst);
+            g.flush();
+        }
         self.udp_cancel.cancel();
         for h in self.udp_tasks.drain(..) {
             h.abort();
@@ -296,5 +306,104 @@ mod tests {
         // A degenerate request (one channel for both) is not honoured.
         assert_eq!(s.interleaved_pair_for(Some((4, 4))), Some((2, 3)));
         assert_eq!(s.interleaved_pair_for(Some((8, 9))), Some((8, 9)));
+    }
+
+    /// Models the synchronous tail of a UDP ingest poll that has already
+    /// won `select!` when `end()` runs: the delivery must be refused, never
+    /// reach the adapter after its final flush. The barrier forces the tail
+    /// to resume only after `end()` returned.
+    #[test]
+    fn a_delivery_that_loses_the_race_with_end_is_dropped() {
+        use crate::rtsp::server::publish::adapter::PublishAdapter;
+        use crate::rtsp::server::publish::udp_ingest::deliver;
+        use std::sync::Barrier;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct Observe(Arc<AtomicUsize>);
+        impl PublishAdapter for Observe {
+            fn on_rtp(&mut self, _: usize, _: &[u8]) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+            fn on_rtcp(&mut self, _: usize, _: &[u8]) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+            fn flush(&mut self) {}
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mount = PublishMountState::new("/p", 8, Default::default());
+        let shape = AnnounceShape {
+            shape: super::super::PublishShape::Mp2t,
+            tracks: vec![AnnouncedTrack {
+                index: 0,
+                control: Some("a".into()),
+                payload_type: 33,
+                kind: TrackKind::Mp2t,
+                h264_fmtp: None,
+            }],
+        };
+        let mut s = PublishSession::new(mount, 0, shape, Box::new(Observe(calls.clone())));
+        let adapter = s.adapter.clone();
+        let ended = s.adapter_ended.clone();
+        let entered = Arc::new(Barrier::new(2));
+        let resume = Arc::new(Barrier::new(2));
+        let (e, r) = (entered.clone(), resume.clone());
+        let tail = std::thread::spawn(move || {
+            e.wait(); // "recv_from won select!; this poll is executing"
+            r.wait(); // resumes after end() returned
+            let rtp = deliver(
+                &adapter,
+                &ended,
+                0,
+                &[0x80, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                false,
+            );
+            let rtcp = deliver(&adapter, &ended, 0, &[0x80, 200, 0, 1, 0, 0, 0, 0], true);
+            (rtp, rtcp)
+        });
+        entered.wait();
+        s.end();
+        resume.wait();
+        let (rtp, rtcp) = tail.join().unwrap();
+        assert!(!rtp && !rtcp, "deliveries after end() must be refused");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "callback after final flush"
+        );
+    }
+
+    #[test]
+    fn a_delivery_before_end_reaches_the_adapter() {
+        use crate::rtsp::server::publish::adapter::PublishAdapter;
+        use crate::rtsp::server::publish::udp_ingest::deliver;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct Observe(Arc<AtomicUsize>);
+        impl PublishAdapter for Observe {
+            fn on_rtp(&mut self, _: usize, _: &[u8]) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+            fn on_rtcp(&mut self, _: usize, _: &[u8]) {
+                self.0.fetch_add(10, Ordering::SeqCst);
+            }
+            fn flush(&mut self) {}
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mount = PublishMountState::new("/p", 8, Default::default());
+        let shape = AnnounceShape {
+            shape: super::super::PublishShape::Mp2t,
+            tracks: vec![AnnouncedTrack {
+                index: 0,
+                control: Some("a".into()),
+                payload_type: 33,
+                kind: TrackKind::Mp2t,
+                h264_fmtp: None,
+            }],
+        };
+        let s = PublishSession::new(mount, 0, shape, Box::new(Observe(calls.clone())));
+        assert!(deliver(&s.adapter, &s.adapter_ended, 0, &[0], false));
+        assert!(deliver(&s.adapter, &s.adapter_ended, 0, &[0], true));
+        assert_eq!(calls.load(Ordering::SeqCst), 11);
     }
 }

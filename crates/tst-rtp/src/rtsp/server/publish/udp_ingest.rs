@@ -10,7 +10,7 @@
 //! the IP half of it ([`same_ip`]) before reaching the adapter.
 
 use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::net::UdpSocket;
@@ -81,6 +81,33 @@ pub(crate) fn same_ip(from: SocketAddr, peer_ip: IpAddr) -> bool {
     from.ip().to_canonical() == peer_ip.to_canonical()
 }
 
+/// Hand one datagram to the adapter unless the session has ended. The
+/// `ended` flag is set by [`PublishSession::end`] while it holds the
+/// adapter mutex, and read here under the same mutex, so a delivery that
+/// acquires the lock after `end()`'s final flush is refused: aborting a
+/// task cannot interrupt a poll already past `select!`, and without this
+/// gate such a poll fed the OLD adapter — whose output goes to the mount's
+/// shared sinks — after the flush and after the publisher slot was freed.
+/// Returns `false` when refused.
+pub(crate) fn deliver(
+    adapter: &Mutex<Box<dyn PublishAdapter>>,
+    ended: &AtomicBool,
+    track: usize,
+    packet: &[u8],
+    rtcp: bool,
+) -> bool {
+    let mut g = adapter.lock().unwrap_or_else(|e| e.into_inner());
+    if ended.load(Ordering::SeqCst) {
+        return false;
+    }
+    if rtcp {
+        g.on_rtcp(track, packet);
+    } else {
+        g.on_rtp(track, packet);
+    }
+    true
+}
+
 /// Run one track's UDP RTP+RTCP ingest loop until `cancel` fires or a
 /// socket read fails.
 ///
@@ -105,6 +132,7 @@ pub(crate) fn spawn_udp_ingest(
     peer_ip: IpAddr,
     expected_pt: u8,
     adapter: Arc<Mutex<Box<dyn PublishAdapter>>>,
+    ended: Arc<AtomicBool>,
     mount: Arc<PublishMountState>,
     last_media_ms: Arc<AtomicU64>,
     cancel: CancellationToken,
@@ -131,10 +159,9 @@ pub(crate) fn spawn_udp_ingest(
                                 last_media_ms.store(PublishSession::now_ms(), Ordering::Relaxed);
                             }
                         }
-                        adapter
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .on_rtp(track, packet);
+                        if !deliver(&adapter, &ended, track, packet, false) {
+                            break; // the session ended under us
+                        }
                     }
                     Err(e) => {
                         tracing::debug!(
@@ -155,10 +182,9 @@ pub(crate) fn spawn_udp_ingest(
                         mount.tick(|s| s.source_rejected += 1);
                         continue;
                     }
-                    adapter
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .on_rtcp(track, &rtcp_buf[..n]);
+                    if !deliver(&adapter, &ended, track, &rtcp_buf[..n], true) {
+                        break;
+                    }
                 },
             }
         }
@@ -255,6 +281,7 @@ mod tests {
             peer_ip.parse().unwrap(),
             33,
             adapter,
+            Arc::new(AtomicBool::new(false)),
             mount.clone(),
             Arc::new(AtomicU64::new(0)),
             cancel.clone(),
@@ -306,6 +333,7 @@ mod tests {
             "127.0.0.1".parse().unwrap(),
             33,
             adapter,
+            Arc::new(AtomicBool::new(false)),
             mount.clone(),
             last.clone(),
             cancel.clone(),
