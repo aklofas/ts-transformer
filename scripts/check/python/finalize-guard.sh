@@ -6,7 +6,8 @@
 # Why: a thread that wakes from a native call after interpreter
 # finalisation began and re-takes the GIL is killed by CPython; that forced
 # unwind crosses PyO3's panic trampoline and the process aborts (exit 134).
-# `allow_threads_parking` parks such a thread for good instead.
+# `allow_threads_parking` parks such a thread instead (bounded at 3 s, by
+# which time a finalising process is gone).
 #
 # Every bare `.allow_threads(` site under
 # bindings/python/src/{srt,rtp,udp,tcp,rist,hls}/ is listed as

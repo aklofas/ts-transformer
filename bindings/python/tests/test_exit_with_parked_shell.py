@@ -252,3 +252,46 @@ def test_exit_with_a_daemon_thread_waking_after_finalize_is_clean() -> None:
     forced thread exit crossed PyO3's trampoline and glibc aborted (134)."""
     r = _run(SCRIPT_DAEMON_WAKES_AFTER_FINALIZE, timeout=30.0, what=" with a daemon thread waking after finalize")
     assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr[-800:]}"
+
+
+# An `atexit` handler registered BEFORE `import tstrans` runs AFTER the
+# tstrans exit hook (handlers run last-in-first-out). One that joins a
+# worker the hook woke must still complete: the woken worker parks only for
+# a bounded time, then returns and raises like any cancelled call.
+SCRIPT_EARLIER_ATEXIT_JOINS_WOKEN_WORKER = """
+    import atexit, threading
+
+    workers = []
+    atexit.register(lambda: [t.join() for t in workers])
+
+    import tstrans.srt as srt
+
+    lst = srt.Builder("srt://127.0.0.1:0?mode=listener").listen()
+    entered = threading.Event()
+
+    def park():
+        entered.set()
+        try:
+            lst.accept()
+        except Exception:
+            pass
+
+    t = threading.Thread(target=park, daemon=True)
+    workers.append(t)
+    t.start()
+    entered.wait()
+    for _ in range(20):
+        threading.Event().wait(0.01)  # hand the GIL over so accept() parks
+"""
+
+
+def test_an_earlier_registered_atexit_join_of_a_woken_worker_completes() -> None:
+    """The exit hook wakes the worker parked in `accept()`; an earlier
+    `atexit` handler then joins it. The bounded park lets the worker return,
+    so the join completes and the process exits 0 instead of hanging."""
+    r = _run(
+        SCRIPT_EARLIER_ATEXIT_JOINS_WOKEN_WORKER,
+        timeout=20.0,
+        what=" with an earlier-registered atexit joining a woken worker",
+    )
+    assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr[-800:]}"

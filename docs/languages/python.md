@@ -508,16 +508,18 @@ libsrt is torn down. That wait is bounded at 2 s — past it the teardown runs
 anyway, with the risk every such program carried before the guard existed —
 and it does not include the closes themselves: a connected sender with
 unsent data takes up to its linger time (`?linger=` on the URL) to close.
-A thread whose native call returns after the exit hook has run (a woken
-receive, a `next_publisher` slice, a byte sink) never re-enters Python: it
-parks until the process ends, as CPython does with daemon threads, instead
-of aborting the exit.
 
-Because of that, the call the hook wakes does not raise in the worker:
-the thread stays parked in the native call, prints nothing, and the
-process exits 0. Code after that call in the worker (a `finally`, a
-cleanup) does not run, so `close()` your shells before exit when the
-worker has cleanup of its own to do.
+A thread whose native call returns after the exit hook has run (a woken
+receive, a `next_publisher` slice, a byte sink) does not re-enter Python
+right away: it parks for up to 3 s, as CPython does with daemon threads,
+instead of aborting the exit. The process normally ends during that park,
+so the call the hook wakes does not raise in the worker, nothing is
+printed, and the process exits 0. Code after that call in the worker (a
+`finally`, a cleanup) does not run, so `close()` your shells before exit
+when the worker has cleanup of its own to do. The exception is an `atexit`
+handler registered before `import tstrans` (it runs after the tstrans
+hook) that joins such a worker: after the 3 s the worker returns, its call
+raises like any cancelled call, its `finally` runs, and the join completes.
 
 ### What answers while another thread is parked
 
