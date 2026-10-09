@@ -318,6 +318,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   closed every mount in its snapshot and the late registration then
   inserted one it had missed, whose transport stayed open until the server
   was dropped. The flag is now re-checked under the lock.
+- **An unusable sender-report pair no longer loses every KLV unit.** The
+  aligner adopted any pair of RTCP sender reports; when the two tracks'
+  NTP stamps came from different clocks (a wall-clock KLV source against
+  an uptime video clock), every KLV unit was placed thousands of seconds
+  off the video line and expired or was dropped while
+  `PublishMountStats::alignment` read `SenderReport`. A sender-report
+  mapping is now checked once, at the first KLV placement it makes: if
+  that would place the unit more than 30 s from the newest video PTS
+  seen, the mapping is abandoned for the first-packet-coincidence
+  fallback (`Provisional`), counted once in `alignment_steps`, and not
+  re-adopted while later report pairs recompute the same offset. A
+  mapping that has validated is kept through later video stalls.
 
 ### Testing — RTSP publisher role
 
