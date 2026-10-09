@@ -245,7 +245,10 @@ pub(crate) fn event_ordinal(
 /// the harness-only `rtsp-publish://host:port/mount`: `recv` then runs an
 /// RTSP server with one publish mount and judges whatever an external
 /// publisher RECORDs into it. A publisher that ends leaves the mount open
-/// and silent, so the capture still ends on this loop's own deadline.
+/// and silent, so the capture still ends on this loop's own deadline, and
+/// a later publisher's bytes join the same capture. The report then
+/// carries the mount's own counters in `publish_mount` (publishers ended,
+/// packets, drops), snapshotted before the server shut down.
 ///
 /// `no_klv_digest` skips the per-record digest accumulation
 /// `CellMetrics::klv_set_sha256` needs — that field comes back `None`
@@ -297,8 +300,8 @@ pub fn run(
     corruption_log: Option<&Path>,
     layout: WireLayout,
 ) -> Result<VerifyReport, String> {
-    let transport = transport::make_recv(url)?;
-    let report = recv_over_transport_with_layout(
+    let (transport, publish_mount) = transport::make_recv_probed(url)?;
+    let mut report = recv_over_transport_with_layout(
         transport,
         expect,
         seconds,
@@ -308,6 +311,9 @@ pub fn run(
         corruption_log,
         layout,
     )?;
+    // The transport is gone by now, so its listener has filled the probe.
+    report.publish_mount =
+        publish_mount.and_then(|p| p.lock().unwrap_or_else(|e| e.into_inner()).take());
     if let Some(target) = json_out {
         write_json(target, &report)?;
     }

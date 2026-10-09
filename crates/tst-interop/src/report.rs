@@ -986,13 +986,19 @@ pub mod stress;
 /// `soak-results.json` — the endurance half of the published interop
 /// evidence (`merge`/`render`, above, is the interop-matrix half).
 ///
-/// `scripts/interop/soak.sh` runs two concurrent legs over the same
+/// `scripts/interop/soak.sh` runs concurrent legs over the same
 /// wall-clock window: `srt` (through an impaired proxy with scheduled
 /// outage windows, sender wrapped via `send::run_managed` so it
-/// reconnects) and `rist` (through a second impaired proxy with NO
+/// reconnects), `rist` (through a second impaired proxy with NO
 /// outage — sustained impairment only; see this module's "Known
 /// telemetry limitations" section for why only one leg carries the
-/// outage/reconnect assertion). [`soak::build_soak_results`] is the
+/// outage/reconnect assertion) and `rtsp-publish` (a publish leg: an
+/// external RTSP publisher RECORDing into `recv`'s publish mount, its
+/// session ended and re-ANNOUNCEd on a declared period, judged by
+/// `publisher_generations_<leg>` from the mount's own count of ended
+/// publishers; no proxy, no tst-interop sender, so the proxy, reconnect
+/// and corruption verdicts are reported not applicable for it).
+/// [`soak::build_soak_results`] is the
 /// pure verdict engine; [`soak::run`] is the file-driven CLI wrapper
 /// `main.rs`'s `report soak` calls.
 ///
@@ -1110,7 +1116,9 @@ pub mod soak {
     use serde::{Deserialize, Serialize};
 
     use crate::proxy::ProxyStats;
-    use crate::report_types::{CellMetrics, ManagedSendStats, RECONNECT_MODES, VerifyReport};
+    use crate::report_types::{
+        CellMetrics, ManagedSendStats, PublishMountReport, RECONNECT_MODES, VerifyReport,
+    };
 
     /// Absolute ceiling on the warmup excluded from the RSS regression,
     /// in seconds. The actual warmup is `min(MAX_WARMUP_S,
@@ -1123,7 +1131,16 @@ pub mod soak {
     /// also shrink its own warmup exclusion.
     const MAX_WARMUP_S: f64 = 30.0 * 60.0;
 
-    const KNOWN_LEGS: [&str; 2] = ["srt", "rist"];
+    const KNOWN_LEGS: [&str; 3] = ["srt", "rist", "rtsp-publish"];
+
+    /// Legs fed by an external publisher RECORDing into `recv`'s publish
+    /// mount instead of by a `tst-interop send` through an impairment
+    /// proxy. Their processes are `recv` and `publisher` (the shell loop
+    /// that relaunches the publisher tool; the tool itself exits at the
+    /// end of every generation by design), they have no proxy-stats or
+    /// send report, and they are judged by [`build_soak_results`]'s
+    /// publish-leg verdicts rather than the transport-leg ones.
+    const PUBLISH_LEGS: [&str; 1] = ["rtsp-publish"];
 
     /// The per-leg corruption verdict family, in the order it is
     /// emitted. Named once so the tap-disabled and no-attribution arms
@@ -1238,22 +1255,34 @@ pub mod soak {
             .unwrap_or(2)
     }
 
-    const KNOWN_PROCESSES: [&str; 3] = ["send", "proxy", "recv"];
+    /// The processes one leg runs, i.e. the `process` values its rows in
+    /// `rss.csv` may carry and the `<leg>-<process>` roles it reaps into
+    /// `exits.json`.
+    fn leg_processes(leg: &str) -> &'static [&'static str] {
+        if PUBLISH_LEGS.contains(&leg) {
+            &["recv", "publisher"]
+        } else {
+            &["send", "proxy", "recv"]
+        }
+    }
 
     /// Every worker `soak.sh` reaps into `exits.json` (the sampler is
     /// killed by the script itself and is deliberately not a worker
-    /// here). The `worker_exits` verdict below only REQUIRES a role's
-    /// entry when its leg is present in `legs` (a single-leg srt-only
-    /// run, e.g. a local smoke test, never launches the `rist-*` three)
-    /// — but a key outside this whole set, for ANY run, is always an
-    /// unconditional failure, never silently ignored.
-    const WORKER_ROLES: [&str; 6] = [
+    /// here): `<leg>-<process>` for every leg and its [`leg_processes`].
+    /// The `worker_exits` verdict below only REQUIRES a role's entry when
+    /// its leg is present in the run (a single-leg srt-only run, e.g. a
+    /// local smoke test, never launches the `rist-*` three) — but a key
+    /// outside this whole set, for ANY run, is always an unconditional
+    /// failure, never silently ignored.
+    const WORKER_ROLES: [&str; 8] = [
         "srt-send",
         "srt-proxy",
         "srt-recv",
         "rist-send",
         "rist-proxy",
         "rist-recv",
+        "rtsp-publish-recv",
+        "rtsp-publish-publisher",
     ];
     /// Fraction of the cadence-implied post-warmup sample count a
     /// process must actually have.
@@ -1330,9 +1359,10 @@ pub mod soak {
                 ));
             }
             let process = fields[2].to_string();
-            if !KNOWN_PROCESSES.contains(&process.as_str()) {
+            let processes = leg_processes(&leg);
+            if !processes.contains(&process.as_str()) {
                 return Err(format!(
-                    "rss.csv line {line_no}: unknown process {process:?} (want one of {KNOWN_PROCESSES:?})"
+                    "rss.csv line {line_no}: unknown process {process:?} for leg {leg:?} (want one of {processes:?})"
                 ));
             }
             let pid: u32 = fields[3]
@@ -1448,6 +1478,17 @@ pub mod soak {
         /// and nothing else in a run's artifacts says which one it was.
         #[serde(default)]
         pub reconnect_mode: Option<String>,
+        /// A publish leg's publisher command line ([`PUBLISH_LEGS`]).
+        /// Recorded for provenance, not checked. `None` on every other
+        /// leg — and rejected there at parse time.
+        #[serde(default)]
+        pub publisher: Option<String>,
+        /// A publish leg's publisher generation length, in seconds: the
+        /// publisher session ends and a new one ANNOUNCEs every this many
+        /// seconds. Required on a publish leg and judged by
+        /// `publisher_generations_<leg>`; rejected on every other leg.
+        #[serde(default)]
+        pub publisher_drop_period_s: Option<u64>,
     }
 
     /// The declared half of the corruption tap's configuration, compared
@@ -1592,6 +1633,36 @@ pub mod soak {
                     ));
                 }
             }
+            // A publish leg must declare a drop period that leaves at
+            // least one re-ANNOUNCE for `publisher_generations_<leg>` to
+            // require; anything else could only pass that verdict
+            // vacuously. The publisher fields mean nothing on a
+            // transport leg, so declaring them there is a typo.
+            if PUBLISH_LEGS.contains(&leg.as_str()) {
+                match decl.publisher_drop_period_s {
+                    Some(p)
+                        if p > 0 && min_publisher_generations(cfg.expected_duration_s, p) >= 1 => {}
+                    Some(p) => {
+                        return Err(format!(
+                            "soak-config.json: legs.{leg}.publisher_drop_period_s ({p}) must be \
+                             > 0 and at most half of expected_duration_s ({}) — the run must \
+                             span at least two publisher generations",
+                            cfg.expected_duration_s
+                        ));
+                    }
+                    None => {
+                        return Err(format!(
+                            "soak-config.json: legs.{leg} is a publish leg and must declare \
+                             publisher_drop_period_s"
+                        ));
+                    }
+                }
+            } else if decl.publisher.is_some() || decl.publisher_drop_period_s.is_some() {
+                return Err(format!(
+                    "soak-config.json: legs.{leg} declares a publisher, but only a publish leg \
+                     ({PUBLISH_LEGS:?}) has one"
+                ));
+            }
         }
         // Reject a declared tap spec the tap itself would refuse, at
         // declaration time rather than after a multi-day run has produced
@@ -1612,8 +1683,122 @@ pub mod soak {
         Ok(cfg)
     }
 
+    /// The fewest ended publishers `publisher_generations_<leg>` accepts:
+    /// `floor(expected_duration_s / publisher_drop_period_s) - 1`. One
+    /// generation per declared period, less one because the last
+    /// publisher may still be connected when `recv` takes its snapshot
+    /// (a publisher counts once it has ENDED), and the leg starts a few
+    /// seconds into the run.
+    fn min_publisher_generations(expected_duration_s: f64, period_s: u64) -> u64 {
+        let periods = (expected_duration_s / period_s as f64).floor();
+        if periods.is_finite() && periods >= 1.0 {
+            (periods as u64) - 1
+        } else {
+            0
+        }
+    }
+
+    /// `profile_declared_<leg>`: the recv report was judged against the
+    /// profile `soak-config.json` declared for the leg. Shared by
+    /// transport and publish legs.
+    fn profile_declared_verdict(
+        leg_name: &str,
+        declared: Option<&LegDeclaration>,
+        recv: &VerifyReport,
+    ) -> SoakVerdict {
+        let (profile_pass, profile_detail) = match declared {
+            None => (
+                true,
+                format!("{leg_name}: no declaration (pre-realism config)"),
+            ),
+            Some(d) => match &recv.profile {
+                Some(observed) if *observed == d.profile => (
+                    true,
+                    format!("{leg_name}: recv judged the declared profile {observed:?}"),
+                ),
+                Some(observed) => (
+                    false,
+                    format!(
+                        "{leg_name}: config declared profile {:?} but the recv report was \
+                         judged against {observed:?}",
+                        d.profile
+                    ),
+                ),
+                None => (
+                    false,
+                    format!(
+                        "{leg_name}: config declared profile {:?} but the recv report carries \
+                         no profile (an offline `verify` report, or one written before `recv` \
+                         stamped it)",
+                        d.profile
+                    ),
+                ),
+            },
+        };
+        SoakVerdict {
+            name: format!("profile_declared_{leg_name}"),
+            pass: profile_pass,
+            provisional: false,
+            detail: profile_detail,
+        }
+    }
+
+    /// `klv_declared_<leg>`: the receiver ran the KLV oracles of the set
+    /// `soak-config.json` declared for the leg. Shared by transport and
+    /// publish legs.
+    fn klv_declared_verdict(
+        leg_name: &str,
+        declared: Option<&LegDeclaration>,
+        recv: &VerifyReport,
+    ) -> SoakVerdict {
+        let observed_rich = recv.metrics.klv_rich.is_some();
+        let (klv_pass, klv_detail) = match declared.and_then(|d| d.klv_set.as_deref()) {
+            None => (
+                true,
+                format!("{leg_name}: no KLV set declared (pre-realism config)"),
+            ),
+            Some("rich") if observed_rich => {
+                let rich = recv.metrics.klv_rich.as_ref();
+                (
+                    true,
+                    format!(
+                        "{leg_name}: declared rich and recv judged {} record(s) against the \
+                         rich oracles (seed {:?})",
+                        rich.map_or(0, |r| r.records),
+                        declared.and_then(|d| d.klv_seed)
+                    ),
+                )
+            }
+            Some("rich") => (
+                false,
+                format!(
+                    "{leg_name}: config declared the rich KLV set but the recv report carries \
+                     no klv_rich block — the receiver judged this leg in compact mode, so no \
+                     rich-KLV oracle ran"
+                ),
+            ),
+            Some("compact") if observed_rich => (
+                false,
+                format!(
+                    "{leg_name}: config declared the compact KLV set but the recv report \
+                     carries a klv_rich block"
+                ),
+            ),
+            Some(other) => (
+                !observed_rich,
+                format!("{leg_name}: declared KLV set {other:?}"),
+            ),
+        };
+        SoakVerdict {
+            name: format!("klv_declared_{leg_name}"),
+            pass: klv_pass,
+            provisional: false,
+            detail: klv_detail,
+        }
+    }
+
     /// `soak.sh`'s `exits.json`: `{ "<role>": <exit status>, ... }` for every
-    /// worker it reaped (the six leg processes; never the sampler, which the
+    /// worker it reaped (every leg's processes; never the sampler, which the
     /// script itself kills on schedule).
     pub fn parse_worker_exits(text: &str) -> Result<BTreeMap<String, i32>, String> {
         serde_json::from_str(text).map_err(|e| format!("exits.json: {e}"))
@@ -1869,11 +2054,42 @@ pub mod soak {
         pub process_exits: Vec<ProcessExit>,
         pub worker_exits: BTreeMap<String, i32>,
         pub legs: Vec<LegResult>,
+        /// The publish legs ([`PUBLISH_LEGS`]), apart from `legs` because
+        /// they have no proxy or sender to report on. `#[serde(default)]`
+        /// so a results file written before publish legs existed still
+        /// loads.
+        #[serde(default)]
+        pub publish_legs: Vec<PublishLegResult>,
         pub verdicts: Vec<SoakVerdict>,
         /// `true` iff every non-[`SoakVerdict::provisional`] verdict
         /// passed.
         pub overall_pass: bool,
         pub limitations: Vec<String>,
+    }
+
+    /// One publish leg's result: what its receiver judged, and the
+    /// publish mount's own counters beside the declared drop period.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PublishLegResult {
+        pub leg: String,
+        pub publisher_drop_period_s: Option<u64>,
+        /// The floor `publisher_generations_<leg>` held the mount's
+        /// `generation` to (`None` without a declared drop period).
+        pub min_generations: Option<u64>,
+        pub publish_mount: Option<PublishMountReport>,
+        pub recv_pass: bool,
+        pub recv_failures: Vec<String>,
+        pub recv_video_aus: u64,
+    }
+
+    /// A publish leg's raw evidence: the receiver's report only. The
+    /// publisher is an external tool that writes no report of its own;
+    /// what it delivered is what the receiver judged, and how many
+    /// publishers came and went is the mount's own count, carried in the
+    /// report's `publish_mount` block.
+    #[derive(Debug, Clone)]
+    pub struct PublishLegArtifacts {
+        pub recv_report: VerifyReport,
     }
 
     /// One leg's raw evidence artifacts — `soak.sh` writes these as
@@ -1896,6 +2112,9 @@ pub mod soak {
         /// `"rist"` is included whenever that leg's three report files
         /// were supplied.
         pub legs: Vec<(String, LegArtifacts)>,
+        /// `(leg name, artifacts)` for each publish leg ([`PUBLISH_LEGS`])
+        /// the run had — empty when it had none.
+        pub publish_legs: Vec<(String, PublishLegArtifacts)>,
         pub rss_slope_threshold_kb_per_hour: Option<f64>,
         /// The run's declared parameters (`soak-config.json`) — judged
         /// against, never derived from, the artifacts on disk.
@@ -1927,6 +2146,7 @@ pub mod soak {
         let SoakInputs {
             rss_samples,
             legs,
+            publish_legs,
             rss_slope_threshold_kb_per_hour,
             config,
             worker_exits,
@@ -2013,9 +2233,15 @@ pub mod soak {
         for points in groups.values_mut() {
             points.sort_by(|a, b| a.0.total_cmp(&b.0));
         }
+        // Every leg this run had, transport and publish alike.
+        let leg_names: Vec<&str> = legs
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .chain(publish_legs.iter().map(|(n, _)| n.as_str()))
+            .collect();
         // Every `(leg, process)` combination this run is SUPPOSED to
-        // have RSS evidence for — one entry per `KNOWN_PROCESSES` value
-        // for each leg actually present in `legs`. Compared against
+        // have RSS evidence for — one entry per `leg_processes` value
+        // for each leg actually present. Compared against
         // `groups`'s keys (which ones actually have >=1 post-warmup,
         // rss_kb-present sample) BEFORE `groups` is consumed below, so a
         // whole missing process (or one whose only samples are all
@@ -2025,10 +2251,10 @@ pub mod soak {
         // for why a total data absence needs a harder signal than "this
         // vec happens to be shorter than expected."
         let mut missing_data: Vec<(String, String)> = Vec::new();
-        for (leg_name, _) in &legs {
-            for process in KNOWN_PROCESSES {
-                if !groups.contains_key(&(leg_name.clone(), process.to_string())) {
-                    missing_data.push((leg_name.clone(), process.to_string()));
+        for &leg_name in &leg_names {
+            for &process in leg_processes(leg_name) {
+                if !groups.contains_key(&(leg_name.to_string(), process.to_string())) {
+                    missing_data.push((leg_name.to_string(), process.to_string()));
                 }
             }
         }
@@ -2164,16 +2390,21 @@ pub mod soak {
         // A single-leg (srt-only) run — e.g. a local smoke test, or any
         // invocation that omits the three `--rist-*` flags per
         // `run`'s own doc comment — never launches the `rist-*` trio at
-        // all, so only the roles whose leg is actually present in
-        // `legs` are required. The same scoping `missing_data` above
-        // already applies to RSS/leg checks.
-        let required_roles = WORKER_ROLES.iter().copied().filter(|role| {
-            legs.iter()
-                .any(|(leg_name, _)| role.starts_with(leg_name.as_str()))
+        // all, so only the roles whose leg is actually present are
+        // required. The same scoping `missing_data` above already
+        // applies to RSS/leg checks. A publish leg's roles are its
+        // `recv` and the publisher LOOP — the publisher tool itself exits
+        // at the end of every generation by design and is never a
+        // worker.
+        let required_roles = leg_names.iter().flat_map(|&leg_name| {
+            leg_processes(leg_name)
+                .iter()
+                .map(move |process| format!("{leg_name}-{process}"))
         });
 
         let mut exit_problems: Vec<String> = Vec::new();
         for role in required_roles {
+            let role = role.as_str();
             match worker_exits.get(role) {
                 None => exit_problems.push(format!("{role}: no exit status recorded")),
                 Some(&status) => {
@@ -2426,41 +2657,11 @@ pub mod soak {
             // (or a different impairment) than its own evidence page
             // claims would otherwise pass every other verdict.
             let declared = config.legs.get(leg_name.as_str());
-            let (profile_pass, profile_detail) = match declared {
-                None => (
-                    true,
-                    format!("{leg_name}: no declaration (pre-realism config)"),
-                ),
-                Some(d) => match &artifacts.recv_report.profile {
-                    Some(observed) if *observed == d.profile => (
-                        true,
-                        format!("{leg_name}: recv judged the declared profile {observed:?}"),
-                    ),
-                    Some(observed) => (
-                        false,
-                        format!(
-                            "{leg_name}: config declared profile {:?} but the recv report was \
-                             judged against {observed:?}",
-                            d.profile
-                        ),
-                    ),
-                    None => (
-                        false,
-                        format!(
-                            "{leg_name}: config declared profile {:?} but the recv report carries \
-                             no profile (an offline `verify` report, or one written before `recv` \
-                             stamped it)",
-                            d.profile
-                        ),
-                    ),
-                },
-            };
-            verdicts.push(SoakVerdict {
-                name: format!("profile_declared_{leg_name}"),
-                pass: profile_pass,
-                provisional: false,
-                detail: profile_detail,
-            });
+            verdicts.push(profile_declared_verdict(
+                leg_name,
+                declared,
+                &artifacts.recv_report,
+            ));
 
             // The echo carries the generated phase table too, but only its
             // three inputs are declared — the table is a pure function of
@@ -2532,50 +2733,11 @@ pub mod soak {
             // checking none of the content contract the evidence page
             // says it checks. The observable is exactly that block's
             // presence.
-            let observed_rich = artifacts.recv_report.metrics.klv_rich.is_some();
-            let (klv_pass, klv_detail) = match declared.and_then(|d| d.klv_set.as_deref()) {
-                None => (
-                    true,
-                    format!("{leg_name}: no KLV set declared (pre-realism config)"),
-                ),
-                Some("rich") if observed_rich => {
-                    let rich = artifacts.recv_report.metrics.klv_rich.as_ref();
-                    (
-                        true,
-                        format!(
-                            "{leg_name}: declared rich and recv judged {} record(s) against the \
-                             rich oracles (seed {:?})",
-                            rich.map_or(0, |r| r.records),
-                            declared.and_then(|d| d.klv_seed)
-                        ),
-                    )
-                }
-                Some("rich") => (
-                    false,
-                    format!(
-                        "{leg_name}: config declared the rich KLV set but the recv report carries \
-                         no klv_rich block — the receiver judged this leg in compact mode, so no \
-                         rich-KLV oracle ran"
-                    ),
-                ),
-                Some("compact") if observed_rich => (
-                    false,
-                    format!(
-                        "{leg_name}: config declared the compact KLV set but the recv report \
-                         carries a klv_rich block"
-                    ),
-                ),
-                Some(other) => (
-                    !observed_rich,
-                    format!("{leg_name}: declared KLV set {other:?}"),
-                ),
-            };
-            verdicts.push(SoakVerdict {
-                name: format!("klv_declared_{leg_name}"),
-                pass: klv_pass,
-                provisional: false,
-                detail: klv_detail,
-            });
+            verdicts.push(klv_declared_verdict(
+                leg_name,
+                declared,
+                &artifacts.recv_report,
+            ));
 
             // Fourth declaration check. The two reconnect modes spend an
             // outage differently — `blocking` stalls the producer and
@@ -2958,6 +3120,128 @@ pub mod soak {
             });
         }
 
+        // Publish legs. No proxy and no tst-interop sender, so the
+        // drop-rate, reconnect-count and corruption verdicts have nothing
+        // to judge; the declaration checks that DO apply run as on a
+        // transport leg, the ones that cannot say why, and the leg's own
+        // exercise — the publisher dropping and re-ANNOUNCing on a
+        // schedule — is `publisher_generations_<leg>`.
+        let mut publish_leg_results = Vec::new();
+        for (leg_name, artifacts) in &publish_legs {
+            let recv = &artifacts.recv_report;
+            let declared = config.legs.get(leg_name.as_str());
+            verdicts.push(SoakVerdict {
+                name: format!("recv_invariants_{leg_name}"),
+                pass: recv.pass,
+                provisional: false,
+                detail: if recv.pass {
+                    "final tallies within expected bounds across every publisher generation"
+                        .to_string()
+                } else {
+                    recv.failures.join("; ")
+                },
+            });
+            verdicts.push(profile_declared_verdict(leg_name, declared, recv));
+            verdicts.push(klv_declared_verdict(leg_name, declared, recv));
+
+            let schedule = declared.and_then(|d| d.schedule.as_ref());
+            verdicts.push(SoakVerdict {
+                name: format!("schedule_declared_{leg_name}"),
+                pass: schedule.is_none(),
+                provisional: false,
+                detail: match schedule {
+                    None => format!(
+                        "{leg_name}: not applicable — this leg has no impairment proxy (the \
+                         publisher pushes to the mount over loopback TCP) and declares no schedule"
+                    ),
+                    Some(d) => format!(
+                        "{leg_name}: config declared schedule seed {} / {} phase(s) / {}s, but \
+                         this leg has no proxy to run it",
+                        d.seed, d.phases, d.phase_s
+                    ),
+                },
+            });
+
+            let mode = declared.and_then(|d| d.reconnect_mode.as_deref());
+            verdicts.push(SoakVerdict {
+                name: format!("reconnect_mode_declared_{leg_name}"),
+                pass: mode.is_none(),
+                provisional: false,
+                detail: match mode {
+                    None => format!(
+                        "{leg_name}: not applicable — the publisher is an external tool, not a \
+                         managed tst-interop sender; its drops are what \
+                         publisher_generations_{leg_name} judges"
+                    ),
+                    Some(m) => format!(
+                        "{leg_name}: config declared reconnect mode {m:?}, but this leg has no \
+                         managed sender to run it"
+                    ),
+                },
+            });
+
+            for n in CORRUPTION_VERDICTS {
+                verdicts.push(SoakVerdict {
+                    name: format!("{n}_{leg_name}"),
+                    pass: true,
+                    provisional: false,
+                    detail: format!(
+                        "{leg_name}: not applicable — the publisher replays a generated stream \
+                         with no corruption tap, so there is no injection log to judge against"
+                    ),
+                });
+            }
+
+            // The mount counts a publisher once its session has ENDED, so
+            // the floor allows for the last one still being connected —
+            // see `min_publisher_generations`.
+            let period = declared.and_then(|d| d.publisher_drop_period_s);
+            let min_generations =
+                period.map(|p| min_publisher_generations(config.expected_duration_s, p));
+            let observed = recv.publish_mount.as_ref().map(|m| m.generation);
+            let (gen_pass, gen_detail) = match (period, min_generations, observed) {
+                (Some(p), Some(min), Some(g)) => (
+                    g >= min,
+                    format!(
+                        "{leg_name}: {g} publisher(s) ended on the mount, against a floor of \
+                         {min} = floor({:.0}s / {p}s) - 1",
+                        config.expected_duration_s
+                    ),
+                ),
+                (Some(_), _, None) => (
+                    false,
+                    format!(
+                        "{leg_name}: the recv report carries no publish_mount block, so nothing \
+                         says how many publishers came and went (recv ran on a non-publish URL, or \
+                         predates the block)"
+                    ),
+                ),
+                _ => (
+                    false,
+                    format!(
+                        "{leg_name}: no publisher_drop_period_s declared for this publish leg, \
+                         so there is no floor to judge the mount's generation count against"
+                    ),
+                ),
+            };
+            verdicts.push(SoakVerdict {
+                name: format!("publisher_generations_{leg_name}"),
+                pass: gen_pass,
+                provisional: false,
+                detail: gen_detail,
+            });
+
+            publish_leg_results.push(PublishLegResult {
+                leg: leg_name.clone(),
+                publisher_drop_period_s: period,
+                min_generations,
+                publish_mount: recv.publish_mount.clone(),
+                recv_pass: recv.pass,
+                recv_failures: recv.failures.clone(),
+                recv_video_aus: recv.metrics.video_aus,
+            });
+        }
+
         let overall_pass = verdicts.iter().all(|v| v.provisional || v.pass);
 
         Ok(SoakResults {
@@ -2970,6 +3254,7 @@ pub mod soak {
             process_exits,
             worker_exits,
             legs: leg_results,
+            publish_legs: publish_leg_results,
             verdicts,
             overall_pass,
             limitations: vec![
@@ -3042,7 +3327,8 @@ pub mod soak {
     /// path, build [`SoakInputs`], and write [`build_soak_results`]'s
     /// output to `out_path`. The `rist` leg is entirely optional — pass
     /// `None` to omit it (the `srt` leg alone is enough for a local
-    /// smoke run; the full 72h run supplies both).
+    /// smoke run; the full 72h run supplies both). So is the
+    /// `rtsp-publish` leg, whose only artifact is its recv report.
     #[allow(clippy::too_many_arguments)]
     pub fn run(
         rss_path: &Path,
@@ -3053,6 +3339,7 @@ pub mod soak {
         srt_send_report_path: &Path,
         srt_outage_period_s: u64,
         rist: Option<(&Path, &Path, &Path)>,
+        rtsp_publish_recv_report: Option<&Path>,
         rss_slope_threshold_kb_per_hour: Option<f64>,
         out_path: &Path,
     ) -> Result<SoakResults, String> {
@@ -3077,9 +3364,20 @@ pub mod soak {
             ));
         }
 
+        let mut publish_legs = Vec::new();
+        if let Some(path) = rtsp_publish_recv_report {
+            let recv_report: VerifyReport = serde_json::from_str(&read_to_string(path)?)
+                .map_err(|e| format!("parse {}: {e}", path.display()))?;
+            publish_legs.push((
+                "rtsp-publish".to_string(),
+                PublishLegArtifacts { recv_report },
+            ));
+        }
+
         let results = build_soak_results(SoakInputs {
             rss_samples,
             legs,
+            publish_legs,
             rss_slope_threshold_kb_per_hour,
             config,
             worker_exits,
@@ -3212,6 +3510,7 @@ pub mod soak {
                 reconnects: None,
                 profile: None,
                 skipped_oracles: Vec::new(),
+                publish_mount: None,
             }
         }
 
@@ -3284,6 +3583,7 @@ pub mod soak {
             exits: BTreeMap<String, i32>,
         ) -> SoakInputs {
             SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples,
                 legs: one_leg(LegArtifacts {
                     proxy_stats: proxy_stats(1000, 0, 0.0, None, 0),
@@ -3464,6 +3764,7 @@ pub mod soak {
                 samples.push(rss_row("srt", "recv", t, Some(50_000)));
             }
             let results = build_soak_results(SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples,
                 legs: one_leg(LegArtifacts {
                     proxy_stats: proxy_stats(1000, 0, 0.0, None, 0),
@@ -3514,6 +3815,7 @@ pub mod soak {
                 samples.push(rss_row("srt", "proxy", elapsed_s, Some(20_000)));
             }
             let base_inputs = || SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples.clone(),
                 legs: one_leg(LegArtifacts {
                     proxy_stats: proxy_stats(1000, 0, 0.0, None, 0),
@@ -3571,6 +3873,7 @@ pub mod soak {
         fn unexplained_excess_drop_fails_the_drop_rate_check() {
             let samples = vec![rss_row("srt", "send", 0.0, Some(1000))];
             let results = build_soak_results(SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples,
                 legs: one_leg(LegArtifacts {
                     // No outage configured, loss_pct=0 -> expected drop
@@ -3624,6 +3927,7 @@ pub mod soak {
                 samples.push(rss_row("srt", "recv", t, Some(1000)));
             }
             let results = build_soak_results(SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples,
                 legs: one_leg(LegArtifacts {
                     proxy_stats: proxy_stats(total - dropped, dropped, 2.0, Some(3600), 360),
@@ -3669,6 +3973,7 @@ pub mod soak {
                 rss_row("srt", "send", 3542.0, Some(1000)),
             ];
             let results = build_soak_results(SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples,
                 legs: one_leg(LegArtifacts {
                     proxy_stats: proxy_stats(98_000, 2_000, 2.0, Some(21600), 90),
@@ -3703,6 +4008,7 @@ pub mod soak {
                 rss_row("srt", "send", 259200.0, Some(1000)),
             ];
             let results = build_soak_results(SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples,
                 legs: one_leg(LegArtifacts {
                     proxy_stats: proxy_stats(98_000, 2_000, 2.0, Some(21600), 90),
@@ -3741,6 +4047,7 @@ pub mod soak {
                 rss_row("srt", "recv", 0.0, Some(1000)),
             ];
             let results = build_soak_results(SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples,
                 legs: one_leg(LegArtifacts {
                     proxy_stats: proxy_stats(total - dropped, dropped, 2.0, None, 0),
@@ -3969,6 +4276,7 @@ pub mod soak {
                 samples.push(rss_row("srt", "recv", t, Some(1000)));
             }
             let results = build_soak_results(SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples,
                 legs: one_leg(LegArtifacts {
                     proxy_stats: proxy_stats(total - dropped, dropped, 2.0, None, 0),
@@ -4153,6 +4461,7 @@ pub mod soak {
                 rss_row("srt", "recv", 0.0, Some(1000)),
             ];
             let results = build_soak_results(SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples,
                 legs: one_leg(LegArtifacts {
                     proxy_stats: proxy_stats(0, 0, 2.0, None, 0),
@@ -4204,6 +4513,7 @@ pub mod soak {
                 rss_row("srt", "send", 30.0, Some(1000)),
             ];
             let results = build_soak_results(SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples,
                 legs: Vec::new(),
                 rss_slope_threshold_kb_per_hour: None,
@@ -4227,6 +4537,7 @@ pub mod soak {
                 rss_row("srt", "recv", 30.0, None),
             ];
             let results = build_soak_results(SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples,
                 legs: Vec::new(),
                 rss_slope_threshold_kb_per_hour: None,
@@ -4309,6 +4620,7 @@ pub mod soak {
                 0,
                 None,
                 None,
+                None,
                 &out_path,
             )
             .expect("run must succeed");
@@ -4388,6 +4700,7 @@ pub mod soak {
                 0,
                 None,
                 None,
+                None,
                 &out_path,
             )
             .expect_err("a header-only rss.csv must be a hard error, not a clean pass");
@@ -4463,6 +4776,7 @@ pub mod soak {
                 21600,
                 None,
                 None,
+                None,
                 &out_path,
             )
             .unwrap_err();
@@ -4536,6 +4850,7 @@ pub mod soak {
                 21600,
                 None,
                 None,
+                None,
                 &out_path,
             )
             .unwrap_err();
@@ -4555,6 +4870,7 @@ pub mod soak {
         #[test]
         fn empty_rss_samples_is_a_hard_error() {
             let err = build_soak_results(SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: Vec::new(),
                 legs: one_leg(LegArtifacts {
                     proxy_stats: proxy_stats(1000, 0, 0.0, None, 0),
@@ -4588,6 +4904,7 @@ pub mod soak {
                 // "recv" never appears at all.
             }
             let results = build_soak_results(SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples,
                 legs: one_leg(LegArtifacts {
                     proxy_stats: proxy_stats(1000, 0, 0.0, None, 0),
@@ -4653,6 +4970,7 @@ pub mod soak {
                 samples.push(rss_row("srt", process, 6000.0, Some(10_500)));
             }
             let results = build_soak_results(SoakInputs {
+                publish_legs: Vec::new(),
                 rss_samples: samples,
                 legs: one_leg(LegArtifacts {
                     proxy_stats: proxy_stats(1000, 0, 0.0, None, 0),
@@ -5610,6 +5928,8 @@ pub mod soak {
                     klv_set: None,
                     klv_seed: None,
                     reconnect_mode: None,
+                    publisher: None,
+                    publisher_drop_period_s: None,
                 },
             );
         }
@@ -6033,6 +6353,209 @@ pub mod soak {
                 "the declared schedule must survive the round trip"
             );
             assert!(cfg.legs["rist"].schedule.is_none());
+        }
+
+        /// The `rtsp-publish` leg's declaration as `soak.sh` writes it.
+        fn publish_declaration(period: Option<u64>) -> LegDeclaration {
+            LegDeclaration {
+                profile: "baseline".to_string(),
+                schedule: None,
+                klv_set: None,
+                klv_seed: None,
+                reconnect_mode: None,
+                publisher: Some("gst-launch-1.0 filesrc ! tsparse ! rtspclientsink".to_string()),
+                publisher_drop_period_s: period,
+            }
+        }
+
+        /// [`healthy_inputs`] plus a healthy `rtsp-publish` leg: RSS for
+        /// its two processes, clean exits for its two roles, a declared
+        /// drop period, and a passing recv report whose mount counted
+        /// `generation` ended publishers (`None` = no `publish_mount`
+        /// block at all).
+        fn publish_inputs(generation: Option<u64>, period: Option<u64>) -> SoakInputs {
+            let mut inputs = healthy_inputs();
+            for i in 0..121 {
+                let t = i as f64 * 30.0;
+                inputs
+                    .rss_samples
+                    .push(rss_row("rtsp-publish", "recv", t, Some(40_000)));
+                inputs
+                    .rss_samples
+                    .push(rss_row("rtsp-publish", "publisher", t, Some(4_000)));
+            }
+            for role in ["rtsp-publish-recv", "rtsp-publish-publisher"] {
+                inputs.worker_exits.insert(role.to_string(), 0);
+            }
+            inputs
+                .config
+                .legs
+                .insert("rtsp-publish".to_string(), publish_declaration(period));
+            let mut recv_report = passing_recv_report(1000);
+            recv_report.profile = Some("baseline".to_string());
+            recv_report.publish_mount = generation.map(|generation| PublishMountReport {
+                generation,
+                ..PublishMountReport::default()
+            });
+            inputs.publish_legs.push((
+                "rtsp-publish".to_string(),
+                PublishLegArtifacts { recv_report },
+            ));
+            inputs
+        }
+
+        /// 3600 s declared, 600 s period: floor(3600 / 600) - 1 = 5. A
+        /// mount that counted exactly the floor passes, and the leg's
+        /// not-applicable verdicts pass with their reason, so the whole
+        /// run passes.
+        #[test]
+        fn publisher_generations_passes_at_the_floor() {
+            let r = build_soak_results(publish_inputs(Some(5), Some(600))).unwrap();
+            let v = verdict(&r, "publisher_generations_rtsp-publish");
+            assert!(v.pass, "{}", v.detail);
+            assert!(v.detail.contains("floor of 5"), "{}", v.detail);
+            for name in [
+                "reconnect_mode_declared_rtsp-publish",
+                "schedule_declared_rtsp-publish",
+                "corruption_attributed_rtsp-publish",
+            ] {
+                let v = verdict(&r, name);
+                assert!(
+                    v.pass && v.detail.contains("not applicable"),
+                    "{name}: {}",
+                    v.detail
+                );
+            }
+            assert!(verdict(&r, "rss_sample_coverage_rtsp-publish_publisher").pass);
+            assert!(verdict(&r, "worker_exits").pass);
+            assert_eq!(r.publish_legs.len(), 1);
+            assert_eq!(r.publish_legs[0].min_generations, Some(5));
+            assert!(r.overall_pass, "{:?}", r.verdicts);
+        }
+
+        #[test]
+        fn publisher_generations_fails_one_below_the_floor() {
+            let r = build_soak_results(publish_inputs(Some(4), Some(600))).unwrap();
+            let v = verdict(&r, "publisher_generations_rtsp-publish");
+            assert!(!v.pass && !v.provisional, "{}", v.detail);
+            assert!(v.detail.contains("4 publisher(s)"), "{}", v.detail);
+            assert!(!r.overall_pass);
+        }
+
+        /// A recv report with no `publish_mount` block says nothing about
+        /// how many publishers came and went: a failure, not a pass.
+        #[test]
+        fn publisher_generations_fails_without_a_publish_mount_block() {
+            let r = build_soak_results(publish_inputs(None, Some(600))).unwrap();
+            let v = verdict(&r, "publisher_generations_rtsp-publish");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("no publish_mount block"), "{}", v.detail);
+        }
+
+        #[test]
+        fn publisher_generations_fails_without_a_declared_period() {
+            let r = build_soak_results(publish_inputs(Some(9), None)).unwrap();
+            let v = verdict(&r, "publisher_generations_rtsp-publish");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(
+                v.detail.contains("no publisher_drop_period_s"),
+                "{}",
+                v.detail
+            );
+        }
+
+        /// A run without the publish leg emits no publish verdict at all
+        /// and never asks for its roles.
+        #[test]
+        fn a_run_without_the_publish_leg_has_no_publisher_verdicts() {
+            let r = build_soak_results(healthy_inputs()).unwrap();
+            assert!(
+                !r.verdicts.iter().any(|v| v.name.ends_with("_rtsp-publish")),
+                "{:?}",
+                r.verdicts
+            );
+            assert!(r.publish_legs.is_empty());
+            assert!(verdict(&r, "worker_exits").pass);
+        }
+
+        /// The publish leg's roles are `recv` and the publisher LOOP: a
+        /// run missing either fails `worker_exits` by name, and one
+        /// missing the loop's RSS fails its data-present verdict.
+        #[test]
+        fn publish_leg_requires_its_recv_and_publisher_roles() {
+            let mut inputs = publish_inputs(Some(5), Some(600));
+            inputs.worker_exits.remove("rtsp-publish-publisher");
+            inputs
+                .rss_samples
+                .retain(|s| !(s.leg == "rtsp-publish" && s.process == "publisher"));
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "worker_exits");
+            assert!(
+                !v.pass && v.detail.contains("rtsp-publish-publisher"),
+                "{}",
+                v.detail
+            );
+            assert!(!verdict(&r, "rss_data_present_rtsp-publish_publisher").pass);
+        }
+
+        /// The not-applicable verdicts are not free passes: a publish leg
+        /// declared with a schedule or a reconnect mode has nothing that
+        /// could have run either, and fails.
+        #[test]
+        fn publish_leg_declaring_a_schedule_or_mode_fails_those_verdicts() {
+            let mut inputs = publish_inputs(Some(5), Some(600));
+            let decl = inputs.config.legs.get_mut("rtsp-publish").unwrap();
+            decl.schedule = Some(ScheduleDeclaration {
+                seed: 1,
+                phases: 4,
+                phase_s: 900,
+            });
+            decl.reconnect_mode = Some("background".to_string());
+            let r = build_soak_results(inputs).unwrap();
+            assert!(!verdict(&r, "schedule_declared_rtsp-publish").pass);
+            assert!(!verdict(&r, "reconnect_mode_declared_rtsp-publish").pass);
+        }
+
+        #[test]
+        fn rss_csv_takes_publisher_rows_only_on_a_publish_leg() {
+            let header = "elapsed_s,leg,process,pid,rss_kb\n";
+            assert!(parse_rss_csv(&format!("{header}0,rtsp-publish,publisher,7,100\n")).is_ok());
+            assert!(parse_rss_csv(&format!("{header}0,rtsp-publish,send,7,100\n")).is_err());
+            assert!(parse_rss_csv(&format!("{header}0,srt,publisher,7,100\n")).is_err());
+        }
+
+        fn config_with_publish_leg(leg: &str, period: Option<u64>) -> String {
+            let mut legs = serde_json::Map::new();
+            legs.insert(
+                leg.to_string(),
+                serde_json::to_value(publish_declaration(period)).unwrap(),
+            );
+            serde_json::json!({
+                "expected_duration_s": 3600, "rss_cadence_s": 30, "warmup_fraction": 0.1667,
+                "sampler_end_slack_s": 35, "expected_worker_exits": {}, "legs": legs
+            })
+            .to_string()
+        }
+
+        /// The declaration is validated at launch: a publish leg needs a
+        /// drop period leaving at least two generations, and a transport
+        /// leg cannot declare a publisher.
+        #[test]
+        fn soak_config_validates_the_publish_leg_declaration() {
+            let cfg = parse_soak_config(&config_with_publish_leg("rtsp-publish", Some(600)))
+                .expect("a soak.sh-shaped publish leg must validate");
+            assert_eq!(cfg.legs["rtsp-publish"].publisher_drop_period_s, Some(600));
+            assert!(
+                parse_soak_config(&config_with_publish_leg("rtsp-publish", Some(1800))).is_ok()
+            );
+            for bad in [None, Some(0), Some(1801), Some(3600)] {
+                let err = parse_soak_config(&config_with_publish_leg("rtsp-publish", bad))
+                    .expect_err("a period leaving fewer than two generations must be rejected");
+                assert!(err.contains("publisher_drop_period_s"), "{err}");
+            }
+            let err = parse_soak_config(&config_with_publish_leg("srt", Some(600)))
+                .expect_err("a transport leg declaring a publisher must be rejected");
+            assert!(err.contains("only a publish leg"), "{err}");
         }
     }
 }
