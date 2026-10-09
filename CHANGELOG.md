@@ -284,6 +284,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   application transport — after that point (an abort cannot interrupt a
   running poll). The end now closes a gate under the adapter lock that
   every later delivery checks before touching the adapter.
+- **Mount registration cannot outlive `stop()`.** `add_mount`,
+  `add_multicast_mount` and `add_publish_mount` checked the shutdown flag
+  before taking the mounts lock; a `stop()` that completed in between
+  closed every mount in its snapshot and the late registration then
+  inserted one it had missed, whose transport stayed open until the server
+  was dropped. The flag is now re-checked under the lock.
 
 ### Testing — RTSP publisher role
 
