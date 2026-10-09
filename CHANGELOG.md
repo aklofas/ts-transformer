@@ -330,6 +330,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fallback (`Provisional`), counted once in `alignment_steps`, and not
   re-adopted while later report pairs recompute the same offset. A
   mapping that has validated is kept through later video stalls.
+- **The KLV unit captured at the video origin is no longer lost to
+  sender-report rounding.** The sender-report offset is rounded to whole
+  ticks, so the unit at PTS 0 could be placed a tick early and dropped as
+  'before the video origin'; a placement within 1 ms before the origin
+  now lands on it. Found by the es-klv interop cell, which lost exactly
+  that record on two CI runs.
 
 ### Testing — RTSP publisher role
 
