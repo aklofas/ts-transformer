@@ -337,6 +337,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now lands on it. Found by the es-klv interop cell, which lost exactly
   that record on three CI runs.
 
+### Fixed — tst-py
+
+- **Interpreter exit no longer aborts when a thread is still inside a native call.** A thread parked in a tstrans native (a receive, an accept, `next_publisher`, a managed reconnect wait) that woke after interpreter finalisation began re-took the GIL and was killed by CPython; the forced exit crossed the binding's panic trampoline and the process aborted with exit 134 (seen twice on CI after a fully passing test run). Once the exit hook has run, a parking native now parks the thread for good instead of re-entering Python, as CPython itself does with daemon threads. A new CI rail keeps every parking native on that path.
+
 ### Testing — RTSP publisher role
 
 - Auth on ANNOUNCE, SETUP `mode=record` and RECORD is tested under Basic and Digest-MD5 (`tests/rtsp_server/publish/auth.rs`); both `check_auth` calls and the Digest method tokens were previously deletable with every suite green.

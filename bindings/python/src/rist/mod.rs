@@ -309,7 +309,9 @@ impl PyRistTransport {
         pyres(
             py,
             &RIST,
-            py.allow_threads(|| self.owned.with_mut(|t| t.0.send_bytes(slice))),
+            crate::util::allow_threads_parking(py, || {
+                self.owned.with_mut(|t| t.0.send_bytes(slice))
+            }),
         )
     }
 
@@ -324,7 +326,7 @@ impl PyRistTransport {
         let s = pyok(
             py,
             &RIST,
-            py.allow_threads(|| self.owned.with_ref(|t| t.0.stats())),
+            crate::util::allow_threads_parking(py, || self.owned.with_ref(|t| t.0.stats())),
         )?;
         Py::new(py, PyRistStats::from(s))
     }
@@ -475,8 +477,7 @@ impl PyRistTransportBuilder {
         if let Some(v) = self.compression {
             b = b.compression(v);
         }
-        let t = py
-            .allow_threads(|| b.connect())
+        let t = crate::util::allow_threads_parking(py, || b.connect())
             .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
         let peer_url = t.peer_url().to_owned();
         // Obtain-before-move: the transport's real cancel handle, captured
@@ -574,7 +575,7 @@ impl PyRistRecvTransport {
         let cancel = Arc::clone(&self.cancel);
         let deadline =
             timeout_ms.map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms));
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.owned.with_mut(move |s| {
                 loop {
                     if cancel.is_cancelled() {
@@ -617,7 +618,7 @@ impl PyRistRecvTransport {
         let s = pyok(
             py,
             &RIST,
-            py.allow_threads(|| self.owned.with_ref(|s| s.transport.stats())),
+            crate::util::allow_threads_parking(py, || self.owned.with_ref(|s| s.transport.stats())),
         )?;
         Py::new(py, PyRistStats::from(s))
     }
@@ -738,8 +739,7 @@ impl PyRistRecvTransportBuilder {
         if let Some(ms) = self.session_timeout_ms {
             b = b.session_timeout(std::time::Duration::from_millis(ms));
         }
-        let t = py
-            .allow_threads(|| b.listen())
+        let t = crate::util::allow_threads_parking(py, || b.listen())
             .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
         let scratch_len = t.max_payload().max(65_536);
         let bind_url = t.bind_url().to_owned();

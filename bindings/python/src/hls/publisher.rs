@@ -106,7 +106,7 @@ impl PyHlsPublisher {
         F: FnOnce(&mut HlsPublisher) -> Result<R, HlsError> + Send,
         R: Send,
     {
-        py.allow_threads(|| {
+        crate::util::allow_threads_parking(py, || {
             let mut guard = self.inner.lock().map_err(|_| Locked::Poisoned)?;
             let inner = guard.as_mut().ok_or(Locked::Gone)?;
             f(inner).map_err(Locked::Inner)
@@ -124,7 +124,7 @@ impl PyHlsPublisher {
     /// `borrow_mut()` there would panic ("Already borrowed") while another
     /// thread's `push_ts(&self, ...)` call is in flight.
     pub(crate) fn take(&self, py: Python<'_>) -> PyResult<Option<HlsPublisher>> {
-        py.allow_threads(|| {
+        crate::util::allow_threads_parking(py, || {
             let mut guard = self.inner.lock().map_err(|_| ())?;
             let taken = guard.take();
             if taken.is_some() {
@@ -174,7 +174,7 @@ impl PyHlsPublisher {
         let inner = self
             .take(py)?
             .ok_or_else(|| Self::finished_error(py, "HlsPublisher already finished"))?;
-        py.allow_threads(|| Publisher::finish(inner))
+        crate::util::allow_threads_parking(py, || Publisher::finish(inner))
             .map_err(|e| raise(py, &HLS, BindingError::from(e)))
     }
 
@@ -192,8 +192,7 @@ impl PyHlsPublisher {
         let inner = self
             .take(py)?
             .ok_or_else(|| Self::finished_error(py, "HlsPublisher already finished"))?;
-        let handle = py
-            .allow_threads(|| inner.finish_serving())
+        let handle = crate::util::allow_threads_parking(py, || inner.finish_serving())
             .map_err(|e| raise(py, &HLS, BindingError::from(e)))?;
         Ok(PyHlsServerHandle::from_inner(handle))
     }
@@ -241,7 +240,7 @@ impl PyHlsPublisher {
     /// (idempotent). Useful in `with`-style cleanup.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         if let Some(inner) = self.take(py)? {
-            py.allow_threads(|| Publisher::finish(inner))
+            crate::util::allow_threads_parking(py, || Publisher::finish(inner))
                 .map_err(|e| raise(py, &HLS, BindingError::from(e)))?;
         }
         Ok(())
@@ -394,8 +393,7 @@ impl PyHlsPublisherBuilder {
             .inner
             .take()
             .ok_or_else(|| PyRuntimeError::new_err("HlsPublisherBuilder already consumed"))?;
-        let pub_ = py
-            .allow_threads(|| b.build())
+        let pub_ = crate::util::allow_threads_parking(py, || b.build())
             .map_err(|e| raise(py, &HLS, BindingError::from(e)))?;
         Ok(PyHlsPublisher::from_inner(pub_))
     }
@@ -484,7 +482,7 @@ impl PyHlsServerHandle {
             guard.take()
         };
         if let Some(handle) = handle {
-            py.allow_threads(|| handle.shutdown());
+            crate::util::allow_threads_parking(py, || handle.shutdown());
         }
         Ok(())
     }

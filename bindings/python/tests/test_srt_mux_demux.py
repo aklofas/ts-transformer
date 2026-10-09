@@ -471,36 +471,41 @@ def test_socket_into_mux_sender_promotion() -> None:
     fully-functional MuxSender (a real impl, not a NotImplementedError
     stub)."""
     port = _free_tcp_port()
-    # Listener side spawned by the helper, but we drive the caller side
-    # manually via Builder + into_mux_sender.
-    listener_url = f"srt://:{port}?mode=listener"
-    rx_box: list[tstrans.srt.DemuxReceiver] = []
+    # The listener side is only the peer; we drive the caller side manually
+    # via Builder + into_mux_sender. Bound on the test thread (no bind race)
+    # and accepted with a deadline: a caller that connects and closes before
+    # the accept dequeues it can leave a plain accept parked forever (libsrt
+    # prunes the broken entry), which leaked a thread past the test.
+    lst = tstrans.srt.Builder(f"srt://:{port}?mode=listener").listener().listen()
+    sock_box: list[tstrans.srt.Socket] = []
 
     def accept_worker() -> None:
         try:
-            r = tstrans.srt.DemuxReceiver.from_url(listener_url)
-            rx_box.append(r)
-        except BaseException:
-            pass
+            sock_box.append(lst.accept(timeout_ms=5000))
+        except SrtError:
+            pass  # timed out after a pruned connection: bounded, not a leak
 
     t = threading.Thread(target=accept_worker, daemon=True)
     t.start()
-    time.sleep(0.1)
-    sock = (
-        tstrans.srt.Builder(f"srt://127.0.0.1:{port}?mode=caller")
-        .caller()
-        .connect()
-    )
-    program = _video_only_program()
-    sender = sock.into_mux_sender(program)
-    # Socket should now be closed (consumed).
-    assert not sock.is_alive()
-    # Pushing should work via the promoted sender.
-    sender.send_video(NAL_AUD, pts=Pts90khz.from_raw(0))
-    sender.close()
-    t.join(timeout=5.0)
-    if rx_box:
-        rx_box[0].close()
+    try:
+        sock = (
+            tstrans.srt.Builder(f"srt://127.0.0.1:{port}?mode=caller")
+            .caller()
+            .connect()
+        )
+        program = _video_only_program()
+        sender = sock.into_mux_sender(program)
+        # Socket should now be closed (consumed).
+        assert not sock.is_alive()
+        # Pushing should work via the promoted sender.
+        sender.send_video(NAL_AUD, pts=Pts90khz.from_raw(0))
+        sender.close()
+        t.join(timeout=10.0)
+        assert not t.is_alive(), "listener accept leaked"
+    finally:
+        for accepted in sock_box:
+            accepted.close()
+        lst.close()
 
 
 def test_socket_into_demux_receiver_promotion() -> None:

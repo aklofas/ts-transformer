@@ -222,7 +222,9 @@ impl PyTcpTransport {
         pyres(
             py,
             &TCP,
-            py.allow_threads(|| self.owned.with_mut(|t| t.0.send_bytes(&owned))),
+            crate::util::allow_threads_parking(py, || {
+                self.owned.with_mut(|t| t.0.send_bytes(&owned))
+            }),
         )
     }
 
@@ -262,7 +264,7 @@ impl PyTcpTransport {
         // We need an owned buffer to cross the allow_threads boundary --
         // `PyByteArray` is a Python object and is !Send.
         let mut owned = vec![0u8; buf_len];
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.owned
                 .with_mut(|t| t.0.recv_bytes(owned.as_mut_slice()))
         });
@@ -322,7 +324,7 @@ impl PyTcpTransport {
         let s = pyok(
             py,
             &TCP,
-            py.allow_threads(|| self.owned.with_ref(|t| t.0.stats())),
+            crate::util::allow_threads_parking(py, || self.owned.with_ref(|t| t.0.stats())),
         )?;
         Py::new(py, PyTcpStats::from(s))
     }
@@ -463,7 +465,7 @@ impl PyTcpTransportBuilder {
         let pkt_size = self.pkt_size;
         let connect_timeout_ms = self.connect_timeout_ms;
 
-        let t = py.allow_threads(|| -> Result<TcpTransport, TcpError> {
+        let t = crate::util::allow_threads_parking(py, || -> Result<TcpTransport, TcpError> {
             let mut b = tst_tcp::TcpTransportBuilder::from_url(&url_str).map_err(TcpError::Url)?;
             if let Some(v) = nodelay {
                 b.nodelay(v);
@@ -564,7 +566,9 @@ impl PyTcpListener {
     fn accept_blocking(&self, py: Python<'_>) -> PyResult<PyTcpTransport> {
         // Two-step: accept inside allow_threads (returns Result<TcpTransport, TcpError>
         // where TcpError is Send), then map to PyErr after re-acquiring the GIL.
-        let res = py.allow_threads(|| self.owned.with_ref(|l| l.0.accept_blocking()));
+        let res = crate::util::allow_threads_parking(py, || {
+            self.owned.with_ref(|l| l.0.accept_blocking())
+        });
         Ok(make_py_tcp_transport(pyres(py, &TCP, res)?))
     }
 
@@ -734,31 +738,32 @@ impl PyTcpListenerBuilder {
             }
         }
 
-        let listener = py.allow_threads(|| -> Result<TcpListener, TcpError> {
-            // Build a listener URL: tcp://addr:port?listen=1, or the tcps://
-            // variant carrying the cert + key paths when tls(...) was set.
-            let listen_url = match &tls_cert_key {
-                Some((cert, key)) => {
-                    format!("tcps://{addr_str}?listen=1&cert={cert}&key={key}")
+        let listener =
+            crate::util::allow_threads_parking(py, || -> Result<TcpListener, TcpError> {
+                // Build a listener URL: tcp://addr:port?listen=1, or the tcps://
+                // variant carrying the cert + key paths when tls(...) was set.
+                let listen_url = match &tls_cert_key {
+                    Some((cert, key)) => {
+                        format!("tcps://{addr_str}?listen=1&cert={cert}&key={key}")
+                    }
+                    None => format!("tcp://{}?listen=1", addr_str),
+                };
+                let mut b =
+                    tst_tcp::TcpListenerBuilder::from_url(&listen_url).map_err(TcpError::Url)?;
+                if let Some(v) = nodelay {
+                    b.nodelay(v);
                 }
-                None => format!("tcp://{}?listen=1", addr_str),
-            };
-            let mut b =
-                tst_tcp::TcpListenerBuilder::from_url(&listen_url).map_err(TcpError::Url)?;
-            if let Some(v) = nodelay {
-                b.nodelay(v);
-            }
-            if let Some(v) = rcvbuf {
-                b.rcvbuf(v);
-            }
-            if let Some(v) = sndbuf {
-                b.sndbuf(v);
-            }
-            if let Some(v) = pkt_size {
-                b.pkt_size(v);
-            }
-            b.build()
-        });
+                if let Some(v) = rcvbuf {
+                    b.rcvbuf(v);
+                }
+                if let Some(v) = sndbuf {
+                    b.sndbuf(v);
+                }
+                if let Some(v) = pkt_size {
+                    b.pkt_size(v);
+                }
+                b.build()
+            });
 
         match listener {
             Ok(l) => {

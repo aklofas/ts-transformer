@@ -137,15 +137,10 @@ impl PyManagedSender {
         // handle snapshots. The managed
         // family dials with `connect()` — the sender preset — matching the
         // C ABI.
-        let (inner, handles, stats_handle) = py
-            .allow_threads(|| {
-                tst_srt::shells::managed_sender_from_url(
-                    &parsed,
-                    policy_inner,
-                    SenderConfig::default(),
-                )
-            })
-            .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        let (inner, handles, stats_handle) = crate::util::allow_threads_parking(py, || {
+            tst_srt::shells::managed_sender_from_url(&parsed, policy_inner, SenderConfig::default())
+        })
+        .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         let cancel = CancelSource::new(handles.cancel);
         Ok(Self {
             owned: Owned::new(inner, cancel.as_dyn(), ()),
@@ -165,7 +160,7 @@ impl PyManagedSender {
         pyres(
             py,
             &SRT,
-            py.allow_threads(|| self.owned.with_mut(|s| s.send_ts(slice))),
+            crate::util::allow_threads_parking(py, || self.owned.with_mut(|s| s.send_ts(slice))),
         )
     }
 
@@ -175,7 +170,7 @@ impl PyManagedSender {
         pyres(
             py,
             &SRT,
-            py.allow_threads(|| self.owned.with_mut(|s| s.flush())),
+            crate::util::allow_threads_parking(py, || self.owned.with_mut(|s| s.flush())),
         )
     }
 
@@ -195,7 +190,7 @@ impl PyManagedSender {
         let core = pyok(
             py,
             &SRT,
-            py.allow_threads(|| {
+            crate::util::allow_threads_parking(py, || {
                 self.owned
                     .with_ref(|s| s.socket_stats().unwrap_or_default())
             }),
@@ -238,8 +233,7 @@ impl PyManagedSender {
         if self.owned.is_closed() {
             return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
         }
-        let stats = py
-            .allow_threads(|| self.stats_handle.stats())
+        let stats = crate::util::allow_threads_parking(py, || self.stats_handle.stats())
             .ok_or_else(|| {
                 raise(
                     py,
@@ -361,9 +355,10 @@ impl PyManagedReceiver {
         // handle snapshots. The INITIAL accept is still uncancellable in
         // practice: the handle that could fire it does not exist until
         // this constructor returns (documented in python.md).
-        let (inner, handles) = py
-            .allow_threads(|| tst_srt::shells::managed_receiver_from_url(&parsed, policy_inner))
-            .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        let (inner, handles) = crate::util::allow_threads_parking(py, || {
+            tst_srt::shells::managed_receiver_from_url(&parsed, policy_inner)
+        })
+        .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         let reconnects = handles.reconnects.clone();
         let cancel = CancelSource::new(handles.cancel);
         Ok(Self {
@@ -387,7 +382,7 @@ impl PyManagedReceiver {
         let bytes = pyres(
             py,
             &SRT,
-            py.allow_threads(|| self.owned.with_mut(|r| r.next_packet())),
+            crate::util::allow_threads_parking(py, || self.owned.with_mut(|r| r.next_packet())),
         )?;
         Ok(PyBytes::new_bound(py, &bytes).unbind())
     }
@@ -414,7 +409,7 @@ impl PyManagedReceiver {
         let core = pyok(
             py,
             &SRT,
-            py.allow_threads(|| {
+            crate::util::allow_threads_parking(py, || {
                 self.owned
                     .with_ref(|r| r.socket_stats().unwrap_or_default())
             }),

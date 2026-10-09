@@ -508,15 +508,16 @@ libsrt is torn down. That wait is bounded at 2 s — past it the teardown runs
 anyway, with the risk every such program carried before the guard existed —
 and it does not include the closes themselves: a connected sender with
 unsent data takes up to its linger time (`?linger=` on the URL) to close.
+A thread whose native call returns after the exit hook has run (a woken
+receive, a `next_publisher` slice, a byte sink) never re-enters Python: it
+parks until the process ends, as CPython does with daemon threads, instead
+of aborting the exit.
 
-One visible side effect: the call the hook wakes raises like any other
-cancelled call, so a worker thread that was parked in it and has no
-`except` of its own ends with
-`SrtError: cancelled from another thread` (or `accept: listener was
-closed` on the plain SRT shells) and Python prints that thread's
-traceback to stderr during shutdown. The process still exits 0 — it is
-the guard doing its job, not a failure. `close()` your shells before
-exit, or catch `BaseException` in the worker, to keep the output clean.
+Because of that, the call the hook wakes does not raise in the worker:
+the thread stays parked in the native call, prints nothing, and the
+process exits 0. Code after that call in the worker (a `finally`, a
+cleanup) does not run, so `close()` your shells before exit when the
+worker has cleanup of its own to do.
 
 ### What answers while another thread is parked
 

@@ -1,0 +1,19 @@
+# Bare `.allow_threads(` sites allowed in the Python transport modules
+# (bindings/python/src/{srt,rtp,udp,tcp,rist,hls}/). Read by
+# scripts/check/python/finalize-guard.sh, which fails on any bare site not
+# listed here AND on any row whose site no longer exists.
+#
+# Rule: a native call that can park (network I/O, a wait on a channel or a
+# deadline, a thread join, or a lock another thread can hold across one,
+# e.g. the `Owned` slot a parked recv holds) MUST go through
+# `util::allow_threads_parking`, so a thread that wakes after interpreter
+# finalisation began parks instead of re-taking the GIL (CPython would
+# kill it and the process aborts). Only a call that finishes in bounded
+# time on in-memory state may stay bare, with its reason below.
+#
+# Columns (TAB-separated): path, function, reason. One row per
+# (file, function) pair.
+bindings/python/src/rtp/publish.rs	cancel	sets the shared cancel flag; no lock held across I/O
+bindings/python/src/rtp/publish.rs	publisher	clones PublisherInfo under a short in-memory mutex
+bindings/python/src/rtp/publish.rs	stats	snapshots counters under a short in-memory mutex
+bindings/python/src/rtp/server.rs	reset_stats	zeroes counters under short in-memory mutexes

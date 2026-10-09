@@ -4,7 +4,7 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use tst_core::mpegts::mux::{
     AudioStreamHandle, DataStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
@@ -85,6 +85,56 @@ pub(crate) struct CancelSource {
 /// leave their Python frames. Long enough for libsrt's ~3-10 ms cancel
 /// wake plus the GIL hand-off; short enough to be invisible at exit.
 const EXIT_SETTLE_MS: u64 = 250;
+
+/// Set by [`fire_cancel_sources_at_exit`] — Python's `atexit`, which runs
+/// after every non-daemon thread was joined and before interpreter
+/// finalisation. Read by [`allow_threads_parking`] and [`exiting`] on
+/// worker threads: once set, a thread that would re-take the GIL parks
+/// forever instead. CPython 3.12 `pthread_exit`s a thread re-acquiring
+/// the GIL during finalisation; that forced unwind crosses PyO3's
+/// `catch_unwind` trampoline and glibc aborts the process ("FATAL:
+/// exception not rethrown", exit 134). Parking is what CPython 3.14 does
+/// to daemon threads itself; `exit_group` reaps the parked thread.
+static INTERPRETER_EXITING: AtomicBool = AtomicBool::new(false);
+/// The thread that ran the exit hook (the main thread): it is finalising
+/// the interpreter and must keep running.
+static EXIT_HOOK_THREAD: OnceLock<std::thread::ThreadId> = OnceLock::new();
+
+/// `true` once the exit hook has run on another thread. Byte-sink
+/// callbacks check it before `Python::with_gil`.
+#[allow(dead_code)] // byte-sink callers are srt/rtp-feature-gated.
+pub(crate) fn exiting() -> bool {
+    INTERPRETER_EXITING.load(Ordering::Acquire)
+        && EXIT_HOOK_THREAD.get() != Some(&std::thread::current().id())
+}
+
+/// `py.allow_threads(f)` for a native call that can park (network I/O, a
+/// wait, a join, or a lock another thread can hold across one). If the
+/// interpreter began exiting while `f` ran, this thread parks forever
+/// instead of re-taking the GIL — see [`INTERPRETER_EXITING`]. The value
+/// `f` returned is never used on that path; the process reclaims it at
+/// exit.
+#[allow(dead_code)] // every transport surface calls this; dead only in a
+// transport-less `--no-default-features` build.
+pub(crate) fn allow_threads_parking<T, F>(py: Python<'_>, f: F) -> T
+where
+    // `Send`, not `pyo3::marker::Ungil`: without PyO3's `nightly` feature
+    // `Ungil` is exactly a blanket over `Send`, and a closure capturing a
+    // generic `F: Ungil` is not provably `Ungil` itself.
+    F: Send + FnOnce() -> T,
+    T: Send,
+{
+    py.allow_threads(move || {
+        let r = f();
+        if exiting() {
+            // `park()` may return spuriously; never fall through.
+            loop {
+                std::thread::park();
+            }
+        }
+        r
+    })
+}
 
 /// Every live [`CancelSource`], weakly. Walked once at interpreter exit by
 /// [`fire_cancel_sources_at_exit`] — see its doc for why.
@@ -171,7 +221,7 @@ where
     T::Error: Send,
     S: Send + Sync,
 {
-    match py.allow_threads(|| owned.close()) {
+    match allow_threads_parking(py, || owned.close()) {
         Ok(()) => Ok(()),
         Err(CloseFailure::Inner(e)) => {
             tracing::warn!(error = %e, "close() failed on the underlying transport; handle released");
@@ -270,6 +320,10 @@ pub(crate) fn open_snapshot<T, S>(owned: &Owned<T, S>) -> Option<&S> {
 #[pyfunction]
 #[pyo3(name = "_fire_cancel_sources_at_exit")]
 pub(crate) fn fire_cancel_sources_at_exit(py: Python<'_>) -> usize {
+    // First: from here on a worker thread waking from a native call parks
+    // instead of re-taking the GIL of an interpreter about to finalise.
+    let _ = EXIT_HOOK_THREAD.set(std::thread::current().id());
+    INTERPRETER_EXITING.store(true, Ordering::Release);
     // Poison recovered for the same reason as in `CancelSource::new`: a
     // hook that no-ops after an unrelated panic is exactly the hang this
     // exists to prevent, and `drain` on a `Vec<Weak<_>>` cannot observe a

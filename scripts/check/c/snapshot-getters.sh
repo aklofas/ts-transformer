@@ -201,7 +201,12 @@ if [ "${SG_ONLY_READERS:-}" != "1" ]; then
                         }
                     }
                     if (matched) continue
-                    if (at == 0 && index(rest, "allow_threads(") == 1) {
+                    if (at == 0 && index(rest, "allow_threads_parking(") == 1) {
+                        # util::allow_threads_parking(py, f): the same
+                        # GIL release as py.allow_threads(f).
+                        at = 1
+                        i += 22
+                    } else if (at == 0 && index(rest, "allow_threads(") == 1) {
                         at = 1
                         i += 14
                     } else if (at > 0 && wg == 0 && index(rest, "with_gil(") == 1) {

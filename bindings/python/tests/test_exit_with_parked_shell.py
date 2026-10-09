@@ -218,3 +218,37 @@ def test_the_exit_hook_sees_the_first_accept_slot() -> None:
     assert fired, f"{r.stdout}\n{r.stderr}"
     assert int(fired[0].split("=")[1]) >= 1, f"{r.stdout}\n{r.stderr}"
     assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr}"
+
+
+# A daemon thread parked in a native call that is NOT in the exit registry
+# (`next_publisher` wakes on its own every 1 s slice) and wakes after
+# interpreter finalisation began. The open SRT listener holds the process in
+# the C `atexit` phase (`srt_cleanup`) for about a second, which is the
+# window in which that wake lands.
+SCRIPT_DAEMON_WAKES_AFTER_FINALIZE = """
+    import threading, time
+    import tstrans.srt as srt
+    from tstrans.rtp import RtspServer, RtspServerConfig
+
+    lst = srt.Builder("srt://127.0.0.1:0?mode=listener").listener().listen()
+    server = RtspServer.start(
+        RtspServerConfig(bind_addr="127.0.0.1:0", accept_unregistered_publishers=True)
+    )
+    entered = threading.Event()
+
+    def park():
+        entered.set()
+        server.next_publisher(None)
+
+    threading.Thread(target=park, daemon=True).start()
+    entered.wait()
+    time.sleep(0.3)
+"""
+
+
+def test_exit_with_a_daemon_thread_waking_after_finalize_is_clean() -> None:
+    """A daemon thread parked in a native call that wakes after interpreter
+    finalisation began must park, not re-take the GIL: before the fix the
+    forced thread exit crossed PyO3's trampoline and glibc aborted (134)."""
+    r = _run(SCRIPT_DAEMON_WAKES_AFTER_FINALIZE, timeout=30.0, what=" with a daemon thread waking after finalize")
+    assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr[-800:]}"

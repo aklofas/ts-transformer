@@ -187,9 +187,14 @@ impl PyDemuxReceiver {
         // block on the slot — a deadlock. Registering the sink (a
         // Vec push) needs no GIL and never re-enters Python, so it is
         // safe to do inside the released-GIL block.
-        let res = py.allow_threads(move || {
+        let res = crate::util::allow_threads_parking(py, move || {
             self.owned.with_mut(|rx| {
                 rx.add_byte_sink(Box::new(move |pkt: &[u8]| {
+                    // The interpreter is finalising: re-taking the GIL now
+                    // would abort the process. Drop the packet instead.
+                    if crate::util::exiting() {
+                        return;
+                    }
                     Python::with_gil(|py| {
                         let b = PyBytes::new_bound(py, pkt);
                         if let Err(e) = callback.call1(py, (b,)) {
@@ -227,7 +232,8 @@ impl PyDemuxReceiver {
         // fires `cancel`) can wake the parked recv. Once recv returns
         // (event, EOF, or cancelled error), we drop the guard and the
         // close path can take ownership of `inner` cleanly.
-        let res = py.allow_threads(|| self.owned.with_mut(|rx| rx.recv_event()));
+        let res =
+            crate::util::allow_threads_parking(py, || self.owned.with_mut(|rx| rx.recv_event()));
         // Fail-loud: surface any sink exception captured during this
         // `recv_event` (the slot guard has been dropped above, so touching
         // `sink_error` here can't nest under it).
@@ -261,7 +267,7 @@ impl PyDemuxReceiver {
         // pattern in this file. Extract plain Rust values under the lock,
         // build Python objects after the guard is dropped and the GIL is
         // reacquired.
-        let raw = py.allow_threads(|| {
+        let raw = crate::util::allow_threads_parking(py, || {
             self.owned.with_ref(|rx| {
                 let combined = rx.stats();
                 // The underlying RTP transport's full SocketStats live behind a
@@ -314,7 +320,7 @@ impl PyDemuxReceiver {
         let last_seen = pyok(
             py,
             &RTP,
-            py.allow_threads(|| {
+            crate::util::allow_threads_parking(py, || {
                 self.owned
                     .with_ref(|rx| rx.stats().per_stream.get(&pid).and_then(|s| s.last_seen))
             }),

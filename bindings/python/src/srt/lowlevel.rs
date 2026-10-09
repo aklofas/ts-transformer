@@ -368,9 +368,9 @@ impl PyBuilder {
         let mut cfg = self.socket_cfg.clone();
         parsed.overlay.apply_to_socket(&mut cfg);
         let addr = tst_srt::addr::join_host_port(&parsed.host, parsed.port);
-        let socket = py
-            .allow_threads(|| SrtSocket::connect_with(&cfg, addr.as_str()))
-            .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        let socket =
+            crate::util::allow_threads_parking(py, || SrtSocket::connect_with(&cfg, addr.as_str()))
+                .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         Ok(PySocket::wrap(socket))
     }
 
@@ -409,9 +409,9 @@ impl PyBuilder {
             parsed.host.as_str()
         };
         let addr = tst_srt::addr::join_host_port(bind_host, parsed.port);
-        let listener = py
-            .allow_threads(|| SrtListener::bind_with(&cfg, addr.as_str()))
-            .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        let listener =
+            crate::util::allow_threads_parking(py, || SrtListener::bind_with(&cfg, addr.as_str()))
+                .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         Ok(PyListener::wrap(listener))
     }
 
@@ -581,7 +581,7 @@ impl PySocket {
         let taken = self.inner.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(socket) = taken {
             // SrtSocket::close consumes self and is infallible.
-            py.allow_threads(|| {
+            crate::util::allow_threads_parking(py, || {
                 socket.close();
             });
         }
@@ -686,7 +686,7 @@ impl PyListener {
     /// with `SrtError(CLOSED)`.
     #[pyo3(signature = (timeout_ms = None))]
     fn accept(&self, py: Python<'_>, timeout_ms: Option<u64>) -> PyResult<PySocket> {
-        let res = py.allow_threads(|| {
+        let res = crate::util::allow_threads_parking(py, || {
             self.owned.with_mut(|l| match timeout_ms {
                 None => l.get()?.accept(),
                 Some(ms) => l.get()?.accept_timeout(Duration::from_millis(ms)),
@@ -757,7 +757,8 @@ impl PyListener {
     }
 
     fn __next__(&self, py: Python<'_>) -> PyResult<PySocket> {
-        let res = py.allow_threads(|| self.owned.with_mut(|l| l.get()?.accept()));
+        let res =
+            crate::util::allow_threads_parking(py, || self.owned.with_mut(|l| l.get()?.accept()));
         match res {
             Err(HandleState::Closed) => Err(PyStopIteration::new_err(())),
             Ok(Err(AcceptError::ListenerClosed)) => Err(PyStopIteration::new_err(())),
