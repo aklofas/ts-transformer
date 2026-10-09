@@ -1257,7 +1257,9 @@ pub mod soak {
 
     /// The processes one leg runs, i.e. the `process` values its rows in
     /// `rss.csv` may carry and the `<leg>-<process>` roles it reaps into
-    /// `exits.json`.
+    /// `exits.json`. A publish leg's `publisher` is the restart loop's
+    /// shell, not the publisher tool: its RSS rows and its exit status are
+    /// the loop's, and the tool's own memory is not sampled.
     fn leg_processes(leg: &str) -> &'static [&'static str] {
         if PUBLISH_LEGS.contains(&leg) {
             &["recv", "publisher"]
@@ -1484,11 +1486,20 @@ pub mod soak {
         #[serde(default)]
         pub publisher: Option<String>,
         /// A publish leg's publisher generation length, in seconds: the
-        /// publisher session ends and a new one ANNOUNCEs every this many
-        /// seconds. Required on a publish leg and judged by
-        /// `publisher_generations_<leg>`; rejected on every other leg.
+        /// publisher session ends and a new one ANNOUNCEs about every this
+        /// many seconds. Required on a publish leg and recorded; rejected
+        /// on every other leg. Not what `publisher_generations_<leg>`
+        /// judges against — that is [`Self::publisher_generations`], the
+        /// count the run actually launched, because a length floored to
+        /// whole seconds does not divide back into the run's duration.
         #[serde(default)]
         pub publisher_drop_period_s: Option<u64>,
+        /// How many publisher sessions the run launched on a publish leg
+        /// (one per stream segment). Required on a publish leg, at least
+        /// two; `publisher_generations_<leg>` requires `generations - 1`
+        /// of them to have ended. Rejected on every other leg.
+        #[serde(default)]
+        pub publisher_generations: Option<u64>,
     }
 
     /// The declared half of the corruption tap's configuration, compared
@@ -1633,31 +1644,28 @@ pub mod soak {
                     ));
                 }
             }
-            // A publish leg must declare a drop period that leaves at
-            // least one re-ANNOUNCE for `publisher_generations_<leg>` to
-            // require; anything else could only pass that verdict
+            // A publish leg must declare at least two generations, so
+            // `publisher_generations_<leg>` requires at least one
+            // re-ANNOUNCE; anything else could only pass that verdict
             // vacuously. The publisher fields mean nothing on a
             // transport leg, so declaring them there is a typo.
             if PUBLISH_LEGS.contains(&leg.as_str()) {
-                match decl.publisher_drop_period_s {
-                    Some(p)
-                        if p > 0 && min_publisher_generations(cfg.expected_duration_s, p) >= 1 => {}
-                    Some(p) => {
-                        return Err(format!(
-                            "soak-config.json: legs.{leg}.publisher_drop_period_s ({p}) must be \
-                             > 0 and at most half of expected_duration_s ({}) — the run must \
-                             span at least two publisher generations",
-                            cfg.expected_duration_s
-                        ));
-                    }
-                    None => {
-                        return Err(format!(
-                            "soak-config.json: legs.{leg} is a publish leg and must declare \
-                             publisher_drop_period_s"
-                        ));
-                    }
+                if decl.publisher_drop_period_s.is_none_or(|p| p == 0) {
+                    return Err(format!(
+                        "soak-config.json: legs.{leg} is a publish leg and must declare \
+                         publisher_drop_period_s > 0"
+                    ));
                 }
-            } else if decl.publisher.is_some() || decl.publisher_drop_period_s.is_some() {
+                if decl.publisher_generations.is_none_or(|n| n < 2) {
+                    return Err(format!(
+                        "soak-config.json: legs.{leg} is a publish leg and must declare \
+                         publisher_generations >= 2 — one generation drops nothing"
+                    ));
+                }
+            } else if decl.publisher.is_some()
+                || decl.publisher_drop_period_s.is_some()
+                || decl.publisher_generations.is_some()
+            {
                 return Err(format!(
                     "soak-config.json: legs.{leg} declares a publisher, but only a publish leg \
                      ({PUBLISH_LEGS:?}) has one"
@@ -1681,21 +1689,6 @@ pub mod soak {
             .map_err(|e| format!("soak-config.json: corruption_spec: {e}"))?;
         }
         Ok(cfg)
-    }
-
-    /// The fewest ended publishers `publisher_generations_<leg>` accepts:
-    /// `floor(expected_duration_s / publisher_drop_period_s) - 1`. One
-    /// generation per declared period, less one because the last
-    /// publisher may still be connected when `recv` takes its snapshot
-    /// (a publisher counts once it has ENDED), and the leg starts a few
-    /// seconds into the run.
-    fn min_publisher_generations(expected_duration_s: f64, period_s: u64) -> u64 {
-        let periods = (expected_duration_s / period_s as f64).floor();
-        if periods.is_finite() && periods >= 1.0 {
-            (periods as u64) - 1
-        } else {
-            0
-        }
     }
 
     /// `profile_declared_<leg>`: the recv report was judged against the
@@ -3192,20 +3185,23 @@ pub mod soak {
                 });
             }
 
-            // The mount counts a publisher once its session has ENDED, so
-            // the floor allows for the last one still being connected —
-            // see `min_publisher_generations`.
+            // Judged against the generations the run DECLARED it launched,
+            // not a count re-derived from the run length: the mount counts
+            // a publisher once its session has ENDED, and the last one may
+            // still be connected when `recv` snapshots the mount at its
+            // deadline, hence `- 1`.
             let period = declared.and_then(|d| d.publisher_drop_period_s);
-            let min_generations =
-                period.map(|p| min_publisher_generations(config.expected_duration_s, p));
+            let launched = declared.and_then(|d| d.publisher_generations);
+            let min_generations = launched.map(|n| n.saturating_sub(1));
             let observed = recv.publish_mount.as_ref().map(|m| m.generation);
-            let (gen_pass, gen_detail) = match (period, min_generations, observed) {
-                (Some(p), Some(min), Some(g)) => (
+            let (gen_pass, gen_detail) = match (launched, min_generations, observed) {
+                (Some(n), Some(min), Some(g)) => (
                     g >= min,
                     format!(
                         "{leg_name}: {g} publisher(s) ended on the mount, against a floor of \
-                         {min} = floor({:.0}s / {p}s) - 1",
-                        config.expected_duration_s
+                         {min} = {n} declared generation(s) - 1 (the last may still be connected \
+                         at recv's deadline). Each generation ends gracefully — EOS, then the \
+                         session closes — so an abrupt publisher loss is not exercised here"
                     ),
                 ),
                 (Some(_), _, None) => (
@@ -3219,7 +3215,7 @@ pub mod soak {
                 _ => (
                     false,
                     format!(
-                        "{leg_name}: no publisher_drop_period_s declared for this publish leg, \
+                        "{leg_name}: no publisher_generations declared for this publish leg, \
                          so there is no floor to judge the mount's generation count against"
                     ),
                 ),
@@ -5930,6 +5926,7 @@ pub mod soak {
                     reconnect_mode: None,
                     publisher: None,
                     publisher_drop_period_s: None,
+                    publisher_generations: None,
                 },
             );
         }
@@ -6356,7 +6353,7 @@ pub mod soak {
         }
 
         /// The `rtsp-publish` leg's declaration as `soak.sh` writes it.
-        fn publish_declaration(period: Option<u64>) -> LegDeclaration {
+        fn publish_declaration(generations: Option<u64>) -> LegDeclaration {
             LegDeclaration {
                 profile: "baseline".to_string(),
                 schedule: None,
@@ -6364,16 +6361,17 @@ pub mod soak {
                 klv_seed: None,
                 reconnect_mode: None,
                 publisher: Some("gst-launch-1.0 filesrc ! tsparse ! rtspclientsink".to_string()),
-                publisher_drop_period_s: period,
+                publisher_drop_period_s: Some(600),
+                publisher_generations: generations,
             }
         }
 
         /// [`healthy_inputs`] plus a healthy `rtsp-publish` leg: RSS for
         /// its two processes, clean exits for its two roles, a declared
-        /// drop period, and a passing recv report whose mount counted
+        /// generation count, and a passing recv report whose mount counted
         /// `generation` ended publishers (`None` = no `publish_mount`
         /// block at all).
-        fn publish_inputs(generation: Option<u64>, period: Option<u64>) -> SoakInputs {
+        fn publish_inputs(generation: Option<u64>, launched: Option<u64>) -> SoakInputs {
             let mut inputs = healthy_inputs();
             for i in 0..121 {
                 let t = i as f64 * 30.0;
@@ -6390,7 +6388,7 @@ pub mod soak {
             inputs
                 .config
                 .legs
-                .insert("rtsp-publish".to_string(), publish_declaration(period));
+                .insert("rtsp-publish".to_string(), publish_declaration(launched));
             let mut recv_report = passing_recv_report(1000);
             recv_report.profile = Some("baseline".to_string());
             recv_report.publish_mount = generation.map(|generation| PublishMountReport {
@@ -6404,13 +6402,13 @@ pub mod soak {
             inputs
         }
 
-        /// 3600 s declared, 600 s period: floor(3600 / 600) - 1 = 5. A
+        /// Six generations declared: a floor of 6 - 1 = 5. A
         /// mount that counted exactly the floor passes, and the leg's
         /// not-applicable verdicts pass with their reason, so the whole
         /// run passes.
         #[test]
         fn publisher_generations_passes_at_the_floor() {
-            let r = build_soak_results(publish_inputs(Some(5), Some(600))).unwrap();
+            let r = build_soak_results(publish_inputs(Some(5), Some(6))).unwrap();
             let v = verdict(&r, "publisher_generations_rtsp-publish");
             assert!(v.pass, "{}", v.detail);
             assert!(v.detail.contains("floor of 5"), "{}", v.detail);
@@ -6435,7 +6433,7 @@ pub mod soak {
 
         #[test]
         fn publisher_generations_fails_one_below_the_floor() {
-            let r = build_soak_results(publish_inputs(Some(4), Some(600))).unwrap();
+            let r = build_soak_results(publish_inputs(Some(4), Some(6))).unwrap();
             let v = verdict(&r, "publisher_generations_rtsp-publish");
             assert!(!v.pass && !v.provisional, "{}", v.detail);
             assert!(v.detail.contains("4 publisher(s)"), "{}", v.detail);
@@ -6446,19 +6444,19 @@ pub mod soak {
         /// how many publishers came and went: a failure, not a pass.
         #[test]
         fn publisher_generations_fails_without_a_publish_mount_block() {
-            let r = build_soak_results(publish_inputs(None, Some(600))).unwrap();
+            let r = build_soak_results(publish_inputs(None, Some(6))).unwrap();
             let v = verdict(&r, "publisher_generations_rtsp-publish");
             assert!(!v.pass, "{}", v.detail);
             assert!(v.detail.contains("no publish_mount block"), "{}", v.detail);
         }
 
         #[test]
-        fn publisher_generations_fails_without_a_declared_period() {
+        fn publisher_generations_fails_without_a_declared_count() {
             let r = build_soak_results(publish_inputs(Some(9), None)).unwrap();
             let v = verdict(&r, "publisher_generations_rtsp-publish");
             assert!(!v.pass, "{}", v.detail);
             assert!(
-                v.detail.contains("no publisher_drop_period_s"),
+                v.detail.contains("no publisher_generations"),
                 "{}",
                 v.detail
             );
@@ -6483,7 +6481,7 @@ pub mod soak {
         /// missing the loop's RSS fails its data-present verdict.
         #[test]
         fn publish_leg_requires_its_recv_and_publisher_roles() {
-            let mut inputs = publish_inputs(Some(5), Some(600));
+            let mut inputs = publish_inputs(Some(5), Some(6));
             inputs.worker_exits.remove("rtsp-publish-publisher");
             inputs
                 .rss_samples
@@ -6503,7 +6501,7 @@ pub mod soak {
         /// could have run either, and fails.
         #[test]
         fn publish_leg_declaring_a_schedule_or_mode_fails_those_verdicts() {
-            let mut inputs = publish_inputs(Some(5), Some(600));
+            let mut inputs = publish_inputs(Some(5), Some(6));
             let decl = inputs.config.legs.get_mut("rtsp-publish").unwrap();
             decl.schedule = Some(ScheduleDeclaration {
                 seed: 1,
@@ -6524,12 +6522,9 @@ pub mod soak {
             assert!(parse_rss_csv(&format!("{header}0,srt,publisher,7,100\n")).is_err());
         }
 
-        fn config_with_publish_leg(leg: &str, period: Option<u64>) -> String {
+        fn config_with_publish_leg(leg: &str, decl: LegDeclaration) -> String {
             let mut legs = serde_json::Map::new();
-            legs.insert(
-                leg.to_string(),
-                serde_json::to_value(publish_declaration(period)).unwrap(),
-            );
+            legs.insert(leg.to_string(), serde_json::to_value(decl).unwrap());
             serde_json::json!({
                 "expected_duration_s": 3600, "rss_cadence_s": 30, "warmup_fraction": 0.1667,
                 "sampler_end_slack_s": 35, "expected_worker_exits": {}, "legs": legs
@@ -6538,24 +6533,83 @@ pub mod soak {
         }
 
         /// The declaration is validated at launch: a publish leg needs a
-        /// drop period leaving at least two generations, and a transport
-        /// leg cannot declare a publisher.
+        /// drop period and at least two generations, and a transport leg
+        /// cannot declare a publisher.
         #[test]
         fn soak_config_validates_the_publish_leg_declaration() {
-            let cfg = parse_soak_config(&config_with_publish_leg("rtsp-publish", Some(600)))
-                .expect("a soak.sh-shaped publish leg must validate");
-            assert_eq!(cfg.legs["rtsp-publish"].publisher_drop_period_s, Some(600));
+            let cfg = parse_soak_config(&config_with_publish_leg(
+                "rtsp-publish",
+                publish_declaration(Some(6)),
+            ))
+            .expect("a soak.sh-shaped publish leg must validate");
+            assert_eq!(cfg.legs["rtsp-publish"].publisher_generations, Some(6));
             assert!(
-                parse_soak_config(&config_with_publish_leg("rtsp-publish", Some(1800))).is_ok()
+                parse_soak_config(&config_with_publish_leg(
+                    "rtsp-publish",
+                    publish_declaration(Some(2))
+                ))
+                .is_ok()
             );
-            for bad in [None, Some(0), Some(1801), Some(3600)] {
-                let err = parse_soak_config(&config_with_publish_leg("rtsp-publish", bad))
-                    .expect_err("a period leaving fewer than two generations must be rejected");
-                assert!(err.contains("publisher_drop_period_s"), "{err}");
+            for bad in [None, Some(0), Some(1)] {
+                let err = parse_soak_config(&config_with_publish_leg(
+                    "rtsp-publish",
+                    publish_declaration(bad),
+                ))
+                .expect_err("fewer than two generations must be rejected");
+                assert!(err.contains("publisher_generations"), "{err}");
             }
-            let err = parse_soak_config(&config_with_publish_leg("srt", Some(600)))
-                .expect_err("a transport leg declaring a publisher must be rejected");
+            let mut no_period = publish_declaration(Some(6));
+            no_period.publisher_drop_period_s = None;
+            let err = parse_soak_config(&config_with_publish_leg("rtsp-publish", no_period))
+                .expect_err("a publish leg without a period must be rejected");
+            assert!(err.contains("publisher_drop_period_s"), "{err}");
+            let err = parse_soak_config(&config_with_publish_leg(
+                "srt",
+                publish_declaration(Some(6)),
+            ))
+            .expect_err("a transport leg declaring a publisher must be rejected");
             assert!(err.contains("only a publish leg"), "{err}");
+        }
+
+        /// Short periods: the floor is the declared count less one, never a
+        /// count re-derived from the run length (which could exceed what
+        /// the run launched). 7200 s at 60 s and 3600 s at 30 s both launch
+        /// 120 generations: 120 or 119 ended passes, 118 fails.
+        #[test]
+        fn short_period_runs_are_judged_against_the_declared_count() {
+            for duration_s in [7200.0, 3600.0] {
+                for (ended, pass) in [(120, true), (119, true), (118, false)] {
+                    let mut inputs = publish_inputs(Some(ended), Some(120));
+                    inputs.config.expected_duration_s = duration_s;
+                    let r = build_soak_results(inputs).unwrap();
+                    let v = verdict(&r, "publisher_generations_rtsp-publish");
+                    assert_eq!(v.pass, pass, "{duration_s}s, {ended} ended: {}", v.detail);
+                    assert!(v.detail.contains("floor of 119"), "{}", v.detail);
+                }
+            }
+        }
+
+        /// A recv report written before `publish_mount` existed (the key
+        /// absent) still loads, and the leg is judged as missing evidence
+        /// rather than `report soak` erroring.
+        #[test]
+        fn a_recv_report_without_publish_mount_loads_and_fails_the_leg() {
+            let mut older = passing_recv_report(1000);
+            older.profile = Some("baseline".to_string());
+            let json = serde_json::to_string(&older).unwrap();
+            assert!(!json.contains("publish_mount"), "{json}");
+            let recv_report: VerifyReport =
+                serde_json::from_str(&json).expect("the older shape must parse");
+            assert!(recv_report.publish_mount.is_none());
+            let mut inputs = publish_inputs(Some(5), Some(6));
+            inputs.publish_legs[0].1 = PublishLegArtifacts { recv_report };
+            let r = build_soak_results(inputs).expect("must judge, not error");
+            let v = verdict(&r, "publisher_generations_rtsp-publish");
+            assert!(
+                !v.pass && v.detail.contains("no publish_mount block"),
+                "{}",
+                v.detail
+            );
         }
     }
 }

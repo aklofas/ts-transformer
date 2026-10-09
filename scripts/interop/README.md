@@ -826,31 +826,42 @@ generates one stream of the run's length less 30 s and cuts it at PAT packets
 into `TOTAL_SECONDS / PUBLISHER_DROP_PERIOD_S` segments. A shell loop (the
 `rtsp-publish-publisher` worker) pushes each segment as its own publisher
 session: at the segment's end the publisher exits, its session ends, and the
-next one ANNOUNCEs. The segments concatenate to the source, so the receiver
+next one ANNOUNCEs. Each drop is graceful (EOS, then the session closes); an
+abrupt publisher loss, such as a reset with no TEARDOWN, is not exercised
+here and stays with the RTSP server's integration tests. The segments
+concatenate to the source, so the receiver
 judges one unbroken stream `--strict`, and its `stream_sha256` equals the
 source's (`rtsp-publish/source.sha256`) when every byte arrived. A publisher
 restart cannot end the capture: `recv`'s 15 s no-data deadline only applies
 before its first event.
 
+The stream is generated before launch, and while it is cut the source and the
+segments exist together: about 1.7 GB of disk per hour of run, about 122 GB
+for 72 h. `soak.sh` measures a 10 s sample of the leg's profile and exits 2,
+naming `--no-rtsp-publish`, when the outdir has less than 1.2 times that peak
+free.
+
 - **Declared** — `legs.rtsp-publish` carries the profile (`baseline` under
   `--profile auto`, not part of the seeded draw), the KLV set, `schedule:
-  null`, `reconnect_mode: null`, the publisher command line, and
-  `publisher_drop_period_s`, the segment length. `parse_soak_config` rejects
-  a publish leg without a period that leaves at least two generations, and a
-  transport leg that declares a publisher.
+  null`, `reconnect_mode: null`, the publisher command line,
+  `publisher_drop_period_s` (the segment length, recorded) and
+  `publisher_generations` (how many publisher sessions the run launched).
+  `parse_soak_config` rejects a publish leg without a period or with fewer
+  than two generations, and a transport leg that declares a publisher.
 - **Observed** — the recv report's `publish_mount` block: the mount's own
   counters, snapshotted before the server shuts down. `generation` counts
   publishers that ended.
 - **Checked** — **`publisher_generations_rtsp-publish`**, non-provisional:
-  `generation >= floor(expected_duration_s / publisher_drop_period_s) - 1`
-  (the last publisher may still be connected at the snapshot). Fails when
+  `generation >= publisher_generations - 1` (the last publisher may still be
+  connected at the snapshot). Fails when
   the report carries no `publish_mount` block. The leg also gets
   `recv_invariants_`, `profile_declared_` and `klv_declared_`, as a transport
   leg does. `schedule_declared_`, `reconnect_mode_declared_` and the six
   `corruption_*_` verdicts pass with a detail that begins "not applicable"
   and says why, except that a declared schedule or reconnect mode fails, since
   nothing on this leg could run it. RSS is sampled for `recv` and the
-  publisher loop. `soak-results.json` lists the leg under `publish_legs`, and
+  publisher loop; the `publisher` rows are the loop's shell, not
+  gst-launch-1.0. `soak-results.json` lists the leg under `publish_legs`, and
   `summary.txt` prints the publisher count and whether the stream hash
   matched.
 
