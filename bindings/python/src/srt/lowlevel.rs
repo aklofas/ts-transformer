@@ -580,7 +580,7 @@ impl PySocket {
     fn close(&self, py: Python<'_>) {
         let taken = self.inner.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(socket) = taken {
-            // SrtSocket::close consumes self and is documented as always-Ok.
+            // SrtSocket::close consumes self and is infallible.
             py.allow_threads(|| {
                 socket.close();
             });

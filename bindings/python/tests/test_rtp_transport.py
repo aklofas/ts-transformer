@@ -419,8 +419,8 @@ def _rtp_docstrings():
 def test_no_rtp_docstring_names_a_retired_kind() -> None:
     """The 0.7.0 rename left ~20 Python-visible rtp docstrings naming
     `TRANSPORT` / `MALFORMED_PACKET` / `CANCELLED` / `TIMEOUT`. Those
-    members still resolve as deprecated aliases, so nothing else catches
-    the drift — `help()` simply tells the user the wrong kind. All four
+    members were removed in 0.8.0; this guard keeps docstrings from
+    naming them, since nothing else catches the drift — `help()` simply tells the user the wrong kind. All four
     ARE checked; the regex is scoped to `RtpError(...)` / `RtpErrorKind.`
     contexts so it cannot flag the legitimate `StreamEndReason.CANCELLED`
     / `TRANSPORT_FAILED` end reasons or `RtspErrorKind.TIMEOUT`, which

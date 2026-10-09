@@ -333,9 +333,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **The KLV unit captured at the video origin is no longer lost to
   sender-report rounding.** The sender-report offset is rounded to whole
   ticks, so the unit at PTS 0 could be placed a tick early and dropped as
-  'before the video origin'; a placement within 1 ms before the origin
+  'before the video origin'; a placement less than 1 ms before the origin
   now lands on it. Found by the es-klv interop cell, which lost exactly
-  that record on two CI runs.
+  that record on three CI runs.
 
 ### Testing — RTSP publisher role
 
@@ -582,7 +582,7 @@ had to pin the sending host with a firewall rule.
 
 - **`MaxBandwidth::Limited(n)` with `n > i64::MAX` is clamped to `i64::MAX`**
   instead of wrapping through the `i64` cast: `Limited(u64::MAX)` used to
-  send `-1`, which libsrt reads as `Auto` (no cap), and any other wrapped
+  send `-1`, which libsrt reads as `Infinite` (named `Auto` before 0.8.0; no cap), and any other wrapped
   value was negative and refused by `srt_setsockopt`.
 
 ### Testing

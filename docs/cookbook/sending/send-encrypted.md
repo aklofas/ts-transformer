@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     sb.latency(Duration::from_millis(120));
     let mut socket = sb.connect("127.0.0.1:9000")?;
     socket.send(b"encrypted hello")?;
-    socket.close()?;
+    socket.close();
     Ok(())
 }
 ```

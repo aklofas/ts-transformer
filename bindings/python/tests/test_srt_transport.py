@@ -553,8 +553,8 @@ def test_listener_open_docstring_names_broken_not_accept_failed(cls_name: str) -
 
 def test_no_srt_docstring_names_a_retired_kind() -> None:
     """`SrtErrorKind.WOULD_BLOCK` is a 0.7.x deprecated alias of
-    `BACKPRESSURE`; it still resolves, so nothing else catches a docstring
-    that keeps naming it. Scoped to kind contexts so unrelated prose cannot
+    `BACKPRESSURE`, removed in 0.8.0; this guard keeps docstrings from
+    naming it. Scoped to kind contexts so unrelated prose cannot
     trip it (the rtp twin in `test_rtp_transport.py` has the same shape)."""
     import inspect
     import re

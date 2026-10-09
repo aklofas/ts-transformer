@@ -926,6 +926,7 @@ their first CI run ([run 37858440566](https://github.com/aklofas/ts-transformer/
   cell gates that: it computes the source file's digest with `verify` and
   fails on any difference. In the final-tree CI run the cell logged equal
   source and received digests.
+  On three CI runs the cell lost exactly the KLV record at PTS 0; the cause (the sender-report offset rounding that unit a tick before the video origin) is fixed in this release and the cell record now carries the mount's own counters.
   The cell holds KLV **content**, not KLV **timing**: no interop oracle
   relates a KLV unit's PTS to the video PTS it was placed against, so
   where the server puts a unit on the video timeline is pinned by the

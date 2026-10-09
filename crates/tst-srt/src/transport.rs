@@ -313,7 +313,7 @@ impl Transport for SrtTransport {
         // the latch and report `ExplicitClose` for our own close.
         self.closed = true;
         if let Some(socket) = self.socket.take() {
-            // Socket::close consumes self; ignore the error — we're closing.
+            // Socket::close consumes self and is infallible; the cancel handle consumes the srt_close rc.
             socket.close();
         }
     }

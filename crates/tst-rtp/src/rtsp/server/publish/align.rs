@@ -19,7 +19,7 @@
 //! unit more than [`SR_PLAUSIBILITY_TICKS`] from the newest video PTS seen
 //! is abandoned for the fallback (counted as one step; the same offset is
 //! not re-adopted). A mapping that has validated is kept through later
-//! video stalls. A unit placed within [`STEP_TOLERANCE_TICKS`] before
+//! video stalls. A unit placed less than [`STEP_TOLERANCE_TICKS`] before
 //! PTS 0 lands on PTS 0: the report offset is rounded to whole ticks, so
 //! the unit captured at the video origin can otherwise be implied a tick
 //! early. A later report pair always recomputes
@@ -180,7 +180,7 @@ struct VideoOrigin {
 /// stamp is rounded on its own, and the NTP delta floors), so the unit
 /// captured at the video origin can be implied a tick or two before PTS 0,
 /// which the adapter drops as "placed before the video origin". Within
-/// [`STEP_TOLERANCE_TICKS`] before the origin it IS the origin; anything
+/// [`STEP_TOLERANCE_TICKS`] before the origin (less than 1 ms, so exactly that many ticks is excluded) it IS the origin; anything
 /// earlier keeps its negative PTS for the adapter to drop.
 fn placed_pts(t_k: i64, offset: i64, origin: i64) -> i64 {
     let pts = t_k + offset - origin;
