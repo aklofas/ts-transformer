@@ -152,8 +152,8 @@ The Rust API is the source of truth — every binding crate forwards
   multiple threads — runs the closer at most once.
 - The underlying close (`srt_close` for SRT transports) runs on the
   thread that wins the atomic swap. The closer's return code is
-  currently swallowed — see the inline doc on `Socket::close` for
-  context.
+  consumed there, which is why `Socket::close` and `Listener::close`
+  are infallible.
 - `is_cancelled()` (on the concrete `SrtCancelHandle` struct) is advisory;
   the underlying close may not have completed yet on another thread.
 - `is_cancelled()` answers **"did a caller cancel?"**, never "is this

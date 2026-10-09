@@ -430,19 +430,13 @@ impl Socket {
 
     /// Explicit close; rare. Drop handles the normal path.
     ///
-    /// After `close()` returns, any other thread parked in `send`/`recv`
-    /// on a clone of this socket's `cancel_handle()` observes
-    /// `SendError::ConnectionBroken` / `RecvError::ConnectionBroken`.
-    ///
-    /// **Always returns `Ok`.** The `Result` is retained for API stability
-    /// and may carry an error in a future revision (the underlying
-    /// `srt_close` rc is currently swallowed by the `SrtCancelHandle` closer).
-    pub fn close(self) -> Result<(), IoError> {
-        // SrtCancelHandle::cancel does the srt_close and is idempotent. We
-        // can't easily plumb the rc back out (closer is `Fn`), so the
-        // Result type stays for back-compat but always returns Ok.
+    /// Infallible: the underlying `srt_close` return code is consumed by the
+    /// cancel-handle closer. After `close()` returns, any other thread parked
+    /// in `send`/`recv` on a clone of this socket's `cancel_handle()`
+    /// observes `SendError::ConnectionBroken` / `RecvError::ConnectionBroken`.
+    pub fn close(self) {
+        // SrtCancelHandle::cancel does the srt_close and is idempotent.
         self.cancel.cancel();
-        Ok(())
     }
 
     /// Clone-able close handle. Calling `cancel()` from any thread

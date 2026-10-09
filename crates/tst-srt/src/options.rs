@@ -364,7 +364,7 @@ mod tests {
     }
 
     /// A cap above `i64::MAX` must clamp, never wrap: `Limited(u64::MAX)`
-    /// cast straight to `i64` is `-1`, which libsrt reads as `Auto`
+    /// cast straight to `i64` is `-1`, which libsrt reads as `Infinite`
     /// ("infinite"), and any other wrapped value is negative and rejected
     /// by `srt_setsockopt`. A caller asking for an absurdly large cap gets
     /// the largest cap the option can carry.

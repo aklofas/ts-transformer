@@ -314,7 +314,7 @@ impl Transport for SrtTransport {
         self.closed = true;
         if let Some(socket) = self.socket.take() {
             // Socket::close consumes self; ignore the error — we're closing.
-            let _ = socket.close();
+            socket.close();
         }
     }
 

@@ -417,12 +417,10 @@ impl Listener {
     /// returned, and use `cancel_handle()` — never a free-then-wake — for the
     /// cross-thread wake.)
     ///
-    /// **Always returns `Ok`.** The `Result` is retained for API stability
-    /// and may carry an error in a future revision (the underlying
-    /// `srt_close` rc is currently swallowed by the `SrtCancelHandle` closer).
-    pub fn close(self) -> Result<(), IoError> {
+    /// Infallible: the underlying `srt_close` return code is consumed by the
+    /// cancel-handle closer.
+    pub fn close(self) {
         self.cancel.cancel();
-        Ok(())
     }
 
     /// Clone-able cancel handle — the sanctioned cross-thread wake for a parked

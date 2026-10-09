@@ -366,7 +366,7 @@ fn exit_is_clean_after_a_clean_close() {
         .connect(format!("127.0.0.1:{port}"))
         .expect("connect");
     let accepted = accept.join();
-    socket.close().expect("close caller");
-    accepted.close().expect("close accepted");
+    socket.close();
+    accepted.close();
     std::process::exit(0);
 }

@@ -670,7 +670,7 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nClose(
     crate::panic::jni_catch(&mut env, (), |_env| {
         // Atomic + idempotent: only the winning close gets the Socket back.
         if let Some(socket) = REGISTRY_SOCKET.close(handle as u64) {
-            let _ = socket.close();
+            socket.close();
         }
     })
 }
@@ -778,7 +778,7 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nClose(
         // accept released it. So the free below is sound against a parked accept.
         // Atomic + idempotent: a double close finds the id gone → no-op.
         if let Some(listener) = REGISTRY_LISTENER.close(handle as u64) {
-            let _ = listener.close();
+            listener.close();
         }
     })
 }

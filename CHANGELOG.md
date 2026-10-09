@@ -30,6 +30,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   does with them. Neither old name survives, so an old use fails to
   compile instead of silently changing the sending behaviour.
   `Limited(bps)` and `?maxbw=` are unchanged.
+- **`Socket::close(self)` and `Listener::close(self)` no longer return a
+  `Result`.** Both always returned `Ok(())` (the `srt_close` return code
+  is consumed by the cancel-handle closer); the signature was kept through
+  0.5–0.7 for stability. A caller that wrote `sock.close()?` or
+  `if let Err(e) = sock.close()` now fails to compile; drop the `?` / the
+  match. The binding `close()` methods (C, Python, JVM) are unchanged.
 
 ### Added — tst-rtp: RTSP publisher role (ANNOUNCE / RECORD ingest), MP2T and elementary H.264 + KLV
 

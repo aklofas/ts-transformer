@@ -56,7 +56,7 @@ fn peer_close_ends_the_stream_without_latching_is_cancelled() {
 
     // Clean peer-side close.
     let peer = accept.join();
-    peer.close().expect("peer close");
+    peer.close();
 
     // Drive the receiver until it observes the end. `Backpressure` is the
     // recv-timeout tick — keep going. Bounded by attempts, not wall clock:

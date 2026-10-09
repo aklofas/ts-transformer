@@ -164,7 +164,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // before the socket goes away. Without this, the close can race the
             // last few datagrams and the listener sees fewer messages than sent.
             thread::sleep(Duration::from_millis(200));
-            socket.close()?;
+            socket.close();
             Ok(())
         },
     );

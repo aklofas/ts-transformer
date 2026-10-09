@@ -747,20 +747,11 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## `Socket::close` Result-type cleanup
 
-- **Status:** `tst_srt::Socket::close(self) -> Result<(), IoError>` always
-  returns `Ok`. The
-  underlying `srt_close` return code is consumed inside the
-  `SrtCancelHandle` closer (which has a `Fn` signature, no return path).
-  Same applies to `tst_srt::Listener::close`.
-- **Why deferred:** The signature is preserved for API stability —
-  changing it now would be a breaking change for consumers who pattern
-  on `if let Err(e) = sock.close()`. A future breaking-change cycle
-  could either drop the `Result` entirely (close becomes infallible)
-  or plumb `srt_close`'s rc back via a richer `CloseError` channel.
-- **Trigger to revisit:** the next breaking release: drop the `Result`
-  (close becomes infallible) unless a consumer has by then asked for the
-  `srt_close` rc. The breaking releases 0.5.0 and 0.6.0 kept the
-  `Result`, and so does 0.7.0.
+- **Status:** Resolved in 0.8.0: `tst_srt::Socket::close(self)` and
+  `tst_srt::Listener::close(self)` are infallible. Both always returned
+  `Ok`, because the `srt_close` return code is consumed inside the
+  `SrtCancelHandle` closer (a `Fn`, no return path). A caller that wrote
+  `sock.close()?` or matched on the result now fails to compile.
 
 ## `MaxBandwidth` variant naming vs libsrt sentinels
 
