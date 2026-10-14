@@ -32,20 +32,16 @@
  *   remain stable per the documented `#[repr(i32)]` policy in
  *   `bindings/c/core/src/error.rs`).
  *
- * Bumped on:
+ * Rule (additive-only): within a major, the minor bumps for ADDITIONS
+ * only — new symbols, new struct fields appended behind a size/version
+ * scheme, new enum values, new error codes. REMOVING or renaming a `tst_*`
+ * symbol, changing an existing function's signature or semantic contract,
+ * or changing an existing struct's layout/size (the `_Static_assert`
+ * lines in the header trailer) is a MAJOR bump. Pre-1.0 the major stays
+ * at 0, so those changes wait for 1.0; until then they are made by adding
+ * a new symbol/struct beside the old one.
  *
- * - Removing or renaming any `tst_*` symbol.
- * - Changing a struct layout / size in a way that breaks
- *   `_Static_assert(sizeof(...) == N)` lines in the header trailer.
- * - Changing the signature of an existing `tst_*` function.
- * - Changing the semantic contract of an existing function in a way
- *   that would silently miscompile or misbehave in pre-existing
- *   consumers (e.g., flipping return-code polarity, changing
- *   buffer-ownership semantics).
- *
- * **Initial value:** `0.1` (pre-1.0). The minor field bumps freely
- * during pre-1.0 development on any breaking ABI change. Settles to
- * `1.0` at the first stable release.
+ * **Initial value:** `0.1`. Settles to `1.0` at the first stable release.
  *
  * Cbindgen emits this as `#define TST_ABI_VERSION_MAJOR 0` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_major`].

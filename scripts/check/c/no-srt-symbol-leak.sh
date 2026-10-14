@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Verify that libtstrans.so's dynamic export table contains zero
-# srt_*/SRT_* symbols. Plan B's build.rs symbol-hygiene wiring (Linux:
-# -Wl,--exclude-libs=ALL; macOS: -Wl,-exported_symbols_list,exports.txt)
-# restricts exports to tst_*/TST_*; this ratchet enforces the result at
-# CI time.
+# srt_*/SRT_* symbols. Export control is done by `bindings/c/build.rs`:
+# on Linux rustc's anonymous version script localises the libsrt/mbedTLS
+# symbols (the build deliberately does NOT use `--exclude-libs=ALL`); on
+# macOS the `exports.txt` list (`-exported_symbols_list`) whitelists
+# tst_*/TST_*. This ratchet enforces the result at CI time.
 #
 # A regression here means either:
 #   - the build.rs link-arg was dropped from emission
-#   - libsrt has a new C-visible symbol the version-script didn't
-#     anticipate (extremely unlikely — --exclude-libs=ALL is total)
+#   - libsrt has a new C-visible symbol the version-script / exports list
+#     didn't anticipate
 #   - someone added a libsrt re-export to tst-c without going through
 #     the Rust srt_sys::* binding path
 #

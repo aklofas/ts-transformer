@@ -2,10 +2,12 @@
 //! against one client. Reads requests via tokio AsyncRead, dispatches
 //! to handlers, writes responses back.
 //!
-//! State machine: Idle → Described (after DESCRIBE) → SettingUp (after
-//! SETUP) → Playing (after PLAY) → TornDown (after TEARDOWN or
-//! disconnect). State lives in [`ServerSessionState`] with fan-out
-//! subscription handle and transport choice (Udp/TcpInterleaved).
+//! Per-connection state lives in [`ServerSessionState`]. `session_id` is
+//! `None` until SETUP returns 200; the mount and the transport choice (a UDP
+//! socket pair or interleaved channels) are set by SETUP. `fanout_handle`
+//! and `peer_cancel` exist only while PLAYing and are re-minted on
+//! PAUSE/PLAY; TEARDOWN or a disconnect clears them. DESCRIBE is stateless.
+//! Invariant: one role per session (reader or publisher).
 //!
 //! A TLS variant `handle_connection_tls` is gated on `feature = "rtsp-server-tls"`.
 //! Without `tokio-rustls`, the TLS path is not implemented.
