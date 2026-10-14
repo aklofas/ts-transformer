@@ -338,7 +338,13 @@ still block briefly on internal lock contention while the worker
 drains), but that's a second thread the caller doesn't manage, not
 cooperative scheduling.
 
-Two crates own private tokio runtimes today — one per `RtspServer` (`tst-rtp`) and one per `HlsPublisher` (`tst-hls`, two workers). Each is created in the constructor, blocked on from the caller's thread, and shut down with a bounded timeout by `stop()`/`Drop`; public methods that touch a runtime must not be called from inside one. A written runtime-ownership rule is still to come.
+Two crates own private tokio runtimes today — one per `RtspServer`
+(`tst-rtp`) and one per serving `HlsPublisher` (`tst-hls` owns a runtime
+only when it serves HTTP; two workers). Each is created in the
+constructor, blocked on from the caller's thread, and shut down with a
+bounded timeout by `stop()`/`Drop`; public methods that touch a runtime
+must not be called from inside one. A written runtime-ownership rule is
+still to come.
 
 Sync was chosen for three reasons. First, the target deployment shape
 is small — a process talks to ≤10 SRT peers, so the thread-per-

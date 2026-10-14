@@ -252,8 +252,8 @@ pub const TST_VERSION_PATCH: crate::c_types::c_int = 0;
 ///   `bindings/c/core/src/error.rs`).
 ///
 /// Rule (additive-only): within a major, the minor bumps for ADDITIONS
-/// only — new symbols, new struct fields appended behind a size/version
-/// scheme, new enum values, new error codes. REMOVING or renaming a `tst_*`
+/// only — new symbols, new struct fields only in NEW structs (existing struct
+/// layouts are frozen until a sized/versioned snapshot convention exists), new enum values, new error codes. REMOVING or renaming a `tst_*`
 /// symbol, changing an existing function's signature or semantic contract,
 /// or changing an existing struct's layout/size (the `_Static_assert`
 /// lines in the header trailer) is a MAJOR bump. Pre-1.0 the major stays

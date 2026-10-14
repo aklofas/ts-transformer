@@ -19,7 +19,7 @@ mod pes;
 mod psi;
 pub(crate) mod psi_assembler;
 pub mod strict;
-// pub(super) so the demuxer's sibling modules can call parse_ts_packet.
+// pub(super): the demuxer's sibling modules in this directory call parse_ts_packet.
 pub(super) mod ts;
 mod types;
 mod sync_ingress;

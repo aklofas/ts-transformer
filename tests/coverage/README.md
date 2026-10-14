@@ -5,9 +5,14 @@ runs where, what's intentionally skipped, what coverage is intended, and where
 every committed fixture came from. They are inventory aids **and** partly
 enforced: `scripts/check/repo/test-manifests.sh` checks that they are
 well-formed and reference real, in-tree files, and
-`scripts/check/repo/surface-manifest.sh` enforces rules (a)–(c): every
-level-3 public item has a row, named symbols resolve, and the owning tests
-exist. See that script's header for the exact rules.
+`scripts/check/repo/surface-manifest.sh` enforces:
+
+- (a) every `owning_tests` path in the surface manifest exists on disk;
+- (b) every binding column symbol resolves in that binding's source;
+- (b2) every `[[surface]]` row carries all five binding columns;
+- (c) closure: every mappable public-api item is mapped or exempted.
+
+See that script's header for the exact rules.
 
 ## The tier model
 
@@ -16,7 +21,7 @@ Every test (or test job) maps to one of these tiers:
 | Tier | Meaning | Where it runs | Gating? |
 | --- | --- | --- | --- |
 | **A** | Always-on, hermetic, fast. The default suite. | PR CI (`build (linux-x86_64)`, `build (linux-aarch64)`), both feature modes | **Yes** — a red here blocks merge |
-| **A-soft** | Always-on but on a soft platform, phasing in. | (historical; since 2026-05-30 all four platforms are gating — see ci.yml's build matrix) | Yes — promoted to A on a dated schedule |
+| **A-soft** | Historical tier: always-on on a platform that was still phasing in. | Nowhere today — since 2026-05-30 all four platforms are gating (see ci.yml's build matrix), so these jobs are tier A | Yes — promoted to A |
 | **B** | Needs external tools (ffmpeg / tsduck / vlc) or the long soak. | Local `scripts/release-validation.sh` before tagging | No (local, pre-release) |
 | **C** | Manual / diagnostic. Run explicitly by a maintainer. | `#[ignore]`d; run with `-- --ignored` on demand | No |
 | **D** | Deferred / advisory. Documented intent, not yet implemented. | Nowhere yet | No |
