@@ -12,10 +12,14 @@
 //! counting it, the drop counters do not), exactly as after a cancel through
 //! the wrapper's own handle.
 
+mod common;
+
+use crate::common::{FlagCancel, broken, flag, wait_for};
+
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
+use std::time::Duration;
+use tst_core::transport::{Transport, TransportCancel, TransportError};
 use tst_pipeline::{
     BackoffStrategy, ManagedStatsHandle, ManagedTransport, OverflowPolicy, ReconnectMode,
     ReconnectPolicy,
@@ -56,29 +60,6 @@ impl Transport for Inner {
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
         Some(Arc::new(FlagCancel(Arc::clone(&self.cancelled))))
     }
-}
-
-struct FlagCancel(Arc<AtomicBool>);
-
-impl TransportCancel for FlagCancel {
-    fn cancel(&self) {
-        self.0.store(true, Ordering::SeqCst);
-    }
-    fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
-    }
-}
-
-fn broken(msg: &str) -> TransportError {
-    TransportError::Broken {
-        msg: msg.into(),
-        errno_code: None,
-        cause: BrokenCause::Unspecified,
-    }
-}
-
-fn flag(set: bool) -> Arc<AtomicBool> {
-    Arc::new(AtomicBool::new(set))
 }
 
 fn policy(mode: ReconnectMode) -> ReconnectPolicy {
@@ -146,17 +127,6 @@ fn rig(
         factory_calls,
         delivered,
     }
-}
-
-fn wait_for(mut f: impl FnMut() -> bool) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < PROMPT {
-        if f() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    f()
 }
 
 /// The terminal state every case below must end in: no further factory
@@ -269,7 +239,7 @@ fn background_worker_drain_into_a_cancelled_inner_is_terminal() {
         .expect("the break is accepted into the gap buffer");
     let stats = rig.stats.clone();
     assert!(
-        wait_for(|| !stats.stats().expect("no poison").reconnecting),
+        wait_for(PROMPT, || !stats.stats().expect("no poison").reconnecting),
         "the worker kept going after its inner reported the cancel"
     );
     // The accepted message stays queued, undelivered.
@@ -290,7 +260,7 @@ fn background_cancelled_dial_is_terminal() {
         .expect("the break is accepted into the gap buffer");
     let stats = rig.stats.clone();
     assert!(
-        wait_for(|| !stats.stats().expect("no poison").reconnecting),
+        wait_for(PROMPT, || !stats.stats().expect("no poison").reconnecting),
         "the worker kept dialling after the dial reported the cancel"
     );
     assert_terminal(&mut rig, 1, 1);

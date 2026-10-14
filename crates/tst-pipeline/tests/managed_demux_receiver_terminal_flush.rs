@@ -7,9 +7,12 @@
 //! Helpers mirror `demux_receiver_terminal_flush.rs` (each tst-pipeline
 //! test binary carries its own small fixture set).
 
+mod common;
+
+use crate::common::{build_h264_au, drain_mux, fast_policy, to_ts_packets};
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
@@ -17,46 +20,9 @@ use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder, Video
 use tst_core::transport::{RecvTransport, TransportCancel};
 use tst_core::{BrokenCause, TransportError};
 use tst_pipeline::{
-    BackoffStrategy, DemuxReceiverErrorSource, ManagedDemuxReceiver, ManagedDemuxReceiverConfig,
-    ManagedRecvTransport, ReconnectPolicy, RecvEndReason, ShellErrorKind,
+    DemuxReceiverErrorSource, ManagedDemuxReceiver, ManagedDemuxReceiverConfig,
+    ManagedRecvTransport, RecvEndReason, ShellErrorKind,
 };
-
-/// Minimal valid Annex-B H.264 AU (AUD + IDR slice), 14 bytes; `marker`
-/// makes each AU distinguishable.
-fn build_h264_au(marker: u8) -> Vec<u8> {
-    vec![
-        0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00, 0x01, 0x65, marker, 0xBB, 0xCC,
-    ]
-}
-
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
-
-fn to_ts_packets(bytes: &[u8]) -> Vec<[u8; 188]> {
-    assert_eq!(
-        bytes.len() % 188,
-        0,
-        "muxer output must be TS-packet aligned"
-    );
-    bytes
-        .chunks_exact(188)
-        .map(|c| {
-            let mut a = [0u8; 188];
-            a.copy_from_slice(c);
-            a
-        })
-        .collect()
-}
 
 /// Three video AUs; the last one's PES is length-0 (unbounded) and only a
 /// flush can complete it.
@@ -86,14 +52,6 @@ fn never_reconnect() -> Box<dyn FnMut() -> Result<CancelThenBroken, TransportErr
             cause: BrokenCause::Unspecified,
         })
     })
-}
-
-fn fast_policy(max_attempts: Option<u32>) -> ReconnectPolicy {
-    ReconnectPolicy {
-        max_attempts,
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        ..Default::default()
-    }
 }
 
 /// Delivers one 188-byte packet per `recv_bytes`, then — once exhausted —
