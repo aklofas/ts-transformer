@@ -4,6 +4,7 @@
 //! muxer + demuxer round-trip preserves the codec classification (PMT
 //! stream_type 0x33 -> `VideoCodec::H266`) and the per-NAL header fields.
 
+use crate::common::mux_demux::{collect_events, drain_mux};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::Demuxer;
 use tst_core::mpegts::demux::event::{
@@ -35,27 +36,6 @@ fn synthetic_h266_au() -> Vec<u8> {
     au.extend(nal(16, &[0xC0])); // PPS_NUT
     au.extend(nal(7, &[0xD0])); // IDR_W_RADL (slice payload placeholder)
     au
-}
-
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
-
-fn collect_events(d: &mut Demuxer) -> Vec<DemuxEvent> {
-    let mut out = Vec::new();
-    while let Some(e) = d.next_event() {
-        out.push(e);
-    }
-    out
 }
 
 #[test]

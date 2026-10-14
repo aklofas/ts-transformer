@@ -13,6 +13,7 @@
 //! / `mpegts_demux_subtitle.rs`. Hand-rolling raw PAT/PMT/PES bytes would
 //! duplicate dozens of LoC of muxer logic for no real coverage gain.
 
+use crate::common::mux_demux::drain_mux as drain_all;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
     DemuxEvent, Demuxer, SamplePayload, VideoCodec, VideoPayload, split_video,
@@ -25,20 +26,6 @@ use tst_core::mpegts::stats::StreamCodecStats;
 use tst_core::shared::SharedBytes;
 
 // --- Helpers ----------------------------------------------------------------
-
-/// Drain every queued packet from the muxer into a single Vec.
-fn drain_all(mux: &mut Muxer) -> Vec<u8> {
-    let mut all = Vec::new();
-    let mut buf = vec![0u8; 188 * 256];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        all.extend_from_slice(&buf[..n]);
-    }
-    all
-}
 
 /// Feed `bytes` to a fresh Demuxer and drain all events, returning the
 /// demuxer for follow-on `stream_codec_stats` / `reset_stats` queries.

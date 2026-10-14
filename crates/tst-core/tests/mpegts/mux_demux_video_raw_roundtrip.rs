@@ -8,6 +8,7 @@
 //! AV1 uses `Av1CarriageMode::InteropRawObu` throughout so the mux passes raw
 //! OBU bytes without binding-mode wrapping — the byte-faithful path.
 
+use crate::common::mux_demux::drain_mux;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
     Demuxer, DemuxerConfig,
@@ -100,21 +101,6 @@ fn synthetic_av1_au() -> Vec<u8> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    // The pull loop exits on n==0, so a single small buffer drains AUs larger
-    // than itself across multiple pulls — no need to size it to the AU.
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
 
 /// Mux `au` as a video AU (key frame, PTS=90000) into a fresh `Muxer` built
 /// with `build_cfg`, drain all TS packets, then demux and collect each Video

@@ -6,22 +6,11 @@
 //!
 //! Skipped if `ffprobe` is not on PATH (returns early with a printed note).
 
+use crate::common::mux_demux::drain_mux as drain_all;
 use std::process::Command;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder};
 use tst_test_helpers::synthetic_nal;
-
-fn drain_all(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            return out;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-}
 
 fn have_ffprobe() -> bool {
     Command::new("ffprobe")

@@ -5,25 +5,14 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use tst_core::mpegts::demux::{DemuxEvent, Demuxer, SamplePayload, StreamKind, SubtitleCodec};
+use crate::common::mux_demux::demux_bytes_flushed as collect_events;
+use tst_core::mpegts::demux::{DemuxEvent, SamplePayload, StreamKind, SubtitleCodec};
 
 fn load(name: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/subtitles")
         .join(name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {}", path.display(), e))
-}
-
-/// Drain every event from the demuxer into a Vec for matching.
-fn collect_events(bytes: &[u8]) -> Vec<DemuxEvent> {
-    let mut demux = Demuxer::new();
-    demux.feed(bytes).unwrap();
-    demux.flush();
-    let mut events = Vec::new();
-    while let Some(e) = demux.next_event() {
-        events.push(e);
-    }
-    events
 }
 
 fn ffprobe_available() -> bool {

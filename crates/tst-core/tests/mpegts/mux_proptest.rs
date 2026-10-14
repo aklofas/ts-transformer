@@ -1,5 +1,6 @@
 //! Property-based tests for `mpegts::mux::Muxer` invariants.
 
+use crate::common::mux_demux::drain_mux as drain_all;
 use proptest::prelude::*;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{Muxer, MuxerConfig};
@@ -27,18 +28,6 @@ fn push_spec_strategy() -> impl Strategy<Value = PushSpec> {
             pts,
             key_frame,
         })
-}
-
-fn drain_all(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            return out;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
 }
 
 proptest! {

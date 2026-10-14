@@ -1,5 +1,6 @@
 //! Acceptance: mux -> demux raw -> remux is a PAYLOAD FIXPOINT in
 //! BOTH carriage modes, using the pass-through wire push for the remux.
+use crate::common::mux_demux::drain_mux as drain;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::event::{DemuxEvent, SamplePayload};
 use tst_core::mpegts::demux::{Demuxer, DemuxerConfig};
@@ -20,19 +21,6 @@ fn synth() -> Vec<u8> {
     au.extend(obu(1, &[0x00, 0x00, 0x01, 0xAA])); // forces emulation prevention in binding
     au.extend(obu(3, &[0x00, 0xFF]));
     au
-}
-
-fn drain(m: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = m.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
 }
 
 fn mux_cfg(mode: Av1CarriageMode) -> MuxerConfig {

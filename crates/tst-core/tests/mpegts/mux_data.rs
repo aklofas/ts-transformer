@@ -11,9 +11,10 @@
 //! and — because Unknown streams have no H.222.0 §2.7.4 PTS mandate — emits
 //! no `NonConformant` for the omission.
 
+use crate::common::mux_demux::{demux_bytes as drain_events, drain_mux};
 use tst_core::MuxError;
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::demux::{DemuxEvent, Demuxer, SamplePayload, StreamKind as DemuxStreamKind};
+use tst_core::mpegts::demux::{DemuxEvent, SamplePayload, StreamKind as DemuxStreamKind};
 use tst_core::mpegts::mux::{
     DataStreamHandle, Muxer, MuxerConfig, MuxerProgramConfigBuilder, StreamKind, VideoCodec,
 };
@@ -35,29 +36,6 @@ fn synthetic_h264_au() -> Vec<u8> {
     au.extend(nal(8, &[0xCE, 0x38, 0x80])); // PPS
     au.extend(nal(5, &[0x88, 0x84, 0x0A, 0x7C, 0x11])); // IDR slice
     au
-}
-
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
-
-fn drain_events(bytes: &[u8]) -> Vec<DemuxEvent> {
-    let mut demuxer = Demuxer::new();
-    demuxer.feed(bytes).unwrap();
-    let mut out = Vec::new();
-    while let Some(ev) = demuxer.next_event() {
-        out.push(ev);
-    }
-    out
 }
 
 /// One video + three data streams (0xF0 w/ descriptor, 0xF1, bare 0x06

@@ -3,6 +3,7 @@
 //! Drives the existing `mpegts::mux::Muxer` to produce TS bytes, feeds them
 //! into `Demuxer`, asserts the events recovered match the inputs.
 
+use crate::common::mux_demux::{collect_events, drain_mux};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
     DemuxEvent, Demuxer, MetadataKind, SamplePayload, StreamKind, VideoCodec,
@@ -25,14 +26,6 @@ fn build_minimal_h265_au() -> Vec<u8> {
     ]
 }
 
-fn collect_events(d: &mut Demuxer) -> Vec<DemuxEvent> {
-    let mut out = Vec::new();
-    while let Some(e) = d.next_event() {
-        out.push(e);
-    }
-    out
-}
-
 fn build_dummy_klv() -> Vec<u8> {
     // Hand-roll a minimal ST 0601 LS: 16-byte UL + BER-short length +
     // body. Body has one tag (2) of length 8 carrying 8 zero bytes.
@@ -47,19 +40,6 @@ fn build_dummy_klv() -> Vec<u8> {
     ]);
     out.push(body.len() as u8); // BER short-form length
     out.extend_from_slice(&body);
-    out
-}
-
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
     out
 }
 

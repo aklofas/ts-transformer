@@ -25,11 +25,11 @@
 //! the PUSI packet on the KLV PID. The muxer always writes Complete CFI,
 //! so patches are what drive the demuxer through the non-conformant paths.
 
+use crate::common::mux_demux::{collect_events_with, drain_mux as drain};
 use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
-    DemuxEvent, Demuxer, DemuxerConfig, DemuxerConfigBuilder, MetadataKind, NonConformantIssue,
-    event::MultiCellAuReason,
+    DemuxEvent, DemuxerConfig, MetadataKind, NonConformantIssue, event::MultiCellAuReason,
 };
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
@@ -61,19 +61,6 @@ fn build_muxer() -> Muxer {
         b.build().unwrap()
     };
     Muxer::new(cfg).unwrap()
-}
-
-fn drain(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
 }
 
 /// Find byte offset of the n-th PUSI AU cell on `KLV_PID`. Same shape as
@@ -128,16 +115,6 @@ fn patch_au_cell(
     let mut buf = Vec::with_capacity(5 + inner.len());
     write_metadata_au_cell(&mut buf, hdr, inner).unwrap();
     ts_bytes[offset..offset + buf.len()].copy_from_slice(&buf);
-}
-
-fn collect_events_with(builder: DemuxerConfigBuilder, ts_bytes: &[u8]) -> Vec<DemuxEvent> {
-    let mut dem = Demuxer::with_config(builder.build());
-    dem.feed(ts_bytes).unwrap();
-    let mut events = Vec::new();
-    while let Some(e) = dem.next_event() {
-        events.push(e);
-    }
-    events
 }
 
 // Tolerance is on by default, so every caller in this file passes an

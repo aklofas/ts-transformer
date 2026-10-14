@@ -5,26 +5,13 @@
 //! All tests go through the public mux→demux path to avoid exposing
 //! internal PSI build helpers.
 
+use crate::common::mux_demux::drain_mux as drain;
 use proptest::prelude::*;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::low_level::walk_descriptors;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer};
 use tst_core::mpegts::descriptors;
 use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-
-/// Drain all TS packets from a muxer into a single `Vec<u8>`.
-fn drain(mux: &mut Muxer) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    let mut buf = vec![0u8; 188 * 64];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        bytes.extend_from_slice(&buf[..n]);
-    }
-    bytes
-}
 
 /// Drive a fixed-config Muxer once, return the muxed TS bytes used by
 /// the chunking-invariance test. Fixed inputs keep the chunking test

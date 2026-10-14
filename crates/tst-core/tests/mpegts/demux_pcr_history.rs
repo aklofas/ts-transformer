@@ -17,6 +17,7 @@
 use tst_core::error::DemuxError;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig, NonConformantIssue, StrictMode};
 
+use crate::common::mux_demux::collect_events as drain;
 use crate::psi_builders::{build_pat_section, build_pmt_section, psi_packet};
 
 const PMT_PID: u16 = 0x1000;
@@ -59,10 +60,6 @@ fn pcr_packet(pid: u16, pcr_27mhz: u64) -> [u8; 188] {
     buf[10] = (((base & 0x01) as u8) << 7) | 0x7E | ((ext >> 8) as u8 & 0x01);
     buf[11] = (ext & 0xFF) as u8;
     buf
-}
-
-fn drain(d: &mut Demuxer) -> Vec<DemuxEvent> {
-    core::iter::from_fn(|| d.next_event()).collect()
 }
 
 fn program_maps(events: &[DemuxEvent]) -> usize {

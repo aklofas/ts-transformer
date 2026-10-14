@@ -8,24 +8,11 @@
 //! `mpegts_mux_ffprobe.rs` and `mpegts_mux.rs` files; these tests focus
 //! on routing — the right bytes go to the right PIDs.
 
+use crate::common::mux_demux::drain_mux as drain_all;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
-
-/// Drain every queued packet from the muxer into a single Vec.
-fn drain_all(mux: &mut Muxer) -> Vec<u8> {
-    let mut all = Vec::new();
-    let mut buf = vec![0u8; 188 * 64];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        all.extend_from_slice(&buf[..n]);
-    }
-    all
-}
 
 /// Extract the set of PIDs present in a TS byte stream.
 fn pids_present(ts: &[u8]) -> std::collections::BTreeSet<u16> {

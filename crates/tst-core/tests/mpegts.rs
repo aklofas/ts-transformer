@@ -4,6 +4,12 @@
 //! Each `mod` below is one former top-level integration-test file, now
 //! compiled into this single binary. Test bodies are unchanged; only the
 //! module path gained a `mpegts::<file>::` prefix.
+
+// Shared test helpers, declared once at the binary root so
+// `crate::common::*` resolves for every member and `common/mod.rs` is not
+// loaded as a module twice (clippy::duplicate_mod).
+#[path = "common/mod.rs"]
+mod common;
 #[path = "mpegts/au_cell_round_trip.rs"]
 mod au_cell_round_trip;
 #[path = "mpegts/au_cell_tolerance.rs"]

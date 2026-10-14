@@ -1,9 +1,9 @@
 //! Shared helpers for `tst-core` integration tests.
 //!
-//! Each integration test under `tests/*.rs` declares `mod common;` at
-//! the top to pull these in. `tests/common/mod.rs` (not `tests/common.rs`)
-//! is the Cargo-required shape — a file at `tests/common.rs` would be
-//! compiled as its own integration-test binary.
+//! Each domain root (`tests/<domain>.rs`) that needs them declares
+//! `#[path = "common/mod.rs"] mod common;` once, and member files refer to
+//! `crate::common::…`. Declaring it per member file would load the module
+//! twice (`clippy::duplicate_mod`).
 //!
 //! ## When to add helpers here vs. promote to `tst-test-helpers`
 //!
@@ -18,6 +18,8 @@
 //! for what currently lives there.
 
 #![allow(dead_code)]
+
+pub mod mux_demux;
 
 /// Diagnostic breakdown of an IMAPB tolerance computation.
 ///

@@ -1,25 +1,12 @@
 //! Integration tests for subtitle / caption sender side
 //! (`mpegts::mux`).
 
+use crate::common::mux_demux::drain_mux as drain_all;
 use tst_core::error::MuxError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, SubtitleCodec, VideoCodec,
 };
-
-/// Drain every queued packet from the muxer into a single Vec.
-fn drain_all(mux: &mut Muxer) -> Vec<u8> {
-    let mut all = Vec::new();
-    let mut buf = vec![0u8; 188 * 256];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        all.extend_from_slice(&buf[..n]);
-    }
-    all
-}
 
 fn webvtt_cue(pts: i64, text: &str) -> Vec<u8> {
     let mut buf = Vec::new();

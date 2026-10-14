@@ -3,6 +3,7 @@
 //! Verifies that PAT carries N program entries and that one PMT is emitted per
 //! program per PSI tick.
 
+use crate::common::mux_demux::drain_mux as drain_all;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfig, MuxerProgramConfigBuilder, StreamSpec,
@@ -45,18 +46,6 @@ fn two_program_config() -> MuxerConfig {
     let mut cfg = MuxerConfig::default();
     cfg.programs = vec![prog1, prog2];
     cfg
-}
-
-fn drain_all(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            return out;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
 }
 
 /// Trigger PSI emission for program 0 by pushing a video frame (PTS=0 forces
