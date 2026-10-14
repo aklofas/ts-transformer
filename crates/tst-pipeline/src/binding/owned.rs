@@ -110,8 +110,9 @@ pub struct Owned<T, S = ()> {
 }
 
 /// The cancel handle an [`Owned`] owns and shares: latches, then fires the
-/// transport's handle (see `owned_cancel_latches_before_it_fires_the_transport_handle`). Private — reached only as `Arc<dyn TransportCancel>`
-/// through [`Owned::cancel_arc`].
+/// transport's handle (see
+/// `owned_cancel_latches_before_it_fires_the_transport_handle`). Private —
+/// reached only as `Arc<dyn TransportCancel>` through [`Owned::cancel_arc`].
 struct OwnedCancel {
     transport: Arc<dyn TransportCancel>,
     cancelled: AtomicBool,
