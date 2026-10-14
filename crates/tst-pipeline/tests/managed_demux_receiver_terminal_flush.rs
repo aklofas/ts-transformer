@@ -9,16 +9,16 @@
 
 mod common;
 
-use crate::common::{build_h264_au, drain_mux, fast_policy, to_ts_packets};
+use crate::common::{broken, build_h264_au, drain_mux, fast_policy, to_ts_packets};
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use tst_core::TransportError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
 use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_core::transport::{RecvTransport, TransportCancel};
-use tst_core::{BrokenCause, TransportError};
 use tst_pipeline::{
     DemuxReceiverErrorSource, ManagedDemuxReceiver, ManagedDemuxReceiverConfig,
     ManagedRecvTransport, RecvEndReason, ShellErrorKind,
@@ -45,13 +45,7 @@ fn three_au_stream() -> Vec<[u8; 188]> {
 }
 
 fn never_reconnect() -> Box<dyn FnMut() -> Result<CancelThenBroken, TransportError> + Send> {
-    Box::new(|| {
-        Err(TransportError::Broken {
-            msg: "factory never reconnects (test)".into(),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })
-    })
+    Box::new(|| Err(broken("factory never reconnects (test)")))
 }
 
 /// Delivers one 188-byte packet per `recv_bytes`, then — once exhausted —
@@ -73,11 +67,7 @@ impl RecvTransport for CancelThenBroken {
             if let Some(h) = self.cancel.lock().unwrap().as_ref() {
                 h.cancel();
             }
-            return Err(TransportError::Broken {
-                msg: "socket closed by the cancel (test)".into(),
-                errno_code: None,
-                cause: BrokenCause::Unspecified,
-            });
+            return Err(broken("socket closed by the cancel (test)"));
         }
         buf[..188].copy_from_slice(&self.packets[self.pos]);
         self.pos += 1;

@@ -3,13 +3,13 @@
 
 mod common;
 
-use crate::common::ScriptedRecv;
+use crate::common::{ScriptedRecv, broken};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use tst_core::transport::{BrokenCause, RecvTransport, Transport, TransportCancel, TransportError};
+use tst_core::transport::{RecvTransport, Transport, TransportCancel, TransportError};
 use tst_pipeline::reconnect::{BackoffStrategy, ReconnectPolicy};
 use tst_pipeline::{ManagedRecvTransport, ManagedTransport};
 
@@ -199,11 +199,7 @@ fn poisoned_inner_lock_returns_broken_not_panic() {
     // a site-specific message.
     let result: Result<i32, TransportError> = m
         .lock()
-        .map_err(|_| TransportError::Broken {
-            msg: "test: pattern-only".into(),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })
+        .map_err(|_| broken("test: pattern-only"))
         .map(|g| *g);
 
     assert!(
@@ -246,11 +242,7 @@ fn successful_reconnect_does_not_deadlock() {
     impl Transport for OneShotBrokenThenOk {
         fn send_bytes(&mut self, _: &[u8]) -> Result<(), TransportError> {
             if self.broken_first.fetch_sub(1, Ordering::Relaxed) > 0 {
-                Err(TransportError::Broken {
-                    msg: "simulated one-shot break".into(),
-                    errno_code: None,
-                    cause: BrokenCause::Unspecified,
-                })
+                Err(broken("simulated one-shot break"))
             } else {
                 Ok(())
             }

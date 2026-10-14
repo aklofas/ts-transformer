@@ -34,9 +34,9 @@
 
 mod common;
 
-use crate::common::ScriptedRecv;
+use crate::common::{ScriptedRecv, ScriptedSend};
 
-use tst_core::transport::{Transport, TransportError};
+use tst_core::transport::TransportError;
 use tst_pipeline::{
     RawSender, RawSenderConfig, RawSenderErrorSource, Receiver, ReceiverConfig,
     ReceiverErrorSource, ShellErrorKind,
@@ -154,36 +154,12 @@ fn closed_propagates_as_end_of_stream_on_receiver() {
 // Test 4: ExplicitClose
 // ---------------------------------------------------------------------------
 
-/// `TransportError::ExplicitClose` from the underlying send transport must
-/// propagate as `ShellErrorKind::Closed` + `RawSenderErrorSource::Transport(ExplicitClose)`.
-///
-/// `ExplicitClose` is the caller-initiated variant (the
-/// `ManagedRecvTransport::cancel()` path). Unlike `Closed` (which on the
-/// sender side also maps to `Closed` kind), `ExplicitClose` is distinguished
-/// at the inner-source level. Binding authors don't differentiate the two at
-/// the kind level (both are `Closed`), but power users inspecting `err.source`
-/// can tell that the cancel signal fired rather than the remote peer closing.
-///
-/// `MockTransport` does not have an `ExplicitClose` `FailMode`, so this test
-/// uses a minimal local mock that unconditionally returns `ExplicitClose`.
-struct ExplicitCloseTransport;
-
-impl Transport for ExplicitCloseTransport {
-    fn send_bytes(&mut self, _msg: &[u8]) -> Result<(), TransportError> {
-        Err(TransportError::ExplicitClose)
-    }
-    fn max_payload(&self) -> usize {
-        1316
-    }
-    fn is_alive(&self) -> bool {
-        false
-    }
-    fn close(&mut self) {}
-}
-
 #[test]
 fn explicit_close_propagates_as_closed() {
-    let mut sender = RawSender::new(ExplicitCloseTransport, RawSenderConfig::default());
+    let mut sender = RawSender::new(
+        ScriptedSend::always(TransportError::ExplicitClose).with_alive(false),
+        RawSenderConfig::default(),
+    );
     let err = sender
         .send(&[0u8; 100])
         .expect_err("must return ExplicitClose");

@@ -11,7 +11,7 @@ use crate::common::{FlagCancel, ScriptedRecv, broken};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
-use tst_core::transport::{BrokenCause, RecvTransport, TransportCancel, TransportError};
+use tst_core::transport::{RecvTransport, TransportCancel, TransportError};
 use tst_pipeline::{BackoffStrategy, FactoryCancel, ManagedRecvTransport, ReconnectPolicy};
 
 /// Stand-in for a listener's cancel handle: `cancel()` releases whoever
@@ -161,11 +161,7 @@ fn factory_observed_cancel_is_terminal_and_not_retried() {
             if fc.is_cancelled() {
                 Err(TransportError::ExplicitClose)
             } else {
-                Err(TransportError::Broken {
-                    msg: "parked factory timed out without a cancel".into(),
-                    errno_code: None,
-                    cause: BrokenCause::Unspecified,
-                })
+                Err(broken("parked factory timed out without a cancel"))
             }
         });
 
@@ -238,11 +234,7 @@ struct RaceInner {
 impl RecvTransport for RaceInner {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         if self.dead {
-            return Err(TransportError::Broken {
-                msg: "dead on arrival".into(),
-                errno_code: None,
-                cause: BrokenCause::Unspecified,
-            });
+            return Err(broken("dead on arrival"));
         }
         buf[0] = 1;
         Ok(1)

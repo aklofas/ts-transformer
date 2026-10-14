@@ -16,13 +16,13 @@
 
 mod common;
 
-use crate::common::wait_for;
+use crate::common::{broken, wait_for};
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
+use tst_core::transport::{Transport, TransportCancel, TransportError};
 use tst_pipeline::{
     BackoffStrategy, ManagedTransport, OverflowPolicy, ReconnectMode, ReconnectPolicy,
 };
@@ -83,11 +83,7 @@ struct Mock {
 impl Transport for Mock {
     fn send_bytes(&mut self, _msg: &[u8]) -> Result<(), TransportError> {
         match self.behavior {
-            Behavior::Break => Err(TransportError::Broken {
-                msg: "inner is down".into(),
-                errno_code: None,
-                cause: BrokenCause::Unspecified,
-            }),
+            Behavior::Break => Err(broken("inner is down")),
             Behavior::Park => {
                 self.entered.store(true, Ordering::SeqCst);
                 self.gate.wait();
@@ -149,13 +145,7 @@ fn broken_inner() -> Mock {
 
 /// Factory that never succeeds — used where the test must never reconnect.
 fn dead_factory() -> impl Fn() -> Result<Mock, TransportError> + Send + Sync + 'static {
-    || {
-        Err(TransportError::Broken {
-            msg: "factory down".into(),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })
-    }
+    || Err(broken("factory down"))
 }
 
 /// Factory handing back a parking transport, counting its calls.
