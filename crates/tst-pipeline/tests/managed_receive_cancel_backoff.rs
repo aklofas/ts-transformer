@@ -4,37 +4,21 @@
 //! With the default exponential policy the wait can be 10 s,
 //! which is not "prompt" for a Ctrl-C.
 
+mod common;
+
+use crate::common::{ScriptedRecv, broken};
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
 use tst_pipeline::{BackoffStrategy, ManagedRecvTransport, ReconnectPolicy};
 
-struct DeadInner;
-
-impl RecvTransport for DeadInner {
-    fn recv_bytes(&mut self, _buf: &mut [u8]) -> Result<usize, TransportError> {
-        Err(TransportError::Broken {
-            msg: "dead on arrival".into(),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })
-    }
-
-    fn max_payload(&self) -> usize {
-        1316
-    }
-
-    fn is_alive(&self) -> bool {
-        false
-    }
-}
-
 #[test]
 fn cancel_interrupts_the_backoff_wait() {
     let factory_calls = Arc::new(AtomicU32::new(0));
     let calls = Arc::clone(&factory_calls);
-    let factory: Box<dyn FnMut() -> Result<DeadInner, TransportError> + Send> =
+    let factory: Box<dyn FnMut() -> Result<ScriptedRecv, TransportError> + Send> =
         Box::new(move || {
             calls.fetch_add(1, Ordering::SeqCst);
             Err(TransportError::Broken {
@@ -51,7 +35,11 @@ fn cancel_interrupts_the_backoff_wait() {
         backoff: BackoffStrategy::Constant(Duration::from_secs(5)),
         ..Default::default()
     };
-    let mut managed = ManagedRecvTransport::new(DeadInner, factory, policy);
+    let mut managed = ManagedRecvTransport::new(
+        ScriptedRecv::failing(broken("dead on arrival")),
+        factory,
+        policy,
+    );
     let cancel = managed.cancel_handle().expect("managed cancel handle");
 
     let canceller = std::thread::spawn(move || {

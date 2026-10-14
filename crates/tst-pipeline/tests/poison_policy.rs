@@ -1,6 +1,10 @@
 //! Poison-policy tests: ExplicitClose wiring and the hybrid mutex policy
 //! (4 sites return typed errors, 2 sites are documented panics).
 
+mod common;
+
+use crate::common::ScriptedRecv;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -62,20 +66,6 @@ impl RecvTransport for ParkedRecv {
         Some(Arc::new(ParkedRecvCancel {
             flag: self.cancel.clone(),
         }))
-    }
-}
-
-/// A RecvTransport that returns Closed immediately (simulating clean peer-EOS).
-struct EosRecv;
-impl RecvTransport for EosRecv {
-    fn recv_bytes(&mut self, _buf: &mut [u8]) -> Result<usize, TransportError> {
-        Err(TransportError::Closed)
-    }
-    fn max_payload(&self) -> usize {
-        1316
-    }
-    fn is_alive(&self) -> bool {
-        false
     }
 }
 
@@ -142,11 +132,15 @@ fn peer_eos_returns_closed_not_explicit_close() {
     let factory_calls_cl = factory_calls.clone();
     let factory = Box::new(move || {
         factory_calls_cl.fetch_add(1, Ordering::Relaxed);
-        // Always reconnect to EosRecv — peer immediately re-EOSs each time.
-        Ok(EosRecv)
+        // Always reconnect to ScriptedRecv::failing(TransportError::Closed) — peer immediately re-EOSs each time.
+        Ok(ScriptedRecv::failing(TransportError::Closed))
     });
 
-    let mut managed = ManagedRecvTransport::new(EosRecv, factory, fast_policy(Some(2)));
+    let mut managed = ManagedRecvTransport::new(
+        ScriptedRecv::failing(TransportError::Closed),
+        factory,
+        fast_policy(Some(2)),
+    );
     let mut buf = [0u8; 1316];
     let result = managed.recv_bytes(&mut buf);
     // After 2 attempts the budget is exhausted; returns Closed (not ExplicitClose).

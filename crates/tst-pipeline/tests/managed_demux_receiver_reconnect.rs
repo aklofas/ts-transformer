@@ -8,19 +8,19 @@
 //!    half-assembled sample is dropped, not corrupted into the next
 //!    sample.
 //!
-//! Uses a local `ScriptedInner` (below) for deterministic reconnect
+//! Uses `ScriptedRecv` (from `common`) for deterministic reconnect
 //! injection — no SRT loopback, no temp files, no sleep beyond the
 //! policy backoff (zero in tests).
 
 mod common;
 
-use crate::common::fast_policy;
+use crate::common::{ScriptedRecv, fast_policy};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tst_core::mpegts::demux::DemuxEvent;
-use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
+use tst_core::transport::{BrokenCause, TransportError};
 use tst_pipeline::{
     ManagedDemuxReceiver, ManagedDemuxReceiverConfig, ManagedRecvTransport, RecvEndReason,
 };
@@ -65,45 +65,6 @@ fn pack_chunk(packets: &[[u8; 188]]) -> Vec<u8> {
     v
 }
 
-/// Minimal RecvTransport implementing the script-then-fail pattern.
-///
-/// A generic queue-exhaust mock would surface `Closed` (peer EOS) once
-/// its scripted chunks run out — but for these tests we need each
-/// successive recv_bytes to terminate by triggering a *reconnect* in
-/// `ManagedRecvTransport`, which means the first inner needs to surface
-/// `Broken` once its chunk is consumed (not `Closed`, which is also a
-/// reconnect trigger but exhausts the budget less informatively — both
-/// work, Broken is closer to a real network drop). Hence this local,
-/// purpose-built `on_exhaust`-configurable stub instead of a shared one.
-struct ScriptedInner {
-    chunks: std::collections::VecDeque<Vec<u8>>,
-    /// What to return once the chunk queue is empty.
-    on_exhaust: TransportError,
-}
-
-impl RecvTransport for ScriptedInner {
-    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
-        match self.chunks.pop_front() {
-            Some(v) => {
-                let n = v.len().min(buf.len());
-                buf[..n].copy_from_slice(&v[..n]);
-                Ok(n)
-            }
-            None => Err(self.on_exhaust.clone()),
-        }
-    }
-
-    fn max_payload(&self) -> usize {
-        // Larger than any per-test chunk so a single recv_bytes drains
-        // the whole queued chunk in one call.
-        4096
-    }
-
-    fn is_alive(&self) -> bool {
-        !self.chunks.is_empty()
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Test 1 — Connection drops mid-TS-packet
 // ---------------------------------------------------------------------------
@@ -127,30 +88,32 @@ fn connection_drops_mid_ts_packet_reconnect_resyncs_cleanly() {
     p1.extend_from_slice(&[0xDE; 46]);
     assert_eq!(p1.len() - p1_packets.len() * 188, 50);
 
-    let inner = ScriptedInner {
-        chunks: vec![p1].into(),
-        on_exhaust: TransportError::Broken {
+    let inner = ScriptedRecv::new(
+        vec![p1],
+        TransportError::Broken {
             msg: "phase 1 ended (test)".into(),
             errno_code: None,
             cause: BrokenCause::Unspecified,
         },
-    };
+    )
+    .with_max_payload(4096);
 
     let calls = Arc::new(AtomicU32::new(0));
     let calls_cl = calls.clone();
-    let factory = Box::new(move || -> Result<ScriptedInner, TransportError> {
+    let factory = Box::new(move || -> Result<ScriptedRecv, TransportError> {
         let n = calls_cl.fetch_add(1, Ordering::SeqCst);
         if n == 0 {
             // Second connection: clean aligned packets on a different PID.
             let p2_packets: Vec<[u8; 188]> = (0..5).map(|i| ts_packet(0x0200, i as u8)).collect();
-            Ok(ScriptedInner {
-                chunks: vec![pack_chunk(&p2_packets)].into(),
-                on_exhaust: TransportError::Broken {
+            Ok(ScriptedRecv::new(
+                vec![pack_chunk(&p2_packets)],
+                TransportError::Broken {
                     msg: "phase 2 ended (test)".into(),
                     errno_code: None,
                     cause: BrokenCause::Unspecified,
                 },
-            })
+            )
+            .with_max_payload(4096))
         } else {
             // Force budget exhaust on second factory attempt.
             Err(TransportError::Broken {
@@ -194,18 +157,19 @@ fn reconnect_event_is_observable_via_public_api() {
             .map(|i| ts_packet(0x0300, i as u8))
             .collect::<Vec<_>>(),
     );
-    let inner = ScriptedInner {
-        chunks: vec![phase1].into(),
-        on_exhaust: TransportError::Broken {
+    let inner = ScriptedRecv::new(
+        vec![phase1],
+        TransportError::Broken {
             msg: "phase 1 ended".into(),
             errno_code: None,
             cause: BrokenCause::Unspecified,
         },
-    };
+    )
+    .with_max_payload(4096);
 
     let calls = Arc::new(AtomicU32::new(0));
     let calls_cl = calls.clone();
-    let factory = Box::new(move || -> Result<ScriptedInner, TransportError> {
+    let factory = Box::new(move || -> Result<ScriptedRecv, TransportError> {
         let n = calls_cl.fetch_add(1, Ordering::SeqCst);
         if n == 0 {
             let phase2 = pack_chunk(
@@ -213,14 +177,15 @@ fn reconnect_event_is_observable_via_public_api() {
                     .map(|i| ts_packet(0x0301, i as u8))
                     .collect::<Vec<_>>(),
             );
-            Ok(ScriptedInner {
-                chunks: vec![phase2].into(),
-                on_exhaust: TransportError::Broken {
+            Ok(ScriptedRecv::new(
+                vec![phase2],
+                TransportError::Broken {
                     msg: "phase 2 ended".into(),
                     errno_code: None,
                     cause: BrokenCause::Unspecified,
                 },
-            })
+            )
+            .with_max_payload(4096))
         } else {
             Err(TransportError::Broken {
                 msg: "stop".into(),
@@ -294,29 +259,31 @@ fn reconnect_during_in_flight_psi_drops_partial_state() {
     // no Unrecoverable).
     let p1_packets: Vec<[u8; 188]> = (0..5).map(|i| ts_packet(0x0FFF, i as u8)).collect();
     let p1 = pack_chunk(&p1_packets);
-    let inner = ScriptedInner {
-        chunks: vec![p1].into(),
-        on_exhaust: TransportError::Broken {
+    let inner = ScriptedRecv::new(
+        vec![p1],
+        TransportError::Broken {
             msg: "phase 1 end".into(),
             errno_code: None,
             cause: BrokenCause::Unspecified,
         },
-    };
+    )
+    .with_max_payload(4096);
 
     let calls = Arc::new(AtomicU32::new(0));
     let calls_cl = calls.clone();
-    let factory = Box::new(move || -> Result<ScriptedInner, TransportError> {
+    let factory = Box::new(move || -> Result<ScriptedRecv, TransportError> {
         let n = calls_cl.fetch_add(1, Ordering::SeqCst);
         if n == 0 {
             let p2_packets: Vec<[u8; 188]> = (0..5).map(|i| ts_packet(0x0EEE, i as u8)).collect();
-            Ok(ScriptedInner {
-                chunks: vec![pack_chunk(&p2_packets)].into(),
-                on_exhaust: TransportError::Broken {
+            Ok(ScriptedRecv::new(
+                vec![pack_chunk(&p2_packets)],
+                TransportError::Broken {
                     msg: "phase 2 end".into(),
                     errno_code: None,
                     cause: BrokenCause::Unspecified,
                 },
-            })
+            )
+            .with_max_payload(4096))
         } else {
             Err(TransportError::Broken {
                 msg: "exhaust".into(),
@@ -417,14 +384,15 @@ fn clean_reconnect_drops_first_post_reconnect_packet() {
         "phase 1 chunk must end on a packet boundary (no dead-tail)"
     );
 
-    let inner = ScriptedInner {
-        chunks: vec![p1_chunk].into(),
-        on_exhaust: TransportError::Broken {
+    let inner = ScriptedRecv::new(
+        vec![p1_chunk],
+        TransportError::Broken {
             msg: "phase 1 ended (clean boundary)".into(),
             errno_code: None,
             cause: BrokenCause::Unspecified,
         },
-    };
+    )
+    .with_max_payload(4096);
 
     // Second connection: M TEI packets delivered as TWO clean-aligned chunks. The
     // shell's reset_sync clears the syncer buffer at reconnect time so
@@ -434,7 +402,7 @@ fn clean_reconnect_drops_first_post_reconnect_packet() {
     let m: usize = 16;
     let calls = Arc::new(AtomicU32::new(0));
     let calls_cl = calls.clone();
-    let factory = Box::new(move || -> Result<ScriptedInner, TransportError> {
+    let factory = Box::new(move || -> Result<ScriptedRecv, TransportError> {
         let n = calls_cl.fetch_add(1, Ordering::SeqCst);
         if n == 0 {
             let p2_first: Vec<[u8; 188]> = (0..8).map(|i| ts_packet_tei(0x200, i as u8)).collect();
@@ -445,14 +413,15 @@ fn clean_reconnect_drops_first_post_reconnect_packet() {
             let chunk_b = pack_chunk(&p2_second);
             assert_eq!(chunk_a.len() % 188, 0);
             assert_eq!(chunk_b.len() % 188, 0);
-            Ok(ScriptedInner {
-                chunks: vec![chunk_a, chunk_b].into(),
-                on_exhaust: TransportError::Broken {
+            Ok(ScriptedRecv::new(
+                vec![chunk_a, chunk_b],
+                TransportError::Broken {
                     msg: "phase 2 ended".into(),
                     errno_code: None,
                     cause: BrokenCause::Unspecified,
                 },
-            })
+            )
+            .with_max_payload(4096))
         } else {
             Err(TransportError::Broken {
                 msg: "no more rebuilds".into(),
@@ -533,17 +502,18 @@ fn clean_reconnect_drops_first_post_reconnect_packet() {
 #[test]
 fn end_reason_reconnect_exhausted_on_budget_giveup() {
     let packets: Vec<[u8; 188]> = (0..5).map(|i| ts_packet(0x0100, i as u8)).collect();
-    let inner = ScriptedInner {
-        chunks: vec![pack_chunk(&packets)].into(),
-        on_exhaust: TransportError::Broken {
+    let inner = ScriptedRecv::new(
+        vec![pack_chunk(&packets)],
+        TransportError::Broken {
             msg: "peer gone (test)".into(),
             errno_code: None,
             cause: BrokenCause::Unspecified,
         },
-    };
+    )
+    .with_max_payload(4096);
     // Factory never succeeds — with max_attempts=1 the budget exhausts on
     // the first (and only) reconnect attempt.
-    let factory = Box::new(|| -> Result<ScriptedInner, TransportError> {
+    let factory = Box::new(|| -> Result<ScriptedRecv, TransportError> {
         Err(TransportError::Broken {
             msg: "peer never returns".into(),
             errno_code: None,
@@ -582,15 +552,16 @@ fn end_reason_reconnect_exhausted_on_budget_giveup() {
 #[test]
 fn end_reason_cancelled_on_caller_cancel() {
     let packets: Vec<[u8; 188]> = (0..5).map(|i| ts_packet(0x0100, i as u8)).collect();
-    let inner = ScriptedInner {
-        chunks: vec![pack_chunk(&packets)].into(),
-        on_exhaust: TransportError::Broken {
+    let inner = ScriptedRecv::new(
+        vec![pack_chunk(&packets)],
+        TransportError::Broken {
             msg: "unused (test)".into(),
             errno_code: None,
             cause: BrokenCause::Unspecified,
         },
-    };
-    let factory = Box::new(|| -> Result<ScriptedInner, TransportError> {
+    )
+    .with_max_payload(4096);
+    let factory = Box::new(|| -> Result<ScriptedRecv, TransportError> {
         Err(TransportError::Broken {
             msg: "unused (test)".into(),
             errno_code: None,
@@ -637,15 +608,16 @@ fn end_reason_none_while_live() {
     // lock before it emits anything (shorter streams yield a silent
     // clean EOF with zero events).
     let packets: Vec<[u8; 188]> = (0..6).map(|i| ts_packet_tei(0x0100, i as u8)).collect();
-    let inner = ScriptedInner {
-        chunks: vec![pack_chunk(&packets)].into(),
-        on_exhaust: TransportError::Broken {
+    let inner = ScriptedRecv::new(
+        vec![pack_chunk(&packets)],
+        TransportError::Broken {
             msg: "unused (test)".into(),
             errno_code: None,
             cause: BrokenCause::Unspecified,
         },
-    };
-    let factory = Box::new(|| -> Result<ScriptedInner, TransportError> {
+    )
+    .with_max_payload(4096);
+    let factory = Box::new(|| -> Result<ScriptedRecv, TransportError> {
         Err(TransportError::Broken {
             msg: "unused (test)".into(),
             errno_code: None,
@@ -674,15 +646,16 @@ fn end_reason_none_while_live() {
 #[test]
 fn end_reason_first_writer_wins_across_repeated_terminal_calls() {
     let packets: Vec<[u8; 188]> = (0..5).map(|i| ts_packet(0x0100, i as u8)).collect();
-    let inner = ScriptedInner {
-        chunks: vec![pack_chunk(&packets)].into(),
-        on_exhaust: TransportError::Broken {
+    let inner = ScriptedRecv::new(
+        vec![pack_chunk(&packets)],
+        TransportError::Broken {
             msg: "peer gone (test)".into(),
             errno_code: None,
             cause: BrokenCause::Unspecified,
         },
-    };
-    let factory = Box::new(|| -> Result<ScriptedInner, TransportError> {
+    )
+    .with_max_payload(4096);
+    let factory = Box::new(|| -> Result<ScriptedRecv, TransportError> {
         Err(TransportError::Broken {
             msg: "peer never returns".into(),
             errno_code: None,
@@ -761,19 +734,20 @@ fn end_reason_first_writer_wins_across_repeated_terminal_calls() {
 #[test]
 fn reconnecting_flag_true_during_outage_false_after_rebuild_latched_after_giveup() {
     let phase1: Vec<[u8; 188]> = (0..8).map(|i| ts_packet_tei(0x100, i as u8)).collect();
-    let inner = ScriptedInner {
-        chunks: vec![pack_chunk(&phase1)].into(),
-        on_exhaust: TransportError::Broken {
+    let inner = ScriptedRecv::new(
+        vec![pack_chunk(&phase1)],
+        TransportError::Broken {
             msg: "phase 1 ended (test)".into(),
             errno_code: None,
             cause: BrokenCause::Unspecified,
         },
-    };
+    )
+    .with_max_payload(4096);
 
     let (gate_tx, gate_rx) = std::sync::mpsc::channel::<()>();
     let calls = Arc::new(AtomicU32::new(0));
     let calls_cl = calls.clone();
-    let factory = Box::new(move || -> Result<ScriptedInner, TransportError> {
+    let factory = Box::new(move || -> Result<ScriptedRecv, TransportError> {
         let n = calls_cl.fetch_add(1, Ordering::SeqCst);
         if n == 0 {
             // Hold the outage open until the watcher has seen
@@ -784,14 +758,15 @@ fn reconnecting_flag_true_during_outage_false_after_rebuild_latched_after_giveup
             let b: Vec<[u8; 188]> = (0..8)
                 .map(|i| ts_packet_tei(0x200, (i + 8) as u8))
                 .collect();
-            Ok(ScriptedInner {
-                chunks: vec![pack_chunk(&a), pack_chunk(&b)].into(),
-                on_exhaust: TransportError::Broken {
+            Ok(ScriptedRecv::new(
+                vec![pack_chunk(&a), pack_chunk(&b)],
+                TransportError::Broken {
                     msg: "phase 2 ended (test)".into(),
                     errno_code: None,
                     cause: BrokenCause::Unspecified,
                 },
-            })
+            )
+            .with_max_payload(4096))
         } else {
             Err(TransportError::Broken {
                 msg: "peer gone for good (test)".into(),

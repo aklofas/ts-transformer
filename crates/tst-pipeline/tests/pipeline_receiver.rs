@@ -1,8 +1,12 @@
-//! Pipeline integration: drive `DemuxReceiver` with an in-memory `CannedTransport`.
+//! Pipeline integration: drive `DemuxReceiver` with an in-memory `ScriptedRecv`.
 //!
 //! These tests verify the composition layer rather than the mux or demux
-//! internals in isolation. `CannedTransport` replays pre-muxed TS bytes
+//! internals in isolation. `ScriptedRecv` replays pre-muxed TS bytes
 //! as if they arrived over a live SRT connection.
+
+mod common;
+
+use crate::common::ScriptedRecv;
 
 use std::collections::VecDeque;
 
@@ -14,42 +18,6 @@ use tst_core::mpegts::mux::{
 use tst_core::transport::RecvTransport;
 use tst_core::transport::TransportError;
 use tst_pipeline::DemuxReceiver;
-
-// ---------------------------------------------------------------------------
-// CannedTransport — replay a queue of byte chunks, then signal Closed.
-// ---------------------------------------------------------------------------
-
-/// In-memory `RecvTransport` mock. Each `recv_bytes` call pops one chunk from
-/// the queue and copies it into the caller's buffer. When the queue is empty,
-/// returns `TransportError::Closed`.
-///
-/// This mirrors the SRT live-mode framing contract: one `recv_bytes` call
-/// returns one message, never more.
-struct CannedTransport {
-    chunks: VecDeque<Vec<u8>>,
-}
-
-impl RecvTransport for CannedTransport {
-    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
-        match self.chunks.pop_front() {
-            Some(c) => {
-                let n = c.len().min(buf.len());
-                buf[..n].copy_from_slice(&c[..n]);
-                Ok(n)
-            }
-            None => Err(TransportError::Closed),
-        }
-    }
-
-    fn max_payload(&self) -> usize {
-        // 7 × 188 = 1316 bytes — the standard SRT TS payload size.
-        1316
-    }
-
-    fn is_alive(&self) -> bool {
-        !self.chunks.is_empty()
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Helper: mux one H.264 AU and drain all output chunks.
@@ -135,7 +103,7 @@ fn build_and_preload_muxer() -> Muxer {
 // Test 1: DemuxReceiver emits at least a ProgramMap event for a well-formed stream.
 // ---------------------------------------------------------------------------
 
-/// Mux several H.264 frames, replay them through `CannedTransport`, and confirm
+/// Mux several H.264 frames, replay them through `ScriptedRecv`, and confirm
 /// the `DemuxReceiver` emits a `ProgramMap` event. This exercises the full
 /// composition path: transport → Receiver sync → Demuxer → event queue.
 ///
@@ -148,7 +116,7 @@ fn receiver_emits_events_through_canned_transport() {
 
     let (chunks, _) = drain_to_chunks(&mut m, 1316);
 
-    let mut rx = DemuxReceiver::new(CannedTransport { chunks });
+    let mut rx = DemuxReceiver::new(ScriptedRecv::new(chunks, TransportError::Closed));
     let mut saw_pmap = false;
     for item in &mut rx {
         let e = item.unwrap();
@@ -181,7 +149,7 @@ fn byte_sinks_see_every_chunk() {
 
     let (chunks, total) = drain_to_chunks(&mut m, 1316);
 
-    let mut rx = DemuxReceiver::new(CannedTransport { chunks });
+    let mut rx = DemuxReceiver::new(ScriptedRecv::new(chunks, TransportError::Closed));
 
     // Shared counter: the sink accumulates bytes across all packets.
     let captured = Arc::new(Mutex::new(0usize));
@@ -190,7 +158,7 @@ fn byte_sinks_see_every_chunk() {
         *cap.lock().unwrap() += b.len();
     }));
 
-    // Drive the receiver to EOF. CannedTransport only emits Closed (never
+    // Drive the receiver to EOF. ScriptedRecv here only emits Closed (never
     // Broken), so any Err here would be a Demux strict-mode rejection — none
     // are expected on a clean stream. The `is_some` discard pattern is safe
     // *here*; production code should match each `Item` and surface errors.
@@ -223,16 +191,15 @@ fn managed_receive_reconnects_through_factory() {
     let attempts_cl = attempts.clone();
     let factory = Box::new(move || {
         *attempts_cl.lock().unwrap() += 1;
-        Ok(CannedTransport {
-            chunks: VecDeque::from(vec![vec![0x47; 188]]),
-        })
+        Ok(ScriptedRecv::new(
+            VecDeque::from(vec![vec![0x47; 188]]),
+            TransportError::Closed,
+        ))
     });
 
     // Initial transport is empty — first recv_bytes gets Closed and the
     // decorator falls into the reconnect path.
-    let initial = CannedTransport {
-        chunks: VecDeque::new(),
-    };
+    let initial = ScriptedRecv::new(VecDeque::new(), TransportError::Closed);
 
     // Zero-delay constant backoff so the test doesn't actually sleep.
     let policy = ReconnectPolicy {

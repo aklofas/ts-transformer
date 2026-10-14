@@ -10,12 +10,13 @@
 
 #![allow(dead_code)] // each binary uses a subset
 
+use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use tst_core::mpegts::mux::Muxer;
-use tst_core::transport::{BrokenCause, TransportCancel, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, TransportCancel, TransportError};
 use tst_pipeline::{BackoffStrategy, ReconnectPolicy};
 
 /// `TransportError::Broken` with no errno and an unspecified cause — the
@@ -116,4 +117,72 @@ pub fn to_ts_packets(bytes: &[u8]) -> Vec<[u8; 188]> {
             a
         })
         .collect()
+}
+
+/// Replays `chunks` one per `recv_bytes` (truncated to the caller's
+/// buffer), then returns `on_exhaust` on every later call. `is_alive` is
+/// `alive` when set, otherwise "chunks remain". `recvs` counts calls.
+pub struct ScriptedRecv {
+    pub chunks: VecDeque<Vec<u8>>,
+    pub on_exhaust: TransportError,
+    pub max_payload: usize,
+    pub alive: Option<bool>,
+    pub recvs: Arc<AtomicU32>,
+}
+
+impl ScriptedRecv {
+    pub fn new(chunks: impl IntoIterator<Item = Vec<u8>>, on_exhaust: TransportError) -> Self {
+        Self {
+            chunks: chunks.into_iter().collect(),
+            on_exhaust,
+            max_payload: 1316,
+            alive: None,
+            recvs: Arc::default(),
+        }
+    }
+
+    /// One 188-byte TS packet per call; the ceiling is one packet.
+    pub fn packets(packets: Vec<[u8; 188]>, on_exhaust: TransportError) -> Self {
+        Self::new(packets.into_iter().map(|p| p.to_vec()), on_exhaust).with_max_payload(188)
+    }
+
+    /// Nothing to deliver: every call returns `err`; not alive.
+    pub fn failing(err: TransportError) -> Self {
+        Self::new(Vec::<Vec<u8>>::new(), err)
+    }
+
+    pub fn with_max_payload(mut self, n: usize) -> Self {
+        self.max_payload = n;
+        self
+    }
+
+    pub fn with_alive(mut self, alive: bool) -> Self {
+        self.alive = Some(alive);
+        self
+    }
+
+    pub fn with_counter(mut self, recvs: Arc<AtomicU32>) -> Self {
+        self.recvs = recvs;
+        self
+    }
+}
+
+impl RecvTransport for ScriptedRecv {
+    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        self.recvs.fetch_add(1, Ordering::SeqCst);
+        match self.chunks.pop_front() {
+            Some(c) => {
+                let n = c.len().min(buf.len());
+                buf[..n].copy_from_slice(&c[..n]);
+                Ok(n)
+            }
+            None => Err(self.on_exhaust.clone()),
+        }
+    }
+    fn max_payload(&self) -> usize {
+        self.max_payload
+    }
+    fn is_alive(&self) -> bool {
+        self.alive.unwrap_or(!self.chunks.is_empty())
+    }
 }
