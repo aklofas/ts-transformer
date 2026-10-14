@@ -12,16 +12,23 @@ use std::time::Duration;
 
 use tst_rtp::RtspServer;
 
+/// Per-read patience for a response. Not a latency assertion: any answer
+/// inside this window passes; only the pre-fix silence (until the 30 s idle
+/// timeout) fails.
+const READ_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Read one complete RTSP message head (through CRLFCRLF). Panics when
-/// nothing arrives within the socket's 2 s read timeout — that silence is
-/// the bug this file pins.
+/// nothing arrives within the socket's read timeout — that silence is the
+/// bug this file pins. The timeout is generous (10 s, well under the 30 s
+/// idle reaper the bug used to run into) because under ThreadSanitizer the
+/// server's first response has taken over 2 s on a loaded runner.
 fn read_head(tcp: &mut TcpStream, what: &str) -> String {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 1024];
     loop {
         let n = tcp
             .read(&mut chunk)
-            .unwrap_or_else(|e| panic!("no response to {what} within 2 s: {e}"));
+            .unwrap_or_else(|e| panic!("no response to {what} within {READ_TIMEOUT:?}: {e}"));
         assert!(
             n > 0,
             "server closed the connection instead of answering {what}"
@@ -40,8 +47,8 @@ fn connect(server: &RtspServer) -> TcpStream {
     tcp.set_nodelay(true).unwrap();
     // Both timeouts before the first write: once the server rejects and
     // closes, a setsockopt on the reset socket fails with EINVAL on macOS.
-    tcp.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    tcp.set_write_timeout(Some(READ_TIMEOUT)).unwrap();
+    tcp.set_read_timeout(Some(READ_TIMEOUT)).unwrap();
     tcp
 }
 
