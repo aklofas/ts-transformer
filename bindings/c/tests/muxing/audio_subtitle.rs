@@ -8,10 +8,8 @@
 //! SRT-wrapped `tst_mux_sender_send_*` tests are out of scope here —
 //! they need listener/sender boilerplate and live in `tests/url_open.rs`.
 
-// The offline `tst_muxer_*` surface is unconditional (no feature gate);
-// this test still gates on `srt` only because it links against SRT-transport
-// helpers used elsewhere in the muxing test binary.
-#![cfg(feature = "srt")]
+// The offline `tst_muxer_*` surface is unconditional, so this file runs on
+// every feature plane including the default (no-transport) build.
 
 use tstrans::config::{
     TstAudioCodec, TstProgramHandle, TstVideoCodec, tst_mux_config_add_audio_stream,
