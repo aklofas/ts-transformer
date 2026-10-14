@@ -12,27 +12,22 @@
 //! injection — no SRT loopback, no temp files, no sleep beyond the
 //! policy backoff (zero in tests).
 
+mod common;
+
+use crate::common::fast_policy;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tst_core::mpegts::demux::DemuxEvent;
 use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
 use tst_pipeline::{
-    BackoffStrategy, ManagedDemuxReceiver, ManagedDemuxReceiverConfig, ManagedRecvTransport,
-    ReconnectPolicy, RecvEndReason,
+    ManagedDemuxReceiver, ManagedDemuxReceiverConfig, ManagedRecvTransport, RecvEndReason,
 };
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn fast_policy(max_attempts: Option<u32>) -> ReconnectPolicy {
-    ReconnectPolicy {
-        max_attempts,
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        ..Default::default()
-    }
-}
 
 /// Build a 188-byte aligned TS packet on `pid` with CC `cc`.
 fn ts_packet(pid: u16, cc: u8) -> [u8; 188] {

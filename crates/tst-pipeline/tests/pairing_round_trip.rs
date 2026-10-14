@@ -8,6 +8,10 @@
 //! sync-KLV, which is what the `KlvSample.kind = KlvSyncAuCell` event
 //! arm exposes).
 
+mod common;
+
+use crate::common::{build_h264_au, drain_mux, dummy_klv};
+
 use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::Demuxer;
@@ -18,38 +22,6 @@ use tst_pipeline::ext::pairing::{Pairer, PairerConfig, PairerMode, PairerOutput}
 
 const VIDEO_PID: u16 = 0x100;
 const KLV_PID: u16 = 0x102;
-
-fn minimal_h264_au() -> Vec<u8> {
-    // Annex-B: AUD (nal_type=9) + IDR (nal_type=5).
-    vec![
-        0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB, 0xCC,
-    ]
-}
-
-fn dummy_klv() -> Vec<u8> {
-    // Tiny ST 0601 LS payload: UL + length + checksum tag stub.
-    // Doesn't have to decode — the pairer doesn't parse it.
-    let mut v = vec![
-        0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
-        0x00,
-    ];
-    v.push(4); // BER length
-    v.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
-    v
-}
-
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = [0u8; 188 * 64];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
 
 #[test]
 fn with_config_pairs_sync_klv_with_video() {
@@ -66,7 +38,7 @@ fn with_config_pairs_sync_klv_with_video() {
     // Push 5 frames + 5 KLV records at matching PTS.
     let pts_ticks: Vec<i64> = (0..5).map(|i| 90_000 + i * 3000).collect();
     for &pts in &pts_ticks {
-        mux.push_video(&minimal_h264_au(), Pts90khz::new(pts), true)
+        mux.push_video(&build_h264_au(0xAA), Pts90khz::new(pts), true)
             .unwrap();
         mux.push_klv(&dummy_klv(), Pts90khz::new(pts), 0x00)
             .unwrap();
@@ -147,7 +119,7 @@ fn last_before_pts_pairs_async_klv_at_lower_cadence() {
                 ki += 1;
             }
             (Some(vp), _) => {
-                mux.push_video(&minimal_h264_au(), Pts90khz::new(vp), true)
+                mux.push_video(&build_h264_au(0xAA), Pts90khz::new(vp), true)
                     .unwrap();
                 vi += 1;
             }

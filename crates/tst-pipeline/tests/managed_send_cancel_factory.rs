@@ -6,6 +6,10 @@
 //! draining the gap buffer through a connection the caller already asked it
 //! to abandon.
 
+mod common;
+
+use crate::common::FlagCancel;
+
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -61,17 +65,6 @@ impl Transport for RaceInner {
 
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
         Some(Arc::new(FlagCancel(Arc::clone(&self.cancelled))))
-    }
-}
-
-struct FlagCancel(Arc<AtomicBool>);
-
-impl TransportCancel for FlagCancel {
-    fn cancel(&self) {
-        self.0.store(true, Ordering::SeqCst);
-    }
-    fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
     }
 }
 
