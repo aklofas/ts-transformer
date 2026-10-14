@@ -18,17 +18,9 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
+use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_rtp::RtspServer;
-
-fn make_muxer_cfg() -> MuxerConfig {
-    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-    prog.add_video(0x1011, VideoCodec::H264);
-    let mut b = MuxerConfig::builder();
-    b.add_program(prog.build());
-    b.build().unwrap()
-}
 
 /// Read an RTSP response off `stream` up to the blank-line header terminator.
 fn read_response(stream: &mut TcpStream) -> String {

@@ -10,18 +10,10 @@
 
 #![cfg(feature = "rtsp-server-tls")]
 
-use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
+use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use tst_rtp::{RtspServerBuilder, RtspServerError};
 
 use crate::fixtures::tls_certs::SelfSignedCert;
-
-fn make_muxer_cfg() -> MuxerConfig {
-    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-    prog.add_video(0x1011, VideoCodec::H264);
-    let mut b = MuxerConfig::builder();
-    b.add_program(prog.build());
-    b.build().expect("MuxerConfig builds")
-}
 
 /// Server with TLS cert configured starts cleanly and binds to a port.
 /// This is the smoke-level confirmation that `RtspServerBuilder::tls_cert`

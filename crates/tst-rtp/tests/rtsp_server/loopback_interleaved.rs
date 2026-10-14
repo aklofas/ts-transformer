@@ -17,16 +17,8 @@
 //! intentionally stays narrow on the handshake to keep the regression
 //! signal localized.
 
-use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
+use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use tst_rtp::{RtspClient, RtspServer};
-
-fn make_muxer_cfg() -> MuxerConfig {
-    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-    prog.add_video(0x1011, VideoCodec::H264);
-    let mut b = MuxerConfig::builder();
-    b.add_program(prog.build());
-    b.build().unwrap()
-}
 
 /// Server accepts a `?transport=tcp` client through PLAY without
 /// erroring. The fanout task is spawned on the interleaved branch

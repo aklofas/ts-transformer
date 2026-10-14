@@ -11,17 +11,9 @@
 //! `rtsp_client/keepalive.rs`. The point here is the *server* side:
 //! it accepts repeated OPTIONS across the lifetime of a session.
 
+use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use std::time::Duration;
-use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_rtp::{RtspClient, RtspServer};
-
-fn make_muxer_cfg() -> MuxerConfig {
-    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-    prog.add_video(0x1011, VideoCodec::H264);
-    let mut b = MuxerConfig::builder();
-    b.add_program(prog.build());
-    b.build().unwrap()
-}
 
 /// Client sends manual OPTIONS pings interleaved with DESCRIBE; server
 /// returns 200 to each. Stand-in for the keepalive-over-existing-session

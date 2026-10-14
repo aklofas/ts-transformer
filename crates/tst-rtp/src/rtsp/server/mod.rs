@@ -373,10 +373,10 @@ pub(crate) fn test_state_on_demand(
     (st, rx)
 }
 
-/// Shared test-only one-program H.264 `MuxerConfig` — the config a local
-/// (muxer-backed) mount needs to construct against in a test. Shared by
-/// `handlers::tests` and `publish::handlers::tests` for the same reason
-/// as [`test_state`].
+/// Shared test-only one-program H.264 `MuxerConfig` (PID 0x1011 video,
+/// program 1, PMT 0x1000) — the config every `rtsp::server` test module
+/// builds a local mount from. One definition for the same reason as
+/// [`test_state`].
 #[cfg(test)]
 pub(crate) fn test_muxer_cfg() -> tst_core::mpegts::mux::MuxerConfig {
     use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
@@ -1343,16 +1343,6 @@ mod listener_tests {
 #[cfg(test)]
 mod add_mount_tests {
     use super::*;
-    use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-
-    fn make_muxer_cfg() -> MuxerConfig {
-        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-        prog.add_video(0x1011, VideoCodec::H264);
-        let mut b = MuxerConfig::builder();
-        b.add_program(prog.build());
-        b.build().unwrap()
-    }
-
     #[test]
     fn a_mount_path_with_a_control_byte_is_invalid() {
         for p in ["/a\0b", "/a\tb", "/a\nb", "/a\rb", "/a\x7fb", "/\x01"] {
@@ -1373,14 +1363,14 @@ mod add_mount_tests {
     #[test]
     fn add_mount_rejects_empty_path() {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
-        let e = server.add_mount("", make_muxer_cfg()).unwrap_err();
+        let e = server.add_mount("", test_muxer_cfg()).unwrap_err();
         assert!(matches!(e, RtspServerError::InvalidMountPath { .. }));
     }
 
     #[test]
     fn add_mount_path_with_query_char_rejected() {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
-        let e = server.add_mount("/live?x=1", make_muxer_cfg()).unwrap_err();
+        let e = server.add_mount("/live?x=1", test_muxer_cfg()).unwrap_err();
         assert!(matches!(e, RtspServerError::InvalidMountPath { .. }));
     }
 }
@@ -1388,21 +1378,11 @@ mod add_mount_tests {
 #[cfg(test)]
 mod add_multicast_mount_tests {
     use super::*;
-    use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-
-    fn make_muxer_cfg() -> MuxerConfig {
-        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-        prog.add_video(0x1011, VideoCodec::H264);
-        let mut b = MuxerConfig::builder();
-        b.add_program(prog.build());
-        b.build().unwrap()
-    }
-
     #[test]
     fn add_multicast_mount_returns_handle_for_v4_group() {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
         let mount = server
-            .add_multicast_mount("/mc", make_muxer_cfg(), "rtp://239.0.0.1:5004")
+            .add_multicast_mount("/mc", test_muxer_cfg(), "rtp://239.0.0.1:5004")
             .unwrap();
         assert_eq!(mount.mount_path(), "/mc");
         assert!(matches!(
@@ -1415,7 +1395,7 @@ mod add_multicast_mount_tests {
     fn add_multicast_mount_rejects_unicast_group() {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
         let e = server
-            .add_multicast_mount("/mc", make_muxer_cfg(), "rtp://10.0.0.1:5004")
+            .add_multicast_mount("/mc", test_muxer_cfg(), "rtp://10.0.0.1:5004")
             .unwrap_err();
         assert!(matches!(e, RtspServerError::InvalidMulticastGroup { .. }));
     }
@@ -1424,7 +1404,7 @@ mod add_multicast_mount_tests {
     fn add_multicast_mount_rejects_malformed_url() {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
         let e = server
-            .add_multicast_mount("/mc", make_muxer_cfg(), "not-a-url")
+            .add_multicast_mount("/mc", test_muxer_cfg(), "not-a-url")
             .unwrap_err();
         assert!(matches!(e, RtspServerError::InvalidMulticastGroup { .. }));
     }
@@ -1433,10 +1413,10 @@ mod add_multicast_mount_tests {
     fn add_multicast_mount_rejects_duplicate_path() {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
         server
-            .add_multicast_mount("/mc", make_muxer_cfg(), "rtp://239.0.0.1:5004")
+            .add_multicast_mount("/mc", test_muxer_cfg(), "rtp://239.0.0.1:5004")
             .unwrap();
         let e = server
-            .add_multicast_mount("/mc", make_muxer_cfg(), "rtp://239.0.0.2:5004")
+            .add_multicast_mount("/mc", test_muxer_cfg(), "rtp://239.0.0.2:5004")
             .unwrap_err();
         assert!(matches!(e, RtspServerError::DuplicateMount { .. }));
     }
@@ -1447,7 +1427,7 @@ mod add_multicast_mount_tests {
         let mount = server
             .add_multicast_mount(
                 "/mc",
-                make_muxer_cfg(),
+                test_muxer_cfg(),
                 "rtp://239.0.0.1:5004?ttl=2&iface=127.0.0.1",
             )
             .unwrap();
@@ -1464,16 +1444,6 @@ mod add_multicast_mount_tests {
 #[cfg(test)]
 mod add_publish_mount_tests {
     use super::*;
-    use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-
-    fn make_muxer_cfg() -> MuxerConfig {
-        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-        prog.add_video(0x1011, VideoCodec::H264);
-        let mut b = MuxerConfig::builder();
-        b.add_program(prog.build());
-        b.build().unwrap()
-    }
-
     #[test]
     fn add_publish_mount_registers_and_rejects_duplicates() {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
@@ -1484,7 +1454,7 @@ mod add_publish_mount_tests {
             Err(RtspServerError::DuplicateMount { .. })
         ));
         assert!(matches!(
-            server.add_mount("/pub", make_muxer_cfg()),
+            server.add_mount("/pub", test_muxer_cfg()),
             Err(RtspServerError::DuplicateMount { .. })
         ));
         assert!(matches!(

@@ -1265,19 +1265,11 @@ mod tests {
     // ── SETUP handler tests ───────────────────────────────────────────────
 
     use crate::rtsp::server::mount::{MountEntry, MountKind, MountState};
-    use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-
-    fn make_muxer_cfg() -> MuxerConfig {
-        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-        prog.add_video(0x1011, VideoCodec::H264);
-        let mut b = MuxerConfig::builder();
-        b.add_program(prog.build());
-        b.build().unwrap()
-    }
+    use crate::rtsp::server::test_muxer_cfg;
 
     fn make_state_with_mount() -> Arc<ServerState> {
         let state = make_state();
-        let mount_state = MountState::new("/live", MountKind::Unicast, make_muxer_cfg(), 256)
+        let mount_state = MountState::new("/live", MountKind::Unicast, test_muxer_cfg(), 256)
             .expect("mount state constructs");
         state
             .mounts
@@ -1300,7 +1292,7 @@ mod tests {
                 ttl: 4,
                 iface: None,
             },
-            make_muxer_cfg(),
+            test_muxer_cfg(),
             256,
         )
         .expect("multicast mount state constructs");

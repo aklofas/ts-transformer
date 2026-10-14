@@ -21,17 +21,9 @@
 
 use std::time::Duration;
 
+use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use secrecy::SecretString;
-use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_rtp::{RtspClientBuilder, RtspServerBuilder};
-
-fn make_muxer_cfg() -> MuxerConfig {
-    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-    prog.add_video(0x1011, VideoCodec::H264);
-    let mut b = MuxerConfig::builder();
-    b.add_program(prog.build());
-    b.build().unwrap()
-}
 
 /// Connect to an `rtsps://` server and verify the keepalive thread spawns
 /// over TLS (a `try_clone`-based thread would silently no-op, `try_clone`
