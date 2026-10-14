@@ -4,12 +4,16 @@
 //! (`ManagedTransportStats::reconnect_attempts`); the two sides are
 //! symmetric and the counter is exposed lock-free.
 
+mod common;
+
+use crate::common::{broken, fast_policy, wait_for};
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tst_pipeline::{
-    BackoffStrategy, BrokenCause, ManagedDemuxReceiver, ManagedDemuxReceiverConfig,
-    ManagedRecvTransport, ReconnectPolicy, RecvTransport, TransportError,
+    ManagedDemuxReceiver, ManagedDemuxReceiverConfig, ManagedRecvTransport, RecvTransport,
+    TransportError,
 };
 
 /// Bound on anything that must NOT wait on the thread owning the
@@ -18,26 +22,6 @@ use tst_pipeline::{
 /// queued behind the parked owner) blocks forever on this scale, and these
 /// tests also run under ASan/TSan where scheduling is 5-15x slower.
 const PROMPT: Duration = Duration::from_secs(10);
-
-/// Latch-and-poll with a bounded watchdog — never a wall-clock assert.
-fn wait_for(deadline: Duration, f: impl Fn() -> bool) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < deadline {
-        if f() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    f()
-}
-
-fn broken(msg: &str) -> TransportError {
-    TransportError::Broken {
-        msg: msg.into(),
-        errno_code: None,
-        cause: BrokenCause::Unspecified,
-    }
-}
 
 /// A scripted inner: `good == false` breaks on every recv (forces the
 /// reconnect path); `good == true` delivers four bytes.
@@ -77,21 +61,13 @@ fn fail_twice_then_succeed(
     })
 }
 
-fn fast_policy() -> ReconnectPolicy {
-    ReconnectPolicy {
-        max_attempts: Some(10),
-        backoff: BackoffStrategy::Constant(Duration::ZERO),
-        ..Default::default()
-    }
-}
-
 #[test]
 fn attempts_count_factory_calls_and_reconnects_count_successes() {
     let calls = Arc::new(AtomicU32::new(0));
     let mut managed = ManagedRecvTransport::new(
         Scripted { good: false },
         fail_twice_then_succeed(Arc::clone(&calls)),
-        fast_policy(),
+        fast_policy(Some(10)),
     );
     let attempts = managed.attempts_handle();
     let reconnects = managed.reconnects_handle();
@@ -134,7 +110,7 @@ fn managed_demux_receiver_exposes_the_transport_attempts_counter() {
     let managed = ManagedRecvTransport::new(
         Scripted { good: true },
         fail_twice_then_succeed(Arc::new(AtomicU32::new(0))),
-        fast_policy(),
+        fast_policy(Some(10)),
     );
     let from_transport = managed.attempts_handle();
     let rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
@@ -173,7 +149,8 @@ fn attempts_handle_reads_while_the_owner_is_parked_in_the_factory() {
         }) as Box<dyn FnMut() -> Result<Scripted, TransportError> + Send>
     };
 
-    let mut managed = ManagedRecvTransport::new(Scripted { good: false }, factory, fast_policy());
+    let mut managed =
+        ManagedRecvTransport::new(Scripted { good: false }, factory, fast_policy(Some(10)));
     // Obtain BEFORE the move — the only way a binding can reach it.
     let attempts = managed.attempts_handle();
     let mut buf = [0u8; 16];
@@ -216,7 +193,7 @@ fn attempts_handles_are_plain_shared_atomics() {
     let managed = ManagedRecvTransport::new(
         Scripted { good: true },
         fail_twice_then_succeed(Arc::new(AtomicU32::new(0))),
-        fast_policy(),
+        fast_policy(Some(10)),
     );
     let _: Arc<AtomicU64> = managed.attempts_handle();
     let rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());

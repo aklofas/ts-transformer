@@ -8,31 +8,16 @@
 //! event AND the post-recovery video `Sample` — proving the lenient fix
 //! flows through the pipeline shell's `feed_aligned` call site.
 
+mod common;
+
+use crate::common::{build_h264_au, drain_mux, to_ts_packets};
+
 use tst_core::TransportError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, NonConformantIssue, SamplePayload};
 use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_core::transport::RecvTransport;
 use tst_pipeline::DemuxReceiver;
-
-fn build_minimal_h264_au() -> Vec<u8> {
-    vec![
-        0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB, 0xCC,
-    ]
-}
-
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
 
 /// Build a corrupted TS byte stream by muxing two H.264 PESes on PID 0x100
 /// and flipping the third PES start-code byte of the first one. Returns the
@@ -47,10 +32,10 @@ fn build_packets_with_one_malformed_pes() -> Vec<[u8; 188]> {
     };
     let mut mux = Muxer::new(cfg).unwrap();
 
-    mux.push_video(&build_minimal_h264_au(), Pts90khz::new(90_000), true)
+    mux.push_video(&build_h264_au(0xAA), Pts90khz::new(90_000), true)
         .unwrap();
     let bytes1 = drain_mux(&mut mux);
-    mux.push_video(&build_minimal_h264_au(), Pts90khz::new(180_000), true)
+    mux.push_video(&build_h264_au(0xAA), Pts90khz::new(180_000), true)
         .unwrap();
     let bytes2 = drain_mux(&mut mux);
 
@@ -85,14 +70,7 @@ fn build_packets_with_one_malformed_pes() -> Vec<[u8; 188]> {
         "test setup: no PUSI packet found on video PID 0x100 to corrupt"
     );
 
-    bytes
-        .chunks_exact(188)
-        .map(|c| {
-            let mut a = [0u8; 188];
-            a.copy_from_slice(c);
-            a
-        })
-        .collect()
+    to_ts_packets(&bytes)
 }
 
 /// Minimal `RecvTransport` that delivers one 188-byte TS packet per

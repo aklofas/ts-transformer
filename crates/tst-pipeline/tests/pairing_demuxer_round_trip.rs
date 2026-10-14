@@ -4,6 +4,10 @@
 //! bytes. `PairingDemuxer` must produce a byte-identical `PairerOutput`
 //! sequence — proving the composite is a faithful, lossless wrapper.
 
+mod common;
+
+use crate::common::{build_h264_au, drain_mux, dummy_klv};
+
 use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{Demuxer, DemuxerConfig};
@@ -16,35 +20,6 @@ use tst_pipeline::ext::pairing::{
 
 const VIDEO_PID: u16 = 0x100;
 const KLV_PID: u16 = 0x102;
-
-fn minimal_h264_au() -> Vec<u8> {
-    vec![
-        0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB, 0xCC,
-    ]
-}
-
-fn dummy_klv() -> Vec<u8> {
-    let mut v = vec![
-        0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
-        0x00,
-    ];
-    v.push(4);
-    v.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
-    v
-}
-
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = [0u8; 188 * 64];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
 
 /// Sync-KLV stream, 5 video frames + 5 KLV records at matching PTS.
 fn sync_klv_bytes() -> Vec<u8> {
@@ -59,7 +34,7 @@ fn sync_klv_bytes() -> Vec<u8> {
     let mut mux = Muxer::new(cfg).unwrap();
     for i in 0..5 {
         let pts = 90_000 + i * 3000;
-        mux.push_video(&minimal_h264_au(), Pts90khz::new(pts), true)
+        mux.push_video(&build_h264_au(0xAA), Pts90khz::new(pts), true)
             .unwrap();
         mux.push_klv(&dummy_klv(), Pts90khz::new(pts), 0x00)
             .unwrap();
@@ -142,7 +117,7 @@ fn async_klv_bytes() -> Vec<u8> {
                 ki += 1;
             }
             (Some(vp), _) => {
-                mux.push_video(&minimal_h264_au(), Pts90khz::new(vp), true)
+                mux.push_video(&build_h264_au(0xAA), Pts90khz::new(vp), true)
                     .unwrap();
                 vi += 1;
             }

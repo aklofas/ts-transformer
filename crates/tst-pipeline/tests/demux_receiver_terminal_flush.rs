@@ -36,6 +36,10 @@
 //! some transports) — this fix does not introduce a new risk category, it
 //! just applies the same accepted behavior to more termination reasons.
 
+mod common;
+
+use crate::common::{build_h264_au, drain_mux, to_ts_packets};
+
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
 use tst_core::mpegts::mux::{
@@ -44,44 +48,6 @@ use tst_core::mpegts::mux::{
 use tst_core::transport::RecvTransport;
 use tst_core::{BrokenCause, TransportError};
 use tst_pipeline::{DemuxReceiver, DemuxReceiverErrorSource, ShellErrorKind};
-
-/// Minimal valid Annex-B H.264 AU (AUD + IDR slice), 14 bytes. `marker`
-/// occupies the byte after the slice NAL header so each pushed AU has
-/// distinguishable content for the assertion.
-fn build_h264_au(marker: u8) -> Vec<u8> {
-    vec![
-        0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00, 0x01, 0x65, marker, 0xBB, 0xCC,
-    ]
-}
-
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
-
-fn to_ts_packets(bytes: &[u8]) -> Vec<[u8; 188]> {
-    assert_eq!(
-        bytes.len() % 188,
-        0,
-        "muxer output must be TS-packet aligned"
-    );
-    bytes
-        .chunks_exact(188)
-        .map(|c| {
-            let mut a = [0u8; 188];
-            a.copy_from_slice(c);
-            a
-        })
-        .collect()
-}
 
 /// Delivers one 188-byte TS packet per `recv_bytes` call, then signals a
 /// *terminal, non-clean* transport error once exhausted — simulating a live

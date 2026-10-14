@@ -14,9 +14,13 @@
 //! cleanup on every path, and the cancel runs on its own thread so "cancel
 //! never returned" surfaces as `joined == false` rather than a hang.
 
+mod common;
+
+use crate::common::wait_for;
+
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
 use tst_pipeline::{
@@ -182,18 +186,6 @@ fn policy(mode: ReconnectMode) -> ReconnectPolicy {
         overflow_policy: OverflowPolicy::DropOldest,
         mode,
     }
-}
-
-/// Poll `f` until it holds or the deadline passes. Returns whether it held.
-fn wait_for(deadline: Duration, mut f: impl FnMut() -> bool) -> bool {
-    let t0 = Instant::now();
-    while !f() {
-        if t0.elapsed() > deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    true
 }
 
 /// Fire `cancel` on its own thread; report whether it returned in time.
