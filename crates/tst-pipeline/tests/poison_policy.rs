@@ -132,7 +132,7 @@ fn peer_eos_returns_closed_not_explicit_close() {
     let factory_calls_cl = factory_calls.clone();
     let factory = Box::new(move || {
         factory_calls_cl.fetch_add(1, Ordering::Relaxed);
-        // Always reconnect to ScriptedRecv::failing(TransportError::Closed) — peer immediately re-EOSs each time.
+        // Every reconnect yields a receiver that hits end-of-stream at once.
         Ok(ScriptedRecv::failing(TransportError::Closed))
     });
 
