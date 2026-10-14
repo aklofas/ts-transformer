@@ -20,15 +20,9 @@
 //! * `tst_demux_receiver_get_stream_codec_stats`             (demux_receiver.rs)
 //! * `tst_managed_demux_receiver_get_stream_codec_stats`     (demux_receiver.rs)
 
-// The null-pointer error-path tests at the top need only the unconditional
-// `tstrans::muxer::*`, but the loopback/happy-path tests below pull in
-// `tstrans::sender::*` / `tstrans::receiver::*`, both gated behind
-// `feature = "srt"`. The whole file is gated at the binary level so
-// `cargo test --workspace --no-default-features` compiles; the muxing test
-// binary links SRT-dependent code and defaults to `srt` anyway. (It is no
-// longer true that *every* test here requires sender/receiver — splitting the
-// offline cases out from the gate was out of scope for this relocation.)
-#![cfg(feature = "srt")]
+// Offline `tst_demuxer_*` / `tst_muxer_*` cases run on every plane; the
+// loopback cases that pair a sender with a receiver are gated per test on
+// `srt`.
 
 use std::ptr;
 
@@ -51,6 +45,7 @@ fn muxer_get_stream_codec_stats_null_handle_returns_invalid_config() {
 }
 
 #[test]
+#[cfg(feature = "srt")]
 fn mux_sender_get_stream_codec_stats_null_handle_returns_invalid_config() {
     let mut out = TstStreamCodecStats {
         kind: 0,
@@ -68,6 +63,7 @@ fn mux_sender_get_stream_codec_stats_null_handle_returns_invalid_config() {
 }
 
 #[test]
+#[cfg(feature = "srt")]
 fn managed_mux_sender_get_stream_codec_stats_null_handle_returns_invalid_config() {
     let mut out = TstStreamCodecStats {
         kind: 0,
@@ -85,6 +81,7 @@ fn managed_mux_sender_get_stream_codec_stats_null_handle_returns_invalid_config(
 }
 
 #[test]
+#[cfg(feature = "srt")]
 fn demux_receiver_get_stream_codec_stats_null_handle_returns_invalid_config() {
     let mut out = TstStreamCodecStats {
         kind: 0,
@@ -102,6 +99,7 @@ fn demux_receiver_get_stream_codec_stats_null_handle_returns_invalid_config() {
 }
 
 #[test]
+#[cfg(feature = "srt")]
 fn managed_demux_receiver_get_stream_codec_stats_null_handle_returns_invalid_config() {
     let mut out = TstStreamCodecStats {
         kind: 0,
@@ -245,6 +243,7 @@ fn muxer_get_stream_codec_stats_after_push_video_returns_video_variant() {
 // AND the `tst_demux_receiver_*` not-found-for-PSI scenario in one fixture.
 
 #[test]
+#[cfg(feature = "srt")]
 #[cfg(target_os = "linux")]
 fn loopback_mux_sender_to_demux_receiver_codec_stats_video_and_psi_not_found() {
     use std::ffi::{CStr, CString};
