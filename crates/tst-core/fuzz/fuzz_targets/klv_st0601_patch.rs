@@ -52,13 +52,17 @@ fuzz_target!(|data: &[u8]| {
         //  - `field_errors` may legitimately differ: patch re-encoding
         //    a MALFORMED original tag 23 heals its field error, so
         //    comparing the sets would fire on CORRECT behavior.
-        // Whole-record PartialEq is NaN-safe here: st0601 typed floats
-        // come from integer scaling / IMAPB Value decode (always
-        // finite), never raw IEEE wire bits.
-        if let Ok(orig) = decode_unchecked(data) {
+        // `field_errors` is cleared on BOTH sides rather than copied
+        // across: an `OutOfRange` entry carries the offending value, and
+        // the decoder reports a reserved IMAPB special and a non-finite
+        // IMAPB decode as `value: NaN`, so a copied list never compares
+        // equal to itself. The typed fields themselves are NaN-free
+        // (integer scaling / IMAPB `Value` decode, always finite).
+        if let Ok(mut orig) = decode_unchecked(data) {
             let mut masked = re.clone();
             masked.frame_center_lat_deg = orig.frame_center_lat_deg;
-            masked.field_errors = orig.field_errors.clone();
+            masked.field_errors.clear();
+            orig.field_errors.clear();
             assert_eq!(masked, orig, "non-edited fields must survive patch");
         }
     }
