@@ -91,7 +91,7 @@ Package version (matches Cargo.toml):
   TST_VERSION_MINOR          runtime=7  header=7  [OK]
   TST_VERSION_PATCH          runtime=0  header=0  [OK]
   packed (M<<16|m<<8|p)      runtime=1792  header=1792  [OK]
-  version string             runtime="0.7.0"
+  version string             runtime="0.8.0"
 
 ABI contract version (breaking-change cadence):
   TST_ABI_VERSION_MAJOR      runtime=0  header=0  [OK]

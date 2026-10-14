@@ -1325,9 +1325,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "once_cell",
  "ring",
@@ -1917,7 +1917,7 @@ dependencies = [
 
 [[package]]
 name = "tst-c"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cbindgen",
  "libc",
@@ -1931,7 +1931,7 @@ dependencies = [
 
 [[package]]
 name = "tst-c-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "critical-section",
  "libc",
@@ -1950,7 +1950,7 @@ dependencies = [
 
 [[package]]
 name = "tst-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "criterion",
  "hashbrown 0.15.5",
@@ -1986,7 +1986,7 @@ dependencies = [
 
 [[package]]
 name = "tst-hls"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64",
  "bytes",
@@ -2006,7 +2006,7 @@ dependencies = [
 
 [[package]]
 name = "tst-integration"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2019,7 +2019,7 @@ dependencies = [
 
 [[package]]
 name = "tst-interop"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2039,7 +2039,7 @@ dependencies = [
 
 [[package]]
 name = "tst-jni"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "jni",
  "rustls",
@@ -2056,7 +2056,7 @@ dependencies = [
 
 [[package]]
 name = "tst-pipeline"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "criterion",
  "proptest",
@@ -2070,7 +2070,7 @@ dependencies = [
 
 [[package]]
 name = "tst-py"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "pyo3",
  "pyo3-build-config",
@@ -2091,7 +2091,7 @@ dependencies = [
 
 [[package]]
 name = "tst-rist"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "libc",
  "secrecy",
@@ -2104,7 +2104,7 @@ dependencies = [
 
 [[package]]
 name = "tst-rtp"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64",
  "bytes",
@@ -2134,7 +2134,7 @@ dependencies = [
 
 [[package]]
 name = "tst-srt"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "libc",
  "os_socketaddr",
@@ -2152,7 +2152,7 @@ dependencies = [
 
 [[package]]
 name = "tst-tcp"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "libc",
  "rcgen",
@@ -2176,7 +2176,7 @@ dependencies = [
 
 [[package]]
 name = "tst-udp"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "libc",
  "socket2 0.5.10",
@@ -2188,11 +2188,11 @@ dependencies = [
 
 [[package]]
 name = "tstrans-mbedtls-src"
-version = "0.7.0+3.6.7"
+version = "0.8.0+3.6.7"
 
 [[package]]
 name = "tstrans-rist-sys"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "bindgen",
  "cc",
@@ -2204,7 +2204,7 @@ dependencies = [
 
 [[package]]
 name = "tstrans-srt-sys"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "bindgen",
  "cmake",

@@ -4,7 +4,7 @@ description = "MPEG-TS video + MISB KLV streaming via PyO3 — mux/demux, typed 
 publish     = false
 # tst-py versions independently from the rest of the workspace.
 # Keep this in sync with pyproject.toml's `[project] version`.
-version     = "0.7.0"
+version     = "0.8.0"
 edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true

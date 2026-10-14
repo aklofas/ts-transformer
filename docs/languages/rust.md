@@ -20,9 +20,9 @@ the three top-level crates in:
 
 ```toml
 [dependencies]
-tst-core     = "0.7"  # MPEG-TS mux/demux + KLV + codec parsers
-tst-pipeline = "0.7"  # Sender / Receiver / MuxSender / DemuxReceiver shells
-tst-srt      = "0.7"  # SRT transport
+tst-core     = "0.8"  # MPEG-TS mux/demux + KLV + codec parsers
+tst-pipeline = "0.8"  # Sender / Receiver / MuxSender / DemuxReceiver shells
+tst-srt      = "0.8"  # SRT transport
 ```
 
 When you only need to inspect or build `.ts` bytes (no live transport),
