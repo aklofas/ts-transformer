@@ -127,6 +127,8 @@ pub mod stats;
 pub mod stream_end_reason;
 mod ffi_slice;
 mod panic;
+#[cfg(test)]
+mod test_support;
 // Shared C-string -> &str bridge, consumed only by the four transport
 // families whose url.rs modules delegate to it (rtp's URL parsing needs
 // more than a borrowed &str, so it stays separate — see c_str.rs docs).

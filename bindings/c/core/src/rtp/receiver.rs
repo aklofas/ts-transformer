@@ -352,39 +352,29 @@ pub unsafe extern "C" fn tst_rtp_receiver_reset_stats(p: *mut TstRtpReceiver) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
 
-    #[test]
-    fn null_close_is_safe() {
-        unsafe { tst_rtp_receiver_close(std::ptr::null_mut()) };
-    }
-
-    #[test]
-    fn null_cancel_returns_invalid_config() {
-        let rc = unsafe { tst_rtp_receiver_cancel(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_recv_ts_returns_invalid_config() {
-        let mut buf = [0u8; 188];
-        let mut n: usize = 0;
-        let rc = unsafe {
+    null_entry_tests! {
+        null_close_is_safe => no_crash { tst_rtp_receiver_close(std::ptr::null_mut()) };
+        null_cancel_returns_invalid_config => invalid_config {
+            tst_rtp_receiver_cancel(std::ptr::null_mut())
+        };
+        null_recv_ts_returns_invalid_config => invalid_config {
+            let mut buf = [0u8; 188];
+            let mut n: usize = 0;
             tst_rtp_receiver_recv_ts(std::ptr::null_mut(), buf.as_mut_ptr(), buf.len(), &mut n)
         };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_get_stats_returns_invalid_config() {
-        let mut stats = TstReceiverStats::default();
-        let rc = unsafe { tst_rtp_receiver_get_stats(std::ptr::null_mut(), &mut stats) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_reset_stats_returns_invalid_config() {
-        let rc = unsafe { tst_rtp_receiver_reset_stats(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
+        null_get_stats_returns_invalid_config => invalid_config {
+            let mut stats = TstReceiverStats::default();
+            tst_rtp_receiver_get_stats(std::ptr::null_mut(), &mut stats)
+        };
+        null_reset_stats_returns_invalid_config => invalid_config {
+            tst_rtp_receiver_reset_stats(std::ptr::null_mut())
+        };
+        null_end_reason_returns_invalid_config => invalid_config {
+            let mut out = TstStreamEndReason::None;
+            tst_rtp_receiver_end_reason(std::ptr::null_mut(), &mut out)
+        };
     }
 
     #[test]
@@ -399,13 +389,6 @@ mod tests {
         let rc = unsafe { tst_rtp_receiver_recv_ts(handle, buf.as_mut_ptr(), buf.len(), &mut n) };
         assert_eq!(rc, TstError::InvalidConfig as i32);
         unsafe { tst_rtp_receiver_close(handle) };
-    }
-
-    #[test]
-    fn null_end_reason_returns_invalid_config() {
-        let mut out = TstStreamEndReason::None;
-        let rc = unsafe { tst_rtp_receiver_end_reason(std::ptr::null_mut(), &mut out) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
     }
 
     #[test]

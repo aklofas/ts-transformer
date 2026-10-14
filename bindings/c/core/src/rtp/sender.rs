@@ -246,34 +246,22 @@ pub unsafe extern "C" fn tst_rtp_sender_reset_stats(p: *mut TstRtpSender) -> lib
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
 
-    #[test]
-    fn null_close_is_safe() {
-        unsafe { tst_rtp_sender_close(std::ptr::null_mut()) };
-    }
-
-    #[test]
-    fn null_cancel_returns_invalid_config() {
-        let rc = unsafe { tst_rtp_sender_cancel(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_send_ts_returns_invalid_config() {
-        let rc = unsafe { tst_rtp_sender_send_ts(std::ptr::null_mut(), std::ptr::null(), 0) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_get_stats_returns_invalid_config() {
-        let mut stats = TstSenderStats::default();
-        let rc = unsafe { tst_rtp_sender_get_stats(std::ptr::null_mut(), &mut stats) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_reset_stats_returns_invalid_config() {
-        let rc = unsafe { tst_rtp_sender_reset_stats(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
+    null_entry_tests! {
+        null_close_is_safe => no_crash { tst_rtp_sender_close(std::ptr::null_mut()) };
+        null_cancel_returns_invalid_config => invalid_config {
+            tst_rtp_sender_cancel(std::ptr::null_mut())
+        };
+        null_send_ts_returns_invalid_config => invalid_config {
+            tst_rtp_sender_send_ts(std::ptr::null_mut(), std::ptr::null(), 0)
+        };
+        null_get_stats_returns_invalid_config => invalid_config {
+            let mut stats = TstSenderStats::default();
+            tst_rtp_sender_get_stats(std::ptr::null_mut(), &mut stats)
+        };
+        null_reset_stats_returns_invalid_config => invalid_config {
+            tst_rtp_sender_reset_stats(std::ptr::null_mut())
+        };
     }
 }

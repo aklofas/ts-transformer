@@ -290,10 +290,10 @@ pub unsafe extern "C" fn tst_tcp_listener_cancel(p: *mut TstTcpListener) -> libc
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
 
-    #[test]
-    fn null_free_is_safe() {
-        unsafe { tst_tcp_listener_free(std::ptr::null_mut()) };
+    null_entry_tests! {
+        null_free_is_safe => no_crash { tst_tcp_listener_free(std::ptr::null_mut()) };
     }
 
     #[test]

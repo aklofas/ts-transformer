@@ -403,66 +403,39 @@ pub unsafe extern "C" fn tst_udp_demux_receiver_get_stream_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
 
-    #[test]
-    fn null_close_is_safe() {
-        unsafe { tst_udp_demux_receiver_close(std::ptr::null_mut()) };
-    }
-
-    #[test]
-    fn null_next_event_returns_invalid_config() {
-        let mut ev = TstEvent::default();
-        let rc = unsafe { tst_udp_demux_receiver_next_event(std::ptr::null_mut(), &mut ev) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_out_event_returns_invalid_config() {
-        let rc = unsafe {
+    null_entry_tests! {
+        null_close_is_safe => no_crash { tst_udp_demux_receiver_close(std::ptr::null_mut()) };
+        null_next_event_returns_invalid_config => invalid_config {
+            let mut ev = TstEvent::default();
+            tst_udp_demux_receiver_next_event(std::ptr::null_mut(), &mut ev)
+        };
+        null_out_event_returns_invalid_config => invalid_config {
             tst_udp_demux_receiver_next_event(std::ptr::null_mut(), std::ptr::null_mut())
         };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_get_stats_returns_invalid_config() {
-        let mut stats = crate::stats::TstDemuxReceiverStats::default();
-        let rc = unsafe { tst_udp_demux_receiver_get_stats(std::ptr::null_mut(), &mut stats) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_reset_stats_returns_invalid_config() {
-        let rc = unsafe { tst_udp_demux_receiver_reset_stats(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_get_stream_last_seen_micros_returns_invalid_config() {
-        let mut micros: u64 = 0;
-        let rc = unsafe {
+        null_get_stats_returns_invalid_config => invalid_config {
+            let mut stats = crate::stats::TstDemuxReceiverStats::default();
+            tst_udp_demux_receiver_get_stats(std::ptr::null_mut(), &mut stats)
+        };
+        null_reset_stats_returns_invalid_config => invalid_config {
+            tst_udp_demux_receiver_reset_stats(std::ptr::null_mut())
+        };
+        null_get_stream_last_seen_micros_returns_invalid_config => invalid_config {
+            let mut micros: u64 = 0;
             tst_udp_demux_receiver_get_stream_last_seen_micros(
                 std::ptr::null_mut(),
                 0x1011,
                 &mut micros,
             )
         };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_get_stream_stats_returns_invalid_config() {
-        let mut arr: *const crate::stats::TstStreamStats = std::ptr::null();
-        let mut count: libc::size_t = 0;
-        let rc = unsafe {
+        null_get_stream_stats_returns_invalid_config => invalid_config {
+            let mut arr: *const crate::stats::TstStreamStats = std::ptr::null();
+            let mut count: libc::size_t = 0;
             tst_udp_demux_receiver_get_stream_stats(std::ptr::null_mut(), &mut arr, &mut count)
         };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn open_with_null_url_returns_null() {
-        let p = unsafe { tst_udp_demux_receiver_open(std::ptr::null(), std::ptr::null()) };
-        assert!(p.is_null());
+        open_with_null_url_returns_null => null {
+            tst_udp_demux_receiver_open(std::ptr::null(), std::ptr::null())
+        };
     }
 }

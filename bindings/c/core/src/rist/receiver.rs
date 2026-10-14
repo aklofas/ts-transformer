@@ -291,32 +291,21 @@ pub unsafe extern "C" fn tst_rist_receiver_reset_stats(p: *mut TstRistReceiver) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
 
-    #[test]
-    fn null_close_is_safe() {
-        unsafe { tst_rist_receiver_close(std::ptr::null_mut()) };
-    }
-
-    #[test]
-    fn null_recv_ts_returns_invalid_config() {
-        let mut buf = [0u8; 188];
-        let mut n = 0usize;
-        let rc = unsafe {
+    null_entry_tests! {
+        null_close_is_safe => no_crash { tst_rist_receiver_close(std::ptr::null_mut()) };
+        null_recv_ts_returns_invalid_config => invalid_config {
+            let mut buf = [0u8; 188];
+            let mut n = 0usize;
             tst_rist_receiver_recv_ts(std::ptr::null_mut(), buf.as_mut_ptr(), buf.len(), &mut n)
         };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_get_stats_returns_invalid_config() {
-        let mut stats = TstReceiverStats::default();
-        let rc = unsafe { tst_rist_receiver_get_stats(std::ptr::null_mut(), &mut stats) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_reset_stats_returns_invalid_config() {
-        let rc = unsafe { tst_rist_receiver_reset_stats(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
+        null_get_stats_returns_invalid_config => invalid_config {
+            let mut stats = TstReceiverStats::default();
+            tst_rist_receiver_get_stats(std::ptr::null_mut(), &mut stats)
+        };
+        null_reset_stats_returns_invalid_config => invalid_config {
+            tst_rist_receiver_reset_stats(std::ptr::null_mut())
+        };
     }
 }
