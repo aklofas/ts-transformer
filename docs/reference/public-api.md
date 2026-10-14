@@ -34,8 +34,8 @@ Three layers of intended-public surface, from most stable to least:
    future `tst_core::mpegts::descriptors::low_level::*` if needed) —
    explicitly-named extension points for fuzz harnesses, third-party
    tools, and advanced consumers that need direct access to parser
-   internals. **Stability: experimental.** May change between minor
-   versions before 1.0; post-1.0 expectations TBD.
+   internals. **Stability: Internal** (the tier table in [api-stability.md](./api-stability.md) is authoritative). May change between minor
+   versions before 1.0.
 
 Anything not in one of these three categories is **private** and may
 change without notice.

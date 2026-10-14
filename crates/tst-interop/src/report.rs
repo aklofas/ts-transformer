@@ -21,9 +21,9 @@
 //! multiset (see [`check_inventory`]).
 //!
 //! Expectations are read from a small hand-rolled TOML-shaped format (see
-//! [`parse_expectations`]) rather than a real TOML crate — the workspace
-//! has no `toml` dependency in normal deps and this crate doesn't widen
-//! that set for a machine-written file with an exact, fixed schema.
+//! [`parse_expectations`]) rather than a real TOML crate — this crate
+//! deliberately takes no `toml` dependency (tst-integration and tst-core's
+//! optional feature do) for a machine-written file with an exact, fixed schema.
 
 use std::collections::BTreeMap;
 use std::fs;

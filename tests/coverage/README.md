@@ -1,12 +1,13 @@
-# Test coverage control plane (advisory)
+# Test coverage control plane
 
-This directory holds **advisory** manifests that describe the test suite — what
+This directory holds the manifests that describe the test suite — what
 runs where, what's intentionally skipped, what coverage is intended, and where
-every committed fixture came from. They are **inventory / review aids**, not
-coverage gates: `scripts/check/repo/test-manifests.sh` enforces only that they are
-*well-formed and reference real, in-tree files* — never that coverage is
-"enough". Real enforcement (a surface manifest, enforced coverage) is deferred
-to a later milestone.
+every committed fixture came from. They are inventory aids **and** partly
+enforced: `scripts/check/repo/test-manifests.sh` checks that they are
+well-formed and reference real, in-tree files, and
+`scripts/check/repo/surface-manifest.sh` enforces rules (a)–(c): every
+level-3 public item has a row, named symbols resolve, and the owning tests
+exist. See that script's header for the exact rules.
 
 ## The tier model
 
@@ -15,7 +16,7 @@ Every test (or test job) maps to one of these tiers:
 | Tier | Meaning | Where it runs | Gating? |
 | --- | --- | --- | --- |
 | **A** | Always-on, hermetic, fast. The default suite. | PR CI (`build (linux-x86_64)`, `build (linux-aarch64)`), both feature modes | **Yes** — a red here blocks merge |
-| **A-soft** | Always-on but on a soft platform, phasing in. | PR CI macOS / Windows jobs (`continue-on-error: true`) | No (soft red) — promoted to A on a dated schedule |
+| **A-soft** | Always-on but on a soft platform, phasing in. | (historical; since 2026-05-30 all four platforms are gating — see ci.yml's build matrix) | Yes — promoted to A on a dated schedule |
 | **B** | Needs external tools (ffmpeg / tsduck / vlc) or the long soak. | Local `scripts/release-validation.sh` before tagging | No (local, pre-release) |
 | **C** | Manual / diagnostic. Run explicitly by a maintainer. | `#[ignore]`d; run with `-- --ignored` on demand | No |
 | **D** | Deferred / advisory. Documented intent, not yet implemented. | Nowhere yet | No |

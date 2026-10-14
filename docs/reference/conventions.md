@@ -121,7 +121,7 @@ let pairer = Pairer::with_config(v, k, config);          // explicit knob still 
 |------|---------|
 | `send_*` | **Wire / transport-bound operation.** Frames a message and pushes it to a `Transport`. May block, may fail with a transport error. Examples: `MuxSender::send_video`, `Sender::send_ts`. |
 | `recv_*` | **Wire-read counterpart of `send_*`.** Reads from a `RecvTransport`. May block, may fail with a transport error or return `None` on stream end. Examples: `DemuxReceiver::recv_event`, `RawReceiver::recv_one`. |
-| `push_*` | **In-process enqueue.** Hands data to an in-process buffer / queue / parser. No transport contract; no I/O; the operation completes synchronously and either succeeds or returns a structural error. Examples: `Muxer::push_video`, `TsFraming::push_strict`. |
+| `push_*` | **In-process enqueue.** Hands data to an in-process buffer / queue / parser. No transport contract (a publisher such as HLS may write files or cut segments as part of the enqueue); the operation completes synchronously and either succeeds or returns a structural error. Examples: `Muxer::push_video`, `TsFraming::push_strict`. |
 | `pull_*` / `feed_*` | **Consume from an in-process source.** Pull existing buffered output, or feed incoming bytes to an in-process consumer. No transport contract. Example: `Demuxer::feed_aligned`. |
 
 **Why:** Without a codified rule, future contributors will invent local

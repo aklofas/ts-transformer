@@ -59,7 +59,7 @@ never on a *-sys crate):
    tst-c   ──→ tst-c-core ──→ tst-core + tst-pipeline + all six transports
                               (each transport behind an opt-in cargo feature)
    tst-py  ──→ tst-core + tst-pipeline + all six transports (default-on)
-   tst-jni ──→ tst-core + tst-pipeline + tst-srt + tst-rtp
+   tst-jni ──→ tst-core + tst-pipeline + tst-srt + tst-rtp + tst-hls
    tst-uniffi (planned) — same shape as tst-jni
 
 dev-only: tst-test-helpers (publish = false; shared test fixtures and
@@ -270,9 +270,12 @@ slots between any receive shell and the underlying transport
 transparently. **It has no gap buffer** — receive-side bytes that
 never arrived can't be replayed, so the decorator simply restarts the
 recv loop on a fresh transport when the inner returns `Closed` or
-`Broken`. The demuxer-side state (sync alignment, PES reassembly) does
-carry over across reconnect, which costs at most one re-VERIFY pass
-on the syncer.
+`Broken`. Nothing but the gap buffer carries across a reconnect in
+`ManagedTransport` / `ManagedRecvTransport`; `ManagedDemuxReceiver` resets
+its per-stream demux state (sync alignment, PES reassembly) on reconnect
+while aggregate counters and configuration survive, as
+[`binding-authors.md`](./binding-authors.md) §"Receiver-side reconnect"
+describes.
 
 **Decoupled pairing.** The demuxer surfaces every video AU and every
 KLV record as an independent stream-tagged event with full timing.
@@ -285,8 +288,12 @@ everyone. The canonical pairing patterns live in the cookbook's
 
 ## Cross-thread shutdown — `SrtCancelHandle`
 
-Every long-lived pipeline shell exposes a
-[`SrtCancelHandle`](./srt-cancel-handle.md) for cross-thread cancellation. The
+Every long-lived pipeline shell exposes
+`cancel_handle() -> Option<Arc<dyn TransportCancel>>` for cross-thread
+cancellation; [`SrtCancelHandle`](./srt-cancel-handle.md) is the SRT
+transport's implementation of that trait (an integer handle plus a closer).
+The other transports implement the same trait with a flag that their
+blocking calls poll. The
 handle is `Send + Sync`, one-shot, idempotent, and `Clone` — fire it
 from any thread (a signal handler, a lifecycle observer, a parent-process
 watchdog) and the parked `send_*` / `recv_*` on the calling thread
@@ -302,7 +309,7 @@ on the send side, `tst_demux_receiver_cancel` / `tst_receiver_cancel` /
 This is the supported shape for breaking a sync-blocking shell from
 another thread. Shells return the trait-object form
 `Option<Arc<dyn TransportCancel + Send + Sync>>` — pipeline-layer,
-transport-agnostic. The concrete struct lives in `tst-core`
+transport-agnostic. The SRT implementation lives in `tst-core`
 (`SrtCancelHandle` wraps an integer handle plus a closer closure — for
 SRT, the handle is the `SRTSOCKET` and the closer is `srt_close`) and
 is re-exported as `tst_pipeline::SrtCancelHandle` (and as
@@ -330,6 +337,8 @@ where a dedicated per-outage worker thread owns the reconnect loop so
 still block briefly on internal lock contention while the worker
 drains), but that's a second thread the caller doesn't manage, not
 cooperative scheduling.
+
+Two crates own private tokio runtimes today — one per `RtspServer` (`tst-rtp`) and one per `HlsPublisher` (`tst-hls`, two workers). Each is created in the constructor, blocked on from the caller's thread, and shut down with a bounded timeout by `stop()`/`Drop`; public methods that touch a runtime must not be called from inside one. A written runtime-ownership rule is still to come.
 
 Sync was chosen for three reasons. First, the target deployment shape
 is small — a process talks to ≤10 SRT peers, so the thread-per-

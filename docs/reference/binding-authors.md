@@ -2,36 +2,29 @@
 
 This page is the entry point for authors writing language bindings on top of
 `ts-transformer`. The Rust API is sync-blocking and generic over a
-`Transport` / `RecvTransport`; binding code targets the **dyn-erased**
-shape — one concrete type per pipeline shell — for cross-language stability.
+`Transport` / `RecvTransport`; binding code targets one concrete binding object per
+`(shell, transport)` pair for cross-language stability.
 
-## The dyn-erased shape
+## The shape the bindings use
 
-`tst_pipeline` re-exports six aliases that pin every shell to a boxed
-trait object:
+Binding code targets **one binding object per `(shell, transport)` pair**.
+Generic shell bodies are monomorphised per transport rather than erased
+behind a trait object:
 
-| Generic shell | Boxed alias |
-|---------------|-------------|
-| `MuxSender<T>` | `BoxedMuxSender` |
-| `Sender<T>` | `BoxedSender` |
-| `RawSender<T>` | `BoxedRawSender` |
-| `DemuxReceiver<T>` | `BoxedDemuxReceiver` |
-| `Receiver<T>` | `BoxedReceiver` |
-| `RawReceiver<T>` | `BoxedRawReceiver` |
+- **C:** per-family `extern "C"` wrappers over the generics in
+  `transport_impls`.
+- **Python / JVM:** `MuxSender<SrtTransport>`,
+  `MuxSender<ManagedTransport<SrtTransport>>` and
+  `MuxSender<RtpTransport>` are distinct classes.
 
-The aliases live at both `tst_pipeline::dyn_aliases::*` and the crate root.
+Each binding object wraps its shell in
+`tst_pipeline::binding::Owned<Shell<T>, Snapshot>`, which owns the handle
+lifecycle, the shared cancel latch and the stats snapshot.
 
-Binding code constructs one of these by handing a `Box<dyn Transport>`
-(or `Box<dyn RecvTransport>`) to `Xxx::new(transport, config)`:
-
-```rust
-use tst_pipeline::{BoxedMuxSender, MuxSender};
-use tst_srt::{SocketBuilder, SrtTransport};
-
-let socket = SocketBuilder::new().connect("203.0.113.10:9000")?;
-let transport: Box<dyn tst_core::Transport> = Box::new(SrtTransport::new(socket));
-let mut sender: BoxedMuxSender = MuxSender::new(transport, config)?;
-```
+`Box<dyn Transport>` (and `Box<dyn RecvTransport>`) still satisfy the shell
+bounds through the blanket impls, so a Rust caller can erase the transport
+by hand. The `Boxed*` aliases in `tst_pipeline::dyn_aliases` are unused by
+any binding and are scheduled for removal.
 
 ## Per-language patterns
 
@@ -556,8 +549,7 @@ Bindings should compile-time-assert the minor they require:
 #endif
 ```
 
-`tst-jni` and `tst-uniffi` track the C ABI for binary stability and the
-Rust crate for feature parity.
+`tst-jni` wraps the Rust crates directly (it has no binary dependency on the C ABI); the planned `tst-uniffi` does the same. The three bindings share a release cadence, not a binary contract.
 
 ## Thread-local last-error reset
 
@@ -658,7 +650,7 @@ cell is either shipped, or deferred with the trigger that reopens it in
 | `MuxSender::finish()` (drain, report, close) | ✅ | ✅ `tst_mux_sender_finish`, `tst_managed_mux_sender_finish`, `tst_{udp,tcp,rtp,rist}_mux_sender_finish` (ABI 0.22) | ✅ `MuxSender.finish()`, `ManagedMuxSender.finish()`, `rtp.MuxSender.finish()` | ✅ `MuxSender.finish()`, `ManagedMuxSender.finish()`, `rtp.MuxSender.finish()` |
 | `FileTransport::finish()` | ✅ | n/a — `FileTransport` is a Rust-only capture transport; no binding exposes it | n/a | n/a |
 | `DemuxerConfig::sync_buf_cap` | ✅ | ✅ `tst_demux_config_set_sync_buf_cap` (ABI 0.22) | ✅ `DemuxerConfig.sync_buf_cap` | ✅ `DemuxerConfig.Builder.syncBufCap(long)` |
-| Cross-thread cancel entry point | ✅ every transport (`cancel_handle()` is `Some` everywhere since 0.7.0) | ✅ `tst_<transport>_<shell>_cancel` for srt/rtp (since 0.6–0.21) and tcp/udp/rist (ABI 0.22) | ✅ `cancel_handle()` on every shell | ✅ `cancelHandle()` on every shell |
+| Cross-thread cancel entry point | ✅ every transport (`cancel_handle()` is `Some` everywhere since 0.7.0) | ✅ `tst_<transport>_<shell>_cancel` for srt/rtp (since 0.6–0.21) and tcp/udp/rist (ABI 0.22) | ✅ srt shells; ⚠️ rtp shells expose none yet (planned) | ✅ srt shells; ⚠️ rtp shells expose none yet (planned) |
 | RTSP publisher role (`add_publish_mount`, `next_publisher`, `remove_mount`, publish-mount transport, stats and publisher info, `accept_unregistered_publishers`) | ✅ | ✅ `tst_rtsp_server_*` + `tst_rtsp_publish_mount_*` (ABI 0.23) | ✅ `RtspServer.add_publish_mount` / `next_publisher` / `remove_mount` + `PublishMount` (`into_demux_receiver`, `stats()`, `publisher()`) + `RtspServerConfig.accept_unregistered_publishers` | ✅ `RtspServer.addPublishMount` / `nextPublisher` / `removeMount` + `PublishMount` (`intoDemuxReceiver`, `stats()`, `publisher()`) + `RtspServerConfig.Builder.acceptUnregisteredPublishers` |
 
 **Rule for new cells.** A ship-now cell must be under a day per binding
