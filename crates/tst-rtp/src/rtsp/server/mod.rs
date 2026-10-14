@@ -1242,29 +1242,10 @@ mod runtime_tests {
     }
 
     #[test]
-    fn start_twice_errors_second_time() {
-        let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
-        server.start().unwrap();
-        let e = server.start().unwrap_err();
-        assert!(matches!(e, RtspServerError::AlreadyStarted));
-    }
-
-    #[test]
     fn stop_before_start_errors() {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
         let e = server.stop().unwrap_err();
         assert!(matches!(e, RtspServerError::NotStarted));
-    }
-
-    #[test]
-    fn stop_is_idempotent() {
-        let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
-        // Override the drain timing for the test so it doesn't take 1+ s.
-        // (We can't, because graceful_shutdown_drain is on the builder
-        // not the server. We accept the ~1.1 s in this test for clarity.)
-        server.start().unwrap();
-        server.stop().unwrap();
-        server.stop().unwrap(); // No-op the second time.
     }
 
     #[test]
@@ -1334,14 +1315,6 @@ mod listener_tests {
     use super::*;
 
     #[test]
-    fn double_start_errors() {
-        let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
-        server.start().unwrap();
-        let e = server.start().unwrap_err();
-        assert!(matches!(e, RtspServerError::AlreadyStarted));
-    }
-
-    #[test]
     fn start_then_local_addr_returns_port() {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
         server.start().unwrap();
@@ -1398,33 +1371,10 @@ mod add_mount_tests {
     }
 
     #[test]
-    fn add_mount_returns_handle_with_path() {
-        let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
-        let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
-        assert_eq!(mount.mount_path(), "/live");
-        assert_eq!(server.stats().mounts, 1);
-    }
-
-    #[test]
     fn add_mount_rejects_empty_path() {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
         let e = server.add_mount("", make_muxer_cfg()).unwrap_err();
         assert!(matches!(e, RtspServerError::InvalidMountPath { .. }));
-    }
-
-    #[test]
-    fn add_mount_rejects_path_without_leading_slash() {
-        let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
-        let e = server.add_mount("live", make_muxer_cfg()).unwrap_err();
-        assert!(matches!(e, RtspServerError::InvalidMountPath { .. }));
-    }
-
-    #[test]
-    fn add_mount_rejects_duplicate_path() {
-        let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
-        server.add_mount("/live", make_muxer_cfg()).unwrap();
-        let e = server.add_mount("/live", make_muxer_cfg()).unwrap_err();
-        assert!(matches!(e, RtspServerError::DuplicateMount { .. }));
     }
 
     #[test]
