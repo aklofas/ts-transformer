@@ -1,8 +1,9 @@
-//! Hand-built PSI sections, single-packet TS wrapping and adaptation-field PCR
-//! packets, shared by the `mpegts` test binary's demux tests (`pts_unwrap`, `demux_multi_program`,
-//! `demux_pcr_history`, `demux_psi_program_number`). Byte layouts per ISO/IEC 13818-1 §2.4.4;
+//! Hand-built PSI sections, single-packet TS wrapping and adaptation-field
+//! PCR packets, shared by the `mpegts` test binary's demux tests
+//! (`pts_unwrap`, `demux_multi_program`, `demux_pcr_history`,
+//! `demux_psi_program_number`). Byte layouts per ISO/IEC 13818-1 §2.4.4;
 //! every section carries a valid CRC-32/MPEG-2 trailer. `demux_strict`
-//! keeps its own builders on purpose — it needs oversized and deliberately
+//! keeps its own builders on purpose: it needs oversized and deliberately
 //! split sections these single-packet shapes cannot express.
 
 /// Build a PAT section (table_id 0x00). `programs` is `(program_number,

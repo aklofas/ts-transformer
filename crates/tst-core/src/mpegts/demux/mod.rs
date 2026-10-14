@@ -26,6 +26,8 @@ mod sync_ingress;
 pub(crate) mod pmt_classify;
 mod pat_reassemble;
 mod psi_topology;
+#[cfg(test)]
+mod test_support;
 mod pes_emit;
 mod stats_recorder;
 

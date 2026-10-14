@@ -2815,58 +2815,16 @@ mod tests {
     // Moved here from crates/tst-core/tests/mpegts_demux_multi_program.rs so
     // that programs_for_test can be pub(crate) + #[cfg(test)] rather than pub.
 
-    /// Synthesise a well-formed PAT TS packet for tests.
+    use crate::mpegts::demux::test_support::{build_pat_section, build_pmt_section, psi_packet};
+
+    /// One PAT packet (TSID 1, CC 0) declaring `programs` as
+    /// `(program_number, pmt_pid)`.
     fn pat_packet_with_programs(programs: &[(u16, u16)], version: u8) -> Vec<u8> {
-        let section_length = 5 + 4 * programs.len() + 4;
-        let mut sec: Vec<u8> = Vec::with_capacity(3 + section_length);
-        sec.push(0x00); // table_id = PAT
-        sec.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
-        sec.push((section_length & 0xFF) as u8);
-        sec.push(0x00); // transport_stream_id hi
-        sec.push(0x01); // transport_stream_id lo
-        sec.push(0xC1 | ((version & 0x1F) << 1)); // reserved | version | current_next
-        sec.push(0x00); // section_number
-        sec.push(0x00); // last_section_number
-        for &(pn, pmt_pid) in programs {
-            sec.push((pn >> 8) as u8);
-            sec.push((pn & 0xFF) as u8);
-            sec.push(0xE0 | ((pmt_pid >> 8) as u8 & 0x1F));
-            sec.push((pmt_pid & 0xFF) as u8);
-        }
-        let crc = crc32_mpeg2_test(&sec);
-        sec.push((crc >> 24) as u8);
-        sec.push((crc >> 16) as u8);
-        sec.push((crc >> 8) as u8);
-        sec.push(crc as u8);
-        let mut pkt = vec![0xFFu8; 188];
-        pkt[0] = 0x47;
-        pkt[1] = 0x40; // PUSI | PAT PID hi = 0
-        pkt[2] = 0x00; // PAT PID lo
-        pkt[3] = 0x10; // payload-only, CC=0
-        pkt[4] = 0x00; // pointer_field
-        let sec_end = 5 + sec.len();
-        assert!(sec_end <= 188);
-        pkt[5..sec_end].copy_from_slice(&sec);
-        pkt
+        psi_packet(0x0000, &build_pat_section(0x0001, version, programs), 0)
     }
 
-    /// CRC-32/MPEG-2 helper for test packet builders.
-    fn crc32_mpeg2_test(data: &[u8]) -> u32 {
-        let mut crc: u32 = 0xFFFF_FFFF;
-        for &b in data {
-            crc ^= (b as u32) << 24;
-            for _ in 0..8 {
-                if crc & 0x8000_0000 != 0 {
-                    crc = (crc << 1) ^ 0x04C1_1DB7;
-                } else {
-                    crc <<= 1;
-                }
-            }
-        }
-        crc
-    }
-
-    /// Synthesise a well-formed PMT TS packet for tests.
+    /// One PMT packet (CC 0) on `pmt_pid`; `streams` is
+    /// `(stream_type, elementary_pid)`, no descriptors.
     fn pmt_packet_for_test(
         pmt_pid: u16,
         program_number: u16,
@@ -2874,43 +2832,12 @@ mod tests {
         streams: &[(u8, u16)],
         version: u8,
     ) -> Vec<u8> {
-        let stream_loop_len = 5 * streams.len();
-        let section_length = 9 + stream_loop_len + 4;
-        let mut sec: Vec<u8> = Vec::with_capacity(3 + section_length);
-        sec.push(0x02); // table_id = PMT
-        sec.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
-        sec.push((section_length & 0xFF) as u8);
-        sec.push((program_number >> 8) as u8);
-        sec.push((program_number & 0xFF) as u8);
-        sec.push(0xC0 | ((version & 0x1F) << 1) | 1); // reserved | version | cni
-        sec.push(0x00); // section_number
-        sec.push(0x00); // last_section_number
-        sec.push(0xE0 | ((pcr_pid >> 8) as u8 & 0x1F));
-        sec.push((pcr_pid & 0xFF) as u8);
-        sec.push(0xF0); // program_info_length hi
-        sec.push(0x00); // program_info_length lo (no descriptors)
-        for &(stream_type, pid) in streams {
-            sec.push(stream_type);
-            sec.push(0xE0 | ((pid >> 8) as u8 & 0x1F));
-            sec.push((pid & 0xFF) as u8);
-            sec.push(0xF0); // es_info_length hi
-            sec.push(0x00); // es_info_length lo
-        }
-        let crc = crc32_mpeg2_test(&sec);
-        sec.push((crc >> 24) as u8);
-        sec.push((crc >> 16) as u8);
-        sec.push((crc >> 8) as u8);
-        sec.push(crc as u8);
-        let mut pkt = vec![0xFFu8; 188];
-        pkt[0] = 0x47;
-        pkt[1] = 0x40 | ((pmt_pid >> 8) as u8 & 0x1F); // PUSI + PID hi
-        pkt[2] = (pmt_pid & 0xFF) as u8;
-        pkt[3] = 0x10; // payload-only, CC=0
-        pkt[4] = 0x00; // pointer_field
-        let sec_end = 5 + sec.len();
-        assert!(sec_end <= 188);
-        pkt[5..sec_end].copy_from_slice(&sec);
-        pkt
+        let es: Vec<(u8, u16, &[u8])> = streams.iter().map(|&(t, p)| (t, p, &[][..])).collect();
+        psi_packet(
+            pmt_pid,
+            &build_pmt_section(program_number, pcr_pid, version, &[], &es),
+            0,
+        )
     }
 
     #[test]
@@ -3199,7 +3126,7 @@ mod tests {
         // Recompute CRC over the section sans its 4-byte trailer.
         let section_len = 3 + (((pkt[5 + 1] as usize & 0x0F) << 8) | pkt[5 + 2] as usize);
         let section_end = 5 + section_len;
-        let crc = crc32_mpeg2_test(&pkt[5..section_end - 4]);
+        let crc = crate::mpegts::common::crc32::crc32_mpeg2(&pkt[5..section_end - 4]);
         pkt[section_end - 4..section_end].copy_from_slice(&crc.to_be_bytes());
         pkt
     }
@@ -3216,7 +3143,7 @@ mod tests {
         pkt[5 + 7] = 0x01;
         let section_len = 3 + (((pkt[5 + 1] as usize & 0x0F) << 8) | pkt[5 + 2] as usize);
         let section_end = 5 + section_len;
-        let crc = crc32_mpeg2_test(&pkt[5..section_end - 4]);
+        let crc = crate::mpegts::common::crc32::crc32_mpeg2(&pkt[5..section_end - 4]);
         pkt[section_end - 4..section_end].copy_from_slice(&crc.to_be_bytes());
         pkt
     }
