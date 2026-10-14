@@ -10,6 +10,7 @@
 //! exact descriptor preservation for all typed stream kinds,
 //! and real mux→demux→`from_program_map` round-trips.
 
+use crate::common::mux_demux::drain_mux as drain;
 use tst_core::MuxError;
 use tst_core::mpegts::common::{Pts90khz, StreamTypeCode};
 use tst_core::mpegts::demux::{
@@ -543,19 +544,6 @@ fn synthetic_klv_ls() -> Vec<u8> {
     v.push(0x04);
     v.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
     v
-}
-
-fn drain(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
 }
 
 #[test]

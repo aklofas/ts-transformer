@@ -1,25 +1,12 @@
 //! Round-trip integrity: mux→demux subtitle PES bytes must come
 //! back identical.
 
+use crate::common::mux_demux::drain_mux as drain_all;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, SamplePayload};
 use tst_core::mpegts::mux::{
     Muxer, MuxerConfig, MuxerProgramConfigBuilder, SubtitleCodec as MuxSub, VideoCodec,
 };
-
-/// Drain every queued packet from the muxer into a single Vec.
-fn drain_all(mux: &mut Muxer) -> Vec<u8> {
-    let mut all = Vec::new();
-    let mut buf = vec![0u8; 188 * 256];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        all.extend_from_slice(&buf[..n]);
-    }
-    all
-}
 
 /// Push `payload` through a subtitle PID 0x200, demux, and return the
 /// payload bytes from the first `SamplePayload::Subtitle` event. Returns

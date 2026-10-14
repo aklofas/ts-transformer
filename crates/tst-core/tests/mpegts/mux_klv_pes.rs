@@ -4,6 +4,7 @@
 //! - Async KLV (stream_type 0x06 PrivateData)  → PES stream_id 0xBD (private_stream_1)
 //! - Sync  KLV (stream_type 0x15 SynchronousMetadata) → PES stream_id 0xFC (metadata)
 
+use crate::common::mux_demux::drain_mux as drain;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
@@ -47,19 +48,6 @@ fn pes_stream_id_on_pid(ts_buf: &[u8], pid: u16) -> Option<u8> {
         }
     }
     None
-}
-
-fn drain(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
 }
 
 #[test]

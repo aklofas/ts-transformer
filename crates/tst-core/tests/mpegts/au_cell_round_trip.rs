@@ -4,6 +4,7 @@
 //! Replaces the obsolete tests/mpegts_mux_st1910.rs + tests/mpegts_demux_st1910.rs
 //! which exercised the fictional UL+BER+PTSP wrapper format.
 
+use crate::common::mux_demux::drain_mux as drain;
 use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, read_metadata_au_cell};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, MetadataKind};
@@ -23,19 +24,6 @@ fn synthetic_klv_ls() -> Vec<u8> {
     // 4 body bytes (just markers; no real ST 0601 content).
     v.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
     v
-}
-
-fn drain(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
 }
 
 #[test]

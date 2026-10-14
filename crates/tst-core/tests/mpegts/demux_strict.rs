@@ -31,6 +31,7 @@
 //! `MissingMetadataDescriptor` requires a multi-video PMT, which the
 //! current `mpegts::mux::MuxerConfig::validate` rejects (Path 3 lifts that).
 
+use crate::common::mux_demux::drain_mux as drain;
 use tst_core::error::DemuxError;
 use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
 use tst_core::mpegts::common::Pts90khz;
@@ -46,19 +47,6 @@ const BARE_KLV_LS: [u8; 17] = [
     0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00, 0x00,
     0x00,
 ];
-
-fn drain(m: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = m.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
 
 /// Build a TS byte stream that triggers `StreamTypeMismatchSyncOnAsyncPid`:
 /// PMT declares the KLV PID as async (stream_type 0x06, PrivateData) but

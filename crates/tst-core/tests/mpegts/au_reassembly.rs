@@ -29,11 +29,13 @@
 //! the cell sequence_number to drive the reassembler through every
 //! state-table row. PSI/CC + PES headers + TS framing remain valid.
 
+use crate::common::mux_demux::{
+    collect_events_with, demux_bytes as collect_events, drain_mux as drain,
+};
 use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
-    DemuxEvent, Demuxer, DemuxerConfig, DemuxerConfigBuilder, MetadataKind, NonConformantIssue,
-    event::MultiCellAuReason,
+    DemuxEvent, Demuxer, DemuxerConfig, MetadataKind, NonConformantIssue, event::MultiCellAuReason,
 };
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
@@ -66,19 +68,6 @@ fn build_muxer() -> Muxer {
         b.build().unwrap()
     };
     Muxer::new(cfg).unwrap()
-}
-
-fn drain(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
 }
 
 /// Find the byte offset (within `ts_bytes`) of the AU cell header bytes
@@ -146,30 +135,6 @@ fn patch_au_cell(
     let mut buf = Vec::with_capacity(5 + inner.len());
     write_metadata_au_cell(&mut buf, hdr, inner).unwrap();
     ts_bytes[offset..offset + buf.len()].copy_from_slice(&buf);
-}
-
-/// Run a TS byte stream through a fresh `Demuxer` and collect every
-/// `DemuxEvent` it emits.
-fn collect_events(ts_bytes: &[u8]) -> Vec<DemuxEvent> {
-    let mut dem = Demuxer::new();
-    dem.feed(ts_bytes).unwrap();
-    let mut events = Vec::new();
-    while let Some(e) = dem.next_event() {
-        events.push(e);
-    }
-    events
-}
-
-/// Same as `collect_events` but uses a custom-configured demuxer (for
-/// the Overflow test, which lowers `au_cell_cap_per_pid`).
-fn collect_events_with(builder: DemuxerConfigBuilder, ts_bytes: &[u8]) -> Vec<DemuxEvent> {
-    let mut dem = Demuxer::with_config(builder.build());
-    dem.feed(ts_bytes).unwrap();
-    let mut events = Vec::new();
-    while let Some(e) = dem.next_event() {
-        events.push(e);
-    }
-    events
 }
 
 /// Pump enough video frames into the muxer to advance PTS past the PSI

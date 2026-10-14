@@ -9,6 +9,7 @@
 //! BOTH the byte-stream `feed` path and the aligned-packet `feed_aligned`
 //! path (the hot path used by `DemuxReceiver`).
 
+use crate::common::mux_demux::drain_mux;
 use tst_core::error::DemuxError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
@@ -22,20 +23,6 @@ fn build_minimal_h264_au() -> Vec<u8> {
         0x00, 0x00, 0x00, 0x01, 0x09, 0x10, // AUD
         0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB, 0xCC, // IDR
     ]
-}
-
-/// Drain the muxer fully into a Vec.
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
 }
 
 /// Build a TS byte stream containing: PAT + PMT + first H.264 PES (with its

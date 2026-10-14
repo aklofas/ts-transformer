@@ -6,6 +6,7 @@
 //! 0x06 with `format_identifier "AV01"` -> `VideoCodec::Av1`) and the
 //! per-OBU header bytes.
 
+use crate::common::mux_demux::drain_mux;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::event::{
     DemuxEvent, NonConformantIssue, Obu, SamplePayload, StreamId, StreamKind, VideoCodec,
@@ -44,19 +45,6 @@ fn synthetic_av1_au() -> Vec<u8> {
     au.extend(obu(3, &[0x00])); // Frame Header (placeholder body)
     au.extend(obu(4, &[0x00, 0x01, 0x02])); // Tile Group (placeholder body)
     au
-}
-
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
 }
 
 #[test]

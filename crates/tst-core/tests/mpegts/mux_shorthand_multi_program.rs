@@ -2,6 +2,7 @@
 //! and `push_klv()` must not use `pack(0, 0)`, which misroutes when the
 //! lone stream of that kind sits in program-index >= 1.
 
+use crate::common::mux_demux::drain_mux as drain_all;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     AudioCodec, KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfig, StreamSpec, VideoCodec,
@@ -72,19 +73,6 @@ fn config_klv_in_program_one() -> MuxerConfig {
     let mut cfg = MuxerConfig::default();
     cfg.programs = vec![prog1, prog2];
     cfg
-}
-
-/// Drain all TS packets from the muxer into a flat byte buffer.
-fn drain_all(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 64 * 188];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            return out;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
 }
 
 /// Count packets on a given PID in a flat 188-byte-chunk TS buffer.

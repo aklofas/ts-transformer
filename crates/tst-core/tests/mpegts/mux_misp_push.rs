@@ -2,6 +2,7 @@
 //! `push_video_misp_to_with_dts` — ST 0604 MISP timestamp SEI splice on the
 //! mux path.
 
+use crate::common::mux_demux::drain_mux as drain_all;
 use tst_core::codec::misp_time::{self, MispTimestamp};
 use tst_core::error::{MuxError, MuxErrorKind};
 use tst_core::mpegts::common::Pts90khz;
@@ -38,18 +39,6 @@ fn h264_keyframe_au() -> Vec<u8> {
 /// AUD-only AU with no VCL — used for the NoVclNal rejection test.
 fn h264_no_vcl_au() -> Vec<u8> {
     vec![0x00, 0x00, 0x00, 0x01, 9u8, 0xF0] // AUD only (nal_ref_idc=0 | nal_unit_type=9)
-}
-
-fn drain_all(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            return out;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

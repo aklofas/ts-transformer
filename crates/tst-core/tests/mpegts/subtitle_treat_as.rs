@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+use crate::common::mux_demux::collect_events;
 use tst_core::mpegts::demux::{
     DemuxEvent, Demuxer, DemuxerConfig, NonConformantIssue, SamplePayload, StreamKind,
     SubtitleCodec,
@@ -17,14 +18,6 @@ fn load(name: &str) -> Vec<u8> {
         .join("tests/fixtures/subtitles")
         .join(name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {}", path.display(), e))
-}
-
-fn collect_events(demux: &mut Demuxer) -> Vec<DemuxEvent> {
-    let mut events = Vec::new();
-    while let Some(e) = demux.next_event() {
-        events.push(e);
-    }
-    events
 }
 
 #[test]

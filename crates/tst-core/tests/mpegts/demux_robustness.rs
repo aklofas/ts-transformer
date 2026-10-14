@@ -13,6 +13,7 @@
 //! Strict-mode rejection of these same issues is exercised in
 //! `mpegts_demux_strict.rs`; here we only assert the lenient-mode contract.
 
+use crate::common::mux_demux::drain_mux as drain;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
     DemuxEvent, Demuxer, DemuxerConfig, DiscontinuityKind, NonConformantIssue, SamplePayload,
@@ -21,19 +22,6 @@ use tst_core::mpegts::demux::{
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,
 };
-
-fn drain(m: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = m.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
 
 /// Build a known-good clean MPEG-TS byte stream: PAT + PMT + two H.264 AUs
 /// large enough to span multiple TS packets each. The size matters: the

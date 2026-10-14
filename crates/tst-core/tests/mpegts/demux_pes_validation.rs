@@ -23,6 +23,7 @@
 //!   demuxer surfaces `LatmFraming` when the syncword is absent or the
 //!   declared length runs past the PES payload.
 
+use crate::common::mux_demux::drain_mux as drain_all;
 use tst_core::codec::aac::latm::LatmFramingKind;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
@@ -31,20 +32,6 @@ use tst_core::mpegts::demux::{
 use tst_core::mpegts::mux::{
     AudioCodec, Muxer, MuxerConfig, MuxerProgramConfigBuilder, SubtitleCodec as MuxSub, VideoCodec,
 };
-
-/// Drain every queued packet from the muxer into a single Vec.
-fn drain_all(mux: &mut Muxer) -> Vec<u8> {
-    let mut all = Vec::new();
-    let mut buf = vec![0u8; 188 * 256];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        all.extend_from_slice(&buf[..n]);
-    }
-    all
-}
 
 // =====================================================================
 // PTS anomaly distinct from PCR anomaly

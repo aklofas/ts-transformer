@@ -6,9 +6,10 @@
 //!   - extract_user_label decodes user_private labels.
 //!   - Auto-emit suppression on caller-supplied KLVA Registration works.
 
+use crate::common::mux_demux::demux_bytes as drain_events;
 use tst_core::mpegts::common::Pts90khz;
+use tst_core::mpegts::demux::DemuxEvent;
 use tst_core::mpegts::demux::low_level::extract_user_label;
-use tst_core::mpegts::demux::{DemuxEvent, Demuxer};
 use tst_core::mpegts::descriptors;
 use tst_core::mpegts::mux::{
     AudioCodec, KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
@@ -23,16 +24,6 @@ fn drive_psi(cfg: MuxerConfig) -> Vec<u8> {
     let n = mux.pull(&mut buf);
     buf.truncate(n);
     buf
-}
-
-fn drain_events(bytes: &[u8]) -> Vec<DemuxEvent> {
-    let mut demuxer = Demuxer::new();
-    demuxer.feed(bytes).unwrap();
-    let mut out = Vec::new();
-    while let Some(ev) = demuxer.next_event() {
-        out.push(ev);
-    }
-    out
 }
 
 #[test]

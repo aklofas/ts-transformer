@@ -4,6 +4,12 @@
 //! Each `mod` below is one former top-level integration-test file, now
 //! compiled into this single binary. Test bodies are unchanged; only the
 //! module path gained a `conformance::<file>::` prefix.
+
+// Shared test helpers, declared once at the binary root so
+// `crate::common::*` resolves for every member and `common/mod.rs` is not
+// loaded as a module twice (clippy::duplicate_mod).
+#[path = "common/mod.rs"]
+mod common;
 #[path = "conformance/conformance.rs"]
 mod conformance;
 #[path = "conformance/demux_error_discrimination.rs"]

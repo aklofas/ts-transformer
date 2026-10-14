@@ -1,6 +1,7 @@
 //! Integration tests for subtitle / caption receiver side
 //! (`mpegts::demux`).
 
+use crate::common::mux_demux::{demux_bytes_flushed as collect_events, drain_mux as drain_all};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
     DemuxEvent, Demuxer, DemuxerConfig, NonConformantIssue, SamplePayload, StreamKind, StrictMode,
@@ -9,20 +10,6 @@ use tst_core::mpegts::demux::{
 use tst_core::mpegts::mux::{
     Muxer, MuxerConfig, MuxerProgramConfigBuilder, SubtitleCodec as MuxSub, VideoCodec,
 };
-
-/// Drain every queued packet from the muxer into a single Vec.
-fn drain_all(mux: &mut Muxer) -> Vec<u8> {
-    let mut all = Vec::new();
-    let mut buf = vec![0u8; 188 * 256];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        all.extend_from_slice(&buf[..n]);
-    }
-    all
-}
 
 /// Build a TS byte stream containing a single subtitle PES on PID 0x200,
 /// alongside a placeholder H.264 video PID required by the muxer config.
@@ -40,18 +27,6 @@ fn build_ts_with_one_subtitle_pes(codec: MuxSub, payload: &[u8]) -> Vec<u8> {
     mux.push_subtitle_to(h, Pts90khz::new(90_000), payload)
         .unwrap();
     drain_all(&mut mux)
-}
-
-/// Drain every event from the demuxer into a Vec for matching.
-fn collect_events(bytes: &[u8]) -> Vec<DemuxEvent> {
-    let mut demux = Demuxer::new();
-    demux.feed(bytes).unwrap();
-    demux.flush();
-    let mut events = Vec::new();
-    while let Some(e) = demux.next_event() {
-        events.push(e);
-    }
-    events
 }
 
 #[test]

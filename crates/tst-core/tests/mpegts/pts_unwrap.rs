@@ -15,6 +15,7 @@ use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
 
+use crate::common::mux_demux::drain_mux as drain;
 use crate::psi_builders::{build_pat_section, build_pmt_section, psi_packet};
 
 /// Mirrors `crates/tst-interop/src/profiles.rs`'s `PTS_ROLLOVER_START`: 5 s
@@ -39,19 +40,6 @@ fn minimal_klv() -> Vec<u8> {
         0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
         0x00, 0x00,
     ]
-}
-
-fn drain(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
 }
 
 /// Feed `ts_buf` through a fresh `Demuxer` (`unwrap_timestamps` per

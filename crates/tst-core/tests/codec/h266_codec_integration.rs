@@ -13,6 +13,7 @@
 //! inline (see `BitWriter` below) so this integration test has zero
 //! coupling to internal `pub(crate)` helpers.
 
+use crate::common::mux_demux::{collect_events, drain_mux};
 use tst_core::codec::h266::{H266ParameterSets, parse_parameter_sets};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::Demuxer;
@@ -202,27 +203,6 @@ fn minimal_sps_rbsp() -> Vec<u8> {
 
     bw.end_rbsp();
     bw.bytes
-}
-
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
-
-fn collect_events(d: &mut Demuxer) -> Vec<DemuxEvent> {
-    let mut out = Vec::new();
-    while let Some(e) = d.next_event() {
-        out.push(e);
-    }
-    out
 }
 
 #[test]
