@@ -24,8 +24,8 @@
 //!   `tst_test_helpers::MockTransport` (for `Backpressure`, `Broken`,
 //!   `TooLarge`) or a minimal local struct for `ExplicitClose` (which
 //!   `MockTransport` does not support as a `FailMode`).
-//! - The receiver-side test uses a `ScriptedRecv` that fails `Closed` at once that immediately
-//!   returns `TransportError::Closed`, driving `Receiver::next_packet` to
+//! - The receiver-side test uses a `ScriptedRecv` that fails `Closed` at once,
+//!   driving `Receiver::next_packet` to
 //!   `ReceiverError { kind: EndOfStream, source: Transport(Closed) }`.
 //! - Asserting on **both** `err.kind` and `err.source` matters: `err.kind` is
 //!   what binding authors (`tst-c`, `tst-jni`, `tst-uniffi`) use for retry /
@@ -119,6 +119,13 @@ fn broken_propagates_to_shell_as_transport_broken_kind() {
 // Test 3: Closed → EndOfStream (receiver side)
 // ---------------------------------------------------------------------------
 
+/// A `ScriptedRecv` that fails `Closed` at once gives
+/// `ShellErrorKind::EndOfStream` + `ReceiverErrorSource::Transport(Closed)`.
+///
+/// The `Closed` → `EndOfStream` mapping only applies when `kind_from_transport`
+/// receives `Direction::Recv`. The same `Closed` variant on the send side maps
+/// to `Closed` kind (a different route). This test pins the receiver-side
+/// routing to catch any future swap.
 #[test]
 fn closed_propagates_as_end_of_stream_on_receiver() {
     let mut rx = Receiver::new(
