@@ -18,7 +18,7 @@ use tst_core::error::DemuxError;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig, NonConformantIssue, StrictMode};
 
 use crate::common::mux_demux::collect_events as drain;
-use crate::psi_builders::{build_pat_section, build_pmt_section, psi_packet};
+use crate::psi_builders::{build_pat_section, build_pmt_section, pcr_packet, psi_packet};
 
 const PMT_PID: u16 = 0x1000;
 const ES_PID: u16 = 0x1011;
@@ -40,26 +40,6 @@ fn pmt(pmt_pid: u16, program: u16, pcr_pid: u16, es_pid: u16, version: u8, cc: u
         &build_pmt_section(program, pcr_pid, version, &[(0x1B, es_pid, &[][..])]),
         cc,
     )
-}
-
-/// Adaptation-field-only packet carrying a PCR (ISO/IEC 13818-1 §2.4.3.4).
-fn pcr_packet(pid: u16, pcr_27mhz: u64) -> [u8; 188] {
-    let base: u64 = pcr_27mhz / 300;
-    let ext: u64 = pcr_27mhz % 300;
-    let mut buf = [0xFFu8; 188];
-    buf[0] = 0x47;
-    buf[1] = (pid >> 8) as u8 & 0x1F;
-    buf[2] = (pid & 0xFF) as u8;
-    buf[3] = 0x20; // adaptation only, CC=0
-    buf[4] = 183;
-    buf[5] = 0x10; // PCR_flag
-    buf[6] = (base >> 25) as u8;
-    buf[7] = (base >> 17) as u8;
-    buf[8] = (base >> 9) as u8;
-    buf[9] = (base >> 1) as u8;
-    buf[10] = (((base & 0x01) as u8) << 7) | 0x7E | ((ext >> 8) as u8 & 0x01);
-    buf[11] = (ext & 0xFF) as u8;
-    buf
 }
 
 fn program_maps(events: &[DemuxEvent]) -> usize {

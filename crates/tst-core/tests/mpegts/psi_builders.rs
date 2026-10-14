@@ -1,6 +1,6 @@
-//! Hand-built PSI sections and single-packet TS wrapping, shared by the
-//! `mpegts` test binary's demux tests (`pts_unwrap`, `demux_multi_program`,
-//! `demux_psi_program_number`). Byte layouts per ISO/IEC 13818-1 §2.4.4;
+//! Hand-built PSI sections, single-packet TS wrapping and adaptation-field PCR
+//! packets, shared by the `mpegts` test binary's demux tests (`pts_unwrap`, `demux_multi_program`,
+//! `demux_pcr_history`, `demux_psi_program_number`). Byte layouts per ISO/IEC 13818-1 §2.4.4;
 //! every section carries a valid CRC-32/MPEG-2 trailer. `demux_strict`
 //! keeps its own builders on purpose — it needs oversized and deliberately
 //! split sections these single-packet shapes cannot express.
@@ -106,4 +106,27 @@ pub(crate) fn psi_packet(pid: u16, section: &[u8], cc: u8) -> Vec<u8> {
     assert!(end <= 188, "section too large for one TS packet");
     pkt[5..end].copy_from_slice(section);
     pkt
+}
+
+/// One adaptation-field-only TS packet carrying `pcr_27mhz` on `pid`
+/// (ISO/IEC 13818-1 §2.4.3.4): 33-bit base (pcr/300), 6 reserved 1-bits,
+/// 9-bit extension (pcr%300); CC 0, no payload.
+pub(crate) fn pcr_packet(pid: u16, pcr_27mhz: u64) -> [u8; 188] {
+    let base: u64 = pcr_27mhz / 300;
+    let ext: u64 = pcr_27mhz % 300;
+    let mut buf = [0xFFu8; 188];
+    buf[0] = 0x47; // sync
+    buf[1] = (pid >> 8) as u8 & 0x1F; // no PUSI, no TEI
+    buf[2] = (pid & 0xFF) as u8;
+    buf[3] = 0x20; // adaptation_field_control = 0b10 (adaptation only), CC=0
+    buf[4] = 183; // af_length: fills the rest of the packet
+    buf[5] = 0x10; // flags: PCR_flag=1 (bit 4), others 0
+    buf[6] = (base >> 25) as u8;
+    buf[7] = (base >> 17) as u8;
+    buf[8] = (base >> 9) as u8;
+    buf[9] = (base >> 1) as u8;
+    buf[10] = (((base & 0x01) as u8) << 7) | 0x7E | ((ext >> 8) as u8 & 0x01);
+    buf[11] = (ext & 0xFF) as u8;
+    // Bytes 12..188 are stuffing (0xFF), which matches the rest of the AF.
+    buf
 }

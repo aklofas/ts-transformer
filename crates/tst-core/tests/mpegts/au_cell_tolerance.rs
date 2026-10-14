@@ -25,15 +25,13 @@
 //! the PUSI packet on the KLV PID. The muxer always writes Complete CFI,
 //! so patches are what drive the demuxer through the non-conformant paths.
 
-use crate::common::mux_demux::{collect_events_with, drain_mux as drain};
+use crate::common::mux_demux::{collect_events_with, drain_mux as drain, h264_sync_klv_muxer};
 use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
     DemuxEvent, DemuxerConfig, MetadataKind, NonConformantIssue, event::MultiCellAuReason,
 };
-use tst_core::mpegts::mux::{
-    KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
-};
+use tst_core::mpegts::mux::Muxer;
 
 const KLV_PID: u16 = 0x1031;
 
@@ -49,18 +47,6 @@ fn synth_klv_record(value_len: u8) -> Vec<u8> {
     v.push(value_len);
     v.extend(std::iter::repeat_n(0x42u8, value_len as usize));
     v
-}
-
-fn build_muxer() -> Muxer {
-    let cfg = {
-        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-        prog.add_video(0x1011, VideoCodec::H264);
-        prog.add_klv(KLV_PID, KlvStreamType::SynchronousMetadata, true);
-        let mut b = MuxerConfig::builder();
-        b.add_program(prog.build());
-        b.build().unwrap()
-    };
-    Muxer::new(cfg).unwrap()
 }
 
 /// Find byte offset of the n-th PUSI AU cell on `KLV_PID`. Same shape as
@@ -139,7 +125,7 @@ fn ts_with_patched_single_cell(
     cfi: CellFragmentIndication,
     seq: u8,
 ) -> Vec<u8> {
-    let mut mux = build_muxer();
+    let mut mux = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux, 5, 90_000);
     mux.push_klv(inner_for_push, Pts90khz::new(90_000), 0x00)
         .unwrap();
@@ -450,7 +436,7 @@ fn tolerance_mode_legitimate_fragmentation_unaffected() {
     let part_a = b"AAA";
     let part_b = b"BBB";
     let part_c = b"CCC";
-    let mut mux = build_muxer();
+    let mut mux = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux, 8, 90_000);
     mux.push_klv(part_a, Pts90khz::new(90_000), 0x00).unwrap();
     mux.push_klv(part_b, Pts90khz::new(91_000), 0x00).unwrap();
@@ -519,7 +505,7 @@ fn tolerance_mode_active_buffer_sequence_gap_still_emits_existing_failure() {
     // touches Orphan continuations on an EMPTY buffer.
     let part_a = b"DDD";
     let part_b = b"EEE";
-    let mut mux = build_muxer();
+    let mut mux = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux, 8, 90_000);
     mux.push_klv(part_a, Pts90khz::new(90_000), 0x00).unwrap();
     mux.push_klv(part_b, Pts90khz::new(91_000), 0x00).unwrap();

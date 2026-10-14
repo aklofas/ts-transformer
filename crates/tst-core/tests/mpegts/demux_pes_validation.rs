@@ -24,6 +24,7 @@
 //!   declared length runs past the PES payload.
 
 use crate::common::mux_demux::drain_mux as drain_all;
+use crate::common::mux_demux::patch_pes_strip_pts;
 use tst_core::codec::aac::latm::LatmFramingKind;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
@@ -387,24 +388,6 @@ fn patch_pes_pts_dts_flags(mut bytes: Vec<u8>, stream_id: u8, new_flags: u8) -> 
     // Byte 7 of the PES header carries `PTS_DTS_flags` in bits 7..6.
     let flags2_off = pos + 7;
     bytes[flags2_off] = (bytes[flags2_off] & 0x3F) | ((new_flags & 0x03) << 6);
-    bytes
-}
-
-/// Clear PTS_DTS_flags entirely (sets bits 7..6 of byte 7 to 0) and zero
-/// `header_data_length` (byte 8) so the parsed PES has no PTS. The body
-/// then starts at offset 9 (whatever bytes follow). The 5 PTS bytes that
-/// were originally there become part of the elementary payload — harmless
-/// for a structural assertion about MissingRequiredPts.
-fn patch_pes_strip_pts(mut bytes: Vec<u8>, stream_id: u8) -> Vec<u8> {
-    let needle = [0x00u8, 0x00, 0x01, stream_id];
-    let pos = bytes
-        .windows(4)
-        .position(|w| w == needle)
-        .expect("PES start code should appear in the muxed TS");
-    let flags2_off = pos + 7;
-    let hdr_len_off = pos + 8;
-    bytes[flags2_off] &= 0x3F;
-    bytes[hdr_len_off] = 0;
     bytes
 }
 

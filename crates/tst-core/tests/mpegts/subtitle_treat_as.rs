@@ -5,20 +5,12 @@
 //! `Subtitle(WebVttInTs)` and additionally emits `SubtitleMissingDescriptor`
 //! since the PMT entry has no recognized subtitle descriptor.
 
-use std::path::PathBuf;
-
+use crate::common::fixtures::subtitle_fixture as load;
 use crate::common::mux_demux::collect_events;
 use tst_core::mpegts::demux::{
     DemuxEvent, Demuxer, DemuxerConfig, NonConformantIssue, SamplePayload, StreamKind,
     SubtitleCodec,
 };
-
-fn load(name: &str) -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/subtitles")
-        .join(name);
-    std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {}", path.display(), e))
-}
 
 #[test]
 fn non_conformant_classifies_as_audio_without_treat_as() {

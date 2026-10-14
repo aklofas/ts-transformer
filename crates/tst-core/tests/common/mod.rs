@@ -19,7 +19,9 @@
 
 #![allow(dead_code)]
 
+pub mod fixtures;
 pub mod mux_demux;
+pub mod synthetic;
 
 /// Diagnostic breakdown of an IMAPB tolerance computation.
 ///

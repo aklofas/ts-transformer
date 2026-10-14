@@ -5,7 +5,7 @@
 
 use tst_core::mpegts::demux::Demuxer;
 
-use crate::psi_builders::{build_pat_section, build_pmt_section, psi_packet};
+use crate::psi_builders::{build_pat_section, build_pmt_section, pcr_packet, psi_packet};
 
 // Section and packet bytes come from the shared `psi_builders`; these
 // adapters keep this file's call shape (PAT: programs then version; PMT:
@@ -177,31 +177,6 @@ fn demuxer_stats_programs_seen_reflects_pat_size() {
 // ---------------------------------------------------------------------------
 // Multi-program PCR tracking
 // ---------------------------------------------------------------------------
-
-/// Build a 188-byte TS packet carrying a PCR in its adaptation field on
-/// the given PID. `pcr_27mhz` is encoded per ISO/IEC 13818-1 §2.4.3.4:
-/// 33-bit base (pcr/300) || 6 reserved 1-bits || 9-bit ext (pcr%300).
-/// CC defaults to 0; no payload. This is the minimum shape `parse_ts_packet`
-/// needs to populate `TsPacket::pcr_27mhz`.
-fn pcr_packet(pid: u16, pcr_27mhz: u64) -> [u8; 188] {
-    let base: u64 = pcr_27mhz / 300;
-    let ext: u64 = pcr_27mhz % 300;
-    let mut buf = [0xFFu8; 188];
-    buf[0] = 0x47; // sync
-    buf[1] = (pid >> 8) as u8 & 0x1F; // no PUSI, no TEI
-    buf[2] = (pid & 0xFF) as u8;
-    buf[3] = 0x20; // adaptation_field_control = 0b10 (adaptation only), CC=0
-    buf[4] = 183; // af_length: fills the rest of the packet
-    buf[5] = 0x10; // flags: PCR_flag=1 (bit 4), others 0
-    buf[6] = (base >> 25) as u8;
-    buf[7] = (base >> 17) as u8;
-    buf[8] = (base >> 9) as u8;
-    buf[9] = (base >> 1) as u8;
-    buf[10] = (((base & 0x01) as u8) << 7) | 0x7E | ((ext >> 8) as u8 & 0x01);
-    buf[11] = (ext & 0xFF) as u8;
-    // Bytes 12..188 are stuffing (0xFF), which matches the rest of the AF.
-    buf
-}
 
 /// Two programs with independent PCR PIDs must not share a PCR comparison
 /// slot. Before the fix, `Demuxer::last_pcr_27mhz` was a single global

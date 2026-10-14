@@ -2,20 +2,13 @@
 //! `tests/fixtures/audio/`, demux each, assert the audio stream
 //! is correctly classified and produces non-empty frames.
 
+use crate::common::fixtures::audio_fixture_path as fixture_path;
 use std::fs;
 use std::path::Path;
 use tst_core::mpegts::demux::{
     Demuxer,
     event::{AudioCodec, DemuxEvent, SamplePayload, StreamKind},
 };
-
-fn fixture_path(name: &str) -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("audio")
-        .join(name)
-}
 
 fn demux_fixture(path: &Path) -> Vec<DemuxEvent> {
     let bytes = fs::read(path).expect("fixture present");

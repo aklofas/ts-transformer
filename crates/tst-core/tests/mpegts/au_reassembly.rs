@@ -30,16 +30,14 @@
 //! state-table row. PSI/CC + PES headers + TS framing remain valid.
 
 use crate::common::mux_demux::{
-    collect_events_with, demux_bytes as collect_events, drain_mux as drain,
+    collect_events_with, demux_bytes as collect_events, drain_mux as drain, h264_sync_klv_muxer,
 };
 use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
     DemuxEvent, Demuxer, DemuxerConfig, MetadataKind, NonConformantIssue, event::MultiCellAuReason,
 };
-use tst_core::mpegts::mux::{
-    KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
-};
+use tst_core::mpegts::mux::Muxer;
 
 const KLV_PID: u16 = 0x1031;
 
@@ -56,18 +54,6 @@ fn synthetic_klv_ls() -> Vec<u8> {
     v.push(0x01); // BER length = 1
     v.push(0xAB); // one payload byte
     v
-}
-
-fn build_muxer() -> Muxer {
-    let cfg = {
-        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-        prog.add_video(0x1011, VideoCodec::H264);
-        prog.add_klv(KLV_PID, KlvStreamType::SynchronousMetadata, true);
-        let mut b = MuxerConfig::builder();
-        b.add_program(prog.build());
-        b.build().unwrap()
-    };
-    Muxer::new(cfg).unwrap()
 }
 
 /// Find the byte offset (within `ts_bytes`) of the AU cell header bytes
@@ -153,7 +139,7 @@ fn pump_video(mux: &mut Muxer, frame_count: usize, base_pts_ticks: i64) {
 
 #[test]
 fn single_complete_cell_emits_sample_with_was_reassembled_false() {
-    let mut mux = build_muxer();
+    let mut mux = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux, 5, 90_000);
     let inner = synthetic_klv_ls();
     mux.push_klv(&inner, Pts90khz::new(90_000), 0x00).unwrap();
@@ -202,7 +188,7 @@ fn single_complete_cell_emits_sample_with_was_reassembled_false() {
 
 #[test]
 fn three_cell_au_across_three_pes_reassembles() {
-    let mut mux = build_muxer();
+    let mut mux = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux, 8, 90_000);
 
     // Three pushes → three PES packets on KLV_PID. Each carries one
@@ -283,7 +269,7 @@ fn three_complete_cells_back_to_back_in_one_pes_emit_three_samples() {
     // — three back-to-back Completes emitted only one Sample. Post-
     // Task-4 (via the reassembler's empty-state row 1) every Complete
     // cell emits its own Sample.
-    let mut mux = build_muxer();
+    let mut mux = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux, 8, 90_000);
 
     // Wrap 21 bytes ("zzzz...") which the muxer will package as one
@@ -377,7 +363,7 @@ fn three_complete_cells_back_to_back_in_one_pes_emit_three_samples() {
 
 #[test]
 fn orphan_middle_emits_nonconformant_no_sample() {
-    let mut mux = build_muxer();
+    let mut mux = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux, 5, 90_000);
     let inner = b"XXX";
     mux.push_klv(inner, Pts90khz::new(90_000), 0x00).unwrap();
@@ -417,7 +403,7 @@ fn orphan_middle_emits_nonconformant_no_sample() {
 
 #[test]
 fn sequence_gap_emits_nonconformant_no_sample() {
-    let mut mux = build_muxer();
+    let mut mux = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux, 8, 90_000);
     let a = b"AAA";
     let b = b"BBB";
@@ -468,7 +454,7 @@ fn sequence_gap_emits_nonconformant_no_sample() {
 
 #[test]
 fn concurrent_first_emits_nonconformant_then_buffers_new() {
-    let mut mux = build_muxer();
+    let mut mux = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux, 12, 90_000);
     let a = b"AAA";
     let b = b"BBB";
@@ -556,7 +542,7 @@ fn concurrent_first_emits_nonconformant_then_buffers_new() {
 fn overflow_drops_buffer_emits_nonconformant() {
     // Lower au_cell_cap_per_pid via DemuxerConfigBuilder so the second
     // (Middle) cell overflows.
-    let mut mux = build_muxer();
+    let mut mux = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux, 8, 90_000);
     let a = vec![0xAAu8; 5];
     let b = vec![0xBBu8; 10];
@@ -613,7 +599,7 @@ fn reset_sync_clears_buffer_no_nonconformant() {
     // then feed an orphan Middle from a fresh TS byte stream. The
     // orphan Middle should fire MultiCellAu(Orphan) — proving the
     // reset really cleared the prior First.
-    let mut mux1 = build_muxer();
+    let mut mux1 = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux1, 5, 90_000);
     let a = b"AAA";
     mux1.push_klv(a, Pts90khz::new(90_000), 0x00).unwrap();
@@ -656,7 +642,7 @@ fn reset_sync_clears_buffer_no_nonconformant() {
     // reset_sync drops PAT/PMT/CC state too, we feed a NEW full stream
     // from a fresh muxer that opens with PAT+PMT. Without the prior
     // First (cleared by reset_sync), the Middle should be an Orphan.
-    let mut mux2 = build_muxer();
+    let mut mux2 = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux2, 5, 90_000);
     let b = b"BBB";
     mux2.push_klv(b, Pts90khz::new(90_000), 0x00).unwrap();
