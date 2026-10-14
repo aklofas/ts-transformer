@@ -4,8 +4,8 @@
 //! Python/JVM receivers close cancel-first, so without that flush every
 //! managed close drops the partial final video AU the plain shell surfaces.
 //!
-//! Helpers mirror `demux_receiver_terminal_flush.rs` (each tst-pipeline
-//! test binary carries its own small fixture set).
+//! The mux, packet and policy helpers come from `common`; the fixtures
+//! that fire the managed cancel handle from inside `recv_bytes` stay local.
 
 mod common;
 

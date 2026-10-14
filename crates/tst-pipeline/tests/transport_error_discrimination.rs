@@ -24,7 +24,7 @@
 //!   `tst_test_helpers::MockTransport` (for `Backpressure`, `Broken`,
 //!   `TooLarge`) or a minimal local struct for `ExplicitClose` (which
 //!   `MockTransport` does not support as a `FailMode`).
-//! - The receiver-side test uses a minimal local `ClosedRecv` that immediately
+//! - The receiver-side test uses a `ScriptedRecv` that fails `Closed` at once that immediately
 //!   returns `TransportError::Closed`, driving `Receiver::next_packet` to
 //!   `ReceiverError { kind: EndOfStream, source: Transport(Closed) }`.
 //! - Asserting on **both** `err.kind` and `err.source` matters: `err.kind` is
@@ -32,7 +32,11 @@
 //!   error-code decisions; `err.source` gives power users the inner-variant
 //!   discrimination needed to route logs and telemetry.
 
-use tst_core::transport::{RecvTransport, Transport, TransportError};
+mod common;
+
+use crate::common::ScriptedRecv;
+
+use tst_core::transport::{Transport, TransportError};
 use tst_pipeline::{
     RawSender, RawSenderConfig, RawSenderErrorSource, Receiver, ReceiverConfig,
     ReceiverErrorSource, ShellErrorKind,
@@ -115,31 +119,12 @@ fn broken_propagates_to_shell_as_transport_broken_kind() {
 // Test 3: Closed → EndOfStream (receiver side)
 // ---------------------------------------------------------------------------
 
-/// A `RecvTransport` that immediately returns `TransportError::Closed`
-/// (peer-EOS) must cause `Receiver::next_packet` to return
-/// `ShellErrorKind::EndOfStream` + `ReceiverErrorSource::Transport(Closed)`.
-///
-/// The `Closed` → `EndOfStream` mapping only applies when `kind_from_transport`
-/// receives `Direction::Recv`. The same `Closed` variant on the send side maps
-/// to `Closed` kind (a different route). This test pins the receiver-side
-/// routing to catch any future swap.
-struct ClosedRecv;
-
-impl RecvTransport for ClosedRecv {
-    fn recv_bytes(&mut self, _buf: &mut [u8]) -> Result<usize, TransportError> {
-        Err(TransportError::Closed)
-    }
-    fn max_payload(&self) -> usize {
-        1316
-    }
-    fn is_alive(&self) -> bool {
-        false
-    }
-}
-
 #[test]
 fn closed_propagates_as_end_of_stream_on_receiver() {
-    let mut rx = Receiver::new(ClosedRecv, ReceiverConfig::default());
+    let mut rx = Receiver::new(
+        ScriptedRecv::failing(TransportError::Closed),
+        ReceiverConfig::default(),
+    );
     let err = rx.next_packet().expect_err("must fail with EOS");
 
     assert_eq!(

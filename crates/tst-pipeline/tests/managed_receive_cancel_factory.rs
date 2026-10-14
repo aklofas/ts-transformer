@@ -6,35 +6,13 @@
 
 mod common;
 
-use crate::common::FlagCancel;
+use crate::common::{FlagCancel, ScriptedRecv, broken};
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use tst_core::transport::{BrokenCause, RecvTransport, TransportCancel, TransportError};
 use tst_pipeline::{BackoffStrategy, FactoryCancel, ManagedRecvTransport, ReconnectPolicy};
-
-/// Inner transport that is dead on arrival: the first recv reports
-/// `Broken`, which sends the managed transport into its reconnect loop.
-struct DeadInner;
-
-impl RecvTransport for DeadInner {
-    fn recv_bytes(&mut self, _buf: &mut [u8]) -> Result<usize, TransportError> {
-        Err(TransportError::Broken {
-            msg: "dead on arrival".into(),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })
-    }
-
-    fn max_payload(&self) -> usize {
-        1316
-    }
-
-    fn is_alive(&self) -> bool {
-        false
-    }
-}
 
 /// Stand-in for a listener's cancel handle: `cancel()` releases whoever
 /// is parked on the paired receiver, exactly as `Listener::cancel_handle`
@@ -63,7 +41,7 @@ fn cancel_wakes_a_factory_parked_on_its_installed_handle() {
 
     let fc = Arc::clone(&factory_cancel);
     let woken = Arc::clone(&woken_by_cancel);
-    let factory: Box<dyn FnMut() -> Result<DeadInner, TransportError> + Send> =
+    let factory: Box<dyn FnMut() -> Result<ScriptedRecv, TransportError> + Send> =
         Box::new(move || {
             let (tx, rx) = mpsc::channel::<()>();
             let handle: Arc<dyn TransportCancel + Send + Sync> = Arc::new(ParkedAccept {
@@ -88,8 +66,12 @@ fn cancel_wakes_a_factory_parked_on_its_installed_handle() {
         backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
         ..Default::default()
     };
-    let mut managed =
-        ManagedRecvTransport::new_with_factory_cancel(DeadInner, factory, policy, factory_cancel);
+    let mut managed = ManagedRecvTransport::new_with_factory_cancel(
+        ScriptedRecv::failing(broken("dead on arrival")),
+        factory,
+        policy,
+        factory_cancel,
+    );
     let cancel = managed.cancel_handle().expect("managed cancel handle");
 
     let canceller = std::thread::spawn(move || {
@@ -157,7 +139,7 @@ fn factory_observed_cancel_is_terminal_and_not_retried() {
     let fc = Arc::clone(&factory_cancel);
     let calls = Arc::clone(&factory_calls);
     let park_cl = Arc::clone(&park);
-    let factory: Box<dyn FnMut() -> Result<DeadInner, TransportError> + Send> =
+    let factory: Box<dyn FnMut() -> Result<ScriptedRecv, TransportError> + Send> =
         Box::new(move || {
             calls.fetch_add(1, Ordering::SeqCst);
             let handle: Arc<dyn TransportCancel + Send + Sync> =
@@ -193,8 +175,12 @@ fn factory_observed_cancel_is_terminal_and_not_retried() {
         ..Default::default()
     };
     let canceller_slot = Arc::clone(&factory_cancel);
-    let mut managed =
-        ManagedRecvTransport::new_with_factory_cancel(DeadInner, factory, policy, factory_cancel);
+    let mut managed = ManagedRecvTransport::new_with_factory_cancel(
+        ScriptedRecv::failing(broken("dead on arrival")),
+        factory,
+        policy,
+        factory_cancel,
+    );
 
     let canceller = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(150));

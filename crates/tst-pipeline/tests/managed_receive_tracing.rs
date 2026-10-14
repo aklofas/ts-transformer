@@ -6,8 +6,12 @@
 //! each reconnect attempt, warn on terminal give-up) actually fire
 //! during a real reconnect-and-give-up flow on the receive side.
 
+mod common;
+
+use crate::common::{ScriptedRecv, broken};
+
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 use tracing_test::traced_test;
 use tst_pipeline::{
@@ -15,39 +19,12 @@ use tst_pipeline::{
     RecvTransport, TransportError,
 };
 
-/// Mock `RecvTransport` whose every `recv_bytes` returns `Broken` so the
-/// `ManagedRecvTransport` decorator is forced into the reconnect path.
-struct AlwaysBrokenRecv {
-    recvs: Arc<AtomicU32>,
-}
-
-impl RecvTransport for AlwaysBrokenRecv {
-    fn recv_bytes(&mut self, _buf: &mut [u8]) -> Result<usize, TransportError> {
-        self.recvs.fetch_add(1, Ordering::SeqCst);
-        Err(TransportError::Broken {
-            msg: "always broken (test)".into(),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })
-    }
-
-    fn max_payload(&self) -> usize {
-        1316
-    }
-
-    fn is_alive(&self) -> bool {
-        // Returning `true` is harmless here; the broken `recv_bytes` is
-        // what triggers reconnect.
-        true
-    }
-}
-
 #[traced_test]
 #[test]
 fn receiver_reconnect_emits_info_on_attempt_and_warn_on_give_up() {
     // Factory always fails so the reconnect budget is exhausted and the
     // give-up branch fires.
-    let factory = Box::new(|| -> Result<AlwaysBrokenRecv, TransportError> {
+    let factory = Box::new(|| -> Result<ScriptedRecv, TransportError> {
         Err(TransportError::Broken {
             msg: "test factory always fails".into(),
             errno_code: None,
@@ -62,9 +39,9 @@ fn receiver_reconnect_emits_info_on_attempt_and_warn_on_give_up() {
         ..Default::default()
     };
 
-    let inner = AlwaysBrokenRecv {
-        recvs: Arc::new(AtomicU32::new(0)),
-    };
+    let inner = ScriptedRecv::failing(broken("always broken (test)"))
+        .with_alive(true)
+        .with_counter(Arc::new(AtomicU32::new(0)));
     let mut managed = ManagedRecvTransport::new(inner, factory, policy);
 
     // Drive the reconnect path: a single recv triggers Broken → drop inner →
@@ -97,7 +74,7 @@ fn receiver_reconnect_emits_info_on_attempt_and_warn_on_give_up() {
 #[traced_test]
 #[test]
 fn receiver_background_mode_warns_and_behaves_as_blocking() {
-    let factory = Box::new(|| -> Result<AlwaysBrokenRecv, TransportError> {
+    let factory = Box::new(|| -> Result<ScriptedRecv, TransportError> {
         Err(TransportError::Broken {
             msg: "test factory always fails".into(),
             errno_code: None,
@@ -112,9 +89,9 @@ fn receiver_background_mode_warns_and_behaves_as_blocking() {
         ..Default::default()
     };
 
-    let inner = AlwaysBrokenRecv {
-        recvs: Arc::new(AtomicU32::new(0)),
-    };
+    let inner = ScriptedRecv::failing(broken("always broken (test)"))
+        .with_alive(true)
+        .with_counter(Arc::new(AtomicU32::new(0)));
     let mut managed = ManagedRecvTransport::new(inner, factory, policy);
 
     // The construction-time warning fires immediately, regardless of
