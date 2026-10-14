@@ -15,8 +15,6 @@ Nothing yet.
 
 ## [0.8.0] — 2026-10-14
 
-<!-- TODO(release): the date `2026-10-14` above is a placeholder; set it to the tag day and delete this comment (gate: `rg -n 'TODO\((release|harvest)' CHANGELOG.md docs/` prints nothing). -->
-
 Post-v0.7.0: the RTSP publisher role — `RtspServer` accepts ANNOUNCE / RECORD
 ingest into publish mounts (MPEG-TS over RTP passed through, or elementary
 H.264 + KLV re-muxed into MPEG-TS with the KLV placed on the video timeline
