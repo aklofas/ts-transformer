@@ -7,11 +7,14 @@
 //! construct each shell and let it drop at end-of-scope, then assert
 //! both events appeared in the captured `tracing` output.
 
-use std::collections::VecDeque;
+mod common;
+
+use crate::common::ScriptedRecv;
+
 use tracing_test::traced_test;
 
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-use tst_core::transport::{RecvTransport, Transport, TransportError};
+use tst_core::transport::{Transport, TransportError};
 
 use tst_pipeline::{
     DemuxReceiver, MuxSender, RawReceiver, RawReceiverConfig, RawSender, RawSenderConfig, Receiver,
@@ -35,26 +38,6 @@ impl Transport for Sink {
     fn close(&mut self) {}
     fn is_alive(&self) -> bool {
         true
-    }
-}
-
-struct Source(VecDeque<Vec<u8>>);
-impl RecvTransport for Source {
-    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
-        match self.0.pop_front() {
-            Some(v) => {
-                let n = v.len().min(buf.len());
-                buf[..n].copy_from_slice(&v[..n]);
-                Ok(n)
-            }
-            None => Err(TransportError::Closed),
-        }
-    }
-    fn max_payload(&self) -> usize {
-        1316
-    }
-    fn is_alive(&self) -> bool {
-        !self.0.is_empty()
     }
 }
 
@@ -108,7 +91,7 @@ fn raw_sender_emits_open_and_close_events() {
 #[test]
 fn demux_receiver_emits_open_and_close_events() {
     {
-        let _rx = DemuxReceiver::new(Source(VecDeque::new()));
+        let _rx = DemuxReceiver::new(ScriptedRecv::failing(TransportError::Closed));
     }
     assert!(logs_contain("DemuxReceiver opened"));
     assert!(logs_contain("DemuxReceiver closed"));
@@ -118,7 +101,10 @@ fn demux_receiver_emits_open_and_close_events() {
 #[test]
 fn receiver_emits_open_and_close_events() {
     {
-        let _rx = Receiver::new(Source(VecDeque::new()), ReceiverConfig::default());
+        let _rx = Receiver::new(
+            ScriptedRecv::failing(TransportError::Closed),
+            ReceiverConfig::default(),
+        );
     }
     assert!(logs_contain("Receiver opened"));
     assert!(logs_contain("Receiver closed"));
@@ -128,7 +114,10 @@ fn receiver_emits_open_and_close_events() {
 #[test]
 fn raw_receiver_emits_open_and_close_events() {
     {
-        let _rx = RawReceiver::new(Source(VecDeque::new()), RawReceiverConfig::default());
+        let _rx = RawReceiver::new(
+            ScriptedRecv::failing(TransportError::Closed),
+            RawReceiverConfig::default(),
+        );
     }
     assert!(logs_contain("RawReceiver opened"));
     assert!(logs_contain("RawReceiver closed"));

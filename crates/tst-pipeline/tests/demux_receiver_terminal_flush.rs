@@ -38,81 +38,15 @@
 
 mod common;
 
-use crate::common::{build_h264_au, drain_mux, to_ts_packets};
+use crate::common::{ScriptedRecv, broken, build_h264_au, drain_mux, to_ts_packets};
 
+use tst_core::TransportError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
 use tst_core::mpegts::mux::{
     AudioCodec, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
-use tst_core::transport::RecvTransport;
-use tst_core::{BrokenCause, TransportError};
 use tst_pipeline::{DemuxReceiver, DemuxReceiverErrorSource, ShellErrorKind};
-
-/// Delivers one 188-byte TS packet per `recv_bytes` call, then signals a
-/// *terminal, non-clean* transport error once exhausted — simulating a live
-/// socket dying (`Broken`) or a caller cancelling from another thread
-/// (`ExplicitClose`) instead of the peer closing cleanly (`Closed`, already
-/// covered by `demux_receiver_malformed_pes_recovery.rs`'s `PacketSource`).
-struct TerminalAfterPackets {
-    packets: Vec<[u8; 188]>,
-    pos: usize,
-    terminal: TransportError,
-}
-
-impl TerminalAfterPackets {
-    fn broken(packets: Vec<[u8; 188]>) -> Self {
-        Self {
-            packets,
-            pos: 0,
-            terminal: TransportError::Broken {
-                msg: "simulated socket break".into(),
-                errno_code: None,
-                cause: BrokenCause::Unspecified,
-            },
-        }
-    }
-
-    fn explicit_close(packets: Vec<[u8; 188]>) -> Self {
-        Self {
-            packets,
-            pos: 0,
-            terminal: TransportError::ExplicitClose,
-        }
-    }
-}
-
-impl RecvTransport for TerminalAfterPackets {
-    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
-        if self.pos >= self.packets.len() {
-            return Err(match &self.terminal {
-                TransportError::Broken {
-                    msg,
-                    errno_code,
-                    cause,
-                } => TransportError::Broken {
-                    msg: msg.clone(),
-                    errno_code: *errno_code,
-                    cause: *cause,
-                },
-                TransportError::ExplicitClose => TransportError::ExplicitClose,
-                other => panic!("unexpected terminal fixture: {other:?}"),
-            });
-        }
-        let pkt = self.packets[self.pos];
-        buf[..188].copy_from_slice(&pkt);
-        self.pos += 1;
-        Ok(188)
-    }
-
-    fn max_payload(&self) -> usize {
-        188
-    }
-
-    fn is_alive(&self) -> bool {
-        self.pos < self.packets.len()
-    }
-}
 
 /// The mandatory RED→GREEN regression: 3 video AUs muxed and delivered in
 /// full, then the transport breaks (no clean `Closed`). All 3 AUs — including
@@ -140,7 +74,7 @@ fn demux_receiver_flushes_final_video_au_on_transport_broken() {
         bytes.extend_from_slice(&drain_mux(&mut mux));
     }
 
-    let source = TerminalAfterPackets::broken(to_ts_packets(&bytes));
+    let source = ScriptedRecv::packets(to_ts_packets(&bytes), broken("simulated socket break"));
     let mut rx = DemuxReceiver::new(source);
 
     let mut recovered_aus: Vec<Vec<u8>> = Vec::new();
@@ -214,7 +148,7 @@ fn demux_receiver_flushes_final_video_au_on_explicit_close() {
         bytes.extend_from_slice(&drain_mux(&mut mux));
     }
 
-    let source = TerminalAfterPackets::explicit_close(to_ts_packets(&bytes));
+    let source = ScriptedRecv::packets(to_ts_packets(&bytes), TransportError::ExplicitClose);
     let mut rx = DemuxReceiver::new(source);
 
     let mut recovered_aus: Vec<Vec<u8>> = Vec::new();
@@ -301,7 +235,7 @@ fn demux_receiver_flushes_pending_audio_pid_on_transport_broken() {
     let mut packets = to_ts_packets(&video_bytes);
     packets.extend_from_slice(&audio_packets[..deliver_n]);
 
-    let source = TerminalAfterPackets::broken(packets);
+    let source = ScriptedRecv::packets(packets, broken("simulated socket break"));
     let mut rx = DemuxReceiver::new(source);
 
     let mut saw_video = false;

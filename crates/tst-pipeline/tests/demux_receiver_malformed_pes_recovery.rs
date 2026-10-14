@@ -10,13 +10,12 @@
 
 mod common;
 
-use crate::common::{build_h264_au, drain_mux, to_ts_packets};
+use crate::common::{ScriptedRecv, build_h264_au, drain_mux, to_ts_packets};
 
 use tst_core::TransportError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, NonConformantIssue, SamplePayload};
 use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-use tst_core::transport::RecvTransport;
 use tst_pipeline::DemuxReceiver;
 
 /// Build a corrupted TS byte stream by muxing two H.264 PESes on PID 0x100
@@ -73,44 +72,10 @@ fn build_packets_with_one_malformed_pes() -> Vec<[u8; 188]> {
     to_ts_packets(&bytes)
 }
 
-/// Minimal `RecvTransport` that delivers one 188-byte TS packet per
-/// `recv_bytes` call, then signals `Closed` (EOF — DemuxReceiver converts
-/// this to a flush + `Ok(None)`).
-struct PacketSource {
-    packets: Vec<[u8; 188]>,
-    pos: usize,
-}
-
-impl PacketSource {
-    fn new(packets: Vec<[u8; 188]>) -> Self {
-        Self { packets, pos: 0 }
-    }
-}
-
-impl RecvTransport for PacketSource {
-    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
-        if self.pos >= self.packets.len() {
-            return Err(TransportError::Closed);
-        }
-        let pkt = self.packets[self.pos];
-        buf[..188].copy_from_slice(&pkt);
-        self.pos += 1;
-        Ok(188)
-    }
-
-    fn max_payload(&self) -> usize {
-        188
-    }
-
-    fn is_alive(&self) -> bool {
-        self.pos < self.packets.len()
-    }
-}
-
 #[test]
 fn demux_receiver_lenient_mode_recovers_from_malformed_pes() {
     let packets = build_packets_with_one_malformed_pes();
-    let source = PacketSource::new(packets);
+    let source = ScriptedRecv::packets(packets, TransportError::Closed);
     let mut rx = DemuxReceiver::new(source); // default = lenient
 
     let mut saw_malformed = false;
