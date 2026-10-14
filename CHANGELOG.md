@@ -9,6 +9,121 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+---
+
+## [0.8.0] — 2026-10-14
+
+<!-- TODO(release): the date `2026-10-14` above is a placeholder; set it to the tag day and delete this comment (gate: `rg -n 'TODO\((release|harvest)' CHANGELOG.md docs/` prints nothing). -->
+
+Post-v0.7.0: the RTSP publisher role — `RtspServer` accepts ANNOUNCE / RECORD
+ingest into publish mounts (MPEG-TS over RTP passed through, or elementary
+H.264 + KLV re-muxed into MPEG-TS with the KLV placed on the video timeline
+from the publisher's RTCP sender reports), on-demand mounts, `remove_mount`
+and per-mount stats — in Rust, C (ABI 0.23), Python and the JVM; the JVM HLS
+publisher binding; `rtp://` receive-socket sizing and a source filter from an
+integrator field report; the RTSP-server hardening and KLV-alignment fixes of
+the pre-tag review; a `tcps://` handshake that completes inside `connect`;
+HLS playlists written on every segment cut; and the fuzz bundle running in CI
+under ClusterFuzzLite. Two source-breaking renames in tst-srt and the removal
+of the Python aliases 0.7.0 deprecated make this 0.8.0 — a `"0.7"`
+requirement will not auto-update into it.
+
+### Release highlights
+
+The integrator-facing changes at a glance (full detail in the sections below):
+
+- **Why this is 0.8.0 (breaks):** tst-srt — `MaxBandwidth::Unlimited` is now
+  `MaxBandwidth::InputRelative` and `MaxBandwidth::Auto` is
+  `MaxBandwidth::Infinite` (the `SRTO_MAXBW` values are unchanged; an old
+  name fails to compile), and `Socket::close(self)` / `Listener::close(self)`
+  return `()` instead of a `Result` (drop the `?`). tst-py — the 15
+  error-kind aliases kept through 0.7.x (`SrtErrorKind.WOULD_BLOCK`,
+  `DemuxErrorKind.BAD_PMT`, `RtpErrorKind.TIMEOUT`, …) are removed; the
+  old → new table is in the 0.7.0 entry "Changed — Python binding". tst-rtp
+  — `TransportResponse` gains a public `mode` field (struct literals add
+  it). JVM — `ServerStats` and `RtpStats` are records with new components,
+  so code calling their canonical constructors passes them; getters are
+  unchanged.
+- **RTSP publisher role (tst-rtp):** `RtspServer::add_publish_mount(path)`,
+  `RtspServerBuilder::accept_unregistered_publishers(true)` +
+  `RtspServer::next_publisher(timeout)` for on-demand mounts (off by
+  default), `RtspServer::remove_mount(path)` for mounts of any kind. A
+  publisher's MPEG-TS reaches the application as an `RtpRecvTransport`
+  (`PublishMountHandle::into_recv_transport`, take-once) and every PLAY
+  reader of the mount. Elementary publishers announce H.264 (RFC 6184,
+  packetization modes 0 and 1) with an optional KLV track (RFC 6597); KLV is
+  placed from RTCP sender reports once a pair validates within 30 s of the
+  video line, with a first-packet fallback (`PublishMountStats::alignment`),
+  bounded by a 10 s hold. One publisher per mount; a second ANNOUNCE is
+  `403`; SSRC changes restart a track; B-frames are muxed PTS-only and
+  counted. The same surface in C (`tst_rtsp_publish_mount_*`,
+  `tst_rtsp_server_{add_publish_mount,next_publisher,remove_mount,local_addr}`),
+  Python (`PublishMount`, `RtspServer.next_publisher`) and the JVM
+  (`PublishMount`, `RtspServer.nextPublisher`). New example
+  `receiving/recv_rtsp_publish.rs`, cookbook recipe "Accept RTSP
+  publishers".
+- **C ABI 0.22 → 0.23 (additive):** the publish-mount handle and server
+  entry points above, `tst_rtsp_server_local_addr`, new structs
+  `tst_rtsp_publish_mount_stats_t` / `tst_rtsp_publisher_info_t` and enums
+  `tst_rtsp_publish_shape` / `tst_rtsp_clock_alignment`; `tst_server_stats_t`
+  keeps its layout (the publisher counters are getters). No new error codes.
+- **Other bindings:** JVM `org.tstrans.hls` mirrors `tstrans.hls` class for
+  class. `rtp://` URLs accept `?rcvbuf=` / `?sndbuf=` (knob parity with
+  `udp://`, applied clamp logged) and an opt-in `?source=<ip>` filter
+  (`RtpStats.source_rejected`) in Rust, Python and the JVM.
+- **Behaviour changes without a signature change:** `tcps://` completes its
+  TLS handshake inside `connect` under `connect_timeout` (`ConnectTimeout` /
+  `Tls` / `Io` at connect, never a zero-progress `Backpressure` on the first
+  send); `tst-hls` writes `playlist.m3u8` atomically on every segment cut
+  (a static origin serves the live stream); an RTSP connection whose current
+  request has not framed within the idle bound is closed; `OPTIONS`
+  advertises `ANNOUNCE` and `RECORD`; the mount lookup strips a trailing
+  `stream=N` segment; a Python worker woken by interpreter exit parks for up
+  to 3 s instead of re-entering Python.
+- **Fixes worth reading:** mount paths refuse control bytes (an on-demand
+  ANNOUNCE could pin a slot with an unremovable name); H.264
+  `packetization-mode=2` is refused with `415` instead of accepted and lost;
+  `RtspClient::describe` no longer panics on a hostile server's SDP
+  (`sdp-types` 0.2.0 plus a caught parser panic → `BadSdp`); TCP readers
+  that send RTCP receiver reports keep their session (VLC / live555 /
+  GStreamer with TCP were disconnected 30–60 s after PLAY); a UDP
+  publisher's last in-flight datagram cannot reach the mount after it
+  ended; a mount registered during `stop()` cannot outlive it; an
+  unusable sender-report pair no longer loses every KLV unit, and the unit
+  at the video origin is no longer lost to tick rounding;
+  `MaxBandwidth::Limited(n)` with `n > i64::MAX` is clamped instead of
+  wrapping to "infinite"; Python interpreter exit no longer aborts with
+  exit 134 when a thread is still inside a native call.
+- **Validation:** the interop census is 159 cells, 94 PASS / 0 FAIL / 65
+  documented / 0 skipped at realistic access-unit sizes on `c9cd8163`, the
+  last library change before the tag
+  ([run 38206815679](https://github.com/aklofas/ts-transformer/actions/runs/38206815679)),
+  and all four sanitizer jobs are green on the same tree
+  ([run 38505046089](https://github.com/aklofas/ts-transformer/actions/runs/38505046089)).
+  The publisher role's one-hour `rtsp-publish` soak leg passed every verdict
+  it owns (the run's three FAILs are the SRT leg's harness oracles, analysed
+  in `docs/project/2026-10-09-soak-rtsp-publish-srt-audio-attribution.md`).
+  ClusterFuzzLite's first one-hour batch over the 36 fuzz targets found no
+  crash, after its first pull-request run had found and we had fixed a
+  harness oracle defect. Full figures in
+  [`docs/project/validation-evidence.md`](/docs/project/validation-evidence.md).
+  The maintainer's local Tier-B battery (`release-validation.sh`) remains
+  separate from the interop matrix for this release; its consolidation is
+  tracked in `docs/project/deferred-features.md`.
+
+### Changed — dependencies
+
+- **rustls 0.23.45 → 0.23.46** in every lockfile, for RUSTSEC-2026-0346,
+  -0347 and -0348 (derived `Debug` on client session values exposing TLS
+  secrets to a custom `ClientSessionStore`; buffered application data sent
+  after an ECH rejection; Brotli certificate decompression allocating up to
+  1 GiB). None of the three reaches this project — no custom session store,
+  ECH is not enabled, and the `brotli` feature is off — but the advisory
+  gate (`cargo-deny`) fails every pull request until the pin moves, and a
+  release should not ship with an open advisory in its lockfile.
+
 ### Removed — tst-py (BREAKING): the 0.7.x deprecated kind aliases
 
 - The 15 aliases 0.7.0 kept for one release are gone, as that release

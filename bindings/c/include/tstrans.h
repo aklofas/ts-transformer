@@ -400,7 +400,7 @@
 /**
  * Minor version.
  */
-#define TST_VERSION_MINOR 7
+#define TST_VERSION_MINOR 8
 
 /**
  * Patch version.

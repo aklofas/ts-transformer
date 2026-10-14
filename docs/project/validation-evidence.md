@@ -1112,6 +1112,39 @@ supplied.
 
 The run's full artifact set is retained offline by the maintainer.
 
+## Evidence for the 0.8.0 tree
+
+The publisher-role figures above were produced on `43834194`. The library
+changes that landed after it and before the 0.8.0 tag are the pre-tag fix
+set listed in the CHANGELOG's 0.8.0 entry: control bytes refused in mount
+paths, the interleaved RTCP drain for TCP readers, the per-request idle
+bound, the UDP ingest end gate, the mount-registration re-check under the
+mounts lock, the sender-report plausibility window and the origin-tick KLV
+placement, `MaxBandwidth` renamed and `Socket::close` made infallible, and
+the Python exit park. The last library commit before the tag is `c9cd8163`;
+the commits after it change a fuzz harness oracle, CI workflows, one test's
+read margin and the version numbers. Evidence on `c9cd8163`:
+
+- the 159-cell interop census at 159 / 94 / 0 / 65 / 0 at realistic
+  access-unit sizes
+  ([run 38206815679](https://github.com/aklofas/ts-transformer/actions/runs/38206815679),
+  the weekly schedule, 2026-10-12);
+- all four sanitizer jobs, ASan and TSan over the pure-Rust and the
+  native-linking crates
+  ([run 38505046089](https://github.com/aklofas/ts-transformer/actions/runs/38505046089),
+  the nightly schedule, 2026-10-14). The nightly run of 2026-10-13 on the
+  same tree failed one TSan test, `tst-rtp`'s
+  `malformed_request_line_gets_400_and_the_next_request_is_served`, on the
+  2 s socket read margin it used to tell an answer from silence; the margin
+  is now 10 s and no library code changed;
+- ClusterFuzzLite's first one-hour batch over the 36 fuzz targets, under
+  AddressSanitizer, on `4bb93a17`
+  ([run 38543594093](https://github.com/aklofas/ts-transformer/actions/runs/38543594093)):
+  no crash. Its first 600 s pull-request run had found a harness oracle
+  defect, `klv_st0601_patch` comparing records whose `field_errors` carried
+  a NaN, fixed before the batch ran. See "Fuzz targets" above for the
+  bundle.
+
 ## Stress and ceilings
 
 A stress run is a different instrument than a soak: it sweeps stream count
