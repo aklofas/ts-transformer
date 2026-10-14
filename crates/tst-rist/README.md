@@ -16,13 +16,13 @@ for the full guide set.
 use tst_core::transport::Transport;
 use tst_rist::RistTransport;
 
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
-let mut tx = RistTransport::connect("rist://127.0.0.1:9000")?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut tx = RistTransport::connect("rist://127.0.0.1:9000")?;
 
-let ts_packet = [0u8; 188]; // caller-supplied MPEG-TS packet
-tx.send_bytes(&ts_packet)?;
-# Ok(())
-# }
+    let ts_packet = [0u8; 188]; // caller-supplied MPEG-TS packet
+    tx.send_bytes(&ts_packet)?;
+    Ok(())
+}
 ```
 
 **Build prerequisites:** a C toolchain, meson, and ninja (for the

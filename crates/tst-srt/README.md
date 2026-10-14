@@ -15,14 +15,14 @@ for the full guide set.
 ```rust,no_run
 use tst_srt::SocketBuilder;
 
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
-let mut b = SocketBuilder::new();
-b.latency_ms(120);
-let mut socket = b.connect("127.0.0.1:1234")?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut b = SocketBuilder::new();
+    b.latency_ms(120);
+    let mut socket = b.connect("127.0.0.1:1234")?;
 
-socket.send(b"hello")?;
-# Ok(())
-# }
+    socket.send(b"hello")?;
+    Ok(())
+}
 ```
 
 **Build prerequisites:** a C/C++ toolchain and CMake (for the bundled
@@ -30,7 +30,8 @@ libsrt build), plus libclang (for bindgen) — see `tstrans-srt-sys`'s
 README for detail.
 
 **Stability: Stable** — the primary transport of this project's
-scope. See the [API stability
+scope; only the `shells` module (URL → managed-shell open path used by
+the bindings) is Provisional. See the [API stability
 reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 
 **License:** MIT OR Apache-2.0. This crate depends on

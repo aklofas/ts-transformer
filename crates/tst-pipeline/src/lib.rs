@@ -173,3 +173,10 @@ pub use tst_core::transport::{
 // one or type-erase to it. See [`crate`]'s `srt-cancel-handle.md` doc
 // for the full pattern.
 pub use tst_core::SrtCancelHandle;
+
+// The crate README is rendered by crates.io and GitHub, which do not
+// compile it; this doctest-only item compiles and runs its examples with
+// `cargo test --doc` so they cannot drift from the API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;

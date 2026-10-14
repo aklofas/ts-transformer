@@ -111,6 +111,15 @@ The integrator-facing changes at a glance (full detail in the sections below):
   separate from the interop matrix for this release; its consolidation is
   tracked in `docs/project/deferred-features.md`.
 
+### Docs — crate pages
+
+- The crate READMEs, which crates.io renders as plain Markdown, showed
+  their quick-start examples with rustdoc hidden lines (`# fn main() …`,
+  `# Ok(())`) printed literally. Every example is now a complete program
+  as written, and `tst-core` and `tst-pipeline` compile their README
+  examples under `cargo test --doc` like the six transport crates already
+  did. Stability blurbs re-aligned with the API stability table.
+
 ### Changed — dependencies
 
 - **rustls 0.23.45 → 0.23.46** in every lockfile, for RUSTSEC-2026-0346,

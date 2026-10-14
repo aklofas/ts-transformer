@@ -16,13 +16,13 @@ for the full guide set.
 use tst_core::transport::Transport;
 use tst_udp::UdpTransport;
 
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
-let mut tx = UdpTransport::connect("udp://127.0.0.1:5004")?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut tx = UdpTransport::connect("udp://127.0.0.1:5004")?;
 
-let ts_packet = [0u8; 188]; // caller-supplied MPEG-TS packet
-tx.send_bytes(&ts_packet)?;
-# Ok(())
-# }
+    let ts_packet = [0u8; 188]; // caller-supplied MPEG-TS packet
+    tx.send_bytes(&ts_packet)?;
+    Ok(())
+}
 ```
 
 **Stability: Stable** — small, settled surface. See the [API

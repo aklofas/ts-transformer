@@ -31,20 +31,21 @@ impl Transport for Sink {
     fn is_alive(&self) -> bool { true }
 }
 
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
-let mut sender = Sender::new(Sink(Vec::new()), SenderConfig::default());
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut sender = Sender::new(Sink(Vec::new()), SenderConfig::default());
 
-// One pre-muxed TS packet (188 bytes, sync byte 0x47 first).
-let mut pkt = vec![0x47u8];
-pkt.extend(vec![0u8; 187]);
-sender.send_ts(&pkt)?;
-sender.flush()?;
-# Ok(())
-# }
+    // One pre-muxed TS packet (188 bytes, sync byte 0x47 first).
+    let mut pkt = vec![0x47u8];
+    pkt.extend(vec![0u8; 187]);
+    sender.send_ts(&pkt)?;
+    sender.flush()?;
+    Ok(())
+}
 ```
 
-**Stability: Stable**, with two Provisional modules: `mux_publisher`
-(HLS-adjacent, newer) and `ext` (the `Pairer` extension). See the
+**Stability: Stable**, with three Provisional modules: `mux_publisher`
+(HLS-adjacent, newer), `ext` (the `Pairer` extension) and `binding` (the
+handle layer shared by the C, Python and JVM bindings). See the
 [API stability
 reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md)
 for the full per-module table.

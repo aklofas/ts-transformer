@@ -2,7 +2,9 @@
 
 RTP-over-UDP carrying MPEG-TS (RFC 2250) or a bare H.264 elementary
 stream (RFC 6184), with an RTSP/1.0 + RTSP/2.0 client and server for
-session negotiation. Pure Rust, no native dependencies.
+session negotiation. The server serves PLAY readers from mounts the
+application pushes into and, since 0.8.0, accepts ANNOUNCE / RECORD
+publishers. Pure Rust, no native dependencies.
 
 Built on `tst-core`'s transport traits; pair with `tst-pipeline`'s
 `MuxSender`/`DemuxReceiver` shells for the MPEG-TS-over-RTP path. See
@@ -16,13 +18,13 @@ for the full guide set.
 use tst_core::transport::Transport;
 use tst_rtp::RtpTransport;
 
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
-let mut tx = RtpTransport::connect("rtp://239.55.55.1:5004?ttl=8")?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut tx = RtpTransport::connect("rtp://239.55.55.1:5004?ttl=8")?;
 
-let ts_packet = [0u8; 188]; // caller-supplied MPEG-TS packet
-tx.send_bytes(&ts_packet)?;
-# Ok(())
-# }
+    let ts_packet = [0u8; 188]; // caller-supplied MPEG-TS packet
+    tx.send_bytes(&ts_packet)?;
+    Ok(())
+}
 ```
 
 **Stability: Stable** for the RTP transports; the `rtsp` module

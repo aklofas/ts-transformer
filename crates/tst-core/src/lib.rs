@@ -93,3 +93,10 @@ pub use transport::{
     BrokenCause, RecvTransport, SocketStats, Transport, TransportCancel, TransportError,
 };
 pub use url::{ParsedUrl, UrlError};
+
+// The crate README is rendered by crates.io and GitHub, which do not
+// compile it; this doctest-only item compiles and runs its examples with
+// `cargo test --doc` so they cannot drift from the API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;
