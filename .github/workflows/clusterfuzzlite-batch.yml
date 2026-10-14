@@ -1,0 +1,89 @@
+# ClusterFuzzLite scheduled work on main: a one-hour batch fuzz of every
+# harness under AddressSanitizer, a corpus prune, and a coverage report.
+# Daily at 04:00 UTC, after the sanitizers cron (03:00). Dispatchable for a
+# first run or after a bundle change.
+#
+# Corpus and coverage persist only with a storage repo (the
+# PERSONAL_ACCESS_TOKEN secret; setup in oss-fuzz/README.md). Without it
+# each batch starts from the committed seeds and the results land as run
+# artifacts, so the schedule still finds shallow crashes but accumulates
+# nothing.
+name: clusterfuzzlite-batch
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  batch:
+    name: batch fuzz (address)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Build fuzzers
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: rust
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: address
+      - name: Run fuzzers
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 3600
+          mode: batch
+          sanitizer: address
+          storage-repo: ${{ secrets.PERSONAL_ACCESS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzz-corpus.git', secrets.PERSONAL_ACCESS_TOKEN) || '' }}
+          storage-repo-branch: main
+          storage-repo-branch-coverage: gh-pages
+
+  prune:
+    name: corpus prune
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Build fuzzers
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: rust
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run fuzzers
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: prune
+          storage-repo: ${{ secrets.PERSONAL_ACCESS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzz-corpus.git', secrets.PERSONAL_ACCESS_TOKEN) || '' }}
+          storage-repo-branch: main
+          storage-repo-branch-coverage: gh-pages
+
+  coverage:
+    name: coverage report
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Build fuzzers
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: rust
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: coverage
+      - name: Run fuzzers
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: coverage
+          sanitizer: coverage
+          storage-repo: ${{ secrets.PERSONAL_ACCESS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzz-corpus.git', secrets.PERSONAL_ACCESS_TOKEN) || '' }}
+          storage-repo-branch: main
+          storage-repo-branch-coverage: gh-pages

@@ -705,18 +705,21 @@ source of truth for this section; the current scope is:
 
 ## Fuzzing
 
-33 cargo-fuzz harnesses live in-tree (27 in `tst-core`, 5 in `tst-rtp`,
+36 cargo-fuzz harnesses live in-tree (27 in `tst-core`, 8 in `tst-rtp`,
 1 in `tst-srt`; inventory ground truth is
 `tests/coverage/fuzz-targets.toml`). CI compile-checks the harnesses
 nightly; deeper runs are local (`cargo +nightly fuzz run <target>`).
 
-OSS-Fuzz status: **enrollment PR submitted to `google/oss-fuzz`
-(2026-10-01), not yet merged — there is no continuous OSS-Fuzz fleet
-coverage until it is.** The onboarding bundle under `oss-fuzz/`
-(Dockerfile + build script bundling all 33 harnesses, libFuzzer +
-AddressSanitizer only, the engine/sanitizer pair OSS-Fuzz supports for
-Rust) was re-verified against the OSS-Fuzz builder and runner images
-before submission (see `oss-fuzz/VERIFICATION.md`).
+Continuous fuzzing runs in this repository's own CI through
+**ClusterFuzzLite** (`.clusterfuzzlite/`, workflows `clusterfuzzlite-pr`
+and `clusterfuzzlite-batch`): every harness is built with libFuzzer +
+AddressSanitizer in the OSS-Fuzz builder image, pull requests that touch
+library or binding code get a bounded fuzz run, and a daily batch run,
+corpus prune and coverage report run on `main`. Rust gets no other engine
+or sanitizer from that toolchain. The enrollment PR to the hosted
+`google/oss-fuzz` fleet (2026-10-01) was declined on 2026-10-06 for the
+project's user base, not for the bundle, which passed every check; the
+bundle under `oss-fuzz/` stays current (see `oss-fuzz/README.md`).
 
 ---
 

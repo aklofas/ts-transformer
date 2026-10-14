@@ -4,8 +4,8 @@ This directory contains the four artifacts (`project.yaml`, `Dockerfile`, `build
 
 It is consumed in two contexts:
 
-1. **One-time submission** of these files to `google/oss-fuzz` so the project is enrolled in the OSS-Fuzz fleet.
-2. **Continuous use** by OSS-Fuzz's nightly build cycle, which clones this repo and runs `build.sh` to produce fresh fuzz drivers.
+1. **ClusterFuzzLite in this repo's CI** (the live one): `.clusterfuzzlite/build.sh` runs this directory's `build.sh` inside the same base image, on pull requests and on a daily schedule. See "ClusterFuzzLite" below.
+2. **Enrollment in the OSS-Fuzz fleet** (declined, see the status note): the one-time submission of these files to `google/oss-fuzz`, after which the fleet would clone this repo and run `build.sh` each cycle.
 
 ## Layout
 
@@ -45,16 +45,62 @@ git commit -m "Add ts-transformer project"
 git push origin main
 ```
 
-The PR review by Google's OSS-Fuzz maintainers usually completes within 1-2 business days if `check_build` passes locally. After merge, the OSS-Fuzz fleet starts fuzzing all bundled targets within 24 hours (currently 34: 27 in `tst-core`, 6 in `tst-rtp`, 1 in `tst-srt` — `build.sh` asserts the shipped-driver count against the `fuzz_targets/*.rs` inventory so this figure cannot silently drift).
+The PR review by Google's OSS-Fuzz maintainers usually completes within 1-2 business days if `check_build` passes locally. After merge, the OSS-Fuzz fleet starts fuzzing all bundled targets within 24 hours (currently 36: 27 in `tst-core`, 8 in `tst-rtp`, 1 in `tst-srt` — `build.sh` asserts the shipped-driver count against the `fuzz_targets/*.rs` inventory so this figure cannot silently drift).
 
-> **Status (2026-10-01):** the bundle was re-verified against the current
-> 33-target inventory with the bind-mount-free sequence below (same images
-> and `compile` / `test_all.py` entry points `helper.py` drives) — see
-> `VERIFICATION.md` for the recorded run — and the upstream PR to
-> `google/oss-fuzz` was opened from it. Until that PR merges there is no
-> continuous OSS-Fuzz coverage. `project.yaml` restricts the project to
-> libFuzzer + AddressSanitizer because those are the only engine and
-> sanitizer OSS-Fuzz supports for Rust.
+> **Status (2026-10-06):** the enrollment PR (`google/oss-fuzz#16214`,
+> opened 2026-10-01 after the re-verification recorded in
+> `VERIFICATION.md`) was closed by an OSS-Fuzz maintainer: the project does
+> not yet have the wide user base OSS-Fuzz targets. The build itself passed
+> every check on the PR. The maintainer pointed at ClusterFuzzLite, which now
+> runs this bundle from our own CI (next section). Resubmission waits for a
+> materially larger user base; the bundle stays current for that day.
+> `project.yaml` restricts the project to libFuzzer + AddressSanitizer
+> because those are the only engine and sanitizer OSS-Fuzz supports for Rust.
+
+## ClusterFuzzLite (in-CI, live)
+
+[ClusterFuzzLite](https://google.github.io/clusterfuzzlite/) is OSS-Fuzz's
+build and run machinery packaged as GitHub Actions. It consumes the same
+`base-builder-rust` image and the same `Dockerfile` / `build.sh` /
+`project.yaml` contract, laid out under `.clusterfuzzlite/` at the repo root:
+
+| Path | Role |
+|---|---|
+| `.clusterfuzzlite/project.yaml` | `language: rust` (the only field the tooling reads) |
+| `.clusterfuzzlite/Dockerfile` | Twin of `oss-fuzz/Dockerfile`; `COPY`s the checkout instead of cloning main |
+| `.clusterfuzzlite/build.sh` | Shim that `exec`s `oss-fuzz/build.sh`, so the two bundles cannot drift |
+| `.github/workflows/clusterfuzzlite-pr.yml` | On PRs touching `crates/`, `bindings/`, the bundles: 600 s of `code-change` fuzzing under ASan |
+| `.github/workflows/clusterfuzzlite-batch.yml` | Daily 04:00 UTC (and `workflow_dispatch`): 3600 s batch fuzz, corpus prune, coverage report |
+
+A crash in the PR job fails the check and attaches the reproducer as a run
+artifact; reproduce it with `cargo +nightly fuzz run <target> <file>` as in
+"Reproducing a crash report" below.
+
+### Corpus persistence (one-time setup, not yet done)
+
+Without a storage repo every run starts from the committed seeds, corpora
+and coverage land only as run artifacts, and PR runs cannot narrow to the
+harnesses a change touched (that narrowing reads the coverage report).
+To enable it:
+
+1. Create an empty repository `aklofas/ts-transformer-fuzz-corpus`.
+2. Create a personal access token with write permission to that repository
+   only, and add it to this repository as a **repository** secret named
+   `PERSONAL_ACCESS_TOKEN` (not an environment secret).
+3. Nothing else: both workflows already pass the storage repo URL whenever
+   that secret exists (`main` for corpora, `gh-pages` for coverage).
+
+### Verifying the ClusterFuzzLite image locally
+
+Same bind-mount-free sequence as below, with the repo root as the build
+context and the `.clusterfuzzlite/Dockerfile`:
+
+```bash
+cd /path/to/ts-transformer     # the workspace root (contains .clusterfuzzlite/)
+docker build -t ts-transformer-cflite -f .clusterfuzzlite/Dockerfile .
+# then the `compile` / `test_all.py` / `run_fuzzer` steps from the next
+# section with image ts-transformer-cflite in place of ts-transformer-oss-fuzz.
+```
 
 ### Verifying without `helper.py` bind mounts
 
@@ -133,7 +179,7 @@ Estimated long-term burden: ~1 PR/year to `google/oss-fuzz` absent base-image dr
 
 ## What is NOT here
 
-- **CIFuzz GHA integration**. Deferred until the first OSS-Fuzz bug is triaged and we want regression prevention on PRs.
+- **CIFuzz GHA integration**. Superseded: ClusterFuzzLite (above) is its successor and runs on PRs.
 - **MemorySanitizer (MSan) builds**. Deferred until `tst-jni`/`tst-uniffi` introduce material new `unsafe`.
 - **Coverage builds for public dashboard**. Deferred until we want to communicate fuzz reach publicly.
 - **Crash-triage SLA / bug-response policy**. Runtime concern; surfaces once bugs start arriving.
