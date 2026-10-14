@@ -11,12 +11,12 @@
 #![allow(dead_code)] // each binary uses a subset
 
 use std::collections::VecDeque;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tst_core::mpegts::mux::Muxer;
-use tst_core::transport::{BrokenCause, RecvTransport, TransportCancel, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, Transport, TransportCancel, TransportError};
 use tst_pipeline::{BackoffStrategy, ReconnectPolicy};
 
 /// `TransportError::Broken` with no errno and an unspecified cause — the
@@ -184,5 +184,135 @@ impl RecvTransport for ScriptedRecv {
     }
     fn is_alive(&self) -> bool {
         self.alive.unwrap_or(!self.chunks.is_empty())
+    }
+}
+
+/// What the next scripted send does; an empty script means `Ok`.
+#[derive(Clone, Copy, Debug)]
+pub enum SendStep {
+    Ok,
+    Backpressure,
+    Broken,
+    TooLarge,
+}
+
+/// A send transport driven by a shared script. In order, each send:
+/// counts itself in `sends`; returns `every_send` if set; refuses a message
+/// over `max_payload` as `TooLarge`; refuses with `Broken("dead")` once not
+/// alive; then pops the script — `Ok` appends the message to the shared
+/// `wire` log, `Broken` also marks the transport dead. The script and the
+/// wire are `Arc`s so a factory's rebuilt transports share them.
+#[derive(Clone)]
+pub struct ScriptedSend {
+    pub script: Arc<Mutex<VecDeque<SendStep>>>,
+    pub wire: Arc<Mutex<Vec<Vec<u8>>>>,
+    pub sends: Arc<AtomicU32>,
+    pub every_send: Option<TransportError>,
+    pub max_payload: usize,
+    pub alive: bool,
+}
+
+impl ScriptedSend {
+    /// Accepts everything into its own wire log.
+    pub fn ok() -> Self {
+        Self {
+            script: Arc::default(),
+            wire: Arc::default(),
+            sends: Arc::default(),
+            every_send: None,
+            max_payload: 1316,
+            alive: true,
+        }
+    }
+
+    /// Fails every send with `err`.
+    pub fn always(err: TransportError) -> Self {
+        Self {
+            every_send: Some(err),
+            ..Self::ok()
+        }
+    }
+
+    /// Follows `script`, logging accepted sends into `wire`.
+    pub fn scripted(
+        script: Arc<Mutex<VecDeque<SendStep>>>,
+        wire: Arc<Mutex<Vec<Vec<u8>>>>,
+    ) -> Self {
+        Self {
+            script,
+            wire,
+            ..Self::ok()
+        }
+    }
+
+    pub fn with_max_payload(mut self, n: usize) -> Self {
+        self.max_payload = n;
+        self
+    }
+
+    pub fn with_alive(mut self, alive: bool) -> Self {
+        self.alive = alive;
+        self
+    }
+
+    pub fn with_counter(mut self, sends: Arc<AtomicU32>) -> Self {
+        self.sends = sends;
+        self
+    }
+
+    /// Everything accepted so far, as one byte run.
+    pub fn wire_bytes(&self) -> Vec<u8> {
+        self.wire.lock().unwrap().concat()
+    }
+}
+
+impl Transport for ScriptedSend {
+    fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
+        self.sends.fetch_add(1, Ordering::SeqCst);
+        if let Some(e) = &self.every_send {
+            return Err(e.clone());
+        }
+        if msg.len() > self.max_payload {
+            return Err(TransportError::TooLarge {
+                len: msg.len(),
+                max: self.max_payload,
+            });
+        }
+        if !self.alive {
+            return Err(broken("dead"));
+        }
+        let step = self
+            .script
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(SendStep::Ok);
+        match step {
+            SendStep::Ok => {
+                self.wire.lock().unwrap().push(msg.to_vec());
+                Ok(())
+            }
+            SendStep::Backpressure => Err(TransportError::Backpressure {
+                msg: "scripted backpressure".into(),
+                errno_code: None,
+            }),
+            SendStep::TooLarge => Err(TransportError::TooLarge {
+                len: msg.len(),
+                max: 0,
+            }),
+            SendStep::Broken => {
+                self.alive = false;
+                Err(broken("scripted break"))
+            }
+        }
+    }
+    fn max_payload(&self) -> usize {
+        self.max_payload
+    }
+    fn is_alive(&self) -> bool {
+        self.alive
+    }
+    fn close(&mut self) {
+        self.alive = false;
     }
 }

@@ -9,42 +9,17 @@
 //! shells map it to `ShellErrorKind::Backpressure` and `tst-c` to
 //! `TST_E_BUFFER_FULL`.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+mod common;
+
+use crate::common::{ScriptedSend, broken};
+
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tst_pipeline::reconnect::OverflowPolicy;
 use tst_pipeline::{
-    BackoffStrategy, BrokenCause, ManagedTransport, ReconnectMode, ReconnectPolicy, Transport,
-    TransportError,
+    BackoffStrategy, ManagedTransport, ReconnectMode, ReconnectPolicy, Transport, TransportError,
 };
-
-/// Mock `Transport` whose every `send_bytes` returns `Broken` so the
-/// `ManagedTransport` decorator is forced into the reconnect path, where
-/// new bytes get queued into the gap buffer.
-struct AlwaysBroken {
-    sends: Arc<AtomicU32>,
-}
-
-impl Transport for AlwaysBroken {
-    fn send_bytes(&mut self, _: &[u8]) -> Result<(), TransportError> {
-        self.sends.fetch_add(1, Ordering::SeqCst);
-        Err(TransportError::Broken {
-            msg: "always broken (test)".into(),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })
-    }
-
-    fn max_payload(&self) -> usize {
-        1316
-    }
-
-    fn is_alive(&self) -> bool {
-        true
-    }
-
-    fn close(&mut self) {}
-}
 
 /// With `OverflowPolicy::Reject` and no room in the buffer, a send must
 /// surface `TransportError::Backpressure { msg: "gap buffer full", errno_code: None }` rather than
@@ -54,13 +29,8 @@ impl Transport for AlwaysBroken {
 /// out of the buffer, so a failed send cannot be what fills it.
 #[test]
 fn reject_policy_surfaces_backpressure_when_gap_full() {
-    let factory = || -> Result<AlwaysBroken, TransportError> {
-        Err(TransportError::Broken {
-            msg: "factory always fails".into(),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })
-    };
+    let factory =
+        || -> Result<ScriptedSend, TransportError> { Err(broken("factory always fails")) };
     // The buffer refuses BEFORE any reconnect is attempted.
     let policy = ReconnectPolicy {
         max_attempts: Some(1),
@@ -70,9 +40,8 @@ fn reject_policy_surfaces_backpressure_when_gap_full() {
         ..Default::default()
     };
 
-    let inner = AlwaysBroken {
-        sends: Arc::new(AtomicU32::new(0)),
-    };
+    let inner = ScriptedSend::always(broken("always broken (test)"))
+        .with_counter(Arc::new(AtomicU32::new(0)));
     let mut managed = ManagedTransport::new(inner, factory, policy);
 
     // The transport returns Broken and the bytes have nowhere to queue.
@@ -95,11 +64,7 @@ struct Link {
 impl Transport for Link {
     fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
         if self.broken {
-            return Err(TransportError::Broken {
-                msg: "broken (test)".into(),
-                errno_code: None,
-                cause: BrokenCause::Unspecified,
-            });
+            return Err(broken("broken (test)"));
         }
         self.delivered.lock().unwrap().push(msg.to_vec());
         Ok(())

@@ -11,7 +11,7 @@ use crate::common::{ScriptedRecv, broken};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
-use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
+use tst_core::transport::{RecvTransport, TransportError};
 use tst_pipeline::{BackoffStrategy, ManagedRecvTransport, ReconnectPolicy};
 
 #[test]
@@ -21,11 +21,7 @@ fn cancel_interrupts_the_backoff_wait() {
     let factory: Box<dyn FnMut() -> Result<ScriptedRecv, TransportError> + Send> =
         Box::new(move || {
             calls.fetch_add(1, Ordering::SeqCst);
-            Err(TransportError::Broken {
-                msg: "peer still down".into(),
-                errno_code: None,
-                cause: BrokenCause::Unspecified,
-            })
+            Err(broken("peer still down"))
         });
 
     // A 5 s constant backoff: the first reconnect attempt cannot begin
