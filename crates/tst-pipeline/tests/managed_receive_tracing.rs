@@ -10,8 +10,6 @@ mod common;
 
 use crate::common::{ScriptedRecv, broken};
 
-use std::sync::Arc;
-use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 use tracing_test::traced_test;
 use tst_pipeline::{
@@ -39,9 +37,7 @@ fn receiver_reconnect_emits_info_on_attempt_and_warn_on_give_up() {
         ..Default::default()
     };
 
-    let inner = ScriptedRecv::failing(broken("always broken (test)"))
-        .with_alive(true)
-        .with_counter(Arc::new(AtomicU32::new(0)));
+    let inner = ScriptedRecv::failing(broken("always broken (test)")).with_alive(true);
     let mut managed = ManagedRecvTransport::new(inner, factory, policy);
 
     // Drive the reconnect path: a single recv triggers Broken → drop inner →
@@ -89,9 +85,7 @@ fn receiver_background_mode_warns_and_behaves_as_blocking() {
         ..Default::default()
     };
 
-    let inner = ScriptedRecv::failing(broken("always broken (test)"))
-        .with_alive(true)
-        .with_counter(Arc::new(AtomicU32::new(0)));
+    let inner = ScriptedRecv::failing(broken("always broken (test)")).with_alive(true);
     let mut managed = ManagedRecvTransport::new(inner, factory, policy);
 
     // The construction-time warning fires immediately, regardless of
