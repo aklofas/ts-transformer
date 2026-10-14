@@ -609,42 +609,29 @@ pub unsafe extern "C" fn tst_rist_mux_sender_reset_stats(p: *mut TstRistMuxSende
 mod tests {
     use super::*;
     use crate::config::*;
+    use crate::test_support::null_entry_tests;
 
-    #[test]
-    fn null_close_is_safe() {
-        unsafe { tst_rist_mux_sender_close(std::ptr::null_mut()) };
-    }
-
-    #[test]
-    fn null_push_video_returns_invalid_config() {
-        let nal = [0u8; 4];
-        let rc = unsafe {
+    null_entry_tests! {
+        null_close_is_safe => no_crash { tst_rist_mux_sender_close(std::ptr::null_mut()) };
+        null_push_video_returns_invalid_config => invalid_config {
+            let nal = [0u8; 4];
             tst_rist_mux_sender_push_video(std::ptr::null_mut(), nal.as_ptr(), nal.len(), 0, false)
         };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_push_klv_returns_invalid_config() {
-        let klv = [0u8; 4];
-        let rc = unsafe {
+        null_push_klv_returns_invalid_config => invalid_config {
+            let klv = [0u8; 4];
             tst_rist_mux_sender_push_klv(std::ptr::null_mut(), klv.as_ptr(), klv.len(), 0)
         };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_get_mux_sender_stats_returns_invalid_config() {
-        let mut stats = crate::stats::TstMuxSenderStats::default();
-        let rc =
-            unsafe { tst_rist_mux_sender_get_mux_sender_stats(std::ptr::null_mut(), &mut stats) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_reset_stats_returns_invalid_config() {
-        let rc = unsafe { tst_rist_mux_sender_reset_stats(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
+        null_get_mux_sender_stats_returns_invalid_config => invalid_config {
+            let mut stats = crate::stats::TstMuxSenderStats::default();
+            tst_rist_mux_sender_get_mux_sender_stats(std::ptr::null_mut(), &mut stats)
+        };
+        null_reset_stats_returns_invalid_config => invalid_config {
+            tst_rist_mux_sender_reset_stats(std::ptr::null_mut())
+        };
+        open_with_null_config_returns_null => null {
+            let url = std::ffi::CString::new("rist://127.0.0.1:8001").unwrap();
+            tst_rist_mux_sender_open(url.as_ptr(), std::ptr::null())
+        };
     }
 
     #[test]
@@ -657,12 +644,5 @@ mod tests {
             assert!(p.is_null());
             tst_mux_config_free(cfg);
         }
-    }
-
-    #[test]
-    fn open_with_null_config_returns_null() {
-        let url = std::ffi::CString::new("rist://127.0.0.1:8001").unwrap();
-        let p = unsafe { tst_rist_mux_sender_open(url.as_ptr(), std::ptr::null()) };
-        assert!(p.is_null());
     }
 }
