@@ -154,7 +154,10 @@ fn encode_buffer_too_small() {
     let r = UasDatalinkLs::default();
     let mut buf = vec![0u8; 5];
     let err = encode(&r, &mut buf).unwrap_err();
-    matches!(err, KlvEncodeError::BufferTooSmall { .. });
+    assert!(
+        matches!(err, KlvEncodeError::BufferTooSmall { .. }),
+        "unexpected error: {err:?}"
+    );
 }
 
 #[test]

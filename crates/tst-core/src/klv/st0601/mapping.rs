@@ -444,7 +444,10 @@ mod tests {
         };
         let mut buf = [0u8; 4];
         let err = encode_fixed_range(&r, 13, 100.0, &mut buf, OutOfRangePolicy::Error).unwrap_err();
-        matches!(err, KlvEncodeError::OutOfRange { .. });
+        assert!(
+            matches!(err, KlvEncodeError::OutOfRange { .. }),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]

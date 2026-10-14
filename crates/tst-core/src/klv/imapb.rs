@@ -492,7 +492,10 @@ mod tests {
         };
         let mut buf = [0u8; 2];
         let err = encode_imapb(&p, 2.0, &mut buf).unwrap_err();
-        matches!(err, KlvEncodeError::OutOfRange { .. });
+        assert!(
+            matches!(err, KlvEncodeError::OutOfRange { .. }),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
@@ -504,7 +507,10 @@ mod tests {
         };
         let mut buf = [0u8; 2];
         let err = encode_imapb(&p, f64::NAN, &mut buf).unwrap_err();
-        matches!(err, KlvEncodeError::OutOfRange { .. });
+        assert!(
+            matches!(err, KlvEncodeError::OutOfRange { .. }),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
@@ -516,7 +522,10 @@ mod tests {
         };
         let mut buf = [0u8; 2];
         let err = encode_imapb(&p, 0.0, &mut buf).unwrap_err();
-        matches!(err, KlvEncodeError::BufferTooSmall { .. });
+        assert!(
+            matches!(err, KlvEncodeError::BufferTooSmall { .. }),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
@@ -528,7 +537,10 @@ mod tests {
         };
         let buf = [0u8; 3];
         let err = decode_imapb(&p, &buf).unwrap_err();
-        matches!(err, KlvFieldError::InvalidLength { .. });
+        assert!(
+            matches!(err, KlvFieldError::InvalidLength { .. }),
+            "unexpected error: {err:?}"
+        );
     }
 
     // --- Spec-vector regression tests (ST 1201.5 §10 + ST 0903.6 §10.1) ---
