@@ -1,18 +1,10 @@
 //! Concurrent unicast clients.
 
+use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
-use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_rtp::{RtspClient, RtspServer, RtspServerBuilder};
-
-fn make_muxer_cfg() -> MuxerConfig {
-    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-    prog.add_video(0x1011, VideoCodec::H264);
-    let mut b = MuxerConfig::builder();
-    b.add_program(prog.build());
-    b.build().unwrap()
-}
 
 /// N concurrent clients all connect + DESCRIBE successfully.
 #[test]

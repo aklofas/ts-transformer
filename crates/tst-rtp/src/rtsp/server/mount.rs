@@ -592,12 +592,7 @@ mod tests {
     use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 
     fn mock_unicast_mount_state() -> Arc<MountState> {
-        // Minimal MuxerConfig: one program with H.264 video.
-        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-        prog.add_video(0x1011, VideoCodec::H264);
-        let mut b = MuxerConfig::builder();
-        b.add_program(prog.build());
-        let cfg = b.build().unwrap();
+        let cfg = crate::rtsp::server::test_muxer_cfg();
         MountState::new("/test", MountKind::Unicast, cfg, 256).unwrap()
     }
 

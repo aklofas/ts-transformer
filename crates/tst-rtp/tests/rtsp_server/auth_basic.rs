@@ -5,17 +5,9 @@
 //! backed `RtspServer` on a kernel-picked port, runs an RTSP request,
 //! and asserts on the response or returned error.
 
+use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use secrecy::SecretString;
-use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_rtp::{RtspClient, RtspError, RtspServer, RtspServerBuilder};
-
-fn make_muxer_cfg() -> MuxerConfig {
-    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-    prog.add_video(0x1011, VideoCodec::H264);
-    let mut b = MuxerConfig::builder();
-    b.add_program(prog.build());
-    b.build().expect("MuxerConfig builds")
-}
 
 /// Spin up an `RtspServer` requiring Basic auth, with a single
 /// `/live` unicast mount, listening on a kernel-picked port.

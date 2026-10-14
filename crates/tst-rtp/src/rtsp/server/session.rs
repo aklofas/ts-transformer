@@ -1090,7 +1090,6 @@ mod session_tests {
     #[tokio::test]
     async fn auth_failures_reset_on_successful_auth() {
         use crate::rtsp::server::mount::{MountEntry, MountKind, MountState};
-        use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -1103,11 +1102,7 @@ mod session_tests {
             *state.local_addr.lock().unwrap() = Some("127.0.0.1:8554".parse().unwrap());
             // Register a real mount at /test so an auth-passing DESCRIBE
             // returns 200 (2xx), triggering the counter reset.
-            let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-            prog.add_video(0x1011, VideoCodec::H264);
-            let mut b = MuxerConfig::builder();
-            b.add_program(prog.build());
-            let mux_cfg = b.build().unwrap();
+            let mux_cfg = crate::rtsp::server::test_muxer_cfg();
             let mount = MountState::new("/test", MountKind::Unicast, mux_cfg, 16).unwrap();
             state
                 .mounts

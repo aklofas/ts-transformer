@@ -3,17 +3,9 @@
 //! Mirror of `auth_basic.rs` but exercises
 //! `RtspServerBuilder::auth_digest_md5` and `auth_digest_sha256`.
 
+use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use secrecy::SecretString;
-use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_rtp::{RtspClient, RtspError, RtspServer, RtspServerBuilder};
-
-fn make_muxer_cfg() -> MuxerConfig {
-    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-    prog.add_video(0x1011, VideoCodec::H264);
-    let mut b = MuxerConfig::builder();
-    b.add_program(prog.build());
-    b.build().expect("MuxerConfig builds")
-}
 
 fn server_with_digest_md5() -> RtspServer {
     let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").expect("URL parse");

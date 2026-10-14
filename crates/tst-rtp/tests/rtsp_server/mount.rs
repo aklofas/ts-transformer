@@ -2,17 +2,9 @@
 //! tests. No RTP/RTCP flow exercised here; the loopback, multicast and
 //! client tests cover the actual streaming paths.
 
+use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_rtp::{MountKind, RtspServer, RtspServerError};
-
-fn make_muxer_cfg() -> MuxerConfig {
-    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-    prog.add_video(0x1011, VideoCodec::H264);
-    let mut b = MuxerConfig::builder();
-    b.add_program(prog.build());
-    b.build().unwrap()
-}
 
 #[test]
 fn add_mount_returns_handle_with_path() {
