@@ -425,7 +425,10 @@ mod tests {
     fn ber_buffer_too_small() {
         let mut buf = [0u8; 1];
         let err = write_ber(0x100, &mut buf).unwrap_err();
-        matches!(err, KlvEncodeError::BufferTooSmall { needed: 3, got: 1 });
+        assert!(
+            matches!(err, KlvEncodeError::BufferTooSmall { needed: 3, got: 1 }),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
@@ -433,14 +436,20 @@ mod tests {
         // 0x82 says "next 2 bytes are length" but we provide only 1
         let buf = [0x82, 0xFF];
         let err = read_ber(&buf).unwrap_err();
-        matches!(err, KlvDecodeError::Truncated { .. });
+        assert!(
+            matches!(err, KlvDecodeError::Truncated { .. }),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
     fn ber_indefinite_form_rejected() {
         let buf = [0x80];
         let err = read_ber(&buf).unwrap_err();
-        matches!(err, KlvDecodeError::MalformedLength { offset: 0 });
+        assert!(
+            matches!(err, KlvDecodeError::MalformedLength { offset: 0 }),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
@@ -448,14 +457,20 @@ mod tests {
         // 0x89 = "9 length bytes", bigger than u64
         let buf = [0x89, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         let err = read_ber(&buf).unwrap_err();
-        matches!(err, KlvDecodeError::MalformedLength { offset: 0 });
+        assert!(
+            matches!(err, KlvDecodeError::MalformedLength { offset: 0 }),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
     fn ber_empty_input_truncated() {
         let buf: [u8; 0] = [];
         let err = read_ber(&buf).unwrap_err();
-        matches!(err, KlvDecodeError::Truncated { .. });
+        assert!(
+            matches!(err, KlvDecodeError::Truncated { .. }),
+            "unexpected error: {err:?}"
+        );
     }
 
     // ---------- BER-OID ----------
@@ -529,7 +544,10 @@ mod tests {
         // 0x80 alone has the continuation bit set but no following byte
         let buf = [0x80];
         let err = read_ber_oid(&buf).unwrap_err();
-        matches!(err, KlvDecodeError::Truncated { .. });
+        assert!(
+            matches!(err, KlvDecodeError::Truncated { .. }),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
@@ -537,9 +555,12 @@ mod tests {
         // 6 continuation bytes — overflows u32
         let buf = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F];
         let err = read_ber_oid(&buf).unwrap_err();
-        matches!(
-            err,
-            KlvDecodeError::LengthOverflow { .. } | KlvDecodeError::MalformedTag { .. }
+        assert!(
+            matches!(
+                err,
+                KlvDecodeError::LengthOverflow { .. } | KlvDecodeError::MalformedTag { .. }
+            ),
+            "unexpected error: {err:?}"
         );
     }
 
@@ -547,7 +568,10 @@ mod tests {
     fn ber_oid_buffer_too_small() {
         let mut buf = [0u8; 1];
         let err = write_ber_oid(0x80, &mut buf).unwrap_err();
-        matches!(err, KlvEncodeError::BufferTooSmall { .. });
+        assert!(
+            matches!(err, KlvEncodeError::BufferTooSmall { .. }),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]

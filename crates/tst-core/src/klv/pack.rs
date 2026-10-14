@@ -220,7 +220,10 @@ mod tests {
         let buf = [0x01, 0x04, 0xAA, 0xBB];
         let mut it = Iter::local_set(&buf);
         let err = it.next().unwrap().unwrap_err();
-        matches!(err, KlvDecodeError::Truncated { .. });
+        assert!(
+            matches!(err, KlvDecodeError::Truncated { .. }),
+            "unexpected error: {err:?}"
+        );
         assert!(it.next().is_none(), "iterator finished after error");
     }
 
@@ -230,7 +233,10 @@ mod tests {
         let buf = [0x01, 0x82, 0xFF];
         let mut it = Iter::local_set(&buf);
         let err = it.next().unwrap().unwrap_err();
-        matches!(err, KlvDecodeError::Truncated { .. });
+        assert!(
+            matches!(err, KlvDecodeError::Truncated { .. }),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
