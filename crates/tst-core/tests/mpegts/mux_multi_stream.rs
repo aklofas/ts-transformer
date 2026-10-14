@@ -9,6 +9,7 @@
 //! on routing — the right bytes go to the right PIDs.
 
 use crate::common::mux_demux::drain_mux as drain_all;
+use crate::common::synthetic::minimal_klv as klv_blob;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
@@ -27,14 +28,6 @@ fn pids_present(ts: &[u8]) -> std::collections::BTreeSet<u16> {
 /// Minimal Annex-B H.264 NAL — start code + nal_unit_type byte + payload.
 fn h264_au(payload: u8) -> Vec<u8> {
     vec![0x00, 0x00, 0x00, 0x01, 0x67, payload, 0xFF]
-}
-
-/// Minimal 17-byte KLV (16-byte UL + 1-byte length=0).
-fn klv_blob() -> Vec<u8> {
-    vec![
-        0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
-        0x00, 0x00,
-    ]
 }
 
 #[test]

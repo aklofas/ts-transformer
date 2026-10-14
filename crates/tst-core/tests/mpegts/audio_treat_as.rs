@@ -1,20 +1,12 @@
 //! Tests `DemuxerConfig::stream_kind_overrides` against the non-conformant
 //! audio fixtures (MP3 on user-private 0xF1, MP3 mislabeled as Layer II 0x03).
 
+use crate::common::fixtures::audio_fixture_path as fixture_path;
 use std::fs;
-use std::path::Path;
 use tst_core::mpegts::demux::{
     Demuxer, DemuxerConfig,
     event::{AudioCodec, DemuxEvent, SamplePayload, StreamKind},
 };
-
-fn fixture_path(name: &str) -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("audio")
-        .join(name)
-}
 
 /// Walks the PMT to find a PID whose stream_type matches the target.
 /// Crude PMT parse; assumes single-section + no adaptation field.

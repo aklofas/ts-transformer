@@ -5,18 +5,11 @@
 //! - Sync  KLV (stream_type 0x15 SynchronousMetadata) → PES stream_id 0xFC (metadata)
 
 use crate::common::mux_demux::drain_mux as drain;
+use crate::common::synthetic::minimal_klv as synthetic_klv;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
-
-/// Minimal 17-byte KLV LS packet (16-byte ST 0601 UL + 1-byte BER length=0).
-fn synthetic_klv() -> Vec<u8> {
-    vec![
-        0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
-        0x00, 0x00,
-    ]
-}
 
 /// Extract the PES `stream_id` byte from the first PUSI packet on `pid`.
 ///

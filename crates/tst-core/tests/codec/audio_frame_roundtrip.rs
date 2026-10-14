@@ -9,18 +9,10 @@
 //! All three fixtures are ffmpeg-generated at 44100 Hz mono. Verified with
 //! `ffprobe -show_streams -select_streams a <file>.ts`.
 
-use std::path::Path;
+use crate::common::fixtures::audio_fixture_path as fixture_path;
 use tst_core::codec;
 use tst_core::mpegts::demux::{AudioCodec, DemuxEvent, Demuxer, SamplePayload};
 use tst_core::shared::SharedBytes;
-
-fn fixture_path(name: &str) -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("audio")
-        .join(name)
-}
 
 /// Feed a fixture file through the demuxer; return all (pid, codec, frames)
 /// tuples from Audio sample events.

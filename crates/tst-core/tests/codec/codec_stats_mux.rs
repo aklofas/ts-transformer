@@ -18,6 +18,7 @@
 //! to `tests/common/mod.rs` (which currently only holds the unrelated
 //! `imapb_tol` helper).
 
+use crate::common::synthetic::{build_adts_frame, build_dummy_klv, build_minimal_h264_au};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     AudioCodec as MuxAudioCodec, KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder,
@@ -26,47 +27,6 @@ use tst_core::mpegts::mux::{
 use tst_core::mpegts::stats::StreamCodecStats;
 
 // --- Helpers ----------------------------------------------------------------
-
-/// Minimal H.264 AU: AUD (nal_type=9) + IDR (nal_type=5). Same shape as
-/// the helper in `codec_stats.rs` and `mpegts_demux.rs::build_minimal_h264_au`.
-fn build_minimal_h264_au() -> Vec<u8> {
-    vec![
-        0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB, 0xCC,
-    ]
-}
-
-/// Minimal SMPTE-UL-shaped KLV blob — same shape as
-/// `codec_stats.rs::build_dummy_klv`. Only what matters for routing
-/// is the SMPTE UL prefix (`06 0E 2B 34`).
-fn build_dummy_klv() -> Vec<u8> {
-    let body = [2u8, 8, 0, 0, 0, 0, 0, 0, 0, 0];
-    let mut out = Vec::with_capacity(17 + body.len());
-    out.extend_from_slice(&[
-        0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
-        0x00,
-    ]);
-    out.push(body.len() as u8); // BER short-form length
-    out.extend_from_slice(&body);
-    out
-}
-
-/// Build a single ADTS frame — copy of `codec_stats.rs::build_adts_frame`.
-/// Header pattern matches `crates/tst-core/src/codec/aac/mod.rs`'s
-/// `build_frame` test helper: MPEG-2 ID, no CRC, AAC-LC, 1 block.
-fn build_adts_frame(sample_rate_index: u8, channel_config: u8, total_len: u32) -> Vec<u8> {
-    let mut h = vec![0u8; 7];
-    h[0] = 0xFF;
-    h[1] = 0b1111_0000 | (1 << 3) | 1; // ID=MPEG-2, layer=0, no CRC
-    h[2] = (1 << 6) | ((sample_rate_index & 0xF) << 2) | ((channel_config >> 2) & 1);
-    h[3] = ((channel_config & 0b11) << 6) | (((total_len >> 11) & 0b11) as u8);
-    h[4] = ((total_len >> 3) & 0xFF) as u8;
-    h[5] = (((total_len & 0b111) as u8) << 5) | 0b1_1111;
-    h[6] = 0b11_1111 << 2;
-    let pad = total_len as usize - 7;
-    let mut out = h;
-    out.extend(std::iter::repeat(0u8).take(pad));
-    out
-}
 
 /// Two back-to-back ADTS frames in a single buffer — what Test 4 pushes.
 fn build_two_adts_frames() -> Vec<u8> {

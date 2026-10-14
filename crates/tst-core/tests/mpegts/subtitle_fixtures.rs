@@ -5,23 +5,9 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+use crate::common::fixtures::{ffprobe_available, subtitle_fixture as load};
 use crate::common::mux_demux::demux_bytes_flushed as collect_events;
 use tst_core::mpegts::demux::{DemuxEvent, SamplePayload, StreamKind, SubtitleCodec};
-
-fn load(name: &str) -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/subtitles")
-        .join(name);
-    std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {}", path.display(), e))
-}
-
-fn ffprobe_available() -> bool {
-    Command::new("ffprobe")
-        .arg("-version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
 
 #[test]
 fn dvb_subtitling_eng_classifies_as_dvb_subtitling() {

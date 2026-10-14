@@ -4,6 +4,7 @@
 //! into `Demuxer`, asserts the events recovered match the inputs.
 
 use crate::common::mux_demux::{collect_events, drain_mux};
+use crate::common::synthetic::build_minimal_h264_au;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
     DemuxEvent, Demuxer, MetadataKind, SamplePayload, StreamKind, VideoCodec,
@@ -11,13 +12,6 @@ use tst_core::mpegts::demux::{
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,
 };
-
-fn build_minimal_h264_au() -> Vec<u8> {
-    // Annex-B: AUD (nal_type=9) + IDR (nal_type=5).
-    vec![
-        0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB, 0xCC,
-    ]
-}
 
 fn build_minimal_h265_au() -> Vec<u8> {
     // Annex-B: AUD (nal_type=35) + IDR_W_RADL (nal_type=19, layer=0, temp=1).

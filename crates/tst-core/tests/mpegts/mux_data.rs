@@ -12,31 +12,13 @@
 //! no `NonConformant` for the omission.
 
 use crate::common::mux_demux::{demux_bytes as drain_events, drain_mux};
+use crate::common::synthetic::synthetic_h264_au;
 use tst_core::MuxError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, SamplePayload, StreamKind as DemuxStreamKind};
 use tst_core::mpegts::mux::{
     DataStreamHandle, Muxer, MuxerConfig, MuxerProgramConfigBuilder, StreamKind, VideoCodec,
 };
-
-/// Minimal Annex-B H.264 access unit: SPS + PPS + IDR slice. Mirrors the
-/// helper in `mux_demux_video_raw_roundtrip.rs` — kept local per the
-/// domain convention (each member file owns its synthetic builders).
-fn synthetic_h264_au() -> Vec<u8> {
-    fn nal(nal_type: u8, body: &[u8]) -> Vec<u8> {
-        let mut v = vec![0x00, 0x00, 0x00, 0x01];
-        // forbidden_zero(1)=0 | nal_ref_idc(2) | nal_unit_type(5)
-        let nri: u8 = 0b11; // IDR/SPS/PPS all use high nal_ref_idc
-        v.push((nri << 5) | nal_type);
-        v.extend_from_slice(body);
-        v
-    }
-    let mut au = Vec::new();
-    au.extend(nal(7, &[0x42, 0xC0, 0x28, 0xD9])); // SPS
-    au.extend(nal(8, &[0xCE, 0x38, 0x80])); // PPS
-    au.extend(nal(5, &[0x88, 0x84, 0x0A, 0x7C, 0x11])); // IDR slice
-    au
-}
 
 /// One video + three data streams (0xF0 w/ descriptor, 0xF1, bare 0x06
 /// without PTS) — the corpus-shaped private-stream mix.

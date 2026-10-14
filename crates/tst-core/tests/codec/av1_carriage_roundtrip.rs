@@ -19,26 +19,29 @@ use tst_core::mpegts::mux::{
 };
 use tst_core::shared::SharedBytes;
 
+/// One AV1 OBU with `obu_has_size_field = 1` and a single-byte LEB128 size
+/// (bodies shorter than 128 bytes).
+fn obu(obu_type: u8, body: &[u8]) -> Vec<u8> {
+    // AV1 spec §5.3.2 OBU header byte:
+    //   obu_forbidden_bit  f(1) = 0
+    //   obu_type           f(4)
+    //   obu_extension_flag f(1) = 0
+    //   obu_has_size_field f(1) = 1   <-- required by AV1-in-MPEG-2-TS §3.1
+    //   obu_reserved_1bit  f(1) = 0
+    // = (obu_type << 3) | 0b010
+    let header = (obu_type << 3) | 0x02;
+    let mut v = vec![header];
+    // Single-byte LEB128 size (body lengths < 128 here).
+    v.push(body.len() as u8);
+    v.extend_from_slice(body);
+    v
+}
+
 /// Build a minimal AV1 access unit: Temporal Delimiter + Sequence Header +
 /// Frame Header + Tile Group. Each OBU has `obu_has_size_field = 1`. Bodies
 /// are placeholders — what matters for this test is that the demuxer recovers
 /// each OBU with the correct `obu_type`.
 fn synthetic_av1_au() -> Vec<u8> {
-    fn obu(obu_type: u8, body: &[u8]) -> Vec<u8> {
-        // AV1 spec §5.3.2 OBU header byte:
-        //   obu_forbidden_bit  f(1) = 0
-        //   obu_type           f(4)
-        //   obu_extension_flag f(1) = 0
-        //   obu_has_size_field f(1) = 1   <-- required by AV1-in-MPEG-2-TS §3.1
-        //   obu_reserved_1bit  f(1) = 0
-        // = (obu_type << 3) | 0b010
-        let header = (obu_type << 3) | 0x02;
-        let mut v = vec![header];
-        // Single-byte LEB128 size (body lengths < 128 here).
-        v.push(body.len() as u8);
-        v.extend_from_slice(body);
-        v
-    }
     let mut au = Vec::new();
     au.extend(obu(2, &[])); // Temporal Delimiter (always empty body)
     au.extend(obu(1, &[0x00, 0x00])); // Sequence Header (placeholder body)
@@ -119,13 +122,6 @@ fn av1_mux_demux_roundtrip_emits_obus() {
 /// `ts_open_bitstream_unit` start code (the mux escapes, the demux unwraps).
 #[test]
 fn av1_binding_mode_round_trip_no_issues_with_emulation_prevention() {
-    fn obu(obu_type: u8, body: &[u8]) -> Vec<u8> {
-        let header = (obu_type << 3) | 0x02;
-        let mut v = vec![header];
-        v.push(body.len() as u8);
-        v.extend_from_slice(body);
-        v
-    }
     // OBU bodies contain bytes that, when concatenated, produce a
     // 0x00 0x00 0x01 sequence — the muxer MUST insert emulation
     // prevention, the demuxer MUST strip it back out.
@@ -207,13 +203,6 @@ fn av1_binding_mode_round_trip_no_issues_with_emulation_prevention() {
 /// `split_video` call, which still recovers the OBUs via the raw-OBU fallback.
 #[test]
 fn av1_interop_sender_into_binding_demuxer_surfaces_both_issues() {
-    fn obu(obu_type: u8, body: &[u8]) -> Vec<u8> {
-        let header = (obu_type << 3) | 0x02;
-        let mut v = vec![header];
-        v.push(body.len() as u8);
-        v.extend_from_slice(body);
-        v
-    }
     let mut au = Vec::new();
     au.extend(obu(2, &[]));
     au.extend(obu(1, &[0xAA]));
@@ -285,13 +274,6 @@ fn av1_interop_sender_into_binding_demuxer_surfaces_both_issues() {
 /// round-trip. Exercises the escape-hatch matching.
 #[test]
 fn av1_interop_round_trip_no_binding_issues() {
-    fn obu(obu_type: u8, body: &[u8]) -> Vec<u8> {
-        let header = (obu_type << 3) | 0x02;
-        let mut v = vec![header];
-        v.push(body.len() as u8);
-        v.extend_from_slice(body);
-        v
-    }
     let mut au = Vec::new();
     au.extend(obu(2, &[]));
     au.extend(obu(1, &[0xAA]));
@@ -346,13 +328,6 @@ fn av1_interop_round_trip_no_binding_issues() {
 /// wire-format assertion to catch any regression to it.
 #[test]
 fn av1_binding_mode_emits_one_start_code_per_obu_on_wire() {
-    fn obu(obu_type: u8, body: &[u8]) -> Vec<u8> {
-        let header = (obu_type << 3) | 0x02;
-        let mut v = vec![header];
-        v.push(body.len() as u8);
-        v.extend_from_slice(body);
-        v
-    }
     // 4-OBU AU — same shape as the round-trip test above but with bodies
     // chosen so no body needs escape padding (verifies the COUNT
     // independent of escape mechanics).

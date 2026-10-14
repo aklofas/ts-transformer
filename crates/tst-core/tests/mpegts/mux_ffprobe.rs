@@ -6,19 +6,12 @@
 //!
 //! Skipped if `ffprobe` is not on PATH (returns early with a printed note).
 
+use crate::common::fixtures::ffprobe_available as have_ffprobe;
 use crate::common::mux_demux::drain_mux as drain_all;
 use std::process::Command;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder};
 use tst_test_helpers::synthetic_nal;
-
-fn have_ffprobe() -> bool {
-    Command::new("ffprobe")
-        .arg("-version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
 
 fn run_ffprobe_field(path: &str, field: &str) -> String {
     let out = Command::new("ffprobe")

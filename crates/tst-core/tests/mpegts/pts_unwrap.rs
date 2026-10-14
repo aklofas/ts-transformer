@@ -16,6 +16,8 @@ use tst_core::mpegts::mux::{
 };
 
 use crate::common::mux_demux::drain_mux as drain;
+use crate::common::mux_demux::patch_pes_strip_pts;
+use crate::common::synthetic::minimal_klv;
 use crate::psi_builders::{build_pat_section, build_pmt_section, psi_packet};
 
 /// Mirrors `crates/tst-interop/src/profiles.rs`'s `PTS_ROLLOVER_START`: 5 s
@@ -29,16 +31,6 @@ fn minimal_h264_au() -> Vec<u8> {
     // parsed by the demuxer (raw-first) — any bytes work as the AU.
     vec![
         0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB, 0xCC,
-    ]
-}
-
-/// Minimal 17-byte KLV LS packet (16-byte ST 0601 UL + 1-byte BER
-/// length=0) — bare SMPTE UL, recognized by `classify_klv` as the async
-/// (`KlvShape::Async`) shape.
-fn minimal_klv() -> Vec<u8> {
-    vec![
-        0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
-        0x00, 0x00,
     ]
 }
 
@@ -304,23 +296,6 @@ fn reordered_pts_across_wrap_does_not_double_the_epoch() {
         "each sample must land in the epoch its signed 33-bit delta implies; \
          a second epoch (2*WRAP) means the reorder was mistaken for a wrap"
     );
-}
-
-/// Locate the PES start (`00 00 01 <stream_id>`) and clear `PTS_DTS_flags`
-/// (top 2 bits of byte 7) + zero `header_data_length` (byte 8), so the
-/// parsed PES has no PTS. Mirrors
-/// `tests/mpegts/demux_pes_validation.rs::patch_pes_strip_pts`.
-fn patch_pes_strip_pts(mut bytes: Vec<u8>, stream_id: u8) -> Vec<u8> {
-    let needle = [0x00u8, 0x00, 0x01, stream_id];
-    let pos = bytes
-        .windows(4)
-        .position(|w| w == needle)
-        .expect("PES start code should appear in the muxed TS");
-    let flags2_off = pos + 7;
-    let hdr_len_off = pos + 8;
-    bytes[flags2_off] &= 0x3F;
-    bytes[hdr_len_off] = 0;
-    bytes
 }
 
 /// Test D — a video PID and a KLV PID, each anchored at a *different*
