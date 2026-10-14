@@ -1,0 +1,5 @@
+# ClusterFuzzLite project metadata. `language` is the only field the
+# tooling reads; contacts and sanitizers live in the GitHub workflows
+# (.github/workflows/clusterfuzzlite-*.yml). The fleet-side twin of this
+# bundle is oss-fuzz/ — same build script, different source delivery.
+language: rust

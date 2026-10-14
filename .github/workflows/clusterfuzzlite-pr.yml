@@ -1,0 +1,56 @@
+# ClusterFuzzLite on pull requests: build every libFuzzer harness under
+# AddressSanitizer from the PR head and fuzz the changed code for a bounded
+# time. This is the in-CI stand-in for the OSS-Fuzz fleet (OSS-Fuzz declined
+# the project in 2026-10 on user-base grounds and pointed here), reusing the
+# same base image and the same build script (oss-fuzz/build.sh via
+# .clusterfuzzlite/build.sh).
+#
+# Without a storage repo the run has no coverage history, so "code-change"
+# mode fuzzes all targets with the time budget split between them. Once the
+# PERSONAL_ACCESS_TOKEN secret exists (setup in oss-fuzz/README.md), the
+# storage repo supplies the corpus and the coverage report that narrows the
+# run to the harnesses the PR touched.
+name: clusterfuzzlite-pr
+
+on:
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'bindings/**'
+      - 'oss-fuzz/**'
+      - '.clusterfuzzlite/**'
+      - '.github/workflows/clusterfuzzlite-pr.yml'
+
+permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-fuzz:
+    name: fuzz changed code (address)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Build fuzzers
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: rust
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: address
+          storage-repo: ${{ secrets.PERSONAL_ACCESS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzz-corpus.git', secrets.PERSONAL_ACCESS_TOKEN) || '' }}
+          storage-repo-branch: main
+          storage-repo-branch-coverage: gh-pages
+      - name: Run fuzzers
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: code-change
+          sanitizer: address
+          storage-repo: ${{ secrets.PERSONAL_ACCESS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzz-corpus.git', secrets.PERSONAL_ACCESS_TOKEN) || '' }}
+          storage-repo-branch: main
+          storage-repo-branch-coverage: gh-pages

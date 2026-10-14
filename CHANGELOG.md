@@ -604,6 +604,22 @@ had to pin the sending host with a firewall rule.
 
 ---
 
+### Added — fuzzing: ClusterFuzzLite in CI; OSS-Fuzz enrollment declined
+
+- The OSS-Fuzz enrollment PR recorded in 0.7.0 (`google/oss-fuzz#16214`)
+  was closed by a maintainer on 2026-10-06: the project does not yet have
+  the wide user base OSS-Fuzz targets (the bundle itself passed every
+  check). The suggested alternative, ClusterFuzzLite, now runs the same
+  bundle from this repository's CI: `.clusterfuzzlite/` reuses
+  `oss-fuzz/build.sh` and the OSS-Fuzz builder image; `clusterfuzzlite-pr`
+  fuzzes pull requests that touch `crates/` or `bindings/` for 600 s under
+  libFuzzer + AddressSanitizer, and `clusterfuzzlite-batch` runs a daily
+  one-hour batch, a corpus prune and a coverage report on `main`. Corpus
+  persistence across runs needs a storage repository and a token
+  (`oss-fuzz/README.md` "Corpus persistence"); until then each run starts
+  from the committed seeds. `docs/reference/compatibility.md` §Fuzzing now
+  states this instead of "submitted, not yet merged".
+
 ## [0.7.0] — 2026-10-05
 
 Post-v0.6.0: deep review #4 Arc 2 — one binding layer (`tst_pipeline::binding`)

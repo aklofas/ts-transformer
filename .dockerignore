@@ -1,0 +1,5 @@
+# .clusterfuzzlite/Dockerfile copies the whole checkout into the builder
+# image. Keep host build output out of the context: a local verification
+# build from a warm checkout would otherwise ship tens of GB of target/.
+target/
+**/target/
