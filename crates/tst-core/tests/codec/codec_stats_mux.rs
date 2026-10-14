@@ -13,10 +13,8 @@
 //!   and returns Unknown.
 //!
 //! The Muxer-driven shape mirrors `codec_stats.rs` (Demuxer side). The
-//! `build_adts_frame` helper is copy-pasted from that file; the duplication
-//! is small enough to live with rather than promoting
-//! to `tests/common/mod.rs` (which currently only holds the unrelated
-//! `imapb_tol` helper).
+//! synthetic access-unit builders are shared with it through
+//! `common/synthetic.rs`.
 
 use crate::common::synthetic::{build_adts_frame, build_dummy_klv, build_minimal_h264_au};
 use tst_core::mpegts::common::Pts90khz;

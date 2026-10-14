@@ -29,7 +29,7 @@ pub fn synthetic_h264_au() -> Vec<u8> {
     au
 }
 
-/// The smallest H.264 access unit the muxer accepts as a key frame.
+/// A minimal H.264 access unit: AUD plus one IDR slice.
 pub fn build_minimal_h264_au() -> Vec<u8> {
     // Annex-B: AUD (nal_type=9) + IDR (nal_type=5).
     vec![

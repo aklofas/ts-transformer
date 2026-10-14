@@ -877,75 +877,19 @@ mod tests {
     use crate::mpegts::common::crc32::crc32_mpeg2;
     use alloc::vec::Vec;
 
-    /// Build a minimal valid single-program PAT section (table_id=0x00).
-    /// `programs` is `(program_number, pmt_pid)` tuples.
-    fn build_pat_section(
-        transport_stream_id: u16,
-        version: u8,
-        programs: &[(u16, u16)],
-    ) -> Vec<u8> {
-        let section_length = 5 + 4 * programs.len() + 4;
-        let mut s: Vec<u8> = Vec::with_capacity(3 + section_length);
-        s.push(0x00); // table_id = PAT
-        s.push(0xB0 | ((section_length >> 8) as u8 & 0x0F)); // ssi=1, reserved-zero=0, reserved=11, length hi
-        s.push((section_length & 0xFF) as u8);
-        s.push((transport_stream_id >> 8) as u8);
-        s.push((transport_stream_id & 0xFF) as u8);
-        s.push(0xC1 | ((version & 0x1F) << 1)); // reserved(2)=11 + version(5) + current_next(1)=1
-        s.push(0x00); // section_number
-        s.push(0x00); // last_section_number
-        for &(pn, pid) in programs {
-            s.push((pn >> 8) as u8);
-            s.push((pn & 0xFF) as u8);
-            s.push(0xE0 | ((pid >> 8) as u8 & 0x1F));
-            s.push((pid & 0xFF) as u8);
-        }
-        let total = s.len(); // body before CRC
-        let crc = crc32_mpeg2(&s[..total]);
-        s.push((crc >> 24) as u8);
-        s.push((crc >> 16) as u8);
-        s.push((crc >> 8) as u8);
-        s.push(crc as u8);
-        s
-    }
+    use crate::mpegts::demux::test_support::{
+        build_pat_section, build_pmt_section as build_pmt_section_with,
+    };
 
-    /// Build a minimal valid PMT section (table_id=0x02).
-    /// `streams` is `(stream_type, elementary_pid)` tuples.
+    /// `streams` is `(stream_type, elementary_pid)`, no descriptors.
     fn build_pmt_section(
         program_number: u16,
         pcr_pid: u16,
         version: u8,
         streams: &[(u8, u16)],
     ) -> Vec<u8> {
-        let stream_loop_len = 5 * streams.len();
-        let section_length = 9 + stream_loop_len + 4;
-        let mut s: Vec<u8> = Vec::with_capacity(3 + section_length);
-        s.push(0x02); // table_id = PMT
-        s.push(0xB0 | ((section_length >> 8) as u8 & 0x0F)); // ssi=1, reserved-zero=0, reserved=11, length hi
-        s.push((section_length & 0xFF) as u8);
-        s.push((program_number >> 8) as u8);
-        s.push((program_number & 0xFF) as u8);
-        s.push(0xC1 | ((version & 0x1F) << 1)); // reserved(2)=11 + version(5) + cni=1
-        s.push(0x00); // section_number
-        s.push(0x00); // last_section_number
-        s.push(0xE0 | ((pcr_pid >> 8) as u8 & 0x1F)); // reserved(3)=111 + pcr_pid hi
-        s.push((pcr_pid & 0xFF) as u8);
-        s.push(0xF0); // reserved(4)=1111 + program_info_length hi
-        s.push(0x00); // program_info_length lo (no descriptors)
-        for &(stream_type, pid) in streams {
-            s.push(stream_type);
-            s.push(0xE0 | ((pid >> 8) as u8 & 0x1F)); // reserved(3)=111 + pid hi
-            s.push((pid & 0xFF) as u8);
-            s.push(0xF0); // reserved(4)=1111 + es_info_length hi
-            s.push(0x00); // es_info_length lo
-        }
-        let total = s.len();
-        let crc = crc32_mpeg2(&s[..total]);
-        s.push((crc >> 24) as u8);
-        s.push((crc >> 16) as u8);
-        s.push((crc >> 8) as u8);
-        s.push(crc as u8);
-        s
+        let es: Vec<(u8, u16, &[u8])> = streams.iter().map(|&(t, p)| (t, p, &[][..])).collect();
+        build_pmt_section_with(program_number, pcr_pid, version, &[], &es)
     }
 
     /// Recompute and overwrite the CRC trailer in a section byte vector.

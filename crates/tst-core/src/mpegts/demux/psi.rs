@@ -201,39 +201,7 @@ pub fn parse_pat(section: &[u8]) -> Result<Pat, PsiParseError> {
 #[cfg(test)]
 mod pat_tests {
     use super::*;
-
-    /// Build a minimal valid PAT section bytes for testing.
-    /// `programs` is `(program_number, pid)` tuples.
-    fn build_pat_section(
-        transport_stream_id: u16,
-        version: u8,
-        programs: &[(u16, u16)],
-    ) -> Vec<u8> {
-        let mut s = Vec::new();
-        s.push(0x00); // table_id = PAT
-        // section_syntax_indicator (1) + reserved-zero (1) + reserved (2) + section_length (12)
-        let section_length = 5 + 4 * programs.len() + 4; // header tail + program loop + CRC32
-        let sl = section_length as u16;
-        s.push(0xB0 | ((sl >> 8) as u8 & 0x0F)); // 1011_xxxx
-        s.push((sl & 0xFF) as u8);
-        s.push((transport_stream_id >> 8) as u8);
-        s.push((transport_stream_id & 0xFF) as u8);
-        s.push(0xC1 | ((version & 0x1F) << 1)); // reserved(2)=11 + version(5) + current_next(1)=1
-        s.push(0x00); // section_number
-        s.push(0x00); // last_section_number
-        for (pn, pid) in programs {
-            s.push((pn >> 8) as u8);
-            s.push((pn & 0xFF) as u8);
-            s.push(0xE0 | ((pid >> 8) as u8 & 0x1F));
-            s.push((pid & 0xFF) as u8);
-        }
-        let crc = crc32_mpeg2(&s);
-        s.push((crc >> 24) as u8);
-        s.push((crc >> 16) as u8);
-        s.push((crc >> 8) as u8);
-        s.push(crc as u8);
-        s
-    }
+    use crate::mpegts::demux::test_support::build_pat_section;
 
     #[test]
     fn parses_minimal_pat() {
@@ -652,6 +620,19 @@ pub fn parse_pmt(section: &[u8]) -> Result<Pmt, PsiParseError> {
 mod pmt_tests {
     use super::*;
 
+    use crate::mpegts::demux::test_support::build_pmt_section as build_pmt_section_with;
+
+    /// `descriptors` serialised as `tag, length, data` triples.
+    fn descriptor_bytes(descriptors: &[RawDescriptor]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for d in descriptors {
+            out.push(d.tag);
+            out.push(d.data.len() as u8);
+            out.extend_from_slice(&d.data);
+        }
+        out
+    }
+
     fn build_pmt_section(
         program_number: u16,
         version: u8,
@@ -659,56 +640,24 @@ mod pmt_tests {
         program_descs: &[RawDescriptor],
         streams: &[PmtStream],
     ) -> Vec<u8> {
-        // section_syntax_indicator(1) | '0'(1) | reserved(2) | section_length(12)
-        // Body length is computed below; section_length covers from byte 3 to end including CRC.
-        let mut s: Vec<u8> = vec![
-            0x02, // table_id = PMT
-            0xB0, // placeholder for top nibble of section_length
-            0x00, // placeholder low byte
-            (program_number >> 8) as u8,
-            (program_number & 0xFF) as u8,
-            0xC1 | ((version & 0x1F) << 1),
-            0x00, // section_number
-            0x00, // last_section_number
-            0xE0 | ((pcr_pid >> 8) as u8 & 0x1F),
-            (pcr_pid & 0xFF) as u8,
-        ];
-        // program_info_length (12 bits, top 4 reserved)
-        let mut prog_desc_buf = Vec::new();
-        for d in program_descs {
-            prog_desc_buf.push(d.tag);
-            prog_desc_buf.push(d.data.len() as u8);
-            prog_desc_buf.extend_from_slice(&d.data);
-        }
-        s.push(0xF0 | ((prog_desc_buf.len() >> 8) as u8 & 0x0F));
-        s.push((prog_desc_buf.len() & 0xFF) as u8);
-        s.extend_from_slice(&prog_desc_buf);
-        // streams loop
-        for st in streams {
-            s.push(st.stream_type);
-            s.push(0xE0 | ((st.elementary_pid >> 8) as u8 & 0x1F));
-            s.push((st.elementary_pid & 0xFF) as u8);
-            let mut sd_buf = Vec::new();
-            for d in &st.descriptors {
-                sd_buf.push(d.tag);
-                sd_buf.push(d.data.len() as u8);
-                sd_buf.extend_from_slice(&d.data);
-            }
-            s.push(0xF0 | ((sd_buf.len() >> 8) as u8 & 0x0F));
-            s.push((sd_buf.len() & 0xFF) as u8);
-            s.extend_from_slice(&sd_buf);
-        }
-        // Backfill section_length (from byte 3 forward, including CRC).
-        let section_length = (s.len() - 3 + 4) as u16;
-        s[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
-        s[2] = (section_length & 0xFF) as u8;
-        // CRC.
-        let crc = crc32_mpeg2(&s);
-        s.push((crc >> 24) as u8);
-        s.push((crc >> 16) as u8);
-        s.push((crc >> 8) as u8);
-        s.push(crc as u8);
-        s
+        let es: Vec<(u8, u16, Vec<u8>)> = streams
+            .iter()
+            .map(|s| {
+                (
+                    s.stream_type,
+                    s.elementary_pid,
+                    descriptor_bytes(&s.descriptors),
+                )
+            })
+            .collect();
+        let es: Vec<(u8, u16, &[u8])> = es.iter().map(|(t, p, d)| (*t, *p, d.as_slice())).collect();
+        build_pmt_section_with(
+            program_number,
+            pcr_pid,
+            version,
+            &descriptor_bytes(program_descs),
+            &es,
+        )
     }
 
     fn klva_descriptor() -> RawDescriptor {
