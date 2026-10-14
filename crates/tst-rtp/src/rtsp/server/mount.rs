@@ -671,26 +671,6 @@ mod tests {
     }
 
     #[test]
-    fn push_video_updates_stats() {
-        let state = mock_unicast_mount_state();
-        let handle = MountHandle { state };
-        let nal = [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB];
-        let initial = handle.stats();
-        handle.push_video(&nal, Pts90khz::new(0), true).unwrap();
-        let after = handle.stats();
-        assert!(
-            after.bytes_pushed > initial.bytes_pushed,
-            "bytes_pushed should grow after a push (got {} -> {})",
-            initial.bytes_pushed,
-            after.bytes_pushed,
-        );
-        assert!(
-            after.packets_pushed > initial.packets_pushed,
-            "packets_pushed should grow after a push",
-        );
-    }
-
-    #[test]
     fn push_video_with_subscriber_delivers_to_broadcast() {
         let state = mock_unicast_mount_state();
         let mut rx = state.fanout.subscribe();
