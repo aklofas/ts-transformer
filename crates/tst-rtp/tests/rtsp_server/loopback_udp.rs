@@ -10,18 +10,10 @@
 //! Unicast UDP variant runs on the server runtime; this test verifies
 //! the handshake + control-plane wire-up only.
 
+use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_rtp::{RtspClient, RtspServer};
-
-fn make_muxer_cfg() -> MuxerConfig {
-    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-    prog.add_video(0x1011, VideoCodec::H264);
-    let mut b = MuxerConfig::builder();
-    b.add_program(prog.build());
-    b.build().unwrap()
-}
 
 /// Sanity: server bind + add_mount + start + client.connect + describe
 /// returns a valid SDP advertising the MP2T payload type.

@@ -10,19 +10,11 @@
 
 use std::time::Duration;
 
+use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
-use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_pipeline::DemuxReceiver;
 use tst_rtp::{RtspClient, RtspServer};
-
-fn make_muxer_cfg() -> MuxerConfig {
-    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-    prog.add_video(0x1011, VideoCodec::H264);
-    let mut b = MuxerConfig::builder();
-    b.add_program(prog.build());
-    b.build().unwrap()
-}
 
 /// `rtsp:// ?transport=tcp` end-to-end: [`RtspClient::play`] succeeds with
 /// the interleaved pump feeding the underlying
