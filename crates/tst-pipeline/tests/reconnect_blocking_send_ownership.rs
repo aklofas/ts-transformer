@@ -10,6 +10,10 @@
 //! any of these. A copy left behind in the gap buffer would reach the wire as
 //! well, so every test here counts what the wire carried.
 
+mod common;
+
+use crate::common::{ScriptedSend, SendStep, broken};
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -17,69 +21,11 @@ use std::time::Duration;
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-use tst_core::transport::{BrokenCause, Transport, TransportError};
+use tst_core::transport::{Transport, TransportError};
 use tst_pipeline::{
     BackoffStrategy, ManagedTransport, MuxSender, OverflowPolicy, ReconnectMode, ReconnectPolicy,
     Sender, SenderConfig, ShellErrorKind,
 };
-
-#[derive(Clone, Copy, Debug)]
-enum Outcome {
-    Backpressure,
-    Broken,
-    TooLarge,
-}
-
-/// Script-driven transport. An empty script means the send succeeds and the
-/// slice is appended to the shared wire log.
-struct Scripted {
-    script: Arc<Mutex<VecDeque<Outcome>>>,
-    wire: Arc<Mutex<Vec<Vec<u8>>>>,
-    alive: bool,
-}
-
-impl Transport for Scripted {
-    fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
-        if !self.alive {
-            return Err(TransportError::Broken {
-                msg: "dead".into(),
-                errno_code: None,
-                cause: BrokenCause::Unspecified,
-            });
-        }
-        match self.script.lock().unwrap().pop_front() {
-            None => {
-                self.wire.lock().unwrap().push(msg.to_vec());
-                Ok(())
-            }
-            Some(Outcome::Backpressure) => Err(TransportError::Backpressure {
-                msg: "scripted backpressure".into(),
-                errno_code: None,
-            }),
-            Some(Outcome::TooLarge) => Err(TransportError::TooLarge {
-                len: msg.len(),
-                max: 0,
-            }),
-            Some(Outcome::Broken) => {
-                self.alive = false;
-                Err(TransportError::Broken {
-                    msg: "scripted break".into(),
-                    errno_code: None,
-                    cause: BrokenCause::Unspecified,
-                })
-            }
-        }
-    }
-    fn max_payload(&self) -> usize {
-        1316
-    }
-    fn is_alive(&self) -> bool {
-        self.alive
-    }
-    fn close(&mut self) {
-        self.alive = false;
-    }
-}
 
 struct Rig {
     wire: Arc<Mutex<Vec<Vec<u8>>>>,
@@ -88,27 +34,25 @@ struct Rig {
 
 /// Initial inner: first send breaks. Fresh inner (one factory call expected):
 /// first send reports `Backpressure`, everything after succeeds.
-fn managed_break_then_backpressure() -> (ManagedTransport<Scripted>, Rig) {
+fn managed_break_then_backpressure() -> (ManagedTransport<ScriptedSend>, Rig) {
     let wire = Arc::new(Mutex::new(Vec::new()));
     let factory_calls = Arc::new(AtomicU32::new(0));
-    let initial = Scripted {
-        script: Arc::new(Mutex::new(VecDeque::from([Outcome::Broken]))),
-        wire: Arc::clone(&wire),
-        alive: true,
-    };
-    let fresh_script = Arc::new(Mutex::new(VecDeque::from([Outcome::Backpressure])));
+    let initial = ScriptedSend::scripted(
+        Arc::new(Mutex::new(VecDeque::from([SendStep::Broken]))),
+        Arc::clone(&wire),
+    );
+    let fresh_script = Arc::new(Mutex::new(VecDeque::from([SendStep::Backpressure])));
     let factory = {
         let wire = Arc::clone(&wire);
         let calls = Arc::clone(&factory_calls);
-        move || -> Result<Scripted, TransportError> {
+        move || -> Result<ScriptedSend, TransportError> {
             calls.fetch_add(1, Ordering::SeqCst);
-            Ok(Scripted {
+            Ok(ScriptedSend::scripted(
                 // Shared across rebuilds: the single Backpressure is consumed
                 // once, whichever fresh inner sees it.
-                script: Arc::clone(&fresh_script),
-                wire: Arc::clone(&wire),
-                alive: true,
-            })
+                Arc::clone(&fresh_script),
+                Arc::clone(&wire),
+            ))
         }
     };
     let policy = ReconnectPolicy {
@@ -217,22 +161,6 @@ fn sender_over_blocking_managed_delivers_each_bundle_once() {
     assert_eq!(wire[0], a);
 }
 
-#[derive(Clone)]
-struct Sink(Arc<Mutex<Vec<Vec<u8>>>>);
-impl Transport for Sink {
-    fn send_bytes(&mut self, b: &[u8]) -> Result<(), TransportError> {
-        self.0.lock().unwrap().push(b.to_vec());
-        Ok(())
-    }
-    fn max_payload(&self) -> usize {
-        1316
-    }
-    fn close(&mut self) {}
-    fn is_alive(&self) -> bool {
-        true
-    }
-}
-
 fn mux_config() -> MuxerConfig {
     let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
     prog.add_video(0x1011, VideoCodec::H264);
@@ -256,7 +184,11 @@ fn mux_sender_over_blocking_managed_delivers_each_chunk_once() {
     // Reference: same input over a transport that never fails.
     let reference = Arc::new(Mutex::new(Vec::new()));
     {
-        let s = MuxSender::new(Sink(Arc::clone(&reference)), mux_config()).expect("mux sender");
+        let s = MuxSender::new(
+            ScriptedSend::scripted(Arc::default(), Arc::clone(&reference)),
+            mux_config(),
+        )
+        .expect("mux sender");
         s.send_video(&idr(0xA5), Pts90khz::new(0), true).unwrap();
         s.send_video(&idr(0x5A), Pts90khz::new(3000), true).unwrap();
         s.finish().unwrap();
@@ -293,30 +225,26 @@ fn mux_sender_over_blocking_managed_delivers_each_chunk_once() {
 /// Initial inner: first send breaks. The factory's Nth call (from 0) answers
 /// with `rebuilds[N]`: `None` refuses, `Some(script)` hands back an inner that
 /// plays `script` and then accepts everything. Calls past the end accept.
-fn managed_break_then(rebuilds: Vec<Option<Vec<Outcome>>>) -> (ManagedTransport<Scripted>, Rig) {
+fn managed_break_then(
+    rebuilds: Vec<Option<Vec<SendStep>>>,
+) -> (ManagedTransport<ScriptedSend>, Rig) {
     let wire = Arc::new(Mutex::new(Vec::new()));
     let factory_calls = Arc::new(AtomicU32::new(0));
-    let initial = Scripted {
-        script: Arc::new(Mutex::new(VecDeque::from([Outcome::Broken]))),
-        wire: Arc::clone(&wire),
-        alive: true,
-    };
+    let initial = ScriptedSend::scripted(
+        Arc::new(Mutex::new(VecDeque::from([SendStep::Broken]))),
+        Arc::clone(&wire),
+    );
     let factory = {
         let wire = Arc::clone(&wire);
         let calls = Arc::clone(&factory_calls);
-        move || -> Result<Scripted, TransportError> {
+        move || -> Result<ScriptedSend, TransportError> {
             let n = calls.fetch_add(1, Ordering::SeqCst) as usize;
             match rebuilds.get(n).cloned().unwrap_or(Some(Vec::new())) {
-                None => Err(TransportError::Broken {
-                    msg: "factory down".into(),
-                    errno_code: None,
-                    cause: BrokenCause::Unspecified,
-                }),
-                Some(script) => Ok(Scripted {
-                    script: Arc::new(Mutex::new(VecDeque::from(script))),
-                    wire: Arc::clone(&wire),
-                    alive: true,
-                }),
+                None => Err(broken("factory down")),
+                Some(script) => Ok(ScriptedSend::scripted(
+                    Arc::new(Mutex::new(VecDeque::from(script))),
+                    Arc::clone(&wire),
+                )),
             }
         }
     };
@@ -370,7 +298,11 @@ fn sender_over_blocking_managed_delivers_once_across_a_give_up() {
 fn mux_sender_over_blocking_managed_delivers_once_across_a_give_up() {
     let reference = Arc::new(Mutex::new(Vec::new()));
     {
-        let s = MuxSender::new(Sink(Arc::clone(&reference)), mux_config()).expect("mux sender");
+        let s = MuxSender::new(
+            ScriptedSend::scripted(Arc::default(), Arc::clone(&reference)),
+            mux_config(),
+        )
+        .expect("mux sender");
         s.send_video(&idr(0xA5), Pts90khz::new(0), true).unwrap();
         s.send_video(&idr(0x5A), Pts90khz::new(3000), true).unwrap();
         s.finish().unwrap();
@@ -399,7 +331,7 @@ fn mux_sender_over_blocking_managed_delivers_once_across_a_give_up() {
 /// `Broken` again, same ownership.
 #[test]
 fn sender_over_blocking_managed_delivers_once_across_a_break_during_drain() {
-    let (managed, rig) = managed_break_then(vec![Some(vec![Outcome::Broken])]);
+    let (managed, rig) = managed_break_then(vec![Some(vec![SendStep::Broken])]);
     let mut sender = Sender::new(managed, SenderConfig::default());
 
     let a = ts_bundle(0xA1);
@@ -423,7 +355,7 @@ fn sender_over_blocking_managed_delivers_once_across_a_break_during_drain() {
 /// the front of the queue failing every later drain.
 #[test]
 fn blocking_too_large_after_reconnect_is_not_left_queued() {
-    let (mut managed, rig) = managed_break_then(vec![Some(vec![Outcome::TooLarge])]);
+    let (mut managed, rig) = managed_break_then(vec![Some(vec![SendStep::TooLarge])]);
     let stats = managed.stats_handle();
 
     let r = managed.send_bytes(b"A");

@@ -9,12 +9,12 @@
 
 mod common;
 
-use crate::common::ScriptedRecv;
+use crate::common::{ScriptedRecv, ScriptedSend};
 
 use tracing_test::traced_test;
 
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-use tst_core::transport::{Transport, TransportError};
+use tst_core::transport::TransportError;
 
 use tst_pipeline::{
     DemuxReceiver, MuxSender, RawReceiver, RawReceiverConfig, RawSender, RawSenderConfig, Receiver,
@@ -25,21 +25,6 @@ use tst_pipeline::{
 // Inline test transports — kept private so each test file has its own copy
 // (same canonical pattern used in the sub-phase 2.2 doctests).
 // ---------------------------------------------------------------------------
-
-struct Sink(Vec<u8>);
-impl Transport for Sink {
-    fn send_bytes(&mut self, b: &[u8]) -> Result<(), TransportError> {
-        self.0.extend_from_slice(b);
-        Ok(())
-    }
-    fn max_payload(&self) -> usize {
-        1316
-    }
-    fn close(&mut self) {}
-    fn is_alive(&self) -> bool {
-        true
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Sender-side shells
@@ -56,7 +41,7 @@ fn mux_sender_emits_open_and_close_events() {
         b.build().unwrap()
     };
     {
-        let _sender = MuxSender::new(Sink(Vec::new()), cfg).unwrap();
+        let _sender = MuxSender::new(ScriptedSend::ok(), cfg).unwrap();
         // Drops at end of block.
     }
     assert!(logs_contain("MuxSender opened"));
@@ -67,7 +52,7 @@ fn mux_sender_emits_open_and_close_events() {
 #[test]
 fn sender_emits_open_and_close_events() {
     {
-        let _sender = Sender::new(Sink(Vec::new()), SenderConfig::default());
+        let _sender = Sender::new(ScriptedSend::ok(), SenderConfig::default());
     }
     assert!(logs_contain("Sender opened"));
     assert!(logs_contain("Sender closed"));
@@ -77,7 +62,7 @@ fn sender_emits_open_and_close_events() {
 #[test]
 fn raw_sender_emits_open_and_close_events() {
     {
-        let _sender = RawSender::new(Sink(Vec::new()), RawSenderConfig::default());
+        let _sender = RawSender::new(ScriptedSend::ok(), RawSenderConfig::default());
     }
     assert!(logs_contain("RawSender opened"));
     assert!(logs_contain("RawSender closed"));

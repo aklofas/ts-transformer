@@ -8,12 +8,12 @@
 
 mod common;
 
-use crate::common::FlagCancel;
+use crate::common::{FlagCancel, broken};
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
+use tst_core::transport::{Transport, TransportCancel, TransportError};
 use tst_pipeline::{BackoffStrategy, ManagedTransport, ReconnectPolicy};
 
 /// What the mock reports as `max_payload`: one SRT TS bundle (7 × 188-byte
@@ -38,11 +38,7 @@ struct RaceInner {
 impl Transport for RaceInner {
     fn send_bytes(&mut self, _msg: &[u8]) -> Result<(), TransportError> {
         if self.dead {
-            return Err(TransportError::Broken {
-                msg: "dead on arrival".into(),
-                errno_code: None,
-                cause: BrokenCause::Unspecified,
-            });
+            return Err(broken("dead on arrival"));
         }
         // Deliberately ignores `cancelled`: a real socket would fail here
         // after its cancel, which would let the wrapper's drain surface a
@@ -152,11 +148,7 @@ struct DrainRaceInner {
 impl Transport for DrainRaceInner {
     fn send_bytes(&mut self, _msg: &[u8]) -> Result<(), TransportError> {
         if self.dead {
-            return Err(TransportError::Broken {
-                msg: "dead on arrival".into(),
-                errno_code: None,
-                cause: BrokenCause::Unspecified,
-            });
+            return Err(broken("dead on arrival"));
         }
         if !self.fired.swap(true, Ordering::SeqCst) {
             self.handle
@@ -166,11 +158,7 @@ impl Transport for DrainRaceInner {
                 .expect("cancel handle installed before the first send")
                 .cancel();
         }
-        Err(TransportError::Broken {
-            msg: "socket closed by the cancel".into(),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })
+        Err(broken("socket closed by the cancel"))
     }
 
     fn max_payload(&self) -> usize {

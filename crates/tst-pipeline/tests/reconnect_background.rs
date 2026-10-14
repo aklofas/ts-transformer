@@ -3,89 +3,24 @@
 //! All synchronization is deadline-polling (`wait_until`) — never bare
 //! sleeps-as-sync. Timing assertions carry >=5x margins for slow CI.
 
+mod common;
+
+use crate::common::{ScriptedSend, SendStep, broken};
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
+use tst_core::transport::{Transport, TransportCancel, TransportError};
 use tst_pipeline::{
     BackoffStrategy, ManagedTransport, OverflowPolicy, RawSender, RawSenderConfig, ReconnectMode,
     ReconnectPolicy,
 };
 
-/// What the next inner send should do. Empty script => Ok.
-#[derive(Clone, Copy, Debug)]
-enum SendOutcome {
-    Ok,
-    Backpressure,
-    Broken,
-}
-
-/// Script-driven mock transport. Successful sends land in a log SHARED
-/// with the test rig (survives factory rebuilds, so FIFO can be asserted
-/// across reconnect cycles).
-struct ScriptedTransport {
-    script: Arc<Mutex<VecDeque<SendOutcome>>>,
-    sent: Arc<Mutex<Vec<Vec<u8>>>>,
-    max_payload: usize,
-    alive: bool,
-}
-
-impl Transport for ScriptedTransport {
-    fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
-        if msg.len() > self.max_payload {
-            return Err(TransportError::TooLarge {
-                len: msg.len(),
-                max: self.max_payload,
-            });
-        }
-        if !self.alive {
-            return Err(TransportError::Broken {
-                msg: "dead".into(),
-                errno_code: None,
-                cause: BrokenCause::Unspecified,
-            });
-        }
-        match self
-            .script
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or(SendOutcome::Ok)
-        {
-            SendOutcome::Ok => {
-                self.sent.lock().unwrap().push(msg.to_vec());
-                Ok(())
-            }
-            SendOutcome::Backpressure => Err(TransportError::Backpressure {
-                msg: "bp".into(),
-                errno_code: None,
-            }),
-            SendOutcome::Broken => {
-                self.alive = false;
-                Err(TransportError::Broken {
-                    msg: "scripted break".into(),
-                    errno_code: None,
-                    cause: BrokenCause::Unspecified,
-                })
-            }
-        }
-    }
-    fn max_payload(&self) -> usize {
-        self.max_payload
-    }
-    fn is_alive(&self) -> bool {
-        self.alive
-    }
-    fn close(&mut self) {
-        self.alive = false;
-    }
-}
-
 /// Shared state backing every transport the rig (or its factories) builds.
 struct Rig {
-    script: Arc<Mutex<VecDeque<SendOutcome>>>,
+    script: Arc<Mutex<VecDeque<SendStep>>>,
     sent: Arc<Mutex<Vec<Vec<u8>>>>,
     factory_calls: Arc<AtomicU32>,
 }
@@ -98,50 +33,40 @@ impl Rig {
             factory_calls: Arc::new(AtomicU32::new(0)),
         }
     }
-    fn transport(&self) -> ScriptedTransport {
+    fn transport(&self) -> ScriptedSend {
         self.transport_with_payload(1316)
     }
-    fn transport_with_payload(&self, max_payload: usize) -> ScriptedTransport {
-        ScriptedTransport {
-            script: Arc::clone(&self.script),
-            sent: Arc::clone(&self.sent),
-            max_payload,
-            alive: true,
-        }
+    fn transport_with_payload(&self, max_payload: usize) -> ScriptedSend {
+        ScriptedSend::scripted(Arc::clone(&self.script), Arc::clone(&self.sent))
+            .with_max_payload(max_payload)
     }
     fn factory(
         &self,
         fail_first: u32,
-    ) -> impl Fn() -> Result<ScriptedTransport, TransportError> + Send + Sync + 'static {
+    ) -> impl Fn() -> Result<ScriptedSend, TransportError> + Send + Sync + 'static {
         self.factory_with_payload(fail_first, 1316)
     }
     fn factory_with_payload(
         &self,
         fail_first: u32,
         max_payload: usize,
-    ) -> impl Fn() -> Result<ScriptedTransport, TransportError> + Send + Sync + 'static {
+    ) -> impl Fn() -> Result<ScriptedSend, TransportError> + Send + Sync + 'static {
         let calls = Arc::clone(&self.factory_calls);
         let script = Arc::clone(&self.script);
         let sent = Arc::clone(&self.sent);
         move || {
             let n = calls.fetch_add(1, Ordering::SeqCst);
             if n < fail_first {
-                Err(TransportError::Broken {
-                    msg: "factory down".into(),
-                    errno_code: None,
-                    cause: BrokenCause::Unspecified,
-                })
+                Err(broken("factory down"))
             } else {
-                Ok(ScriptedTransport {
-                    script: Arc::clone(&script),
-                    sent: Arc::clone(&sent),
-                    max_payload,
-                    alive: true,
-                })
+                Ok(
+                    ScriptedSend::scripted(Arc::clone(&script), Arc::clone(&sent))
+                        .with_max_payload(max_payload),
+                )
             }
         }
     }
-    fn push_outcome(&self, o: SendOutcome) {
+    fn push_outcome(&self, o: SendStep) {
         self.script.lock().unwrap().push_back(o);
     }
     fn sent_snapshot(&self) -> Vec<Vec<u8>> {
@@ -174,7 +99,7 @@ fn wait_until(deadline: Duration, mut cond: impl FnMut() -> bool) {
 #[test]
 fn background_send_never_blocks_during_outage() {
     let rig = Rig::new();
-    rig.push_outcome(SendOutcome::Broken); // first send breaks the inner
+    rig.push_outcome(SendStep::Broken); // first send breaks the inner
     // Factory never succeeds; backoff parks the worker 5s per attempt.
     // Every send during the outage must return immediately regardless.
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_secs(5)));
@@ -196,8 +121,8 @@ fn background_send_never_blocks_during_outage() {
 #[test]
 fn background_reconnect_drains_fifo_then_resumes_direct() {
     let rig = Rig::new();
-    rig.push_outcome(SendOutcome::Ok); //     msg 0: direct send
-    rig.push_outcome(SendOutcome::Broken); // msg 1: breaks the inner (msg 1 must be queued, not lost)
+    rig.push_outcome(SendStep::Ok); //     msg 0: direct send
+    rig.push_outcome(SendStep::Broken); // msg 1: breaks the inner (msg 1 must be queued, not lost)
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(20)));
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(2), policy);
 
@@ -222,7 +147,7 @@ fn background_reconnect_drains_fifo_then_resumes_direct() {
 #[test]
 fn background_dropoldest_evicts_and_counts_deterministically() {
     let rig = Rig::new();
-    rig.push_outcome(SendOutcome::Broken);
+    rig.push_outcome(SendStep::Broken);
     // 200ms backoff >> the microseconds the 6 sends below take, so the
     // eviction sequence is deterministic (no concurrent drain).
     let mut policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(200)));
@@ -260,7 +185,7 @@ fn background_dropoldest_evicts_and_counts_deterministically() {
 #[test]
 fn background_worker_panic_recovers_via_abnormal_give_up() {
     let rig = Rig::new();
-    rig.push_outcome(SendOutcome::Broken); // msg 0's send breaks the inner -> worker spawns
+    rig.push_outcome(SendStep::Broken); // msg 0's send breaks the inner -> worker spawns
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(10)));
 
     // Custom factory (not rig.factory(), which never panics): first call
@@ -269,17 +194,15 @@ fn background_worker_panic_recovers_via_abnormal_give_up() {
     let calls = Arc::clone(&rig.factory_calls);
     let script = Arc::clone(&rig.script);
     let sent = Arc::clone(&rig.sent);
-    let factory = move || -> Result<ScriptedTransport, TransportError> {
+    let factory = move || -> Result<ScriptedSend, TransportError> {
         let n = calls.fetch_add(1, Ordering::SeqCst);
         if n == 0 {
             panic!("test factory panic");
         }
-        Ok(ScriptedTransport {
-            script: Arc::clone(&script),
-            sent: Arc::clone(&sent),
-            max_payload: 1316,
-            alive: true,
-        })
+        Ok(ScriptedSend::scripted(
+            Arc::clone(&script),
+            Arc::clone(&sent),
+        ))
     };
 
     let mut managed = ManagedTransport::new(rig.transport(), factory, policy);
@@ -349,7 +272,7 @@ fn flap_cycles_never_wedge_or_hang() {
     let mut next_idx: u32 = 0;
     let mut all_sent: Vec<u32> = Vec::new();
     for _ in 0..30 {
-        rig.push_outcome(SendOutcome::Broken); // breaks the inner on this cycle's first send
+        rig.push_outcome(SendStep::Broken); // breaks the inner on this cycle's first send
         for _ in 0..5 {
             let idx = next_idx;
             next_idx += 1;
@@ -422,7 +345,7 @@ fn flap_cycles_never_wedge_or_hang() {
     let mut next_idx2: u32 = 0;
     let mut all_sent2: Vec<u32> = Vec::new();
     for _ in 0..3 {
-        rig2.push_outcome(SendOutcome::Broken); // breaks the inner on this cycle's first send
+        rig2.push_outcome(SendStep::Broken); // breaks the inner on this cycle's first send
         for _ in 0..5 {
             let idx = next_idx2;
             next_idx2 += 1;
@@ -473,7 +396,7 @@ fn flap_cycles_never_wedge_or_hang() {
 #[test]
 fn background_give_up_reports_broken_once_then_restarts_budget() {
     let rig = Rig::new();
-    rig.push_outcome(SendOutcome::Broken);
+    rig.push_outcome(SendStep::Broken);
     let policy = bg_policy(
         Some(2),
         BackoffStrategy::Constant(Duration::from_millis(10)),
@@ -519,7 +442,7 @@ fn background_give_up_reports_broken_once_then_restarts_budget() {
 #[test]
 fn background_none_budget_never_gives_up() {
     let rig = Rig::new();
-    rig.push_outcome(SendOutcome::Broken);
+    rig.push_outcome(SendStep::Broken);
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(5)));
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(u32::MAX), policy);
     let stats = managed.stats_handle();
@@ -538,7 +461,7 @@ fn background_none_budget_never_gives_up() {
 #[test]
 fn close_joins_worker_promptly_mid_backoff() {
     let rig = Rig::new();
-    rig.push_outcome(SendOutcome::Broken);
+    rig.push_outcome(SendStep::Broken);
     // 30s backoff: a sleep-bounded join would hang the test far past the
     // assert; the interruptible wait makes close return in milliseconds.
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_secs(30)));
@@ -560,7 +483,7 @@ fn close_joins_worker_promptly_mid_backoff() {
 #[test]
 fn drop_detaches_without_blocking_and_worker_quiesces() {
     let rig = Rig::new();
-    rig.push_outcome(SendOutcome::Broken);
+    rig.push_outcome(SendStep::Broken);
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(5)));
     let calls = Arc::clone(&rig.factory_calls);
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(u32::MAX), policy);
@@ -587,7 +510,7 @@ fn drop_detaches_without_blocking_and_worker_quiesces() {
 #[test]
 fn cancel_handle_stops_background_worker() {
     let rig = Rig::new();
-    rig.push_outcome(SendOutcome::Broken);
+    rig.push_outcome(SendStep::Broken);
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(5)));
     let calls = Arc::clone(&rig.factory_calls);
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(u32::MAX), policy);
@@ -613,9 +536,9 @@ fn cancel_handle_stops_background_worker() {
 #[test]
 fn drain_backpressure_retries_same_message_without_loss() {
     let rig = Rig::new();
-    rig.push_outcome(SendOutcome::Broken); //       msg 0 -> gap
-    rig.push_outcome(SendOutcome::Backpressure); // drain: msg 0 stalls twice...
-    rig.push_outcome(SendOutcome::Backpressure);
+    rig.push_outcome(SendStep::Broken); //       msg 0 -> gap
+    rig.push_outcome(SendStep::Backpressure); // drain: msg 0 stalls twice...
+    rig.push_outcome(SendStep::Backpressure);
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(10)));
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(0), policy);
     managed.send_bytes(&[0]).unwrap();
@@ -630,9 +553,9 @@ fn drain_backpressure_retries_same_message_without_loss() {
 #[test]
 fn drain_break_resumes_reconnect_with_front_message_retained() {
     let rig = Rig::new();
-    rig.push_outcome(SendOutcome::Broken); // initial break: msg 0 -> gap
-    rig.push_outcome(SendOutcome::Ok); //     reconnect #1 drains msg 0...
-    rig.push_outcome(SendOutcome::Broken); // ...and breaks on msg 1 mid-drain
+    rig.push_outcome(SendStep::Broken); // initial break: msg 0 -> gap
+    rig.push_outcome(SendStep::Ok); //     reconnect #1 drains msg 0...
+    rig.push_outcome(SendStep::Broken); // ...and breaks on msg 1 mid-drain
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(10)));
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(0), policy);
     managed.send_bytes(&[0]).unwrap();
@@ -649,7 +572,7 @@ fn drain_break_resumes_reconnect_with_front_message_retained() {
 #[test]
 fn background_reject_full_returns_backpressure_immediately() {
     let rig = Rig::new();
-    rig.push_outcome(SendOutcome::Broken);
+    rig.push_outcome(SendStep::Broken);
     let policy = ReconnectPolicy {
         max_attempts: None,
         backoff: BackoffStrategy::Constant(Duration::from_secs(5)), // park the worker far away
@@ -678,7 +601,7 @@ fn background_reject_full_returns_backpressure_immediately() {
 #[test]
 fn oversized_after_ceiling_shrink_drops_and_counts_instead_of_wedging() {
     let rig = Rig::new();
-    rig.push_outcome(SendOutcome::Broken);
+    rig.push_outcome(SendStep::Broken);
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(10)));
     // Initial inner accepts 1316 bytes; every REBUILT inner only 4. The
     // 100-byte queued message would wedge the drain forever if the worker
@@ -783,19 +706,11 @@ impl Transport for GatedTransport {
     fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
         if self.breaks {
             self.alive = false;
-            return Err(TransportError::Broken {
-                msg: "initial break".into(),
-                errno_code: None,
-                cause: BrokenCause::Unspecified,
-            });
+            return Err(broken("initial break"));
         }
         if !self.gate.park() {
             self.alive = false;
-            return Err(TransportError::Broken {
-                msg: "cancelled while parked".into(),
-                errno_code: None,
-                cause: BrokenCause::Unspecified,
-            });
+            return Err(broken("cancelled while parked"));
         }
         self.sent.lock().unwrap().push(msg.to_vec());
         Ok(())
@@ -1048,7 +963,7 @@ fn size_pre_check_follows_the_published_ceiling_across_a_rebuild() {
         other => panic!("expected TooLarge, got {other:?}"),
     }
 
-    rig.push_outcome(SendOutcome::Broken);
+    rig.push_outcome(SendStep::Broken);
     managed.send_bytes(&[1]).unwrap(); // break -> queued, worker rebuilds at 100
     wait_until(Duration::from_secs(10), || {
         let s = stats.stats().unwrap();
@@ -1081,7 +996,7 @@ fn stress_pump_vs_flapping_sink_delivery_is_fifo_subsequence() {
     // both fault paths under pump/worker interleaving.
     for i in 0..2000u32 {
         if i % 40 == 0 {
-            rig.push_outcome(SendOutcome::Broken);
+            rig.push_outcome(SendStep::Broken);
         }
         managed.send_bytes(&i.to_be_bytes()).unwrap();
         if i % 7 == 0 {

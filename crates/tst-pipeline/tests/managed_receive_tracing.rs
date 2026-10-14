@@ -13,8 +13,8 @@ use crate::common::{ScriptedRecv, broken};
 use std::time::Duration;
 use tracing_test::traced_test;
 use tst_pipeline::{
-    BackoffStrategy, BrokenCause, ManagedRecvTransport, ReconnectMode, ReconnectPolicy,
-    RecvTransport, TransportError,
+    BackoffStrategy, ManagedRecvTransport, ReconnectMode, ReconnectPolicy, RecvTransport,
+    TransportError,
 };
 
 #[traced_test]
@@ -23,11 +23,7 @@ fn receiver_reconnect_emits_info_on_attempt_and_warn_on_give_up() {
     // Factory always fails so the reconnect budget is exhausted and the
     // give-up branch fires.
     let factory = Box::new(|| -> Result<ScriptedRecv, TransportError> {
-        Err(TransportError::Broken {
-            msg: "test factory always fails".into(),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })
+        Err(broken("test factory always fails"))
     });
 
     // Cap attempts low + zero backoff so the test is fast.
@@ -71,11 +67,7 @@ fn receiver_reconnect_emits_info_on_attempt_and_warn_on_give_up() {
 #[test]
 fn receiver_background_mode_warns_and_behaves_as_blocking() {
     let factory = Box::new(|| -> Result<ScriptedRecv, TransportError> {
-        Err(TransportError::Broken {
-            msg: "test factory always fails".into(),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })
+        Err(broken("test factory always fails"))
     });
 
     let policy = ReconnectPolicy {

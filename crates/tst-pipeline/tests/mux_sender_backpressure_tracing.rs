@@ -31,32 +31,14 @@
 //!   - Push 7 (same oversized): also BufferFull, Overflow→Overflow is
 //!     not a transition. **No warn fires.**
 
+mod common;
+
+use crate::common::ScriptedSend;
+
 use tracing_test::traced_test;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{KlvStreamType, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-use tst_core::transport::{Transport, TransportError};
 use tst_pipeline::MuxSender;
-
-/// In-memory sink that succeeds on every send. Used so the muxer queue
-/// drains cleanly (no `pending_bytes` retry path); the back-pressure
-/// signal we want is the peak muxer-queue depth observed at the warn
-/// sample point (between push and drain).
-struct OkSink;
-impl Transport for OkSink {
-    fn send_bytes(&mut self, _: &[u8]) -> Result<(), TransportError> {
-        Ok(())
-    }
-    fn max_payload(&self) -> usize {
-        // Match the typical SRT live payload so chunks are 1316 bytes
-        // (== 7 * 188 TS packets); irrelevant for the warn semantic but
-        // matches real call shape.
-        1316
-    }
-    fn close(&mut self) {}
-    fn is_alive(&self) -> bool {
-        true
-    }
-}
 
 /// Build an Annex-B IDR NAL of approximately `body_bytes` total bytes.
 /// 5 bytes of start code + nal-unit header, then `body_bytes - 5` of
@@ -80,7 +62,7 @@ fn warn_fires_exactly_twice_on_back_pressure_escalation() {
         b.buffer_packets(10); // minimum cap; smallest cap to engineer threshold crossings
         b.build().expect("config builds")
     };
-    let s = MuxSender::new(OkSink, cfg).expect("sender builds");
+    let s = MuxSender::new(ScriptedSend::ok(), cfg).expect("sender builds");
 
     // Push 1: small. Empirical queue depth = 3 (PSI(2) + video(1)). Ok.
     s.send_video(&idr_nal(50), Pts90khz::new(0), true)
