@@ -51,7 +51,6 @@ cbindgen = { workspace = true }
 
 [dev-dependencies]
 cbindgen         = { workspace = true }
-tst-test-helpers = { path = "../../crates/tst-test-helpers" }
 tempfile         = "3"
 # The integration tests in `tests/` reference these crates directly (constructing
 # Rust-side fixtures + comparing against the C ABI surface). They are pulled in
