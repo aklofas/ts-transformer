@@ -14,8 +14,6 @@ impl From<crate::url::HlsUrlError> for BindingError {
 impl From<HlsError> for BindingError {
     fn from(e: HlsError) -> Self {
         let kind = match &e {
-            #[cfg(feature = "serve")]
-            HlsError::Url(_) => K::HlsUrl,
             HlsError::Io(_) => K::HlsIo,
             HlsError::BindFailed(_) => K::HlsBindFailed,
             HlsError::InvalidConfig(_) => K::HlsInvalidConfig,
@@ -65,15 +63,11 @@ mod tests {
         assert_eq!(internal.kind, K::Internal);
         assert_eq!(internal.detail, "internal HTTP server error: hyper");
         assert_eq!(K::HlsBindFailed.c_projection(), -34);
-        // Both ways into HLS_URL (serve-gated, like the variant itself).
+        // The one way into HLS_URL: the builder's `HlsUrlError`.
         #[cfg(feature = "serve")]
         {
             assert_eq!(
                 BindingError::from(crate::url::HlsUrlError::MissingPort).kind,
-                K::HlsUrl
-            );
-            assert_eq!(
-                BindingError::from(HlsError::Url(crate::url::HlsUrlError::MissingPort)).kind,
                 K::HlsUrl
             );
             assert_eq!(K::HlsUrl.c_projection(), -35);

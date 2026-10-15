@@ -43,7 +43,7 @@ class TcpErrorKind(IntEnum):
     """Discriminator for ``TcpError.kind``. The ``tstrans.tcp`` subset of the
     Rust ``tst_pipeline::binding::BindingErrorKind`` table: ``URL`` / ``IO`` /
     ``CLOSED`` / ``CONNECT_TIMEOUT`` / ``INVALID_CONFIG`` / ``TLS`` /
-    ``TLS_DISABLED`` from ``tst_tcp::TcpErrorKind``, ``BROKEN`` /
+    ``TLS_DISABLED`` from ``tst_tcp::TcpError``, ``BROKEN`` /
     ``BACKPRESSURE`` / ``TOO_LARGE`` from the transport."""
 
     URL = 0

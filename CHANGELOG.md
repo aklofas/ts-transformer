@@ -26,6 +26,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   negotiated `SRTO_PAYLOADSIZE`; to send smaller messages set the
   `payloadsize=` URL key or `SocketConfig::payload_size` before connecting.
 
+### Removed — tst-udp, tst-tcp, tst-rist, tst-hls (BREAKING)
+
+- `UdpErrorKind`, `TcpErrorKind`, `RistErrorKind` and `HlsErrorKind`, and the
+  `kind()` methods on `UdpError`, `TcpError`, `RistError` and `HlsError`, are
+  removed. No binding read them. Match on the error itself, e.g.
+  `matches!(e, RistError::InvalidConfig(_))`. The Python enums of the same
+  names in `tstrans.exceptions` are unchanged.
+- `HlsError::Url` is removed; nothing in the library produced it.
+  `HlsPublisherBuilder::from_url` returns `HlsUrlError`, as before, and
+  `HlsError` no longer implements `From<HlsUrlError>`.
+
 ### Changed — tst-core (BREAKING)
 
 - `tst_core::transport::conformance` (the transport conformance kit) is now
@@ -37,6 +48,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `tstrans.h`: enum blocks are now emitted in a deterministic sorted order; no
   declaration, value or symbol changed.
+- Doc comments only: the UDP, TCP, HLS and RIST error codes name the Rust
+  error variants they map from (`tst_udp::UdpError::Io` instead of the removed
+  `UdpErrorKind::Io`). No declaration, value, symbol or ABI version changed.
 
 ### Fixed — tst-rtp
 

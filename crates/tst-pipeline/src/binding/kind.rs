@@ -193,7 +193,7 @@ kinds! {
     TcpUrl = -54 => "TCP_URL", "URL", -31;
     /// `TcpError::TlsDisabled`.
     TcpTlsDisabled = -55 => "TCP_TLS_DISABLED", "TLS_DISABLED", -33;
-    /// `HlsError::Url`.
+    /// `HlsUrlError` (`HlsPublisherBuilder::from_url`).
     HlsUrl = -56 => "HLS_URL", "URL", -35;
     /// `HlsError::BindFailed`.
     HlsBindFailed = -57 => "HLS_BIND_FAILED", "BIND_FAILED", -34;

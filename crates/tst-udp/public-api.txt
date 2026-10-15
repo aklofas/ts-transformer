@@ -69,8 +69,6 @@ pub mod tst_udp::error
 pub tst_udp::error::UdpError::InvalidConfig(alloc::string::String)
 pub tst_udp::error::UdpError::Io(core::io::error::Error)
 pub tst_udp::error::UdpError::Url(tst_udp::url::UdpUrlError)
-impl tst_udp::error::UdpError
-pub fn tst_udp::error::UdpError::kind(&self) -> tst_udp::error::UdpErrorKind
 impl core::convert::From<core::io::error::Error> for tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::from(core::io::error::Error) -> Self
 impl core::convert::From<tst_udp::error::UdpError> for tst_pipeline::binding::kind::BindingError
@@ -90,28 +88,6 @@ impl core::marker::Unpin for tst_udp::error::UdpError
 impl core::marker::UnsafeUnpin for tst_udp::error::UdpError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_udp::error::UdpError
 impl !core::panic::unwind_safe::UnwindSafe for tst_udp::error::UdpError
-#[non_exhaustive] #[repr(u32)] pub enum tst_udp::error::UdpErrorKind
-pub tst_udp::error::UdpErrorKind::InvalidConfig = 7
-pub tst_udp::error::UdpErrorKind::Io = 3
-pub tst_udp::error::UdpErrorKind::Url = 1
-impl core::clone::Clone for tst_udp::error::UdpErrorKind
-pub fn tst_udp::error::UdpErrorKind::clone(&self) -> tst_udp::error::UdpErrorKind
-impl core::cmp::Eq for tst_udp::error::UdpErrorKind
-impl core::cmp::PartialEq for tst_udp::error::UdpErrorKind
-pub fn tst_udp::error::UdpErrorKind::eq(&self, &tst_udp::error::UdpErrorKind) -> bool
-impl core::fmt::Debug for tst_udp::error::UdpErrorKind
-pub fn tst_udp::error::UdpErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_udp::error::UdpErrorKind
-pub fn tst_udp::error::UdpErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_udp::error::UdpErrorKind
-impl core::marker::StructuralPartialEq for tst_udp::error::UdpErrorKind
-impl core::marker::Freeze for tst_udp::error::UdpErrorKind
-impl core::marker::Send for tst_udp::error::UdpErrorKind
-impl core::marker::Sync for tst_udp::error::UdpErrorKind
-impl core::marker::Unpin for tst_udp::error::UdpErrorKind
-impl core::marker::UnsafeUnpin for tst_udp::error::UdpErrorKind
-impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::error::UdpErrorKind
-impl core::panic::unwind_safe::UnwindSafe for tst_udp::error::UdpErrorKind
 pub mod tst_udp::recv
 pub struct tst_udp::recv::UdpRecvTransport
 impl tst_udp::recv::UdpRecvTransport
@@ -264,8 +240,6 @@ impl core::panic::unwind_safe::UnwindSafe for tst_udp::url::UdpUrl
 pub tst_udp::UdpError::InvalidConfig(alloc::string::String)
 pub tst_udp::UdpError::Io(core::io::error::Error)
 pub tst_udp::UdpError::Url(tst_udp::url::UdpUrlError)
-impl tst_udp::error::UdpError
-pub fn tst_udp::error::UdpError::kind(&self) -> tst_udp::error::UdpErrorKind
 impl core::convert::From<core::io::error::Error> for tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::from(core::io::error::Error) -> Self
 impl core::convert::From<tst_udp::error::UdpError> for tst_pipeline::binding::kind::BindingError
@@ -285,28 +259,6 @@ impl core::marker::Unpin for tst_udp::error::UdpError
 impl core::marker::UnsafeUnpin for tst_udp::error::UdpError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_udp::error::UdpError
 impl !core::panic::unwind_safe::UnwindSafe for tst_udp::error::UdpError
-#[non_exhaustive] #[repr(u32)] pub enum tst_udp::UdpErrorKind
-pub tst_udp::UdpErrorKind::InvalidConfig = 7
-pub tst_udp::UdpErrorKind::Io = 3
-pub tst_udp::UdpErrorKind::Url = 1
-impl core::clone::Clone for tst_udp::error::UdpErrorKind
-pub fn tst_udp::error::UdpErrorKind::clone(&self) -> tst_udp::error::UdpErrorKind
-impl core::cmp::Eq for tst_udp::error::UdpErrorKind
-impl core::cmp::PartialEq for tst_udp::error::UdpErrorKind
-pub fn tst_udp::error::UdpErrorKind::eq(&self, &tst_udp::error::UdpErrorKind) -> bool
-impl core::fmt::Debug for tst_udp::error::UdpErrorKind
-pub fn tst_udp::error::UdpErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_udp::error::UdpErrorKind
-pub fn tst_udp::error::UdpErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_udp::error::UdpErrorKind
-impl core::marker::StructuralPartialEq for tst_udp::error::UdpErrorKind
-impl core::marker::Freeze for tst_udp::error::UdpErrorKind
-impl core::marker::Send for tst_udp::error::UdpErrorKind
-impl core::marker::Sync for tst_udp::error::UdpErrorKind
-impl core::marker::Unpin for tst_udp::error::UdpErrorKind
-impl core::marker::UnsafeUnpin for tst_udp::error::UdpErrorKind
-impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::error::UdpErrorKind
-impl core::panic::unwind_safe::UnwindSafe for tst_udp::error::UdpErrorKind
 #[non_exhaustive] pub enum tst_udp::UdpUrlError
 pub tst_udp::UdpUrlError::BadQueryValue
 pub tst_udp::UdpUrlError::BadQueryValue::detail: alloc::string::String

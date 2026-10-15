@@ -131,8 +131,6 @@ pub tst_rist::error::RistError::Ffi::function: &'static str
 pub tst_rist::error::RistError::InvalidConfig(alloc::string::String)
 pub tst_rist::error::RistError::PeerCreateFailed
 pub tst_rist::error::RistError::Url(tst_rist::url::RistUrlError)
-impl tst_rist::error::RistError
-pub fn tst_rist::error::RistError::kind(&self) -> tst_rist::error::RistErrorKind
 impl core::convert::From<tst_rist::error::RistError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_rist::error::RistError) -> Self
 impl core::convert::From<tst_rist::url::RistUrlError> for tst_rist::error::RistError
@@ -150,31 +148,6 @@ impl core::marker::Unpin for tst_rist::error::RistError
 impl core::marker::UnsafeUnpin for tst_rist::error::RistError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::error::RistError
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::error::RistError
-#[non_exhaustive] #[repr(u32)] pub enum tst_rist::error::RistErrorKind
-pub tst_rist::error::RistErrorKind::ContextCreateFailed = 7
-pub tst_rist::error::RistErrorKind::EncryptionDisabled = 6
-pub tst_rist::error::RistErrorKind::Ffi = 2
-pub tst_rist::error::RistErrorKind::InvalidConfig = 5
-pub tst_rist::error::RistErrorKind::PeerCreateFailed = 8
-pub tst_rist::error::RistErrorKind::Url = 1
-impl core::clone::Clone for tst_rist::error::RistErrorKind
-pub fn tst_rist::error::RistErrorKind::clone(&self) -> tst_rist::error::RistErrorKind
-impl core::cmp::Eq for tst_rist::error::RistErrorKind
-impl core::cmp::PartialEq for tst_rist::error::RistErrorKind
-pub fn tst_rist::error::RistErrorKind::eq(&self, &tst_rist::error::RistErrorKind) -> bool
-impl core::fmt::Debug for tst_rist::error::RistErrorKind
-pub fn tst_rist::error::RistErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_rist::error::RistErrorKind
-pub fn tst_rist::error::RistErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_rist::error::RistErrorKind
-impl core::marker::StructuralPartialEq for tst_rist::error::RistErrorKind
-impl core::marker::Freeze for tst_rist::error::RistErrorKind
-impl core::marker::Send for tst_rist::error::RistErrorKind
-impl core::marker::Sync for tst_rist::error::RistErrorKind
-impl core::marker::Unpin for tst_rist::error::RistErrorKind
-impl core::marker::UnsafeUnpin for tst_rist::error::RistErrorKind
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::error::RistErrorKind
-impl core::panic::unwind_safe::UnwindSafe for tst_rist::error::RistErrorKind
 pub mod tst_rist::init
 pub mod tst_rist::recv
 pub struct tst_rist::recv::RistRecvTransport
@@ -334,8 +307,6 @@ pub tst_rist::RistError::Ffi::function: &'static str
 pub tst_rist::RistError::InvalidConfig(alloc::string::String)
 pub tst_rist::RistError::PeerCreateFailed
 pub tst_rist::RistError::Url(tst_rist::url::RistUrlError)
-impl tst_rist::error::RistError
-pub fn tst_rist::error::RistError::kind(&self) -> tst_rist::error::RistErrorKind
 impl core::convert::From<tst_rist::error::RistError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_rist::error::RistError) -> Self
 impl core::convert::From<tst_rist::url::RistUrlError> for tst_rist::error::RistError
@@ -353,31 +324,6 @@ impl core::marker::Unpin for tst_rist::error::RistError
 impl core::marker::UnsafeUnpin for tst_rist::error::RistError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::error::RistError
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::error::RistError
-#[non_exhaustive] #[repr(u32)] pub enum tst_rist::RistErrorKind
-pub tst_rist::RistErrorKind::ContextCreateFailed = 7
-pub tst_rist::RistErrorKind::EncryptionDisabled = 6
-pub tst_rist::RistErrorKind::Ffi = 2
-pub tst_rist::RistErrorKind::InvalidConfig = 5
-pub tst_rist::RistErrorKind::PeerCreateFailed = 8
-pub tst_rist::RistErrorKind::Url = 1
-impl core::clone::Clone for tst_rist::error::RistErrorKind
-pub fn tst_rist::error::RistErrorKind::clone(&self) -> tst_rist::error::RistErrorKind
-impl core::cmp::Eq for tst_rist::error::RistErrorKind
-impl core::cmp::PartialEq for tst_rist::error::RistErrorKind
-pub fn tst_rist::error::RistErrorKind::eq(&self, &tst_rist::error::RistErrorKind) -> bool
-impl core::fmt::Debug for tst_rist::error::RistErrorKind
-pub fn tst_rist::error::RistErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_rist::error::RistErrorKind
-pub fn tst_rist::error::RistErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_rist::error::RistErrorKind
-impl core::marker::StructuralPartialEq for tst_rist::error::RistErrorKind
-impl core::marker::Freeze for tst_rist::error::RistErrorKind
-impl core::marker::Send for tst_rist::error::RistErrorKind
-impl core::marker::Sync for tst_rist::error::RistErrorKind
-impl core::marker::Unpin for tst_rist::error::RistErrorKind
-impl core::marker::UnsafeUnpin for tst_rist::error::RistErrorKind
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::error::RistErrorKind
-impl core::panic::unwind_safe::UnwindSafe for tst_rist::error::RistErrorKind
 #[non_exhaustive] pub enum tst_rist::RistProfile
 pub tst_rist::RistProfile::Main
 pub tst_rist::RistProfile::Simple
