@@ -609,7 +609,8 @@ these cells with the role's fuzz targets and the soak's `rtsp-publish` leg
 endurance run, judged by `tst-interop report soak` rather than by the
 cell-based matrix above. Two legs (SRT + RIST) run through an impaired proxy;
 a third, `rtsp-publish`, has an external RTSP publisher push into the
-receiver's publish mount and drop on a schedule (see "Publish leg" below). `bash scripts/interop/soak.sh --help` lists the flags, env knobs and exit
+receiver's publish mount and drop on a schedule (see "Publish leg" below).
+`bash scripts/interop/soak.sh --help` lists the flags, env knobs and exit
 codes; the topology, prerequisites and launch recipe follow below.
 
 `soak.sh` also records three files `report soak` does **not** read — they
@@ -707,8 +708,9 @@ about three minutes.
 ### Outputs and the supervisor
 
 Under `--outdir`: `rss.csv` (`elapsed_s,leg,process,pid,rss_kb` for every
-worker; on rtsp-publish the `publisher` row is the restart loop's shell,
-not gst-launch-1.0), `proc.csv`, `host.csv` and `provenance.json` (above),
+worker, 8 PIDs, or 6 under `--no-rtsp-publish`; on rtsp-publish the
+`publisher` row is the restart loop's shell, not gst-launch-1.0, whose own
+memory is not sampled), `proc.csv`, `host.csv` and `provenance.json` (above),
 `soak-config.json` and `exits.json` (below), per leg
 `{srt,rist}/{proxy-stats,recv-report,send-report}.json` and
 `corruption.jsonl`, `rtsp-publish/recv-report.json` and `source.sha256`,
@@ -1095,7 +1097,8 @@ with its own default settings.
 per transport. `soak.sh` asks a different question: whether one fixed load
 survives days of impairment. Never run `stress.sh` on a host that is running
 a soak. It drives the box to its limits on purpose, which would spoil both
-runs' resource evidence. `bash scripts/interop/stress.sh --help` lists the flags, env knobs and exit codes.
+runs' resource evidence. `bash scripts/interop/stress.sh --help` lists the
+flags, env knobs and exit codes.
 
 One stream is one `send -> proxy -> recv` triple of `tst-interop` processes.
 TCP has no proxy. Every sender runs realistic AU sizes, rich KLV and the
@@ -1134,8 +1137,11 @@ recorded, not gated, in sweep steps (`RSS_SLOPE_UNGATED`, default
 `rist/send`: librist settles over about an hour, longer than a step); the
 hold gates it. UDP receivers and their proxies get a socket buffer sized to
 the step's largest keyframe burst (`UDP_RCVBUF_BURST_FACTOR`, default 2×)
-whenever the kernel default could not hold it; the pre-flight refuses a run
-that `net.core.rmem_max` would clamp.
+whenever the kernel default could not hold it. The burst is 53 248 B ×
+`au_scale`, as TS packets, and the default holds about half of
+`net.core.rmem_default`. Scale 1 never qualifies, so streams-axis steps are
+unchanged. The pre-flight refuses a run that `net.core.rmem_max` would
+clamp.
 
 Per transport, a step's processes are:
 
@@ -1166,13 +1172,16 @@ least one stream. The ceiling is the highest streams step that passed. If
 the sweep's per-stream CPU cost predicts more than 70% of the box for the
 total, every count is scaled down by the same factor (`cpu_scale_factor`);
 then likewise for memory: the per-stream RSS each transport showed at its
-ceiling step, times `HOLD_MEM_HEADROOM` (2.5, margin for what a 10-minute step cannot show: gap buffers filling across outages and per-reconnect RSS steps), summed over the hold, must
+ceiling step, times `HOLD_MEM_HEADROOM` (2.5, margin for what a 10-minute
+step cannot show: gap buffers filling across outages and per-reconnect RSS
+steps), summed over the hold, must
 stay under `HOLD_MEM_BUDGET` (0.70) × MemTotal, or every count is scaled
 down by the same `mem_scale_factor`. Both factors and the figures are in
 `hold/hold-config.json`. A transport with no passing streams step is
 excluded from the hold (declared in `excluded_transports`, listed as a
 limitation) and the hold runs on the rest; the run still exits 1. Only when
-no transport has a ceiling is the hold refused.
+no transport has a ceiling is the hold refused. If `srt` is excluded there
+are no outages or restarts.
 
 Every SRT and RIST hold proxy runs its own seeded impairment schedule. UDP
 proxies run the sweep's clean link: raw UDP has no loss recovery and nothing
@@ -1180,7 +1189,9 @@ to reconnect, so impairing it would measure the network, not the library.
 TCP stays direct. SRT proxies also
 cut the link for `HOLD_OUTAGE_DUR_S` every `HOLD_OUTAGE_PERIOD_S`. They start
 `HOLD_OUTAGE_DUR_S + 30` seconds before the hold clock, as in `soak.sh`, so
-their first outage is over before any handshake. Every
+their first outage is over before any handshake; in hold time, outage
+n ≥ 1 starts at n × `HOLD_OUTAGE_PERIOD_S` − (`HOLD_OUTAGE_DUR_S` + 30) s.
+Every
 `HOLD_RESTART_PERIOD_S`, starting at `HOLD_RESTART_OFFSET_S`, the supervisor
 kills the `srt-0` receiver and relaunches it on the same port.
 `tst-interop report hold` then requires that stream's sender to reconnect
@@ -1209,7 +1220,8 @@ SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=1024 \
 ```
 
 A real run must be launched detached, for the reason under "Running a soak
-on a fresh host" above; its prerequisites are the soak's, without GStreamer. `--skip-hold` runs the sweep only:
+on a fresh host" above; its prerequisites are the soak's, without
+GStreamer. `--skip-hold` runs the sweep only:
 
 ```bash
 SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=1024 \
@@ -1221,7 +1233,11 @@ Outputs under `--outdir`:
 - `provenance.json` and `stress-config.json` are written before any process
   launches.
 - `stress-events.log` records every launch, step start, pass, fail and
-  timeout. `pids/stress.pid` holds the supervisor's own pid (`pids/sampler.pid` the sampler's); a restart is logged to `restart-events.log` as `<elapsed_s> RESTART role=<leg>-recv old_pid=N new_pid=N`; killing it aborts the run (its INT/TERM trap kills the current step's processes).
+  timeout. `pids/stress.pid` holds the supervisor's own pid
+  (`pids/sampler.pid` the sampler's). Killing the supervisor aborts the run:
+  its INT/TERM trap kills the current step's processes. A restart is logged
+  to `restart-events.log` as
+  `<elapsed_s> RESTART role=<leg>-recv old_pid=N new_pid=N`.
 - `sweep/<transport>/<streams|bitrate>/<load>/` holds one step. It contains
   `config.json`, `rss.csv`, `proc.csv`, `host.csv`, `exits.json`,
   `step-results.json`, `logs/` and `pids/`, plus
