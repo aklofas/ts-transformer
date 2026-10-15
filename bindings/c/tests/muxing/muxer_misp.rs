@@ -8,6 +8,7 @@
 //!   - `misp_kind=2` (out of range) returns `TST_E_MISP_TIME` (-45).
 //!   - `tst_misp_time_extract` on an access unit without a MISP SEI returns 1.
 
+use crate::muxing_common::{drain_mux, find_pes_start};
 use tstrans::config::{
     TstVideoCodec, tst_mux_config_add_program, tst_mux_config_add_video_stream,
     tst_mux_config_free, tst_mux_config_new,
@@ -16,26 +17,12 @@ use tstrans::error::TstError;
 use tstrans::handle::TstVideoStreamHandle;
 use tstrans::misp_time::tst_misp_time_extract;
 use tstrans::muxer::{
-    TstMuxer, tst_muxer_close, tst_muxer_open, tst_muxer_pull, tst_muxer_push_video_misp_to,
+    TstMuxer, tst_muxer_close, tst_muxer_open, tst_muxer_push_video_misp_to,
     tst_muxer_push_video_misp_to_with_dts,
 };
 
 /// Minimal Annex-B IDR NAL unit (H.264, nal_unit_type=5).
 const NAL_IDR: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x00];
-
-/// Drain all buffered TS bytes from the C muxer into a Vec.
-fn drain_mux(mux: *mut TstMuxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 64 * 188];
-    loop {
-        let n = unsafe { tst_muxer_pull(mux, buf.as_mut_ptr(), buf.len()) };
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
 
 /// Build a minimal H.264 muxer and return `(mux_ptr, video_handle)`.
 ///
@@ -255,32 +242,4 @@ fn extract_absent_returns_one_on_plain_au() {
     assert_eq!(rc, 1, "expected 1 (absent) for plain IDR NAL, got {rc}");
     // Out-params must be untouched on absent.
     assert_eq!(out_kind, 0xFF, "out_kind should be untouched on absent");
-}
-
-/// Locate the first PES start in `ts_bytes` on the given PID (copied from
-/// `muxer_dts.rs` — helpers are not shared across test-module files).
-fn find_pes_start(ts_bytes: &[u8], pid: u16) -> Option<usize> {
-    assert_eq!(ts_bytes.len() % 188, 0, "TS must be 188-aligned");
-    for pkt in ts_bytes.chunks(188) {
-        if pkt[0] != 0x47 {
-            continue;
-        }
-        let pusi = (pkt[1] & 0x40) != 0;
-        let pkt_pid = (((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16;
-        if pkt_pid != pid || !pusi {
-            continue;
-        }
-        let afc = (pkt[3] >> 4) & 0x03;
-        let payload_offset = match afc {
-            1 => 4,
-            3 => 4 + 1 + pkt[4] as usize,
-            _ => continue,
-        };
-        if payload_offset >= 188 {
-            continue;
-        }
-        let pkt_start = unsafe { pkt.as_ptr().offset_from(ts_bytes.as_ptr()) as usize };
-        return Some(pkt_start + payload_offset);
-    }
-    None
 }

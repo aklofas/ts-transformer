@@ -14,7 +14,7 @@
 // (both gated on `feature = "srt"`).
 #![cfg(feature = "srt")]
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -23,7 +23,7 @@ use tstrans::config::{
     TstVideoCodec, tst_mux_config_add_program, tst_mux_config_add_video_stream,
     tst_mux_config_free, tst_mux_config_new,
 };
-use tstrans::error::{TstError, tst_get_last_error_str};
+use tstrans::error::TstError;
 use tstrans::event::{TstEvent, TstEventKind};
 use tstrans::receiver::demux_receiver::{
     tst_demux_receiver_close, tst_demux_receiver_get_stream_last_seen_micros,
@@ -33,15 +33,7 @@ use tstrans::sender::mux_sender::{
     tst_mux_sender_close, tst_mux_sender_open, tst_mux_sender_send_video,
 };
 
-fn last_error_msg() -> String {
-    unsafe {
-        let p = tst_get_last_error_str();
-        if p.is_null() {
-            return "<null>".into();
-        }
-        CStr::from_ptr(p).to_string_lossy().into_owned()
-    }
-}
+use crate::common::last_error_msg;
 
 #[test]
 fn loopback_mux_sender_to_demux_receiver_delivers_pmt_and_sample_and_eos() {

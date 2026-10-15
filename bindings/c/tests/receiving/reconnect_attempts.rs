@@ -18,7 +18,7 @@
 //! Own port band: 33_000.
 #![cfg(feature = "srt")]
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::time::{Duration, Instant};
 
 use tst_srt::ListenerBuilder;
@@ -26,7 +26,7 @@ use tstrans::config::{
     tst_reconnect_policy_free, tst_reconnect_policy_new,
     tst_reconnect_policy_set_backoff_constant_ms, tst_reconnect_policy_set_max_attempts,
 };
-use tstrans::error::{TstError, tst_get_last_error_str};
+use tstrans::error::TstError;
 use tstrans::event::TstEvent;
 use tstrans::receiver::demux_receiver::managed::{
     tst_managed_demux_receiver_close, tst_managed_demux_receiver_get_reconnect_stats,
@@ -36,15 +36,7 @@ use tstrans::stats::TstManagedTransportStats;
 
 const WATCHDOG: Duration = Duration::from_secs(10);
 
-fn last_error_msg() -> String {
-    unsafe {
-        let p = tst_get_last_error_str();
-        if p.is_null() {
-            return "<null>".into();
-        }
-        CStr::from_ptr(p).to_string_lossy().into_owned()
-    }
-}
+use crate::common::last_error_msg;
 
 #[test]
 fn recv_side_reconnect_attempts_counts_attempts_not_successes() {

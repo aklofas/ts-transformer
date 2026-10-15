@@ -7,81 +7,19 @@
 //! header byte 3 both set) with the exact PTS/DTS values surviving
 //! the round-trip.
 
+use crate::muxing_common::{drain_mux, find_pes_start};
 use tstrans::config::{
     TstVideoCodec, tst_mux_config_add_program, tst_mux_config_add_video_stream,
     tst_mux_config_free, tst_mux_config_new,
 };
 use tstrans::muxer::{
-    TstMuxer, tst_muxer_close, tst_muxer_open, tst_muxer_pull, tst_muxer_push_video_to_with_dts,
+    tst_muxer_close, tst_muxer_open, tst_muxer_push_video_to_with_dts,
     tst_muxer_push_video_wire_to_with_dts,
 };
 
 /// Minimal Annex-B IDR NAL unit accepted by the muxer's Annex-B validator.
 /// start code (4 bytes) + NAL type 0x65 (IDR slice) + filler payload.
 const NAL_IDR: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x00];
-
-/// Drain all buffered TS bytes from the C muxer into a Vec.
-///
-/// The backing `Vec` keeps its allocation alive for the caller — no pointer
-/// into it may outlive the returned Vec (per
-/// `feedback_tst_c_arena_pointer_alias_flake`).
-fn drain_mux(mux: *mut TstMuxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 64 * 188];
-    loop {
-        let n = unsafe { tst_muxer_pull(mux, buf.as_mut_ptr(), buf.len()) };
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
-
-/// Locate the first PES start in `ts_bytes` on the given PID and return
-/// the index into `ts_bytes` of the first byte of the PES header.
-///
-/// Returns `None` if no TS packet on `pid` has `payload_unit_start_indicator`
-/// set.
-fn find_pes_start(ts_bytes: &[u8], pid: u16) -> Option<usize> {
-    assert_eq!(
-        ts_bytes.len() % 188,
-        0,
-        "TS must be aligned to 188-byte packets"
-    );
-    for pkt in ts_bytes.chunks(188) {
-        // TS header: sync(1) + error/PUSI/priority+PID_hi(1) + PID_lo(1) + AFC+CC(1)
-        if pkt[0] != 0x47 {
-            continue;
-        }
-        let pusi = (pkt[1] & 0x40) != 0;
-        let pkt_pid = (((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16;
-        if pkt_pid != pid || !pusi {
-            continue;
-        }
-        // Locate payload start within the packet.
-        let afc = (pkt[3] >> 4) & 0x03;
-        let payload_offset = match afc {
-            // 0b01 = payload only
-            1 => 4,
-            // 0b11 = adaptation field + payload
-            3 => 4 + 1 + pkt[4] as usize,
-            _ => continue,
-        };
-        if payload_offset >= 188 {
-            continue;
-        }
-        // The TS packet payload starts with the pointer_field when PUSI is set
-        // for sections, but for PES streams the payload IS the PES header
-        // directly (no pointer field). Return the index of the PES start code.
-        let pkt_start = unsafe {
-            // SAFETY: ts_bytes is a contiguous slice; pkt is a sub-slice of it.
-            pkt.as_ptr().offset_from(ts_bytes.as_ptr()) as usize
-        };
-        return Some(pkt_start + payload_offset);
-    }
-    None
-}
 
 /// Parse the 90 kHz PTS value from a PES PTS field starting at `bytes[0]`.
 ///

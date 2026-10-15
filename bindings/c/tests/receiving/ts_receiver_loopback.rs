@@ -21,21 +21,13 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 use tstrans::config::{tst_sender_config_free, tst_sender_config_new};
-use tstrans::error::{TstError, tst_get_last_error_str};
+use tstrans::error::TstError;
 use tstrans::receiver::ts_receiver::{
     tst_receiver_close, tst_receiver_open_listener, tst_receiver_recv_packet,
 };
 use tstrans::sender::ts_sender::{tst_sender_close, tst_sender_open, tst_sender_send_ts};
 
-fn last_error_msg() -> String {
-    unsafe {
-        let p = tst_get_last_error_str();
-        if p.is_null() {
-            return "<null>".into();
-        }
-        std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
-    }
-}
+use crate::common::last_error_msg;
 
 /// Build a synthetic aligned TS stream of `n` packets. Each packet
 /// starts with the 0x47 sync byte at offset 0 and has its second-byte

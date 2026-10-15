@@ -25,7 +25,8 @@
 // both `cfg(feature = "srt")`.
 #![cfg(feature = "srt")]
 
-use std::ffi::{CStr, CString};
+use crate::muxing_common::drain_core_muxer;
+use std::ffi::CString;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -38,7 +39,7 @@ use tst_core::mpegts::mux::{
 use tstrans::demux_config::{
     tst_demux_config_free, tst_demux_config_new, tst_demux_config_set_pes_cap,
 };
-use tstrans::error::{TstError, tst_get_last_error_str};
+use tstrans::error::TstError;
 use tstrans::event::{TstDiscontinuityKindTag, TstEvent, TstEventKind, TstStreamKindTag};
 use tstrans::receiver::demux_receiver::{
     tst_demux_receiver_close, tst_demux_receiver_get_stream_stats,
@@ -48,19 +49,7 @@ use tstrans::receiver::demux_receiver::{
 use tstrans::sender::raw_sender::{tst_raw_sender_close, tst_raw_sender_open, tst_raw_sender_send};
 use tstrans::stats::TstStreamStats;
 
-// ---------------------------------------------------------------------------
-// last-error helper
-// ---------------------------------------------------------------------------
-
-fn last_error_msg() -> String {
-    unsafe {
-        let p = tst_get_last_error_str();
-        if p.is_null() {
-            return "<null>".into();
-        }
-        CStr::from_ptr(p).to_string_lossy().into_owned()
-    }
-}
+use crate::common::last_error_msg;
 
 // ---------------------------------------------------------------------------
 // Synthetic NAL — opaque to the muxer/demuxer; just needs an Annex-B envelope.
@@ -110,7 +99,7 @@ fn build_multi_program_stream_with_video_in_each_program() -> Vec<u8> {
         mux.push_video_to(v1, NAL_IDR, pts, true).expect("push v1");
         mux.push_video_to(v2, NAL_IDR, pts, true).expect("push v2");
     }
-    drain_mux(&mut mux)
+    drain_core_muxer(&mut mux)
 }
 
 /// Build a single-program TS stream with one H.264 video stream; pushes
@@ -136,20 +125,7 @@ fn build_stream_with_video_rai_set() -> Vec<u8> {
         mux.push_video_to(vh, NAL_IDR, pts, /* key_frame = */ true)
             .expect("push v");
     }
-    drain_mux(&mut mux)
-}
-
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::with_capacity(64 * 1024);
-    let mut buf = [0u8; 188 * 256];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
+    drain_core_muxer(&mut mux)
 }
 
 // ---------------------------------------------------------------------------
@@ -259,7 +235,7 @@ fn build_multi_program_stream_with_distinct_pids(
         mux.push_video_to(v1, NAL_IDR, pts, true).expect("push v1");
         mux.push_video_to(v2, NAL_IDR, pts, true).expect("push v2");
     }
-    drain_mux(&mut mux)
+    drain_core_muxer(&mut mux)
 }
 
 // ---------------------------------------------------------------------------

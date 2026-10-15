@@ -25,7 +25,6 @@ use tstrans::config::{
     tst_mux_config_add_video_stream, tst_mux_config_free, tst_mux_config_new,
     tst_reconnect_policy_free, tst_reconnect_policy_new,
 };
-use tstrans::error::tst_get_last_error_str;
 use tstrans::sender::mux_sender::{
     tst_managed_mux_sender_close, tst_managed_mux_sender_open, tst_managed_mux_sender_send_data_to,
     tst_managed_mux_sender_send_klv_to, tst_managed_mux_sender_send_video_to, tst_mux_sender_close,
@@ -33,15 +32,7 @@ use tstrans::sender::mux_sender::{
     tst_mux_sender_send_video,
 };
 
-fn last_error_msg() -> String {
-    unsafe {
-        let p = tst_get_last_error_str();
-        if p.is_null() {
-            return "<null>".into();
-        }
-        std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
-    }
-}
+use crate::common::last_error_msg;
 
 #[test]
 fn mux_sender_to_listener_roundtrip() {

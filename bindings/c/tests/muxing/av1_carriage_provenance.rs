@@ -15,6 +15,7 @@
 //! next call to `next_event` / `close` (the arena is reset on each call). Always
 //! copy payload bytes before advancing to the next event.
 
+use crate::muxing_common::{drain_core_muxer, synthetic_av1_au};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     Av1CarriageMode, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,
@@ -37,36 +38,6 @@ use tstrans::muxer::{
     tst_muxer_push_video_wire_to,
 };
 
-/// Build a minimal AV1 access unit (TD, Sequence Header, Frame Header, Tile Group OBUs).
-fn synthetic_av1_au() -> Vec<u8> {
-    fn obu(obu_type: u8, body: &[u8]) -> Vec<u8> {
-        let header = (obu_type << 3) | 0x02; // obu_has_size_field = 1
-        let mut v = vec![header];
-        v.push(body.len() as u8); // single-byte LEB128
-        v.extend_from_slice(body);
-        v
-    }
-    let mut au = Vec::new();
-    au.extend(obu(2, &[])); // Temporal Delimiter
-    au.extend(obu(1, &[0x00, 0x00])); // Sequence Header (placeholder)
-    au.extend(obu(3, &[0x00])); // Frame Header (placeholder)
-    au.extend(obu(4, &[0x00, 0x01, 0x02])); // Tile Group (placeholder)
-    au
-}
-
-fn drain_mux_rust(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
-
 /// Build a TS stream carrying one AV1 AU under the given Rust carriage mode.
 fn build_av1_ts_rust(mode: Av1CarriageMode) -> Vec<u8> {
     let cfg = {
@@ -81,7 +52,7 @@ fn build_av1_ts_rust(mode: Av1CarriageMode) -> Vec<u8> {
     let h = mux.video_handles()[0];
     mux.push_video_to(h, &synthetic_av1_au(), Pts90khz::new(90_000), true)
         .unwrap();
-    drain_mux_rust(&mut mux)
+    drain_core_muxer(&mut mux)
 }
 
 /// Build a TS stream carrying one H.264 IDR AU (single-NAL, Annex-B framed).
@@ -98,7 +69,7 @@ fn build_h264_ts_rust() -> Vec<u8> {
     let nal: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xAA, 0xAA, 0xAA];
     mux.push_video_to(h, nal, Pts90khz::new(90_000), true)
         .unwrap();
-    drain_mux_rust(&mut mux)
+    drain_core_muxer(&mut mux)
 }
 
 /// Open a C demuxer configured for the given AV1 carriage mode, feed `ts`, flush,

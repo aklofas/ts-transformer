@@ -18,12 +18,12 @@
 
 #![cfg(feature = "srt")]
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tstrans::error::{TstError, tst_get_last_error_str};
+use tstrans::error::TstError;
 use tstrans::event::TstEvent;
 use tstrans::receiver::demux_receiver::managed::{
     TstManagedDemuxReceiver, tst_managed_demux_receiver_cancel, tst_managed_demux_receiver_close,
@@ -36,15 +36,7 @@ use tstrans::sender::raw_sender::{tst_raw_sender_close, tst_raw_sender_open, tst
 struct SendPtr(*mut TstManagedDemuxReceiver);
 unsafe impl Send for SendPtr {}
 
-fn last_error_msg() -> String {
-    unsafe {
-        let p = tst_get_last_error_str();
-        if p.is_null() {
-            return "<null>".into();
-        }
-        CStr::from_ptr(p).to_string_lossy().into_owned()
-    }
-}
+use crate::common::last_error_msg;
 
 /// Connect a raw SRT caller to the listener, retrying while it is not yet
 /// bound (the listener re-binds between rounds).
