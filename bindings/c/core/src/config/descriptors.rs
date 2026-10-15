@@ -782,4 +782,66 @@ mod tests {
             tst_mux_config_free(cfg);
         }
     }
+
+    /// A handle is an index within its kind: handing a KLV stream's handle to
+    /// the video setter selects the n-th VIDEO stream (the kind filter), or
+    /// fails with the video "stream out of range" text when there is none.
+    #[test]
+    fn wrong_kind_handle_resolves_within_the_setters_kind() {
+        use crate::config::TstKlvStreamType;
+        use crate::config::streams::tst_mux_config_add_klv_stream;
+        fn last_msg() -> alloc::string::String {
+            unsafe { core::ffi::CStr::from_ptr(crate::error::tst_get_last_error_str()) }
+                .to_string_lossy()
+                .into_owned()
+        }
+        let tlv = [0x28u8, 0x01, 0x77];
+        unsafe {
+            // KLV only: the KLV handle is canonical, but no video stream exists.
+            let cfg = tst_mux_config_new();
+            let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
+            let k = tst_mux_config_add_klv_stream(
+                cfg,
+                prog,
+                0x101,
+                TstKlvStreamType::PrivateData,
+                false,
+            );
+            let rc = tst_mux_config_set_stream_descriptors_for_video(cfg, k, tlv.as_ptr(), 3, 1);
+            assert_eq!(rc, TstError::InvalidUsage as i32);
+            assert_eq!(
+                last_msg(),
+                "invalid video stream handle (stream out of range)"
+            );
+            tst_mux_config_free(cfg);
+
+            // KLV added before video: the video slot is stream 1, not 0.
+            let cfg = tst_mux_config_new();
+            let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
+            let k = tst_mux_config_add_klv_stream(
+                cfg,
+                prog,
+                0x101,
+                TstKlvStreamType::PrivateData,
+                false,
+            );
+            let v = tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264);
+            assert_eq!(
+                tst_mux_config_set_stream_descriptors_for_video(cfg, k, tlv.as_ptr(), 3, 1),
+                0
+            );
+            let got = &(*cfg).programs[0].stream_descriptors;
+            assert!(got[0].is_empty());
+            assert_eq!(got[1], alloc::vec![tlv.to_vec()]);
+            assert_eq!(
+                tst_mux_config_set_stream_descriptors_for_klv(cfg, v, tlv.as_ptr(), 3, 1),
+                0
+            );
+            assert_eq!(
+                (*cfg).programs[0].stream_descriptors[0],
+                alloc::vec![tlv.to_vec()]
+            );
+            tst_mux_config_free(cfg);
+        }
+    }
 }

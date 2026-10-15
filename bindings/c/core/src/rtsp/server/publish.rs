@@ -26,7 +26,7 @@
 //! `TST_E_CLOSED` on every entry point, including a `next_publisher` call
 //! that `tst_rtsp_server_stop` woke.
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::os::raw::c_char;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
@@ -86,18 +86,9 @@ fn record_server_error(e: tst_rtp::RtspServerError, ctx: &str) -> i32 {
 
 /// Borrow a NUL-terminated UTF-8 path argument.
 fn path_arg<'a>(path: *const c_char) -> Result<&'a str, i32> {
-    if path.is_null() {
-        set_last_error(TstError::InvalidConfig, "path is null");
-        return Err(TstError::InvalidConfig as i32);
-    }
     // SAFETY: caller guarantees a NUL-terminated string valid for this call.
-    match unsafe { CStr::from_ptr(path) }.to_str() {
-        Ok(s) => Ok(s),
-        Err(_) => {
-            set_last_error(TstError::InvalidConfig, "path is not valid UTF-8");
-            Err(TstError::InvalidConfig as i32)
-        }
-    }
+    unsafe { crate::c_str::c_str_arg(path, TstError::InvalidConfig, "path") }
+        .ok_or(TstError::InvalidConfig as i32)
 }
 
 /// Box a `PublishMountHandle` as a C handle. NULL (with
@@ -680,6 +671,7 @@ pub unsafe extern "C" fn tst_rtsp_publish_mount_free(mount: *mut TstRtspPublishM
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CStr;
 
     #[test]
     fn copy_truncated_terminates_and_truncates() {

@@ -41,7 +41,6 @@
 //! succeeds (it stores the bytes) but `_connect` will surface an error if the
 //! URL uses `rtsps://`.
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::ptr;
 
@@ -85,17 +84,10 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_new(
     url: *const c_char,
 ) -> *mut TstRtspClientBuilder {
     ffi_catch(ptr::null_mut(), || {
-        if url.is_null() {
-            set_last_error(TstError::InvalidConfig, "url is null");
+        let Some(url_str) =
+            (unsafe { crate::c_str::c_str_arg(url, TstError::InvalidConfig, "url") })
+        else {
             return ptr::null_mut();
-        }
-        // SAFETY: caller guarantees NUL-terminated, valid-for-this-call.
-        let url_str = match unsafe { CStr::from_ptr(url) }.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                set_last_error(TstError::InvalidConfig, "url is not valid UTF-8");
-                return ptr::null_mut();
-            }
         };
         match TstRtspClientBuilder::from_url(url_str) {
             Ok(b) => TstRtspClientBuilder::into_raw(Box::new(b)),
