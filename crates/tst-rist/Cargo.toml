@@ -28,3 +28,6 @@ default = ["mbedtls"]
 # Enable AES-128/192/256 PSK encryption. Re-exports rist-sys's mbedtls feature
 # so consumers get one feature flag.
 mbedtls = ["rist-sys/mbedtls"]
+
+[dev-dependencies]
+tst-core = { path = "../tst-core", features = ["conformance"] }

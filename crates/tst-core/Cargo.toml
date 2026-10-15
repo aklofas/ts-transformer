@@ -17,6 +17,9 @@ default = ["std", "file"]
 # serialization deps. Without it the crate is #![no_std] + alloc.
 std  = ["file", "serde/std", "tracing/std", "sha2/std", "dep:serde_json", "dep:toml", "portable-atomic/std", "dep:socket2"]
 file = ["std"]  # std::fs-using helpers in io_file (must imply std)
+# The transport conformance kit (`transport::conformance`): test
+# infrastructure the transport crates enable from their dev-dependencies.
+conformance = ["std"]
 
 [dependencies]
 thiserror    = { workspace = true }
@@ -133,3 +136,6 @@ required-features = ["std"]
 path  = "tests/tools/strip_conformance_parameter_sets.rs"
 bench = false
 doc   = false
+
+[package.metadata.docs.rs]
+features = ["conformance"]

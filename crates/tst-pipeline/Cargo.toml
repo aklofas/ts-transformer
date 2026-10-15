@@ -35,6 +35,7 @@ spin      = { version = "0.9", default-features = false, features = ["spin_mutex
 criterion       = { workspace = true }
 proptest        = { workspace = true }
 tst-test-helpers = { path = "../tst-test-helpers" }
+tst-core         = { path = "../tst-core", default-features = false, features = ["conformance"] }
 # Captures `tracing` events in tests for assertion.
 # `no-env-filter` makes the subscriber accept events from any crate (not just
 # the test binary), which is needed for integration tests that assert on

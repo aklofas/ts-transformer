@@ -9,7 +9,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed — tst-core (BREAKING)
+
+- `tst_core::transport::conformance` (the transport conformance kit) is now
+  behind the non-default `conformance` feature. It is test infrastructure;
+  enable it from `[dev-dependencies]`:
+  `tst-core = { version = "…", features = ["conformance"] }`.
 
 ---
 

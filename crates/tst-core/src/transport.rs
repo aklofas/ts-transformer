@@ -57,11 +57,13 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use thiserror::Error;
 
-// Executable form of the contract table above (std-only, Provisional). The
-// summary rustdoc lives in the module file's own `//!` docs — an outer `///`
-// here would make rustdoc resolve the module's intra-doc links in THIS
-// module's scope and break every one of them.
-#[cfg(feature = "std")]
+// Executable form of the contract table above (Provisional), behind the
+// non-default `conformance` feature: every transport crate enables it from its
+// dev-dependencies and runs the kit in `tests/conformance.rs`. The summary
+// rustdoc lives in the module file's own `//!` docs — an outer `///` here
+// would make rustdoc resolve the module's intra-doc links in THIS module's
+// scope and break every one of them.
+#[cfg(feature = "conformance")]
 pub mod conformance;
 
 // ============================================================
