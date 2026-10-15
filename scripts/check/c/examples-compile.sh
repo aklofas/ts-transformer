@@ -26,8 +26,8 @@
 # ratchets sweep): tst-c's build.rs writes ONE header path,
 # <target>/<profile>/include/tstrans.h, for whatever feature set it was
 # last run with — and cargo only reruns build.rs when the unit is not fresh.
-# So after any narrower tst-c build (e.g. no-srt-symbol-leak.sh's
-# `--features srt`), an already-cached all-features build is "fresh", build.rs
+# So after any narrower tst-c build (e.g. a header-drift run's
+# `--features srt,rtp`), an already-cached all-features build is "fresh", build.rs
 # is skipped, and the srt-only header stays on disk while the all-features
 # cdylib is up to date. We therefore PROBE the header with the preprocessor
 # after building and, if any TST_HAS_* is missing, touch one of build.rs's

@@ -740,8 +740,61 @@ ms_copy; printf '[toolchain]\nchannel = "stable"\n' > "$tmp/ms/rust-toolchain.to
 ms_copy; printf '        toolchain: "%s"\n' "$v" >> "$tmp/ms/.github/workflows/ci.yml";        expect "msrv: a workflow toolchain literal"   1 ms
 ms_copy; printf '  RUSTUP_TOOLCHAIN: "%s"\n' "$v" >> "$tmp/ms/.github/workflows/ci.yml";      expect "msrv: a RUSTUP_TOOLCHAIN literal"     1 ms
 ms_copy; printf 'rustup target add x --toolchain %s\n' "$v" > "$tmp/ms/embedded/scripts/check/g.sh"; expect "msrv: an embedded --toolchain literal" 1 ms
-ms_copy; printf 'cargo +%s fmt\nrustup toolchain install %s\n' "$v" "$v" > "$tmp/ms/scripts/x.sh"; expect "msrv: a cargo +X / toolchain install X literal" 1 ms
+ms_copy; printf 'cargo +%s fmt\n' "$v" > "$tmp/ms/scripts/x.sh";                       expect "msrv: a cargo +X literal"                1 ms
+ms_copy; printf 'rustup toolchain install %s\n' "$v" > "$tmp/ms/scripts/x.sh";            expect "msrv: a toolchain install X literal"     1 ms
+ms_copy; mkdir -p "$tmp/ms/embedded/freertos-srt/substrate"; printf 'rustup target add x --toolchain %s\n' "$v" > "$tmp/ms/embedded/freertos-srt/substrate/b.sh"; expect "msrv: a freertos substrate --toolchain literal" 1 ms
+ms_copy; printf '      - uses: dtolnay/rust-toolchain@%s\n' "$v" >> "$tmp/ms/.github/workflows/ci.yml"; expect "msrv: a dtolnay/rust-toolchain@X.Y pin" 1 ms
 ms_copy; printf '[package]\nname = "foo"\nrust-version = "%s"\n' "$pin" > "$tmp/ms/crates/foo/Cargo.toml"; expect "msrv: a member manifest with its own rust-version" 1 ms
+
+# ---- roster-sync check 5: every member inherits [workspace.lints] ----
+mkdir -p "$tmp/ro/nolints" "$tmp/ro/lints"
+printf '[package]\nname = "tst-core"\n' > "$tmp/ro/nolints/Cargo.toml"
+printf '[package]\nname = "tst-core"\n\n[lints]\nworkspace = true\n' > "$tmp/ro/lints/Cargo.toml"
+for v in nolints lints; do
+    python3 -I -c '
+import json, sys
+m = json.load(open(sys.argv[1]))
+for p in m["packages"]:
+    if p["name"] == "tst-core":
+        p["manifest_path"] = sys.argv[2]
+json.dump(m, open(sys.argv[3], "w"))' "$tmp/ro/meta.json" "$tmp/ro/$v/Cargo.toml" "$tmp/ro/meta-$v.json"
+done
+rs_copy
+rs_lints() { ROSTER_METADATA="$tmp/ro/meta-$1.json" RSYNC_FILES_ROOT="$tmp/rs" bash "$RSYNC"; }
+rs_nolints() { rs_lints nolints; }
+rs_withlints() { rs_lints lints; }
+expect "roster-sync: a member manifest without [lints] workspace = true" 1 rs_nolints
+expect "roster-sync: the same member with the lint table inherited"       0 rs_withlints
+
+# ---- no unreachable / .expect in binding production code (scripts/check/repo/no-unreachable-expect-in-bindings.sh) ----
+NUE="$DIR/../check/repo/no-unreachable-expect-in-bindings.sh"
+mkdir -p "$tmp/nue/x/src"
+nue() { NUE_ROOT="$tmp/nue" NUE_DIRS="x/src" bash "$NUE"; }
+nue_src() { printf "$1" > "$tmp/nue/x/src/lib.rs"; } # the fixture is $tmp/nue/x/src/lib.rs
+nue_src 'fn a() -> u8 { let v: Option<u8> = None; v.expect("boom") }\n#[cfg(test)]\nmod t { fn b() { unreachable!() } }\n'
+expect "no-unreachable-expect: production .expect(" 1 nue
+nue_src 'fn a() -> u8 { 1 }\n#[cfg(test)]\nmod t { fn b() { unreachable!(); let v: Option<u8> = None; v.expect("x"); } }\n'
+expect "no-unreachable-expect: test-module unreachable!/.expect( ignored" 0 nue
+nue_src 'fn a() { match 1 { 1 => {}, _ => unreachable!("no") } }\n'
+expect "no-unreachable-expect: production unreachable!" 1 nue
+nue_src '/// Never `.expect()` here; see also unreachable!.\n//! module prose naming .expect(\nfn a() -> u8 { 1 }\n'
+expect "no-unreachable-expect: comment prose naming unreachable!/.expect(" 0 nue
+nue_src 'fn a() -> u8 { let v: Option<u8> = None; v.expect("boom") } // trailing note\n'
+expect "no-unreachable-expect: a trailing comment does not shield the code on its line" 1 nue
+nue_src 'struct S;\nimpl S {\n    #[cfg(test)]\n    fn t() {}\n}\nfn a() -> u8 { let v: Option<u8> = None; v.expect("boom") }\n'
+expect "no-unreachable-expect: an indented #[cfg(test)] does not end the production region" 1 nue
+nue_src 'fn a() -> u8 { 1 }\n'
+expect "no-unreachable-expect: a clean file" 0 nue
+# A column-0 #[cfg(test)] on a NON-module item is not the file tail: a next-line
+# item, a same-line item, and a multi-line fn whose own body may `.expect(`.
+nue_src '#[cfg(test)]\nextern crate std;\nfn a() -> u8 { let v: Option<u8> = None; v.expect("boom") }\n'
+expect "no-unreachable-expect: a cfg(test) extern-crate item does not end the production region" 1 nue
+nue_src '#[cfg(test)] use core::fmt::Debug;\nfn a() { unreachable!("boom") }\n'
+expect "no-unreachable-expect: a same-line cfg(test) item does not end the production region" 1 nue
+nue_src '#[cfg(test)]\npub(crate) fn helper() -> u8 {\n    let v: Option<u8> = None;\n    v.expect("fine in a test helper")\n}\nfn a() -> u8 { 1 }\n'
+expect "no-unreachable-expect: a cfg(test) fn body may expect, and scanning resumes after it" 0 nue
+nue_src '#[cfg(test)]\npub(crate) fn helper() -> u8 {\n    1\n}\nfn a() -> u8 { let v: Option<u8> = None; v.expect("boom") }\n'
+expect "no-unreachable-expect: production code AFTER a cfg(test) fn is still scanned" 1 nue
 
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

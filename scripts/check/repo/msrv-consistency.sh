@@ -21,7 +21,7 @@ stated() { # <path> TAB <ERE with @V@ for the version> TAB <min occurrences>
     'docs/start/quickstart.md'        '(Rust @V@\+|pins to @V@ )'                   2
 }
 # A toolchain version written where the channel must be read instead.
-FORBIDDEN='(RUSTUP_TOOLCHAIN|toolchain|rust-version):[[:space:]]*"?[0-9]+\.[0-9]+|--toolchain [0-9]+\.[0-9]+|toolchain install [0-9]+\.[0-9]+|cargo \+[0-9]+\.[0-9]+|Install Rust [0-9]+\.[0-9]+'
+FORBIDDEN='(RUSTUP_TOOLCHAIN|toolchain|rust-version):[[:space:]]*"?[0-9]+\.[0-9]+|--toolchain [0-9]+\.[0-9]+|toolchain install [0-9]+\.[0-9]+|cargo \+[0-9]+\.[0-9]+|Install Rust [0-9]+\.[0-9]+|dtolnay/rust-toolchain@[0-9]+\.[0-9]+'
 
 pinned="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+(\.[0-9]+)?)".*/\1/p' "$ROOT/rust-toolchain.toml" | head -1)"
 [ -n "$pinned" ] || { echo "FAIL: no numeric channel in rust-toolchain.toml (a 'stable'/'nightly' channel is not an MSRV pin)"; exit 1; }

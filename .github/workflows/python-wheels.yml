@@ -27,6 +27,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/python-wheels.yml"
+      - ".github/actions/rust-setup/**"
+      - "rust-toolchain.toml"
       - "bindings/python/**"
       - "crates/tst-core/**"
       - "crates/tst-rtp/**"

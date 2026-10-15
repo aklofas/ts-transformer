@@ -7,7 +7,7 @@
 //! discover-then-release helper the `rtp` binary also uses: an OS-assigned pair
 //! `base`/`base+1`, released before the transport binds it. That window is
 //! only safe because nothing else is binding ephemeral ports concurrently —
-//! `.config/nextest.toml` puts `binary(conformance)` in the single-threaded
+//! `.config/nextest.toml` puts `binary(/^net_/)` in the single-threaded
 //! `network` group for exactly this reason. Under plain `cargo test` (which
 //! has no test groups) the whole workspace is not running alongside, so the
 //! window is likewise uncontended; it is CI, which uses nextest, that needs

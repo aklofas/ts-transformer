@@ -11,8 +11,8 @@
 #      below (constant returns with no internal locking, panics, or
 #      allocation).
 #
-# The existing
-# `scripts/check/c/lifecycle-ffi-catch-coverage.sh` only covers `_close` /
+# The former
+# lifecycle-only rail covered only `_close` /
 # `_cancel` entries — `tst_demux_config_free` slipped past that
 # ratchet by being a `_free`. This ratchet enumerates *every*
 # `pub unsafe extern "C" fn` in tst-c, so future entry points cannot

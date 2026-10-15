@@ -313,7 +313,7 @@ jobs:
 
       - name: check-ratchet-self-test (fail-closed ratchets detect gaps)
         # Validates that the fail-closed ratchets actually detect their
-        # failure mode (today: the C-header rail's cases). Gated to
+        # failure mode (the cases in scripts/ratchets/tests/self_test.sh). Gated to
         # linux-x86_64: the check is platform-independent (no signal from
         # other runners) and its synthetic-fixture bash is GNU-leaning.
         if: matrix.name == 'linux-x86_64'
@@ -643,7 +643,11 @@ jobs:
           # re-render all 10 baselines with it, and land both together.
           rustup toolchain install nightly-2026-07-03 --profile minimal --no-self-update
           cargo +stable install cargo-public-api --locked --quiet
-          for pair in $(bash scripts/lib/roster.sh public-api); do
+          # Assigned first: a roster.sh failure inside the loop's command
+          # substitution would otherwise leave an empty loop and a green step.
+          pairs="$(bash scripts/lib/roster.sh public-api)"
+          test "$(printf '%s\n' $pairs | grep -c .)" -eq 10 || { echo "public-api roster is not the 10 baselined crates: $pairs" >&2; exit 1; }
+          for pair in $pairs; do
             pkg="${pair%%:*}"
             dir="${pair##*:}"
             SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo +nightly-2026-07-03 public-api -p $pkg --simplified > /tmp/public-api-current-$pkg.txt
