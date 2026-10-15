@@ -10,12 +10,13 @@
 //! We can't use `RtspClient` here: it's a request/response client and
 //! has no path to surface a server-initiated ANNOUNCE to the caller.
 
-use std::io::{Read, Write};
+use std::io::Read;
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
-use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use tst_rtp::RtspServer;
+
+use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, session_id};
 
 /// Read from `stream` until `terminator` appears anywhere in the
 /// accumulated buffer, EOF, or `deadline` passes. Returns the
@@ -49,18 +50,6 @@ fn read_until(stream: &mut TcpStream, terminator: &[u8], deadline: Instant) -> V
     buf
 }
 
-/// Issue an RTSP request over `stream`, then read the response until
-/// the first CRLFCRLF (we don't exercise bodies > the header block in
-/// this test — DESCRIBE responses with a body are read up through the
-/// SDP terminator).
-fn send_and_read_response(stream: &mut TcpStream, req: &[u8]) -> String {
-    stream.write_all(req).unwrap();
-    stream.flush().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let buf = read_until(stream, b"\r\n\r\n", deadline);
-    String::from_utf8_lossy(&buf).into_owned()
-}
-
 #[test]
 fn stop_sends_notice_5402_announce_to_active_session() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
@@ -74,46 +63,39 @@ fn stop_sends_notice_5402_announce_to_active_session() {
     // the test's port surface).
     let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
     tcp.set_nodelay(true).unwrap();
+    tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
 
-    let opts = send_and_read_response(
+    let opts = request(
         &mut tcp,
-        format!("OPTIONS rtsp://127.0.0.1:{port}/live RTSP/1.0\r\nCSeq: 1\r\n\r\n").as_bytes(),
+        &format!("OPTIONS rtsp://127.0.0.1:{port}/live RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
     );
     assert!(opts.contains("200 OK"), "OPTIONS failed: {opts}");
 
-    let describe = send_and_read_response(
+    let describe = request(
         &mut tcp,
-        format!("DESCRIBE rtsp://127.0.0.1:{port}/live RTSP/1.0\r\nCSeq: 2\r\nAccept: application/sdp\r\n\r\n")
-            .as_bytes(),
+        &format!(
+            "DESCRIBE rtsp://127.0.0.1:{port}/live RTSP/1.0\r\nCSeq: 2\r\nAccept: application/sdp\r\n\r\n"
+        ),
     );
     assert!(describe.contains("200 OK"), "DESCRIBE failed: {describe}");
 
-    let setup = send_and_read_response(
+    let setup = request(
         &mut tcp,
-        format!(
+        &format!(
             "SETUP rtsp://127.0.0.1:{port}/live RTSP/1.0\r\nCSeq: 3\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
-        )
-        .as_bytes(),
+        ),
     );
     assert!(setup.contains("200 OK"), "SETUP failed: {setup}");
 
     // Extract the Session: header so we can assert it round-trips into
     // the ANNOUNCE.
-    let session_id = setup
-        .lines()
-        .find_map(|l| {
-            l.strip_prefix("Session: ")
-                .or_else(|| l.strip_prefix("session: "))
-        })
-        .map(|s| s.split(';').next().unwrap().trim().to_string())
-        .expect("SETUP response should carry Session header");
+    let session_id = session_id(&setup);
 
-    let play = send_and_read_response(
+    let play = request(
         &mut tcp,
-        format!(
+        &format!(
             "PLAY rtsp://127.0.0.1:{port}/live RTSP/1.0\r\nCSeq: 4\r\nSession: {session_id}\r\n\r\n"
-        )
-        .as_bytes(),
+        ),
     );
     assert!(play.contains("200 OK"), "PLAY failed: {play}");
 
@@ -185,19 +167,19 @@ fn stop_shuts_down_per_session_write_half_so_client_sees_eof_promptly() {
 
     let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
     tcp.set_nodelay(true).unwrap();
+    tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     // Drive through SETUP so the server registers an ActiveSession with
     // a populated `tcp_write` — the new shutdown loop only fires on
     // sessions present in the registry at stop() time.
-    let _ = send_and_read_response(
+    let _ = request(
         &mut tcp,
-        format!("OPTIONS rtsp://127.0.0.1:{port}/live RTSP/1.0\r\nCSeq: 1\r\n\r\n").as_bytes(),
+        &format!("OPTIONS rtsp://127.0.0.1:{port}/live RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
     );
-    let _ = send_and_read_response(
+    let _ = request(
         &mut tcp,
-        format!(
+        &format!(
             "SETUP rtsp://127.0.0.1:{port}/live RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
-        )
-        .as_bytes(),
+        ),
     );
 
     // Call stop() in the foreground — it blocks for the full graceful

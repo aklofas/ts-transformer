@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use crate::ports::free_rtp_port_base;
 use tst_core::transport::{RecvTransport, Transport};
 use tst_rtp::{RtpRecvTransport, RtpTransport};
 
@@ -24,42 +25,6 @@ fn synthetic_ts_packet(seq_byte: u8) -> [u8; 188] {
     let mut out = [seq_byte; 188];
     out[0] = 0x47; // TS sync byte
     out
-}
-
-/// Find a free RTP port base on `127.0.0.1` where both `base` and `base + 1`
-/// (the RTCP companion auto-bound on `port + 1` per RFC 3550 §11) are
-/// currently bindable, then release them so the transport under test can bind
-/// them itself.
-///
-/// This replaces the old hard-coded 55004/55008/… ports, which intermittently
-/// collided with the Windows dynamic-exclusion / reserved UDP ranges (shift
-/// per runner boot) and failed with `WSAEACCES (os error 10013)`. An
-/// OS-assigned ephemeral port is never drawn from a reserved range, so this
-/// removes that flake class. We can't hand the pre-bound socket to the
-/// transport (`RtpRecvTransport::listen` binds by URL and exposes no
-/// local-addr accessor), so we discover-then-release; the serialized `network`
-/// nextest test-group means no sibling test races for the freed port.
-fn free_rtp_port_base() -> u16 {
-    use std::net::UdpSocket;
-    // Bounded so a host under unusual port pressure fails deterministically with
-    // a clear message instead of spinning until nextest's timeout kills it.
-    for _ in 0..1000 {
-        let s = UdpSocket::bind("127.0.0.1:0").expect("bind ephemeral udp");
-        let base = s.local_addr().unwrap().port();
-        if base < u16::MAX {
-            if let Ok(companion) = UdpSocket::bind(("127.0.0.1", base + 1)) {
-                drop(companion);
-                drop(s);
-                return base;
-            }
-        }
-        drop(s); // base + 1 was taken (or base == u16::MAX); retry.
-        std::thread::yield_now();
-    }
-    panic!(
-        "free_rtp_port_base: no free base/base+1 UDP port pair on 127.0.0.1 \
-         after 1000 attempts (host under port pressure?)"
-    );
 }
 
 #[test]

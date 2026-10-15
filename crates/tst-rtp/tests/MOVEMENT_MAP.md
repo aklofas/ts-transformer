@@ -105,3 +105,6 @@ root as `#[path = "rtsp_server/publish/<file>.rs"] mod publish_<file>;` — one
 | `rtsp_server/publish/conformance.rs` | shared receive-side conformance kit on the app transport |
 | `fixtures/raw_rtsp_publisher.rs` | raw-socket publisher (`RawPublisher`, plain + TLS), `SDP_MP2T`, `rtp_wrap`, `ts_fixture_packets`; elementary shapes `SDP_H264`, `SDP_H264_KLV`, `h264_rtp_packets`, `klv_rtp_packet`, `klv_unit`, `sr_packet`, `demux_until_quiet` |
 | `fixtures/h264_payloader.rs` | test-only RFC 6184 payloader (`packetize`, `expected_annexb`, `build_rtp_packet`), re-exported by `h264/common.rs` |
+| `fixtures/raw_rtsp_server.rs` | hand-rolled blocking RTSP server peer for client tests (`read_request` with a persistent `leftover` buffer, `answer_describe_and_setup`, `force_reset` RST close, `SDP_BODY`) |
+| `fixtures/ports.rs` | `free_rtp_port_base`, `#[path]`-included by the `rtp` and `conformance` binaries |
+| `fixtures/mod.rs` | `wait_for` (poll-with-budget) beside the module declarations |

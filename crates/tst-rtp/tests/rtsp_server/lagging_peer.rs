@@ -14,44 +14,13 @@
 //! path were ever coupled to peer drain (e.g. a bounded blocking channel), this
 //! loop would stall and nextest's per-test timeout would fail it.
 
-use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
-use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use tst_core::mpegts::common::Pts90khz;
 use tst_rtp::RtspServer;
 
-/// Read an RTSP response off `stream` up to the blank-line header terminator.
-fn read_response(stream: &mut TcpStream) -> String {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 1024];
-    loop {
-        let n = stream.read(&mut chunk).expect("read RTSP response");
-        assert_ne!(n, 0, "server closed before sending a full response");
-        buf.extend_from_slice(&chunk[..n]);
-        if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-            break;
-        }
-    }
-    String::from_utf8_lossy(&buf).into_owned()
-}
-
-/// Extract the bare session id from a `Session: <id>;timeout=N` header.
-fn session_id(response: &str) -> String {
-    for line in response.lines() {
-        if let Some(rest) = line
-            .strip_prefix("Session: ")
-            .or_else(|| line.strip_prefix("session: "))
-        {
-            return rest.split(';').next().unwrap().trim().to_string();
-        }
-    }
-    panic!("no Session header in SETUP response:\n{response}");
-}
+use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, session_id};
 
 /// A stalled TCP-interleaved peer does not block the muxer push path.
 #[test]
@@ -65,24 +34,24 @@ fn slow_peer_does_not_block_muxer() {
     // Raw TCP-interleaved handshake. SETUP uses the bare mount path (the
     // server's extract_mount_path does not strip a trailing trackID segment).
     let mut peer = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    peer.write_all(
-        format!(
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let setup_resp = request(
+        &mut peer,
+        &format!(
             "SETUP {base} RTSP/1.0\r\nCSeq: 1\r\n\
              Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
-        )
-        .as_bytes(),
-    )
-    .unwrap();
-    let setup_resp = read_response(&mut peer);
+        ),
+    );
     assert!(
         setup_resp.starts_with("RTSP/1.0 200"),
         "SETUP failed:\n{setup_resp}"
     );
     let sid = session_id(&setup_resp);
 
-    peer.write_all(format!("PLAY {base} RTSP/1.0\r\nCSeq: 2\r\nSession: {sid}\r\n\r\n").as_bytes())
-        .unwrap();
-    let play_resp = read_response(&mut peer);
+    let play_resp = request(
+        &mut peer,
+        &format!("PLAY {base} RTSP/1.0\r\nCSeq: 2\r\nSession: {sid}\r\n\r\n"),
+    );
     assert!(
         play_resp.starts_with("RTSP/1.0 200"),
         "PLAY failed:\n{play_resp}"
