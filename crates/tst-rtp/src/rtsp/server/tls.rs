@@ -55,6 +55,15 @@ impl TlsServerConfig {
         })
     }
 
+    /// [`Self::load`] for PEM bytes.
+    pub(crate) fn from_pem(cert_pem: &[u8], key_pem: &[u8]) -> Result<Self, RtspServerError> {
+        let config = tst_core::net::tls::server_config_from_pem(cert_pem, key_pem)
+            .map_err(|e| RtspServerError::Tls(e.to_string()))?;
+        Ok(Self {
+            acceptor: TlsAcceptor::from(Arc::new(config)),
+        })
+    }
+
     /// Perform the TLS handshake on an accepted TCP connection.
     ///
     /// Returns the TLS stream; the session splits it like a TCP stream.

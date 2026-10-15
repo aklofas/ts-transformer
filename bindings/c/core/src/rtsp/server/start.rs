@@ -149,11 +149,11 @@ mod tests {
         unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(handle) };
     }
 
-    /// TLS PEM bytes on a builder must fail `_start` rather than silently
-    /// starting a PLAINTEXT server: tst-c is built without tst-rtp's `tls`
-    /// feature, so the stored bytes can never take effect. The PEM content
-    /// is never parsed (the guard fires before any TLS machinery), so
-    /// dummy bytes suffice.
+    /// TLS PEM bytes on a plaintext `rtsp://` builder must fail `_start`
+    /// rather than silently starting a PLAINTEXT server. Without the `tls`
+    /// feature the build refuses them outright; with it the server refuses
+    /// the plaintext bind. The PEM content is never parsed (the guard fires
+    /// before any TLS machinery), so dummy bytes suffice.
     #[test]
     fn tls_cert_pem_on_plaintext_bind_fails_start() {
         let b = TstRtspServerBuilder::from_url("rtsp://127.0.0.1:0").expect("test url parses");
@@ -183,5 +183,28 @@ mod tests {
             .to_str()
             .unwrap();
         assert!(msg.contains("TLS"), "message must name the cause: {msg}");
+    }
+
+    /// In a `tls` build, valid in-memory PEM on an `rtsps://` builder starts
+    /// the server.
+    #[cfg(feature = "tls")]
+    #[test]
+    fn tls_cert_pem_on_rtsps_bind_starts() {
+        let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
+        let (cert_pem, key_pem) = (cert.cert.pem(), cert.key_pair.serialize_pem());
+        let b = TstRtspServerBuilder::from_url("rtsps://127.0.0.1:0").expect("test url parses");
+        let raw = TstRtspServerBuilder::into_raw(Box::new(b));
+        unsafe {
+            crate::rtsp::server::builder::tst_rtsp_server_builder_tls_cert_pem(
+                raw,
+                cert_pem.as_ptr(),
+                cert_pem.len(),
+                key_pem.as_ptr(),
+                key_pem.len(),
+            );
+        }
+        let handle = unsafe { tst_rtsp_server_builder_start(raw) };
+        assert!(!handle.is_null(), "start with valid PEM must succeed");
+        unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(handle) };
     }
 }

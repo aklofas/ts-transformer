@@ -804,15 +804,16 @@ impl RtspServer {
         // behavior silently ignored the configured TLS cert/key paths and came up
         // PLAINTEXT — the caller believed TLS was armed. Python feeds this
         // same builder, so erroring here closes both surfaces at once; the
-        // JVM fails fast earlier at build(), and the C ABI — which cannot
-        // reach this guard (tst-c builds without the `rtsp-server-tls`
-        // feature) — carries its own equivalent refusal in build_server. The
-        // fields only exist under the `rtsp-server-tls` feature, so no
-        // cfg(not(rtsp-server-tls)) twin is needed.
+        // JVM fails fast earlier at build(), and the C ABI reaches this guard
+        // in a `tls` build (a build without it carries its own equivalent
+        // refusal in build_server). The fields only exist under the
+        // `rtsp-server-tls` feature, so no cfg(not(rtsp-server-tls)) twin is
+        // needed.
         #[cfg(feature = "rtsp-server-tls")]
         if !is_tls
             && (self.state.builder.tls_cert_path.is_some()
-                || self.state.builder.tls_key_path.is_some())
+                || self.state.builder.tls_key_path.is_some()
+                || self.state.builder.tls_pem.is_some())
         {
             // Nothing was spawned — un-latch `started` so the caller
             // isn't left holding a wedged object (same contract as the
@@ -827,15 +828,21 @@ impl RtspServer {
         }
         #[cfg(feature = "rtsp-server-tls")]
         if is_tls {
-            let loaded = (|| {
-                let cert = self.state.builder.tls_cert_path.as_ref().ok_or_else(|| {
-                    RtspServerError::Tls("rtsps:// bind requires tls_cert() builder call".into())
-                })?;
-                let key = self.state.builder.tls_key_path.as_ref().ok_or_else(|| {
-                    RtspServerError::Tls("rtsps:// bind requires tls_cert() builder call".into())
-                })?;
-                crate::rtsp::server::tls::TlsServerConfig::load(cert, key)
-            })();
+            let loaded = match (
+                &self.state.builder.tls_pem,
+                &self.state.builder.tls_cert_path,
+                &self.state.builder.tls_key_path,
+            ) {
+                (Some((cert, key)), _, _) => {
+                    crate::rtsp::server::tls::TlsServerConfig::from_pem(cert, key)
+                }
+                (None, Some(cert), Some(key)) => {
+                    crate::rtsp::server::tls::TlsServerConfig::load(cert, key)
+                }
+                _ => Err(RtspServerError::Tls(
+                    "rtsps:// bind requires tls_cert() or tls_cert_pem()".into(),
+                )),
+            };
             match loaded {
                 Ok(cfg) => *self.state.tls_config.lock().unwrap() = Some(cfg),
                 Err(e) => {

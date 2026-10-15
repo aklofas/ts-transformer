@@ -417,14 +417,14 @@ pub struct TstRtspServerBuilder {
     pub(crate) fanout_capacity: u32,
     /// Graceful-shutdown drain window in milliseconds. Default: 100.
     pub(crate) graceful_shutdown_drain_ms: u32,
-    /// Raw PEM bytes for the TLS certificate chain. Stored for a future
-    /// tst-c `tls` feature; TLS is NOT available in this build, so
-    /// `build_server` refuses to start when this is `Some` (the server
-    /// would otherwise come up PLAINTEXT with the certs ignored).
+    /// Raw PEM bytes for the TLS certificate chain. Handed to the server in a
+    /// `tls` build; without it `build_server` refuses to start when this is
+    /// `Some` (the server would otherwise come up PLAINTEXT with the certs
+    /// ignored).
     pub(crate) tls_cert_pem: Option<Vec<u8>>,
     /// Raw PEM bytes for the TLS private key. Same contract as
-    /// [`Self::tls_cert_pem`]: stored but unusable in this build;
-    /// presence makes `build_server` refuse.
+    /// [`Self::tls_cert_pem`]: handed to the server in a `tls` build;
+    /// refused at start otherwise.
     pub(crate) tls_key_pem: Option<Vec<u8>>,
     /// Whether an ANNOUNCE to an unregistered path creates a publish mount
     /// on demand. Default: false.
@@ -524,19 +524,22 @@ impl TstRtspServerBuilder {
         ));
         b.accept_unregistered_publishers(self.accept_unregistered_publishers);
 
-        // TLS bytes: tst-c has no `rtsp-server-tls` cargo feature, so
-        // tst-rtp's `RtspServerBuilder::tls_cert` is compiled out of this
-        // graph and stored PEM bytes can never take effect. Refuse to start
-        // rather than come up PLAINTEXT while the caller believes TLS is
-        // armed. (The setter still stores the bytes so a future tst-c
-        // `rtsp-server-tls` feature can light this up without an ABI
-        // change.)
+        // TLS bytes from tst_rtsp_server_builder_tls_cert_pem. With the `tls`
+        // feature they are handed to the server, which loads them at start()
+        // and refuses a plaintext rtsp:// bind that carries them. Without it
+        // they cannot take effect: refuse rather than start PLAINTEXT while
+        // the caller believes TLS is armed.
+        #[cfg(feature = "tls")]
+        if let (Some(cert), Some(key)) = (&self.tls_cert_pem, &self.tls_key_pem) {
+            b.tls_cert_pem(cert.clone(), key.clone());
+        }
+        #[cfg(not(feature = "tls"))]
         if self.tls_cert_pem.is_some() || self.tls_key_pem.is_some() {
             return Err(tst_rtp::RtspServerError::Tls(
-                "tst_rtsp_server_builder_tls_cert_pem was called, but TLS is \
-                 not compiled into this tst-c build — the server would start \
-                 PLAINTEXT with the supplied certs ignored; drop the \
-                 tls_cert_pem call (or use a TLS-capable binding)"
+                "tst_rtsp_server_builder_tls_cert_pem was called, but this tst-c \
+                 build has no `tls` feature — the server would start PLAINTEXT \
+                 with the supplied certs ignored; rebuild with --features tls \
+                 (TST_HAS_TLS) or drop the call"
                     .into(),
             ));
         }

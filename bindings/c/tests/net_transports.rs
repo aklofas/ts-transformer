@@ -5,6 +5,9 @@
 //! compiled into this single binary. Test bodies are unchanged; only the
 //! module path gained a `transports::<file>::` prefix. Per-file `#![cfg(feature=…)]`
 //! gates still apply (a gated-out member compiles to an empty module).
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
+mod common;
 #[path = "transports/hls_publish_smoke.rs"]
 mod hls_publish_smoke;
 #[path = "transports/rist_cancel_from_other_thread.rs"]
@@ -19,6 +22,8 @@ mod rtp_open_smoke;
 mod rtsp_publish_smoke;
 #[path = "transports/tcp_open_smoke.rs"]
 mod tcp_open_smoke;
+#[path = "transports/tcps_loopback.rs"]
+mod tcps_loopback;
 #[path = "transports/udp_close_cancels_first.rs"]
 mod udp_close_cancels_first;
 #[path = "transports/udp_open_smoke.rs"]

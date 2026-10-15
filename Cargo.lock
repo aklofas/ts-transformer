@@ -1930,6 +1930,7 @@ version = "0.8.0"
 dependencies = [
  "cbindgen",
  "libc",
+ "rcgen",
  "tempfile",
  "tst-c-core",
  "tst-core",
@@ -1943,6 +1944,7 @@ version = "0.8.0"
 dependencies = [
  "critical-section",
  "libc",
+ "rcgen",
  "secrecy",
  "spin",
  "thiserror 2.0.18",

@@ -15,8 +15,8 @@
 //!
 //! URL schemes:
 //! - `tcp://host:port` — plain TCP caller (connect)
-//! - `tcps://host:port` — TLS caller (requires `tls` sub-feature; returns
-//!   `TST_E_TCP_TLS` if disabled at build time)
+//! - `tcps://host:port` — TLS caller (works in a build with the `tls` feature,
+//!   `TST_HAS_TLS`; returns `TST_E_TCP_TLS` without it)
 //! - `tcp://addr:port?listen=1` — listener (via `tst_tcp_listener_from_url`)
 //!
 //! Common query params for caller-side handles: `?nodelay=1`, `?rcvbuf=N`,
