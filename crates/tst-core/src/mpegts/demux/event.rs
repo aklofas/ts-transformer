@@ -483,14 +483,17 @@ pub enum MultiCellAuReason {
     TooManyPids,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NonConformantIssue {
     /// `stream_type=0x06` carries Metadata_AU_cell payload (H.222.0 V9 §2.12.4.2,
     /// also defined in ST 1402.2 §9.4.1); treated as sync KLV.
+    #[error("stream_type=0x06 carries sync KLV on async PID")]
     StreamTypeMismatchSyncOnAsyncPid,
     /// `stream_type=0x15` carries bare KLV without AU cell wrap; treated as async KLV.
+    #[error("stream_type=0x15 carries async KLV on sync PID")]
     StreamTypeMismatchAsyncOnSyncPid,
     /// `metadata_descriptor` missing on a sync-KLV-shaped PID.
+    #[error("metadata_descriptor missing on sync-KLV PID")]
     MissingMetadataDescriptor,
     /// PCR jump or stream-monotonic timing inconsistency.
     ///
@@ -514,9 +517,11 @@ pub enum NonConformantIssue {
     /// declared again afterwards starts from a fresh seed: its first PCR is
     /// remembered without being compared, so it is never judged against the
     /// value an earlier declaration left off at.
+    #[error("PCR anomaly: delta={delta}")]
     PcrAnomaly { delta: i64 },
     /// PSI section checksum mismatch. Lenient mode falls back to the
     /// previous PSI version; strict mode converts to error.
+    #[error("PSI checksum mismatch on PID 0x{pid:04X}")]
     PsiChecksumMismatch { pid: u16 },
     /// PUSI mid-PES — a new PUSI packet arrived before the previous PES
     /// completed.
@@ -527,19 +532,23 @@ pub enum NonConformantIssue {
     /// diagnostic event. The variant is preserved for non-exhaustive-enum
     /// binary-compatibility parity only (same zero-emit-site status as
     /// `DemuxException.Kind::UNEXPECTED_EOF` in the Python binding).
+    #[error("PUSI packet arrived mid-PES")]
     PusiMidPes,
     /// PES header parse failed. Lenient mode: receiver continues parsing
     /// subsequent packets. Strict modes: escalates to `DemuxError`.
+    #[error("malformed PES on PID 0x{pid:04X}: {reason}")]
     MalformedPes { pid: u16, reason: &'static str },
     /// A PMT introduced a stream PID that's already bound to a different
     /// program. PID uniqueness across programs is required by ISO 13818-1;
     /// the demuxer keeps the first-program-wins binding and drops the second.
+    #[error(fmt = fmt_pid_reused)]
     PidReusedAcrossPrograms { pid: u16, programs: [u16; 2] },
 
     /// `treat_as` (or fallback) routed a PID to a subtitle codec but no
     /// recognized subtitle descriptor (subtitling/teletext/VTTC/GA94) is
     /// present on the PMT entry. Lenient mode classifies anyway; strict
     /// mode converts to `DemuxError::StrictRejection`.
+    #[error("subtitle stream on PID 0x{pid:04X} missing descriptor")]
     SubtitleMissingDescriptor { pid: u16 },
 
     /// PMT entry on `stream_type=0x06` carries more than one recognized
@@ -553,6 +562,7 @@ pub enum NonConformantIssue {
     /// descriptor tag bytes for tag-presence matches (`0x59`, `0x56`,
     /// `0x46`) and synthetic codepoints for `format_identifier` matches
     /// (`0xF0` = VTTC, `0xF1` = GA94, `0xF2` = KLVA).
+    #[error("subtitle PID 0x{pid:04X} has ambiguous descriptors: {tags:?}")]
     SubtitleDescriptorAmbiguous { pid: u16, tags: Vec<u8> },
 
     /// Subtitle descriptor tag was recognized but the inner length /
@@ -570,10 +580,12 @@ pub enum NonConformantIssue {
     /// and every binding's label table, so it stays reserved for
     /// cross-binding parity until the deferred typed-parser work gives it
     /// a real emission site.
+    #[error("subtitle descriptor 0x{tag:02X} malformed on PID 0x{pid:04X}")]
     SubtitleDescriptorMalformed { pid: u16, tag: u8 },
 
     /// AV1 stream's PMT entry has a malformed `registration_descriptor`
     /// for `format_identifier "AV01"` — length byte mismatches payload.
+    #[error("AV1 registration descriptor malformed on PID 0x{pid:04X}")]
     Av1RegistrationMalformed { pid: u16 },
 
     /// AV1 OBU encountered with `obu_has_size_field = 0`. AV1 in MPEG-2 TS
@@ -581,11 +593,13 @@ pub enum NonConformantIssue {
     /// format") requires `=1`. Streams violating this can't be split
     /// reliably; the splitter places remaining bytes into one trailing
     /// `Obu` and stops walking.
+    #[error("AV1 OBU type 0x{obu_type:02X} missing size field on PID 0x{pid:04X}")]
     Av1ObuMissingSizeField { pid: u16, obu_type: u8 },
 
     /// Tile List OBU (`obu_type = 8`) encountered. Forbidden by AV1 in
     /// MPEG-2 TS binding §3.3. Lenient mode passes through; strict mode
     /// rejects.
+    #[error("AV1 Tile List OBU forbidden on PID 0x{pid:04X}")]
     Av1TileListNotAllowed { pid: u16 },
 
     /// Per ISO/IEC 13818-1 §2.4.4.6 short-form sections cap at 1021 bytes;
@@ -603,6 +617,7 @@ pub enum NonConformantIssue {
     /// exceed cap before any length is seen). `observed_len` reflects the
     /// full overshoot in either case. Split the variant if telemetry
     /// consumers ever need to distinguish them.
+    #[error("PSI section overlong on PID 0x{pid:04X}: {observed_len} bytes")]
     PsiOverlongSection { pid: u16, observed_len: usize },
 
     /// Per ISO/IEC 13818-1 §2.4.3.2, bit 0x80 of TS byte 1
@@ -612,6 +627,7 @@ pub enum NonConformantIssue {
     /// consumers can correlate with downstream parse failures or surface to
     /// telemetry. Matches ffmpeg's `AV_PKT_FLAG_CORRUPT` in
     /// `mpegts.c:3091-3097`.
+    #[error("transport_error_indicator set on PID 0x{pid:04X}")]
     TransportErrorPacket { pid: u16 },
 
     /// DVB-subtitle PES_data_field carries a `data_identifier` byte other
@@ -630,6 +646,9 @@ pub enum NonConformantIssue {
     /// `Sample` event alongside this `NonConformant`. Strict mode
     /// (`StrictMode::Full`): the demuxer suppresses the `Sample` event and
     /// the issue propagates as a `DemuxError::StrictRejection`.
+    #[error(
+        "DVB-subtitle data_identifier=0x{observed:02X} (EN 300 743 §6.2 Table 3 requires 0x20)"
+    )]
     DvbSubDataIdentifier { observed: u8 },
 
     /// PTS anomaly distinct from PCR anomaly. Per ITU-T
@@ -648,17 +667,20 @@ pub enum NonConformantIssue {
     /// anomaly uses 27 MHz ticks and lives on the program's PCR PID;
     /// this PTS anomaly uses 90 kHz ticks and lives on the elementary
     /// stream PID.
+    #[error("PTS anomaly: delta={delta} (90 kHz ticks)")]
     PtsAnomaly { delta: i64 },
 
     /// A PES on a stream type that requires PTS (audio or video per
     /// H.222.0 V9 §2.7.4) arrived without one. The demuxer cannot
     /// timestamp the sample; lenient mode emits the sample with PTS=0
     /// and surfaces this issue. Strict mode (`StrictMode::Full`) rejects.
+    #[error("PTS required by stream type on PID 0x{pid:04X} but absent in PES header")]
     MissingRequiredPts { pid: u16 },
 
     /// PES header structural validation failure. Catches spec violations
     /// a plain "too short for header" check misses.
     /// See [`PesHeaderMalformedKind`] for the specific violation.
+    #[error(fmt = fmt_pes_header_malformed)]
     PesHeaderMalformed {
         pid: u16,
         kind: PesHeaderMalformedKind,
@@ -669,6 +691,9 @@ pub enum NonConformantIssue {
     /// 743 §6.2 and EN 300 472 §4.2, subtitle streams MUST set this
     /// flag (one complete composition page / one teletext block per
     /// PES). Lenient mode emits the sample anyway; strict mode rejects.
+    #[error(
+        "subtitle PES on PID 0x{pid:04X} missing data_alignment_indicator (EN 300 743 §6.2 / EN 300 472 §4.2 require =1)"
+    )]
     SubtitleAlignmentMissing { pid: u16 },
 
     /// PCR field decoded from the adaptation field violated ITU-T H.222.0
@@ -683,6 +708,7 @@ pub enum NonConformantIssue {
     /// timing tracking on a PID. Strict-mode timing categories
     /// (`StrictMode::TimingOnly`, `StrictMode::Full`) escalate this issue
     /// to `DemuxError::StrictRejection`.
+    #[error(fmt = fmt_pcr_malformed)]
     PcrMalformed { kind: PcrMalformedKind },
 
     /// NAL header constraint violation per H.264 §7.3.1 / H.265 §7.3.1.2 /
@@ -700,6 +726,7 @@ pub enum NonConformantIssue {
     /// NAL but still emits the issue. Strict mode (`StrictMode::Full`):
     /// the issue escalates to `DemuxError::StrictRejection` and the
     /// `Sample` event is suppressed.
+    #[error(fmt = fmt_nal_header)]
     NalHeader {
         codec: VideoCodec,
         kind: NalHeaderKind,
@@ -716,6 +743,7 @@ pub enum NonConformantIssue {
     /// Lenient mode (`StrictMode::Off`): the demuxer continues and the OBU
     /// surfaces on the `Sample` event. Strict mode (`StrictMode::Full`):
     /// the issue escalates to `DemuxError::StrictRejection`.
+    #[error(fmt = fmt_av1_obu_header)]
     Av1ObuHeader { pid: u16, kind: Av1ObuHeaderKind },
 
     /// AAC-LATM PES (stream_type `0x11`) framing violation. Per ISO/IEC 14496-3
@@ -731,6 +759,7 @@ pub enum NonConformantIssue {
     /// the bytes for forensic analysis). Strict mode (`StrictMode::Full`):
     /// the issue escalates to `DemuxError::StrictRejection` and the
     /// `Sample` event is suppressed.
+    #[error(fmt = fmt_latm_framing)]
     LatmFraming {
         pid: u16,
         kind: crate::codec::aac::latm::LatmFramingKind,
@@ -744,6 +773,9 @@ pub enum NonConformantIssue {
     /// ffmpeg's `mpegts.c:3118-3142` behavior. Lenient mode feeds the bytes
     /// through; the section then either passes by luck or surfaces as
     /// `PsiChecksumMismatch`.
+    #[error(
+        "PSI continuity-counter jump on PID 0x{pid:04X}: expected 0x{expected:X}, observed 0x{observed:X}"
+    )]
     PsiCcDiscontinuity {
         pid: u16,
         expected: u8,
@@ -758,6 +790,7 @@ pub enum NonConformantIssue {
     /// On the happy path (reassembly succeeded → `DemuxEvent::Sample`
     /// with `MetadataKind::KlvSyncAuCell { was_reassembled: true, .. }`)
     /// this event is NOT emitted.
+    #[error(fmt = fmt_multi_cell_au)]
     MultiCellAu {
         pid: u16,
         dropped_bytes: usize,
@@ -790,6 +823,7 @@ pub enum NonConformantIssue {
     /// value the demuxer read. `treated_as` is the value the demuxer
     /// substituted (always [`crate::mpegts::au_cell::CellFragmentIndication::Complete`]
     /// today).
+    #[error(fmt = fmt_cfi_tolerated)]
     CfiTolerated {
         pid: u16,
         observed_cfi: crate::mpegts::au_cell::CellFragmentIndication,
@@ -817,6 +851,9 @@ pub enum NonConformantIssue {
     /// `last_section_number` field — the count of additional
     /// sections the demuxer would need to assemble to materialize
     /// the full table.
+    #[error(
+        "PSI multi-section table unsupported on PID 0x{pid:04X}: table_id=0x{table_id:02X}, last_section_number={last_section_number} (full §2.4.4.5 reassembly deferred — partial section dropped)"
+    )]
     PsiMultiSectionUnsupported {
         pid: u16,
         table_id: u8,
@@ -835,6 +872,9 @@ pub enum NonConformantIssue {
     /// fail closed.
     ///
     /// `pid` is the stream PID.
+    #[error(
+        "AC-3 PES on PID 0x{pid:04X} missing syncword 0x0B77 despite data_alignment_indicator=1 (A/52:2018 §A.6.3)"
+    )]
     Ac3SyncMissing { pid: u16 },
 
     /// AV1-in-MPEG-2-TS binding §3.4 violation — AV1 PES arrived with
@@ -848,6 +888,9 @@ pub enum NonConformantIssue {
     /// `observed` is the actual PES `stream_id` byte. Lenient mode
     /// (`StrictMode::Off`): the demuxer continues to dispatch the PES.
     /// Strict mode (`StrictMode::Full`): escalates to `DemuxError::StrictRejection`.
+    #[error(
+        "AV1 PES on PID 0x{pid:04X} carries stream_id=0x{observed:02X} (AV1-in-MPEG-2-TS binding §3.4 mandates 0xBD)"
+    )]
     Av1WrongStreamId { pid: u16, observed: u8 },
 
     /// AV1-in-MPEG-2-TS binding §3.2 violation — AV1 PES payload did not
@@ -866,11 +909,17 @@ pub enum NonConformantIssue {
     /// [`split_video_strict`](crate::mpegts::demux::split_video_strict) for a
     /// fail-fast parse). `pid` is `0` — the opt-in parse path has no PID
     /// context.
+    #[error(
+        "AV1 PES on PID 0x{pid:04X} missing ts_open_bitstream_unit start code (AV1-in-MPEG-2-TS binding §3.2 mandates 0x00 0x00 0x01 prefix)"
+    )]
     Av1MissingTsObuFraming { pid: u16 },
 
     /// A PMT section's body `program_number` (H.222.0 §2.4.4.8) does not match
     /// the `program_number` the PAT (§2.4.4.4) assigned to this PMT PID. The
     /// mislabeled topology is NOT adopted.
+    #[error(
+        "PMT on PID 0x{pid:04X} body program_number={pmt_program} does not match PAT assignment program_number={pat_program} (H.222.0 §2.4.4.8)"
+    )]
     PmtProgramNumberMismatch {
         /// The PMT PID on which the mislabeled section arrived.
         pid: u16,
@@ -887,6 +936,9 @@ pub enum NonConformantIssue {
     /// corrupt PSI/PES/codec/metadata state) and surfaces this issue.
     /// `StrictMode::Full` rejects. A subsequent clear (TSC=0) packet on the
     /// same PID recovers normally.
+    #[error(
+        "unsupported transport_scrambling_control=0b{control:02b} on PID 0x{pid:04X} (H.222.0 §2.4.3.2; payload not routed)"
+    )]
     UnsupportedScrambling {
         /// The PID the scrambled packet arrived on.
         pid: u16,
@@ -899,6 +951,7 @@ pub enum NonConformantIssue {
     /// value, or a PCR flag with too few bytes). See [`AdaptationFieldKind`].
     /// Lenient mode surfaces this and continues best-effort (control 00 routes
     /// no payload by construction); `StrictMode::Full` rejects.
+    #[error(fmt = fmt_adaptation_field)]
     AdaptationFieldMalformed {
         pid: u16,
         kind: crate::mpegts::demux::ts::AdaptationFieldKind,
@@ -910,6 +963,9 @@ pub enum NonConformantIssue {
     /// PES would buffer until the next PUSI / cap and flush a bogus sample.
     /// The demuxer drops the partial and surfaces this; `StrictMode::Full`
     /// rejects. `stream_id` is the PES stream_id byte.
+    #[error(
+        "zero PES_packet_length on non-video PID 0x{pid:04X} (stream_id=0x{stream_id:02X}); H.222.0 §2.4.3.7 permits zero only for video — packet dropped"
+    )]
     ZeroLengthPesNonVideo { pid: u16, stream_id: u8 },
 
     /// A PAT/PMT section violated a fixed/reserved syntax field per H.222.0
@@ -919,6 +975,7 @@ pub enum NonConformantIssue {
     /// reserved bits inconsistently, so always-on checking would false-positive
     /// in default/lenient mode). `StrictMode::Full` rejects. `table_id` is the
     /// PSI table_id (0x00 PAT, 0x02 PMT).
+    #[error(fmt = fmt_psi_syntax)]
     PsiSyntax {
         pid: u16,
         table_id: u8,
@@ -926,6 +983,7 @@ pub enum NonConformantIssue {
     },
 
     /// Other.
+    #[error("{0}")]
     Other(String),
 }
 
@@ -1066,330 +1124,282 @@ pub fn pts_to_duration(pts: Pts90khz) -> Duration {
     Duration::from_micros(u64::try_from(ticks * 1_000_000 / 90_000).unwrap_or(u64::MAX))
 }
 
-impl core::fmt::Display for NonConformantIssue {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            NonConformantIssue::StreamTypeMismatchSyncOnAsyncPid => {
-                write!(f, "stream_type=0x06 carries sync KLV on async PID")
-            }
-            NonConformantIssue::StreamTypeMismatchAsyncOnSyncPid => {
-                write!(f, "stream_type=0x15 carries async KLV on sync PID")
-            }
-            NonConformantIssue::MissingMetadataDescriptor => {
-                write!(f, "metadata_descriptor missing on sync-KLV PID")
-            }
-            NonConformantIssue::PcrAnomaly { delta } => {
-                write!(f, "PCR anomaly: delta={}", delta)
-            }
-            NonConformantIssue::PsiChecksumMismatch { pid } => {
-                write!(f, "PSI checksum mismatch on PID 0x{pid:04X}")
-            }
-            NonConformantIssue::PusiMidPes => {
-                write!(f, "PUSI packet arrived mid-PES")
-            }
-            NonConformantIssue::MalformedPes { pid, reason } => {
-                write!(f, "malformed PES on PID 0x{pid:04X}: {reason}")
-            }
-            NonConformantIssue::PidReusedAcrossPrograms { pid, programs } => {
-                write!(
-                    f,
-                    "PID 0x{pid:04X} reused across programs {} and {}",
-                    programs[0], programs[1]
-                )
-            }
-            NonConformantIssue::SubtitleMissingDescriptor { pid } => {
-                write!(f, "subtitle stream on PID 0x{pid:04X} missing descriptor")
-            }
-            NonConformantIssue::SubtitleDescriptorAmbiguous { pid, tags } => {
-                write!(
-                    f,
-                    "subtitle PID 0x{pid:04X} has ambiguous descriptors: {tags:?}"
-                )
-            }
-            NonConformantIssue::SubtitleDescriptorMalformed { pid, tag } => {
-                write!(
-                    f,
-                    "subtitle descriptor 0x{tag:02X} malformed on PID 0x{pid:04X}"
-                )
-            }
-            NonConformantIssue::Av1RegistrationMalformed { pid } => {
-                write!(
-                    f,
-                    "AV1 registration descriptor malformed on PID 0x{pid:04X}"
-                )
-            }
-            NonConformantIssue::Av1ObuMissingSizeField { pid, obu_type } => {
-                write!(
-                    f,
-                    "AV1 OBU type 0x{obu_type:02X} missing size field on PID 0x{pid:04X}"
-                )
-            }
-            NonConformantIssue::Av1TileListNotAllowed { pid } => {
-                write!(f, "AV1 Tile List OBU forbidden on PID 0x{pid:04X}")
-            }
-            NonConformantIssue::PsiOverlongSection { pid, observed_len } => {
-                write!(
-                    f,
-                    "PSI section overlong on PID 0x{pid:04X}: {} bytes",
-                    observed_len
-                )
-            }
-            NonConformantIssue::TransportErrorPacket { pid } => {
-                write!(f, "transport_error_indicator set on PID 0x{pid:04X}")
-            }
-            NonConformantIssue::PsiCcDiscontinuity {
-                pid,
-                expected,
-                observed,
-            } => {
-                write!(
-                    f,
-                    "PSI continuity-counter jump on PID 0x{pid:04X}: expected 0x{expected:X}, observed 0x{observed:X}"
-                )
-            }
-            NonConformantIssue::DvbSubDataIdentifier { observed } => {
-                write!(
-                    f,
-                    "DVB-subtitle data_identifier=0x{observed:02X} \
-                     (EN 300 743 §6.2 Table 3 requires 0x20)"
-                )
-            }
-            NonConformantIssue::PtsAnomaly { delta } => {
-                write!(f, "PTS anomaly: delta={delta} (90 kHz ticks)")
-            }
-            NonConformantIssue::MissingRequiredPts { pid } => {
-                write!(
-                    f,
-                    "PTS required by stream type on PID 0x{pid:04X} but absent in PES header"
-                )
-            }
-            NonConformantIssue::PesHeaderMalformed { pid, kind } => {
-                let detail = match kind {
-                    PesHeaderMalformedKind::ForbiddenPtsDtsFlags => {
-                        "PTS_DTS_flags=0b01 forbidden by H.222.0 §2.4.3.7"
-                    }
-                    PesHeaderMalformedKind::InvalidMarkerBits => {
-                        "flags1 byte top bits != '10' marker (H.222.0 §2.4.3.6)"
-                    }
-                    PesHeaderMalformedKind::InvalidPtsPrefix => {
-                        "PTS 4-bit prefix mismatch (H.222.0 §2.4.3.7)"
-                    }
-                    PesHeaderMalformedKind::InvalidDtsPrefix => {
-                        "DTS 4-bit prefix mismatch (H.222.0 §2.4.3.7)"
-                    }
-                    PesHeaderMalformedKind::InvalidPtsDtsMarkerBits => {
-                        "PTS/DTS 5-byte marker bit != 1 (H.222.0 §2.4.3.7)"
-                    }
-                };
-                write!(f, "PES header malformed on PID 0x{pid:04X}: {detail}")
-            }
-            NonConformantIssue::SubtitleAlignmentMissing { pid } => {
-                write!(
-                    f,
-                    "subtitle PES on PID 0x{pid:04X} missing data_alignment_indicator \
-                     (EN 300 743 §6.2 / EN 300 472 §4.2 require =1)"
-                )
-            }
-            NonConformantIssue::MultiCellAu {
-                pid,
-                dropped_bytes,
-                reason,
-            } => {
-                let reason_str = match reason {
-                    MultiCellAuReason::Orphan => "orphan continuation (no prior First)",
-                    MultiCellAuReason::SequenceGap => "sequence_number gap",
-                    MultiCellAuReason::ConcurrentFirst => "new First while buffering previous AU",
-                    MultiCellAuReason::Overflow => "buffer exceeded au_cell_cap_per_pid",
-                    MultiCellAuReason::OverflowTotal => {
-                        "aggregate buffers exceeded au_cell_cap_total"
-                    }
-                    MultiCellAuReason::TooManyPids => {
-                        "in-flight PID count exceeded au_cell_max_in_flight_pids"
-                    }
-                };
-                write!(
-                    f,
-                    "multi-cell AU reassembly failed on PID 0x{pid:04X}: {dropped_bytes} bytes dropped ({reason_str})"
-                )
-            }
-            NonConformantIssue::CfiTolerated {
-                pid,
-                observed_cfi,
-                treated_as,
-            } => {
-                write!(
-                    f,
-                    "malformed AU cell CFI tolerated on PID 0x{pid:04X}: \
-                     observed {observed_cfi:?} (0b{observed_bits:02b}), \
-                     treated as {treated_as:?} (0b{treated_bits:02b})",
-                    observed_bits = *observed_cfi as u8,
-                    treated_bits = *treated_as as u8,
-                )
-            }
-            NonConformantIssue::PsiMultiSectionUnsupported {
-                pid,
-                table_id,
-                last_section_number,
-            } => {
-                write!(
-                    f,
-                    "PSI multi-section table unsupported on PID 0x{pid:04X}: \
-                     table_id=0x{table_id:02X}, last_section_number={last_section_number} \
-                     (full §2.4.4.5 reassembly deferred — partial section dropped)"
-                )
-            }
-            NonConformantIssue::NalHeader { codec, kind } => match kind {
-                NalHeaderKind::ForbiddenZeroBit => write!(
-                    f,
-                    "{codec:?} NAL header forbidden_zero_bit set (spec mandates =0)"
-                ),
-                NalHeaderKind::ReservedBit => write!(
-                    f,
-                    "{codec:?} NAL header reserved bit set (spec mandates =0)"
-                ),
-                NalHeaderKind::ZeroTemporalIdPlus1 => write!(
-                    f,
-                    "{codec:?} NAL header nuh_temporal_id_plus1 = 0 (spec mandates !=0)"
-                ),
-                NalHeaderKind::LayerIdOutOfRange { id } => write!(
-                    f,
-                    "{codec:?} NAL header nuh_layer_id={id} out of range (spec allows 0..=55)"
-                ),
-            },
-            NonConformantIssue::Av1ObuHeader { pid, kind } => match kind {
-                Av1ObuHeaderKind::ForbiddenBit => write!(
-                    f,
-                    "AV1 OBU header obu_forbidden_bit set on PID 0x{pid:04X} (spec mandates =0)"
-                ),
-                Av1ObuHeaderKind::ReservedBit => write!(
-                    f,
-                    "AV1 OBU header obu_reserved_1bit set on PID 0x{pid:04X} (spec mandates =0)"
-                ),
-                Av1ObuHeaderKind::ExtensionReservedBits => write!(
-                    f,
-                    "AV1 OBU extension header reserved bits set on PID 0x{pid:04X} (spec mandates =0)"
-                ),
-            },
-            NonConformantIssue::PcrMalformed { kind } => match kind {
-                PcrMalformedKind::InvalidReservedBits => {
-                    write!(f, "PCR field reserved bits not all 1 (H.222.0 §2.4.3.5)")
-                }
-                PcrMalformedKind::ExtensionOutOfRange => write!(
-                    f,
-                    "PCR field program_clock_reference_extension > 299 (H.222.0 §2.4.3.5)"
-                ),
-            },
-            NonConformantIssue::Ac3SyncMissing { pid } => {
-                write!(
-                    f,
-                    "AC-3 PES on PID 0x{pid:04X} missing syncword 0x0B77 \
-                     despite data_alignment_indicator=1 (A/52:2018 §A.6.3)"
-                )
-            }
-            NonConformantIssue::LatmFraming { pid, kind } => {
-                use crate::codec::aac::latm::LatmFramingKind;
-                let detail = match kind {
-                    LatmFramingKind::MissingSyncword => {
-                        "LOAS syncword (0x2B7) missing at start of PES payload"
-                    }
-                    LatmFramingKind::AudioMuxLengthOverrun => {
-                        "audioMuxLengthBytes runs past end of PES payload"
-                    }
-                    LatmFramingKind::Truncated => "PES payload shorter than 3-byte LOAS header",
-                };
-                write!(
-                    f,
-                    "AAC-LATM framing violation on PID 0x{pid:04X}: {detail} \
-                     (ISO/IEC 14496-3 §1.7 + H.222.0 Table 2-34 stream_type 0x11)"
-                )
-            }
-            NonConformantIssue::Av1WrongStreamId { pid, observed } => {
-                write!(
-                    f,
-                    "AV1 PES on PID 0x{pid:04X} carries stream_id=0x{observed:02X} \
-                     (AV1-in-MPEG-2-TS binding §3.4 mandates 0xBD)"
-                )
-            }
-            NonConformantIssue::Av1MissingTsObuFraming { pid } => {
-                write!(
-                    f,
-                    "AV1 PES on PID 0x{pid:04X} missing ts_open_bitstream_unit \
-                     start code (AV1-in-MPEG-2-TS binding §3.2 mandates 0x00 0x00 0x01 prefix)"
-                )
-            }
-            NonConformantIssue::PmtProgramNumberMismatch {
-                pid,
-                pat_program,
-                pmt_program,
-            } => {
-                write!(
-                    f,
-                    "PMT on PID 0x{pid:04X} body program_number={pmt_program} does not match \
-                     PAT assignment program_number={pat_program} (H.222.0 §2.4.4.8)"
-                )
-            }
-            NonConformantIssue::UnsupportedScrambling { pid, control } => {
-                write!(
-                    f,
-                    "unsupported transport_scrambling_control=0b{control:02b} on PID 0x{pid:04X} \
-                     (H.222.0 §2.4.3.2; payload not routed)"
-                )
-            }
-            NonConformantIssue::AdaptationFieldMalformed { pid, kind } => {
-                let detail = match kind {
-                    AdaptationFieldKind::ReservedControl => {
-                        "adaptation_field_control=00 reserved (H.222.0 §2.4.3.2; discard)"
-                    }
-                    AdaptationFieldKind::BadLengthForControl => {
-                        "adaptation_field_length invalid for control (H.222.0 §2.4.3.2)"
-                    }
-                    AdaptationFieldKind::ShortPcr => {
-                        "pcr_flag set with fewer than 6 PCR bytes (H.222.0 §2.4.3.5)"
-                    }
-                };
-                write!(f, "adaptation field malformed on PID 0x{pid:04X}: {detail}")
-            }
-            NonConformantIssue::ZeroLengthPesNonVideo { pid, stream_id } => {
-                write!(
-                    f,
-                    "zero PES_packet_length on non-video PID 0x{pid:04X} \
-                     (stream_id=0x{stream_id:02X}); H.222.0 §2.4.3.7 permits zero \
-                     only for video — packet dropped"
-                )
-            }
-            NonConformantIssue::PsiSyntax {
-                pid,
-                table_id,
-                kind,
-            } => {
-                // Write directly to the formatter — no intermediate String
-                // allocation (Display can be on the strict-rejection hot path,
-                // and tst-core is no_std-capable).
-                write!(
-                    f,
-                    "PSI syntax violation on PID 0x{pid:04X} (table_id=0x{table_id:02X}): "
-                )?;
-                match kind {
-                    PsiSyntaxKind::SectionSyntaxIndicatorUnset => {
-                        write!(f, "section_syntax_indicator != 1")?
-                    }
-                    PsiSyntaxKind::SectionNumberNonZero { observed } => {
-                        write!(f, "section_number={observed} != 0 on single-section table")?
-                    }
-                    PsiSyntaxKind::ReservedBits => write!(f, "reserved bits not at spec values")?,
-                }
-                write!(f, " (H.222.0 §2.4.4)")
-            }
-            NonConformantIssue::Other(msg) => {
-                write!(f, "{msg}")
-            }
+// `#[error(fmt = …)]` targets for the `NonConformantIssue` variants whose text
+// depends on a sub-kind. thiserror passes the variant's fields by reference,
+// in declaration order, then the formatter.
+
+fn fmt_pid_reused(
+    pid: &u16,
+    programs: &[u16; 2],
+    f: &mut core::fmt::Formatter<'_>,
+) -> core::fmt::Result {
+    write!(
+        f,
+        "PID 0x{pid:04X} reused across programs {} and {}",
+        programs[0], programs[1]
+    )
+}
+
+fn fmt_pes_header_malformed(
+    pid: &u16,
+    kind: &PesHeaderMalformedKind,
+    f: &mut core::fmt::Formatter<'_>,
+) -> core::fmt::Result {
+    let detail = match kind {
+        PesHeaderMalformedKind::ForbiddenPtsDtsFlags => {
+            "PTS_DTS_flags=0b01 forbidden by H.222.0 §2.4.3.7"
         }
+        PesHeaderMalformedKind::InvalidMarkerBits => {
+            "flags1 byte top bits != '10' marker (H.222.0 §2.4.3.6)"
+        }
+        PesHeaderMalformedKind::InvalidPtsPrefix => "PTS 4-bit prefix mismatch (H.222.0 §2.4.3.7)",
+        PesHeaderMalformedKind::InvalidDtsPrefix => "DTS 4-bit prefix mismatch (H.222.0 §2.4.3.7)",
+        PesHeaderMalformedKind::InvalidPtsDtsMarkerBits => {
+            "PTS/DTS 5-byte marker bit != 1 (H.222.0 §2.4.3.7)"
+        }
+    };
+    write!(f, "PES header malformed on PID 0x{pid:04X}: {detail}")
+}
+
+fn fmt_pcr_malformed(
+    kind: &PcrMalformedKind,
+    f: &mut core::fmt::Formatter<'_>,
+) -> core::fmt::Result {
+    match kind {
+        PcrMalformedKind::InvalidReservedBits => {
+            write!(f, "PCR field reserved bits not all 1 (H.222.0 §2.4.3.5)")
+        }
+        PcrMalformedKind::ExtensionOutOfRange => write!(
+            f,
+            "PCR field program_clock_reference_extension > 299 (H.222.0 §2.4.3.5)"
+        ),
     }
+}
+
+fn fmt_nal_header(
+    codec: &VideoCodec,
+    kind: &NalHeaderKind,
+    f: &mut core::fmt::Formatter<'_>,
+) -> core::fmt::Result {
+    match kind {
+        NalHeaderKind::ForbiddenZeroBit => write!(
+            f,
+            "{codec:?} NAL header forbidden_zero_bit set (spec mandates =0)"
+        ),
+        NalHeaderKind::ReservedBit => {
+            write!(
+                f,
+                "{codec:?} NAL header reserved bit set (spec mandates =0)"
+            )
+        }
+        NalHeaderKind::ZeroTemporalIdPlus1 => write!(
+            f,
+            "{codec:?} NAL header nuh_temporal_id_plus1 = 0 (spec mandates !=0)"
+        ),
+        NalHeaderKind::LayerIdOutOfRange { id } => write!(
+            f,
+            "{codec:?} NAL header nuh_layer_id={id} out of range (spec allows 0..=55)"
+        ),
+    }
+}
+
+fn fmt_av1_obu_header(
+    pid: &u16,
+    kind: &Av1ObuHeaderKind,
+    f: &mut core::fmt::Formatter<'_>,
+) -> core::fmt::Result {
+    match kind {
+        Av1ObuHeaderKind::ForbiddenBit => write!(
+            f,
+            "AV1 OBU header obu_forbidden_bit set on PID 0x{pid:04X} (spec mandates =0)"
+        ),
+        Av1ObuHeaderKind::ReservedBit => write!(
+            f,
+            "AV1 OBU header obu_reserved_1bit set on PID 0x{pid:04X} (spec mandates =0)"
+        ),
+        Av1ObuHeaderKind::ExtensionReservedBits => write!(
+            f,
+            "AV1 OBU extension header reserved bits set on PID 0x{pid:04X} (spec mandates =0)"
+        ),
+    }
+}
+
+fn fmt_latm_framing(
+    pid: &u16,
+    kind: &crate::codec::aac::latm::LatmFramingKind,
+    f: &mut core::fmt::Formatter<'_>,
+) -> core::fmt::Result {
+    use crate::codec::aac::latm::LatmFramingKind;
+    let detail = match kind {
+        LatmFramingKind::MissingSyncword => "LOAS syncword (0x2B7) missing at start of PES payload",
+        LatmFramingKind::AudioMuxLengthOverrun => {
+            "audioMuxLengthBytes runs past end of PES payload"
+        }
+        LatmFramingKind::Truncated => "PES payload shorter than 3-byte LOAS header",
+    };
+    write!(
+        f,
+        "AAC-LATM framing violation on PID 0x{pid:04X}: {detail} \
+         (ISO/IEC 14496-3 §1.7 + H.222.0 Table 2-34 stream_type 0x11)"
+    )
+}
+
+fn fmt_multi_cell_au(
+    pid: &u16,
+    dropped_bytes: &usize,
+    reason: &MultiCellAuReason,
+    f: &mut core::fmt::Formatter<'_>,
+) -> core::fmt::Result {
+    let reason_str = match reason {
+        MultiCellAuReason::Orphan => "orphan continuation (no prior First)",
+        MultiCellAuReason::SequenceGap => "sequence_number gap",
+        MultiCellAuReason::ConcurrentFirst => "new First while buffering previous AU",
+        MultiCellAuReason::Overflow => "buffer exceeded au_cell_cap_per_pid",
+        MultiCellAuReason::OverflowTotal => "aggregate buffers exceeded au_cell_cap_total",
+        MultiCellAuReason::TooManyPids => "in-flight PID count exceeded au_cell_max_in_flight_pids",
+    };
+    write!(
+        f,
+        "multi-cell AU reassembly failed on PID 0x{pid:04X}: {dropped_bytes} bytes dropped ({reason_str})"
+    )
+}
+
+fn fmt_cfi_tolerated(
+    pid: &u16,
+    observed_cfi: &crate::mpegts::au_cell::CellFragmentIndication,
+    treated_as: &crate::mpegts::au_cell::CellFragmentIndication,
+    f: &mut core::fmt::Formatter<'_>,
+) -> core::fmt::Result {
+    write!(
+        f,
+        "malformed AU cell CFI tolerated on PID 0x{pid:04X}: \
+         observed {observed_cfi:?} (0b{observed_bits:02b}), \
+         treated as {treated_as:?} (0b{treated_bits:02b})",
+        observed_bits = *observed_cfi as u8,
+        treated_bits = *treated_as as u8,
+    )
+}
+
+fn fmt_adaptation_field(
+    pid: &u16,
+    kind: &AdaptationFieldKind,
+    f: &mut core::fmt::Formatter<'_>,
+) -> core::fmt::Result {
+    let detail = match kind {
+        AdaptationFieldKind::ReservedControl => {
+            "adaptation_field_control=00 reserved (H.222.0 §2.4.3.2; discard)"
+        }
+        AdaptationFieldKind::BadLengthForControl => {
+            "adaptation_field_length invalid for control (H.222.0 §2.4.3.2)"
+        }
+        AdaptationFieldKind::ShortPcr => {
+            "pcr_flag set with fewer than 6 PCR bytes (H.222.0 §2.4.3.5)"
+        }
+    };
+    write!(f, "adaptation field malformed on PID 0x{pid:04X}: {detail}")
+}
+
+fn fmt_psi_syntax(
+    pid: &u16,
+    table_id: &u8,
+    kind: &PsiSyntaxKind,
+    f: &mut core::fmt::Formatter<'_>,
+) -> core::fmt::Result {
+    // Written straight to the formatter: no intermediate String (Display can
+    // sit on the strict-rejection hot path, and tst-core is no_std-capable).
+    write!(
+        f,
+        "PSI syntax violation on PID 0x{pid:04X} (table_id=0x{table_id:02X}): "
+    )?;
+    match kind {
+        PsiSyntaxKind::SectionSyntaxIndicatorUnset => write!(f, "section_syntax_indicator != 1")?,
+        PsiSyntaxKind::SectionNumberNonZero { observed } => {
+            write!(f, "section_number={observed} != 0 on single-section table")?
+        }
+        PsiSyntaxKind::ReservedBits => write!(f, "reserved bits not at spec values")?,
+    }
+    write!(f, " (H.222.0 §2.4.4)")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every `NonConformantIssue` message, byte for byte. The JVM binding and
+    /// the interop harness carry `issue.to_string()`, so the text is contract.
+    #[test]
+    fn non_conformant_issue_display_is_pinned() {
+        use crate::codec::aac::latm::LatmFramingKind;
+        use crate::mpegts::au_cell::CellFragmentIndication;
+        use crate::mpegts::demux::{AdaptationFieldKind, PcrMalformedKind};
+        use NonConformantIssue as I;
+        let iso = "(ISO/IEC 14496-3 §1.7 + H.222.0 Table 2-34 stream_type 0x11)";
+        let cases: Vec<(NonConformantIssue, String)> = vec![
+            (I::StreamTypeMismatchSyncOnAsyncPid, "stream_type=0x06 carries sync KLV on async PID".into()),
+            (I::StreamTypeMismatchAsyncOnSyncPid, "stream_type=0x15 carries async KLV on sync PID".into()),
+            (I::MissingMetadataDescriptor, "metadata_descriptor missing on sync-KLV PID".into()),
+            (I::PcrAnomaly { delta: -27 }, "PCR anomaly: delta=-27".into()),
+            (I::PsiChecksumMismatch { pid: 0x1F }, "PSI checksum mismatch on PID 0x001F".into()),
+            (I::PusiMidPes, "PUSI packet arrived mid-PES".into()),
+            (I::MalformedPes { pid: 0x100, reason: "short" }, "malformed PES on PID 0x0100: short".into()),
+            (I::PidReusedAcrossPrograms { pid: 0x100, programs: [1, 2] }, "PID 0x0100 reused across programs 1 and 2".into()),
+            (I::SubtitleMissingDescriptor { pid: 0x30 }, "subtitle stream on PID 0x0030 missing descriptor".into()),
+            (I::SubtitleDescriptorAmbiguous { pid: 0x30, tags: vec![0x59, 0x56] }, "subtitle PID 0x0030 has ambiguous descriptors: [89, 86]".into()),
+            (I::SubtitleDescriptorMalformed { pid: 0x30, tag: 0x59 }, "subtitle descriptor 0x59 malformed on PID 0x0030".into()),
+            (I::Av1RegistrationMalformed { pid: 0x41 }, "AV1 registration descriptor malformed on PID 0x0041".into()),
+            (I::Av1ObuMissingSizeField { pid: 0x41, obu_type: 6 }, "AV1 OBU type 0x06 missing size field on PID 0x0041".into()),
+            (I::Av1TileListNotAllowed { pid: 0x41 }, "AV1 Tile List OBU forbidden on PID 0x0041".into()),
+            (I::PsiOverlongSection { pid: 0, observed_len: 1025 }, "PSI section overlong on PID 0x0000: 1025 bytes".into()),
+            (I::TransportErrorPacket { pid: 0x100 }, "transport_error_indicator set on PID 0x0100".into()),
+            (I::PsiCcDiscontinuity { pid: 0, expected: 3, observed: 0xA }, "PSI continuity-counter jump on PID 0x0000: expected 0x3, observed 0xA".into()),
+            (I::DvbSubDataIdentifier { observed: 0x10 }, "DVB-subtitle data_identifier=0x10 (EN 300 743 §6.2 Table 3 requires 0x20)".into()),
+            (I::PtsAnomaly { delta: 9000 }, "PTS anomaly: delta=9000 (90 kHz ticks)".into()),
+            (I::MissingRequiredPts { pid: 0x100 }, "PTS required by stream type on PID 0x0100 but absent in PES header".into()),
+            (I::SubtitleAlignmentMissing { pid: 0x30 }, "subtitle PES on PID 0x0030 missing data_alignment_indicator (EN 300 743 §6.2 / EN 300 472 §4.2 require =1)".into()),
+            (I::Ac3SyncMissing { pid: 0x44 }, "AC-3 PES on PID 0x0044 missing syncword 0x0B77 despite data_alignment_indicator=1 (A/52:2018 §A.6.3)".into()),
+            (I::Av1WrongStreamId { pid: 0x41, observed: 0xE0 }, "AV1 PES on PID 0x0041 carries stream_id=0xE0 (AV1-in-MPEG-2-TS binding §3.4 mandates 0xBD)".into()),
+            (I::Av1MissingTsObuFraming { pid: 0x41 }, "AV1 PES on PID 0x0041 missing ts_open_bitstream_unit start code (AV1-in-MPEG-2-TS binding §3.2 mandates 0x00 0x00 0x01 prefix)".into()),
+            (I::PmtProgramNumberMismatch { pid: 0x1000, pat_program: 1, pmt_program: 2 }, "PMT on PID 0x1000 body program_number=2 does not match PAT assignment program_number=1 (H.222.0 §2.4.4.8)".into()),
+            (I::UnsupportedScrambling { pid: 0x100, control: 2 }, "unsupported transport_scrambling_control=0b10 on PID 0x0100 (H.222.0 §2.4.3.2; payload not routed)".into()),
+            (I::ZeroLengthPesNonVideo { pid: 0x44, stream_id: 0xC0 }, "zero PES_packet_length on non-video PID 0x0044 (stream_id=0xC0); H.222.0 §2.4.3.7 permits zero only for video — packet dropped".into()),
+            (I::PsiMultiSectionUnsupported { pid: 0, table_id: 0, last_section_number: 1 }, "PSI multi-section table unsupported on PID 0x0000: table_id=0x00, last_section_number=1 (full §2.4.4.5 reassembly deferred — partial section dropped)".into()),
+            (I::Other("custom text".into()), "custom text".into()),
+            (I::PesHeaderMalformed { pid: 0x100, kind: PesHeaderMalformedKind::ForbiddenPtsDtsFlags }, "PES header malformed on PID 0x0100: PTS_DTS_flags=0b01 forbidden by H.222.0 §2.4.3.7".into()),
+            (I::PesHeaderMalformed { pid: 0x100, kind: PesHeaderMalformedKind::InvalidMarkerBits }, "PES header malformed on PID 0x0100: flags1 byte top bits != '10' marker (H.222.0 §2.4.3.6)".into()),
+            (I::PesHeaderMalformed { pid: 0x100, kind: PesHeaderMalformedKind::InvalidPtsPrefix }, "PES header malformed on PID 0x0100: PTS 4-bit prefix mismatch (H.222.0 §2.4.3.7)".into()),
+            (I::PesHeaderMalformed { pid: 0x100, kind: PesHeaderMalformedKind::InvalidDtsPrefix }, "PES header malformed on PID 0x0100: DTS 4-bit prefix mismatch (H.222.0 §2.4.3.7)".into()),
+            (I::PesHeaderMalformed { pid: 0x100, kind: PesHeaderMalformedKind::InvalidPtsDtsMarkerBits }, "PES header malformed on PID 0x0100: PTS/DTS 5-byte marker bit != 1 (H.222.0 §2.4.3.7)".into()),
+            (I::MultiCellAu { pid: 0x31, dropped_bytes: 12, reason: MultiCellAuReason::Orphan }, "multi-cell AU reassembly failed on PID 0x0031: 12 bytes dropped (orphan continuation (no prior First))".into()),
+            (I::MultiCellAu { pid: 0x31, dropped_bytes: 12, reason: MultiCellAuReason::SequenceGap }, "multi-cell AU reassembly failed on PID 0x0031: 12 bytes dropped (sequence_number gap)".into()),
+            (I::MultiCellAu { pid: 0x31, dropped_bytes: 12, reason: MultiCellAuReason::ConcurrentFirst }, "multi-cell AU reassembly failed on PID 0x0031: 12 bytes dropped (new First while buffering previous AU)".into()),
+            (I::MultiCellAu { pid: 0x31, dropped_bytes: 12, reason: MultiCellAuReason::Overflow }, "multi-cell AU reassembly failed on PID 0x0031: 12 bytes dropped (buffer exceeded au_cell_cap_per_pid)".into()),
+            (I::MultiCellAu { pid: 0x31, dropped_bytes: 12, reason: MultiCellAuReason::OverflowTotal }, "multi-cell AU reassembly failed on PID 0x0031: 12 bytes dropped (aggregate buffers exceeded au_cell_cap_total)".into()),
+            (I::MultiCellAu { pid: 0x31, dropped_bytes: 12, reason: MultiCellAuReason::TooManyPids }, "multi-cell AU reassembly failed on PID 0x0031: 12 bytes dropped (in-flight PID count exceeded au_cell_max_in_flight_pids)".into()),
+            (I::CfiTolerated { pid: 0x31, observed_cfi: CellFragmentIndication::Middle, treated_as: CellFragmentIndication::Complete }, "malformed AU cell CFI tolerated on PID 0x0031: observed Middle (0b00), treated as Complete (0b11)".into()),
+            (I::NalHeader { codec: VideoCodec::H265, kind: NalHeaderKind::ForbiddenZeroBit }, "H265 NAL header forbidden_zero_bit set (spec mandates =0)".into()),
+            (I::NalHeader { codec: VideoCodec::H265, kind: NalHeaderKind::ReservedBit }, "H265 NAL header reserved bit set (spec mandates =0)".into()),
+            (I::NalHeader { codec: VideoCodec::H265, kind: NalHeaderKind::ZeroTemporalIdPlus1 }, "H265 NAL header nuh_temporal_id_plus1 = 0 (spec mandates !=0)".into()),
+            (I::NalHeader { codec: VideoCodec::H266, kind: NalHeaderKind::LayerIdOutOfRange { id: 63 } }, "H266 NAL header nuh_layer_id=63 out of range (spec allows 0..=55)".into()),
+            (I::Av1ObuHeader { pid: 0x41, kind: Av1ObuHeaderKind::ForbiddenBit }, "AV1 OBU header obu_forbidden_bit set on PID 0x0041 (spec mandates =0)".into()),
+            (I::Av1ObuHeader { pid: 0x41, kind: Av1ObuHeaderKind::ReservedBit }, "AV1 OBU header obu_reserved_1bit set on PID 0x0041 (spec mandates =0)".into()),
+            (I::Av1ObuHeader { pid: 0x41, kind: Av1ObuHeaderKind::ExtensionReservedBits }, "AV1 OBU extension header reserved bits set on PID 0x0041 (spec mandates =0)".into()),
+            (I::PcrMalformed { kind: PcrMalformedKind::InvalidReservedBits }, "PCR field reserved bits not all 1 (H.222.0 §2.4.3.5)".into()),
+            (I::PcrMalformed { kind: PcrMalformedKind::ExtensionOutOfRange }, "PCR field program_clock_reference_extension > 299 (H.222.0 §2.4.3.5)".into()),
+            (I::LatmFraming { pid: 0x45, kind: LatmFramingKind::MissingSyncword }, format!("AAC-LATM framing violation on PID 0x0045: LOAS syncword (0x2B7) missing at start of PES payload {iso}")),
+            (I::LatmFraming { pid: 0x45, kind: LatmFramingKind::AudioMuxLengthOverrun }, format!("AAC-LATM framing violation on PID 0x0045: audioMuxLengthBytes runs past end of PES payload {iso}")),
+            (I::LatmFraming { pid: 0x45, kind: LatmFramingKind::Truncated }, format!("AAC-LATM framing violation on PID 0x0045: PES payload shorter than 3-byte LOAS header {iso}")),
+            (I::AdaptationFieldMalformed { pid: 0x100, kind: AdaptationFieldKind::ReservedControl }, "adaptation field malformed on PID 0x0100: adaptation_field_control=00 reserved (H.222.0 §2.4.3.2; discard)".into()),
+            (I::AdaptationFieldMalformed { pid: 0x100, kind: AdaptationFieldKind::BadLengthForControl }, "adaptation field malformed on PID 0x0100: adaptation_field_length invalid for control (H.222.0 §2.4.3.2)".into()),
+            (I::AdaptationFieldMalformed { pid: 0x100, kind: AdaptationFieldKind::ShortPcr }, "adaptation field malformed on PID 0x0100: pcr_flag set with fewer than 6 PCR bytes (H.222.0 §2.4.3.5)".into()),
+            (I::PsiSyntax { pid: 0, table_id: 2, kind: PsiSyntaxKind::SectionSyntaxIndicatorUnset }, "PSI syntax violation on PID 0x0000 (table_id=0x02): section_syntax_indicator != 1 (H.222.0 §2.4.4)".into()),
+            (I::PsiSyntax { pid: 0, table_id: 2, kind: PsiSyntaxKind::SectionNumberNonZero { observed: 3 } }, "PSI syntax violation on PID 0x0000 (table_id=0x02): section_number=3 != 0 on single-section table (H.222.0 §2.4.4)".into()),
+            (I::PsiSyntax { pid: 0, table_id: 2, kind: PsiSyntaxKind::ReservedBits }, "PSI syntax violation on PID 0x0000 (table_id=0x02): reserved bits not at spec values (H.222.0 §2.4.4)".into()),
+        ];
+        assert_eq!(cases.len(), 59);
+        for (issue, want) in &cases {
+            assert_eq!(&issue.to_string(), want, "{issue:?}");
+        }
+    }
 
     #[test]
     fn nal_unit_h264_h265_distinct() {

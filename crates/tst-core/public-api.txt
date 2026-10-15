@@ -4552,6 +4552,7 @@ pub fn tst_core::mpegts::demux::event::NonConformantIssue::clone(&self) -> tst_c
 impl core::cmp::Eq for tst_core::mpegts::demux::event::NonConformantIssue
 impl core::cmp::PartialEq for tst_core::mpegts::demux::event::NonConformantIssue
 pub fn tst_core::mpegts::demux::event::NonConformantIssue::eq(&self, &tst_core::mpegts::demux::event::NonConformantIssue) -> bool
+impl core::error::Error for tst_core::mpegts::demux::event::NonConformantIssue
 impl core::fmt::Debug for tst_core::mpegts::demux::event::NonConformantIssue
 pub fn tst_core::mpegts::demux::event::NonConformantIssue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::fmt::Display for tst_core::mpegts::demux::event::NonConformantIssue
@@ -5485,6 +5486,7 @@ pub fn tst_core::mpegts::demux::event::NonConformantIssue::clone(&self) -> tst_c
 impl core::cmp::Eq for tst_core::mpegts::demux::event::NonConformantIssue
 impl core::cmp::PartialEq for tst_core::mpegts::demux::event::NonConformantIssue
 pub fn tst_core::mpegts::demux::event::NonConformantIssue::eq(&self, &tst_core::mpegts::demux::event::NonConformantIssue) -> bool
+impl core::error::Error for tst_core::mpegts::demux::event::NonConformantIssue
 impl core::fmt::Debug for tst_core::mpegts::demux::event::NonConformantIssue
 pub fn tst_core::mpegts::demux::event::NonConformantIssue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::fmt::Display for tst_core::mpegts::demux::event::NonConformantIssue
