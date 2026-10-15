@@ -240,6 +240,18 @@ impl RtpHeader {
     }
 }
 
+/// One RTP payload a packetizer produced, with the marker bit it needs
+/// (set on the last payload of an access unit). The sender writes the RTP
+/// header — sequence number, timestamp, SSRC, payload type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Chunk {
+    /// The RTP payload: a whole NAL unit or one fragmentation unit.
+    pub payload: Vec<u8>,
+    /// The RTP marker bit: `true` on the access unit's last payload.
+    pub marker: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

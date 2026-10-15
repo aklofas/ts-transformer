@@ -20,6 +20,11 @@
 //! call [`H264Depacketizer::feed`] for each received packet then drain
 //! [`H264Depacketizer::next_au`] until it returns `None`.
 //!
+//! # Packetizer
+//!
+//! [`packetizer::packetize`] is the inverse of the depacketizer: an access
+//! unit's NAL units to RTP payloads.
+//!
 //! # Receiver
 //!
 //! Use [`H264Receiver`] for a blocking I/O shell that wraps a UDP socket
@@ -28,6 +33,7 @@
 
 pub mod depacketizer;
 pub(crate) mod fmtp;
+pub mod packetizer;
 pub mod receiver;
 
 pub use crate::depay::ParameterSetInjection;

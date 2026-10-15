@@ -1346,18 +1346,19 @@ mean **Deferred**. An entry whose feature has shipped must never read
   H.264 ingest (e.g. a bare-metal pipeline receiving from a STANAG 4609
   RTSP camera). Would be the next additive ABI minor bump (0.22 → 0.23).
 
-## H.264-over-RTP payloader (RFC 6184 send side)
+## Elementary H.264/H.265 RTP sender
 
-- **Status:** Deferred. The library can send MPEG-TS-over-RTP (RFC 2250,
-  PT=33) via `MuxSender<RtpTransport>` / the RTSP `MountHandle` push
-  family, but there is no way to send a bare H.264 elementary stream in
-  RFC 6184 fragmented form.
+- **Status:** Deferred. `tst_rtp::h264::packetizer` (RFC 6184) and
+  `tst_rtp::h265::packetizer` (RFC 7798) turn an access unit into RTP
+  payloads, but no transport sends them: `MuxSender<RtpTransport>` and the
+  RTSP mounts send MPEG-TS over RTP (RFC 2250, PT 33).
 - **Why deferred:** No consumer has asked for it. The STANAG 4609 pipeline
   shape — mux video + KLV + audio into MPEG-TS, then send over RTP —
   is sufficient for all current deployments; bare H.264 RTP output is a
   camera-side concern.
-- **Trigger to revisit:** A consumer needs to push H.264 to an ONVIF
-  recorder or WebRTC gateway that does not accept MPEG-TS.
+- **Trigger to revisit:** A consumer needs to push bare H.264 or H.265 RTP
+  to an ONVIF recorder or a gateway that does not accept MPEG-TS (the
+  WebRTC crate packetizes for its own sessions).
 
 ## RTP interleaved mode 2 (STAP-B / MTAP / FU-B / DON)
 
@@ -1439,9 +1440,11 @@ mean **Deferred**. An entry whose feature has shipped must never read
   An announce carrying audio, H.265, or any other track mix answers
   `415 Unsupported Media Type`. An MPEG-TS-over-RTP publisher may carry
   any of these inside its TS.
-- **Why deferred:** Each elementary codec needs its own RTP depacketizer
-  feeding the server's re-muxer (RFC 7798 for H.265, RFC 3640 or
-  RFC 6416 for AAC), and audio adds a second clock to align with the
+- **Why deferred:** Each elementary codec needs an adapter feeding the
+  server's re-muxer; for H.265 the RFC 7798 depacketizer exists
+  (`tst_rtp::h265::H265Depacketizer`) and the adapter is the missing
+  piece; audio needs RFC 3640 or RFC 6416 depacketizers, and adds a
+  second clock to align with the
   video beside the KLV one. H.264 plus KLV is the shape camera and
   gimbal-payload encoders push, and MPEG-TS over RTP covers the rest.
 - **Trigger to revisit:** A publisher that can push only H.265 or audio
@@ -1946,7 +1949,7 @@ Shipped 0.1.0: `MuxerProgramConfigBuilder.add_subtitle(pid, codec_config)` takes
 
 ### RTP H.264 depayloader (RFC 6184)
 
-Shipped 0.3.0 in Rust, Python and the JVM (packetization modes 0 and 1); the rest of RFC 6184 is the C receiver, payloader, mode 2 and jitter-buffer entries above.
+Shipped 0.3.0 in Rust, Python and the JVM (packetization modes 0 and 1); the rest of RFC 6184 is the C receiver, elementary sender, mode 2 and jitter-buffer entries above.
 
 ### RTP receive-deadline bindings parity (C / Python / JVM) — RESOLVED 2026-08-21
 

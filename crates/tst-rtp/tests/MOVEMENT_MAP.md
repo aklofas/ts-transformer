@@ -51,7 +51,7 @@ unchanged (310) and the test leaf-name multiset is byte-identical before/after
 
 | new `tests/…` | description |
 | --- | --- |
-| `h264/common.rs` | LCG PRNG for the loss soak; re-exports the RFC 6184 payloader + `expected_annexb` from `fixtures/h264_payloader.rs` |
+| `h264/common.rs` | LCG PRNG for the loss soak; re-exports the RFC 6184 payloader + `expected_annexb` from `fixtures/rtp_packets.rs` |
 | `h264/udp_loopback.rs` | Multi-AU roundtrip + randomized-loss soak (p=0.2, 200 AUs, fixed seed) |
 | `h264/rtsp_session.rs` | `setup_h264_auto` mode-1 roundtrip + mode-2 pre-SETUP rejection |
 
@@ -97,7 +97,7 @@ root as `#[path = "rtsp_server/publish/<file>.rs"] mod publish_<file>;` — one
 | `rtsp_server/publish/interleaved_framing.rs` | `$` frames pipelined with requests (split frame, unknown channel, before/behind RECORD, CRLFCRLF in a payload, requested channels) — moved from the inline `rtsp::server::session` tests |
 | `rtsp_server/publish/conformance.rs` | shared receive-side conformance kit on the app transport |
 | `fixtures/raw_rtsp_publisher.rs` | raw-socket publisher (`RawPublisher`, plain + TLS), `SDP_MP2T`, `rtp_wrap`, `ts_fixture_packets`; elementary shapes `SDP_H264`, `SDP_H264_KLV`, `h264_rtp_packets`, `klv_rtp_packet`, `klv_unit`, `sr_packet`, `demux_until_quiet` |
-| `fixtures/h264_payloader.rs` | test-only RFC 6184 payloader (`packetize`, `expected_annexb`, `build_rtp_packet`), re-exported by `h264/common.rs` |
+| `fixtures/rtp_packets.rs` | test-only RFC 6184 payloader (`packetize`, `expected_annexb`, `build_rtp_packet`), re-exported by `h264/common.rs` |
 | `fixtures/raw_rtsp_server.rs` | hand-rolled blocking RTSP server peer for client tests (`read_request` with a persistent `leftover` buffer, `answer_describe_and_setup`, `force_reset` RST close, `SDP_BODY`) |
 | `fixtures/ports.rs` | `free_rtp_port_base`, `#[path]`-included by the `rtp` and `conformance` binaries |
 | `fixtures/mod.rs` | `wait_for` (poll-with-budget) beside the module declarations |

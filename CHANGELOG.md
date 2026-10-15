@@ -210,6 +210,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `RtspClientBuilder::rtsp_version` sets the request-line version, overriding
   the URL's `?rtsp_version=` key.
+- `h264::packetizer::packetize` (RFC 6184 single NAL unit + FU-A) and
+  `h265::packetizer::packetize` (RFC 7798 single NAL unit + FU): an access
+  unit's NAL units to RTP payloads (`packet::Chunk { payload, marker }`);
+  the sender writes the RTP header.
+- `h265::H265Depacketizer` (RFC 7798 single NAL unit, aggregation and
+  fragmentation packets, no DONL), the same contract as
+  `H264Depacketizer`, with a fuzz target.
 
 ### Fixed — tst-py
 
