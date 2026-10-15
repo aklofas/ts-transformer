@@ -31,245 +31,49 @@ use pyo3::intern;
 use pyo3::panic::PanicException;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+pub(crate) use tst_pipeline::binding::Domain;
 use tst_pipeline::binding::{BindingError, BindingErrorKind as K, HandleState};
 
-pub(crate) struct Domain {
-    pub error_class: &'static str,
-    pub kind_enum: &'static str,
-    /// The subset of `BindingErrorKind` this domain's enum carries — every
-    /// `name()` here must resolve on `kind_enum` at import.
-    pub kinds: &'static [K],
-}
-
 #[cfg(feature = "srt")]
-pub(crate) static SRT: Domain = Domain {
-    error_class: "SrtError",
-    kind_enum: "SrtErrorKind",
-    kinds: &[
-        K::SrtConnectFailed,
-        K::SrtAcceptFailed,
-        K::Backpressure,
-        K::SrtTimeout,
-        K::Closed,
-        K::Broken,
-        K::ConfigInvalid,
-        K::SrtIo,
-        K::TooLarge,
-        K::InputMalformed,
-        K::EndOfStream,
-    ],
-};
-
+pub(crate) const SRT: Domain = Domain::Srt;
 #[cfg(feature = "rtp")]
-pub(crate) static RTP: Domain = Domain {
-    error_class: "RtpError",
-    kind_enum: "RtpErrorKind",
-    kinds: &[
-        K::Broken,
-        K::TooLarge,
-        K::Closed,
-        K::Backpressure,
-        K::RtpPayloadTypeParam,
-        K::RtpMissingPayloadTypeParam,
-        K::RtpUrl,
-        K::RtpHostNotLiteral,
-        K::RtpIo,
-        K::RtpIfaceUnsupported,
-        K::EndOfStream,
-    ],
-};
-
+pub(crate) const RTP: Domain = Domain::Rtp;
 #[cfg(feature = "rtp")]
-pub(crate) static RTSP: Domain = Domain {
-    error_class: "RtspError",
-    kind_enum: "RtspErrorKind",
-    kinds: &[
-        K::RtspProtocol,
-        K::RtspAuthFailed,
-        K::RtspAuthRequired,
-        K::RtspNotFound,
-        K::RtspUnsupportedTransport,
-        K::RtspTls,
-        K::RtspIo,
-        K::RtspTimeout,
-        K::RtspServer,
-        K::RtspMount,
-        // The shared closed-handle kind: `HandleState::Closed` reaches this
-        // domain through the rtsp client's closable slots. Without
-        // the member it would degrade to a misdiagnosing `RuntimeError`.
-        K::Closed,
-    ],
-};
-
+pub(crate) const RTSP: Domain = Domain::Rtsp;
 #[cfg(feature = "udp")]
-pub(crate) static UDP: Domain = Domain {
-    error_class: "UdpError",
-    kind_enum: "UdpErrorKind",
-    kinds: &[
-        K::UdpUrl,
-        K::UdpIo,
-        K::TooLarge,
-        K::Closed,
-        K::UdpInvalidConfig,
-        K::Backpressure,
-        K::Broken,
-    ],
-};
-
+pub(crate) const UDP: Domain = Domain::Udp;
 #[cfg(feature = "tcp")]
-pub(crate) static TCP: Domain = Domain {
-    error_class: "TcpError",
-    kind_enum: "TcpErrorKind",
-    kinds: &[
-        K::TcpUrl,
-        K::TcpIo,
-        K::TooLarge,
-        K::Closed,
-        K::TcpConnectTimeout,
-        K::TcpInvalidConfig,
-        K::TcpTls,
-        K::TcpTlsDisabled,
-        K::Backpressure,
-        K::Broken,
-    ],
-};
-
+pub(crate) const TCP: Domain = Domain::Tcp;
 #[cfg(feature = "hls")]
-pub(crate) static HLS: Domain = Domain {
-    error_class: "HlsError",
-    kind_enum: "HlsErrorKind",
-    kinds: &[
-        K::HlsUrl,
-        K::HlsIo,
-        K::HlsBindFailed,
-        K::HlsInvalidConfig,
-        K::HlsUnalignedPushTs,
-        K::HlsFinished,
-        K::HlsTlsDisabled,
-        K::HlsTls,
-        K::Internal,
-        K::Closed,
-    ],
-};
-
+pub(crate) const HLS: Domain = Domain::Hls;
 #[cfg(feature = "rist")]
-pub(crate) static RIST: Domain = Domain {
-    error_class: "RistError",
-    kind_enum: "RistErrorKind",
-    kinds: &[
-        K::RistUrl,
-        K::RistFfi,
-        K::TooLarge,
-        K::Closed,
-        K::RistInvalidConfig,
-        K::RistEncryptionDisabled,
-        K::RistContextCreateFailed,
-        K::RistPeerCreateFailed,
-        K::Backpressure,
-        K::Broken,
-    ],
-};
+pub(crate) const RIST: Domain = Domain::Rist;
+pub(crate) const MUX: Domain = Domain::Mux;
+pub(crate) const DEMUX: Domain = Domain::Demux;
+pub(crate) const KLV_DECODE: Domain = Domain::KlvDecode;
+pub(crate) const KLV_ENCODE: Domain = Domain::KlvEncode;
+pub(crate) const CODEC: Domain = Domain::Codec;
 
-// Checked at import; raised by their own attribute-carrying mappers.
-pub(crate) static MUX: Domain = Domain {
-    error_class: "MuxError",
-    kind_enum: "MuxErrorKind",
-    kinds: &[
-        K::InputMalformed,
-        K::ConfigInvalid,
-        K::InvalidUsage,
-        K::Backpressure,
-        K::Internal,
-        K::InvalidNal,
-        K::KlvTooLarge,
-        K::InvalidAv1Obu,
-        K::MispTime,
-    ],
-};
-
-pub(crate) static DEMUX: Domain = Domain {
-    error_class: "DemuxError",
-    kind_enum: "DemuxErrorKind",
-    kinds: &[
-        K::DemuxUnrecoverable,
-        K::DemuxStrictRejection,
-        K::DemuxMalformedPes,
-        K::DemuxSyncBufExhausted,
-    ],
-};
-
-pub(crate) static KLV_DECODE: Domain = Domain {
-    error_class: "KlvError",
-    kind_enum: "KlvErrorKind",
-    kinds: &[
-        K::KlvDecodeTruncatedSet,
-        K::KlvDecodeBadUniversalLabel,
-        K::KlvDecodeChecksumMismatch,
-        K::KlvDecodeDuplicateTag,
-        K::KlvDecodeMissingRequiredTag,
-        K::KlvDecodeMalformedBytes,
-        K::Internal,
-    ],
-};
-
-pub(crate) static KLV_ENCODE: Domain = Domain {
-    error_class: "KlvEncodeError",
-    kind_enum: "KlvEncodeErrorKind",
-    kinds: &[
-        K::KlvEncodeBufferTooSmall,
-        K::KlvEncodeRecordTooLarge,
-        K::KlvEncodeOutOfRange,
-        K::KlvEncodeStringTooLong,
-        K::KlvEncodeUnsupportedImapbLength,
-        K::KlvEncodeInvalidImapbParams,
-        K::KlvEncodeMissingMandatoryItem,
-        K::KlvEncodeReservedTagInUnknown,
-        K::KlvEncodeVTargetPackEmpty,
-        K::KlvEncodeDuplicateTargetId,
-        K::KlvEncodeForbiddenStandaloneOffset,
-    ],
-};
-
-pub(crate) static CODEC: Domain = Domain {
-    error_class: "CodecError",
-    kind_enum: "CodecErrorKind",
-    kinds: &[
-        K::CodecTruncatedRbsp,
-        K::CodecInvalidGolomb,
-        K::CodecReservedValue,
-        K::CodecUnsupportedProfile,
-        K::CodecEngineError,
-        K::CodecInvalidLeb128,
-        K::CodecBadSyncWord,
-        K::CodecTruncated,
-        K::CodecForbidden,
-        K::CodecUnsupportedFreeFormat,
-        K::CodecInvalidLengthSize,
-        K::CodecNalLengthOverflow,
-        K::CodecBufferTooSmall,
-    ],
-};
-
-pub(crate) static DOMAINS: &[&Domain] = &[
+pub(crate) static DOMAINS: &[Domain] = &[
     #[cfg(feature = "srt")]
-    &SRT,
+    SRT,
     #[cfg(feature = "rtp")]
-    &RTP,
+    RTP,
     #[cfg(feature = "rtp")]
-    &RTSP,
+    RTSP,
     #[cfg(feature = "udp")]
-    &UDP,
+    UDP,
     #[cfg(feature = "tcp")]
-    &TCP,
+    TCP,
     #[cfg(feature = "hls")]
-    &HLS,
+    HLS,
     #[cfg(feature = "rist")]
-    &RIST,
-    &MUX,
-    &DEMUX,
-    &KLV_DECODE,
-    &KLV_ENCODE,
-    &CODEC,
+    RIST,
+    MUX,
+    DEMUX,
+    KLV_DECODE,
+    KLV_ENCODE,
+    CODEC,
 ];
 
 /// Raise `e` as `d`'s exception class (see the module doc for the two
@@ -280,23 +84,23 @@ pub(crate) fn raise(py: Python<'_>, d: &Domain, e: BindingError) -> PyErr {
     if e.kind == K::PanicCaught {
         return PanicException::new_err(e.detail);
     }
-    if e.kind == K::Internal && !d.kinds.contains(&K::Internal) {
+    if e.kind == K::Internal && !d.kinds().contains(&K::Internal) {
         return PyRuntimeError::new_err(e.detail);
     }
     let name = e.kind.name();
     let built: PyResult<PyErr> = (|| {
         let exceptions = py.import_bound(intern!(py, "tstrans.exceptions"))?;
-        let kind_enum = exceptions.getattr(d.kind_enum)?;
+        let kind_enum = exceptions.getattr(d.python_kind_enum())?;
         let value = kind_enum.getattr(name).map_err(|_| {
             PyRuntimeError::new_err(format!(
                 "tstrans.exceptions.{}.{} is missing for BindingErrorKind::{} — \
                  the import-time check did not run",
-                d.kind_enum,
+                d.python_kind_enum(),
                 name,
                 e.kind.variant_name()
             ))
         })?;
-        let cls = exceptions.getattr(d.error_class)?;
+        let cls = exceptions.getattr(d.python_error_class())?;
         let kwargs = PyDict::new_bound(py);
         kwargs.set_item(intern!(py, "kind"), value)?;
         kwargs.set_item(intern!(py, "message"), e.detail.as_str())?;
@@ -340,20 +144,20 @@ pub(crate) fn pyok<R>(py: Python<'_>, d: &Domain, r: Result<R, HandleState>) -> 
 // features; a bare `--no-default-features` build has none.
 #[allow(dead_code)]
 pub(crate) fn kind_by_name(d: &Domain, name: &str) -> Option<K> {
-    d.kinds.iter().copied().find(|k| k.name() == name)
+    d.kinds().iter().copied().find(|k| k.name() == name)
 }
 
 /// Startup check: every member of every domain must resolve.
 pub(crate) fn check_error_kinds(py: Python<'_>) -> PyResult<()> {
     let exceptions = py.import_bound(intern!(py, "tstrans.exceptions"))?;
     for d in DOMAINS {
-        let kind_enum = exceptions.getattr(d.kind_enum)?;
-        for k in d.kinds {
+        let kind_enum = exceptions.getattr(d.python_kind_enum())?;
+        for k in d.kinds() {
             if kind_enum.getattr(k.name()).is_err() {
                 return Err(PyImportError::new_err(format!(
                     "tstrans.exceptions.{}.{} is missing (required by BindingErrorKind::{}); \
                      the Python kind enum and the Rust kind table are out of step",
-                    d.kind_enum,
+                    d.python_kind_enum(),
                     k.name(),
                     k.variant_name()
                 )));
