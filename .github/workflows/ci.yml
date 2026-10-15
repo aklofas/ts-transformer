@@ -61,10 +61,6 @@ jobs:
             runner: windows-latest
             continue: false
             phase: features
-    # Pin to MSRV via env so rust-toolchain.toml ("stable" for local dev)
-    # doesn't relax the verification done in CI.
-    env:
-      RUSTUP_TOOLCHAIN: "1.85"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -151,35 +147,15 @@ jobs:
           rg --version | head -1
           pkg-config --version | head -1
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Rust toolchain, cargo-nextest, cargo cache
+        # nextest: per-test `terminate-after` kills a hung test and keeps the
+        # run going; the `network` group serialises loopback tests.
+        uses: ./.github/actions/rust-setup
         with:
-          toolchain: "1.85"
           components: rustfmt, clippy
-
-      - name: Install cargo-nextest
-        # All runtime test steps run under nextest (not `cargo test`): per-test
-        # `terminate-after` (.config/nextest.toml) kills any hung test and
-        # continues the run — a single hung network test can't stall the job and
-        # all failures surface in one run — while the `network` test-group caps
-        # loopback tests to one-at-a-time so they don't contend (the rest of the
-        # suite still runs fully parallel). Prebuilt binary, all OSes.
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest
-
-      - name: Cache cargo + cmake artifacts
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            !target/debug/incremental
-            !target/debug/.fingerprint
-            !target/debug/deps
-          key: cargo-${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-${{ matrix.name }}-
+          nextest: 'true'
+          cache-key: cargo-${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-${{ matrix.name }}-
 
       - name: Scrub guard (no pre-rename names in tree)
         # Fails the build if any pre-rename name (`srt-core`, `srt-rust`,
@@ -453,13 +429,9 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/release-version-consistency.sh
 
-      - name: check-msrv-consistency (every pinned-toolchain site == rust-toolchain.toml)
-        # The MSRV is repeated at ~30 literal sites (workflows, crate
-        # manifests, embedded gate scripts, doc claims).
-        # Self-test first (planted drift must fail), then the tree. Gated to
-        # linux-x86_64 — the sources are platform-independent.
+      - name: check-msrv-consistency (one toolchain source, rust-toolchain.toml)
         if: matrix.name == 'linux-x86_64'
-        run: bash scripts/check/repo/msrv-consistency.sh --self-test && bash scripts/check/repo/msrv-consistency.sh
+        run: bash scripts/check/repo/msrv-consistency.sh
 
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
@@ -712,31 +684,17 @@ jobs:
     name: test (linux-musl-x86_64, no-libsrt crates)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      RUSTUP_TOOLCHAIN: "1.85"
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - name: Install Rust toolchain + musl target
-        uses: dtolnay/rust-toolchain@stable
+      - name: Rust toolchain + musl target, cargo cache
+        uses: ./.github/actions/rust-setup
         with:
-          toolchain: "1.85"
           targets: x86_64-unknown-linux-musl
-
-      - name: Cache cargo artifacts
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            !target/debug/incremental
-            !target/debug/.fingerprint
-            !target/debug/deps
-          key: cargo-musl-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-musl-${{ runner.os }}-
+          cache-key: cargo-musl-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-musl-${{ runner.os }}-
 
       # tst-core + tst-pipeline are pure Rust crates (no libsrt link),
       # so rust-std-musl + rust-lld is sufficient — no musl-tools/musl-gcc
@@ -770,33 +728,15 @@ jobs:
     # the leg stays immune to vendored-submodule host outages (the
     # 2026-08-08 code.videolan.org outage failed every submodule-cloning
     # job in checkout).
-    env:
-      RUSTUP_TOOLCHAIN: "1.85"
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Rust toolchain, cargo cache, cargo-nextest
+        uses: ./.github/actions/rust-setup
         with:
-          toolchain: "1.85"
-
-      - name: Cache cargo artifacts
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            !target/debug/incremental
-            !target/debug/.fingerprint
-            !target/debug/deps
-          key: cargo-rtp-client-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-rtp-client-${{ runner.os }}-
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest
+          nextest: 'true'
+          cache-key: cargo-rtp-client-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-rtp-client-${{ runner.os }}-
 
       # A client-only build ships no tokio (the server's runtime). Scoped
       # to `-e normal` — tokio IS
@@ -822,34 +762,21 @@ jobs:
     name: no_std bare-metal (compile + QEMU runtime)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      RUSTUP_TOOLCHAIN: "1.85"
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - name: Install Rust toolchain + bare-metal targets
-        uses: dtolnay/rust-toolchain@stable
+      - name: Rust toolchain + bare-metal targets, cargo cache
+        uses: ./.github/actions/rust-setup
         with:
-          toolchain: "1.85"
           targets: thumbv7em-none-eabihf, riscv32imac-unknown-none-elf
-
-      - name: Cache cargo artifacts
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            !target/debug/incremental
-            !target/debug/.fingerprint
-            !target/debug/deps
+          cache-key: cargo-nostd-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'embedded/baremetal-qemu/Cargo.lock', 'embedded/baremetal-qemu-c/Cargo.lock', 'embedded/freertos-srt/example/host/Cargo.lock') }}
+          cache-restore-key: cargo-nostd-${{ runner.os }}-
+          cache-extra-paths: |
             embedded/baremetal-qemu/target
             embedded/baremetal-qemu-c/target
             embedded/freertos-srt/example/host/target
-          key: cargo-nostd-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'embedded/baremetal-qemu/Cargo.lock', 'embedded/baremetal-qemu-c/Cargo.lock', 'embedded/freertos-srt/example/host/Cargo.lock') }}
-          restore-keys: cargo-nostd-${{ runner.os }}-
 
       # A `*-none-*` target has no std at all, so a successful library build
       # IS the no_std proof: any `use std::` or std-only dependency fails to
@@ -1013,6 +940,11 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Pinned toolchain with rustfmt (fuzz-workspace fmt check)
+        uses: ./.github/actions/rust-setup
+        with:
+          components: rustfmt
+
       - name: Install build prerequisites
         run: |
           sudo apt-get -o Acquire::Retries=5 update
@@ -1034,15 +966,14 @@ jobs:
       # The three fuzz crates are separate workspaces, so the root
       # `cargo fmt --all -- --check` in the build job never sees them; two of
       # them had drifted unformatted before this step existed. Formats with
-      # the repo's pinned stable toolchain (rust-toolchain.toml: 1.85), not
+      # the pinned toolchain the setup step installed (RUSTUP_TOOLCHAIN), not
       # the nightly this job installs: that nightly is `--profile minimal`
       # (no rustfmt), and a rolling nightly rustfmt would make the check
       # drift over time. Only the fuzz COMPILE needs nightly.
       - name: cargo fmt --check (fuzz workspaces, pinned toolchain)
         run: |
-          rustup toolchain install 1.85 --profile minimal --component rustfmt --no-self-update
           for d in crates/tst-core/fuzz crates/tst-srt/fuzz crates/tst-rtp/fuzz; do
-            (cd "$d" && cargo +1.85 fmt --all -- --check)
+            (cd "$d" && cargo fmt --all -- --check)
           done
 
       # `cargo +nightly fuzz check` (compile-only) catches fuzz-target
@@ -1072,12 +1003,6 @@ jobs:
     # typed decode/encode, codec parsers, and io helpers. Python kinds come
     # from one Rust table, resolved at `import tstrans`, so a gap fails the
     # import (and the pytest suite) instead of needing a call-site grep.
-    env:
-      # Same `RUSTUP_TOOLCHAIN` pin as `build` and `python-pandas-extra` —
-      # avoids the pre-installed clippy / rustup-sync clash on
-      # ubuntu-latest runners (per
-      # `reference_maturin_develop_ci_venv_recipe`).
-      RUSTUP_TOOLCHAIN: "1.85"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -1104,22 +1029,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust toolchain, cargo cache
+        uses: ./.github/actions/rust-setup
         with:
-          toolchain: "1.85"
-
-      - name: Cache cargo artifacts
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            !target/debug/incremental
-            !target/debug/.fingerprint
-            !target/debug/deps
-          key: cargo-python-core-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-python-core-
+          cache-key: cargo-python-core-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-python-core-
 
       - name: Create + activate venv, install maturin + pytest
         # maturin develop requires VIRTUAL_ENV/CONDA_PREFIX/.venv; setup-python
@@ -1184,11 +1098,6 @@ jobs:
     # test file (test_pandas_missing_extra.py) runs unconditionally in this
     # job as a smoke check — it patches sys.modules so the [pandas] extra
     # being installed here doesn't suppress the test.
-    env:
-      # Pin via env so rust-toolchain.toml doesn't re-trigger rustup sync
-      # mid-build (which clashes with the pre-installed clippy on
-      # ubuntu-latest runners — see the matching pattern in the `build` job).
-      RUSTUP_TOOLCHAIN: "1.85"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -1203,22 +1112,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust toolchain, cargo cache
+        uses: ./.github/actions/rust-setup
         with:
-          toolchain: "1.85"
-
-      - name: Cache cargo artifacts
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            !target/debug/incremental
-            !target/debug/.fingerprint
-            !target/debug/deps
-          key: cargo-python-pandas-extra-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-python-pandas-extra-
+          cache-key: cargo-python-pandas-extra-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-python-pandas-extra-
 
       - name: Create + activate venv, install maturin + pandas extras
         # maturin develop requires VIRTUAL_ENV/CONDA_PREFIX/.venv; setup-python
@@ -1267,8 +1165,6 @@ jobs:
     #  - srt-only (--no-default-features --features srt)
     #  - rtp-only (--no-default-features --features rtp)
     #  - neither  (--no-default-features)  — 0 tests expected, must compile
-    env:
-      RUSTUP_TOOLCHAIN: "1.85"
     strategy:
       fail-fast: false
       matrix:
@@ -1291,23 +1187,11 @@ jobs:
           sudo apt-get -o Acquire::Retries=5 update
           sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Rust toolchain, cargo cache
+        uses: ./.github/actions/rust-setup
         with:
-          toolchain: "1.85"
-
-      - name: Cache cargo + cmake artifacts
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            !target/debug/incremental
-            !target/debug/.fingerprint
-            !target/debug/deps
-          key: cargo-tst-c-matrix-${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-tst-c-matrix-${{ matrix.name }}-
+          cache-key: cargo-tst-c-matrix-${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-tst-c-matrix-${{ matrix.name }}-
 
       - name: Install cbindgen (pinned to Cargo.lock's cbindgen)
         # The header rail below renders a header with the cbindgen CLI. CI
@@ -1359,7 +1243,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - id: rust
+        uses: ./.github/actions/rust-setup
+        with:
+          toolchain: none
+
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories licenses
-          rust-version: "1.85"
+          rust-version: ${{ steps.rust.outputs.channel }}

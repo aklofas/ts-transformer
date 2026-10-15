@@ -17,6 +17,7 @@ set -euo pipefail
 PROD=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)   # embedded/freertos-srt
 SUB="$PROD/substrate"
 ROOT=$(cd "$PROD/../.." && pwd)                          # workspace root
+TOOLCHAIN="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$ROOT/rust-toolchain.toml")"
 cd "$PROD"
 
 # Single ignored output root. obj/ = compiled objects; generated/ = golden.h;
@@ -90,7 +91,7 @@ if [ "${TSTC:-0}" = "1" ]; then
   # without the rustup target installed would otherwise hard-fail on a cargo
   # error instead of skipping cleanly — a rustup target isn't a binary on
   # PATH, so the `need` guards in freertos-srt.sh structurally can't cover it.
-  rustup target add thumbv7em-none-eabihf --toolchain 1.85 >/dev/null 2>&1 || true
+  rustup target add thumbv7em-none-eabihf --toolchain "$TOOLCHAIN" >/dev/null 2>&1 || true
   ( cd "$TSTC_CRATE" && cargo build --release --locked )
   TSTC_LIB="$TSTC_CRATE/target/thumbv7em-none-eabihf/release/libtstrans_firmware.a"
   [ -f "$TSTC_LIB" ] || { echo "FATAL: $TSTC_LIB missing after cargo build" >&2; exit 1; }

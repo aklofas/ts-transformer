@@ -2,7 +2,7 @@
 name        = "tst-test-helpers"
 version     = "0.0.0"
 edition     = "2024"
-rust-version = "1.85"
+rust-version.workspace = true
 publish     = false
 description = "Internal test helpers shared across tst-core, tst-pipeline, tst-srt. Not for external consumption."
 license     = "MIT OR Apache-2.0"

@@ -2,7 +2,7 @@
 name = "tst-integration"
 version.workspace = true
 edition = "2024"
-rust-version = "1.85"
+rust-version.workspace = true
 publish = false
 description = "Cross-binding scenario harness: golden-envelope contract + scenarios that the Rust, Python, and C adapters all reproduce byte-for-byte, with a gen-scenarios --check drift rail. Not for external consumption."
 

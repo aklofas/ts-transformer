@@ -12,12 +12,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 
+# The one toolchain: rust-toolchain.toml's channel.
+TOOLCHAIN="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' rust-toolchain.toml)"
+
 REQUIRE="${QEMU_RUNTIME_REQUIRE_TOOLS:-0}"
 
-# Pin to the workspace toolchain (rust-toolchain.toml "1.85") — a bare
+# Add targets to the workspace toolchain (rust-toolchain.toml) — a bare
 # `rustup target add` installs into the DEFAULT toolchain, which may differ.
-rustup target add thumbv7em-none-eabihf --toolchain 1.85 >/dev/null 2>&1 || true
-rustup target add riscv32imac-unknown-none-elf --toolchain 1.85 >/dev/null 2>&1 || true
+rustup target add thumbv7em-none-eabihf --toolchain "$TOOLCHAIN" >/dev/null 2>&1 || true
+rustup target add riscv32imac-unknown-none-elf --toolchain "$TOOLCHAIN" >/dev/null 2>&1 || true
 
 run_target() {
   local tool="$1" target="$2" label="$3"
