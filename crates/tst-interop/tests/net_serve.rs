@@ -8,7 +8,7 @@
 //! test is placed in the capped `network` test-group by binary name.
 //! Both test *names* below deliberately contain `round_trip` (matching
 //! `test(round_trip)`), and the RTSP test additionally contains `rtsp`
-//! (matching `test(rtsp)`) — same naming convention `tests/loopback.rs`
+//! (matching `test(rtsp)`) — same naming convention `tests/net_loopback.rs`
 //! uses for its own network cells. Both therefore DO land in the
 //! `network` group (serialized against this crate's other network
 //! tests) with the 10s-period/2-terminate (20s hard kill; 40s on
@@ -17,7 +17,7 @@
 //! seconds in the happy path (bounded retries + a short profile window),
 //! comfortably inside either budget.
 //!
-//! Deterministic-test policy (mirrors `tests/loopback.rs`):
+//! Deterministic-test policy (mirrors `tests/net_loopback.rs`):
 //! - Ports are ephemeral, discovered via a throwaway TCP bind (HLS/RTSP
 //!   are both TCP-based, unlike `loopback.rs`'s UDP-probed ports).
 //! - No fixed sleeps as synchronization: every wait is either a bounded
@@ -87,7 +87,7 @@ const SECONDS: f64 = 3.0;
 
 /// Poll `handle.is_finished()` until it's done or `timeout` elapses —
 /// the bounded-wait counterpart to a bare `.join()`, mirroring
-/// `tests/loopback.rs::join_with_timeout`.
+/// `tests/net_loopback.rs::join_with_timeout`.
 fn join_with_timeout<T>(handle: thread::JoinHandle<T>, timeout: Duration) -> T {
     let deadline = Instant::now() + timeout;
     loop {
@@ -153,7 +153,7 @@ fn wait_for_accept(addr: SocketAddr, timeout: Duration) {
 
 /// Perform a raw HTTP/1.1 GET against `addr` and return `(status_line,
 /// body_bytes)`. Segment responses are binary MPEG-TS, so — unlike
-/// `tst-hls`'s own `tests/http_hardening.rs::http_get` helper, which
+/// `tst-hls`'s own `tests/net_http_hardening.rs::http_get` helper, which
 /// reads the whole response via `read_to_string` (fine for its
 /// text-only playlist assertions) — this reads raw bytes
 /// (`read_to_end`) and splits the header/body manually at the first
@@ -347,7 +347,7 @@ fn rtsp_serve_round_trip_via_own_client() {
     // thread's connect attempt even after the TCP listener itself is
     // accepting (accept happens before add_mount's mutex state settles
     // in the very first connection); retry on a bounded budget, the same
-    // pattern `tests/loopback.rs::send_with_retry` uses for its SRT cell.
+    // pattern `tests/net_loopback.rs::send_with_retry` uses for its SRT cell.
     let deadline = Instant::now() + Duration::from_secs(5);
     let (client, recv_transport) = loop {
         match connect_and_play(bind_addr, MOUNT) {

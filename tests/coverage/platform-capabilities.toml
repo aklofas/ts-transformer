@@ -24,7 +24,7 @@
 # ─── test-level platform gates (one per gated file) ────────────
 
 [[platform_skip]]
-file = "crates/tst-rist/tests/loopback.rs"
+file = "crates/tst-rist/tests/net_loopback.rs"
 platform = "windows-msvc"
 capability = "rist_runtime"
 class = "blocked_bug"
@@ -38,7 +38,7 @@ delivery on both profiles) — gate lifted 2026-07-26.
 """
 
 [[platform_skip]]
-file = "crates/tst-rist/tests/pipeline_round_trip.rs"
+file = "crates/tst-rist/tests/net_pipeline_round_trip.rs"
 platform = "windows-msvc"
 capability = "rist_runtime"
 class = "blocked_bug"
@@ -46,7 +46,7 @@ resolved = "2026-07-26"
 note = "Same librist teardown hang as loopback.rs; fixed in librist 0.2.18."
 
 [[platform_skip]]
-file = "crates/tst-udp/tests/loopback_multicast.rs"
+file = "crates/tst-udp/tests/net_loopback_multicast.rs"
 platform = "windows-msvc"
 capability = "ipv6_multicast"
 class = "gap"

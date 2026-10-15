@@ -28,7 +28,7 @@ use crate::verify::{self, KlvExpect, Tally, VerifyMode, WireLayout};
 /// entirely — the sender never connected or never sent anything at all
 /// (a genuinely broken run, not a slow-starting one). Generous on
 /// purpose: connection setup time varies across schemes (e.g. a
-/// retry-on-connect SRT caller, see `tests/loopback.rs`, can take a
+/// retry-on-connect SRT caller, see `tests/net_loopback.rs`, can take a
 /// few seconds even in the well-behaved case).
 const NO_DATA_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -321,7 +321,7 @@ pub fn run(
 }
 
 /// Core of [`run`], split out so a caller that already holds a
-/// constructed transport (e.g. this crate's `tests/loopback.rs`, which
+/// constructed transport (e.g. this crate's `tests/net_loopback.rs`, which
 /// binds/listens on its own thread before spawning a sender so the two
 /// sides can't race without a fixed sleep) can drive the same receive
 /// loop without going through `--url` parsing twice.

@@ -1,5 +1,5 @@
 //! Cross-thread cancel contract for `RistTransport` / `RistRecvTransport`.
-//! Same shape as `crates/tst-udp/tests/cancel.rs`.
+//! Same shape as `crates/tst-udp/tests/net_cancel.rs`.
 //!
 //! Ports are hardcoded EVEN values (Simple profile = RTP on `port` + RTCP on
 //! `port + 1`, `rist.c:866`), distinct from `loopback.rs` (33010–33026) and

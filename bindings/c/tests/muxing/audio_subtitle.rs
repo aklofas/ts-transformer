@@ -6,7 +6,7 @@
 //! entries (`tst_muxer_push_audio[_to]`, `tst_muxer_push_subtitle[_to]`).
 //!
 //! SRT-wrapped `tst_mux_sender_send_*` tests are out of scope here —
-//! they need listener/sender boilerplate and live in `tests/url_open.rs`.
+//! they need listener/sender boilerplate and live in `tests/url_open/`.
 
 // The offline `tst_muxer_*` surface is unconditional, so this file runs on
 // every feature plane including the default (no-transport) build.

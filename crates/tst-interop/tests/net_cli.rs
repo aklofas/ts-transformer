@@ -1,5 +1,5 @@
 //! CLI argument-parsing robustness tests, general (not proxy-specific —
-//! see `tests/proxy.rs`'s `stats_json_missing_value_exits_with_usage_error`
+//! see `tests/net_proxy.rs`'s `stats_json_missing_value_exits_with_usage_error`
 //! for the original instance of this regression class, which this file
 //! extends to `gen`/`send`/`recv`/`verify`/`report`).
 //!
@@ -275,7 +275,7 @@ fn send_reconnect_mode_without_managed_exits_2() {
 /// is no outage here and nothing to reconnect to, so every counter is
 /// zero; what is pinned is that the flag parses and the block is
 /// written. The reconnect itself is
-/// `tests/proxy.rs::srt_background_reconnect_keeps_producing_through_an_outage`'s
+/// `tests/net_proxy.rs::srt_background_reconnect_keeps_producing_through_an_outage`'s
 /// job.
 #[test]
 fn send_managed_background_is_accepted_and_reports_managed_send() {

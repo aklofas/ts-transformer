@@ -1,6 +1,6 @@
 //! The tst-core transport conformance kit, run against loopback UDP (every
 //! transport crate pins the one-cancel-outcome contract). Shape =
-//! `crates/tst-tcp/tests/conformance.rs` with a `std::net::UdpSocket` peer.
+//! `crates/tst-tcp/tests/net_conformance.rs` with a `std::net::UdpSocket` peer.
 //!
 //! Receiver factories bind port 0 and publish the port through a shared
 //! cell so the kit's `feed` closure can aim a std socket at whichever
@@ -17,7 +17,7 @@
 //!   kernel refuses it with `EMSGSIZE` on every platform (IPv4 UDP payload
 //!   ceiling 65 507 B; Windows `WSAEMSGSIZE`), a non-transient
 //!   `io::ErrorKind` → `Broken`, and the row asserts `!is_alive()`
-//!   (`tests/cancel.rs::send_broken_loopback_latches_dead` is the twin);
+//!   (`tests/net_cancel.rs::send_broken_loopback_latches_dead` is the twin);
 //! - recv: `BrokenSource::NotProducible` — an unconnected datagram socket
 //!   never reports a peer error on `recv` and the private socket is not
 //!   reachable from `tests/`; the kit prints its visible skip line and the

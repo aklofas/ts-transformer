@@ -1,5 +1,5 @@
 //! The tst-core transport conformance kit over librist loopback.
-//! Shape = `crates/tst-tcp/tests/conformance.rs` with a librist peer.
+//! Shape = `crates/tst-tcp/tests/net_conformance.rs` with a librist peer.
 //!
 //! Three librist facts shape the factories:
 //!

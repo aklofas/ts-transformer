@@ -711,7 +711,7 @@ mod tests {
     /// payload length that was enqueued. `-2` cannot be forced from a test
     /// (524,288-entry queue drained by the protocol thread regardless of a
     /// peer), so the mapping is pinned here and guarded live in
-    /// tests/loopback.rs `send_burst_without_receiver_never_latches_broken`.
+    /// tests/net_loopback.rs `send_burst_without_receiver_never_latches_broken`.
     #[test]
     fn classify_write_rc_maps_librist_namespace() {
         assert_eq!(classify_write_rc(-2), WriteOutcome::QueueFull);

@@ -64,10 +64,10 @@ libc             = { workspace = true }
 
 # Folder-shaped integration test: Cargo's auto-discovery only walks tests/*.rs
 # at the top level, not tests/<dir>/mod.rs. The explicit entry below points it
-# at the url_open/ directory so `cargo test -p tst-c --test url_open` keeps
+# at the url_open/ directory so `cargo test -p tst-c --test net_url_open` keeps
 # working post-split.
 [[test]]
-name = "url_open"
+name = "net_url_open"
 path = "tests/url_open/mod.rs"
 
 [lints]

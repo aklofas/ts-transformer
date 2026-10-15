@@ -4,7 +4,7 @@
 //! **Stability: Provisional** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 //!
-//! Each transport crate adds one `tests/conformance.rs` that hands the kit
+//! Each transport crate adds one `tests/*conformance.rs` that hands the kit
 //! a loopback *factory* (a fresh, connected transport per call — every row
 //! consumes one) and, for receivers, a *feed* closure. The feed contract is
 //! deliberately weak: after `feed(bytes)` the transport under test must

@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use tst_rist::{RistRecvTransportBuilder, RistTransportBuilder};
 
 /// Serialize RIST pipeline tests within the process — same rationale as
-/// `tests/loopback.rs`. Ephemeral-port + librist-rebind race is brittle
+/// `tests/net_loopback.rs`. Ephemeral-port + librist-rebind race is brittle
 /// when multiple RIST tests run in parallel.
 static SERIAL: Mutex<()> = Mutex::new(());
 

@@ -8,7 +8,7 @@ scenarios.toml`` this test:
 3. Asserts ``observed == committed_golden`` (full equality, order-sensitive).
 
 Normalisation rules mirror the Rust adapter at
-``crates/tst-integration/tests/rust_scenarios.rs`` exactly:
+``crates/tst-integration/tests/net_rust_scenarios.rs`` exactly:
 
 Video
   ``payload_sha256`` = sha256 of the concatenated RBSP bytes from every

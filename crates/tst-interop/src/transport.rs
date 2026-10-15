@@ -97,7 +97,7 @@ const DEFAULT_SRT_RECV_TIMEOUT: Duration = Duration::from_millis(200);
 /// overrides it. libsrt's own default is 3s; this crate's send/recv
 /// subcommands run short, finite test cells, so failing a dead connect
 /// attempt faster (still generous for a real link) keeps a
-/// retry-on-connect caller (see `tests/loopback.rs`) fast without
+/// retry-on-connect caller (see `tests/net_loopback.rs`) fast without
 /// giving up too eagerly on a genuinely slow handshake.
 const DEFAULT_SRT_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
