@@ -11,6 +11,9 @@
 #   5. census: exactly the known publishable crates carry publish=null (each
 #      with non-empty description/readme/keywords/categories); every other
 #      workspace member is explicitly publish=false
+# The publishable set in check 5 comes from scripts/lib/roster.sh, so
+# scripts/check/repo/roster-sync.sh (roster vs the literal crates-io.yml layers)
+# is the fail-closed guard for it.
 # Linux-only: runs cargo package (heavy) and GNU stat.
 set -euo pipefail
 [ "$(uname -s)" = "Linux" ] || { echo "publish-package-sanity: SKIP (linux-only)"; exit 0; }
