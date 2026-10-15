@@ -1,8 +1,9 @@
 # Known duplicate test helpers: file<TAB>name<TAB>reason.
 # Read by scripts/check/repo/no-duplicate-test-helpers.sh, exact in both
-# directions: delete a row when its duplicate is gone; never add one for
-# new code (move the helper into the crate's tests/common or into
-# tst-test-helpers instead).
+# directions: delete a row when its duplicate is gone; never add a row
+# without a reason. Regenerate with `--print-allowlist` (it keeps the
+# reason of every row that already exists). For new code, move the helper
+# into the crate's tests/common or into tst-test-helpers instead.
 bindings/c/tests/codec_framing.rs	last_error_msg	binding tests: shared test support not yet written
 bindings/c/tests/muxing/av1_carriage_provenance.rs	drain_mux_rust	binding tests: shared test support not yet written
 bindings/c/tests/muxing/demux_config_av1_parity.rs	drain_mux	binding tests: shared test support not yet written
@@ -63,7 +64,6 @@ bindings/python/tests/test_rtp_mux_sender.py	_video_data_program	binding tests: 
 bindings/python/tests/test_rtp_mux_sender.py	_video_klv_program	binding tests: shared test support not yet written
 bindings/python/tests/test_srt_mux_demux.py	_video_data_program	binding tests: shared test support not yet written
 bindings/python/tests/test_srt_mux_demux.py	_video_klv_program	binding tests: shared test support not yet written
-crates/tst-core/tests/common/synthetic.rs	build_minimal_h264_au	cross-crate twin; the one copy belongs in tst-test-helpers
 crates/tst-core/tests/mpegts/demux_local.rs	fixtures_dir	cross-crate twin; the one copy belongs in tst-test-helpers
 crates/tst-hls/tests/hls_e2e.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
 crates/tst-hls/tests/klv_interop.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
@@ -85,7 +85,7 @@ crates/tst-pipeline/tests/managed_receive_cancel_factory.rs	recv_bytes	pipeline 
 crates/tst-pipeline/tests/managed_send_inner_cancelled.rs	broken	pipeline and transport tests: shared tests/common not yet written
 crates/tst-pipeline/tests/pairing_demuxer_round_trip.rs	drain_mux	pipeline and transport tests: shared tests/common not yet written
 crates/tst-pipeline/tests/pairing_round_trip.rs	drain_mux	pipeline and transport tests: shared tests/common not yet written
-crates/tst-pipeline/tests/pairing_round_trip.rs	minimal_h264_au	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/pipeline_receiver.rs	minimal_klv	pipeline and transport tests: shared tests/common not yet written
 crates/tst-pipeline/tests/reconnect_reject_overflow.rs	send_bytes	pipeline and transport tests: shared tests/common not yet written
 crates/tst-pipeline/tests/reconnect_tracing.rs	send_bytes	pipeline and transport tests: shared tests/common not yet written
 crates/tst-rist/tests/pipeline_round_trip.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
@@ -115,9 +115,8 @@ crates/tst-srt/tests/loopback/listener_accept_one_cancellable.rs	reserve_port	pi
 crates/tst-srt/tests/loopback/listener_accept_one_cancellable.rs	spawn_connector	pipeline and transport tests: shared tests/common not yet written
 crates/tst-srt/tests/loopback/url_open.rs	reserve_port	pipeline and transport tests: shared tests/common not yet written
 crates/tst-srt/tests/loopback/url_open.rs	spawn_connector	pipeline and transport tests: shared tests/common not yet written
+crates/tst-srt/tests/pipeline/pipeline_receiver_live.rs	minimal_klv	pipeline and transport tests: shared tests/common not yet written
 crates/tst-srt/tests/pipeline/pipeline_receiver_live_corpus.rs	fixtures_dir	pipeline and transport tests: shared tests/common not yet written
-crates/tst-srt/tests/url/url_parser.rs	congestion_live	pipeline and transport tests: shared tests/common not yet written
-crates/tst-srt/tests/url/url_parser_boundaries.rs	enum_lowercase_live	pipeline and transport tests: shared tests/common not yet written
 crates/tst-tcp/tests/pipeline_round_trip.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
 crates/tst-udp/tests/pipeline_round_trip.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
 crates/tst-udp/tests/zero_length.rs	null_ts_packet	pipeline and transport tests: shared tests/common not yet written

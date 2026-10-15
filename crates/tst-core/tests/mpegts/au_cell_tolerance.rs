@@ -25,8 +25,11 @@
 //! the PUSI packet on the KLV PID. The muxer always writes Complete CFI,
 //! so patches are what drive the demuxer through the non-conformant paths.
 
-use crate::common::mux_demux::{collect_events_with, drain_mux as drain, h264_sync_klv_muxer};
-use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
+use crate::common::mux_demux::{
+    collect_events_with, drain_mux as drain, h264_sync_klv_muxer, locate_nth_au_cell_offset,
+    patch_au_cell,
+};
+use tst_core::mpegts::au_cell::CellFragmentIndication;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
     DemuxEvent, DemuxerConfig, MetadataKind, NonConformantIssue, event::MultiCellAuReason,
@@ -47,60 +50,6 @@ fn synth_klv_record(value_len: u8) -> Vec<u8> {
     v.push(value_len);
     v.extend(std::iter::repeat_n(0x42u8, value_len as usize));
     v
-}
-
-/// Find byte offset of the n-th PUSI AU cell on `KLV_PID`. Same shape as
-/// the helper in `mpegts_au_reassembly.rs`.
-fn locate_nth_au_cell_offset(ts_bytes: &[u8], n: usize) -> Option<usize> {
-    let mut seen = 0usize;
-    for (pkt_idx, pkt) in ts_bytes.chunks_exact(188).enumerate() {
-        let pkt_pid = ((pkt[1] as u16 & 0x1F) << 8) | pkt[2] as u16;
-        if pkt_pid != KLV_PID {
-            continue;
-        }
-        let pusi = (pkt[1] & 0x40) != 0;
-        if !pusi {
-            continue;
-        }
-        let af_present = (pkt[3] & 0x20) != 0;
-        let mut idx = 4usize;
-        if af_present {
-            let af_len = pkt[idx] as usize;
-            idx += 1 + af_len;
-        }
-        if idx + 9 > 188 {
-            continue;
-        }
-        let pes_header_data_length = pkt[idx + 8] as usize;
-        idx += 9 + pes_header_data_length;
-        if seen == n {
-            return Some(pkt_idx * 188 + idx);
-        }
-        seen += 1;
-    }
-    None
-}
-
-/// Rewrite the 5-byte AU cell header + N inner bytes at `offset`. Caller
-/// MUST ensure `5 + inner.len()` does not exceed the original cell footprint
-/// (we push back into the same byte run).
-fn patch_au_cell(
-    ts_bytes: &mut [u8],
-    offset: usize,
-    cfi: CellFragmentIndication,
-    seq: u8,
-    inner: &[u8],
-) {
-    let hdr = AuCellHeader {
-        metadata_service_id: 0x00,
-        sequence_number: seq,
-        cell_fragment_indication: cfi,
-        decoder_config_flag: false,
-        random_access_indicator: true,
-    };
-    let mut buf = Vec::with_capacity(5 + inner.len());
-    write_metadata_au_cell(&mut buf, hdr, inner).unwrap();
-    ts_bytes[offset..offset + buf.len()].copy_from_slice(&buf);
 }
 
 // Tolerance is on by default, so every caller in this file passes an
@@ -130,7 +79,7 @@ fn ts_with_patched_single_cell(
     mux.push_klv(inner_for_push, Pts90khz::new(90_000), 0x00)
         .unwrap();
     let mut ts = drain(&mut mux);
-    let off = locate_nth_au_cell_offset(&ts, 0).expect("PUSI 0 on KLV_PID");
+    let off = locate_nth_au_cell_offset(KLV_PID, &ts, 0).expect("PUSI 0 on KLV_PID");
     patch_au_cell(&mut ts, off, cfi, seq, patched_inner);
     ts
 }
@@ -443,9 +392,9 @@ fn tolerance_mode_legitimate_fragmentation_unaffected() {
     mux.push_klv(part_c, Pts90khz::new(92_000), 0x00).unwrap();
     let mut ts = drain(&mut mux);
 
-    let off0 = locate_nth_au_cell_offset(&ts, 0).expect("PUSI 0");
-    let off1 = locate_nth_au_cell_offset(&ts, 1).expect("PUSI 1");
-    let off2 = locate_nth_au_cell_offset(&ts, 2).expect("PUSI 2");
+    let off0 = locate_nth_au_cell_offset(KLV_PID, &ts, 0).expect("PUSI 0");
+    let off1 = locate_nth_au_cell_offset(KLV_PID, &ts, 1).expect("PUSI 1");
+    let off2 = locate_nth_au_cell_offset(KLV_PID, &ts, 2).expect("PUSI 2");
     patch_au_cell(&mut ts, off0, CellFragmentIndication::First, 10, part_a);
     patch_au_cell(&mut ts, off1, CellFragmentIndication::Middle, 11, part_b);
     patch_au_cell(&mut ts, off2, CellFragmentIndication::Last, 12, part_c);
@@ -511,8 +460,8 @@ fn tolerance_mode_active_buffer_sequence_gap_still_emits_existing_failure() {
     mux.push_klv(part_b, Pts90khz::new(91_000), 0x00).unwrap();
     let mut ts = drain(&mut mux);
 
-    let off0 = locate_nth_au_cell_offset(&ts, 0).expect("PUSI 0");
-    let off1 = locate_nth_au_cell_offset(&ts, 1).expect("PUSI 1");
+    let off0 = locate_nth_au_cell_offset(KLV_PID, &ts, 0).expect("PUSI 0");
+    let off1 = locate_nth_au_cell_offset(KLV_PID, &ts, 1).expect("PUSI 1");
     patch_au_cell(&mut ts, off0, CellFragmentIndication::First, 10, part_a);
     // Skip seq 11 — go straight to 12 to trigger SequenceGap.
     patch_au_cell(&mut ts, off1, CellFragmentIndication::Middle, 12, part_b);

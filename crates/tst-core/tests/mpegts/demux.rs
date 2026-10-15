@@ -4,6 +4,7 @@
 //! into `Demuxer`, asserts the events recovered match the inputs.
 
 use crate::common::mux_demux::{collect_events, drain_mux};
+use crate::common::synthetic::build_dummy_klv;
 use crate::common::synthetic::build_minimal_h264_au;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
@@ -18,23 +19,6 @@ fn build_minimal_h265_au() -> Vec<u8> {
     vec![
         0x00, 0x00, 0x00, 0x01, 0x46, 0x01, 0x10, 0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0xCC, 0xDD,
     ]
-}
-
-fn build_dummy_klv() -> Vec<u8> {
-    // Hand-roll a minimal ST 0601 LS: 16-byte UL + BER-short length +
-    // body. Body has one tag (2) of length 8 carrying 8 zero bytes.
-    // The exact bytes are not load-bearing for round-trip — what matters
-    // is that the demuxer's `classify_klv` recognizes the SMPTE UL prefix
-    // (`06 0E 2B 34`) and routes it to MetadataKind::KlvAsync.
-    let body = [2u8, 8, 0, 0, 0, 0, 0, 0, 0, 0];
-    let mut out = Vec::with_capacity(17 + body.len());
-    out.extend_from_slice(&[
-        0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
-        0x00,
-    ]);
-    out.push(body.len() as u8); // BER short-form length
-    out.extend_from_slice(&body);
-    out
 }
 
 #[test]
