@@ -10,7 +10,7 @@
 /// final call the hand-written test ran (its `let` preludes included); the
 /// macro wraps all of it in one `unsafe` block. Arms:
 ///
-/// * `no_crash` — run `body`; a NULL `_close` / `_free` must not crash
+/// * `no_crash` — run `body`; a NULL `_close` / `_free` / `_cancel` must not crash
 ///   (the arm asserts nothing beyond reaching the end).
 /// * `invalid_config` — `body` returns `TST_E_INVALID_CONFIG`.
 /// * `negative` — `body` returns a negative `TST_E_*` code.
@@ -19,9 +19,6 @@
 ///
 /// Only the tests are generated. The production NULL guards stay written
 /// out at every entry point, where a reader of that entry point sees them.
-// Only the transport families use it, so a build with no transport feature
-// sees neither the macro nor its re-export used.
-#[allow(unused_macros)]
 macro_rules! null_entry_tests {
     (@one [$($attr:tt)*] $name:ident no_crash { $($body:tt)* }) => {
         $($attr)*
@@ -75,5 +72,4 @@ macro_rules! null_entry_tests {
         )+
     };
 }
-#[allow(unused_imports)]
 pub(crate) use null_entry_tests;
