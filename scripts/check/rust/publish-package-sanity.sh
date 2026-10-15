@@ -138,7 +138,6 @@ done
 # non-empty description/readme/keywords/categories (crates.io listing
 # quality); every other workspace member must be explicitly publish=false
 # (metadata: publish=[]) so a new crate can't silently become publishable.
-PUBLISHABLE="tstrans-mbedtls-src tstrans-srt-sys tstrans-rist-sys tst-core tst-pipeline tst-udp tst-tcp tst-hls tst-rtp tst-srt tst-rist"
 # `jq` is required below; under `set -euo pipefail` a missing/failed jq
 # invocation used as a bare command substitution (e.g. `x=$(jq ...)`) would
 # otherwise abort the whole script with a raw "jq: command not found" instead
@@ -150,9 +149,14 @@ if ! command -v jq >/dev/null 2>&1; then
 else
   meta=$(cargo metadata --format-version 1 --no-deps 2>/dev/null) || { echo "FAIL: cargo metadata"; fail=1; meta=""; }
   if [ -n "$meta" ]; then
+    # The roster reads the metadata already fetched above (one cargo call).
+    roster_meta="$(mktemp "${TMPDIR:-/tmp}/psp-meta.XXXXXX")"
+    printf '%s' "$meta" > "$roster_meta"
+    PUBLISHABLE="$(ROSTER_METADATA="$roster_meta" bash scripts/lib/roster.sh publishable | tr '\n' ' ')"
+    rm -f "$roster_meta"
     is_publishable() { local n=$1 p; for p in $PUBLISHABLE; do [ "$p" = "$n" ] && return 0; done; return 1; }
     if null_count=$(jq '[.packages[] | select(.publish == null)] | length' <<<"$meta" 2>&1); then
-      [ "$null_count" -eq 11 ] || { echo "FAIL: expected 11 publish=null packages, found $null_count"; fail=1; }
+      [ "$null_count" -eq "$(printf '%s\n' $PUBLISHABLE | grep -c .)" ] || { echo "FAIL: expected $(printf '%s\n' $PUBLISHABLE | grep -c .) publish=null packages, found $null_count"; fail=1; }
     else
       echo "FAIL: jq census-count parse failed: $null_count"
       fail=1
