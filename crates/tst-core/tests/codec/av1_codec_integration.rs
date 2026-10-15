@@ -1,9 +1,10 @@
 //! End-to-end: synthetic AV1 OBUs → mux → demux → codec::av1 parse.
 
 use tst_core::codec::av1::parse_obu_stream;
+use tst_core::codec::{Obu, VideoCodec};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::Demuxer;
-use tst_core::mpegts::demux::event::{DemuxEvent, Obu, SamplePayload, VideoCodec, VideoPayload};
+use tst_core::mpegts::demux::event::{DemuxEvent, SamplePayload, VideoPayload};
 use tst_core::mpegts::demux::split_video;
 use tst_core::mpegts::mux::{
     Av1CarriageMode, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,

@@ -33,7 +33,7 @@ use tst_core::codec::av1::{
     Av1FrameHeaderLight, Av1ObuStream, Av1SequenceHeader, parse_frame_header_light,
     parse_obu_stream, parse_sequence_header,
 };
-use tst_core::mpegts::demux::event::{Obu, ObuExtension};
+use tst_core::codec::{Obu, ObuExtension};
 
 use crate::codec::shared::{build_chroma_format, build_color_info, build_rational};
 use crate::error::map_codec_parse_error;

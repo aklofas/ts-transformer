@@ -18,10 +18,8 @@
 
 use crate::muxing_common::{drain_core_muxer, synthetic_av1_au};
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::demux::event::{
-    DemuxEvent, NonConformantIssue, SamplePayload, VideoCodec, VideoPayload,
-};
-use tst_core::mpegts::demux::{Demuxer, split_video};
+use tst_core::mpegts::demux::event::{DemuxEvent, NonConformantIssue, SamplePayload, VideoPayload};
+use tst_core::mpegts::demux::{Demuxer, VideoCodec, split_video};
 use tst_core::mpegts::mux::{
     Av1CarriageMode, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,
 };

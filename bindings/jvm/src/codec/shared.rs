@@ -12,7 +12,7 @@ use jni::objects::{JObject, JValue};
 use tst_core::codec::{
     ChromaFormat, ColorInfo, ColourPrimaries, MatrixCoefficients, Rational, TransferCharacteristics,
 };
-use tst_core::mpegts::demux::event::{NalUnit, Obu};
+use tst_core::codec::{NalUnit, Obu};
 
 use crate::jutil::enum_const;
 

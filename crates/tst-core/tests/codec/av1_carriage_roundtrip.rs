@@ -7,10 +7,10 @@
 //! per-OBU header bytes.
 
 use crate::common::mux_demux::drain_mux;
+use tst_core::codec::{Obu, VideoCodec};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::event::{
-    DemuxEvent, NonConformantIssue, Obu, SamplePayload, StreamId, StreamKind, VideoCodec,
-    VideoPayload,
+    DemuxEvent, NonConformantIssue, SamplePayload, StreamId, StreamKind, VideoPayload,
 };
 use tst_core::mpegts::demux::{Demuxer, DemuxerConfig};
 use tst_core::mpegts::demux::{split_video, split_video_strict};

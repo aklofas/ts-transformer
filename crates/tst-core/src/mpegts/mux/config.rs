@@ -317,7 +317,7 @@ impl MuxerConfig {
             };
             match &s.kind {
                 DemuxKind::Video(c) => {
-                    prog.add_video(s.pid, VideoCodec::from(*c));
+                    prog.add_video(s.pid, *c);
                     if let Some(tlvs) = tlvs {
                         prog.stream_descriptors_for_video(video_idx, tlvs)?;
                     }

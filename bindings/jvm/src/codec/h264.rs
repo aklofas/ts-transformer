@@ -26,11 +26,11 @@
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JValue};
 use jni::sys::{jint, jobject};
+use tst_core::codec::NalUnit;
 use tst_core::codec::h264::{
     EntropyCodingMode, H264ParameterSets, H264Pps, H264SliceHeaderLight, H264SliceType, H264Sps,
     parse_parameter_sets, parse_pps, parse_slice_header_light, parse_sps,
 };
-use tst_core::mpegts::demux::event::NalUnit;
 
 use crate::codec::shared::{
     build_color_info, build_rational, builder_set_bool, builder_set_int, builder_set_long,

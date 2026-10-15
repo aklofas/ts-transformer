@@ -35,11 +35,11 @@
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JValue};
 use jni::sys::{jint, jobject};
+use tst_core::codec::NalUnit;
 use tst_core::codec::h266::{
     H266ParameterSets, H266Pps, H266ProfileTierLevel, H266SliceHeaderLight, H266SliceType, H266Sps,
     H266Vps, parse_parameter_sets, parse_pps, parse_slice_header_light, parse_sps, parse_vps,
 };
-use tst_core::mpegts::demux::event::NalUnit;
 
 use crate::codec::shared::{build_color_info, build_rational, builder_set_int, builder_set_long};
 use crate::error::map_codec_parse_error;

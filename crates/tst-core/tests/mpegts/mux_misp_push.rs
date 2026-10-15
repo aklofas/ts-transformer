@@ -7,8 +7,7 @@ use tst_core::codec::misp_time::{self, MispTimestamp};
 use tst_core::error::{MuxError, MuxErrorKind};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
-    Demuxer, DemuxerConfig,
-    event::VideoCodec as DemuxVideoCodec,
+    Demuxer, DemuxerConfig, VideoCodec as DemuxVideoCodec,
     event::{DemuxEvent, SamplePayload},
     split_video,
 };
@@ -103,7 +102,8 @@ fn misp_push_round_trips_and_orders_sei() {
         "unexpected conformance issues: {issues:?}"
     );
 
-    use tst_core::mpegts::demux::event::{NalUnit, VideoPayload};
+    use tst_core::codec::NalUnit;
+    use tst_core::mpegts::demux::event::VideoPayload;
     let nals = match video_payload {
         VideoPayload::Nals(n) => n,
         other => panic!("expected Nals variant, got {other:?}"),

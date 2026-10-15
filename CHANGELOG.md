@@ -116,6 +116,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `ObjectCountryCodingMethod` rename `from_u8` / `to_u8` to `from_wire` /
   `to_wire`, the names every other KLV codepoint enum uses. Behaviour is
   unchanged.
+- The codec vocabulary is defined in `tst_core::codec`: `VideoCodec`,
+  `AudioCodec`, `NalUnit`, `Obu` and `ObuExtension`. `mpegts::mux` and
+  `mpegts::demux` re-export them, so `mpegts::mux::VideoCodec` and
+  `mpegts::demux::VideoCodec` are now the same type and the
+  `From<demux::VideoCodec> for mux::VideoCodec` conversion is gone (pass the
+  value directly). The `mpegts::demux::event::{VideoCodec, AudioCodec,
+  NalUnit, Obu, ObuExtension}` paths are removed; use `tst_core::codec::…`.
+  `VideoCodec` now implements `Hash` on every path.
+- `Av1CarriageMode` is defined in `mpegts::common` (still re-exported as
+  `mpegts::mux::Av1CarriageMode`).
 
 ### Changed — C header
 

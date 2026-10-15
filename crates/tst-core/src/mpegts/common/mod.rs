@@ -5,6 +5,53 @@
 pub mod crc32;
 pub(crate) mod handle_pack;
 
+/// AV1 carriage mode in PES — controls the AV1-in-MPEG-2-TS binding
+/// conformance level.
+///
+/// The AV1-in-MPEG-2-TS binding (`av1-mpeg2-ts-binding.html`) mandates
+/// two non-default behaviors for AV1 PES carriage:
+/// - **§3.4**: PES `stream_id` MUST be `0xBD` (private_stream_1),
+///   distinct from the typical `0xE0` for video.
+/// - **§3.2**: OBUs MUST be wrapped in `ts_open_bitstream_unit()` framing
+///   — each OBU prefixed with a 3-byte `obu_start_code` (`uimsbf(24)`
+///   with value `0x000001`, i.e. the byte sequence `0x00 0x00 0x01`) plus
+///   emulation-prevention escapes inside the payload (any byte sequence
+///   `0x00 0x00 0x0X` with `X ∈ {0x00, 0x01, 0x02, 0x03}` has a `0x03`
+///   emulation prevention byte inserted after the second `0x00`).
+///
+/// Default is [`Av1CarriageMode::Mpeg2TsBinding`] for spec conformance.
+/// Use [`Av1CarriageMode::InteropRawObu`] when interoperating with
+/// ffmpeg / libaom / hls.js / mediamtx — those tools today carry AV1
+/// PES with `stream_id=0xE0` and raw OBU payload (no `ts_open_bitstream_unit`
+/// framing). The interop mode preserves loopback with that ecosystem.
+///
+/// Symmetric setting exists on the demuxer
+/// (`DemuxerConfig::av1_carriage`); the two MUST match for a successful
+/// round-trip.
+///
+/// Strict-mode receivers running in `Mpeg2TsBinding` mode surface
+/// [`crate::mpegts::demux::NonConformantIssue::Av1WrongStreamId`] when
+/// an incoming AV1 PES uses `stream_id != 0xBD`, and
+/// [`crate::mpegts::demux::NonConformantIssue::Av1MissingTsObuFraming`]
+/// when the PES payload does not start with a `ts_open_bitstream_unit`
+/// start code.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Av1CarriageMode {
+    /// AV1-in-MPEG-2-TS binding conformant carriage. PES `stream_id=0xBD`
+    /// (private_stream_1) per §3.4; OBUs wrapped in `ts_open_bitstream_unit()`
+    /// framing per §3.2 (3-byte start code `0x00 0x00 0x01` + emulation
+    /// prevention bytes). This is the default.
+    #[default]
+    Mpeg2TsBinding,
+    /// Interoperability mode for the ffmpeg / libaom / hls.js / mediamtx
+    /// AV1-in-TS toolchain — PES `stream_id=0xE0` (video) and raw OBU
+    /// payload (no `ts_open_bitstream_unit` framing). Non-conformant per
+    /// the binding spec, but matches the de facto carriage used by these
+    /// tools today.
+    InteropRawObu,
+}
+
 /// MPEG-TS PMT `stream_type` values used by this library.
 ///
 /// Single enum covers both directions: mux looks up by codec / KLV mode,

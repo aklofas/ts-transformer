@@ -6,8 +6,8 @@ use crate::common::fixtures::audio_fixture_path as fixture_path;
 use std::fs;
 use std::path::Path;
 use tst_core::mpegts::demux::{
-    Demuxer,
-    event::{AudioCodec, DemuxEvent, SamplePayload, StreamKind},
+    AudioCodec, Demuxer,
+    event::{DemuxEvent, SamplePayload, StreamKind},
 };
 
 fn demux_fixture(path: &Path) -> Vec<DemuxEvent> {

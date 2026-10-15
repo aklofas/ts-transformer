@@ -22,7 +22,7 @@
 //! - Per-frame size override in Frame Header — full reference frame
 //!   management not surfaced; `frame_size` is always `None`.
 //!   See `docs/project/deferred-features.md`.
-//! - Tile Group OBUs (pass-through unparsed via `mpegts::demux::event::Obu`).
+//! - Tile Group OBUs (pass-through unparsed via `codec::Obu`).
 //! - Metadata OBUs (pass-through).
 //! - Padding OBUs.
 

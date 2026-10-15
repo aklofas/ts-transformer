@@ -25,9 +25,10 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
+use tst_core::codec::AudioCodec;
 use tst_core::error::DemuxError;
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::demux::event::{AudioCodec, MultiCellAuReason};
+use tst_core::mpegts::demux::event::MultiCellAuReason;
 use tst_core::mpegts::demux::{
     DemuxEvent, Demuxer, DemuxerConfig, DiscontinuityKind, LinkSource, MetadataKind,
     NonConformantIssue, ProgramMap, SamplePayload, StreamId, StreamInfo, StreamKind, StreamKindTag,

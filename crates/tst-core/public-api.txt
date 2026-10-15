@@ -298,7 +298,7 @@ impl core::marker::UnsafeUnpin for tst_core::codec::av1::Av1SequenceHeader
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::av1::Av1SequenceHeader
 impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::av1::Av1SequenceHeader
 pub fn tst_core::codec::av1::parse_frame_header_light(&[u8], &tst_core::codec::av1::Av1SequenceHeader) -> core::result::Result<tst_core::codec::av1::Av1FrameHeaderLight, tst_core::codec::CodecParseError>
-pub fn tst_core::codec::av1::parse_obu_stream(&[tst_core::mpegts::demux::event::Obu]) -> tst_core::codec::av1::Av1ObuStream
+pub fn tst_core::codec::av1::parse_obu_stream(&[tst_core::codec::Obu]) -> tst_core::codec::av1::Av1ObuStream
 pub fn tst_core::codec::av1::parse_sequence_header(&[u8]) -> core::result::Result<tst_core::codec::av1::Av1SequenceHeader, tst_core::codec::CodecParseError>
 pub mod tst_core::codec::h264
 pub enum tst_core::codec::h264::EntropyCodingMode
@@ -443,7 +443,7 @@ impl core::marker::Unpin for tst_core::codec::h264::H264Sps
 impl core::marker::UnsafeUnpin for tst_core::codec::h264::H264Sps
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::h264::H264Sps
 impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::h264::H264Sps
-pub fn tst_core::codec::h264::parse_parameter_sets(&[tst_core::mpegts::demux::event::NalUnit]) -> core::result::Result<tst_core::codec::h264::H264ParameterSets, tst_core::codec::CodecParseError>
+pub fn tst_core::codec::h264::parse_parameter_sets(&[tst_core::codec::NalUnit]) -> core::result::Result<tst_core::codec::h264::H264ParameterSets, tst_core::codec::CodecParseError>
 pub fn tst_core::codec::h264::parse_pps(&[u8]) -> core::result::Result<tst_core::codec::h264::H264Pps, tst_core::codec::CodecParseError>
 pub fn tst_core::codec::h264::parse_slice_header_light(&[u8], core::option::Option<&tst_core::codec::h264::H264Sps>, u8) -> core::result::Result<tst_core::codec::h264::H264SliceHeaderLight, tst_core::codec::CodecParseError>
 pub fn tst_core::codec::h264::parse_sps(&[u8]) -> core::result::Result<tst_core::codec::h264::H264Sps, tst_core::codec::CodecParseError>
@@ -630,7 +630,7 @@ impl core::marker::Unpin for tst_core::codec::h265::H265Vps
 impl core::marker::UnsafeUnpin for tst_core::codec::h265::H265Vps
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::h265::H265Vps
 impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::h265::H265Vps
-pub fn tst_core::codec::h265::parse_parameter_sets(&[tst_core::mpegts::demux::event::NalUnit]) -> core::result::Result<tst_core::codec::h265::H265ParameterSets, tst_core::codec::CodecParseError>
+pub fn tst_core::codec::h265::parse_parameter_sets(&[tst_core::codec::NalUnit]) -> core::result::Result<tst_core::codec::h265::H265ParameterSets, tst_core::codec::CodecParseError>
 pub fn tst_core::codec::h265::parse_pps(&[u8]) -> core::result::Result<tst_core::codec::h265::H265Pps, tst_core::codec::CodecParseError>
 pub fn tst_core::codec::h265::parse_slice_header_light(&[u8], core::option::Option<&tst_core::codec::h265::H265Sps>, u8) -> core::result::Result<tst_core::codec::h265::H265SliceHeaderLight, tst_core::codec::CodecParseError>
 pub fn tst_core::codec::h265::parse_sps(&[u8]) -> core::result::Result<tst_core::codec::h265::H265Sps, tst_core::codec::CodecParseError>
@@ -791,7 +791,7 @@ impl core::marker::Unpin for tst_core::codec::h266::H266Vps
 impl core::marker::UnsafeUnpin for tst_core::codec::h266::H266Vps
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::h266::H266Vps
 impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::h266::H266Vps
-pub fn tst_core::codec::h266::parse_parameter_sets(&[tst_core::mpegts::demux::event::NalUnit]) -> core::result::Result<tst_core::codec::h266::H266ParameterSets, tst_core::codec::CodecParseError>
+pub fn tst_core::codec::h266::parse_parameter_sets(&[tst_core::codec::NalUnit]) -> core::result::Result<tst_core::codec::h266::H266ParameterSets, tst_core::codec::CodecParseError>
 pub fn tst_core::codec::h266::parse_pps(&[u8]) -> core::result::Result<tst_core::codec::h266::H266Pps, tst_core::codec::CodecParseError>
 pub fn tst_core::codec::h266::parse_slice_header_light(&[u8], core::option::Option<&tst_core::codec::h266::H266Sps>, u8) -> core::result::Result<tst_core::codec::h266::H266SliceHeaderLight, tst_core::codec::CodecParseError>
 pub fn tst_core::codec::h266::parse_sps(&[u8]) -> core::result::Result<tst_core::codec::h266::H266Sps, tst_core::codec::CodecParseError>
@@ -799,10 +799,10 @@ pub fn tst_core::codec::h266::parse_vps(&[u8]) -> core::result::Result<tst_core:
 pub mod tst_core::codec::misp_time
 #[non_exhaustive] pub enum tst_core::codec::misp_time::MispTimeError
 pub tst_core::codec::misp_time::MispTimeError::NanoUnsupportedForCodec
-pub tst_core::codec::misp_time::MispTimeError::NanoUnsupportedForCodec::codec: tst_core::mpegts::mux::VideoCodec
+pub tst_core::codec::misp_time::MispTimeError::NanoUnsupportedForCodec::codec: tst_core::codec::VideoCodec
 pub tst_core::codec::misp_time::MispTimeError::NoVclNal
 pub tst_core::codec::misp_time::MispTimeError::UnsupportedCodec
-pub tst_core::codec::misp_time::MispTimeError::UnsupportedCodec::codec: tst_core::mpegts::mux::VideoCodec
+pub tst_core::codec::misp_time::MispTimeError::UnsupportedCodec::codec: tst_core::codec::VideoCodec
 impl core::clone::Clone for tst_core::codec::misp_time::MispTimeError
 pub fn tst_core::codec::misp_time::MispTimeError::clone(&self) -> tst_core::codec::misp_time::MispTimeError
 impl core::cmp::Eq for tst_core::codec::misp_time::MispTimeError
@@ -891,9 +891,9 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::misp_time::MispTi
 pub const tst_core::codec::misp_time::MISP_MICROSEC_ID_H264: [u8; 16]
 pub const tst_core::codec::misp_time::MISP_MICROSEC_ID_H265: [u8; 16]
 pub const tst_core::codec::misp_time::MISP_NANOSEC_ID_H265: [u8; 16]
-pub fn tst_core::codec::misp_time::build_sei_nal(tst_core::mpegts::mux::VideoCodec, &tst_core::codec::misp_time::MispTimestamp) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::codec::misp_time::MispTimeError>
-pub fn tst_core::codec::misp_time::extract(&[u8], tst_core::mpegts::mux::VideoCodec) -> core::result::Result<core::option::Option<tst_core::codec::misp_time::MispTimestamp>, tst_core::codec::misp_time::MispTimeExtractError>
-pub fn tst_core::codec::misp_time::identifier_for(tst_core::mpegts::mux::VideoCodec, tst_core::codec::misp_time::MispTimeKind) -> core::result::Result<&'static [u8; 16], tst_core::codec::misp_time::MispTimeError>
+pub fn tst_core::codec::misp_time::build_sei_nal(tst_core::codec::VideoCodec, &tst_core::codec::misp_time::MispTimestamp) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::codec::misp_time::MispTimeError>
+pub fn tst_core::codec::misp_time::extract(&[u8], tst_core::codec::VideoCodec) -> core::result::Result<core::option::Option<tst_core::codec::misp_time::MispTimestamp>, tst_core::codec::misp_time::MispTimeExtractError>
+pub fn tst_core::codec::misp_time::identifier_for(tst_core::codec::VideoCodec, tst_core::codec::misp_time::MispTimeKind) -> core::result::Result<&'static [u8; 16], tst_core::codec::misp_time::MispTimeError>
 pub mod tst_core::codec::mpegaudio
 pub enum tst_core::codec::mpegaudio::ChannelMode
 pub tst_core::codec::mpegaudio::ChannelMode::DualChannel
@@ -1052,10 +1052,33 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::nal_framing::Para
 pub fn tst_core::codec::nal_framing::annexb_to_length_prefixed(&[u8], u8) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::codec::CodecParseError>
 pub fn tst_core::codec::nal_framing::annexb_to_length_prefixed_into(&[u8], u8, &mut [u8]) -> core::result::Result<usize, tst_core::codec::CodecParseError>
 pub fn tst_core::codec::nal_framing::annexb_to_length_prefixed_len(&[u8], u8) -> core::result::Result<usize, tst_core::codec::CodecParseError>
-pub fn tst_core::codec::nal_framing::extract_parameter_sets(&[u8], tst_core::mpegts::demux::event::VideoCodec) -> tst_core::codec::nal_framing::ParameterSets
+pub fn tst_core::codec::nal_framing::extract_parameter_sets(&[u8], tst_core::codec::VideoCodec) -> tst_core::codec::nal_framing::ParameterSets
 pub fn tst_core::codec::nal_framing::length_prefixed_to_annexb(&[u8], u8) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::codec::CodecParseError>
 pub mod tst_core::codec::util
-pub fn tst_core::codec::util::count_nal_units(&[u8], tst_core::mpegts::mux::VideoCodec) -> u64
+pub fn tst_core::codec::util::count_nal_units(&[u8], tst_core::codec::VideoCodec) -> u64
+pub enum tst_core::codec::AudioCodec
+pub tst_core::codec::AudioCodec::Aac
+pub tst_core::codec::AudioCodec::AacLatm
+pub tst_core::codec::AudioCodec::Ac3
+pub tst_core::codec::AudioCodec::Mp2
+impl core::clone::Clone for tst_core::codec::AudioCodec
+pub fn tst_core::codec::AudioCodec::clone(&self) -> tst_core::codec::AudioCodec
+impl core::cmp::Eq for tst_core::codec::AudioCodec
+impl core::cmp::PartialEq for tst_core::codec::AudioCodec
+pub fn tst_core::codec::AudioCodec::eq(&self, &tst_core::codec::AudioCodec) -> bool
+impl core::fmt::Debug for tst_core::codec::AudioCodec
+pub fn tst_core::codec::AudioCodec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::codec::AudioCodec
+pub fn tst_core::codec::AudioCodec::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::codec::AudioCodec
+impl core::marker::StructuralPartialEq for tst_core::codec::AudioCodec
+impl core::marker::Freeze for tst_core::codec::AudioCodec
+impl core::marker::Send for tst_core::codec::AudioCodec
+impl core::marker::Sync for tst_core::codec::AudioCodec
+impl core::marker::Unpin for tst_core::codec::AudioCodec
+impl core::marker::UnsafeUnpin for tst_core::codec::AudioCodec
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::AudioCodec
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::AudioCodec
 pub enum tst_core::codec::ChromaFormat
 pub tst_core::codec::ChromaFormat::Monochrome
 pub tst_core::codec::ChromaFormat::Yuv420
@@ -1196,6 +1219,36 @@ impl core::marker::Unpin for tst_core::codec::MatrixCoefficients
 impl core::marker::UnsafeUnpin for tst_core::codec::MatrixCoefficients
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::MatrixCoefficients
 impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::MatrixCoefficients
+pub enum tst_core::codec::NalUnit
+pub tst_core::codec::NalUnit::H264
+pub tst_core::codec::NalUnit::H264::nal_type: u8
+pub tst_core::codec::NalUnit::H264::payload: tst_core::shared::SharedBytes
+pub tst_core::codec::NalUnit::H264::ref_idc: u8
+pub tst_core::codec::NalUnit::H265
+pub tst_core::codec::NalUnit::H265::layer_id: u8
+pub tst_core::codec::NalUnit::H265::nal_type: u8
+pub tst_core::codec::NalUnit::H265::payload: tst_core::shared::SharedBytes
+pub tst_core::codec::NalUnit::H265::temporal_id_plus1: u8
+pub tst_core::codec::NalUnit::H266
+pub tst_core::codec::NalUnit::H266::layer_id: u8
+pub tst_core::codec::NalUnit::H266::nal_type: u8
+pub tst_core::codec::NalUnit::H266::payload: tst_core::shared::SharedBytes
+pub tst_core::codec::NalUnit::H266::temporal_id_plus1: u8
+impl core::clone::Clone for tst_core::codec::NalUnit
+pub fn tst_core::codec::NalUnit::clone(&self) -> tst_core::codec::NalUnit
+impl core::cmp::Eq for tst_core::codec::NalUnit
+impl core::cmp::PartialEq for tst_core::codec::NalUnit
+pub fn tst_core::codec::NalUnit::eq(&self, &tst_core::codec::NalUnit) -> bool
+impl core::fmt::Debug for tst_core::codec::NalUnit
+pub fn tst_core::codec::NalUnit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_core::codec::NalUnit
+impl core::marker::Freeze for tst_core::codec::NalUnit
+impl core::marker::Send for tst_core::codec::NalUnit
+impl core::marker::Sync for tst_core::codec::NalUnit
+impl core::marker::Unpin for tst_core::codec::NalUnit
+impl core::marker::UnsafeUnpin for tst_core::codec::NalUnit
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::NalUnit
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::NalUnit
 pub enum tst_core::codec::TransferCharacteristics
 pub tst_core::codec::TransferCharacteristics::AribStdB67
 pub tst_core::codec::TransferCharacteristics::Bt1361E
@@ -1233,6 +1286,29 @@ impl core::marker::Unpin for tst_core::codec::TransferCharacteristics
 impl core::marker::UnsafeUnpin for tst_core::codec::TransferCharacteristics
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::TransferCharacteristics
 impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::TransferCharacteristics
+pub enum tst_core::codec::VideoCodec
+pub tst_core::codec::VideoCodec::Av1
+pub tst_core::codec::VideoCodec::H264
+pub tst_core::codec::VideoCodec::H265
+pub tst_core::codec::VideoCodec::H266
+impl core::clone::Clone for tst_core::codec::VideoCodec
+pub fn tst_core::codec::VideoCodec::clone(&self) -> tst_core::codec::VideoCodec
+impl core::cmp::Eq for tst_core::codec::VideoCodec
+impl core::cmp::PartialEq for tst_core::codec::VideoCodec
+pub fn tst_core::codec::VideoCodec::eq(&self, &tst_core::codec::VideoCodec) -> bool
+impl core::fmt::Debug for tst_core::codec::VideoCodec
+pub fn tst_core::codec::VideoCodec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::codec::VideoCodec
+pub fn tst_core::codec::VideoCodec::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::codec::VideoCodec
+impl core::marker::StructuralPartialEq for tst_core::codec::VideoCodec
+impl core::marker::Freeze for tst_core::codec::VideoCodec
+impl core::marker::Send for tst_core::codec::VideoCodec
+impl core::marker::Sync for tst_core::codec::VideoCodec
+impl core::marker::Unpin for tst_core::codec::VideoCodec
+impl core::marker::UnsafeUnpin for tst_core::codec::VideoCodec
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::VideoCodec
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::VideoCodec
 pub struct tst_core::codec::ColorInfo
 pub tst_core::codec::ColorInfo::chroma_loc: core::option::Option<u8>
 pub tst_core::codec::ColorInfo::full_range: bool
@@ -1255,6 +1331,46 @@ impl core::marker::Unpin for tst_core::codec::ColorInfo
 impl core::marker::UnsafeUnpin for tst_core::codec::ColorInfo
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::ColorInfo
 impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::ColorInfo
+pub struct tst_core::codec::Obu
+pub tst_core::codec::Obu::extension: core::option::Option<tst_core::codec::ObuExtension>
+pub tst_core::codec::Obu::obu_type: u8
+pub tst_core::codec::Obu::payload: tst_core::shared::SharedBytes
+impl core::clone::Clone for tst_core::codec::Obu
+pub fn tst_core::codec::Obu::clone(&self) -> tst_core::codec::Obu
+impl core::cmp::Eq for tst_core::codec::Obu
+impl core::cmp::PartialEq for tst_core::codec::Obu
+pub fn tst_core::codec::Obu::eq(&self, &tst_core::codec::Obu) -> bool
+impl core::fmt::Debug for tst_core::codec::Obu
+pub fn tst_core::codec::Obu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_core::codec::Obu
+impl core::marker::Freeze for tst_core::codec::Obu
+impl core::marker::Send for tst_core::codec::Obu
+impl core::marker::Sync for tst_core::codec::Obu
+impl core::marker::Unpin for tst_core::codec::Obu
+impl core::marker::UnsafeUnpin for tst_core::codec::Obu
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::Obu
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::Obu
+pub struct tst_core::codec::ObuExtension
+pub tst_core::codec::ObuExtension::spatial_id: u8
+pub tst_core::codec::ObuExtension::temporal_id: u8
+impl core::clone::Clone for tst_core::codec::ObuExtension
+pub fn tst_core::codec::ObuExtension::clone(&self) -> tst_core::codec::ObuExtension
+impl core::cmp::Eq for tst_core::codec::ObuExtension
+impl core::cmp::PartialEq for tst_core::codec::ObuExtension
+pub fn tst_core::codec::ObuExtension::eq(&self, &tst_core::codec::ObuExtension) -> bool
+impl core::fmt::Debug for tst_core::codec::ObuExtension
+pub fn tst_core::codec::ObuExtension::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::codec::ObuExtension
+pub fn tst_core::codec::ObuExtension::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::codec::ObuExtension
+impl core::marker::StructuralPartialEq for tst_core::codec::ObuExtension
+impl core::marker::Freeze for tst_core::codec::ObuExtension
+impl core::marker::Send for tst_core::codec::ObuExtension
+impl core::marker::Sync for tst_core::codec::ObuExtension
+impl core::marker::Unpin for tst_core::codec::ObuExtension
+impl core::marker::UnsafeUnpin for tst_core::codec::ObuExtension
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::ObuExtension
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::ObuExtension
 pub struct tst_core::codec::Rational
 pub tst_core::codec::Rational::den: u32
 pub tst_core::codec::Rational::num: u32
@@ -4064,6 +4180,27 @@ pub mod tst_core::mpegts::common::pid
 pub const tst_core::mpegts::common::pid::NULL: u16
 pub const tst_core::mpegts::common::pid::PAT: u16
 pub fn tst_core::mpegts::common::pid::is_user_pid(u16) -> bool
+#[non_exhaustive] pub enum tst_core::mpegts::common::Av1CarriageMode
+pub tst_core::mpegts::common::Av1CarriageMode::InteropRawObu
+pub tst_core::mpegts::common::Av1CarriageMode::Mpeg2TsBinding
+impl core::clone::Clone for tst_core::mpegts::common::Av1CarriageMode
+pub fn tst_core::mpegts::common::Av1CarriageMode::clone(&self) -> tst_core::mpegts::common::Av1CarriageMode
+impl core::cmp::Eq for tst_core::mpegts::common::Av1CarriageMode
+impl core::cmp::PartialEq for tst_core::mpegts::common::Av1CarriageMode
+pub fn tst_core::mpegts::common::Av1CarriageMode::eq(&self, &tst_core::mpegts::common::Av1CarriageMode) -> bool
+impl core::default::Default for tst_core::mpegts::common::Av1CarriageMode
+pub fn tst_core::mpegts::common::Av1CarriageMode::default() -> tst_core::mpegts::common::Av1CarriageMode
+impl core::fmt::Debug for tst_core::mpegts::common::Av1CarriageMode
+pub fn tst_core::mpegts::common::Av1CarriageMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::mpegts::common::Av1CarriageMode
+impl core::marker::StructuralPartialEq for tst_core::mpegts::common::Av1CarriageMode
+impl core::marker::Freeze for tst_core::mpegts::common::Av1CarriageMode
+impl core::marker::Send for tst_core::mpegts::common::Av1CarriageMode
+impl core::marker::Sync for tst_core::mpegts::common::Av1CarriageMode
+impl core::marker::Unpin for tst_core::mpegts::common::Av1CarriageMode
+impl core::marker::UnsafeUnpin for tst_core::mpegts::common::Av1CarriageMode
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::common::Av1CarriageMode
+impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::common::Av1CarriageMode
 #[non_exhaustive] #[repr(u8)] pub enum tst_core::mpegts::common::StreamType
 pub tst_core::mpegts::common::StreamType::AudioAac = 15
 pub tst_core::mpegts::common::StreamType::AudioAacLatm = 17
@@ -4223,29 +4360,6 @@ impl core::marker::Unpin for tst_core::mpegts::demux::AdaptationFieldKind
 impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::AdaptationFieldKind
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::AdaptationFieldKind
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::AdaptationFieldKind
-pub enum tst_core::mpegts::demux::event::AudioCodec
-pub tst_core::mpegts::demux::event::AudioCodec::Aac
-pub tst_core::mpegts::demux::event::AudioCodec::AacLatm
-pub tst_core::mpegts::demux::event::AudioCodec::Ac3
-pub tst_core::mpegts::demux::event::AudioCodec::Mp2
-impl core::clone::Clone for tst_core::mpegts::demux::event::AudioCodec
-pub fn tst_core::mpegts::demux::event::AudioCodec::clone(&self) -> tst_core::mpegts::demux::event::AudioCodec
-impl core::cmp::Eq for tst_core::mpegts::demux::event::AudioCodec
-impl core::cmp::PartialEq for tst_core::mpegts::demux::event::AudioCodec
-pub fn tst_core::mpegts::demux::event::AudioCodec::eq(&self, &tst_core::mpegts::demux::event::AudioCodec) -> bool
-impl core::fmt::Debug for tst_core::mpegts::demux::event::AudioCodec
-pub fn tst_core::mpegts::demux::event::AudioCodec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_core::mpegts::demux::event::AudioCodec
-pub fn tst_core::mpegts::demux::event::AudioCodec::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_core::mpegts::demux::event::AudioCodec
-impl core::marker::StructuralPartialEq for tst_core::mpegts::demux::event::AudioCodec
-impl core::marker::Freeze for tst_core::mpegts::demux::event::AudioCodec
-impl core::marker::Send for tst_core::mpegts::demux::event::AudioCodec
-impl core::marker::Sync for tst_core::mpegts::demux::event::AudioCodec
-impl core::marker::Unpin for tst_core::mpegts::demux::event::AudioCodec
-impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::AudioCodec
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::AudioCodec
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::AudioCodec
 #[non_exhaustive] pub enum tst_core::mpegts::demux::event::Av1ObuHeaderKind
 pub tst_core::mpegts::demux::event::Av1ObuHeaderKind::ExtensionReservedBits
 pub tst_core::mpegts::demux::event::Av1ObuHeaderKind::ForbiddenBit
@@ -4419,36 +4533,6 @@ impl core::marker::Unpin for tst_core::mpegts::demux::event::NalHeaderKind
 impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::NalHeaderKind
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::NalHeaderKind
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::NalHeaderKind
-pub enum tst_core::mpegts::demux::event::NalUnit
-pub tst_core::mpegts::demux::event::NalUnit::H264
-pub tst_core::mpegts::demux::event::NalUnit::H264::nal_type: u8
-pub tst_core::mpegts::demux::event::NalUnit::H264::payload: tst_core::shared::SharedBytes
-pub tst_core::mpegts::demux::event::NalUnit::H264::ref_idc: u8
-pub tst_core::mpegts::demux::event::NalUnit::H265
-pub tst_core::mpegts::demux::event::NalUnit::H265::layer_id: u8
-pub tst_core::mpegts::demux::event::NalUnit::H265::nal_type: u8
-pub tst_core::mpegts::demux::event::NalUnit::H265::payload: tst_core::shared::SharedBytes
-pub tst_core::mpegts::demux::event::NalUnit::H265::temporal_id_plus1: u8
-pub tst_core::mpegts::demux::event::NalUnit::H266
-pub tst_core::mpegts::demux::event::NalUnit::H266::layer_id: u8
-pub tst_core::mpegts::demux::event::NalUnit::H266::nal_type: u8
-pub tst_core::mpegts::demux::event::NalUnit::H266::payload: tst_core::shared::SharedBytes
-pub tst_core::mpegts::demux::event::NalUnit::H266::temporal_id_plus1: u8
-impl core::clone::Clone for tst_core::mpegts::demux::event::NalUnit
-pub fn tst_core::mpegts::demux::event::NalUnit::clone(&self) -> tst_core::mpegts::demux::event::NalUnit
-impl core::cmp::Eq for tst_core::mpegts::demux::event::NalUnit
-impl core::cmp::PartialEq for tst_core::mpegts::demux::event::NalUnit
-pub fn tst_core::mpegts::demux::event::NalUnit::eq(&self, &tst_core::mpegts::demux::event::NalUnit) -> bool
-impl core::fmt::Debug for tst_core::mpegts::demux::event::NalUnit
-pub fn tst_core::mpegts::demux::event::NalUnit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for tst_core::mpegts::demux::event::NalUnit
-impl core::marker::Freeze for tst_core::mpegts::demux::event::NalUnit
-impl core::marker::Send for tst_core::mpegts::demux::event::NalUnit
-impl core::marker::Sync for tst_core::mpegts::demux::event::NalUnit
-impl core::marker::Unpin for tst_core::mpegts::demux::event::NalUnit
-impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::NalUnit
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::NalUnit
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::NalUnit
 pub enum tst_core::mpegts::demux::event::NonConformantIssue
 pub tst_core::mpegts::demux::event::NonConformantIssue::Ac3SyncMissing
 pub tst_core::mpegts::demux::event::NonConformantIssue::Ac3SyncMissing::pid: u16
@@ -4490,7 +4574,7 @@ pub tst_core::mpegts::demux::event::NonConformantIssue::MultiCellAu::dropped_byt
 pub tst_core::mpegts::demux::event::NonConformantIssue::MultiCellAu::pid: u16
 pub tst_core::mpegts::demux::event::NonConformantIssue::MultiCellAu::reason: tst_core::mpegts::demux::event::MultiCellAuReason
 pub tst_core::mpegts::demux::event::NonConformantIssue::NalHeader
-pub tst_core::mpegts::demux::event::NonConformantIssue::NalHeader::codec: tst_core::mpegts::demux::event::VideoCodec
+pub tst_core::mpegts::demux::event::NonConformantIssue::NalHeader::codec: tst_core::codec::VideoCodec
 pub tst_core::mpegts::demux::event::NonConformantIssue::NalHeader::kind: tst_core::mpegts::demux::event::NalHeaderKind
 pub tst_core::mpegts::demux::event::NonConformantIssue::Other(alloc::string::String)
 pub tst_core::mpegts::demux::event::NonConformantIssue::PcrAnomaly
@@ -4629,7 +4713,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event:
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::PsiSyntaxKind
 pub enum tst_core::mpegts::demux::event::SamplePayload
 pub tst_core::mpegts::demux::event::SamplePayload::Audio
-pub tst_core::mpegts::demux::event::SamplePayload::Audio::codec: tst_core::mpegts::demux::event::AudioCodec
+pub tst_core::mpegts::demux::event::SamplePayload::Audio::codec: tst_core::codec::AudioCodec
 pub tst_core::mpegts::demux::event::SamplePayload::Audio::frames: tst_core::shared::SharedBytes
 pub tst_core::mpegts::demux::event::SamplePayload::Subtitle
 pub tst_core::mpegts::demux::event::SamplePayload::Subtitle::codec: tst_core::mpegts::demux::event::SubtitleCodec
@@ -4638,8 +4722,8 @@ pub tst_core::mpegts::demux::event::SamplePayload::Unknown
 pub tst_core::mpegts::demux::event::SamplePayload::Unknown::raw: tst_core::shared::SharedBytes
 pub tst_core::mpegts::demux::event::SamplePayload::Unknown::stream_type: tst_core::mpegts::common::StreamTypeCode
 pub tst_core::mpegts::demux::event::SamplePayload::Video
-pub tst_core::mpegts::demux::event::SamplePayload::Video::av1_carriage: core::option::Option<tst_core::mpegts::mux::Av1CarriageMode>
-pub tst_core::mpegts::demux::event::SamplePayload::Video::codec: tst_core::mpegts::demux::event::VideoCodec
+pub tst_core::mpegts::demux::event::SamplePayload::Video::av1_carriage: core::option::Option<tst_core::mpegts::common::Av1CarriageMode>
+pub tst_core::mpegts::demux::event::SamplePayload::Video::codec: tst_core::codec::VideoCodec
 pub tst_core::mpegts::demux::event::SamplePayload::Video::random_access_indicator: bool
 pub tst_core::mpegts::demux::event::SamplePayload::Video::raw: tst_core::shared::SharedBytes
 impl core::clone::Clone for tst_core::mpegts::demux::event::SamplePayload
@@ -4658,13 +4742,13 @@ impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::SamplePayload
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::SamplePayload
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::SamplePayload
 pub enum tst_core::mpegts::demux::event::StreamKind
-pub tst_core::mpegts::demux::event::StreamKind::Audio(tst_core::mpegts::demux::event::AudioCodec)
+pub tst_core::mpegts::demux::event::StreamKind::Audio(tst_core::codec::AudioCodec)
 pub tst_core::mpegts::demux::event::StreamKind::KlvAsync
 pub tst_core::mpegts::demux::event::StreamKind::KlvSync
 pub tst_core::mpegts::demux::event::StreamKind::KlvSync::declared_link: core::option::Option<u16>
 pub tst_core::mpegts::demux::event::StreamKind::Subtitle(tst_core::mpegts::demux::event::SubtitleCodec)
 pub tst_core::mpegts::demux::event::StreamKind::Unknown(u8)
-pub tst_core::mpegts::demux::event::StreamKind::Video(tst_core::mpegts::demux::event::VideoCodec)
+pub tst_core::mpegts::demux::event::StreamKind::Video(tst_core::codec::VideoCodec)
 impl tst_core::mpegts::demux::event::StreamKind
 pub fn tst_core::mpegts::demux::event::StreamKind::tag(&self) -> tst_core::mpegts::demux::event::StreamKindTag
 impl core::clone::Clone for tst_core::mpegts::demux::event::StreamKind
@@ -4733,34 +4817,9 @@ impl core::marker::Unpin for tst_core::mpegts::demux::event::SubtitleCodec
 impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::SubtitleCodec
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::SubtitleCodec
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::SubtitleCodec
-pub enum tst_core::mpegts::demux::event::VideoCodec
-pub tst_core::mpegts::demux::event::VideoCodec::Av1
-pub tst_core::mpegts::demux::event::VideoCodec::H264
-pub tst_core::mpegts::demux::event::VideoCodec::H265
-pub tst_core::mpegts::demux::event::VideoCodec::H266
-impl core::clone::Clone for tst_core::mpegts::demux::event::VideoCodec
-pub fn tst_core::mpegts::demux::event::VideoCodec::clone(&self) -> tst_core::mpegts::demux::event::VideoCodec
-impl core::cmp::Eq for tst_core::mpegts::demux::event::VideoCodec
-impl core::cmp::PartialEq for tst_core::mpegts::demux::event::VideoCodec
-pub fn tst_core::mpegts::demux::event::VideoCodec::eq(&self, &tst_core::mpegts::demux::event::VideoCodec) -> bool
-impl core::convert::From<tst_core::mpegts::demux::event::VideoCodec> for tst_core::mpegts::mux::VideoCodec
-pub fn tst_core::mpegts::mux::VideoCodec::from(tst_core::mpegts::demux::event::VideoCodec) -> Self
-impl core::fmt::Debug for tst_core::mpegts::demux::event::VideoCodec
-pub fn tst_core::mpegts::demux::event::VideoCodec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_core::mpegts::demux::event::VideoCodec
-pub fn tst_core::mpegts::demux::event::VideoCodec::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_core::mpegts::demux::event::VideoCodec
-impl core::marker::StructuralPartialEq for tst_core::mpegts::demux::event::VideoCodec
-impl core::marker::Freeze for tst_core::mpegts::demux::event::VideoCodec
-impl core::marker::Send for tst_core::mpegts::demux::event::VideoCodec
-impl core::marker::Sync for tst_core::mpegts::demux::event::VideoCodec
-impl core::marker::Unpin for tst_core::mpegts::demux::event::VideoCodec
-impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::VideoCodec
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::VideoCodec
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::VideoCodec
 pub enum tst_core::mpegts::demux::event::VideoPayload
-pub tst_core::mpegts::demux::event::VideoPayload::Nals(alloc::vec::Vec<tst_core::mpegts::demux::event::NalUnit>)
-pub tst_core::mpegts::demux::event::VideoPayload::Obus(alloc::vec::Vec<tst_core::mpegts::demux::event::Obu>)
+pub tst_core::mpegts::demux::event::VideoPayload::Nals(alloc::vec::Vec<tst_core::codec::NalUnit>)
+pub tst_core::mpegts::demux::event::VideoPayload::Obus(alloc::vec::Vec<tst_core::codec::Obu>)
 impl core::clone::Clone for tst_core::mpegts::demux::event::VideoPayload
 pub fn tst_core::mpegts::demux::event::VideoPayload::clone(&self) -> tst_core::mpegts::demux::event::VideoPayload
 impl core::cmp::Eq for tst_core::mpegts::demux::event::VideoPayload
@@ -4796,46 +4855,6 @@ impl core::marker::Unpin for tst_core::mpegts::demux::event::KlvLink
 impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::KlvLink
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::KlvLink
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::KlvLink
-pub struct tst_core::mpegts::demux::event::Obu
-pub tst_core::mpegts::demux::event::Obu::extension: core::option::Option<tst_core::mpegts::demux::event::ObuExtension>
-pub tst_core::mpegts::demux::event::Obu::obu_type: u8
-pub tst_core::mpegts::demux::event::Obu::payload: tst_core::shared::SharedBytes
-impl core::clone::Clone for tst_core::mpegts::demux::event::Obu
-pub fn tst_core::mpegts::demux::event::Obu::clone(&self) -> tst_core::mpegts::demux::event::Obu
-impl core::cmp::Eq for tst_core::mpegts::demux::event::Obu
-impl core::cmp::PartialEq for tst_core::mpegts::demux::event::Obu
-pub fn tst_core::mpegts::demux::event::Obu::eq(&self, &tst_core::mpegts::demux::event::Obu) -> bool
-impl core::fmt::Debug for tst_core::mpegts::demux::event::Obu
-pub fn tst_core::mpegts::demux::event::Obu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for tst_core::mpegts::demux::event::Obu
-impl core::marker::Freeze for tst_core::mpegts::demux::event::Obu
-impl core::marker::Send for tst_core::mpegts::demux::event::Obu
-impl core::marker::Sync for tst_core::mpegts::demux::event::Obu
-impl core::marker::Unpin for tst_core::mpegts::demux::event::Obu
-impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::Obu
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::Obu
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::Obu
-pub struct tst_core::mpegts::demux::event::ObuExtension
-pub tst_core::mpegts::demux::event::ObuExtension::spatial_id: u8
-pub tst_core::mpegts::demux::event::ObuExtension::temporal_id: u8
-impl core::clone::Clone for tst_core::mpegts::demux::event::ObuExtension
-pub fn tst_core::mpegts::demux::event::ObuExtension::clone(&self) -> tst_core::mpegts::demux::event::ObuExtension
-impl core::cmp::Eq for tst_core::mpegts::demux::event::ObuExtension
-impl core::cmp::PartialEq for tst_core::mpegts::demux::event::ObuExtension
-pub fn tst_core::mpegts::demux::event::ObuExtension::eq(&self, &tst_core::mpegts::demux::event::ObuExtension) -> bool
-impl core::fmt::Debug for tst_core::mpegts::demux::event::ObuExtension
-pub fn tst_core::mpegts::demux::event::ObuExtension::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_core::mpegts::demux::event::ObuExtension
-pub fn tst_core::mpegts::demux::event::ObuExtension::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_core::mpegts::demux::event::ObuExtension
-impl core::marker::StructuralPartialEq for tst_core::mpegts::demux::event::ObuExtension
-impl core::marker::Freeze for tst_core::mpegts::demux::event::ObuExtension
-impl core::marker::Send for tst_core::mpegts::demux::event::ObuExtension
-impl core::marker::Sync for tst_core::mpegts::demux::event::ObuExtension
-impl core::marker::Unpin for tst_core::mpegts::demux::event::ObuExtension
-impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::ObuExtension
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::ObuExtension
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::ObuExtension
 pub struct tst_core::mpegts::demux::event::ProgramMap
 pub tst_core::mpegts::demux::event::ProgramMap::klv_links: alloc::vec::Vec<tst_core::mpegts::demux::event::KlvLink>
 pub tst_core::mpegts::demux::event::ProgramMap::pcr_pid: u16
@@ -5185,24 +5204,24 @@ pub tst_core::mpegts::demux::AudioCodec::Aac
 pub tst_core::mpegts::demux::AudioCodec::AacLatm
 pub tst_core::mpegts::demux::AudioCodec::Ac3
 pub tst_core::mpegts::demux::AudioCodec::Mp2
-impl core::clone::Clone for tst_core::mpegts::demux::event::AudioCodec
-pub fn tst_core::mpegts::demux::event::AudioCodec::clone(&self) -> tst_core::mpegts::demux::event::AudioCodec
-impl core::cmp::Eq for tst_core::mpegts::demux::event::AudioCodec
-impl core::cmp::PartialEq for tst_core::mpegts::demux::event::AudioCodec
-pub fn tst_core::mpegts::demux::event::AudioCodec::eq(&self, &tst_core::mpegts::demux::event::AudioCodec) -> bool
-impl core::fmt::Debug for tst_core::mpegts::demux::event::AudioCodec
-pub fn tst_core::mpegts::demux::event::AudioCodec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_core::mpegts::demux::event::AudioCodec
-pub fn tst_core::mpegts::demux::event::AudioCodec::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_core::mpegts::demux::event::AudioCodec
-impl core::marker::StructuralPartialEq for tst_core::mpegts::demux::event::AudioCodec
-impl core::marker::Freeze for tst_core::mpegts::demux::event::AudioCodec
-impl core::marker::Send for tst_core::mpegts::demux::event::AudioCodec
-impl core::marker::Sync for tst_core::mpegts::demux::event::AudioCodec
-impl core::marker::Unpin for tst_core::mpegts::demux::event::AudioCodec
-impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::AudioCodec
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::AudioCodec
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::AudioCodec
+impl core::clone::Clone for tst_core::codec::AudioCodec
+pub fn tst_core::codec::AudioCodec::clone(&self) -> tst_core::codec::AudioCodec
+impl core::cmp::Eq for tst_core::codec::AudioCodec
+impl core::cmp::PartialEq for tst_core::codec::AudioCodec
+pub fn tst_core::codec::AudioCodec::eq(&self, &tst_core::codec::AudioCodec) -> bool
+impl core::fmt::Debug for tst_core::codec::AudioCodec
+pub fn tst_core::codec::AudioCodec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::codec::AudioCodec
+pub fn tst_core::codec::AudioCodec::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::codec::AudioCodec
+impl core::marker::StructuralPartialEq for tst_core::codec::AudioCodec
+impl core::marker::Freeze for tst_core::codec::AudioCodec
+impl core::marker::Send for tst_core::codec::AudioCodec
+impl core::marker::Sync for tst_core::codec::AudioCodec
+impl core::marker::Unpin for tst_core::codec::AudioCodec
+impl core::marker::UnsafeUnpin for tst_core::codec::AudioCodec
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::AudioCodec
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::AudioCodec
 #[non_exhaustive] pub enum tst_core::mpegts::demux::Av1ObuHeaderKind
 pub tst_core::mpegts::demux::Av1ObuHeaderKind::ExtensionReservedBits
 pub tst_core::mpegts::demux::Av1ObuHeaderKind::ForbiddenBit
@@ -5368,21 +5387,21 @@ pub tst_core::mpegts::demux::NalUnit::H266::layer_id: u8
 pub tst_core::mpegts::demux::NalUnit::H266::nal_type: u8
 pub tst_core::mpegts::demux::NalUnit::H266::payload: tst_core::shared::SharedBytes
 pub tst_core::mpegts::demux::NalUnit::H266::temporal_id_plus1: u8
-impl core::clone::Clone for tst_core::mpegts::demux::event::NalUnit
-pub fn tst_core::mpegts::demux::event::NalUnit::clone(&self) -> tst_core::mpegts::demux::event::NalUnit
-impl core::cmp::Eq for tst_core::mpegts::demux::event::NalUnit
-impl core::cmp::PartialEq for tst_core::mpegts::demux::event::NalUnit
-pub fn tst_core::mpegts::demux::event::NalUnit::eq(&self, &tst_core::mpegts::demux::event::NalUnit) -> bool
-impl core::fmt::Debug for tst_core::mpegts::demux::event::NalUnit
-pub fn tst_core::mpegts::demux::event::NalUnit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for tst_core::mpegts::demux::event::NalUnit
-impl core::marker::Freeze for tst_core::mpegts::demux::event::NalUnit
-impl core::marker::Send for tst_core::mpegts::demux::event::NalUnit
-impl core::marker::Sync for tst_core::mpegts::demux::event::NalUnit
-impl core::marker::Unpin for tst_core::mpegts::demux::event::NalUnit
-impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::NalUnit
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::NalUnit
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::NalUnit
+impl core::clone::Clone for tst_core::codec::NalUnit
+pub fn tst_core::codec::NalUnit::clone(&self) -> tst_core::codec::NalUnit
+impl core::cmp::Eq for tst_core::codec::NalUnit
+impl core::cmp::PartialEq for tst_core::codec::NalUnit
+pub fn tst_core::codec::NalUnit::eq(&self, &tst_core::codec::NalUnit) -> bool
+impl core::fmt::Debug for tst_core::codec::NalUnit
+pub fn tst_core::codec::NalUnit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_core::codec::NalUnit
+impl core::marker::Freeze for tst_core::codec::NalUnit
+impl core::marker::Send for tst_core::codec::NalUnit
+impl core::marker::Sync for tst_core::codec::NalUnit
+impl core::marker::Unpin for tst_core::codec::NalUnit
+impl core::marker::UnsafeUnpin for tst_core::codec::NalUnit
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::NalUnit
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::NalUnit
 pub enum tst_core::mpegts::demux::NonConformantIssue
 pub tst_core::mpegts::demux::NonConformantIssue::Ac3SyncMissing
 pub tst_core::mpegts::demux::NonConformantIssue::Ac3SyncMissing::pid: u16
@@ -5424,7 +5443,7 @@ pub tst_core::mpegts::demux::NonConformantIssue::MultiCellAu::dropped_bytes: usi
 pub tst_core::mpegts::demux::NonConformantIssue::MultiCellAu::pid: u16
 pub tst_core::mpegts::demux::NonConformantIssue::MultiCellAu::reason: tst_core::mpegts::demux::event::MultiCellAuReason
 pub tst_core::mpegts::demux::NonConformantIssue::NalHeader
-pub tst_core::mpegts::demux::NonConformantIssue::NalHeader::codec: tst_core::mpegts::demux::event::VideoCodec
+pub tst_core::mpegts::demux::NonConformantIssue::NalHeader::codec: tst_core::codec::VideoCodec
 pub tst_core::mpegts::demux::NonConformantIssue::NalHeader::kind: tst_core::mpegts::demux::event::NalHeaderKind
 pub tst_core::mpegts::demux::NonConformantIssue::Other(alloc::string::String)
 pub tst_core::mpegts::demux::NonConformantIssue::PcrAnomaly
@@ -5563,7 +5582,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event:
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::PsiSyntaxKind
 pub enum tst_core::mpegts::demux::SamplePayload
 pub tst_core::mpegts::demux::SamplePayload::Audio
-pub tst_core::mpegts::demux::SamplePayload::Audio::codec: tst_core::mpegts::demux::event::AudioCodec
+pub tst_core::mpegts::demux::SamplePayload::Audio::codec: tst_core::codec::AudioCodec
 pub tst_core::mpegts::demux::SamplePayload::Audio::frames: tst_core::shared::SharedBytes
 pub tst_core::mpegts::demux::SamplePayload::Subtitle
 pub tst_core::mpegts::demux::SamplePayload::Subtitle::codec: tst_core::mpegts::demux::event::SubtitleCodec
@@ -5572,8 +5591,8 @@ pub tst_core::mpegts::demux::SamplePayload::Unknown
 pub tst_core::mpegts::demux::SamplePayload::Unknown::raw: tst_core::shared::SharedBytes
 pub tst_core::mpegts::demux::SamplePayload::Unknown::stream_type: tst_core::mpegts::common::StreamTypeCode
 pub tst_core::mpegts::demux::SamplePayload::Video
-pub tst_core::mpegts::demux::SamplePayload::Video::av1_carriage: core::option::Option<tst_core::mpegts::mux::Av1CarriageMode>
-pub tst_core::mpegts::demux::SamplePayload::Video::codec: tst_core::mpegts::demux::event::VideoCodec
+pub tst_core::mpegts::demux::SamplePayload::Video::av1_carriage: core::option::Option<tst_core::mpegts::common::Av1CarriageMode>
+pub tst_core::mpegts::demux::SamplePayload::Video::codec: tst_core::codec::VideoCodec
 pub tst_core::mpegts::demux::SamplePayload::Video::random_access_indicator: bool
 pub tst_core::mpegts::demux::SamplePayload::Video::raw: tst_core::shared::SharedBytes
 impl core::clone::Clone for tst_core::mpegts::demux::event::SamplePayload
@@ -5592,13 +5611,13 @@ impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::SamplePayload
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::SamplePayload
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::SamplePayload
 pub enum tst_core::mpegts::demux::StreamKind
-pub tst_core::mpegts::demux::StreamKind::Audio(tst_core::mpegts::demux::event::AudioCodec)
+pub tst_core::mpegts::demux::StreamKind::Audio(tst_core::codec::AudioCodec)
 pub tst_core::mpegts::demux::StreamKind::KlvAsync
 pub tst_core::mpegts::demux::StreamKind::KlvSync
 pub tst_core::mpegts::demux::StreamKind::KlvSync::declared_link: core::option::Option<u16>
 pub tst_core::mpegts::demux::StreamKind::Subtitle(tst_core::mpegts::demux::event::SubtitleCodec)
 pub tst_core::mpegts::demux::StreamKind::Unknown(u8)
-pub tst_core::mpegts::demux::StreamKind::Video(tst_core::mpegts::demux::event::VideoCodec)
+pub tst_core::mpegts::demux::StreamKind::Video(tst_core::codec::VideoCodec)
 impl tst_core::mpegts::demux::event::StreamKind
 pub fn tst_core::mpegts::demux::event::StreamKind::tag(&self) -> tst_core::mpegts::demux::event::StreamKindTag
 impl core::clone::Clone for tst_core::mpegts::demux::event::StreamKind
@@ -5695,29 +5714,27 @@ pub tst_core::mpegts::demux::VideoCodec::Av1
 pub tst_core::mpegts::demux::VideoCodec::H264
 pub tst_core::mpegts::demux::VideoCodec::H265
 pub tst_core::mpegts::demux::VideoCodec::H266
-impl core::clone::Clone for tst_core::mpegts::demux::event::VideoCodec
-pub fn tst_core::mpegts::demux::event::VideoCodec::clone(&self) -> tst_core::mpegts::demux::event::VideoCodec
-impl core::cmp::Eq for tst_core::mpegts::demux::event::VideoCodec
-impl core::cmp::PartialEq for tst_core::mpegts::demux::event::VideoCodec
-pub fn tst_core::mpegts::demux::event::VideoCodec::eq(&self, &tst_core::mpegts::demux::event::VideoCodec) -> bool
-impl core::convert::From<tst_core::mpegts::demux::event::VideoCodec> for tst_core::mpegts::mux::VideoCodec
-pub fn tst_core::mpegts::mux::VideoCodec::from(tst_core::mpegts::demux::event::VideoCodec) -> Self
-impl core::fmt::Debug for tst_core::mpegts::demux::event::VideoCodec
-pub fn tst_core::mpegts::demux::event::VideoCodec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_core::mpegts::demux::event::VideoCodec
-pub fn tst_core::mpegts::demux::event::VideoCodec::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_core::mpegts::demux::event::VideoCodec
-impl core::marker::StructuralPartialEq for tst_core::mpegts::demux::event::VideoCodec
-impl core::marker::Freeze for tst_core::mpegts::demux::event::VideoCodec
-impl core::marker::Send for tst_core::mpegts::demux::event::VideoCodec
-impl core::marker::Sync for tst_core::mpegts::demux::event::VideoCodec
-impl core::marker::Unpin for tst_core::mpegts::demux::event::VideoCodec
-impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::VideoCodec
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::VideoCodec
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::VideoCodec
+impl core::clone::Clone for tst_core::codec::VideoCodec
+pub fn tst_core::codec::VideoCodec::clone(&self) -> tst_core::codec::VideoCodec
+impl core::cmp::Eq for tst_core::codec::VideoCodec
+impl core::cmp::PartialEq for tst_core::codec::VideoCodec
+pub fn tst_core::codec::VideoCodec::eq(&self, &tst_core::codec::VideoCodec) -> bool
+impl core::fmt::Debug for tst_core::codec::VideoCodec
+pub fn tst_core::codec::VideoCodec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::codec::VideoCodec
+pub fn tst_core::codec::VideoCodec::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::codec::VideoCodec
+impl core::marker::StructuralPartialEq for tst_core::codec::VideoCodec
+impl core::marker::Freeze for tst_core::codec::VideoCodec
+impl core::marker::Send for tst_core::codec::VideoCodec
+impl core::marker::Sync for tst_core::codec::VideoCodec
+impl core::marker::Unpin for tst_core::codec::VideoCodec
+impl core::marker::UnsafeUnpin for tst_core::codec::VideoCodec
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::VideoCodec
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::VideoCodec
 pub enum tst_core::mpegts::demux::VideoPayload
-pub tst_core::mpegts::demux::VideoPayload::Nals(alloc::vec::Vec<tst_core::mpegts::demux::event::NalUnit>)
-pub tst_core::mpegts::demux::VideoPayload::Obus(alloc::vec::Vec<tst_core::mpegts::demux::event::Obu>)
+pub tst_core::mpegts::demux::VideoPayload::Nals(alloc::vec::Vec<tst_core::codec::NalUnit>)
+pub tst_core::mpegts::demux::VideoPayload::Obus(alloc::vec::Vec<tst_core::codec::Obu>)
 impl core::clone::Clone for tst_core::mpegts::demux::event::VideoPayload
 pub fn tst_core::mpegts::demux::event::VideoPayload::clone(&self) -> tst_core::mpegts::demux::event::VideoPayload
 impl core::cmp::Eq for tst_core::mpegts::demux::event::VideoPayload
@@ -5760,7 +5777,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::demuxer::
 pub tst_core::mpegts::demux::DemuxerConfig::au_cell_cap_per_pid: core::option::Option<usize>
 pub tst_core::mpegts::demux::DemuxerConfig::au_cell_cap_total: core::option::Option<usize>
 pub tst_core::mpegts::demux::DemuxerConfig::au_cell_max_in_flight_pids: core::option::Option<usize>
-pub tst_core::mpegts::demux::DemuxerConfig::av1_carriage: tst_core::mpegts::mux::Av1CarriageMode
+pub tst_core::mpegts::demux::DemuxerConfig::av1_carriage: tst_core::mpegts::common::Av1CarriageMode
 pub tst_core::mpegts::demux::DemuxerConfig::cfi_tolerance: bool
 pub tst_core::mpegts::demux::DemuxerConfig::klv_link_overrides: alloc::vec::Vec<(u16, u16)>
 pub tst_core::mpegts::demux::DemuxerConfig::lenient_psi_reassembly: bool
@@ -5790,7 +5807,7 @@ impl tst_core::mpegts::demux::DemuxerConfigBuilder
 pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::au_cell_cap_per_pid(self, usize) -> Self
 pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::au_cell_cap_total(self, usize) -> Self
 pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::au_cell_max_in_flight_pids(self, usize) -> Self
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::av1_carriage(self, tst_core::mpegts::mux::Av1CarriageMode) -> Self
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::av1_carriage(self, tst_core::mpegts::common::Av1CarriageMode) -> Self
 pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::build(self) -> tst_core::mpegts::demux::DemuxerConfig
 pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::cfi_tolerance(self, bool) -> Self
 pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::link_klv(self, u16, u16) -> Self
@@ -5859,45 +5876,45 @@ impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::KlvLink
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::KlvLink
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::KlvLink
 pub struct tst_core::mpegts::demux::Obu
-pub tst_core::mpegts::demux::Obu::extension: core::option::Option<tst_core::mpegts::demux::event::ObuExtension>
+pub tst_core::mpegts::demux::Obu::extension: core::option::Option<tst_core::codec::ObuExtension>
 pub tst_core::mpegts::demux::Obu::obu_type: u8
 pub tst_core::mpegts::demux::Obu::payload: tst_core::shared::SharedBytes
-impl core::clone::Clone for tst_core::mpegts::demux::event::Obu
-pub fn tst_core::mpegts::demux::event::Obu::clone(&self) -> tst_core::mpegts::demux::event::Obu
-impl core::cmp::Eq for tst_core::mpegts::demux::event::Obu
-impl core::cmp::PartialEq for tst_core::mpegts::demux::event::Obu
-pub fn tst_core::mpegts::demux::event::Obu::eq(&self, &tst_core::mpegts::demux::event::Obu) -> bool
-impl core::fmt::Debug for tst_core::mpegts::demux::event::Obu
-pub fn tst_core::mpegts::demux::event::Obu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for tst_core::mpegts::demux::event::Obu
-impl core::marker::Freeze for tst_core::mpegts::demux::event::Obu
-impl core::marker::Send for tst_core::mpegts::demux::event::Obu
-impl core::marker::Sync for tst_core::mpegts::demux::event::Obu
-impl core::marker::Unpin for tst_core::mpegts::demux::event::Obu
-impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::Obu
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::Obu
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::Obu
+impl core::clone::Clone for tst_core::codec::Obu
+pub fn tst_core::codec::Obu::clone(&self) -> tst_core::codec::Obu
+impl core::cmp::Eq for tst_core::codec::Obu
+impl core::cmp::PartialEq for tst_core::codec::Obu
+pub fn tst_core::codec::Obu::eq(&self, &tst_core::codec::Obu) -> bool
+impl core::fmt::Debug for tst_core::codec::Obu
+pub fn tst_core::codec::Obu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_core::codec::Obu
+impl core::marker::Freeze for tst_core::codec::Obu
+impl core::marker::Send for tst_core::codec::Obu
+impl core::marker::Sync for tst_core::codec::Obu
+impl core::marker::Unpin for tst_core::codec::Obu
+impl core::marker::UnsafeUnpin for tst_core::codec::Obu
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::Obu
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::Obu
 pub struct tst_core::mpegts::demux::ObuExtension
 pub tst_core::mpegts::demux::ObuExtension::spatial_id: u8
 pub tst_core::mpegts::demux::ObuExtension::temporal_id: u8
-impl core::clone::Clone for tst_core::mpegts::demux::event::ObuExtension
-pub fn tst_core::mpegts::demux::event::ObuExtension::clone(&self) -> tst_core::mpegts::demux::event::ObuExtension
-impl core::cmp::Eq for tst_core::mpegts::demux::event::ObuExtension
-impl core::cmp::PartialEq for tst_core::mpegts::demux::event::ObuExtension
-pub fn tst_core::mpegts::demux::event::ObuExtension::eq(&self, &tst_core::mpegts::demux::event::ObuExtension) -> bool
-impl core::fmt::Debug for tst_core::mpegts::demux::event::ObuExtension
-pub fn tst_core::mpegts::demux::event::ObuExtension::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_core::mpegts::demux::event::ObuExtension
-pub fn tst_core::mpegts::demux::event::ObuExtension::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_core::mpegts::demux::event::ObuExtension
-impl core::marker::StructuralPartialEq for tst_core::mpegts::demux::event::ObuExtension
-impl core::marker::Freeze for tst_core::mpegts::demux::event::ObuExtension
-impl core::marker::Send for tst_core::mpegts::demux::event::ObuExtension
-impl core::marker::Sync for tst_core::mpegts::demux::event::ObuExtension
-impl core::marker::Unpin for tst_core::mpegts::demux::event::ObuExtension
-impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::ObuExtension
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::ObuExtension
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::ObuExtension
+impl core::clone::Clone for tst_core::codec::ObuExtension
+pub fn tst_core::codec::ObuExtension::clone(&self) -> tst_core::codec::ObuExtension
+impl core::cmp::Eq for tst_core::codec::ObuExtension
+impl core::cmp::PartialEq for tst_core::codec::ObuExtension
+pub fn tst_core::codec::ObuExtension::eq(&self, &tst_core::codec::ObuExtension) -> bool
+impl core::fmt::Debug for tst_core::codec::ObuExtension
+pub fn tst_core::codec::ObuExtension::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::codec::ObuExtension
+pub fn tst_core::codec::ObuExtension::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::codec::ObuExtension
+impl core::marker::StructuralPartialEq for tst_core::codec::ObuExtension
+impl core::marker::Freeze for tst_core::codec::ObuExtension
+impl core::marker::Send for tst_core::codec::ObuExtension
+impl core::marker::Sync for tst_core::codec::ObuExtension
+impl core::marker::Unpin for tst_core::codec::ObuExtension
+impl core::marker::UnsafeUnpin for tst_core::codec::ObuExtension
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::ObuExtension
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::ObuExtension
 pub struct tst_core::mpegts::demux::ProgramMap
 pub tst_core::mpegts::demux::ProgramMap::klv_links: alloc::vec::Vec<tst_core::mpegts::demux::event::KlvLink>
 pub tst_core::mpegts::demux::ProgramMap::pcr_pid: u16
@@ -5963,8 +5980,8 @@ impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::StreamInfo
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::StreamInfo
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::StreamInfo
 pub fn tst_core::mpegts::demux::pts_to_duration(tst_core::mpegts::common::Pts90khz) -> core::time::Duration
-pub fn tst_core::mpegts::demux::split_video(&tst_core::shared::SharedBytes, tst_core::mpegts::demux::event::VideoCodec, tst_core::mpegts::mux::Av1CarriageMode) -> (tst_core::mpegts::demux::event::VideoPayload, alloc::vec::Vec<tst_core::mpegts::demux::event::NonConformantIssue>)
-pub fn tst_core::mpegts::demux::split_video_strict(&tst_core::shared::SharedBytes, tst_core::mpegts::demux::event::VideoCodec, tst_core::mpegts::mux::Av1CarriageMode) -> core::result::Result<tst_core::mpegts::demux::event::VideoPayload, tst_core::mpegts::demux::event::NonConformantIssue>
+pub fn tst_core::mpegts::demux::split_video(&tst_core::shared::SharedBytes, tst_core::codec::VideoCodec, tst_core::mpegts::common::Av1CarriageMode) -> (tst_core::mpegts::demux::event::VideoPayload, alloc::vec::Vec<tst_core::mpegts::demux::event::NonConformantIssue>)
+pub fn tst_core::mpegts::demux::split_video_strict(&tst_core::shared::SharedBytes, tst_core::codec::VideoCodec, tst_core::mpegts::common::Av1CarriageMode) -> core::result::Result<tst_core::mpegts::demux::event::VideoPayload, tst_core::mpegts::demux::event::NonConformantIssue>
 pub mod tst_core::mpegts::descriptors
 pub mod tst_core::mpegts::descriptors::parse
 #[non_exhaustive] pub enum tst_core::mpegts::descriptors::parse::DescriptorParseError
@@ -6188,45 +6205,45 @@ pub tst_core::mpegts::mux::AudioCodec::Aac
 pub tst_core::mpegts::mux::AudioCodec::AacLatm
 pub tst_core::mpegts::mux::AudioCodec::Ac3
 pub tst_core::mpegts::mux::AudioCodec::Mp2
-impl core::clone::Clone for tst_core::mpegts::mux::AudioCodec
-pub fn tst_core::mpegts::mux::AudioCodec::clone(&self) -> tst_core::mpegts::mux::AudioCodec
-impl core::cmp::Eq for tst_core::mpegts::mux::AudioCodec
-impl core::cmp::PartialEq for tst_core::mpegts::mux::AudioCodec
-pub fn tst_core::mpegts::mux::AudioCodec::eq(&self, &tst_core::mpegts::mux::AudioCodec) -> bool
-impl core::fmt::Debug for tst_core::mpegts::mux::AudioCodec
-pub fn tst_core::mpegts::mux::AudioCodec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_core::mpegts::mux::AudioCodec
-pub fn tst_core::mpegts::mux::AudioCodec::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_core::mpegts::mux::AudioCodec
-impl core::marker::StructuralPartialEq for tst_core::mpegts::mux::AudioCodec
-impl core::marker::Freeze for tst_core::mpegts::mux::AudioCodec
-impl core::marker::Send for tst_core::mpegts::mux::AudioCodec
-impl core::marker::Sync for tst_core::mpegts::mux::AudioCodec
-impl core::marker::Unpin for tst_core::mpegts::mux::AudioCodec
-impl core::marker::UnsafeUnpin for tst_core::mpegts::mux::AudioCodec
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::mux::AudioCodec
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::AudioCodec
+impl core::clone::Clone for tst_core::codec::AudioCodec
+pub fn tst_core::codec::AudioCodec::clone(&self) -> tst_core::codec::AudioCodec
+impl core::cmp::Eq for tst_core::codec::AudioCodec
+impl core::cmp::PartialEq for tst_core::codec::AudioCodec
+pub fn tst_core::codec::AudioCodec::eq(&self, &tst_core::codec::AudioCodec) -> bool
+impl core::fmt::Debug for tst_core::codec::AudioCodec
+pub fn tst_core::codec::AudioCodec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::codec::AudioCodec
+pub fn tst_core::codec::AudioCodec::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::codec::AudioCodec
+impl core::marker::StructuralPartialEq for tst_core::codec::AudioCodec
+impl core::marker::Freeze for tst_core::codec::AudioCodec
+impl core::marker::Send for tst_core::codec::AudioCodec
+impl core::marker::Sync for tst_core::codec::AudioCodec
+impl core::marker::Unpin for tst_core::codec::AudioCodec
+impl core::marker::UnsafeUnpin for tst_core::codec::AudioCodec
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::AudioCodec
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::AudioCodec
 #[non_exhaustive] pub enum tst_core::mpegts::mux::Av1CarriageMode
 pub tst_core::mpegts::mux::Av1CarriageMode::InteropRawObu
 pub tst_core::mpegts::mux::Av1CarriageMode::Mpeg2TsBinding
-impl core::clone::Clone for tst_core::mpegts::mux::Av1CarriageMode
-pub fn tst_core::mpegts::mux::Av1CarriageMode::clone(&self) -> tst_core::mpegts::mux::Av1CarriageMode
-impl core::cmp::Eq for tst_core::mpegts::mux::Av1CarriageMode
-impl core::cmp::PartialEq for tst_core::mpegts::mux::Av1CarriageMode
-pub fn tst_core::mpegts::mux::Av1CarriageMode::eq(&self, &tst_core::mpegts::mux::Av1CarriageMode) -> bool
-impl core::default::Default for tst_core::mpegts::mux::Av1CarriageMode
-pub fn tst_core::mpegts::mux::Av1CarriageMode::default() -> tst_core::mpegts::mux::Av1CarriageMode
-impl core::fmt::Debug for tst_core::mpegts::mux::Av1CarriageMode
-pub fn tst_core::mpegts::mux::Av1CarriageMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for tst_core::mpegts::mux::Av1CarriageMode
-impl core::marker::StructuralPartialEq for tst_core::mpegts::mux::Av1CarriageMode
-impl core::marker::Freeze for tst_core::mpegts::mux::Av1CarriageMode
-impl core::marker::Send for tst_core::mpegts::mux::Av1CarriageMode
-impl core::marker::Sync for tst_core::mpegts::mux::Av1CarriageMode
-impl core::marker::Unpin for tst_core::mpegts::mux::Av1CarriageMode
-impl core::marker::UnsafeUnpin for tst_core::mpegts::mux::Av1CarriageMode
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::mux::Av1CarriageMode
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::Av1CarriageMode
+impl core::clone::Clone for tst_core::mpegts::common::Av1CarriageMode
+pub fn tst_core::mpegts::common::Av1CarriageMode::clone(&self) -> tst_core::mpegts::common::Av1CarriageMode
+impl core::cmp::Eq for tst_core::mpegts::common::Av1CarriageMode
+impl core::cmp::PartialEq for tst_core::mpegts::common::Av1CarriageMode
+pub fn tst_core::mpegts::common::Av1CarriageMode::eq(&self, &tst_core::mpegts::common::Av1CarriageMode) -> bool
+impl core::default::Default for tst_core::mpegts::common::Av1CarriageMode
+pub fn tst_core::mpegts::common::Av1CarriageMode::default() -> tst_core::mpegts::common::Av1CarriageMode
+impl core::fmt::Debug for tst_core::mpegts::common::Av1CarriageMode
+pub fn tst_core::mpegts::common::Av1CarriageMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::mpegts::common::Av1CarriageMode
+impl core::marker::StructuralPartialEq for tst_core::mpegts::common::Av1CarriageMode
+impl core::marker::Freeze for tst_core::mpegts::common::Av1CarriageMode
+impl core::marker::Send for tst_core::mpegts::common::Av1CarriageMode
+impl core::marker::Sync for tst_core::mpegts::common::Av1CarriageMode
+impl core::marker::Unpin for tst_core::mpegts::common::Av1CarriageMode
+impl core::marker::UnsafeUnpin for tst_core::mpegts::common::Av1CarriageMode
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::common::Av1CarriageMode
+impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::common::Av1CarriageMode
 pub enum tst_core::mpegts::mux::KlvStreamType
 pub tst_core::mpegts::mux::KlvStreamType::PrivateData
 pub tst_core::mpegts::mux::KlvStreamType::SynchronousMetadata
@@ -6274,7 +6291,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::mux::StreamKi
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::StreamKind
 pub enum tst_core::mpegts::mux::StreamSpec
 pub tst_core::mpegts::mux::StreamSpec::Audio
-pub tst_core::mpegts::mux::StreamSpec::Audio::codec: tst_core::mpegts::mux::AudioCodec
+pub tst_core::mpegts::mux::StreamSpec::Audio::codec: tst_core::codec::AudioCodec
 pub tst_core::mpegts::mux::StreamSpec::Audio::language: core::option::Option<[u8; 3]>
 pub tst_core::mpegts::mux::StreamSpec::Audio::pid: u16
 pub tst_core::mpegts::mux::StreamSpec::Data
@@ -6289,7 +6306,7 @@ pub tst_core::mpegts::mux::StreamSpec::Subtitle
 pub tst_core::mpegts::mux::StreamSpec::Subtitle::codec: tst_core::mpegts::mux::SubtitleCodec
 pub tst_core::mpegts::mux::StreamSpec::Subtitle::pid: u16
 pub tst_core::mpegts::mux::StreamSpec::Video
-pub tst_core::mpegts::mux::StreamSpec::Video::codec: tst_core::mpegts::mux::VideoCodec
+pub tst_core::mpegts::mux::StreamSpec::Video::codec: tst_core::codec::VideoCodec
 pub tst_core::mpegts::mux::StreamSpec::Video::pid: u16
 impl core::clone::Clone for tst_core::mpegts::mux::StreamSpec
 pub fn tst_core::mpegts::mux::StreamSpec::clone(&self) -> tst_core::mpegts::mux::StreamSpec
@@ -6362,24 +6379,24 @@ pub tst_core::mpegts::mux::VideoCodec::Av1
 pub tst_core::mpegts::mux::VideoCodec::H264
 pub tst_core::mpegts::mux::VideoCodec::H265
 pub tst_core::mpegts::mux::VideoCodec::H266
-impl core::clone::Clone for tst_core::mpegts::mux::VideoCodec
-pub fn tst_core::mpegts::mux::VideoCodec::clone(&self) -> tst_core::mpegts::mux::VideoCodec
-impl core::cmp::Eq for tst_core::mpegts::mux::VideoCodec
-impl core::cmp::PartialEq for tst_core::mpegts::mux::VideoCodec
-pub fn tst_core::mpegts::mux::VideoCodec::eq(&self, &tst_core::mpegts::mux::VideoCodec) -> bool
-impl core::convert::From<tst_core::mpegts::demux::event::VideoCodec> for tst_core::mpegts::mux::VideoCodec
-pub fn tst_core::mpegts::mux::VideoCodec::from(tst_core::mpegts::demux::event::VideoCodec) -> Self
-impl core::fmt::Debug for tst_core::mpegts::mux::VideoCodec
-pub fn tst_core::mpegts::mux::VideoCodec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for tst_core::mpegts::mux::VideoCodec
-impl core::marker::StructuralPartialEq for tst_core::mpegts::mux::VideoCodec
-impl core::marker::Freeze for tst_core::mpegts::mux::VideoCodec
-impl core::marker::Send for tst_core::mpegts::mux::VideoCodec
-impl core::marker::Sync for tst_core::mpegts::mux::VideoCodec
-impl core::marker::Unpin for tst_core::mpegts::mux::VideoCodec
-impl core::marker::UnsafeUnpin for tst_core::mpegts::mux::VideoCodec
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::mux::VideoCodec
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::VideoCodec
+impl core::clone::Clone for tst_core::codec::VideoCodec
+pub fn tst_core::codec::VideoCodec::clone(&self) -> tst_core::codec::VideoCodec
+impl core::cmp::Eq for tst_core::codec::VideoCodec
+impl core::cmp::PartialEq for tst_core::codec::VideoCodec
+pub fn tst_core::codec::VideoCodec::eq(&self, &tst_core::codec::VideoCodec) -> bool
+impl core::fmt::Debug for tst_core::codec::VideoCodec
+pub fn tst_core::codec::VideoCodec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::codec::VideoCodec
+pub fn tst_core::codec::VideoCodec::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::codec::VideoCodec
+impl core::marker::StructuralPartialEq for tst_core::codec::VideoCodec
+impl core::marker::Freeze for tst_core::codec::VideoCodec
+impl core::marker::Send for tst_core::codec::VideoCodec
+impl core::marker::Sync for tst_core::codec::VideoCodec
+impl core::marker::Unpin for tst_core::codec::VideoCodec
+impl core::marker::UnsafeUnpin for tst_core::codec::VideoCodec
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::VideoCodec
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::VideoCodec
 pub struct tst_core::mpegts::mux::AudioStreamHandle(_)
 impl core::clone::Clone for tst_core::mpegts::mux::AudioStreamHandle
 pub fn tst_core::mpegts::mux::AudioStreamHandle::clone(&self) -> tst_core::mpegts::mux::AudioStreamHandle
@@ -6489,7 +6506,7 @@ impl core::marker::UnsafeUnpin for tst_core::mpegts::mux::Muxer
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::mux::Muxer
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::Muxer
 #[non_exhaustive] pub struct tst_core::mpegts::mux::MuxerConfig
-pub tst_core::mpegts::mux::MuxerConfig::av1_carriage: tst_core::mpegts::mux::Av1CarriageMode
+pub tst_core::mpegts::mux::MuxerConfig::av1_carriage: tst_core::mpegts::common::Av1CarriageMode
 pub tst_core::mpegts::mux::MuxerConfig::buffer_packets: usize
 pub tst_core::mpegts::mux::MuxerConfig::pcr_interval_ms: u32
 pub tst_core::mpegts::mux::MuxerConfig::programs: alloc::vec::Vec<tst_core::mpegts::mux::MuxerProgramConfig>
@@ -6514,7 +6531,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::MuxerConfig
 pub struct tst_core::mpegts::mux::MuxerConfigBuilder
 impl tst_core::mpegts::mux::MuxerConfigBuilder
 pub fn tst_core::mpegts::mux::MuxerConfigBuilder::add_program(&mut self, tst_core::mpegts::mux::MuxerProgramConfig) -> &mut Self
-pub fn tst_core::mpegts::mux::MuxerConfigBuilder::av1_carriage(&mut self, tst_core::mpegts::mux::Av1CarriageMode) -> &mut Self
+pub fn tst_core::mpegts::mux::MuxerConfigBuilder::av1_carriage(&mut self, tst_core::mpegts::common::Av1CarriageMode) -> &mut Self
 pub fn tst_core::mpegts::mux::MuxerConfigBuilder::buffer_packets(&mut self, usize) -> &mut Self
 pub fn tst_core::mpegts::mux::MuxerConfigBuilder::build(&self) -> core::result::Result<tst_core::mpegts::mux::MuxerConfig, tst_core::error::MuxError>
 pub fn tst_core::mpegts::mux::MuxerConfigBuilder::pcr_interval_ms(&mut self, u32) -> &mut Self
@@ -6552,12 +6569,12 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::mux::MuxerPro
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::MuxerProgramConfig
 pub struct tst_core::mpegts::mux::MuxerProgramConfigBuilder
 impl tst_core::mpegts::mux::MuxerProgramConfigBuilder
-pub fn tst_core::mpegts::mux::MuxerProgramConfigBuilder::add_audio(&mut self, u16, tst_core::mpegts::mux::AudioCodec) -> &mut Self
-pub fn tst_core::mpegts::mux::MuxerProgramConfigBuilder::add_audio_with_language(&mut self, u16, tst_core::mpegts::mux::AudioCodec, [u8; 3]) -> &mut Self
+pub fn tst_core::mpegts::mux::MuxerProgramConfigBuilder::add_audio(&mut self, u16, tst_core::codec::AudioCodec) -> &mut Self
+pub fn tst_core::mpegts::mux::MuxerProgramConfigBuilder::add_audio_with_language(&mut self, u16, tst_core::codec::AudioCodec, [u8; 3]) -> &mut Self
 pub fn tst_core::mpegts::mux::MuxerProgramConfigBuilder::add_data(&mut self, u16, u8, bool) -> &mut Self
 pub fn tst_core::mpegts::mux::MuxerProgramConfigBuilder::add_klv(&mut self, u16, tst_core::mpegts::mux::KlvStreamType, bool) -> &mut Self
 pub fn tst_core::mpegts::mux::MuxerProgramConfigBuilder::add_subtitle(&mut self, u16, tst_core::mpegts::mux::SubtitleCodec) -> &mut Self
-pub fn tst_core::mpegts::mux::MuxerProgramConfigBuilder::add_video(&mut self, u16, tst_core::mpegts::mux::VideoCodec) -> &mut Self
+pub fn tst_core::mpegts::mux::MuxerProgramConfigBuilder::add_video(&mut self, u16, tst_core::codec::VideoCodec) -> &mut Self
 pub fn tst_core::mpegts::mux::MuxerProgramConfigBuilder::build(&self) -> tst_core::mpegts::mux::MuxerProgramConfig
 pub fn tst_core::mpegts::mux::MuxerProgramConfigBuilder::new(u16, u16) -> Self
 pub fn tst_core::mpegts::mux::MuxerProgramConfigBuilder::pcr_pid(&mut self, u16) -> &mut Self

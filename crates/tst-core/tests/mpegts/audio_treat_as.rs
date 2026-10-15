@@ -4,8 +4,8 @@
 use crate::common::fixtures::audio_fixture_path as fixture_path;
 use std::fs;
 use tst_core::mpegts::demux::{
-    Demuxer, DemuxerConfig,
-    event::{AudioCodec, DemuxEvent, SamplePayload, StreamKind},
+    AudioCodec, Demuxer, DemuxerConfig,
+    event::{DemuxEvent, SamplePayload, StreamKind},
 };
 
 /// Walks the PMT to find a PID whose stream_type matches the target.

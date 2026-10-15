@@ -1,7 +1,7 @@
 //! `parse_parameter_sets` collector tests.
 
+use crate::codec::NalUnit;
 use crate::codec::h266::parse_parameter_sets;
-use crate::mpegts::demux::event::NalUnit;
 
 #[test]
 fn parse_parameter_sets_partial_success_one_bad_sps() {

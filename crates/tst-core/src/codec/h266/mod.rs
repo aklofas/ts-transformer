@@ -51,7 +51,7 @@ pub use sps::{H266Sps, parse_sps};
 pub use vps::{H266Vps, parse_vps};
 
 use crate::codec::CodecParseError;
-use crate::mpegts::demux::event::NalUnit;
+use crate::codec::NalUnit;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 

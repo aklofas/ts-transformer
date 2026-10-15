@@ -684,7 +684,8 @@ pub fn demux_to_core_events(ts_bytes: &[u8]) -> Vec<CoreEvent> {
 }
 
 fn video_payload_bytes(vp: &tst_core::mpegts::demux::event::VideoPayload) -> Vec<u8> {
-    use tst_core::mpegts::demux::event::{NalUnit, VideoPayload};
+    use tst_core::codec::NalUnit;
+    use tst_core::mpegts::demux::event::VideoPayload;
     match vp {
         VideoPayload::Nals(nals) => {
             let mut out = Vec::new();
@@ -712,8 +713,8 @@ fn video_payload_bytes(vp: &tst_core::mpegts::demux::event::VideoPayload) -> Vec
 // the PID was not seen in a ProgramMap; the primary source is the parsed PMT
 // (`StreamInfo::stream_type.as_byte()`).
 //   H.264 = 0x1B, H.265 = 0x24, H.266 = 0x33, AV1 = 0x06 (with AV01 reg-desc).
-fn video_codec_pmt_byte(codec: tst_core::mpegts::demux::event::VideoCodec) -> u8 {
-    use tst_core::mpegts::demux::event::VideoCodec;
+fn video_codec_pmt_byte(codec: tst_core::codec::VideoCodec) -> u8 {
+    use tst_core::codec::VideoCodec;
     match codec {
         VideoCodec::H264 => 0x1B,
         VideoCodec::H265 => 0x24,
@@ -723,8 +724,8 @@ fn video_codec_pmt_byte(codec: tst_core::mpegts::demux::event::VideoCodec) -> u8
 }
 
 //   MP2 = 0x03/0x04, AAC ADTS = 0x0F, AAC LATM = 0x11, AC-3 = 0x81.
-fn audio_codec_pmt_byte(codec: tst_core::mpegts::demux::event::AudioCodec) -> u8 {
-    use tst_core::mpegts::demux::event::AudioCodec;
+fn audio_codec_pmt_byte(codec: tst_core::codec::AudioCodec) -> u8 {
+    use tst_core::codec::AudioCodec;
     match codec {
         AudioCodec::Mp2 => 0x03,
         AudioCodec::Aac => 0x0F,

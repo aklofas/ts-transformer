@@ -33,13 +33,13 @@ mod stats_recorder;
 
 pub mod low_level;
 
+pub use crate::codec::{AudioCodec, NalUnit, Obu, ObuExtension, VideoCodec};
 pub use demuxer::Demuxer;
 pub use event::{
-    AdaptationFieldKind, AudioCodec, Av1ObuHeaderKind, DemuxEvent, DiscontinuityKind, KlvLink,
-    LinkSource, MetadataKind, NalHeaderKind, NalUnit, NonConformantIssue, Obu, ObuExtension,
-    PcrMalformedKind, PesHeaderMalformedKind, ProgramMap, PsiSyntaxKind, SamplePayload, StreamId,
-    StreamInfo, StreamKind, StreamKindTag, SubtitleCodec, VideoCodec, VideoPayload,
-    pts_to_duration,
+    AdaptationFieldKind, Av1ObuHeaderKind, DemuxEvent, DiscontinuityKind, KlvLink, LinkSource,
+    MetadataKind, NalHeaderKind, NonConformantIssue, PcrMalformedKind, PesHeaderMalformedKind,
+    ProgramMap, PsiSyntaxKind, SamplePayload, StreamId, StreamInfo, StreamKind, StreamKindTag,
+    SubtitleCodec, VideoPayload, pts_to_duration,
 };
 pub use payload::{split_video, split_video_strict};
 pub use strict::StrictMode;
