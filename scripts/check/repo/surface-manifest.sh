@@ -71,7 +71,11 @@ extract_items() {
 # sha256_of: hex digest of stdin; sha256sum on Linux, shasum on macOS.
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1
-  else shasum -a 256 | cut -d' ' -f1; fi
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 | cut -d' ' -f1
+  else
+    echo "FAIL: surface-manifest needs sha256sum (GNU coreutils) or shasum (perl, ships with macOS); install one." >&2
+    return 1
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -82,7 +86,7 @@ sha256_of() {
 list_unaudited() {
   local named c f
   named="$(mktemp)"
-  grep -E '^item = ' "$SURFACE_MANIFEST" | sed -E 's/^item = "(.*)"/\1/' | LC_ALL=C sort -u > "$named"
+  grep -E '^item = ' "$SURFACE_MANIFEST" | sed -nE 's/^item = "([^"]+)".*/\1/p' | LC_ALL=C sort -u > "$named"
   for c in $SURFACE_CRATES; do
     f="$SURFACE_BASELINE_DIR/$c/public-api.txt"; [ -f "$f" ] || continue
     extract_items < "$f"
@@ -469,6 +473,10 @@ self_test() {
   printf '[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
   SURFACE_UNAUDITED_COUNT=1 SURFACE_UNAUDITED_SHA256=4b00f8db406822b96eeba4fc4cff6c67f0df4cc48602125672ed68077e174a47 \
     expect fail "closure: same count, different item" || return 1
+
+  # (10) An item key followed by an inline comment still names its item.
+  printf '[[exempt]]\nitem = "demo::a" # kept\n[[exempt]]\nitem = "demo::B" # kept\n' > "$tmp/m.toml"
+  expect pass "closure: item keys with trailing inline comments" || return 1
 
   echo "self-test: PASS"
 }
