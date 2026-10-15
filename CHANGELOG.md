@@ -16,6 +16,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   enable it from `[dev-dependencies]`:
   `tst-core = { version = "…", features = ["conformance"] }`.
 
+### Changed — C header
+
+- `tstrans.h`: enum blocks are now emitted in a deterministic sorted order; no
+  declaration, value or symbol changed.
+
 ---
 
 ## [0.8.0] — 2026-10-14

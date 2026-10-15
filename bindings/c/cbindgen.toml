@@ -111,13 +111,9 @@ include = ["tst-core", "tst-pipeline", "tst-srt"]
 "feature = rist" = "TST_HAS_RIST"
 
 [export]
+# `pub enum Tst*` items are added by build.rs (header_post::mirror_enums);
+# list here only the structs, handles and constants no signature references.
 include = [
-    "TstError",
-    "TstVideoCodec",
-    "TstKlvStreamType",
-    "TstTsFramingMode",
-    "TstOverflowPolicy",
-    "TstReconnectMode",
     "TstVideoStreamHandle",
     "TstKlvStreamHandle",
     "TstAudioStreamHandle",
@@ -155,7 +151,6 @@ include = [
     "TstManagedDemuxReceiver",
     "TstDemuxReceiverStats",
     "TstEvent",
-    "TstEventKind",
     "TstEventBody",
     "TstEventProgramMap",
     "TstEventSample",
@@ -167,26 +162,8 @@ include = [
     "TstDescriptor",
     "TstStreamInfo",
     "TstKlvLink",
-    "TstStreamKindTag",
-    "TstMetadataKindTag",
-    "TstDiscontinuityKindTag",
-    "TstNonConformantCode",
-    "TstPcrMalformedKind",
-    "TstCellFragmentIndication",
-    "TstMultiCellAuReason",
-    "TstLinkSource",
-    "TstStrictMode",
-    "TstAudioCodec",
-    "TstSubtitleCodec",
-    "TstAv1CarriageMode",
-    # HLS publisher-kind discriminator (hls feature)
-    "TstPublisherKind",
     # RTSP client builder handle (rtp feature — emitted inside #if defined(TST_HAS_RTP))
     "TstRtspClientBuilder",
-    # RTP stream-end reason — unconditional (defined outside the rtp
-    # module so cbindgen emits it without a per-variant #if; only the
-    # two getters that read it are TST_HAS_RTP-gated)
-    "TstStreamEndReason",
     # RTSP server stats structs (rtp feature)
     "TstServerStats",
     "TstMountStats",
@@ -196,13 +173,10 @@ include = [
     "TstRtspPublishMount",
     "TstRtspPublishMountStats",
     "TstRtspPublisherInfo",
-    "TstRtspPublishShape",
-    "TstRtspClockAlignment",
     "TST_RTSP_PEER_ADDR_LEN",
     # ST 0601 KLV decode surface (ABI 21, unconditional)
     "TstSt0601",
     "TstSt0601Geometry",
-    "TstSt0601FieldState",
     # Annex B <-> length-prefixed + parameter-set extraction
     # (ABI 21, unconditional)
     "TstParamSets",

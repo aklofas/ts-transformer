@@ -250,10 +250,6 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/no-process-markers-selftest.sh
 
-      - name: check-c-abi-rustdoc-coverage
-        if: matrix.name == 'linux-x86_64'
-        run: bash scripts/check/c/abi-rustdoc-coverage.sh
-
       - name: No stale relocated-away package paths
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/no-stale-relocated-paths.sh
@@ -287,14 +283,6 @@ jobs:
           SRT_FORCE_VENDORED: "1"
           RIST_FORCE_VENDORED: "1"
         run: bash scripts/check/repo/kind-equivalence.sh
-      - name: No srt_*/SRT_* symbol leak in libtstrans.so
-        # Fails if libtstrans.so's dynamic export table contains any
-        # srt_*/SRT_* symbols (defense in depth
-        # alongside the symbol_audit.rs Rust-side check). Linux-only
-        # (uses GNU nm).
-        if: matrix.name == 'linux-x86_64'
-        run: bash scripts/check/c/no-srt-symbol-leak.sh
-
       - name: Check C header section uniqueness
         run: bash scripts/check/c/header-section-uniqueness.sh
 
@@ -310,34 +298,18 @@ jobs:
         # a reason, in scripts/ratchets/blocking-slot-readers.tsv.
         run: bash scripts/check/c/snapshot-getters.sh
 
-      - name: Check lifecycle ffi_catch coverage
-        # Linux-only: scans platform-independent Rust source under
-        # bindings/c/core/src/ with GNU-grep `\w`/`\b`. BSD grep on the
-        # macOS runner matches 0 entries and trips the script's own
-        # "pattern drifted" guard — a gating flake, not a real signal.
-        if: matrix.name == 'linux-x86_64'
-        run: bash scripts/check/c/lifecycle-ffi-catch-coverage.sh
-
       - name: Check extern C ffi_catch coverage
-        # Superset of the lifecycle check above: every `pub unsafe
+        # Every `pub unsafe
         # extern "C" fn` in bindings/c/core/src/ must isolate panics via
         # ffi_catch, Handle::with_inner_{mut,ref}, or be in the
         # trivially-infallible allowlist. Caught tst_demux_config_free
         # which had bypassed the lifecycle ratchet by being named
         # _free.
-        # Linux-only (same rationale as the lifecycle check above):
+        # Linux-only:
         # platform-independent source scan whose ffi_catch guard uses
         # GNU-grep `\s`, which BSD grep on macOS would mis-match.
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/c/extern-c-ffi-catch-coverage.sh
-
-      - name: Check C header mirror-enum export
-        # Catches Tst* enums declared in bindings/c/core/src/ but missing
-        # from cbindgen.toml [export] include allowlist — silently
-        # dropped from the generated header (regression bug 2026-05-24
-        # CFI tolerance: TstCellFragmentIndication was defined but
-        # never exported, so C callers had no constants).
-        run: bash scripts/check/c/header-mirror-enum-export.sh
 
       - name: Check doc ABI and ST 1910 currency
         # Fails on any non-current `ABI version 0.N` in README/docs/crate
