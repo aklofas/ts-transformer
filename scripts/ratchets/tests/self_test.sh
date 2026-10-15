@@ -366,5 +366,19 @@ expect "dup helpers: a copy that only adds a comment line is still a copy"      
 expect "dup helpers: a three-file group, all listed, passes"                               0 env DTH_ROOTS="$tmp/dth/three" DTH_ALLOWLIST="$tmp/dth/three.tsv"    bash "$DTH"
 expect "dup helpers: a three-file group with one file gone leaves a stale row"             1 env DTH_ROOTS="$tmp/dth/two"   DTH_ALLOWLIST="$tmp/dth/three.tsv"    bash "$DTH"
 
+mkdir -p "$tmp/dth/tr/a/tests" "$tmp/dth/tr/b/tests"
+cat > "$tmp/dth/tr/a/tests/t.rs" <<'XEOF'
+trait Clock {
+    fn now(
+        &self,
+        unit: u8,
+    ) -> u8;
+}
+
+XEOF
+cat "$tmp/dth/rs/a/tests/t.rs" >> "$tmp/dth/tr/a/tests/t.rs"
+cp "$tmp/dth/rs/a/tests/t.rs" "$tmp/dth/tr/b/tests/t.rs"
+expect "dup helpers: a bodiless multi-line trait declaration does not hide a duplicate after it" 1 env DTH_ROOTS="$tmp/dth/tr" DTH_ALLOWLIST="$tmp/dth/empty.tsv" bash "$DTH"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"
