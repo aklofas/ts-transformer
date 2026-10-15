@@ -41,52 +41,13 @@ from tstrans.klv import (
     encode_vmti,
 )
 
-from _builders.klv_tlv import ber_short as _ber_short
 from _builders.klv_tlv import tlv as _tlv
+from _builders.st0601_wire import wrap_st0601_with_checksum as _wrap_st0601_with_checksum
 
 
 # ---------------------------------------------------------------------------
 # Test helpers — manual TLV synthesis for fixture injection
 # ---------------------------------------------------------------------------
-
-
-def _ber_long(n: int) -> bytes:
-    """BER definite long-form length: 0x8X header + X big-endian length bytes.
-
-    Used to wrap the ST 0601 outer length when the body exceeds 0x7F bytes.
-    """
-    if n < 0x80:
-        return _ber_short(n)
-    # Find the minimum number of bytes needed
-    payload = n.to_bytes((n.bit_length() + 7) // 8, "big")
-    return bytes([0x80 | len(payload)]) + payload
-
-
-def _st0601_checksum(buf: bytes) -> int:
-    """ST 0601 §6.3 16-bit running-sum: even index → high byte, odd → low.
-
-    Mirrors `tst_core::klv::checksum::checksum_running_sum_16`. Caller passes
-    the full prefix `[UL .. start of Tag 1 value]`.
-    """
-    bcc = 0
-    for i, b in enumerate(buf):
-        shift = 8 * (((i + 1) % 2))
-        bcc = (bcc + (b << shift)) & 0xFFFF
-    return bcc
-
-
-def _wrap_st0601_with_checksum(body_without_checksum: bytes) -> bytes:
-    """Wrap an ST 0601 LS body with UL + outer BER length + ... + Tag 1 TLV.
-
-    Computes the running-sum checksum over `[UL || outer_len || body || 0x01 ||
-    0x02]` and appends the 2-byte checksum value, so the resulting buffer
-    passes lenient decode's checksum verification.
-    """
-    body_with_checksum_tlv = body_without_checksum + b"\x01\x02"
-    outer_len = len(body_with_checksum_tlv) + 2  # +2 for checksum value
-    prefix = ST_0601_UL + _ber_long(outer_len) + body_with_checksum_tlv
-    cksum = _st0601_checksum(prefix)
-    return prefix + cksum.to_bytes(2, "big")
 
 
 def _populated_uas() -> UasDatalinkLs:

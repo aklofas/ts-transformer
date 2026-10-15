@@ -4,8 +4,6 @@ import pytest
 
 from tstrans.exceptions import MuxError, MuxErrorKind
 from tstrans.mpegts import (
-    AudioCodec,
-    KlvStreamType,
     Muxer,
     MuxerConfig,
     MuxerConfigBuilder,
@@ -14,16 +12,7 @@ from tstrans.mpegts import (
     VideoCodec,
 )
 
-
-def _simple_config() -> MuxerConfig:
-    prog = (
-        MuxerProgramConfigBuilder(1, 0x100)
-        .add_video(0x101, VideoCodec.H264)
-        .add_audio(0x102, AudioCodec.AAC)
-        .add_klv(0x103, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
-        .build()
-    )
-    return MuxerConfigBuilder().add_program(prog).build()
+from _builders.mux_programs import video_audio_klv_config as _simple_config
 
 
 def test_muxer_constructs_with_valid_config():

@@ -17,26 +17,12 @@ import pytest
 
 from tstrans.mpegts import (
     Muxer,
-    MuxerConfigBuilder,
-    MuxerProgramConfigBuilder,
     Pts90khz,
-    VideoCodec,
 )
 import tstrans.mpegts as mpegts_mod
 
-
-def _cfg():
-    prog = (
-        MuxerProgramConfigBuilder(1, 0x100)
-        .add_video(0x101, VideoCodec.H264)
-        .build()
-    )
-    return MuxerConfigBuilder().add_program(prog).build()
-
-
-def _nal_aud() -> bytes:
-    # Minimal H.264 NAL: 4-byte start code + AUD (type 9) + trailing byte.
-    return b"\x00\x00\x00\x01\x09\xF0"
+from _builders.mux_programs import video_only_config as _cfg
+from _builders.nal import nal_aud as _nal_aud
 
 
 class _BufferOnlyFile:

@@ -16,18 +16,8 @@ from tstrans.mpegts import (
     VideoCodec,
 )
 
-
-def _cfg():
-    prog = (
-        MuxerProgramConfigBuilder(1, 0x100)
-        .add_video(0x101, VideoCodec.H264)
-        .build()
-    )
-    return MuxerConfigBuilder().add_program(prog).build()
-
-
-def _nal_aud() -> bytes:
-    return b"\x00\x00\x00\x01\x09\xF0"
+from _builders.mux_programs import video_only_config as _cfg
+from _builders.nal import nal_aud as _nal_aud
 
 
 def test_write_file_creates_non_empty_file():
