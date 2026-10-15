@@ -2,7 +2,7 @@
 //! registry/cancel path; the RFC 7826 §13.5.1 Notice 5402 wire
 //! transmission is covered by `notice_5402.rs`.
 
-use crate::fixtures::raw_rtsp::make_muxer_cfg;
+use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, session_id};
 use tst_core::mpegts::common::Pts90khz;
 use tst_rtp::{RtspServer, RtspServerError};
 
@@ -124,4 +124,89 @@ fn hard_cancel_ends_a_session_parked_in_read() {
         0,
         "a session parked in read outlived the hard cancel"
     );
+}
+
+/// A session in streaming PLAY, media flowing and its control connection
+/// still open, ends under a hard cancel, and its RTP fanout stops with it.
+/// Before the listener fired the server token, a streaming session never
+/// ended under a hard cancel at all. Latch-and-poll, no duration assertion.
+#[test]
+fn hard_cancel_ends_a_streaming_play_session_and_its_fanout() {
+    use std::net::{TcpStream, UdpSocket};
+    use std::time::{Duration, Instant};
+
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+
+    let rtp = UdpSocket::bind("127.0.0.1:0").unwrap();
+    rtp.set_read_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    let client_port = rtp.local_addr().unwrap().port();
+    let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let url = format!("rtsp://127.0.0.1:{port}/live");
+    let setup = request(
+        &mut tcp,
+        &format!(
+            "SETUP {url} RTSP/1.0\r\nCSeq: 1\r\nTransport: RTP/AVP;unicast;client_port={client_port}-{}\r\n\r\n",
+            client_port + 1
+        ),
+    );
+    assert!(setup.starts_with("RTSP/1.0 200"), "{setup}");
+    let sid = session_id(&setup);
+    let play = request(
+        &mut tcp,
+        &format!("PLAY {url} RTSP/1.0\r\nCSeq: 2\r\nSession: {sid}\r\n\r\n"),
+    );
+    assert!(play.starts_with("RTSP/1.0 200"), "{play}");
+
+    // Media is flowing to the client.
+    let nal = [0x00, 0x00, 0x00, 0x01, 0x65, 0xBB];
+    let mut buf = [0u8; 2048];
+    let mut pts: i64 = 0;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        mount.push_video(&nal, Pts90khz::new(pts), true).unwrap();
+        pts += 3600;
+        if rtp.recv(&mut buf).is_ok() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "no RTP reached the client");
+    }
+    assert_eq!(mount.peer_count(), 1);
+    assert_eq!(server.stats().active_sessions, 1);
+
+    // The control connection stays open; only the hard cancel ends the session.
+    server.cancel_handle().cancel();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.stats().active_sessions != 0 || mount.peer_count() != 0 {
+        mount.push_video(&nal, Pts90khz::new(pts), true).unwrap();
+        pts += 3600;
+        assert!(
+            Instant::now() < deadline,
+            "a streaming session outlived the hard cancel (sessions = {}, peers = {})",
+            server.stats().active_sessions,
+            mount.peer_count()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // Drain what was in flight (bounded), then keep pushing: nothing new may arrive.
+    let mut drained = 0usize;
+    while rtp.recv(&mut buf).is_ok() {
+        drained += 1;
+        assert!(drained < 64, "RTP still arriving after the fanout stopped");
+    }
+    for _ in 0..25 {
+        mount.push_video(&nal, Pts90khz::new(pts), true).unwrap();
+        pts += 3600;
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        rtp.recv(&mut buf).is_err(),
+        "RTP kept flowing after the hard cancel"
+    );
+    drop(tcp);
 }
