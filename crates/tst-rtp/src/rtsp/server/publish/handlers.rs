@@ -14,13 +14,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use bytes::Bytes;
-
 use crate::rtsp::client::transport_negotiation::{RtspTransportKind, TransportResponse};
 use crate::rtsp::message::{RtspRequest, RtspResponse};
 use crate::rtsp::server::handlers::{
     bind_server_udp_pair, check_auth, control_segment, error_response, extract_mount_path,
-    generate_session_id, handle_not_valid_in_state, last_path_segment, server_header,
+    generate_session_id, handle_not_valid_in_state, last_path_segment,
 };
 use crate::rtsp::server::mount::MountEntry;
 use crate::rtsp::server::session::ServerSessionState;
@@ -39,21 +37,11 @@ use super::shape::{ShapeReject, TrackKind, classify_announce};
 /// first SETUP does, via `generate_session_id`), so its 200 passes
 /// `None`; RECORD passes the session's existing id.
 fn ok_response(req: &RtspRequest, session_id: Option<&str>) -> RtspResponse {
-    let mut headers = HashMap::new();
-    if let Some(cseq) = req.headers.get("cseq") {
-        headers.insert("cseq".into(), cseq.clone());
-    }
-    headers.insert("server".into(), server_header());
+    let mut resp = crate::rtsp::server::handlers::ok_response(req);
     if let Some(id) = session_id {
-        headers.insert("session".into(), id.to_string());
+        resp.headers.insert("session".into(), id.to_string());
     }
-    RtspResponse {
-        version: req.version,
-        status: 200,
-        reason: "OK".into(),
-        headers,
-        body: Bytes::new(),
-    }
+    resp
 }
 
 /// ANNOUNCE handler — RFC 2326 §10.3. Auth-gated.
@@ -384,12 +372,8 @@ pub(crate) fn handle_setup_record(
     };
     session.mount_path = Some(mount_path.to_string());
 
-    let mut headers = HashMap::new();
-    if let Some(cseq) = req.headers.get("cseq") {
-        headers.insert("cseq".into(), cseq.clone());
-    }
-    headers.insert("server".into(), server_header());
-    headers.insert(
+    let mut resp = ok_response(req, None);
+    resp.headers.insert(
         "session".into(),
         format!(
             "{};timeout={}",
@@ -397,14 +381,9 @@ pub(crate) fn handle_setup_record(
             state.builder.session_timeout.as_secs()
         ),
     );
-    headers.insert("transport".into(), transport_response_header);
-    RtspResponse {
-        version: req.version,
-        status: 200,
-        reason: "OK".into(),
-        headers,
-        body: Bytes::new(),
-    }
+    resp.headers
+        .insert("transport".into(), transport_response_header);
+    resp
 }
 
 /// RECORD handler — RFC 2326 §10.11. Auth-gated.

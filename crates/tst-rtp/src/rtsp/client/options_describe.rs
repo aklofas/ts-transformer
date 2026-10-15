@@ -387,6 +387,16 @@ impl RtspClient {
                             RtspFraming::BadContentLength(detail) => {
                                 return Err(RtspError::BadResponse { detail });
                             }
+                            RtspFraming::NonUtf8Headers { .. } => {
+                                return Err(RtspError::BadResponse {
+                                    detail: "non-UTF8 RTSP headers",
+                                });
+                            }
+                            RtspFraming::BodyOffsetOverflow => {
+                                return Err(RtspError::BadResponse {
+                                    detail: "RTSP body offset overflow",
+                                });
+                            }
                             RtspFraming::Complete { total_len } => {
                                 // Full message present — parse. `total_len` is
                                 // the exact byte length of this message.
@@ -756,6 +766,25 @@ mod tests {
         assert!(
             matches!(err, RtspError::BadResponse { .. }),
             "over-1-MiB declared body must be rejected as BadResponse, got {err:?}"
+        );
+        h.join().unwrap();
+    }
+
+    /// A response whose header block is not UTF-8 is a `BadResponse` carrying
+    /// exactly this detail.
+    #[test]
+    fn send_and_read_rejects_non_utf8_headers_with_their_own_detail() {
+        let (port, h) = serve_then_close(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nX: \xff\r\n\r\n".to_vec());
+        let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{}/test", port)).unwrap();
+        let err = client.options().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                RtspError::BadResponse {
+                    detail: "non-UTF8 RTSP headers"
+                }
+            ),
+            "{err:?}"
         );
         h.join().unwrap();
     }

@@ -41,6 +41,13 @@ pub(crate) fn error_response(req: &RtspRequest, status: u16, reason: &str) -> Rt
     }
 }
 
+/// A 200 OK with the request's CSeq and our `Server:` header; the caller
+/// adds the method's own headers and body. (`error_response` builds any
+/// status — its name stays for its error callers.)
+pub(crate) fn ok_response(req: &RtspRequest) -> RtspResponse {
+    error_response(req, 200, "OK")
+}
+
 /// 455 for a method that is valid only in a state this session is not in.
 pub(crate) fn handle_not_valid_in_state(req: &RtspRequest) -> RtspResponse {
     error_response(req, 455, "Method Not Valid in This State")
@@ -111,22 +118,12 @@ pub(crate) fn check_auth(
 /// OPTIONS itself never requires auth (it's the connectivity probe).
 #[allow(unused_variables)]
 pub(crate) fn handle_options(req: &RtspRequest, state: &Arc<ServerState>) -> RtspResponse {
-    let mut headers = HashMap::new();
-    if let Some(cseq) = req.headers.get("cseq") {
-        headers.insert("cseq".into(), cseq.clone());
-    }
-    headers.insert("server".into(), server_header());
-    headers.insert(
+    let mut resp = ok_response(req);
+    resp.headers.insert(
         "public".into(),
         "OPTIONS, DESCRIBE, ANNOUNCE, SETUP, PLAY, RECORD, PAUSE, TEARDOWN, GET_PARAMETER".into(),
     );
-    RtspResponse {
-        version: req.version,
-        status: 200,
-        reason: "OK".into(),
-        headers,
-        body: Bytes::new(),
-    }
+    resp
 }
 
 /// DESCRIBE handler — RFC 7826 §10.2.
@@ -175,13 +172,11 @@ pub(crate) fn handle_describe(
     };
     let body = crate::sdp::Sdp::build_for_mount(&mount_path, connection_addr, kind_is_multicast);
 
-    let mut headers = HashMap::new();
-    if let Some(cseq) = req.headers.get("cseq") {
-        headers.insert("cseq".into(), cseq.clone());
-    }
-    headers.insert("server".into(), server_header());
-    headers.insert("content-type".into(), "application/sdp".into());
-    headers.insert("content-length".into(), body.len().to_string());
+    let mut resp = ok_response(req);
+    resp.headers
+        .insert("content-type".into(), "application/sdp".into());
+    resp.headers
+        .insert("content-length".into(), body.len().to_string());
     // RFC 7826 §D: Content-Base anchors relative a=control: URIs in the SDP
     // body so third-party clients (VLC, ffplay) resolve SETUP URLs correctly.
     // The value is the request URI with a trailing slash appended.
@@ -189,14 +184,9 @@ pub(crate) fn handle_describe(
         let uri = req.uri.trim_end_matches('/');
         format!("{uri}/")
     };
-    headers.insert("content-base".into(), content_base);
-    RtspResponse {
-        version: req.version,
-        status: 200,
-        reason: "OK".into(),
-        headers,
-        body,
-    }
+    resp.headers.insert("content-base".into(), content_base);
+    resp.body = body;
+    resp
 }
 
 /// Extract the path component from a request URI. Handles both full
@@ -573,12 +563,8 @@ pub(crate) fn handle_setup(
     session.mount_path = Some(mount_path);
     session.transport = Some(parsed);
 
-    let mut headers = HashMap::new();
-    if let Some(cseq) = req.headers.get("cseq") {
-        headers.insert("cseq".into(), cseq.clone());
-    }
-    headers.insert("server".into(), server_header());
-    headers.insert(
+    let mut resp = ok_response(req);
+    resp.headers.insert(
         "session".into(),
         format!(
             "{};timeout={}",
@@ -586,14 +572,9 @@ pub(crate) fn handle_setup(
             state.builder.session_timeout.as_secs()
         ),
     );
-    headers.insert("transport".into(), transport_response_header);
-    RtspResponse {
-        version: req.version,
-        status: 200,
-        reason: "OK".into(),
-        headers,
-        body: Bytes::new(),
-    }
+    resp.headers
+        .insert("transport".into(), transport_response_header);
+    resp
 }
 
 /// Generate a 16-hex-char session ID. Per RFC 7826 §17.3.2, session IDs
@@ -853,26 +834,16 @@ fn play_response_ok(
     initial_seq: u16,
     initial_rtptime: u32,
 ) -> RtspResponse {
-    let mut headers = HashMap::new();
-    if let Some(cseq) = req.headers.get("cseq") {
-        headers.insert("cseq".into(), cseq.clone());
-    }
-    headers.insert("server".into(), server_header());
-    headers.insert("session".into(), session_id.into());
-    headers.insert(
+    let mut resp = ok_response(req);
+    resp.headers.insert("session".into(), session_id.into());
+    resp.headers.insert(
         "rtp-info".into(),
         format!(
             "url={};seq={};rtptime={}",
             req.uri, initial_seq, initial_rtptime
         ),
     );
-    RtspResponse {
-        version: req.version,
-        status: 200,
-        reason: "OK".into(),
-        headers,
-        body: Bytes::new(),
-    }
+    resp
 }
 
 /// PAUSE handler — RFC 7826 §10.6 / RFC 2326 §11.3.
@@ -905,19 +876,9 @@ pub(crate) fn handle_pause(
         return error_response(req, 454, "Session Not Found");
     };
     if session.publish.is_some() {
-        let mut headers = HashMap::new();
-        if let Some(cseq) = req.headers.get("cseq") {
-            headers.insert("cseq".into(), cseq.clone());
-        }
-        headers.insert("server".into(), server_header());
-        headers.insert("session".into(), session_id);
-        return RtspResponse {
-            version: req.version,
-            status: 200,
-            reason: "OK".into(),
-            headers,
-            body: Bytes::new(),
-        };
+        let mut resp = ok_response(req);
+        resp.headers.insert("session".into(), session_id);
+        return resp;
     }
     // Retire the current fanout task. The session's `peer_cancel` was
     // passed into `spawn_peer_fanout` at PLAY; cancelling it exits the
@@ -933,19 +894,9 @@ pub(crate) fn handle_pause(
     session.retire_fanout();
     session.peer_cancel = tokio_util::sync::CancellationToken::new();
 
-    let mut headers = HashMap::new();
-    if let Some(cseq) = req.headers.get("cseq") {
-        headers.insert("cseq".into(), cseq.clone());
-    }
-    headers.insert("server".into(), server_header());
-    headers.insert("session".into(), session_id);
-    RtspResponse {
-        version: req.version,
-        status: 200,
-        reason: "OK".into(),
-        headers,
-        body: Bytes::new(),
-    }
+    let mut resp = ok_response(req);
+    resp.headers.insert("session".into(), session_id);
+    resp
 }
 
 /// TEARDOWN handler — RFC 7826 §10.7 / RFC 2326 §11.4.
@@ -988,21 +939,11 @@ pub(crate) fn handle_teardown(
     session.interleaved_channels = None;
     session.peer_drop_counter = None;
 
-    let mut headers = HashMap::new();
-    if let Some(cseq) = req.headers.get("cseq") {
-        headers.insert("cseq".into(), cseq.clone());
-    }
-    headers.insert("server".into(), server_header());
+    let mut resp = ok_response(req);
     if !session_id.is_empty() {
-        headers.insert("session".into(), session_id);
+        resp.headers.insert("session".into(), session_id);
     }
-    RtspResponse {
-        version: req.version,
-        status: 200,
-        reason: "OK".into(),
-        headers,
-        body: Bytes::new(),
-    }
+    resp
 }
 
 /// GET_PARAMETER handler — v1 echoes 200 OK with cseq + session header
@@ -1013,21 +954,11 @@ pub(crate) fn handle_get_parameter(
     state: &Arc<ServerState>,
     session: &mut ServerSessionState,
 ) -> RtspResponse {
-    let mut headers = HashMap::new();
-    if let Some(cseq) = req.headers.get("cseq") {
-        headers.insert("cseq".into(), cseq.clone());
-    }
+    let mut resp = ok_response(req);
     if let Some(sid) = req.headers.get("session") {
-        headers.insert("session".into(), sid.clone());
+        resp.headers.insert("session".into(), sid.clone());
     }
-    headers.insert("server".into(), server_header());
-    RtspResponse {
-        version: req.version,
-        status: 200,
-        reason: "OK".into(),
-        headers,
-        body: Bytes::new(),
-    }
+    resp
 }
 
 #[cfg(test)]
@@ -1221,6 +1152,65 @@ mod tests {
             resp.headers.get("content-base").map(String::as_str),
             Some("rtsp://127.0.0.1:8554/live/"),
         );
+    }
+
+    /// Every 200 OK carries exactly the request's CSeq, our Server header and
+    /// the method's own headers, says "OK", and echoes the request version.
+    #[test]
+    fn ok_responses_carry_exactly_their_headers() {
+        use crate::rtsp::message::RtspResponse;
+        fn keys(r: &RtspResponse) -> Vec<&str> {
+            let mut k: Vec<&str> = r.headers.keys().map(String::as_str).collect();
+            k.sort_unstable();
+            k
+        }
+        let state = make_state();
+        let mut session = ServerSessionState::new();
+
+        let opt = handle_options(&make_req(RtspMethod::Options, "/"), &state);
+        assert_eq!(keys(&opt), ["cseq", "public", "server"]);
+
+        let mut gp_req = make_req(RtspMethod::GetParameter, "/");
+        gp_req.headers.insert("session".into(), "abc".into());
+        let gp = handle_get_parameter(&gp_req, &state, &mut session);
+        assert_eq!(keys(&gp), ["cseq", "server", "session"]);
+        assert_eq!(gp.headers["session"], "abc");
+
+        let td = handle_teardown(&make_req(RtspMethod::Teardown, "/"), &state, &mut session);
+        assert_eq!(keys(&td), ["cseq", "server"]);
+
+        let with_mount = make_state_with_mount();
+        let d = handle_describe(
+            &make_req(RtspMethod::Describe, "rtsp://127.0.0.1:8554/live"),
+            &with_mount,
+            &mut ServerSessionState::new(),
+        );
+        assert_eq!(
+            keys(&d),
+            [
+                "content-base",
+                "content-length",
+                "content-type",
+                "cseq",
+                "server"
+            ]
+        );
+        assert_eq!(d.headers["content-length"], d.body.len().to_string());
+
+        let play = play_response_ok(&make_req(RtspMethod::Play, "rtsp://h/live"), "sid", 7, 9);
+        assert_eq!(keys(&play), ["cseq", "rtp-info", "server", "session"]);
+        assert_eq!(play.headers["session"], "sid");
+        assert_eq!(
+            play.headers["rtp-info"],
+            "url=rtsp://h/live;seq=7;rtptime=9"
+        );
+
+        for r in [&opt, &gp, &td, &d, &play] {
+            assert_eq!((r.status, r.reason.as_str()), (200, "OK"));
+            assert_eq!(r.version, RtspVersion::V1_0);
+            assert_eq!(r.headers["cseq"], "1");
+            assert_eq!(r.headers["server"], server_header());
+        }
     }
 
     /// Content-Base idempotency: a request URI that already ends with `/`

@@ -1,13 +1,12 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use tst_rtp::rtsp::framing::{
-    RtspFrameBoundary, parse_binary_frame_header, scan_rtsp_message_boundary,
-};
+use tst_rtp::rtsp::framing::parse_binary_frame_header;
+use tst_rtp::rtsp::message::{RtspFraming, rtsp_frame_decision};
 
 // Feed arbitrary bytes through the same `$<ch><len>` / CRLFCRLF+Content-
 // Length framing rules `spawn_client_pump`'s inner loop uses on the wire
-// (RFC 7826 §14). `parse_binary_frame_header` / `scan_rtsp_message_boundary`
+// (RFC 7826 §14). `parse_binary_frame_header` / `rtsp_frame_decision`
 // are `#[doc(hidden)] pub` extractions of that loop's boundary-detection
 // step — pure functions, no socket/thread/channel required — so this
 // exercises the client's real parsing path rather than a standalone
@@ -26,16 +25,16 @@ fuzz_target!(|data: &[u8]| {
                 None => break,
             };
         } else {
-            match scan_rtsp_message_boundary(&buf) {
-                RtspFrameBoundary::Incomplete => break,
-                RtspFrameBoundary::NonUtf8Headers { skip } => {
+            match rtsp_frame_decision(&buf) {
+                RtspFraming::NeedMore | RtspFraming::HeadersTooLong => break,
+                RtspFraming::NonUtf8Headers { skip } => {
                     buf.drain(..skip);
                 }
-                RtspFrameBoundary::BadContentLength { .. } | RtspFrameBoundary::LengthOverflow => {
+                RtspFraming::BadContentLength(_) | RtspFraming::BodyOffsetOverflow => {
                     break;
                 }
-                RtspFrameBoundary::Complete { len } => {
-                    buf.drain(..len);
+                RtspFraming::Complete { total_len } => {
+                    buf.drain(..total_len);
                 }
             }
         }

@@ -21,6 +21,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tstrans.h`: enum blocks are now emitted in a deterministic sorted order; no
   declaration, value or symbol changed.
 
+### Fixed — tst-rtp
+
+- `RtspServer::cancel_handle().cancel()` now ends a session parked in its read
+  within about 100 ms (the listener's poll period). Before, such a session
+  lived until its idle bound: 30 s before SETUP, the session timeout plus
+  grace after. The handle's shape and its signal-safety are unchanged.
+
 ---
 
 ## [0.8.0] — 2026-10-14

@@ -26,7 +26,9 @@ fuzz_target!(|data: &[u8]| {
             }
             RtspFraming::NeedMore
             | RtspFraming::HeadersTooLong
-            | RtspFraming::BadContentLength(_) => break,
+            | RtspFraming::NonUtf8Headers { .. }
+            | RtspFraming::BadContentLength(_)
+            | RtspFraming::BodyOffsetOverflow => break,
         }
     }
 });
