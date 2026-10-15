@@ -287,9 +287,9 @@ fn chroma_format_idc_5_rejected_with_reserved_value() {
 /// `seq_parameter_set_id`, no NAL header. Per H.264 V15 §7.3.2.2 the PPS
 /// body starts with two ue(v) fields and an entropy_coding_mode_flag bit,
 /// then more fields we don't need to terminate before — the standalone
-/// `parse_pps` decoder reads only those first three values, so we can stop
-/// after the entropy_coding_mode_flag (no rbsp_trailing_bits needed; the
-/// parser tolerates a payload that ends mid-byte).
+/// `parse_pps` decoder reads only those first three values, so we stop
+/// after the entropy_coding_mode_flag and close with rbsp_trailing_bits
+/// (a stop bit and zero padding to a byte boundary).
 fn craft_pps(pic_parameter_set_id: u32, seq_parameter_set_id: u32) -> Vec<u8> {
     let mut bw = BitWriter::new();
     bw.write_ue(pic_parameter_set_id);

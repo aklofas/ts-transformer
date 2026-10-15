@@ -9,8 +9,8 @@
 //!      parameter-set NALs into `H266ParameterSets`.
 //!
 //! The minimal VPS/SPS/PPS bodies match the per-set unit tests at
-//! `codec/h266/{vps,sps,pps}.rs`. The SPS bit-builder is replicated
-//! inline (see `BitWriter` below) so this integration test has zero
+//! `codec/h266/{vps,sps,pps}.rs`. The SPS bit-builder is the shared
+//! `common::bitwriter::BitWriter`, so this integration test has zero
 //! coupling to internal `pub(crate)` helpers.
 
 use crate::common::bitwriter::BitWriter;
