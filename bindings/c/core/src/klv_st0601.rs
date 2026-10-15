@@ -668,6 +668,11 @@ pub unsafe extern "C" fn tst_st0601_free(p: *mut TstSt0601) {
 mod tests {
     use super::*;
     use crate::error::{clear_last_error_for_test, tst_get_last_error};
+    use crate::test_support::null_entry_tests;
+
+    null_entry_tests! {
+        free_is_null_safe => no_crash { tst_st0601_free(core::ptr::null_mut()) };
+    }
 
     fn fixture_bytes(name: &str) -> alloc::vec::Vec<u8> {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -850,10 +855,5 @@ mod tests {
         assert_eq!(rc, TstError::InvalidConfig as i32);
 
         unsafe { tst_st0601_free(p) };
-    }
-
-    #[test]
-    fn free_is_null_safe() {
-        unsafe { tst_st0601_free(core::ptr::null_mut()) };
     }
 }

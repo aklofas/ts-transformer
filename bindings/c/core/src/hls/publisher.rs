@@ -670,35 +670,37 @@ unsafe fn write_cstr_to_buf(s: &str, buf: *mut c_char, buf_len: usize) -> libc::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
 
-    #[test]
-    fn null_free_is_safe() {
-        unsafe { tst_publisher_free(std::ptr::null_mut()) };
-    }
-
-    #[test]
-    fn null_push_ts_returns_invalid_config() {
-        let rc = unsafe { tst_publisher_push_ts(std::ptr::null_mut(), std::ptr::null(), 0) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_cut_segment_returns_invalid_config() {
-        let rc = unsafe { tst_publisher_cut_segment(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_finish_returns_invalid_config() {
-        let rc = unsafe { tst_publisher_finish(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_get_stats_returns_invalid_config() {
-        let mut stats = TstPublisherStats::default();
-        let rc = unsafe { tst_publisher_get_stats(std::ptr::null_mut(), &mut stats) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
+    null_entry_tests! {
+        null_free_is_safe => no_crash { tst_publisher_free(std::ptr::null_mut()) };
+        null_push_ts_returns_invalid_config => invalid_config {
+            tst_publisher_push_ts(std::ptr::null_mut(), std::ptr::null(), 0)
+        };
+        null_cut_segment_returns_invalid_config => invalid_config {
+            tst_publisher_cut_segment(std::ptr::null_mut())
+        };
+        null_finish_returns_invalid_config => invalid_config {
+            tst_publisher_finish(std::ptr::null_mut())
+        };
+        null_get_stats_returns_invalid_config => invalid_config {
+            let mut stats = TstPublisherStats::default();
+            tst_publisher_get_stats(std::ptr::null_mut(), &mut stats)
+        };
+        null_get_forced_cuts_returns_invalid_config => invalid_config {
+            let mut out: u64 = 0;
+            tst_hls_publisher_get_forced_cuts(std::ptr::null_mut(), &mut out)
+        };
+        null_server_handle_local_addr_returns_invalid_config => invalid_config {
+            let mut buf = [0 as c_char; 8];
+            tst_hls_server_handle_local_addr(std::ptr::null_mut(), buf.as_mut_ptr(), buf.len())
+        };
+        null_server_handle_shutdown_returns_invalid_config => invalid_config {
+            tst_hls_server_handle_shutdown(std::ptr::null_mut())
+        };
+        null_server_handle_free_is_safe => no_crash {
+            tst_hls_server_handle_free(std::ptr::null_mut())
+        };
     }
 
     #[test]
@@ -709,38 +711,11 @@ mod tests {
     }
 
     #[test]
-    fn null_get_forced_cuts_returns_invalid_config() {
-        let mut out: u64 = 0;
-        let rc = unsafe { tst_hls_publisher_get_forced_cuts(std::ptr::null_mut(), &mut out) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
     fn null_finish_serving_returns_invalid_config() {
         let mut out: *mut TstHlsServerHandle = std::ptr::null_mut();
         let rc = unsafe { tst_hls_publisher_finish_serving(std::ptr::null_mut(), &mut out) };
         assert_eq!(rc, TstError::InvalidConfig as i32);
         assert!(out.is_null());
-    }
-
-    #[test]
-    fn null_server_handle_local_addr_returns_invalid_config() {
-        let mut buf = [0 as c_char; 8];
-        let rc = unsafe {
-            tst_hls_server_handle_local_addr(std::ptr::null_mut(), buf.as_mut_ptr(), buf.len())
-        };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_server_handle_shutdown_returns_invalid_config() {
-        let rc = unsafe { tst_hls_server_handle_shutdown(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_server_handle_free_is_safe() {
-        unsafe { tst_hls_server_handle_free(std::ptr::null_mut()) };
     }
 
     #[test]

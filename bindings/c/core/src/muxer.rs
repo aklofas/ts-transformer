@@ -1006,7 +1006,12 @@ pub unsafe extern "C" fn tst_muxer_close(p: *mut TstMuxer) {
 mod tests {
     use super::*;
     use crate::config::*;
+    use crate::test_support::null_entry_tests;
     use alloc::vec;
+
+    null_entry_tests! {
+        null_pointer_close_is_safe => no_crash { tst_muxer_close(core::ptr::null_mut()) };
+    }
 
     #[test]
     fn open_with_default_config_succeeds() {
@@ -1063,10 +1068,5 @@ mod tests {
 
             tst_muxer_close(m);
         }
-    }
-
-    #[test]
-    fn null_pointer_close_is_safe() {
-        unsafe { tst_muxer_close(core::ptr::null_mut()) };
     }
 }

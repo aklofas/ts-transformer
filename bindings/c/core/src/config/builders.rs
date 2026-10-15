@@ -286,6 +286,13 @@ pub unsafe extern "C" fn tst_reconnect_policy_set_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
+
+    null_entry_tests! {
+        reconnect_policy_set_mode_null_returns_invalid_config => negative {
+            tst_reconnect_policy_set_mode(core::ptr::null_mut(), TstReconnectMode::Background)
+        };
+    }
 
     #[test]
     fn ts_sender_config_lifecycle() {
@@ -334,15 +341,6 @@ mod tests {
             );
             assert_eq!((*p).inner.mode, tst_pipeline::ReconnectMode::Background);
             tst_reconnect_policy_free(p);
-        }
-    }
-
-    #[test]
-    fn reconnect_policy_set_mode_null_returns_invalid_config() {
-        unsafe {
-            let rc =
-                tst_reconnect_policy_set_mode(core::ptr::null_mut(), TstReconnectMode::Background);
-            assert!(rc < 0);
         }
     }
 }

@@ -902,6 +902,44 @@ pub unsafe extern "C" fn tst_rtsp_mount_reset_stats(
 mod tests {
     use super::*;
     use crate::handle::TstRtspServerBuilder;
+    use crate::test_support::null_entry_tests;
+
+    null_entry_tests! {
+        unicast_null_is_noop => no_crash { tst_rtsp_mount_handle_free(std::ptr::null_mut()) };
+        push_video_null_handle_returns_invalid_config => invalid_config {
+            tst_rtsp_mount_push_video(
+                std::ptr::null_mut(),
+                [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB].as_ptr(),
+                6,
+                0,
+                true,
+            )
+        };
+        push_klv_null_handle_returns_invalid_config => invalid_config {
+            tst_rtsp_mount_push_klv(std::ptr::null_mut(), [0u8; 4].as_ptr(), 4, 0)
+        };
+        push_audio_null_handle_returns_invalid_config => invalid_config {
+            tst_rtsp_mount_push_audio(std::ptr::null_mut(), [0u8; 4].as_ptr(), 4, 0)
+        };
+        push_subtitle_null_handle_returns_invalid_config => invalid_config {
+            tst_rtsp_mount_push_subtitle(std::ptr::null_mut(), [0u8; 4].as_ptr(), 4, 0)
+        };
+        push_data_null_handle_returns_invalid_config => invalid_config {
+            tst_rtsp_mount_push_data(std::ptr::null_mut(), [0u8; 4].as_ptr(), 4, 0)
+        };
+        push_data_to_null_handle_returns_invalid_config => invalid_config {
+            tst_rtsp_mount_push_data_to(std::ptr::null_mut(), 0, [0u8; 4].as_ptr(), 4, 0)
+        };
+        flush_null_handle_returns_invalid_config => invalid_config {
+            tst_rtsp_mount_flush(std::ptr::null_mut())
+        };
+        cancel_null_handle_returns_invalid_config => invalid_config {
+            tst_rtsp_mount_cancel(std::ptr::null_mut())
+        };
+        reset_stats_null_handle_returns_invalid_config => invalid_config {
+            tst_rtsp_mount_reset_stats(std::ptr::null_mut())
+        };
+    }
 
     /// Helper: start a server on 127.0.0.1:0 and return the raw handle.
     fn start_test_server() -> *mut TstRtspServer {
@@ -1030,78 +1068,7 @@ mod tests {
         unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
     }
 
-    #[test]
-    fn unicast_null_is_noop() {
-        unsafe { tst_rtsp_mount_handle_free(std::ptr::null_mut()) };
-    }
-
     // ── Push methods — null-pointer guard tests ──────────────────────────
-
-    #[test]
-    fn push_video_null_handle_returns_invalid_config() {
-        let rc = unsafe {
-            tst_rtsp_mount_push_video(
-                std::ptr::null_mut(),
-                [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB].as_ptr(),
-                6,
-                0,
-                true,
-            )
-        };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn push_klv_null_handle_returns_invalid_config() {
-        let rc = unsafe { tst_rtsp_mount_push_klv(std::ptr::null_mut(), [0u8; 4].as_ptr(), 4, 0) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn push_audio_null_handle_returns_invalid_config() {
-        let rc =
-            unsafe { tst_rtsp_mount_push_audio(std::ptr::null_mut(), [0u8; 4].as_ptr(), 4, 0) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn push_subtitle_null_handle_returns_invalid_config() {
-        let rc =
-            unsafe { tst_rtsp_mount_push_subtitle(std::ptr::null_mut(), [0u8; 4].as_ptr(), 4, 0) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn push_data_null_handle_returns_invalid_config() {
-        let rc = unsafe { tst_rtsp_mount_push_data(std::ptr::null_mut(), [0u8; 4].as_ptr(), 4, 0) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn push_data_to_null_handle_returns_invalid_config() {
-        let rc = unsafe {
-            tst_rtsp_mount_push_data_to(std::ptr::null_mut(), 0, [0u8; 4].as_ptr(), 4, 0)
-        };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn flush_null_handle_returns_invalid_config() {
-        let rc = unsafe { tst_rtsp_mount_flush(std::ptr::null_mut()) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn cancel_null_handle_returns_invalid_config() {
-        let rc = unsafe { tst_rtsp_mount_cancel(std::ptr::null_mut()) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn reset_stats_null_handle_returns_invalid_config() {
-        let rc = unsafe { tst_rtsp_mount_reset_stats(std::ptr::null_mut()) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
 
     // ── Push methods — end-to-end via a live unicast mount ───────────────
 

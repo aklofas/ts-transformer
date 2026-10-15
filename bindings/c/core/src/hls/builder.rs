@@ -463,23 +463,21 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_build(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
+
+    null_entry_tests! {
+        null_free_is_safe => no_crash { tst_hls_publisher_builder_free(std::ptr::null_mut()) };
+        null_bind_returns_invalid_config => invalid_config {
+            tst_hls_publisher_builder_bind(std::ptr::null_mut(), std::ptr::null())
+        };
+        null_build_returns_null => null { tst_hls_publisher_builder_build(std::ptr::null_mut()) };
+    }
 
     #[test]
     fn new_then_free_is_safe() {
         let b = unsafe { tst_hls_publisher_builder_new() };
         assert!(!b.is_null());
         unsafe { tst_hls_publisher_builder_free(b) };
-    }
-
-    #[test]
-    fn null_free_is_safe() {
-        unsafe { tst_hls_publisher_builder_free(std::ptr::null_mut()) };
-    }
-
-    #[test]
-    fn null_bind_returns_invalid_config() {
-        let rc = unsafe { tst_hls_publisher_builder_bind(std::ptr::null_mut(), std::ptr::null()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
     }
 
     #[test]
@@ -497,11 +495,5 @@ mod tests {
         let rc = unsafe { tst_hls_publisher_builder_mode(b, 99) };
         assert_eq!(rc, TstError::HlsConfig as i32);
         unsafe { tst_hls_publisher_builder_free(b) };
-    }
-
-    #[test]
-    fn null_build_returns_null() {
-        let p = unsafe { tst_hls_publisher_builder_build(std::ptr::null_mut()) };
-        assert!(p.is_null());
     }
 }

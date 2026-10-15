@@ -409,6 +409,24 @@ pub unsafe extern "C" fn tst_managed_sender_cancel(p: *mut TstManagedSender) -> 
 mod tests {
     use super::*;
     use crate::config::*;
+    use crate::test_support::null_entry_tests;
+
+    null_entry_tests! {
+        null_close_is_safe => no_crash {
+            tst_sender_close(std::ptr::null_mut());
+            tst_managed_sender_close(std::ptr::null_mut());
+        };
+        null_cancel_returns_invalid_config => invalid_config {
+            tst_sender_cancel(std::ptr::null_mut())
+        };
+        managed_null_cancel_returns_invalid_config => invalid_config {
+            tst_managed_sender_cancel(std::ptr::null_mut())
+        };
+        managed_null_handle_get_reconnect_stats_returns_invalid_config => invalid_config {
+            let mut out = crate::stats::TstManagedTransportStats::default();
+            tst_managed_sender_get_reconnect_stats(std::ptr::null_mut(), &mut out)
+        };
+    }
 
     #[test]
     fn open_with_null_url_returns_null() {
@@ -418,33 +436,6 @@ mod tests {
             assert!(p.is_null());
             tst_sender_config_free(cfg);
         }
-    }
-
-    #[test]
-    fn null_close_is_safe() {
-        unsafe {
-            tst_sender_close(std::ptr::null_mut());
-            tst_managed_sender_close(std::ptr::null_mut());
-        }
-    }
-
-    #[test]
-    fn null_cancel_returns_invalid_config() {
-        let rc = unsafe { tst_sender_cancel(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_cancel_returns_invalid_config() {
-        let rc = unsafe { tst_managed_sender_cancel(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_handle_get_reconnect_stats_returns_invalid_config() {
-        let mut out = crate::stats::TstManagedTransportStats::default();
-        let rc = unsafe { tst_managed_sender_get_reconnect_stats(std::ptr::null_mut(), &mut out) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
     }
 
     /// A C sender must not silently dial as a caller when the URL says

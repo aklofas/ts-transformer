@@ -391,33 +391,23 @@ pub unsafe extern "C" fn tst_managed_raw_sender_reset_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
 
-    #[test]
-    fn null_close_is_safe() {
-        unsafe {
+    null_entry_tests! {
+        null_close_is_safe => no_crash {
             tst_raw_sender_close(std::ptr::null_mut());
             tst_managed_raw_sender_close(std::ptr::null_mut());
-        }
-    }
-
-    #[test]
-    fn null_cancel_returns_invalid_config() {
-        let rc = unsafe { tst_raw_sender_cancel(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_cancel_returns_invalid_config() {
-        let rc = unsafe { tst_managed_raw_sender_cancel(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_handle_get_reconnect_stats_returns_invalid_config() {
-        let mut out = crate::stats::TstManagedTransportStats::default();
-        let rc =
-            unsafe { tst_managed_raw_sender_get_reconnect_stats(std::ptr::null_mut(), &mut out) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
+        };
+        null_cancel_returns_invalid_config => invalid_config {
+            tst_raw_sender_cancel(std::ptr::null_mut())
+        };
+        managed_null_cancel_returns_invalid_config => invalid_config {
+            tst_managed_raw_sender_cancel(std::ptr::null_mut())
+        };
+        managed_null_handle_get_reconnect_stats_returns_invalid_config => invalid_config {
+            let mut out = crate::stats::TstManagedTransportStats::default();
+            tst_managed_raw_sender_get_reconnect_stats(std::ptr::null_mut(), &mut out)
+        };
     }
 
     /// Twin of `ts_sender.rs`'s pin: `require_caller_mode` refuses

@@ -160,6 +160,32 @@ pub unsafe extern "C" fn tst_mux_config_free(p: *mut TstMuxConfig) {
 mod tests {
     use super::*;
     use crate::handle::TST_INVALID_STREAM_HANDLE;
+    use crate::test_support::null_entry_tests;
+
+    null_entry_tests! {
+        add_video_stream_null_returns_sentinel => eq(TST_INVALID_STREAM_HANDLE) {
+            // Null cfg: no program handle needed
+            tst_mux_config_add_video_stream(
+                core::ptr::null_mut(),
+                TstProgramHandle(0),
+                0,
+                TstVideoCodec::H264,
+            )
+        };
+        add_program_null_returns_sentinel => eq(TST_INVALID_PROGRAM_HANDLE) {
+            tst_mux_config_add_program(core::ptr::null_mut(), 1, 0x1000)
+        };
+        add_video_descriptor_null_cfg_returns_error => negative {
+            let body = b"TEST";
+            let desc = crate::event::TstDescriptor {
+                tag: 0x09,
+                _reserved: [0; 7],
+                data: body.as_ptr(),
+                data_len: body.len(),
+            };
+            tst_mux_config_add_video_descriptor(core::ptr::null_mut(), 0, &desc)
+        };
+    }
 
     #[test]
     fn mux_config_lifecycle() {
@@ -241,20 +267,6 @@ mod tests {
     }
 
     #[test]
-    fn add_video_stream_null_returns_sentinel() {
-        unsafe {
-            // Null cfg: no program handle needed
-            let h = tst_mux_config_add_video_stream(
-                core::ptr::null_mut(),
-                TstProgramHandle(0),
-                0,
-                TstVideoCodec::H264,
-            );
-            assert_eq!(h, TST_INVALID_STREAM_HANDLE);
-        }
-    }
-
-    #[test]
     fn add_video_stream_invalid_program_returns_sentinel() {
         unsafe {
             let p = tst_mux_config_new();
@@ -290,14 +302,6 @@ mod tests {
     }
 
     #[test]
-    fn add_program_null_returns_sentinel() {
-        unsafe {
-            let h = tst_mux_config_add_program(core::ptr::null_mut(), 1, 0x1000);
-            assert_eq!(h, TST_INVALID_PROGRAM_HANDLE);
-        }
-    }
-
-    #[test]
     fn add_video_descriptor_smoke() {
         unsafe {
             let cfg = tst_mux_config_new();
@@ -323,21 +327,6 @@ mod tests {
                 &[0x05u8, 0x04, b'V', b'I', b'D', b'X']
             );
             tst_mux_config_free(cfg);
-        }
-    }
-
-    #[test]
-    fn add_video_descriptor_null_cfg_returns_error() {
-        unsafe {
-            let body = b"TEST";
-            let desc = crate::event::TstDescriptor {
-                tag: 0x09,
-                _reserved: [0; 7],
-                data: body.as_ptr(),
-                data_len: body.len(),
-            };
-            let rc = tst_mux_config_add_video_descriptor(core::ptr::null_mut(), 0, &desc);
-            assert!(rc < 0);
         }
     }
 
