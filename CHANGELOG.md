@@ -156,6 +156,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   can be installed wherever a `dyn TransportCancel` is taken.
   `RtspServerCancelHandle::cancel` is still one atomic store, safe from a
   signal handler. `RtpCancelHandle`'s API is unchanged.
+- The H.264 depacketizer's access unit, configuration, counters and
+  injection mode are the codec-neutral `depay::{AccessUnit, DepayConfig,
+  DepayStats, ParameterSetInjection}`, shared with the new H.265
+  depacketizer. `H264Au`, `H264DepayConfig` and `H264DepayStats` remain as
+  type aliases (struct literals and field access are unchanged);
+  `ParameterSetInjection` is re-exported where it was, except at
+  `h264::depacketizer::ParameterSetInjection`.
 
 ### Changed — tst-udp, tst-tcp, tst-rist (BREAKING)
 

@@ -37,6 +37,7 @@
 pub mod builder;
 pub mod cancel;
 pub(crate) mod clock;
+pub mod depay;
 pub mod error;
 pub mod h264;
 pub mod packet;

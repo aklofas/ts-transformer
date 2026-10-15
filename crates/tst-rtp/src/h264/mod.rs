@@ -30,7 +30,6 @@ pub mod depacketizer;
 pub(crate) mod fmtp;
 pub mod receiver;
 
-pub use depacketizer::{
-    H264Au, H264Depacketizer, H264DepayConfig, H264DepayStats, ParameterSetInjection,
-};
+pub use crate::depay::ParameterSetInjection;
+pub use depacketizer::{H264Au, H264Depacketizer, H264DepayConfig, H264DepayStats};
 pub use receiver::H264Receiver;
