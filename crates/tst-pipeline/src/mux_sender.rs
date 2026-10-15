@@ -274,6 +274,25 @@ impl<T: Transport> MuxSender<T> {
         })
     }
 
+    /// Lock the inner state and run one muxer push through the shared drain
+    /// cycle ([`Inner::push_then_drain`]).
+    ///
+    /// Mutex-poisoning policy (recoverable path): a poisoned inner lock means
+    /// a previous panic happened mid-mutation. `lock_poisoned` routes it to a
+    /// `MuxSenderError` of kind `TransportBroken` whose message names `site`,
+    /// so the C ABI surfaces a useful diagnostic via
+    /// `tst_get_last_error_str()`. Precedent: the gap-buffer policy in
+    /// `ManagedTransport::send_managed` / `drain_gap_if_alive` in
+    /// reconnect/mod.rs.
+    fn push(
+        &self,
+        site: &'static str,
+        push: impl FnOnce(&mut Muxer) -> Result<(), MuxError>,
+    ) -> Result<(), MuxSenderError> {
+        let mut inner = self.inner.lock().map_err(|_| lock_poisoned(site))?;
+        inner.push_then_drain(push)
+    }
+
     /// Send one video access unit. Annex-B framing is required.
     /// `pts` is in 90 kHz ticks (the TS clock); `key_frame` should
     /// be true for IDR.
@@ -303,12 +322,8 @@ impl<T: Transport> MuxSender<T> {
     /// - [`MuxSenderErrorSource::Mux`] wraps [`MuxError`] from the underlying
     ///   muxer (e.g. `AmbiguousTarget` when more than one video stream
     ///   is configured, `InvalidStreamHandle` from `send_video_to`).
-    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; on
-    ///   transport flap the unsent TS chunks are retained for a later
-    ///   `send_*` call to drain.
-    ///   Whether the input was consumed depends on the failure point — see
-    ///   the module-level *Input consumption and retry* section before
-    ///   deciding whether to resend.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; the
+    ///   module-level *Input consumption and retry* section says whether to resend.
     ///
     /// # Example
     /// ```
@@ -349,14 +364,7 @@ impl<T: Transport> MuxSender<T> {
         pts: Pts90khz,
         key_frame: bool,
     ) -> Result<(), MuxSenderError> {
-        // Mutex-poisoning policy (recoverable path): poisoned inner lock means a
-        // previous panic happened mid-mutation. `lock_poisoned` routes to
-        // `MuxSenderError` with kind `TransportBroken` and a site-specific
-        // message so the C ABI surfaces a useful diagnostic via
-        // `tst_get_last_error_str()`. Precedent: the gap-buffer policy in
-        // `ManagedTransport::send_managed` / `drain_gap_if_alive` in reconnect/mod.rs.
-        let mut inner = self.inner.lock().map_err(|_| lock_poisoned("send_video"))?;
-        inner.send_video(nal, pts.as_ticks(), key_frame)
+        self.push("send_video", |m| m.push_video(nal, pts, key_frame))
     }
 
     /// Send one pre-built KLV blob. `pts` is in 90 kHz units (the
@@ -380,21 +388,15 @@ impl<T: Transport> MuxSender<T> {
     ///   blob would overflow `PES_packet_length`;
     ///   [`MuxError::BufferFull`] if the muxer's outbound queue is at
     ///   `MuxerConfig::buffer_packets`.
-    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; on
-    ///   transport flap the unsent TS chunks are retained for a later
-    ///   `send_*` call to drain.
-    ///   Whether the input was consumed depends on the failure point — see
-    ///   the module-level *Input consumption and retry* section before
-    ///   deciding whether to resend.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; the
+    ///   module-level *Input consumption and retry* section says whether to resend.
     pub fn send_klv(
         &self,
         klv: &[u8],
         pts: Pts90khz,
         metadata_service_id: u8,
     ) -> Result<(), MuxSenderError> {
-        // Mutex-poisoning policy — see send_video for rationale.
-        let mut inner = self.inner.lock().map_err(|_| lock_poisoned("send_klv"))?;
-        inner.send_klv(klv, pts.as_ticks(), metadata_service_id)
+        self.push("send_klv", |m| m.push_klv(klv, pts, metadata_service_id))
     }
 
     /// Send one video access unit to a specific configured video stream.
@@ -414,12 +416,8 @@ impl<T: Transport> MuxSender<T> {
     ///   H.265 / H.266 only — AV1 OBU payloads skip this check);
     ///   [`MuxError::BufferFull`] if the muxer's outbound queue is at
     ///   `MuxerConfig::buffer_packets`.
-    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; on
-    ///   transport flap the unsent TS chunks are retained for a later
-    ///   `send_*` call to drain.
-    ///   Whether the input was consumed depends on the failure point — see
-    ///   the module-level *Input consumption and retry* section before
-    ///   deciding whether to resend.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; the
+    ///   module-level *Input consumption and retry* section says whether to resend.
     pub fn send_video_to(
         &self,
         handle: VideoStreamHandle,
@@ -427,12 +425,9 @@ impl<T: Transport> MuxSender<T> {
         pts: Pts90khz,
         key_frame: bool,
     ) -> Result<(), MuxSenderError> {
-        // Mutex-poisoning policy — see send_video for rationale.
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| lock_poisoned("send_video_to"))?;
-        inner.send_video_to(handle, nal, pts.as_ticks(), key_frame)
+        self.push("send_video_to", |m| {
+            m.push_video_to(handle, nal, pts, key_frame)
+        })
     }
 
     /// Send one access unit with explicit composition (PTS) and decode (DTS)
@@ -457,12 +452,8 @@ impl<T: Transport> MuxSender<T> {
     /// # Errors
     /// - [`MuxSenderErrorSource::Mux`] wraps [`MuxError`] from the inner
     ///   muxer (same variants as [`Self::send_video_to`]).
-    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; on
-    ///   transport flap the unsent TS chunks are retained for a later
-    ///   `send_*` call to drain.
-    ///   Whether the input was consumed depends on the failure point — see
-    ///   the module-level *Input consumption and retry* section before
-    ///   deciding whether to resend.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; the
+    ///   module-level *Input consumption and retry* section says whether to resend.
     pub fn send_video_to_with_dts(
         &self,
         handle: VideoStreamHandle,
@@ -471,11 +462,9 @@ impl<T: Transport> MuxSender<T> {
         dts: Pts90khz,
         key_frame: bool,
     ) -> Result<(), MuxSenderError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| lock_poisoned("send_video_to_with_dts"))?;
-        inner.send_video_to_with_dts(handle, nal, pts.as_ticks(), dts.as_ticks(), key_frame)
+        self.push("send_video_to_with_dts", |m| {
+            m.push_video_to_with_dts(handle, nal, pts, dts, key_frame)
+        })
     }
 
     /// Send one video access unit with an ST 0604 MISP timestamp SEI spliced
@@ -492,12 +481,8 @@ impl<T: Transport> MuxSender<T> {
     /// - [`MuxSenderErrorSource::Mux`] wraps [`MuxError`] from the inner
     ///   muxer (same variants as [`Self::send_video_to`], plus
     ///   [`tst_core::error::MuxError::MispTime`] when the SEI cannot be built).
-    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; on
-    ///   transport flap the unsent TS chunks are retained for a later
-    ///   `send_*` call to drain.
-    ///   Whether the input was consumed depends on the failure point — see
-    ///   the module-level *Input consumption and retry* section before
-    ///   deciding whether to resend.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; the
+    ///   module-level *Input consumption and retry* section says whether to resend.
     pub fn send_video_misp_to(
         &self,
         handle: VideoStreamHandle,
@@ -506,11 +491,9 @@ impl<T: Transport> MuxSender<T> {
         key_frame: bool,
         misp: &tst_core::codec::misp_time::MispTimestamp,
     ) -> Result<(), MuxSenderError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| lock_poisoned("send_video_misp_to"))?;
-        inner.send_video_misp_to(handle, nal, pts.as_ticks(), key_frame, misp)
+        self.push("send_video_misp_to", |m| {
+            m.push_video_misp_to(handle, nal, pts, key_frame, misp)
+        })
     }
 
     /// PTS+DTS variant of [`Self::send_video_misp_to`] for reordered codecs.
@@ -529,12 +512,8 @@ impl<T: Transport> MuxSender<T> {
     /// - [`MuxSenderErrorSource::Mux`] wraps [`MuxError`] from the inner
     ///   muxer (same variants as [`Self::send_video_to`], plus
     ///   [`tst_core::error::MuxError::MispTime`] when the SEI cannot be built).
-    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; on
-    ///   transport flap the unsent TS chunks are retained for a later
-    ///   `send_*` call to drain.
-    ///   Whether the input was consumed depends on the failure point — see
-    ///   the module-level *Input consumption and retry* section before
-    ///   deciding whether to resend.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; the
+    ///   module-level *Input consumption and retry* section says whether to resend.
     pub fn send_video_misp_to_with_dts(
         &self,
         handle: VideoStreamHandle,
@@ -544,18 +523,9 @@ impl<T: Transport> MuxSender<T> {
         key_frame: bool,
         misp: &tst_core::codec::misp_time::MispTimestamp,
     ) -> Result<(), MuxSenderError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| lock_poisoned("send_video_misp_to_with_dts"))?;
-        inner.send_video_misp_to_with_dts(
-            handle,
-            nal,
-            pts.as_ticks(),
-            dts.as_ticks(),
-            key_frame,
-            misp,
-        )
+        self.push("send_video_misp_to_with_dts", |m| {
+            m.push_video_misp_to_with_dts(handle, nal, pts, dts, key_frame, misp)
+        })
     }
 
     /// Send one KLV blob to a specific configured KLV stream.
@@ -578,12 +548,8 @@ impl<T: Transport> MuxSender<T> {
     ///   AU cell header reservation for `SynchronousMetadata` streams);
     ///   [`MuxError::BufferFull`] if the muxer's outbound queue is at
     ///   `MuxerConfig::buffer_packets`.
-    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; on
-    ///   transport flap the unsent TS chunks are retained for a later
-    ///   `send_*` call to drain.
-    ///   Whether the input was consumed depends on the failure point — see
-    ///   the module-level *Input consumption and retry* section before
-    ///   deciding whether to resend.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; the
+    ///   module-level *Input consumption and retry* section says whether to resend.
     pub fn send_klv_to(
         &self,
         handle: KlvStreamHandle,
@@ -591,12 +557,9 @@ impl<T: Transport> MuxSender<T> {
         pts: Pts90khz,
         metadata_service_id: u8,
     ) -> Result<(), MuxSenderError> {
-        // Mutex-poisoning policy — see send_video for rationale.
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| lock_poisoned("send_klv_to"))?;
-        inner.send_klv_to(handle, klv, pts.as_ticks(), metadata_service_id)
+        self.push("send_klv_to", |m| {
+            m.push_klv_to(handle, klv, pts, metadata_service_id)
+        })
     }
 
     /// Send one audio frame buffer. `pts` is in 90 kHz ticks (the
@@ -619,16 +582,10 @@ impl<T: Transport> MuxSender<T> {
     ///   [`MuxError::AudioTooLarge`] if `frames.len()` would overflow
     ///   `PES_packet_length`; [`MuxError::BufferFull`] if the muxer's
     ///   outbound queue is at `MuxerConfig::buffer_packets`.
-    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; on
-    ///   transport flap the unsent TS chunks are retained for a later
-    ///   `send_*` call to drain.
-    ///   Whether the input was consumed depends on the failure point — see
-    ///   the module-level *Input consumption and retry* section before
-    ///   deciding whether to resend.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; the
+    ///   module-level *Input consumption and retry* section says whether to resend.
     pub fn send_audio(&self, frames: &[u8], pts: Pts90khz) -> Result<(), MuxSenderError> {
-        // Mutex-poisoning policy — see send_video for rationale.
-        let mut inner = self.inner.lock().map_err(|_| lock_poisoned("send_audio"))?;
-        inner.send_audio(frames, pts.as_ticks())
+        self.push("send_audio", |m| m.push_audio(frames, pts))
     }
 
     /// Send one audio frame buffer to a specific configured audio stream.
@@ -647,24 +604,16 @@ impl<T: Transport> MuxSender<T> {
     ///   [`MuxError::AudioTooLarge`] if `frames.len()` would overflow
     ///   `PES_packet_length`; [`MuxError::BufferFull`] if the muxer's
     ///   outbound queue is at `MuxerConfig::buffer_packets`.
-    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; on
-    ///   transport flap the unsent TS chunks are retained for a later
-    ///   `send_*` call to drain.
-    ///   Whether the input was consumed depends on the failure point — see
-    ///   the module-level *Input consumption and retry* section before
-    ///   deciding whether to resend.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; the
+    ///   module-level *Input consumption and retry* section says whether to resend.
     pub fn send_audio_to(
         &self,
         handle: AudioStreamHandle,
         frames: &[u8],
         pts: Pts90khz,
     ) -> Result<(), MuxSenderError> {
-        // Mutex-poisoning policy — see send_video for rationale.
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| lock_poisoned("send_audio_to"))?;
-        inner.send_audio_to(handle, frames, pts.as_ticks())
+        // The muxer takes (handle, pts, frames); this API keeps data first, like send_video.
+        self.push("send_audio_to", |m| m.push_audio_to(handle, pts, frames))
     }
 
     /// Send one subtitle PES unit. `pts` is in 90 kHz ticks (the
@@ -689,19 +638,11 @@ impl<T: Transport> MuxSender<T> {
     ///   configured; [`MuxError::SubtitleTooLarge`] if `payload.len()`
     ///   would overflow `PES_packet_length`; [`MuxError::BufferFull`] if
     ///   the muxer's outbound queue is at `MuxerConfig::buffer_packets`.
-    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; on
-    ///   transport flap the unsent TS chunks are retained for a later
-    ///   `send_*` call to drain.
-    ///   Whether the input was consumed depends on the failure point — see
-    ///   the module-level *Input consumption and retry* section before
-    ///   deciding whether to resend.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; the
+    ///   module-level *Input consumption and retry* section says whether to resend.
     pub fn send_subtitle(&self, payload: &[u8], pts: Pts90khz) -> Result<(), MuxSenderError> {
-        // Mutex-poisoning policy — see send_video for rationale.
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| lock_poisoned("send_subtitle"))?;
-        inner.send_subtitle(payload, pts.as_ticks())
+        // The muxer takes (pts, payload); this API keeps data first, like send_video.
+        self.push("send_subtitle", |m| m.push_subtitle(pts, payload))
     }
 
     /// Send one subtitle PES unit to a specific configured subtitle stream.
@@ -720,24 +661,17 @@ impl<T: Transport> MuxSender<T> {
     ///   [`MuxError::SubtitleTooLarge`] if `payload.len()` would overflow
     ///   `PES_packet_length`; [`MuxError::BufferFull`] if the muxer's
     ///   outbound queue is at `MuxerConfig::buffer_packets`.
-    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; on
-    ///   transport flap the unsent TS chunks are retained for a later
-    ///   `send_*` call to drain.
-    ///   Whether the input was consumed depends on the failure point — see
-    ///   the module-level *Input consumption and retry* section before
-    ///   deciding whether to resend.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; the
+    ///   module-level *Input consumption and retry* section says whether to resend.
     pub fn send_subtitle_to(
         &self,
         handle: SubtitleStreamHandle,
         payload: &[u8],
         pts: Pts90khz,
     ) -> Result<(), MuxSenderError> {
-        // Mutex-poisoning policy — see send_video for rationale.
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| lock_poisoned("send_subtitle_to"))?;
-        inner.send_subtitle_to(handle, payload, pts.as_ticks())
+        self.push("send_subtitle_to", |m| {
+            m.push_subtitle_to(handle, pts, payload)
+        })
     }
 
     /// Send one data payload on the muxer's single data stream. `pts` is
@@ -763,16 +697,10 @@ impl<T: Transport> MuxSender<T> {
     ///   payload would overflow `PES_packet_length`;
     ///   [`MuxError::BufferFull`] if the muxer's outbound queue is at
     ///   `MuxerConfig::buffer_packets`.
-    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; on
-    ///   transport flap the unsent TS chunks are retained for a later
-    ///   `send_*` call to drain.
-    ///   Whether the input was consumed depends on the failure point — see
-    ///   the module-level *Input consumption and retry* section before
-    ///   deciding whether to resend.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; the
+    ///   module-level *Input consumption and retry* section says whether to resend.
     pub fn send_data(&self, data: &[u8], pts: Pts90khz) -> Result<(), MuxSenderError> {
-        // Mutex-poisoning policy — see send_video for rationale.
-        let mut inner = self.inner.lock().map_err(|_| lock_poisoned("send_data"))?;
-        inner.send_data(data, pts.as_ticks())
+        self.push("send_data", |m| m.push_data(data, pts))
     }
 
     /// Send one data payload to a specific configured data stream.
@@ -797,24 +725,15 @@ impl<T: Transport> MuxSender<T> {
     ///   if the payload would overflow `PES_packet_length`;
     ///   [`MuxError::BufferFull`] if the muxer's outbound queue is at
     ///   `MuxerConfig::buffer_packets`.
-    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; on
-    ///   transport flap the unsent TS chunks are retained for a later
-    ///   `send_*` call to drain.
-    ///   Whether the input was consumed depends on the failure point — see
-    ///   the module-level *Input consumption and retry* section before
-    ///   deciding whether to resend.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]; the
+    ///   module-level *Input consumption and retry* section says whether to resend.
     pub fn send_data_to(
         &self,
         handle: DataStreamHandle,
         data: &[u8],
         pts: Pts90khz,
     ) -> Result<(), MuxSenderError> {
-        // Mutex-poisoning policy — see send_video for rationale.
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| lock_poisoned("send_data_to"))?;
-        inner.send_data_to(handle, data, pts.as_ticks())
+        self.push("send_data_to", |m| m.push_data_to(handle, data, pts))
     }
 
     /// Snapshot all video stream handles for this sender's muxer, in
@@ -1205,142 +1124,6 @@ impl<T: Transport> Inner<T> {
         // From here the input is muxed and retained: a failure leaves it in
         // the pending queue, draining exactly once on the next call.
         self.drain_muxer().map_err(|e| e.with_input_consumed(true))
-    }
-
-    fn send_video(
-        &mut self,
-        nal: &[u8],
-        pts_90khz: i64,
-        key_frame: bool,
-    ) -> Result<(), MuxSenderError> {
-        self.push_then_drain(|m| m.push_video(nal, Pts90khz::new(pts_90khz), key_frame))
-    }
-
-    fn send_klv(
-        &mut self,
-        klv: &[u8],
-        pts_90khz: i64,
-        metadata_service_id: u8,
-    ) -> Result<(), MuxSenderError> {
-        self.push_then_drain(|m| m.push_klv(klv, Pts90khz::new(pts_90khz), metadata_service_id))
-    }
-
-    fn send_video_to(
-        &mut self,
-        handle: VideoStreamHandle,
-        nal: &[u8],
-        pts_90khz: i64,
-        key_frame: bool,
-    ) -> Result<(), MuxSenderError> {
-        self.push_then_drain(|m| m.push_video_to(handle, nal, Pts90khz::new(pts_90khz), key_frame))
-    }
-
-    fn send_video_to_with_dts(
-        &mut self,
-        handle: VideoStreamHandle,
-        nal: &[u8],
-        pts_90khz: i64,
-        dts_90khz: i64,
-        key_frame: bool,
-    ) -> Result<(), MuxSenderError> {
-        self.push_then_drain(|m| {
-            m.push_video_to_with_dts(
-                handle,
-                nal,
-                Pts90khz::new(pts_90khz),
-                Pts90khz::new(dts_90khz),
-                key_frame,
-            )
-        })
-    }
-
-    fn send_video_misp_to(
-        &mut self,
-        handle: VideoStreamHandle,
-        nal: &[u8],
-        pts_90khz: i64,
-        key_frame: bool,
-        misp: &tst_core::codec::misp_time::MispTimestamp,
-    ) -> Result<(), MuxSenderError> {
-        self.push_then_drain(|m| {
-            m.push_video_misp_to(handle, nal, Pts90khz::new(pts_90khz), key_frame, misp)
-        })
-    }
-
-    fn send_video_misp_to_with_dts(
-        &mut self,
-        handle: VideoStreamHandle,
-        nal: &[u8],
-        pts_90khz: i64,
-        dts_90khz: i64,
-        key_frame: bool,
-        misp: &tst_core::codec::misp_time::MispTimestamp,
-    ) -> Result<(), MuxSenderError> {
-        self.push_then_drain(|m| {
-            m.push_video_misp_to_with_dts(
-                handle,
-                nal,
-                Pts90khz::new(pts_90khz),
-                Pts90khz::new(dts_90khz),
-                key_frame,
-                misp,
-            )
-        })
-    }
-
-    fn send_klv_to(
-        &mut self,
-        handle: KlvStreamHandle,
-        klv: &[u8],
-        pts_90khz: i64,
-        metadata_service_id: u8,
-    ) -> Result<(), MuxSenderError> {
-        self.push_then_drain(|m| {
-            m.push_klv_to(handle, klv, Pts90khz::new(pts_90khz), metadata_service_id)
-        })
-    }
-
-    fn send_audio(&mut self, frames: &[u8], pts_90khz: i64) -> Result<(), MuxSenderError> {
-        self.push_then_drain(|m| m.push_audio(frames, Pts90khz::new(pts_90khz)))
-    }
-
-    fn send_audio_to(
-        &mut self,
-        handle: AudioStreamHandle,
-        frames: &[u8],
-        pts_90khz: i64,
-    ) -> Result<(), MuxSenderError> {
-        // Muxer parameter order is `(handle, pts, frames)`; the public
-        // pipeline API mirrors `send_video` / `send_klv` (data first).
-        self.push_then_drain(|m| m.push_audio_to(handle, Pts90khz::new(pts_90khz), frames))
-    }
-
-    fn send_subtitle(&mut self, payload: &[u8], pts_90khz: i64) -> Result<(), MuxSenderError> {
-        // Muxer parameter order is `(pts, payload)`; we present
-        // `(payload, pts)` for symmetry with `send_video` / `send_klv`.
-        self.push_then_drain(|m| m.push_subtitle(Pts90khz::new(pts_90khz), payload))
-    }
-
-    fn send_subtitle_to(
-        &mut self,
-        handle: SubtitleStreamHandle,
-        payload: &[u8],
-        pts_90khz: i64,
-    ) -> Result<(), MuxSenderError> {
-        self.push_then_drain(|m| m.push_subtitle_to(handle, Pts90khz::new(pts_90khz), payload))
-    }
-
-    fn send_data(&mut self, data: &[u8], pts_90khz: i64) -> Result<(), MuxSenderError> {
-        self.push_then_drain(|m| m.push_data(data, Pts90khz::new(pts_90khz)))
-    }
-
-    fn send_data_to(
-        &mut self,
-        handle: DataStreamHandle,
-        data: &[u8],
-        pts_90khz: i64,
-    ) -> Result<(), MuxSenderError> {
-        self.push_then_drain(|m| m.push_data_to(handle, data, Pts90khz::new(pts_90khz)))
     }
 
     /// Sample muxer queue depth and emit `tracing::warn!` once when the
@@ -2578,6 +2361,181 @@ mod cancel_tests {
         assert!(
             matches!(err, MuxError::ProgramNotFound { program_number: 1 }),
             "subtitle_handles_for_program: expected ProgramNotFound{{1}}, got: {err:?}"
+        );
+    }
+
+    /// Every `send_*` names its own site in the poisoned-lock message,
+    /// exactly. `contains("send_video")` would also accept `send_video_to…`,
+    /// so the message is compared whole.
+    #[test]
+    fn poisoned_lock_names_every_send_site_exactly() {
+        use tst_core::codec::misp_time::MispTimestamp;
+        let fresh = MuxSender::new(PanicOnSend, all_streams_config()).unwrap();
+        let (v, k, a, s, d) = (
+            fresh.video_handles()[0],
+            fresh.klv_handles()[0],
+            fresh.audio_handles()[0],
+            fresh.subtitle_handles()[0],
+            fresh.data_handles()[0],
+        );
+        drop(fresh);
+        let sender = poison_sender();
+        let nal = [0x00, 0x00, 0x00, 0x01, 0x67, 0xBB];
+        let p = Pts90khz::new(0);
+        let misp = MispTimestamp::micros(1, 0x1F);
+        let calls: [(&str, Result<(), MuxSenderError>); 13] = [
+            ("send_video", sender.send_video(&nal, p, true)),
+            ("send_klv", sender.send_klv(&[0xAA], p, 0)),
+            ("send_video_to", sender.send_video_to(v, &nal, p, true)),
+            (
+                "send_video_to_with_dts",
+                sender.send_video_to_with_dts(v, &nal, p, p, true),
+            ),
+            (
+                "send_video_misp_to",
+                sender.send_video_misp_to(v, &nal, p, true, &misp),
+            ),
+            (
+                "send_video_misp_to_with_dts",
+                sender.send_video_misp_to_with_dts(v, &nal, p, p, true, &misp),
+            ),
+            ("send_klv_to", sender.send_klv_to(k, &[0xAA], p, 0)),
+            ("send_audio", sender.send_audio(&[0xFF; 8], p)),
+            ("send_audio_to", sender.send_audio_to(a, &[0xFF; 8], p)),
+            ("send_subtitle", sender.send_subtitle(b"WEBVTT", p)),
+            ("send_subtitle_to", sender.send_subtitle_to(s, b"WEBVTT", p)),
+            ("send_data", sender.send_data(&[0x42; 8], p)),
+            ("send_data_to", sender.send_data_to(d, &[0x42; 8], p)),
+        ];
+        for (site, r) in calls {
+            let err = r.unwrap_err();
+            let want = alloc::format!("mux_sender: inner lock poisoned during {site}");
+            assert!(
+                matches!(&err.source, MuxSenderErrorSource::Transport(TransportError::Broken { msg, .. }) if *msg == want),
+                "{site}: expected {want:?}, got {err:?}"
+            );
+            assert_eq!(
+                err.input_consumed, None,
+                "{site}: a poisoned lock is not an input-path error"
+            );
+        }
+    }
+
+    /// Records every byte handed to the transport.
+    struct Rec(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl Transport for Rec {
+        fn send_bytes(&mut self, b: &[u8]) -> Result<(), TransportError> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(())
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn close(&mut self) {}
+        fn is_alive(&self) -> bool {
+            true
+        }
+    }
+
+    /// Each `send_*` wrapper must forward every argument, in order, to the
+    /// matching `Muxer::push_*`. The reference bytes come from driving the
+    /// drain cycle with a hand-written closure over the muxer call, using
+    /// distinct PTS/DTS values so a swapped or dropped argument changes
+    /// the output.
+    #[test]
+    fn every_send_wrapper_forwards_its_arguments_to_the_matching_push() {
+        use tst_core::codec::misp_time::MispTimestamp;
+        let mk = || {
+            let out = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let s = MuxSender::new(Rec(out.clone()), all_streams_config()).unwrap();
+            (s, out)
+        };
+        let nal = [0x00, 0x00, 0x00, 0x01, 0x65, 0xBB, 0xCC, 0xDD];
+        let klv = [0xAA, 0xBB, 0xCC, 0xDD];
+        let aud = [0xFF; 24];
+        let (pts, dts) = (Pts90khz::new(90_000), Pts90khz::new(45_000));
+        let misp = MispTimestamp::micros(1_700_000_000_000_000, 0x1F);
+        let h = mk().0;
+        let (v, k, a, st, d) = (
+            h.video_handles()[0],
+            h.klv_handles()[0],
+            h.audio_handles()[0],
+            h.subtitle_handles()[0],
+            h.data_handles()[0],
+        );
+        drop(h);
+
+        let check = |name: &str,
+                     wrapper: &dyn Fn(&MuxSender<Rec>) -> Result<(), MuxSenderError>,
+                     reference: &dyn Fn(&mut Muxer) -> Result<(), MuxError>| {
+            let (a_s, a_out) = mk();
+            wrapper(&a_s).unwrap();
+            let (b_s, b_out) = mk();
+            b_s.inner
+                .lock()
+                .unwrap()
+                .push_then_drain(|m| reference(m))
+                .unwrap();
+            let (got, want) = (a_out.lock().unwrap(), b_out.lock().unwrap());
+            assert!(!want.is_empty(), "{name}: reference produced no bytes");
+            assert_eq!(
+                *got, *want,
+                "{name}: wrapper output differs from the muxer push"
+            );
+        };
+
+        check("send_video", &|s| s.send_video(&nal, pts, true), &|m| {
+            m.push_video(&nal, pts, true)
+        });
+        check("send_klv", &|s| s.send_klv(&klv, pts, 7), &|m| {
+            m.push_klv(&klv, pts, 7)
+        });
+        check(
+            "send_video_to",
+            &|s| s.send_video_to(v, &nal, pts, true),
+            &|m| m.push_video_to(v, &nal, pts, true),
+        );
+        check(
+            "send_video_to_with_dts",
+            &|s| s.send_video_to_with_dts(v, &nal, pts, dts, true),
+            &|m| m.push_video_to_with_dts(v, &nal, pts, dts, true),
+        );
+        check(
+            "send_video_misp_to",
+            &|s| s.send_video_misp_to(v, &nal, pts, true, &misp),
+            &|m| m.push_video_misp_to(v, &nal, pts, true, &misp),
+        );
+        check(
+            "send_video_misp_to_with_dts",
+            &|s| s.send_video_misp_to_with_dts(v, &nal, pts, dts, true, &misp),
+            &|m| m.push_video_misp_to_with_dts(v, &nal, pts, dts, true, &misp),
+        );
+        check("send_klv_to", &|s| s.send_klv_to(k, &klv, pts, 7), &|m| {
+            m.push_klv_to(k, &klv, pts, 7)
+        });
+        check("send_audio", &|s| s.send_audio(&aud, pts), &|m| {
+            m.push_audio(&aud, pts)
+        });
+        check("send_audio_to", &|s| s.send_audio_to(a, &aud, pts), &|m| {
+            m.push_audio_to(a, pts, &aud)
+        });
+        check(
+            "send_subtitle",
+            &|s| s.send_subtitle(b"WEBVTT", pts),
+            &|m| m.push_subtitle(pts, b"WEBVTT"),
+        );
+        check(
+            "send_subtitle_to",
+            &|s| s.send_subtitle_to(st, b"WEBVTT", pts),
+            &|m| m.push_subtitle_to(st, pts, b"WEBVTT"),
+        );
+        check("send_data", &|s| s.send_data(&[0x42; 8], pts), &|m| {
+            m.push_data(&[0x42; 8], pts)
+        });
+        check(
+            "send_data_to",
+            &|s| s.send_data_to(d, &[0x42; 8], pts),
+            &|m| m.push_data_to(d, &[0x42; 8], pts),
         );
     }
 
