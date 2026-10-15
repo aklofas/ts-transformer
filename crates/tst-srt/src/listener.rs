@@ -34,7 +34,7 @@ const SRT_EPOLL_IN: c_int = 0x1;
 /// 1. **Drop** — the [`Drop`] impl calls
 ///    `cancel.close_without_cancel()`, which fires `srt_close(fd)` exactly
 ///    once (idempotent with `close()`) but does NOT latch
-///    `SrtCancelHandle::is_cancelled()` — Drop is the owner retiring the
+///    `ResourceCancel::is_cancelled()` — Drop is the owner retiring the
 ///    listener, not a caller cancelling it. Quick on a listening socket —
 ///    no `SRTO_LINGER` payload to drain.
 /// 2. **Explicit close** — call [`Self::close`] (consuming `self`). Same
@@ -42,7 +42,7 @@ const SRT_EPOLL_IN: c_int = 0x1;
 ///    it. Always returns `Ok(())` (the inner `srt_close` rc is currently
 ///    swallowed; see method doc).
 /// 3. **Cross-thread cancel** — call [`Self::cancel_handle`] to obtain a
-///    [`tst_core::SrtCancelHandle`] (clone-able, `Send + Sync`), then
+///    [`tst_core::ResourceCancel`] (clone-able, `Send + Sync`), then
 ///    `cancel()` from any thread. Closes the listening socket; a peer
 ///    parked in [`Self::accept`] returns
 ///    [`AcceptError::ListenerClosed`] within one libsrt I/O cycle
@@ -68,7 +68,7 @@ pub struct Listener {
     /// calls `cancel.close_without_cancel()` so explicit `close()` and Drop
     /// never double-close — and so Drop does not latch the caller-visible
     /// `is_cancelled()` (see the type docs).
-    cancel: tst_core::SrtCancelHandle,
+    cancel: tst_core::ResourceCancel,
     /// Stored for inheritance into accepted Sockets.
     accepted_send_timeout: Option<Duration>,
     accepted_recv_timeout: Option<Duration>,
@@ -426,7 +426,7 @@ impl Listener {
     /// Clone-able cancel handle — the sanctioned cross-thread wake for a parked
     /// `accept()`. Calling `cancel()` from any thread closes the underlying SRT
     /// listener socket without freeing the listener itself. Idempotent.
-    pub fn cancel_handle(&self) -> tst_core::SrtCancelHandle {
+    pub fn cancel_handle(&self) -> tst_core::ResourceCancel {
         self.cancel.clone()
     }
 

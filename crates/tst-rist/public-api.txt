@@ -200,24 +200,6 @@ impl core::marker::UnsafeUnpin for tst_rist::stats::RistStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::stats::RistStats
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::stats::RistStats
 pub mod tst_rist::transport
-pub struct tst_rist::transport::RistCancelHandle
-impl tst_rist::transport::RistCancelHandle
-pub fn tst_rist::transport::RistCancelHandle::cancel(&self)
-pub fn tst_rist::transport::RistCancelHandle::is_cancelled(&self) -> bool
-impl core::clone::Clone for tst_rist::transport::RistCancelHandle
-pub fn tst_rist::transport::RistCancelHandle::clone(&self) -> tst_rist::transport::RistCancelHandle
-impl core::fmt::Debug for tst_rist::transport::RistCancelHandle
-pub fn tst_rist::transport::RistCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl tst_core::transport::TransportCancel for tst_rist::transport::RistCancelHandle
-pub fn tst_rist::transport::RistCancelHandle::cancel(&self)
-pub fn tst_rist::transport::RistCancelHandle::is_cancelled(&self) -> bool
-impl core::marker::Freeze for tst_rist::transport::RistCancelHandle
-impl core::marker::Send for tst_rist::transport::RistCancelHandle
-impl core::marker::Sync for tst_rist::transport::RistCancelHandle
-impl core::marker::Unpin for tst_rist::transport::RistCancelHandle
-impl core::marker::UnsafeUnpin for tst_rist::transport::RistCancelHandle
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::transport::RistCancelHandle
-impl core::panic::unwind_safe::UnwindSafe for tst_rist::transport::RistCancelHandle
 pub struct tst_rist::transport::RistTransport
 impl tst_rist::transport::RistTransport
 pub fn tst_rist::transport::RistTransport::cancel_handle(&self) -> tst_rist::transport::RistCancelHandle
@@ -241,6 +223,7 @@ impl core::marker::Unpin for tst_rist::transport::RistTransport
 impl core::marker::UnsafeUnpin for tst_rist::transport::RistTransport
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::transport::RistTransport
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::transport::RistTransport
+pub type tst_rist::transport::RistCancelHandle = tst_core::cancel::FlagCancel
 pub mod tst_rist::url
 #[non_exhaustive] pub enum tst_rist::url::RistUrlError
 pub tst_rist::url::RistUrlError::AesTypeWithoutSecret
@@ -395,24 +378,6 @@ impl core::marker::Unpin for tst_rist::config::EncryptionKey
 impl core::marker::UnsafeUnpin for tst_rist::config::EncryptionKey
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::config::EncryptionKey
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::config::EncryptionKey
-pub struct tst_rist::RistCancelHandle
-impl tst_rist::transport::RistCancelHandle
-pub fn tst_rist::transport::RistCancelHandle::cancel(&self)
-pub fn tst_rist::transport::RistCancelHandle::is_cancelled(&self) -> bool
-impl core::clone::Clone for tst_rist::transport::RistCancelHandle
-pub fn tst_rist::transport::RistCancelHandle::clone(&self) -> tst_rist::transport::RistCancelHandle
-impl core::fmt::Debug for tst_rist::transport::RistCancelHandle
-pub fn tst_rist::transport::RistCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl tst_core::transport::TransportCancel for tst_rist::transport::RistCancelHandle
-pub fn tst_rist::transport::RistCancelHandle::cancel(&self)
-pub fn tst_rist::transport::RistCancelHandle::is_cancelled(&self) -> bool
-impl core::marker::Freeze for tst_rist::transport::RistCancelHandle
-impl core::marker::Send for tst_rist::transport::RistCancelHandle
-impl core::marker::Sync for tst_rist::transport::RistCancelHandle
-impl core::marker::Unpin for tst_rist::transport::RistCancelHandle
-impl core::marker::UnsafeUnpin for tst_rist::transport::RistCancelHandle
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::transport::RistCancelHandle
-impl core::panic::unwind_safe::UnwindSafe for tst_rist::transport::RistCancelHandle
 #[non_exhaustive] pub struct tst_rist::RistConfig
 pub tst_rist::RistConfig::bandwidth_kbps: core::option::Option<u32>
 pub tst_rist::RistConfig::buffer: core::time::Duration
@@ -589,3 +554,4 @@ impl core::marker::Unpin for tst_rist::url::RistUrl
 impl core::marker::UnsafeUnpin for tst_rist::url::RistUrl
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::url::RistUrl
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::url::RistUrl
+pub type tst_rist::RistCancelHandle = tst_core::cancel::FlagCancel

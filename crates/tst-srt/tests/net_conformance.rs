@@ -94,7 +94,7 @@ struct Pair {
     /// is the sanctioned wake. Our `connect()` accepts against a caller
     /// thread that stays alive, so the hazard should not arise — this guard
     /// is what makes "should not" not matter.
-    accept_cancel: tst_core::SrtCancelHandle,
+    accept_cancel: tst_core::ResourceCancel,
 }
 
 impl Drop for Pair {

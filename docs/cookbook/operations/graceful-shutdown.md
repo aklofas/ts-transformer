@@ -1,4 +1,4 @@
-# Graceful shutdown from another thread via `SrtCancelHandle`
+# Graceful shutdown from another thread via `ResourceCancel`
 
 > **When to use this:** The main thread is parked in `send_*` / `recv_*` and a sibling thread (signal handler, watchdog, FFI lifecycle observer) needs to wake it.
 

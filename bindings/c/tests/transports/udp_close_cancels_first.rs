@@ -1,7 +1,7 @@
 //! `tst_udp_receiver_close` from another thread must end a `_recv_ts`
 //! parked on the UDP poll loop with `TST_E_CLOSED`: the UDP transport has a
 //! real cancel handle, and `Owned::close` fires it before taking the slot.
-//! With only a `binding::FlagCancel` latch in the slot (one the transport
+//! With only a `FlagCancel` latch in the slot (one the transport
 //! never reads), a cross-thread `_close` would block on the handle mutex
 //! until a datagram arrived.
 //!

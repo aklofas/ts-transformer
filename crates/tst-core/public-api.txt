@@ -16,26 +16,50 @@ impl core::marker::Unpin for tst_core::cancel::CancelSlot
 impl core::marker::UnsafeUnpin for tst_core::cancel::CancelSlot
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::cancel::CancelSlot
 impl core::panic::unwind_safe::UnwindSafe for tst_core::cancel::CancelSlot
-pub struct tst_core::cancel::SrtCancelHandle
-impl tst_core::cancel::SrtCancelHandle
-pub fn tst_core::cancel::SrtCancelHandle::cancel(&self)
-pub fn tst_core::cancel::SrtCancelHandle::close_without_cancel(&self)
-pub fn tst_core::cancel::SrtCancelHandle::is_cancelled(&self) -> bool
-pub fn tst_core::cancel::SrtCancelHandle::new<F>(i64, F) -> Self where F: core::ops::function::Fn(i64) + core::marker::Send + core::marker::Sync + 'static
-impl core::clone::Clone for tst_core::cancel::SrtCancelHandle
-pub fn tst_core::cancel::SrtCancelHandle::clone(&self) -> tst_core::cancel::SrtCancelHandle
-impl core::fmt::Debug for tst_core::cancel::SrtCancelHandle
-pub fn tst_core::cancel::SrtCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl tst_core::transport::TransportCancel for tst_core::cancel::SrtCancelHandle
-pub fn tst_core::cancel::SrtCancelHandle::cancel(&self)
-pub fn tst_core::cancel::SrtCancelHandle::is_cancelled(&self) -> bool
-impl core::marker::Freeze for tst_core::cancel::SrtCancelHandle
-impl core::marker::Send for tst_core::cancel::SrtCancelHandle
-impl core::marker::Sync for tst_core::cancel::SrtCancelHandle
-impl core::marker::Unpin for tst_core::cancel::SrtCancelHandle
-impl core::marker::UnsafeUnpin for tst_core::cancel::SrtCancelHandle
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_core::cancel::SrtCancelHandle
-impl !core::panic::unwind_safe::UnwindSafe for tst_core::cancel::SrtCancelHandle
+pub struct tst_core::cancel::FlagCancel(_)
+impl tst_core::cancel::FlagCancel
+pub fn tst_core::cancel::FlagCancel::cancel(&self)
+pub fn tst_core::cancel::FlagCancel::is_cancelled(&self) -> bool
+pub fn tst_core::cancel::FlagCancel::new() -> Self
+impl core::clone::Clone for tst_core::cancel::FlagCancel
+pub fn tst_core::cancel::FlagCancel::clone(&self) -> tst_core::cancel::FlagCancel
+impl core::default::Default for tst_core::cancel::FlagCancel
+pub fn tst_core::cancel::FlagCancel::default() -> tst_core::cancel::FlagCancel
+impl core::fmt::Debug for tst_core::cancel::FlagCancel
+pub fn tst_core::cancel::FlagCancel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl tst_core::transport::TransportCancel for tst_core::cancel::FlagCancel
+pub fn tst_core::cancel::FlagCancel::cancel(&self)
+pub fn tst_core::cancel::FlagCancel::is_cancelled(&self) -> bool
+impl core::marker::Freeze for tst_core::cancel::FlagCancel
+impl core::marker::Send for tst_core::cancel::FlagCancel
+impl core::marker::Sync for tst_core::cancel::FlagCancel
+impl core::marker::Unpin for tst_core::cancel::FlagCancel
+impl core::marker::UnsafeUnpin for tst_core::cancel::FlagCancel
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::cancel::FlagCancel
+impl core::panic::unwind_safe::UnwindSafe for tst_core::cancel::FlagCancel
+pub struct tst_core::cancel::ResourceCancel
+impl tst_core::cancel::ResourceCancel
+pub fn tst_core::cancel::ResourceCancel::cancel(&self)
+pub fn tst_core::cancel::ResourceCancel::close_without_cancel(&self)
+pub fn tst_core::cancel::ResourceCancel::is_cancelled(&self) -> bool
+pub fn tst_core::cancel::ResourceCancel::new<F>(i64, F) -> Self where F: core::ops::function::Fn(i64) + core::marker::Send + core::marker::Sync + 'static
+impl core::clone::Clone for tst_core::cancel::ResourceCancel
+pub fn tst_core::cancel::ResourceCancel::clone(&self) -> tst_core::cancel::ResourceCancel
+impl core::fmt::Debug for tst_core::cancel::ResourceCancel
+pub fn tst_core::cancel::ResourceCancel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl tst_core::transport::TransportCancel for tst_core::cancel::ResourceCancel
+pub fn tst_core::cancel::ResourceCancel::cancel(&self)
+pub fn tst_core::cancel::ResourceCancel::is_cancelled(&self) -> bool
+impl core::marker::Freeze for tst_core::cancel::ResourceCancel
+impl core::marker::Send for tst_core::cancel::ResourceCancel
+impl core::marker::Sync for tst_core::cancel::ResourceCancel
+impl core::marker::Unpin for tst_core::cancel::ResourceCancel
+impl core::marker::UnsafeUnpin for tst_core::cancel::ResourceCancel
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_core::cancel::ResourceCancel
+impl !core::panic::unwind_safe::UnwindSafe for tst_core::cancel::ResourceCancel
+pub const tst_core::cancel::ACCEPT_POLL_INTERVAL: core::time::Duration
+pub const tst_core::cancel::CANCEL_POLL_INTERVAL: core::time::Duration
+pub type tst_core::cancel::SrtCancelHandle = tst_core::cancel::ResourceCancel
 pub mod tst_core::codec
 pub mod tst_core::codec::aac
 pub mod tst_core::codec::aac::latm
@@ -6793,6 +6817,25 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::stats::Stream
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::stats::StreamStats
 pub mod tst_core::net
 pub mod tst_core::net::io_classify
+pub enum tst_core::net::io_classify::RecvAction
+pub tst_core::net::io_classify::RecvAction::Fatal
+pub tst_core::net::io_classify::RecvAction::Retry
+impl core::clone::Clone for tst_core::net::io_classify::RecvAction
+pub fn tst_core::net::io_classify::RecvAction::clone(&self) -> tst_core::net::io_classify::RecvAction
+impl core::cmp::Eq for tst_core::net::io_classify::RecvAction
+impl core::cmp::PartialEq for tst_core::net::io_classify::RecvAction
+pub fn tst_core::net::io_classify::RecvAction::eq(&self, &tst_core::net::io_classify::RecvAction) -> bool
+impl core::fmt::Debug for tst_core::net::io_classify::RecvAction
+pub fn tst_core::net::io_classify::RecvAction::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::net::io_classify::RecvAction
+impl core::marker::StructuralPartialEq for tst_core::net::io_classify::RecvAction
+impl core::marker::Freeze for tst_core::net::io_classify::RecvAction
+impl core::marker::Send for tst_core::net::io_classify::RecvAction
+impl core::marker::Sync for tst_core::net::io_classify::RecvAction
+impl core::marker::Unpin for tst_core::net::io_classify::RecvAction
+impl core::marker::UnsafeUnpin for tst_core::net::io_classify::RecvAction
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::net::io_classify::RecvAction
+impl core::panic::unwind_safe::UnwindSafe for tst_core::net::io_classify::RecvAction
 pub enum tst_core::net::io_classify::SendClass
 pub tst_core::net::io_classify::SendClass::Fatal
 pub tst_core::net::io_classify::SendClass::Transient
@@ -6812,10 +6855,9 @@ impl core::marker::Unpin for tst_core::net::io_classify::SendClass
 impl core::marker::UnsafeUnpin for tst_core::net::io_classify::SendClass
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::net::io_classify::SendClass
 impl core::panic::unwind_safe::UnwindSafe for tst_core::net::io_classify::SendClass
+pub fn tst_core::net::io_classify::classify_recv_error(core::io::error::ErrorKind) -> tst_core::net::io_classify::RecvAction
 pub fn tst_core::net::io_classify::classify_send_error(&core::io::error::Error) -> tst_core::net::io_classify::SendClass
 pub mod tst_core::net::udp_socket
-pub const tst_core::net::udp_socket::ACCEPT_POLL_INTERVAL: core::time::Duration
-pub const tst_core::net::udp_socket::CANCEL_POLL_INTERVAL: core::time::Duration
 pub const tst_core::net::udp_socket::MCAST_DEFAULT_TTL: u8
 pub fn tst_core::net::udp_socket::apply_multicast_iface(&std::net::udp::UdpSocket, core::net::ip_addr::IpAddr, &str) -> core::io::error::Result<()>
 pub fn tst_core::net::udp_socket::apply_multicast_recv_join(&std::net::udp::UdpSocket, core::net::ip_addr::IpAddr, core::option::Option<&str>) -> core::io::error::Result<()>
@@ -6825,6 +6867,25 @@ pub fn tst_core::net::udp_socket::bind_udp_socket_multicast(core::net::socket_ad
 pub fn tst_core::net::udp_socket::set_multicast_hops_v6(&std::net::udp::UdpSocket, u8) -> core::io::error::Result<()>
 pub fn tst_core::net::udp_socket::set_multicast_if_v4(&std::net::udp::UdpSocket, core::net::ip_addr::Ipv4Addr) -> core::io::error::Result<()>
 pub fn tst_core::net::udp_socket::set_socket_buffers<S: std::os::fd::owned::AsFd>(&S, core::option::Option<usize>, core::option::Option<usize>) -> core::io::error::Result<()>
+pub enum tst_core::net::RecvAction
+pub tst_core::net::RecvAction::Fatal
+pub tst_core::net::RecvAction::Retry
+impl core::clone::Clone for tst_core::net::io_classify::RecvAction
+pub fn tst_core::net::io_classify::RecvAction::clone(&self) -> tst_core::net::io_classify::RecvAction
+impl core::cmp::Eq for tst_core::net::io_classify::RecvAction
+impl core::cmp::PartialEq for tst_core::net::io_classify::RecvAction
+pub fn tst_core::net::io_classify::RecvAction::eq(&self, &tst_core::net::io_classify::RecvAction) -> bool
+impl core::fmt::Debug for tst_core::net::io_classify::RecvAction
+pub fn tst_core::net::io_classify::RecvAction::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::net::io_classify::RecvAction
+impl core::marker::StructuralPartialEq for tst_core::net::io_classify::RecvAction
+impl core::marker::Freeze for tst_core::net::io_classify::RecvAction
+impl core::marker::Send for tst_core::net::io_classify::RecvAction
+impl core::marker::Sync for tst_core::net::io_classify::RecvAction
+impl core::marker::Unpin for tst_core::net::io_classify::RecvAction
+impl core::marker::UnsafeUnpin for tst_core::net::io_classify::RecvAction
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::net::io_classify::RecvAction
+impl core::panic::unwind_safe::UnwindSafe for tst_core::net::io_classify::RecvAction
 pub enum tst_core::net::SendClass
 pub tst_core::net::SendClass::Fatal
 pub tst_core::net::SendClass::Transient
@@ -6844,6 +6905,7 @@ impl core::marker::Unpin for tst_core::net::io_classify::SendClass
 impl core::marker::UnsafeUnpin for tst_core::net::io_classify::SendClass
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::net::io_classify::SendClass
 impl core::panic::unwind_safe::UnwindSafe for tst_core::net::io_classify::SendClass
+pub fn tst_core::net::classify_recv_error(core::io::error::ErrorKind) -> tst_core::net::io_classify::RecvAction
 pub fn tst_core::net::classify_send_error(&core::io::error::Error) -> tst_core::net::io_classify::SendClass
 pub mod tst_core::publisher
 #[non_exhaustive] pub struct tst_core::publisher::PublisherStats
@@ -7018,9 +7080,12 @@ pub fn alloc::boxed::Box<T>::socket_stats(&self) -> core::option::Option<tst_cor
 pub trait tst_core::transport::TransportCancel: core::marker::Send + core::marker::Sync
 pub fn tst_core::transport::TransportCancel::cancel(&self)
 pub fn tst_core::transport::TransportCancel::is_cancelled(&self) -> bool
-impl tst_core::transport::TransportCancel for tst_core::cancel::SrtCancelHandle
-pub fn tst_core::cancel::SrtCancelHandle::cancel(&self)
-pub fn tst_core::cancel::SrtCancelHandle::is_cancelled(&self) -> bool
+impl tst_core::transport::TransportCancel for tst_core::cancel::FlagCancel
+pub fn tst_core::cancel::FlagCancel::cancel(&self)
+pub fn tst_core::cancel::FlagCancel::is_cancelled(&self) -> bool
+impl tst_core::transport::TransportCancel for tst_core::cancel::ResourceCancel
+pub fn tst_core::cancel::ResourceCancel::cancel(&self)
+pub fn tst_core::cancel::ResourceCancel::is_cancelled(&self) -> bool
 pub mod tst_core::url
 pub mod tst_core::url::common
 #[non_exhaustive] pub enum tst_core::url::common::UrlError
@@ -7602,6 +7667,26 @@ impl<'a> core::marker::Unpin for tst_core::url::common::ParsedUrl<'a>
 impl<'a> core::marker::UnsafeUnpin for tst_core::url::common::ParsedUrl<'a>
 impl<'a> core::panic::unwind_safe::RefUnwindSafe for tst_core::url::common::ParsedUrl<'a>
 impl<'a> core::panic::unwind_safe::UnwindSafe for tst_core::url::common::ParsedUrl<'a>
+pub struct tst_core::ResourceCancel
+impl tst_core::cancel::ResourceCancel
+pub fn tst_core::cancel::ResourceCancel::cancel(&self)
+pub fn tst_core::cancel::ResourceCancel::close_without_cancel(&self)
+pub fn tst_core::cancel::ResourceCancel::is_cancelled(&self) -> bool
+pub fn tst_core::cancel::ResourceCancel::new<F>(i64, F) -> Self where F: core::ops::function::Fn(i64) + core::marker::Send + core::marker::Sync + 'static
+impl core::clone::Clone for tst_core::cancel::ResourceCancel
+pub fn tst_core::cancel::ResourceCancel::clone(&self) -> tst_core::cancel::ResourceCancel
+impl core::fmt::Debug for tst_core::cancel::ResourceCancel
+pub fn tst_core::cancel::ResourceCancel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl tst_core::transport::TransportCancel for tst_core::cancel::ResourceCancel
+pub fn tst_core::cancel::ResourceCancel::cancel(&self)
+pub fn tst_core::cancel::ResourceCancel::is_cancelled(&self) -> bool
+impl core::marker::Freeze for tst_core::cancel::ResourceCancel
+impl core::marker::Send for tst_core::cancel::ResourceCancel
+impl core::marker::Sync for tst_core::cancel::ResourceCancel
+impl core::marker::Unpin for tst_core::cancel::ResourceCancel
+impl core::marker::UnsafeUnpin for tst_core::cancel::ResourceCancel
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_core::cancel::ResourceCancel
+impl !core::panic::unwind_safe::UnwindSafe for tst_core::cancel::ResourceCancel
 #[non_exhaustive] pub struct tst_core::SocketStats
 pub tst_core::SocketStats::bytes_lost_recv: u64
 pub tst_core::SocketStats::bytes_received: u64
@@ -7637,26 +7722,6 @@ impl core::marker::Unpin for tst_core::transport::SocketStats
 impl core::marker::UnsafeUnpin for tst_core::transport::SocketStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::SocketStats
 impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::SocketStats
-pub struct tst_core::SrtCancelHandle
-impl tst_core::cancel::SrtCancelHandle
-pub fn tst_core::cancel::SrtCancelHandle::cancel(&self)
-pub fn tst_core::cancel::SrtCancelHandle::close_without_cancel(&self)
-pub fn tst_core::cancel::SrtCancelHandle::is_cancelled(&self) -> bool
-pub fn tst_core::cancel::SrtCancelHandle::new<F>(i64, F) -> Self where F: core::ops::function::Fn(i64) + core::marker::Send + core::marker::Sync + 'static
-impl core::clone::Clone for tst_core::cancel::SrtCancelHandle
-pub fn tst_core::cancel::SrtCancelHandle::clone(&self) -> tst_core::cancel::SrtCancelHandle
-impl core::fmt::Debug for tst_core::cancel::SrtCancelHandle
-pub fn tst_core::cancel::SrtCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl tst_core::transport::TransportCancel for tst_core::cancel::SrtCancelHandle
-pub fn tst_core::cancel::SrtCancelHandle::cancel(&self)
-pub fn tst_core::cancel::SrtCancelHandle::is_cancelled(&self) -> bool
-impl core::marker::Freeze for tst_core::cancel::SrtCancelHandle
-impl core::marker::Send for tst_core::cancel::SrtCancelHandle
-impl core::marker::Sync for tst_core::cancel::SrtCancelHandle
-impl core::marker::Unpin for tst_core::cancel::SrtCancelHandle
-impl core::marker::UnsafeUnpin for tst_core::cancel::SrtCancelHandle
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_core::cancel::SrtCancelHandle
-impl !core::panic::unwind_safe::UnwindSafe for tst_core::cancel::SrtCancelHandle
 pub struct tst_core::UasDatalinkLs
 pub tst_core::UasDatalinkLs::active_payloads: core::option::Option<alloc::vec::Vec<u8>>
 pub tst_core::UasDatalinkLs::active_wavelengths: core::option::Option<alloc::vec::Vec<u64>>
@@ -7859,6 +7924,10 @@ pub fn alloc::boxed::Box<T>::socket_stats(&self) -> core::option::Option<tst_cor
 pub trait tst_core::TransportCancel: core::marker::Send + core::marker::Sync
 pub fn tst_core::TransportCancel::cancel(&self)
 pub fn tst_core::TransportCancel::is_cancelled(&self) -> bool
-impl tst_core::transport::TransportCancel for tst_core::cancel::SrtCancelHandle
-pub fn tst_core::cancel::SrtCancelHandle::cancel(&self)
-pub fn tst_core::cancel::SrtCancelHandle::is_cancelled(&self) -> bool
+impl tst_core::transport::TransportCancel for tst_core::cancel::FlagCancel
+pub fn tst_core::cancel::FlagCancel::cancel(&self)
+pub fn tst_core::cancel::FlagCancel::is_cancelled(&self) -> bool
+impl tst_core::transport::TransportCancel for tst_core::cancel::ResourceCancel
+pub fn tst_core::cancel::ResourceCancel::cancel(&self)
+pub fn tst_core::cancel::ResourceCancel::is_cancelled(&self) -> bool
+pub type tst_core::SrtCancelHandle = tst_core::cancel::ResourceCancel

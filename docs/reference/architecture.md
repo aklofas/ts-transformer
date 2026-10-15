@@ -121,7 +121,7 @@ free of any libsrt dependency. `tst-srt` re-exports the safe wrappers
 at the crate root: `Socket` / `Listener` (connected and listening
 sockets), `SocketBuilder` / `ListenerBuilder` (fluent construction over
 `SocketConfig` / `ListenerConfig`), `SrtTransport` (the canonical
-`Transport` + `RecvTransport` impl), `SrtCancelHandle` (one-shot
+`Transport` + `RecvTransport` impl), `ResourceCancel` (one-shot
 pre-emptive close), and `Stats` (live snapshot of libsrt's internal
 counters). The `url::SrtUrl` type parses `srt://host:port?key=value&…`
 into a builder overlay using libsrt's documented option vocabulary,
@@ -286,14 +286,14 @@ everyone. The canonical pairing patterns live in the cookbook's
 [Pairing section](/docs/cookbook/index.md) with runnable example companions
 (`pair_sync_klv.rs`, `tee_disk_and_demux.rs`).
 
-## Cross-thread shutdown — `SrtCancelHandle`
+## Cross-thread shutdown — `ResourceCancel` and `FlagCancel`
 
 Every long-lived pipeline shell exposes
 `cancel_handle() -> Option<Arc<dyn TransportCancel>>` for cross-thread
-cancellation; [`SrtCancelHandle`](./srt-cancel-handle.md) is the SRT
-transport's implementation of that trait (an integer handle plus a closer).
-The other transports implement the same trait with a flag that their
-blocking calls poll. The
+cancellation; [`ResourceCancel`](./srt-cancel-handle.md) is the SRT
+transport's implementation of that trait (an integer handle plus a closer);
+UDP, TCP, RIST, RTP and both RTSP handles use `tst_core::cancel::FlagCancel`,
+a shared flag their blocking calls poll. The
 handle is `Send + Sync`, one-shot, idempotent, and `Clone` — fire it
 from any thread (a signal handler, a lifecycle observer, a parent-process
 watchdog) and the parked `send_*` / `recv_*` on the calling thread
@@ -310,14 +310,14 @@ This is the supported shape for breaking a sync-blocking shell from
 another thread. Shells return the trait-object form
 `Option<Arc<dyn TransportCancel + Send + Sync>>` — pipeline-layer,
 transport-agnostic. The SRT implementation lives in `tst-core`
-(`SrtCancelHandle` wraps an integer handle plus a closer closure — for
+(`ResourceCancel` wraps an integer handle plus a closer closure — for
 SRT, the handle is the `SRTSOCKET` and the closer is `srt_close`) and
-is re-exported as `tst_pipeline::SrtCancelHandle` (and as
-`tst_srt::SrtCancelHandle`) so binding authors have a single import path.
+is re-exported as `tst_pipeline::ResourceCancel` (and as
+`tst_srt::ResourceCancel`) so binding authors have a single import path.
 The Rust API stays synchronous-blocking; the cancel handle is the
 supported escape hatch for "wake the parked syscall now" without
 time-sliced polling. (When async lands later as a separate crate,
-`SrtCancelHandle` remains the sync-blocking primitive — see
+`ResourceCancel` remains the sync-blocking primitive — see
 **Sync vs. async** below.)
 
 See [`srt-cancel-handle.md`](./srt-cancel-handle.md) for the full pattern,

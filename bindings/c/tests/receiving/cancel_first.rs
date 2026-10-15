@@ -49,7 +49,7 @@ pub(crate) fn port() -> u16 {
 pub(crate) struct PeerListener {
     pub(crate) port: u16,
     hold: Option<mpsc::Sender<()>>,
-    cancel: tst_srt::SrtCancelHandle,
+    cancel: tst_srt::ResourceCancel,
     thread: Option<thread::JoinHandle<()>>,
 }
 

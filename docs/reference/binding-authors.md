@@ -186,7 +186,7 @@ above).
 
 Every long-lived shell exposes `cancel_handle()` returning
 `Option<Arc<dyn TransportCancel + Send + Sync>>`, and since 0.7.0 it is
-`Some` on **every** transport: SRT (`SrtCancelHandle`), RTP
+`Some` on **every** transport: SRT (`ResourceCancel`), RTP
 (`RtpCancelHandle`), TCP (`TcpCancelHandle`), UDP (`UdpCancelHandle`) and
 RIST (`RistCancelHandle`). The `Option` survives only for pure in-memory
 test mocks; a binding never has to handle `None` for a real transport —

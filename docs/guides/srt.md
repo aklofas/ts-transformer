@@ -7,7 +7,7 @@
 > - How `Socket`, `Listener`, and `SocketBuilder` compose
 > - How to enable AES encryption with a passphrase
 > - The full set of supported SRT URL query parameters
-> - How `SrtCancelHandle` lets you cancel blocking I/O from another thread
+> - How `ResourceCancel` lets you cancel blocking I/O from another thread
 > - How `ManagedTransport` wraps a Socket for automatic reconnect
 > - Why `SrtTransport` implements both `Transport` and `RecvTransport` —
 >   sender vs. receiver is a preset choice, not a type choice
@@ -520,7 +520,7 @@ sync-vs-async section in [reference/architecture.md](/docs/reference/architectur
 ## Cancelling a blocked call
 
 `Socket::cancel_handle()` and `Listener::cancel_handle()` return a
-clone-able `SrtCancelHandle` (`Send + Sync`, idempotent). Calling
+clone-able `ResourceCancel` (`Send + Sync`, idempotent). Calling
 `cancel()` from any thread closes the underlying SRT socket: a thread
 parked in `send` / `recv` wakes with a connection error, and a parked
 `accept()` returns. Once the socket is wrapped in `SrtTransport`, the same

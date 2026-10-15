@@ -1,5 +1,5 @@
 //! Live-socket validation that `MuxSender::close()` (and the underlying
-//! `SrtCancelHandle`) wakes a peer thread parked inside libsrt's
+//! `ResourceCancel`) wakes a peer thread parked inside libsrt's
 //! `srt_sendmsg2`.
 //!
 //! We engineer a deterministic park by:

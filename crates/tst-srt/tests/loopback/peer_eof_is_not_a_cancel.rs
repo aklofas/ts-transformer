@@ -1,4 +1,4 @@
-//! A peer disconnect must NOT latch `SrtCancelHandle::is_cancelled()`.
+//! A peer disconnect must NOT latch `ResourceCancel::is_cancelled()`.
 //!
 //! The closer behind the handle also runs on the OWNER's teardown:
 //! `Socket::drop` fires the handle, and `SrtTransport` drops its
@@ -15,7 +15,7 @@
 //! one-kind shift in Python and the JVM. Four `tst-c` receiving tests pin
 //! it.
 //!
-//! So the two are split: `SrtCancelHandle::cancel()` (the caller path)
+//! So the two are split: `ResourceCancel::cancel()` (the caller path)
 //! latches; `close_without_cancel()` (owner teardown: both `Drop` impls)
 //! closes and wakes without latching.
 

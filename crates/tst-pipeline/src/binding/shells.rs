@@ -119,11 +119,12 @@ mod tests {
 
     use tst_core::transport::{TransportCancel, TransportError};
 
-    use crate::binding::{FlagCancel, Owned};
+    use crate::binding::Owned;
     use crate::{
         DemuxReceiver, ManagedDemuxReceiver, MuxSender, RawReceiver, RawSender, ReceiverConfig,
         SenderConfig,
     };
+    use tst_core::cancel::FlagCancel;
 
     /// Send-side mock that records its close.
     struct Sink(Arc<AtomicBool>);

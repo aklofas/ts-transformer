@@ -27,7 +27,7 @@ use crate::url::UdpUrl;
 /// shape as `TcpCancelHandle` and `RtpCancelHandle`:
 ///
 /// - a parked `recv_bytes` observes the flag at its next poll tick (≤ ~100 ms,
-///   `tst_core::net::udp_socket::CANCEL_POLL_INTERVAL`) and returns
+///   `tst_core::cancel::CANCEL_POLL_INTERVAL`) and returns
 ///   `ExplicitClose`;
 /// - calls started after `cancel()` return `ExplicitClose` on their entry
 ///   check (a UDP `send_bytes` never parks — `send_to` on a datagram socket
@@ -41,48 +41,7 @@ use crate::url::UdpUrl;
 /// `close()` is a different signal: post-close calls return
 /// [`TransportError::Closed`], and a handle obtained earlier does **not**
 /// read `is_cancelled()` after a plain close.
-///
-/// `UdpCancelHandle` is `Clone + Send + Sync`; multiple holders can race
-/// `cancel()` safely (the flag is an `Arc<AtomicBool>`, idempotent).
-#[derive(Clone, Debug)]
-pub struct UdpCancelHandle {
-    /// The cancel latch proper, SEPARATE from the transport's `alive` flag.
-    ///
-    /// `alive` is a liveness flag — `close()` and a latched `Broken` both
-    /// clear it — so `!alive` cannot answer "did the caller cancel?". The
-    /// bindings relabel a caller-initiated end from exactly that answer, so
-    /// reading `!alive` here would turn every broken UDP receive into a
-    /// `CLOSED` outcome instead of a broken one.
-    cancelled: Arc<AtomicBool>,
-}
-
-impl UdpCancelHandle {
-    /// Build a handle over a shared flag — used by [`UdpTransport::cancel_handle`]
-    /// and [`crate::recv::UdpRecvTransport::cancel_handle`].
-    pub(crate) fn from_flag(cancelled: Arc<AtomicBool>) -> Self {
-        Self { cancelled }
-    }
-
-    /// Signal cancellation. Idempotent — repeated calls are a no-op.
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-    }
-
-    /// `true` once [`Self::cancel`] has been called on any clone of this handle.
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
-    }
-}
-
-impl TransportCancel for UdpCancelHandle {
-    fn cancel(&self) {
-        UdpCancelHandle::cancel(self)
-    }
-
-    fn is_cancelled(&self) -> bool {
-        UdpCancelHandle::is_cancelled(self)
-    }
-}
+pub type UdpCancelHandle = tst_core::cancel::FlagCancel;
 
 /// UDP sender.
 ///
@@ -108,7 +67,7 @@ pub struct UdpTransport {
     /// Set by [`UdpCancelHandle::cancel`]; checked at `send_bytes` entry
     /// BEFORE `alive`, so a cancelled transport reports `ExplicitClose`
     /// rather than `Closed` (one cancel outcome).
-    cancelled: Arc<AtomicBool>,
+    cancel: UdpCancelHandle,
 }
 
 impl UdpTransport {
@@ -167,7 +126,7 @@ impl UdpTransport {
             peer,
             stats: UdpStats::default(),
             alive: Arc::new(AtomicBool::new(true)),
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancel: UdpCancelHandle::new(),
         })
     }
 
@@ -187,7 +146,7 @@ impl UdpTransport {
     /// [`Transport::cancel_handle`] hands back the same flag boxed as
     /// `Arc<dyn TransportCancel>`.
     pub fn cancel_handle(&self) -> UdpCancelHandle {
-        UdpCancelHandle::from_flag(self.cancelled.clone())
+        self.cancel.clone()
     }
 }
 
@@ -205,7 +164,7 @@ impl Transport for UdpTransport {
     fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
         // Cancel wins over close: a caller who fired the handle sees the
         // cancel outcome even if a close() raced in afterwards.
-        if self.cancelled.load(Ordering::Acquire) {
+        if self.cancel.is_cancelled() {
             return Err(TransportError::ExplicitClose);
         }
         if !self.alive.load(Ordering::Acquire) {
@@ -256,7 +215,7 @@ impl Transport for UdpTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.alive.load(Ordering::Acquire) && !self.cancelled.load(Ordering::Acquire)
+        self.alive.load(Ordering::Acquire) && !self.cancel.is_cancelled()
     }
 
     fn close(&mut self) {

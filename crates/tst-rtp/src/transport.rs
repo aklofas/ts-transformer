@@ -12,9 +12,10 @@ use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use tst_core::cancel::CANCEL_POLL_INTERVAL;
 use tst_core::net::udp_socket::{
-    CANCEL_POLL_INTERVAL, apply_multicast_recv_join, apply_multicast_send_knobs,
-    bind_udp_socket_multicast, set_socket_buffers,
+    apply_multicast_recv_join, apply_multicast_send_knobs, bind_udp_socket_multicast,
+    set_socket_buffers,
 };
 use tst_core::transport::{
     BrokenCause, RecvTransport, SocketStats, Transport, TransportCancel, TransportError,

@@ -1,6 +1,7 @@
 pub mod tst_pipeline
 pub use tst_pipeline::BrokenCause
 pub use tst_pipeline::RecvTransport
+pub use tst_pipeline::ResourceCancel
 pub use tst_pipeline::SrtCancelHandle
 pub use tst_pipeline::Transport
 pub use tst_pipeline::TransportCancel
@@ -250,24 +251,6 @@ impl core::marker::Unpin for tst_pipeline::binding::owned::HandleState
 impl core::marker::UnsafeUnpin for tst_pipeline::binding::owned::HandleState
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::HandleState
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::HandleState
-pub struct tst_pipeline::binding::owned::FlagCancel(_)
-impl tst_pipeline::binding::owned::FlagCancel
-pub fn tst_pipeline::binding::owned::FlagCancel::is_set(&self) -> bool
-pub fn tst_pipeline::binding::owned::FlagCancel::new() -> Self
-impl core::default::Default for tst_pipeline::binding::owned::FlagCancel
-pub fn tst_pipeline::binding::owned::FlagCancel::default() -> tst_pipeline::binding::owned::FlagCancel
-impl core::fmt::Debug for tst_pipeline::binding::owned::FlagCancel
-pub fn tst_pipeline::binding::owned::FlagCancel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl tst_core::transport::TransportCancel for tst_pipeline::binding::owned::FlagCancel
-pub fn tst_pipeline::binding::owned::FlagCancel::cancel(&self)
-pub fn tst_pipeline::binding::owned::FlagCancel::is_cancelled(&self) -> bool
-impl !core::marker::Freeze for tst_pipeline::binding::owned::FlagCancel
-impl core::marker::Send for tst_pipeline::binding::owned::FlagCancel
-impl core::marker::Sync for tst_pipeline::binding::owned::FlagCancel
-impl core::marker::Unpin for tst_pipeline::binding::owned::FlagCancel
-impl core::marker::UnsafeUnpin for tst_pipeline::binding::owned::FlagCancel
-impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::FlagCancel
-impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::FlagCancel
 pub struct tst_pipeline::binding::owned::Owned<T, S>
 impl<T, S> tst_pipeline::binding::owned::Owned<T, S>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel(&self)
@@ -565,24 +548,6 @@ impl core::marker::Unpin for tst_pipeline::binding::kind::BindingError
 impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::BindingError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::BindingError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::BindingError
-pub struct tst_pipeline::binding::FlagCancel(_)
-impl tst_pipeline::binding::owned::FlagCancel
-pub fn tst_pipeline::binding::owned::FlagCancel::is_set(&self) -> bool
-pub fn tst_pipeline::binding::owned::FlagCancel::new() -> Self
-impl core::default::Default for tst_pipeline::binding::owned::FlagCancel
-pub fn tst_pipeline::binding::owned::FlagCancel::default() -> tst_pipeline::binding::owned::FlagCancel
-impl core::fmt::Debug for tst_pipeline::binding::owned::FlagCancel
-pub fn tst_pipeline::binding::owned::FlagCancel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl tst_core::transport::TransportCancel for tst_pipeline::binding::owned::FlagCancel
-pub fn tst_pipeline::binding::owned::FlagCancel::cancel(&self)
-pub fn tst_pipeline::binding::owned::FlagCancel::is_cancelled(&self) -> bool
-impl !core::marker::Freeze for tst_pipeline::binding::owned::FlagCancel
-impl core::marker::Send for tst_pipeline::binding::owned::FlagCancel
-impl core::marker::Sync for tst_pipeline::binding::owned::FlagCancel
-impl core::marker::Unpin for tst_pipeline::binding::owned::FlagCancel
-impl core::marker::UnsafeUnpin for tst_pipeline::binding::owned::FlagCancel
-impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::FlagCancel
-impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::FlagCancel
 pub struct tst_pipeline::binding::ManagedHandles
 pub tst_pipeline::binding::ManagedHandles::attempts: alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub tst_pipeline::binding::ManagedHandles::cancel: alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
@@ -950,8 +915,8 @@ impl core::marker::UnsafeUnpin for tst_pipeline::ext::pairing::PairingDemuxerCon
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::ext::pairing::PairingDemuxerConfig
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::ext::pairing::PairingDemuxerConfig
 pub struct tst_pipeline::ext::pairing::VideoSample
-pub tst_pipeline::ext::pairing::VideoSample::av1_carriage: core::option::Option<tst_core::mpegts::mux::types::Av1CarriageMode>
-pub tst_pipeline::ext::pairing::VideoSample::codec: tst_core::mpegts::demux::event::VideoCodec
+pub tst_pipeline::ext::pairing::VideoSample::av1_carriage: core::option::Option<tst_core::mpegts::common::Av1CarriageMode>
+pub tst_pipeline::ext::pairing::VideoSample::codec: tst_core::codec::vocabulary::VideoCodec
 pub tst_pipeline::ext::pairing::VideoSample::dts: core::option::Option<tst_core::mpegts::common::Pts90khz>
 pub tst_pipeline::ext::pairing::VideoSample::pts: tst_core::mpegts::common::Pts90khz
 pub tst_pipeline::ext::pairing::VideoSample::random_access_indicator: bool

@@ -31,7 +31,7 @@ const SRT_INVALID_SOCK: srt_sys::SRTSOCKET = -1;
 /// 1. **Drop** — the [`Drop`] impl calls
 ///    `cancel.close_without_cancel()`, which fires `srt_close(fd)` exactly
 ///    once (idempotent with `close()`) but does NOT latch
-///    `SrtCancelHandle::is_cancelled()`: Drop also runs on every transport
+///    `ResourceCancel::is_cancelled()`: Drop also runs on every transport
 ///    error path that retires a dead socket, and a peer disconnect must not
 ///    read as a caller cancel. Bounded by `SRTO_LINGER` (libsrt default off,
 ///    sender preset 5 s, configurable via `SocketBuilder::linger` before construction).
@@ -40,7 +40,7 @@ const SRT_INVALID_SOCK: srt_sys::SRTSOCKET = -1;
 ///    it. Always returns `Ok(())` (the inner `srt_close` rc is currently
 ///    swallowed; see method doc).
 /// 3. **Cross-thread cancel** — call [`Self::cancel_handle`] to obtain a
-///    [`tst_core::SrtCancelHandle`] (clone-able, `Send + Sync`), then
+///    [`tst_core::ResourceCancel`] (clone-able, `Send + Sync`), then
 ///    `cancel()` from any thread. Closes the libsrt socket; a peer
 ///    parked in `send` / `recv` returns
 ///    [`SendError::ConnectionBroken`] / [`RecvError::ConnectionBroken`]
@@ -65,7 +65,7 @@ pub struct Socket {
     /// Drop calls `cancel.close_without_cancel()` so explicit `close()` and
     /// Drop never double-close — and so Drop does not latch the
     /// caller-visible `is_cancelled()` (see the type docs).
-    cancel: tst_core::SrtCancelHandle,
+    cancel: tst_core::ResourceCancel,
     /// Cached at construction; libsrt allows reading via getsockflag, but
     /// reading once is cheaper.
     cached_stream_id: Option<String>,
@@ -435,7 +435,7 @@ impl Socket {
     /// in `send`/`recv` on a clone of this socket's `cancel_handle()`
     /// observes `SendError::ConnectionBroken` / `RecvError::ConnectionBroken`.
     pub fn close(self) {
-        // SrtCancelHandle::cancel does the srt_close and is idempotent.
+        // ResourceCancel::cancel does the srt_close and is idempotent.
         self.cancel.cancel();
     }
 
@@ -454,7 +454,7 @@ impl Socket {
     /// `Socket` values past a cancel should treat any post-cancel `&self`
     /// results as advisory. No memory unsafety results; libsrt validates
     /// handles internally.
-    pub fn cancel_handle(&self) -> tst_core::SrtCancelHandle {
+    pub fn cancel_handle(&self) -> tst_core::ResourceCancel {
         self.cancel.clone()
     }
 }
@@ -1036,9 +1036,9 @@ fn refused_connect() -> ConnectError {
     }
 }
 
-/// Build a SrtCancelHandle that closes the SRTSOCKET on first cancel, and
+/// Build a ResourceCancel that closes the SRTSOCKET on first cancel, and
 /// make the socket reachable by the process-exit guard until then.
-pub(crate) fn make_cancel_handle(handle: srt_sys::SRTSOCKET) -> tst_core::SrtCancelHandle {
+pub(crate) fn make_cancel_handle(handle: srt_sys::SRTSOCKET) -> tst_core::ResourceCancel {
     crate::exit_guard::tracked_cancel_handle(handle)
 }
 
@@ -1397,13 +1397,13 @@ mod tests {
     /// already ran).
     #[test]
     fn double_close_via_cancel_then_drop_is_safe() {
-        // We construct a SrtCancelHandle by hand around a fake handle with a
+        // We construct a ResourceCancel by hand around a fake handle with a
         // closer that records the call count, mirroring what Socket holds.
         use std::sync::atomic::{AtomicU32, Ordering};
-        use tst_core::SrtCancelHandle;
+        use tst_core::ResourceCancel;
         let calls = std::sync::Arc::new(AtomicU32::new(0));
         let calls_cl = calls.clone();
-        let cancel = SrtCancelHandle::new(99, move |_| {
+        let cancel = ResourceCancel::new(99, move |_| {
             calls_cl.fetch_add(1, Ordering::SeqCst);
         });
         // Cancel once (simulates Socket::close).

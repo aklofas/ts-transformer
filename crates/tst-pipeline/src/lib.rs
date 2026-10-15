@@ -153,6 +153,8 @@ pub use tst_core::transport::{
 
 // Re-exported so binding authors have one import path; defined in tst-core
 // for layering.
+pub use tst_core::ResourceCancel;
+#[allow(deprecated)]
 pub use tst_core::SrtCancelHandle;
 
 // The crate README is rendered by crates.io and GitHub, which do not

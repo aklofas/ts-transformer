@@ -80,7 +80,7 @@ impl core::marker::UnsafeUnpin for tst_rtp::builder::RtspServerBuilder
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::builder::RtspServerBuilder
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::builder::RtspServerBuilder
 pub mod tst_rtp::cancel
-pub struct tst_rtp::cancel::RtpCancelHandle
+pub struct tst_rtp::cancel::RtpCancelHandle(_)
 impl tst_rtp::cancel::RtpCancelHandle
 pub fn tst_rtp::cancel::RtpCancelHandle::cancel(&self)
 pub fn tst_rtp::cancel::RtpCancelHandle::is_cancelled(&self) -> bool
@@ -92,30 +92,14 @@ pub fn tst_rtp::cancel::RtpCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_
 impl tst_core::transport::TransportCancel for tst_rtp::cancel::RtpCancelHandle
 pub fn tst_rtp::cancel::RtpCancelHandle::cancel(&self)
 pub fn tst_rtp::cancel::RtpCancelHandle::is_cancelled(&self) -> bool
-impl !core::marker::Freeze for tst_rtp::cancel::RtpCancelHandle
+impl core::marker::Freeze for tst_rtp::cancel::RtpCancelHandle
 impl core::marker::Send for tst_rtp::cancel::RtpCancelHandle
 impl core::marker::Sync for tst_rtp::cancel::RtpCancelHandle
 impl core::marker::Unpin for tst_rtp::cancel::RtpCancelHandle
 impl core::marker::UnsafeUnpin for tst_rtp::cancel::RtpCancelHandle
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::cancel::RtpCancelHandle
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::cancel::RtpCancelHandle
-pub struct tst_rtp::cancel::RtspServerCancelHandle
-impl tst_rtp::cancel::RtspServerCancelHandle
-pub fn tst_rtp::cancel::RtspServerCancelHandle::cancel(&self)
-pub fn tst_rtp::cancel::RtspServerCancelHandle::is_cancelled(&self) -> bool
-impl core::clone::Clone for tst_rtp::cancel::RtspServerCancelHandle
-pub fn tst_rtp::cancel::RtspServerCancelHandle::clone(&self) -> tst_rtp::cancel::RtspServerCancelHandle
-impl core::default::Default for tst_rtp::cancel::RtspServerCancelHandle
-pub fn tst_rtp::cancel::RtspServerCancelHandle::default() -> Self
-impl core::fmt::Debug for tst_rtp::cancel::RtspServerCancelHandle
-pub fn tst_rtp::cancel::RtspServerCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_rtp::cancel::RtspServerCancelHandle
-impl core::marker::Send for tst_rtp::cancel::RtspServerCancelHandle
-impl core::marker::Sync for tst_rtp::cancel::RtspServerCancelHandle
-impl core::marker::Unpin for tst_rtp::cancel::RtspServerCancelHandle
-impl core::marker::UnsafeUnpin for tst_rtp::cancel::RtspServerCancelHandle
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::cancel::RtspServerCancelHandle
-impl core::panic::unwind_safe::UnwindSafe for tst_rtp::cancel::RtspServerCancelHandle
+pub type tst_rtp::cancel::RtspServerCancelHandle = tst_core::cancel::FlagCancel
 pub mod tst_rtp::error
 #[non_exhaustive] pub enum tst_rtp::error::MountError
 pub tst_rtp::error::MountError::Closed
@@ -827,19 +811,6 @@ impl core::marker::Unpin for tst_rtp::rtsp::client::transport_negotiation::RtspT
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::transport_negotiation::RtspTransportKind
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::transport_negotiation::RtspTransportKind
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::transport_negotiation::RtspTransportKind
-pub struct tst_rtp::rtsp::client::RtspCancelHandle
-impl tst_rtp::rtsp::client::RtspCancelHandle
-pub fn tst_rtp::rtsp::client::RtspCancelHandle::cancel(&self)
-pub fn tst_rtp::rtsp::client::RtspCancelHandle::is_cancelled(&self) -> bool
-impl core::clone::Clone for tst_rtp::rtsp::client::RtspCancelHandle
-pub fn tst_rtp::rtsp::client::RtspCancelHandle::clone(&self) -> tst_rtp::rtsp::client::RtspCancelHandle
-impl core::marker::Freeze for tst_rtp::rtsp::client::RtspCancelHandle
-impl core::marker::Send for tst_rtp::rtsp::client::RtspCancelHandle
-impl core::marker::Sync for tst_rtp::rtsp::client::RtspCancelHandle
-impl core::marker::Unpin for tst_rtp::rtsp::client::RtspCancelHandle
-impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::RtspCancelHandle
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::RtspCancelHandle
-impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::RtspCancelHandle
 pub struct tst_rtp::rtsp::client::RtspClient
 impl tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::cancel_handle(&self) -> tst_rtp::rtsp::client::RtspCancelHandle
@@ -870,6 +841,7 @@ impl core::marker::Unpin for tst_rtp::rtsp::client::RtspClient
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::RtspClient
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::RtspClient
 impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::RtspClient
+pub type tst_rtp::rtsp::client::RtspCancelHandle = tst_core::cancel::FlagCancel
 pub mod tst_rtp::rtsp::server
 pub mod tst_rtp::rtsp::server::auth
 pub mod tst_rtp::rtsp::server::fanout
@@ -2201,7 +2173,7 @@ impl core::marker::Unpin for tst_rtp::rtcp::stats::RtcpStats
 impl core::marker::UnsafeUnpin for tst_rtp::rtcp::stats::RtcpStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtcp::stats::RtcpStats
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtcp::stats::RtcpStats
-pub struct tst_rtp::RtpCancelHandle
+pub struct tst_rtp::RtpCancelHandle(_)
 impl tst_rtp::cancel::RtpCancelHandle
 pub fn tst_rtp::cancel::RtpCancelHandle::cancel(&self)
 pub fn tst_rtp::cancel::RtpCancelHandle::is_cancelled(&self) -> bool
@@ -2213,7 +2185,7 @@ pub fn tst_rtp::cancel::RtpCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_
 impl tst_core::transport::TransportCancel for tst_rtp::cancel::RtpCancelHandle
 pub fn tst_rtp::cancel::RtpCancelHandle::cancel(&self)
 pub fn tst_rtp::cancel::RtpCancelHandle::is_cancelled(&self) -> bool
-impl !core::marker::Freeze for tst_rtp::cancel::RtpCancelHandle
+impl core::marker::Freeze for tst_rtp::cancel::RtpCancelHandle
 impl core::marker::Send for tst_rtp::cancel::RtpCancelHandle
 impl core::marker::Sync for tst_rtp::cancel::RtpCancelHandle
 impl core::marker::Unpin for tst_rtp::cancel::RtpCancelHandle
@@ -2396,19 +2368,6 @@ impl core::marker::Unpin for tst_rtp::url::RtpUrl
 impl core::marker::UnsafeUnpin for tst_rtp::url::RtpUrl
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::url::RtpUrl
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::url::RtpUrl
-pub struct tst_rtp::RtspCancelHandle
-impl tst_rtp::rtsp::client::RtspCancelHandle
-pub fn tst_rtp::rtsp::client::RtspCancelHandle::cancel(&self)
-pub fn tst_rtp::rtsp::client::RtspCancelHandle::is_cancelled(&self) -> bool
-impl core::clone::Clone for tst_rtp::rtsp::client::RtspCancelHandle
-pub fn tst_rtp::rtsp::client::RtspCancelHandle::clone(&self) -> tst_rtp::rtsp::client::RtspCancelHandle
-impl core::marker::Freeze for tst_rtp::rtsp::client::RtspCancelHandle
-impl core::marker::Send for tst_rtp::rtsp::client::RtspCancelHandle
-impl core::marker::Sync for tst_rtp::rtsp::client::RtspCancelHandle
-impl core::marker::Unpin for tst_rtp::rtsp::client::RtspCancelHandle
-impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::RtspCancelHandle
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::RtspCancelHandle
-impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::RtspCancelHandle
 pub struct tst_rtp::RtspClient
 impl tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::cancel_handle(&self) -> tst_rtp::rtsp::client::RtspCancelHandle
@@ -2505,23 +2464,6 @@ impl core::marker::Unpin for tst_rtp::builder::RtspServerBuilder
 impl core::marker::UnsafeUnpin for tst_rtp::builder::RtspServerBuilder
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::builder::RtspServerBuilder
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::builder::RtspServerBuilder
-pub struct tst_rtp::RtspServerCancelHandle
-impl tst_rtp::cancel::RtspServerCancelHandle
-pub fn tst_rtp::cancel::RtspServerCancelHandle::cancel(&self)
-pub fn tst_rtp::cancel::RtspServerCancelHandle::is_cancelled(&self) -> bool
-impl core::clone::Clone for tst_rtp::cancel::RtspServerCancelHandle
-pub fn tst_rtp::cancel::RtspServerCancelHandle::clone(&self) -> tst_rtp::cancel::RtspServerCancelHandle
-impl core::default::Default for tst_rtp::cancel::RtspServerCancelHandle
-pub fn tst_rtp::cancel::RtspServerCancelHandle::default() -> Self
-impl core::fmt::Debug for tst_rtp::cancel::RtspServerCancelHandle
-pub fn tst_rtp::cancel::RtspServerCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_rtp::cancel::RtspServerCancelHandle
-impl core::marker::Send for tst_rtp::cancel::RtspServerCancelHandle
-impl core::marker::Sync for tst_rtp::cancel::RtspServerCancelHandle
-impl core::marker::Unpin for tst_rtp::cancel::RtspServerCancelHandle
-impl core::marker::UnsafeUnpin for tst_rtp::cancel::RtspServerCancelHandle
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::cancel::RtspServerCancelHandle
-impl core::panic::unwind_safe::UnwindSafe for tst_rtp::cancel::RtspServerCancelHandle
 pub struct tst_rtp::RtspSession
 impl tst_rtp::rtsp::client::session::RtspSession
 pub fn tst_rtp::rtsp::client::session::RtspSession::into_h264_receiver(self, tst_rtp::h264::depacketizer::H264DepayConfig) -> tst_rtp::h264::receiver::H264Receiver
@@ -2700,3 +2642,5 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::end_reas
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
 pub const tst_rtp::DEFAULT_PKT_SIZE: usize
 pub const tst_rtp::RTP_HEADER_LEN: usize
+pub type tst_rtp::RtspCancelHandle = tst_core::cancel::FlagCancel
+pub type tst_rtp::RtspServerCancelHandle = tst_core::cancel::FlagCancel

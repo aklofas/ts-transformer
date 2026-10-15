@@ -6,7 +6,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tst_core::net::udp_socket::ACCEPT_POLL_INTERVAL;
+use tst_core::cancel::{ACCEPT_POLL_INTERVAL, FlagCancel};
 
 use crate::config::SocketConfig;
 use crate::error::TcpError;
@@ -35,7 +35,7 @@ pub struct TcpListener {
     alive: Arc<AtomicBool>,
     /// Set only by [`TcpCancelHandle::cancel`] / [`Self::close`] — the cancel
     /// latch the handle reports, kept apart from `alive`.
-    cancelled: Arc<AtomicBool>,
+    cancel: FlagCancel,
     #[cfg(feature = "tls")]
     tls_config: Option<Arc<rustls::ServerConfig>>,
 }
@@ -53,7 +53,7 @@ impl TcpListener {
             inner,
             config: SocketConfig::default(),
             alive: Arc::new(AtomicBool::new(true)),
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancel: FlagCancel::new(),
             #[cfg(feature = "tls")]
             tls_config: None,
         })
@@ -201,7 +201,7 @@ impl TcpListener {
     /// another thread. Obtain it BEFORE moving the listener into the accept
     /// thread. See [`TcpCancelHandle`] for the cooperative-cancel contract.
     pub fn cancel_handle(&self) -> TcpCancelHandle {
-        TcpCancelHandle::from_flags(self.alive.clone(), self.cancelled.clone())
+        TcpCancelHandle::from_flags(self.alive.clone(), self.cancel.clone())
     }
 
     /// Close the listener from any thread: a parked `accept_blocking` returns
@@ -215,7 +215,7 @@ impl TcpListener {
         // caller asking it to stop, so close() latches the cancel flag too
         // (matching `TcpCancelHandle::cancel`, which is the same operation
         // reached from another thread).
-        self.cancelled.store(true, Ordering::Release);
+        self.cancel.cancel();
         self.alive.store(false, Ordering::Release);
     }
 }

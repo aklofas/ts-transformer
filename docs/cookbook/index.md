@@ -84,7 +84,7 @@ Receiving a stream and want video + telemetry as one record? This is the section
 
 - **[Survive a flaky transport with reconnect + gap buffer](/docs/cookbook/operations/managed-transport-reconnect.md)** — Radio links, NAT timeouts, listener restarts.
 - **[Print live `Stats` from a sender](/docs/cookbook/operations/print-live-stats.md)** — Dashboards, production telemetry, field packet-loss debugging.
-- **[Graceful shutdown from another thread via `SrtCancelHandle`](/docs/cookbook/operations/graceful-shutdown.md)** — Wake a thread parked in `send_*` / `recv_*` from a signal handler or watchdog.
+- **[Graceful shutdown from another thread via `ResourceCancel`](/docs/cookbook/operations/graceful-shutdown.md)** — Wake a thread parked in `send_*` / `recv_*` from a signal handler or watchdog.
 - **[Inject WebVTT POI cues into a live MPEG-TS uplink](/docs/cookbook/operations/inject-webvtt-cues.md)** — Mark Points of Interest so a downstream HLS player renders captions.
 - **[Capture a regression fixture from a corpus `.ts` file](/docs/cookbook/operations/capture-regression-fixture.md)** — Preserve a minimal reproducer as a committed regression test.
 

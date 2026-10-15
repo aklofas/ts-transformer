@@ -96,12 +96,12 @@ fn managed_demux_receiver_end_reason_reconnect_stats_and_unwrap_config() {
     /// Tears the peer thread down on EVERY exit path, including an
     /// assertion panic mid-test: drop the done-sender (the peer's
     /// `recv_timeout` returns at once), cancel the listener (wakes a
-    /// parked `accept()` — `SrtCancelHandle` has no Drop of its own),
+    /// parked `accept()` — `ResourceCancel` has no Drop of its own),
     /// then join. Without this, unwinding would skip the teardown and
     /// leak a thread parked in `srt_accept`. Bounded: the peer body is.
     struct PeerGuard {
         done: Option<mpsc::Sender<()>>,
-        cancel: tst_srt::SrtCancelHandle,
+        cancel: tst_srt::ResourceCancel,
         thread: Option<thread::JoinHandle<()>>,
     }
 
