@@ -46,7 +46,7 @@ const KLV_PID: u16 = 0x1031;
 /// length = 1 + 1 payload byte). The reassembler does not care about
 /// the inner shape; the muxer's auto-wrap path doesn't validate inner
 /// bytes either. Any non-empty slice works.
-fn synthetic_klv_ls() -> Vec<u8> {
+fn one_byte_klv_ls() -> Vec<u8> {
     let mut v = Vec::new();
     v.extend_from_slice(&[
         0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
@@ -75,7 +75,7 @@ fn pump_video(mux: &mut Muxer, frame_count: usize, base_pts_ticks: i64) {
 fn single_complete_cell_emits_sample_with_was_reassembled_false() {
     let mut mux = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux, 5, 90_000);
-    let inner = synthetic_klv_ls();
+    let inner = one_byte_klv_ls();
     mux.push_klv(&inner, Pts90khz::new(90_000), 0x00).unwrap();
     let ts = drain(&mut mux);
 

@@ -8,7 +8,9 @@
 # brace at the signature's indentation (Python: up to the next line at or left
 # of the `def`). A signature that spans several lines contributes its
 # parameter lines to the body, so two helpers match only when their parameter
-# lists match too. Before hashing, each body line loses its leading and
+# lists match too. A multi-line
+# declaration without a body (a trait method) ends at the first `;` line that
+# comes before any `{`, so it never swallows the code after it. Before hashing, each body line loses its leading and
 # trailing whitespace; blank lines and comment-only lines (`//`, and `#` in
 # Python) are dropped, so a copy that only differs in comments is still a
 # copy. The name is not compared. A body needs at least DTH_MIN_LINES (4)
@@ -53,7 +55,14 @@ awk -v min="${DTH_MIN_LINES:-4}" '
   FNR == 1 { flush(); testattr = 0 }
   name != "" && py && /^[ \t]*$/ { next }
   name != "" && py { match($0, /^[ \t]*/); if (RLENGTH <= ind) flush(); else { add($0); next } }
-  name != "" && !py { if ($0 == pad "}") { flush(); next } add($0); next }
+  name != "" && !py {
+    # A multi-line declaration with no body (a trait method) ends at a `;`
+    # line that comes before any `{`.
+    if (!seen && $0 ~ /;[ \t]*$/ && $0 !~ /\{/) { name = ""; next }
+    if ($0 ~ /\{/) seen = 1
+    if ($0 == pad "}") { flush(); next }
+    add($0); next
+  }
   {
     py = (FILENAME ~ /\.py$/)
     if (py && /^[ \t]*(async )?def [A-Za-z0-9_]+\(/) re = "def "
@@ -66,6 +75,7 @@ awk -v min="${DTH_MIN_LINES:-4}" '
       next
     }
     skip = testattr; testattr = 0
+    seen = ($0 ~ /\{/)
     match($0, /^[ \t]*/); ind = RLENGTH; pad = substr($0, 1, RLENGTH)
     name = $0; sub("^.*" re "([^ (]+ )*", "", name); sub(/[<(].*/, "", name); body = ""; n = 0
     if (py && name ~ /^test_/) skip = 1
