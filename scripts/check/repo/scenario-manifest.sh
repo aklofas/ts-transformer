@@ -9,9 +9,8 @@
 #   5. A `golden` path that does not resolve on disk relative to the manifest dir.
 #
 # Run it:    bash scripts/check/repo/scenario-manifest.sh
-# Self-test: bash scripts/check/repo/scenario-manifest.sh --self-test
 #
-# Overridable (for the self-test):
+# Overridable (scripts/ratchets/tests/self_test.sh points this at fixtures):
 #   SCENARIO_MANIFEST   path to the scenarios.toml file
 set -euo pipefail
 
@@ -32,7 +31,7 @@ run_check() {
   DIR="$(dirname "$SCENARIO_MANIFEST")"
 
   # --- Rule 1: duplicate ids ------------------------------------------------
-  # Match both `id = "foo"` (spaced, real manifest) and `id="foo"` (self-test).
+  # Match both `id = "foo"` (spaced, real manifest) and `id="foo"` (the fixtures).
   # `|| true`: under `set -euo pipefail`, a no-match grep (exit 1) inside this
   # command substitution would otherwise abort the whole script mid-check with
   # no "FAIL:" message. Treat "no ids found" as an empty set and report it
@@ -110,135 +109,7 @@ run_check() {
 }
 
 # ---------------------------------------------------------------------------
-# self_test: build throwaway manifests and assert each negative is caught
-# ---------------------------------------------------------------------------
-self_test() {
-  local tmp; tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
-  local rc
-
-  expect() { # <expected pass|fail> <label>
-    local want="$1" label="$2"
-    if run_check >/dev/null 2>&1; then rc=pass; else rc=fail; fi
-    if [ "$rc" = "$want" ]; then
-      echo "  ok: $label (expected $want)"
-    else
-      echo "  SELF-TEST FAIL: $label expected $want got $rc" >&2
-      return 1
-    fi
-  }
-
-  export SCENARIO_MANIFEST="$tmp/scenarios.toml"
-
-  # Lay down real fixture stubs that the valid manifest will reference.
-  mkdir -p "$tmp/s"
-  : > "$tmp/s/in.ts"
-  printf '{}' > "$tmp/s/g.json"
-
-  # (1) Valid minimal manifest — must pass.
-  cat > "$SCENARIO_MANIFEST" <<'TOML'
-[[scenario]]
-id = "a"
-kind = "demux"
-input = "s/in.ts"
-golden = "s/g.json"
-features = []
-tier = "A"
-schema_version = 0
-TOML
-  expect pass "valid single-scenario manifest" || return 1
-
-  # (2) Duplicate id — must fail.
-  cat > "$SCENARIO_MANIFEST" <<'TOML'
-[[scenario]]
-id = "a"
-kind = "demux"
-input = "s/in.ts"
-golden = "s/g.json"
-features = []
-tier = "A"
-schema_version = 0
-
-[[scenario]]
-id = "a"
-kind = "roundtrip"
-input = "s/in.ts"
-golden = "s/g.json"
-features = []
-tier = "A"
-schema_version = 0
-TOML
-  expect fail "duplicate id" || return 1
-
-  # (3) Unknown kind — must fail.
-  cat > "$SCENARIO_MANIFEST" <<'TOML'
-[[scenario]]
-id = "b"
-kind = "badkind"
-input = "s/in.ts"
-golden = "s/g.json"
-features = []
-tier = "A"
-schema_version = 0
-TOML
-  expect fail "unknown kind" || return 1
-
-  # (4) Unknown feature token — must fail.
-  cat > "$SCENARIO_MANIFEST" <<'TOML'
-[[scenario]]
-id = "c"
-kind = "demux"
-input = "s/in.ts"
-golden = "s/g.json"
-features = ["srt", "quic"]
-tier = "A"
-schema_version = 0
-TOML
-  expect fail "unknown feature token" || return 1
-
-  # (5) Missing input file — must fail.
-  cat > "$SCENARIO_MANIFEST" <<'TOML'
-[[scenario]]
-id = "d"
-kind = "demux"
-input = "s/no-such-input.ts"
-golden = "s/g.json"
-features = []
-tier = "A"
-schema_version = 0
-TOML
-  expect fail "missing input file" || return 1
-
-  # (6) Missing golden file — must fail.
-  cat > "$SCENARIO_MANIFEST" <<'TOML'
-[[scenario]]
-id = "e"
-kind = "demux"
-input = "s/in.ts"
-golden = "s/no-such-golden.json"
-features = []
-tier = "A"
-schema_version = 0
-TOML
-  expect fail "missing golden file" || return 1
-
-  # (7) Empty / no-id manifest — must fail CLEANLY (not abort the script under
-  # `set -euo pipefail` when the id grep finds no matches).
-  printf '# manifest with no scenarios\n' > "$SCENARIO_MANIFEST"
-  expect fail "manifest with no scenario ids" || return 1
-
-  echo "self-test: PASS"
-}
-
-# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
-if [ "${1:-}" = "--self-test" ]; then
-  self_test
-else
-  # Prove the checker still catches its negatives before trusting a pass.
-  # Subshell so the self-test's SCENARIO_MANIFEST override can't leak into run_check.
-  ( self_test ) >/dev/null
-  run_check
-  echo "scenario-manifest: OK"
-fi
+run_check
+echo "scenario-manifest: OK"

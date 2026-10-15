@@ -17,9 +17,8 @@
 #                                                        (promotion alarm)
 #
 # Run it:    bash scripts/check/repo/platform-capabilities.sh
-# Self-test: bash scripts/check/repo/platform-capabilities.sh --self-test
 #
-# Overridable env vars (used by the self-test to point at a temp tree):
+# Overridable env vars (scripts/ratchets/tests/self_test.sh points them at a temp tree):
 #   PLATCAP_FILE      path to the manifest TOML
 #   PLATCAP_SCAN_DIRS space-separated dirs scanned for platform cfg-gates
 #   PLATCAP_ROOT      root used for $ROOT-relative path stripping in the
@@ -34,7 +33,7 @@ TODAY="$(date +%F)"
 
 # Emit one manifest-relative path per test file carrying a top-level platform
 # cfg-gate. Strips the PLATCAP_ROOT (default: $ROOT) prefix so paths match the
-# manifest `file` field values. Evaluated at call time so the self-test can
+# manifest `file` field values. Evaluated at call time so the fixtures can
 # override PLATCAP_ROOT after the script loads.
 enumerate_gated_files() {
   local strip_root d
@@ -166,65 +165,5 @@ EOF
   return "$fail"
 }
 
-self_test() {
-  local tmp; tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
-
-  mkdir -p "$tmp/crates/demo/tests"
-  printf '#![cfg(not(target_os = "windows"))]\n#[test]\nfn a(){}\n' \
-    > "$tmp/crates/demo/tests/g.rs"
-
-  # Point all three overrides at the temp tree so enumerate_gated_files strips
-  # $tmp as the root prefix and every file reference resolves inside $tmp.
-  export PLATCAP_SCAN_DIRS="$tmp/crates"
-  export PLATCAP_FILE="$tmp/m.toml"
-  export PLATCAP_ROOT="$tmp"
-
-  local rc
-  expect() { # <expected pass|fail> <label>
-    local want="$1" label="$2"
-    if run_check >/dev/null 2>&1; then rc=pass; else rc=fail; fi
-    if [ "$rc" = "$want" ]; then
-      echo "  ok: $label (expected $want)"
-    else
-      echo "  SELF-TEST FAIL: $label expected $want got $rc" >&2
-      return 1
-    fi
-  }
-
-  # (a) synced gate: gated file listed -> pass
-  printf '[[platform_skip]]\nfile = "crates/demo/tests/g.rs"\nplatform = "windows-msvc"\ncapability = "x"\nclass = "gap"\n' \
-    > "$tmp/m.toml"
-  expect pass "synced gate" || return 1
-
-  # (b) unlisted gate: gated file with empty manifest -> fail
-  : > "$tmp/m.toml"
-  expect fail "unlisted gate" || return 1
-
-  # (c) stale entry: manifest names a non-existent gated file -> fail
-  printf '[[platform_skip]]\nfile = "crates/demo/tests/ghost.rs"\nplatform = "windows-msvc"\ncapability = "x"\nclass = "gap"\n' \
-    > "$tmp/m.toml"
-  expect fail "stale entry" || return 1
-
-  # (d) expired blocked_bug -> fail
-  printf '[[platform_skip]]\nfile = "crates/demo/tests/g.rs"\nplatform = "windows-msvc"\ncapability = "x"\nclass = "blocked_bug"\nexpires_after = "2000-01-01"\n' \
-    > "$tmp/m.toml"
-  expect fail "expired blocked_bug" || return 1
-
-  # (e) A-soft capability with lapsed soft_until -> fail
-  printf '[[platform_skip]]\nfile = "crates/demo/tests/g.rs"\nplatform = "windows-msvc"\ncapability = "x"\nclass = "gap"\n[[capability]]\nplatform = "macos-arm64"\nstatus = "A-soft"\nsoft_until = "2000-01-01"\n' \
-    > "$tmp/m.toml"
-  expect fail "lapsed A-soft" || return 1
-
-  echo "self-test: PASS"
-}
-
-if [ "${1:-}" = "--self-test" ]; then
-  self_test
-else
-  # Prove the checker still catches its negatives before trusting a pass.
-  # Subshell so the self-test's PLATCAP_* env overrides can't leak into run_check.
-  ( self_test ) >/dev/null
-  run_check
-  echo "platform-capabilities: OK"
-fi
+run_check
+echo "platform-capabilities: OK"

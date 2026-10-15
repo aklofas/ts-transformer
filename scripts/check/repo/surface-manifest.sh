@@ -15,11 +15,10 @@
 #       items whose sorted list hashes to UNAUDITED_SHA256).
 #
 # Run it:          bash scripts/check/repo/surface-manifest.sh
-# Self-test:       bash scripts/check/repo/surface-manifest.sh --self-test
 # Pinned set:      bash scripts/check/repo/surface-manifest.sh --list-unaudited
 # Re-pin values:   bash scripts/check/repo/surface-manifest.sh --print-baseline
 #
-# Overridable (for the self-test):
+# Overridable (scripts/ratchets/tests/self_test.sh points these at fixtures):
 #   SURFACE_MANIFEST        path to the manifest TOML
 #   SURFACE_BASELINE_DIR    directory containing <crate>/public-api.txt files
 #   SURFACE_CRATES          space-separated list of crate names to check
@@ -243,14 +242,14 @@ run_check() {
 
   # (a) owning_tests paths exist.
   local p
-  grep -E '^owning_tests = ' "$SURFACE_MANIFEST" | grep -oE '"[^"]+"' | tr -d '"' \
+  { grep -E '^owning_tests = ' "$SURFACE_MANIFEST" | grep -oE '"[^"]+"' || true; } | tr -d '"' \
   | while IFS= read -r p; do
     [ -f "$ROOT/$p" ] || echo "FAIL: owning test path missing: $p"
   done >> "$errs"
 
   # (b) binding symbols resolve (feature-aware).
   local b feat sym leaf
-  grep -E '^bindings = ' "$SURFACE_MANIFEST" | grep -oE '"[^"]+"' | tr -d '"' \
+  { grep -E '^bindings = ' "$SURFACE_MANIFEST" | grep -oE '"[^"]+"' || true; } | tr -d '"' \
   | while IFS= read -r b; do
     feat=""
     sym="$b"
@@ -351,142 +350,9 @@ run_check() {
 }
 
 # ---------------------------------------------------------------------------
-# self_test: build throwaway manifests and assert each negative is caught
-# ---------------------------------------------------------------------------
-self_test() {
-  local tmp; tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
-  local rc
-
-  expect() { # <expected pass|fail> <label>
-    local want="$1" label="$2"
-    if ( cd "$ROOT" && run_check ) >/dev/null 2>&1; then rc=pass; else rc=fail; fi
-    if [ "$rc" = "$want" ]; then
-      echo "  ok: $label (expected $want)"
-    else
-      echo "  SELF-TEST FAIL: $label expected $want got $rc" >&2
-      return 1
-    fi
-  }
-
-  # Set up an isolated fake tree
-  mkdir -p "$tmp/crates/demo"
-  printf 'pub fn demo::a()\npub struct demo::B\n' > "$tmp/crates/demo/public-api.txt"
-  : > "$tmp/h.h"   # empty C header
-
-  export SURFACE_BASELINE_DIR="$tmp/crates"
-  export SURFACE_CRATES="demo"
-  export SURFACE_MANIFEST="$tmp/m.toml"
-  export SURFACE_C_HEADER="$tmp/h.h"
-  export SURFACE_PYI_DIR="$tmp"
-  export SURFACE_BUILT_FEATURES="srt"
-  export SURFACE_UNAUDITED_COUNT=0
-  export SURFACE_UNAUDITED_SHA256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  # sha256 of no lines
-
-  # (1) Both items exempted -> pass
-  printf '[[exempt]]\nitem = "demo::a"\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
-  expect pass "all exempted" || return 1
-
-  # (2) One item neither mapped nor exempted -> fail (closure)
-  printf '[[exempt]]\nitem = "demo::a"\n' > "$tmp/m.toml"
-  expect fail "un-catalogued item" || return 1
-
-  # (3) Mapped row with a missing owning test -> fail
-  # Five-column sentinels so the expected failure can only come from rule (a).
-  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/NO_SUCH_FILE.rs"]\nbindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
-  expect fail "missing owning test" || return 1
-
-  # (4) Mapped row with owning test present but unresolved c symbol -> fail
-  # Use a real repo-relative path that exists (tests/coverage/README.md)
-  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:nope_sym_xyz", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
-  expect fail "unresolved c symbol" || return 1
-
-  # (5) Five-column rule: a row missing one column -> fail; all sentinels -> pass
-  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
-  expect fail "row missing the kotlin column" || return 1
-  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:n/a", "java:unaudited", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
-  expect pass "all five columns present as sentinels (:deferred / :n/a / :unaudited)" || return 1
-
-  # (6) SURFACE_REQUIRED_PREFIXES really drives rule (b2) — the same two-column
-  # row that fails under the default set passes when the set is narrowed.
-  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
-  expect fail "a two-column row under the default prefix set" || return 1
-  SURFACE_REQUIRED_PREFIXES="c python" expect pass "the same row under SURFACE_REQUIRED_PREFIXES='c python'" || return 1
-
-  # (7) python: cells resolve by definition. A fake package with one class
-  # defined in two modules, one module-level function and one unique class.
-  mkdir -p "$tmp/py"
-  printf 'class Transport:\n    def send(self, payload: bytes) -> None: ...\n\ndef decode_thing(buf: bytes) -> int: ...\n' > "$tmp/py/udp.pyi"
-  printf 'class Transport:\n    def send(self, payload: bytes) -> None: ...\n' > "$tmp/py/tcp.pyi"
-  printf 'class B:\n    count: int\n    def feed(self, buf: bytes) -> None: ...\n\nclass BEvent: ...\n' > "$tmp/py/mpegts.pyi"
-  export SURFACE_PYI_DIR="$tmp/py"
-  py_row() { # <item> <python cell>
-    printf '[[surface]]\nitem = "%s"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:%s", "java:deferred", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "%s"\n' \
-      "$1" "$2" "$3" > "$tmp/m.toml"
-  }
-  py_row "demo::a" "decode_thing" "demo::B"
-  expect pass "python: module-level function, unqualified" || return 1
-  py_row "demo::a" "send" "demo::B"
-  expect fail "python: bare method name (the old leaf match resolved it)" || return 1
-  py_row "demo::a" "Transport.send" "demo::B"
-  expect fail "python: Class.member defined in two modules, no module given" || return 1
-  py_row "demo::a" "tstrans.udp.Transport.send" "demo::B"
-  expect pass "python: module-qualified Class.member" || return 1
-  py_row "demo::a" "tstrans.tcp.decode_thing" "demo::B"
-  expect fail "python: defined, but not in the module the cell names" || return 1
-  py_row "demo::a" "B.nope" "demo::B"
-  expect fail "python: class exists, member does not" || return 1
-  py_row "demo::a" "B.count" "demo::B"
-  expect pass "python: class attribute" || return 1
-  py_row "demo::a" "decode_thing [feature=rist]" "demo::B"
-  expect pass "python: unbuilt feature is skipped" || return 1
-  py_row "demo::a" "send [feature=srt]" "demo::B"
-  expect fail "python: built feature is resolved" || return 1
-  # Owner rule: demo::B::x is a member of B, and B has a Python class.
-  printf 'pub fn demo::a()\npub fn demo::B::x()\n' > "$tmp/crates/demo/public-api.txt"
-  py_row "demo::B::x" "decode_thing" "demo::a"
-  expect fail "python: a real function that is not the owner class's member" || return 1
-  py_row "demo::B::x" "BEvent" "demo::a"
-  expect fail "python: a real class that is not the owner class" || return 1
-  py_row "demo::B::x" "B.feed" "demo::a"
-  expect pass "python: the owner class's member" || return 1
-  py_row "demo::B::x" "B" "demo::a"
-  expect pass "python: the owner class itself" || return 1
-
-  # (8) An EMPTY definition index resolves nothing. A package directory with
-  # no .pyi/.py in it (a moved tree, a wrong SURFACE_PYI_DIR) must fail every
-  # python: cell that names a symbol; only sentinel cells survive it.
-  mkdir -p "$tmp/py-empty"
-  export SURFACE_PYI_DIR="$tmp/py-empty"
-  py_row "demo::a" "no_such_function" "demo::B::x"
-  expect fail "python: a named symbol against an empty definition index" || return 1
-  py_row "demo::a" "deferred" "demo::B::x"
-  expect pass "python: sentinel cells against an empty definition index" || return 1
-
-  # (9) Rule (c) pins the un-catalogued SET, not only its size: the pinned
-  # set passes, and the same count with a different item (one gone, one new)
-  # fails on the digest.
-  printf 'pub fn demo::a()\npub struct demo::B\n' > "$tmp/crates/demo/public-api.txt"
-  printf '[[exempt]]\nitem = "demo::a"\n' > "$tmp/m.toml"
-  SURFACE_UNAUDITED_COUNT=1 SURFACE_UNAUDITED_SHA256=4b00f8db406822b96eeba4fc4cff6c67f0df4cc48602125672ed68077e174a47 \
-    expect pass "closure: the pinned un-catalogued set {demo::B}" || return 1
-  printf '[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
-  SURFACE_UNAUDITED_COUNT=1 SURFACE_UNAUDITED_SHA256=4b00f8db406822b96eeba4fc4cff6c67f0df4cc48602125672ed68077e174a47 \
-    expect fail "closure: same count, different item" || return 1
-
-  # (10) An item key followed by an inline comment still names its item.
-  printf '[[exempt]]\nitem = "demo::a" # kept\n[[exempt]]\nitem = "demo::B" # kept\n' > "$tmp/m.toml"
-  expect pass "closure: item keys with trailing inline comments" || return 1
-
-  echo "self-test: PASS"
-}
-
-# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 case "${1:-}" in
-  --self-test)
-    self_test ;;
   --list-unaudited)
     list_unaudited ;;
   --print-baseline)
@@ -495,9 +361,6 @@ case "${1:-}" in
     echo "UNAUDITED_SHA256=$(sha256_of < "$t")"
     rm -f "$t" ;;
   *)
-    # Prove the checker still catches its negatives before trusting a pass.
-    # Subshell so the self-test's env overrides can't leak into run_check.
-    ( self_test ) >/dev/null
     run_check
     echo "surface-manifest: OK" ;;
 esac

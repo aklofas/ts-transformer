@@ -26,41 +26,9 @@
 # Bash 3.2-portable: no `mapfile`, no `declare -A`, no `readarray`. Uses
 # `while IFS= read -r x; do arr+=("$x"); done < <(...)` pattern.
 
-# --self-test: build a fixture tree with a planted stale minor, expect FAIL;
-# correct it, expect OK. Runs the real script recursively via DOC_ABI_ROOT.
-if [ "${1:-}" = "--self-test" ]; then
-    set -euo pipefail
-    SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-    tmp="$(mktemp -d "${TMPDIR:-/tmp}/docabi-selftest.XXXXXX")"
-    trap 'rm -rf "$tmp"' EXIT
-    mkdir -p "$tmp/bindings/c/core/src" "$tmp/docs/languages" "$tmp/docs/reference" "$tmp/crates"
-    printf 'pub const TST_ABI_VERSION_MINOR: c_int = 21;\n' > "$tmp/bindings/c/core/src/lib.rs"
-    printf '[workspace.package]\nversion = "0.6.0"\n' > "$tmp/Cargo.toml"
-    printf '# x\n\nC ABI **0.21** today.\n' > "$tmp/README.md"
-    printf '#define TST_ABI_VERSION_MINOR 21\n#define TST_VERSION_MAJOR 0\n#define TST_VERSION_MINOR 6\n#define TST_VERSION_PATCH 0\n' > "$tmp/docs/languages/c.md"
-    printf 'ABI minor is **21** today.\n' > "$tmp/docs/reference/binding-authors.md"
-    printf '| `tst-c` | ABI version **0.20** (additive). |\n' > "$tmp/docs/reference/compatibility.md"
-    if DOC_ABI_ROOT="$tmp" bash "$SELF" >/dev/null 2>&1; then
-        echo "SELF-TEST FAIL: planted 'ABI version **0.20**' on a 0.21 tree passed" >&2; exit 1
-    fi
-    echo "  ok: planted stale bold minor fails"
-    printf '| `tst-c` | ABI version 0.20 (additive). |\n' > "$tmp/docs/reference/compatibility.md"
-    if DOC_ABI_ROOT="$tmp" bash "$SELF" >/dev/null 2>&1; then
-        echo "SELF-TEST FAIL: planted 'ABI version 0.20' on a 0.21 tree passed" >&2; exit 1
-    fi
-    echo "  ok: planted stale plain minor fails"
-    printf '| `tst-c` | ABI version **0.21** (additive). |\n' > "$tmp/docs/reference/compatibility.md"
-    if ! DOC_ABI_ROOT="$tmp" bash "$SELF" >/dev/null 2>&1; then
-        echo "SELF-TEST FAIL: current minor 0.21 rejected" >&2; exit 1
-    fi
-    echo "  ok: current minor passes"
-    echo "doc-abi-and-st1910-currency self-test: OK"
-    exit 0
-fi
-
 set -euo pipefail
 
-# DOC_ABI_ROOT lets --self-test point the rail at a fixture tree.
+# DOC_ABI_ROOT lets scripts/ratchets/tests/self_test.sh point the rail at a fixture tree.
 ROOT="${DOC_ABI_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 cd "$ROOT"
 

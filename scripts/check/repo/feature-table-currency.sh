@@ -12,8 +12,7 @@
 # tstrans-srt-sys).
 #
 # Run:       bash scripts/check/repo/feature-table-currency.sh
-# Self-test: bash scripts/check/repo/feature-table-currency.sh --self-test
-# Overridable (the self-test points these at fixtures):
+# Overridable (scripts/ratchets/tests/self_test.sh points these at fixtures):
 #   FTC_RUST_MD     the markdown file to scan
 #   FTC_CRATES_DIR  the directory holding <crate>/Cargo.toml
 #
@@ -56,31 +55,4 @@ check() {
     echo "OK: $checked feature-table rows in $(basename "$FTC_RUST_MD") exist in their crate's [features]"
 }
 
-self_test() {
-    local tmp; tmp="$(mktemp -d "${TMPDIR:-/tmp}/ftc-selftest.XXXXXX")"
-    trap 'rm -rf "$tmp"' RETURN
-    mkdir -p "$tmp/crates/foo"
-    printf '[package]\nname = "foo"\n\n[features]\ndefault = ["alpha"]\nalpha = []\nbeta = ["dep:x"]\n\n[dependencies]\nx = "1"\n' > "$tmp/crates/foo/Cargo.toml"
-    run() { FTC_RUST_MD="$tmp/rust.md" FTC_CRATES_DIR="$tmp/crates" bash "$0"; }
-    expect() { # <pass|fail> <label>
-        local want="$1" label="$2" rc
-        if run >/dev/null 2>&1; then rc=pass; else rc=fail; fi
-        if [ "$rc" = "$want" ]; then echo "  ok: $label (expected $want)"; else
-            echo "  SELF-TEST FAIL: $label expected $want got $rc" >&2; return 1; fi
-    }
-    printf '| Crate | Feature | Default | Effect |\n| --- | --- | --- | --- |\n| `foo` | `alpha` | on | a |\n| `foo` (published as `bar-foo`) | `beta` | off | b |\n' > "$tmp/rust.md"
-    expect pass "every row exists" || return 1
-    printf '| `foo` | `alpha` | on | a |\n| `foo` | `zzz` | on | planted |\n' > "$tmp/rust.md"
-    expect fail "planted missing feature" || return 1
-    printf '| `nope` | `alpha` | on | a |\n' > "$tmp/rust.md"
-    expect fail "planted missing crate" || return 1
-    printf '| Crate | Feature |\n| --- | --- |\n' > "$tmp/rust.md"
-    expect fail "table with no rows" || return 1
-    echo "feature-table-currency self-test: OK"
-}
-
-if [ "${1:-}" = "--self-test" ]; then
-    self_test
-else
-    check
-fi
+check
