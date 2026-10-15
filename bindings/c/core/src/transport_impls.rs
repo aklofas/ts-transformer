@@ -36,7 +36,13 @@ use tst_core::transport::{RecvTransport, Transport};
 use tst_pipeline::{DemuxReceiver, MuxSender, Receiver, Sender};
 #[cfg(feature = "srt")]
 use tst_pipeline::{ManagedDemuxReceiver, RawReceiver, RawSender};
+#[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
+use tst_pipeline::{ReceiverConfig, SenderConfig};
 
+#[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
+use crate::config::TstMuxConfig;
+#[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
+use crate::demux_config::TstDemuxConfig;
 #[cfg(feature = "srt")]
 use crate::error::record_internal;
 use crate::error::{
@@ -48,6 +54,112 @@ use crate::error::{record_recv_closed, record_recv_error};
 #[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
 use crate::event::{EventArena, TstEvent};
 use crate::handle::CHandle;
+#[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
+use crate::handle::cancel_or_latch;
+
+// ============================================================================
+// Open — the shared part of every udp/tcp/rist/rtp `tst_<family>_<shell>_open`
+// ============================================================================
+//
+// The family's `_open` parses its URL argument first (recording its own
+// error) and passes the result here with a `make` step that turns the URL
+// into a transport (recording its own error). The shell is built and its
+// cancel handle resolved the same way for every family. Every shell's
+// `cancel_handle()` forwards its transport's, so taking it from the shell
+// resolves the handle the transport hands out. Each body runs inside
+// `ffi_catch` itself: the isolation rail holds every function in this module
+// to that, and a panic then surfaces as a NULL return with the panic recorded.
+
+/// `Sender<T>` over the transport `make` builds from `url`.
+#[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
+pub(crate) fn open_sender<U, T: Transport>(
+    url: Option<U>,
+    make: impl FnOnce(U) -> Option<T>,
+) -> Option<CHandle<Sender<T>>> {
+    crate::panic::ffi_catch(None, || {
+        let sender = Sender::new(make(url?)?, SenderConfig::default());
+        let cancel = cancel_or_latch(sender.cancel_handle());
+        Some(CHandle::new(sender, cancel, ()))
+    })
+}
+
+/// `Receiver<R>`. `snap` reads what the handle keeps beside the shell
+/// (RTP: its end-reason handle) before the transport moves into the shell.
+#[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
+pub(crate) fn open_receiver<U, R: RecvTransport, S>(
+    url: Option<U>,
+    make: impl FnOnce(U) -> Option<R>,
+    snap: impl FnOnce(&R) -> S,
+) -> Option<CHandle<Receiver<R>, S>> {
+    crate::panic::ffi_catch(None, || {
+        let transport = make(url?)?;
+        let snapshot = snap(&transport);
+        let receiver = Receiver::new(transport, ReceiverConfig::default());
+        let cancel = cancel_or_latch(receiver.cancel_handle());
+        Some(CHandle::new(receiver, cancel, snapshot))
+    })
+}
+
+/// `DemuxReceiver<R>`, with `demux_cfg`'s options when it is non-null.
+///
+/// # Safety
+/// `demux_cfg` is NULL or a live `TstDemuxConfig`.
+#[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
+pub(crate) unsafe fn open_demux_receiver<U, R: RecvTransport, S>(
+    url: Option<U>,
+    demux_cfg: *const TstDemuxConfig,
+    make: impl FnOnce(U) -> Option<R>,
+    snap: impl FnOnce(&R) -> S,
+) -> Option<CHandle<DemuxReceiver<R>, S>> {
+    crate::panic::ffi_catch(None, || {
+        let transport = make(url?)?;
+        let snapshot = snap(&transport);
+        let receiver = match unsafe { demux_cfg.as_ref() } {
+            Some(cfg) => DemuxReceiver::with_demux_options(transport, cfg.build_options()),
+            None => DemuxReceiver::new(transport),
+        };
+        let cancel = cancel_or_latch(receiver.cancel_handle());
+        Some(CHandle::new(receiver, cancel, snapshot))
+    })
+}
+
+/// `MuxSender<T>`. The mux config is checked and built before `make` runs:
+/// a null or invalid config is reported ahead of a URL the family cannot
+/// turn into a transport (a URL the family's own first step rejects is
+/// reported before both).
+///
+/// # Safety
+/// `mux_cfg` is NULL or a live `TstMuxConfig`.
+#[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
+pub(crate) unsafe fn open_mux_sender<U, T: Transport>(
+    url: Option<U>,
+    mux_cfg: *const TstMuxConfig,
+    make: impl FnOnce(U) -> Option<T>,
+) -> Option<CHandle<MuxSender<T>>> {
+    crate::panic::ffi_catch(None, || {
+        let url = url?;
+        let Some(cfg) = (unsafe { mux_cfg.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "mux_cfg is null");
+            return None;
+        };
+        let built = match cfg.build_config() {
+            Ok(c) => c,
+            Err(e) => {
+                record_mux_error(&e);
+                return None;
+            }
+        };
+        let mux_sender = match MuxSender::new(make(url)?, built) {
+            Ok(s) => s,
+            Err(e) => {
+                record_mux_error(&e);
+                return None;
+            }
+        };
+        let cancel = cancel_or_latch(mux_sender.cancel_handle());
+        Some(CHandle::new(mux_sender, cancel, ()))
+    })
+}
 
 // ============================================================================
 // MuxSender<T> generic push impls
@@ -1050,4 +1162,320 @@ pub(crate) unsafe fn managed_demux_receiver_get_stream_stats<R: RecvTransport, S
         }
         0
     })
+}
+
+#[cfg(all(
+    test,
+    any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist")
+))]
+mod open_guard_tests {
+    //! Each family's opens: the code and message for a null URL and for an
+    //! unparseable one, and — for the mux sender — which check reports first
+    //! when the URL is bad and the mux config is null.
+    use crate::error::{TstError, tst_get_last_error, tst_get_last_error_str};
+    use std::ffi::{CStr, CString};
+
+    /// A mux config that builds, so a bad URL is what the open reports.
+    fn valid_mux_cfg() -> *mut crate::config::TstMuxConfig {
+        use crate::config::*;
+        unsafe {
+            let cfg = tst_mux_config_new();
+            let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, crate::config::TstVideoCodec::H264);
+            cfg
+        }
+    }
+
+    fn check(is_null: bool, code: TstError, prefix: &str) {
+        assert!(is_null, "open must return NULL");
+        let msg = unsafe { CStr::from_ptr(tst_get_last_error_str()) }
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(unsafe { tst_get_last_error() }, code as i32, "{msg}");
+        assert!(
+            msg.starts_with(prefix),
+            "{msg:?} should start with {prefix:?}"
+        );
+    }
+
+    #[cfg(feature = "udp")]
+    #[test]
+    fn udp_open_guards() {
+        use crate::udp::*;
+        let bad = CString::new("not a url").unwrap();
+        let (n, nc) = (std::ptr::null(), std::ptr::null());
+        unsafe {
+            let cfg = valid_mux_cfg();
+            check(
+                tst_udp_sender_open(n).is_null(),
+                TstError::UdpConfig,
+                "url pointer is null",
+            );
+            check(
+                tst_udp_sender_open(bad.as_ptr()).is_null(),
+                TstError::UdpConfig,
+                "udp url parse:",
+            );
+            check(
+                tst_udp_recv_open(n).is_null(),
+                TstError::UdpConfig,
+                "url pointer is null",
+            );
+            check(
+                tst_udp_recv_open(bad.as_ptr()).is_null(),
+                TstError::UdpConfig,
+                "udp url parse:",
+            );
+            check(
+                tst_udp_mux_sender_open(n, cfg).is_null(),
+                TstError::UdpConfig,
+                "url pointer is null",
+            );
+            check(
+                tst_udp_mux_sender_open(bad.as_ptr(), cfg).is_null(),
+                TstError::UdpConfig,
+                "udp url parse:",
+            );
+            check(
+                tst_udp_mux_sender_open(bad.as_ptr(), nc).is_null(),
+                TstError::InvalidConfig,
+                "mux_cfg is null",
+            );
+            check(
+                tst_udp_demux_receiver_open(n, std::ptr::null()).is_null(),
+                TstError::UdpConfig,
+                "url pointer is null",
+            );
+            check(
+                tst_udp_demux_receiver_open(bad.as_ptr(), std::ptr::null()).is_null(),
+                TstError::UdpConfig,
+                "udp url parse:",
+            );
+            crate::config::tst_mux_config_free(cfg);
+        }
+    }
+
+    #[cfg(feature = "tcp")]
+    #[test]
+    fn tcp_open_guards() {
+        use crate::tcp::*;
+        let bad = CString::new("not a url").unwrap();
+        let (n, nc) = (std::ptr::null(), std::ptr::null());
+        unsafe {
+            let cfg = valid_mux_cfg();
+            check(
+                tst_tcp_sender_open(n).is_null(),
+                TstError::TcpConfig,
+                "url pointer is null",
+            );
+            check(
+                tst_tcp_sender_open(bad.as_ptr()).is_null(),
+                TstError::TcpConfig,
+                "tcp url parse:",
+            );
+            check(
+                tst_tcp_recv_open(n).is_null(),
+                TstError::TcpConfig,
+                "url pointer is null",
+            );
+            check(
+                tst_tcp_recv_open(bad.as_ptr()).is_null(),
+                TstError::TcpConfig,
+                "tcp url parse:",
+            );
+            check(
+                tst_tcp_mux_sender_open(n, cfg).is_null(),
+                TstError::TcpConfig,
+                "url pointer is null",
+            );
+            check(
+                tst_tcp_mux_sender_open(bad.as_ptr(), cfg).is_null(),
+                TstError::TcpConfig,
+                "tcp url parse:",
+            );
+            check(
+                tst_tcp_mux_sender_open(bad.as_ptr(), nc).is_null(),
+                TstError::InvalidConfig,
+                "mux_cfg is null",
+            );
+            check(
+                tst_tcp_demux_receiver_open(n, std::ptr::null()).is_null(),
+                TstError::TcpConfig,
+                "url pointer is null",
+            );
+            check(
+                tst_tcp_demux_receiver_open(bad.as_ptr(), std::ptr::null()).is_null(),
+                TstError::TcpConfig,
+                "tcp url parse:",
+            );
+            crate::config::tst_mux_config_free(cfg);
+        }
+    }
+
+    #[cfg(feature = "rist")]
+    #[test]
+    fn rist_open_guards() {
+        use crate::rist::*;
+        let bad = CString::new("not a url").unwrap();
+        let (n, nc) = (std::ptr::null(), std::ptr::null());
+        unsafe {
+            let cfg = valid_mux_cfg();
+            check(
+                tst_rist_sender_open(n).is_null(),
+                TstError::RistConfig,
+                "url pointer is null",
+            );
+            check(
+                tst_rist_sender_open(bad.as_ptr()).is_null(),
+                TstError::RistConfig,
+                "rist url parse:",
+            );
+            check(
+                tst_rist_recv_open(n).is_null(),
+                TstError::RistConfig,
+                "url pointer is null",
+            );
+            check(
+                tst_rist_recv_open(bad.as_ptr()).is_null(),
+                TstError::RistConfig,
+                "rist url parse:",
+            );
+            check(
+                tst_rist_mux_sender_open(n, cfg).is_null(),
+                TstError::RistConfig,
+                "url pointer is null",
+            );
+            check(
+                tst_rist_mux_sender_open(bad.as_ptr(), cfg).is_null(),
+                TstError::RistConfig,
+                "rist url parse:",
+            );
+            check(
+                tst_rist_mux_sender_open(bad.as_ptr(), nc).is_null(),
+                TstError::InvalidConfig,
+                "mux_cfg is null",
+            );
+            check(
+                tst_rist_demux_receiver_open(n, std::ptr::null()).is_null(),
+                TstError::RistConfig,
+                "url pointer is null",
+            );
+            check(
+                tst_rist_demux_receiver_open(bad.as_ptr(), std::ptr::null()).is_null(),
+                TstError::RistConfig,
+                "rist url parse:",
+            );
+            crate::config::tst_mux_config_free(cfg);
+        }
+    }
+
+    /// RTP parses the whole URL before it looks at the mux config, so a bad
+    /// URL with a null config reports the URL.
+    #[cfg(feature = "rtp")]
+    #[test]
+    fn rtp_open_guards() {
+        use crate::rtp::*;
+        let bad = CString::new("not a url").unwrap();
+        let (n, nc) = (std::ptr::null(), std::ptr::null());
+        let cfgd = TstError::InvalidConfig;
+        unsafe {
+            let cfg = valid_mux_cfg();
+            check(
+                tst_rtp_sender_open(n).is_null(),
+                cfgd,
+                "rtp url pointer is null",
+            );
+            check(
+                tst_rtp_sender_open(bad.as_ptr()).is_null(),
+                cfgd,
+                "rtp url parse error:",
+            );
+            check(
+                tst_rtp_recv_open(n).is_null(),
+                cfgd,
+                "rtp url pointer is null",
+            );
+            check(
+                tst_rtp_recv_open(bad.as_ptr()).is_null(),
+                cfgd,
+                "rtp url parse error:",
+            );
+            check(
+                tst_rtp_mux_sender_open(n, cfg).is_null(),
+                cfgd,
+                "rtp url pointer is null",
+            );
+            check(
+                tst_rtp_mux_sender_open(bad.as_ptr(), cfg).is_null(),
+                cfgd,
+                "rtp url parse error:",
+            );
+            check(
+                tst_rtp_mux_sender_open(bad.as_ptr(), nc).is_null(),
+                cfgd,
+                "rtp url parse error:",
+            );
+            check(
+                tst_rtp_demux_receiver_open(n, std::ptr::null()).is_null(),
+                cfgd,
+                "rtp url pointer is null",
+            );
+            check(
+                tst_rtp_demux_receiver_open(bad.as_ptr(), std::ptr::null()).is_null(),
+                cfgd,
+                "rtp url parse error:",
+            );
+            crate::config::tst_mux_config_free(cfg);
+        }
+    }
+
+    /// A URL that parses but whose transport cannot be built reports through
+    /// the family's own mapping and context text: a refused TCP connection,
+    /// and a UDP or RTP receive socket on a port already bound.
+    #[cfg(feature = "tcp")]
+    #[test]
+    fn tcp_refused_connection_reports_tcp_connect() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        drop(l);
+        let url = CString::new(format!("tcp://127.0.0.1:{port}")).unwrap();
+        let h = unsafe { crate::tcp::tst_tcp_sender_open(url.as_ptr()) };
+        assert!(h.is_null());
+        let code = unsafe { tst_get_last_error() };
+        // A refused connect is TcpIo; a runner that stalls first reports the timeout.
+        assert!(
+            code == TstError::TcpIo as i32 || code == TstError::TcpConnectTimeout as i32,
+            "{code}"
+        );
+        let msg = unsafe { CStr::from_ptr(tst_get_last_error_str()) }.to_string_lossy();
+        assert!(msg.starts_with("tcp connect:"), "{msg}");
+    }
+
+    #[cfg(feature = "udp")]
+    #[test]
+    fn udp_recv_on_a_bound_port_reports_udp_recv_build() {
+        let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let url = CString::new(format!(
+            "udp://127.0.0.1:{}",
+            s.local_addr().unwrap().port()
+        ))
+        .unwrap();
+        let h = unsafe { crate::udp::tst_udp_recv_open(url.as_ptr()) };
+        check(h.is_null(), TstError::UdpIo, "udp recv build:");
+        drop(s);
+    }
+
+    #[cfg(feature = "rtp")]
+    #[test]
+    fn rtp_recv_on_a_bound_port_reports_rtp_listen() {
+        let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let url = CString::new(format!(
+            "rtp://127.0.0.1:{}",
+            s.local_addr().unwrap().port()
+        ))
+        .unwrap();
+        let h = unsafe { crate::rtp::tst_rtp_recv_open(url.as_ptr()) };
+        check(h.is_null(), TstError::RtpTransport, "rtp listen:");
+        drop(s);
+    }
 }

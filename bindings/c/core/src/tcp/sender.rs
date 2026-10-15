@@ -22,11 +22,11 @@
 
 use std::os::raw::c_char;
 
-use tst_pipeline::{Sender, SenderConfig};
-use tst_tcp::{TcpTransport, TcpTransportBuilder};
+use tst_pipeline::Sender;
+use tst_tcp::TcpTransport;
 
 use crate::error::{TstError, set_last_error};
-use crate::handle::{CHandle, cancel_or_latch};
+use crate::handle::CHandle;
 use crate::stats::TstSenderStats;
 
 // ---------------------------------------------------------------------------
@@ -66,31 +66,11 @@ pub struct TstTcpSender {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_tcp_sender_open(url: *const c_char) -> *mut TstTcpSender {
     crate::panic::ffi_catch(std::ptr::null_mut(), || {
-        let url_str = match unsafe { crate::c_str::parse_c_str(url, TstError::TcpConfig, "url") } {
-            Some(s) => s,
-            None => return std::ptr::null_mut(),
-        };
-        let builder = match TcpTransportBuilder::from_url(url_str) {
-            Ok(b) => b,
-            Err(e) => {
-                set_last_error(TstError::TcpConfig, &format!("tcp url parse: {e}"));
-                return std::ptr::null_mut();
-            }
-        };
-        let transport = match builder.build() {
-            Ok(t) => t,
-            Err(e) => {
-                crate::error::record_with_context(e, "tcp connect");
-                return std::ptr::null_mut();
-            }
-        };
-        let sender = Sender::new(transport, SenderConfig::default());
-        // TCP has a real `TcpCancelHandle`, so `cancel_or_latch` passes it
-        // straight through.
-        let cancel = cancel_or_latch(sender.cancel_handle());
-        Box::into_raw(Box::new(TstTcpSender {
-            inner: CHandle::new(sender, cancel, ()),
-        }))
+        let url = unsafe { crate::c_str::parse_c_str(url, TstError::TcpConfig, "url") };
+        match crate::transport_impls::open_sender(url, super::connect) {
+            Some(inner) => Box::into_raw(Box::new(TstTcpSender { inner })),
+            None => std::ptr::null_mut(),
+        }
     })
 }
 

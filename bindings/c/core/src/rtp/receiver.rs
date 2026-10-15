@@ -14,13 +14,12 @@
 
 use std::os::raw::c_char;
 
-use tst_core::RecvTransport;
 use tst_core::mpegts::common::TS_PACKET_SIZE;
-use tst_pipeline::{Receiver, ReceiverConfig};
+use tst_pipeline::Receiver;
 use tst_rtp::RtpRecvTransport;
 
 use crate::error::{TstError, record_recv_error, set_last_error};
-use crate::handle::{CHandle, cancel_or_latch};
+use crate::handle::CHandle;
 use crate::rtp::RtpRecvSnap;
 use crate::rtp::end_reason::convert_end_reason;
 use crate::stats::TstReceiverStats;
@@ -67,30 +66,17 @@ pub struct TstRtpReceiver {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_rtp_recv_open(url: *const c_char) -> *mut TstRtpReceiver {
     crate::panic::ffi_catch(std::ptr::null_mut(), || {
-        let rtp_url = match unsafe { super::url::parse_url(url) } {
-            Some(u) => u,
-            None => return std::ptr::null_mut(),
-        };
-        // `listen_with` takes the parsed `RtpUrl` directly (not a
-        // field-by-field rebuild), so every present-and-future `RtpUrl`
-        // field applies automatically: `recv_timeout` arms the transport,
-        // and the `pkt_size`/`pt` receive-URL rejections
-        // (`listen_with_rtcp`'s own checks) actually fire — see the
-        // regression test below.
-        let transport = match RtpRecvTransport::listen_with(&rtp_url) {
-            Ok(t) => t,
-            Err(e) => {
-                set_last_error(TstError::RtpTransport, &format!("rtp listen: {e}"));
-                return std::ptr::null_mut();
-            }
-        };
-        // Both observers captured BEFORE the transport moves into the shell.
-        let cancel = cancel_or_latch(transport.cancel_handle());
-        let end_reason = transport.end_reason_handle();
-        let receiver = Receiver::new(transport, ReceiverConfig::default());
-        Box::into_raw(Box::new(TstRtpReceiver {
-            inner: CHandle::new(receiver, cancel, RtpRecvSnap { end_reason }),
-        }))
+        let url = unsafe { super::url::parse_url(url) };
+        match crate::transport_impls::open_receiver(
+            url,
+            super::listen,
+            |t: &tst_rtp::RtpRecvTransport| RtpRecvSnap {
+                end_reason: t.end_reason_handle(),
+            },
+        ) {
+            Some(inner) => Box::into_raw(Box::new(TstRtpReceiver { inner })),
+            None => std::ptr::null_mut(),
+        }
     })
 }
 

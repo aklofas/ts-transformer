@@ -67,3 +67,39 @@ pub use sender::{
     tst_rist_sender_get_stats, tst_rist_sender_open, tst_rist_sender_reset_stats,
     tst_rist_sender_send_ts,
 };
+
+/// `url` → a RIST sender, recording `TST_E_RIST_CONFIG` or the connect error.
+pub(crate) fn connect(url: &str) -> Option<tst_rist::RistTransport> {
+    let builder = match tst_rist::RistTransportBuilder::new(url) {
+        Ok(b) => b,
+        Err(e) => {
+            crate::error::set_last_error(
+                crate::error::TstError::RistConfig,
+                &format!("rist url parse: {e}"),
+            );
+            return None;
+        }
+    };
+    builder
+        .connect()
+        .map_err(|e| crate::error::record_with_context(e, "rist connect"))
+        .ok()
+}
+
+/// `url` → a RIST receiver.
+pub(crate) fn listen(url: &str) -> Option<tst_rist::RistRecvTransport> {
+    let builder = match tst_rist::RistRecvTransportBuilder::new(url) {
+        Ok(b) => b,
+        Err(e) => {
+            crate::error::set_last_error(
+                crate::error::TstError::RistConfig,
+                &format!("rist url parse: {e}"),
+            );
+            return None;
+        }
+    };
+    builder
+        .listen()
+        .map_err(|e| crate::error::record_with_context(e, "rist listen"))
+        .ok()
+}

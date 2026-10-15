@@ -14,14 +14,13 @@
 use std::os::raw::c_char;
 use std::sync::Mutex;
 
-use tst_core::RecvTransport;
 use tst_pipeline::DemuxReceiver;
 use tst_rtp::RtpRecvTransport;
 
 use crate::demux_config::TstDemuxConfig;
 use crate::error::{TstError, set_last_error};
 use crate::event::{EventArena, TstEvent};
-use crate::handle::{CHandle, cancel_or_latch};
+use crate::handle::CHandle;
 use crate::rtp::RtpRecvSnap;
 use crate::rtp::end_reason::convert_end_reason;
 use crate::stream_end_reason::TstStreamEndReason;
@@ -78,33 +77,24 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_open(
     demux_cfg: *const TstDemuxConfig,
 ) -> *mut TstRtpDemuxReceiver {
     crate::panic::ffi_catch(std::ptr::null_mut(), || {
-        let rtp_url = match unsafe { super::url::parse_url(url) } {
-            Some(u) => u,
-            None => return std::ptr::null_mut(),
-        };
-        // See the matching comment in `tst_rtp_recv_open`: `listen_with`
-        // takes the parsed `RtpUrl` directly, so `recv_timeout` and the
-        // receive-URL `pkt_size`/`pt` rejections apply automatically.
-        let transport = match RtpRecvTransport::listen_with(&rtp_url) {
-            Ok(t) => t,
-            Err(e) => {
-                set_last_error(TstError::RtpTransport, &format!("rtp listen: {e}"));
-                return std::ptr::null_mut();
-            }
-        };
-        // Both observers captured BEFORE the transport moves into the shell.
-        let cancel = cancel_or_latch(transport.cancel_handle());
-        let end_reason = transport.end_reason_handle();
-        let receiver = if let Some(cfg) = unsafe { demux_cfg.as_ref() } {
-            DemuxReceiver::with_demux_options(transport, cfg.build_options())
-        } else {
-            DemuxReceiver::new(transport)
-        };
-        Box::into_raw(Box::new(TstRtpDemuxReceiver {
-            inner: CHandle::new(receiver, cancel, RtpRecvSnap { end_reason }),
-            arena: Mutex::new(EventArena::new()),
-            stream_stats_buf: Mutex::new(Vec::new()),
-        }))
+        let url = unsafe { super::url::parse_url(url) };
+        match unsafe {
+            crate::transport_impls::open_demux_receiver(
+                url,
+                demux_cfg,
+                super::listen,
+                |t: &tst_rtp::RtpRecvTransport| RtpRecvSnap {
+                    end_reason: t.end_reason_handle(),
+                },
+            )
+        } {
+            Some(inner) => Box::into_raw(Box::new(TstRtpDemuxReceiver {
+                inner,
+                arena: Mutex::new(EventArena::new()),
+                stream_stats_buf: Mutex::new(Vec::new()),
+            })),
+            None => std::ptr::null_mut(),
+        }
     })
 }
 

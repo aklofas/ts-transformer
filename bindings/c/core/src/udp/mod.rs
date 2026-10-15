@@ -53,3 +53,39 @@ pub use sender::{
     tst_udp_sender_get_stats, tst_udp_sender_open, tst_udp_sender_reset_stats,
     tst_udp_sender_send_ts,
 };
+
+/// `url` → a UDP send transport, recording `TST_E_UDP_CONFIG` or the build error.
+pub(crate) fn connect(url: &str) -> Option<tst_udp::UdpTransport> {
+    let builder = match tst_udp::UdpTransportBuilder::from_url(url) {
+        Ok(b) => b,
+        Err(e) => {
+            crate::error::set_last_error(
+                crate::error::TstError::UdpConfig,
+                &format!("udp url parse: {e}"),
+            );
+            return None;
+        }
+    };
+    builder
+        .build()
+        .map_err(|e| crate::error::record_with_context(e, "udp build"))
+        .ok()
+}
+
+/// `url` → a UDP receive transport.
+pub(crate) fn listen(url: &str) -> Option<tst_udp::UdpRecvTransport> {
+    let builder = match tst_udp::UdpRecvTransportBuilder::from_url(url) {
+        Ok(b) => b,
+        Err(e) => {
+            crate::error::set_last_error(
+                crate::error::TstError::UdpConfig,
+                &format!("udp url parse: {e}"),
+            );
+            return None;
+        }
+    };
+    builder
+        .build()
+        .map_err(|e| crate::error::record_with_context(e, "udp recv build"))
+        .ok()
+}

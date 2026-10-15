@@ -54,3 +54,41 @@ pub use sender::{
     tst_rtp_sender_get_stats, tst_rtp_sender_open, tst_rtp_sender_reset_stats,
     tst_rtp_sender_send_ts,
 };
+
+/// A parsed `rtp://` URL → an RTP send socket, recording `TST_E_RTP_TRANSPORT`.
+pub(crate) fn connect(url: tst_rtp::RtpUrl) -> Option<tst_rtp::RtpTransport> {
+    let mut builder = tst_rtp::RtpSocketBuilder::new(url.host.clone(), url.port);
+    if let Some(ttl) = url.ttl {
+        builder.ttl(ttl);
+    }
+    if let Some(ref iface) = url.iface {
+        builder.iface(iface.clone());
+    }
+    if let Some(n) = url.pkt_size {
+        builder.pkt_size(n);
+    }
+    if let Some(ssrc) = url.ssrc {
+        builder.ssrc(ssrc);
+    }
+    builder
+        .build()
+        .map_err(|e| {
+            crate::error::set_last_error(
+                crate::error::TstError::RtpTransport,
+                &format!("rtp connect: {e}"),
+            )
+        })
+        .ok()
+}
+
+/// A parsed `rtp://` URL → an RTP receive transport.
+pub(crate) fn listen(url: tst_rtp::RtpUrl) -> Option<tst_rtp::RtpRecvTransport> {
+    tst_rtp::RtpRecvTransport::listen_with(&url)
+        .map_err(|e| {
+            crate::error::set_last_error(
+                crate::error::TstError::RtpTransport,
+                &format!("rtp listen: {e}"),
+            )
+        })
+        .ok()
+}

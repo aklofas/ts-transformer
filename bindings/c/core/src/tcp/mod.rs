@@ -67,3 +67,22 @@ pub use sender::{
     tst_tcp_sender_get_stats, tst_tcp_sender_open, tst_tcp_sender_reset_stats,
     tst_tcp_sender_send_ts,
 };
+
+/// `url` → a TCP transport (send or receive), recording `TST_E_TCP_CONFIG`
+/// or the connect error.
+pub(crate) fn connect(url: &str) -> Option<tst_tcp::TcpTransport> {
+    let builder = match tst_tcp::TcpTransportBuilder::from_url(url) {
+        Ok(b) => b,
+        Err(e) => {
+            crate::error::set_last_error(
+                crate::error::TstError::TcpConfig,
+                &format!("tcp url parse: {e}"),
+            );
+            return None;
+        }
+    };
+    builder
+        .build()
+        .map_err(|e| crate::error::record_with_context(e, "tcp connect"))
+        .ok()
+}

@@ -27,11 +27,11 @@
 
 use std::os::raw::c_char;
 
-use tst_pipeline::{Receiver, ReceiverConfig};
-use tst_rist::{RistRecvTransport, RistRecvTransportBuilder};
+use tst_pipeline::Receiver;
+use tst_rist::RistRecvTransport;
 
 use crate::error::{TstError, set_last_error};
-use crate::handle::{CHandle, cancel_or_latch};
+use crate::handle::CHandle;
 use crate::stats::TstReceiverStats;
 
 // ---------------------------------------------------------------------------
@@ -78,36 +78,11 @@ pub struct TstRistReceiver {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_rist_recv_open(url: *const c_char) -> *mut TstRistReceiver {
     crate::panic::ffi_catch(std::ptr::null_mut(), || {
-        let url_str = match unsafe { crate::c_str::parse_c_str(url, TstError::RistConfig, "url") } {
-            Some(s) => s,
-            None => return std::ptr::null_mut(),
-        };
-        // RIST receive builder: new() validates the `@` bind prefix and
-        // parses query params; listen() establishes the librist context.
-        // URL / config parse failures map to RistConfig (-39) directly.
-        // librist runtime failures route through `record_with_context`.
-        let builder = match RistRecvTransportBuilder::new(url_str) {
-            Ok(b) => b,
-            Err(e) => {
-                set_last_error(TstError::RistConfig, &format!("rist url parse: {e}"));
-                return std::ptr::null_mut();
-            }
-        };
-        let transport = match builder.listen() {
-            Ok(t) => t,
-            Err(e) => {
-                crate::error::record_with_context(e, "rist listen");
-                return std::ptr::null_mut();
-            }
-        };
-        let receiver = Receiver::new(transport, ReceiverConfig::default());
-        // `cancel_or_latch` resolves the shell's `Option`;
-        // this transport's `cancel_handle()` is `Some`, so the handle below
-        // carries the REAL cancel and `_close` wakes what it can.
-        let cancel = cancel_or_latch(receiver.cancel_handle());
-        Box::into_raw(Box::new(TstRistReceiver {
-            inner: CHandle::new(receiver, cancel, ()),
-        }))
+        let url = unsafe { crate::c_str::parse_c_str(url, TstError::RistConfig, "url") };
+        match crate::transport_impls::open_receiver(url, super::listen, |_| ()) {
+            Some(inner) => Box::into_raw(Box::new(TstRistReceiver { inner })),
+            None => std::ptr::null_mut(),
+        }
     })
 }
 

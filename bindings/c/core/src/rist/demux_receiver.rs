@@ -29,12 +29,12 @@ use std::os::raw::c_char;
 use std::sync::Mutex;
 
 use tst_pipeline::DemuxReceiver;
-use tst_rist::{RistRecvTransport, RistRecvTransportBuilder};
+use tst_rist::RistRecvTransport;
 
 use crate::demux_config::TstDemuxConfig;
 use crate::error::{TstError, set_last_error};
 use crate::event::{EventArena, TstEvent};
-use crate::handle::{CHandle, cancel_or_latch};
+use crate::handle::CHandle;
 
 // ---------------------------------------------------------------------------
 // Handle type
@@ -87,42 +87,17 @@ pub unsafe extern "C" fn tst_rist_demux_receiver_open(
     demux_cfg: *const TstDemuxConfig,
 ) -> *mut TstRistDemuxReceiver {
     crate::panic::ffi_catch(std::ptr::null_mut(), || {
-        let url_str = match unsafe { crate::c_str::parse_c_str(url, TstError::RistConfig, "url") } {
-            Some(s) => s,
-            None => return std::ptr::null_mut(),
-        };
-        // RIST receive builder: new() validates the `@` bind prefix and
-        // parses query params; listen() establishes the librist context.
-        // URL / config parse failures map to RistConfig (-39) directly.
-        // librist runtime failures route through `record_with_context`.
-        let builder = match RistRecvTransportBuilder::new(url_str) {
-            Ok(b) => b,
-            Err(e) => {
-                set_last_error(TstError::RistConfig, &format!("rist url parse: {e}"));
-                return std::ptr::null_mut();
-            }
-        };
-        let transport = match builder.listen() {
-            Ok(t) => t,
-            Err(e) => {
-                crate::error::record_with_context(e, "rist listen");
-                return std::ptr::null_mut();
-            }
-        };
-        let receiver = if let Some(cfg) = unsafe { demux_cfg.as_ref() } {
-            DemuxReceiver::with_demux_options(transport, cfg.build_options())
-        } else {
-            DemuxReceiver::new(transport)
-        };
-        // `cancel_or_latch` resolves the shell's `Option`;
-        // this transport's `cancel_handle()` is `Some`, so the handle below
-        // carries the REAL cancel and `_close` wakes what it can.
-        let cancel = cancel_or_latch(receiver.cancel_handle());
-        Box::into_raw(Box::new(TstRistDemuxReceiver {
-            inner: CHandle::new(receiver, cancel, ()),
-            arena: Mutex::new(EventArena::new()),
-            stream_stats_buf: Mutex::new(Vec::new()),
-        }))
+        let url = unsafe { crate::c_str::parse_c_str(url, TstError::RistConfig, "url") };
+        match unsafe {
+            crate::transport_impls::open_demux_receiver(url, demux_cfg, super::listen, |_| ())
+        } {
+            Some(inner) => Box::into_raw(Box::new(TstRistDemuxReceiver {
+                inner,
+                arena: Mutex::new(EventArena::new()),
+                stream_stats_buf: Mutex::new(Vec::new()),
+            })),
+            None => std::ptr::null_mut(),
+        }
     })
 }
 
