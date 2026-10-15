@@ -12,12 +12,11 @@
 
 use std::os::raw::c_char;
 
-use tst_core::Transport;
-use tst_pipeline::{Sender, SenderConfig};
-use tst_rtp::{RtpSocketBuilder, RtpTransport};
+use tst_pipeline::Sender;
+use tst_rtp::RtpTransport;
 
 use crate::error::{TstError, set_last_error};
-use crate::handle::{CHandle, cancel_or_latch};
+use crate::handle::CHandle;
 use crate::stats::TstSenderStats;
 
 // ---------------------------------------------------------------------------
@@ -56,36 +55,11 @@ pub struct TstRtpSender {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_rtp_sender_open(url: *const c_char) -> *mut TstRtpSender {
     crate::panic::ffi_catch(std::ptr::null_mut(), || {
-        let rtp_url = match unsafe { super::url::parse_url(url) } {
-            Some(u) => u,
-            None => return std::ptr::null_mut(),
-        };
-        let mut builder = RtpSocketBuilder::new(rtp_url.host.clone(), rtp_url.port);
-        if let Some(ttl) = rtp_url.ttl {
-            builder.ttl(ttl);
+        let url = unsafe { super::url::parse_url(url) };
+        match crate::transport_impls::open_sender(url, super::connect) {
+            Some(inner) => Box::into_raw(Box::new(TstRtpSender { inner })),
+            None => std::ptr::null_mut(),
         }
-        if let Some(ref iface) = rtp_url.iface {
-            builder.iface(iface.clone());
-        }
-        if let Some(n) = rtp_url.pkt_size {
-            builder.pkt_size(n);
-        }
-        if let Some(ssrc) = rtp_url.ssrc {
-            builder.ssrc(ssrc);
-        }
-        let transport = match builder.build() {
-            Ok(t) => t,
-            Err(e) => {
-                set_last_error(TstError::RtpTransport, &format!("rtp connect: {e}"));
-                return std::ptr::null_mut();
-            }
-        };
-        // Captured BEFORE the transport moves into the shell.
-        let cancel = cancel_or_latch(transport.cancel_handle());
-        let sender = Sender::new(transport, SenderConfig::default());
-        Box::into_raw(Box::new(TstRtpSender {
-            inner: CHandle::new(sender, cancel, ()),
-        }))
     })
 }
 

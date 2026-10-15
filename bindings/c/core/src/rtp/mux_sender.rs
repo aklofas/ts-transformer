@@ -14,15 +14,14 @@
 
 use std::os::raw::c_char;
 
-use tst_core::Transport;
 use tst_pipeline::MuxSender;
-use tst_rtp::{RtpSocketBuilder, RtpTransport};
+use tst_rtp::RtpTransport;
 
 use crate::config::TstMuxConfig;
-use crate::error::{TstError, record_mux_error, set_last_error};
+use crate::error::{TstError, set_last_error};
 use crate::handle::{
     CHandle, TstAudioStreamHandle, TstKlvStreamHandle, TstSubtitleStreamHandle,
-    TstVideoStreamHandle, cancel_or_latch,
+    TstVideoStreamHandle,
 };
 
 // ---------------------------------------------------------------------------
@@ -63,56 +62,11 @@ pub unsafe extern "C" fn tst_rtp_mux_sender_open(
     mux_cfg: *const TstMuxConfig,
 ) -> *mut TstRtpMuxSender {
     crate::panic::ffi_catch(std::ptr::null_mut(), || {
-        let rtp_url = match unsafe { super::url::parse_url(url) } {
-            Some(u) => u,
-            None => return std::ptr::null_mut(),
-        };
-        let cfg_ref = match unsafe { mux_cfg.as_ref() } {
-            Some(c) => c,
-            None => {
-                set_last_error(TstError::InvalidConfig, "mux_cfg is null");
-                return std::ptr::null_mut();
-            }
-        };
-        let built = match cfg_ref.build_config() {
-            Ok(c) => c,
-            Err(e) => {
-                record_mux_error(&e);
-                return std::ptr::null_mut();
-            }
-        };
-        let mut builder = RtpSocketBuilder::new(rtp_url.host.clone(), rtp_url.port);
-        if let Some(ttl) = rtp_url.ttl {
-            builder.ttl(ttl);
+        let url = unsafe { super::url::parse_url(url) };
+        match unsafe { crate::transport_impls::open_mux_sender(url, mux_cfg, super::connect) } {
+            Some(inner) => Box::into_raw(Box::new(TstRtpMuxSender { inner })),
+            None => std::ptr::null_mut(),
         }
-        if let Some(ref iface) = rtp_url.iface {
-            builder.iface(iface.clone());
-        }
-        if let Some(n) = rtp_url.pkt_size {
-            builder.pkt_size(n);
-        }
-        if let Some(ssrc) = rtp_url.ssrc {
-            builder.ssrc(ssrc);
-        }
-        let transport = match builder.build() {
-            Ok(t) => t,
-            Err(e) => {
-                set_last_error(TstError::RtpTransport, &format!("rtp connect: {e}"));
-                return std::ptr::null_mut();
-            }
-        };
-        // Captured BEFORE the transport moves into the shell.
-        let cancel = cancel_or_latch(transport.cancel_handle());
-        let mux_sender = match MuxSender::new(transport, built) {
-            Ok(s) => s,
-            Err(e) => {
-                record_mux_error(&e);
-                return std::ptr::null_mut();
-            }
-        };
-        Box::into_raw(Box::new(TstRtpMuxSender {
-            inner: CHandle::new(mux_sender, cancel, ()),
-        }))
     })
 }
 

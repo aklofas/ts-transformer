@@ -24,13 +24,13 @@
 use std::os::raw::c_char;
 
 use tst_pipeline::MuxSender;
-use tst_udp::{UdpTransport, UdpTransportBuilder};
+use tst_udp::UdpTransport;
 
 use crate::config::TstMuxConfig;
-use crate::error::{TstError, record_mux_error, set_last_error};
+use crate::error::{TstError, set_last_error};
 use crate::handle::{
     CHandle, TstAudioStreamHandle, TstKlvStreamHandle, TstSubtitleStreamHandle,
-    TstVideoStreamHandle, cancel_or_latch,
+    TstVideoStreamHandle,
 };
 
 // ---------------------------------------------------------------------------
@@ -73,52 +73,11 @@ pub unsafe extern "C" fn tst_udp_mux_sender_open(
     mux_cfg: *const TstMuxConfig,
 ) -> *mut TstUdpMuxSender {
     crate::panic::ffi_catch(std::ptr::null_mut(), || {
-        let url_str = match unsafe { crate::c_str::parse_c_str(url, TstError::UdpConfig, "url") } {
-            Some(s) => s,
-            None => return std::ptr::null_mut(),
-        };
-        let cfg_ref = match unsafe { mux_cfg.as_ref() } {
-            Some(c) => c,
-            None => {
-                set_last_error(TstError::InvalidConfig, "mux_cfg is null");
-                return std::ptr::null_mut();
-            }
-        };
-        let built = match cfg_ref.build_config() {
-            Ok(c) => c,
-            Err(e) => {
-                record_mux_error(&e);
-                return std::ptr::null_mut();
-            }
-        };
-        let builder = match UdpTransportBuilder::from_url(url_str) {
-            Ok(b) => b,
-            Err(e) => {
-                set_last_error(TstError::UdpConfig, &format!("udp url parse: {e}"));
-                return std::ptr::null_mut();
-            }
-        };
-        let transport = match builder.build() {
-            Ok(t) => t,
-            Err(e) => {
-                crate::error::record_with_context(e, "udp build");
-                return std::ptr::null_mut();
-            }
-        };
-        let mux_sender = match MuxSender::new(transport, built) {
-            Ok(s) => s,
-            Err(e) => {
-                record_mux_error(&e);
-                return std::ptr::null_mut();
-            }
-        };
-        // `cancel_or_latch` resolves the shell's `Option`;
-        // this transport's `cancel_handle()` is `Some`, so the handle below
-        // carries the REAL cancel and `_close` wakes what it can.
-        let cancel = cancel_or_latch(mux_sender.cancel_handle());
-        Box::into_raw(Box::new(TstUdpMuxSender {
-            inner: CHandle::new(mux_sender, cancel, ()),
-        }))
+        let url = unsafe { crate::c_str::parse_c_str(url, TstError::UdpConfig, "url") };
+        match unsafe { crate::transport_impls::open_mux_sender(url, mux_cfg, super::connect) } {
+            Some(inner) => Box::into_raw(Box::new(TstUdpMuxSender { inner })),
+            None => std::ptr::null_mut(),
+        }
     })
 }
 

@@ -21,11 +21,11 @@
 
 use std::os::raw::c_char;
 
-use tst_pipeline::{Sender, SenderConfig};
-use tst_udp::{UdpTransport, UdpTransportBuilder};
+use tst_pipeline::Sender;
+use tst_udp::UdpTransport;
 
 use crate::error::{TstError, set_last_error};
-use crate::handle::{CHandle, cancel_or_latch};
+use crate::handle::CHandle;
 use crate::stats::TstSenderStats;
 
 // ---------------------------------------------------------------------------
@@ -62,32 +62,11 @@ pub struct TstUdpSender {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_udp_sender_open(url: *const c_char) -> *mut TstUdpSender {
     crate::panic::ffi_catch(std::ptr::null_mut(), || {
-        let url_str = match unsafe { crate::c_str::parse_c_str(url, TstError::UdpConfig, "url") } {
-            Some(s) => s,
-            None => return std::ptr::null_mut(),
-        };
-        let builder = match UdpTransportBuilder::from_url(url_str) {
-            Ok(b) => b,
-            Err(e) => {
-                set_last_error(TstError::UdpConfig, &format!("udp url parse: {e}"));
-                return std::ptr::null_mut();
-            }
-        };
-        let transport = match builder.build() {
-            Ok(t) => t,
-            Err(e) => {
-                crate::error::record_with_context(e, "udp build");
-                return std::ptr::null_mut();
-            }
-        };
-        let sender = Sender::new(transport, SenderConfig::default());
-        // `cancel_or_latch` resolves the shell's `Option`;
-        // this transport's `cancel_handle()` is `Some`, so the handle below
-        // carries the REAL cancel and `_close` wakes what it can.
-        let cancel = cancel_or_latch(sender.cancel_handle());
-        Box::into_raw(Box::new(TstUdpSender {
-            inner: CHandle::new(sender, cancel, ()),
-        }))
+        let url = unsafe { crate::c_str::parse_c_str(url, TstError::UdpConfig, "url") };
+        match crate::transport_impls::open_sender(url, super::connect) {
+            Some(inner) => Box::into_raw(Box::new(TstUdpSender { inner })),
+            None => std::ptr::null_mut(),
+        }
     })
 }
 

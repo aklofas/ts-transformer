@@ -25,12 +25,12 @@ use std::os::raw::c_char;
 use std::sync::Mutex;
 
 use tst_pipeline::DemuxReceiver;
-use tst_tcp::{TcpTransport, TcpTransportBuilder};
+use tst_tcp::TcpTransport;
 
 use crate::demux_config::TstDemuxConfig;
 use crate::error::{TstError, set_last_error};
 use crate::event::{EventArena, TstEvent};
-use crate::handle::{CHandle, cancel_or_latch};
+use crate::handle::CHandle;
 
 // ---------------------------------------------------------------------------
 // Handle type
@@ -78,37 +78,17 @@ pub unsafe extern "C" fn tst_tcp_demux_receiver_open(
     demux_cfg: *const TstDemuxConfig,
 ) -> *mut TstTcpDemuxReceiver {
     crate::panic::ffi_catch(std::ptr::null_mut(), || {
-        let url_str = match unsafe { crate::c_str::parse_c_str(url, TstError::TcpConfig, "url") } {
-            Some(s) => s,
-            None => return std::ptr::null_mut(),
-        };
-        let builder = match TcpTransportBuilder::from_url(url_str) {
-            Ok(b) => b,
-            Err(e) => {
-                set_last_error(TstError::TcpConfig, &format!("tcp url parse: {e}"));
-                return std::ptr::null_mut();
-            }
-        };
-        let transport = match builder.build() {
-            Ok(t) => t,
-            Err(e) => {
-                crate::error::record_with_context(e, "tcp connect");
-                return std::ptr::null_mut();
-            }
-        };
-        let receiver = if let Some(cfg) = unsafe { demux_cfg.as_ref() } {
-            DemuxReceiver::with_demux_options(transport, cfg.build_options())
-        } else {
-            DemuxReceiver::new(transport)
-        };
-        // TCP has a real `TcpCancelHandle`, so `cancel_or_latch` passes it
-        // straight through.
-        let cancel = cancel_or_latch(receiver.cancel_handle());
-        Box::into_raw(Box::new(TstTcpDemuxReceiver {
-            inner: CHandle::new(receiver, cancel, ()),
-            arena: Mutex::new(EventArena::new()),
-            stream_stats_buf: Mutex::new(Vec::new()),
-        }))
+        let url = unsafe { crate::c_str::parse_c_str(url, TstError::TcpConfig, "url") };
+        match unsafe {
+            crate::transport_impls::open_demux_receiver(url, demux_cfg, super::connect, |_| ())
+        } {
+            Some(inner) => Box::into_raw(Box::new(TstTcpDemuxReceiver {
+                inner,
+                arena: Mutex::new(EventArena::new()),
+                stream_stats_buf: Mutex::new(Vec::new()),
+            })),
+            None => std::ptr::null_mut(),
+        }
     })
 }
 
