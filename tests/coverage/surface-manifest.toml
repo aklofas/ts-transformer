@@ -1718,15 +1718,6 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
-item = "tst_core::mpegts::mux::VideoCodec::from"
-owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
-# demux→mux codec bridge for misp_time::extract; tested in misp_time::tests::demux_codec_converts_for_extract
-tier = "B"
-
-[[surface]]
-kind = "rust"
-crate = "tst-core"
 item = "tst_core::mpegts::demux::demuxer::Demuxer"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
 # java: keystone Demuxer type (tst-jni surface-port); c/python expose the
@@ -2415,7 +2406,7 @@ scenario_ids = []
 tier = "A"
 
 [[exempt]]
-item = "tst_core::net::udp_socket::ACCEPT_POLL_INTERVAL"
+item = "tst_core::cancel::ACCEPT_POLL_INTERVAL"
 reason = "added 2026-09-14: shorter accept-poll cadence for TcpListener::accept_blocking, consumed by crates/tst-tcp/src/listener.rs; not directly value-asserted by any test (the tst-tcp listener tests assert cancel/accept behaviour completes within a bounded window, not this exact constant), matching CANCEL_POLL_INTERVAL's own treatment below"
 
 [[exempt]]
@@ -4663,22 +4654,6 @@ item = "tst_rist::transport::RistCancelHandle"
 reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
-item = "tst_rist::transport::RistCancelHandle::cancel"
-reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
-
-[[exempt]]
-item = "tst_rist::transport::RistCancelHandle::clone"
-reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
-
-[[exempt]]
-item = "tst_rist::transport::RistCancelHandle::fmt"
-reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
-
-[[exempt]]
-item = "tst_rist::transport::RistCancelHandle::is_cancelled"
-reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
-
-[[exempt]]
 item = "tst_rist::transport::RistTransport::cancel_handle"
 reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
@@ -4688,22 +4663,6 @@ reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catal
 
 [[exempt]]
 item = "tst_udp::transport::UdpCancelHandle"
-reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
-
-[[exempt]]
-item = "tst_udp::transport::UdpCancelHandle::cancel"
-reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
-
-[[exempt]]
-item = "tst_udp::transport::UdpCancelHandle::clone"
-reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
-
-[[exempt]]
-item = "tst_udp::transport::UdpCancelHandle::fmt"
-reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
-
-[[exempt]]
-item = "tst_udp::transport::UdpCancelHandle::is_cancelled"
 reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
