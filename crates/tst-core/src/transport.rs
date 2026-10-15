@@ -10,7 +10,7 @@
 //! # Cancel / close / liveness contract (normative)
 //!
 //! Every `Transport` / `RecvTransport` implementation honours the rows
-//! below; the [`conformance`] kit (std-only) is the executable form and
+//! below; the `conformance` kit (behind the `conformance` feature) is the executable form and
 //! each transport crate runs it in its `tests/conformance.rs`.
 //!
 //! | Transport | after own `close()` | cancel during a parked op | `is_alive()` after `Broken` / after cancel | handle type |
@@ -236,7 +236,7 @@ pub enum TransportError {
     /// **Producers:** every cancel-aware transport, once its cancel handle
     /// has fired and a blocking (or subsequent) op observes it — the
     /// per-transport table in the module docs is normative and the
-    /// [`conformance`] kit pins it. `ManagedRecvTransport::recv_bytes`
+    /// `conformance` kit pins it. `ManagedRecvTransport::recv_bytes`
     /// also produces it after its own `close()`; the bare transports and
     /// `ManagedTransport` produce [`Self::Closed`] there instead (sender
     /// shells map both to `ShellErrorKind::Closed`).
@@ -411,7 +411,7 @@ pub trait Transport: Send {
 /// `cancel()` from any thread interrupts the transport's current blocking
 /// send or receive; the parked call returns
 /// [`TransportError::ExplicitClose`] (the per-transport table in the
-/// module docs is normative, and the [`conformance`] kit pins it).
+/// module docs is normative, and the `conformance` kit pins it).
 /// Idempotent.
 ///
 /// `is_cancelled()` reads the handle's latch: `false` on a fresh handle,
@@ -433,7 +433,7 @@ pub trait Transport: Send {
 ///
 /// "Any clone/alias" above means another handle over the SAME underlying
 /// resource — two `TcpCancelHandle`s minted from one transport, say. Those
-/// must share one latch, and the [`conformance`] row `is_cancelled_flips`
+/// must share one latch, and the `conformance` row `is_cancelled_flips`
 /// checks it.
 ///
 /// It does NOT extend to a wrapper that OWNS an inner handle and forwards
