@@ -105,6 +105,7 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-tcp | (crate) | Stable | small, settled |
 | tst-rtp | builder | Stable | RTP transport builder / URL-connect surface |
 | tst-rtp | cancel | Stable | RTP cancellation handle |
+| tst-rtp | depay | Stable | the access unit, configuration and counters the H.264 and H.265 depacketizers share (formerly `H264Au`/`H264DepayConfig`/`H264DepayStats`, still aliased under those names) |
 | tst-rtp | error | Stable | RTP error taxonomy |
 | tst-rtp | h264 | Stable | RFC 6184 H.264 depacketizer/receiver; `H264Receiver::set_recv_timeout` and `end_reason()` are Provisional — same divergence shape as `transport`'s row below |
 | tst-rtp | packet | Stable | RTP packet parse/build |

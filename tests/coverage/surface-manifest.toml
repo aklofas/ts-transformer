@@ -3160,11 +3160,11 @@ item = "tst_rtp::h264::H264Depacketizer"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::depacketizer::H264Au::clone"
+item = "tst_rtp::depay::AccessUnit::clone"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::depacketizer::H264Au::fmt"
+item = "tst_rtp::depay::AccessUnit::fmt"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
@@ -3192,47 +3192,47 @@ item = "tst_rtp::h264::depacketizer::H264Depacketizer::stats"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::depacketizer::H264DepayConfig::clone"
+item = "tst_rtp::depay::DepayConfig::clone"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::depacketizer::H264DepayConfig::default"
+item = "tst_rtp::depay::DepayConfig::default"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::depacketizer::H264DepayConfig::fmt"
+item = "tst_rtp::depay::DepayConfig::fmt"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::depacketizer::H264DepayStats::clone"
+item = "tst_rtp::depay::DepayStats::clone"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::depacketizer::H264DepayStats::default"
+item = "tst_rtp::depay::DepayStats::default"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::depacketizer::H264DepayStats::eq"
+item = "tst_rtp::depay::DepayStats::eq"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::depacketizer::H264DepayStats::fmt"
+item = "tst_rtp::depay::DepayStats::fmt"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::depacketizer::ParameterSetInjection::clone"
+item = "tst_rtp::depay::ParameterSetInjection::clone"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::depacketizer::ParameterSetInjection::default"
+item = "tst_rtp::depay::ParameterSetInjection::default"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::depacketizer::ParameterSetInjection::eq"
+item = "tst_rtp::depay::ParameterSetInjection::eq"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::depacketizer::ParameterSetInjection::fmt"
+item = "tst_rtp::depay::ParameterSetInjection::fmt"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
