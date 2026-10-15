@@ -200,3 +200,157 @@ fn start_rejects_tls_paths_on_plaintext_bind() {
         "started was not un-latched, got {again:?}"
     );
 }
+
+/// TCP-interleaved PLAY works over an `rtsps://` control connection and
+/// the media arrives on it.
+#[test]
+fn interleaved_play_over_rtsps_delivers_ts() {
+    let certs = SelfSignedCert::generate();
+    let mut b = RtspServerBuilder::new("rtsps://127.0.0.1:0").expect("URL parse");
+    b.tls_cert(certs.cert_path.clone(), certs.key_path.clone());
+    let server = b.build().expect("server build");
+    let mount = server
+        .add_mount("/live", make_muxer_cfg())
+        .expect("add_mount");
+    server.start().expect("server start");
+    let port = server.local_addr().expect("local_addr").port();
+
+    let roots =
+        tst_core::net::tls::load_root_store(certs.root_pem.as_bytes()).expect("trust bundle");
+    let mut client =
+        tst_rtp::RtspClientBuilder::new(&format!("rtsps://127.0.0.1:{port}/live?transport=tcp"))
+            .expect("client builder")
+            .tls_root_certs(roots)
+            .connect()
+            .expect("rtsps connect");
+    let sdp = client.describe().expect("DESCRIBE");
+    let session = client.setup_mp2t_auto(&sdp).expect("SETUP");
+    assert_eq!(
+        session.transport_kind(),
+        tst_rtp::RtspTransportKind::TcpInterleaved
+    );
+    let mut rx = session.into_recv_transport();
+    client
+        .play()
+        .expect("PLAY with an interleaved transport over rtsps");
+    rx.set_recv_timeout(Some(std::time::Duration::from_secs(5)));
+
+    // Push until the fanout is attached and a packet comes back.
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let pusher = {
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            let au = [0u8, 0, 0, 1, 0x65, 0x88, 0x84, 0x00];
+            let mut pts = 0i64;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = mount.push_video(&au, tst_core::mpegts::common::Pts90khz::new(pts), true);
+                pts += 3003;
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        })
+    };
+    let mut buf = [0u8; 2048];
+    let n = tst_core::transport::RecvTransport::recv_bytes(&mut rx, &mut buf)
+        .expect("TS over the TLS session");
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    pusher.join().unwrap();
+    assert!(
+        n >= 188 && n % 188 == 0 && buf[0] == 0x47,
+        "got {n} bytes starting {:#x}",
+        buf[0]
+    );
+    drop(client);
+    server.stop().ok();
+}
+
+/// `stop()` sends the RFC 7826 §13.5.1 Notice 5402 ANNOUNCE to a TLS
+/// session too, then closes the TLS session cleanly (close_notify, not a
+/// bare TCP FIN).
+#[test]
+fn stop_sends_notice_5402_to_a_tls_session_and_closes_it_cleanly() {
+    use crate::fixtures::raw_rtsp::{request, session_id};
+    use std::io::Read;
+    let certs = SelfSignedCert::generate();
+    let mut b = RtspServerBuilder::new("rtsps://127.0.0.1:0").expect("URL parse");
+    b.tls_cert(certs.cert_path.clone(), certs.key_path.clone());
+    let server = b.build().expect("server build");
+    let _mount = server
+        .add_mount("/live", make_muxer_cfg())
+        .expect("add_mount");
+    server.start().expect("server start");
+    let port = server.local_addr().expect("local_addr").port();
+
+    let roots =
+        tst_core::net::tls::load_root_store(certs.root_pem.as_bytes()).expect("trust bundle");
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let name = rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap();
+    let conn = rustls::ClientConnection::new(std::sync::Arc::new(config), name).unwrap();
+    let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    tcp.set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    let mut tls = rustls::StreamOwned::new(conn, tcp);
+    let base = format!("rtsps://127.0.0.1:{port}/live");
+    assert!(
+        request(
+            &mut tls,
+            &format!("DESCRIBE {base} RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n")
+        )
+        .contains("200 OK")
+    );
+    let setup = request(
+        &mut tls,
+        &format!(
+            "SETUP {base} RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+        ),
+    );
+    assert!(setup.contains("200 OK"), "SETUP: {setup}");
+    let sid = session_id(&setup);
+    let play = request(
+        &mut tls,
+        &format!("PLAY {base} RTSP/1.0\r\nCSeq: 3\r\nSession: {sid}\r\n\r\n"),
+    );
+    assert!(play.contains("200 OK"), "PLAY: {play}");
+
+    let server = std::sync::Arc::new(server);
+    let stopper = {
+        let server = server.clone();
+        std::thread::spawn(move || server.stop().unwrap())
+    };
+    // Read everything until the server ends the session.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut got = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let end = loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no end of session; got {:?}",
+            String::from_utf8_lossy(&got)
+        );
+        match tls.read(&mut chunk) {
+            Ok(0) => break "close_notify",
+            Ok(n) => got.extend_from_slice(&chunk[..n]),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(e) => {
+                break if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    "eof without close_notify"
+                } else {
+                    "error"
+                };
+            }
+        }
+    };
+    stopper.join().unwrap();
+    let text = String::from_utf8_lossy(&got);
+    assert!(
+        text.contains("ANNOUNCE ") && text.contains("Notice: 5402"),
+        "no Notice 5402 over TLS: {text:?}"
+    );
+    assert!(text.contains(&format!("Session: {sid}")), "{text:?}");
+    assert_eq!(end, "close_notify");
+}

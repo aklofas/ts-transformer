@@ -1,6 +1,6 @@
 //! Server accept loop. Binds a tokio `TcpListener` to the configured
 //! bind URL, runs an async accept loop, and spawns
-//! `session::handle_connection` per accepted client. For `rtsps://`
+//! `session::handle_tcp_connection` (or `handle_tls_connection`) per accepted client. For `rtsps://`
 //! binds, the accepted TCP stream is handed to
 //! `tls::TlsServerConfig::accept` before being
 //! passed to the per-session task.
@@ -144,18 +144,16 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
                             if let Some(cfg) = cfg {
                                 let handshake_timeout = state.builder.tls_handshake_timeout;
                                 tokio::spawn(async move {
-                                    // `slot` is moved into this task so the reserved
-                                    // slot is released (its `Drop` fires) on the
-                                    // handshake-failure path, the handshake-timeout
-                                    // path AND the normal session path.
-                                    let _slot = slot;
+                                    // `slot` moves into the session on success and is
+                                    // dropped by this task on the handshake-failure and
+                                    // timeout paths, releasing the reserved slot either way.
                                     // Bounded handshake: a peer that connects and never
                                     // sends a ClientHello would otherwise park this
                                     // task — and its slot — forever; `max_sessions`
                                     // such connects would wedge the server at its cap.
                                     match tokio::time::timeout(handshake_timeout, cfg.accept(tcp)).await {
                                         Ok(Ok(tls_stream)) => {
-                                            if let Err(e) = crate::rtsp::server::session::handle_connection_tls(st, tls_stream, peer).await {
+                                            if let Err(e) = crate::rtsp::server::session::handle_tls_connection(st, tls_stream, peer, slot).await {
                                                 tracing::warn!(
                                                     target: "tst_rtp::server",
                                                     peer = %peer, error = ?e,
@@ -190,7 +188,7 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
                         }
                         // Plain TCP path (always available regardless of `rtsp-server-tls` feature):
                         tokio::spawn(async move {
-                            if let Err(e) = crate::rtsp::server::session::handle_connection(st, tcp, peer, slot).await {
+                            if let Err(e) = crate::rtsp::server::session::handle_tcp_connection(st, tcp, peer, slot).await {
                                 tracing::warn!(
                                     target: "tst_rtp::server",
                                     peer = %peer, error = ?e,

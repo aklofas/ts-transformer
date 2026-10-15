@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
-use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -28,9 +27,9 @@ pub(crate) enum PeerTransport {
         peer_addr: SocketAddr,
     },
     Interleaved {
-        /// Async-locked TCP write half. Per-session task owns this; the
-        /// fanout task locks per-frame.
-        writer: Arc<AsyncMutex<tokio::net::tcp::OwnedWriteHalf>>,
+        /// The session's writer (plain TCP or TLS). Per-session task owns
+        /// this; the fanout task locks per-frame.
+        writer: crate::rtsp::server::session::SessionWriter,
         /// SETUP-allocated channel for RTP (server's response Transport
         /// header carried e.g. `interleaved=0-1`; RTP rides 0, RTCP 1).
         rtp_channel: u8,

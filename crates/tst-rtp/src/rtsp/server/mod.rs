@@ -18,14 +18,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use tokio::io::AsyncWriteExt;
-use tokio::net::tcp::OwnedWriteHalf;
 use tokio::runtime::Runtime;
-use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::builder::RtspServerBuilder;
 use crate::cancel::RtspServerCancelHandle;
 use crate::error::RtspServerError;
+use crate::rtsp::server::session::SessionWriter;
 use crate::url::RtspScheme;
 
 /// Bound of the on-demand publish-mount queue (see
@@ -77,7 +76,7 @@ pub(crate) struct ServerState {
     /// Bound address — set by the listener after kernel-assigns the port
     /// (when bind URL had `port = 0`). `start()` spin-waits on this.
     pub(crate) local_addr: std::sync::Mutex<Option<SocketAddr>>,
-    /// Active session registry — populated by `session::handle_connection`
+    /// Active session registry — populated by `session::serve_connection`
     /// on accept, removed on session end. Used by `stop()` to fan out the
     /// graceful-shutdown per-session cancel and the RFC 7826 §13.5.1
     /// Notice 5402 ("Server-Initiated TEARDOWN") message.
@@ -113,11 +112,11 @@ pub(crate) struct ServerState {
 }
 
 /// Lightweight per-session record kept on [`ServerState::sessions`] for
-/// graceful-shutdown coordination. `session::handle_connection_inner`
-/// populates `cancel` + `peer` at accept, mirrors `session_id` +
-/// `mount_path` from [`session::ServerSessionState`] after each SETUP /
-/// TEARDOWN, and stashes `tcp_write` after splitting the TCP. The
-/// `tcp_write` mutex is the same `Arc` the per-peer fanout task uses for
+/// graceful-shutdown coordination. `session::serve_connection`
+/// populates `cancel` + `peer` + `writer` at accept and mirrors
+/// `session_id` + `mount_path` from [`session::ServerSessionState`] after
+/// each SETUP / TEARDOWN. The `writer` mutex is the same `Arc` the
+/// per-peer fanout task uses for
 /// RFC 7826 §14 interleaved RTP frames — `RtspServer::stop` takes the
 /// same lock to write the Notice 5402 ANNOUNCE before cancelling the
 /// session.
@@ -132,32 +131,33 @@ pub(crate) struct ActiveSession {
     pub(crate) cancel: CancellationToken,
     /// Peer address — captured at accept for logging + diagnostics.
     pub(crate) peer: SocketAddr,
-    /// Async-locked write half of the per-session TCP. Set by
-    /// `session::handle_connection_inner` once the `TcpStream` is split.
-    /// `None` for unit-test constructions that don't drive a real
-    /// connection (e.g. `register_session` in isolation). The fanout
-    /// task + the per-session response writer share this same `Arc`;
-    /// `RtspServer::stop` locks it to write the Notice 5402 ANNOUNCE.
-    pub(crate) tcp_write: std::sync::Mutex<Option<Arc<AsyncMutex<OwnedWriteHalf>>>>,
+    /// The session's writer (plain TCP or TLS), shared with the fanout
+    /// task and the per-session response writer; `RtspServer::stop` locks
+    /// it to write the Notice 5402 ANNOUNCE.
+    pub(crate) writer: SessionWriter,
 }
 
 impl ActiveSession {
-    pub(crate) fn new(peer: SocketAddr) -> Arc<Self> {
+    pub(crate) fn new(peer: SocketAddr, writer: SessionWriter) -> Arc<Self> {
         Arc::new(Self {
             session_id: std::sync::Mutex::new(None),
             mount_path: std::sync::Mutex::new(None),
             cancel: CancellationToken::new(),
             peer,
-            tcp_write: std::sync::Mutex::new(None),
+            writer,
         })
     }
 }
 
 /// Register an active session with the server. Called by
-/// `session::handle_connection` on accept; the returned `Arc` is held
+/// `session::serve_connection` on accept; the returned `Arc` is held
 /// by the per-session task for the connection's lifetime.
-pub(crate) fn register_session(state: &Arc<ServerState>, peer: SocketAddr) -> Arc<ActiveSession> {
-    let entry = ActiveSession::new(peer);
+pub(crate) fn register_session(
+    state: &Arc<ServerState>,
+    peer: SocketAddr,
+    writer: SessionWriter,
+) -> Arc<ActiveSession> {
+    let entry = ActiveSession::new(peer, writer);
     if let Ok(mut g) = state.sessions.lock() {
         g.push(entry.clone());
     }
@@ -165,7 +165,7 @@ pub(crate) fn register_session(state: &Arc<ServerState>, peer: SocketAddr) -> Ar
 }
 
 /// Remove an active session from the registry. Called by
-/// `session::handle_connection` on disconnect / TEARDOWN / cancel.
+/// `session::serve_connection` on disconnect / TEARDOWN / cancel.
 pub(crate) fn unregister_session(state: &Arc<ServerState>, entry: &Arc<ActiveSession>) {
     if let Ok(mut g) = state.sessions.lock() {
         g.retain(|s| !Arc::ptr_eq(s, entry));
@@ -954,7 +954,7 @@ impl RtspServer {
         std::thread::sleep(drain);
         // Explicitly shutdown each per-session TCP write half so peers
         // see FIN immediately instead of relying on Arc-drop. Without
-        // this, lingering `Arc<AsyncMutex<OwnedWriteHalf>>` clones (held
+        // this, lingering `SessionWriter` clones (held
         // by `state.sessions`, the fanout task, and any in-flight
         // handler) keep the write half open after the per-session task
         // returns — the kernel never sends FIN, and clients block in
@@ -965,9 +965,7 @@ impl RtspServer {
         if let Some(rt) = self.runtime.as_ref() {
             use tokio::io::AsyncWriteExt;
             for s in &sessions {
-                let Some(write_half) = s.tcp_write.lock().ok().and_then(|g| g.clone()) else {
-                    continue;
-                };
+                let write_half = s.writer.clone();
                 let peer = s.peer;
                 rt.block_on(async {
                     let shutdown_fut = async {
@@ -1004,7 +1002,7 @@ impl RtspServer {
     /// sessions on one mount). Callers hold no server lock.
     ///
     /// Sessions without a `mount_path` or `session_id` yet (no completed
-    /// SETUP) or without a write half get no ANNOUNCE, only the cancel.
+    /// SETUP) get no ANNOUNCE, only the cancel.
     fn notify_and_cancel(&self, sessions: &[Arc<ActiveSession>]) {
         // Send the Notice 5402 ANNOUNCE over each session's TCP control
         // channel BEFORE cancelling. The write needs an async context
@@ -1030,9 +1028,7 @@ impl RtspServer {
                 let Some(session_id) = s.session_id.lock().ok().and_then(|g| g.clone()) else {
                     continue;
                 };
-                let Some(write_half) = s.tcp_write.lock().ok().and_then(|g| g.clone()) else {
-                    continue;
-                };
+                let write_half = s.writer.clone();
                 let cseq = self.state.notice_cseq.fetch_add(1, Ordering::Relaxed);
                 let bytes = build_notice_5402_announce(
                     &bind_host,
@@ -1460,7 +1456,11 @@ mod graceful_shutdown_tests {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
         server.start().unwrap();
         let peer: std::net::SocketAddr = "127.0.0.1:50000".parse().unwrap();
-        let entry = register_session(&server.state, peer);
+        let entry = register_session(
+            &server.state,
+            peer,
+            crate::rtsp::server::session::session_writer(tokio::io::sink()),
+        );
         assert_eq!(server.state.sessions.lock().unwrap().len(), 1);
         assert!(!entry.cancel.is_cancelled());
         server.stop().unwrap();
@@ -1471,7 +1471,11 @@ mod graceful_shutdown_tests {
     fn unregister_session_drops_from_list() {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
         let peer: std::net::SocketAddr = "127.0.0.1:50000".parse().unwrap();
-        let entry = register_session(&server.state, peer);
+        let entry = register_session(
+            &server.state,
+            peer,
+            crate::rtsp::server::session::session_writer(tokio::io::sink()),
+        );
         assert_eq!(server.state.sessions.lock().unwrap().len(), 1);
         unregister_session(&server.state, &entry);
         assert_eq!(server.state.sessions.lock().unwrap().len(), 0);
@@ -1481,7 +1485,11 @@ mod graceful_shutdown_tests {
     fn register_session_records_peer() {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
         let peer: std::net::SocketAddr = "10.0.0.1:12345".parse().unwrap();
-        let entry = register_session(&server.state, peer);
+        let entry = register_session(
+            &server.state,
+            peer,
+            crate::rtsp::server::session::session_writer(tokio::io::sink()),
+        );
         assert_eq!(entry.peer, peer);
     }
 }

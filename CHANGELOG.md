@@ -218,6 +218,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   multicast mount senders. Before, a session ended only at its idle bound, and
   a streaming one not at all. Publish mounts' application transports stay
   open, as before. Shape and signal-safety unchanged.
+- `RtspServer` over `rtsps://`: TCP-interleaved PLAY works (it answered
+  `461 Unsupported Transport`), and `stop()` sends the Notice 5402 ANNOUNCE
+  to TLS sessions and closes them with a TLS close_notify (it skipped them).
+  Plain and TLS sessions now share one connection handler.
 
 ---
 
