@@ -223,8 +223,6 @@ kinds! {
     DemuxUnrecoverable = -69 => "DEMUX_UNRECOVERABLE", "UNRECOVERABLE", -3;
     /// `DemuxError::StrictRejection`.
     DemuxStrictRejection = -70 => "DEMUX_STRICT_REJECTION", "STRICT_REJECTION", -3;
-    /// `DemuxError::MalformedPsi`.
-    DemuxMalformedPsi = -71 => "DEMUX_MALFORMED_PSI", "MALFORMED_PSI", -3;
     /// `DemuxError::MalformedPes`.
     DemuxMalformedPes = -72 => "DEMUX_MALFORMED_PES", "MALFORMED_PES", -3;
     /// `DemuxError::SyncBufExhausted`.
@@ -271,10 +269,6 @@ kinds! {
     CodecReservedValue = -93 => "CODEC_RESERVED_VALUE", "RESERVED_VALUE", -10;
     /// `CodecParseError::UnsupportedProfile`.
     CodecUnsupportedProfile = -94 => "CODEC_UNSUPPORTED_PROFILE", "UNSUPPORTED_PROFILE", -10;
-    /// `CodecParseError::DanglingSpsReference`.
-    CodecDanglingSpsReference = -95 => "CODEC_DANGLING_SPS_REFERENCE", "DANGLING_SPS_REFERENCE", -10;
-    /// `CodecParseError::DanglingVpsReference`.
-    CodecDanglingVpsReference = -96 => "CODEC_DANGLING_VPS_REFERENCE", "DANGLING_VPS_REFERENCE", -10;
     /// `CodecParseError::EngineError`.
     CodecEngineError = -97 => "CODEC_ENGINE_ERROR", "ENGINE_ERROR", -10;
     /// `CodecParseError::InvalidLeb128`.
@@ -406,7 +400,6 @@ fn map_demux(e: &DemuxError) -> Option<BindingErrorKind> {
     match e {
         DemuxError::Unrecoverable { .. } => Some(BindingErrorKind::DemuxUnrecoverable),
         DemuxError::StrictRejection(_) => Some(BindingErrorKind::DemuxStrictRejection),
-        DemuxError::MalformedPsi { .. } => Some(BindingErrorKind::DemuxMalformedPsi),
         DemuxError::MalformedPes { .. } => Some(BindingErrorKind::DemuxMalformedPes),
         DemuxError::SyncBufExhausted { .. } => Some(BindingErrorKind::DemuxSyncBufExhausted),
         _ => None,
@@ -582,12 +575,6 @@ fn map_codec(e: &CodecParseError) -> Option<BindingErrorKind> {
         CodecParseError::ReservedValue { .. } => Some(BindingErrorKind::CodecReservedValue),
         CodecParseError::UnsupportedProfile { .. } => {
             Some(BindingErrorKind::CodecUnsupportedProfile)
-        }
-        CodecParseError::DanglingSpsReference { .. } => {
-            Some(BindingErrorKind::CodecDanglingSpsReference)
-        }
-        CodecParseError::DanglingVpsReference { .. } => {
-            Some(BindingErrorKind::CodecDanglingVpsReference)
         }
         CodecParseError::EngineError(_) => Some(BindingErrorKind::CodecEngineError),
         CodecParseError::InvalidLeb128 { .. } => Some(BindingErrorKind::CodecInvalidLeb128),
@@ -1148,16 +1135,24 @@ mod tests {
             .iter()
             .filter(|k| !k.is_c_frozen())
             .collect();
-        assert_eq!(new.len(), 57);
-        for (i, k) in new.iter().enumerate() {
-            assert_eq!(k.c_code(), -49 - i as i32, "{} out of order", k.name());
+        assert_eq!(new.len(), 54);
+        // Codes of removed kinds are never reused: -71 (DemuxMalformedPsi),
+        // -95 and -96 (CodecDangling{Sps,Vps}Reference) stay as gaps.
+        const RETIRED: [i32; 3] = [-71, -95, -96];
+        let mut expected = -49;
+        for k in &new {
+            while RETIRED.contains(&expected) {
+                expected -= 1;
+            }
+            assert_eq!(k.c_code(), expected, "{} out of order", k.name());
+            expected -= 1;
             assert!(
                 (-48..=-1).contains(&k.c_projection()),
                 "{} projects outside TST_E",
                 k.name()
             );
         }
-        assert_eq!(BindingErrorKind::ALL.len(), 98);
+        assert_eq!(BindingErrorKind::ALL.len(), 95);
     }
 
     #[test]
@@ -1233,13 +1228,6 @@ mod tests {
         assert_eq!(
             kind_of_demux(&DemuxError::StrictRejection("x".into())),
             K::DemuxStrictRejection
-        );
-        assert_eq!(
-            kind_of_demux(&DemuxError::MalformedPsi {
-                pid: 0,
-                reason: "r"
-            }),
-            K::DemuxMalformedPsi
         );
         assert_eq!(
             kind_of_demux(&DemuxError::MalformedPes {

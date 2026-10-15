@@ -108,7 +108,6 @@ fn field_error(e: VTargetPackError, got: usize) -> KlvFieldError {
             expected: if tag == 12 { 2 } else { 3 },
             got,
         },
-        VTargetPackError::MalformedUtf8 { tag } => KlvFieldError::InvalidUtf8 { tag },
         VTargetPackError::TruncatedField { tag } => KlvFieldError::TruncatedField { tag },
         // Framing errors never reach here — `read_pack_inner` returns them
         // before `decode_field` runs.

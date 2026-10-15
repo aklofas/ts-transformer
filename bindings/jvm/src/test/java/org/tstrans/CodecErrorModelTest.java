@@ -8,16 +8,16 @@ import org.junit.jupiter.api.Test;
 
 class CodecErrorModelTest {
     @Test
-    void kindHasAllFifteenRustVariants() {
+    void kindHasAllThirteenRustVariants() {
         // Mirrors tst_core::codec::CodecParseError. A Rust-side rename or
         // addition is caught here. The three nal-framing converter errors
         // each get their own member rather than folding into the
-        // ENGINE_ERROR wildcard; nothing retires, so this pins fifteen.
+        // ENGINE_ERROR wildcard; nothing retires, so this pins thirteen.
         CodecParseException.Kind[] ks = CodecParseException.Kind.values();
-        assertEquals(15, ks.length);
+        assertEquals(13, ks.length);
         for (String n : new String[] {
                 "TRUNCATED_RBSP", "INVALID_GOLOMB", "RESERVED_VALUE", "UNSUPPORTED_PROFILE",
-                "DANGLING_SPS_REFERENCE", "DANGLING_VPS_REFERENCE", "ENGINE_ERROR",
+                "ENGINE_ERROR",
                 "INVALID_LEB128", "BAD_SYNC_WORD", "TRUNCATED", "FORBIDDEN",
                 "UNSUPPORTED_FREE_FORMAT",
                 "INVALID_LENGTH_SIZE", "NAL_LENGTH_OVERFLOW", "BUFFER_TOO_SMALL"}) {
@@ -30,8 +30,8 @@ class CodecErrorModelTest {
         CodecParseException e = new CodecParseException(
                 CodecParseException.Kind.TRUNCATED_RBSP, "h264", "truncated",
                 /* offsetBits */ 80, /* neededBits */ 5, /* field */ null,
-                /* value */ null, /* profileIdc */ null, /* spsId */ null,
-                /* vpsId */ null, /* offsetBytes */ null, /* expected */ null,
+                /* value */ null, /* profileIdc */ null,
+                /* offsetBytes */ null, /* expected */ null,
                 /* found */ null, /* needed */ null, /* had */ null, /* layer */ null);
         assertTrue(e instanceof BindingException, "must extend BindingException");
         assertEquals(CodecParseException.Kind.TRUNCATED_RBSP, e.kind());
@@ -49,7 +49,7 @@ class CodecErrorModelTest {
                 CodecParseException.Kind.RESERVED_VALUE, "h265", "reserved",
                 /* offsetBits */ null, /* neededBits */ null,
                 /* field */ "chroma_format_idc", /* value */ 4,
-                /* profileIdc */ null, /* spsId */ null, /* vpsId */ null,
+                /* profileIdc */ null,
                 /* offsetBytes */ null, /* expected */ null, /* found */ null,
                 /* needed */ null, /* had */ null, /* layer */ null);
         assertEquals(CodecParseException.Kind.RESERVED_VALUE, e.kind());

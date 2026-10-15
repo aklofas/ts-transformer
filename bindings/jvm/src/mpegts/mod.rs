@@ -231,7 +231,7 @@ pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nFeed<'local>(
 ///
 /// Shared by `nFeed` and the srt `DemuxReceiver.nNext` demux-error arm.
 pub(crate) fn throw_demux_error(env: &mut JNIEnv, e: &DemuxError) {
-    // The shared classifier, not a local table: `UNRECOVERABLE` / `MALFORMED_PSI` /
+    // The shared classifier, not a local table: `UNRECOVERABLE` /
     // `MALFORMED_PES` / `SYNC_BUF_EXHAUSTED` each get their own member (they
     // were `INTERNAL` / `BAD_PMT` / `BAD_PES` / `SYNC_LOSS`); `STRICT_REJECTION`
     // is unchanged and its wildcard is `Internal`.

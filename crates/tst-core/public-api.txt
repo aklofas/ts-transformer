@@ -1084,10 +1084,6 @@ pub tst_core::codec::CodecParseError::BadSyncWord::found: u16
 pub tst_core::codec::CodecParseError::BufferTooSmall
 pub tst_core::codec::CodecParseError::BufferTooSmall::have: usize
 pub tst_core::codec::CodecParseError::BufferTooSmall::needed: usize
-pub tst_core::codec::CodecParseError::DanglingSpsReference
-pub tst_core::codec::CodecParseError::DanglingSpsReference::sps_id: u8
-pub tst_core::codec::CodecParseError::DanglingVpsReference
-pub tst_core::codec::CodecParseError::DanglingVpsReference::vps_id: u8
 pub tst_core::codec::CodecParseError::EngineError(alloc::string::String)
 pub tst_core::codec::CodecParseError::Forbidden
 pub tst_core::codec::CodecParseError::Forbidden::field: &'static str
@@ -1305,9 +1301,6 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::error::CotError
 pub tst_core::error::DemuxError::MalformedPes
 pub tst_core::error::DemuxError::MalformedPes::pid: u16
 pub tst_core::error::DemuxError::MalformedPes::reason: &'static str
-pub tst_core::error::DemuxError::MalformedPsi
-pub tst_core::error::DemuxError::MalformedPsi::pid: u16
-pub tst_core::error::DemuxError::MalformedPsi::reason: &'static str
 pub tst_core::error::DemuxError::StrictRejection(alloc::string::String)
 pub tst_core::error::DemuxError::SyncBufExhausted
 pub tst_core::error::DemuxError::SyncBufExhausted::max: usize
@@ -3088,8 +3081,6 @@ pub tst_core::klv::st0903::VTargetPackError::LengthOverrun::declared: usize
 pub tst_core::klv::st0903::VTargetPackError::LengthOverrun::tag: u32
 pub tst_core::klv::st0903::VTargetPackError::MalformedImapb
 pub tst_core::klv::st0903::VTargetPackError::MalformedImapb::tag: u32
-pub tst_core::klv::st0903::VTargetPackError::MalformedUtf8
-pub tst_core::klv::st0903::VTargetPackError::MalformedUtf8::tag: u32
 pub tst_core::klv::st0903::VTargetPackError::TruncatedField
 pub tst_core::klv::st0903::VTargetPackError::TruncatedField::tag: u32
 pub tst_core::klv::st0903::VTargetPackError::TruncatedTargetId
@@ -3552,8 +3543,6 @@ pub tst_core::klv::VTargetPackError::LengthOverrun::declared: usize
 pub tst_core::klv::VTargetPackError::LengthOverrun::tag: u32
 pub tst_core::klv::VTargetPackError::MalformedImapb
 pub tst_core::klv::VTargetPackError::MalformedImapb::tag: u32
-pub tst_core::klv::VTargetPackError::MalformedUtf8
-pub tst_core::klv::VTargetPackError::MalformedUtf8::tag: u32
 pub tst_core::klv::VTargetPackError::TruncatedField
 pub tst_core::klv::VTargetPackError::TruncatedField::tag: u32
 pub tst_core::klv::VTargetPackError::TruncatedTargetId
@@ -7131,9 +7120,6 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::error::CotError
 pub tst_core::DemuxError::MalformedPes
 pub tst_core::DemuxError::MalformedPes::pid: u16
 pub tst_core::DemuxError::MalformedPes::reason: &'static str
-pub tst_core::DemuxError::MalformedPsi
-pub tst_core::DemuxError::MalformedPsi::pid: u16
-pub tst_core::DemuxError::MalformedPsi::reason: &'static str
 pub tst_core::DemuxError::StrictRejection(alloc::string::String)
 pub tst_core::DemuxError::SyncBufExhausted
 pub tst_core::DemuxError::SyncBufExhausted::max: usize

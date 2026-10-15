@@ -15,8 +15,6 @@ def test_codec_error_kind_enum_variants_present():
         "INVALID_GOLOMB",
         "RESERVED_VALUE",
         "UNSUPPORTED_PROFILE",
-        "DANGLING_SPS_REFERENCE",
-        "DANGLING_VPS_REFERENCE",
         "ENGINE_ERROR",
         "INVALID_LEB128",
         "BAD_SYNC_WORD",

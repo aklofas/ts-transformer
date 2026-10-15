@@ -29,8 +29,8 @@
 #
 # Valid chroma_format values: "Monochrome", "Yuv420", "Yuv422", "Yuv444"
 # Valid error values: "TruncatedRbsp", "InvalidGolomb", "ReservedValue",
-#   "UnsupportedProfile", "DanglingSpsReference", "DanglingVpsReference",
-#   "EngineError", "InvalidLeb128", "BadSyncWord", "Truncated", "Forbidden"
+#   "UnsupportedProfile", "EngineError", "InvalidLeb128", "BadSyncWord",
+#   "Truncated", "Forbidden"
 
 # ---------------------------------------------------------------------------
 # H.264 / AVC  — JVT-AVC draft_conformance, AVCv1 and FRExt sub-trees

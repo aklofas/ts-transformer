@@ -263,7 +263,6 @@ pub(crate) fn kind_from_demux(e: &DemuxError) -> ShellErrorKind {
     match e {
         DemuxError::Unrecoverable { .. } => InputMalformed,
         DemuxError::StrictRejection(_) => InputMalformed,
-        DemuxError::MalformedPsi { .. } => InputMalformed,
         DemuxError::MalformedPes { .. } => InputMalformed,
         DemuxError::SyncBufExhausted { .. } => InputMalformed,
         // Required by #[non_exhaustive]. Safe default: InputMalformed

@@ -46,6 +46,28 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `mpegts::common::{PTS_TICKS_PER_SECOND, PCR_TICKS_PER_SECOND}` — the values
   are 90 000 and 27 000 000.
 - `mpegts::mux::_detail` — import `MuxError` from `tst_core::error`.
+- Error variants no code path produced: `DemuxError::MalformedPsi`,
+  `CodecParseError::DanglingSpsReference`,
+  `CodecParseError::DanglingVpsReference` and
+  `VTargetPackError::MalformedUtf8`. A malformed PSI section is still
+  reported as a `NonConformant` issue (or dropped), and a PPS naming a missing
+  SPS is still dropped with a warning. The matching `BindingErrorKind` rows
+  go with them. The C error codes are unchanged: `TST_E_INVALID_TS` and
+  `TST_E_INTERNAL` are still returned for the other demux and codec errors.
+
+### Removed — tst-py (BREAKING)
+
+- `DemuxErrorKind.MALFORMED_PSI`, `CodecErrorKind.DANGLING_SPS_REFERENCE`,
+  `CodecErrorKind.DANGLING_VPS_REFERENCE`, and `CodecError`'s `sps_id` /
+  `vps_id` keyword arguments and attributes — never raised.
+
+### Removed — tst-jni (BREAKING)
+
+- `DemuxException.Kind.MALFORMED_PSI`,
+  `CodecParseException.Kind.DANGLING_SPS_REFERENCE` /
+  `DANGLING_VPS_REFERENCE`, and `CodecParseException.spsId()` / `vpsId()`
+  with their two constructor parameters (the public constructor now takes 14
+  arguments) — never thrown.
 
 ### Changed — tst-core (BREAKING)
 

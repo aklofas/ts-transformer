@@ -524,7 +524,6 @@ pub(crate) fn record_demux_error(e: &DemuxError) -> i32 {
     let code = match e {
         DemuxError::StrictRejection(_) => TstError::InvalidTs,
         DemuxError::Unrecoverable { .. } => TstError::InvalidTs,
-        DemuxError::MalformedPsi { .. } => TstError::InvalidTs,
         DemuxError::MalformedPes { .. } => TstError::InvalidTs,
         // Fired when the caller feeds a pathologically large byte stream with
         // no 0x47 sync bytes — the sync buffer hit its 4 MiB cap.
@@ -1070,8 +1069,8 @@ mod tests {
         use tst_pipeline::binding::BindingErrorKind;
         assert_eq!(
             BindingErrorKind::ALL.len(),
-            98,
-            "the binding error-kind table has 98 variants"
+            95,
+            "the binding error-kind table has 95 variants"
         );
         for k in BindingErrorKind::ALL {
             let v = TstError::from_c_code(k.c_projection()).unwrap_or_else(|| {

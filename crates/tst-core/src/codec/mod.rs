@@ -276,22 +276,6 @@ pub enum CodecParseError {
     #[error("unsupported profile_idc {profile_idc}")]
     UnsupportedProfile { profile_idc: u8 },
 
-    /// A PPS references an SPS id that is not in the input.
-    ///
-    /// Reserved — no parser returns it: H.264 `parse_parameter_sets` drops
-    /// such a PPS with a `tracing::warn!`, and a standalone `parse_pps`
-    /// sees no SPS set to check against.
-    #[error("PPS references SPS id {sps_id} which was not in the input")]
-    DanglingSpsReference { sps_id: u8 },
-
-    /// H.265 only: an SPS references a VPS id that is not in the input.
-    ///
-    /// Reserved — no parser returns it: H.265 `parse_parameter_sets` keeps
-    /// an SPS whatever VPS it names, and a standalone `parse_sps` sees no
-    /// VPS set to check against.
-    #[error("SPS references VPS id {vps_id} which was not in the input")]
-    DanglingVpsReference { vps_id: u8 },
-
     /// Underlying engine returned an error that doesn't map cleanly to
     /// our enum. The string is for diagnostics only — consumers should
     /// not pattern-match on it.
@@ -576,14 +560,6 @@ mod tests {
         assert_eq!(
             CodecParseError::UnsupportedProfile { profile_idc: 200 }.to_string(),
             "unsupported profile_idc 200"
-        );
-        assert_eq!(
-            CodecParseError::DanglingSpsReference { sps_id: 3 }.to_string(),
-            "PPS references SPS id 3 which was not in the input"
-        );
-        assert_eq!(
-            CodecParseError::DanglingVpsReference { vps_id: 1 }.to_string(),
-            "SPS references VPS id 1 which was not in the input"
         );
         assert_eq!(
             CodecParseError::EngineError("test error".into()).to_string(),

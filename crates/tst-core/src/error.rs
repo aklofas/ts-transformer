@@ -851,14 +851,6 @@ pub enum DemuxError {
     #[error("strict-mode rejection: {0}")]
     StrictRejection(String),
 
-    /// PSI section claimed a length that doesn't fit a valid PAT/PMT.
-    ///
-    /// Reserved — the demuxer does not return it: a structurally invalid
-    /// PAT/PMT section is dropped, and a CRC mismatch surfaces as
-    /// [`NonConformantIssue::PsiChecksumMismatch`](crate::mpegts::demux::NonConformantIssue::PsiChecksumMismatch).
-    #[error("malformed PSI section at PID 0x{pid:04X}: {reason}")]
-    MalformedPsi { pid: u16, reason: &'static str },
-
     /// PES header at PID 0x{pid:04X} declared a length that's too short to
     /// contain its own claimed flags. Unlike PSI checksum failures (which
     /// surface as `NonConformant` in lenient mode), this prevents the

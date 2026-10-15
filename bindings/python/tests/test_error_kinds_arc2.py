@@ -110,7 +110,6 @@ EXPECTED = {
     exc.DemuxErrorKind: {
         "UNRECOVERABLE": "unrecoverable",
         "STRICT_REJECTION": "strict_rejection",
-        "MALFORMED_PSI": "malformed_psi",
         "MALFORMED_PES": "malformed_pes",
         "SYNC_BUF_EXHAUSTED": "sync_buf_exhausted",
     },
@@ -141,8 +140,6 @@ EXPECTED = {
         "INVALID_GOLOMB": 2,
         "RESERVED_VALUE": 3,
         "UNSUPPORTED_PROFILE": 4,
-        "DANGLING_SPS_REFERENCE": 5,
-        "DANGLING_VPS_REFERENCE": 6,
         "ENGINE_ERROR": 7,
         "INVALID_LEB128": 8,
         "BAD_SYNC_WORD": 9,
@@ -173,14 +170,17 @@ REMOVED_ALIASES = {
     },
     exc.DemuxErrorKind: {
         "INTERNAL": "UNRECOVERABLE",
-        "BAD_PMT": "MALFORMED_PSI",
         "BAD_PES": "MALFORMED_PES",
         "SYNC_LOSS": "SYNC_BUF_EXHAUSTED",
     },
     exc.KlvEncodeErrorKind: {"VTARGET_PACK_EMPTY": "V_TARGET_PACK_EMPTY"},
 }
 
-REMOVED = {exc.DemuxErrorKind: ["UNEXPECTED_EOF"], exc.KlvErrorKind: ["UNKNOWN_SET"]}
+REMOVED = {
+    exc.DemuxErrorKind: ["UNEXPECTED_EOF", "MALFORMED_PSI"],
+    exc.KlvErrorKind: ["UNKNOWN_SET"],
+    exc.CodecErrorKind: ["DANGLING_SPS_REFERENCE", "DANGLING_VPS_REFERENCE"],
+}
 
 
 @pytest.mark.parametrize("enum_cls", list(EXPECTED), ids=lambda e: e.__name__)
@@ -203,5 +203,5 @@ def test_the_0_7_x_aliases_are_gone(enum_cls) -> None:
 def test_removed_members_are_gone(enum_cls) -> None:
     for name in REMOVED[enum_cls]:
         assert name not in enum_cls.__members__, (
-            f"{enum_cls.__name__}.{name} was never produced and is removed in 0.7.0"
+            f"{enum_cls.__name__}.{name} was never produced and is removed"
         )

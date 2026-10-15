@@ -22,8 +22,6 @@ pub struct CodecErrFields {
     pub field: Option<String>,
     pub value: Option<i32>,
     pub profile_idc: Option<i32>,
-    pub sps_id: Option<i32>,
-    pub vps_id: Option<i32>,
     pub offset_bytes: Option<i32>,
     pub expected: Option<i32>,
     pub found: Option<i32>,
@@ -118,7 +116,6 @@ pub(crate) const RTSP_KINDS: &[K] = &[
 /// failure and the binding layer's wildcard, not a `DemuxError` variant).
 pub(crate) const DEMUX_KINDS: &[K] = &[
     K::DemuxUnrecoverable,
-    K::DemuxMalformedPsi,
     K::DemuxMalformedPes,
     K::DemuxSyncBufExhausted,
     K::DemuxStrictRejection,
@@ -166,8 +163,6 @@ pub(crate) const CODEC_KINDS: &[K] = &[
     K::CodecInvalidGolomb,
     K::CodecReservedValue,
     K::CodecUnsupportedProfile,
-    K::CodecDanglingSpsReference,
-    K::CodecDanglingVpsReference,
     K::CodecEngineError,
     K::CodecInvalidLeb128,
     K::CodecBadSyncWord,
@@ -635,8 +630,6 @@ fn throw_codec_inner(
     let needed_bits = boxed_int(env, fields.needed_bits)?;
     let value = boxed_int(env, fields.value)?;
     let profile_idc = boxed_int(env, fields.profile_idc)?;
-    let sps_id = boxed_int(env, fields.sps_id)?;
-    let vps_id = boxed_int(env, fields.vps_id)?;
     let offset_bytes = boxed_int(env, fields.offset_bytes)?;
     let expected = boxed_int(env, fields.expected)?;
     let found = boxed_int(env, fields.found)?;
@@ -644,18 +637,17 @@ fn throw_codec_inner(
     let had = boxed_int(env, fields.had)?;
     let layer = boxed_int(env, fields.layer)?;
 
-    // Canonical 16-arg ctor: (Kind, String codec, String message, then the
-    // 13 nullable diagnostic fields in declaration order). The message slot
+    // Canonical 14-arg ctor: (Kind, String codec, String message, then the
+    // 11 nullable diagnostic fields in declaration order). The message slot
     // carries the Rust `Display` string forwarded by the call site (mirrors
     // tst-py's `format!("{err}")` and `throw_klv_decode`/`throw_demux`).
     let msg = env.new_string(message)?;
     let ctor_sig = "(Lorg/tstrans/CodecParseException$Kind;\
 Ljava/lang/String;Ljava/lang/String;\
 Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/String;\
+Ljava/lang/Integer;Ljava/lang/Integer;\
 Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;\
-Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;\
-Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;\
-Ljava/lang/Integer;)V";
+Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)V";
     let exc = env.new_object(
         "org/tstrans/CodecParseException",
         ctor_sig,
@@ -668,8 +660,6 @@ Ljava/lang/Integer;)V";
             JValue::Object(&field_str),
             JValue::Object(&value),
             JValue::Object(&profile_idc),
-            JValue::Object(&sps_id),
-            JValue::Object(&vps_id),
             JValue::Object(&offset_bytes),
             JValue::Object(&expected),
             JValue::Object(&found),
@@ -729,32 +719,6 @@ pub fn map_codec_parse_error(env: &mut JNIEnv, e: &CodecParseError, codec: &str)
             throw_codec(
                 env,
                 BindingErrorKind::CodecUnsupportedProfile,
-                codec,
-                &f,
-                &msg,
-            )
-        }
-        CodecParseError::DanglingSpsReference { sps_id } => {
-            let f = CodecErrFields {
-                sps_id: Some(i32::from(*sps_id)),
-                ..Default::default()
-            };
-            throw_codec(
-                env,
-                BindingErrorKind::CodecDanglingSpsReference,
-                codec,
-                &f,
-                &msg,
-            )
-        }
-        CodecParseError::DanglingVpsReference { vps_id } => {
-            let f = CodecErrFields {
-                vps_id: Some(i32::from(*vps_id)),
-                ..Default::default()
-            };
-            throw_codec(
-                env,
-                BindingErrorKind::CodecDanglingVpsReference,
                 codec,
                 &f,
                 &msg,
@@ -959,11 +923,11 @@ mod tests {
             (Domain::Srt, 11),
             (Domain::Rtp, 10),
             (Domain::Rtsp, 11), // + CLOSED (a cancelled control call, a consumed data plane)
-            (Domain::Demux, 6),
+            (Domain::Demux, 5),
             (Domain::Mux, 9),
             (Domain::KlvDecode, 7),
             (Domain::KlvEncode, 11),
-            (Domain::Codec, 15),
+            (Domain::Codec, 13),
             (Domain::Hls, 10),
         ] {
             let members: std::collections::BTreeSet<&str> =

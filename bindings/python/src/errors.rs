@@ -277,12 +277,6 @@ pub(crate) fn codec_parse_error_to_pyerr(
         CodecParseError::UnsupportedProfile { profile_idc } => {
             vec![("profile_idc", profile_idc.into_py(py))]
         }
-        CodecParseError::DanglingSpsReference { sps_id } => {
-            vec![("sps_id", sps_id.into_py(py))]
-        }
-        CodecParseError::DanglingVpsReference { vps_id } => {
-            vec![("vps_id", vps_id.into_py(py))]
-        }
         CodecParseError::EngineError(_) => vec![],
         CodecParseError::InvalidLeb128 { offset_bytes } => {
             vec![("offset_bytes", offset_bytes.into_py(py))]

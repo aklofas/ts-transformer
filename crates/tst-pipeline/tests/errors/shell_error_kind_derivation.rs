@@ -214,13 +214,6 @@ fn demux_rows() -> Vec<(DemuxError, ShellErrorKind)> {
         ),
         (DemuxError::StrictRejection("test".into()), InputMalformed),
         (
-            DemuxError::MalformedPsi {
-                pid: 0,
-                reason: "test",
-            },
-            InputMalformed,
-        ),
-        (
             DemuxError::MalformedPes {
                 pid: 0,
                 reason: "test",

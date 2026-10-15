@@ -10,10 +10,10 @@ import java.util.stream.Collectors;
 class ErrorModelTest {
     @Test
     void demuxExceptionCarriesKindAndMessage() {
-        DemuxException e = new DemuxException(DemuxException.Kind.MALFORMED_PSI, "bad psi");
+        DemuxException e = new DemuxException(DemuxException.Kind.MALFORMED_PES, "bad pes");
         assertTrue(e instanceof BindingException, "DemuxException must extend BindingException");
-        assertEquals(DemuxException.Kind.MALFORMED_PSI, e.kind());
-        assertEquals("bad psi", e.getMessage());
+        assertEquals(DemuxException.Kind.MALFORMED_PES, e.kind());
+        assertEquals("bad pes", e.getMessage());
     }
 
     /**
@@ -25,12 +25,12 @@ class ErrorModelTest {
      */
     @Test
     void kindMembersMatchTheDemuxDomain() {
-        Set<String> expected = Set.of("UNRECOVERABLE", "MALFORMED_PSI", "MALFORMED_PES", "SYNC_BUF_EXHAUSTED", "STRICT_REJECTION", "INTERNAL");
+        Set<String> expected = Set.of("UNRECOVERABLE", "MALFORMED_PES", "SYNC_BUF_EXHAUSTED", "STRICT_REJECTION", "INTERNAL");
         Set<String> actual = Arrays.stream(DemuxException.Kind.values())
             .map(Enum::name)
             .collect(Collectors.toSet());
         assertEquals(expected, actual);
-        assertEquals(6, DemuxException.Kind.values().length);
+        assertEquals(5, DemuxException.Kind.values().length);
         assertThrows(IllegalArgumentException.class, () -> DemuxException.Kind.valueOf("SYNC_LOSS"));
         assertThrows(IllegalArgumentException.class, () -> DemuxException.Kind.valueOf("BAD_PMT"));
         assertThrows(IllegalArgumentException.class, () -> DemuxException.Kind.valueOf("BAD_PES"));

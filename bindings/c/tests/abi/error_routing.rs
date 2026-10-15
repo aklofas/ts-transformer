@@ -286,10 +286,10 @@ fn raw_sender_closed_returns_closed_code() {
 #[test]
 fn demux_receiver_input_malformed_returns_invalid_ts_code() {
     reset();
-    // `DemuxError::MalformedPsi` → kind InputMalformed on DemuxReceiver.
-    let demux_err = DemuxError::MalformedPsi {
-        pid: 0x0000,
-        reason: "bad section length",
+    // `DemuxError::MalformedPes` → kind InputMalformed on DemuxReceiver.
+    let demux_err = DemuxError::MalformedPes {
+        pid: 0x0100,
+        reason: "PES header too short for its flags",
     };
     let e = DemuxReceiverError::from(demux_err);
     let rc = test_record_shell_error(&e);
@@ -300,10 +300,7 @@ fn demux_receiver_input_malformed_returns_invalid_ts_code() {
     assert_eq!(test_last_error_code(), TST_E_INVALID_TS);
     let msg = test_last_error_msg();
     assert!(
-        msg.contains("section")
-            || msg.contains("PSI")
-            || msg.contains("pid")
-            || msg.contains("malformed"),
+        msg.contains("PES") || msg.contains("pid") || msg.contains("PID"),
         "DemuxReceiver InputMalformed: unexpected msg: {msg}"
     );
 }

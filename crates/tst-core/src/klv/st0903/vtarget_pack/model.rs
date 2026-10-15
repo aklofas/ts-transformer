@@ -264,8 +264,6 @@ pub enum VTargetPackError {
     },
     #[error("VTargetPack tag {tag}: malformed IMAPB value")]
     MalformedImapb { tag: u32 },
-    #[error("VTargetPack tag {tag}: malformed UTF-8 string")]
-    MalformedUtf8 { tag: u32 },
     #[error("VTargetPack tag {tag}: invalid value length {got} (expected {expected})")]
     InvalidLength {
         tag: u32,

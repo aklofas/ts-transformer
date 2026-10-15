@@ -941,7 +941,7 @@ impl Demuxer {
     /// that error still gets the lenient `NonConformant` / strict error
     /// policy instead of passing through unexamined.
     ///
-    /// All other `DemuxError` variants (`MalformedPsi`, `Unrecoverable`,
+    /// All other `DemuxError` variants (`Unrecoverable`,
     /// `StrictRejection`, `SyncBufExhausted`) are pass-through — those
     /// represent unrecoverable byte-stream conditions or strict-mode
     /// rejections already shaped for caller handling.
