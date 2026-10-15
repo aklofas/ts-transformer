@@ -1,16 +1,16 @@
 //! RTSP server — accepts client connections, manages sessions, fans out
 //! one Muxer's TS bytes to N connected peers.
 
-pub mod auth;
-pub mod fanout;
-pub mod handlers;
-pub mod listener;
+pub(crate) mod auth;
+pub(crate) mod fanout;
+pub(crate) mod handlers;
+pub(crate) mod listener;
 pub mod mount;
-pub mod multicast;
+pub(crate) mod multicast;
 pub mod publish;
 pub(crate) mod session;
 #[cfg(feature = "rtsp-server-tls")]
-pub mod tls;
+pub(crate) mod tls;
 
 use std::net::SocketAddr;
 use std::sync::Arc;

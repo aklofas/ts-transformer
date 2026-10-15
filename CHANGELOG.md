@@ -121,6 +121,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   first-writer-wins semantics). `RtpRecvTransport::end_reason_handle` returns
   `EndReasonHandle`, and `RtpRecvTransport` also answers the new
   `RecvTransport::end_reason_handle`.
+- The implementation modules `rtsp::client::{interleaved_pump, keepalive,
+  setup, teardown}` and `rtsp::server::{auth, fanout, handlers, listener,
+  multicast, tls}` are no longer public; none exported an item of its own
+  (`RtspClient::setup` and `teardown` are methods and are unchanged).
 
 ### Changed — tst-core (BREAKING)
 

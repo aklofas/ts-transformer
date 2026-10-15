@@ -41,6 +41,7 @@ unchanged (310) and the test leaf-name multiset is byte-identical before/after
 | `rtsp_client_auth.rs` | `rtsp_client/auth.rs` |
 | `rtsp_client_fallback.rs` | `rtsp_client/fallback.rs` |
 | `rtsp_client_interleaved_e2e.rs` | `rtsp_client/interleaved_e2e.rs` |
+| (new in phase 6) | `rtsp_client/interleaved_rtcp.rs` |
 | `rtsp_client_keepalive.rs` | `rtsp_client/keepalive.rs` |
 | `rtsp_client_setup_play.rs` | `rtsp_client/setup_play.rs` |
 | `rtsp_client_teardown.rs` | `rtsp_client/teardown.rs` |

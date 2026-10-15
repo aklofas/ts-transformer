@@ -22,6 +22,8 @@ mod fallback;
 // hand-rolled `fixtures::rtsp_loopback_server`).
 #[path = "rtsp_client/interleaved_e2e.rs"]
 mod interleaved_e2e;
+#[path = "rtsp_client/interleaved_rtcp.rs"]
+mod interleaved_rtcp;
 #[path = "rtsp_client/keepalive.rs"]
 mod keepalive;
 #[path = "rtsp_client/keepalive_overflow.rs"]
