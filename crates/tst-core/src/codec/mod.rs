@@ -17,7 +17,7 @@
 use alloc::string::String;
 pub mod aac;
 pub mod ac3;
-pub(crate) mod annexb;
+pub mod annexb;
 pub mod av1;
 pub(crate) mod bitreader;
 pub(crate) mod framing;
@@ -26,6 +26,7 @@ pub mod h265;
 pub mod h266;
 pub mod misp_time;
 pub mod mpegaudio;
+pub mod nal;
 pub mod nal_framing;
 pub mod util;
 mod vocabulary;

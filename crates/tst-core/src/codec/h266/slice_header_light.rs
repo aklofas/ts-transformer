@@ -67,12 +67,6 @@ pub enum H266SliceType {
     I,
 }
 
-/// Returns `true` when `nal_unit_type` is an IDR NAL: IDR_W_RADL (7) or
-/// IDR_N_LP (8) per H.266 V4 Table 5.
-const fn is_idr_nal(nal_unit_type: u8) -> bool {
-    matches!(nal_unit_type, 7 | 8)
-}
-
 /// Parse a light H.266 slice header from a RBSP byte slice.
 ///
 /// # Input contract
@@ -124,18 +118,19 @@ pub fn parse_slice_header_light(
     // For non-IDR slices the bit width comes from
     // sps_log2_max_pic_order_cnt_lsb_minus4, which requires the deferred
     // SPS-driven parser path — return None.
-    let pic_order_cnt_lsb = if is_idr_nal(nal_unit_type) {
-        Some(0)
-    } else {
-        None
-    };
+    let pic_order_cnt_lsb =
+        if crate::codec::nal::is_idr(crate::codec::VideoCodec::H266, nal_unit_type) {
+            Some(0)
+        } else {
+            None
+        };
 
     Ok(H266SliceHeaderLight {
         first_in_pic,
         slice_type,
         pps_id,
         pic_order_cnt_lsb,
-        idr: is_idr_nal(nal_unit_type),
+        idr: crate::codec::nal::is_idr(crate::codec::VideoCodec::H266, nal_unit_type),
         raw_rbsp: rbsp.to_vec(),
     })
 }

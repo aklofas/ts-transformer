@@ -142,12 +142,12 @@ pub(crate) fn sei_payload(
     Ok(out)
 }
 
-/// Append `rbsp` to `out` with `emulation_prevention_three_byte`
-/// insertion (H.264 §7.4.1 / H.265 §7.4.2): any byte value 0x00–0x03
-/// that would follow two consecutive zero bytes gets a 0x03 inserted
-/// before it. `out`'s existing tail does not count toward the zero run
-/// (callers append the NAL header first — headers are non-zero here).
-pub(crate) fn append_rbsp_escaped(out: &mut Vec<u8>, rbsp: &[u8]) {
+/// Emulation-prevention escaping for a NAL unit's RBSP (H.264 §7.4.1 /
+/// H.265 §7.4.2): appends `rbsp` to `out`, inserting `0x03` before any byte
+/// `0x00`–`0x03` that follows two zero bytes. `out`'s existing tail does
+/// not count toward the zero run (callers append the NAL header first —
+/// headers are non-zero here).
+pub fn append_rbsp_escaped(out: &mut Vec<u8>, rbsp: &[u8]) {
     let mut zeros = 0u32;
     for &b in rbsp {
         if zeros >= 2 && b <= 0x03 {
@@ -157,6 +157,49 @@ pub(crate) fn append_rbsp_escaped(out: &mut Vec<u8>, rbsp: &[u8]) {
         out.push(b);
         if b == 0 { zeros += 1 } else { zeros = 0 }
     }
+}
+
+/// Build one `user_data_unregistered` SEI NAL unit (payloadType 5:
+/// H.264 §D.1.6, H.265 §D.2.7): the 16-byte `uuid` then `payload`, as one
+/// SEI message whose payloadSize uses `0xFF` runs (H.264 §7.3.2.3.1), with
+/// `rbsp_trailing_bits` and emulation prevention.
+///
+/// Returns the bare NAL: header (H.264 type 6, `nal_ref_idc` 0; H.265
+/// PREFIX_SEI type 39, layer 0, `nuh_temporal_id_plus1` 1) plus escaped
+/// RBSP, no start code. The MISP timestamp SEI ([`build_sei_nal`]) is this
+/// message with the ST 0604 identifier as the UUID.
+///
+/// # Errors
+///
+/// [`MispTimeError::UnsupportedCodec`] for H.266 and AV1.
+pub fn build_user_data_unregistered_sei_nal(
+    codec: VideoCodec,
+    uuid: &[u8; 16],
+    payload: &[u8],
+) -> Result<Vec<u8>, MispTimeError> {
+    let header: &[u8] = match codec {
+        VideoCodec::H264 => &[0x06],
+        VideoCodec::H265 => &[0x4E, 0x01],
+        VideoCodec::H266 | VideoCodec::Av1 => {
+            return Err(MispTimeError::UnsupportedCodec { codec });
+        }
+    };
+    let size = uuid.len() + payload.len();
+    let mut rbsp = Vec::with_capacity(size + size / 255 + 3);
+    rbsp.push(0x05);
+    let mut n = size;
+    while n >= 255 {
+        rbsp.push(0xFF);
+        n -= 255;
+    }
+    rbsp.push(n as u8); // n < 255 here
+    rbsp.extend_from_slice(uuid);
+    rbsp.extend_from_slice(payload);
+    rbsp.push(0x80);
+    let mut out = Vec::with_capacity(header.len() + rbsp.len() + rbsp.len() / 2);
+    out.extend_from_slice(header);
+    append_rbsp_escaped(&mut out, &rbsp);
+    Ok(out)
 }
 
 /// Build the complete MISP-timestamp SEI NAL for one access unit.
@@ -169,24 +212,23 @@ pub(crate) fn append_rbsp_escaped(out: &mut Vec<u8>, rbsp: &[u8]) {
 /// 28-byte ST 0604 payload.
 pub fn build_sei_nal(codec: VideoCodec, ts: &MispTimestamp) -> Result<Vec<u8>, MispTimeError> {
     let payload = sei_payload(codec, ts)?;
-    // RBSP = payload_type(5) + payload_size(28) + payload + trailing 0x80.
-    let mut rbsp = [0u8; 31];
-    rbsp[0] = 0x05;
-    rbsp[1] = 28;
-    rbsp[2..30].copy_from_slice(&payload);
-    rbsp[30] = 0x80;
-    let mut out = Vec::with_capacity(2 + rbsp.len() + 4);
-    match codec {
-        VideoCodec::H264 => out.push(0x06),
-        VideoCodec::H265 => out.extend_from_slice(&[0x4E, 0x01]),
-        // sei_payload() above already rejected H.266 / AV1.
-        VideoCodec::H266 | VideoCodec::Av1 => unreachable!("rejected by sei_payload"),
-    }
-    append_rbsp_escaped(&mut out, &rbsp);
-    Ok(out)
+    let (uuid, rest) = payload.split_at(16);
+    let uuid: &[u8; 16] = uuid.try_into().expect("sei_payload is 28 bytes");
+    build_user_data_unregistered_sei_nal(codec, uuid, rest)
 }
 
-pub(crate) fn insert_sei_before_first_vcl(
+/// Splice a SEI NAL unit into an Annex-B access unit, before its first VCL
+/// NAL unit (after any AUD and parameter sets), behind a 3-byte start code.
+///
+/// `sei_nal` is a bare NAL (header + escaped RBSP, no start code), as
+/// [`build_sei_nal`] and [`build_user_data_unregistered_sei_nal`] return.
+/// H.264 and H.265 only.
+///
+/// # Errors
+///
+/// [`MispTimeError::NoVclNal`] when `au` holds no VCL NAL unit (or the
+/// codec is not H.264/H.265).
+pub fn insert_sei_before_first_vcl(
     au: &[u8],
     sei_nal: &[u8],
     codec: VideoCodec,
@@ -377,46 +419,75 @@ fn scan_sei_nal(
 /// (§7.4.2.2, all VCL types are < 32). Only H.264/H.265 reach this —
 /// build_sei_nal() has already rejected other codecs.
 fn first_vcl_prefix_offset(au: &[u8], codec: VideoCodec) -> Option<usize> {
-    let mut i = 0usize;
-    while i + 3 <= au.len() {
-        if au[i] == 0 && au[i + 1] == 0 {
-            let (prefix_len, data_at) = if au[i + 2] == 1 {
-                (3, i + 3)
-            } else if i + 4 <= au.len() && au[i + 2] == 0 && au[i + 3] == 1 {
-                (4, i + 4)
-            } else {
-                i += 1;
-                continue;
-            };
-            // H.265 NAL header is 2 bytes (forbidden_zero_bit | nal_unit_type | nuh_layer_id
-            // | nuh_temporal_id_plus1); require both bytes to be present before classifying
-            // H.265 VCL so a 1-byte truncated tail is never accepted as VCL.
-            let has_header = match codec {
-                VideoCodec::H265 => data_at + 1 < au.len(),
-                _ => data_at < au.len(),
-            };
-            if has_header {
-                let header = au[data_at];
-                let is_vcl = match codec {
-                    VideoCodec::H264 => (1..=5).contains(&(header & 0x1F)),
-                    VideoCodec::H265 => ((header >> 1) & 0x3F) <= 31,
-                    VideoCodec::H266 | VideoCodec::Av1 => false,
-                };
-                if is_vcl {
-                    return Some(i);
-                }
-            }
-            i += prefix_len;
-        } else {
-            i += 1;
-        }
+    // Only H.264/H.265 carry a MISP SEI; build_sei_nal rejects the others.
+    if !matches!(codec, VideoCodec::H264 | VideoCodec::H265) {
+        return None;
     }
-    None
+    let header = crate::codec::nal::header_len(codec)?;
+    crate::codec::annexb::start_codes(au).find_map(|sc| {
+        let nal = &au[sc.data_start..];
+        // The whole header must be present: a truncated H.265 tail is never VCL.
+        if nal.len() < header {
+            return None;
+        }
+        let nal_type = crate::codec::nal::nal_unit_type(codec, nal)?;
+        crate::codec::nal::is_vcl(codec, nal_type).then_some(sc.prefix_start)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The pre-refactor body, kept verbatim as a differential oracle.
+    fn old_first_vcl_prefix_offset(au: &[u8], codec: VideoCodec) -> Option<usize> {
+        let mut i = 0usize;
+        while i + 3 <= au.len() {
+            if au[i] == 0 && au[i + 1] == 0 {
+                let (prefix_len, data_at) = if au[i + 2] == 1 {
+                    (3, i + 3)
+                } else if i + 4 <= au.len() && au[i + 2] == 0 && au[i + 3] == 1 {
+                    (4, i + 4)
+                } else {
+                    i += 1;
+                    continue;
+                };
+                // H.265 NAL header is 2 bytes (forbidden_zero_bit | nal_unit_type | nuh_layer_id
+                // | nuh_temporal_id_plus1); require both bytes to be present before classifying
+                // H.265 VCL so a 1-byte truncated tail is never accepted as VCL.
+                let has_header = match codec {
+                    VideoCodec::H265 => data_at + 1 < au.len(),
+                    _ => data_at < au.len(),
+                };
+                if has_header {
+                    let header = au[data_at];
+                    let is_vcl = match codec {
+                        VideoCodec::H264 => (1..=5).contains(&(header & 0x1F)),
+                        VideoCodec::H265 => ((header >> 1) & 0x3F) <= 31,
+                        VideoCodec::H266 | VideoCodec::Av1 => false,
+                    };
+                    if is_vcl {
+                        return Some(i);
+                    }
+                }
+                i += prefix_len;
+            } else {
+                i += 1;
+            }
+        }
+        None
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn first_vcl_matches_the_old_scan(
+            buf in proptest::collection::vec(proptest::sample::select(vec![0u8, 0, 0, 1, 0x65, 0x67, 0x26, 0x40, 0x02]), 0..64),
+            h265 in proptest::bool::ANY,
+        ) {
+            let codec = if h265 { VideoCodec::H265 } else { VideoCodec::H264 };
+            proptest::prop_assert_eq!(first_vcl_prefix_offset(&buf, codec), old_first_vcl_prefix_offset(&buf, codec));
+        }
+    }
     use crate::codec::VideoCodec;
 
     // Minimal Annex-B AU builders for splice tests.

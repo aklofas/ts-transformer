@@ -60,11 +60,6 @@ impl H265SliceType {
     }
 }
 
-/// Per H.265 Table 7-1: IDR_W_RADL = 19, IDR_N_LP = 20.
-const fn is_idr_nal(nal_unit_type: u8) -> bool {
-    matches!(nal_unit_type, 19 | 20)
-}
-
 /// Per H.265 §3.x: NAL types 16–23 are IRAP (intra random access point).
 const fn is_irap_nal(nal_unit_type: u8) -> bool {
     matches!(nal_unit_type, 16..=23)
@@ -135,7 +130,7 @@ pub fn parse_slice_header_light(
     let pic_order_cnt_lsb = if let Some(sps) = sps {
         // pic_order_cnt_lsb is present in all non-IDR slice headers.
         // For IDR slices it is implicitly 0 per H.265 §8.3.1.
-        if is_idr_nal(nal_unit_type) {
+        if crate::codec::nal::is_idr(crate::codec::VideoCodec::H265, nal_unit_type) {
             Some(0)
         } else {
             let bits = sps.log2_max_pic_order_cnt_lsb_minus4 as u32 + 4;
@@ -150,7 +145,7 @@ pub fn parse_slice_header_light(
         slice_type,
         pps_id,
         pic_order_cnt_lsb,
-        idr: is_idr_nal(nal_unit_type),
+        idr: crate::codec::nal::is_idr(crate::codec::VideoCodec::H265, nal_unit_type),
         raw_rbsp: rbsp.to_vec(),
     })
 }

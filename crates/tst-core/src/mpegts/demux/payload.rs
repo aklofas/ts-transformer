@@ -1,6 +1,6 @@
 //! ES payload parsers: H.264 / H.265 NAL split, KLV unwrap.
 
-use crate::codec::annexb::start_codes;
+use crate::codec::annexb::start_code_vec;
 use crate::codec::av1::decode::leb128::read_leb128;
 use crate::codec::{NalUnit, Obu, ObuExtension, VideoCodec};
 use crate::mpegts::demux::event::{
@@ -28,7 +28,7 @@ pub fn split_nals(
     let mut out = Vec::new();
     let mut issues = Vec::new();
     let bytes: &[u8] = es_payload;
-    let starts = start_codes(bytes);
+    let starts = start_code_vec(bytes);
     for win in starts.windows(2) {
         // `data_start` is the offset of the first NAL byte after this NAL's
         // start-code prefix; `prefix_start` of the next entry is where the

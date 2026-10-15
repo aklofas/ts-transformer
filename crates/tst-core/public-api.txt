@@ -227,6 +227,50 @@ impl core::marker::UnsafeUnpin for tst_core::codec::ac3::Ac3SyncInfo
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::ac3::Ac3SyncInfo
 impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::ac3::Ac3SyncInfo
 pub fn tst_core::codec::ac3::parse_syncframe(&[u8]) -> core::result::Result<tst_core::codec::ac3::Ac3SyncInfo, tst_core::codec::CodecParseError>
+pub mod tst_core::codec::annexb
+pub struct tst_core::codec::annexb::Nals<'a>
+impl<'a> core::iter::traits::iterator::Iterator for tst_core::codec::annexb::Nals<'a>
+pub type tst_core::codec::annexb::Nals<'a>::Item = &'a [u8]
+pub fn tst_core::codec::annexb::Nals<'a>::next(&mut self) -> core::option::Option<&'a [u8]>
+impl<'a> core::marker::Freeze for tst_core::codec::annexb::Nals<'a>
+impl<'a> core::marker::Send for tst_core::codec::annexb::Nals<'a>
+impl<'a> core::marker::Sync for tst_core::codec::annexb::Nals<'a>
+impl<'a> core::marker::Unpin for tst_core::codec::annexb::Nals<'a>
+impl<'a> core::marker::UnsafeUnpin for tst_core::codec::annexb::Nals<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::annexb::Nals<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for tst_core::codec::annexb::Nals<'a>
+pub struct tst_core::codec::annexb::StartCode
+pub tst_core::codec::annexb::StartCode::data_start: usize
+pub tst_core::codec::annexb::StartCode::prefix_start: usize
+impl core::clone::Clone for tst_core::codec::annexb::StartCode
+pub fn tst_core::codec::annexb::StartCode::clone(&self) -> tst_core::codec::annexb::StartCode
+impl core::cmp::Eq for tst_core::codec::annexb::StartCode
+impl core::cmp::PartialEq for tst_core::codec::annexb::StartCode
+pub fn tst_core::codec::annexb::StartCode::eq(&self, &tst_core::codec::annexb::StartCode) -> bool
+impl core::fmt::Debug for tst_core::codec::annexb::StartCode
+pub fn tst_core::codec::annexb::StartCode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::codec::annexb::StartCode
+impl core::marker::StructuralPartialEq for tst_core::codec::annexb::StartCode
+impl core::marker::Freeze for tst_core::codec::annexb::StartCode
+impl core::marker::Send for tst_core::codec::annexb::StartCode
+impl core::marker::Sync for tst_core::codec::annexb::StartCode
+impl core::marker::Unpin for tst_core::codec::annexb::StartCode
+impl core::marker::UnsafeUnpin for tst_core::codec::annexb::StartCode
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::annexb::StartCode
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::annexb::StartCode
+pub struct tst_core::codec::annexb::StartCodes<'a>
+impl core::iter::traits::iterator::Iterator for tst_core::codec::annexb::StartCodes<'_>
+pub type tst_core::codec::annexb::StartCodes<'_>::Item = tst_core::codec::annexb::StartCode
+pub fn tst_core::codec::annexb::StartCodes<'_>::next(&mut self) -> core::option::Option<tst_core::codec::annexb::StartCode>
+impl<'a> core::marker::Freeze for tst_core::codec::annexb::StartCodes<'a>
+impl<'a> core::marker::Send for tst_core::codec::annexb::StartCodes<'a>
+impl<'a> core::marker::Sync for tst_core::codec::annexb::StartCodes<'a>
+impl<'a> core::marker::Unpin for tst_core::codec::annexb::StartCodes<'a>
+impl<'a> core::marker::UnsafeUnpin for tst_core::codec::annexb::StartCodes<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::annexb::StartCodes<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for tst_core::codec::annexb::StartCodes<'a>
+pub fn tst_core::codec::annexb::nals(&[u8]) -> tst_core::codec::annexb::Nals<'_>
+pub fn tst_core::codec::annexb::start_codes(&[u8]) -> tst_core::codec::annexb::StartCodes<'_>
 pub mod tst_core::codec::av1
 #[non_exhaustive] pub struct tst_core::codec::av1::Av1FrameHeaderLight
 pub tst_core::codec::av1::Av1FrameHeaderLight::frame_size: core::option::Option<(u32, u32)>
@@ -891,9 +935,12 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::misp_time::MispTi
 pub const tst_core::codec::misp_time::MISP_MICROSEC_ID_H264: [u8; 16]
 pub const tst_core::codec::misp_time::MISP_MICROSEC_ID_H265: [u8; 16]
 pub const tst_core::codec::misp_time::MISP_NANOSEC_ID_H265: [u8; 16]
+pub fn tst_core::codec::misp_time::append_rbsp_escaped(&mut alloc::vec::Vec<u8>, &[u8])
 pub fn tst_core::codec::misp_time::build_sei_nal(tst_core::codec::VideoCodec, &tst_core::codec::misp_time::MispTimestamp) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::codec::misp_time::MispTimeError>
+pub fn tst_core::codec::misp_time::build_user_data_unregistered_sei_nal(tst_core::codec::VideoCodec, &[u8; 16], &[u8]) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::codec::misp_time::MispTimeError>
 pub fn tst_core::codec::misp_time::extract(&[u8], tst_core::codec::VideoCodec) -> core::result::Result<core::option::Option<tst_core::codec::misp_time::MispTimestamp>, tst_core::codec::misp_time::MispTimeExtractError>
 pub fn tst_core::codec::misp_time::identifier_for(tst_core::codec::VideoCodec, tst_core::codec::misp_time::MispTimeKind) -> core::result::Result<&'static [u8; 16], tst_core::codec::misp_time::MispTimeError>
+pub fn tst_core::codec::misp_time::insert_sei_before_first_vcl(&[u8], &[u8], tst_core::codec::VideoCodec) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::codec::misp_time::MispTimeError>
 pub mod tst_core::codec::mpegaudio
 pub enum tst_core::codec::mpegaudio::ChannelMode
 pub tst_core::codec::mpegaudio::ChannelMode::DualChannel
@@ -1027,6 +1074,11 @@ impl<'a> core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::mpegaudio:
 impl<'a> core::panic::unwind_safe::UnwindSafe for tst_core::codec::mpegaudio::Frames<'a>
 pub fn tst_core::codec::mpegaudio::frames(&[u8]) -> tst_core::codec::mpegaudio::Frames<'_>
 pub fn tst_core::codec::mpegaudio::frames_with_resync(&[u8]) -> tst_core::codec::mpegaudio::Frames<'_>
+pub mod tst_core::codec::nal
+pub const fn tst_core::codec::nal::header_len(tst_core::codec::VideoCodec) -> core::option::Option<usize>
+pub const fn tst_core::codec::nal::is_idr(tst_core::codec::VideoCodec, u8) -> bool
+pub const fn tst_core::codec::nal::is_vcl(tst_core::codec::VideoCodec, u8) -> bool
+pub fn tst_core::codec::nal::nal_unit_type(tst_core::codec::VideoCodec, &[u8]) -> core::option::Option<u8>
 pub mod tst_core::codec::nal_framing
 pub struct tst_core::codec::nal_framing::ParameterSets
 pub tst_core::codec::nal_framing::ParameterSets::pps: alloc::vec::Vec<alloc::vec::Vec<u8>>
