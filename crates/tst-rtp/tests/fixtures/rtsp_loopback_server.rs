@@ -398,7 +398,7 @@ fn extract_header(req: &str, name: &str) -> Option<String> {
     None
 }
 
-fn extract_client_port(transport: &str) -> Option<u16> {
+pub fn extract_client_port(transport: &str) -> Option<u16> {
     transport
         .split(';')
         .find_map(|p| p.trim().strip_prefix("client_port="))

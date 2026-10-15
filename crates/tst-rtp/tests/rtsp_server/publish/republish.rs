@@ -2,12 +2,13 @@
 //! connection) the mount idles and a new ANNOUNCE takes it, feeding the
 //! SAME application transport.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tst_core::transport::RecvTransport;
-use tst_rtp::{PublishMountHandle, RtspServer};
+use tst_rtp::RtspServer;
 
 use crate::fixtures::raw_rtsp_publisher::*;
+use crate::fixtures::wait_for;
 
 /// ANNOUNCE + interleaved SETUP + RECORD, then `frames` bundles.
 fn publish(port: u16, bundles: &[Vec<u8>], ssrc: u32) -> RawPublisher {
@@ -21,22 +22,6 @@ fn publish(port: u16, bundles: &[Vec<u8>], ssrc: u32) -> RawPublisher {
         p.send_frame(ch, &rtp_wrap(i as u16, i as u32 * 3003, ssrc, 33, b));
     }
     p
-}
-
-/// Poll `cond` every 100 ms until it holds or `ceiling` passes.
-fn wait_for(ceiling: Duration, mut cond: impl FnMut() -> bool) -> bool {
-    let deadline = Instant::now() + ceiling;
-    while Instant::now() < deadline {
-        if cond() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    cond()
-}
-
-fn publisher_gone(mount: &PublishMountHandle) -> bool {
-    mount.publisher().is_none()
 }
 
 #[test]
@@ -79,10 +64,11 @@ fn publisher_dropping_its_connection_frees_the_mount() {
     let p = publish(port, &ts_fixture_packets(2), 0xC);
     assert!(mount.publisher().is_some());
     drop(p); // no TEARDOWN
-    assert!(
-        wait_for(Duration::from_secs(3), || publisher_gone(&mount)),
-        "publisher slot still held after the connection dropped"
-    );
+    // The publisher slot must free once the connection drops; panics
+    // "condition not met within 3s" otherwise.
+    wait_for(Duration::from_secs(3), || {
+        mount.publisher().is_none().then_some(())
+    });
     assert_eq!(mount.generation(), 1);
     // and the mount takes a new publisher
     let mut p2 = publish(port, &[], 0xD);

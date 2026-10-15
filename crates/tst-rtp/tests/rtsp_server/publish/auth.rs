@@ -10,15 +10,9 @@ use md5::{Digest as _, Md5};
 use secrecy::SecretString;
 use tst_rtp::RtspServerBuilder;
 
-use crate::fixtures::raw_rtsp::request;
+use crate::fixtures::raw_rtsp::{request, session_id, try_header};
 use crate::fixtures::raw_rtsp_publisher::SDP_MP2T;
 
-fn header<'a>(resp: &'a str, name: &str) -> Option<&'a str> {
-    resp.lines().find_map(|l| {
-        let (k, v) = l.split_once(':')?;
-        k.trim().eq_ignore_ascii_case(name).then(|| v.trim())
-    })
-}
 fn status(resp: &str) -> u16 {
     resp.split_whitespace().nth(1).unwrap().parse().unwrap()
 }
@@ -56,7 +50,7 @@ fn basic_auth_gates_announce_setup_record_and_admits_credentials() {
     let r = announce(&mut tcp, &uri, 1, "");
     assert_eq!(status(&r), 401, "{r}");
     assert!(
-        header(&r, "WWW-Authenticate").is_some_and(|h| h.starts_with("Basic")),
+        try_header(&r, "WWW-Authenticate").is_some_and(|h| h.starts_with("Basic")),
         "{r}"
     );
     assert!(
@@ -82,12 +76,7 @@ fn basic_auth_gates_announce_setup_record_and_admits_credentials() {
         ),
     );
     assert_eq!(status(&r), 200, "{r}");
-    let sid = header(&r, "Session")
-        .unwrap()
-        .split(';')
-        .next()
-        .unwrap()
-        .to_owned();
+    let sid = session_id(&r);
     let r = request(
         &mut tcp,
         &format!("RECORD {uri} RTSP/1.0\r\nCSeq: 5\r\nSession: {sid}\r\n\r\n"),
@@ -118,7 +107,7 @@ fn digest_md5_auth_hashes_the_announce_and_record_method_tokens() {
 
     let r = announce(&mut tcp, &uri, 1, "");
     assert_eq!(status(&r), 401, "{r}");
-    let ch = header(&r, "WWW-Authenticate").expect("challenge");
+    let ch = try_header(&r, "WWW-Authenticate").expect("challenge");
     assert!(ch.starts_with("Digest"), "{ch}");
     let param = |k: &str| {
         ch.split(',').find_map(|p| {
@@ -170,12 +159,7 @@ fn digest_md5_auth_hashes_the_announce_and_record_method_tokens() {
         ),
     );
     assert_eq!(status(&r), 200, "{r}");
-    let sid = header(&r, "Session")
-        .unwrap()
-        .split(';')
-        .next()
-        .unwrap()
-        .to_owned();
+    let sid = session_id(&r);
     let r = request(
         &mut tcp,
         &format!(

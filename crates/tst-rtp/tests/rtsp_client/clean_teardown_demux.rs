@@ -11,82 +11,15 @@
 //! tell "the peer politely hung up" apart from "the wire broke" without
 //! reaching for `end_reason()`.
 
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use tst_pipeline::{DemuxReceiver, ShellErrorKind};
 use tst_rtp::RtspClient;
 
+use crate::fixtures::raw_rtsp_server::{answer_describe_and_setup, force_reset};
 use crate::fixtures::rtsp_loopback_server::{FixtureConfig, FixtureHandle};
-
-/// Minimal SDP the hand-rolled server answers DESCRIBE with — PT=33
-/// MP2T, same shape as `stream_end_reason.rs`'s copy.
-const SDP_BODY: &[u8] = b"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=tst-rtp test\r\nt=0 0\r\na=control:*\r\nm=video 0 RTP/AVP 33\r\na=control:trackID=0\r\n";
-
-/// Block until a full request (through `CRLFCRLF`) has arrived and
-/// return it as text.
-fn read_request(sock: &mut TcpStream) -> String {
-    let mut buf = vec![0u8; 8192];
-    let mut total = String::new();
-    while !total.contains("\r\n\r\n") {
-        let n = sock.read(&mut buf).expect("read from client");
-        assert!(n > 0, "client closed before a full request arrived");
-        total.push_str(std::str::from_utf8(&buf[..n]).unwrap_or(""));
-    }
-    total
-}
-
-fn cseq_of(req: &str) -> String {
-    req.to_ascii_lowercase()
-        .lines()
-        .find_map(|l| l.strip_prefix("cseq:").map(|v| v.trim().to_string()))
-        .expect("request carries a CSeq header")
-}
-
-fn method_of(req: &str) -> &str {
-    req.split_whitespace().next().unwrap_or("")
-}
-
-/// Answer DESCRIBE, then SETUP with `transport_line` under session id
-/// `DEADBEEF`. Returns once SETUP's response has been written.
-fn answer_describe_and_setup(sock: &mut TcpStream, transport_line: &str) {
-    let req = read_request(sock);
-    assert_eq!(method_of(&req), "DESCRIBE", "unexpected request: {req}");
-    let cseq = cseq_of(&req);
-    sock.write_all(
-        format!(
-            "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n",
-            SDP_BODY.len()
-        )
-        .as_bytes(),
-    )
-    .unwrap();
-    sock.write_all(SDP_BODY).unwrap();
-
-    let req = read_request(sock);
-    assert_eq!(method_of(&req), "SETUP", "unexpected request: {req}");
-    let cseq = cseq_of(&req);
-    sock.write_all(
-        format!(
-            "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: DEADBEEF;timeout=60\r\nTransport: {transport_line}\r\n\r\n"
-        )
-        .as_bytes(),
-    )
-    .unwrap();
-}
-
-/// Force an abortive close: `SO_LINGER=0` makes the kernel send a TCP
-/// RST instead of a FIN, so the peer's next read sees a hard error
-/// rather than a clean EOF — see `stream_end_reason.rs`'s copy of this
-/// helper for the full rationale.
-fn force_reset(sock: TcpStream) {
-    socket2::SockRef::from(&sock)
-        .set_linger(Some(Duration::ZERO))
-        .ok();
-    drop(sock);
-}
 
 /// Clean TEARDOWN: `DemuxReceiver::recv_event` must return `Ok(None)`
 /// (clean end-of-stream), not surface the pump's `Broken` disconnect. A
@@ -131,7 +64,12 @@ fn wire_reset_ends_demux_receiver_as_transport_broken() {
     let (ready_tx, ready_rx) = mpsc::channel::<()>();
     let server = std::thread::spawn(move || {
         let (mut sock, _) = listener.accept().unwrap();
-        answer_describe_and_setup(&mut sock, "RTP/AVP/TCP;unicast;interleaved=0-1");
+        let mut leftover = Vec::new();
+        answer_describe_and_setup(
+            &mut sock,
+            &mut leftover,
+            "RTP/AVP/TCP;unicast;interleaved=0-1",
+        );
         ready_rx.recv().unwrap();
         force_reset(sock);
     });

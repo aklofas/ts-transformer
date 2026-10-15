@@ -3,8 +3,8 @@
 //! the receiver an `RtspClient` session hands out (`into_recv_transport`)
 //! against the in-crate `RtspServer`.
 //!
-//! Port discovery is `free_rtp_port_base`, the same discover-then-release
-//! helper `tests/rtp/loopback_unicast.rs` uses: an OS-assigned pair
+//! Port discovery is `free_rtp_port_base` from `fixtures/ports.rs`, the
+//! discover-then-release helper the `rtp` binary also uses: an OS-assigned pair
 //! `base`/`base+1`, released before the transport binds it. That window is
 //! only safe because nothing else is binding ephemeral ports concurrently —
 //! `.config/nextest.toml` puts `binary(conformance)` in the single-threaded
@@ -20,31 +20,14 @@ use tst_core::transport::Transport;
 use tst_core::transport::conformance::{self as kit, BrokenSource, SendPark};
 use tst_rtp::{RtpRecvTransport, RtpTransport};
 
+#[path = "fixtures/ports.rs"]
+mod ports;
+use ports::free_rtp_port_base;
+
 /// Deliverable ceiling of an RTP MP2T receiver: the 16-bit datagram /
 /// interleaved-frame limit minus the fixed RTP header
 /// (`RECV_SCRATCH_LEN - RTP_HEADER_LEN` in `src/transport.rs`).
 const RTP_RECV_CEILING: usize = 65535 - tst_rtp::RTP_HEADER_LEN;
-
-fn free_rtp_port_base() -> u16 {
-    // Bounded so a host under unusual port pressure fails deterministically
-    // with a clear message instead of spinning until nextest's timeout.
-    for _ in 0..1000 {
-        let s = UdpSocket::bind("127.0.0.1:0").expect("bind ephemeral udp");
-        let base = s.local_addr().unwrap().port();
-        if base < u16::MAX {
-            if let Ok(companion) = UdpSocket::bind(("127.0.0.1", base + 1)) {
-                drop(companion);
-                drop(s);
-                return base;
-            }
-        }
-        drop(s); // base + 1 was taken (or base == u16::MAX); retry.
-        std::thread::yield_now();
-    }
-    panic!(
-        "free_rtp_port_base: no free base/base+1 UDP port pair on 127.0.0.1 after 1000 attempts"
-    );
-}
 
 /// Send side: every factory call targets a fresh port pair that a plain
 /// `UdpSocket` holds open (never read). Without a bound receiver the kernel
