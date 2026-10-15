@@ -343,8 +343,8 @@ Two crates own private tokio runtimes today — one per `RtspServer`
 only when it serves HTTP; two workers). Each is created in the
 constructor, blocked on from the caller's thread, and shut down with a
 bounded timeout by `stop()`/`Drop`; public methods that touch a runtime
-must not be called from inside one. A written runtime-ownership rule is
-still to come.
+must not be called from inside one. The rule is
+§"Runtime ownership" below.
 
 Sync was chosen for three reasons. First, the target deployment shape
 is small — a process talks to ≤10 SRT peers, so the thread-per-
@@ -371,6 +371,50 @@ inputs on separate producers. The synchronization is invisible to single-
 threaded callers and adds no contention when only one thread is
 producing.
 
+## Runtime ownership
+
+Rule: a long-lived object owns at most one named OS thread or one private
+async runtime. It starts it in its constructor (or its `start`), signals it
+through its cancel handle, joins it with a bounded wait in `close()` /
+`stop()` / `finish()`, and detaches it in `Drop`. Data-path calls never
+wait on that thread's I/O. New crates follow this; the table records
+today's owners.
+
+| Crate | Owner | Thread or runtime | Started | Stopped | Exit with it still running |
+|---|---|---|---|---|---|
+| `tst-rtp` | `RtspServer` | private multi-thread tokio runtime, threads named `tst-rtp-server` | the runtime is built by `RtspServerBuilder::build`; `start()` spawns the listener task | `stop()` sends the Notice 5402 ANNOUNCE, cancels every session, waits `graceful_shutdown_drain` plus 1 s, then shuts each session's write half (500 ms each). `Drop` hard-cancels and shuts the runtime down with a 5 s bound | no exit hook; the runtime ends with the process and no Notice or TEARDOWN is sent |
+| `tst-rtp` | `RtspClient` | two std threads, `rtsp-keepalive` and `rtsp-interleaved-pump` | the keepalive thread at `RtspClientBuilder::connect` (unless auto keepalive is off); the pump at SETUP when media is TCP-interleaved | the client's cancel flag stops both. `Drop` sets it, sends a TEARDOWN bounded to 500 ms, then joins both threads. There is no `close()` | no exit hook; the threads end with the process |
+| `tst-rtp` | `RtpRecvTransport` built from an RTSP session | one std thread, `rtsp-rtcp-ingest` | when the transport is built from the interleaved pump's channels | never signalled and never joined; it exits when the pump's RTCP sender drops, which the client's `Drop` causes | no exit hook; the thread ends with the process |
+| `tst-hls` | `HlsPublisher` (only when it serves HTTP) | private tokio runtime with 2 worker threads named `tst-hls-rt` | `HlsPublisher::with_config`, which binds the listener | `HlsServerHandle::shutdown()` after `finish_serving()`, or `Drop` of the publisher or handle: cancel, then a 2 s bounded runtime shutdown | no exit hook; the runtime ends with the process |
+| `tst-pipeline` | `ManagedTransport` with `ReconnectMode::Background` | one unnamed std thread per outage | the first send that finds the inner transport down spawns it, and so does a send that meets a backlog after a give-up | `close()` latches closed, wakes the backoff wait and the inner transport's cancel handle, then joins; the join waits for an in-flight factory call. `Drop` signals the same way and detaches | no exit hook; a worker still running ends with the process |
+| `tst-srt` | libsrt itself (garbage-collector and queue worker threads); not a Rust object | libsrt's threads, process-wide | the first libsrt use (`srt_startup`) | each `Socket` and `Listener` `close()`; `srt_cleanup()` stops the library | guarded: the `atexit` handler in `exit_guard.rs` closes every open socket, waits up to 2 s for operations in flight, then runs `srt_cleanup()` |
+| `tst-rist` | `RistTransport`, `RistRecvTransport` (one librist context each) | librist's protocol thread | `RistCtx::new` calls `rist_start` | `close()` calls `rist_destroy`, which joins the thread. `Drop` calls `close()`, so it waits too | not guarded: there is no exit hook, so keep the owner alive until `close()` returns |
+
+Where today's code differs from the rule, the difference stays until the
+owner's next structural change:
+
+- `RtspClient` and the two RIST transports join in `Drop`; the rule says
+  detach.
+- `RtspServer::stop()` quiesces sessions but does not release the runtime;
+  `Drop` does.
+- `RtspClient` has no `close()`; its `Drop` is the only stop.
+
+## Mount lifecycle
+
+What ends a mount, per mount family. "Handle" is the application's
+`MountHandle` / `PublishMountHandle`. A session "completes SETUP on" a
+mount when its SETUP is answered `200`; only those sessions receive the
+Notice 5402 ANNOUNCE. Plain and TLS sessions share one session writer, so
+`rtsps://` sessions receive it too.
+
+| Event | Local mount (`add_mount`) | Publish mount (`add_publish_mount`, on-demand) | WebRTC mount (planned) |
+|---|---|---|---|
+| The application drops its handle | Nothing. `MountHandle` has no `Drop`; the server's table keeps the mount, readers keep playing, and later PLAYs still find it. No ANNOUNCE. | Nothing. The table keeps the mount, and an on-demand mount stays registered until `remove_mount`. A transport already taken from the handle is unaffected. No ANNOUNCE. | Must match the publish column unless the WebRTC plan says otherwise. |
+| `remove_mount(path)` | The entry leaves the table. Every reader session that completed SETUP on the path gets the Notice 5402 ANNOUNCE and is cancelled. A session that has not completed SETUP is left alone. Handles stay valid and `push_*` succeeds with no readers. A multicast mount's sender task keeps running while a handle is alive. | The mount is closed first: the application transport reads `Closed`, the publisher slot is emptied and refuses every later claim (ANNOUNCE `403`, RECORD `455`). Then every reader and publisher session that completed SETUP on the path gets the ANNOUNCE and is cancelled. An on-demand handle still queued for `next_publisher` is not withdrawn; its transport reads `Closed` at once. The on-demand cap slot is freed. | Must match the publish column unless the WebRTC plan says otherwise. |
+| `RtspServer::stop()` | The queue of on-demand handles is closed, then every session that completed SETUP on any mount gets the ANNOUNCE and is cancelled. The listener stops accepting. The mounts stay in the table, and handles stay valid with no readers. | The same for sessions, publishers included. Also every publish mount is closed: transports read `Closed`, a parked `next_publisher` wakes with `Shutdown`, and an ANNOUNCE that would create an on-demand mount answers `503`. | Must match the publish column unless the WebRTC plan says otherwise. |
+| The last reader or publisher session ends | A reader leaving drops only its own fanout subscription. The mount is untouched and `peer_count` falls. No ANNOUNCE (the peer ended it). | A reader leaving changes nothing. A publisher leaving (TEARDOWN, disconnect or drop) flushes its adapter, stops its UDP ingest and empties the publisher slot. The application transport stays open and silent for the next publisher, and an on-demand mount stays in the table. No ANNOUNCE. | Must match the publish column unless the WebRTC plan says otherwise. |
+| `Drop` of the server | The server hard-cancels and its runtime shuts down within 5 s. Sessions end with no ANNOUNCE. Handles outlive the server and `push_*` succeeds with no readers. | The on-demand queue is closed and every publish mount is closed before the runtime shuts down, so transports read `Closed`. Sessions end with no ANNOUNCE. | Must match the publish column unless the WebRTC plan says otherwise. |
+
 ## What's deferred
 
 The summary below points at the canonical list once; each item maps to
@@ -391,4 +435,5 @@ canonical list and the rationale for each entry.
 
 ## See also
 
+- [Resource policy](./resource-policy.md) — the bounds, reservations and full-queue policies of the RTSP server.
 - [Binding-author starter](./binding-authors.md) — entry point for `tst-jni` and `tst-uniffi` authors (plus the existing `tst-c` ABI).
