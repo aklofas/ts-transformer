@@ -423,6 +423,33 @@ def test_rtsp_version_reaches_every_request_line():
     assert lines and all(line.endswith(" RTSP/2.0") for line in lines), lines
 
 
+@pytest.mark.parametrize(
+    ("query", "kwargs", "want_tcp", "want_version"),
+    [
+        # TransportPref.UDP forces a UDP SETUP.
+        ("", {"transport_pref": TransportPref.UDP}, False, "RTSP/1.0"),
+        # A non-default value overrides a contrary URL query.
+        ("?transport=udp", {"transport_pref": TransportPref.TCP}, True, "RTSP/1.0"),
+        ("?rtsp_version=1.0", {"rtsp_version": RtspVersion.V2_0}, False, "RTSP/2.0"),
+        # The default V1_0 defers to the URL: the query wins.
+        ("?rtsp_version=2.0", {}, False, "RTSP/2.0"),
+    ],
+    ids=["udp-forced", "tcp-overrides-url-udp", "v2-overrides-url-v1", "default-defers-to-url-v2"],
+)
+def test_transport_and_version_precedence_over_the_url(query, kwargs, want_tcp, want_version):
+    port, requests, server = _recording_peer()
+    cfg = RtspClientConfig(url=f"rtsp://127.0.0.1:{port}/x{query}", keepalive=False, **kwargs)
+    _connect_and_teardown(cfg, server)
+    transport = _setup_transport(requests)
+    if want_tcp:
+        assert "RTP/AVP/TCP" in transport, requests
+    else:
+        assert transport.startswith("RTP/AVP;unicast;client_port="), requests
+        assert "TCP" not in transport, requests
+    lines = [r.split("\r\n", 1)[0] for r in requests]
+    assert lines and all(line.endswith(" " + want_version) for line in lines), lines
+
+
 def test_rtsp_client_config_has_no_rtcp_knob():
     with pytest.raises(TypeError):
         RtspClientConfig(url="rtsp://h/p", rtcp=False)

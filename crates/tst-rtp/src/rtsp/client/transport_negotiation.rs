@@ -46,8 +46,8 @@ pub(crate) struct TransportResponse {
 /// request — the syntax is shared per RFC 7826 §18.54).
 ///
 /// Recognized keys: `client_port=`, `server_port=` (validated, not kept),
-/// `interleaved=`, `mode=`. The kind is inferred from the presence of `RTP/AVP/TCP` or
-/// `interleaved=`.
+/// `interleaved=`, `mode=`. The kind is inferred from the presence of
+/// `RTP/AVP/TCP` or `interleaved=`.
 ///
 /// Parsing is **strict** and parameter names are matched
 /// **case-insensitively** (RFC 7826 §18.54: Transport parameter names are
@@ -78,8 +78,7 @@ pub(crate) fn parse_transport_response(header_value: &str) -> Result<TransportRe
     for part in header_value.split(';') {
         let part = part.trim();
         // Split the `key=value` once; match the key case-insensitively
-        // per RFC 7826 §18.54 while preserving the original value casing
-        // (hex ssrc, etc.).
+        // per RFC 7826 §18.54 while preserving the original value casing.
         let Some((key, value)) = part.split_once('=') else {
             continue;
         };

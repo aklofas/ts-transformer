@@ -8,9 +8,9 @@ import java.util.Optional;
  * {@code tstrans.rtp.RtspClientConfig} (a frozen dataclass). Build via
  * {@link #of(String)} (all defaults) or {@link #builder(String)}.
  *
- * <p>{@code transportPref} and {@code rtspVersion} are carried for surface parity
- * but pass-through-only at connect: the underlying tst-rtp builder derives
- * transport/version from the URL. {@code tlsRootCertsPem}, however, IS read at
+ * <p>{@code transportPref} and {@code rtspVersion} are carried but not yet applied
+ * by the JVM binding: connect takes the transport from the URL's {@code ?transport=}
+ * query and the version from {@code ?rtsp_version=}. {@code tlsRootCertsPem}, however, IS read at
  * connect — a PEM bundle of custom trust anchors for {@code rtsps://} servers with
  * a private CA; see {@link RtspClient}.
  */
@@ -42,7 +42,6 @@ public final class RtspClientConfig {
     public Optional<Object> auth() { return Optional.ofNullable(auth); }
 
     public TransportPref transportPref() { return transportPref; }
-
 
     /** @return a defensive copy of the PEM bytes, if set. */
     public Optional<byte[]> tlsRootCertsPem() {
@@ -89,7 +88,6 @@ public final class RtspClientConfig {
         public Builder transportPref(TransportPref p) {
             this.transportPref = Objects.requireNonNull(p); return this;
         }
-
 
         public Builder tlsRootCertsPem(byte[] pem) {
             this.tlsRootCertsPem = pem == null ? null : pem.clone(); return this;

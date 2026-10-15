@@ -671,7 +671,7 @@ Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)V";
     env.throw(JThrowable::from(exc))
 }
 
-/// Map + throw a Rust `CodecParseError`. All 12 Kind literals appear inline as
+/// Map + throw a Rust `CodecParseError`. All Kind literals appear inline as
 /// the 2nd argument to `throw_codec` (satisfies the error-mapping ratchet).
 /// `codec` is a short lowercase codec name (e.g. `"h264"`). Mirrors tst-py's
 /// `codec_parse_error_to_pyerr` variant-for-variant; the wildcard arm routes

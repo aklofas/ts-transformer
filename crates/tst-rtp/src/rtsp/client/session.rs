@@ -123,8 +123,8 @@ impl RtspSession {
     /// crate-private `RtspClient::activate_interleaved_pump`). The
     /// pump's RTCP `mpsc::Receiver<Bytes>` is also handed in and drives
     /// the new `rtsp-rtcp-ingest` thread inside the transport — that
-    /// thread populates `socket_stats().rtt_us` +
-    /// `socket_stats().packets_lost_send` from RR + SR frames arriving
+    /// thread populates `socket_stats().packets_lost_send` from RR + SR
+    /// frames arriving
     /// on RFC 7826 §14 channel 1.
     pub fn into_recv_transport(mut self) -> RtpRecvTransport {
         let mut transport = match self.kind {

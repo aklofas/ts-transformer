@@ -14,7 +14,7 @@
 #   lowercase type/field names inside trait-impl or bindgen union lines
 #   (e.g. `rist_sys::rist_stats_receiver_flow`) and demand table rows for
 #   things that aren't modules at all.
-# - Root-level re-exports (`tst_core::Transport`, `tst_rtp::compute_rtt_us`)
+# - Root-level re-exports (`tst_core::Transport`, `tst_rtp::RtspClient`)
 #   never produce a module path here (the regex requires a lowercase
 #   first character after `<lib>::`, and re-exported items are typically
 #   PascalCase types or already covered by the module that defines them)

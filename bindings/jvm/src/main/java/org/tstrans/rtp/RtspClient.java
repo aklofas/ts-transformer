@@ -19,7 +19,7 @@ import org.tstrans.RtspException;
  * <p><b>Pass-through config fields.</b> {@code transportPref} and {@code rtspVersion}
  * are likewise informational/pass-through: the underlying tst-rtp connect derives
  * the transport (from a {@code ?transport=udp|tcp} URL query) and the version (from
- * the {@code rtsp://} vs {@code rtsps://} scheme) from the URL, not from these
+ * {@code ?rtsp_version=}) from the URL, not from these
  * fields. They round-trip through the config unchanged.
  */
 public final class RtspClient {

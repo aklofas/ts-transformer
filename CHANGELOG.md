@@ -78,7 +78,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The RTCP sender/receiver report emitter is removed: `RtpSocketBuilder::rtcp`,
   `RtpRecvSocketBuilder::rtcp`, `RtpTransport::connect_with_rtcp` and
   `RtpRecvTransport::listen_with_rtcp` (use `connect_with` / `listen_with`),
-  `RtcpReporterHandle`, `RTCP_BASE_INTERVAL`,
+  `RtcpReporterHandle`, `RTCP_BASE_INTERVAL`, `rtcp::reporter::jitter_interval`,
   `RtcpStats::{sr_packets_sent, rr_packets_sent}` and
   `RtpTransport::rtcp_stats`. The emitter was off by default and sent reports
   whose statistics were all zero. No RTP transport binds the `port + 1`
@@ -89,7 +89,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   was never computed; `rtt_us` reports 0, as before.
 - `tst_rtp::init` (a no-op) and `RtspSession::rtcp_endpoint` are removed.
 - Items with no use outside the crate are no longer public: the RTSP wire
-  messages (`RtspRequest`, `RtspResponse`, `RtspMethod`), the authentication
+  messages (`RtspRequest`, `RtspResponse`, `RtspMethod`) are no longer
+  re-exported at the crate root (`rtsp::message` is `#[doc(hidden)]` and not
+  part of the supported surface), the authentication
   internals in `rtsp::auth` (`AuthChallenge`, `DigestAlgorithm`,
   `DigestChallenge`, `DigestContext`, `parse_challenges`,
   `build_basic_response`, `build_digest_response`), the SETUP negotiation
@@ -135,6 +137,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `RtspClientBuilder::rtsp_version` sets the request-line version, overriding
   the URL's `?rtsp_version=` key.
 
+### Fixed — tst-py
+
+- `RtspClientConfig(transport_pref=…, rtsp_version=…)` now take effect at
+  connect; both were accepted and ignored. A non-default value overrides the
+  URL's `?transport=` / `?rtsp_version=` key; the defaults
+  (`TransportPref.AUTO`, `RtspVersion.V1_0`) leave the URL in charge.
+
 ### Fixed — tst-rtp
 
 - `RtspServer::cancel_handle().cancel()` now ends every session within about
@@ -159,13 +168,6 @@ HLS playlists written on every segment cut; and the fuzz bundle running in CI
 under ClusterFuzzLite. Two source-breaking renames in tst-srt and the removal
 of the Python aliases 0.7.0 deprecated make this 0.8.0 — a `"0.7"`
 requirement will not auto-update into it.
-
-### Fixed — tst-py
-
-- `RtspClientConfig(transport_pref=…, rtsp_version=…)` now take effect at
-  connect; both were accepted and ignored. A non-default value overrides the
-  URL's `?transport=` / `?rtsp_version=` key; the defaults
-  (`TransportPref.AUTO`, `RtspVersion.V1_0`) leave the URL in charge.
 
 ### Release highlights
 
