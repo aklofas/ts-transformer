@@ -76,11 +76,7 @@ pub unsafe extern "C" fn tst_muxer_push_video(
         .inner
         .with_inner_mut(|m| match m.push_video(slice, pts, key_frame) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                // Find the matching TST_E_* code via the recorded last-error.
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         })
 }
 
@@ -137,10 +133,7 @@ pub unsafe extern "C" fn tst_muxer_push_klv(
             0x00,
         ) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         }
     })
 }
@@ -179,18 +172,14 @@ pub unsafe extern "C" fn tst_muxer_push_video_to(
     let stream = match VideoStreamHandle::try_from_raw(handle) {
         Ok(h) => h,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { crate::error::tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
     h.inner
         .with_inner_mut(|m| match m.push_video_to(stream, slice, pts, key_frame) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         })
 }
 
@@ -242,16 +231,12 @@ pub unsafe extern "C" fn tst_muxer_push_video_wire(
                     kind: StreamKind::Video,
                     count: handles.len(),
                 };
-                record_mux_error(&e);
-                return unsafe { crate::error::tst_get_last_error() };
+                return record_mux_error(&e);
             }
         };
         match m.push_video_wire_to(h, slice, pts, key_frame) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         }
     })
 }
@@ -293,18 +278,14 @@ pub unsafe extern "C" fn tst_muxer_push_video_wire_to(
     let stream = match VideoStreamHandle::try_from_raw(handle) {
         Ok(h) => h,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { crate::error::tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
     h.inner.with_inner_mut(
         |m| match m.push_video_wire_to(stream, slice, pts, key_frame) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         },
     )
 }
@@ -347,8 +328,7 @@ pub unsafe extern "C" fn tst_muxer_push_video_to_with_dts(
     let stream = match VideoStreamHandle::try_from_raw(handle) {
         Ok(h) => h,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { crate::error::tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
@@ -356,10 +336,7 @@ pub unsafe extern "C" fn tst_muxer_push_video_to_with_dts(
     h.inner.with_inner_mut(
         |m| match m.push_video_to_with_dts(stream, slice, pts, dts, key_frame) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         },
     )
 }
@@ -400,8 +377,7 @@ pub unsafe extern "C" fn tst_muxer_push_video_misp_to(
     let stream = match VideoStreamHandle::try_from_raw(handle) {
         Ok(h) => h,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { crate::error::tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let misp = match misp_kind {
@@ -419,10 +395,7 @@ pub unsafe extern "C" fn tst_muxer_push_video_misp_to(
     h.inner.with_inner_mut(
         |m| match m.push_video_misp_to(stream, slice, pts, key_frame, &misp) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         },
     )
 }
@@ -463,8 +436,7 @@ pub unsafe extern "C" fn tst_muxer_push_video_misp_to_with_dts(
     let stream = match VideoStreamHandle::try_from_raw(handle) {
         Ok(h) => h,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { crate::error::tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let misp = match misp_kind {
@@ -483,10 +455,7 @@ pub unsafe extern "C" fn tst_muxer_push_video_misp_to_with_dts(
     h.inner.with_inner_mut(|m| {
         match m.push_video_misp_to_with_dts(stream, slice, pts, dts, key_frame, &misp) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         }
     })
 }
@@ -523,8 +492,7 @@ pub unsafe extern "C" fn tst_muxer_push_video_wire_to_with_dts(
     let stream = match VideoStreamHandle::try_from_raw(handle) {
         Ok(h) => h,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { crate::error::tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
@@ -532,10 +500,7 @@ pub unsafe extern "C" fn tst_muxer_push_video_wire_to_with_dts(
     h.inner.with_inner_mut(|m| {
         match m.push_video_wire_to_with_dts(stream, slice, pts, dts, key_frame) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         }
     })
 }
@@ -571,8 +536,7 @@ pub unsafe extern "C" fn tst_muxer_push_klv_to(
     let stream = match KlvStreamHandle::try_from_raw(handle) {
         Ok(h) => h,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { crate::error::tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
@@ -584,10 +548,7 @@ pub unsafe extern "C" fn tst_muxer_push_klv_to(
             0x00,
         ) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         }
     })
 }
@@ -644,10 +605,7 @@ pub unsafe extern "C" fn tst_muxer_push_data(
         .inner
         .with_inner_mut(|m| match m.push_data(slice, pts) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         })
 }
 
@@ -677,18 +635,14 @@ pub unsafe extern "C" fn tst_muxer_push_data_to(
     let stream = match DataStreamHandle::try_from_raw(handle) {
         Ok(h) => h,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { crate::error::tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
     h.inner
         .with_inner_mut(|m| match m.push_data_to(stream, slice, pts) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         })
 }
 
@@ -721,10 +675,7 @@ pub unsafe extern "C" fn tst_muxer_push_audio(
         .inner
         .with_inner_mut(|m| match m.push_audio(slice, pts) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         })
 }
 
@@ -758,18 +709,14 @@ pub unsafe extern "C" fn tst_muxer_push_audio_to(
     let stream = match AudioStreamHandle::try_from_raw(handle) {
         Ok(h) => h,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { crate::error::tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
     h.inner
         .with_inner_mut(|m| match m.push_audio_to(stream, pts, slice) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         })
 }
 
@@ -803,10 +750,7 @@ pub unsafe extern "C" fn tst_muxer_push_subtitle(
         .inner
         .with_inner_mut(|m| match m.push_subtitle(pts, slice) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         })
 }
 
@@ -840,18 +784,14 @@ pub unsafe extern "C" fn tst_muxer_push_subtitle_to(
     let stream = match SubtitleStreamHandle::try_from_raw(handle) {
         Ok(h) => h,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { crate::error::tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
     h.inner
         .with_inner_mut(|m| match m.push_subtitle_to(stream, pts, slice) {
             Ok(()) => 0,
-            Err(e) => {
-                record_mux_error(&e);
-                unsafe { crate::error::tst_get_last_error() }
-            }
+            Err(e) => record_mux_error(&e),
         })
 }
 
@@ -1068,5 +1008,142 @@ mod tests {
 
             tst_muxer_close(m);
         }
+    }
+
+    /// The guards every offline push runs before the muxer — null muxer,
+    /// null payload (named per wrapper), forged stream handle — by return
+    /// code and last-error text, plus the MISP kind check.
+    #[test]
+    fn push_wrapper_guards_are_pinned() {
+        fn last() -> (i32, alloc::string::String) {
+            let msg = unsafe { core::ffi::CStr::from_ptr(crate::error::tst_get_last_error_str()) }
+                .to_string_lossy()
+                .into_owned();
+            (unsafe { crate::error::tst_get_last_error() }, msg)
+        }
+        type Push = fn(*mut TstMuxer, *const u8, usize, u32) -> i32;
+        const FORGED: u32 = 0x100; // bit 8: outside the canonical handle layout
+        let cases: [(&str, Push, bool); 16] = [
+            (
+                "nal",
+                |p, d, n, _| unsafe { tst_muxer_push_video(p, d, n, 0, true) },
+                false,
+            ),
+            (
+                "klv",
+                |p, d, n, _| unsafe { tst_muxer_push_klv(p, d, n, 0) },
+                false,
+            ),
+            (
+                "nal",
+                |p, d, n, h| unsafe { tst_muxer_push_video_to(p, h, d, n, 0, true) },
+                true,
+            ),
+            (
+                "wire",
+                |p, d, n, _| unsafe { tst_muxer_push_video_wire(p, d, n, 0, true) },
+                false,
+            ),
+            (
+                "wire",
+                |p, d, n, h| unsafe { tst_muxer_push_video_wire_to(p, h, d, n, 0, true) },
+                true,
+            ),
+            (
+                "nal",
+                |p, d, n, h| unsafe { tst_muxer_push_video_to_with_dts(p, h, d, n, 0, 0, true) },
+                true,
+            ),
+            (
+                "nal",
+                |p, d, n, h| unsafe { tst_muxer_push_video_misp_to(p, h, d, n, 0, true, 0, 0, 0) },
+                true,
+            ),
+            (
+                "nal",
+                |p, d, n, h| unsafe {
+                    tst_muxer_push_video_misp_to_with_dts(p, h, d, n, 0, 0, true, 0, 0, 0)
+                },
+                true,
+            ),
+            (
+                "wire",
+                |p, d, n, h| unsafe {
+                    tst_muxer_push_video_wire_to_with_dts(p, h, d, n, 0, 0, true)
+                },
+                true,
+            ),
+            (
+                "klv",
+                |p, d, n, h| unsafe { tst_muxer_push_klv_to(p, h, d, n, 0) },
+                true,
+            ),
+            (
+                "data",
+                |p, d, n, _| unsafe { tst_muxer_push_data(p, d, n, 0) },
+                false,
+            ),
+            (
+                "data",
+                |p, d, n, h| unsafe { tst_muxer_push_data_to(p, h, d, n, 0) },
+                true,
+            ),
+            (
+                "frames",
+                |p, d, n, _| unsafe { tst_muxer_push_audio(p, d, n, 0) },
+                false,
+            ),
+            (
+                "frames",
+                |p, d, n, h| unsafe { tst_muxer_push_audio_to(p, h, d, n, 0) },
+                true,
+            ),
+            (
+                "payload",
+                |p, d, n, _| unsafe { tst_muxer_push_subtitle(p, d, n, 0) },
+                false,
+            ),
+            (
+                "payload",
+                |p, d, n, h| unsafe { tst_muxer_push_subtitle_to(p, h, d, n, 0) },
+                true,
+            ),
+        ];
+        let (cfg, m) = unsafe {
+            let cfg = tst_mux_config_new();
+            let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+            tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+            (cfg, tst_muxer_open(cfg))
+        };
+        unsafe { tst_mux_config_free(cfg) };
+        assert!(!m.is_null());
+        let one = [0u8; 1];
+        for (i, (name, push, to)) in cases.iter().enumerate() {
+            let rc = push(core::ptr::null_mut(), one.as_ptr(), 1, 0);
+            assert_eq!(rc, TstError::InvalidConfig as i32, "case {i}");
+            assert_eq!(last(), (rc, "null muxer pointer".into()), "case {i}");
+
+            let rc = push(m, core::ptr::null(), 1, 0);
+            assert_eq!(rc, TstError::InvalidConfig as i32, "case {i}");
+            assert_eq!(
+                last(),
+                (rc, alloc::format!("null {name} with non-zero len")),
+                "case {i}"
+            );
+
+            if *to {
+                let rc = push(m, one.as_ptr(), 1, FORGED);
+                assert_eq!(rc, TstError::InvalidUsage as i32, "case {i}");
+                assert_eq!(last().0, rc, "case {i}");
+            }
+        }
+        let rc = unsafe { tst_muxer_push_video_misp_to(m, 0, one.as_ptr(), 1, 0, true, 7, 0, 0) };
+        assert_eq!(rc, TstError::MispTime as i32);
+        assert_eq!(
+            last(),
+            (rc, "misp_kind must be 0 (micro) or 1 (nano)".into())
+        );
+        unsafe { tst_muxer_close(m) };
     }
 }

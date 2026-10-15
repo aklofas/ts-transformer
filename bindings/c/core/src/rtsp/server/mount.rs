@@ -605,8 +605,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_video_to(
         let stream = match VideoStreamHandle::try_from_raw(stream_handle) {
             Ok(s) => s,
             Err(e) => {
-                crate::error::record_mux_error(&e);
-                return unsafe { crate::error::tst_get_last_error() };
+                return crate::error::record_mux_error(&e);
             }
         };
         let pts = Pts90khz::new(pts_90khz);
@@ -654,8 +653,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_klv_to(
         let stream = match KlvStreamHandle::try_from_raw(stream_handle) {
             Ok(s) => s,
             Err(e) => {
-                crate::error::record_mux_error(&e);
-                return unsafe { crate::error::tst_get_last_error() };
+                return crate::error::record_mux_error(&e);
             }
         };
         let pts = Pts90khz::new(pts_90khz);
@@ -704,8 +702,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_audio_to(
         let stream = match AudioStreamHandle::try_from_raw(stream_handle) {
             Ok(s) => s,
             Err(e) => {
-                crate::error::record_mux_error(&e);
-                return unsafe { crate::error::tst_get_last_error() };
+                return crate::error::record_mux_error(&e);
             }
         };
         let pts = Pts90khz::new(pts_90khz);
@@ -749,8 +746,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_subtitle_to(
         let stream = match SubtitleStreamHandle::try_from_raw(stream_handle) {
             Ok(s) => s,
             Err(e) => {
-                crate::error::record_mux_error(&e);
-                return unsafe { crate::error::tst_get_last_error() };
+                return crate::error::record_mux_error(&e);
             }
         };
         let pts = Pts90khz::new(pts_90khz);
@@ -794,8 +790,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_data_to(
         let stream = match DataStreamHandle::try_from_raw(stream_handle) {
             Ok(s) => s,
             Err(e) => {
-                crate::error::record_mux_error(&e);
-                return unsafe { crate::error::tst_get_last_error() };
+                return crate::error::record_mux_error(&e);
             }
         };
         let pts = Pts90khz::new(pts_90khz);

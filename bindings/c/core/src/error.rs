@@ -469,20 +469,21 @@ pub(crate) fn record_with_context(e: impl Into<BindingError>, ctx: &str) -> i32 
 /// (`InvalidNal` -2, `KlvTooLarge` -5, `InvalidAv1Obu` -44, `MispTime`
 /// -45 keep their precise codes; everything else folds through
 /// `MuxError::kind()`). `Display` still carries the spec-rich diagnostic.
+/// Returns the code it stored, ready to hand back from the C entry point.
 #[cfg(feature = "std")]
-pub(crate) fn record_mux_error(e: &MuxError) {
-    set_last_error(
-        TstError::from_kind(tst_pipeline::binding::kind::kind_of_mux(e)),
-        &e.to_string(),
-    );
+pub(crate) fn record_mux_error(e: &MuxError) -> i32 {
+    let code = TstError::from_kind(tst_pipeline::binding::kind::kind_of_mux(e));
+    set_last_error(code, &e.to_string());
+    code as i32
 }
 
 /// no_std twin of [`record_mux_error`]: `tst_pipeline::binding` is
 /// std-only, so the bare offline muxer keeps the fold locally. Same
 /// projection as the std path (both planes agree, including
-/// `InputMalformed` -> `TST_E_INVALID_TS`).
+/// `InputMalformed` -> `TST_E_INVALID_TS`). Returns the code it stored, ready
+/// to hand back from the C entry point.
 #[cfg(not(feature = "std"))]
-pub(crate) fn record_mux_error(e: &MuxError) {
+pub(crate) fn record_mux_error(e: &MuxError) -> i32 {
     use tst_core::error::MuxErrorKind;
     let code = match e {
         MuxError::InvalidNal => TstError::InvalidNal,
@@ -499,6 +500,7 @@ pub(crate) fn record_mux_error(e: &MuxError) {
         },
     };
     set_last_error(code, &e.to_string());
+    code as i32
 }
 
 /// Map a [`DemuxError`] to a code + message and record it to the per-thread

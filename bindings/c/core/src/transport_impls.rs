@@ -41,7 +41,7 @@ use tst_pipeline::{ManagedDemuxReceiver, RawReceiver, RawSender};
 use crate::error::record_internal;
 use crate::error::{
     TstError, record_mux_error, record_not_available, record_not_found, record_shell_error,
-    set_last_error, tst_get_last_error,
+    set_last_error,
 };
 #[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
 use crate::error::{record_recv_closed, record_recv_error};
@@ -75,10 +75,7 @@ pub(crate) unsafe fn mux_sender_push_video<T: Transport, S>(
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_video(slice, pts, key_frame) {
         Ok(()) => 0,
-        Err(e) => {
-            record_shell_error(&e);
-            unsafe { tst_get_last_error() }
-        }
+        Err(e) => record_shell_error(&e),
     })
 }
 
@@ -99,10 +96,7 @@ pub(crate) unsafe fn mux_sender_push_klv<T: Transport, S>(
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_klv(slice, pts, 0x00) {
         Ok(()) => 0,
-        Err(e) => {
-            record_shell_error(&e);
-            unsafe { tst_get_last_error() }
-        }
+        Err(e) => record_shell_error(&e),
     })
 }
 
@@ -123,10 +117,7 @@ pub(crate) unsafe fn mux_sender_push_audio<T: Transport, S>(
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_audio(slice, pts) {
         Ok(()) => 0,
-        Err(e) => {
-            record_shell_error(&e);
-            unsafe { tst_get_last_error() }
-        }
+        Err(e) => record_shell_error(&e),
     })
 }
 
@@ -147,10 +138,7 @@ pub(crate) unsafe fn mux_sender_push_subtitle<T: Transport, S>(
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_subtitle(slice, pts) {
         Ok(()) => 0,
-        Err(e) => {
-            record_shell_error(&e);
-            unsafe { tst_get_last_error() }
-        }
+        Err(e) => record_shell_error(&e),
     })
 }
 
@@ -176,17 +164,13 @@ pub(crate) unsafe fn mux_sender_push_video_to<T: Transport, S>(
     let stream = match VideoStreamHandle::try_from_raw(stream_handle) {
         Ok(s) => s,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_video_to(stream, slice, pts, key_frame) {
         Ok(()) => 0,
-        Err(e) => {
-            record_shell_error(&e);
-            unsafe { tst_get_last_error() }
-        }
+        Err(e) => record_shell_error(&e),
     })
 }
 
@@ -208,17 +192,13 @@ pub(crate) unsafe fn mux_sender_push_klv_to<T: Transport, S>(
     let stream = match KlvStreamHandle::try_from_raw(stream_handle) {
         Ok(s) => s,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_klv_to(stream, slice, pts, 0x00) {
         Ok(()) => 0,
-        Err(e) => {
-            record_shell_error(&e);
-            unsafe { tst_get_last_error() }
-        }
+        Err(e) => record_shell_error(&e),
     })
 }
 
@@ -240,17 +220,13 @@ pub(crate) unsafe fn mux_sender_push_audio_to<T: Transport, S>(
     let stream = match AudioStreamHandle::try_from_raw(stream_handle) {
         Ok(s) => s,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_audio_to(stream, slice, pts) {
         Ok(()) => 0,
-        Err(e) => {
-            record_shell_error(&e);
-            unsafe { tst_get_last_error() }
-        }
+        Err(e) => record_shell_error(&e),
     })
 }
 
@@ -272,17 +248,13 @@ pub(crate) unsafe fn mux_sender_push_subtitle_to<T: Transport, S>(
     let stream = match SubtitleStreamHandle::try_from_raw(stream_handle) {
         Ok(s) => s,
         Err(e) => {
-            record_mux_error(&e);
-            return unsafe { tst_get_last_error() };
+            return record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_subtitle_to(stream, slice, pts) {
         Ok(()) => 0,
-        Err(e) => {
-            record_shell_error(&e);
-            unsafe { tst_get_last_error() }
-        }
+        Err(e) => record_shell_error(&e),
     })
 }
 

@@ -12,9 +12,7 @@
 
 use crate::config::{TstMuxConfig, TstReconnectPolicy};
 use crate::error::record_binding_error;
-use crate::error::{
-    TstError, record_mux_error, record_shell_error, set_last_error, tst_get_last_error,
-};
+use crate::error::{TstError, record_mux_error, record_shell_error, set_last_error};
 use crate::handle::{CHandle, TstDataStreamHandle, cancel_or_latch};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::DataStreamHandle;
@@ -274,10 +272,7 @@ pub unsafe extern "C" fn tst_mux_sender_send_data(
         .inner
         .with_inner_ref(|s| match s.send_data(slice, pts) {
             Ok(()) => 0,
-            Err(e) => {
-                record_shell_error(&e);
-                unsafe { tst_get_last_error() }
-            }
+            Err(e) => record_shell_error(&e),
         })
 }
 
@@ -313,8 +308,7 @@ pub unsafe extern "C" fn tst_mux_sender_send_data_to(
     let stream = match DataStreamHandle::try_from_raw(stream_handle) {
         Ok(h) => h,
         Err(e) => {
-            crate::error::record_mux_error(&e);
-            return unsafe { tst_get_last_error() };
+            return crate::error::record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
@@ -322,10 +316,7 @@ pub unsafe extern "C" fn tst_mux_sender_send_data_to(
         .inner
         .with_inner_ref(|s| match s.send_data_to(stream, slice, pts) {
             Ok(()) => 0,
-            Err(e) => {
-                record_shell_error(&e);
-                unsafe { tst_get_last_error() }
-            }
+            Err(e) => record_shell_error(&e),
         })
 }
 
@@ -1043,10 +1034,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_data(
         .inner
         .with_inner_ref(|s| match s.send_data(slice, pts) {
             Ok(()) => 0,
-            Err(e) => {
-                record_shell_error(&e);
-                unsafe { tst_get_last_error() }
-            }
+            Err(e) => record_shell_error(&e),
         })
 }
 
@@ -1074,8 +1062,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_data_to(
     let stream = match DataStreamHandle::try_from_raw(stream_handle) {
         Ok(h) => h,
         Err(e) => {
-            crate::error::record_mux_error(&e);
-            return unsafe { tst_get_last_error() };
+            return crate::error::record_mux_error(&e);
         }
     };
     let pts = Pts90khz::new(pts_90khz);
@@ -1083,10 +1070,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_data_to(
         .inner
         .with_inner_ref(|s| match s.send_data_to(stream, slice, pts) {
             Ok(()) => 0,
-            Err(e) => {
-                record_shell_error(&e);
-                unsafe { tst_get_last_error() }
-            }
+            Err(e) => record_shell_error(&e),
         })
 }
 
