@@ -15,7 +15,7 @@ use super::packs::{
 
 /// One ST 0601 UAS Datalink Local Set, one field per tag.
 ///
-/// A field whose doc gives an "encode range" is checked when the record is
+/// A field whose doc states a range is checked when the record is
 /// encoded: under the default [`OutOfRangePolicy::Error`] a value outside it
 /// raises [`crate::error::KlvEncodeError::OutOfRange`]; see
 /// [`OutOfRangePolicy`] for the tags that can carry the spec's Out-of-Range
@@ -42,12 +42,10 @@ pub struct UasDatalinkLs {
     /// Item 5: Platform Heading Angle — encode range [0, 360] deg (uint16).
     pub platform_heading_deg: Option<f64>,
     /// Item 6: Platform Pitch Angle — encode range [-20, 20] deg (int16).
-    /// For
-    /// the full ±90° range use [`Self::platform_pitch_full_deg`] (Item 90).
+    /// For the full ±90° range use [`Self::platform_pitch_full_deg`] (Item 90).
     pub platform_pitch_deg: Option<f64>,
     /// Item 7: Platform Roll Angle — encode range [-50, 50] deg (int16).
-    /// For
-    /// the full ±90° range use [`Self::platform_roll_full_deg`] (Item 91).
+    /// For the full ±90° range use [`Self::platform_roll_full_deg`] (Item 91).
     pub platform_roll_deg: Option<f64>,
     /// Item 8: Platform True Airspeed — encode range [0, 255] m/s (uint8).
     pub platform_true_airspeed: Option<f64>,
@@ -116,36 +114,28 @@ pub struct UasDatalinkLs {
 
     // Image corners — offsets from frame center (tags 26-33)
     /// Item 26: Offset Corner Latitude Point 1 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full
-    /// latitude range use [`Self::corner_lat_p1_deg`] (Item 82, ±90°).
+    /// For the full latitude range use [`Self::corner_lat_p1_deg`] (Item 82, ±90°).
     pub corner_lat_offset_p1_deg: Option<f64>,
     /// Item 27: Offset Corner Longitude Point 1 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full
-    /// longitude range use [`Self::corner_lon_p1_deg`] (Item 83, ±180°).
+    /// For the full longitude range use [`Self::corner_lon_p1_deg`] (Item 83, ±180°).
     pub corner_lon_offset_p1_deg: Option<f64>,
     /// Item 28: Offset Corner Latitude Point 2 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full
-    /// latitude range use [`Self::corner_lat_p2_deg`] (Item 84, ±90°).
+    /// For the full latitude range use [`Self::corner_lat_p2_deg`] (Item 84, ±90°).
     pub corner_lat_offset_p2_deg: Option<f64>,
     /// Item 29: Offset Corner Longitude Point 2 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full
-    /// longitude range use [`Self::corner_lon_p2_deg`] (Item 85, ±180°).
+    /// For the full longitude range use [`Self::corner_lon_p2_deg`] (Item 85, ±180°).
     pub corner_lon_offset_p2_deg: Option<f64>,
     /// Item 30: Offset Corner Latitude Point 3 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full
-    /// latitude range use [`Self::corner_lat_p3_deg`] (Item 86, ±90°).
+    /// For the full latitude range use [`Self::corner_lat_p3_deg`] (Item 86, ±90°).
     pub corner_lat_offset_p3_deg: Option<f64>,
     /// Item 31: Offset Corner Longitude Point 3 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full
-    /// longitude range use [`Self::corner_lon_p3_deg`] (Item 87, ±180°).
+    /// For the full longitude range use [`Self::corner_lon_p3_deg`] (Item 87, ±180°).
     pub corner_lon_offset_p3_deg: Option<f64>,
     /// Item 32: Offset Corner Latitude Point 4 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full
-    /// latitude range use [`Self::corner_lat_p4_deg`] (Item 88, ±90°).
+    /// For the full latitude range use [`Self::corner_lat_p4_deg`] (Item 88, ±90°).
     pub corner_lat_offset_p4_deg: Option<f64>,
     /// Item 33: Offset Corner Longitude Point 4 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full
-    /// longitude range use [`Self::corner_lon_p4_deg`] (Item 89, ±180°).
+    /// For the full longitude range use [`Self::corner_lon_p4_deg`] (Item 89, ±180°).
     pub corner_lon_offset_p4_deg: Option<f64>,
 
     // Image corners — full lat/lon (tags 82-89, ST 0601.13+)
@@ -219,8 +209,7 @@ pub struct UasDatalinkLs {
     /// Item 51: Platform Vertical Speed — encode range [-180, 180] m/s (int16).
     pub platform_vertical_speed: Option<f64>,
     /// Item 52: Platform Sideslip Angle — encode range [-20, 20] deg (int16).
-    /// For
-    /// the full ±180° range use [`Self::platform_sideslip_full_deg`] (Item 93).
+    /// For the full ±180° range use [`Self::platform_sideslip_full_deg`] (Item 93).
     pub platform_sideslip_deg: Option<f64>,
     /// Item 56: Platform Ground Speed — encode range [0, 255] m/s (uint8).
     pub platform_ground_speed: Option<f64>,
