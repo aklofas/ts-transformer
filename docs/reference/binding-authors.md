@@ -161,6 +161,17 @@ If you encounter a `tst_get_last_error_str()` value beginning with
 bypassed or failed; please file an issue with the variant name from the
 last-error string.
 
+### Adding an error kind
+
+Add the row to `kinds!` in `crates/tst-pipeline/src/binding/kind.rs` (its
+doc text is what Python and Java users read), add the kind to each
+`Domain::kinds()` list that raises it (and, for a new domain, a `Domain`
+variant and a Python value table in
+`crates/tst-pipeline/tests/tools/print_kinds.rs`), then run
+`cargo run -p tst-pipeline --bin print-kinds -- --write`.
+`scripts/check/repo/kind-equivalence.sh` fails until the generated files
+are committed.
+
 ### Transient vs persistent error codes
 
 Two negative `TST_E_*` codes — `TST_E_NOT_AVAILABLE` (-13) and

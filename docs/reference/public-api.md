@@ -114,7 +114,7 @@ The three binding crates — `bindings/c` (tst-c), `bindings/c/core`
   `scripts/check/python/`, and — since 0.7.0 — the error-kind vocabulary
   itself, which is `tst_pipeline::binding::BindingErrorKind::name()` checked
   at `import tstrans` (`scripts/ratchets/kind-equivalence.tsv` records the
-  Rust-C-Python-JVM member mapping).
+  Rust-C-Python-JVM member mapping and is generated from `kind.rs`).
 
 **Rule:** do not add `cargo public-api` baselines to binding crates unless
 they become actual CI release gates. Adding a baseline to a binding crate

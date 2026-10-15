@@ -34,6 +34,6 @@ pub mod panic;
 pub mod shells;
 
 pub use handles::ManagedHandles;
-pub use kind::{BindingError, BindingErrorKind};
+pub use kind::{BindingError, BindingErrorKind, Domain};
 pub use owned::{Close, CloseFailure, HandleState, Owned};
 pub use shells::{RecvHalf, SendHalf};

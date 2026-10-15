@@ -8,7 +8,6 @@ import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.tstrans.CodecParseException;
-import org.tstrans.DemuxException;
 import org.tstrans.codec.AdtsFrame;
 import org.tstrans.codec.AudioFrame;
 import org.tstrans.codec.Codec;
@@ -123,10 +122,11 @@ class DemuxEventAudioParseTest {
     @Test
     void outOfRangeCodecOrdinalThrows() {
         // The companion native validates the ordinal exactly (nSplitVideo pattern);
-        // an out-of-range value means AudioCodec enum drift → loud failure.
-        assertThrows(DemuxException.class,
+        // an out-of-range value means AudioCodec enum drift → loud failure. Demux
+        // has no INTERNAL kind, so it surfaces as RuntimeException (Python: RuntimeError).
+        assertThrows(RuntimeException.class,
             () -> DemuxEventAudioNatives.nParseAudio(new byte[] {0}, 99, false),
-            "an out-of-range AudioCodec ordinal must throw DemuxException");
+            "an out-of-range AudioCodec ordinal must throw RuntimeException");
     }
 
     @Test

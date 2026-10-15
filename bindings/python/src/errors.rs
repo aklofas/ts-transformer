@@ -107,7 +107,7 @@ fn raise_for_test(py: Python<'_>, d: &crate::raise::Domain, member: &str, messag
         Some(k) => crate::raise::raise(py, d, tst_pipeline::binding::BindingError::new(k, message)),
         None => pyo3::exceptions::PyValueError::new_err(format!(
             "{} has no kind with member {member}",
-            d.kind_enum
+            d.python_kind_enum()
         )),
     }
 }

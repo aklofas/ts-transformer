@@ -18,19 +18,18 @@ class ErrorModelTest {
 
     /**
      * The members are exactly the domain's {@code BindingErrorKind} subset.
-     * Every member except {@code INTERNAL} maps 1:1 to a
-     * {@code tst_core::mpegts::demux::DemuxError} variant; {@code INTERNAL} is the
-     * JNI-side event-conversion failure. {@code UNEXPECTED_EOF} was parity-only
-     * and had no producer at all.
+     * Every member maps 1:1 to a
+     * {@code tst_core::mpegts::demux::DemuxError} variant. {@code UNEXPECTED_EOF}
+     * was parity-only and had no producer at all.
      */
     @Test
     void kindMembersMatchTheDemuxDomain() {
-        Set<String> expected = Set.of("UNRECOVERABLE", "MALFORMED_PES", "SYNC_BUF_EXHAUSTED", "STRICT_REJECTION", "INTERNAL");
+        Set<String> expected = Set.of("UNRECOVERABLE", "MALFORMED_PES", "SYNC_BUF_EXHAUSTED", "STRICT_REJECTION");
         Set<String> actual = Arrays.stream(DemuxException.Kind.values())
             .map(Enum::name)
             .collect(Collectors.toSet());
         assertEquals(expected, actual);
-        assertEquals(5, DemuxException.Kind.values().length);
+        assertEquals(4, DemuxException.Kind.values().length);
         assertThrows(IllegalArgumentException.class, () -> DemuxException.Kind.valueOf("SYNC_LOSS"));
         assertThrows(IllegalArgumentException.class, () -> DemuxException.Kind.valueOf("BAD_PMT"));
         assertThrows(IllegalArgumentException.class, () -> DemuxException.Kind.valueOf("BAD_PES"));

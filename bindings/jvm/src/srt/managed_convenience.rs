@@ -992,8 +992,8 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nNext<'local>(
                 Ok(None) => JObject::null().into_raw(),
                 Err(()) => {
                     // Event-conversion JNI failure. `throw_demux` guards against
-                    // clobbering a pending exception; the INTERNAL literal stays
-                    // ratchet-visible.
+                    // clobbering a pending exception; it throws RuntimeException:
+                    // demux has no INTERNAL kind.
                     crate::error::throw_demux(
                         env,
                         BindingErrorKind::Internal,

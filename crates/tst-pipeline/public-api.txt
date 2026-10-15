@@ -125,6 +125,7 @@ pub tst_pipeline::binding::kind::BindingErrorKind::WrongType = -47
 impl tst_pipeline::binding::kind::BindingErrorKind
 pub const tst_pipeline::binding::kind::BindingErrorKind::ALL: &'static [tst_pipeline::binding::kind::BindingErrorKind]
 pub fn tst_pipeline::binding::kind::BindingErrorKind::c_projection(&self) -> i32
+pub fn tst_pipeline::binding::kind::BindingErrorKind::doc(&self) -> &'static str
 pub fn tst_pipeline::binding::kind::BindingErrorKind::name(&self) -> &'static str
 pub fn tst_pipeline::binding::kind::BindingErrorKind::variant_name(&self) -> &'static str
 impl tst_pipeline::binding::kind::BindingErrorKind
@@ -150,6 +151,43 @@ impl core::marker::Unpin for tst_pipeline::binding::kind::BindingErrorKind
 impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::BindingErrorKind
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::BindingErrorKind
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::BindingErrorKind
+#[non_exhaustive] pub enum tst_pipeline::binding::kind::Domain
+pub tst_pipeline::binding::kind::Domain::Codec
+pub tst_pipeline::binding::kind::Domain::Demux
+pub tst_pipeline::binding::kind::Domain::Hls
+pub tst_pipeline::binding::kind::Domain::KlvDecode
+pub tst_pipeline::binding::kind::Domain::KlvEncode
+pub tst_pipeline::binding::kind::Domain::Mux
+pub tst_pipeline::binding::kind::Domain::Rist
+pub tst_pipeline::binding::kind::Domain::Rtp
+pub tst_pipeline::binding::kind::Domain::Rtsp
+pub tst_pipeline::binding::kind::Domain::Srt
+pub tst_pipeline::binding::kind::Domain::Tcp
+pub tst_pipeline::binding::kind::Domain::Udp
+impl tst_pipeline::binding::kind::Domain
+pub const tst_pipeline::binding::kind::Domain::ALL: &'static [tst_pipeline::binding::kind::Domain]
+pub fn tst_pipeline::binding::kind::Domain::java_exception_class(self) -> core::option::Option<&'static str>
+pub fn tst_pipeline::binding::kind::Domain::kinds(self) -> &'static [tst_pipeline::binding::kind::BindingErrorKind]
+pub fn tst_pipeline::binding::kind::Domain::python_error_class(self) -> &'static str
+pub fn tst_pipeline::binding::kind::Domain::python_kind_enum(self) -> &'static str
+impl core::clone::Clone for tst_pipeline::binding::kind::Domain
+pub fn tst_pipeline::binding::kind::Domain::clone(&self) -> tst_pipeline::binding::kind::Domain
+impl core::cmp::Eq for tst_pipeline::binding::kind::Domain
+impl core::cmp::PartialEq for tst_pipeline::binding::kind::Domain
+pub fn tst_pipeline::binding::kind::Domain::eq(&self, &tst_pipeline::binding::kind::Domain) -> bool
+impl core::fmt::Debug for tst_pipeline::binding::kind::Domain
+pub fn tst_pipeline::binding::kind::Domain::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_pipeline::binding::kind::Domain
+pub fn tst_pipeline::binding::kind::Domain::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_pipeline::binding::kind::Domain
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::kind::Domain
+impl core::marker::Freeze for tst_pipeline::binding::kind::Domain
+impl core::marker::Send for tst_pipeline::binding::kind::Domain
+impl core::marker::Sync for tst_pipeline::binding::kind::Domain
+impl core::marker::Unpin for tst_pipeline::binding::kind::Domain
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::Domain
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::Domain
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::Domain
 pub struct tst_pipeline::binding::kind::BindingError
 pub tst_pipeline::binding::kind::BindingError::detail: alloc::string::String
 pub tst_pipeline::binding::kind::BindingError::kind: tst_pipeline::binding::kind::BindingErrorKind
@@ -429,6 +467,7 @@ pub tst_pipeline::binding::BindingErrorKind::WrongType = -47
 impl tst_pipeline::binding::kind::BindingErrorKind
 pub const tst_pipeline::binding::kind::BindingErrorKind::ALL: &'static [tst_pipeline::binding::kind::BindingErrorKind]
 pub fn tst_pipeline::binding::kind::BindingErrorKind::c_projection(&self) -> i32
+pub fn tst_pipeline::binding::kind::BindingErrorKind::doc(&self) -> &'static str
 pub fn tst_pipeline::binding::kind::BindingErrorKind::name(&self) -> &'static str
 pub fn tst_pipeline::binding::kind::BindingErrorKind::variant_name(&self) -> &'static str
 impl tst_pipeline::binding::kind::BindingErrorKind
@@ -469,6 +508,43 @@ impl<E> core::marker::Unpin for tst_pipeline::binding::owned::CloseFailure<E> wh
 impl<E> core::marker::UnsafeUnpin for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::UnsafeUnpin
 impl<E> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::CloseFailure<E> where E: core::panic::unwind_safe::RefUnwindSafe
 impl<E> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::CloseFailure<E> where E: core::panic::unwind_safe::UnwindSafe
+#[non_exhaustive] pub enum tst_pipeline::binding::Domain
+pub tst_pipeline::binding::Domain::Codec
+pub tst_pipeline::binding::Domain::Demux
+pub tst_pipeline::binding::Domain::Hls
+pub tst_pipeline::binding::Domain::KlvDecode
+pub tst_pipeline::binding::Domain::KlvEncode
+pub tst_pipeline::binding::Domain::Mux
+pub tst_pipeline::binding::Domain::Rist
+pub tst_pipeline::binding::Domain::Rtp
+pub tst_pipeline::binding::Domain::Rtsp
+pub tst_pipeline::binding::Domain::Srt
+pub tst_pipeline::binding::Domain::Tcp
+pub tst_pipeline::binding::Domain::Udp
+impl tst_pipeline::binding::kind::Domain
+pub const tst_pipeline::binding::kind::Domain::ALL: &'static [tst_pipeline::binding::kind::Domain]
+pub fn tst_pipeline::binding::kind::Domain::java_exception_class(self) -> core::option::Option<&'static str>
+pub fn tst_pipeline::binding::kind::Domain::kinds(self) -> &'static [tst_pipeline::binding::kind::BindingErrorKind]
+pub fn tst_pipeline::binding::kind::Domain::python_error_class(self) -> &'static str
+pub fn tst_pipeline::binding::kind::Domain::python_kind_enum(self) -> &'static str
+impl core::clone::Clone for tst_pipeline::binding::kind::Domain
+pub fn tst_pipeline::binding::kind::Domain::clone(&self) -> tst_pipeline::binding::kind::Domain
+impl core::cmp::Eq for tst_pipeline::binding::kind::Domain
+impl core::cmp::PartialEq for tst_pipeline::binding::kind::Domain
+pub fn tst_pipeline::binding::kind::Domain::eq(&self, &tst_pipeline::binding::kind::Domain) -> bool
+impl core::fmt::Debug for tst_pipeline::binding::kind::Domain
+pub fn tst_pipeline::binding::kind::Domain::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_pipeline::binding::kind::Domain
+pub fn tst_pipeline::binding::kind::Domain::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_pipeline::binding::kind::Domain
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::kind::Domain
+impl core::marker::Freeze for tst_pipeline::binding::kind::Domain
+impl core::marker::Send for tst_pipeline::binding::kind::Domain
+impl core::marker::Sync for tst_pipeline::binding::kind::Domain
+impl core::marker::Unpin for tst_pipeline::binding::kind::Domain
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::Domain
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::Domain
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::Domain
 #[non_exhaustive] pub enum tst_pipeline::binding::HandleState
 pub tst_pipeline::binding::HandleState::Closed
 pub tst_pipeline::binding::HandleState::Panicked

@@ -253,7 +253,7 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/rust/kind-table-coverage.sh
       - name: Kind-equivalence rail (C ≡ Python ≡ JVM per BindingErrorKind)
-        # Default mode; KIND_EQUIV_STRICT=1 (no `pending` *_parity row) is a manual gate.
+        # Generated == committed: the TSV and both hosts' kind-enum blocks are rendered from kind.rs by print-kinds --check.
         if: matrix.name == 'linux-x86_64'
         env:
           SRT_FORCE_VENDORED: "1"

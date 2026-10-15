@@ -262,7 +262,8 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nNext<'local>(
                 Err(()) => {
                     // Event-conversion JNI failure (mirrors mpegts::nNextEvent's
                     // Err(()) arm). `throw_demux` guards against clobbering a
-                    // pending exception; the INTERNAL literal stays ratchet-visible.
+                    // pending exception; it throws RuntimeException: demux has no
+                    // INTERNAL kind.
                     crate::error::throw_demux(
                         env,
                         BindingErrorKind::Internal,

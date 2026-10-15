@@ -17,17 +17,18 @@ class RtpErrorModelTest {
     /**
      * The members are exactly the domain's {@code BindingErrorKind} subset:
      * the five {@code TransportError} projections an rtp shell can raise plus
-     * {@code tst_rtp::ConnectError}'s six variants. The four retired members have
+     * {@code tst_rtp::ConnectError}'s six variants plus {@code END_OF_STREAM}
+     * (the peer ended the stream). The four retired members have
      * no producer left now that the rtp tables point at the shared classifier.
      */
     @Test
     void kindMembersMatchTheRtpDomain() {
-        Set<String> expected = Set.of("BACKPRESSURE", "BROKEN", "CLOSED", "TOO_LARGE", "PAYLOAD_TYPE_PARAM", "MISSING_PAYLOAD_TYPE_PARAM", "URL", "HOST_NOT_LITERAL", "IO", "IFACE_UNSUPPORTED");
+        Set<String> expected = Set.of("BACKPRESSURE", "BROKEN", "CLOSED", "TOO_LARGE", "PAYLOAD_TYPE_PARAM", "MISSING_PAYLOAD_TYPE_PARAM", "URL", "HOST_NOT_LITERAL", "IO", "IFACE_UNSUPPORTED", "END_OF_STREAM");
         Set<String> actual = Arrays.stream(RtpException.Kind.values())
             .map(Enum::name)
             .collect(Collectors.toSet());
         assertEquals(expected, actual);
-        assertEquals(10, RtpException.Kind.values().length);
+        assertEquals(11, RtpException.Kind.values().length);
         assertThrows(IllegalArgumentException.class, () -> RtpException.Kind.valueOf("TRANSPORT"));
         assertThrows(IllegalArgumentException.class, () -> RtpException.Kind.valueOf("CANCELLED"));
         assertThrows(IllegalArgumentException.class, () -> RtpException.Kind.valueOf("MALFORMED_PACKET"));

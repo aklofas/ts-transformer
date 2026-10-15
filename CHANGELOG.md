@@ -82,6 +82,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   arguments) — never thrown.
 - `org.tstrans.rtp.RtspClientConfig.rtcp()` and `Builder.rtcp(boolean)` are
   removed; the flag was carried and ignored.
+- `DemuxException.Kind.INTERNAL` is removed. An internal failure while
+  converting a demux event now throws `RuntimeException`, as Python raises
+  `RuntimeError`.
 
 ### Removed — tst-rtp (BREAKING)
 
@@ -174,6 +177,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tst_core::cancel::FlagCancel` (they gain `Default`; behaviour is
   unchanged). `TcpCancelHandle` keeps its type and API.
 
+### Changed — tst-jni (BREAKING)
+
+- The `Kind` enums of `SrtException`, `RtpException`, `RtspException`,
+  `DemuxException`, `MuxException`, `KlvDecodeException`,
+  `KlvEncodeException`, `CodecParseException` and `HlsException` declare their constants in the
+  Python binding's member order, so `ordinal()` values change; match on the
+  constant, not its ordinal.
+
 ### Changed — C header
 
 - `tstrans.h`: enum blocks are now emitted in a deterministic sorted order; no
@@ -210,6 +221,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `load_root_store` and `TlsLoadError` — the one PEM loader behind
   `tcps://`, `hlss://`, `rtsps://` and the Python/JVM trust bundles.
 
+### Added — tst-pipeline
+
+- `binding::Domain`: the binding error domains and the kinds each one's
+  host enums carry — the one table the Python and JVM bindings and their
+  generated kind enums read. `BindingErrorKind::doc` returns a kind's
+  description.
+
 ### Added — tst-rtp
 
 - `RtspClientBuilder::rtsp_version` sets the request-line version, overriding
@@ -221,6 +239,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `h265::H265Depacketizer` (RFC 7798 single NAL unit, aggregation and
   fragmentation packets, no DONL), the same contract as
   `H264Depacketizer`, with a fuzz target.
+
+### Added — tst-jni
+
+- `RtpException.Kind.END_OF_STREAM`, which the Python binding's
+  `RtpErrorKind` already had.
 
 ### Fixed — tst-py
 

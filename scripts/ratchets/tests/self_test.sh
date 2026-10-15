@@ -796,5 +796,16 @@ expect "no-unreachable-expect: a cfg(test) fn body may expect, and scanning resu
 nue_src '#[cfg(test)]\npub(crate) fn helper() -> u8 {\n    1\n}\nfn a() -> u8 { let v: Option<u8> = None; v.expect("boom") }\n'
 expect "no-unreachable-expect: production code AFTER a cfg(test) fn is still scanned" 1 nue
 
+# kind-equivalence: a hand-edited Python member value fails the generated == committed check.
+KE_REPO="$(cd "$DIR/../.." && pwd)"
+ke="$tmp/kind-equiv"
+mkdir -p "$ke/scripts/ratchets" "$ke/bindings/python/python/tstrans" "$ke/bindings/jvm/src/main/java/org/tstrans"
+cp "$KE_REPO/scripts/ratchets/kind-equivalence.tsv" "$ke/scripts/ratchets/"
+cp "$KE_REPO/bindings/python/python/tstrans/exceptions.py" "$ke/bindings/python/python/tstrans/"
+cp "$KE_REPO"/bindings/jvm/src/main/java/org/tstrans/*Exception.java "$ke/bindings/jvm/src/main/java/org/tstrans/"
+expect "kind-equivalence: an unchanged copy passes" 0 env KIND_EQUIV_ROOT="$ke" bash "$KE_REPO/scripts/check/repo/kind-equivalence.sh"
+plant "$ke/bindings/python/python/tstrans/exceptions.py" '    INPUT_MALFORMED = 0' '    INPUT_MALFORMED = 99'
+expect "kind-equivalence: a hand-edited Python value fails" 1 env KIND_EQUIV_ROOT="$ke" bash "$KE_REPO/scripts/check/repo/kind-equivalence.sh"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

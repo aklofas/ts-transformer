@@ -282,6 +282,7 @@ pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nNextEvent<'local>(
                     // guard should a future skip-worthy variant appear.
                     Ok(None) => continue,
                     Err(()) => {
+                        // RuntimeException: demux has no INTERNAL kind.
                         throw_demux(env, BindingErrorKind::Internal, "event conversion failed");
                         return JObject::null().into_raw();
                     }
