@@ -48,10 +48,10 @@ pub fn encode(record: &SecurityLs, out: &mut [u8]) -> Result<usize, KlvEncodeErr
     // "tag 2 first, tag 1 last" rules — but emitting numeric is
     // friendlier to byte-diff tooling.
     if let Some(v) = record.security_classification {
-        emit(out, &mut pos, 1, &[v.to_u8()])?;
+        emit(out, &mut pos, 1, &[v.to_wire()])?;
     }
     if let Some(v) = record.classifying_country_coding_method {
-        emit(out, &mut pos, 2, &[v.to_u8()])?;
+        emit(out, &mut pos, 2, &[v.to_wire()])?;
     }
     // ST 0107.5 §6.3.3.2: empty string → single NUL byte on the wire.
     // Non-empty strings encode as raw UTF-8 bytes.
@@ -83,7 +83,7 @@ pub fn encode(record: &SecurityLs, out: &mut [u8]) -> Result<usize, KlvEncodeErr
         emit(out, &mut pos, 11, str_wire(s))?;
     }
     if let Some(v) = record.object_country_coding_method {
-        emit(out, &mut pos, 12, &[v.to_u8()])?;
+        emit(out, &mut pos, 12, &[v.to_wire()])?;
     }
     if let Some(s) = record.object_country_codes.as_ref() {
         let utf16 = encode_utf16_bom(s);

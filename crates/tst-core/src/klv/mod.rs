@@ -272,15 +272,15 @@ mod wire_codepoint_tests {
         );
         assert_eq!(
             table(
-                SecurityClassification::from_u8,
-                SecurityClassification::to_u8
+                SecurityClassification::from_wire,
+                SecurityClassification::to_wire
             ),
             "1=Unclassified 2=Restricted 3=Confidential 4=Secret 5=TopSecret "
         );
         assert_eq!(
             table(
-                ClassifyingCountryCodingMethod::from_u8,
-                ClassifyingCountryCodingMethod::to_u8
+                ClassifyingCountryCodingMethod::from_wire,
+                ClassifyingCountryCodingMethod::to_wire
             ),
             "1=Iso3166TwoLetter 2=Iso3166ThreeLetter 3=Fips104TwoLetter 4=Fips104FourLetter \
              5=Iso3166Numeric 6=Stanag1059TwoLetter 7=Stanag1059ThreeLetter 8=OmittedValue08 \
@@ -289,8 +289,8 @@ mod wire_codepoint_tests {
         );
         assert_eq!(
             table(
-                ObjectCountryCodingMethod::from_u8,
-                ObjectCountryCodingMethod::to_u8
+                ObjectCountryCodingMethod::from_wire,
+                ObjectCountryCodingMethod::to_wire
             ),
             "1=Iso3166TwoLetter 2=Iso3166ThreeLetter 3=Iso3166Numeric 4=Fips104TwoLetter \
              5=Fips104FourLetter 6=Stanag1059TwoLetter 7=Stanag1059ThreeLetter \

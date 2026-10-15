@@ -117,7 +117,7 @@ class St0102Test {
         // Tag 2 is a *known* enum constant (lenient decode tolerates it; only
         // strict mode rejects it). Decoding Tag 2 = 0x08 must surface the typed
         // OMITTED_VALUE_08 constant — proves the codepoint round-trips through
-        // the Rust from_u8 → to_u8 → Java fromCode chain without truncation.
+        // the Rust from_wire → to_wire → Java fromCode chain without truncation.
         SecurityLs s = assertDoesNotThrow(() -> Klv.decodeSecurity(new byte[]{0x02, 0x01, 0x08}));
         assertEquals(Optional.of(ClassifyingCountryCodingMethod.OMITTED_VALUE_08),
                 s.classifyingCountryCodingMethod());
