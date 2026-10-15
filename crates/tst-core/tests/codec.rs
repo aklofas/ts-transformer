@@ -20,16 +20,14 @@ mod av1_carriage_roundtrip;
 mod av1_codec_integration;
 #[path = "codec/av1_no_panic.rs"]
 mod av1_no_panic;
-#[path = "codec/codec_av1_corpus.rs"]
-mod codec_av1_corpus;
-#[path = "codec/codec_h266_corpus.rs"]
-mod codec_h266_corpus;
 #[path = "codec/codec_parameter_sets.rs"]
 mod codec_parameter_sets;
 #[path = "codec/codec_stats.rs"]
 mod codec_stats;
 #[path = "codec/codec_stats_mux.rs"]
 mod codec_stats_mux;
+#[path = "codec/corpus_cross_check.rs"]
+mod corpus_cross_check;
 #[path = "codec/h265_real_x265_round_trip.rs"]
 mod h265_real_x265_round_trip;
 #[path = "codec/h266_carriage_roundtrip.rs"]
@@ -40,5 +38,3 @@ mod h266_codec_integration;
 mod h266_vui_overflow;
 #[path = "codec/h266_real_encoder_round_trip.rs"]
 mod h266_real_encoder_round_trip;
-#[path = "codec/local_codec_corpus.rs"]
-mod local_codec_corpus;

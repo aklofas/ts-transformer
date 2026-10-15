@@ -49,9 +49,9 @@ so these corpus checks skip in CI exactly as they did under `tst-srt`.)
 
 | old `tst-srt/tests/…` | new `tests/…` |
 | --- | --- |
-| `codec_av1_corpus.rs` | `codec/codec_av1_corpus.rs` |
-| `codec_h266_corpus.rs` | `codec/codec_h266_corpus.rs` |
-| `local_codec_corpus.rs` | `codec/local_codec_corpus.rs` |
+| `codec_av1_corpus.rs` | `codec/corpus_cross_check.rs` (merged) |
+| `codec_h266_corpus.rs` | `codec/corpus_cross_check.rs` (merged) |
+| `local_codec_corpus.rs` | `codec/corpus_cross_check.rs` (merged) |
 | `local_fixtures.rs` | `klv/local_fixtures.rs` |
 | `mpegts_demux_local.rs` | `mpegts/demux_local.rs` |
 | `mpegts_mux_local.rs` | `mpegts/mux_local.rs` |
@@ -148,5 +148,16 @@ so these corpus checks skip in CI exactly as they did under `tst-srt`.)
 | old `tests/…` | new `tests/…` |
 | --- | --- |
 | `io_file_smoke.rs` | `io/io_file_smoke.rs` |
-| `public_api_surface.rs` | `io/public_api_surface.rs` |
 | `timing_smoke.rs` | `io/timing_smoke.rs` |
+
+## Later consolidation
+
+- Helpers used by more than one member file live in `tests/common/`
+  (`mux_demux`, `synthetic`, `fixtures`, `bitwriter`, plus `imapb_tol`),
+  declared once per domain root; `scripts/check/repo/no-duplicate-test-helpers.sh`
+  fails on a helper body copied into a second test file.
+- The three ffprobe corpus checks are one runner,
+  `codec/corpus_cross_check.rs`; the three test names are unchanged.
+- `io/public_api_surface.rs` was removed: the `cargo public-api` baseline
+  (`crates/tst-core/public-api.txt`, diffed in CI) already fails on any
+  removed or moved public item.
