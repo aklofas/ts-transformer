@@ -833,7 +833,6 @@ pub const tst_srt::transport::SrtTransport::DEFAULT_PAYLOAD: usize
 pub fn tst_srt::transport::SrtTransport::new(tst_srt::socket::Socket) -> Self
 pub fn tst_srt::transport::SrtTransport::srt_cancel_handle(&self) -> tst_core::cancel::SrtCancelHandle
 pub fn tst_srt::transport::SrtTransport::stats(&self) -> core::result::Result<tst_srt::socket::Stats, tst_srt::error::IoError>
-pub fn tst_srt::transport::SrtTransport::with_max_payload(self, usize) -> Self
 impl core::ops::drop::Drop for tst_srt::transport::SrtTransport
 pub fn tst_srt::transport::SrtTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_srt::transport::SrtTransport
@@ -1561,7 +1560,6 @@ pub const tst_srt::transport::SrtTransport::DEFAULT_PAYLOAD: usize
 pub fn tst_srt::transport::SrtTransport::new(tst_srt::socket::Socket) -> Self
 pub fn tst_srt::transport::SrtTransport::srt_cancel_handle(&self) -> tst_core::cancel::SrtCancelHandle
 pub fn tst_srt::transport::SrtTransport::stats(&self) -> core::result::Result<tst_srt::socket::Stats, tst_srt::error::IoError>
-pub fn tst_srt::transport::SrtTransport::with_max_payload(self, usize) -> Self
 impl core::ops::drop::Drop for tst_srt::transport::SrtTransport
 pub fn tst_srt::transport::SrtTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_srt::transport::SrtTransport
