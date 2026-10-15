@@ -128,48 +128,16 @@ mod tests {
     /// With progressive=1 && interlaced=0 the parser reads the single
     /// `chroma_sample_loc_type_frame` ue(v) (not the top+bottom pair).
     fn craft_vui_with_chroma_frame_loc(frame_loc_ue: u32) -> Vec<u8> {
-        struct Bw {
-            bytes: Vec<u8>,
-            pos: u32,
-        }
-        impl Bw {
-            fn new() -> Self {
-                Self {
-                    bytes: vec![],
-                    pos: 0,
-                }
-            }
-            fn u(&mut self, value: u32, n: u32) {
-                for i in (0..n).rev() {
-                    let bit = ((value >> i) & 1) as u8;
-                    let byte_idx = (self.pos / 8) as usize;
-                    let bit_in_byte = 7 - (self.pos % 8);
-                    if byte_idx == self.bytes.len() {
-                        self.bytes.push(0);
-                    }
-                    self.bytes[byte_idx] |= bit << bit_in_byte;
-                    self.pos += 1;
-                }
-            }
-            fn ue(&mut self, value: u32) {
-                let v = value + 1;
-                let leading_zeros = 31 - v.leading_zeros();
-                for _ in 0..leading_zeros {
-                    self.u(0, 1);
-                }
-                self.u(v, leading_zeros + 1);
-            }
-        }
-        let mut bw = Bw::new();
-        bw.u(1, 1); // vui_progressive_source_flag
-        bw.u(0, 1); // vui_interlaced_source_flag
-        bw.u(0, 1); // vui_non_packed_constraint_flag
-        bw.u(0, 1); // vui_non_projected_constraint_flag
-        bw.u(0, 1); // vui_aspect_ratio_info_present_flag
-        bw.u(0, 1); // vui_overscan_info_present_flag
-        bw.u(0, 1); // vui_colour_description_present_flag
-        bw.u(1, 1); // vui_chroma_loc_info_present_flag
-        bw.ue(frame_loc_ue);
+        let mut bw = BitWriter::new();
+        bw.write(1, 1); // vui_progressive_source_flag
+        bw.write(0, 1); // vui_interlaced_source_flag
+        bw.write(0, 1); // vui_non_packed_constraint_flag
+        bw.write(0, 1); // vui_non_projected_constraint_flag
+        bw.write(0, 1); // vui_aspect_ratio_info_present_flag
+        bw.write(0, 1); // vui_overscan_info_present_flag
+        bw.write(0, 1); // vui_colour_description_present_flag
+        bw.write(1, 1); // vui_chroma_loc_info_present_flag
+        bw.write_ue(frame_loc_ue);
         bw.bytes
     }
 
