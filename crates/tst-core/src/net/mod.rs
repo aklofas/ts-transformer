@@ -9,5 +9,7 @@
 
 pub mod io_classify;
 pub mod udp_socket;
+#[cfg(feature = "tls")]
+pub mod tls;
 
 pub use io_classify::{RecvAction, SendClass, classify_recv_error, classify_send_error};

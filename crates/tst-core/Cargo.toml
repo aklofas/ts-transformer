@@ -20,6 +20,10 @@ file = ["std"]  # std::fs-using helpers in io_file (must imply std)
 # The transport conformance kit (`transport::conformance`): test
 # infrastructure the transport crates enable from their dev-dependencies.
 conformance = ["std"]
+# PEM loading for the rustls-based transports (`net::tls`): tcps://, hlss://,
+# rtsps://. Implies std. Off by default; the transport crates' own `tls`
+# features turn it on.
+tls = ["std", "dep:rustls", "dep:rustls-pemfile"]
 
 [dependencies]
 thiserror    = { workspace = true }
@@ -50,11 +54,14 @@ portable-atomic = { version = "1", default-features = false, features = ["fallba
 # compiled on the BSD/macOS cfg arm — a Linux-only build check cannot catch
 # its absence (macOS CI does).
 socket2      = { workspace = true, optional = true, features = ["all"] }
+rustls         = { version = "0.23", optional = true, default-features = false, features = ["std", "ring"] }
+rustls-pemfile = { version = "2", optional = true }
 
 [dev-dependencies]
 proptest         = { workspace = true }
 tracing-test     = { version = "0.2", features = ["no-env-filter"] }
 tempfile         = "3"
+rcgen            = "0.13"
 criterion        = { workspace = true }
 tst-test-helpers = { path = "../tst-test-helpers" }
 

@@ -34,7 +34,7 @@ jni = "0.21"
 # tst-core (pure Rust, no libsrt) backs the mpegts-demux keystone (Demuxer +
 # DemuxEvent). tst-pipeline/tst-srt/tst-rtp are added by their respective module
 # waves, not before.
-tst-core = { path = "../../crates/tst-core" }
+tst-core = { path = "../../crates/tst-core", features = ["tls"] }
 
 # tst-pipeline (Sender/Receiver shells) + tst-srt (Socket/Listener/SrtTransport,
 # vendored libsrt + mbedTLS) back the org.tstrans.srt surface. First non-pure-Rust
@@ -46,7 +46,7 @@ tst-srt      = { path = "../../crates/tst-srt" }
 # tst-rtp (pure Rust: RTP-over-UDP + RTSP) backs the org.tstrans.rtp surface.
 # `tls` is ON: rtsps:// client (custom-CA roots via RtspClientConfig) and
 # rtsps:// server (cert/key paths) ship in the JAR — parity with tst-py's
-# wheels. The direct rustls + rustls-pemfile deps below parse
+# wheels. tst-core's `tls` PEM loader parses
 # RtspClientConfig.tlsRootCertsPem into the rustls::RootCertStore that
 # RtspClientBuilder::tls_root_certs takes (same shape as tst-py). Server
 # support (RtspServer + mounts) is on by default in tst-rtp, so
@@ -72,14 +72,6 @@ secrecy = { workspace = true }
 # at runtime when `TSTRANS_LOG` is set (see `lib.rs`). Mirrors tst-py's
 # identical dependency.
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-
-[dependencies.rustls]
-version          = "0.23"
-default-features = false
-features         = ["std", "ring"]
-
-[dependencies.rustls-pemfile]
-version = "2"
 
 [dev-dependencies]
 # Test-only: `lib.rs`'s init_tracing_bridge test asserts on

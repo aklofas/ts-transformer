@@ -51,10 +51,8 @@ fn rtsps_keepalive_thread_spawns_on_connect() {
     let url = format!("rtsps://127.0.0.1:{port}/live");
 
     // Build a client trusting the fixture's self-signed cert as a root.
-    let mut roots = rustls::RootCertStore::empty();
-    for cert in rustls_pemfile::certs(&mut certs.root_pem.as_bytes()) {
-        roots.add(cert.unwrap()).unwrap();
-    }
+    let roots =
+        tst_core::net::tls::load_root_store(certs.root_pem.as_bytes()).expect("trust bundle");
 
     let mut client = RtspClientBuilder::new(&url)
         .unwrap()

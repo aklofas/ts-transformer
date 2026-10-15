@@ -4,28 +4,19 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rustls::ServerConfig;
+use tst_core::net::tls::TlsLoadError;
 
 use crate::error::HlsError;
 
-/// Load a server certificate + key from PEM files.
+/// Load a server certificate + key from PEM files. Read and PEM-parse
+/// failures are `HlsError::Io`, as before; the rest are `HlsError::Tls`.
 pub(crate) fn load_server_config(cert: &Path, key: &Path) -> Result<Arc<ServerConfig>, HlsError> {
-    let certs = {
-        let data = std::fs::read(cert).map_err(HlsError::Io)?;
-        let mut reader = std::io::BufReader::new(&data[..]);
-        rustls_pemfile::certs(&mut reader)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(HlsError::Io)?
-    };
-    let key = {
-        let data = std::fs::read(key).map_err(HlsError::Io)?;
-        let mut reader = std::io::BufReader::new(&data[..]);
-        rustls_pemfile::private_key(&mut reader)
-            .map_err(HlsError::Io)?
-            .ok_or_else(|| HlsError::Tls(format!("no private key in {}", key.display())))?
-    };
-    let cfg = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .map_err(|e| HlsError::Tls(format!("ServerConfig build: {e}")))?;
-    Ok(Arc::new(cfg))
+    tst_core::net::tls::load_server_config(cert, key)
+        .map(Arc::new)
+        .map_err(|e| match e {
+            TlsLoadError::Read { source, .. } | TlsLoadError::Pem { source, .. } => {
+                HlsError::Io(source)
+            }
+            other => HlsError::Tls(other.to_string()),
+        })
 }

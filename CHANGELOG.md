@@ -42,6 +42,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `HlsError::Url` is removed; nothing in the library produced it.
   `HlsPublisherBuilder::from_url` returns `HlsUrlError`, as before, and
   `HlsError` no longer implements `From<HlsUrlError>`.
+- `tst_tcp::tls::load_server_config` is removed; use
+  `tst_core::net::tls::load_server_config` (it takes `&Path` and returns
+  `TlsLoadError`). A `tcps://…?ca=` bundle with no certificate now fails at
+  connect with `TcpError::Tls` instead of failing the handshake later.
 
 ### Removed — tst-core (BREAKING)
 
@@ -191,6 +195,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   every surface, with a table of which surface produces which reason),
   `transport::EndReasonHandle`, and `RecvTransport::end_reason_handle`
   (defaults to `None`; `Box<T>` forwards it).
+- `net::tls` (feature `tls`): `load_server_config`, `server_config_from_pem`,
+  `load_root_store` and `TlsLoadError` — the one PEM loader behind
+  `tcps://`, `hlss://`, `rtsps://` and the Python/JVM trust bundles.
 
 ### Added — tst-rtp
 

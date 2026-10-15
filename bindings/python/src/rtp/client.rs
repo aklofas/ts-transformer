@@ -655,42 +655,22 @@ fn apply_tls_roots(
     let Some(pem) = config.tls_root_certs_pem.as_ref() else {
         return Ok(builder);
     };
-    let mut roots = rustls::RootCertStore::empty();
-    let mut reader = std::io::BufReader::new(&pem[..]);
-    let mut added = 0usize;
-    for cert in rustls_pemfile::certs(&mut reader) {
-        let cert = cert.map_err(|e| {
-            raise(
-                py,
-                &RTSP,
-                BindingError::new(
-                    BindingErrorKind::RtspTls,
-                    format!("tls_root_certs_pem: invalid PEM: {e}"),
-                ),
-            )
-        })?;
-        roots.add(cert).map_err(|e| {
-            raise(
-                py,
-                &RTSP,
-                BindingError::new(
-                    BindingErrorKind::RtspTls,
-                    format!("tls_root_certs_pem: certificate rejected as trust anchor: {e}"),
-                ),
-            )
-        })?;
-        added += 1;
-    }
-    if added == 0 {
-        return Err(raise(
+    use tst_core::net::tls::TlsLoadError as E;
+    let roots = tst_core::net::tls::load_root_store(pem).map_err(|e| {
+        let detail = match e {
+            E::Pem { source, .. } => format!("tls_root_certs_pem: invalid PEM: {source}"),
+            E::NoCertificates { .. } => "tls_root_certs_pem contains no certificates".to_string(),
+            E::TrustAnchor(err) => {
+                format!("tls_root_certs_pem: certificate rejected as trust anchor: {err}")
+            }
+            other => format!("tls_root_certs_pem: {other}"),
+        };
+        raise(
             py,
             &RTSP,
-            BindingError::new(
-                BindingErrorKind::RtspTls,
-                "tls_root_certs_pem contains no certificates",
-            ),
-        ));
-    }
+            BindingError::new(BindingErrorKind::RtspTls, detail),
+        )
+    })?;
     Ok(builder.tls_root_certs(roots))
 }
 

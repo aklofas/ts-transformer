@@ -68,8 +68,7 @@ rtsp-server = ["dep:tokio", "dep:tokio-util"]
 # acceptor.
 tls = [
     "dep:rustls",
-    "dep:rustls-pemfile",
-    "dep:rustls-pki-types",
+    "tst-core/tls",
     "dep:rustls-native-certs",
 ]
 # Server-side TLS acceptor. The server is async (tokio Runtime), so this adds
@@ -83,14 +82,6 @@ version          = "0.23"
 optional         = true
 default-features = false
 features         = ["std", "ring"]
-
-[dependencies.rustls-pemfile]
-version  = "2"
-optional = true
-
-[dependencies.rustls-pki-types]
-version  = "1"
-optional = true
 
 # Pulls trust roots from the OS / native cert store so `rtsps://` works
 # out-of-the-box without webpki-roots being baked into the binary.

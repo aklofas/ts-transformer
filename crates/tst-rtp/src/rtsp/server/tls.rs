@@ -49,44 +49,11 @@ impl TlsServerConfig {
     /// [`RtspServerError::Tls`] on any file open / PEM parse / keypair
     /// validation failure.
     pub(crate) fn load(cert_pem: &Path, key_pem: &Path) -> Result<Self, RtspServerError> {
-        let cert_file = std::fs::File::open(cert_pem).map_err(|e| {
-            RtspServerError::Tls(format!(
-                "failed to open cert file {}: {e}",
-                cert_pem.display()
-            ))
-        })?;
-        let mut cert_reader = io::BufReader::new(cert_file);
-        let cert_chain: Vec<rustls_pki_types::CertificateDer<'static>> =
-            rustls_pemfile::certs(&mut cert_reader)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| RtspServerError::Tls(format!("PEM cert parse failed: {e}")))?;
-        if cert_chain.is_empty() {
-            return Err(RtspServerError::Tls(format!(
-                "no certificates found in {}",
-                cert_pem.display()
-            )));
-        }
-
-        let key_file = std::fs::File::open(key_pem).map_err(|e| {
-            RtspServerError::Tls(format!(
-                "failed to open key file {}: {e}",
-                key_pem.display()
-            ))
-        })?;
-        let mut key_reader = io::BufReader::new(key_file);
-        let key = rustls_pemfile::private_key(&mut key_reader)
-            .map_err(|e| RtspServerError::Tls(format!("PEM key parse failed: {e}")))?
-            .ok_or_else(|| {
-                RtspServerError::Tls(format!("no private key in {}", key_pem.display()))
-            })?;
-
-        let server_config = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(cert_chain, key)
-            .map_err(|e| RtspServerError::Tls(format!("rustls config build failed: {e}")))?;
-
-        let acceptor = TlsAcceptor::from(Arc::new(server_config));
-        Ok(Self { acceptor })
+        let config = tst_core::net::tls::load_server_config(cert_pem, key_pem)
+            .map_err(|e| RtspServerError::Tls(e.to_string()))?;
+        Ok(Self {
+            acceptor: TlsAcceptor::from(Arc::new(config)),
+        })
     }
 
     /// Perform the TLS handshake on an accepted TCP connection.
