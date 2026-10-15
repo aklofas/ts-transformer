@@ -34,7 +34,7 @@ use tst_test_helpers::synthetic_nal;
 
 /// Minimal KLV blob with a valid SMPTE UL prefix so the demuxer classifies
 /// it as `MetadataKind::KlvAsync`. Mirrors `minimal_klv()` in
-/// `tests/pipeline_receiver.rs`. A bare ASCII placeholder would land in
+/// `tst-pipeline/tests/shells/pipeline_receiver.rs`. A bare ASCII placeholder would land in
 /// `MetadataKind::Unknown` instead — counts toward `metas` only because we
 /// don't filter by kind, but we want the right kind to flow through.
 fn minimal_klv() -> Vec<u8> {
