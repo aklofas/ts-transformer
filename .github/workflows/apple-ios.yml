@@ -19,6 +19,8 @@ on:
     paths:
       - "scripts/apple/**"
       - ".github/workflows/apple-ios.yml"
+      - ".github/actions/rust-setup/**"
+      - "rust-toolchain.toml"
 
 permissions:
   contents: read

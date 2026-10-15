@@ -46,6 +46,8 @@ on:
       - 'crates/rist-sys/**'
       - '.sanitizer-suppressions/**'
       - '.github/workflows/sanitizers.yml'
+      - '.github/actions/rust-setup/**'
+      - 'rust-toolchain.toml'
 
 permissions:
   contents: read

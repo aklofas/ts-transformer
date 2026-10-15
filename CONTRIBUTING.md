@@ -19,7 +19,7 @@ CI. A cold build takes 3–5 minutes; warm builds seconds.
 ## Before you push
 
 CI (`.github/workflows/ci.yml`) runs fmt + clippy, three test modes on four
-platforms, doctests, nightly rustdoc, ~47 bash rails and three ratchets.
+platforms, doctests, nightly rustdoc, 45 bash rails and three ratchets.
 Run the same set locally from the workspace root:
 
 ```bash

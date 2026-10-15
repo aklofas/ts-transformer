@@ -42,6 +42,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/crates-io.yml"
+      - ".github/actions/rust-setup/**"
+      - "rust-toolchain.toml"
       - "scripts/release/**"
 
 env:
