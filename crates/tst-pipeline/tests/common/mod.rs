@@ -63,7 +63,7 @@ pub fn wait_for(deadline: Duration, mut f: impl FnMut() -> bool) -> bool {
         if f() {
             return true;
         }
-        std::thread::sleep(Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(5));
     }
     f()
 }
@@ -298,7 +298,7 @@ impl Transport for ScriptedSend {
             }),
             SendStep::TooLarge => Err(TransportError::TooLarge {
                 len: msg.len(),
-                max: 0,
+                max: self.max_payload,
             }),
             SendStep::Broken => {
                 self.alive = false;
