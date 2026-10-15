@@ -14,61 +14,11 @@
 //! initial connection; it is the *server's* `WWW-Authenticate` that determines
 //! whether Basic or Digest is actually used.
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use crate::error::{TstError, set_last_error};
 use crate::handle::TstRtspClientBuilder;
 use crate::panic::ffi_catch;
-
-// ---------------------------------------------------------------------------
-// Internal helper
-// ---------------------------------------------------------------------------
-
-/// Extract (user, pass) from two NUL-terminated C strings.
-///
-/// Returns `None` and sets last-error if either pointer is NULL or the
-/// string is not valid UTF-8.
-///
-/// # Safety
-///
-/// `user` and `pass` must each be NULL or a valid, NUL-terminated C string
-/// for the duration of this call.
-unsafe fn extract_credentials(
-    user: *const c_char,
-    pass: *const c_char,
-    context: &str,
-) -> Option<(String, String)> {
-    if user.is_null() || pass.is_null() {
-        set_last_error(
-            TstError::InvalidConfig,
-            &format!("{context}: user or pass pointer is null"),
-        );
-        return None;
-    }
-    // SAFETY: caller guarantees valid NUL-terminated strings.
-    let u = match unsafe { CStr::from_ptr(user) }.to_str() {
-        Ok(s) => s.to_owned(),
-        Err(_) => {
-            set_last_error(
-                TstError::InvalidConfig,
-                &format!("{context}: username is not valid UTF-8"),
-            );
-            return None;
-        }
-    };
-    let p = match unsafe { CStr::from_ptr(pass) }.to_str() {
-        Ok(s) => s.to_owned(),
-        Err(_) => {
-            set_last_error(
-                TstError::InvalidConfig,
-                &format!("{context}: password is not valid UTF-8"),
-            );
-            return None;
-        }
-    };
-    Some((u, p))
-}
 
 // ---------------------------------------------------------------------------
 // Auth entry points
@@ -107,7 +57,7 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_auth_basic(
             }
         };
         // SAFETY: user+pass lifetime guaranteed by caller for this call.
-        if let Some((u, p)) = unsafe { extract_credentials(user, pass, "auth_basic") } {
+        if let Some((u, p)) = unsafe { crate::c_str::credentials(user, pass, "auth_basic") } {
             b.username = Some(u);
             b.password = Some(p);
         }
@@ -147,7 +97,7 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_auth_digest_md5(
             }
         };
         // SAFETY: user+pass lifetime guaranteed by caller for this call.
-        if let Some((u, p)) = unsafe { extract_credentials(user, pass, "auth_digest_md5") } {
+        if let Some((u, p)) = unsafe { crate::c_str::credentials(user, pass, "auth_digest_md5") } {
             b.username = Some(u);
             b.password = Some(p);
         }
@@ -188,7 +138,8 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_auth_digest_sha256(
             }
         };
         // SAFETY: user+pass lifetime guaranteed by caller for this call.
-        if let Some((u, p)) = unsafe { extract_credentials(user, pass, "auth_digest_sha256") } {
+        if let Some((u, p)) = unsafe { crate::c_str::credentials(user, pass, "auth_digest_sha256") }
+        {
             b.username = Some(u);
             b.password = Some(p);
         }

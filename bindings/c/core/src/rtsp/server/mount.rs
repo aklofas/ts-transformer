@@ -41,7 +41,6 @@
 //! - `MuxError` from config validation → mapped via
 //!   [`crate::error::record_mux_error`].
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -102,16 +101,10 @@ pub unsafe extern "C" fn tst_rtsp_server_add_unicast_mount(
         };
 
         // Decode the mount path.
-        if path.is_null() {
-            set_last_error(TstError::InvalidConfig, "path is null");
+        let Some(path_str) =
+            (unsafe { crate::c_str::c_str_arg(path, TstError::InvalidConfig, "path") })
+        else {
             return std::ptr::null_mut();
-        }
-        let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                set_last_error(TstError::InvalidConfig, "path is not valid UTF-8");
-                return std::ptr::null_mut();
-            }
         };
 
         // Build MuxerConfig from the TstMuxConfig builder.
@@ -212,41 +205,28 @@ pub unsafe extern "C" fn tst_rtsp_server_add_multicast_mount(
         };
 
         // Decode mount path.
-        if path.is_null() {
-            set_last_error(TstError::InvalidConfig, "path is null");
+        let Some(path_str) =
+            (unsafe { crate::c_str::c_str_arg(path, TstError::InvalidConfig, "path") })
+        else {
             return std::ptr::null_mut();
-        }
-        let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                set_last_error(TstError::InvalidConfig, "path is not valid UTF-8");
-                return std::ptr::null_mut();
-            }
         };
 
         // Decode group address.
-        if group.is_null() {
-            set_last_error(TstError::InvalidConfig, "group is null");
+        let Some(group_str) =
+            (unsafe { crate::c_str::c_str_arg(group, TstError::InvalidConfig, "group") })
+        else {
             return std::ptr::null_mut();
-        }
-        let group_str = match unsafe { CStr::from_ptr(group) }.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                set_last_error(TstError::InvalidConfig, "group is not valid UTF-8");
-                return std::ptr::null_mut();
-            }
         };
 
         // Decode optional iface_name.
         let iface_str: Option<&str> = if iface_name.is_null() {
             None
         } else {
-            match unsafe { CStr::from_ptr(iface_name) }.to_str() {
-                Ok(s) => Some(s),
-                Err(_) => {
-                    set_last_error(TstError::InvalidConfig, "iface_name is not valid UTF-8");
-                    return std::ptr::null_mut();
-                }
+            match unsafe {
+                crate::c_str::c_str_arg(iface_name, TstError::InvalidConfig, "iface_name")
+            } {
+                Some(s) => Some(s),
+                None => return std::ptr::null_mut(),
             }
         };
 
@@ -1157,5 +1137,140 @@ mod tests {
         unsafe { crate::config::tst_mux_config_free(cfg1) };
         unsafe { crate::config::tst_mux_config_free(cfg2) };
         unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
+    }
+
+    /// Every RTSP C-string argument keeps its own null and UTF-8 message.
+    #[test]
+    fn rtsp_string_args_keep_their_messages() {
+        use crate::rtsp::client::auth::tst_rtsp_client_builder_auth_basic;
+        use crate::rtsp::client::builder::tst_rtsp_client_builder_new;
+        use crate::rtsp::server::builder::{
+            tst_rtsp_server_builder_auth_basic, tst_rtsp_server_builder_auth_digest_md5,
+            tst_rtsp_server_builder_auth_digest_sha256, tst_rtsp_server_builder_bind,
+            tst_rtsp_server_builder_free, tst_rtsp_server_builder_new,
+        };
+        use crate::rtsp::server::publish::tst_rtsp_server_add_publish_mount;
+        use std::ffi::{CStr, CString};
+
+        fn last() -> (i32, String) {
+            let msg = unsafe { CStr::from_ptr(crate::error::tst_get_last_error_str()) }
+                .to_string_lossy()
+                .into_owned();
+            (unsafe { crate::error::tst_get_last_error() }, msg)
+        }
+        let cfgd = TstError::InvalidConfig as i32;
+        let bad = CString::from_vec_with_nul(b"\xff\0".to_vec()).unwrap();
+        let ok = CString::new("ok").unwrap();
+        let server_url = CString::new("rtsp://127.0.0.1:0").unwrap();
+        let client_url = CString::new("rtsp://127.0.0.1:554/x").unwrap();
+        let group = CString::new("239.0.0.1:5004").unwrap();
+        let null = std::ptr::null();
+        unsafe {
+            assert!(tst_rtsp_server_builder_new(null).is_null());
+            assert_eq!(last(), (cfgd, "addr is null".into()));
+            assert!(tst_rtsp_server_builder_new(bad.as_ptr()).is_null());
+            assert_eq!(last(), (cfgd, "addr is not valid UTF-8".into()));
+            let sb = tst_rtsp_server_builder_new(server_url.as_ptr());
+            tst_rtsp_server_builder_bind(sb, null);
+            assert_eq!(last(), (cfgd, "addr is null".into()));
+            tst_rtsp_server_builder_bind(sb, bad.as_ptr());
+            assert_eq!(last(), (cfgd, "addr is not valid UTF-8".into()));
+            tst_rtsp_server_builder_auth_basic(sb, null, ok.as_ptr());
+            assert_eq!(
+                last(),
+                (cfgd, "auth_basic: user or pass pointer is null".into())
+            );
+            tst_rtsp_server_builder_auth_basic(sb, bad.as_ptr(), ok.as_ptr());
+            assert_eq!(
+                last(),
+                (cfgd, "auth_basic: username is not valid UTF-8".into())
+            );
+            tst_rtsp_server_builder_auth_basic(sb, ok.as_ptr(), bad.as_ptr());
+            assert_eq!(
+                last(),
+                (cfgd, "auth_basic: password is not valid UTF-8".into())
+            );
+            for (ctx, f) in [
+                (
+                    "auth_digest_md5",
+                    tst_rtsp_server_builder_auth_digest_md5 as unsafe extern "C" fn(_, _, _),
+                ),
+                (
+                    "auth_digest_sha256",
+                    tst_rtsp_server_builder_auth_digest_sha256,
+                ),
+            ] {
+                f(sb, null, ok.as_ptr());
+                assert_eq!(
+                    last(),
+                    (cfgd, alloc::format!("{ctx}: user or pass pointer is null"))
+                );
+                f(sb, bad.as_ptr(), ok.as_ptr());
+                assert_eq!(
+                    last(),
+                    (cfgd, alloc::format!("{ctx}: username is not valid UTF-8"))
+                );
+            }
+            tst_rtsp_server_builder_free(sb);
+
+            assert!(tst_rtsp_client_builder_new(null).is_null());
+            assert_eq!(last(), (cfgd, "url is null".into()));
+            assert!(tst_rtsp_client_builder_new(bad.as_ptr()).is_null());
+            assert_eq!(last(), (cfgd, "url is not valid UTF-8".into()));
+            let cb = tst_rtsp_client_builder_new(client_url.as_ptr());
+            tst_rtsp_client_builder_auth_basic(cb, null, ok.as_ptr());
+            assert_eq!(
+                last(),
+                (cfgd, "auth_basic: user or pass pointer is null".into())
+            );
+            tst_rtsp_client_builder_auth_basic(cb, ok.as_ptr(), bad.as_ptr());
+            assert_eq!(
+                last(),
+                (cfgd, "auth_basic: password is not valid UTF-8".into())
+            );
+            for (ctx, f) in [
+                (
+                    "auth_digest_md5",
+                    crate::rtsp::client::auth::tst_rtsp_client_builder_auth_digest_md5
+                        as unsafe extern "C" fn(_, _, _),
+                ),
+                (
+                    "auth_digest_sha256",
+                    crate::rtsp::client::auth::tst_rtsp_client_builder_auth_digest_sha256,
+                ),
+            ] {
+                f(cb, null, ok.as_ptr());
+                assert_eq!(
+                    last(),
+                    (cfgd, alloc::format!("{ctx}: user or pass pointer is null"))
+                );
+                f(cb, ok.as_ptr(), bad.as_ptr());
+                assert_eq!(
+                    last(),
+                    (cfgd, alloc::format!("{ctx}: password is not valid UTF-8"))
+                );
+            }
+            crate::rtsp::client::builder::tst_rtsp_client_builder_free(cb);
+
+            let server = start_test_server();
+            let cfg = make_mux_cfg();
+            assert!(tst_rtsp_server_add_unicast_mount(server, null, cfg).is_null());
+            assert_eq!(last(), (cfgd, "path is null".into()));
+            assert!(tst_rtsp_server_add_unicast_mount(server, bad.as_ptr(), cfg).is_null());
+            assert_eq!(last(), (cfgd, "path is not valid UTF-8".into()));
+            let mc = |p, g, i| tst_rtsp_server_add_multicast_mount(server, p, g, 8, i, cfg);
+            assert!(mc(ok.as_ptr(), null, null).is_null());
+            assert_eq!(last(), (cfgd, "group is null".into()));
+            assert!(mc(ok.as_ptr(), bad.as_ptr(), null).is_null());
+            assert_eq!(last(), (cfgd, "group is not valid UTF-8".into()));
+            assert!(mc(ok.as_ptr(), group.as_ptr(), bad.as_ptr()).is_null());
+            assert_eq!(last(), (cfgd, "iface_name is not valid UTF-8".into()));
+            let _ = tst_rtsp_server_add_publish_mount(server, null);
+            assert_eq!(last(), (cfgd, "path is null".into()));
+            let _ = tst_rtsp_server_add_publish_mount(server, bad.as_ptr());
+            assert_eq!(last(), (cfgd, "path is not valid UTF-8".into()));
+            crate::config::tst_mux_config_free(cfg);
+            crate::rtsp::server::stop::tst_rtsp_server_free(server);
+        }
     }
 }

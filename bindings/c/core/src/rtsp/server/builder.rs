@@ -52,7 +52,6 @@
 //! - `tst_rtsp_server_builder_tls_cert_pem` — TLS cert chain + private key PEM
 //! - `tst_rtsp_server_builder_free` — discard without starting
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::ptr;
 
@@ -93,17 +92,10 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_new(
     addr: *const c_char,
 ) -> *mut TstRtspServerBuilder {
     ffi_catch(ptr::null_mut(), || {
-        if addr.is_null() {
-            set_last_error(TstError::InvalidConfig, "addr is null");
+        let Some(addr_str) =
+            (unsafe { crate::c_str::c_str_arg(addr, TstError::InvalidConfig, "addr") })
+        else {
             return ptr::null_mut();
-        }
-        // SAFETY: caller guarantees NUL-terminated, valid-for-this-call.
-        let addr_str = match unsafe { CStr::from_ptr(addr) }.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                set_last_error(TstError::InvalidConfig, "addr is not valid UTF-8");
-                return ptr::null_mut();
-            }
         };
         match TstRtspServerBuilder::from_url(addr_str) {
             Ok(b) => TstRtspServerBuilder::into_raw(Box::new(b)),
@@ -149,17 +141,10 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_bind(
                 return;
             }
         };
-        if addr.is_null() {
-            set_last_error(TstError::InvalidConfig, "addr is null");
+        let Some(addr_str) =
+            (unsafe { crate::c_str::c_str_arg(addr, TstError::InvalidConfig, "addr") })
+        else {
             return;
-        }
-        // SAFETY: caller guarantees NUL-terminated, valid-for-this-call.
-        let addr_str = match unsafe { CStr::from_ptr(addr) }.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                set_last_error(TstError::InvalidConfig, "addr is not valid UTF-8");
-                return;
-            }
         };
         match tst_rtp::url::RtspUrl::parse(addr_str) {
             Ok(url) => b.bind_url = url,
@@ -209,7 +194,7 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_auth_basic(
             }
         };
         // SAFETY: user+pass lifetime guaranteed by caller for this call.
-        if let Some((u, p)) = unsafe { extract_credentials_pair(user, pass, "auth_basic") } {
+        if let Some((u, p)) = unsafe { crate::c_str::credentials(user, pass, "auth_basic") } {
             b.auth_scheme = Some(TstRtspServerAuthScheme::Basic);
             b.auth_username = Some(u);
             b.auth_password = Some(p);
@@ -251,7 +236,7 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_auth_digest_md5(
             }
         };
         // SAFETY: user+pass lifetime guaranteed by caller for this call.
-        if let Some((u, p)) = unsafe { extract_credentials_pair(user, pass, "auth_digest_md5") } {
+        if let Some((u, p)) = unsafe { crate::c_str::credentials(user, pass, "auth_digest_md5") } {
             b.auth_scheme = Some(TstRtspServerAuthScheme::DigestMd5);
             b.auth_username = Some(u);
             b.auth_password = Some(p);
@@ -293,7 +278,7 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_auth_digest_sha256(
             }
         };
         // SAFETY: user+pass lifetime guaranteed by caller for this call.
-        if let Some((u, p)) = unsafe { extract_credentials_pair(user, pass, "auth_digest_sha256") }
+        if let Some((u, p)) = unsafe { crate::c_str::credentials(user, pass, "auth_digest_sha256") }
         {
             b.auth_scheme = Some(TstRtspServerAuthScheme::DigestSha256);
             b.auth_username = Some(u);
@@ -549,51 +534,6 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_free(builder: *mut TstRtspServe
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/// Extract (user, pass) from two NUL-terminated C strings.
-///
-/// Returns `None` and sets last-error if either pointer is NULL or the
-/// string is not valid UTF-8.
-///
-/// # Safety
-///
-/// `user` and `pass` must each be NULL or a valid, NUL-terminated C string
-/// for the duration of this call.
-unsafe fn extract_credentials_pair(
-    user: *const c_char,
-    pass: *const c_char,
-    context: &str,
-) -> Option<(String, String)> {
-    if user.is_null() || pass.is_null() {
-        set_last_error(
-            TstError::InvalidConfig,
-            &format!("{context}: user or pass pointer is null"),
-        );
-        return None;
-    }
-    // SAFETY: caller guarantees valid NUL-terminated strings.
-    let u = match unsafe { CStr::from_ptr(user) }.to_str() {
-        Ok(s) => s.to_owned(),
-        Err(_) => {
-            set_last_error(
-                TstError::InvalidConfig,
-                &format!("{context}: username is not valid UTF-8"),
-            );
-            return None;
-        }
-    };
-    let p = match unsafe { CStr::from_ptr(pass) }.to_str() {
-        Ok(s) => s.to_owned(),
-        Err(_) => {
-            set_last_error(
-                TstError::InvalidConfig,
-                &format!("{context}: password is not valid UTF-8"),
-            );
-            return None;
-        }
-    };
-    Some((u, p))
-}
 
 /// Auth scheme tag stored in `TstRtspServerBuilder`.
 ///

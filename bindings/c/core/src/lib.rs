@@ -137,13 +137,17 @@ mod ffi_slice;
 mod panic;
 #[cfg(test)]
 mod test_support;
-// Shared C-string -> &str bridge, consumed only by the four transport
-// families whose url.rs modules delegate to it (rtp's URL parsing needs
-// more than a borrowed &str, so it stays separate — see c_str.rs docs).
-// Gated on the union of those features for the same reason transport_impls
-// is: with all of udp/tcp/rist/hls off, nothing calls it and -D warnings
-// clippy rejects the dead code in the default (transport-less) build.
-#[cfg(any(feature = "udp", feature = "tcp", feature = "rist", feature = "hls"))]
+// Shared C-string -> &str bridges (`parse_c_str` for the transport URL
+// arguments and `rtp://` URLs; `c_str_arg` and `credentials` for the RTSP
+// entry points). Gated on the union of the consuming features: with all of
+// them off nothing calls it and `-D warnings` clippy rejects the dead code.
+#[cfg(any(
+    feature = "udp",
+    feature = "tcp",
+    feature = "rist",
+    feature = "hls",
+    feature = "rtp"
+))]
 mod c_str;
 // Generic transport body impls shared across the family modules. Gated on the
 // UNION of the consuming transport features (not just `std`): with all
