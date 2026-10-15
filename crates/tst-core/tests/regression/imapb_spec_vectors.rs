@@ -472,6 +472,20 @@ fn imapb_decode_rejects_wrong_value_length_st1201_5_7_2_2() {
         ),
         "expected InvalidLength {{ expected: 3, got: 2 }}, got {err:?}"
     );
+
+    // And the other direction: more bytes than declared.
+    let err = decode_imapb(&p, &[0x00; 4]).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            KlvFieldError::InvalidLength {
+                expected: 3,
+                got: 4,
+                ..
+            }
+        ),
+        "expected InvalidLength {{ expected: 3, got: 4 }}, got {err:?}"
+    );
 }
 
 // ============================================================================

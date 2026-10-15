@@ -120,3 +120,62 @@ macro_rules! inventory_test {
 
 #[cfg(test)]
 pub(crate) use inventory_test;
+
+/// Shared body of the typed sets' BER-OID unknown-tag tests.
+///
+/// Generates four `#[test]`s, one per BER-OID width boundary of a tag in the
+/// `unknown` bucket (ST 0107.5 §6.3.1): 127 (`7F`), 128 (`81 00`), 16383
+/// (`FF 7F`) and 16384 (`81 80 00`). Each puts one `OwnedRawField` into
+/// `$record`, encodes it with the calling module's `encode_to_vec`, checks
+/// `encoded_len`, checks the tag's BER-OID bytes on the wire, and checks that
+/// `decode` returns the field unchanged. The typed-set encoders write the
+/// unknown bucket last, so the tag sits right before its one-byte BER length
+/// and its value at the end of the output.
+#[cfg(test)]
+macro_rules! ber_oid_unknown_tag_tests {
+    ($record:expr) => {
+        fn ber_oid_unknown_tag_round_trip(tag: u32, value: &[u8], oid: &[u8]) {
+            let mut record = $record;
+            record.unknown = vec![OwnedRawField {
+                tag,
+                value: value.to_vec(),
+            }];
+            let bytes = encode_to_vec(&record).unwrap();
+            assert_eq!(encoded_len(&record), bytes.len(), "tag {tag}: encoded_len");
+            let at = bytes.len() - (value.len() + 1 + oid.len());
+            assert_eq!(&bytes[at..at + oid.len()], oid, "tag {tag}: BER-OID bytes");
+            let decoded = decode(&bytes).unwrap();
+            assert_eq!(decoded.unknown.len(), 1, "tag {tag}: unknown count");
+            assert_eq!(decoded.unknown[0].tag, tag);
+            assert_eq!(decoded.unknown[0].value, value);
+        }
+
+        /// Tag 127, the last single-byte BER-OID value.
+        #[test]
+        fn unknown_tag_127_round_trips_single_byte_ber_oid() {
+            ber_oid_unknown_tag_round_trip(127, b"max-single-byte", &[0x7F]);
+        }
+
+        /// Tag 128, the first multi-byte value: the continuation bit on the
+        /// first byte says more bytes follow.
+        #[test]
+        fn unknown_tag_128_round_trips_multi_byte_ber_oid() {
+            ber_oid_unknown_tag_round_trip(128, b"first-multi-byte", &[0x81, 0x00]);
+        }
+
+        /// Tag 16383 (2^14 − 1), the last two-byte value.
+        #[test]
+        fn unknown_tag_16383_round_trips_two_byte_ber_oid() {
+            ber_oid_unknown_tag_round_trip(16383, b"max-two-byte", &[0xFF, 0x7F]);
+        }
+
+        /// Tag 16384 (2^14), the first three-byte value.
+        #[test]
+        fn unknown_tag_16384_round_trips_three_byte_ber_oid() {
+            ber_oid_unknown_tag_round_trip(16384, b"first-three-byte", &[0x81, 0x80, 0x00]);
+        }
+    };
+}
+
+#[cfg(test)]
+pub(crate) use ber_oid_unknown_tag_tests;
