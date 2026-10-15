@@ -656,9 +656,11 @@ async fn reject_if_over_cap<W: AsyncWrite + Unpin>(
 ) -> bool {
     let cap_rejection = match crate::rtsp::message::rtsp_frame_decision(buf) {
         RtspFraming::HeadersTooLong => Some("headers exceed maximum"),
+        RtspFraming::NonUtf8Headers { .. } => Some("non-UTF8 RTSP headers"),
         RtspFraming::BadContentLength(detail) => Some(detail),
+        RtspFraming::BodyOffsetOverflow => Some("RTSP body offset overflow"),
         // NeedMore / Complete: not a cap rejection.
-        _ => None,
+        RtspFraming::NeedMore | RtspFraming::Complete { .. } => None,
     };
     let Some(detail) = cap_rejection else {
         return false;

@@ -129,7 +129,10 @@ pub(crate) fn pump_accumulation_exceeded(buf: &[u8]) -> bool {
     }
     matches!(
         rtsp_frame_decision(buf),
-        RtspFraming::HeadersTooLong | RtspFraming::BadContentLength(_)
+        RtspFraming::HeadersTooLong
+            | RtspFraming::NonUtf8Headers { .. }
+            | RtspFraming::BadContentLength(_)
+            | RtspFraming::BodyOffsetOverflow
     )
 }
 
@@ -150,26 +153,32 @@ pub(crate) fn pump_accumulation_exceeded(buf: &[u8]) -> bool {
 ///   `header_end + 4 + content_length` (≤ 64 KiB + 1 MiB); if the buffer is
 ///   short → [`RtspFraming::NeedMore`], else [`RtspFraming::Complete`].
 #[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtspFraming {
     /// Within bounds but incomplete — keep reading.
     NeedMore,
     /// Pre-terminator headers exceeded [`MAX_RTSP_MESSAGE_BYTES`] — reject.
     HeadersTooLong,
+    /// The header block (through `CRLFCRLF`) is not UTF-8; it ends `skip`
+    /// bytes in. The client pump resyncs past it; every other caller rejects.
+    NonUtf8Headers { skip: usize },
     /// A malformed/duplicate/over-cap `Content-Length` — reject.
     BadContentLength(&'static str),
+    /// `header + CRLFCRLF + Content-Length` overflowed `usize` (unreachable
+    /// under the caps above; checked anyway).
+    BodyOffsetOverflow,
     /// A full message is present; `total_len` bytes (header + CRLFCRLF + body)
     /// belong to it.
     Complete { total_len: usize },
 }
 
 /// Apply the body-aware two-phase cap policy to a buffer that begins with an
-/// RTSP message. See [`RtspFraming`] for the phase semantics. Non-UTF8 header
-/// bytes are reported as a `BadContentLength` (they can't carry a valid
-/// `Content-Length` and must not be read toward EOF).
+/// RTSP message. See [`RtspFraming`] for the outcomes.
 //
 // `#[doc(hidden)] pub` (with `RtspFraming`) so the fuzz workspace's
-// `rtsp_server_publish_framing` target frames requests the way the server
-// session loop does. Not part of the crate's stable public API.
+// `rtsp_server_publish_framing` and `rtsp_client_pump_framing` targets frame
+// bytes the way the server session loop and the client pump do. Not part of
+// the crate's stable public API.
 #[doc(hidden)]
 pub fn rtsp_frame_decision(buf: &[u8]) -> RtspFraming {
     let Some(header_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
@@ -181,7 +190,9 @@ pub fn rtsp_frame_decision(buf: &[u8]) -> RtspFraming {
     };
     // After the terminator: parse the declared body length via the strict shared scanner.
     let Ok(header_text) = core::str::from_utf8(&buf[..header_end]) else {
-        return RtspFraming::BadContentLength("non-UTF8 RTSP headers");
+        return RtspFraming::NonUtf8Headers {
+            skip: header_end + 4,
+        };
     };
     let content_length = match content_length_from_header_text(header_text) {
         Ok(n) => n,
@@ -193,7 +204,7 @@ pub fn rtsp_frame_decision(buf: &[u8]) -> RtspFraming {
         .checked_add(4)
         .and_then(|e| e.checked_add(content_length))
     else {
-        return RtspFraming::BadContentLength("RTSP body offset overflow");
+        return RtspFraming::BodyOffsetOverflow;
     };
     if buf.len() < total_len {
         return RtspFraming::NeedMore;
@@ -774,6 +785,39 @@ impl RtspRequest {
 mod tests {
     use super::*;
 
+    /// The framing classifier over one corpus; this table is the contract
+    /// each caller keeps.
+    #[test]
+    fn framing_decisions_are_pinned() {
+        let ok: &[u8] = b"RTSP/1.0 200 OK\r\nContent-Length: 3\r\n\r\nabc";
+        let non_utf8: &[u8] = b"RTSP/1.0 200 OK\r\nX: \xff\r\n\r\n";
+        let bad_cl: &[u8] = b"RTSP/1.0 200 OK\r\nContent-Length: nope\r\n\r\n";
+        let mut long = b"RTSP/1.0 200 OK\r\nX: ".to_vec();
+        long.resize(MAX_RTSP_MESSAGE_BYTES + 1, b'a');
+
+        assert_eq!(
+            rtsp_frame_decision(ok),
+            RtspFraming::Complete {
+                total_len: ok.len()
+            }
+        );
+        assert_eq!(
+            rtsp_frame_decision(&ok[..ok.len() - 1]),
+            RtspFraming::NeedMore
+        );
+        assert_eq!(
+            rtsp_frame_decision(non_utf8),
+            RtspFraming::NonUtf8Headers {
+                skip: non_utf8.len()
+            }
+        );
+        assert!(matches!(
+            rtsp_frame_decision(bad_cl),
+            RtspFraming::BadContentLength(_)
+        ));
+        assert_eq!(rtsp_frame_decision(&long), RtspFraming::HeadersTooLong);
+    }
+
     #[test]
     fn encode_options_request() {
         let req = RtspRequest::new(RtspMethod::Options, "rtsp://cam/h264", RtspVersion::V1_0)
@@ -960,11 +1004,10 @@ mod tests {
         );
     }
 
-    // The client interleaved pump's cap-check (`pump_accumulation_exceeded`
-    // -> `rtsp_frame_decision`) and its boundary scanner
-    // (`scan_rtsp_message_boundary` in `rtsp::client::interleaved_pump`)
-    // both share `content_length_from_header_text`. Lock its behavior
-    // across every branch here.
+    // Every `rtsp_frame_decision` caller (the client pump's cap-check
+    // `pump_accumulation_exceeded` included) reads the body length through
+    // `content_length_from_header_text`. Lock its behavior across every
+    // branch here.
     #[test]
     fn content_length_from_header_text_strict() {
         assert_eq!(content_length_from_header_text("CSeq: 1").unwrap(), 0);

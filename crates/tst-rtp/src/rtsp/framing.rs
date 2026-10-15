@@ -1,9 +1,8 @@
-//! RFC 7826 §14 interleaved-frame and RTSP-message boundary rules shared by
-//! the client pump (`rtsp::client::interleaved_pump`) and the server session
-//! loop (`rtsp::server::session`, publisher direction). Pure functions: no
-//! socket, thread or channel.
-
-use crate::rtsp::message::content_length_from_header_text;
+//! RFC 7826 §14 interleaved-frame rule shared by the client pump
+//! (`rtsp::client::interleaved_pump`) and the server session loop
+//! (`rtsp::server::session`, publisher direction). The RTSP-message boundary
+//! rule is `rtsp::message::rtsp_frame_decision`. Pure functions: no socket,
+//! thread or channel.
 
 /// Look for a complete `$<channel><len_be16><payload>` binary
 /// interleaved frame (RFC 7826 §14) at the start of `buf`.
@@ -31,59 +30,6 @@ pub fn parse_binary_frame_header(buf: &[u8]) -> Option<(u8, usize)> {
     Some((channel, total_len))
 }
 
-/// Outcome of scanning for a complete RTSP message (headers terminated
-/// by `CRLFCRLF` + `Content-Length` body) at the start of `buf`. See
-/// [`scan_rtsp_message_boundary`].
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtspFrameBoundary {
-    /// `buf` doesn't yet hold a complete message.
-    Incomplete,
-    /// The header block (up to and including `CRLFCRLF`) is not valid
-    /// UTF-8. Treated as a resync point rather than a fatal error —
-    /// skip `skip` bytes and keep reading.
-    NonUtf8Headers { skip: usize },
-    /// `Content-Length` is missing/unparseable/oversized/duplicated.
-    BadContentLength { detail: &'static str },
-    /// `end + 4 + content_length` overflowed `usize`. Unreachable in
-    /// practice (both operands are capped well below `usize::MAX` by
-    /// `pump_accumulation_exceeded` / `content_length_from_header_text`)
-    /// but checked for defense in depth.
-    LengthOverflow,
-    /// A complete message occupies `buf[..len]`.
-    Complete { len: usize },
-}
-
-/// Scan `buf` for the next complete RTSP message boundary.
-//
-// `#[doc(hidden)] pub` — see [`parse_binary_frame_header`]'s doc for why.
-#[doc(hidden)]
-pub fn scan_rtsp_message_boundary(buf: &[u8]) -> RtspFrameBoundary {
-    let end = match buf.windows(4).position(|w| w == b"\r\n\r\n") {
-        Some(e) => e,
-        None => return RtspFrameBoundary::Incomplete,
-    };
-    let header_text = match std::str::from_utf8(&buf[..end]) {
-        Ok(s) => s,
-        Err(_) => return RtspFrameBoundary::NonUtf8Headers { skip: end + 4 },
-    };
-    let content_length = match content_length_from_header_text(header_text) {
-        Ok(n) => n,
-        Err(detail) => return RtspFrameBoundary::BadContentLength { detail },
-    };
-    let len = match end
-        .checked_add(4)
-        .and_then(|e| e.checked_add(content_length))
-    {
-        Some(m) => m,
-        None => return RtspFrameBoundary::LengthOverflow,
-    };
-    if buf.len() < len {
-        return RtspFrameBoundary::Incomplete;
-    }
-    RtspFrameBoundary::Complete { len }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,18 +40,5 @@ mod tests {
         assert_eq!(parse_binary_frame_header(b"$\x01\x00\x02a"), None);
         assert_eq!(parse_binary_frame_header(b"$\x01\x00\x02ab"), Some((1, 6)));
         assert_eq!(parse_binary_frame_header(b"OPTIONS"), None);
-    }
-
-    #[test]
-    fn rtsp_boundary_complete_with_body() {
-        let msg = b"RTSP/1.0 200 OK\r\nContent-Length: 3\r\n\r\nabc";
-        assert_eq!(
-            scan_rtsp_message_boundary(msg),
-            RtspFrameBoundary::Complete { len: msg.len() }
-        );
-        assert_eq!(
-            scan_rtsp_message_boundary(&msg[..msg.len() - 1]),
-            RtspFrameBoundary::Incomplete
-        );
     }
 }

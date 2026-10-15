@@ -79,6 +79,11 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
     loop {
         if state.hard_cancel.is_cancelled() {
             tracing::info!(target: "tst_rtp::server", "hard cancel observed; listener exiting");
+            // Sessions select on the server token, not on this polled flag:
+            // fire it so a session parked in its read ends now. The flag
+            // stays a plain atomic so `cancel()` remains async-signal-safe
+            // for C callers.
+            state.cancel_token.cancel();
             return Ok(());
         }
         tokio::select! {

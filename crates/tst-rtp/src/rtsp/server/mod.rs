@@ -434,6 +434,38 @@ impl RtspServer {
         RtspServerBuilder::with_url(url).build()
     }
 
+    /// The one mount-table insert behind every `add_*_mount`: refuse after
+    /// `stop()`, validate the path, build the entry with `make`, then insert
+    /// under the lock unless the server stopped meanwhile or the path is
+    /// taken. Returns whatever `make` handed back beside the entry.
+    fn register_mount<R>(
+        &self,
+        path: &str,
+        make: impl FnOnce() -> Result<(crate::rtsp::server::mount::MountEntry, R), RtspServerError>,
+    ) -> Result<R, RtspServerError> {
+        if self.state.shutdown.load(Ordering::Relaxed) {
+            return Err(RtspServerError::Shutdown);
+        }
+        validate_mount_path(path)?;
+        let (entry, made) = make()?;
+        let mut mounts = self.state.mounts.lock().expect("mounts mutex");
+        // Re-checked under the mounts lock: `stop()` sets `shutdown` before
+        // it snapshots this table to close every publish mount, so a
+        // registration that passed the early check while `stop()` ran
+        // cannot insert a mount the snapshot missed (whose transport would
+        // then never see end-of-stream until the server was dropped).
+        if self.state.shutdown.load(Ordering::Acquire) {
+            return Err(RtspServerError::Shutdown);
+        }
+        if mounts.contains_key(path) {
+            return Err(RtspServerError::DuplicateMount {
+                path: path.to_string(),
+            });
+        }
+        mounts.insert(path.to_string(), entry);
+        Ok(made)
+    }
+
     /// Register a unicast mount under `path`. Returns a [`MountHandle`][crate::rtsp::server::mount::MountHandle]
     /// the caller pushes TS frames into. Multiple handles via
     /// [`MountHandle::clone`][crate::rtsp::server::mount::MountHandle::clone]
@@ -453,35 +485,18 @@ impl RtspServer {
         path: &str,
         cfg: tst_core::mpegts::mux::MuxerConfig,
     ) -> Result<crate::rtsp::server::mount::MountHandle, RtspServerError> {
-        if self.state.shutdown.load(Ordering::Relaxed) {
-            return Err(RtspServerError::Shutdown);
-        }
-        validate_mount_path(path)?;
-        let mount_state = crate::rtsp::server::mount::MountState::new(
-            path,
-            crate::rtsp::server::mount::MountKind::Unicast,
-            cfg,
-            self.state.builder.fanout_capacity,
-        )?;
-        let mut mounts = self.state.mounts.lock().expect("mounts mutex");
-        // Re-checked under the mounts lock: `stop()` sets `shutdown` before
-        // it snapshots this table to close every publish mount, so a
-        // registration that passed the early check while `stop()` ran
-        // cannot insert a mount the snapshot missed (whose transport would
-        // then never see end-of-stream until the server was dropped).
-        if self.state.shutdown.load(Ordering::Acquire) {
-            return Err(RtspServerError::Shutdown);
-        }
-        if mounts.contains_key(path) {
-            return Err(RtspServerError::DuplicateMount {
-                path: path.to_string(),
-            });
-        }
-        mounts.insert(
-            path.to_string(),
-            crate::rtsp::server::mount::MountEntry::Local(mount_state.clone()),
-        );
-        Ok(crate::rtsp::server::mount::MountHandle { state: mount_state })
+        self.register_mount(path, || {
+            let state = crate::rtsp::server::mount::MountState::new(
+                path,
+                crate::rtsp::server::mount::MountKind::Unicast,
+                cfg,
+                self.state.builder.fanout_capacity,
+            )?;
+            Ok((
+                crate::rtsp::server::mount::MountEntry::Local(state.clone()),
+                crate::rtsp::server::mount::MountHandle { state },
+            ))
+        })
     }
 
     /// Register a publish mount under `path`. The server now accepts
@@ -500,34 +515,17 @@ impl RtspServer {
         &self,
         path: &str,
     ) -> Result<crate::rtsp::server::publish::PublishMountHandle, RtspServerError> {
-        if self.state.shutdown.load(Ordering::Relaxed) {
-            return Err(RtspServerError::Shutdown);
-        }
-        validate_mount_path(path)?;
-        let st = crate::rtsp::server::publish::mount::PublishMountState::new(
-            path,
-            self.state.builder.fanout_capacity,
-            self.state.publish_counters.clone(),
-        );
-        let mut mounts = self.state.mounts.lock().expect("mounts mutex");
-        // Re-checked under the mounts lock: `stop()` sets `shutdown` before
-        // it snapshots this table to close every publish mount, so a
-        // registration that passed the early check while `stop()` ran
-        // cannot insert a mount the snapshot missed (whose transport would
-        // then never see end-of-stream until the server was dropped).
-        if self.state.shutdown.load(Ordering::Acquire) {
-            return Err(RtspServerError::Shutdown);
-        }
-        if mounts.contains_key(path) {
-            return Err(RtspServerError::DuplicateMount {
-                path: path.to_string(),
-            });
-        }
-        mounts.insert(
-            path.to_string(),
-            crate::rtsp::server::mount::MountEntry::Publish(st.clone()),
-        );
-        Ok(crate::rtsp::server::publish::PublishMountHandle { state: st })
+        self.register_mount(path, || {
+            let st = crate::rtsp::server::publish::mount::PublishMountState::new(
+                path,
+                self.state.builder.fanout_capacity,
+                self.state.publish_counters.clone(),
+            );
+            Ok((
+                crate::rtsp::server::mount::MountEntry::Publish(st.clone()),
+                crate::rtsp::server::publish::PublishMountHandle { state: st },
+            ))
+        })
     }
 
     /// Remove the mount at `path`, of any kind, and free the path for a
@@ -701,44 +699,28 @@ impl RtspServer {
         cfg: tst_core::mpegts::mux::MuxerConfig,
         group_url: &str,
     ) -> Result<crate::rtsp::server::mount::MountHandle, RtspServerError> {
-        if self.state.shutdown.load(Ordering::Relaxed) {
-            return Err(RtspServerError::Shutdown);
-        }
-        validate_mount_path(path)?;
-        let mcast = crate::url::MulticastGroup::parse(group_url).map_err(|e| {
-            RtspServerError::InvalidMulticastGroup {
-                addr: group_url.to_string(),
-                detail: e.to_string(),
-            }
+        let (mount_state, mcast) = self.register_mount(path, || {
+            let mcast = crate::url::MulticastGroup::parse(group_url).map_err(|e| {
+                RtspServerError::InvalidMulticastGroup {
+                    addr: group_url.to_string(),
+                    detail: e.to_string(),
+                }
+            })?;
+            let mount_state = crate::rtsp::server::mount::MountState::new(
+                path,
+                crate::rtsp::server::mount::MountKind::Multicast {
+                    group: mcast.addr,
+                    ttl: mcast.ttl,
+                    iface: mcast.iface.clone(),
+                },
+                cfg,
+                self.state.builder.fanout_capacity,
+            )?;
+            Ok((
+                crate::rtsp::server::mount::MountEntry::Local(mount_state.clone()),
+                (mount_state, mcast),
+            ))
         })?;
-        let mount_state = crate::rtsp::server::mount::MountState::new(
-            path,
-            crate::rtsp::server::mount::MountKind::Multicast {
-                group: mcast.addr,
-                ttl: mcast.ttl,
-                iface: mcast.iface.clone(),
-            },
-            cfg,
-            self.state.builder.fanout_capacity,
-        )?;
-        let mut mounts = self.state.mounts.lock().expect("mounts mutex");
-        // Re-checked under the mounts lock: `stop()` sets `shutdown` before
-        // it snapshots this table to close every publish mount, so a
-        // registration that passed the early check while `stop()` ran
-        // cannot insert a mount the snapshot missed (whose transport would
-        // then never see end-of-stream until the server was dropped).
-        if self.state.shutdown.load(Ordering::Acquire) {
-            return Err(RtspServerError::Shutdown);
-        }
-        if mounts.contains_key(path) {
-            return Err(RtspServerError::DuplicateMount {
-                path: path.to_string(),
-            });
-        }
-        mounts.insert(
-            path.to_string(),
-            crate::rtsp::server::mount::MountEntry::Local(mount_state.clone()),
-        );
         // Spawn the per-mount multicast sender task. The send socket is
         // built async on the runtime; we use spawn so add_multicast_mount
         // can return synchronously. If the socket build fails, the task

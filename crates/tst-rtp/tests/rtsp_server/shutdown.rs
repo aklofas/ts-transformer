@@ -99,3 +99,29 @@ fn stop_does_not_panic_with_mounts_registered() {
     server.start().unwrap();
     server.stop().expect("stop with registered mounts");
 }
+
+/// A hard cancel ends a session parked in its read. Before the fix such a
+/// session lived until the 30 s pre-SETUP idle bound; the 5 s bound here
+/// only separates "woken" from "not woken".
+#[test]
+fn hard_cancel_ends_a_session_parked_in_read() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    server.start().unwrap();
+    let _peer = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+    let wait_for = |want: usize| {
+        let t0 = std::time::Instant::now();
+        while server.stats().active_sessions != want
+            && t0.elapsed() < std::time::Duration::from_secs(5)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        server.stats().active_sessions
+    };
+    assert_eq!(wait_for(1), 1, "the connection never became a session");
+    server.cancel_handle().cancel();
+    assert_eq!(
+        wait_for(0),
+        0,
+        "a session parked in read outlived the hard cancel"
+    );
+}

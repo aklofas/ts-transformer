@@ -203,3 +203,45 @@ fn remove_local_mount_ends_readers_and_handle_pushes_reach_nobody() {
     let e = server.remove_mount("/live").unwrap_err();
     assert!(matches!(e, RtspServerError::Shutdown), "got {e:?}");
 }
+
+/// The order of the registration checks: shutdown, then the path, then the
+/// mount's own construction (here a non-multicast group), then the duplicate
+/// check. A failed registration leaves the path free.
+#[test]
+fn mount_registration_error_precedence() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    server.add_mount("/taken", make_muxer_cfg()).unwrap();
+    let not_multicast = "rtp://10.0.0.1:5004";
+
+    let e = server
+        .add_multicast_mount("bad", make_muxer_cfg(), not_multicast)
+        .unwrap_err();
+    assert!(
+        matches!(e, RtspServerError::InvalidMountPath { .. }),
+        "{e:?}"
+    );
+
+    let e = server
+        .add_multicast_mount("/taken", make_muxer_cfg(), not_multicast)
+        .unwrap_err();
+    assert!(
+        matches!(e, RtspServerError::InvalidMulticastGroup { .. }),
+        "{e:?}"
+    );
+
+    let e = server
+        .add_multicast_mount("/free", make_muxer_cfg(), not_multicast)
+        .unwrap_err();
+    assert!(
+        matches!(e, RtspServerError::InvalidMulticastGroup { .. }),
+        "{e:?}"
+    );
+    server
+        .add_publish_mount("/free")
+        .expect("a failed registration must not hold the path");
+
+    server.start().unwrap();
+    server.stop().unwrap();
+    let e = server.add_mount("bad", make_muxer_cfg()).unwrap_err();
+    assert!(matches!(e, RtspServerError::Shutdown), "{e:?}");
+}

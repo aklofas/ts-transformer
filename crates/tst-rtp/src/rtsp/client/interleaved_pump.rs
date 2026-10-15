@@ -51,7 +51,9 @@ use bytes::Bytes;
 use crate::rtsp::client::Stream;
 use crate::rtsp::client::end_reason::{EndReasonSlot, StreamEndReason};
 use crate::rtsp::client::keepalive::KEEPALIVE_CSEQ_BASE;
-use crate::rtsp::message::{RtspResponse, pump_accumulation_exceeded};
+use crate::rtsp::message::{
+    RtspFraming, RtspResponse, pump_accumulation_exceeded, rtsp_frame_decision,
+};
 
 /// Bounded depth of the media (RTP/data) hand-off queue.
 ///
@@ -135,9 +137,7 @@ pub(crate) struct InterleavedChannels {
 // publisher direction). Re-exported here so the fuzz target and any
 // external user of the old `#[doc(hidden)]` path keep compiling.
 #[doc(hidden)]
-pub use crate::rtsp::framing::{
-    RtspFrameBoundary, parse_binary_frame_header, scan_rtsp_message_boundary,
-};
+pub use crate::rtsp::framing::parse_binary_frame_header;
 
 /// Spawn the sync interleaved pump thread.
 ///
@@ -385,14 +385,16 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                         // would desync framing, and an uncapped length would
                         // let a peer drive unbounded buffering — close the
                         // pump instead.
-                        let msg_end = match scan_rtsp_message_boundary(&buf) {
-                            RtspFrameBoundary::Incomplete => break, // Need more bytes.
-                            RtspFrameBoundary::NonUtf8Headers { skip } => {
+                        let msg_end = match rtsp_frame_decision(&buf) {
+                            // Need more bytes (an over-long unterminated run
+                            // was already refused by the accumulation cap).
+                            RtspFraming::NeedMore | RtspFraming::HeadersTooLong => break,
+                            RtspFraming::NonUtf8Headers { skip } => {
                                 stats.malformed_frames.fetch_add(1, Ordering::Relaxed);
                                 buf.drain(..skip);
                                 continue;
                             }
-                            RtspFrameBoundary::BadContentLength { detail } => {
+                            RtspFraming::BadContentLength(detail) => {
                                 tracing::warn!(
                                     target: "tst_rtp::client::pump",
                                     detail,
@@ -404,11 +406,11 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                                 });
                                 return;
                             }
-                            RtspFrameBoundary::LengthOverflow => {
+                            RtspFraming::BodyOffsetOverflow => {
                                 stats.malformed_frames.fetch_add(1, Ordering::Relaxed);
                                 return;
                             }
-                            RtspFrameBoundary::Complete { len } => len,
+                            RtspFraming::Complete { total_len } => total_len,
                         };
                         // Keepalive-ping responses are consumed HERE, never
                         // queued: nothing drains ctrl_rx between main-thread
@@ -1007,6 +1009,32 @@ mod tests {
         let _ = handle.join();
         assert_eq!(stats.rtp_frames_received.load(Ordering::Relaxed), 1);
         assert_eq!(stats.malformed_frames.load(Ordering::Relaxed), 1);
+    }
+
+    /// After a binary frame, a non-UTF-8 header block is skipped as a resync
+    /// point (counted once), and the next response still arrives.
+    #[test]
+    fn pump_skips_a_non_utf8_header_block_after_a_binary_frame() {
+        let mut raw = interleaved_frame(0, &valid_rtp_header());
+        raw.extend_from_slice(b"RTSP/1.0 200 OK\r\nX: \xff\r\n\r\n");
+        raw.extend_from_slice(b"RTSP/1.0 200 OK\r\nCSeq: 2\r\nContent-Length: 5\r\n\r\nHELLO");
+        let (dt, _dr, rt, _rr, ct, cr, cancel, stats) = make_args();
+        let handle = spawn_test_pump(
+            Cursor::new(raw),
+            dt,
+            rt,
+            ct,
+            InterleavedChannels { rtp: 0, rtcp: 1 },
+            cancel.clone(),
+            Arc::new(AtomicUsize::new(0)),
+            stats.clone(),
+        )
+        .unwrap();
+        let msg = cr.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        assert!(msg.ends_with(b"\r\n\r\nHELLO"));
+        let _ = handle.join();
+        assert_eq!(stats.malformed_frames.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.rtsp_messages_received.load(Ordering::Relaxed), 1);
     }
 
     /// Build a minimal *valid* fixed RTP header (V=2, P=0, X=0, CC=0,

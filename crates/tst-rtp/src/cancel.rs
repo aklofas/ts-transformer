@@ -87,9 +87,10 @@ impl RtspServerCancelHandle {
         }
     }
 
-    /// Signal the server to break out of all blocking I/O at the next
-    /// poll. The listener exits its accept loop within ~100 ms; per-session
-    /// tasks exit at their next `select!` wake.
+    /// Signal the server to stop. The listener sees it within ~100 ms, stops
+    /// accepting, and wakes every per-session task, which exits at once —
+    /// including one parked in a read. A plain atomic store, safe from a
+    /// signal handler.
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
     }

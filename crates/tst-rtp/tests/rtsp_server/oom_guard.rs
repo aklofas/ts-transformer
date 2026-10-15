@@ -347,3 +347,22 @@ fn pipelined_over_cap_head_gets_413_without_another_read() {
 
     server.stop().ok();
 }
+
+/// A request whose header block is not UTF-8 is answered 413 and the
+/// connection closed, like any other framing-cap violation.
+#[test]
+fn non_utf8_request_headers_get_413_and_close() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    server.start().unwrap();
+    let mut tcp = TcpStream::connect(server.local_addr().unwrap()).unwrap();
+    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    tcp.write_all(b"OPTIONS rtsp://127.0.0.1/x RTSP/1.0\r\nCSeq: 1\r\nX: \xff\r\n\r\n")
+        .unwrap();
+    let mut resp = Vec::new();
+    let _ = tcp.read_to_end(&mut resp);
+    assert!(
+        resp.starts_with(b"RTSP/1.0 413 "),
+        "{:?}",
+        String::from_utf8_lossy(&resp)
+    );
+}
