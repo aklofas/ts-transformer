@@ -10,7 +10,7 @@ well-formed and reference real, in-tree files, and
 - (a) every `owning_tests` path in the surface manifest exists on disk;
 - (b) every binding column symbol resolves in that binding's source;
 - (b2) every `[[surface]]` row carries all five binding columns;
-- (c) closure: every mappable public-api item is mapped or exempted.
+- (c) closure: the un-catalogued public-api items equal the pinned set.
 
 See that script's header for the exact rules.
 
@@ -84,11 +84,12 @@ empty — the C/Python adapters live in their own crates' test/example surfaces)
   every gated file listed, every listed file is a real gate, all deferrals and
   soft windows future-dated). See "Platform-capability manifest" section below.
 - **`surface-manifest.toml`** — **L3 surface-to-test ownership manifest** (shipped
-  2026-06-03). Every mappable entry across the 8 `public-api.txt` baselines is either
-  a `[[surface]]` row (item → owning tests + per-binding columns) or an `[[exempt]]`
-  entry. Enforced by `scripts/check/repo/surface-manifest.sh` (owning-test path
+  2026-06-03). Every mappable entry across the 8 `public-api.txt` baselines is
+  a `[[surface]]` row (item → owning tests + per-binding columns), an `[[exempt]]`
+  row with a reason, or one of the un-catalogued items the rail pins by count and
+  digest. Enforced by `scripts/check/repo/surface-manifest.sh` (owning-test path
   exists, binding symbol resolves, every row carries all five binding columns,
-  closure over all mappable baseline items).
+  the un-catalogued set equals the pinned one).
   See "Surface manifest" section below for the graduation workflow.
 - **`TEST_CORPUS.md`** — notes on the (gitignored, local-only) real-world corpus.
 
@@ -112,14 +113,18 @@ un-catalogued. The ratchet (`scripts/check/repo/surface-manifest.sh`) enforces:
   wrote, a TODO rather than a claim), `"<prefix>:deferred"` (a checked gap) and
   `"<prefix>:n/a"` (no twin by design). `swift:` / `kotlin:` real symbols are
   accepted unresolved until tst-uniffi ships.
-- **(c) closure** — every item extracted from the 8 `public-api.txt` baselines is
-  present in the manifest as either a `[[surface]]` item or an `[[exempt]]` item.
+- **(c) closure** — the items extracted from the 8 `public-api.txt` baselines
+  that no `[[surface]]` or `[[exempt]]` row names must be exactly the set the rail
+  pins as `UNAUDITED_COUNT` / `UNAUDITED_SHA256` (2 023 items the 2026-06-03
+  bootstrap left uncatalogued). `bash scripts/check/repo/surface-manifest.sh
+  --list-unaudited` prints them.
 
-**Adding a new public API item:** a CI failure means your item landed in a baseline
-without a manifest entry. Either add a `[[surface]]` row (preferred, if it has tests)
-or an `[[exempt]]` entry (acceptable for interim or internal items). Run
-`bash scripts/gen/surface-exemptions.sh` to generate `[[exempt]]` blocks for any
-un-catalogued items, then append them to the manifest.
+**Adding a new public API item:** a CI failure means the un-catalogued set changed —
+your item landed in a baseline without a manifest row. Add a `[[surface]]` row
+(preferred, if it has tests) or an `[[exempt]]` row with a reason. Removing or
+renaming an item, or giving one of the pinned items a row, changes the set too:
+re-pin with `bash scripts/check/repo/surface-manifest.sh --print-baseline` and copy
+its two values over `UNAUDITED_COUNT` / `UNAUDITED_SHA256` in the same change.
 
 **Graduating an exempt item to a surface row:** remove its `[[exempt]]` block and
 add a `[[surface]]` row with `owning_tests`, `bindings`, and optionally `scenario_ids`.
