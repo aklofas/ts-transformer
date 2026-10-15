@@ -354,3 +354,16 @@ fn stop_sends_notice_5402_to_a_tls_session_and_closes_it_cleanly() {
     assert!(text.contains(&format!("Session: {sid}")), "{text:?}");
     assert_eq!(end, "close_notify");
 }
+
+#[test]
+fn tls_cert_pem_starts_an_rtsps_server() {
+    let certs = SelfSignedCert::generate();
+    let mut b = RtspServerBuilder::new("rtsps://127.0.0.1:0").expect("URL parse");
+    b.tls_cert_pem(
+        std::fs::read(&certs.cert_path).unwrap(),
+        std::fs::read(&certs.key_path).unwrap(),
+    );
+    let server = b.build().expect("server build");
+    server.start().expect("start with in-memory PEM");
+    server.stop().ok();
+}

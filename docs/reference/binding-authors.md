@@ -304,7 +304,7 @@ baseline (by design)" for the full rationale.
   incompatible change to the ABI shape. **0** today.
 - `TST_ABI_VERSION_MINOR` — incremented on additive, source-compatible
   changes (new event kinds, new C entry points, new error codes).
-  **23** today. History (additive bumps only — major stays at 0 pre-1.0):
+  **24** today. History (additive bumps only — major stays at 0 pre-1.0):
     - `1`: receiver-surface initial drop.
     - `2`: `ManagedDemuxReceiver` wired into
       `tst-c`; `TST_EVENT_KIND_RECONNECT_DISCONTINUITY = 6` added; TS-bytes
@@ -566,6 +566,12 @@ baseline (by design)" for the full rationale.
         `tst_rtsp_server_total_rtp_packets_received`,
         `tst_rtsp_server_total_rtp_bytes_received`): `tst_server_stats_t`
         keeps its layout.
+    - `24` (`tls` cargo feature): `TST_HAS_TLS`. In a `tls` build,
+      `tcps://` URLs, `tst_hls_publisher_builder_enable_tls`,
+      `tst_rtsp_client_builder_tls_root_cert_pem` and
+      `tst_rtsp_server_builder_tls_cert_pem` take effect (they were refused
+      or ignored before). No symbol, layout, enum value or error code
+      changed.
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that
   preserve both shape and behaviour.
 

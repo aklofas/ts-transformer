@@ -34,10 +34,9 @@
 //! # TLS root certificates
 //!
 //! `RtspClientBuilder::tls_root_certs` takes a `rustls::RootCertStore`.
-//! Rather than pulling `rustls` as a direct dependency of `tst-c`, we store
-//! the raw PEM bytes and parse them into a `RootCertStore` at connect time
-//! when `tst-rtp`'s `tls` feature is active.  If the `tls` feature
-//! is not enabled, calling `tst_rtsp_client_builder_tls_root_cert_pem` still
+//! The C ABI stores the raw PEM bytes and parses them into a `RootCertStore`
+//! at connect time in a build with the `tls` feature (`TST_HAS_TLS`).
+//! Without it, calling `tst_rtsp_client_builder_tls_root_cert_pem` still
 //! succeeds (it stores the bytes) but `_connect` will surface an error if the
 //! URL uses `rtsps://`.
 
@@ -190,10 +189,10 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_keepalive(
 /// No-op (with last-error set) if `builder` or `cert_pem` is NULL, or if
 /// `cert_len` is zero.
 ///
-/// Note: this setter stores the raw PEM bytes regardless of whether the
-/// `tls` cargo feature is active.  If TLS support was not compiled in and
-/// `tst_rtsp_client_builder_connect` is called with an `rtsps://` URL, the
-/// connect call itself will fail with `TST_E_INVALID_CONFIG`.
+/// Works in a build with the `tls` feature (`TST_HAS_TLS`). The setter stores
+/// the raw PEM bytes either way; without the feature they are never used, and
+/// `tst_rtsp_client_builder_connect` with an `rtsps://` URL fails with
+/// `TST_E_INVALID_CONFIG`.
 ///
 /// # Safety
 ///

@@ -4,7 +4,7 @@
 //! build script cannot depend on the crate it builds.
 
 /// The cargo features whose `#define TST_HAS_<NAME> 1` is injected, in order.
-pub const FEATURES: &[&str] = &["SRT", "RTP", "UDP", "TCP", "HLS", "RIST"];
+pub const FEATURES: &[&str] = &["SRT", "RTP", "UDP", "TCP", "HLS", "RIST", "TLS"];
 
 /// Insert `#define TST_HAS_<F> 1` for each `active` feature right after the
 /// `#define TSTRANS_H` include-guard line. cbindgen wraps feature-gated items

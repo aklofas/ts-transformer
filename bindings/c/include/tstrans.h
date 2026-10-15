@@ -52,13 +52,13 @@
  * Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
  * for the bump policy.
  *
- * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 23` in the
+ * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 24` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_minor`].
  *
  * What each minor added is recorded once, in the repository's
  * `docs/reference/binding-authors.md` § "Versioning".
  */
-#define TST_ABI_VERSION_MINOR 23
+#define TST_ABI_VERSION_MINOR 24
 
 #define TST_CODEC_KIND_AUDIO 3
 
@@ -7191,9 +7191,8 @@ int tst_hls_publisher_builder_bind(struct TstHlsPublisherBuilder *b, const char 
  * still consumed (the `Box` is reclaimed); allocate a fresh one to retry.
  * The returned `TstPublisher` must be freed with `tst_publisher_free`.
  *
- * A builder configured with `enable_tls` fails here with
- * `TST_E_HLS_TLS` because `tst-c` does not enable the `tst-tcp` `tls`
- * feature.
+ * A builder configured with `enable_tls` works in a build with the `tls`
+ * feature (`TST_HAS_TLS`); without it this fails with `TST_E_HLS_TLS`.
  *
  * # Safety
  *
@@ -7207,10 +7206,9 @@ struct TstPublisher *tst_hls_publisher_builder_build(struct TstHlsPublisherBuild
 /**
  * Enable HTTPS by supplying PEM cert + key paths.
  *
- * **Note:** the `tst-tcp` `tls` cargo feature is not enabled in `tst-c`,
- * so `tst_hls_publisher_builder_build` will reject a TLS-configured
- * builder with `TST_E_HLS_TLS`. This setter is wired for forward-
- * compatibility once a `tls` feature lights up in `tst-c`.
+ * Works in a build with the `tls` feature (`TST_HAS_TLS`). Without it,
+ * `tst_hls_publisher_builder_build` rejects a TLS-configured builder with
+ * `TST_E_HLS_TLS`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if `b` is null, or
  * `TST_E_HLS_CONFIG` if either path is null / not valid UTF-8.
@@ -9590,10 +9588,10 @@ struct tst_rtsp_client_builder_t *tst_rtsp_client_builder_new(const char *url);
  * No-op (with last-error set) if `builder` or `cert_pem` is NULL, or if
  * `cert_len` is zero.
  *
- * Note: this setter stores the raw PEM bytes regardless of whether the
- * `tls` cargo feature is active.  If TLS support was not compiled in and
- * `tst_rtsp_client_builder_connect` is called with an `rtsps://` URL, the
- * connect call itself will fail with `TST_E_INVALID_CONFIG`.
+ * Works in a build with the `tls` feature (`TST_HAS_TLS`). The setter stores
+ * the raw PEM bytes either way; without the feature they are never used, and
+ * `tst_rtsp_client_builder_connect` with an `rtsps://` URL fails with
+ * `TST_E_INVALID_CONFIG`.
  *
  * # Safety
  *
@@ -10534,13 +10532,12 @@ struct TstRtspServer *tst_rtsp_server_builder_start(struct TstRtspServerBuilder 
  * Both buffers are copied immediately; the caller's pointers need not
  * outlive this call.
  *
- * TLS is not available in this build of tst-c (there is no `tls` cargo
- * feature yet). The PEM bytes are stored on the builder, and
+ * Works in a build with the `tls` feature (`TST_HAS_TLS`): the PEM bytes are
+ * loaded when the server starts. Without it the bytes are stored, and
  * `tst_rtsp_server_builder_start` FAILS (NULL + `TST_E_RTSP_SERVER`
  * last-error) when they are set — the alternative would be a server that
- * silently starts PLAINTEXT with the supplied certs ignored. The setter and
- * its stored bytes exist so a future `tls` feature can activate them without
- * an ABI change.
+ * silently starts PLAINTEXT with the supplied certs ignored. A plaintext
+ * `rtsp://` bind with these bytes set is refused in either build.
  *
  * No-op (with last-error set) if `builder`, `cert`, or `key` is NULL,
  * or if any length is zero.
@@ -11000,7 +10997,8 @@ int tst_tcp_demux_receiver_next_event(struct TstTcpDemuxReceiver *p,
  *
  * URL grammar:
  * - `tcp://host:port` — connect to a plain TCP listener
- * - `tcps://host:port` — connect with TLS (disabled if built without `tls` feature)
+ * - `tcps://host:port` — connect with TLS (works in a `tls` build, `TST_HAS_TLS`;
+ *   refused without it)
  * - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`,
  *   `?connect_timeout=N` (seconds)
  *
@@ -11221,7 +11219,8 @@ int tst_tcp_mux_sender_get_stream_codec_stats(struct TstTcpMuxSender *p,
  *
  * URL grammar:
  * - `tcp://host:port` — connect to a plain TCP listener
- * - `tcps://host:port` — connect with TLS (disabled if built without `tls` feature)
+ * - `tcps://host:port` — connect with TLS (works in a `tls` build, `TST_HAS_TLS`;
+ *   refused without it)
  * - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`,
  *   `?connect_timeout=N` (seconds)
  *
@@ -11517,7 +11516,8 @@ int tst_tcp_receiver_reset_stats(struct TstTcpReceiver *p);
  *
  * URL grammar:
  * - `tcp://host:port` — connect to a plain TCP listener
- * - `tcps://host:port` — connect with TLS (disabled if built without `tls` feature)
+ * - `tcps://host:port` — connect with TLS (works in a `tls` build, `TST_HAS_TLS`;
+ *   refused without it)
  * - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`,
  *   `?connect_timeout=N` (seconds)
  *
@@ -11577,7 +11577,7 @@ int tst_tcp_sender_get_stats(struct TstTcpSender *p, struct tst_sender_stats_t *
  *
  * URL grammar:
  * - `tcp://host:port` — plain TCP caller
- * - `tcps://host:port` — TLS caller (disabled if built without `tls` feature)
+ * - `tcps://host:port` — TLS caller (works in a `tls` build, `TST_HAS_TLS`; refused without it)
  * - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`,
  *   `?connect_timeout=N` (seconds)
  *
@@ -12341,6 +12341,9 @@ int tst_udp_sender_send_ts(struct TstUdpSender *p, const uint8_t *bytes, size_t 
 #endif
 #if !defined(TST_HAS_RIST)
 #define TST_HAS_RIST 0
+#endif
+#if !defined(TST_HAS_TLS)
+#define TST_HAS_TLS 0
 #endif
 
 /* ABI layout guards — trip the C compiler at consumer-build time if

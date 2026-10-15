@@ -48,6 +48,9 @@ trailer = """
 #if !defined(TST_HAS_RIST)
 #define TST_HAS_RIST 0
 #endif
+#if !defined(TST_HAS_TLS)
+#define TST_HAS_TLS 0
+#endif
 
 /* ABI layout guards — trip the C compiler at consumer-build time if
  * the Rust-side struct sizes drift from their pinned baselines. Layouts
@@ -109,6 +112,7 @@ include = ["tst-core", "tst-pipeline", "tst-srt"]
 "feature = tcp"  = "TST_HAS_TCP"
 "feature = hls"  = "TST_HAS_HLS"
 "feature = rist" = "TST_HAS_RIST"
+"feature = tls"  = "TST_HAS_TLS"
 
 [export]
 # `pub enum Tst*` items are added by build.rs (header_post::mirror_enums);

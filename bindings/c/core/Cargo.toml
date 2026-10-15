@@ -30,6 +30,10 @@ udp     = ["std", "dep:tst-udp"]
 tcp     = ["std", "dep:tst-tcp"]
 hls     = ["std", "dep:tst-hls", "tst-hls?/serve"]
 rist    = ["std", "dep:tst-rist"]
+# TLS for the transports that have it: tcps:// (tst-tcp), hlss://
+# (tst-hls), rtsps:// client and server (tst-rtp). Each forward fires only
+# when that transport is selected. Default off, like every transport.
+tls     = ["std", "tst-core/tls", "tst-tcp?/tls", "tst-hls?/tls", "tst-rtp?/tls", "tst-rtp?/rtsp-server-tls"]
 
 [dependencies]
 tst-srt      = { path = "../../../crates/tst-srt", default-features = false, optional = true }
@@ -53,6 +57,8 @@ spin         = { version = "0.9", default-features = false, features = ["spin_mu
 # gets the crate's std implementation from here. Dev-only, so the library's
 # MCU builds stay implementation-free.
 critical-section = { version = "1", features = ["std"] }
+# Self-signed certificate for the `tls`-build server start test.
+rcgen = "0.13"
 
 [lints]
 workspace = true

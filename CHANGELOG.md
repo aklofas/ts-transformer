@@ -210,6 +210,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   error variants they map from (`tst_udp::UdpError::Io` instead of the removed
   `UdpErrorKind::Io`). No declaration, value, symbol or ABI version changed.
 - Doc comment only: the `tst_stream_end_reason` enum doc and the managed receiver's end-reason getter doc no longer name a Rust type.
+- `TST_ABI_VERSION_MINOR` is 24, the trailer defines `TST_HAS_TLS` (0 unless built with `tls`), and the TLS setters' docs describe the `tls` feature.
 
 ### Added — tst-core
 
@@ -256,6 +257,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `h265::H265Depacketizer` (RFC 7798 single NAL unit, aggregation and
   fragmentation packets, no DONL), the same contract as
   `H264Depacketizer`, with a fuzz target.
+- `RtspServerBuilder::tls_cert_pem` (feature `rtsp-server-tls`): the
+  server certificate and key as PEM bytes instead of file paths.
+
+### Added — tst-c
+
+- A `tls` cargo feature (default off): `tcps://`, HTTPS for the HLS
+  publisher (`tst_hls_publisher_builder_enable_tls`), and `rtsps://` with
+  custom trust anchors (`tst_rtsp_client_builder_tls_root_cert_pem`) or an
+  in-memory server certificate (`tst_rtsp_server_builder_tls_cert_pem`)
+  work in a `tls` build; before, no tst-c build could reach TLS. The header
+  defines `TST_HAS_TLS`; ABI minor 24 (additive).
 
 ### Added — tst-jni
 

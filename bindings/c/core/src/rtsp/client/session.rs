@@ -163,14 +163,19 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_connect(
             rust_builder = rust_builder.no_auto_keepalive(true);
         }
 
-        // TLS root certificates: stored by tst_rtsp_client_builder_tls_root_cert_pem
-        // for rtsps:// connections, but parsing them into a rustls::RootCertStore
-        // requires the tst-rtp `tls` cargo feature, which tst-c does not enable
-        // directly. When a user calls _tls_root_cert_pem and then _connect on a
-        // plain `rtsp://` URL the PEM bytes are silently unused (harmless).
-        // For rtsps:// URLs without custom certs the platform trust store is used.
-        // Custom PEM cert injection for rtsps:// via the C ABI is deferred to a
-        // future tst-c `tls` feature (see docs/project/deferred-features.md).
+        // TLS trust anchors from tst_rtsp_client_builder_tls_root_cert_pem.
+        // With the `tls` feature they verify an rtsps:// server; without it
+        // an rtsps:// connect fails anyway, and a plain rtsp:// URL ignores them.
+        #[cfg(feature = "tls")]
+        if let Some(pem) = &b.tls_root_cert_pem {
+            match tst_core::net::tls::load_root_store(pem) {
+                Ok(roots) => rust_builder = rust_builder.tls_root_certs(roots),
+                Err(e) => {
+                    set_last_error(TstError::RtspTls, &format!("tls_root_cert_pem: {e}"));
+                    return std::ptr::null_mut();
+                }
+            }
+        }
 
         // Step 2: TCP connect + optional keepalive-thread spawn.
         let mut client = match rust_builder.connect() {

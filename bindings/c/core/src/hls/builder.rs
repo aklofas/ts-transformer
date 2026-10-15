@@ -327,10 +327,9 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_basic_auth(
 
 /// Enable HTTPS by supplying PEM cert + key paths.
 ///
-/// **Note:** the `tst-tcp` `tls` cargo feature is not enabled in `tst-c`,
-/// so `tst_hls_publisher_builder_build` will reject a TLS-configured
-/// builder with `TST_E_HLS_TLS`. This setter is wired for forward-
-/// compatibility once a `tls` feature lights up in `tst-c`.
+/// Works in a build with the `tls` feature (`TST_HAS_TLS`). Without it,
+/// `tst_hls_publisher_builder_build` rejects a TLS-configured builder with
+/// `TST_E_HLS_TLS`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if `b` is null, or
 /// `TST_E_HLS_CONFIG` if either path is null / not valid UTF-8.
@@ -421,9 +420,8 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_from_url(
 /// still consumed (the `Box` is reclaimed); allocate a fresh one to retry.
 /// The returned `TstPublisher` must be freed with `tst_publisher_free`.
 ///
-/// A builder configured with `enable_tls` fails here with
-/// `TST_E_HLS_TLS` because `tst-c` does not enable the `tst-tcp` `tls`
-/// feature.
+/// A builder configured with `enable_tls` works in a build with the `tls`
+/// feature (`TST_HAS_TLS`); without it this fails with `TST_E_HLS_TLS`.
 ///
 /// # Safety
 ///

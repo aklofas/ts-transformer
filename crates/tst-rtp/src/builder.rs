@@ -465,6 +465,8 @@ pub struct RtspServerBuilder {
     #[cfg(feature = "rtsp-server-tls")]
     pub(crate) tls_key_path: Option<PathBuf>,
     #[cfg(feature = "rtsp-server-tls")]
+    pub(crate) tls_pem: Option<(Vec<u8>, Vec<u8>)>,
+    #[cfg(feature = "rtsp-server-tls")]
     pub(crate) tls_handshake_timeout: Duration,
 }
 
@@ -501,6 +503,8 @@ impl RtspServerBuilder {
             tls_cert_path: None,
             #[cfg(feature = "rtsp-server-tls")]
             tls_key_path: None,
+            #[cfg(feature = "rtsp-server-tls")]
+            tls_pem: None,
             #[cfg(feature = "rtsp-server-tls")]
             tls_handshake_timeout: Duration::from_secs(30),
         }
@@ -641,6 +645,20 @@ impl RtspServerBuilder {
     pub fn tls_cert(&mut self, cert_chain_pem: PathBuf, key_pem: PathBuf) -> &mut Self {
         self.tls_cert_path = Some(cert_chain_pem);
         self.tls_key_path = Some(key_pem);
+        self.tls_pem = None;
+        self
+    }
+
+    /// [`Self::tls_cert`] with the PEM in memory instead of in files (the C
+    /// binding's `tst_rtsp_server_builder_tls_cert_pem` takes bytes). The
+    /// last of the two calls wins. Loaded and validated at
+    /// [`RtspServer::start`](crate::rtsp::server::RtspServer::start), which
+    /// also refuses a plaintext `rtsp://` bind with TLS material configured.
+    #[cfg(feature = "rtsp-server-tls")]
+    pub fn tls_cert_pem(&mut self, cert_chain_pem: Vec<u8>, key_pem: Vec<u8>) -> &mut Self {
+        self.tls_pem = Some((cert_chain_pem, key_pem));
+        self.tls_cert_path = None;
+        self.tls_key_path = None;
         self
     }
 

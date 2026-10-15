@@ -33,6 +33,7 @@ udp     = ["tst-c-core/udp"]
 tcp     = ["tst-c-core/tcp"]
 hls     = ["tst-c-core/hls"]
 rist    = ["tst-c-core/rist"]
+tls     = ["tst-c-core/tls"]
 
 [dependencies]
 # `std` is hardcoded (not just forwarded via the leaf's `std` feature): this
@@ -61,6 +62,8 @@ tst-srt          = { path = "../../crates/tst-srt", default-features = false }
 tst-core         = { path = "../../crates/tst-core", default-features = false }
 tst-pipeline     = { path = "../../crates/tst-pipeline", default-features = false }
 libc             = { workspace = true }
+# Self-signed certificates for the tcps:// / rtsps:// loopback tests (`tls` builds).
+rcgen            = "0.13"
 
 # Folder-shaped integration test: Cargo's auto-discovery only walks tests/*.rs
 # at the top level, not tests/<dir>/mod.rs. The explicit entry below points it

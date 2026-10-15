@@ -51,7 +51,7 @@ pub struct TstTcpSender {
 ///
 /// URL grammar:
 /// - `tcp://host:port` — plain TCP caller
-/// - `tcps://host:port` — TLS caller (disabled if built without `tls` feature)
+/// - `tcps://host:port` — TLS caller (works in a `tls` build, `TST_HAS_TLS`; refused without it)
 /// - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`,
 ///   `?connect_timeout=N` (seconds)
 ///

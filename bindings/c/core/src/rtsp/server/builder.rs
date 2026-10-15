@@ -29,9 +29,9 @@
 //! `rtsp-server-tls` feature is compiled in) takes `PathBuf` arguments
 //! pointing at files on disk. The C ABI instead stores the raw PEM bytes in
 //! `TstRtspServerBuilder`, both the cert chain and the private key
-//! together, via a single `tls_cert_pem` call. TLS is not available in this
-//! build of tst-c (there is no `tls` or `rtsp-server-tls` cargo feature
-//! yet): `tst_rtsp_server_builder_start` FAILS (`TST_E_RTSP_SERVER`)
+//! together, via a single `tls_cert_pem` call, and hands them to the server's
+//! `tls_cert_pem` in a build with the `tls` feature (`TST_HAS_TLS`). Without
+//! that feature `tst_rtsp_server_builder_start` FAILS (`TST_E_RTSP_SERVER`)
 //! whenever these bytes are set — the alternative would be a server that
 //! silently starts PLAINTEXT with the supplied certs ignored.
 //!
@@ -441,13 +441,12 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_graceful_shutdown_drain_ms(
 /// Both buffers are copied immediately; the caller's pointers need not
 /// outlive this call.
 ///
-/// TLS is not available in this build of tst-c (there is no `tls` cargo
-/// feature yet). The PEM bytes are stored on the builder, and
+/// Works in a build with the `tls` feature (`TST_HAS_TLS`): the PEM bytes are
+/// loaded when the server starts. Without it the bytes are stored, and
 /// `tst_rtsp_server_builder_start` FAILS (NULL + `TST_E_RTSP_SERVER`
 /// last-error) when they are set — the alternative would be a server that
-/// silently starts PLAINTEXT with the supplied certs ignored. The setter and
-/// its stored bytes exist so a future `tls` feature can activate them without
-/// an ABI change.
+/// silently starts PLAINTEXT with the supplied certs ignored. A plaintext
+/// `rtsp://` bind with these bytes set is refused in either build.
 ///
 /// No-op (with last-error set) if `builder`, `cert`, or `key` is NULL,
 /// or if any length is zero.
