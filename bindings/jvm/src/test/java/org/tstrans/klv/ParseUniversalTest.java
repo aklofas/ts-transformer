@@ -1,6 +1,7 @@
 package org.tstrans.klv;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.cat;
 
 import java.util.Arrays;
 import java.util.Optional;
@@ -57,19 +58,6 @@ class ParseUniversalTest {
         System.arraycopy(ul, 0, out, 0, 16);
         System.arraycopy(ber, 0, out, 16, ber.length);
         System.arraycopy(body, 0, out, 16 + ber.length, body.length);
-        return out;
-    }
-
-    /** Concatenate byte arrays. */
-    private static byte[] cat(byte[]... arrays) {
-        int total = 0;
-        for (byte[] a : arrays) total += a.length;
-        byte[] out = new byte[total];
-        int pos = 0;
-        for (byte[] a : arrays) {
-            System.arraycopy(a, 0, out, pos, a.length);
-            pos += a.length;
-        }
         return out;
     }
 

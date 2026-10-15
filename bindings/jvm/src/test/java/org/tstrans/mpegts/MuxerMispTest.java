@@ -1,7 +1,8 @@
 package org.tstrans.mpegts;
 
 import static org.junit.jupiter.api.Assertions.*;
-import java.io.ByteArrayOutputStream;
+import static org.tstrans.TestSupport.drain;
+import static org.tstrans.TestSupport.syntheticH264IdrPrefix;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -19,20 +20,6 @@ import org.tstrans.codec.MispTimestamp;
  */
 class MuxerMispTest {
 
-    /** Annex-B IDR AU (same pattern as MuxerDtsTest). */
-    private static byte[] syntheticH264Idr() {
-        return new byte[]{0x00, 0x00, 0x00, 0x01, 0x65, (byte) 0x88, (byte) 0x84, 0x00};
-    }
-
-    /** Drain all TS bytes from a muxer into a byte array. */
-    private static byte[] drain(Muxer m) throws Exception {
-        ByteArrayOutputStream acc = new ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        int n;
-        while ((n = m.pull(buf)) > 0) acc.write(buf, 0, n);
-        return acc.toByteArray();
-    }
-
     /**
      * {@link Muxer#pushVideoMispTo} splices the MISP SEI correctly: after a
      * mux→demux round-trip the raw AU bytes contain the SEI, and
@@ -48,7 +35,7 @@ class MuxerMispTest {
         byte[] ts;
         try (Muxer m = new Muxer(cfg)) {
             VideoStreamHandle h = m.videoStreamHandle(0).orElseThrow();
-            m.pushVideoMispTo(h, syntheticH264Idr(), 9000L, true, input);
+            m.pushVideoMispTo(h, syntheticH264IdrPrefix(), 9000L, true, input);
             ts = drain(m);
         }
 
@@ -89,7 +76,7 @@ class MuxerMispTest {
         byte[] ts;
         try (Muxer m = new Muxer(cfg)) {
             VideoStreamHandle h = m.videoStreamHandle(0).orElseThrow();
-            m.pushVideoMispTo(h, syntheticH264Idr(), 9000L, 6000L, true, input);
+            m.pushVideoMispTo(h, syntheticH264IdrPrefix(), 9000L, 6000L, true, input);
             ts = drain(m);
         }
 
@@ -134,7 +121,7 @@ class MuxerMispTest {
         try (Muxer m = new Muxer(cfg)) {
             VideoStreamHandle h = m.videoStreamHandle(0).orElseThrow();
             MuxException ex = assertThrows(MuxException.class,
-                () -> m.pushVideoMispTo(h, syntheticH264Idr(), 9000L, true, nano));
+                () -> m.pushVideoMispTo(h, syntheticH264IdrPrefix(), 9000L, true, nano));
             assertEquals(MuxException.Kind.MISP_TIME, ex.kind(),
                 "nano-on-H264 must surface as MISP_TIME (MuxError::MispTime)");
         }
@@ -146,7 +133,7 @@ class MuxerMispTest {
      */
     @Test
     void extractOnPlainAuReturnsNull() throws Exception {
-        MispTimestamp result = MispTimestamp.extract(syntheticH264Idr(), VideoCodec.H264);
+        MispTimestamp result = MispTimestamp.extract(syntheticH264IdrPrefix(), VideoCodec.H264);
         assertNull(result, "no MISP SEI present → must return null");
     }
 

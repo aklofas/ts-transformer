@@ -1,8 +1,8 @@
 package org.tstrans.mpegts;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.drain;
 import static org.tstrans.TestSupport.syntheticH264Idr;
-import java.io.ByteArrayOutputStream;
 import java.nio.file.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -150,15 +150,6 @@ class DemuxerConfigTest {
         assertEquals(List.of(WRAP - 100, WRAP + 100, WRAP - 50, WRAP + 200), videoPts(ts, unwrap),
             "each sample must land in the epoch its signed 33-bit delta implies; "
                 + "a second epoch (2*WRAP) means the reorder was mistaken for a wrap");
-    }
-
-    /** Drain every TS byte the muxer has queued. */
-    private static byte[] drain(Muxer m) {
-        ByteArrayOutputStream acc = new ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        int n;
-        while ((n = m.pull(buf)) > 0) acc.write(buf, 0, n);
-        return acc.toByteArray();
     }
 
     /** Feed {@code ts} through a fresh demuxer configured by {@code cfg} and collect video PTS in order. */

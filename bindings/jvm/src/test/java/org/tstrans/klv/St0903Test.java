@@ -1,6 +1,8 @@
 package org.tstrans.klv;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.beBytes;
+import static org.tstrans.TestSupport.cat;
 
 import java.util.HexFormat;
 import org.junit.jupiter.api.Test;
@@ -36,29 +38,6 @@ class St0903Test {
         out[0] = (byte) tag;
         out[1] = (byte) value.length;
         System.arraycopy(value, 0, out, 2, value.length);
-        return out;
-    }
-
-    /** Concat two byte arrays. */
-    private static byte[] cat(byte[]... arrays) {
-        int total = 0;
-        for (byte[] a : arrays) total += a.length;
-        byte[] out = new byte[total];
-        int pos = 0;
-        for (byte[] a : arrays) {
-            System.arraycopy(a, 0, out, pos, a.length);
-            pos += a.length;
-        }
-        return out;
-    }
-
-    /** Big-endian long to n-byte array. */
-    private static byte[] beBytes(long val, int n) {
-        byte[] out = new byte[n];
-        for (int i = n - 1; i >= 0; i--) {
-            out[i] = (byte) (val & 0xFF);
-            val >>= 8;
-        }
         return out;
     }
 

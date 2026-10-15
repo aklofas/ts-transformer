@@ -1,6 +1,7 @@
 package org.tstrans.rtp;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -107,7 +108,7 @@ class RtspServerTest {
                 assertTrue(m.videoHandle().isPresent());
                 assertEquals(1, m.videoHandles().size());
                 MountStats before = m.stats();
-                m.pushVideo(idr(), 0L, true);
+                m.pushVideo(syntheticH264Idr(), 0L, true);
                 m.flush();
                 assertTrue(m.stats().bytesPushed() > before.bytesPushed());
                 m.resetStats();
@@ -192,7 +193,7 @@ class RtspServerTest {
                 .programNumber(1).pmtPid(0x1000)
                 .addVideo(0x1011, VideoCodec.H264).build();
             try (MountHandle m = s.addUnicastMount("/v", cfg)) {
-                byte[] nal = idr();
+                byte[] nal = syntheticH264Idr();
                 // Negative jlong: rejected by the u32::try_from leg before try_from_raw.
                 RtspException neg = assertThrows(RtspException.class,
                     () -> m.pushVideoTo(VideoStreamHandle.fromRaw(-1L), nal, 0L, true));
@@ -207,10 +208,4 @@ class RtspServerTest {
         }
     }
 
-    private static byte[] idr() {
-        byte[] b = new byte[20];
-        b[0]=0; b[1]=0; b[2]=0; b[3]=1; b[4]=0x65;
-        for (int i=0;i<15;i++) b[5+i]=(byte)(0xA5 ^ i);
-        return b;
-    }
 }

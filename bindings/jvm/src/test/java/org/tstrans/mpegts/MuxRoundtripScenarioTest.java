@@ -1,6 +1,7 @@
 package org.tstrans.mpegts;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.scenarioDir;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import java.io.ByteArrayOutputStream;
@@ -31,11 +32,6 @@ import org.tstrans.codec.MispTimestamp;
  * </ul>
  */
 class MuxRoundtripScenarioTest {
-
-    private static Path scenarioDir(String scenarioId) {
-        return Path.of(System.getProperty("user.dir"), "..", "..",
-                "crates/tst-integration/tests/fixtures/scenarios", scenarioId).normalize();
-    }
 
 
     // ── video-roundtrip ─────────────────────────────────────────────────────

@@ -1,6 +1,8 @@
 package org.tstrans.klv;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.beBytes;
+import static org.tstrans.TestSupport.cat;
 
 import java.nio.ByteBuffer;
 import java.util.HexFormat;
@@ -25,28 +27,6 @@ class St0806Test {
     // -----------------------------------------------------------------------
     // Fixture helpers (mirroring St0903Test's cat/beBytes idiom)
     // -----------------------------------------------------------------------
-
-    private static byte[] cat(byte[]... arrays) {
-        int total = 0;
-        for (byte[] a : arrays) total += a.length;
-        byte[] out = new byte[total];
-        int pos = 0;
-        for (byte[] a : arrays) {
-            System.arraycopy(a, 0, out, pos, a.length);
-            pos += a.length;
-        }
-        return out;
-    }
-
-    /** Big-endian long to n-byte array. */
-    private static byte[] beBytes(long val, int n) {
-        byte[] out = new byte[n];
-        for (int i = n - 1; i >= 0; i--) {
-            out[i] = (byte) (val & 0xFF);
-            val >>= 8;
-        }
-        return out;
-    }
 
     /**
      * Timestamp + true airspeed + one POI (number=7, lat=45.0, lon=-90.0).

@@ -1,6 +1,7 @@
 package org.tstrans.scenarios;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.scenarioDir;
 import static org.tstrans.TestSupport.sha256Units;
 
 import java.nio.ByteBuffer;
@@ -84,17 +85,9 @@ class ScenarioReproductionTest {
         0x0E, 0x01, 0x03, 0x01, 0x01,
     };
 
-    /** Workspace-relative shared scenario dir; resolved from Gradle's user.dir (bindings/jvm). */
-    private static Path scenarioDir() {
-        return Path.of(
-                System.getProperty("user.dir"), "..", "..",
-                "crates/tst-integration/tests/fixtures/scenarios", SCENARIO_ID)
-            .normalize();
-    }
-
     @Test
     void reproducesH264St0601MpVideoSubset() throws Exception {
-        Path dir = scenarioDir();
+        Path dir = scenarioDir(SCENARIO_ID);
         Path inputPath = dir.resolve("input.ts");
         Path goldenPath = dir.resolve("golden.json");
 
@@ -200,7 +193,7 @@ class ScenarioReproductionTest {
      */
     @Test
     void reproducesH264St0601MpViaParseFile() throws Exception {
-        Path dir = scenarioDir();
+        Path dir = scenarioDir(SCENARIO_ID);
         Path inputPath = dir.resolve("input.ts");
         Path goldenPath = dir.resolve("golden.json");
         assertTrue(Files.isRegularFile(inputPath),
@@ -269,7 +262,7 @@ class ScenarioReproductionTest {
      */
     @Test
     void typedKlvDecodeParityFromSharedGolden() throws Exception {
-        Path dir = scenarioDir();
+        Path dir = scenarioDir(SCENARIO_ID);
         Path inputPath = dir.resolve("input.ts");
         assertTrue(Files.isRegularFile(inputPath),
             "shared scenario input missing (expected committed fixture): " + inputPath);

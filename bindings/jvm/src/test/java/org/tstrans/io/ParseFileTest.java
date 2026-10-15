@@ -1,6 +1,7 @@
 package org.tstrans.io;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.inputTs;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -8,14 +9,6 @@ import org.junit.jupiter.api.Test;
 import org.tstrans.mpegts.DemuxEvent;
 
 class ParseFileTest {
-
-    // The committed shared scenario fixture — a real .ts file on disk. Resolved
-    // from Gradle's user.dir (bindings/jvm), same pattern as ScenarioReproductionTest.
-    private static Path inputTs() {
-        return Path.of(System.getProperty("user.dir"), "..", "..",
-                "crates/tst-integration/tests/fixtures/scenarios/h264-st0601-mp/input.ts")
-            .normalize();
-    }
 
     @Test
     void parseFileYieldsDemuxEvents() throws Exception {

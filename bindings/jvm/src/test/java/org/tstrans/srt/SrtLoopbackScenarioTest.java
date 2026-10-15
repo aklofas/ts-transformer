@@ -3,6 +3,8 @@ package org.tstrans.srt;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
+import static org.tstrans.TestSupport.scenarioDir;
+import static org.tstrans.TestSupport.sha256OfDemuxedVideoUnits;
 import static org.tstrans.TestSupport.sha256Units;
 
 import java.io.ByteArrayOutputStream;
@@ -14,9 +16,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.tstrans.SrtException;
-import org.tstrans.codec.NalUnit;
-import org.tstrans.mpegts.DemuxEvent;
-import org.tstrans.mpegts.Demuxer;
 
 /**
  * Cross-binding loopback parity test for the JVM SRT surface.
@@ -80,14 +79,6 @@ class SrtLoopbackScenarioTest {
      */
     private static final int LATENCY_MS = 120;
 
-    /** Workspace-relative shared scenario dir; resolved from Gradle's user.dir (bindings/jvm). */
-    private static Path scenarioDir() {
-        return Path.of(
-                System.getProperty("user.dir"), "..", "..",
-                "crates/tst-integration/tests/fixtures/scenarios", SCENARIO_ID)
-            .normalize();
-    }
-
     /**
      * Build a 1316-byte send payload: the scenario {@code input.ts} (752 bytes)
      * followed by three MPEG-TS null/stuffing packets (PID 0x1FFF) to reach
@@ -135,7 +126,7 @@ class SrtLoopbackScenarioTest {
     void srtLoopbackReproducesH264St0601MpGolden() throws Exception {
         assumeTrue(isLinux(), "SRT live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");
 
-        Path dir = scenarioDir();
+        Path dir = scenarioDir(SCENARIO_ID);
         Path inputPath  = dir.resolve("input.ts");
         Path goldenPath = dir.resolve("golden.json");
 
@@ -294,25 +285,6 @@ class SrtLoopbackScenarioTest {
     // Replicated here rather than adding a shared helper class: the test is
     // self-contained, matches the pattern of the Python adapter's repeated
     // private helpers, and keeps the test easy to read and grep in isolation.
-
-    /**
-     * Demux the given TS bytes and return the SHA-256 hex digest of the
-     * concatenated NAL RBSP payloads from the first H.264 video sample that
-     * carries typed {@link NalUnit}s. Mirrors the golden-builder derivation
-     * in the Rust and Python adapters.
-     */
-    private static String sha256OfDemuxedVideoUnits(byte[] tsBytes) throws Exception {
-        try (Demuxer d = new Demuxer()) {
-            d.feed(tsBytes);
-            d.flush();
-            for (DemuxEvent e : d) {
-                if (e instanceof DemuxEvent.Video v && !v.parse().isEmpty()) {
-                    return sha256Units(v.parse());
-                }
-            }
-        }
-        throw new AssertionError("no typed Video event found in the demuxed bytes");
-    }
 
 
     /**

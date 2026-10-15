@@ -1,9 +1,9 @@
 package org.tstrans.mpegts;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.drain;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
-import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -25,15 +25,6 @@ class MuxerTargetedPushTest {
             (byte) 0xA0, (byte) 0xA1, (byte) 0xA2, (byte) 0xA3,
             (byte) 0xA4, (byte) 0xA5, (byte) 0xA6, (byte) 0xA7
         };
-    }
-
-    /** Drain all TS bytes from a muxer into a fresh array. */
-    private static byte[] drain(Muxer m) throws Exception {
-        ByteArrayOutputStream acc = new ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        int n;
-        while ((n = m.pull(buf)) > 0) acc.write(buf, 0, n);
-        return acc.toByteArray();
     }
 
     // -------------------------------------------------------------------------
