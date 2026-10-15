@@ -87,15 +87,10 @@ pub tst_hls::error::HlsError::Tls(alloc::string::String)
 pub tst_hls::error::HlsError::TlsDisabled
 pub tst_hls::error::HlsError::UnalignedPushTs
 pub tst_hls::error::HlsError::UnalignedPushTs::len: usize
-pub tst_hls::error::HlsError::Url(tst_hls::url::HlsUrlError)
-impl tst_hls::error::HlsError
-pub fn tst_hls::error::HlsError::kind(&self) -> tst_hls::error::HlsErrorKind
 impl core::convert::From<core::io::error::Error> for tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::from(core::io::error::Error) -> Self
 impl core::convert::From<tst_hls::error::HlsError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_hls::error::HlsError) -> Self
-impl core::convert::From<tst_hls::url::HlsUrlError> for tst_hls::error::HlsError
-pub fn tst_hls::error::HlsError::from(tst_hls::url::HlsUrlError) -> Self
 impl core::error::Error for tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_hls::error::HlsError
@@ -109,34 +104,6 @@ impl core::marker::Unpin for tst_hls::error::HlsError
 impl core::marker::UnsafeUnpin for tst_hls::error::HlsError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_hls::error::HlsError
 impl !core::panic::unwind_safe::UnwindSafe for tst_hls::error::HlsError
-#[non_exhaustive] #[repr(u32)] pub enum tst_hls::error::HlsErrorKind
-pub tst_hls::error::HlsErrorKind::BindFailed = 3
-pub tst_hls::error::HlsErrorKind::Finished = 6
-pub tst_hls::error::HlsErrorKind::Internal = 9
-pub tst_hls::error::HlsErrorKind::InvalidConfig = 4
-pub tst_hls::error::HlsErrorKind::Io = 2
-pub tst_hls::error::HlsErrorKind::Tls = 8
-pub tst_hls::error::HlsErrorKind::TlsDisabled = 7
-pub tst_hls::error::HlsErrorKind::UnalignedPushTs = 5
-pub tst_hls::error::HlsErrorKind::Url = 1
-impl core::clone::Clone for tst_hls::error::HlsErrorKind
-pub fn tst_hls::error::HlsErrorKind::clone(&self) -> tst_hls::error::HlsErrorKind
-impl core::cmp::Eq for tst_hls::error::HlsErrorKind
-impl core::cmp::PartialEq for tst_hls::error::HlsErrorKind
-pub fn tst_hls::error::HlsErrorKind::eq(&self, &tst_hls::error::HlsErrorKind) -> bool
-impl core::fmt::Debug for tst_hls::error::HlsErrorKind
-pub fn tst_hls::error::HlsErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_hls::error::HlsErrorKind
-pub fn tst_hls::error::HlsErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_hls::error::HlsErrorKind
-impl core::marker::StructuralPartialEq for tst_hls::error::HlsErrorKind
-impl core::marker::Freeze for tst_hls::error::HlsErrorKind
-impl core::marker::Send for tst_hls::error::HlsErrorKind
-impl core::marker::Sync for tst_hls::error::HlsErrorKind
-impl core::marker::Unpin for tst_hls::error::HlsErrorKind
-impl core::marker::UnsafeUnpin for tst_hls::error::HlsErrorKind
-impl core::panic::unwind_safe::RefUnwindSafe for tst_hls::error::HlsErrorKind
-impl core::panic::unwind_safe::UnwindSafe for tst_hls::error::HlsErrorKind
 pub mod tst_hls::publisher
 pub struct tst_hls::publisher::HlsPublisher
 impl tst_hls::publisher::HlsPublisher
@@ -203,8 +170,6 @@ pub tst_hls::url::HlsUrlError::MissingPort
 pub tst_hls::url::HlsUrlError::Parse(tst_core::url::common::UrlError)
 impl core::convert::From<tst_core::url::common::UrlError> for tst_hls::url::HlsUrlError
 pub fn tst_hls::url::HlsUrlError::from(tst_core::url::common::UrlError) -> Self
-impl core::convert::From<tst_hls::url::HlsUrlError> for tst_hls::error::HlsError
-pub fn tst_hls::error::HlsError::from(tst_hls::url::HlsUrlError) -> Self
 impl core::convert::From<tst_hls::url::HlsUrlError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_hls::url::HlsUrlError) -> Self
 impl core::error::Error for tst_hls::url::HlsUrlError
@@ -255,15 +220,10 @@ pub tst_hls::HlsError::Tls(alloc::string::String)
 pub tst_hls::HlsError::TlsDisabled
 pub tst_hls::HlsError::UnalignedPushTs
 pub tst_hls::HlsError::UnalignedPushTs::len: usize
-pub tst_hls::HlsError::Url(tst_hls::url::HlsUrlError)
-impl tst_hls::error::HlsError
-pub fn tst_hls::error::HlsError::kind(&self) -> tst_hls::error::HlsErrorKind
 impl core::convert::From<core::io::error::Error> for tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::from(core::io::error::Error) -> Self
 impl core::convert::From<tst_hls::error::HlsError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_hls::error::HlsError) -> Self
-impl core::convert::From<tst_hls::url::HlsUrlError> for tst_hls::error::HlsError
-pub fn tst_hls::error::HlsError::from(tst_hls::url::HlsUrlError) -> Self
 impl core::error::Error for tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_hls::error::HlsError
@@ -277,34 +237,6 @@ impl core::marker::Unpin for tst_hls::error::HlsError
 impl core::marker::UnsafeUnpin for tst_hls::error::HlsError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_hls::error::HlsError
 impl !core::panic::unwind_safe::UnwindSafe for tst_hls::error::HlsError
-#[non_exhaustive] #[repr(u32)] pub enum tst_hls::HlsErrorKind
-pub tst_hls::HlsErrorKind::BindFailed = 3
-pub tst_hls::HlsErrorKind::Finished = 6
-pub tst_hls::HlsErrorKind::Internal = 9
-pub tst_hls::HlsErrorKind::InvalidConfig = 4
-pub tst_hls::HlsErrorKind::Io = 2
-pub tst_hls::HlsErrorKind::Tls = 8
-pub tst_hls::HlsErrorKind::TlsDisabled = 7
-pub tst_hls::HlsErrorKind::UnalignedPushTs = 5
-pub tst_hls::HlsErrorKind::Url = 1
-impl core::clone::Clone for tst_hls::error::HlsErrorKind
-pub fn tst_hls::error::HlsErrorKind::clone(&self) -> tst_hls::error::HlsErrorKind
-impl core::cmp::Eq for tst_hls::error::HlsErrorKind
-impl core::cmp::PartialEq for tst_hls::error::HlsErrorKind
-pub fn tst_hls::error::HlsErrorKind::eq(&self, &tst_hls::error::HlsErrorKind) -> bool
-impl core::fmt::Debug for tst_hls::error::HlsErrorKind
-pub fn tst_hls::error::HlsErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_hls::error::HlsErrorKind
-pub fn tst_hls::error::HlsErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_hls::error::HlsErrorKind
-impl core::marker::StructuralPartialEq for tst_hls::error::HlsErrorKind
-impl core::marker::Freeze for tst_hls::error::HlsErrorKind
-impl core::marker::Send for tst_hls::error::HlsErrorKind
-impl core::marker::Sync for tst_hls::error::HlsErrorKind
-impl core::marker::Unpin for tst_hls::error::HlsErrorKind
-impl core::marker::UnsafeUnpin for tst_hls::error::HlsErrorKind
-impl core::panic::unwind_safe::RefUnwindSafe for tst_hls::error::HlsErrorKind
-impl core::panic::unwind_safe::UnwindSafe for tst_hls::error::HlsErrorKind
 pub enum tst_hls::HlsMode
 pub tst_hls::HlsMode::Event
 pub tst_hls::HlsMode::Live
@@ -338,8 +270,6 @@ pub tst_hls::HlsUrlError::MissingPort
 pub tst_hls::HlsUrlError::Parse(tst_core::url::common::UrlError)
 impl core::convert::From<tst_core::url::common::UrlError> for tst_hls::url::HlsUrlError
 pub fn tst_hls::url::HlsUrlError::from(tst_core::url::common::UrlError) -> Self
-impl core::convert::From<tst_hls::url::HlsUrlError> for tst_hls::error::HlsError
-pub fn tst_hls::error::HlsError::from(tst_hls::url::HlsUrlError) -> Self
 impl core::convert::From<tst_hls::url::HlsUrlError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_hls::url::HlsUrlError) -> Self
 impl core::error::Error for tst_hls::url::HlsUrlError

@@ -28,7 +28,7 @@ mod binding_kind;
 
 pub use builder::{UdpRecvTransportBuilder, UdpTransportBuilder};
 pub use config::SocketConfig;
-pub use error::{UdpError, UdpErrorKind};
+pub use error::UdpError;
 pub use recv::UdpRecvTransport;
 pub use stats::UdpStats;
 pub use transport::{UdpCancelHandle, UdpTransport};

@@ -76,8 +76,6 @@ pub tst_tcp::error::TcpError::Io(core::io::error::Error)
 pub tst_tcp::error::TcpError::Tls(alloc::string::String)
 pub tst_tcp::error::TcpError::TlsDisabled
 pub tst_tcp::error::TcpError::Url(tst_tcp::url::TcpUrlError)
-impl tst_tcp::error::TcpError
-pub fn tst_tcp::error::TcpError::kind(&self) -> tst_tcp::error::TcpErrorKind
 impl core::convert::From<core::io::error::Error> for tst_tcp::error::TcpError
 pub fn tst_tcp::error::TcpError::from(core::io::error::Error) -> Self
 impl core::convert::From<tst_tcp::error::TcpError> for tst_pipeline::binding::kind::BindingError
@@ -97,32 +95,6 @@ impl core::marker::Unpin for tst_tcp::error::TcpError
 impl core::marker::UnsafeUnpin for tst_tcp::error::TcpError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_tcp::error::TcpError
 impl !core::panic::unwind_safe::UnwindSafe for tst_tcp::error::TcpError
-#[non_exhaustive] #[repr(u32)] pub enum tst_tcp::error::TcpErrorKind
-pub tst_tcp::error::TcpErrorKind::Closed = 4
-pub tst_tcp::error::TcpErrorKind::ConnectTimeout = 5
-pub tst_tcp::error::TcpErrorKind::InvalidConfig = 6
-pub tst_tcp::error::TcpErrorKind::Io = 2
-pub tst_tcp::error::TcpErrorKind::Tls = 7
-pub tst_tcp::error::TcpErrorKind::TlsDisabled = 8
-pub tst_tcp::error::TcpErrorKind::Url = 1
-impl core::clone::Clone for tst_tcp::error::TcpErrorKind
-pub fn tst_tcp::error::TcpErrorKind::clone(&self) -> tst_tcp::error::TcpErrorKind
-impl core::cmp::Eq for tst_tcp::error::TcpErrorKind
-impl core::cmp::PartialEq for tst_tcp::error::TcpErrorKind
-pub fn tst_tcp::error::TcpErrorKind::eq(&self, &tst_tcp::error::TcpErrorKind) -> bool
-impl core::fmt::Debug for tst_tcp::error::TcpErrorKind
-pub fn tst_tcp::error::TcpErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_tcp::error::TcpErrorKind
-pub fn tst_tcp::error::TcpErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_tcp::error::TcpErrorKind
-impl core::marker::StructuralPartialEq for tst_tcp::error::TcpErrorKind
-impl core::marker::Freeze for tst_tcp::error::TcpErrorKind
-impl core::marker::Send for tst_tcp::error::TcpErrorKind
-impl core::marker::Sync for tst_tcp::error::TcpErrorKind
-impl core::marker::Unpin for tst_tcp::error::TcpErrorKind
-impl core::marker::UnsafeUnpin for tst_tcp::error::TcpErrorKind
-impl core::panic::unwind_safe::RefUnwindSafe for tst_tcp::error::TcpErrorKind
-impl core::panic::unwind_safe::UnwindSafe for tst_tcp::error::TcpErrorKind
 pub mod tst_tcp::listener
 pub struct tst_tcp::listener::TcpListener
 impl tst_tcp::listener::TcpListener

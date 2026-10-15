@@ -2,7 +2,8 @@
 
 use thiserror::Error;
 
-/// All errors returned from `tst-rist` operations.
+/// All errors returned from `tst-rist` operations. The bindings map them
+/// through `BindingError` (see `binding_kind.rs`).
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum RistError {
@@ -25,43 +26,9 @@ pub enum RistError {
     PeerCreateFailed,
 }
 
-/// Flat error-kind projection with a stable numeric code per variant.
-/// The bindings do not read it; they map `RistError` through
-/// `BindingError` (see `binding_kind.rs`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-#[repr(u32)]
-pub enum RistErrorKind {
-    Url = 1,
-    Ffi = 2,
-    InvalidConfig = 5,
-    EncryptionDisabled = 6,
-    ContextCreateFailed = 7,
-    PeerCreateFailed = 8,
-}
-
-impl RistError {
-    pub fn kind(&self) -> RistErrorKind {
-        match self {
-            Self::Url(_) => RistErrorKind::Url,
-            Self::Ffi { .. } => RistErrorKind::Ffi,
-            Self::InvalidConfig(_) => RistErrorKind::InvalidConfig,
-            Self::EncryptionDisabled => RistErrorKind::EncryptionDisabled,
-            Self::ContextCreateFailed => RistErrorKind::ContextCreateFailed,
-            Self::PeerCreateFailed => RistErrorKind::PeerCreateFailed,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn kind_is_stable() {
-        assert_eq!(RistErrorKind::Url as u32, 1);
-        assert_eq!(RistErrorKind::PeerCreateFailed as u32, 8);
-    }
 
     #[test]
     fn ffi_error_carries_code_and_function() {
@@ -69,7 +36,7 @@ mod tests {
             code: -3,
             function: "rist_peer_create",
         };
-        assert_eq!(e.kind(), RistErrorKind::Ffi);
+        assert!(matches!(e, RistError::Ffi { .. }));
         assert!(e.to_string().contains("-3"));
         assert!(e.to_string().contains("rist_peer_create"));
     }

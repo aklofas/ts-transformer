@@ -31,50 +31,15 @@ pub enum TcpError {
     TlsDisabled,
 }
 
-/// Flat error-variant projection for C-ABI mapping.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-#[repr(u32)]
-pub enum TcpErrorKind {
-    Url = 1,
-    Io = 2,
-    Closed = 4,
-    ConnectTimeout = 5,
-    InvalidConfig = 6,
-    Tls = 7,
-    TlsDisabled = 8,
-}
-
-impl TcpError {
-    pub fn kind(&self) -> TcpErrorKind {
-        match self {
-            Self::Url(_) => TcpErrorKind::Url,
-            Self::Io(_) => TcpErrorKind::Io,
-            Self::Closed => TcpErrorKind::Closed,
-            Self::ConnectTimeout { .. } => TcpErrorKind::ConnectTimeout,
-            Self::InvalidConfig(_) => TcpErrorKind::InvalidConfig,
-            #[cfg(feature = "tls")]
-            Self::Tls(_) => TcpErrorKind::Tls,
-            Self::TlsDisabled => TcpErrorKind::TlsDisabled,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn kind_is_stable() {
-        assert_eq!(TcpErrorKind::Url as u32, 1);
-        assert_eq!(TcpErrorKind::TlsDisabled as u32, 8);
-    }
-
-    #[test]
     fn io_error_wraps() {
         let io_err = io::Error::new(io::ErrorKind::ConnectionRefused, "no");
         let t: TcpError = io_err.into();
-        assert_eq!(t.kind(), TcpErrorKind::Io);
+        assert!(matches!(t, TcpError::Io(_)));
         assert!(t.to_string().contains("TCP I/O error"));
     }
 }

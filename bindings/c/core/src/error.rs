@@ -111,71 +111,71 @@ pub enum TstError {
 
     // UDP error codes (-26..=-29).
     /// (-26) UDP transport I/O failure (bind, connect, send, recv).
-    /// Maps from `tst_udp::UdpErrorKind::Io`.
+    /// Maps from `tst_udp::UdpError::Io`.
     UdpIo = -26,
     /// (-27) UDP URL/config parse failure or invalid host literal.
-    /// Maps from `UdpErrorKind::{Url, InvalidConfig}`.
+    /// Maps from `UdpError::{Url, InvalidConfig}`.
     UdpConfig = -27,
     /// (-28) UDP payload too large for the configured MTU / pkt_size.
-    /// Reserved; not currently produced (no `UdpErrorKind` variant maps here).
+    /// Reserved; not currently produced (no `UdpError` variant maps here).
     UdpPayloadTooLarge = -28,
     /// (-29) UDP multicast interface not supported (e.g., requested
     /// `?iface=eth0` on a platform where `tst-udp` can't apply it).
-    /// Reserved; not currently produced (no `UdpErrorKind` variant maps here).
+    /// Reserved; not currently produced (no `UdpError` variant maps here).
     UdpIfaceUnsupported = -29,
 
     // TCP error codes (-30..=-33).
     /// (-30) TCP transport I/O failure (connect, accept, send, recv).
-    /// Maps from `tst_tcp::TcpErrorKind::Io`.
+    /// Maps from `tst_tcp::TcpError::Io`.
     TcpIo = -30,
     /// (-31) TCP URL/config parse failure.
-    /// Maps from `TcpErrorKind::{Url, InvalidConfig}`.
+    /// Maps from `TcpError::{Url, InvalidConfig}`.
     TcpConfig = -31,
     /// (-32) TCP connect timeout (default 10s, override via `?connect_timeout=`).
-    /// Maps from `TcpErrorKind::ConnectTimeout`.
+    /// Maps from `TcpError::ConnectTimeout`.
     TcpConnectTimeout = -32,
     /// (-33) TCP TLS handshake or certificate validation failure;
     /// or TLS requested but `tst-tcp` built without `tls` feature.
-    /// Maps from `TcpErrorKind::{Tls, TlsDisabled}`.
+    /// Maps from `TcpError::{Tls, TlsDisabled}`.
     TcpTls = -33,
 
     // HLS error codes (-34..=-37).
     /// (-34) HLS HTTP server bind/listen failure.
-    /// Maps from `tst_hls::HlsErrorKind::{BindFailed, Io}`.
+    /// Maps from `tst_hls::HlsError::{BindFailed, Io}`.
     HlsIo = -34,
     /// (-35) HLS configuration invalid (bad output_dir, segment_duration < 1s, etc.).
-    /// Maps from `HlsErrorKind::{Url, InvalidConfig, UnalignedPushTs}`.
+    /// Maps from `HlsUrlError` and `HlsError::{InvalidConfig, UnalignedPushTs}`.
     HlsConfig = -35,
     /// (-36) HLS publisher already finished (terminal state after
     /// `tst_hls_publisher_finish`); subsequent push/cut calls fail here.
-    /// Maps from `HlsErrorKind::Finished`.
+    /// Maps from `HlsError::Finished`.
     HlsFinished = -36,
     /// (-37) HLS TLS error (cert load, handshake) or TLS requested
     /// but disabled at build time.
-    /// Maps from `HlsErrorKind::{Tls, TlsDisabled}`.
+    /// Maps from `HlsError::{Tls, TlsDisabled}`.
     HlsTls = -37,
 
     // RIST error codes (-38..=-43).
     /// (-38) RIST librist FFI failure; check the message for the
     /// underlying librist function name + error code.
-    /// Maps from `tst_rist::RistErrorKind::{Ffi, ContextCreateFailed, PeerCreateFailed}`.
+    /// Maps from `tst_rist::RistError::{Ffi, ContextCreateFailed, PeerCreateFailed}`.
     RistFfi = -38,
     /// (-39) RIST URL/config parse failure or invalid AES type.
-    /// Maps from `RistErrorKind::{Url, InvalidConfig}`.
+    /// Maps from `RistError::{Url, InvalidConfig}`.
     RistConfig = -39,
     /// (-40) RIST payload too large for the configured pkt_size
     /// (default 1316 bytes; STANAG-4609-aligned).
-    /// Reserved; not currently produced (no `RistErrorKind` variant maps here).
+    /// Reserved; not currently produced (no `RistError` variant maps here).
     RistPayloadTooLarge = -40,
     /// (-41) RIST encryption requested but `tst-rist` built without
     /// `mbedtls` feature (uncrypted librist build cannot apply AES).
-    /// Maps from `RistErrorKind::EncryptionDisabled`.
+    /// Maps from `RistError::EncryptionDisabled`.
     RistEncryptionDisabled = -41,
     /// (-42) RIST receive timeout exceeded the session_timeout.
-    /// Reserved; not currently produced (no `RistErrorKind` variant maps here).
+    /// Reserved; not currently produced (no `RistError` variant maps here).
     RistRecvTimeout = -42,
     /// (-43) RIST socket I/O failure underlying the librist transport.
-    /// Reserved; not currently produced (no `RistErrorKind` variant maps here).
+    /// Reserved; not currently produced (no `RistError` variant maps here).
     RistIo = -43,
 
     /// (-44) AV1 OBU input is not a well-formed elementary OBU stream;

@@ -38,7 +38,7 @@ mod binding_kind;
 mod ctx;
 
 pub use config::{EncryptionKey, RistConfig, RistProfile, RistSecret};
-pub use error::{RistError, RistErrorKind};
+pub use error::RistError;
 pub use stats::RistStats;
 pub use url::{RistUrl, RistUrlError};
 

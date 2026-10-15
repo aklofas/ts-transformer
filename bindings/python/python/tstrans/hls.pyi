@@ -42,7 +42,7 @@ __all__: list[str] = [
 
 
 class HlsErrorKind(IntEnum):
-    """Discriminator for ``HlsError.kind``. The ``tst_hls::HlsErrorKind``
+    """Discriminator for ``HlsError.kind``. The ``tst_hls::HlsError``
     variants plus ``CLOSED`` (0.7.0: ``MuxPublisherError::Closed`` — a call
     after the publisher was taken)."""
 

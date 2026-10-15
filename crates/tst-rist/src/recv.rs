@@ -355,14 +355,11 @@ mod tests {
     /// and the vendored-librist null-deref is never reached.
     #[test]
     fn refuses_simple_profile_ipv6_bind() {
-        use crate::error::RistErrorKind;
-
         let r = RistRecvTransport::listen("rist://@[::1]:33024?profile=simple");
         match r {
             Err(e) => {
-                assert_eq!(
-                    e.kind(),
-                    RistErrorKind::InvalidConfig,
+                assert!(
+                    matches!(e, crate::error::RistError::InvalidConfig(_)),
                     "got {e:?}, expected InvalidConfig"
                 );
                 // Not the '@'-missing InvalidConfig — this must be the guard.

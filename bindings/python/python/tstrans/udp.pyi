@@ -40,7 +40,7 @@ __all__: list[str] = [
 class UdpErrorKind(IntEnum):
     """Discriminator for ``UdpError.kind``. The ``tstrans.udp`` subset of the
     Rust ``tst_pipeline::binding::BindingErrorKind`` table: ``URL`` / ``IO`` /
-    ``INVALID_CONFIG`` from ``tst_udp::UdpErrorKind``, ``CLOSED`` / ``BROKEN`` /
+    ``INVALID_CONFIG`` from ``tst_udp::UdpError``, ``CLOSED`` / ``BROKEN`` /
     ``BACKPRESSURE`` / ``TOO_LARGE`` from the transport."""
 
     URL = 0

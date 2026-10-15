@@ -426,7 +426,7 @@ class SrtError(_KindMessageError):
 class UdpErrorKind(enum.IntEnum):
     """`UdpError.kind` — the `tstrans.udp` subset of the Rust
     `BindingErrorKind` table. `URL` / `IO` / `INVALID_CONFIG` come from
-    `tst_udp::UdpErrorKind` at build time; `CLOSED` / `BROKEN` /
+    `tst_udp::UdpError` at build time; `CLOSED` / `BROKEN` /
     `BACKPRESSURE` (recv deadline expired — retryable; raised `IO` before
     0.7.0) / `TOO_LARGE` from the transport. Raised by `tstrans.udp`
     operations (built with the `udp` cargo feature, default-on)."""
@@ -450,7 +450,7 @@ class TcpErrorKind(enum.IntEnum):
     """`TcpError.kind` — the `tstrans.tcp` subset of the Rust
     `BindingErrorKind` table. `URL` / `IO` / `CLOSED` / `CONNECT_TIMEOUT` /
     `INVALID_CONFIG` / `TLS` / `TLS_DISABLED` come from
-    `tst_tcp::TcpErrorKind`; `BROKEN` (a wire failure — raised `IO` before
+    `tst_tcp::TcpError`; `BROKEN` (a wire failure — raised `IO` before
     0.7.0) / `BACKPRESSURE` / `TOO_LARGE` from the transport; `CLOSED` also
     from a cancel/close from another thread. Raised by `tstrans.tcp`
     operations (built with the `tcp` cargo feature, default-on)."""
@@ -475,7 +475,7 @@ class TcpError(_KindMessageError):
 
 class HlsErrorKind(enum.IntEnum):
     """`HlsError.kind` — the `tstrans.hls` subset of the Rust
-    `BindingErrorKind` table; the `tst_hls::HlsErrorKind` variants plus
+    `BindingErrorKind` table; the `tst_hls::HlsError` variants plus
     `CLOSED` (0.7.0: `MuxPublisherError::Closed` — a call after the
     publisher was taken; folded into `FINISHED` before). Raised by
     `tstrans.hls` operations (built with the `hls` cargo feature,
@@ -503,7 +503,7 @@ class RistErrorKind(enum.IntEnum):
     """`RistError.kind` — the `tstrans.rist` subset of the Rust
     `BindingErrorKind` table. `URL` / `FFI` / `INVALID_CONFIG` /
     `ENCRYPTION_DISABLED` / `CONTEXT_CREATE_FAILED` / `PEER_CREATE_FAILED`
-    come from `tst_rist::RistErrorKind`; `CLOSED` / `BROKEN` /
+    come from `tst_rist::RistError`; `CLOSED` / `BROKEN` /
     `BACKPRESSURE` (recv deadline expired — retryable) / `TOO_LARGE` from
     the transport. Raised by `tstrans.rist` operations (built with the
     `rist` cargo feature, default-on)."""

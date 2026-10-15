@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use tst_core::transport::{RecvTransport, Transport, TransportError};
 use tst_rist::{
-    EncryptionKey, RistErrorKind, RistProfile, RistRecvTransportBuilder, RistTransportBuilder,
+    EncryptionKey, RistError, RistProfile, RistRecvTransportBuilder, RistTransportBuilder,
 };
 
 /// Serializes RIST loopback tests within this test binary. (Cross-binary
@@ -383,9 +383,8 @@ fn ipv6_simple_profile_listen_is_refused() {
         .profile(RistProfile::Simple)
         .listen();
     match result {
-        Err(err) => assert_eq!(
-            err.kind(),
-            RistErrorKind::InvalidConfig,
+        Err(err) => assert!(
+            matches!(err, RistError::InvalidConfig(_)),
             "got {err:?}, expected InvalidConfig"
         ),
         Ok(_) => panic!("Simple-profile IPv6 receiver bind must be refused, not attempted"),

@@ -29,7 +29,7 @@
 //! `bytearray`/`memoryview`.
 //!
 //! Error mapping: every failure is a `tst_pipeline::binding::BindingError`
-//! raised on `UdpError` through `crate::raise` — `UdpErrorKind::{Url, Io,
+//! raised on `UdpError` through `crate::raise` — `UdpError::{Url, Io,
 //! InvalidConfig}` at build time; `CLOSED` / `BROKEN` / `BACKPRESSURE` /
 //! `TOO_LARGE` from the transport.
 

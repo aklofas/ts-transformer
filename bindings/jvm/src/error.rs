@@ -178,7 +178,7 @@ pub(crate) const CODEC_KINDS: &[K] = &[
     K::CodecNalLengthOverflow,
     K::CodecBufferTooSmall,
 ];
-/// `org.tstrans.HlsException.Kind`: the eight `HlsErrorKind` projections plus
+/// `org.tstrans.HlsException.Kind`: the eight `tst_hls::HlsError` projections plus
 /// `Closed` (a consumed `MuxPublisher` shell) and `Internal` (a poisoned lock,
 /// and `HlsError::Internal`). The ten rows of `scripts/ratchets/kind-equivalence.tsv`
 /// whose JVM column this binding fills.

@@ -45,7 +45,7 @@ mod tls;
 
 pub use builder::HlsPublisherBuilder;
 pub use config::{HlsConfig, HlsMode};
-pub use error::{HlsError, HlsErrorKind};
+pub use error::HlsError;
 pub use publisher::HlsPublisher;
 #[cfg(feature = "serve")]
 pub use publisher::HlsServerHandle;
