@@ -751,110 +751,12 @@ fn defined_tags_byte_identical_pre_and_post_e5() {
     assert!(decoded.unknown.is_empty());
 }
 
-/// BER-OID round-trip boundary: unknown tag 127 — last single-byte
-/// value (`0x7F`). Mirrors `klv::st0102::tests::
-/// unknown_tag_127_round_trips_single_byte_ber_oid`.
-#[test]
-fn unknown_tag_127_round_trips_single_byte_ber_oid() {
-    let ls = VmtiLs {
-        precision_time_stamp: Some(1_700_000_000_000_000),
-        version_number: Some(6),
-        num_targets_reported: Some(0),
-        unknown: vec![OwnedRawField {
-            tag: 127,
-            value: b"max-single-byte".to_vec(),
-        }],
-        ..Default::default()
-    };
-    let bytes = encode_to_vec(&ls).unwrap();
-    assert_eq!(bytes.len(), encoded_len(&ls));
-    let decoded = decode(&bytes).unwrap();
-    assert_eq!(decoded.unknown.len(), 1);
-    assert_eq!(decoded.unknown[0].tag, 127);
-    assert_eq!(decoded.unknown[0].value, b"max-single-byte");
-}
-
-/// BER-OID round-trip boundary: unknown tag 128 — first multi-byte
-/// value (`0x81 0x00`). The continuation bit `0x80` on the first byte
-/// signals "more bytes follow". A single-byte tag path would corrupt it
-/// (the `as u8` cast truncates to `0x80`, and a `cursor[0]` decoder reads
-/// that `0x80` as start of a BER length); it must survive a full
-/// encode/decode round-trip.
-#[test]
-fn unknown_tag_128_round_trips_multi_byte_ber_oid() {
-    let ls = VmtiLs {
-        precision_time_stamp: Some(1_700_000_000_000_000),
-        version_number: Some(6),
-        num_targets_reported: Some(0),
-        unknown: vec![OwnedRawField {
-            tag: 128,
-            value: b"first-multi-byte".to_vec(),
-        }],
-        ..Default::default()
-    };
-    let bytes = encode_to_vec(&ls).unwrap();
-    assert_eq!(bytes.len(), encoded_len(&ls));
-
-    // Hand-verify the BER-OID bytes for tag 128 land where expected
-    // on the wire. The tail of `bytes` ends with `[0x81, 0x00, BER
-    // length, value...]` — locate the BER-OID prefix by scanning
-    // backwards.
-    let tail_start = bytes.len() - (b"first-multi-byte".len() + 1 + 2);
-    assert_eq!(
-        &bytes[tail_start..tail_start + 2],
-        &[0x81, 0x00],
-        "tag 128 BER-OID encoding is 0x81 0x00"
-    );
-
-    let decoded = decode(&bytes).unwrap();
-    assert_eq!(decoded.unknown.len(), 1);
-    assert_eq!(decoded.unknown[0].tag, 128);
-    assert_eq!(decoded.unknown[0].value, b"first-multi-byte");
-}
-
-/// BER-OID round-trip boundary: unknown tag 16383 (`2^14 - 1`) — last
-/// two-byte value (`0xFF 0x7F`).
-#[test]
-fn unknown_tag_16383_round_trips_two_byte_ber_oid() {
-    let ls = VmtiLs {
-        precision_time_stamp: Some(1_700_000_000_000_000),
-        version_number: Some(6),
-        num_targets_reported: Some(0),
-        unknown: vec![OwnedRawField {
-            tag: 16383,
-            value: b"max-two-byte".to_vec(),
-        }],
-        ..Default::default()
-    };
-    let bytes = encode_to_vec(&ls).unwrap();
-    assert_eq!(bytes.len(), encoded_len(&ls));
-    let decoded = decode(&bytes).unwrap();
-    assert_eq!(decoded.unknown.len(), 1);
-    assert_eq!(decoded.unknown[0].tag, 16383);
-    assert_eq!(decoded.unknown[0].value, b"max-two-byte");
-}
-
-/// BER-OID round-trip boundary: unknown tag 16384 (`2^14`) — first
-/// three-byte value (`0x81 0x80 0x00`).
-#[test]
-fn unknown_tag_16384_round_trips_three_byte_ber_oid() {
-    let ls = VmtiLs {
-        precision_time_stamp: Some(1_700_000_000_000_000),
-        version_number: Some(6),
-        num_targets_reported: Some(0),
-        unknown: vec![OwnedRawField {
-            tag: 16384,
-            value: b"first-three-byte".to_vec(),
-        }],
-        ..Default::default()
-    };
-    let bytes = encode_to_vec(&ls).unwrap();
-    assert_eq!(bytes.len(), encoded_len(&ls));
-    let decoded = decode(&bytes).unwrap();
-    assert_eq!(decoded.unknown.len(), 1);
-    assert_eq!(decoded.unknown[0].tag, 16384);
-    assert_eq!(decoded.unknown[0].value, b"first-three-byte");
-}
+crate::klv::ber_oid_unknown_tag_tests!(VmtiLs {
+    precision_time_stamp: Some(1_700_000_000_000_000),
+    version_number: Some(6),
+    num_targets_reported: Some(0),
+    ..Default::default()
+});
 
 /// Strict decode also preserves multi-byte BER-OID unknown tags per
 /// ST 0107.5 §6 (strict mode is about codepoint legality, not
