@@ -457,10 +457,6 @@ tier = "A"
 
 # tst_core::SrtCancelHandle graduated to [[surface]] once the JVM SRT binding covered it.
 
-[[exempt]]
-item = "tst_core::UasDatalinkLs::active_payload_ids"
-reason = "Convenience iterator over the tag 139 active_payloads bitmask; exercised by st0601::tests::wpb_active_payload_ids_multi_byte_extends_upward"
-
 [[surface]]
 kind = "rust"
 crate = "tst-core"
@@ -2486,15 +2482,6 @@ reason = "raw-first refactor 2026-06-08; opt-in ES splitter; graduate to [[surfa
 item = "tst_core::mpegts::demux::split_video_strict"
 reason = "raw-first refactor 2026-06-08; opt-in strict ES splitter; graduate to [[surface]] as coverage is asserted"
 
-[[surface]]
-kind = "rust"
-crate = "tst-core"
-item = "tst_core::transport::TransportError::is_connection_refused"
-owning_tests = ["crates/tst-core/src/transport.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
-scenario_ids = []
-tier = "A"
-
 # BrokenCause (2026-09-11, the tst-tcp clean-EOF discriminator): the derived
 # PartialEq is what the two tst-tcp peer-close tests assert on (assert_eq! on
 # the `cause` field of the Broken they observe).
@@ -3187,10 +3174,6 @@ tier = "A"
 item = "tst_rtp::rtsp::server::mount::MountHandle::push_video_to_with_dts"
 reason = "unit-covered (mount.rs push_video_to_with_dts_serves_distinct_dts); Rust-only by design (bindings parity deferred — see deferred-features); graduate with the mount push family"
 
-[[exempt]]
-item = "tst_rtp::rtsp::server::session::ServerSessionState::drop"
-reason = "added 2026-10-04: Drop cancels the per-peer fanout; server-internal type, catalogued like its RtspServer::drop sibling (exempt)"
-
 # end_reason: StreamEndReason accessor — first-writer-wins record of why
 # an RTSP-backed session ended; unit-tested for the plain-rtp:// (no
 # owning RtspClient) case in transport.rs (fresh/close/cancel-handle-fire),
@@ -3331,34 +3314,6 @@ item = "tst_rtp::h264::depacketizer::ParameterSetInjection::fmt"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::h264::fmtp::H264FmtpParams::clone"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::h264::fmtp::H264FmtpParams::eq"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::h264::fmtp::H264FmtpParams::fmt"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::h264::fmtp::H264FmtpParams::parse"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::h264::fmtp::parse_rtpmap_h264"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::h264::parse_rtpmap_h264"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::parse_rtpmap_h264"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
 item = "tst_rtp::H264Receiver"
 reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
@@ -3456,27 +3411,11 @@ item = "tst_rtp::h264::receiver::H264Receiver::socket_stats"
 reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 [[exempt]]
-item = "tst_rtp::H264Media"
-reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
-
-[[exempt]]
-item = "tst_rtp::pick_h264"
-reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
-
-[[exempt]]
 item = "tst_rtp::rtsp::client::RtspClient::setup_h264_auto"
 reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::rtsp::client::session::RtspSession::into_h264_receiver"
-reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
-
-[[exempt]]
-item = "tst_rtp::sdp::pick::H264Media"
-reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
-
-[[exempt]]
-item = "tst_rtp::sdp::pick::pick_h264"
 reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
 
 # tst_srt::Listener graduated to [[surface]] once the JVM SRT binding covered it.

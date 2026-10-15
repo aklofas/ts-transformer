@@ -35,7 +35,8 @@ Three layers of intended-public surface, from most stable to least:
    explicitly-named extension points for fuzz harnesses, third-party
    tools, and advanced consumers that need direct access to parser
    internals. **Stability: Internal** (the tier table in [api-stability.md](./api-stability.md) is authoritative). May change between minor
-   versions before 1.0.
+   versions before 1.0. `tst_core::mpegts::demux::low_level::iter_au_cells`
+   (the Metadata AU cell iterator) lives here since 0.9.0.
 
 Anything not in one of these three categories is **private** and may
 change without notice.
