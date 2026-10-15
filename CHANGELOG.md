@@ -20,6 +20,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tst_pipeline::binding::kind::kind_of_transport` is removed; use
   `BindingError::from(err).kind`.
 
+### Removed — tst-srt (BREAKING)
+
+- `SrtTransport::with_max_payload` is removed. `SrtTransport::new` reads the
+  negotiated `SRTO_PAYLOADSIZE`; to send smaller messages set the
+  `payloadsize=` URL key or `SocketConfig::payload_size` before connecting.
+
 ### Changed — tst-core (BREAKING)
 
 - `tst_core::transport::conformance` (the transport conformance kit) is now

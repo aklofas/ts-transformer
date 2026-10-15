@@ -109,7 +109,6 @@ let pairer = Pairer::with_config(v, k, config);          // explicit knob still 
 |------|---------------------|-------------|
 | `DemuxReceiver::with_demux_options(transport, options)` | Uses over-specific `_demux_options` noun; rule recommends generic `with_config`. | Rename candidate before 1.0 — every C-ABI demux-receiver open path calls it (`bindings/c/core/src/{receiver/demux_receiver,udp,tcp,rtp,rist,rtsp/client}`), so the rename is not a one-line change. |
 | `tst_core::transport::conformance::{SendOptions, RecvOptions}` | Per-transport knobs of the conformance test harness, not construction parameters of a transport or shell. | No rename; the module sits behind tst-core's non-default `conformance` feature. |
-| `SrtTransport::with_max_payload(self, n) -> Self` | Chainable `self -> Self` modifier on an already-constructed value; reads like a constructor by prefix but is a fluent modifier. | Borderline — the method's rustdoc (`crates/tst-srt/src/transport.rs`) clarifies the modifier intent. No rename; reviewers should not flag new `with_*` modifiers on existing values, but new constructors should still match the `with_<aspect>` aspect-rule. |
 
 ---
 

@@ -312,7 +312,6 @@ impl Transport for MemTransport {
 impl SrtTransport {
     pub const DEFAULT_PAYLOAD: usize = 1316;
     pub fn new(socket: Socket) -> Self;
-    pub fn with_max_payload(self, n: usize) -> Self;
 }
 ```
 
@@ -322,7 +321,7 @@ socket (passphrase, latency, stream id, etc.) before wrapping —
 read from the socket's negotiated `SRTO_PAYLOADSIZE`
 (`Socket::payload_limit`) — 1316 for an unconfigured socket, or e.g. 1456
 when `payloadsize=` / `SocketConfig::payload_size` was set. `DEFAULT_PAYLOAD`
-is the 1316-byte fallback constant; `with_max_payload` overrides the value.
+is the 1316-byte fallback constant.
 
 Error mapping from `SendError` → `TransportError`:
 
