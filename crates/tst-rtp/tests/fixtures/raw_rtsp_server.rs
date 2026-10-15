@@ -20,11 +20,10 @@ pub const SDP_BODY: &[u8] = b"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=tst-rtp test\
 /// in the same read), and this function only consumes and returns the
 /// FIRST complete request from `leftover`, keeping any bytes past its
 /// terminating `CRLFCRLF` buffered for the next call. Discarding that
-/// surplus  silently drops the second pipelined
-/// request, wedging the server in a blocking read that never completes
-/// since the client already sent everything it's going to send — a
-/// deadlock that hangs the test (and the gating runner) rather than
-/// failing it.
+/// surplus silently drops the second pipelined request, wedging the
+/// server in a blocking read that never completes since the client
+/// already sent everything it's going to send — a deadlock that hangs
+/// the test (and the gating runner) rather than failing it.
 pub fn read_request(sock: &mut TcpStream, leftover: &mut Vec<u8>) -> String {
     loop {
         if let Some(pos) = leftover.windows(4).position(|w| w == b"\r\n\r\n") {
