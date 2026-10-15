@@ -4,8 +4,6 @@
 //! internals in isolation. `ScriptedRecv` replays pre-muxed TS bytes
 //! as if they arrived over a live SRT connection.
 
-mod common;
-
 use crate::common::ScriptedRecv;
 
 use std::collections::VecDeque;

@@ -99,4 +99,4 @@ tst-core +16, tst-pipeline +3 (net zero).
 | `mpegts_demux_local.rs` | `tst-core/tests/mpegts/demux_local.rs` | demux over local TS corpus; imports only `tst_core`. |
 | `mpegts_mux_local.rs` | `tst-core/tests/mpegts/mux_local.rs` | mux over local corpus; imports only `tst_core`. |
 | `mpegts_mux_ffprobe.rs` | `tst-core/tests/mpegts/mux_ffprobe.rs` | mux output validated by ffprobe; imports only `tst_core` (a cross-crate fixture path hack was removed). |
-| `pipeline_sender_unit.rs` | `tst-pipeline/tests/pipeline_sender_unit.rs` | unit-tests `tst_pipeline::MuxSender` over a mock transport; needs no SRT. |
+| `pipeline_sender_unit.rs` | `tst-pipeline/tests/shells/pipeline_sender_unit.rs` | unit-tests `tst_pipeline::MuxSender` over a mock transport; needs no SRT. |

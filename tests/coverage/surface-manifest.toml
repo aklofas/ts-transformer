@@ -5717,7 +5717,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-core"
 item = "tst_core::cancel::CancelSlot"
-owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect/reconnect_cancel_parked_send.rs"]
 # The latched, replaceable cancel target the managed wrappers publish their
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
@@ -5742,7 +5742,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-core"
 item = "tst_core::cancel::CancelSlot::new"
-owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect/reconnect_cancel_parked_send.rs"]
 # The latched, replaceable cancel target the managed wrappers publish their
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
@@ -5755,7 +5755,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-core"
 item = "tst_core::cancel::CancelSlot::install"
-owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect/reconnect_cancel_parked_send.rs"]
 # The latched, replaceable cancel target the managed wrappers publish their
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
@@ -5768,7 +5768,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-core"
 item = "tst_core::cancel::CancelSlot::clear"
-owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect/reconnect_cancel_parked_send.rs"]
 # The latched, replaceable cancel target the managed wrappers publish their
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
@@ -5781,7 +5781,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-core"
 item = "tst_core::cancel::CancelSlot::cancel"
-owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect/reconnect_cancel_parked_send.rs"]
 # The latched, replaceable cancel target the managed wrappers publish their
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
@@ -5794,7 +5794,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-core"
 item = "tst_core::cancel::CancelSlot::is_cancelled"
-owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect/reconnect_cancel_parked_send.rs"]
 # The latched, replaceable cancel target the managed wrappers publish their
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
@@ -5807,7 +5807,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-core"
 item = "tst_core::CancelSlot"
-owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect/reconnect_cancel_parked_send.rs"]
 # The latched, replaceable cancel target the managed wrappers publish their
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
@@ -5832,7 +5832,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::Sender"
-owning_tests = ["crates/tst-pipeline/tests/pipeline_ts_sender.rs"]
+owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_ts_sender.rs"]
 bindings = ["java:org.tstrans.srt.Sender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
@@ -5841,7 +5841,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::Receiver"
-owning_tests = ["crates/tst-pipeline/tests/pipeline_receiver.rs"]
+owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
 bindings = ["java:org.tstrans.srt.Receiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
@@ -6543,7 +6543,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::BackoffStrategy"
-owning_tests = ["crates/tst-pipeline/tests/poison_policy.rs"]
+owning_tests = ["crates/tst-pipeline/tests/managed/poison_policy.rs"]
 bindings = ["java:org.tstrans.srt.BackoffStrategy", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -6583,7 +6583,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::DemuxReceiver"
-owning_tests = ["crates/tst-pipeline/tests/demux_receiver_malformed_pes_recovery.rs"]
+owning_tests = ["crates/tst-pipeline/tests/shells/demux_receiver_malformed_pes_recovery.rs"]
 bindings = ["java:org.tstrans.srt.DemuxReceiver", "java:org.tstrans.rtp.DemuxReceiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -6626,7 +6626,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ManagedDemuxReceiver"
-owning_tests = ["crates/tst-pipeline/tests/managed_demux_receiver_reconnect.rs"]
+owning_tests = ["crates/tst-pipeline/tests/managed/managed_demux_receiver_reconnect.rs"]
 bindings = ["java:org.tstrans.srt.ManagedDemuxReceiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -6637,7 +6637,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ManagedRecvTransport"
-owning_tests = ["crates/tst-pipeline/tests/managed_receive_tracing.rs"]
+owning_tests = ["crates/tst-pipeline/tests/managed/managed_receive_tracing.rs"]
 bindings = ["java:org.tstrans.srt.ManagedReceiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -6646,7 +6646,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::FactoryCancel"
-owning_tests = ["crates/tst-pipeline/tests/managed_receive_cancel_factory.rs"]
+owning_tests = ["crates/tst-pipeline/tests/managed/managed_receive_cancel_factory.rs"]
 # Type alias of tst_core::cancel::CancelSlot (the items are catalogued under
 # tst-core). Used internally by the C ABI / Python / JVM managed listener
 # factories (no direct binding symbol); their parity tests: tst-c
@@ -6660,7 +6660,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::managed_receive::FactoryCancel"
-owning_tests = ["crates/tst-pipeline/tests/managed_receive_cancel_factory.rs"]
+owning_tests = ["crates/tst-pipeline/tests/managed/managed_receive_cancel_factory.rs"]
 # Type alias of tst_core::cancel::CancelSlot (the items are catalogued under
 # tst-core). Used internally by the C ABI / Python / JVM managed listener
 # factories (no direct binding symbol); their parity tests: tst-c
@@ -6677,7 +6677,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ManagedTransport"
-owning_tests = ["crates/tst-pipeline/tests/reconnect_reject_overflow.rs"]
+owning_tests = ["crates/tst-pipeline/tests/reconnect/reconnect_reject_overflow.rs"]
 bindings = ["java:org.tstrans.srt.ManagedSender", "java:org.tstrans.srt.ManagedMuxSender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -6693,7 +6693,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::MuxSender"
-owning_tests = ["crates/tst-pipeline/tests/mux_sender_golden.rs"]
+owning_tests = ["crates/tst-pipeline/tests/shells/mux_sender_golden.rs"]
 bindings = ["java:org.tstrans.srt.MuxSender", "java:org.tstrans.rtp.MuxSender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["video-roundtrip"]
 tier = "A"
@@ -6708,7 +6708,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::OverflowPolicy"
-owning_tests = ["crates/tst-pipeline/tests/reconnect_reject_overflow.rs"]
+owning_tests = ["crates/tst-pipeline/tests/reconnect/reconnect_reject_overflow.rs"]
 bindings = ["java:org.tstrans.srt.OverflowPolicy", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -6757,7 +6757,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ReconnectPolicy"
-owning_tests = ["crates/tst-pipeline/tests/reconnect_reject_overflow.rs"]
+owning_tests = ["crates/tst-pipeline/tests/reconnect/reconnect_reject_overflow.rs"]
 bindings = ["java:org.tstrans.srt.ReconnectPolicy", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -7181,7 +7181,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::mux_sender::MuxSender"
-owning_tests = ["crates/tst-pipeline/src/mux_sender.rs", "crates/tst-pipeline/tests/mux_sender_golden.rs"]
+owning_tests = ["crates/tst-pipeline/src/mux_sender.rs", "crates/tst-pipeline/tests/shells/mux_sender_golden.rs"]
 bindings = ["java:org.tstrans.srt.MuxSender", "java:org.tstrans.rtp.MuxSender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["video-roundtrip"]
 tier = "A"
@@ -7530,7 +7530,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::reconnect::ManagedStatsHandle"
-owning_tests = ["crates/tst-pipeline/tests/reconnect_background.rs"]
+owning_tests = ["crates/tst-pipeline/tests/reconnect/reconnect_background.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -7539,7 +7539,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ManagedStatsHandle"
-owning_tests = ["crates/tst-pipeline/tests/reconnect_background.rs"]
+owning_tests = ["crates/tst-pipeline/tests/reconnect/reconnect_background.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -7548,7 +7548,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::reconnect::ManagedStatsHandle::stats"
-owning_tests = ["crates/tst-pipeline/tests/reconnect_background.rs"]
+owning_tests = ["crates/tst-pipeline/tests/reconnect/reconnect_background.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -7629,7 +7629,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::reconnect::RecvEndReasonHandle"
-owning_tests = ["crates/tst-pipeline/tests/managed_demux_receiver_reconnect.rs"]
+owning_tests = ["crates/tst-pipeline/tests/managed/managed_demux_receiver_reconnect.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -7638,7 +7638,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::RecvEndReasonHandle"
-owning_tests = ["crates/tst-pipeline/tests/managed_demux_receiver_reconnect.rs"]
+owning_tests = ["crates/tst-pipeline/tests/managed/managed_demux_receiver_reconnect.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -7647,7 +7647,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::RecvEndReasonHandle::get"
-owning_tests = ["crates/tst-pipeline/tests/managed_demux_receiver_reconnect.rs"]
+owning_tests = ["crates/tst-pipeline/tests/managed/managed_demux_receiver_reconnect.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"

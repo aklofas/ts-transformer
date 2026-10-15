@@ -12,8 +12,6 @@
 //! injection — no SRT loopback, no temp files, no sleep beyond the
 //! policy backoff (zero in tests).
 
-mod common;
-
 use crate::common::{ScriptedRecv, broken, fast_policy};
 
 use std::sync::Arc;

@@ -6,8 +6,6 @@
 //! draining the gap buffer through a connection the caller already asked it
 //! to abandon.
 
-mod common;
-
 use crate::common::{FlagCancel, broken};
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

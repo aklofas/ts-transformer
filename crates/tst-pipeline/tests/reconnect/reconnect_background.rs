@@ -3,8 +3,6 @@
 //! All synchronization is deadline-polling (`wait_until`) — never bare
 //! sleeps-as-sync. Timing assertions carry >=5x margins for slow CI.
 
-mod common;
-
 use crate::common::{ScriptedSend, SendStep, broken};
 
 use std::collections::VecDeque;
