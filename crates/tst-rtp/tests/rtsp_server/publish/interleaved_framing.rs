@@ -5,10 +5,11 @@
 //! rather than fatal, and a frame's binary payload is never parsed as
 //! RTSP.
 //!
-//! These drove `handle_connection` against a test-only `ServerState` as
-//! inline `rtsp::server::session` tests; they now drive the same session
-//! loop through `RtspServer` and observe it through `PublishMountHandle`.
-//! Assertions are unchanged. The paused-time idle-bound tests stay inline.
+//! Each test drives a real `RtspServer` over a blocking socket and
+//! observes the mount through `PublishMountHandle`: the stats counters
+//! and the payloads the application transport receives. The idle-bound
+//! tests that need paused tokio time live inline in
+//! `rtsp::server::session`.
 
 use std::time::Duration;
 
