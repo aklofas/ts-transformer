@@ -813,24 +813,11 @@ impl IcingDetected {
         Self::Other(0xFF),
     ];
 
-    /// ST 0601.19 §8.34 wire codepoint → variant (`Other(b)` for unknown codes).
-    pub fn from_wire(b: u8) -> Self {
-        match b {
-            0 => Self::DetectorOff,
-            1 => Self::NoIcingDetected,
-            2 => Self::IcingDetected,
-            other => Self::Other(other),
-        }
-    }
-
-    /// Variant → ST 0601.19 §8.34 wire codepoint (inverse of [`Self::from_wire`]).
-    pub fn to_wire(self) -> u8 {
-        match self {
-            Self::DetectorOff => 0,
-            Self::NoIcingDetected => 1,
-            Self::IcingDetected => 2,
-            Self::Other(b) => b,
-        }
+    crate::klv::wire_codepoints! {
+        from_wire, to_wire, Other, "ST 0601.19 §8.34";
+        0 => DetectorOff,
+        1 => NoIcingDetected,
+        2 => IcingDetected,
     }
 }
 
@@ -895,36 +882,17 @@ impl SensorFovName {
         Self::Other(0xFF),
     ];
 
-    /// ST 0601.19 §8.63 wire codepoint → variant (`Other(b)` for unknown codes).
-    pub fn from_wire(b: u8) -> Self {
-        match b {
-            0 => Self::Ultranarrow,
-            1 => Self::Narrow,
-            2 => Self::Medium,
-            3 => Self::Wide,
-            4 => Self::Ultrawide,
-            5 => Self::NarrowMedium,
-            6 => Self::TwoXUltranarrow,
-            7 => Self::FourXUltranarrow,
-            8 => Self::ContinuousZoom,
-            other => Self::Other(other),
-        }
-    }
-
-    /// Variant → ST 0601.19 §8.63 wire codepoint (inverse of [`Self::from_wire`]).
-    pub fn to_wire(self) -> u8 {
-        match self {
-            Self::Ultranarrow => 0,
-            Self::Narrow => 1,
-            Self::Medium => 2,
-            Self::Wide => 3,
-            Self::Ultrawide => 4,
-            Self::NarrowMedium => 5,
-            Self::TwoXUltranarrow => 6,
-            Self::FourXUltranarrow => 7,
-            Self::ContinuousZoom => 8,
-            Self::Other(b) => b,
-        }
+    crate::klv::wire_codepoints! {
+        from_wire, to_wire, Other, "ST 0601.19 §8.63";
+        0 => Ultranarrow,
+        1 => Narrow,
+        2 => Medium,
+        3 => Wide,
+        4 => Ultrawide,
+        5 => NarrowMedium,
+        6 => TwoXUltranarrow,
+        7 => FourXUltranarrow,
+        8 => ContinuousZoom,
     }
 }
 
@@ -979,30 +947,14 @@ impl OperationalMode {
         Self::Other(0xFF),
     ];
 
-    /// ST 0601.19 §8.77 wire codepoint → variant (`Other(b)` for unknown codes).
-    pub fn from_wire(b: u8) -> Self {
-        match b {
-            0 => Self::OtherMode,
-            1 => Self::Operational,
-            2 => Self::Training,
-            3 => Self::Exercise,
-            4 => Self::Maintenance,
-            5 => Self::Test,
-            other => Self::Other(other),
-        }
-    }
-
-    /// Variant → ST 0601.19 §8.77 wire codepoint (inverse of [`Self::from_wire`]).
-    pub fn to_wire(self) -> u8 {
-        match self {
-            Self::OtherMode => 0,
-            Self::Operational => 1,
-            Self::Training => 2,
-            Self::Exercise => 3,
-            Self::Maintenance => 4,
-            Self::Test => 5,
-            Self::Other(b) => b,
-        }
+    crate::klv::wire_codepoints! {
+        from_wire, to_wire, Other, "ST 0601.19 §8.77";
+        0 => OtherMode,
+        1 => Operational,
+        2 => Training,
+        3 => Exercise,
+        4 => Maintenance,
+        5 => Test,
     }
 }
 
@@ -1073,44 +1025,21 @@ impl PlatformStatus {
         Self::Other(0xFF),
     ];
 
-    /// ST 0601.19 §8.125 wire codepoint → variant (`Other(b)` for unknown codes).
-    pub fn from_wire(b: u8) -> Self {
-        match b {
-            0 => Self::Active,
-            1 => Self::PreFlight,
-            2 => Self::PreFlightTaxiing,
-            3 => Self::RunUp,
-            4 => Self::TakeOff,
-            5 => Self::Ingress,
-            6 => Self::ManualOperation,
-            7 => Self::AutomatedOrbit,
-            8 => Self::Transitioning,
-            9 => Self::Egress,
-            10 => Self::Landing,
-            11 => Self::LandedTaxiing,
-            12 => Self::LandedParked,
-            other => Self::Other(other),
-        }
-    }
-
-    /// Variant → ST 0601.19 §8.125 wire codepoint (inverse of [`Self::from_wire`]).
-    pub fn to_wire(self) -> u8 {
-        match self {
-            Self::Active => 0,
-            Self::PreFlight => 1,
-            Self::PreFlightTaxiing => 2,
-            Self::RunUp => 3,
-            Self::TakeOff => 4,
-            Self::Ingress => 5,
-            Self::ManualOperation => 6,
-            Self::AutomatedOrbit => 7,
-            Self::Transitioning => 8,
-            Self::Egress => 9,
-            Self::Landing => 10,
-            Self::LandedTaxiing => 11,
-            Self::LandedParked => 12,
-            Self::Other(b) => b,
-        }
+    crate::klv::wire_codepoints! {
+        from_wire, to_wire, Other, "ST 0601.19 §8.125";
+        0 => Active,
+        1 => PreFlight,
+        2 => PreFlightTaxiing,
+        3 => RunUp,
+        4 => TakeOff,
+        5 => Ingress,
+        6 => ManualOperation,
+        7 => AutomatedOrbit,
+        8 => Transitioning,
+        9 => Egress,
+        10 => Landing,
+        11 => LandedTaxiing,
+        12 => LandedParked,
     }
 }
 
@@ -1163,32 +1092,15 @@ impl SensorControlMode {
         Self::Other(0xFF),
     ];
 
-    /// ST 0601.19 §8.126 wire codepoint → variant (`Other(b)` for unknown codes).
-    pub fn from_wire(b: u8) -> Self {
-        match b {
-            0 => Self::Off,
-            1 => Self::HomePosition,
-            2 => Self::Uncontrolled,
-            3 => Self::ManualControl,
-            4 => Self::Calibrating,
-            5 => Self::AutoHoldingPosition,
-            6 => Self::AutoTracking,
-            other => Self::Other(other),
-        }
-    }
-
-    /// Variant → ST 0601.19 §8.126 wire codepoint (inverse of [`Self::from_wire`]).
-    pub fn to_wire(self) -> u8 {
-        match self {
-            Self::Off => 0,
-            Self::HomePosition => 1,
-            Self::Uncontrolled => 2,
-            Self::ManualControl => 3,
-            Self::Calibrating => 4,
-            Self::AutoHoldingPosition => 5,
-            Self::AutoTracking => 6,
-            Self::Other(b) => b,
-        }
+    crate::klv::wire_codepoints! {
+        from_wire, to_wire, Other, "ST 0601.19 §8.126";
+        0 => Off,
+        1 => HomePosition,
+        2 => Uncontrolled,
+        3 => ManualControl,
+        4 => Calibrating,
+        5 => AutoHoldingPosition,
+        6 => AutoTracking,
     }
 }
 

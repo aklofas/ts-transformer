@@ -65,26 +65,13 @@ pub enum ObjectCountryCodingMethod {
 }
 
 impl SecurityClassification {
-    pub fn from_u8(b: u8) -> Self {
-        match b {
-            0x01 => Self::Unclassified,
-            0x02 => Self::Restricted,
-            0x03 => Self::Confidential,
-            0x04 => Self::Secret,
-            0x05 => Self::TopSecret,
-            other => Self::Unknown(other),
-        }
-    }
-
-    pub fn to_u8(self) -> u8 {
-        match self {
-            Self::Unclassified => 0x01,
-            Self::Restricted => 0x02,
-            Self::Confidential => 0x03,
-            Self::Secret => 0x04,
-            Self::TopSecret => 0x05,
-            Self::Unknown(b) => b,
-        }
+    crate::klv::wire_codepoints! {
+        from_u8, to_u8, Unknown, "ST 0102.12 §6.1.1";
+        0x01 => Unclassified,
+        0x02 => Restricted,
+        0x03 => Confidential,
+        0x04 => Secret,
+        0x05 => TopSecret,
     }
 
     /// True if this codepoint is in the spec's enumerated range
@@ -95,48 +82,24 @@ impl SecurityClassification {
 }
 
 impl ClassifyingCountryCodingMethod {
-    pub fn from_u8(b: u8) -> Self {
-        match b {
-            0x01 => Self::Iso3166TwoLetter,
-            0x02 => Self::Iso3166ThreeLetter,
-            0x03 => Self::Fips104TwoLetter,
-            0x04 => Self::Fips104FourLetter,
-            0x05 => Self::Iso3166Numeric,
-            0x06 => Self::Stanag1059TwoLetter,
-            0x07 => Self::Stanag1059ThreeLetter,
-            0x08 => Self::OmittedValue08,
-            0x09 => Self::OmittedValue09,
-            0x0A => Self::Fips104Mixed,
-            0x0B => Self::Iso3166Mixed,
-            0x0C => Self::Stanag1059Mixed,
-            0x0D => Self::GencTwoLetter,
-            0x0E => Self::GencThreeLetter,
-            0x0F => Self::GencNumeric,
-            0x10 => Self::GencMixed,
-            other => Self::Unknown(other),
-        }
-    }
-
-    pub fn to_u8(self) -> u8 {
-        match self {
-            Self::Iso3166TwoLetter => 0x01,
-            Self::Iso3166ThreeLetter => 0x02,
-            Self::Fips104TwoLetter => 0x03,
-            Self::Fips104FourLetter => 0x04,
-            Self::Iso3166Numeric => 0x05,
-            Self::Stanag1059TwoLetter => 0x06,
-            Self::Stanag1059ThreeLetter => 0x07,
-            Self::OmittedValue08 => 0x08,
-            Self::OmittedValue09 => 0x09,
-            Self::Fips104Mixed => 0x0A,
-            Self::Iso3166Mixed => 0x0B,
-            Self::Stanag1059Mixed => 0x0C,
-            Self::GencTwoLetter => 0x0D,
-            Self::GencThreeLetter => 0x0E,
-            Self::GencNumeric => 0x0F,
-            Self::GencMixed => 0x10,
-            Self::Unknown(b) => b,
-        }
+    crate::klv::wire_codepoints! {
+        from_u8, to_u8, Unknown, "ST 0102.12 §6.1.2";
+        0x01 => Iso3166TwoLetter,
+        0x02 => Iso3166ThreeLetter,
+        0x03 => Fips104TwoLetter,
+        0x04 => Fips104FourLetter,
+        0x05 => Iso3166Numeric,
+        0x06 => Stanag1059TwoLetter,
+        0x07 => Stanag1059ThreeLetter,
+        0x08 => OmittedValue08,
+        0x09 => OmittedValue09,
+        0x0A => Fips104Mixed,
+        0x0B => Iso3166Mixed,
+        0x0C => Stanag1059Mixed,
+        0x0D => GencTwoLetter,
+        0x0E => GencThreeLetter,
+        0x0F => GencNumeric,
+        0x10 => GencMixed,
     }
 
     /// True if codepoint is in the enumerated range AND not an
@@ -151,48 +114,24 @@ impl ClassifyingCountryCodingMethod {
 }
 
 impl ObjectCountryCodingMethod {
-    pub fn from_u8(b: u8) -> Self {
-        match b {
-            0x01 => Self::Iso3166TwoLetter,
-            0x02 => Self::Iso3166ThreeLetter,
-            0x03 => Self::Iso3166Numeric,
-            0x04 => Self::Fips104TwoLetter,
-            0x05 => Self::Fips104FourLetter,
-            0x06 => Self::Stanag1059TwoLetter,
-            0x07 => Self::Stanag1059ThreeLetter,
-            0x08 => Self::OmittedValue08,
-            0x09 => Self::OmittedValue09,
-            0x0A => Self::OmittedValue0A,
-            0x0B => Self::OmittedValue0B,
-            0x0C => Self::OmittedValue0C,
-            0x0D => Self::GencTwoLetter,
-            0x0E => Self::GencThreeLetter,
-            0x0F => Self::GencNumeric,
-            0x40 => Self::GencAdminSub,
-            other => Self::Unknown(other),
-        }
-    }
-
-    pub fn to_u8(self) -> u8 {
-        match self {
-            Self::Iso3166TwoLetter => 0x01,
-            Self::Iso3166ThreeLetter => 0x02,
-            Self::Iso3166Numeric => 0x03,
-            Self::Fips104TwoLetter => 0x04,
-            Self::Fips104FourLetter => 0x05,
-            Self::Stanag1059TwoLetter => 0x06,
-            Self::Stanag1059ThreeLetter => 0x07,
-            Self::OmittedValue08 => 0x08,
-            Self::OmittedValue09 => 0x09,
-            Self::OmittedValue0A => 0x0A,
-            Self::OmittedValue0B => 0x0B,
-            Self::OmittedValue0C => 0x0C,
-            Self::GencTwoLetter => 0x0D,
-            Self::GencThreeLetter => 0x0E,
-            Self::GencNumeric => 0x0F,
-            Self::GencAdminSub => 0x40,
-            Self::Unknown(b) => b,
-        }
+    crate::klv::wire_codepoints! {
+        from_u8, to_u8, Unknown, "ST 0102.12 §6.1.12";
+        0x01 => Iso3166TwoLetter,
+        0x02 => Iso3166ThreeLetter,
+        0x03 => Iso3166Numeric,
+        0x04 => Fips104TwoLetter,
+        0x05 => Fips104FourLetter,
+        0x06 => Stanag1059TwoLetter,
+        0x07 => Stanag1059ThreeLetter,
+        0x08 => OmittedValue08,
+        0x09 => OmittedValue09,
+        0x0A => OmittedValue0A,
+        0x0B => OmittedValue0B,
+        0x0C => OmittedValue0C,
+        0x0D => GencTwoLetter,
+        0x0E => GencThreeLetter,
+        0x0F => GencNumeric,
+        0x40 => GencAdminSub,
     }
 
     pub fn is_known_codepoint(self) -> bool {
