@@ -24,9 +24,8 @@ use crate::cancel::RtpCancelHandle;
 use crate::clock::RtpClock;
 use crate::packet::{RTP_HEADER_LEN, RTP_PT_MP2T, RtpHeader};
 use crate::rtcp::ingest::{ingest_rr, ingest_sr};
-use crate::rtcp::reporter::RtcpReporterHandle;
 use crate::rtcp::stats::RtcpStats;
-use crate::rtcp::{ReceiverReport, SdesPacket, SenderReport};
+use crate::rtcp::{ReceiverReport, SenderReport};
 use crate::rtsp::client::end_reason::{EndReasonSlot, StreamEndReason, StreamEndReasonHandle};
 use crate::url::{DEFAULT_PKT_SIZE, RtpUrl, UrlError as RtpUrlError};
 
@@ -82,20 +81,6 @@ pub struct RtpTransport {
     /// fields stay zero (see the `SocketStats` table above).
     bytes_sent: u64,
     packets_sent: u64,
-    /// Companion RTCP socket bound on `port + 1` per RFC 3550 §11.
-    /// `None` when the caller opted out via `RtpSocketBuilder::rtcp(false)`.
-    /// Retained on the transport so it stays alive for the reporter
-    /// thread's lifetime — the reporter holds its own `try_clone`'d FD.
-    #[allow(dead_code)]
-    rtcp_socket: Option<UdpSocket>,
-    /// RTCP-derived counters, shared with the reporter thread (which
-    /// ticks `sr_packets_sent` on each SR emission). Nothing ingests peer
-    /// RTCP on the send side.
-    rtcp_stats: Arc<Mutex<RtcpStats>>,
-    /// Background SR-emitter handle. Dropping this cancels + joins
-    /// the reporter thread. Held only for its `Drop` side effect.
-    #[allow(dead_code)]
-    rtcp_reporter: Option<RtcpReporterHandle>,
     /// Reusable scratch buffer for building RTP datagrams. Avoids a heap
     /// allocation per `send_bytes` call — cleared and refilled each time,
     /// but the underlying allocation is retained across frames.
@@ -107,42 +92,14 @@ impl RtpTransport {
     /// return a ready-to-send transport.
     ///
     /// `url` must have scheme `rtp://` and an explicit port.
-    ///
-    /// The outgoing RTCP SR reporter is **off by default** (see
-    /// [`Self::connect_with_rtcp`] for the experimental opt-in and its
-    /// limitations). RTCP *reception* is unaffected.
     pub fn connect(url: &str) -> Result<Self, ConnectError> {
         let parsed = RtpUrl::parse(url).map_err(ConnectError::Url)?;
-        Self::connect_with_rtcp(&parsed, false)
+        Self::connect_with(&parsed)
     }
 
     /// Connect using an already-parsed URL — convenient for callers that
-    /// hold an `RtpUrl` (e.g., binding crates). The outgoing RTCP SR
-    /// reporter is **off by default** (see [`Self::connect_with_rtcp`]).
+    /// hold an `RtpUrl` (e.g., binding crates).
     pub fn connect_with(url: &RtpUrl) -> Result<Self, ConnectError> {
-        Self::connect_with_rtcp(url, false)
-    }
-
-    /// Connect using an already-parsed URL with an explicit RTCP toggle.
-    ///
-    /// `rtcp_enabled = true` binds the RTCP companion socket on `port + 1`
-    /// and spawns the periodic SR-emitter thread. `rtcp_enabled = false`
-    /// (the default for [`Self::connect`] / [`Self::connect_with`]) skips
-    /// both.
-    ///
-    /// # Experimental: the SR reporter emits placeholder statistics
-    ///
-    /// The periodic SR reporter is **experimental and off by default**. It
-    /// currently emits **placeholder (zero) statistics** — there are no
-    /// live sender counters wired into the SR (`sender_packet_count`,
-    /// `sender_octet_count`, `rtp_timestamp`, and `ntp_timestamp` are all
-    /// zero). As such it is **NOT RFC 3550-conformant** and must not be
-    /// relied on by peers for sender-side reception statistics. Enabling it
-    /// is only useful for exercising the RTCP socket-pair plumbing. The
-    /// send side does not ingest peer RTCP: [`Self::rtcp_stats`] only
-    /// counts emitted SRs, and [`SocketStats`] leaves the RTCP-derived
-    /// fields at 0 (RTCP reception lives on the receive side).
-    pub fn connect_with_rtcp(url: &RtpUrl, rtcp_enabled: bool) -> Result<Self, ConnectError> {
         if url.pt.is_some() {
             return Err(ConnectError::PayloadTypeParam);
         }
@@ -178,87 +135,15 @@ impl RtpTransport {
                 .map_err(udp_err_to_connect)?;
         }
         socket.connect(peer).map_err(ConnectError::Io)?;
-        // RTCP companion socket bound on `port + 1` per RFC 3550 §11.
-        // Sender binds an ephemeral local port + sends SR to peer's
-        // port+1 (the symmetric pair).
-        let rtcp_socket = if rtcp_enabled {
-            let rtcp_local: SocketAddr = match ip {
-                IpAddr::V4(_) => "0.0.0.0:0".parse().unwrap(),
-                IpAddr::V6(_) => "[::]:0".parse().unwrap(),
-            };
-            Some(UdpSocket::bind(rtcp_local).map_err(ConnectError::Io)?)
-        } else {
-            None
-        };
-        Ok(Self::from_socket(socket, url, rtcp_socket, peer))
+        Ok(Self::from_socket(socket, url))
     }
 
     /// Internal: build from an already-configured socket.
-    fn from_socket(
-        socket: UdpSocket,
-        url: &RtpUrl,
-        rtcp_socket: Option<UdpSocket>,
-        peer: SocketAddr,
-    ) -> Self {
+    fn from_socket(socket: UdpSocket, url: &RtpUrl) -> Self {
         let pkt_size = url.pkt_size.unwrap_or(DEFAULT_PKT_SIZE);
         let ssrc = url.ssrc.unwrap_or_else(random_u32);
         let next_seq = random_u32() as u16;
         let start_ticks = random_u32();
-        let rtcp_stats = Arc::new(Mutex::new(RtcpStats::default()));
-        // Spawn the SR-emitter thread when RTCP is enabled. The closure
-        // grabs its own clone of the rtcp socket FD + the stats handle;
-        // both live for the reporter thread's lifetime via Arc/`try_clone`.
-        let rtcp_reporter = rtcp_socket.as_ref().and_then(|sock| {
-            // try_clone gives the reporter its own FD ref; close
-            // semantics on the original FD stay intact.
-            let sock_clone = match sock.try_clone() {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!(error = %e, "rtcp socket try_clone failed; skipping reporter");
-                    return None;
-                }
-            };
-            let stats_clone = rtcp_stats.clone();
-            // Guard: port 65535 has no valid RTCP companion port
-            // (65536 overflows u16). Skip the reporter in that case,
-            // mirroring the guard in `bind_server_udp_pair` in rtsp/server/handlers.rs.
-            let Some(rtcp_companion_port) = peer.port().checked_add(1) else {
-                tracing::warn!("peer port 65535 has no RTCP companion; skipping SR reporter");
-                return None;
-            };
-            let rtcp_target = SocketAddr::new(peer.ip(), rtcp_companion_port);
-            Some(RtcpReporterHandle::spawn(move || {
-                // A minimal SR (counters zero) + SDES CNAME: the real
-                // bytes_sent / packets_sent live on the transport and
-                // are not wired into the reporter.
-                let sr = crate::rtcp::SenderReport {
-                    ssrc,
-                    ntp_timestamp: 0,
-                    rtp_timestamp: 0,
-                    sender_packet_count: 0,
-                    sender_octet_count: 0,
-                    report_blocks: Vec::new(),
-                };
-                let cname = format!("tst-rtp-{ssrc:08x}");
-                let sdes = SdesPacket { ssrc, cname };
-                // These are locally-built, well-formed packets (no report
-                // blocks, short CNAME) so encode never fails — but the
-                // encoders are fallible now; skip the send on the
-                // (unreachable) validation error rather than unwrapping.
-                let (Ok(mut compound), Ok(sdes_bytes)) = (sr.encode(), sdes.encode()) else {
-                    tracing::error!(
-                        "internal: locally-built RTCP SR/SDES failed to encode; skipping send"
-                    );
-                    debug_assert!(false, "locally-built RTCP SR/SDES must always encode");
-                    return;
-                };
-                compound.extend_from_slice(&sdes_bytes);
-                let _ = sock_clone.send_to(&compound, rtcp_target);
-                if let Ok(mut g) = stats_clone.lock() {
-                    g.sr_packets_sent = g.sr_packets_sent.saturating_add(1);
-                }
-            }))
-        });
         Self {
             socket: Some(socket),
             max_payload: pkt_size,
@@ -268,20 +153,8 @@ impl RtpTransport {
             cancel: RtpCancelHandle::new(),
             bytes_sent: 0,
             packets_sent: 0,
-            rtcp_socket,
-            rtcp_stats,
-            rtcp_reporter,
             send_scratch: Vec::with_capacity(RTP_HEADER_LEN + pkt_size),
         }
-    }
-
-    /// Snapshot of the RTCP-derived counters. Returns a clone of the
-    /// internal `RtcpStats` (cheap — counters are plain integers).
-    pub fn rtcp_stats(&self) -> RtcpStats {
-        self.rtcp_stats
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default()
     }
 }
 
@@ -637,24 +510,13 @@ pub struct RtpRecvTransport {
     /// Per-recv scratch, sized to [`RECV_SCRATCH_LEN`] — heap allocated
     /// once; holds one whole RTP packet (header + payload) per recv.
     scratch: Vec<u8>,
-    /// Companion RTCP socket bound on `port + 1` per RFC 3550 §11.
-    /// `None` when the caller opted out via `RtpRecvSocketBuilder::rtcp(false)`.
-    /// Retained on the transport so it stays alive for the reporter
-    /// thread's lifetime — the reporter holds its own `try_clone`'d FD.
-    #[allow(dead_code)]
-    rtcp_socket: Option<UdpSocket>,
-    /// RTCP-derived counters, shared with the reporter thread (which
-    /// ticks `rr_packets_sent` on each RR emission) and any Task-8
-    /// ingest path.
+    /// RTCP-derived counters. Filled by the interleaved-RTSP ingest thread
+    /// ([`Self::from_mpsc_with_rtcp`]); stay at their defaults on a plain
+    /// `rtp://` receiver, which ingests no RTCP.
     rtcp_stats: Arc<Mutex<RtcpStats>>,
-    /// Background RR-emitter handle. Dropping this cancels + joins
-    /// the reporter thread. Held only for its `Drop` side effect.
-    #[allow(dead_code)]
-    rtcp_reporter: Option<RtcpReporterHandle>,
-    /// Local SSRC used in the RR sender field — defaults to a random
-    /// value generated at listen time; matches the RTP send-side
-    /// pattern. Captured by the reporter closure and read by
-    /// [`Self::from_mpsc_with_rtcp`] to seed the RTCP-ingest thread.
+    /// Local SSRC: random at bind time unless the URL sets `?ssrc=`. The
+    /// interleaved-RTSP ingest thread matches a peer's report blocks
+    /// against it ([`Self::from_mpsc_with_rtcp`]).
     ssrc: u32,
     /// Persistent deadline applied by the blocking
     /// [`RecvTransport::recv_bytes`] path. `None` (the default) blocks
@@ -694,42 +556,14 @@ pub struct RtpStats {
 
 impl RtpRecvTransport {
     /// Bind to `url`'s host:port and (for multicast) join the group.
-    ///
-    /// The outgoing RTCP RR reporter is **off by default** (see
-    /// [`Self::listen_with_rtcp`] for the experimental opt-in and its
-    /// limitations). RTCP *reception* is unaffected.
     pub fn listen(url: &str) -> Result<Self, ConnectError> {
         let parsed = RtpUrl::parse(url).map_err(ConnectError::Url)?;
-        Self::listen_with_rtcp(&parsed, false)
+        Self::listen_with(&parsed)
     }
 
-    /// Bind using an already-parsed URL. The outgoing RTCP RR reporter is
-    /// **off by default** (see [`Self::listen_with_rtcp`]).
+    /// Bind using an already-parsed URL — convenient for callers that hold
+    /// an `RtpUrl` (e.g., binding crates).
     pub fn listen_with(url: &RtpUrl) -> Result<Self, ConnectError> {
-        Self::listen_with_rtcp(url, false)
-    }
-
-    /// Bind using an already-parsed URL with an explicit RTCP toggle.
-    ///
-    /// `rtcp_enabled = true` binds the RTCP companion socket on `port + 1`
-    /// and spawns the periodic RR-emitter thread. `rtcp_enabled = false`
-    /// (the default for [`Self::listen`] / [`Self::listen_with`]) skips
-    /// both.
-    ///
-    /// # Experimental: the RR reporter emits placeholder statistics
-    ///
-    /// The periodic RR reporter is **experimental and off by default**. It
-    /// currently emits **placeholder (zero) statistics** — there are no
-    /// live receiver counters wired into the RR (it carries an empty report
-    /// block list, so no fraction-lost / cumulative-lost / jitter / last-SR
-    /// values reach the peer). As such it is **NOT RFC 3550-conformant**
-    /// and must not be relied on by senders for receiver-side reception
-    /// quality. Enabling it is only useful for exercising the RTCP
-    /// socket-pair plumbing. RTCP *reception* (ingesting peer SR/RR into
-    /// [`Self::rtcp_stats`] and the projected [`SocketStats`] fields, e.g.
-    /// the TCP-interleaved RTSP `rtt_us` / `packets_lost_send` path) is a
-    /// separate, working path and is not affected by this toggle.
-    pub fn listen_with_rtcp(url: &RtpUrl, rtcp_enabled: bool) -> Result<Self, ConnectError> {
         if url.pkt_size.is_some() {
             return Err(ConnectError::Url(RtpUrlError::RecvPktSize));
         }
@@ -769,8 +603,7 @@ impl RtpRecvTransport {
         } else {
             UdpSocket::bind(local).map_err(ConnectError::Io)?
         };
-        // `?rcvbuf=` sizes the RTP socket only; the RTCP companion carries
-        // a few small reports per second and keeps the OS default.
+        // `?rcvbuf=` sizes the receive socket.
         set_socket_buffers(&socket, url.rcvbuf, None).map_err(ConnectError::Io)?;
         // For the multicast path this re-sets SO_RCVTIMEO to the same
         // value the helper already applied — redundant but harmless.
@@ -781,100 +614,7 @@ impl RtpRecvTransport {
             apply_multicast_recv_join(&socket, ip, url.iface.as_deref())
                 .map_err(udp_err_to_connect)?;
         }
-        // RTCP companion socket bound on `port + 1` per RFC 3550 §11.
-        // Use the RTP socket's actual local port (kernel-assigned when
-        // url.port == 0) — `url.port + 1` would resolve to port 1 in
-        // that case, which is privileged.
-        let rtcp_socket = if rtcp_enabled {
-            let actual_rtp_port = socket.local_addr().map_err(ConnectError::Io)?.port();
-            // Guard: if the kernel handed us port 65535 (or the caller
-            // requested it explicitly), there is no valid RTCP companion
-            // port. Skip the RTCP socket rather than wrapping to 0.
-            // Mirrors the guard in `bind_server_udp_pair` in rtsp/server/handlers.rs.
-            if let Some(rtcp_port) = actual_rtp_port.checked_add(1) {
-                let rtcp_local: SocketAddr = if is_multicast {
-                    match ip {
-                        IpAddr::V4(_) => SocketAddr::new("0.0.0.0".parse().unwrap(), rtcp_port),
-                        IpAddr::V6(_) => SocketAddr::new("::".parse().unwrap(), rtcp_port),
-                    }
-                } else {
-                    SocketAddr::new(ip, rtcp_port)
-                };
-                Some(if is_multicast {
-                    // SO_REUSEADDR (+ SO_REUSEPORT on BSD/macOS) allows a
-                    // second receiver to bind the same RTCP companion port
-                    // (group:port+1). The helper's SO_RCVTIMEO is inert —
-                    // rtcp_socket is never read from on the recv transport
-                    // path. SO_SNDTIMEO limits the RR-emitter's send_to
-                    // but that result is discarded (`let _ = ...`).
-                    bind_udp_socket_multicast(rtcp_local).map_err(ConnectError::Io)?
-                } else {
-                    UdpSocket::bind(rtcp_local).map_err(ConnectError::Io)?
-                })
-            } else {
-                tracing::warn!(
-                    "RTP port 65535 has no valid RTCP companion; \
-                     RTCP companion socket skipped"
-                );
-                None
-            }
-        } else {
-            None
-        };
         let ssrc = url.ssrc.unwrap_or_else(random_u32);
-        let rtcp_stats = Arc::new(Mutex::new(RtcpStats::default()));
-        // Spawn the RR-emitter thread when RTCP is enabled. The target
-        // is symmetric — RTP-port + 1 of the peer we last received
-        // from. With no peer seen yet, target the URL's host:port+1
-        // (the symmetric assumption for a known-destination receiver).
-        let rtcp_reporter = rtcp_socket.as_ref().and_then(|sock| {
-            let sock_clone = match sock.try_clone() {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!(error = %e, "rtcp socket try_clone failed; skipping reporter");
-                    return None;
-                }
-            };
-            let stats_clone = rtcp_stats.clone();
-            // For non-multicast, the URL host is the address we
-            // bound to — so the symmetric RTCP target is host:port+1.
-            // For multicast, there's no per-peer notion here; the
-            // thread is still spawned so the rr_packets_sent counter
-            // ticks deterministically against the URL host.
-            //
-            // Guard: url.port 65535 has no valid companion port.
-            // The RTCP socket is already None in that case (guarded
-            // above), so this arm is unreachable at 65535 — the
-            // checked_add is a belt-and-suspenders defence.
-            let Some(rtcp_companion_port) = url.port.checked_add(1) else {
-                tracing::warn!("url port 65535 has no RTCP companion; skipping RR reporter");
-                return None;
-            };
-            let rtcp_target = SocketAddr::new(ip, rtcp_companion_port);
-            Some(RtcpReporterHandle::spawn(move || {
-                let rr = ReceiverReport {
-                    ssrc,
-                    report_blocks: Vec::new(),
-                };
-                let cname = format!("tst-rtp-{ssrc:08x}");
-                let sdes = SdesPacket { ssrc, cname };
-                // Locally-built, well-formed packets (no report blocks,
-                // short CNAME) — encode is fallible now but never fails
-                // here; skip the send on the (unreachable) error.
-                let (Ok(mut compound), Ok(sdes_bytes)) = (rr.encode(), sdes.encode()) else {
-                    tracing::error!(
-                        "internal: locally-built RTCP RR/SDES failed to encode; skipping send"
-                    );
-                    debug_assert!(false, "locally-built RTCP RR/SDES must always encode");
-                    return;
-                };
-                compound.extend_from_slice(&sdes_bytes);
-                let _ = sock_clone.send_to(&compound, rtcp_target);
-                if let Ok(mut g) = stats_clone.lock() {
-                    g.rr_packets_sent = g.rr_packets_sent.saturating_add(1);
-                }
-            }))
-        });
         Ok(Self {
             source: Some(Source::Udp(socket)),
             cancel: RtpCancelHandle::new(),
@@ -884,9 +624,7 @@ impl RtpRecvTransport {
             source_pin: url.source.map(|ip| ip.to_canonical()),
             source_rejected: 0,
             scratch: vec![0u8; RECV_SCRATCH_LEN],
-            rtcp_socket,
-            rtcp_stats,
-            rtcp_reporter,
+            rtcp_stats: Arc::new(Mutex::new(RtcpStats::default())),
             ssrc,
             recv_timeout: url.recv_timeout,
             end_reason: EndReasonSlot::default(),
@@ -919,9 +657,7 @@ impl RtpRecvTransport {
             source_pin: None,
             source_rejected: 0,
             scratch: vec![0u8; RECV_SCRATCH_LEN],
-            rtcp_socket: None,
             rtcp_stats: Arc::new(Mutex::new(RtcpStats::default())),
-            rtcp_reporter: None,
             ssrc,
             recv_timeout: None,
             end_reason: EndReasonSlot::default(),
@@ -959,9 +695,7 @@ impl RtpRecvTransport {
             // scratch before recv_bytes decodes the header and strips the
             // payload — same buffer + ceiling as the UDP arm.
             scratch: vec![0u8; RECV_SCRATCH_LEN],
-            rtcp_socket: None,
             rtcp_stats: Arc::new(Mutex::new(RtcpStats::default())),
-            rtcp_reporter: None,
             ssrc,
             recv_timeout: None,
             end_reason: EndReasonSlot::default(),
@@ -1791,8 +1525,7 @@ mod tests {
     /// up front (the transport exposes no local-addr getter and the
     /// wake-packet unblock lever below needs a destination), so the test
     /// discovers-then-releases an ephemeral port and retries the build
-    /// on the rare cross-process steal. RTCP stays at the builder
-    /// default (off) — no companion port is involved.
+    /// on the rare cross-process steal.
     #[test]
     fn configured_recv_timeout_bounds_udp_trait_recv_bytes() {
         let (mut t, port) = {
@@ -2076,15 +1809,13 @@ mod tests {
     }
 
     /// Guard: RtpTransport::connect with port 65535 must not panic (no u16
-    /// overflow in RTCP companion port arithmetic). Ok or Err both accepted.
+    /// overflow anywhere on the bind path). Ok or Err both accepted.
     #[test]
     fn rtp_connect_port_65535_does_not_panic() {
         let _ = RtpTransport::connect("rtp://127.0.0.1:65535");
     }
 
     /// Guard: RtpRecvTransport::listen with port 65535 must not panic.
-    /// The RTCP companion would need port 65536, which is invalid — the
-    /// bind must be skipped, not overflowed.
     #[test]
     fn rtp_listen_port_65535_does_not_panic() {
         let _ = RtpRecvTransport::listen("rtp://127.0.0.1:65535");

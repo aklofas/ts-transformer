@@ -488,7 +488,7 @@ mod tests {
 
     /// `?pkt_size=` is documented as "send-side only and is rejected on
     /// receive URLs" (see `tst_rtp_recv_open`'s doc) — but that rejection
-    /// lives inside `RtpRecvTransport::listen_with_rtcp`, which only
+    /// lives inside `RtpRecvTransport::listen_with`, which only
     /// fires if the open path hands it the ORIGINAL parsed `RtpUrl`.
     /// Regression test for the same class of bug `recv_timeout` hit: the
     /// prior field-by-field builder rebuild silently dropped `pkt_size`

@@ -18,9 +18,8 @@
 //! REDIRECT, per-request timeouts). RTCP RR/SR ingest is wired on the
 //! TCP-interleaved (RFC 7826 §14) client path: peer RR populates
 //! `socket_stats().packets_lost_send` from the cumulative-lost field;
-//! `socket_stats().rtt_us` stays 0 (the RFC 3550 §6.4.1 RTT calculation,
-//! `rtcp::ingest::compute_rtt_us`, is not wired into ingest). UDP-side RTCP
-//! ingest is deferred.
+//! `socket_stats().rtt_us` stays 0. No transport sends RTCP, and RTCP on the
+//! UDP transports is not received.
 //!
 //! This crate provides the RTP-specific concrete types. The
 //! [`Transport`](tst_core::transport::Transport) /
@@ -61,8 +60,7 @@ pub use url::{DEFAULT_PKT_SIZE, RtpUrl, UrlError as RtpUrlError};
 // RTSP client.
 pub use builder::RtspClientBuilder;
 pub use error::RtspError;
-pub use rtcp::ingest::{SrAnchor, compute_rtt_us, ingest_rr, ingest_sr, system_time_to_ntp_mid};
-pub use rtcp::reporter::{RTCP_BASE_INTERVAL, RtcpReporterHandle};
+pub use rtcp::ingest::{SrAnchor, ingest_rr, ingest_sr};
 pub use rtcp::stats::RtcpStats;
 pub use rtcp::{ReceiverReport, ReportBlock, RtcpError, RtcpPacketType, SdesPacket, SenderReport};
 pub use rtsp::auth::{AuthChallenge, DigestAlgorithm, DigestChallenge, DigestContext};

@@ -9,7 +9,6 @@
 //! scope.
 
 pub mod ingest;
-pub mod reporter;
 pub mod stats;
 
 use bytes::{Buf, BufMut};

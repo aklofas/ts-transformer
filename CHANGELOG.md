@@ -69,6 +69,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with their two constructor parameters (the public constructor now takes 14
   arguments) — never thrown.
 
+### Removed — tst-rtp (BREAKING)
+
+- The RTCP sender/receiver report emitter is removed: `RtpSocketBuilder::rtcp`,
+  `RtpRecvSocketBuilder::rtcp`, `RtpTransport::connect_with_rtcp` and
+  `RtpRecvTransport::listen_with_rtcp` (use `connect_with` / `listen_with`),
+  `RtcpReporterHandle`, `RTCP_BASE_INTERVAL`,
+  `RtcpStats::{sr_packets_sent, rr_packets_sent}` and
+  `RtpTransport::rtcp_stats`. The emitter was off by default and sent reports
+  whose statistics were all zero. No RTP transport binds the `port + 1`
+  companion socket any more. RTCP reception on the interleaved RTSP path is
+  unchanged: `RtpRecvTransport::rtcp_stats` and `socket_stats()` still fill
+  from the peer's reports.
+- `compute_rtt_us` and `system_time_to_ntp_mid` are removed. Round-trip time
+  was never computed; `rtt_us` reports 0, as before.
+
 ### Changed — tst-core (BREAKING)
 
 - `tst_core::transport::conformance` (the transport conformance kit) is now

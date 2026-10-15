@@ -8,8 +8,8 @@
 //! `tst-srt` — `&mut self -> &mut Self` setters, with a terminal `build`
 //! that takes `self` by value.
 //!
-//! `build` delegates to [`RtpTransport::connect_with_rtcp`] /
-//! [`RtpRecvTransport::listen_with_rtcp`]; the builder is sugar, not a
+//! `build` delegates to [`RtpTransport::connect_with`] /
+//! [`RtpRecvTransport::listen_with`]; the builder is sugar, not a
 //! parallel implementation.
 
 #[cfg(feature = "rtsp-server-tls")]
@@ -31,11 +31,6 @@ use crate::url::{RtpUrl, RtspTransportPref, RtspUrl, UrlError as RtpUrlError};
 #[derive(Debug, Clone)]
 pub struct RtpSocketBuilder {
     url: RtpUrl,
-    /// Whether to auto-bind the RTCP companion socket on `port + 1`
-    /// per RFC 3550 §11 and spawn the periodic SR reporter. Default
-    /// `false` — the reporter is experimental and emits placeholder
-    /// (zero) statistics (see [`Self::rtcp`]).
-    rtcp: bool,
 }
 
 impl RtpSocketBuilder {
@@ -56,16 +51,13 @@ impl RtpSocketBuilder {
                 sndbuf: None,
                 source: None,
             },
-            rtcp: false,
         }
     }
 
     /// Parse an `rtp://host:port[?...]` URL into a builder.
     pub fn from_url(url: &str) -> Result<Self, RtpUrlError> {
-        let parsed = RtpUrl::parse(url)?;
         Ok(Self {
-            url: parsed,
-            rtcp: false,
+            url: RtpUrl::parse(url)?,
         })
     }
 
@@ -95,22 +87,9 @@ impl RtpSocketBuilder {
         self
     }
 
-    /// Enable or disable the auto-bound RTCP companion socket on
-    /// `port + 1` and the periodic SR reporter thread. Default `false`.
-    ///
-    /// The SR reporter is **experimental**: when enabled it emits
-    /// **placeholder (zero) statistics** (no live sender counters wired
-    /// in) and is therefore **NOT RFC 3550-conformant**. Pass `true`
-    /// only to exercise the RTCP socket-pair plumbing. RTCP *reception*
-    /// is unaffected by this toggle.
-    pub fn rtcp(mut self, enabled: bool) -> Self {
-        self.rtcp = enabled;
-        self
-    }
-
     /// Build the transport.
     pub fn build(self) -> Result<RtpTransport, ConnectError> {
-        RtpTransport::connect_with_rtcp(&self.url, self.rtcp)
+        RtpTransport::connect_with(&self.url)
     }
 }
 
@@ -119,11 +98,6 @@ impl RtpSocketBuilder {
 #[derive(Debug, Clone)]
 pub struct RtpRecvSocketBuilder {
     url: RtpUrl,
-    /// Whether to auto-bind the RTCP companion socket on `port + 1`
-    /// per RFC 3550 §11 and spawn the periodic RR reporter. Default
-    /// `false` — the reporter is experimental and emits placeholder
-    /// (zero) statistics (see [`Self::rtcp`]).
-    rtcp: bool,
 }
 
 impl RtpRecvSocketBuilder {
@@ -145,16 +119,13 @@ impl RtpRecvSocketBuilder {
                 sndbuf: None,
                 source: None,
             },
-            rtcp: false,
         }
     }
 
     /// Parse an `rtp://host:port[?...]` URL into a builder.
     pub fn from_url(url: &str) -> Result<Self, RtpUrlError> {
-        let parsed = RtpUrl::parse(url)?;
         Ok(Self {
-            url: parsed,
-            rtcp: false,
+            url: RtpUrl::parse(url)?,
         })
     }
 
@@ -164,22 +135,9 @@ impl RtpRecvSocketBuilder {
         self
     }
 
-    /// Enable or disable the auto-bound RTCP companion socket on
-    /// `port + 1` and the periodic RR reporter thread. Default `false`.
-    ///
-    /// The RR reporter is **experimental**: when enabled it emits
-    /// **placeholder (zero) statistics** (empty report blocks, no live
-    /// receiver counters) and is therefore **NOT RFC 3550-conformant**.
-    /// Pass `true` only to exercise the RTCP socket-pair plumbing. RTCP
-    /// *reception* is unaffected by this toggle.
-    pub fn rtcp(mut self, enabled: bool) -> Self {
-        self.rtcp = enabled;
-        self
-    }
-
     /// Build the recv transport.
     pub fn build(self) -> Result<RtpRecvTransport, ConnectError> {
-        RtpRecvTransport::listen_with_rtcp(&self.url, self.rtcp)
+        RtpRecvTransport::listen_with(&self.url)
     }
 }
 
@@ -715,7 +673,7 @@ mod tests {
     #[test]
     fn socket_builder_round_trip_via_build() {
         // Use port 1 — likely refused on bind→connect→sendto, but the
-        // builder fields should propagate through connect_with_rtcp cleanly.
+        // builder fields should propagate through connect_with cleanly.
         let mut b = RtpSocketBuilder::new("127.0.0.1", 1);
         b.pkt_size(376).ssrc(0xABCDEF01);
         let t = b

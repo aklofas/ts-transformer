@@ -1163,34 +1163,22 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## RTCP statistics reporting (RFC 3550 §6.4 Sender/Receiver Reports)
 
-- **Status:** Deferred. The RTCP encoders are correct — SR (Sender
-  Report) and RR (Receiver Report) packets are transmitted on the RTCP
-  schedule — but all statistics fields are placeholder zeros: NTP
-  timestamp, RTP timestamp, sender packet and octet counts in SR, and all
-  RR report-block fields (fraction lost, cumulative lost,
-  extended-highest-sequence-number, interarrival jitter, LSR, DLSR).
-  The receive-path round-trip-time estimate is part of this deferral:
-  `RtcpStats::rtt_us` always reports 0. The earlier computation mixed
-  clock domains (it seeded its anchor from the peer's SR NTP midpoint
-  instead of echoing our own SR per RFC 3550 §6.4.1) and produced garbage
-  on the rare path where it fired, so it stays unwired; the helper itself
-  now saturates its µs conversion and reports anything above 60 s as "no
-  estimate" instead of a truncated number, and a real RTT needs the
-  LSR/DLSR feedback loop described below.
-- **Why deferred:** Populating the SR sender fields is a contained
-  counter-sharing refactor, but full RR report blocks require a
-  substantially larger new subsystem: RFC 3550 §A.1 sequence and cycle
-  tracking, §A.8 interarrival-jitter estimation, and loss accounting must
-  be built from scratch on the receive side, along with UDP-side RTCP
-  reception (not yet implemented) to supply the LSR/DLSR feedback loop.
-  Additionally, the production RTSP server and client paths emit no RTCP
-  today; adding statistics reporting on those paths is greenfield wiring.
-  The combined scope is sizable enough to be its own release-cycle
-  deliverable.
-- **Trigger to revisit:** A consumer needs RFC 3550–conformant RTCP
-  statistics or RR feedback — for example, for congestion control, QoS
-  monitoring, or interoperability with an endpoint that acts on received
-  SR/RR values.
+- **Status:** Not implemented. No RTP transport sends RTCP or binds the RTCP
+  companion port, and the UDP transports do not receive RTCP. Receive-side
+  statistics are not computed: RFC 3550 §A.1 sequence and cycle tracking,
+  §A.8 interarrival jitter, loss accounting, sender packet and octet counts,
+  and the LSR/DLSR round-trip time. RTCP reception on the interleaved RTSP
+  path is implemented: a peer's receiver reports fill
+  `RtpRecvTransport::rtcp_stats()` and `socket_stats().packets_lost_send`,
+  and a publisher's sender reports place KLV on the video timeline of a
+  publish mount. `rtt_us` reports 0 everywhere.
+- **Why deferred:** The statistics are a new subsystem on the receive side
+  (sequence/cycle tracking, jitter and loss accounting) plus SR/RR emission
+  and UDP-side reception to close the LSR/DLSR loop. Scope when added: M–L,
+  including the three bindings.
+- **Trigger to revisit:** A consumer acting on SR/RR values (bitrate
+  adaptation, QoS monitoring), or a peer that ends sessions without receiver
+  reports.
 
 ## `RtspSession.stats()` / `RtspStats` binding accessor (Python / JVM)
 

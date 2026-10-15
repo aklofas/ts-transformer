@@ -1,5 +1,5 @@
 //! RTCP-derived counters, exposed alongside [`tst_core::transport::SocketStats`]
-//! via `RtpRecvTransport::rtcp_stats` / `RtpTransport::rtcp_stats`.
+//! via `RtpRecvTransport::rtcp_stats`.
 
 use std::time::SystemTime;
 
@@ -10,8 +10,6 @@ use crate::rtcp::ingest::SrAnchor;
 pub struct RtcpStats {
     pub rr_packets_received: u64,
     pub sr_packets_received: u64,
-    pub rr_packets_sent: u64,
-    pub sr_packets_sent: u64,
     /// Last RR ingest timestamp (system time of `recv`).
     pub last_rr_ts: Option<SystemTime>,
     /// Last SR ingest timestamp.
@@ -33,8 +31,7 @@ pub struct RtcpStats {
     /// [`tst_core::transport::SocketStats::rtt_us`] by
     /// [`crate::transport::RtpRecvTransport`]'s `socket_stats`.
     pub rtt_us: u32,
-    /// Anchor from the last received SR. Held so that the next RR
-    /// referencing it can drive [`crate::rtcp::ingest::compute_rtt_us`].
+    /// Anchor from the last received SR.
     pub last_sr_anchor: Option<SrAnchor>,
     /// Number of RTCP packets dropped due to parse errors.
     pub rr_parse_errors: u64,
