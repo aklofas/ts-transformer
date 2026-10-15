@@ -13,6 +13,13 @@ use super::packs::{
     PayloadList, SensorFrameRate, ViewDomain, WavelengthRecord, Waypoint, WeaponsStore,
 };
 
+/// One ST 0601 UAS Datalink Local Set, one field per tag.
+///
+/// A field whose doc gives an "encode range" is checked when the record is
+/// encoded: under the default [`OutOfRangePolicy::Error`] a value outside it
+/// raises [`crate::error::KlvEncodeError::OutOfRange`]; see
+/// [`OutOfRangePolicy`] for the tags that can carry the spec's Out-of-Range
+/// indicator instead.
 #[must_use]
 #[derive(Debug, Clone, PartialEq)]
 pub struct UasDatalinkLs {
@@ -33,50 +40,40 @@ pub struct UasDatalinkLs {
 
     // Platform state
     /// Item 5: Platform Heading Angle — encode range [0, 360] deg (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub platform_heading_deg: Option<f64>,
     /// Item 6: Platform Pitch Angle — encode range [-20, 20] deg (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`]; for
+    /// For
     /// the full ±90° range use [`Self::platform_pitch_full_deg`] (Item 90).
     pub platform_pitch_deg: Option<f64>,
     /// Item 7: Platform Roll Angle — encode range [-50, 50] deg (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`]; for
+    /// For
     /// the full ±90° range use [`Self::platform_roll_full_deg`] (Item 91).
     pub platform_roll_deg: Option<f64>,
     /// Item 8: Platform True Airspeed — encode range [0, 255] m/s (uint8).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub platform_true_airspeed: Option<f64>,
     /// Item 9: Platform Indicated Airspeed — encode range [0, 255] m/s (uint8).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub platform_indicated_airspeed: Option<f64>,
     /// Item 90: Platform Pitch Angle (Full) — encode range [-90, 90] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Full-range twin of [`Self::platform_pitch_deg`] (Item 6, ±20°).
     pub platform_pitch_full_deg: Option<f64>,
     /// Item 91: Platform Roll Angle (Full) — encode range [-90, 90] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Full-range twin of [`Self::platform_roll_deg`] (Item 7, ±50°).
     pub platform_roll_full_deg: Option<f64>,
     /// Item 94: MIIS Core Identifier (MISB ST 1204 binary format).
     /// Raw bytes — decode/inspect via [`crate::klv::st1204`].
     pub miis_core_id: Option<Vec<u8>>,
     /// Item 50: Platform Angle of Attack — encode range [-20, 20] deg (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub platform_angle_of_attack_deg: Option<f64>,
 
     // Sensor pose & position
     /// Item 13: Sensor Latitude — encode range [-90, 90] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub sensor_lat_deg: Option<f64>,
     /// Item 14: Sensor Longitude — encode range [-180, 180] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub sensor_lon_deg: Option<f64>,
     /// Item 15: Sensor True Altitude — encode range [-900, 19000] m (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub sensor_alt_m: Option<f64>,
     /// Item 75: Sensor Ellipsoid Height (WGS84) — encode range [-900, 19000] m (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`];
-    /// for the extended [-900, 40000] m range use
+    /// For the extended [-900, 40000] m range use
     /// [`Self::sensor_ellipsoid_height_extended_m`] (Item 104, IMAPB).
     /// Per ST 0601.19 requirements 0601.9-20/-21, a decoder that
     /// understands Item 104 shall use it and ignore this restricted
@@ -85,28 +82,21 @@ pub struct UasDatalinkLs {
     /// when producing new records.
     pub sensor_ellipsoid_height_m: Option<f64>,
     /// Item 16: Sensor Horizontal FOV — encode range [0, 180] deg (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub sensor_hfov_deg: Option<f64>,
     /// Item 17: Sensor Vertical FOV — encode range [0, 180] deg (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub sensor_vfov_deg: Option<f64>,
     /// Item 18: Sensor Relative Azimuth — encode range [0, 360] deg (uint32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub sensor_rel_az_deg: Option<f64>,
     /// Item 19: Sensor Relative Elevation — encode range [-180, 180] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub sensor_rel_el_deg: Option<f64>,
     /// Item 20: Sensor Relative Roll — encode range [0, 360] deg (uint32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub sensor_rel_roll_deg: Option<f64>,
 
     // Ranging & frame center
     /// Item 21: Slant Range — encode range [0, 5000000] m (uint32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub slant_range_m: Option<f64>,
     /// Item 22: Target Width — encode range [0, 10000] m (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`];
-    /// for the extended [0, 1500000] m range use
+    /// For the extended [0, 1500000] m range use
     /// [`Self::target_width_extended_m`] (Item 96, IMAPB).
     /// Per ST 0601.19 requirements 0601.9-20/-21, a decoder that
     /// understands Item 96 shall use it and ignore this restricted
@@ -115,123 +105,100 @@ pub struct UasDatalinkLs {
     /// producing new records.
     pub target_width_m: Option<f64>,
     /// Item 23: Frame Center Latitude — encode range [-90, 90] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub frame_center_lat_deg: Option<f64>,
     /// Item 24: Frame Center Longitude — encode range [-180, 180] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub frame_center_lon_deg: Option<f64>,
     /// Item 25: Frame Center Elevation — encode range [-900, 19000] m (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub frame_center_elev_m: Option<f64>,
     /// Item 78: Frame Center Height Above Ellipsoid (WGS84) — encode range
-    /// [-900, 19000] m (uint16). Values outside raise
-    /// [`crate::error::KlvEncodeError::OutOfRange`].
+    /// [-900, 19000] m (uint16).
     pub frame_center_ellipsoid_height_m: Option<f64>,
 
     // Image corners — offsets from frame center (tags 26-33)
     /// Item 26: Offset Corner Latitude Point 1 — encode range [-0.075, 0.075] deg (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`]; for the full
+    /// For the full
     /// latitude range use [`Self::corner_lat_p1_deg`] (Item 82, ±90°).
     pub corner_lat_offset_p1_deg: Option<f64>,
     /// Item 27: Offset Corner Longitude Point 1 — encode range [-0.075, 0.075] deg (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`]; for the full
+    /// For the full
     /// longitude range use [`Self::corner_lon_p1_deg`] (Item 83, ±180°).
     pub corner_lon_offset_p1_deg: Option<f64>,
     /// Item 28: Offset Corner Latitude Point 2 — encode range [-0.075, 0.075] deg (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`]; for the full
+    /// For the full
     /// latitude range use [`Self::corner_lat_p2_deg`] (Item 84, ±90°).
     pub corner_lat_offset_p2_deg: Option<f64>,
     /// Item 29: Offset Corner Longitude Point 2 — encode range [-0.075, 0.075] deg (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`]; for the full
+    /// For the full
     /// longitude range use [`Self::corner_lon_p2_deg`] (Item 85, ±180°).
     pub corner_lon_offset_p2_deg: Option<f64>,
     /// Item 30: Offset Corner Latitude Point 3 — encode range [-0.075, 0.075] deg (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`]; for the full
+    /// For the full
     /// latitude range use [`Self::corner_lat_p3_deg`] (Item 86, ±90°).
     pub corner_lat_offset_p3_deg: Option<f64>,
     /// Item 31: Offset Corner Longitude Point 3 — encode range [-0.075, 0.075] deg (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`]; for the full
+    /// For the full
     /// longitude range use [`Self::corner_lon_p3_deg`] (Item 87, ±180°).
     pub corner_lon_offset_p3_deg: Option<f64>,
     /// Item 32: Offset Corner Latitude Point 4 — encode range [-0.075, 0.075] deg (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`]; for the full
+    /// For the full
     /// latitude range use [`Self::corner_lat_p4_deg`] (Item 88, ±90°).
     pub corner_lat_offset_p4_deg: Option<f64>,
     /// Item 33: Offset Corner Longitude Point 4 — encode range [-0.075, 0.075] deg (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`]; for the full
+    /// For the full
     /// longitude range use [`Self::corner_lon_p4_deg`] (Item 89, ±180°).
     pub corner_lon_offset_p4_deg: Option<f64>,
 
     // Image corners — full lat/lon (tags 82-89, ST 0601.13+)
     /// Item 82: Corner Latitude Point 1 (Full) — encode range [-90, 90] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Full-range twin of [`Self::corner_lat_offset_p1_deg`] (Item 26, ±0.075°).
     pub corner_lat_p1_deg: Option<f64>,
     /// Item 83: Corner Longitude Point 1 (Full) — encode range [-180, 180] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Full-range twin of [`Self::corner_lon_offset_p1_deg`] (Item 27, ±0.075°).
     pub corner_lon_p1_deg: Option<f64>,
     /// Item 84: Corner Latitude Point 2 (Full) — encode range [-90, 90] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Full-range twin of [`Self::corner_lat_offset_p2_deg`] (Item 28, ±0.075°).
     pub corner_lat_p2_deg: Option<f64>,
     /// Item 85: Corner Longitude Point 2 (Full) — encode range [-180, 180] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Full-range twin of [`Self::corner_lon_offset_p2_deg`] (Item 29, ±0.075°).
     pub corner_lon_p2_deg: Option<f64>,
     /// Item 86: Corner Latitude Point 3 (Full) — encode range [-90, 90] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Full-range twin of [`Self::corner_lat_offset_p3_deg`] (Item 30, ±0.075°).
     pub corner_lat_p3_deg: Option<f64>,
     /// Item 87: Corner Longitude Point 3 (Full) — encode range [-180, 180] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Full-range twin of [`Self::corner_lon_offset_p3_deg`] (Item 31, ±0.075°).
     pub corner_lon_p3_deg: Option<f64>,
     /// Item 88: Corner Latitude Point 4 (Full) — encode range [-90, 90] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Full-range twin of [`Self::corner_lat_offset_p4_deg`] (Item 32, ±0.075°).
     pub corner_lat_p4_deg: Option<f64>,
     /// Item 89: Corner Longitude Point 4 (Full) — encode range [-180, 180] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Full-range twin of [`Self::corner_lon_offset_p4_deg`] (Item 33, ±0.075°).
     pub corner_lon_p4_deg: Option<f64>,
 
     // Target location & tracking (tags 40-46)
     /// Item 40: Target Location Latitude — encode range [-90, 90] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub target_location_lat_deg: Option<f64>,
     /// Item 41: Target Location Longitude — encode range [-180, 180] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub target_location_lon_deg: Option<f64>,
     /// Item 42: Target Location Elevation — encode range [-900, 19000] m (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub target_location_elev_m: Option<f64>,
     /// Item 43: Target Track Gate Width — encode range [0, 510] px (uint8).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub target_track_gate_width_px: Option<f64>,
     /// Item 44: Target Track Gate Height — encode range [0, 510] px (uint8).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub target_track_gate_height_px: Option<f64>,
     /// Item 45: Target Error Estimate - CE90 — encode range [0, 4095] m (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub target_error_ce90_m: Option<f64>,
     /// Item 46: Target Error Estimate - LE90 — encode range [0, 4095] m (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub target_error_le90_m: Option<f64>,
 
     // Weather / atmospheric (tags 35-38, 49, 53-55)
     /// Item 35: Wind Direction — encode range [0, 360] deg (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub wind_direction_deg: Option<f64>,
     /// Item 36: Wind Speed — encode range [0, 100] m/s (uint8).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub wind_speed: Option<f64>,
     /// Item 37: Static Pressure — encode range [0, 5000] mbar (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub static_pressure_mbar: Option<f64>,
     /// Item 38: Density Altitude — encode range [-900, 19000] m (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`];
-    /// for the extended [-900, 40000] m range use
+    /// For the extended [-900, 40000] m range use
     /// [`Self::density_altitude_extended_m`] (Item 103, IMAPB).
     /// Per ST 0601.19 requirements 0601.9-20/-21, a decoder that
     /// understands Item 103 shall use it and ignore this restricted
@@ -240,55 +207,41 @@ pub struct UasDatalinkLs {
     /// producing new records.
     pub density_altitude_m: Option<f64>,
     /// Item 49: Differential Pressure — encode range [0, 5000] mbar (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub differential_pressure_mbar: Option<f64>,
     /// Item 53: Airfield Barometric Pressure — encode range [0, 5000] mbar (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub airfield_barometric_pressure_mbar: Option<f64>,
     /// Item 54: Airfield Elevation — encode range [-900, 19000] m (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub airfield_elevation_m: Option<f64>,
     /// Item 55: Relative Humidity — encode range [0, 100] % (uint8).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub relative_humidity_pct: Option<f64>,
 
     // Extended platform state (tags 51, 52, 56-58, 64, 92, 93)
     /// Item 51: Platform Vertical Speed — encode range [-180, 180] m/s (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub platform_vertical_speed: Option<f64>,
     /// Item 52: Platform Sideslip Angle — encode range [-20, 20] deg (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`]; for
+    /// For
     /// the full ±180° range use [`Self::platform_sideslip_full_deg`] (Item 93).
     pub platform_sideslip_deg: Option<f64>,
     /// Item 56: Platform Ground Speed — encode range [0, 255] m/s (uint8).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub platform_ground_speed: Option<f64>,
     /// Item 57: Ground Range — encode range [0, 5000000] m (uint32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub ground_range_m: Option<f64>,
     /// Item 58: Platform Fuel Remaining — encode range [0, 10000] kg (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub platform_fuel_remaining_kg: Option<f64>,
     /// Item 64: Platform Magnetic Heading — encode range [0, 360] deg (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub platform_magnetic_heading_deg: Option<f64>,
     /// Item 92: Platform Angle of Attack (Full) — encode range [-90, 90] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub platform_angle_of_attack_full_deg: Option<f64>,
     /// Item 93: Platform Sideslip Angle (Full) — encode range [-180, 180] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Full-range twin of [`Self::platform_sideslip_deg`] (Item 52, ±20°).
     pub platform_sideslip_full_deg: Option<f64>,
 
     // Alternate platform (tags 67-69, 71, 76)
     /// Item 67: Alternate Platform Latitude — encode range [-90, 90] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub alternate_platform_lat_deg: Option<f64>,
     /// Item 68: Alternate Platform Longitude — encode range [-180, 180] deg (int32).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub alternate_platform_lon_deg: Option<f64>,
     /// Item 69: Alternate Platform Altitude — encode range [-900, 19000] m (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Not to be confused with [`Self::alternate_platform_ellipsoid_height_extended_m`]
     /// (Item 105) — Item 105 extends Item 76 (Alternate Platform Ellipsoid
     /// Height, a WGS84 ellipsoid-height item), not this plain-altitude item;
@@ -299,11 +252,9 @@ pub struct UasDatalinkLs {
     /// on the 76/105 pair (see [`Self::alternate_platform_ellipsoid_height_m`]).
     pub alternate_platform_alt_m: Option<f64>,
     /// Item 71: Alternate Platform Heading — encode range [0, 360] deg (uint16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub alternate_platform_heading_deg: Option<f64>,
     /// Item 76: Alternate Platform Ellipsoid Height (WGS84) — encode range
-    /// [-900, 19000] m (uint16). Values outside raise
-    /// [`crate::error::KlvEncodeError::OutOfRange`]; for the extended
+    /// [-900, 19000] m (uint16). For the extended
     /// [-900, 40000] m range use
     /// [`Self::alternate_platform_ellipsoid_height_extended_m`] (Item 105, IMAPB).
     /// Per ST 0601.19 requirements 0601.9-20/-21, a decoder that
@@ -316,10 +267,8 @@ pub struct UasDatalinkLs {
 
     // Sensor velocity (tags 79-80)
     /// Item 79: Sensor North Velocity — encode range [-327, 327] m/s (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub sensor_north_velocity: Option<f64>,
     /// Item 80: Sensor East Velocity — encode range [-327, 327] m/s (int16).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub sensor_east_velocity: Option<f64>,
 
     // Extended-range items (ST 1201.5 IMAPB-encoded, tags 96-134).
@@ -330,14 +279,12 @@ pub struct UasDatalinkLs {
     // BelowMin/AboveMax special (see `Self::imapb_specials`).
     /// Item 96: Target Width Extended — ST 1201.5 IMAPB range
     /// [0, 1500000] m, wire length 1..=8 bytes (encode emits 3 bytes).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Extended-range twin of [`Self::target_width_m`] (Item 22, uint16,
     /// [0, 10000] m) — see that field's docs for the ST 0601.19
     /// extended-representation precedence rule (prefer this field).
     pub target_width_extended_m: Option<f64>,
     /// Item 103: Density Altitude Extended — ST 1201.5 IMAPB range
     /// [-900, 40000] m, wire length 1..=8 bytes (encode emits 3 bytes).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Extended-range twin of [`Self::density_altitude_m`] (Item 38,
     /// uint16, [-900, 19000] m) — see that field's docs for the
     /// ST 0601.19 extended-representation precedence rule (prefer this
@@ -345,7 +292,6 @@ pub struct UasDatalinkLs {
     pub density_altitude_extended_m: Option<f64>,
     /// Item 104: Sensor Ellipsoid Height Extended — ST 1201.5 IMAPB range
     /// [-900, 40000] m, wire length 1..=8 bytes (encode emits 3 bytes).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     /// Extended-range twin of [`Self::sensor_ellipsoid_height_m`]
     /// (Item 75, uint16, [-900, 19000] m) — see that field's docs for
     /// the ST 0601.19 extended-representation precedence rule (prefer
@@ -353,8 +299,7 @@ pub struct UasDatalinkLs {
     pub sensor_ellipsoid_height_extended_m: Option<f64>,
     /// Item 105: Alternate Platform Ellipsoid Height Extended —
     /// ST 1201.5 IMAPB range [-900, 40000] m, wire length 1..=8 bytes
-    /// (encode emits 3 bytes). Values outside raise
-    /// [`crate::error::KlvEncodeError::OutOfRange`]. Extended-range twin
+    /// (encode emits 3 bytes). Extended-range twin
     /// of [`Self::alternate_platform_ellipsoid_height_m`] (Item 76,
     /// uint16, [-900, 19000] m) — see that field's docs for the
     /// ST 0601.19 extended-representation precedence rule (prefer this
@@ -364,56 +309,46 @@ pub struct UasDatalinkLs {
     /// Item 109: Range To Recovery Location — distance from current
     /// position to airframe recovery position. ST 1201.5 IMAPB range
     /// [0, 21000] km, wire length 1..=4 bytes (encode emits 3 bytes).
-    /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub range_to_recovery_km: Option<f64>,
     /// Item 112: Platform Course Angle — direction the aircraft is
     /// moving relative to True North. ST 1201.5 IMAPB range [0, 360] deg,
-    /// wire length 1..=8 bytes (encode emits 2 bytes). Values outside
-    /// raise [`crate::error::KlvEncodeError::OutOfRange`].
+    /// wire length 1..=8 bytes (encode emits 2 bytes).
     pub platform_course_angle_deg: Option<f64>,
     /// Item 113: Altitude AGL — Above Ground Level height above the
     /// ground/water. ST 1201.5 IMAPB range [-900, 40000] m, wire length
-    /// 1..=4 bytes (encode emits 3 bytes). Values outside raise
-    /// [`crate::error::KlvEncodeError::OutOfRange`].
+    /// 1..=4 bytes (encode emits 3 bytes).
     pub altitude_agl_m: Option<f64>,
     /// Item 114: Radar Altimeter — height above the ground/water as
     /// reported by a RADAR altimeter (AGL, see [`Self::altitude_agl_m`]).
     /// ST 1201.5 IMAPB range [-900, 40000] m, wire length 1..=4 bytes
-    /// (encode emits 3 bytes). Values outside raise
-    /// [`crate::error::KlvEncodeError::OutOfRange`].
+    /// (encode emits 3 bytes).
     pub radar_altimeter_m: Option<f64>,
     /// Item 117: Sensor Azimuth Rate — rate the sensor's azimuth angle
     /// is changing. ST 1201.5 IMAPB range [-1000, 1000] deg/s, wire
-    /// length 1..=4 bytes (encode emits 2 bytes). Values outside raise
-    /// [`crate::error::KlvEncodeError::OutOfRange`].
+    /// length 1..=4 bytes (encode emits 2 bytes).
     pub sensor_azimuth_rate_dps: Option<f64>,
     /// Item 118: Sensor Elevation Rate — rate the sensor's elevation
     /// angle is changing. ST 1201.5 IMAPB range [-1000, 1000] deg/s,
-    /// wire length 1..=4 bytes (encode emits 3 bytes). Values outside
-    /// raise [`crate::error::KlvEncodeError::OutOfRange`].
+    /// wire length 1..=4 bytes (encode emits 3 bytes).
     pub sensor_elevation_rate_dps: Option<f64>,
     /// Item 119: Sensor Roll Rate — rate the sensor's roll angle is
     /// changing. ST 1201.5 IMAPB range [-1000, 1000] deg/s, wire length
-    /// 1..=4 bytes (encode emits 2 bytes). Values outside raise
-    /// [`crate::error::KlvEncodeError::OutOfRange`].
+    /// 1..=4 bytes (encode emits 2 bytes).
     pub sensor_roll_rate_dps: Option<f64>,
     /// Item 120: On-board MI Storage Percent Full — amount of on-board
     /// Motion Imagery storage used, as a percentage of total storage.
     /// ST 1201.5 IMAPB range [0, 100] %, wire length 1..=3 bytes (encode
-    /// emits 2 bytes). Values outside raise
-    /// [`crate::error::KlvEncodeError::OutOfRange`].
+    /// emits 2 bytes).
     pub mi_storage_percent_full: Option<f64>,
     /// Item 132: Transmission Frequency — radio frequency used to
     /// transmit the Motion Imagery. ST 1201.5 IMAPB range [1, 99999] MHz,
-    /// wire length 1..=4 bytes (encode emits 3 bytes). Values outside
-    /// raise [`crate::error::KlvEncodeError::OutOfRange`]. First IMAPB
+    /// wire length 1..=4 bytes (encode emits 3 bytes). First IMAPB
     /// item whose own tag number is 2-byte BER-OID encoded (like Items
     /// 129/135 in the raw/UTF-8 set).
     pub transmission_frequency_mhz: Option<f64>,
     /// Item 134: Zoom Percentage — for a variable-zoom system, the
     /// percentage of zoom. ST 1201.5 IMAPB range [0, 100] %, wire length
-    /// 1..=4 bytes (encode emits 2 bytes). Values outside raise
-    /// [`crate::error::KlvEncodeError::OutOfRange`].
+    /// 1..=4 bytes (encode emits 2 bytes).
     pub zoom_percentage: Option<f64>,
 
     // Var-length int/enum items (ST 0601, tags 110-139) —

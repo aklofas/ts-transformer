@@ -55,7 +55,7 @@
  * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 23` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_minor`].
  *
- * What each minor added is recorded once, in
+ * What each minor added is recorded once, in the repository's
  * `docs/reference/binding-authors.md` § "Versioning".
  */
 #define TST_ABI_VERSION_MINOR 23

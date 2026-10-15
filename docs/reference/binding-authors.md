@@ -406,8 +406,8 @@ baseline (by design)" for the full rationale.
       `tst_hls_publisher_builder_max_segment_duration_ms` (wall-clock force-cut
       cap; `0` leaves the default) + `tst_hls_publisher_get_forced_cuts`
       (reads `HlsStats::forced_cuts`). The HLS surface moved from `tst-tcp`
-      to the new `tst-hls` crate (link-level only; no C ABI effect). All gated `TST_HAS_HLS`; no
-      struct growth (`TstHlsStats` stays 24 B — the counter rides a getter).
+      to the new `tst-hls` crate (link-level only; no C ABI effect). All
+      gated `TST_HAS_HLS`; no struct growth (`TstHlsStats` stays 24 B — the counter rides a getter).
     - `19` — MISP timestamps (ST 0604): `tst_muxer_push_video_misp_to` /
       `tst_muxer_push_video_misp_to_with_dts` (SEI splice before the first VCL
       NAL) + `tst_misp_time_extract`, with error codes `TST_E_MISP_TIME` (−45)
@@ -456,7 +456,8 @@ baseline (by design)" for the full rationale.
     - `21` — Apple/VideoToolbox-consumer surface (three independent
       additions, all additive — no existing symbol, signature, or struct
       layout changed):
-      - **ST 0601 decode** (unconditional, no feature gate): opaque `TstSt0601` (owned decode result) +
+      - **ST 0601 decode** (unconditional, no feature gate): opaque
+        `TstSt0601` (owned decode result) +
         `tst_st0601_decode` / `_geometry` / `_get_f64` / `_get_u64` /
         `_state` / `_free`. `TstSt0601FieldState` enum (`Present = 0`,
         `Absent = 1`, `Sentinel = 2` for the MISB `INT_MIN` absent-value
@@ -465,8 +466,9 @@ baseline (by design)" for the full rationale.
         returned only by the typed getters, never by `tst_st0601_state`
         itself) reports per-tag presence; `TstSt0601Geometry` is a
         `#[repr(C)]` struct bundling the common
-        lat/lon/alt/heading/pitch/roll/hfov accessor group, a 23-tag curated set (each field
-        paired with its own `_state` byte) behind one call. Two new
+        lat/lon/alt/heading/pitch/roll/hfov accessor group (a 23-tag
+        curated set, each field paired with its own `_state` byte) behind
+        one call. Two new
         error codes: `TstError::WrongType` (-47, a typed accessor called
         against a tag whose mapped field has a different native Rust
         type — the getter refuses a lossy cast) and `TstError::KlvDecode`
