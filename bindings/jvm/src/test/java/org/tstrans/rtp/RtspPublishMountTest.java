@@ -3,6 +3,7 @@ package org.tstrans.rtp;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
+import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.sha256Units;
 
 import java.io.ByteArrayOutputStream;
@@ -26,8 +27,6 @@ import org.tstrans.RtspException;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.Muxer;
-import org.tstrans.mpegts.MuxerConfig;
-import org.tstrans.mpegts.VideoCodec;
 
 /**
  * The RTSP publisher role: {@link RtspServer#addPublishMount}, {@link
@@ -474,11 +473,6 @@ class RtspPublishMountTest {
         return b;
     }
 
-    private static MuxerConfig cfg() {
-        return MuxerConfig.builder()
-            .programNumber(1).pmtPid(0x1000).addVideo(0x1011, VideoCodec.H264).build();
-    }
-
     private static byte[] idr(int i) {
         byte[] b = new byte[300];
         b[3] = 1;
@@ -491,7 +485,7 @@ class RtspPublishMountTest {
     private static byte[] offlineTs() throws Exception {
         ByteArrayOutputStream acc = new ByteArrayOutputStream();
         byte[] out = new byte[8192];
-        try (Muxer m = new Muxer(cfg())) {
+        try (Muxer m = new Muxer(roundtripConfig())) {
             for (int i = 0; i < 24; i++) {
                 m.pushVideo(idr(i), i * 3003L, i == 0);
             }

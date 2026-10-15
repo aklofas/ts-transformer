@@ -2,6 +2,7 @@ package org.tstrans.srt;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.tstrans.TestSupport.connectSender;
 import static org.tstrans.TestSupport.freeUdpPort;
 import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.roundtripConfig;
@@ -33,21 +34,6 @@ import org.tstrans.mpegts.DemuxEvent;
 class SrtManagedEndReasonTest {
 
     private static final int LATENCY_MS = 120;
-
-    /** Connect a caller, retrying while the listener is between binds. */
-    private static ManagedMuxSender connectSender(String url, long budgetMs) throws Exception {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
-        SrtException last = null;
-        while (System.nanoTime() < deadline) {
-            try {
-                return ManagedMuxSender.fromUrl(url, roundtripConfig());
-            } catch (SrtException e) {
-                last = e;
-                Thread.sleep(50);
-            }
-        }
-        throw new AssertionError("caller could not connect within " + budgetMs + " ms", last);
-    }
 
     /**
      * A receiver whose stream has not ended reports no reason at all.

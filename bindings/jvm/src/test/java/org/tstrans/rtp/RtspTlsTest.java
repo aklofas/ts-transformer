@@ -3,6 +3,8 @@ package org.tstrans.rtp;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
+import static org.tstrans.TestSupport.roundtripConfig;
+import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,8 +16,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtspException;
 import org.tstrans.mpegts.DemuxEvent;
-import org.tstrans.mpegts.MuxerConfig;
-import org.tstrans.mpegts.VideoCodec;
 
 /**
  * rtsps:// end-to-end: server bound with the committed CA:FALSE fixture
@@ -36,18 +36,6 @@ class RtspTlsTest {
     private static Path fixtureDir() {
         return Path.of("..", "python", "tests", "fixtures", "tls")
             .toAbsolutePath().normalize();
-    }
-
-    private static byte[] idr() {
-        byte[] b = new byte[20];
-        b[0] = 0; b[1] = 0; b[2] = 0; b[3] = 1; b[4] = 0x65;
-        for (int i = 0; i < 15; i++) b[5 + i] = (byte) (0xA5 ^ i);
-        return b;
-    }
-
-    private static MuxerConfig cfg() {
-        return MuxerConfig.builder()
-            .programNumber(1).pmtPid(0x1000).addVideo(0x1011, VideoCodec.H264).build();
     }
 
     @Test
@@ -109,14 +97,14 @@ class RtspTlsTest {
             String addr = server.localAddr();
             assertNotNull(addr, "server must be bound");
             int port = Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1));
-            MountHandle mount = server.addUnicastMount("/live", cfg());
+            MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
 
             CountDownLatch done = new CountDownLatch(1);
             Thread producer = new Thread(() -> {
                 long pts = 0;
                 try {
                     while (done.getCount() > 0) {
-                        mount.pushVideo(idr(), pts, true);
+                        mount.pushVideo(syntheticH264Idr(), pts, true);
                         mount.flush();
                         pts += 3000;
                         Thread.sleep(20);

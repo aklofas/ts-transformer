@@ -3,6 +3,8 @@ package org.tstrans.srt;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
+import static org.tstrans.TestSupport.roundtripConfig;
+import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -13,8 +15,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
-import org.tstrans.mpegts.MuxerConfig;
-import org.tstrans.mpegts.VideoCodec;
 
 /**
  * Memory-safety stress test for {@link DemuxReceiver#close()} racing a concurrent native call.
@@ -36,23 +36,6 @@ final class DemuxReceiverCloseRaceTest {
 
     private static final int LATENCY_MS = 120;
 
-    private static byte[] idr() {
-        byte[] buf = new byte[20];
-        buf[3] = 0x01;
-        buf[4] = 0x65;
-        for (int i = 0; i < 15; i++) {
-            buf[5 + i] = (byte) (0xA5 ^ i);
-        }
-        return buf;
-    }
-
-    private static MuxerConfig cfg() {
-        return MuxerConfig.builder()
-            .programNumber(1).pmtPid(0x1000)
-            .addVideo(0x1011, VideoCodec.H264)
-            .build();
-    }
-
     /**
      * Stand up a loopback and hand back a CONNECTED {@link DemuxReceiver} (on this thread) plus a
      * daemon that keeps a caller-mode sender streaming so the receiver stays live. Returns the
@@ -66,10 +49,10 @@ final class DemuxReceiverCloseRaceTest {
         // Continuous caller-mode sender on a daemon: connects, then streams muxed TS until stop.
         Thread sender = new Thread(() -> {
             try (MuxSender tx = MuxSender.fromUrl(
-                    "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS, cfg())) {
+                    "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS, roundtripConfig())) {
                 long pts = 0;
                 while (!stop.get()) {
-                    tx.sendVideo(idr(), pts, true);
+                    tx.sendVideo(syntheticH264Idr(), pts, true);
                     pts += 3003;
                     Thread.sleep(5);
                 }

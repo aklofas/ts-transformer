@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -47,13 +48,6 @@ class RtspPanicPoisoningTest {
             .addVideo(0x1011, VideoCodec.H264).build();
     }
 
-    private static byte[] idr() {
-        byte[] b = new byte[20];
-        b[0] = 0; b[1] = 0; b[2] = 0; b[3] = 1; b[4] = 0x65;
-        for (int i = 0; i < 15; i++) b[5 + i] = (byte) (0xA5 ^ i);
-        return b;
-    }
-
     /**
      * A panic driven through the production {@code with_mount_poisoning} helper on a
      * leased {@code MountHandle} poisons the mount: the panic surfaces as a
@@ -67,7 +61,7 @@ class RtspPanicPoisoningTest {
              MountHandle m = s.addUnicastMount("/poison-mount", videoCfg())) {
 
             // Sanity: a real push works BEFORE the torn mutation.
-            m.pushVideo(idr(), 0L, true);
+            m.pushVideo(syntheticH264Idr(), 0L, true);
 
             long raw = m.nativeHandleForTest();
             assertNotEquals(0L, raw, "leased mount handle must be non-zero");
@@ -80,7 +74,7 @@ class RtspPanicPoisoningTest {
             // (2) The mount entry is now poisoned: a REAL mount op leases None and
             //     throws IllegalStateException, NOT a reuse of torn state.
             assertThrows(IllegalStateException.class,
-                () -> m.pushVideo(idr(), 90_000L, true));
+                () -> m.pushVideo(syntheticH264Idr(), 90_000L, true));
             // A second mutating native (flush) is equally dead.
             assertThrows(IllegalStateException.class, m::flush);
         }

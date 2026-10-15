@@ -3,6 +3,8 @@ package org.tstrans.srt;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
+import static org.tstrans.TestSupport.roundtripConfigWithData;
+import static org.tstrans.TestSupport.sha256OfDemuxedVideoUnits;
 import static org.tstrans.TestSupport.sha256Units;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
@@ -14,7 +16,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.tstrans.SrtException;
-import org.tstrans.TestSupport;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.DemuxerConfig;
@@ -105,11 +106,6 @@ class SrtMuxDemuxLoopbackTest {
     private static final byte[] DATA_PAYLOAD =
         {(byte) 0xD0, 'D', 'A', 'T', 'A', (byte) 0xBE, (byte) 0xEF, 0x01};
 
-    /** Video + one private-data stream — see {@link TestSupport#roundtripConfigWithData()}. */
-    private static MuxerConfig roundtripConfig() {
-        return TestSupport.roundtripConfigWithData();
-    }
-
     @Test
     void muxSenderToDemuxReceiverIsByteFaithfulAndCrossBindingConsistent() throws Exception {
         assumeTrue(isLinux(),
@@ -121,7 +117,7 @@ class SrtMuxDemuxLoopbackTest {
         // Muxer, drain to a byte[], feed that to an offline Demuxer, and hash the
         // first Video sample's NAL payloads. This is what the live path must
         // reproduce — no committed golden needed.
-        String offlineSha = offlineMuxDemuxSha();
+        String offlineSha = sha256OfDemuxedVideoUnits(muxToBytes());
 
         // ── receiver thread ────────────────────────────────────────────────
         CompletableFuture<Integer> portFuture = new CompletableFuture<>();
@@ -226,7 +222,7 @@ class SrtMuxDemuxLoopbackTest {
 
         try (MuxSender s = MuxSender.fromUrl(
                 "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS,
-                roundtripConfig())) {
+                roundtripConfigWithData())) {
             for (int i = 0; i < PUSH_COUNT; i++) {
                 // Increasing PTS so the muxer never rejects a duplicate timestamp.
                 s.sendVideo(syntheticH264Idr(), i * 3000L, true);
@@ -303,7 +299,7 @@ class SrtMuxDemuxLoopbackTest {
     private static byte[] muxToBytes() throws Exception {
         ByteArrayOutputStream acc = new ByteArrayOutputStream();
         byte[] out = new byte[8192];
-        try (Muxer m = new Muxer(roundtripConfig())) {
+        try (Muxer m = new Muxer(roundtripConfigWithData())) {
             for (int i = 0; i < PUSH_COUNT; i++) {
                 m.pushVideo(syntheticH264Idr(), i * 3000L, true);
                 // Mirror the live sender's push sequence exactly (incl. the
@@ -316,21 +312,6 @@ class SrtMuxDemuxLoopbackTest {
             }
         }
         return acc.toByteArray();
-    }
-
-    /** Offline Muxer→Demuxer SHA of the first Video sample's NAL payloads. */
-    private static String offlineMuxDemuxSha() throws Exception {
-        byte[] ts = muxToBytes();
-        try (Demuxer d = new Demuxer()) {
-            d.feed(ts);
-            d.flush();
-            for (DemuxEvent e : d) {
-                if (e instanceof DemuxEvent.Video v && !v.parse().isEmpty()) {
-                    return sha256Units(v.parse());
-                }
-            }
-        }
-        throw new AssertionError("offline path produced no typed Video event");
     }
 
 }

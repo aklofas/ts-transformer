@@ -3,7 +3,9 @@ package org.tstrans.rtp;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
+import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.sha256Units;
+import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import java.io.ByteArrayOutputStream;
 import java.util.concurrent.CompletableFuture;
@@ -16,8 +18,6 @@ import org.tstrans.RtspException;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.Muxer;
-import org.tstrans.mpegts.MuxerConfig;
-import org.tstrans.mpegts.VideoCodec;
 
 /**
  * Capstone live cross-binding loopback: an in-JVM {@link RtspServer} (mount fed by
@@ -41,18 +41,6 @@ class RtspServerClientLoopbackTest {
 
     private static final int TIMEOUT_SEC = 25;
 
-    private static byte[] idr() {
-        byte[] b = new byte[20];
-        b[0] = 0; b[1] = 0; b[2] = 0; b[3] = 1; b[4] = 0x65;
-        for (int i = 0; i < 15; i++) b[5 + i] = (byte) (0xA5 ^ i);
-        return b;
-    }
-
-    private static MuxerConfig cfg() {
-        return MuxerConfig.builder()
-            .programNumber(1).pmtPid(0x1000).addVideo(0x1011, VideoCodec.H264).build();
-    }
-
     @Test
     @Timeout(TIMEOUT_SEC + 10)
     void serverToClientLoopbackIsCrossBindingConsistent() throws Exception {
@@ -65,7 +53,7 @@ class RtspServerClientLoopbackTest {
             String addr = server.localAddr();
             assertNotNull(addr, "server must be bound");
             int port = Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1));
-            MountHandle mount = server.addUnicastMount("/live", cfg());
+            MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
 
             // Continuous producer: keep pushing identical IDRs so post-PLAY bytes
             // always flow (no push-then-close, which would discard the batch before
@@ -75,7 +63,7 @@ class RtspServerClientLoopbackTest {
                 long pts = 0;
                 try {
                     while (done.getCount() > 0) {
-                        mount.pushVideo(idr(), pts, true);
+                        mount.pushVideo(syntheticH264Idr(), pts, true);
                         mount.flush();
                         pts += 3000;
                         Thread.sleep(20);
@@ -203,9 +191,9 @@ class RtspServerClientLoopbackTest {
     private static String offlineSha() throws Exception {
         ByteArrayOutputStream acc = new ByteArrayOutputStream();
         byte[] out = new byte[8192];
-        try (Muxer m = new Muxer(cfg())) {
+        try (Muxer m = new Muxer(roundtripConfig())) {
             for (int i = 0; i < 24; i++) {
-                m.pushVideo(idr(), i * 3000L, true);
+                m.pushVideo(syntheticH264Idr(), i * 3000L, true);
             }
             int n;
             while ((n = m.pull(out)) > 0) acc.write(out, 0, n);

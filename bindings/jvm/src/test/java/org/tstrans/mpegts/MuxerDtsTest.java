@@ -1,7 +1,8 @@
 package org.tstrans.mpegts;
 
 import static org.junit.jupiter.api.Assertions.*;
-import java.io.ByteArrayOutputStream;
+import static org.tstrans.TestSupport.drain;
+import static org.tstrans.TestSupport.syntheticH264IdrPrefix;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -14,20 +15,6 @@ import org.junit.jupiter.api.Test;
  * {@link DemuxEvent.Video}.
  */
 class MuxerDtsTest {
-
-    /** Annex-B IDR prefix (8 bytes; same pattern as MuxerTargetedPushTest). */
-    private static byte[] syntheticH264Idr() {
-        return new byte[]{0x00, 0x00, 0x00, 0x01, 0x65, (byte) 0x88, (byte) 0x84, 0x00};
-    }
-
-    /** Drain all TS bytes from a muxer into a fresh array. */
-    private static byte[] drain(Muxer m) throws Exception {
-        ByteArrayOutputStream acc = new ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        int n;
-        while ((n = m.pull(buf)) > 0) acc.write(buf, 0, n);
-        return acc.toByteArray();
-    }
 
     /**
      * {@link Muxer#pushVideoToWithDts} preserves distinct PTS and DTS through
@@ -43,7 +30,7 @@ class MuxerDtsTest {
         byte[] ts;
         try (Muxer m = new Muxer(cfg)) {
             VideoStreamHandle h = m.videoStreamHandle(0).orElseThrow();
-            m.pushVideoToWithDts(h, syntheticH264Idr(), 9000L, 6000L, true);
+            m.pushVideoToWithDts(h, syntheticH264IdrPrefix(), 9000L, 6000L, true);
             ts = drain(m);
         }
 
@@ -77,7 +64,7 @@ class MuxerDtsTest {
         byte[] ts;
         try (Muxer m = new Muxer(cfg)) {
             VideoStreamHandle h = m.videoStreamHandle(0).orElseThrow();
-            m.pushVideoWireToWithDts(h, syntheticH264Idr(), 9000L, 6000L, true);
+            m.pushVideoWireToWithDts(h, syntheticH264IdrPrefix(), 9000L, 6000L, true);
             ts = drain(m);
         }
 
@@ -109,7 +96,7 @@ class MuxerDtsTest {
         try (Muxer m = new Muxer(cfg)) {
             VideoStreamHandle forged = VideoStreamHandle.fromRaw(0x1000L);
             org.tstrans.MuxException ex = assertThrows(org.tstrans.MuxException.class,
-                () -> m.pushVideoToWithDts(forged, syntheticH264Idr(), 9000L, 6000L, true));
+                () -> m.pushVideoToWithDts(forged, syntheticH264IdrPrefix(), 9000L, 6000L, true));
             assertEquals(org.tstrans.MuxException.Kind.INVALID_USAGE, ex.kind());
         }
     }

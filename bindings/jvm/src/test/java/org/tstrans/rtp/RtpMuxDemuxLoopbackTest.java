@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.freeUdpPort;
 import static org.tstrans.TestSupport.isLinux;
+import static org.tstrans.TestSupport.roundtripConfigWithData;
+import static org.tstrans.TestSupport.sha256OfDemuxedVideoUnits;
 import static org.tstrans.TestSupport.sha256Units;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
@@ -15,11 +17,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.tstrans.RtpException;
-import org.tstrans.TestSupport;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.Muxer;
-import org.tstrans.mpegts.MuxerConfig;
 
 /**
  * Live cross-binding loopback parity test for the RTP convenience shells
@@ -65,17 +65,12 @@ class RtpMuxDemuxLoopbackTest {
     private static final byte[] DATA_PAYLOAD =
         {(byte) 0xD1, 'D', 'A', 'T', 'A', (byte) 0xCA, (byte) 0xFE, 0x02};
 
-    /** Video + one private-data stream — see {@link TestSupport#roundtripConfigWithData()}. */
-    private static MuxerConfig roundtripConfig() {
-        return TestSupport.roundtripConfigWithData();
-    }
-
     @Test
     void muxSenderToDemuxReceiverIsByteFaithfulAndCrossBindingConsistent() throws Exception {
         assumeTrue(isLinux(),
             "RTP live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");
 
-        String offlineSha = offlineMuxDemuxSha();
+        String offlineSha = sha256OfDemuxedVideoUnits(muxToBytes());
 
         int port = freeUdpPort();
 
@@ -154,7 +149,7 @@ class RtpMuxDemuxLoopbackTest {
         // Sender on the main thread: push PUSH_COUNT IDRs, pause for delivery,
         // then close. (The receiver is already bound, so kernel UDP buffers hold
         // datagrams until the daemon drains them.)
-        try (MuxSender s = MuxSender.fromUrl("rtp://127.0.0.1:" + port, roundtripConfig())) {
+        try (MuxSender s = MuxSender.fromUrl("rtp://127.0.0.1:" + port, roundtripConfigWithData())) {
             for (int i = 0; i < PUSH_COUNT; i++) {
                 s.sendVideo(syntheticH264Idr(), i * 3000L, true);
                 // A private-data record EVERY iteration (the lone-data-stream
@@ -235,7 +230,7 @@ class RtpMuxDemuxLoopbackTest {
     private static byte[] muxToBytes() throws Exception {
         ByteArrayOutputStream acc = new ByteArrayOutputStream();
         byte[] out = new byte[8192];
-        try (Muxer m = new Muxer(roundtripConfig())) {
+        try (Muxer m = new Muxer(roundtripConfigWithData())) {
             for (int i = 0; i < PUSH_COUNT; i++) {
                 m.pushVideo(syntheticH264Idr(), i * 3000L, true);
                 // Mirror the live sender's push sequence exactly (incl. the
@@ -248,17 +243,4 @@ class RtpMuxDemuxLoopbackTest {
         return acc.toByteArray();
     }
 
-    private static String offlineMuxDemuxSha() throws Exception {
-        byte[] ts = muxToBytes();
-        try (Demuxer d = new Demuxer()) {
-            d.feed(ts);
-            d.flush();
-            for (DemuxEvent e : d) {
-                if (e instanceof DemuxEvent.Video v && !v.parse().isEmpty()) {
-                    return sha256Units(v.parse());
-                }
-            }
-        }
-        throw new AssertionError("offline path produced no typed Video event");
-    }
 }

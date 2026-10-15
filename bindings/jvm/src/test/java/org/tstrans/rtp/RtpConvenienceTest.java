@@ -2,12 +2,12 @@ package org.tstrans.rtp;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.tstrans.TestSupport.freeUdpPort;
+import static org.tstrans.TestSupport.roundtripConfig;
+import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import org.junit.jupiter.api.Test;
-import org.tstrans.mpegts.MuxerConfig;
-import org.tstrans.mpegts.VideoCodec;
 
 /**
  * Standalone (non-live) unit tests for the RTP convenience wrappers. The live
@@ -24,20 +24,6 @@ import org.tstrans.mpegts.VideoCodec;
  */
 class RtpConvenienceTest {
 
-    private static MuxerConfig videoConfig() {
-        return MuxerConfig.builder()
-            .programNumber(1).pmtPid(0x1000)
-            .addVideo(0x1011, VideoCodec.H264)
-            .build();
-    }
-
-    private static byte[] idr() {
-        byte[] b = new byte[20];
-        b[0] = 0; b[1] = 0; b[2] = 0; b[3] = 1; b[4] = 0x65;
-        for (int i = 0; i < 15; i++) b[5 + i] = (byte) (0xA5 ^ i);
-        return b;
-    }
-
     /** Bind a throwaway UDP peer on 127.0.0.1 and return it (caller closes). */
     private static DatagramSocket peer() throws Exception {
         return new DatagramSocket(new InetSocketAddress("127.0.0.1", 0));
@@ -48,10 +34,10 @@ class RtpConvenienceTest {
     void muxSenderConstructsPushesAndReportsStats() throws Exception {
         try (DatagramSocket peer = peer()) {
             String url = "rtp://127.0.0.1:" + peer.getLocalPort();
-            try (MuxSender s = MuxSender.fromUrl(url, videoConfig())) {
+            try (MuxSender s = MuxSender.fromUrl(url, roundtripConfig())) {
                 assertTrue(s.isAlive());
-                s.sendVideo(idr(), 0L, true);
-                s.sendVideo(idr(), 3000L, true);
+                s.sendVideo(syntheticH264Idr(), 0L, true);
+                s.sendVideo(syntheticH264Idr(), 3000L, true);
 
                 TransportStats st = s.stats();
                 assertNotNull(st);
@@ -72,9 +58,9 @@ class RtpConvenienceTest {
     void muxSenderWithExplicitPktSize() throws Exception {
         try (DatagramSocket peer = peer()) {
             String url = "rtp://127.0.0.1:" + peer.getLocalPort();
-            try (MuxSender s = MuxSender.fromUrl(url, videoConfig(), 188)) {
+            try (MuxSender s = MuxSender.fromUrl(url, roundtripConfig(), 188)) {
                 assertTrue(s.isAlive());
-                s.sendVideo(idr(), 0L, true);
+                s.sendVideo(syntheticH264Idr(), 0L, true);
             }
         }
     }
@@ -82,15 +68,15 @@ class RtpConvenienceTest {
     @Test
     void muxSenderRejectsNegativePktSize() {
         assertThrows(IllegalArgumentException.class,
-            () -> MuxSender.fromUrl("rtp://127.0.0.1:5006", videoConfig(), -1));
+            () -> MuxSender.fromUrl("rtp://127.0.0.1:5006", roundtripConfig(), -1));
     }
 
     @Test
     void muxSenderClosedStateThrows() throws Exception {
-        MuxSender s = MuxSender.fromUrl("rtp://127.0.0.1:5007", videoConfig());
+        MuxSender s = MuxSender.fromUrl("rtp://127.0.0.1:5007", roundtripConfig());
         s.close();
         assertFalse(s.isAlive());
-        assertThrows(IllegalStateException.class, () -> s.sendVideo(idr(), 0L, true));
+        assertThrows(IllegalStateException.class, () -> s.sendVideo(syntheticH264Idr(), 0L, true));
         assertThrows(IllegalStateException.class, s::stats);
         s.close(); // idempotent
     }
@@ -98,7 +84,7 @@ class RtpConvenienceTest {
     @Test
     void muxSenderRejectsBadUrl() {
         assertThrows(org.tstrans.RtpException.class,
-            () -> MuxSender.fromUrl("not-a-url", videoConfig()));
+            () -> MuxSender.fromUrl("not-a-url", roundtripConfig()));
     }
 
     // ── DemuxReceiver standalone (non-live) tests ──────────────────────────

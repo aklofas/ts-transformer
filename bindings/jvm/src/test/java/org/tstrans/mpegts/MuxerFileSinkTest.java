@@ -1,6 +1,7 @@
 package org.tstrans.mpegts;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import java.nio.file.Files;
@@ -12,17 +13,10 @@ class MuxerFileSinkTest {
 
     private static final byte[] IDR = syntheticH264Idr();
 
-    private static MuxerConfig videoConfig() {
-        return MuxerConfig.builder()
-            .programNumber(1).pmtPid(0x1000)
-            .addVideo(0x1011, VideoCodec.H264)
-            .build();
-    }
-
     @Test
     void writeFileRoundTripsThroughParseFile(@TempDir Path tmp) throws Exception {
         Path out = tmp.resolve("out.ts");
-        try (Muxer m = new Muxer(videoConfig());
+        try (Muxer m = new Muxer(roundtripConfig());
              MuxerFileSink sink = m.writeFile(out)) {
             sink.pushVideo(IDR, 0L, true);
         }
@@ -37,7 +31,7 @@ class MuxerFileSinkTest {
     @Test
     void atomicCommitPromotes(@TempDir Path tmp) throws Exception {
         Path out = tmp.resolve("atomic.ts");
-        try (Muxer m = new Muxer(videoConfig());
+        try (Muxer m = new Muxer(roundtripConfig());
              MuxerFileSink sink = m.writeFile(out, true)) {
             sink.pushVideo(IDR, 0L, true);
             sink.commit();
@@ -53,7 +47,7 @@ class MuxerFileSinkTest {
     @Test
     void atomicNoCommitDiscards(@TempDir Path tmp) throws Exception {
         Path out = tmp.resolve("discard.ts");
-        try (Muxer m = new Muxer(videoConfig());
+        try (Muxer m = new Muxer(roundtripConfig());
              MuxerFileSink sink = m.writeFile(out, true)) {
             sink.pushVideo(IDR, 0L, true);
             // no commit()
@@ -67,7 +61,7 @@ class MuxerFileSinkTest {
 
     @Test
     void muxerReusableAfterSink(@TempDir Path tmp) throws Exception {
-        try (Muxer m = new Muxer(videoConfig())) {
+        try (Muxer m = new Muxer(roundtripConfig())) {
             try (MuxerFileSink sink = m.writeFile(tmp.resolve("a.ts"))) {
                 sink.pushVideo(IDR, 0L, true);
             }

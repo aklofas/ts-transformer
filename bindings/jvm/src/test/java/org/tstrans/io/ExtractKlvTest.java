@@ -1,18 +1,12 @@
 package org.tstrans.io;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.inputTs;
 
-import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class ExtractKlvTest {
-
-    private static Path inputTs() {
-        return Path.of(System.getProperty("user.dir"), "..", "..",
-                "crates/tst-integration/tests/fixtures/scenarios/h264-st0601-mp/input.ts")
-            .normalize();
-    }
 
     @Test
     void rawDefaultYieldsBytesNoPts() throws Exception {

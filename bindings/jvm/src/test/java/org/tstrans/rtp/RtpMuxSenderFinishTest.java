@@ -3,14 +3,14 @@ package org.tstrans.rtp;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.tstrans.TestSupport.roundtripConfig;
+import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtpException;
-import org.tstrans.mpegts.MuxerConfig;
-import org.tstrans.mpegts.VideoCodec;
 
 /**
  * {@code org.tstrans.rtp.MuxSender.finish()} drains,
@@ -24,33 +24,19 @@ import org.tstrans.mpegts.VideoCodec;
  */
 class RtpMuxSenderFinishTest {
 
-    private static MuxerConfig videoConfig() {
-        return MuxerConfig.builder()
-            .programNumber(1).pmtPid(0x1000)
-            .addVideo(0x1011, VideoCodec.H264)
-            .build();
-    }
-
-    private static byte[] idr() {
-        byte[] b = new byte[20];
-        b[0] = 0; b[1] = 0; b[2] = 0; b[3] = 1; b[4] = 0x65;
-        for (int i = 0; i < 15; i++) b[5 + i] = (byte) (0xA5 ^ i);
-        return b;
-    }
-
     @Test
     @Timeout(60)
     void finishClosesAndIsIdempotent() throws Exception {
         try (DatagramSocket peer = new DatagramSocket(new InetSocketAddress("127.0.0.1", 0))) {
             String url = "rtp://127.0.0.1:" + peer.getLocalPort();
-            MuxSender s = MuxSender.fromUrl(url, videoConfig());
+            MuxSender s = MuxSender.fromUrl(url, roundtripConfig());
             try {
-                s.sendVideo(idr(), 0L, true);
+                s.sendVideo(syntheticH264Idr(), 0L, true);
                 s.finish();
                 assertFalse(s.isAlive());
                 s.finish();                  // quiet
                 RtpException ex = assertThrows(RtpException.class,
-                    () -> s.sendVideo(idr(), 3_000L, true));
+                    () -> s.sendVideo(syntheticH264Idr(), 3_000L, true));
                 assertEquals(RtpException.Kind.CLOSED, ex.kind());
             } finally {
                 s.close();
@@ -63,7 +49,7 @@ class RtpMuxSenderFinishTest {
     void finishAfterCloseIsQuiet() throws Exception {
         try (DatagramSocket peer = new DatagramSocket(new InetSocketAddress("127.0.0.1", 0))) {
             String url = "rtp://127.0.0.1:" + peer.getLocalPort();
-            MuxSender s = MuxSender.fromUrl(url, videoConfig());
+            MuxSender s = MuxSender.fromUrl(url, roundtripConfig());
             s.close();
             s.finish();                      // no handle left: quiet, not a throw
         }

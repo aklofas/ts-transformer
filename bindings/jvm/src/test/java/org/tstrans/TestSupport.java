@@ -1,20 +1,27 @@
 package org.tstrans;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 import org.tstrans.codec.NalUnit;
 import org.tstrans.codec.VideoUnit;
+import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.mpegts.Demuxer;
+import org.tstrans.mpegts.Muxer;
 import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
+import org.tstrans.srt.ManagedMuxSender;
 
 /**
- * Test-only fixture builders shared across the JUnit suite (never shipped —
+ * Test-only fixture builders and helpers shared across the JUnit suite (never shipped —
  * lives under {@code src/test/java}). Each method here previously existed as
  * an identical (or, for {@link #roundtripConfig()} /
  * {@link #roundtripConfigWithData()}, a two-shape) private copy in every test
@@ -101,5 +108,90 @@ public final class TestSupport {
         try (DatagramSocket s = new DatagramSocket(new InetSocketAddress("127.0.0.1", 0))) {
             return s.getLocalPort();
         }
+    }
+
+    /**
+     * 8-byte Annex-B IDR prefix (start code + IDR header + three slice
+     * bytes) — the DTS/MISP muxer tests' fixture, distinct from the 20-byte
+     * {@link #syntheticH264Idr()}.
+     */
+    public static byte[] syntheticH264IdrPrefix() {
+        return new byte[]{0x00, 0x00, 0x00, 0x01, 0x65, (byte) 0x88, (byte) 0x84, 0x00};
+    }
+
+    /** Drain every buffered TS byte from {@code m}. */
+    public static byte[] drain(Muxer m) {
+        ByteArrayOutputStream acc = new ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = m.pull(buf)) > 0) acc.write(buf, 0, n);
+        return acc.toByteArray();
+    }
+
+    /** {@code crates/tst-integration/tests/fixtures/scenarios/<scenarioId>}, from the Gradle project dir. */
+    public static Path scenarioDir(String scenarioId) {
+        return Path.of(System.getProperty("user.dir"), "..", "..",
+                "crates/tst-integration/tests/fixtures/scenarios", scenarioId).normalize();
+    }
+
+    /** The {@code h264-st0601-mp} scenario's input transport stream. */
+    public static Path inputTs() {
+        return scenarioDir("h264-st0601-mp").resolve("input.ts");
+    }
+
+    /**
+     * Open a {@link ManagedMuxSender} caller with {@link #roundtripConfig()},
+     * retrying every 50 ms until {@code budgetMs} elapses (the listener may
+     * not be accepting yet).
+     */
+    public static ManagedMuxSender connectSender(String url, long budgetMs) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
+        SrtException last = null;
+        while (System.nanoTime() < deadline) {
+            try {
+                return ManagedMuxSender.fromUrl(url, roundtripConfig());
+            } catch (SrtException e) {
+                last = e;
+                Thread.sleep(50);
+            }
+        }
+        throw new AssertionError("caller could not connect within " + budgetMs + " ms", last);
+    }
+
+    /** Concatenate byte arrays in order. */
+    public static byte[] cat(byte[]... arrays) {
+        int total = 0;
+        for (byte[] a : arrays) total += a.length;
+        byte[] out = new byte[total];
+        int pos = 0;
+        for (byte[] a : arrays) {
+            System.arraycopy(a, 0, out, pos, a.length);
+            pos += a.length;
+        }
+        return out;
+    }
+
+    /** {@code val} as {@code n} big-endian bytes. */
+    public static byte[] beBytes(long val, int n) {
+        byte[] out = new byte[n];
+        for (int i = n - 1; i >= 0; i--) {
+            out[i] = (byte) (val & 0xFF);
+            val >>= 8;
+        }
+        return out;
+    }
+
+    /** Demux {@code tsBytes} and return {@link #sha256Units} of the first typed Video event. */
+    public static String sha256OfDemuxedVideoUnits(byte[] tsBytes) throws Exception {
+        try (Demuxer d = new Demuxer()) {
+            d.feed(tsBytes);
+            d.flush();
+            for (DemuxEvent e : d) {
+                if (e instanceof DemuxEvent.Video v && !v.parse().isEmpty()) {
+                    return sha256Units(v.parse());
+                }
+            }
+        }
+        throw new AssertionError("no typed Video event found in the demuxed bytes");
     }
 }

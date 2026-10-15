@@ -3,6 +3,8 @@ package org.tstrans.srt;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
+import static org.tstrans.TestSupport.roundtripConfigWithData;
+import static org.tstrans.TestSupport.sha256OfDemuxedVideoUnits;
 import static org.tstrans.TestSupport.sha256Units;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
@@ -16,12 +18,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.tstrans.SrtException;
-import org.tstrans.TestSupport;
 import org.tstrans.mpegts.DataStreamHandle;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.Muxer;
-import org.tstrans.mpegts.MuxerConfig;
 
 /**
  * Live-socket happy-path + stats-drift parity tests for the four managed
@@ -104,7 +104,7 @@ class SrtManagedLiveTest {
             "SRT live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");
 
         // Expected SHA via the OFFLINE Muxer→Demuxer path (self-validating).
-        String offlineSha = offlineMuxDemuxSha();
+        String offlineSha = sha256OfDemuxedVideoUnits(muxToBytes());
 
         CompletableFuture<Integer> portFuture = new CompletableFuture<>();
         CompletableFuture<String> shaFuture = new CompletableFuture<>();
@@ -192,7 +192,7 @@ class SrtManagedLiveTest {
         // try-with-resources closes the handle.
         try (ManagedMuxSender s = ManagedMuxSender.fromUrl(
                 "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS,
-                roundtripConfig())) {
+                roundtripConfigWithData())) {
             // Stream mini-batches until the receiver has captured its SHA (bounded).
             // Continuous streaming (not a fixed batch + 1s drain pause) closes the
             // starved-receiver window: the connection stays live and flowing until
@@ -559,7 +559,7 @@ class SrtManagedLiveTest {
 
         try (ManagedMuxSender s = ManagedMuxSender.fromUrl(
                 "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS,
-                roundtripConfig())) {
+                roundtripConfigWithData())) {
             s.sendVideo(syntheticH264Idr(), 0L, true);
             ManagedTransportStats stats = s.reconnectStats();
             assertEquals(0L, stats.reconnectAttempts(), "no reconnect should have occurred");
@@ -606,7 +606,7 @@ class SrtManagedLiveTest {
                 portFuture.complete(listener.localAddr().port());
 
                 sock = listener.accept(null);
-                ms = sock.intoMuxSender(roundtripConfig());
+                ms = sock.intoMuxSender(roundtripConfigWithData());
                 // Stream until main has observed its first event (bounded so this
                 // daemon can never run away if main fails before observing).
                 long pts = 0;
@@ -814,16 +814,11 @@ class SrtManagedLiveTest {
     private static final byte[] DATA_PAYLOAD =
         {(byte) 0xD0, 'D', 'A', 'T', 'A', (byte) 0xBE, (byte) 0xEF, 0x01};
 
-    /** Video + one private-data stream — see {@link TestSupport#roundtripConfigWithData()}. */
-    private static MuxerConfig roundtripConfig() {
-        return TestSupport.roundtripConfigWithData();
-    }
-
     /** Mux PUSH_COUNT synthetic IDRs at increasing PTS and return the TS bytes. */
     private static byte[] muxToBytes() throws Exception {
         ByteArrayOutputStream acc = new ByteArrayOutputStream();
         byte[] out = new byte[8192];
-        try (Muxer m = new Muxer(roundtripConfig())) {
+        try (Muxer m = new Muxer(roundtripConfigWithData())) {
             for (int i = 0; i < PUSH_COUNT; i++) {
                 m.pushVideo(syntheticH264Idr(), i * 3000L, true);
             }
@@ -833,21 +828,6 @@ class SrtManagedLiveTest {
             }
         }
         return acc.toByteArray();
-    }
-
-    /** Offline Muxer→Demuxer SHA of the first Video sample's NAL payloads. */
-    private static String offlineMuxDemuxSha() throws Exception {
-        byte[] ts = muxToBytes();
-        try (Demuxer d = new Demuxer()) {
-            d.feed(ts);
-            d.flush();
-            for (DemuxEvent e : d) {
-                if (e instanceof DemuxEvent.Video v && !v.parse().isEmpty()) {
-                    return sha256Units(v.parse());
-                }
-            }
-        }
-        throw new AssertionError("offline path produced no typed Video event");
     }
 
 }
