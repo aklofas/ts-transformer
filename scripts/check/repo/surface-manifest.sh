@@ -10,11 +10,14 @@
 #   (b2) every [[surface]] row carries all five binding columns (c, python, java,
 #       swift, kotlin) — "<prefix>:unaudited" / ":deferred" / ":n/a" declare a
 #       column whose twin is unchecked / absent today / absent by design;
-#   (c) closure: every mappable public-api.txt item is mapped ([[surface]] item)
-#       or exempted ([[exempt]] item).
+#   (c) closure: the mappable public-api.txt items that no [[surface]] or
+#       [[exempt]] row names are exactly the pinned set (UNAUDITED_COUNT
+#       items whose sorted list hashes to UNAUDITED_SHA256).
 #
-# Run it:    bash scripts/check/repo/surface-manifest.sh
-# Self-test: bash scripts/check/repo/surface-manifest.sh --self-test
+# Run it:          bash scripts/check/repo/surface-manifest.sh
+# Self-test:       bash scripts/check/repo/surface-manifest.sh --self-test
+# Pinned set:      bash scripts/check/repo/surface-manifest.sh --list-unaudited
+# Re-pin values:   bash scripts/check/repo/surface-manifest.sh --print-baseline
 #
 # Overridable (for the self-test):
 #   SURFACE_MANIFEST        path to the manifest TOML
@@ -25,6 +28,7 @@
 #   SURFACE_PYI_DIR         the Python package directory (.pyi stubs + .py sources)
 #   SURFACE_PY_PACKAGE      the package name a module-qualified cell starts with
 #   SURFACE_REQUIRED_PREFIXES  binding columns every [[surface]] row must carry
+#   SURFACE_UNAUDITED_COUNT / SURFACE_UNAUDITED_SHA256  rule (c) baseline
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -37,11 +41,17 @@ SURFACE_C_HEADER="${SURFACE_C_HEADER:-$ROOT/bindings/c/include/tstrans.h}"
 SURFACE_PYI_DIR="${SURFACE_PYI_DIR:-$ROOT/bindings/python/python/tstrans}"
 SURFACE_JAVA_DIR="${SURFACE_JAVA_DIR:-$ROOT/bindings/jvm/src/main/java}"
 
+# Rule (c) baseline: the mappable baseline items that no [[surface]] or
+# [[exempt]] row names, pinned by count and by the sha256 of their sorted
+# list. The 2026-06-03 bootstrap left them uncatalogued. Giving one a row
+# shrinks the set: re-pin both values with --print-baseline in that change.
+UNAUDITED_COUNT=2023
+UNAUDITED_SHA256=791293c44c6625520ad83e6630db8931e2e56519eed3811d086cfe564c35fcad
+
 # ---------------------------------------------------------------------------
 # extract_items: stdin is a public-api.txt; stdout is one canonical key per
 # mappable line. Mappable = pub fn/struct/enum/trait/type/const (incl. const fn).
 # auto-derived impl lines are NOT mappable and are skipped.
-# KEEP IN SYNC with scripts/gen/surface-exemptions.sh extract_items.
 # ---------------------------------------------------------------------------
 extract_items() {
   awk '
@@ -56,6 +66,22 @@ extract_items() {
       if (line != "") print line
     }
   '
+}
+
+# ---------------------------------------------------------------------------
+# list_unaudited: stdout is the sorted, de-duplicated set of mappable
+# baseline items that no [[surface]] or [[exempt]] row names — the set
+# rule (c) pins by UNAUDITED_COUNT and UNAUDITED_SHA256.
+# ---------------------------------------------------------------------------
+list_unaudited() {
+  local named c f
+  named="$(mktemp)"
+  grep -E '^item = ' "$SURFACE_MANIFEST" | sed -E 's/^item = "(.*)"/\1/' | LC_ALL=C sort -u > "$named"
+  for c in $SURFACE_CRATES; do
+    f="$SURFACE_BASELINE_DIR/$c/public-api.txt"; [ -f "$f" ] || continue
+    extract_items < "$f"
+  done | LC_ALL=C sort -u | LC_ALL=C comm -23 - "$named"
+  rm -f "$named"
 }
 
 # ---------------------------------------------------------------------------
@@ -205,17 +231,6 @@ run_check() {
   local errs; errs="$(mktemp)"; trap 'rm -f "$errs"' RETURN
   local fail=0
 
-  local mapped exempt
-  mapped="$(mktemp)"; exempt="$(mktemp)"
-  # All "item = " lines in [[surface]] AND [[exempt]] sections
-  grep -E '^item = ' "$SURFACE_MANIFEST" | sed -E 's/^item = "(.*)"/\1/' | sort -u > "$mapped"
-  # Only items from [[exempt]] sections (the awk skips [[surface]] items)
-  awk '
-    /^\[\[exempt\]\]/ { e=1; next }
-    /^\[\[surface\]\]/ { e=0; next }
-    e && /^item = / { sub(/^item = "/, ""); sub(/".*$/, ""); print }
-  ' "$SURFACE_MANIFEST" | sort -u > "$exempt"
-
   # (a) owning_tests paths exist.
   local p
   grep -E '^owning_tests = ' "$SURFACE_MANIFEST" | grep -oE '"[^"]+"' | tr -d '"' \
@@ -298,19 +313,24 @@ run_check() {
     END { flush() }
   ' "$SURFACE_MANIFEST" >> "$errs"
 
-  # (c) closure: every mappable baseline item is mapped or exempted.
-  local c f item
-  for c in $SURFACE_CRATES; do
-    f="$SURFACE_BASELINE_DIR/$c/public-api.txt"; [ -f "$f" ] || continue
-    while IFS= read -r item; do
-      [ -n "$item" ] || continue
-      grep -Fxq "$item" "$mapped" && continue
-      grep -Fxq "$item" "$exempt" && continue
-      echo "FAIL: un-catalogued public item (add to [[surface]] or [[exempt]] in surface-manifest.toml): $item"
-    done < <(extract_items < "$f")
-  done >> "$errs"
-
-  rm -f "$mapped" "$exempt"
+  # (c) closure: the set of mappable baseline items that no row names must
+  # equal the pinned baseline, by count and by digest.
+  local unaudited n sum want_n want_sum
+  want_n="${SURFACE_UNAUDITED_COUNT:-$UNAUDITED_COUNT}"
+  want_sum="${SURFACE_UNAUDITED_SHA256:-$UNAUDITED_SHA256}"
+  unaudited="$(mktemp)"
+  list_unaudited > "$unaudited"
+  n="$(wc -l < "$unaudited" | tr -d ' ')"
+  sum="$(sha256sum < "$unaudited" | cut -d' ' -f1)"
+  if [ "$n" != "$want_n" ] || [ "$sum" != "$want_sum" ]; then
+    {
+      echo "FAIL: the un-catalogued public item set changed: $n items, sha256 $sum (pinned: $want_n items, $want_sum)."
+      echo "      Public items this branch added or removed: git diff main -- 'crates/*/public-api.txt'"
+      echo "      A new item needs a [[surface]] row or an [[exempt]] row with a reason in surface-manifest.toml."
+      echo "      Re-pin only for a deliberate change: bash scripts/check/repo/surface-manifest.sh --print-baseline"
+    } >> "$errs"
+  fi
+  rm -f "$unaudited"
 
   if [ -s "$errs" ]; then
     cat "$errs" >&2
@@ -349,6 +369,8 @@ self_test() {
   export SURFACE_C_HEADER="$tmp/h.h"
   export SURFACE_PYI_DIR="$tmp"
   export SURFACE_BUILT_FEATURES="srt"
+  export SURFACE_UNAUDITED_COUNT=0
+  export SURFACE_UNAUDITED_SHA256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  # sha256 of no lines
 
   # (1) Both items exempted -> pass
   printf '[[exempt]]\nitem = "demo::a"\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
@@ -430,18 +452,38 @@ self_test() {
   py_row "demo::a" "deferred" "demo::B::x"
   expect pass "python: sentinel cells against an empty definition index" || return 1
 
+
+  # (9) Rule (c) pins the un-catalogued SET, not only its size: the pinned
+  # set passes, and the same count with a different item (one gone, one new)
+  # fails on the digest.
+  printf 'pub fn demo::a()\npub struct demo::B\n' > "$tmp/crates/demo/public-api.txt"
+  printf '[[exempt]]\nitem = "demo::a"\n' > "$tmp/m.toml"
+  SURFACE_UNAUDITED_COUNT=1 SURFACE_UNAUDITED_SHA256=4b00f8db406822b96eeba4fc4cff6c67f0df4cc48602125672ed68077e174a47 \
+    expect pass "closure: the pinned un-catalogued set {demo::B}" || return 1
+  printf '[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
+  SURFACE_UNAUDITED_COUNT=1 SURFACE_UNAUDITED_SHA256=4b00f8db406822b96eeba4fc4cff6c67f0df4cc48602125672ed68077e174a47 \
+    expect fail "closure: same count, different item" || return 1
+
   echo "self-test: PASS"
 }
 
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
-if [ "${1:-}" = "--self-test" ]; then
-  self_test
-else
-  # Prove the checker still catches its negatives before trusting a pass.
-  # Subshell so the self-test's env overrides can't leak into run_check.
-  ( self_test ) >/dev/null
-  run_check
-  echo "surface-manifest: OK"
-fi
+case "${1:-}" in
+  --self-test)
+    self_test ;;
+  --list-unaudited)
+    list_unaudited ;;
+  --print-baseline)
+    t="$(mktemp)"; list_unaudited > "$t"
+    echo "UNAUDITED_COUNT=$(wc -l < "$t" | tr -d ' ')"
+    echo "UNAUDITED_SHA256=$(sha256sum < "$t" | cut -d' ' -f1)"
+    rm -f "$t" ;;
+  *)
+    # Prove the checker still catches its negatives before trusting a pass.
+    # Subshell so the self-test's env overrides can't leak into run_check.
+    ( self_test ) >/dev/null
+    run_check
+    echo "surface-manifest: OK" ;;
+esac
