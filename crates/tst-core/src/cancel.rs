@@ -1,4 +1,4 @@
-//! Cancellation primitives: [`SrtCancelHandle`] (one fixed handle) and
+//! Cancellation primitives: [`FlagCancel`] (a shared flag), [`ResourceCancel`] (one fixed resource handle plus its closer) and
 //! [`CancelSlot`] (whichever handle is currently able to unblock a worker).
 //!
 //! **Stability: Stable** — see the
@@ -7,10 +7,10 @@
 //! from it and is **Provisional**, as its own docs and the table's `cancel`
 //! row both record.
 //!
-//! [`SrtCancelHandle`] wraps a libsrt `SRTSOCKET` (or any other integer
-//! handle) plus a caller-supplied closer closure. Calling `cancel()` from
-//! any thread atomically swaps the handle to a sentinel and invokes the
-//! closer exactly once. Subsequent `cancel()` calls are no-ops.
+//! [`ResourceCancel`] wraps an integer resource handle (tst-srt's
+//! `SRTSOCKET`) plus a caller-supplied closer closure. Calling `cancel()`
+//! from any thread atomically swaps the handle to a sentinel and invokes
+//! the closer exactly once. Subsequent `cancel()` calls are no-ops.
 //!
 //! It is used by `srt::Socket` and `srt::Listener` so a thread parked in
 //! `srt_sendmsg` / `srt_recvmsg` / `srt_accept` can be woken from
@@ -29,7 +29,29 @@
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
+use core::time::Duration;
 use portable_atomic::{AtomicBool, AtomicI64, Ordering};
+
+/// Standard cancel-poll interval used across all UDP-based transports.
+/// Receivers/senders set this as the socket read/write timeout so that
+/// close/cancel flags get checked at most this often during a blocking call.
+pub const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Poll interval for a non-blocking `accept()` loop (e.g.
+/// `tst_tcp::listener::TcpListener::accept_blocking`) — shorter than
+/// [`CANCEL_POLL_INTERVAL`] on purpose. Unlike a parked `recv`/`send`, whose
+/// cadence comes from `SO_RCVTIMEO`/`SO_SNDTIMEO` (the OS wakes the thread
+/// the instant data/window is available, so the *timeout* value only bounds
+/// the cancel-check latency, not the data latency), a non-blocking `accept()`
+/// loop has no such wakeup: every connection that lands has to wait out the
+/// current sleep before the next `accept()` attempt notices it. At
+/// `CANCEL_POLL_INTERVAL` (100 ms) that put up to ~100 ms of latency on
+/// every accept, tight enough to occasionally blow a caller's own ~100 ms
+/// I/O deadline (observed: a TLS handshake's first write).
+/// 5 ms keeps an idle listener's wakeup cost negligible (200 Hz) while
+/// cutting worst-case accept latency 20×; a cancel is still observed within
+/// one tick either way.
+pub const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// Sentinel stored in the atomic once cancel has run. Picked as `i64::MIN`
 /// because libsrt's `SRTSOCKET` (= `c_int`) cannot legally take this value
@@ -39,14 +61,61 @@ const CANCELLED: i64 = i64::MIN;
 /// Type-erased closer the handle invokes on its first `cancel()` call.
 type Closer = Box<dyn Fn(i64) + Send + Sync>;
 
+/// A cancel handle that is a shared flag: [`cancel`](Self::cancel) sets it
+/// and the owner polls it. For transports whose blocking calls wake on a
+/// socket timeout ([`CANCEL_POLL_INTERVAL`]) or a runtime `select!` — UDP,
+/// RIST, the RTP sockets, the RTSP client and server — and for binding
+/// objects that have nothing to wake.
+///
+/// `Clone` shares the flag: every clone reads and sets the same one.
+/// `cancel()` is a single lock-free atomic store (`Release`) on every target
+/// with native atomics, so it is safe to call from a signal handler;
+/// `is_cancelled()` is an `Acquire` load.
+///
+/// The flag records the CALLER's intent and is deliberately separate from
+/// any liveness flag the owner keeps: an owner also goes dead on `close()`,
+/// a peer EOF or a wire failure, and the bindings tell "the caller closed
+/// it" from "the stream ended" by reading this flag alone.
+#[derive(Clone, Debug, Default)]
+pub struct FlagCancel(Arc<AtomicBool>);
+
+impl FlagCancel {
+    /// A clear flag.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the flag. Idempotent.
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    /// `true` once [`cancel`](Self::cancel) has run on this handle or any
+    /// clone of it.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+impl crate::transport::TransportCancel for FlagCancel {
+    fn cancel(&self) {
+        FlagCancel::cancel(self);
+    }
+    fn is_cancelled(&self) -> bool {
+        FlagCancel::is_cancelled(self)
+    }
+}
+
 /// Thread-safe one-shot socket-close primitive.
 ///
 /// Construct via `Socket::cancel_handle()` / `Listener::cancel_handle()`
-/// (or the test-only `SrtCancelHandle::new`). Clone freely — every clone
+/// (or the test-only `ResourceCancel::new`). Clone freely — every clone
 /// shares the same atomic state, so calling `cancel()` on any clone
 /// fires the closer exactly once.
 #[derive(Clone)]
-pub struct SrtCancelHandle {
+pub struct ResourceCancel {
     state: Arc<State>,
 }
 
@@ -66,7 +135,7 @@ struct State {
     cancelled: AtomicBool,
 }
 
-impl SrtCancelHandle {
+impl ResourceCancel {
     /// Build a handle. The closer is invoked at most once, with the
     /// handle value passed in here. Public so callers outside the `srt`
     /// module (e.g. test mocks) can construct one; production code uses
@@ -139,33 +208,37 @@ impl SrtCancelHandle {
     }
 }
 
-/// A `SrtCancelHandle` is itself a [`TransportCancel`](crate::transport::TransportCancel):
+/// A `ResourceCancel` is itself a [`TransportCancel`](crate::transport::TransportCancel):
 /// this lets a `Listener`'s handle (the cross-thread wake for a parked
 /// `accept()`) be installed wherever a `dyn TransportCancel` is expected —
 /// notably a managed receiver's reconnect-factory cancel slot.
-impl crate::transport::TransportCancel for SrtCancelHandle {
+impl crate::transport::TransportCancel for ResourceCancel {
     fn cancel(&self) {
-        SrtCancelHandle::cancel(self);
+        ResourceCancel::cancel(self);
     }
     fn is_cancelled(&self) -> bool {
-        SrtCancelHandle::is_cancelled(self)
+        ResourceCancel::is_cancelled(self)
     }
 }
 
-impl core::fmt::Debug for SrtCancelHandle {
+impl core::fmt::Debug for ResourceCancel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("SrtCancelHandle")
+        f.debug_struct("ResourceCancel")
             .field("cancelled", &self.is_cancelled())
             .finish()
     }
 }
+
+/// The old name of [`ResourceCancel`].
+#[deprecated(since = "0.9.0", note = "renamed to `ResourceCancel`")]
+pub type SrtCancelHandle = ResourceCancel;
 
 /// A latched, replaceable cancel target.
 ///
 /// **Stability: Provisional** — see the
 /// [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 ///
-/// Where [`SrtCancelHandle`] wraps *one* fixed handle, a `CancelSlot` holds
+/// Where [`ResourceCancel`] wraps *one* fixed handle, a `CancelSlot` holds
 /// *whichever* [`TransportCancel`](crate::transport::TransportCancel) can
 /// currently unblock a worker — a thing that changes as the worker moves
 /// from one blocking call to the next. A producer publishes the current one
@@ -260,7 +333,7 @@ impl CancelSlot {
 mod tests {
     use super::*;
 
-    /// Construct a SrtCancelHandle around an integer "handle" using a stub
+    /// Construct a ResourceCancel around an integer "handle" using a stub
     /// closer that records its calls. Verifies idempotence: the closer
     /// runs at most once across any number of cancel() calls (including
     /// concurrent ones).
@@ -269,7 +342,7 @@ mod tests {
         use std::sync::atomic::{AtomicU32, Ordering};
         let calls = std::sync::Arc::new(AtomicU32::new(0));
         let calls_cl = calls.clone();
-        let h = SrtCancelHandle::new(42, move |handle| {
+        let h = ResourceCancel::new(42, move |handle| {
             assert_eq!(handle, 42);
             calls_cl.fetch_add(1, Ordering::SeqCst);
         });
@@ -283,7 +356,7 @@ mod tests {
     #[test]
     fn cancel_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<SrtCancelHandle>();
+        assert_send_sync::<ResourceCancel>();
     }
 
     #[test]
@@ -292,7 +365,7 @@ mod tests {
         use std::sync::atomic::{AtomicU32, Ordering};
         let calls = std::sync::Arc::new(AtomicU32::new(0));
         let calls_cl = calls.clone();
-        let h = std::sync::Arc::new(SrtCancelHandle::new(7, move |handle| {
+        let h = std::sync::Arc::new(ResourceCancel::new(7, move |handle| {
             // Verify the closer receives the original handle value, not the
             // CANCELLED sentinel. Catches a future bug where someone might
             // "fix" cancel() to pass CANCELLED instead of prev.
@@ -318,7 +391,7 @@ mod tests {
 
     #[test]
     fn is_cancelled_flips_after_cancel() {
-        let h = SrtCancelHandle::new(1, |_| {});
+        let h = ResourceCancel::new(1, |_| {});
         assert!(!h.is_cancelled());
         h.cancel();
         assert!(h.is_cancelled());
@@ -336,7 +409,7 @@ mod tests {
         use core::sync::atomic::AtomicU32;
         let runs = alloc::sync::Arc::new(AtomicU32::new(0));
         let r = runs.clone();
-        let h = SrtCancelHandle::new(5, move |handle| {
+        let h = ResourceCancel::new(5, move |handle| {
             assert_eq!(handle, 5);
             r.fetch_add(1, Ordering::SeqCst);
         });
@@ -364,7 +437,7 @@ mod tests {
     #[test]
     fn is_cancelled_is_reachable_through_the_trait_object() {
         use crate::transport::TransportCancel;
-        let h = SrtCancelHandle::new(3, |_| {});
+        let h = ResourceCancel::new(3, |_| {});
         let dyn_h: &dyn TransportCancel = &h;
         assert!(!dyn_h.is_cancelled());
         dyn_h.cancel();
@@ -519,5 +592,30 @@ mod cancel_slot_tests {
     fn cancel_slot_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<CancelSlot>();
+    }
+}
+
+#[cfg(test)]
+mod flag_cancel_tests {
+    use super::FlagCancel;
+    use crate::transport::TransportCancel;
+
+    #[test]
+    fn a_fresh_flag_is_clear_and_cancel_latches_every_clone() {
+        let a = FlagCancel::new();
+        let b = a.clone();
+        assert!(!b.is_cancelled());
+        a.cancel();
+        a.cancel();
+        assert!(a.is_cancelled() && b.is_cancelled());
+        assert!(!FlagCancel::default().is_cancelled());
+    }
+
+    #[test]
+    fn the_trait_object_reads_the_same_flag() {
+        let f = FlagCancel::new();
+        let dyn_f: alloc::sync::Arc<dyn TransportCancel> = alloc::sync::Arc::new(f.clone());
+        dyn_f.cancel();
+        assert!(f.is_cancelled() && dyn_f.is_cancelled());
     }
 }

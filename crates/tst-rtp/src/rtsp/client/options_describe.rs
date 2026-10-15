@@ -323,7 +323,7 @@ impl RtspClient {
         let mut buf = Vec::with_capacity(4096);
         let mut chunk = [0u8; 4096];
         loop {
-            if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            if self.cancel.is_cancelled() {
                 return Err(RtspError::LocalCancel);
             }
             // No single read may outlast the cancel tick or the time left
@@ -484,7 +484,7 @@ impl RtspClient {
             .as_ref()
             .expect("pump_state is Some — checked by caller");
         loop {
-            if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            if self.cancel.is_cancelled() {
                 return Err(RtspError::LocalCancel);
             }
             // The wait is on the pump's channel, not the socket, so the

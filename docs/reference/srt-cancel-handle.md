@@ -1,10 +1,13 @@
-# SrtCancelHandle — SRT cross-thread shutdown primitive
+# Cross-thread cancellation — `ResourceCancel` and `FlagCancel`
 
 Every long-lived pipeline shell (`MuxSender`, `Sender`, `RawSender`,
 `DemuxReceiver`, `Receiver`, `RawReceiver`) blocks the calling thread
 inside `send_*` / `recv_*`. The cancel-handle pattern is how a
 *different* thread (or a signal handler) wakes that blocked call so the
 process can shut down promptly without time-sliced polling.
+
+SRT uses `ResourceCancel`; UDP, TCP, RIST, RTP and RTSP use `FlagCancel`
+(a shared flag their blocking calls poll, from `tst_core::cancel`).
 
 The handle is `Send + Sync`, one-shot, and idempotent — multiple
 `cancel()` calls from any thread are safe and no-op after the first.
@@ -13,14 +16,14 @@ The handle is `Send + Sync`, one-shot, and idempotent — multiple
 
 There are two named types in play. The trait `TransportCancel` is
 transport-agnostic (every `Transport` impl decides whether to surface a
-cancel handle); the concrete struct `SrtCancelHandle` is SRT-shaped
+cancel handle); the concrete struct `ResourceCancel` is SRT-shaped
 (wraps an `SRTSOCKET` integer handle with `i64::MIN` as the cancelled
 sentinel). Pick the one whose layer you're on:
 
 | Layer | Type | Where it lives |
 |-------|------|----------------|
 | Pipeline (trait, dynamic dispatch) | [`TransportCancel`](/crates/tst-core/src/transport.rs) (trait) | `tst_pipeline::TransportCancel` (re-export of `tst_core::transport::TransportCancel`) |
-| Concrete primitive (SRT-shaped) | [`SrtCancelHandle`](/crates/tst-core/src/cancel.rs) (struct) | `tst_pipeline::SrtCancelHandle` (re-export of `tst_core::SrtCancelHandle`); also re-exported as `tst_srt::SrtCancelHandle` |
+| Concrete primitive (SRT-shaped) | [`ResourceCancel`](/crates/tst-core/src/cancel.rs) (struct) | `tst_pipeline::ResourceCancel` (re-export of `tst_core::ResourceCancel`); also re-exported as `tst_srt::ResourceCancel` |
 
 Pipeline shells return the trait shape:
 
@@ -34,7 +37,7 @@ in-memory test mock returns `None`). All real transports — `SrtTransport`
 decorating it — return `Some`.
 
 `tst-srt`'s `Socket::cancel_handle()` and `Listener::cancel_handle()`
-return the concrete `SrtCancelHandle` struct directly (no `Option`); these
+return the concrete `ResourceCancel` struct directly (no `Option`); these
 are the paths to use when you're working below the pipeline shells.
 
 ## Obtaining a handle
@@ -53,11 +56,11 @@ let cancel = cancel.expect("real transports always return Some");
 From `tst-srt` directly (Socket / Listener):
 
 ```rust,ignore
-use tst_pipeline::SrtCancelHandle;  // re-exported from tst_core::SrtCancelHandle
+use tst_pipeline::ResourceCancel;  // re-exported from tst_core::ResourceCancel
 
 let socket: tst_srt::Socket = /* ... */;
-let cancel: SrtCancelHandle = socket.cancel_handle();
-// `SrtCancelHandle: Clone` — the inner state is Arc-shared, so all clones
+let cancel: ResourceCancel = socket.cancel_handle();
+// `ResourceCancel: Clone` — the inner state is Arc-shared, so all clones
 // fire the closer once across the whole set.
 ```
 
@@ -126,7 +129,7 @@ is below the transport layer, still reports the libsrt error.
 
 ## Per-language idiom
 
-Bindings should expose `SrtCancelHandle` as a language-native shutdown
+Bindings should expose `ResourceCancel` as a language-native shutdown
 primitive. The shape maps cleanly:
 
 | Language | Idiom |
@@ -142,7 +145,7 @@ The Rust API is the source of truth — every binding crate forwards
 
 ## Threading guarantees
 
-- `SrtCancelHandle: Send + Sync + Clone`. Stash it in any container, move
+- `ResourceCancel: Send + Sync + Clone`. Stash it in any container, move
   it into any thread, clone it freely — every clone shares the same
   atomic state, so `cancel()` on any clone fires the closer at most
   once across the whole set.
@@ -154,7 +157,7 @@ The Rust API is the source of truth — every binding crate forwards
   thread that wins the atomic swap. The closer's return code is
   consumed there, which is why `Socket::close` and `Listener::close`
   are infallible.
-- `is_cancelled()` (on the concrete `SrtCancelHandle` struct) is advisory;
+- `is_cancelled()` (on the concrete `ResourceCancel` struct) is advisory;
   the underlying close may not have completed yet on another thread.
 - `is_cancelled()` answers **"did a caller cancel?"**, never "is this
   socket finished?". A peer disconnect or a wire failure leaves it
@@ -185,11 +188,11 @@ transport (fallibly, and possibly blocking like `Drop`) before closing.
 
 ## Anti-priorities
 
-`SrtCancelHandle` is the supported shape for sync-blocking shutdown. The
+`ResourceCancel` is the supported shape for sync-blocking shutdown. The
 API is intentionally synchronous-blocking; when async lands later as a
 separate crate (`tst-srt-async` or feature-gated), it ships
 `Future::poll`-shaped cancellation alongside but doesn't deprecate
-`SrtCancelHandle` — sync consumers stay on the trait-object pattern
+`ResourceCancel` — sync consumers stay on the trait-object pattern
 above. See the **Sync vs. async** section in
 [`architecture.md`](./architecture.md) for the long form.
 
@@ -197,7 +200,7 @@ above. See the **Sync vs. async** section in
 
 | Transport | Cancel handle | Notes |
 |-----------|--------------|-------|
-| SRT (`tst-srt`) | `SrtCancelHandle` | From `Socket::cancel_handle()` or `pipeline_shell.cancel_handle()`. |
+| SRT (`tst-srt`) | `ResourceCancel` | From `Socket::cancel_handle()` or `pipeline_shell.cancel_handle()`. |
 | RTP / RTSP (`tst-rtp`) | `RtpCancelHandle` | From `RtpTransport::cancel_handle()` or the pipeline shell. |
 | TCP / TLS (`tst-tcp`) | `TcpCancelHandle` | From the inherent `TcpTransport::cancel_handle()`, from `Transport::cancel_handle` / `RecvTransport::cancel_handle` on the same transport, or from the pipeline shell (which reads the trait method). All three hand back the same handle. |
 | UDP (`tst-udp`) | `UdpCancelHandle` | From the inherent `UdpTransport::cancel_handle()` / `UdpRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. A parked `recv_bytes` observes it at its next ~100 ms poll tick and returns `ExplicitClose`; `send_bytes` never parks and checks it at entry. `close()` stays `Closed`. `recv_timeout` (per-call deadline) does not observe it — check `is_cancelled()` between slices. |
@@ -207,12 +210,12 @@ above. See the **Sync vs. async** section in
 
 - [`architecture.md`](/docs/reference/architecture.md) — Cross-thread shutdown section.
 - [`binding-authors.md`](/docs/reference/binding-authors.md) — Cancel handles for binding authors.
-- [Graceful shutdown from another thread via `SrtCancelHandle`](/docs/cookbook/operations/graceful-shutdown.md) — the cookbook recipe.
+- [Graceful shutdown from another thread via `ResourceCancel`](/docs/cookbook/operations/graceful-shutdown.md) — the cookbook recipe.
 - [`guides/pipeline.md`](/docs/guides/pipeline.md) — Pipeline shell composition (where `cancel_handle()` lives).
 
 ## Managed wrappers: `CancelSlot`
 
-`SrtCancelHandle` wraps *one* fixed socket. A managed wrapper has no such
+`ResourceCancel` wraps *one* fixed socket. A managed wrapper has no such
 fixed target: which handle can unblock its worker changes every time the
 worker moves on — from a live socket to a reconnect factory to the next
 socket. `tst_core::cancel::CancelSlot` is the primitive that bridges the
@@ -257,7 +260,7 @@ let factory = Box::new(move || -> Result<SrtTransport, TransportError> {
     }
     let mut listener = ListenerBuilder::new().bind("0.0.0.0:9000")
         .map_err(|e| TransportError::Broken { msg: e.to_string(), errno_code: None, cause: BrokenCause::Unspecified })?;
-    fc.install(Arc::new(listener.cancel_handle()));   // `SrtCancelHandle: TransportCancel`
+    fc.install(Arc::new(listener.cancel_handle()));   // `ResourceCancel: TransportCancel`
     let accepted = listener.accept();
     fc.clear();
     match accepted {

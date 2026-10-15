@@ -47,7 +47,8 @@ use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tst_core::net::udp_socket::{CANCEL_POLL_INTERVAL, set_socket_buffers};
+use tst_core::cancel::CANCEL_POLL_INTERVAL;
+use tst_core::net::udp_socket::set_socket_buffers;
 use tst_core::transport::{SocketStats, TransportError};
 
 use crate::cancel::RtpCancelHandle;

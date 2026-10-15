@@ -75,7 +75,7 @@ pub struct SrtTransport {
     /// reported as [`TransportError::ExplicitClose`] rather than the wire
     /// error `srt_close` provokes, and by `is_alive` so a fired handle
     /// reads dead at once.
-    cancel: tst_core::SrtCancelHandle,
+    cancel: tst_core::ResourceCancel,
     /// Set by this transport's own `close()`, BEFORE the socket is
     /// dropped. `Socket::close` fires `cancel` too, so the latch alone
     /// cannot tell "the caller closed this transport" from "another
@@ -119,7 +119,7 @@ impl SrtTransport {
     }
 
     /// The cross-thread wake for this transport's socket — the same
-    /// [`SrtCancelHandle`](tst_core::SrtCancelHandle) the trait method
+    /// [`ResourceCancel`](tst_core::ResourceCancel) the trait method
     /// [`Transport::cancel_handle`] wraps, without the `Option`: it is
     /// captured at construction, so it exists for the transport's whole
     /// life and keeps answering (as cancelled) after `close()`. Obtain it
@@ -129,7 +129,7 @@ impl SrtTransport {
     ///
     /// [`Transport::cancel_handle`]: tst_core::transport::Transport::cancel_handle
     #[must_use]
-    pub fn srt_cancel_handle(&self) -> tst_core::SrtCancelHandle {
+    pub fn srt_cancel_handle(&self) -> tst_core::ResourceCancel {
         self.cancel.clone()
     }
 

@@ -11,9 +11,9 @@
 //! (`file` feature) and the `net` socket helpers the transport crates
 //! share (`std` feature).
 //!
-//! Two trait-adjacent types carry SRT-flavored naming: [`SrtCancelHandle`]
-//! (used only by `tst-srt`) and [`SocketStats`] (its field set mirrors
-//! libsrt's statistics; every transport crate fills the fields it can).
+//! One trait-adjacent type carries SRT-flavored naming: [`SocketStats`]
+//! (its field set mirrors libsrt's statistics; every transport crate fills
+//! the fields it can).
 //! The code is transport-generic (no `srt-sys` dependency from this
 //! crate); the names reflect contract shape, not call sites.
 //!
@@ -83,6 +83,8 @@ pub mod url;
 
 #[cfg(feature = "std")]
 pub use cancel::CancelSlot;
+pub use cancel::ResourceCancel;
+#[allow(deprecated)]
 pub use cancel::SrtCancelHandle;
 pub use error::{
     CotError, DemuxError, KlvDecodeError, KlvEncodeError, KlvFieldError, KlvPatchError, MuxError,

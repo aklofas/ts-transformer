@@ -35,5 +35,5 @@ pub mod shells;
 
 pub use handles::ManagedHandles;
 pub use kind::{BindingError, BindingErrorKind};
-pub use owned::{Close, CloseFailure, FlagCancel, HandleState, Owned};
+pub use owned::{Close, CloseFailure, HandleState, Owned};
 pub use shells::{RecvHalf, SendHalf};

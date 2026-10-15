@@ -455,7 +455,7 @@ bindings = ["python:parse_mpeg2_audio_frames_with_resync", "java:org.tstrans.cod
 scenario_ids = []
 tier = "A"
 
-# tst_core::SrtCancelHandle graduated to [[surface]] once the JVM SRT binding covered it.
+# tst_core::ResourceCancel graduated to [[surface]] once the JVM SRT binding covered it.
 
 [[surface]]
 kind = "rust"
@@ -2309,7 +2309,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
-item = "tst_core::SrtCancelHandle"
+item = "tst_core::ResourceCancel"
 owning_tests = ["crates/tst-srt/tests/loopback/cancellation_loopback.rs"]
 bindings = ["java:org.tstrans.srt.CancelHandle", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 # No scenario_ids: neither the owning Rust test nor the JVM loopback test
@@ -4156,15 +4156,6 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
-item = "tst_pipeline::binding::FlagCancel"
-owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
-scenario_ids = []
-tier = "A"
-
-[[surface]]
-kind = "rust"
-crate = "tst-pipeline"
 item = "tst_pipeline::binding::Owned"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
@@ -4209,54 +4200,45 @@ tier = "A"
 
 [[surface]]
 kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::binding::owned::FlagCancel"
-owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+crate = "tst-core"
+item = "tst_core::cancel::FlagCancel"
+owning_tests = ["crates/tst-core/src/cancel.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::binding::owned::FlagCancel::cancel"
-owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+crate = "tst-core"
+item = "tst_core::cancel::FlagCancel::cancel"
+owning_tests = ["crates/tst-core/src/cancel.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::binding::owned::FlagCancel::default"
-owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+crate = "tst-core"
+item = "tst_core::cancel::FlagCancel::default"
+owning_tests = ["crates/tst-core/src/cancel.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::binding::owned::FlagCancel::fmt"
-owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+crate = "tst-core"
+item = "tst_core::cancel::FlagCancel::fmt"
+owning_tests = ["crates/tst-core/src/cancel.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::binding::owned::FlagCancel::is_set"
-owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
-scenario_ids = []
-tier = "A"
-
-[[surface]]
-kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::binding::owned::FlagCancel::new"
-owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+crate = "tst-core"
+item = "tst_core::cancel::FlagCancel::new"
+owning_tests = ["crates/tst-core/src/cancel.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -4731,7 +4713,7 @@ tier = "A"
 # --- TransportCancel::is_cancelled ------------------------------------------
 # The cancel-handle rows sit alongside their already-exempt siblings.
 [[exempt]]
-item = "tst_core::cancel::SrtCancelHandle::close_without_cancel"
+item = "tst_core::cancel::ResourceCancel::close_without_cancel"
 reason = "Cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
 
 [[exempt]]
@@ -4743,7 +4725,7 @@ item = "tst_core::transport::TransportCancel::is_cancelled"
 reason = "Cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
 
 [[exempt]]
-item = "tst_pipeline::binding::owned::FlagCancel::is_cancelled"
+item = "tst_core::cancel::FlagCancel::is_cancelled"
 reason = "Cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
 
 [[exempt]]

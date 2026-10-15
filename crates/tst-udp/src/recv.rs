@@ -4,10 +4,11 @@ use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use tst_core::cancel::CANCEL_POLL_INTERVAL;
 use tst_core::net::udp_socket::{
-    CANCEL_POLL_INTERVAL, apply_multicast_recv_join, bind_udp_socket, bind_udp_socket_multicast,
-    set_socket_buffers,
+    apply_multicast_recv_join, bind_udp_socket, bind_udp_socket_multicast, set_socket_buffers,
 };
+use tst_core::net::{RecvAction, classify_recv_error};
 use tst_core::transport::{
     BrokenCause, RecvTransport, SocketStats, TransportCancel, TransportError,
 };
@@ -42,7 +43,7 @@ pub struct UdpRecvTransport {
     alive: Arc<AtomicBool>,
     /// Set by [`UdpCancelHandle::cancel`]; read at every poll tick before
     /// `alive` so a cancelled park ends with `ExplicitClose`, not `Closed`.
-    cancelled: Arc<AtomicBool>,
+    cancel: UdpCancelHandle,
     /// Cached `SO_RCVTIMEO` value. Initialized to `CANCEL_POLL_INTERVAL`
     /// (matching what the bind helper sets). Updated lazily: `recv_timeout`
     /// skips `set_read_timeout` when the socket is already at the requested
@@ -107,7 +108,7 @@ impl UdpRecvTransport {
             local,
             stats: UdpStats::default(),
             alive: Arc::new(AtomicBool::new(true)),
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancel: UdpCancelHandle::new(),
             // The bind helper sets SO_RCVTIMEO = CANCEL_POLL_INTERVAL on
             // the socket; cache that so the first recv_bytes entry is a no-op.
             applied_timeout: CANCEL_POLL_INTERVAL,
@@ -126,7 +127,7 @@ impl UdpRecvTransport {
     /// `is_cancelled()` between slices, which is what the Python binding
     /// does).
     pub fn cancel_handle(&self) -> UdpCancelHandle {
-        UdpCancelHandle::from_flag(self.cancelled.clone())
+        self.cancel.clone()
     }
 
     /// Snapshot of UDP stats.
@@ -184,40 +185,6 @@ impl UdpRecvTransport {
     }
 }
 
-/// What a failed `recv` should do next.
-///
-/// Split out as a pure function so the transient/fatal decision is unit
-/// testable: `EINTR` in particular cannot be provoked deterministically
-/// from a plain socket, and the arm it feeds latches the transport
-/// dead, so the classification is worth pinning directly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RecvAction {
-    /// Transient — poll again; the transport stays alive.
-    Retry,
-    /// Terminal — report `Broken` and latch the transport dead.
-    Fatal,
-}
-
-/// Classify a failed `recv` by its [`std::io::ErrorKind`].
-///
-/// `WouldBlock` / `TimedOut` are the `SO_RCVTIMEO` cancel-poll tick.
-/// `Interrupted` is `EINTR` — a signal landed on the thread parked in
-/// `recv`, which is exactly what the SIGINT-handler shutdown pattern
-/// delivers. The send path already treats it as transient
-/// (`tst_core::net::classify_send_error`) and `tst-tcp`'s receive path
-/// retries it for the same reason: a fatal receive latches
-/// `alive = false`, so letting a handled signal through to that
-/// arm would leave the receiver permanently dead with every later call
-/// reporting `Closed`. Everything else is terminal.
-fn classify_recv_error(kind: std::io::ErrorKind) -> RecvAction {
-    match kind {
-        std::io::ErrorKind::WouldBlock
-        | std::io::ErrorKind::TimedOut
-        | std::io::ErrorKind::Interrupted => RecvAction::Retry,
-        _ => RecvAction::Fatal,
-    }
-}
-
 impl RecvTransport for UdpRecvTransport {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         // An empty destination is a no-op — `Ok(0)` before the
@@ -237,7 +204,7 @@ impl RecvTransport for UdpRecvTransport {
         // cancelled or closed, and even when it succeeds it is a setsockopt
         // spent on a transport that is going to refuse the read anyway. The
         // loop re-checks both flags for a cancel that lands during the park.
-        if self.cancelled.load(Ordering::Acquire) {
+        if self.cancel.is_cancelled() {
             return Err(TransportError::ExplicitClose);
         }
         if !self.alive.load(Ordering::Acquire) {
@@ -262,7 +229,7 @@ impl RecvTransport for UdpRecvTransport {
         }
         loop {
             // Cancel wins over close (same order as the sender).
-            if self.cancelled.load(Ordering::Acquire) {
+            if self.cancel.is_cancelled() {
                 return Err(TransportError::ExplicitClose);
             }
             if !self.alive.load(Ordering::Acquire) {
@@ -317,7 +284,7 @@ impl RecvTransport for UdpRecvTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.alive.load(Ordering::Acquire) && !self.cancelled.load(Ordering::Acquire)
+        self.alive.load(Ordering::Acquire) && !self.cancel.is_cancelled()
     }
 
     fn close(&mut self) {
@@ -629,45 +596,5 @@ mod tests {
         assert!(!recv.is_alive(), "Broken must latch the receiver dead");
         let next = recv.recv_bytes(&mut buf);
         assert!(matches!(next, Err(TransportError::Closed)), "got {next:?}");
-    }
-}
-
-#[cfg(test)]
-mod recv_classify_tests {
-    use super::{RecvAction, classify_recv_error};
-    use std::io::ErrorKind;
-
-    #[test]
-    fn wouldblock_and_timedout_retry() {
-        // The SO_RCVTIMEO cancel-poll tick: transient by construction.
-        assert_eq!(
-            classify_recv_error(ErrorKind::WouldBlock),
-            RecvAction::Retry
-        );
-        assert_eq!(classify_recv_error(ErrorKind::TimedOut), RecvAction::Retry);
-    }
-
-    #[test]
-    fn interrupted_retries_like_the_send_path() {
-        // EINTR: a signal landed on the thread parked in `recv`. The send
-        // path classifies it Transient; treating it as fatal here would
-        // latch `alive = false` and kill the receiver for good
-        // on a signal that was meant to be handled and resumed.
-        assert_eq!(
-            classify_recv_error(ErrorKind::Interrupted),
-            RecvAction::Retry
-        );
-    }
-
-    #[test]
-    fn genuine_failures_are_fatal() {
-        for kind in [
-            ErrorKind::ConnectionRefused,
-            ErrorKind::ConnectionReset,
-            ErrorKind::ConnectionAborted,
-            ErrorKind::NotConnected,
-        ] {
-            assert_eq!(classify_recv_error(kind), RecvAction::Fatal, "{kind:?}");
-        }
     }
 }

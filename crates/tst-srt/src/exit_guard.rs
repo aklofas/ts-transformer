@@ -41,7 +41,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
-use tst_core::SrtCancelHandle;
+use tst_core::ResourceCancel;
 
 /// Hard ceiling on the wait for the operations in flight to return, counted
 /// from the moment every open socket has been closed. A cancelled call
@@ -67,7 +67,7 @@ struct OpenSocket {
     handle: srt_sys::SRTSOCKET,
     /// Clone of the handle the `Socket` / `Listener` owns, so the exit
     /// handler can latch `is_cancelled()` before it closes.
-    cancel: SrtCancelHandle,
+    cancel: ResourceCancel,
 }
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -156,14 +156,14 @@ pub fn operations_in_flight() -> u64 {
 ///
 /// Call from inside an [`Operation`]: if the exit handler has already
 /// started, the socket is closed here, on the calling thread.
-pub(crate) fn tracked_cancel_handle(handle: srt_sys::SRTSOCKET) -> SrtCancelHandle {
+pub(crate) fn tracked_cancel_handle(handle: srt_sys::SRTSOCKET) -> ResourceCancel {
     register(handle).1
 }
 
 /// [`tracked_cancel_handle`] plus the registration id, for the tests.
-fn register(handle: srt_sys::SRTSOCKET) -> (u64, SrtCancelHandle) {
+fn register(handle: srt_sys::SRTSOCKET) -> (u64, ResourceCancel) {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let cancel = SrtCancelHandle::new(handle as i64, move |h| {
+    let cancel = ResourceCancel::new(handle as i64, move |h| {
         close_registered(id, h as srt_sys::SRTSOCKET);
     });
     let exiting = {
@@ -195,7 +195,7 @@ fn register(handle: srt_sys::SRTSOCKET) -> (u64, SrtCancelHandle) {
     (id, cancel)
 }
 
-/// The closer behind every tracked [`SrtCancelHandle`]: runs at most once
+/// The closer behind every tracked [`ResourceCancel`]: runs at most once
 /// per socket, on whichever thread fired the handle — an explicit close, a
 /// cancel from another thread, or `Drop`.
 ///
@@ -687,8 +687,8 @@ mod tests {
     fn closing_by_any_path_deregisters() {
         crate::init::ensure_initialized();
         for close in [
-            SrtCancelHandle::cancel as fn(&SrtCancelHandle),
-            SrtCancelHandle::close_without_cancel,
+            ResourceCancel::cancel as fn(&ResourceCancel),
+            ResourceCancel::close_without_cancel,
         ] {
             let h = unsafe { srt_sys::srt_create_socket() };
             assert_ne!(h, -1);

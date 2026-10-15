@@ -36,39 +36,7 @@ use crate::url::RistUrl;
 ///
 /// `close()` is a different signal: post-close calls return
 /// [`TransportError::Closed`] and the handle does not read cancelled.
-#[derive(Clone, Debug)]
-pub struct RistCancelHandle {
-    /// The cancel latch proper, SEPARATE from the transport's `alive` flag
-    /// — `alive` is cleared by `close()` and by a latched `Broken` too, so
-    /// it cannot answer "did the caller cancel?".
-    cancelled: Arc<AtomicBool>,
-}
-
-impl RistCancelHandle {
-    pub(crate) fn from_flag(cancelled: Arc<AtomicBool>) -> Self {
-        Self { cancelled }
-    }
-
-    /// Signal cancellation. Idempotent.
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-    }
-
-    /// `true` once [`Self::cancel`] has been called on any clone.
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
-    }
-}
-
-impl TransportCancel for RistCancelHandle {
-    fn cancel(&self) {
-        RistCancelHandle::cancel(self)
-    }
-
-    fn is_cancelled(&self) -> bool {
-        RistCancelHandle::is_cancelled(self)
-    }
-}
+pub type RistCancelHandle = tst_core::cancel::FlagCancel;
 
 /// Send-side RIST transport.
 ///
@@ -80,7 +48,7 @@ pub struct RistTransport {
     alive: Arc<AtomicBool>,
     /// Set by [`RistCancelHandle::cancel`]; checked at `send_bytes` entry
     /// BEFORE `alive` so a cancelled transport reports `ExplicitClose`.
-    cancelled: Arc<AtomicBool>,
+    cancel: RistCancelHandle,
 }
 
 // librist's rist_ctx is safe to share across threads as long as we don't pass
@@ -111,7 +79,7 @@ impl RistTransport {
             ctx: crate::ctx::RistCtx::open(url, cfg, crate::ctx::Role::Sender)?,
             pkt_size: cfg.pkt_size,
             alive: Arc::new(AtomicBool::new(true)),
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancel: RistCancelHandle::new(),
         })
     }
 
@@ -127,7 +95,7 @@ impl RistTransport {
 
     /// Cross-thread cancel handle for this sender; see [`RistCancelHandle`].
     pub fn cancel_handle(&self) -> RistCancelHandle {
-        RistCancelHandle::from_flag(self.cancelled.clone())
+        self.cancel.clone()
     }
 }
 
@@ -146,7 +114,7 @@ impl Transport for RistTransport {
     fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
         // Cancel wins over close: a caller who fired the handle sees the
         // cancel outcome even if a close() raced in afterwards.
-        if self.cancelled.load(Ordering::Acquire) {
+        if self.cancel.is_cancelled() {
             return Err(TransportError::ExplicitClose);
         }
         if !self.alive.load(Ordering::Acquire) {
@@ -217,7 +185,7 @@ impl Transport for RistTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.alive.load(Ordering::Acquire) && !self.cancelled.load(Ordering::Acquire)
+        self.alive.load(Ordering::Acquire) && !self.cancel.is_cancelled()
     }
 
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {

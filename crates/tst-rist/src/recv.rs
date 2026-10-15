@@ -64,7 +64,7 @@ pub struct RistRecvTransport {
     alive: Arc<AtomicBool>,
     /// Set by [`RistCancelHandle::cancel`]; read at entry and at the end of
     /// every poll tick before `alive`.
-    cancelled: Arc<AtomicBool>,
+    cancel: RistCancelHandle,
 }
 
 // Same Send/!Sync reasoning as RistTransport: RecvTransport methods take
@@ -93,7 +93,7 @@ impl RistRecvTransport {
         Ok(Self {
             ctx: crate::ctx::RistCtx::open(url, cfg, crate::ctx::Role::Receiver)?,
             alive: Arc::new(AtomicBool::new(true)),
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancel: RistCancelHandle::new(),
         })
     }
 
@@ -104,7 +104,7 @@ impl RistRecvTransport {
 
     /// Cross-thread cancel handle for this receiver; see [`RistCancelHandle`].
     pub fn cancel_handle(&self) -> RistCancelHandle {
-        RistCancelHandle::from_flag(self.cancelled.clone())
+        self.cancel.clone()
     }
 
     /// Current snapshot of cumulative stats.
@@ -135,7 +135,7 @@ impl RecvTransport for RistRecvTransport {
             return Ok(0);
         }
         // Cancel wins over close (same order as the sender).
-        if self.cancelled.load(Ordering::Acquire) {
+        if self.cancel.is_cancelled() {
             return Err(TransportError::ExplicitClose);
         }
         if !self.alive.load(Ordering::Acquire) {
@@ -159,7 +159,7 @@ impl RecvTransport for RistRecvTransport {
             // The tick elapsed with nothing to read. A cancel that landed
             // while we were parked is reported HERE — one tick of latency,
             // never a Backpressure that hides it.
-            if self.cancelled.load(Ordering::Acquire) {
+            if self.cancel.is_cancelled() {
                 return Err(TransportError::ExplicitClose);
             }
             // Timeout — transport is alive, nothing to read this tick. Per
@@ -262,7 +262,7 @@ impl RecvTransport for RistRecvTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.alive.load(Ordering::Acquire) && !self.cancelled.load(Ordering::Acquire)
+        self.alive.load(Ordering::Acquire) && !self.cancel.is_cancelled()
     }
 
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {

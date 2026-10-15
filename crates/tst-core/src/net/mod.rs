@@ -10,4 +10,4 @@
 pub mod io_classify;
 pub mod udp_socket;
 
-pub use io_classify::{SendClass, classify_send_error};
+pub use io_classify::{RecvAction, SendClass, classify_recv_error, classify_send_error};

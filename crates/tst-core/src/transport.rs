@@ -15,7 +15,7 @@
 //!
 //! | Transport | after own `close()` | cancel during a parked op | `is_alive()` after `Broken` / after cancel | handle type |
 //! |---|---|---|---|---|
-//! | SRT (`SrtTransport`) | `Closed` | `ExplicitClose` | false / false | `SrtCancelHandle` |
+//! | SRT (`SrtTransport`) | `Closed` | `ExplicitClose` | false / false | `ResourceCancel` |
 //! | TCP / TLS (`TcpTransport`) | `Closed` | `ExplicitClose` | false / false | `TcpCancelHandle` |
 //! | TCP listener (`TcpListener`) | `accept` → `Closed`; `close()` DOES latch `is_cancelled()` (a listener has no peer-EOF path, so its only terminal event is the caller stopping it) | `Closed` (a listener is not a `Transport`; the `TcpError` layer has no cancel variant) | n/a | `TcpCancelHandle` |
 //! | RTP send / recv (`RtpTransport` / `RtpRecvTransport`, incl. RTSP-client recv) | `Closed` | `ExplicitClose` | false / false | `RtpCancelHandle` |
@@ -47,9 +47,9 @@
 //! choose between "caller closed" and "stream ended" from this bit alone,
 //! so a handle that latches on a peer-side end turns every clean EOF into a
 //! reported caller close. Two implementations had to be split to honour it:
-//! `TcpCancelHandle` (was `!alive`) and `SrtCancelHandle` (was "the closer
+//! `TcpCancelHandle` (was `!alive`) and `ResourceCancel` (was "the closer
 //! has run", which `Socket::drop` also triggers on every error path that
-//! retires the socket — hence `SrtCancelHandle::close_without_cancel` for
+//! retires the socket — hence `ResourceCancel::close_without_cancel` for
 //! owner teardown).
 
 use alloc::boxed::Box;

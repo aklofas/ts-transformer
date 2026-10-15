@@ -5,7 +5,8 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tst_core::net::{SendClass, classify_send_error};
+use tst_core::cancel::FlagCancel;
+use tst_core::net::{RecvAction, SendClass, classify_recv_error, classify_send_error};
 use tst_core::transport::{
     BrokenCause, RecvTransport, SocketStats, Transport, TransportCancel, TransportError,
 };
@@ -106,15 +107,15 @@ pub struct TcpCancelHandle {
     /// clean TCP peer EOF into `TST_E_CLOSED` instead of
     /// `TST_E_END_OF_STREAM`. Shared through the same `Arc` chain as
     /// `alive` so a handle minted after the cancel still reads `true`.
-    cancelled: Arc<AtomicBool>,
+    cancel: FlagCancel,
 }
 
 impl TcpCancelHandle {
     /// Build a handle over the shared liveness + cancel flags — used by
     /// [`TcpTransport::cancel_handle`] and
     /// [`crate::listener::TcpListener::cancel_handle`].
-    pub(crate) fn from_flags(alive: Arc<AtomicBool>, cancelled: Arc<AtomicBool>) -> Self {
-        Self { alive, cancelled }
+    pub(crate) fn from_flags(alive: Arc<AtomicBool>, cancel: FlagCancel) -> Self {
+        Self { alive, cancel }
     }
 }
 
@@ -128,7 +129,7 @@ impl TcpCancelHandle {
         // Latch the cancel BEFORE dropping liveness: the woken thread's next
         // act is to ask `is_cancelled()` whether the failure it just saw was
         // caller-initiated, and it must not read `false` there.
-        self.cancelled.store(true, Ordering::Release);
+        self.cancel.cancel();
         self.alive.store(false, Ordering::Release);
     }
 
@@ -141,7 +142,7 @@ impl TcpCancelHandle {
     /// a post-close operation reads `Closed`, a post-cancel one
     /// `ExplicitClose`.
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        self.cancel.is_cancelled()
     }
 }
 
@@ -166,7 +167,7 @@ pub struct TcpTransport {
     pub(crate) alive: Arc<AtomicBool>,
     /// Set only by [`TcpCancelHandle::cancel`] — see that field's doc for
     /// why it is not `!alive`.
-    pub(crate) cancelled: Arc<AtomicBool>,
+    pub(crate) cancel: FlagCancel,
 }
 
 /// Resolve `host:port` (IP literal or DNS name) and connect with `timeout`
@@ -244,7 +245,7 @@ impl TcpTransport {
             peer,
             stats: TcpStats::default(),
             alive: Arc::new(AtomicBool::new(true)),
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancel: FlagCancel::new(),
         })
     }
 
@@ -261,7 +262,7 @@ impl TcpTransport {
             peer,
             stats: TcpStats::default(),
             alive: Arc::new(AtomicBool::new(true)),
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancel: FlagCancel::new(),
         })
     }
 
@@ -278,7 +279,7 @@ impl TcpTransport {
             peer,
             stats: TcpStats::default(),
             alive: Arc::new(AtomicBool::new(true)),
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancel: FlagCancel::new(),
         }
     }
 
@@ -295,14 +296,14 @@ impl TcpTransport {
     /// Return a cloneable handle that can cancel a `recv_bytes` parked in
     /// another thread. See [`TcpCancelHandle`] for the full contract.
     pub fn cancel_handle(&self) -> TcpCancelHandle {
-        TcpCancelHandle::from_flags(self.alive.clone(), self.cancelled.clone())
+        TcpCancelHandle::from_flags(self.alive.clone(), self.cancel.clone())
     }
 
     /// What a dead transport reports: the cancel if one fired, else the
     /// plain close (own `close()`, or latched dead by a terminal error —
     /// those callers return `Broken` directly and never reach this).
     fn dead_error(&self) -> TransportError {
-        if self.cancelled.load(Ordering::Acquire) {
+        if self.cancel.is_cancelled() {
             TransportError::ExplicitClose
         } else {
             TransportError::Closed
@@ -334,7 +335,7 @@ impl TcpTransport {
 fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
     msg: &[u8],
     alive: &AtomicBool,
-    cancelled: &AtomicBool,
+    cancel: &FlagCancel,
     mut write: W,
 ) -> Result<(), (TransportError, bool)> {
     let mut written = 0usize;
@@ -370,7 +371,7 @@ fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
                 // close landed while we were parked (the write timeout is
                 // the poll cadence, so this check runs every ~100 ms).
                 if !alive.load(Ordering::Acquire) {
-                    let e = if cancelled.load(Ordering::Acquire) {
+                    let e = if cancel.is_cancelled() {
                         TransportError::ExplicitClose
                     } else {
                         TransportError::Closed
@@ -405,7 +406,7 @@ impl Transport for TcpTransport {
                 max: self.pkt_size,
             });
         }
-        match write_loop(msg, &self.alive, &self.cancelled, |b| self.inner.write(b)) {
+        match write_loop(msg, &self.alive, &self.cancel, |b| self.inner.write(b)) {
             Ok(()) => {
                 self.stats.send_calls = self.stats.send_calls.saturating_add(1);
                 self.stats.bytes_sent = self.stats.bytes_sent.saturating_add(msg.len() as u64);
@@ -440,39 +441,6 @@ impl Transport for TcpTransport {
 
     fn socket_stats(&self) -> Option<SocketStats> {
         Some(self.stats.to_socket_stats())
-    }
-}
-
-/// What the receive loop does with a failed `read`.
-///
-/// Split out of `recv_bytes` so the classification is unit-testable: the
-/// read itself goes straight at `InnerStream` with no injectable seam, and
-/// `EINTR` in particular cannot be provoked deterministically from a plain
-/// socket. This mirrors what `write_loop` gets from its scripted writer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RecvAction {
-    /// Transient — poll again; the transport stays alive.
-    Retry,
-    /// Terminal — report `Broken` and latch the transport dead.
-    Fatal,
-}
-
-/// Classify a failed receive-side `read` by its [`std::io::ErrorKind`].
-///
-/// `WouldBlock` / `TimedOut` are the read-deadline poll ticking over.
-/// `Interrupted` is `EINTR` — a signal landed on the thread parked in
-/// `read` (which is exactly what the SIGINT-handler shutdown pattern the
-/// docs steer callers toward delivers). `std`'s `TcpStream::read` surfaces
-/// it rather than retrying internally, and the send path's `write_loop`
-/// already retries it, so the receive path does too — otherwise a signal
-/// meant to be handled and resumed would latch the transport permanently
-/// dead. Everything else is terminal.
-pub(crate) fn classify_recv_error(kind: std::io::ErrorKind) -> RecvAction {
-    match kind {
-        std::io::ErrorKind::WouldBlock
-        | std::io::ErrorKind::TimedOut
-        | std::io::ErrorKind::Interrupted => RecvAction::Retry,
-        _ => RecvAction::Fatal,
     }
 }
 
@@ -558,49 +526,11 @@ impl RecvTransport for TcpTransport {
 }
 
 #[cfg(test)]
-mod recv_classify_tests {
-    use super::{RecvAction, classify_recv_error};
-    use std::io::ErrorKind;
-
-    #[test]
-    fn wouldblock_and_timedout_retry() {
-        // The read-deadline poll ticking over: transient by construction.
-        assert_eq!(
-            classify_recv_error(ErrorKind::WouldBlock),
-            RecvAction::Retry
-        );
-        assert_eq!(classify_recv_error(ErrorKind::TimedOut), RecvAction::Retry);
-    }
-
-    #[test]
-    fn interrupted_retries_like_the_send_path() {
-        // EINTR: a signal landed on the thread parked in `read`. `write_loop`
-        // retries it; treating it as fatal here would latch `alive = false`
-        // and kill the transport for good on a signal meant to be resumed.
-        assert_eq!(
-            classify_recv_error(ErrorKind::Interrupted),
-            RecvAction::Retry
-        );
-    }
-
-    #[test]
-    fn genuine_failures_are_fatal() {
-        for kind in [
-            ErrorKind::ConnectionReset,
-            ErrorKind::ConnectionAborted,
-            ErrorKind::BrokenPipe,
-            ErrorKind::NotConnected,
-        ] {
-            assert_eq!(classify_recv_error(kind), RecvAction::Fatal, "{kind:?}");
-        }
-    }
-}
-
-#[cfg(test)]
 mod write_loop_tests {
     use super::write_loop;
     use std::io;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use tst_core::cancel::FlagCancel;
     use tst_core::transport::TransportError;
 
     /// An `alive` flag that never drops — the default for scripted writers.
@@ -610,8 +540,8 @@ mod write_loop_tests {
 
     /// A `cancelled` flag that never fires — the default for scripted
     /// writers (only the cancel/close rows below flip it).
-    fn uncancelled() -> AtomicBool {
-        AtomicBool::new(false)
+    fn uncancelled() -> FlagCancel {
+        FlagCancel::new()
     }
 
     /// Scripted writer: pops one outcome per call from a queue.
@@ -708,7 +638,7 @@ mod write_loop_tests {
     fn partial_then_cross_thread_cancel_returns_explicit_close() {
         let msg = vec![0u8; 188];
         let alive = AtomicBool::new(true);
-        let cancelled = AtomicBool::new(false);
+        let cancelled = FlagCancel::new();
         let mut calls = 0;
         let r = write_loop(&msg, &alive, &cancelled, |_buf| {
             calls += 1;
@@ -717,7 +647,7 @@ mod write_loop_tests {
                 _ => {
                     // A canceller latches the cancel BEFORE dropping alive,
                     // exactly as `TcpCancelHandle::cancel` does.
-                    cancelled.store(true, Ordering::Release);
+                    cancelled.cancel();
                     alive.store(false, Ordering::Release);
                     Err(io::Error::new(io::ErrorKind::WouldBlock, "ewouldblock"))
                 }

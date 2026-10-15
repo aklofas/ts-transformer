@@ -331,7 +331,7 @@ handles, or you never obtained the cancel handle.
 From 0.7.0 every transport has one —
 `UdpTransport::cancel_handle()` / `UdpRecvTransport::cancel_handle()`
 return a `UdpCancelHandle`, and the RIST pair a `RistCancelHandle`
-(`SrtCancelHandle` / `RtpCancelHandle` / `TcpCancelHandle` are the
+(`ResourceCancel` / `RtpCancelHandle` / `TcpCancelHandle` are the
 siblings). The handle must be obtained BEFORE the transport is moved into
 the parked thread; a `recv_bytes` already parked then returns
 `TransportError::ExplicitClose` at its next ~100 ms poll tick. Before

@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
+use tst_core::cancel::FlagCancel;
 
 use secrecy::SecretString;
 
@@ -117,7 +118,7 @@ pub(crate) fn handle_keepalive_response(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn(
     write_half: Arc<Mutex<Stream>>,
-    cancel: Arc<AtomicBool>,
+    cancel: FlagCancel,
     session_dead: Arc<AtomicBool>,
     interval_ms: Arc<AtomicU64>,
     url: String,
@@ -147,7 +148,7 @@ pub(crate) fn spawn(
                 // sleep step never exceeds the remaining wait).
                 let started = std::time::Instant::now();
                 loop {
-                    if cancel.load(Ordering::Relaxed) {
+                    if cancel.is_cancelled() {
                         return;
                     }
                     let interval =
@@ -159,7 +160,7 @@ pub(crate) fn spawn(
                     std::thread::sleep(remaining.min(Duration::from_millis(200)));
                 }
                 // One more cancel check before we burn the bytes on the wire.
-                if cancel.load(Ordering::Relaxed) {
+                if cancel.is_cancelled() {
                     return;
                 }
                 cseq += 1;

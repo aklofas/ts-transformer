@@ -15,7 +15,6 @@
 //! `Arc<dyn TransportCancel>` and share across worker threads.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tst_core::transport::TransportCancel;
 
 /// Shared cancellation flag.
@@ -25,9 +24,7 @@ use tst_core::transport::TransportCancel;
 /// via [`Self::cancel`] wakes any thread parked in the transport on its
 /// next ~100 ms timeout.
 #[derive(Debug, Default)]
-pub struct RtpCancelHandle {
-    flag: AtomicBool,
-}
+pub struct RtpCancelHandle(tst_core::cancel::FlagCancel);
 
 impl RtpCancelHandle {
     /// New un-cancelled handle.
@@ -37,12 +34,12 @@ impl RtpCancelHandle {
 
     /// Mark this handle cancelled. Idempotent.
     pub fn cancel(&self) {
-        self.flag.store(true, Ordering::Release);
+        self.0.cancel();
     }
 
     /// Has cancellation been requested?
     pub fn is_cancelled(&self) -> bool {
-        self.flag.load(Ordering::Acquire)
+        self.0.is_cancelled()
     }
 }
 
@@ -66,47 +63,13 @@ impl TransportCancel for RtpCancelHandle {
 /// For graceful shutdown with session-end notification + bounded drain,
 /// use `RtspServer::stop` instead.
 ///
-/// The handle is `Clone + Send + Sync`; multiple holders can race the
-/// cancel call (idempotent — repeated `cancel()` calls are a no-op).
+/// It is a [`tst_core::cancel::FlagCancel`]: `cancel()` is one atomic store,
+/// safe from a signal handler, and the handle implements `TransportCancel`.
 ///
 /// Requires the `rtsp-server` feature — this handle only exists paired
 /// with a real `RtspServer`.
 #[cfg(feature = "rtsp-server")]
-#[derive(Clone, Debug)]
-pub struct RtspServerCancelHandle {
-    pub(crate) cancel: Arc<AtomicBool>,
-}
-
-#[cfg(feature = "rtsp-server")]
-impl RtspServerCancelHandle {
-    /// Construct a fresh handle. Internal — `RtspServer::from_builder`
-    /// creates one and exposes it via `cancel_handle()`.
-    pub(crate) fn new() -> Self {
-        Self {
-            cancel: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// Signal the server to stop. The listener sees it within ~100 ms, stops
-    /// accepting, and wakes every per-session task, which exits at once —
-    /// including one parked in a read. A plain atomic store, safe from a
-    /// signal handler.
-    pub fn cancel(&self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
-
-    /// Has [`Self::cancel`] been called?
-    pub fn is_cancelled(&self) -> bool {
-        self.cancel.load(Ordering::Relaxed)
-    }
-}
-
-#[cfg(feature = "rtsp-server")]
-impl Default for RtspServerCancelHandle {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub type RtspServerCancelHandle = tst_core::cancel::FlagCancel;
 
 #[cfg(test)]
 mod tests {
@@ -156,45 +119,17 @@ mod tests {
     }
 
     #[test]
+    fn rtsp_handles_are_transport_cancels() {
+        fn assert_tc<T: TransportCancel + Clone + Send + Sync + 'static>() {}
+        assert_tc::<crate::rtsp::client::RtspCancelHandle>();
+        #[cfg(feature = "rtsp-server")]
+        assert_tc::<RtspServerCancelHandle>();
+    }
+
+    #[test]
     fn satisfies_transport_cancel_trait() {
         fn accept(_: &dyn TransportCancel) {}
         let h = RtpCancelHandle::new();
         accept(&*h);
-    }
-}
-
-#[cfg(all(test, feature = "rtsp-server"))]
-mod phase3_server_cancel_tests {
-    use super::*;
-
-    #[test]
-    fn server_cancel_handle_toggles() {
-        let h = RtspServerCancelHandle::new();
-        assert!(!h.is_cancelled());
-        h.cancel();
-        assert!(h.is_cancelled());
-    }
-
-    #[test]
-    fn server_cancel_handle_clone_shares_flag() {
-        let h1 = RtspServerCancelHandle::new();
-        let h2 = h1.clone();
-        h1.cancel();
-        assert!(h2.is_cancelled());
-    }
-
-    #[test]
-    fn server_cancel_handle_idempotent() {
-        let h = RtspServerCancelHandle::new();
-        h.cancel();
-        h.cancel();
-        h.cancel();
-        assert!(h.is_cancelled());
-    }
-
-    #[test]
-    fn server_cancel_handle_default_is_not_canceled() {
-        let h = RtspServerCancelHandle::default();
-        assert!(!h.is_cancelled());
     }
 }

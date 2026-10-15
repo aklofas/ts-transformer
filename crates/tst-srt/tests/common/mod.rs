@@ -245,7 +245,7 @@ pub struct AcceptHandle<R> {
     ready: Arc<AtomicBool>,
     /// Set by the thread the moment `accept()` returns, Ok or Err.
     accepted: Arc<AtomicBool>,
-    cancel: tst_srt::SrtCancelHandle,
+    cancel: tst_srt::ResourceCancel,
 }
 
 impl<R: Send + 'static> AcceptHandle<R> {

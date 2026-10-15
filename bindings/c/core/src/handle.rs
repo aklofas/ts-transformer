@@ -185,10 +185,11 @@ impl<T> Handle<T> {
 mod owned {
     use alloc::sync::Arc;
 
+    use tst_core::cancel::FlagCancel;
     use tst_core::transport::TransportCancel;
     use tst_pipeline::RecvEndReason;
     use tst_pipeline::RecvEndReasonHandle;
-    use tst_pipeline::binding::{BindingError, Close, FlagCancel, Owned};
+    use tst_pipeline::binding::{BindingError, Close, Owned};
 
     use crate::error::record_binding_error;
 
@@ -274,7 +275,7 @@ mod owned {
     }
 
     /// The shells' `cancel_handle()` returns an `Option`; this is the ONE
-    /// place it is resolved. `None` → `binding::FlagCancel` (a plain
+    /// place it is resolved. `None` → `FlagCancel` (a plain
     /// latch that records the request and wakes nothing).
     ///
     /// Every transport this binding opens returns `Some`, so the `None` arm
@@ -691,7 +692,7 @@ mod tests {
         use std::sync::atomic::{AtomicBool, Ordering};
         use tst_core::transport::TransportCancel;
 
-        /// Local probe (not `binding::FlagCancel`: this one is inspected
+        /// Local probe (not `FlagCancel`: this one is inspected
         /// through its own field so the test does not depend on `is_set`).
         struct ProbeCancel(AtomicBool);
         impl TransportCancel for ProbeCancel {

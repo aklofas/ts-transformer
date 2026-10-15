@@ -28,6 +28,7 @@ use bytes::Bytes;
 
 use crate::error::RtspError;
 use crate::url::{RtspScheme, RtspUrl};
+use tst_core::cancel::FlagCancel;
 
 /// The control-plane byte stream — plain TCP for `rtsp://`, or
 /// rustls-wrapped TCP for `rtsps://` when the `tls` cargo feature is
@@ -134,7 +135,7 @@ pub struct RtspClient {
     pub(crate) session_timeout: Duration,
     /// Cancel flag — set by `RtspCancelHandle::cancel` to break out of
     /// blocking I/O loops.
-    pub(crate) cancel: Arc<AtomicBool>,
+    pub(crate) cancel: FlagCancel,
     /// Shared flag flipped when a keepalive observes session death: the
     /// [keepalive](crate::rtsp::client::keepalive) thread sets it when a
     /// control-TCP write fails, and the read sites (interleaved pump /
@@ -319,22 +320,7 @@ pub(crate) struct InterleavedPumpState {
 /// transport plane (post-PLAY RTP data) uses its own
 /// [`crate::RtpCancelHandle`] returned from the
 /// [`crate::RtpRecvTransport`].
-#[derive(Clone)]
-pub struct RtspCancelHandle {
-    cancel: Arc<AtomicBool>,
-}
-
-impl RtspCancelHandle {
-    /// Signal the client to break out of blocking I/O at the next poll.
-    pub fn cancel(&self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
-
-    /// Has [`Self::cancel`] been called?
-    pub fn is_cancelled(&self) -> bool {
-        self.cancel.load(Ordering::Relaxed)
-    }
-}
+pub type RtspCancelHandle = tst_core::cancel::FlagCancel;
 
 /// Per-connection knobs carried from [`RtspClientBuilder`](crate::RtspClientBuilder)
 /// into the connect path. Internal — the public `connect`/`connect_with`/
@@ -486,7 +472,7 @@ impl RtspClient {
             next_cseq: AtomicU32::new(1),
             session_id: None,
             session_timeout: Duration::from_secs(60),
-            cancel: Arc::new(AtomicBool::new(false)),
+            cancel: FlagCancel::new(),
             session_dead: None,
             session_id_shared: None,
             keepalive_interval_shared: None,
@@ -504,9 +490,7 @@ impl RtspClient {
 
     /// Get a clone-able cancel handle.
     pub fn cancel_handle(&self) -> RtspCancelHandle {
-        RtspCancelHandle {
-            cancel: self.cancel.clone(),
-        }
+        self.cancel.clone()
     }
 
     /// Internal helper: get the next CSeq value.
@@ -702,7 +686,7 @@ impl Drop for RtspClient {
         // Setting cancel first lets the pump exit at its next loop-top check
         // (within one read cycle) and stop re-locking, so the TEARDOWN write
         // acquires the lock promptly and Drop stays bounded.
-        self.cancel.store(true, Ordering::Relaxed);
+        self.cancel.cancel();
         if let Some(pump) = self.pump_state.as_ref() {
             pump.cancel.store(true, Ordering::Relaxed);
         }

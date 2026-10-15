@@ -19,6 +19,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `Box<dyn RecvTransport>` still satisfy the shell bounds.
 - `tst_pipeline::binding::kind::kind_of_transport` is removed; use
   `BindingError::from(err).kind`.
+- `binding::FlagCancel` is removed; use `tst_core::cancel::FlagCancel`
+  (`is_set()` is `is_cancelled()`).
 
 ### Removed — tst-srt (BREAKING)
 
@@ -126,6 +128,26 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `VideoCodec` now implements `Hash` on every path.
 - `Av1CarriageMode` is defined in `mpegts::common` (still re-exported as
   `mpegts::mux::Av1CarriageMode`).
+- `cancel::SrtCancelHandle` is renamed `ResourceCancel` (it closes any
+  integer resource handle, not only an SRT socket); `SrtCancelHandle` stays as
+  a deprecated alias for one minor, also at the tst-core, tst-pipeline and
+  tst-srt crate roots.
+- `CANCEL_POLL_INTERVAL` and `ACCEPT_POLL_INTERVAL` move from
+  `net::udp_socket` to `cancel`.
+
+### Changed — tst-rtp (BREAKING)
+
+- `RtspCancelHandle` and `RtspServerCancelHandle` are aliases of
+  `tst_core::cancel::FlagCancel` and now implement `TransportCancel`, so they
+  can be installed wherever a `dyn TransportCancel` is taken.
+  `RtspServerCancelHandle::cancel` is still one atomic store, safe from a
+  signal handler. `RtpCancelHandle`'s API is unchanged.
+
+### Changed — tst-udp, tst-tcp, tst-rist (BREAKING)
+
+- `UdpCancelHandle` and `RistCancelHandle` are aliases of
+  `tst_core::cancel::FlagCancel` (they gain `Default`; behaviour is
+  unchanged). `TcpCancelHandle` keeps its type and API.
 
 ### Changed — C header
 
@@ -149,6 +171,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `codec::misp_time`: `append_rbsp_escaped`, `insert_sei_before_first_vcl`
   and `build_user_data_unregistered_sei_nal` (any 16-byte UUID and payload,
   `0xFF`-run payload size) are public; `build_sei_nal` is built on the last.
+- `cancel::FlagCancel`: a cloneable, signal-safe cancel flag implementing
+  `TransportCancel`; the UDP, RIST, RTP and RTSP cancel handles are built on
+  it.
+- `net::{RecvAction, classify_recv_error}`, the receive-side twin of
+  `classify_send_error`.
 
 ### Added — tst-rtp
 

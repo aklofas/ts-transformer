@@ -136,24 +136,6 @@ impl core::marker::UnsafeUnpin for tst_udp::stats::UdpStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::stats::UdpStats
 impl core::panic::unwind_safe::UnwindSafe for tst_udp::stats::UdpStats
 pub mod tst_udp::transport
-pub struct tst_udp::transport::UdpCancelHandle
-impl tst_udp::transport::UdpCancelHandle
-pub fn tst_udp::transport::UdpCancelHandle::cancel(&self)
-pub fn tst_udp::transport::UdpCancelHandle::is_cancelled(&self) -> bool
-impl core::clone::Clone for tst_udp::transport::UdpCancelHandle
-pub fn tst_udp::transport::UdpCancelHandle::clone(&self) -> tst_udp::transport::UdpCancelHandle
-impl core::fmt::Debug for tst_udp::transport::UdpCancelHandle
-pub fn tst_udp::transport::UdpCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl tst_core::transport::TransportCancel for tst_udp::transport::UdpCancelHandle
-pub fn tst_udp::transport::UdpCancelHandle::cancel(&self)
-pub fn tst_udp::transport::UdpCancelHandle::is_cancelled(&self) -> bool
-impl core::marker::Freeze for tst_udp::transport::UdpCancelHandle
-impl core::marker::Send for tst_udp::transport::UdpCancelHandle
-impl core::marker::Sync for tst_udp::transport::UdpCancelHandle
-impl core::marker::Unpin for tst_udp::transport::UdpCancelHandle
-impl core::marker::UnsafeUnpin for tst_udp::transport::UdpCancelHandle
-impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::transport::UdpCancelHandle
-impl core::panic::unwind_safe::UnwindSafe for tst_udp::transport::UdpCancelHandle
 pub struct tst_udp::transport::UdpTransport
 impl tst_udp::transport::UdpTransport
 pub fn tst_udp::transport::UdpTransport::cancel_handle(&self) -> tst_udp::transport::UdpCancelHandle
@@ -175,6 +157,7 @@ impl core::marker::Unpin for tst_udp::transport::UdpTransport
 impl core::marker::UnsafeUnpin for tst_udp::transport::UdpTransport
 impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::transport::UdpTransport
 impl core::panic::unwind_safe::UnwindSafe for tst_udp::transport::UdpTransport
+pub type tst_udp::transport::UdpCancelHandle = tst_core::cancel::FlagCancel
 pub mod tst_udp::url
 #[non_exhaustive] pub enum tst_udp::url::UdpUrlError
 pub tst_udp::url::UdpUrlError::BadQueryValue
@@ -319,24 +302,6 @@ impl core::marker::Unpin for tst_udp::config::SocketConfig
 impl core::marker::UnsafeUnpin for tst_udp::config::SocketConfig
 impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::config::SocketConfig
 impl core::panic::unwind_safe::UnwindSafe for tst_udp::config::SocketConfig
-pub struct tst_udp::UdpCancelHandle
-impl tst_udp::transport::UdpCancelHandle
-pub fn tst_udp::transport::UdpCancelHandle::cancel(&self)
-pub fn tst_udp::transport::UdpCancelHandle::is_cancelled(&self) -> bool
-impl core::clone::Clone for tst_udp::transport::UdpCancelHandle
-pub fn tst_udp::transport::UdpCancelHandle::clone(&self) -> tst_udp::transport::UdpCancelHandle
-impl core::fmt::Debug for tst_udp::transport::UdpCancelHandle
-pub fn tst_udp::transport::UdpCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl tst_core::transport::TransportCancel for tst_udp::transport::UdpCancelHandle
-pub fn tst_udp::transport::UdpCancelHandle::cancel(&self)
-pub fn tst_udp::transport::UdpCancelHandle::is_cancelled(&self) -> bool
-impl core::marker::Freeze for tst_udp::transport::UdpCancelHandle
-impl core::marker::Send for tst_udp::transport::UdpCancelHandle
-impl core::marker::Sync for tst_udp::transport::UdpCancelHandle
-impl core::marker::Unpin for tst_udp::transport::UdpCancelHandle
-impl core::marker::UnsafeUnpin for tst_udp::transport::UdpCancelHandle
-impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::transport::UdpCancelHandle
-impl core::panic::unwind_safe::UnwindSafe for tst_udp::transport::UdpCancelHandle
 pub struct tst_udp::UdpRecvTransport
 impl tst_udp::recv::UdpRecvTransport
 pub fn tst_udp::recv::UdpRecvTransport::cancel_handle(&self) -> tst_udp::transport::UdpCancelHandle
@@ -466,3 +431,4 @@ impl core::marker::Unpin for tst_udp::url::UdpUrl
 impl core::marker::UnsafeUnpin for tst_udp::url::UdpUrl
 impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::url::UdpUrl
 impl core::panic::unwind_safe::UnwindSafe for tst_udp::url::UdpUrl
+pub type tst_udp::UdpCancelHandle = tst_core::cancel::FlagCancel
