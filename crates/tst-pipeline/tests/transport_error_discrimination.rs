@@ -154,6 +154,18 @@ fn closed_propagates_as_end_of_stream_on_receiver() {
 // Test 4: ExplicitClose
 // ---------------------------------------------------------------------------
 
+/// `TransportError::ExplicitClose` from the underlying send transport must
+/// propagate as `ShellErrorKind::Closed` + `RawSenderErrorSource::Transport(ExplicitClose)`.
+///
+/// `ExplicitClose` is the caller-initiated variant (the
+/// `ManagedRecvTransport::cancel()` path). Unlike `Closed` (which on the
+/// sender side also maps to `Closed` kind), `ExplicitClose` is distinguished
+/// at the inner-source level. Binding authors don't differentiate the two at
+/// the kind level (both are `Closed`), but power users inspecting `err.source`
+/// can tell that the cancel signal fired rather than the remote peer closing.
+///
+/// `MockTransport` does not have an `ExplicitClose` `FailMode`, so this test
+/// uses a `ScriptedSend` that fails every send with `ExplicitClose`.
 #[test]
 fn explicit_close_propagates_as_closed() {
     let mut sender = RawSender::new(
