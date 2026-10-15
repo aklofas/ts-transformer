@@ -13,6 +13,7 @@
 //! inline (see `BitWriter` below) so this integration test has zero
 //! coupling to internal `pub(crate)` helpers.
 
+use crate::common::bitwriter::BitWriter;
 use crate::common::mux_demux::{collect_events, drain_mux};
 use tst_core::codec::h266::{H266ParameterSets, parse_parameter_sets};
 use tst_core::mpegts::common::Pts90khz;
@@ -45,51 +46,6 @@ fn minimal_vps_rbsp() -> Vec<u8> {
 /// Matches `codec::h266::pps::tests` minimal fixture.
 fn minimal_pps_rbsp() -> Vec<u8> {
     vec![0x00, 0x20]
-}
-
-/// Inline bit-builder, copied verbatim from
-/// `codec::h266::sps::tests::BitWriter`. Kept here so this test does
-/// not depend on `pub(crate)` internals.
-struct BitWriter {
-    bytes: Vec<u8>,
-    pos: u32,
-}
-
-impl BitWriter {
-    fn new() -> Self {
-        Self {
-            bytes: Vec::new(),
-            pos: 0,
-        }
-    }
-    fn write(&mut self, value: u32, n: u32) {
-        for i in (0..n).rev() {
-            let bit = ((value >> i) & 1) as u8;
-            let byte_idx = (self.pos / 8) as usize;
-            let bit_in_byte = 7 - (self.pos % 8);
-            if byte_idx == self.bytes.len() {
-                self.bytes.push(0);
-            }
-            self.bytes[byte_idx] |= bit << bit_in_byte;
-            self.pos += 1;
-        }
-    }
-    /// Exp-Golomb ue(v) per H.266 §9.3.2.2.
-    fn write_ue(&mut self, value: u32) {
-        let v = value + 1;
-        let leading_zeros = 31 - v.leading_zeros();
-        for _ in 0..leading_zeros {
-            self.write(0, 1);
-        }
-        self.write(v, leading_zeros + 1);
-    }
-    /// rbsp_trailing_bits(): one '1' bit + zero-pad to byte align.
-    fn end_rbsp(&mut self) {
-        self.write(1, 1);
-        while self.pos % 8 != 0 {
-            self.write(0, 1);
-        }
-    }
 }
 
 /// Construct a minimal valid H.266 SPS bitstream:

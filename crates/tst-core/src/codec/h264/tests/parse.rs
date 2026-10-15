@@ -231,71 +231,33 @@ fn parse_parameter_sets_all_param_sets_fail_returns_err() {
 /// Per H.264 V15 §7.3.2.1.1:
 /// - profile_idc = 100 (High) → chroma_format_idc is signaled.
 fn craft_high_sps_with_chroma_format_idc(idc: u32) -> Vec<u8> {
-    struct Bw {
-        bytes: Vec<u8>,
-        pos: u32,
-    }
-    impl Bw {
-        fn new() -> Self {
-            Self {
-                bytes: vec![],
-                pos: 0,
-            }
-        }
-        fn u(&mut self, value: u32, n: u32) {
-            for i in (0..n).rev() {
-                let bit = ((value >> i) & 1) as u8;
-                let byte_idx = (self.pos / 8) as usize;
-                let bit_in_byte = 7 - (self.pos % 8);
-                if byte_idx == self.bytes.len() {
-                    self.bytes.push(0);
-                }
-                self.bytes[byte_idx] |= bit << bit_in_byte;
-                self.pos += 1;
-            }
-        }
-        fn ue(&mut self, value: u32) {
-            let v = value + 1;
-            let leading_zeros = 31 - v.leading_zeros();
-            for _ in 0..leading_zeros {
-                self.u(0, 1);
-            }
-            self.u(v, leading_zeros + 1);
-        }
-        fn trailing(&mut self) {
-            self.u(1, 1);
-            while self.pos % 8 != 0 {
-                self.u(0, 1);
-            }
-        }
-    }
-    let mut bw = Bw::new();
+    let mut bw = BitWriter::new();
     // §7.3.2.1.1 SPS body (NAL header already stripped by caller).
-    bw.u(100, 8); // profile_idc = 100 (High)
-    bw.u(0, 8); // constraint_set_flags + reserved_zero_2bits = 0
-    bw.u(40, 8); // level_idc = 40 (Level 4.0)
-    bw.ue(0); // seq_parameter_set_id = 0
+    bw.write(100, 8); // profile_idc = 100 (High)
+    bw.write(0, 8); // constraint_set_flags + reserved_zero_2bits = 0
+    bw.write(40, 8); // level_idc = 40 (Level 4.0)
+    bw.write_ue(0); // seq_parameter_set_id = 0
     // profile_idc == 100 → chroma_format_idc is present.
-    bw.ue(idc); // chroma_format_idc (CALLER-SUPPLIED — possibly out-of-spec)
+    bw.write_ue(idc); // chroma_format_idc (CALLER-SUPPLIED — possibly out-of-spec)
     if idc == 3 {
-        bw.u(0, 1); // separate_colour_plane_flag (only when idc=3)
+        bw.write(0, 1); // separate_colour_plane_flag (only when idc=3)
     }
-    bw.ue(0); // bit_depth_luma_minus8 = 0
-    bw.ue(0); // bit_depth_chroma_minus8 = 0
-    bw.u(0, 1); // qpprime_y_zero_transform_bypass_flag = 0
-    bw.u(0, 1); // seq_scaling_matrix_present_flag = 0
-    bw.ue(0); // log2_max_frame_num_minus4 = 0
-    bw.ue(0); // pic_order_cnt_type = 0
-    bw.ue(0); // log2_max_pic_order_cnt_lsb_minus4 = 0
-    bw.ue(1); // num_ref_frames = 1
-    bw.u(0, 1); // gaps_in_frame_num_value_allowed_flag = 0
-    bw.ue(19); // pic_width_in_mbs_minus1 = 19 (320px / 16)
-    bw.ue(14); // pic_height_in_map_units_minus1 = 14 (240px / 16)
-    bw.u(1, 1); // frame_mbs_only_flag = 1
-    bw.u(0, 1); // direct_8x8_inference_flag = 0
-    bw.u(0, 1); // frame_cropping_flag = 0
-    bw.u(0, 1); // vui_parameters_present_flag = 0
-    bw.trailing();
+    bw.write_ue(0); // bit_depth_luma_minus8 = 0
+    bw.write_ue(0); // bit_depth_chroma_minus8 = 0
+    bw.write(0, 1); // qpprime_y_zero_transform_bypass_flag = 0
+    bw.write(0, 1); // seq_scaling_matrix_present_flag = 0
+    bw.write_ue(0); // log2_max_frame_num_minus4 = 0
+    bw.write_ue(0); // pic_order_cnt_type = 0
+    bw.write_ue(0); // log2_max_pic_order_cnt_lsb_minus4 = 0
+    bw.write_ue(1); // num_ref_frames = 1
+    bw.write(0, 1); // gaps_in_frame_num_value_allowed_flag = 0
+    bw.write_ue(19); // pic_width_in_mbs_minus1 = 19 (320px / 16)
+    bw.write_ue(14); // pic_height_in_map_units_minus1 = 14 (240px / 16)
+    bw.write(1, 1); // frame_mbs_only_flag = 1
+    bw.write(0, 1); // direct_8x8_inference_flag = 0
+    bw.write(0, 1); // frame_cropping_flag = 0
+    bw.write(0, 1); // vui_parameters_present_flag = 0
+    bw.end_rbsp();
     bw.bytes
 }
 
@@ -329,49 +291,11 @@ fn chroma_format_idc_5_rejected_with_reserved_value() {
 /// after the entropy_coding_mode_flag (no rbsp_trailing_bits needed; the
 /// parser tolerates a payload that ends mid-byte).
 fn craft_pps(pic_parameter_set_id: u32, seq_parameter_set_id: u32) -> Vec<u8> {
-    struct Bw {
-        bytes: Vec<u8>,
-        pos: u32,
-    }
-    impl Bw {
-        fn new() -> Self {
-            Self {
-                bytes: vec![],
-                pos: 0,
-            }
-        }
-        fn u(&mut self, value: u32, n: u32) {
-            for i in (0..n).rev() {
-                let bit = ((value >> i) & 1) as u8;
-                let byte_idx = (self.pos / 8) as usize;
-                let bit_in_byte = 7 - (self.pos % 8);
-                if byte_idx == self.bytes.len() {
-                    self.bytes.push(0);
-                }
-                self.bytes[byte_idx] |= bit << bit_in_byte;
-                self.pos += 1;
-            }
-        }
-        fn ue(&mut self, value: u32) {
-            let v = value + 1;
-            let leading_zeros = 31 - v.leading_zeros();
-            for _ in 0..leading_zeros {
-                self.u(0, 1);
-            }
-            self.u(v, leading_zeros + 1);
-        }
-        fn trailing(&mut self) {
-            self.u(1, 1);
-            while self.pos % 8 != 0 {
-                self.u(0, 1);
-            }
-        }
-    }
-    let mut bw = Bw::new();
-    bw.ue(pic_parameter_set_id);
-    bw.ue(seq_parameter_set_id);
-    bw.u(0, 1); // entropy_coding_mode_flag = 0 (CAVLC)
-    bw.trailing();
+    let mut bw = BitWriter::new();
+    bw.write_ue(pic_parameter_set_id);
+    bw.write_ue(seq_parameter_set_id);
+    bw.write(0, 1); // entropy_coding_mode_flag = 0 (CAVLC)
+    bw.end_rbsp();
     bw.bytes
 }
 
@@ -454,91 +378,53 @@ fn craft_high_sps_with_constraints_and_timing(
     constraint_flags: u8,
     num_units_in_tick: Option<u32>,
 ) -> Vec<u8> {
-    struct Bw {
-        bytes: Vec<u8>,
-        pos: u32,
-    }
-    impl Bw {
-        fn new() -> Self {
-            Self {
-                bytes: vec![],
-                pos: 0,
-            }
-        }
-        fn u(&mut self, value: u32, n: u32) {
-            for i in (0..n).rev() {
-                let bit = ((value >> i) & 1) as u8;
-                let byte_idx = (self.pos / 8) as usize;
-                let bit_in_byte = 7 - (self.pos % 8);
-                if byte_idx == self.bytes.len() {
-                    self.bytes.push(0);
-                }
-                self.bytes[byte_idx] |= bit << bit_in_byte;
-                self.pos += 1;
-            }
-        }
-        fn ue(&mut self, value: u32) {
-            let v = value + 1;
-            let leading_zeros = 31 - v.leading_zeros();
-            for _ in 0..leading_zeros {
-                self.u(0, 1);
-            }
-            self.u(v, leading_zeros + 1);
-        }
-        fn trailing(&mut self) {
-            self.u(1, 1);
-            while self.pos % 8 != 0 {
-                self.u(0, 1);
-            }
-        }
-    }
-    let mut bw = Bw::new();
+    let mut bw = BitWriter::new();
     // §7.3.2.1.1 SPS body (NAL header already stripped by caller).
-    bw.u(100, 8); // profile_idc = 100 (High)
-    bw.u(constraint_flags as u32, 8); // constraint_set_flags + reserved_zero_2bits (CALLER-SUPPLIED)
-    bw.u(40, 8); // level_idc = 40 (Level 4.0)
-    bw.ue(0); // seq_parameter_set_id = 0
+    bw.write(100, 8); // profile_idc = 100 (High)
+    bw.write(constraint_flags.into(), 8); // constraint_set_flags + reserved_zero_2bits (CALLER-SUPPLIED)
+    bw.write(40, 8); // level_idc = 40 (Level 4.0)
+    bw.write_ue(0); // seq_parameter_set_id = 0
     // profile_idc == 100 → chroma_format_idc is present.
-    bw.ue(1); // chroma_format_idc = 1 (YUV 4:2:0)
-    bw.ue(0); // bit_depth_luma_minus8 = 0
-    bw.ue(0); // bit_depth_chroma_minus8 = 0
-    bw.u(0, 1); // qpprime_y_zero_transform_bypass_flag = 0
-    bw.u(0, 1); // seq_scaling_matrix_present_flag = 0
-    bw.ue(0); // log2_max_frame_num_minus4 = 0
-    bw.ue(0); // pic_order_cnt_type = 0
-    bw.ue(0); // log2_max_pic_order_cnt_lsb_minus4 = 0
-    bw.ue(1); // num_ref_frames = 1
-    bw.u(0, 1); // gaps_in_frame_num_value_allowed_flag = 0
-    bw.ue(19); // pic_width_in_mbs_minus1 = 19 (320px / 16)
-    bw.ue(14); // pic_height_in_map_units_minus1 = 14 (240px / 16)
-    bw.u(1, 1); // frame_mbs_only_flag = 1
-    bw.u(0, 1); // direct_8x8_inference_flag = 0
-    bw.u(0, 1); // frame_cropping_flag = 0
+    bw.write_ue(1); // chroma_format_idc = 1 (YUV 4:2:0)
+    bw.write_ue(0); // bit_depth_luma_minus8 = 0
+    bw.write_ue(0); // bit_depth_chroma_minus8 = 0
+    bw.write(0, 1); // qpprime_y_zero_transform_bypass_flag = 0
+    bw.write(0, 1); // seq_scaling_matrix_present_flag = 0
+    bw.write_ue(0); // log2_max_frame_num_minus4 = 0
+    bw.write_ue(0); // pic_order_cnt_type = 0
+    bw.write_ue(0); // log2_max_pic_order_cnt_lsb_minus4 = 0
+    bw.write_ue(1); // num_ref_frames = 1
+    bw.write(0, 1); // gaps_in_frame_num_value_allowed_flag = 0
+    bw.write_ue(19); // pic_width_in_mbs_minus1 = 19 (320px / 16)
+    bw.write_ue(14); // pic_height_in_map_units_minus1 = 14 (240px / 16)
+    bw.write(1, 1); // frame_mbs_only_flag = 1
+    bw.write(0, 1); // direct_8x8_inference_flag = 0
+    bw.write(0, 1); // frame_cropping_flag = 0
     // vui_parameters_present_flag — 1 iff caller asked for timing_info.
     if let Some(units) = num_units_in_tick {
-        bw.u(1, 1); // vui_parameters_present_flag = 1
-        bw.u(0, 1); // aspect_ratio_info_present_flag = 0
-        bw.u(0, 1); // overscan_info_present_flag = 0
-        bw.u(0, 1); // video_signal_type_present_flag = 0
-        bw.u(0, 1); // chroma_loc_info_present_flag = 0
-        bw.u(1, 1); // timing_info_present_flag = 1
-        bw.u(units, 32); // num_units_in_tick (CALLER-SUPPLIED)
+        bw.write(1, 1); // vui_parameters_present_flag = 1
+        bw.write(0, 1); // aspect_ratio_info_present_flag = 0
+        bw.write(0, 1); // overscan_info_present_flag = 0
+        bw.write(0, 1); // video_signal_type_present_flag = 0
+        bw.write(0, 1); // chroma_loc_info_present_flag = 0
+        bw.write(1, 1); // timing_info_present_flag = 1
+        bw.write(units.into(), 32); // num_units_in_tick (CALLER-SUPPLIED)
         // time_scale chosen to avoid 24 leading-zero bits (which can
         // produce 0x00 0x00 0x00 in the byte-stream that
         // ByteReader::without_skip rejects per RBSP emulation-prevention
         // semantics). 0x4000_001E retains frame-rate semantics for any
         // test that asserts on the value; for overflow tests the value
         // is irrelevant.
-        bw.u(0x4000_001E, 32); // time_scale
-        bw.u(1, 1); // fixed_frame_rate_flag = 1
-        bw.u(0, 1); // nal_hrd_parameters_present_flag = 0
-        bw.u(0, 1); // vcl_hrd_parameters_present_flag = 0
-        bw.u(0, 1); // pic_struct_present_flag = 0
-        bw.u(0, 1); // bitstream_restriction_flag = 0 (no max_num_reorder_frames)
+        bw.write(0x4000_001E, 32); // time_scale
+        bw.write(1, 1); // fixed_frame_rate_flag = 1
+        bw.write(0, 1); // nal_hrd_parameters_present_flag = 0
+        bw.write(0, 1); // vcl_hrd_parameters_present_flag = 0
+        bw.write(0, 1); // pic_struct_present_flag = 0
+        bw.write(0, 1); // bitstream_restriction_flag = 0 (no max_num_reorder_frames)
     } else {
-        bw.u(0, 1); // vui_parameters_present_flag = 0
+        bw.write(0, 1); // vui_parameters_present_flag = 0
     }
-    bw.trailing();
+    bw.end_rbsp();
     bw.bytes
 }
 

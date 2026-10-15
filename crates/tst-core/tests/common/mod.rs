@@ -19,6 +19,7 @@
 
 #![allow(dead_code)]
 
+pub mod bitwriter;
 pub mod fixtures;
 pub mod mux_demux;
 pub mod synthetic;
