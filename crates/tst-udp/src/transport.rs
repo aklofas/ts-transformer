@@ -41,6 +41,8 @@ use crate::url::UdpUrl;
 /// `close()` is a different signal: post-close calls return
 /// [`TransportError::Closed`], and a handle obtained earlier does **not**
 /// read `is_cancelled()` after a plain close.
+/// Obtain it from the owner's `cancel_handle()`; a handle built with
+/// `new()` or `Default` is read by nothing.
 pub type UdpCancelHandle = tst_core::cancel::FlagCancel;
 
 /// UDP sender.

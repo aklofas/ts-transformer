@@ -82,8 +82,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   arguments) — never thrown.
 - `org.tstrans.rtp.RtspClientConfig.rtcp()` and `Builder.rtcp(boolean)` are
   removed; the flag was carried and ignored.
-- `DemuxException.Kind.INTERNAL` is removed. An internal failure while
-  converting a demux event now throws `RuntimeException`, as Python raises
+- `DemuxException.Kind.INTERNAL` is removed. Every internal failure on
+  the demux domain (byte reads, enum drift, event conversion) now throws
+  `RuntimeException`, as Python raises
   `RuntimeError`.
 
 ### Removed — tst-rtp (BREAKING)
@@ -152,7 +153,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `cancel::SrtCancelHandle` is renamed `ResourceCancel` (it closes any
   integer resource handle, not only an SRT socket); `SrtCancelHandle` stays as
   a deprecated alias for one minor, also at the tst-core, tst-pipeline and
-  tst-srt crate roots.
+  tst-srt crate roots. `ResourceCancel` is newly re-exported at the
+  tst-pipeline and tst-srt roots.
 - `CANCEL_POLL_INTERVAL` and `ACCEPT_POLL_INTERVAL` move from
   `net::udp_socket` to `cancel`.
 
@@ -178,12 +180,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   type aliases (struct literals and field access are unchanged);
   `ParameterSetInjection` is re-exported where it was, except at
   `h264::depacketizer::ParameterSetInjection`.
+- The error text of an rtsps server certificate or key that cannot be loaded
+  changed; the error kinds are unchanged.
 
 ### Changed — tst-udp, tst-tcp, tst-rist (BREAKING)
 
 - `UdpCancelHandle` and `RistCancelHandle` are aliases of
   `tst_core::cancel::FlagCancel` (they gain `Default`; behaviour is
   unchanged). `TcpCancelHandle` keeps its type and API.
+- The error text of a tcps CA bundle that cannot be loaded changed; the error
+  kinds are unchanged.
 
 ### Changed — tst-py (BREAKING)
 

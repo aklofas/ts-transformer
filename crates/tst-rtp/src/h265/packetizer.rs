@@ -88,6 +88,18 @@ mod tests {
         assert_eq!(body, nal[2..]);
     }
 
+    /// The PayloadHdr keeps the NAL header's F bit and LayerId high bit and
+    /// the second byte (LayerId low bits, TID) unchanged: `0x27 0x03` (type
+    /// 19, LayerId high bit set, TID 3) gives `0x63 0x03`.
+    #[test]
+    fn the_payload_header_keeps_layer_id_and_tid() {
+        let mut nal = vec![0x27u8, 0x03];
+        nal.extend(std::iter::repeat_n(0xCD, 2500));
+        let out = packetize([nal.as_slice()], 1200);
+        assert_eq!(&out[0].payload[..3], &[0x63, 0x03, 0x80 | 19]);
+        assert_eq!(&out[2].payload[..3], &[0x63, 0x03, 0x40 | 19]);
+    }
+
     #[test]
     fn small_nal_units_travel_whole() {
         let out = packetize([&[0x40, 0x01, 0xAA][..], &[0x26, 0x01, 0xBB]], 1200);

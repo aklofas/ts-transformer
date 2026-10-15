@@ -602,7 +602,8 @@ def _zero_retry_policy() -> ReconnectPolicy:
 
 
 def test_recv_end_reason_enum_mirrors_rust() -> None:
-    """`tstrans.srt.RecvEndReason` mirrors `tst_pipeline::RecvEndReason`
+    """`tstrans.srt.RecvEndReason` mirrors the managed-SRT subset of
+    `tst_core::transport::EndReason`
     1:1 in declaration order, and is exported from the module."""
     assert "RecvEndReason" in tstrans.srt.__all__
     assert [m.name for m in tstrans.srt.RecvEndReason] == [

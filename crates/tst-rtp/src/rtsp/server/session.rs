@@ -34,7 +34,21 @@ use crate::rtsp::server::publish::session::PublishSession;
 /// shared by the response writer, the interleaved fanout and
 /// `RtspServer::stop`'s Notice 5402. The mutex keeps an RTSP response and
 /// a `$`-framed RTP packet from interleaving mid-bytes.
+///
+/// Every writer of a `SessionWriter` flushes after its write, because the
+/// TLS half may hold encoded records until flushed; [`write_flushed`] does
+/// both under the caller's lock.
 pub(crate) type SessionWriter = Arc<AsyncMutex<Box<dyn AsyncWrite + Send + Unpin>>>;
+
+/// `write_all` then `flush` on a locked session writer (a no-op flush on
+/// plain TCP).
+pub(crate) async fn write_flushed<W: AsyncWrite + Unpin + ?Sized>(
+    w: &mut W,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    w.write_all(bytes).await?;
+    w.flush().await
+}
 
 pub(crate) fn session_writer<W: AsyncWrite + Send + Unpin + 'static>(w: W) -> SessionWriter {
     Arc::new(AsyncMutex::new(Box::new(w)))
@@ -523,7 +537,7 @@ where
                     buf.drain(..total_len);
                     let bytes = unparseable_reply_bytes(&reply);
                     let mut guard = write_half.lock().await;
-                    if let Err(e) = guard.write_all(&bytes).await {
+                    if let Err(e) = write_flushed(&mut **guard, &bytes).await {
                         tracing::warn!(target: "tst_rtp::server", peer = %peer, error = %e, "write failed");
                         return Ok(());
                     }
@@ -566,7 +580,7 @@ where
             let written = tokio::select! {
                 r = async {
                     let mut guard = write_half.lock().await;
-                    guard.write_all(&bytes).await
+                    write_flushed(&mut **guard, &bytes).await
                 } => Some(r),
                 _ = tokio::time::sleep(idle_bound) => None,
                 _ = state.cancel_token.cancelled() => None,
@@ -690,7 +704,7 @@ async fn reject_if_over_cap<W: AsyncWrite + Unpin>(
     );
     let response_413 = b"RTSP/1.0 413 Request Entity Too Large\r\nContent-Length: 0\r\n\r\n";
     let mut guard = write_half.lock().await;
-    let _ = guard.write_all(response_413).await;
+    let _ = write_flushed(&mut *guard, response_413).await;
     let _ = guard.shutdown().await;
     true
 }

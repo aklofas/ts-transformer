@@ -34,7 +34,7 @@ except (ImportError, AttributeError) as exc:  # pragma: no cover
 
 
 class StreamEndReason(enum.IntEnum):
-    """Why an RTP receive session ended. Mirrors `tst_rtp::StreamEndReason`.
+    """Why an RTP receive session ended. Mirrors the RTP subset of `tst_core::transport::EndReason`.
 
     Returned by `.end_reason()` on `Receiver` / `DemuxReceiver` /
     `H264Receiver`; `None` means the session either hasn't ended yet or

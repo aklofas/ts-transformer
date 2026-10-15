@@ -1,7 +1,7 @@
 package org.tstrans.rtp;
 
 /**
- * Why an RTP receive session ended. Mirrors {@code tst_rtp::StreamEndReason}.
+ * Why an RTP receive session ended. Mirrors the RTP subset of {@code tst_core::transport::EndReason}.
  *
  * <p>Returned by {@code endReason()} on {@link Receiver}, {@link DemuxReceiver},
  * and {@link H264Receiver}; {@code null} means the session either hasn't ended
@@ -43,7 +43,7 @@ public enum StreamEndReason {
     /**
      * Map the cross-surface-pinned wire ordinal (1-6) to its constant.
      * {@code -1} — or any value this binding doesn't recognize, e.g. a
-     * future non-exhaustive {@code tst_rtp::StreamEndReason} variant — maps
+     * future non-exhaustive {@code tst_core::transport::EndReason} variant — maps
      * to {@code null}.
      */
     static StreamEndReason fromWireOrdinal(int ordinal) {

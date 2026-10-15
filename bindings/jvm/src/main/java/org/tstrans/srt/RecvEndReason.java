@@ -2,7 +2,8 @@ package org.tstrans.srt;
 
 /**
  * Why a {@link ManagedDemuxReceiver}'s stream ended. Mirrors
- * {@code tst_pipeline::RecvEndReason} one-for-one.
+ * {@code tst_core::transport::EndReason}
+ * (the managed-SRT subset) one-for-one.
  *
  * <p>Returned by {@link ManagedDemuxReceiver#endReason()}; {@code null} means
  * the stream either has not ended yet or ended through a path {@code
@@ -57,7 +58,7 @@ public enum RecvEndReason {
     /**
      * Map the native wire ordinal (0-2) to its constant. {@code -1} — or any
      * value this binding does not recognize, e.g. a future
-     * {@code tst_pipeline::RecvEndReason} variant — maps to {@code null}.
+     * {@code tst_core::transport::EndReason} variant — maps to {@code null}.
      *
      * <p>Note {@code 0} is a real reason here, so {@code -1} (never {@code 0})
      * is the "nothing recorded" sentinel.

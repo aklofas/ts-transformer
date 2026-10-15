@@ -24,7 +24,7 @@ class StreamEndReasonTest {
         assertEquals(StreamEndReason.PROTOCOL_ERROR, StreamEndReason.fromWireOrdinal(5));
         assertEquals(StreamEndReason.CANCELLED, StreamEndReason.fromWireOrdinal(6));
         // -1 (the native "not ended" sentinel), 0, and any other unrecognized
-        // value (a future non-exhaustive tst_rtp::StreamEndReason variant)
+        // value (a future non-exhaustive tst_core::transport::EndReason variant)
         // all map to null, never throw.
         assertNull(StreamEndReason.fromWireOrdinal(-1));
         assertNull(StreamEndReason.fromWireOrdinal(0));

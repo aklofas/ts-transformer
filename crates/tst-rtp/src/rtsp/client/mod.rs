@@ -320,6 +320,8 @@ pub(crate) struct InterleavedPumpState {
 /// transport plane (post-PLAY RTP data) uses its own
 /// [`crate::RtpCancelHandle`] returned from the
 /// [`crate::RtpRecvTransport`].
+/// Obtain it from the owner's `cancel_handle()`; a handle built with
+/// `new()` or `Default` is read by nothing.
 pub type RtspCancelHandle = tst_core::cancel::FlagCancel;
 
 /// Per-connection knobs carried from [`RtspClientBuilder`](crate::RtspClientBuilder)

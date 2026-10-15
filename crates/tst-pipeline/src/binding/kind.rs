@@ -104,30 +104,39 @@ macro_rules! kinds {
 
 kinds! {
     /// Configuration rejected before anything was built: an invalid config, URL, option or address.
+    ///
     /// `ShellErrorKind::ConfigInvalid`, `MuxErrorKind::ConfigInvalid`, SRT address/option/URL errors.
     ConfigInvalid = -1 => "CONFIG_INVALID", "CONFIG_INVALID", -1;
     /// A pushed video access unit carried no Annex-B start code, so it is not a NAL.
+    ///
     /// `MuxError::InvalidNal`.
     InvalidNal = -2 => "INVALID_NAL", "INVALID_NAL", -2;
-    /// Input bytes do not conform: MPEG-TS framing lost sync (not 188-byte-aligned packets), or an audio, subtitle or data payload was over its size cap.
+    /// The input is malformed for this call: framing was lost, or a payload was over its size cap.
+    ///
     /// `ShellErrorKind::InputMalformed`, TS framing, over-size audio/subtitle/data pushes.
     InputMalformed = -3 => "INPUT_MALFORMED", "INPUT_MALFORMED", -3;
     /// Transient refusal: the transport or muxer is alive but cannot take or produce the call now (full send queue or muxer buffer, or a receive deadline that expired). Retry; the handle stays open.
+    ///
     /// `TransportError::Backpressure`, `MuxError::BufferFull`, SRT `QueueFull`.
     Backpressure = -4 => "BACKPRESSURE", "BACKPRESSURE", -4;
     /// A KLV record exceeded the PES length cap.
+    ///
     /// `MuxError::KlvTooLarge`.
     KlvTooLarge = -5 => "KLV_TOO_LARGE", "KLV_TOO_LARGE", -5;
     /// The payload exceeds the transport's per-send ceiling.
+    ///
     /// `TransportError::TooLarge`, SRT `PayloadTooLarge` / `BufferTooSmall`.
     TooLarge = -6 => "TOO_LARGE", "TOO_LARGE", -6;
     /// The handle or transport was closed: by `close()` on this object, by a cancel or close from another thread while the call was parked (detail "cancelled from another thread"), or the call came after the handle was closed or consumed.
+    ///
     /// `TransportError::{Closed on a sender, ExplicitClose}`, `HandleState::Closed`, `TcpError::Closed`, SRT `ListenerClosed` / `SocketClosed`.
     Closed = -7 => "CLOSED", "CLOSED", -7;
     /// The transport is dead (a send or receive I/O failure, never a cancel); reopen it.
+    ///
     /// `TransportError::Broken`, SRT `ConnectionBroken`.
     Broken = -8 => "BROKEN", "BROKEN", -8;
     /// API misuse on a successfully-built muxer: a stream handle from another muxer, an ambiguous-target shorthand on a multi-stream muxer, an unknown program reference, or an out-of-range descriptor or index.
+    ///
     /// `MuxErrorKind::InvalidUsage`.
     InvalidUsage = -9 => "INVALID_USAGE", "INVALID_USAGE", -9;
     /// Library-internal failure: an invariant tripped that should not occur in well-formed use (file an issue with reproduction bytes), a poisoned handle lock, or an unmapped variant of a `#[non_exhaustive]` upstream enum.
@@ -135,6 +144,7 @@ kinds! {
     /// A panic caught at the binding boundary (`HandleState::Panicked`).
     PanicCaught = -11 => "PANIC_CAUGHT", "PANIC_CAUGHT", -11;
     /// The receive loop reached end of stream: the peer closed cleanly. The receiver is dead; later calls report `CLOSED`. Iterating receivers end the iteration instead of raising it.
+    ///
     /// `ShellErrorKind::EndOfStream`; the C ABI returns it as `TST_E_END_OF_STREAM` (-12).
     EndOfStream = -12 => "END_OF_STREAM", "END_OF_STREAM", -12;
     /// Transient: value not available right now (C managed-stats getters mid-reconnect).
@@ -142,9 +152,11 @@ kinds! {
     /// Persistent: key never observed (C per-PID getters).
     NotFound = -14 => "NOT_FOUND", "NOT_FOUND", -14;
     /// The AV1 OBU stream could not be framed: it is not a well-formed OBU stream.
+    ///
     /// `MuxError::InvalidAv1Obu`.
     InvalidAv1Obu = -44 => "INVALID_AV1_OBU", "INVALID_AV1_OBU", -44;
     /// The MISP ST 0604 timestamp SEI could not be built or inserted for this codec or carriage (the `push_video_misp_to` family).
+    ///
     /// `MuxError::MispTime`.
     MispTime = -45 => "MISP_TIME", "MISP_TIME", -45;
     /// C `tst_misp_time_extract` on a malformed ST 0604 SEI.
@@ -168,48 +180,63 @@ kinds! {
     /// RTSP request timeout.
     RtspTimeout = -23 => "RTSP_TIMEOUT", "TIMEOUT", -23;
     /// RTSP server lifecycle misuse: started twice, not started, or already shut down.
+    ///
     /// `AlreadyStarted` / `NotStarted` / `Shutdown`.
     RtspServer = -24 => "RTSP_SERVER", "SERVER", -24;
     /// RTSP mount failure: mount path, multicast group, duplicate mount or mount config.
+    ///
     /// `MountError`.
     RtspMount = -25 => "RTSP_MOUNT", "MOUNT", -25;
     /// UDP socket I/O failure (bind, connect or socket option).
+    ///
     /// `UdpError::Io`.
     UdpIo = -26 => "UDP_IO", "IO", -26;
     /// The UDP configuration was rejected.
+    ///
     /// `UdpError::InvalidConfig`.
     UdpInvalidConfig = -27 => "UDP_INVALID_CONFIG", "INVALID_CONFIG", -27;
     /// TCP socket I/O failure.
+    ///
     /// `TcpError::Io`.
     TcpIo = -30 => "TCP_IO", "IO", -30;
     /// The TCP configuration was rejected.
+    ///
     /// `TcpError::InvalidConfig`.
     TcpInvalidConfig = -31 => "TCP_INVALID_CONFIG", "INVALID_CONFIG", -31;
     /// The TCP connect did not complete within the connect timeout.
+    ///
     /// `TcpError::ConnectTimeout`.
     TcpConnectTimeout = -32 => "TCP_CONNECT_TIMEOUT", "CONNECT_TIMEOUT", -32;
     /// TLS setup or handshake failed on a TCP connection.
+    ///
     /// `TcpError::Tls`.
     TcpTls = -33 => "TCP_TLS", "TLS", -33;
     /// Segment or playlist file I/O failed.
+    ///
     /// `HlsError::Io`.
     HlsIo = -34 => "HLS_IO", "IO", -34;
     /// The builder's configuration was rejected at `build()`.
+    ///
     /// `HlsError::InvalidConfig`.
     HlsInvalidConfig = -35 => "HLS_INVALID_CONFIG", "INVALID_CONFIG", -35;
     /// The publisher was already finished and takes no more data.
+    ///
     /// `HlsError::Finished`.
     HlsFinished = -36 => "HLS_FINISHED", "FINISHED", -36;
     /// TLS setup failed (unreadable certificate or key, handshake).
+    ///
     /// `HlsError::Tls`.
     HlsTls = -37 => "HLS_TLS", "TLS", -37;
     /// A librist call failed.
+    ///
     /// `RistError::Ffi`.
     RistFfi = -38 => "RIST_FFI", "FFI", -38;
     /// The RIST configuration was rejected.
+    ///
     /// `RistError::InvalidConfig`.
     RistInvalidConfig = -39 => "RIST_INVALID_CONFIG", "INVALID_CONFIG", -39;
     /// Encryption was requested on a build without RIST encryption support.
+    ///
     /// `RistError::EncryptionDisabled`.
     RistEncryptionDisabled = -41 => "RIST_ENCRYPTION_DISABLED", "ENCRYPTION_DISABLED", -41;
     /// SRT connect / bind failed (refused, rejected, bad encryption, address in use, permission, system).
@@ -221,63 +248,83 @@ kinds! {
     /// SRT low-level I/O failure (`IoError`, `SendError` / `RecvError` system or libsrt errors).
     SrtIo = -52 => "SRT_IO", "IO", -8;
     /// The `udp://` URL could not be parsed.
+    ///
     /// `UdpError::Url`.
     UdpUrl = -53 => "UDP_URL", "URL", -27;
     /// The `tcp://` or `tcps://` URL could not be parsed.
+    ///
     /// `TcpError::Url`.
     TcpUrl = -54 => "TCP_URL", "URL", -31;
     /// TLS was requested on a build without the `tls` feature.
+    ///
     /// `TcpError::TlsDisabled`.
     TcpTlsDisabled = -55 => "TCP_TLS_DISABLED", "TLS_DISABLED", -33;
     /// `from_url` could not parse the HLS URL.
+    ///
     /// `HlsUrlError` (`HlsPublisherBuilder::from_url`).
     HlsUrl = -56 => "HLS_URL", "URL", -35;
     /// The built-in HTTP server could not bind.
+    ///
     /// `HlsError::BindFailed`.
     HlsBindFailed = -57 => "HLS_BIND_FAILED", "BIND_FAILED", -34;
     /// `push_ts` input is not a whole multiple of 188 bytes.
+    ///
     /// `HlsError::UnalignedPushTs`.
     HlsUnalignedPushTs = -58 => "HLS_UNALIGNED_PUSH_TS", "UNALIGNED_PUSH_TS", -35;
     /// `enable_tls` was called on a build without the `tls` feature.
+    ///
     /// `HlsError::TlsDisabled`.
     HlsTlsDisabled = -59 => "HLS_TLS_DISABLED", "TLS_DISABLED", -37;
     /// The `rist://` URL could not be parsed.
+    ///
     /// `RistError::Url`.
     RistUrl = -60 => "RIST_URL", "URL", -39;
     /// librist could not create its context.
+    ///
     /// `RistError::ContextCreateFailed`.
     RistContextCreateFailed = -61 => "RIST_CONTEXT_CREATE_FAILED", "CONTEXT_CREATE_FAILED", -38;
     /// librist could not create the peer.
+    ///
     /// `RistError::PeerCreateFailed`.
     RistPeerCreateFailed = -62 => "RIST_PEER_CREATE_FAILED", "PEER_CREATE_FAILED", -38;
     /// The URL carries `?pt=` (elementary RTP): use the H.264 receiver, not the MP2T transport.
+    ///
     /// tst-rtp `ConnectError::PayloadTypeParam`.
     RtpPayloadTypeParam = -63 => "RTP_PAYLOAD_TYPE_PARAM", "PAYLOAD_TYPE_PARAM", -15;
     /// The H.264 receiver requires a dynamic payload type in `?pt=` on the URL.
+    ///
     /// tst-rtp `ConnectError::MissingPayloadTypeParam`.
     RtpMissingPayloadTypeParam = -64 => "RTP_MISSING_PAYLOAD_TYPE_PARAM", "MISSING_PAYLOAD_TYPE_PARAM", -15;
     /// The `rtp://` or `rtsp://` URL could not be parsed.
+    ///
     /// tst-rtp `ConnectError::Url`.
     RtpUrl = -65 => "RTP_URL", "URL", -15;
     /// The host is not a literal IPv4 or IPv6 address. The RTP transport does no DNS resolution: pre-resolve it and pass the literal.
+    ///
     /// tst-rtp `ConnectError::HostNotLiteral`.
     RtpHostNotLiteral = -66 => "RTP_HOST_NOT_LITERAL", "HOST_NOT_LITERAL", -15;
     /// UDP socket error: an OS-level bind, connect or setsockopt failure.
+    ///
     /// tst-rtp `ConnectError::Io`.
     RtpIo = -67 => "RTP_IO", "IO", -15;
     /// The multicast interface is unsupported here, typically because the platform needs a different form (IPv6 needs a scope-id integer).
+    ///
     /// tst-rtp `ConnectError::IfaceUnsupported`.
     RtpIfaceUnsupported = -68 => "RTP_IFACE_UNSUPPORTED", "IFACE_UNSUPPORTED", -15;
     /// One sync-search window held no packet boundary; the scanned bytes are discarded and the next feed starts a fresh search.
+    ///
     /// `DemuxError::Unrecoverable`.
     DemuxUnrecoverable = -69 => "DEMUX_UNRECOVERABLE", "UNRECOVERABLE", -3;
     /// A strict-mode policy escalated a non-conformance to a fatal error; the message names the specific issue.
+    ///
     /// `DemuxError::StrictRejection`.
     DemuxStrictRejection = -70 => "DEMUX_STRICT_REJECTION", "STRICT_REJECTION", -3;
     /// A PES header declared a length too short to contain its own claimed flags, so the reassembler cannot make forward progress.
+    ///
     /// `DemuxError::MalformedPes`.
     DemuxMalformedPes = -72 => "DEMUX_MALFORMED_PES", "MALFORMED_PES", -3;
     /// The pre-sync buffer filled without finding the four confirming sync bytes; feed in smaller chunks or raise `sync_buf_cap`.
+    ///
     /// `DemuxError::SyncBufExhausted`.
     DemuxSyncBufExhausted = -73 => "DEMUX_SYNC_BUF_EXHAUSTED", "SYNC_BUF_EXHAUSTED", -6;
     /// KLV set truncated, or a BER length malformed or overflowing.
@@ -293,75 +340,99 @@ kinds! {
     /// Any other structural KLV decode failure (malformed tag, non-canonical BER, trailing bytes, field validation).
     KlvDecodeMalformedBytes = -79 => "KLV_DECODE_MALFORMED_BYTES", "MALFORMED_BYTES", -48;
     /// The output buffer cannot hold the encoded record.
+    ///
     /// `KlvEncodeError::BufferTooSmall`.
     KlvEncodeBufferTooSmall = -80 => "KLV_ENCODE_BUFFER_TOO_SMALL", "BUFFER_TOO_SMALL", -10;
     /// The encoded record exceeds the KLV size limit.
+    ///
     /// `KlvEncodeError::RecordTooLarge`.
     KlvEncodeRecordTooLarge = -81 => "KLV_ENCODE_RECORD_TOO_LARGE", "RECORD_TOO_LARGE", -10;
     /// A value is outside the range the spec declares for its item.
+    ///
     /// `KlvEncodeError::OutOfRange`.
     KlvEncodeOutOfRange = -82 => "KLV_ENCODE_OUT_OF_RANGE", "OUT_OF_RANGE", -10;
     /// A string value is longer than its item allows.
+    ///
     /// `KlvEncodeError::StringTooLong`.
     KlvEncodeStringTooLong = -83 => "KLV_ENCODE_STRING_TOO_LONG", "STRING_TOO_LONG", -10;
     /// The IMAPB mapping length is outside the supported range 1 to 8 bytes.
+    ///
     /// `KlvEncodeError::UnsupportedImapbLength`.
     KlvEncodeUnsupportedImapbLength = -84 => "KLV_ENCODE_UNSUPPORTED_IMAPB_LENGTH", "UNSUPPORTED_IMAPB_LENGTH", -10;
     /// The IMAPB parameters violate the ST 1201.5 precondition that min is below max.
+    ///
     /// `KlvEncodeError::InvalidImapbParams`.
     KlvEncodeInvalidImapbParams = -85 => "KLV_ENCODE_INVALID_IMAPB_PARAMS", "INVALID_IMAPB_PARAMS", -10;
     /// A mandatory item is missing under a strict-compliance encoder.
+    ///
     /// `KlvEncodeError::MissingMandatoryItem`.
     KlvEncodeMissingMandatoryItem = -86 => "KLV_ENCODE_MISSING_MANDATORY_ITEM", "MISSING_MANDATORY_ITEM", -10;
     /// An unknown-tag entry used a tag the typed set reserves.
+    ///
     /// `KlvEncodeError::ReservedTagInUnknown`.
     KlvEncodeReservedTagInUnknown = -87 => "KLV_ENCODE_RESERVED_TAG_IN_UNKNOWN", "RESERVED_TAG_IN_UNKNOWN", -10;
     /// An ST 0903 VTarget Pack carried no items after its target id; the error's tag is the target id.
+    ///
     /// `KlvEncodeError::VTargetPackEmpty`.
     KlvEncodeVTargetPackEmpty = -88 => "KLV_ENCODE_V_TARGET_PACK_EMPTY", "V_TARGET_PACK_EMPTY", -10;
     /// An ST 0903 vTargetSeries holds two VTarget Packs with the same target id.
+    ///
     /// `KlvEncodeError::DuplicateTargetId`.
     KlvEncodeDuplicateTargetId = -89 => "KLV_ENCODE_DUPLICATE_TARGET_ID", "DUPLICATE_TARGET_ID", -10;
     /// A standalone ST 0903 VMTI set carries a parent-relative offset tag, which the standalone form forbids.
+    ///
     /// `KlvEncodeError::ForbiddenStandaloneOffset`.
     KlvEncodeForbiddenStandaloneOffset = -90 => "KLV_ENCODE_FORBIDDEN_STANDALONE_OFFSET", "FORBIDDEN_STANDALONE_OFFSET", -10;
     /// The bitstream cursor walked past the end of the input.
+    ///
     /// `CodecParseError::TruncatedRbsp`.
     CodecTruncatedRbsp = -91 => "CODEC_TRUNCATED_RBSP", "TRUNCATED_RBSP", -10;
     /// Malformed Exp-Golomb code (a leading-zero run over 32, or a missing terminator bit).
+    ///
     /// `CodecParseError::InvalidGolomb`.
     CodecInvalidGolomb = -92 => "CODEC_INVALID_GOLOMB", "INVALID_GOLOMB", -10;
     /// A field carries a spec-reserved value that affects framing or downstream parsing.
+    ///
     /// `CodecParseError::ReservedValue`.
     CodecReservedValue = -93 => "CODEC_RESERVED_VALUE", "RESERVED_VALUE", -10;
     /// A profile whose framing semantics the parser cannot extract fields for.
+    ///
     /// `CodecParseError::UnsupportedProfile`.
     CodecUnsupportedProfile = -94 => "CODEC_UNSUPPORTED_PROFILE", "UNSUPPORTED_PROFILE", -10;
     /// The underlying engine failed in a way that maps to no finer kind; a variant a newer library adds also lands here.
+    ///
     /// `CodecParseError::EngineError`.
     CodecEngineError = -97 => "CODEC_ENGINE_ERROR", "ENGINE_ERROR", -10;
     /// A LEB128 value (AV1 OBU size) ran past 8 bytes or set the continuation bit on the 8th.
+    ///
     /// `CodecParseError::InvalidLeb128`.
     CodecInvalidLeb128 = -98 => "CODEC_INVALID_LEB128", "INVALID_LEB128", -10;
     /// An audio frame buffer does not start with the codec's sync word.
+    ///
     /// `CodecParseError::BadSyncWord`.
     CodecBadSyncWord = -99 => "CODEC_BAD_SYNC_WORD", "BAD_SYNC_WORD", -10;
     /// A frame parser ran out of bytes while reading a header or frame body (byte-oriented; `TRUNCATED_RBSP` is the bit-oriented video case).
+    ///
     /// `CodecParseError::Truncated`.
     CodecTruncated = -100 => "CODEC_TRUNCATED", "TRUNCATED", -10;
     /// A field carries a bit pattern the spec marks as never valid.
+    ///
     /// `CodecParseError::Forbidden`.
     CodecForbidden = -101 => "CODEC_FORBIDDEN", "FORBIDDEN", -10;
     /// An MPEG audio header signals free-format (bitrate index 0), whose frame length this parser does not discover.
+    ///
     /// `CodecParseError::UnsupportedFreeFormat`.
     CodecUnsupportedFreeFormat = -102 => "CODEC_UNSUPPORTED_FREE_FORMAT", "UNSUPPORTED_FREE_FORMAT", -10;
     /// The AVCC/HVCC length-prefix size is not 1, 2 or 4 bytes.
+    ///
     /// `CodecParseError::InvalidLengthSize` (C: -1, `codec_framing.rs:44`).
     CodecInvalidLengthSize = -103 => "CODEC_INVALID_LENGTH_SIZE", "INVALID_LENGTH_SIZE", -1;
     /// A NAL length does not fit the configured length-prefix size.
+    ///
     /// `CodecParseError::NalLengthOverflow` (C: -6, `codec_framing.rs:45`).
     CodecNalLengthOverflow = -104 => "CODEC_NAL_LENGTH_OVERFLOW", "NAL_LENGTH_OVERFLOW", -6;
     /// The caller's output buffer cannot hold the converted stream.
+    ///
     /// `CodecParseError::BufferTooSmall` (C: -4, the two-call size-query idiom).
     CodecBufferTooSmall = -105 => "CODEC_BUFFER_TOO_SMALL", "BUFFER_TOO_SMALL", -4;
 }
@@ -392,17 +463,29 @@ impl BindingErrorKind {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Domain {
+    /// Host classes: `SrtError` / `SrtErrorKind`, `SrtException`.
     Srt,
+    /// Host classes: `RtpError` / `RtpErrorKind`, `RtpException`.
     Rtp,
+    /// Host classes: `RtspError` / `RtspErrorKind`, `RtspException`.
     Rtsp,
+    /// Host classes: `UdpError` / `UdpErrorKind` (Python only).
     Udp,
+    /// Host classes: `TcpError` / `TcpErrorKind` (Python only).
     Tcp,
+    /// Host classes: `HlsError` / `HlsErrorKind`, `HlsException`.
     Hls,
+    /// Host classes: `RistError` / `RistErrorKind` (Python only).
     Rist,
+    /// Host classes: `MuxError` / `MuxErrorKind`, `MuxException`.
     Mux,
+    /// Host classes: `DemuxError` / `DemuxErrorKind`, `DemuxException`.
     Demux,
+    /// Host classes: `KlvError` / `KlvErrorKind`, `KlvDecodeException`.
     KlvDecode,
+    /// Host classes: `KlvEncodeError` / `KlvEncodeErrorKind`, `KlvEncodeException`.
     KlvEncode,
+    /// Host classes: `CodecError` / `CodecErrorKind`, `CodecParseException`.
     Codec,
 }
 

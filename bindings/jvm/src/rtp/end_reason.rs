@@ -1,4 +1,4 @@
-//! `tst_rtp::EndReason` → JVM ordinal-coded conversion, shared by
+//! `tst_core::transport::EndReason` (the RTP subset) → JVM ordinal-coded conversion, shared by
 //! `transport::JniRtpReceiver`, `demux_receiver::JniRtpDemuxReceiver`, and
 //! `h264_receiver::JniH264Receiver`.
 //!
