@@ -68,6 +68,12 @@ extract_items() {
   '
 }
 
+# sha256_of: hex digest of stdin; sha256sum on Linux, shasum on macOS.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1
+  else shasum -a 256 | cut -d' ' -f1; fi
+}
+
 # ---------------------------------------------------------------------------
 # list_unaudited: stdout is the sorted, de-duplicated set of mappable
 # baseline items that no [[surface]] or [[exempt]] row names — the set
@@ -321,7 +327,7 @@ run_check() {
   unaudited="$(mktemp)"
   list_unaudited > "$unaudited"
   n="$(wc -l < "$unaudited" | tr -d ' ')"
-  sum="$(sha256sum < "$unaudited" | cut -d' ' -f1)"
+  sum="$(sha256_of < "$unaudited")"
   if [ "$n" != "$want_n" ] || [ "$sum" != "$want_sum" ]; then
     {
       echo "FAIL: the un-catalogued public item set changed: $n items, sha256 $sum (pinned: $want_n items, $want_sum)."
@@ -452,7 +458,6 @@ self_test() {
   py_row "demo::a" "deferred" "demo::B::x"
   expect pass "python: sentinel cells against an empty definition index" || return 1
 
-
   # (9) Rule (c) pins the un-catalogued SET, not only its size: the pinned
   # set passes, and the same count with a different item (one gone, one new)
   # fails on the digest.
@@ -478,7 +483,7 @@ case "${1:-}" in
   --print-baseline)
     t="$(mktemp)"; list_unaudited > "$t"
     echo "UNAUDITED_COUNT=$(wc -l < "$t" | tr -d ' ')"
-    echo "UNAUDITED_SHA256=$(sha256sum < "$t" | cut -d' ' -f1)"
+    echo "UNAUDITED_SHA256=$(sha256_of < "$t")"
     rm -f "$t" ;;
   *)
     # Prove the checker still catches its negatives before trusting a pass.
