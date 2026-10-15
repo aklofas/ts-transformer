@@ -1138,7 +1138,7 @@ push to 65527 payload bytes with PTS, 65532 without
   streams, `MuxError::AmbiguousTarget` with ≥2.
 - Pipeline shells delegate one-for-one:
   `MuxSender::{send_data, send_data_to, data_handles}` and
-  `MuxPublisher::send_data` — see [guides/pipeline.md](/docs/guides/pipeline.md).
+  `MuxPublisher::push_data` — see [guides/pipeline.md](/docs/guides/pipeline.md).
 - The Python binding mirrors the whole surface: `add_data` /
   `stream_descriptors_for_data` / `push_data(_to)` / the handle accessors
   on `tstrans.mpegts`, plus `push_data` / `push_data_to` / `data_handle()`

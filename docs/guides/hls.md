@@ -67,9 +67,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Your encoder's output: one Annex-B access unit and one KLV local set per tick.
     let (nal_bytes, klv_bytes, pts): (Vec<u8>, Vec<u8>, i64) = (vec![0, 0, 0, 1, 0x65, 0xA5], vec![], 0);
 
-    // send_video with key_frame=true cuts a new segment at the keyframe.
-    shell.send_video(&nal_bytes, Pts90khz::new(pts), /* key_frame */ true)?;
-    shell.send_klv(&klv_bytes, Pts90khz::new(pts), 0)?;
+    // push_video with key_frame=true cuts a new segment at the keyframe.
+    shell.push_video(&nal_bytes, Pts90khz::new(pts), /* key_frame */ true)?;
+    shell.push_klv(&klv_bytes, Pts90khz::new(pts), 0)?;
 
     // LIVE mode: drop the shell to stop. To keep a completed EVENT/VOD
     // playlist fetchable after the stream ends, use finish_serving() instead.
@@ -116,8 +116,8 @@ program = (
 
 # with_config_hls CONSUMES the publisher.
 mp = MuxPublisher.with_config_hls(publisher, program)
-mp.send_video(nal, pts=Pts90khz.from_raw(pts), key_frame=True)  # auto-cuts on key_frame
-mp.send_klv(klv, pts=Pts90khz.from_raw(pts))
+mp.push_video(nal, pts=Pts90khz.from_raw(pts), key_frame=True)  # auto-cuts on key_frame
+mp.push_klv(klv, pts=Pts90khz.from_raw(pts))
 
 pub = mp.finish_into_publisher()   # recover the publisher to finish it cleanly
 pub.finish()
@@ -151,8 +151,8 @@ MuxerConfig program = MuxerConfig.builder()
     .build();
 
 MuxPublisher shell = MuxPublisher.withConfigHls(publisher, program); // consumes `publisher`
-shell.sendVideo(annexBNal, pts, /*keyFrame=*/ true);   // a key frame cuts a segment
-shell.sendKlv(klvBytes, pts, 0);                        // raw LS bytes; AU-cell added by the muxer
+shell.pushVideo(annexBNal, pts, /*keyFrame=*/ true);   // a key frame cuts a segment
+shell.pushKlv(klvBytes, pts, 0);                        // raw LS bytes; AU-cell added by the muxer
 
 HlsPublisher back = shell.finishIntoPublisher();        // consumes the shell
 back.finish();                                          // or back.finishServing() to keep serving
@@ -219,7 +219,7 @@ carriage mode when you configure the program's KLV stream:
   registration descriptor. This is the **web-friendly** path: hls.js ≥ 1.7
   with `enableEmsgKLVMetadata: true` surfaces these as `misbklv` samples,
   and older hls.js can slice the KLV out of the sample bytes by anchoring on
-  the 16-byte SMPTE UL. Pass raw KLV LS bytes to `send_klv`.
+  the 16-byte SMPTE UL. Pass raw KLV LS bytes to `push_klv`.
 - **`KlvStreamType::SynchronousMetadata`** — PMT `stream_type = 0x15`, the
   STANAG-strict carriage. The muxer prepends the 5-byte
   `Metadata_AU_cell` header (ITU-T H.222.0 §2.12.4.2) automatically — you
@@ -247,7 +247,7 @@ the full producer + JavaScript client contract for both hls.js paths.
   keyframe-intent signal that closes this window is tracked in
   [deferred-features](/docs/project/deferred-features.md).
 - **Per-GOP duration.** When you push through `MuxPublisher`, a
-  `send_video(..., key_frame=true)` cuts a segment at that keyframe, so
+  `push_video(..., key_frame=true)` cuts a segment at that keyframe, so
   segment length follows your GOP structure. `segment_duration` is the
   *target* — segments cut on the keyframe at or after that duration.
 - **`max_segment_duration` force-cut.** In the keyframe-driven flow, if a

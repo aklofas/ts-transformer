@@ -1980,8 +1980,8 @@ MuxerConfig program = MuxerConfig.builder()
     .build();
 
 MuxPublisher shell = MuxPublisher.withConfigHls(publisher, program); // consumes `publisher`
-shell.sendVideo(annexBNal, pts, /*keyFrame=*/ true);   // a key frame cuts a segment
-shell.sendKlv(klvBytes, pts, 0);                        // raw LS bytes; AU-cell added by the muxer
+shell.pushVideo(annexBNal, pts, /*keyFrame=*/ true);   // a key frame cuts a segment
+shell.pushKlv(klvBytes, pts, 0);                        // raw LS bytes; AU-cell added by the muxer
 
 HlsPublisher back = shell.finishIntoPublisher();        // consumes the shell
 back.finish();                                          // or back.finishServing() to keep serving

@@ -390,9 +390,7 @@ impl PublishMountState {
 /// approaches it. Held KLV released in the same burst narrows the
 /// headroom; see [`PublishMountStats::frames_dropped_app`].
 pub(crate) fn app_queue_bound() -> usize {
-    let max_au = crate::h264::H264DepayConfig::default().max_au_bytes;
-    let frame_packets = crate::rtsp::server::mount::RTP_PAYLOAD_SIZE / 188;
-    max_au.div_ceil(184).div_ceil(frame_packets) + 64
+    super::limits::PublishLimits::DEFAULT.app_queue_frames()
 }
 
 /// Which publisher currently (or most recently) holds the mount's
@@ -823,13 +821,6 @@ mod tests {
             m.emit(pkt.slice(12..), pkt.clone());
         }
         assert_eq!(m.stats.lock().unwrap().frames_dropped_app, 3);
-    }
-
-    #[test]
-    fn app_queue_holds_one_maximum_au() {
-        // 8 MiB of H.264 in 184-byte TS payloads, 7 packets a frame, + 64.
-        assert_eq!(app_queue_bound(), 45_591usize.div_ceil(7) + 64);
-        assert_eq!(app_queue_bound(), 6_577);
     }
 
     #[test]

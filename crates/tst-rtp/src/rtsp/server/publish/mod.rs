@@ -8,6 +8,7 @@ pub(crate) mod adapter_es;
 pub(crate) mod align;
 pub(crate) mod handlers;
 pub(crate) mod klv_depacketizer;
+pub(crate) mod limits;
 pub(crate) mod mount;
 pub(crate) mod session;
 pub(crate) mod shape;

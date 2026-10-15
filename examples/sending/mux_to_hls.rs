@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         let pts = Pts90khz::new(pts_ticks);
-        pub_shell.send_video(&buf[..n], pts, true)?;
+        pub_shell.push_video(&buf[..n], pts, true)?;
         pts_ticks += 9001;
     }
 

@@ -50,7 +50,7 @@ struct Inner<P: Publisher> {
 ///
 /// No method panics on a poisoned inner mutex. If a prior call panicked
 /// mid-mutation and poisoned the lock, each method falls back gracefully:
-/// fallible methods (`send_*`, `cut_segment`) return
+/// fallible methods (`push_*`, `cut_segment`) return
 /// [`MuxPublisherError::LockPoisoned`]; infallible methods (`stats`,
 /// `publisher_stats`) recover the poisoned guard and return the last
 /// observed value. `finish` recovers the poisoned guard and returns the
@@ -112,7 +112,7 @@ impl<P: Publisher> MuxPublisher<P> {
         })
     }
 
-    /// Send one video access unit (Annex-B framing required).
+    /// Push one video access unit (Annex-B framing required).
     ///
     /// A keyframe BEGINS the next segment: before this AU is pushed, the
     /// closing segment is flushed and cut (EXTINF = the exact PTS span
@@ -121,7 +121,7 @@ impl<P: Publisher> MuxPublisher<P> {
     /// (RFC 8216 §3). The keyframe's own bytes then land at the HEAD of the
     /// fresh segment. The stream-head keyframe (no open segment yet) opens
     /// the first segment without a spurious zero-duration cut.
-    pub fn send_video(
+    pub fn push_video(
         &self,
         nal: &[u8],
         pts: Pts90khz,
@@ -130,10 +130,10 @@ impl<P: Publisher> MuxPublisher<P> {
         self.send_video_inner(nal, pts, key_frame, None)
     }
 
-    /// [`Self::send_video`] plus an ST 0604 MISP timestamp SEI spliced
+    /// [`Self::push_video`] plus an ST 0604 MISP timestamp SEI spliced
     /// before the first VCL NAL (see `Muxer::push_video_misp_to`).
-    /// Requires exactly one configured video stream (like `send_video`).
-    pub fn send_video_misp(
+    /// Requires exactly one configured video stream (like `push_video`).
+    pub fn push_video_misp(
         &self,
         nal: &[u8],
         pts: Pts90khz,
@@ -202,11 +202,11 @@ impl<P: Publisher> MuxPublisher<P> {
         Ok(())
     }
 
-    /// Send one KLV unit.
+    /// Push one KLV unit.
     ///
     /// `metadata_service_id` selects the KLV stream when multiple KLV PIDs
     /// are configured; pass `0` for single-stream muxer configs.
-    pub fn send_klv(
+    pub fn push_klv(
         &self,
         klv: &[u8],
         pts: Pts90khz,
@@ -226,8 +226,8 @@ impl<P: Publisher> MuxPublisher<P> {
         Self::drain_locked(&mut inner)
     }
 
-    /// Send one audio frame.
-    pub fn send_audio(
+    /// Push one audio frame.
+    pub fn push_audio(
         &self,
         frames: &[u8],
         pts: Pts90khz,
@@ -246,8 +246,8 @@ impl<P: Publisher> MuxPublisher<P> {
         Self::drain_locked(&mut inner)
     }
 
-    /// Send one subtitle payload.
-    pub fn send_subtitle(
+    /// Push one subtitle payload.
+    pub fn push_subtitle(
         &self,
         payload: &[u8],
         pts: Pts90khz,
@@ -267,12 +267,12 @@ impl<P: Publisher> MuxPublisher<P> {
         Self::drain_locked(&mut inner)
     }
 
-    /// Send one data payload on the muxer's single data stream.
+    /// Push one data payload on the muxer's single data stream.
     ///
     /// Data streams are a PES pass-through — no AU-cell wrap, no framing;
     /// [`Muxer::push_data_to`] holds the contract (`pts` is written into
     /// the PES header only for `carries_pts: true` streams).
-    pub fn send_data(&self, data: &[u8], pts: Pts90khz) -> Result<(), MuxPublisherError<P::Error>> {
+    pub fn push_data(&self, data: &[u8], pts: Pts90khz) -> Result<(), MuxPublisherError<P::Error>> {
         let mut inner = self
             .inner
             .lock()
@@ -511,7 +511,7 @@ mod tests {
         let cfg = b.build().unwrap();
         let p = MemoryPublisher { buffers: vec![] };
         let pub_ = MuxPublisher::with_config(p, cfg).unwrap();
-        pub_.send_data(&[0x42; 64], Pts90khz::new(0)).unwrap();
+        pub_.push_data(&[0x42; 64], Pts90khz::new(0)).unwrap();
         assert!(pub_.stats().bytes_pushed > 0);
     }
 
@@ -557,7 +557,7 @@ mod tests {
         // Catch the panic so the test thread survives.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let nal = h264_au();
-            let _ = pub_.send_video(&nal, Pts90khz::new(0), true);
+            let _ = pub_.push_video(&nal, Pts90khz::new(0), true);
         }));
         assert!(result.is_err(), "expected a panic from push_ts");
 
@@ -566,38 +566,38 @@ mod tests {
         // All fallible push methods → LockPoisoned.
         assert!(
             matches!(
-                pub_.send_video(&[], Pts90khz::new(0), false),
+                pub_.push_video(&[], Pts90khz::new(0), false),
                 Err(MuxPublisherError::LockPoisoned)
             ),
-            "send_video: expected LockPoisoned"
+            "push_video: expected LockPoisoned"
         );
         assert!(
             matches!(
-                pub_.send_klv(&[], Pts90khz::new(0), 0),
+                pub_.push_klv(&[], Pts90khz::new(0), 0),
                 Err(MuxPublisherError::LockPoisoned)
             ),
-            "send_klv: expected LockPoisoned"
+            "push_klv: expected LockPoisoned"
         );
         assert!(
             matches!(
-                pub_.send_audio(&[], Pts90khz::new(0)),
+                pub_.push_audio(&[], Pts90khz::new(0)),
                 Err(MuxPublisherError::LockPoisoned)
             ),
-            "send_audio: expected LockPoisoned"
+            "push_audio: expected LockPoisoned"
         );
         assert!(
             matches!(
-                pub_.send_subtitle(&[], Pts90khz::new(0)),
+                pub_.push_subtitle(&[], Pts90khz::new(0)),
                 Err(MuxPublisherError::LockPoisoned)
             ),
-            "send_subtitle: expected LockPoisoned"
+            "push_subtitle: expected LockPoisoned"
         );
         assert!(
             matches!(
-                pub_.send_data(&[], Pts90khz::new(0)),
+                pub_.push_data(&[], Pts90khz::new(0)),
                 Err(MuxPublisherError::LockPoisoned)
             ),
-            "send_data: expected LockPoisoned"
+            "push_data: expected LockPoisoned"
         );
         assert!(
             matches!(pub_.cut_segment(), Err(MuxPublisherError::LockPoisoned)),
@@ -606,7 +606,7 @@ mod tests {
 
         // LockPoisoned kind → TransportBroken.
         assert_eq!(
-            pub_.send_video(&[], Pts90khz::new(0), false)
+            pub_.push_video(&[], Pts90khz::new(0), false)
                 .unwrap_err()
                 .kind(),
             crate::shell_error::ShellErrorKind::TransportBroken,
@@ -664,10 +664,10 @@ mod tests {
         let p = RecordingPublisher { cuts: vec![] };
         let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
         let au = h264_au();
-        mp.send_video(&au, Pts90khz::new(0), true).unwrap();
-        mp.send_video(&au, Pts90khz::new(9000), false).unwrap();
-        mp.send_video(&au, Pts90khz::new(18000), false).unwrap();
-        mp.send_video(&au, Pts90khz::new(270000), true).unwrap();
+        mp.push_video(&au, Pts90khz::new(0), true).unwrap();
+        mp.push_video(&au, Pts90khz::new(9000), false).unwrap();
+        mp.push_video(&au, Pts90khz::new(18000), false).unwrap();
+        mp.push_video(&au, Pts90khz::new(270000), true).unwrap();
         let p = mp.finish().unwrap();
         assert_eq!(p.cuts.len(), 1, "stream-head IDR must not emit a cut");
         assert_eq!(
@@ -727,12 +727,12 @@ mod tests {
         let k1 = 0;
         let k2 = 3 * 9000; // K1 + 3 AUs (K1 P P) → K2 at index 3
         let k3 = 5 * 9000; // K2 + 2 AUs (K2 P) → K3 at index 5
-        mp.send_video(&au, Pts90khz::new(k1), true).unwrap(); // K1
-        mp.send_video(&au, Pts90khz::new(9000), false).unwrap(); // P
-        mp.send_video(&au, Pts90khz::new(18000), false).unwrap(); // P
-        mp.send_video(&au, Pts90khz::new(k2), true).unwrap(); // K2
-        mp.send_video(&au, Pts90khz::new(4 * 9000), false).unwrap(); // P
-        mp.send_video(&au, Pts90khz::new(k3), true).unwrap(); // K3
+        mp.push_video(&au, Pts90khz::new(k1), true).unwrap(); // K1
+        mp.push_video(&au, Pts90khz::new(9000), false).unwrap(); // P
+        mp.push_video(&au, Pts90khz::new(18000), false).unwrap(); // P
+        mp.push_video(&au, Pts90khz::new(k2), true).unwrap(); // K2
+        mp.push_video(&au, Pts90khz::new(4 * 9000), false).unwrap(); // P
+        mp.push_video(&au, Pts90khz::new(k3), true).unwrap(); // K3
         let p = mp.finish().unwrap();
 
         // Exactly two cuts (K2, K3 — none for the stream-head K1).
@@ -774,7 +774,7 @@ mod tests {
         );
     }
 
-    /// `send_video_misp` splices the ST 0604 SEI; bytes demux to a Video
+    /// `push_video_misp` splices the ST 0604 SEI; bytes demux to a Video
     /// sample from which `misp_time::extract` recovers the timestamp.
     #[test]
     fn send_video_misp_recovers_timestamp() {
@@ -801,7 +801,7 @@ mod tests {
             au
         };
         let misp = MispTimestamp::micros(0xDEAD_BEEF_0000_0001, 0x3F);
-        mp.send_video_misp(&au, Pts90khz::new(0), true, &misp)
+        mp.push_video_misp(&au, Pts90khz::new(0), true, &misp)
             .unwrap();
 
         let publisher = mp.finish().unwrap();

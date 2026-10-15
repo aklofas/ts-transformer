@@ -4,7 +4,7 @@ Covers:
 - Publisher ABC: cannot instantiate; subclass-method enforcement.
 - HlsPublisher: build (bind 127.0.0.1:0, TemporaryDirectory output_dir),
   push_ts, cut_segment, finish → assert .ts + .m3u8 on disk.
-- MuxPublisher: with_config_hls → send_video / send_klv →
+- MuxPublisher: with_config_hls → push_video / push_klv →
   finish_into_publisher → finish; KLV preserved in the .ts segment.
 - HlsMode enum + HlsStats / PublisherStats / MuxPublisherStats dataclasses.
 - Error cases: unaligned push, ops-after-finish, bad bind, bad URL.
@@ -278,12 +278,12 @@ def test_mux_publisher_video_then_finish_into_publisher() -> None:
         assert ei.value.kind == HlsErrorKind.FINISHED
 
         for i in range(3):
-            mp.send_video(NAL_IDR, pts=Pts90khz.from_raw(i * 90_000), key_frame=True)
+            mp.push_video(NAL_IDR, pts=Pts90khz.from_raw(i * 90_000), key_frame=True)
 
         mstats = mp.stats()
         assert isinstance(mstats, MuxPublisherStats)
         assert mstats.bytes_pushed > 0
-        # Keyframes *begin* segments (send_video cuts BEFORE pushing a
+        # Keyframes *begin* segments (push_video cuts BEFORE pushing a
         # keyframe): the stream-head keyframe opens segment 0 without a
         # spurious zero-duration cut, and the 2nd + 3rd keyframes each cut.
         # So 3 keyframes → 2 cuts (segment 2 stays open until finish).
@@ -371,8 +371,8 @@ def test_mux_publisher_klv_preserved_in_ts_segment() -> None:
         program = _video_klv_program()
         mp = MuxPublisher.with_config_hls(pub, program)
 
-        mp.send_klv(KLV_ST0601, pts=Pts90khz.from_raw(0))
-        mp.send_video(NAL_IDR, pts=Pts90khz.from_raw(90_000), key_frame=True)
+        mp.push_klv(KLV_ST0601, pts=Pts90khz.from_raw(0))
+        mp.push_video(NAL_IDR, pts=Pts90khz.from_raw(90_000), key_frame=True)
         mp.cut_segment()
         recovered = mp.finish_into_publisher()
         recovered.finish()
@@ -439,16 +439,16 @@ def test_extinf_is_media_derived() -> None:
         program = _video_program()
         mp = MuxPublisher.with_config_hls(pub, program)
 
-        # Keyframes *begin* segments (send_video cuts BEFORE a keyframe):
+        # Keyframes *begin* segments (push_video cuts BEFORE a keyframe):
         # PTS 0: stream-head keyframe — opens segment 0 (no spurious cut),
         #   baselining its start PTS at 0.
-        mp.send_video(NAL_IDR, pts=Pts90khz.from_raw(0), key_frame=True)
+        mp.push_video(NAL_IDR, pts=Pts90khz.from_raw(0), key_frame=True)
         # PTS 90000: non-keyframe — appended to segment 0.
-        mp.send_video(NAL_IDR, pts=Pts90khz.from_raw(90000), key_frame=False)
+        mp.push_video(NAL_IDR, pts=Pts90khz.from_raw(90000), key_frame=False)
         # PTS 261000: keyframe — cuts segment 0 (span 0..261000 = 261000 ticks
         #   = 2.9 s at 90 kHz), then opens segment 1. 2.900 s is well past the
         #   1.0 s target, so it can only be the media-derived (PTS-span) EXTINF.
-        mp.send_video(NAL_IDR, pts=Pts90khz.from_raw(261000), key_frame=True)
+        mp.push_video(NAL_IDR, pts=Pts90khz.from_raw(261000), key_frame=True)
 
         hls = mp.finish_into_publisher()
         pl = hls.render_playlist(False)

@@ -430,21 +430,21 @@ class MuxPublisher:
         """
         ...
 
-    def send_video(
+    def push_video(
         self, nal: _BytesLike, *, pts: Any, key_frame: bool = ...
     ) -> None:
         """Push one video access unit (Annex-B). Auto-cuts on ``key_frame``."""
         ...
 
-    def send_klv(self, klv: _BytesLike, *, pts: Any, stream_index: int = ...) -> None:
+    def push_klv(self, klv: _BytesLike, *, pts: Any, stream_index: int = ...) -> None:
         """Push one KLV blob. ``stream_index`` selects the KLV stream."""
         ...
 
-    def send_audio(self, frames: _BytesLike, *, pts: Any) -> None:
+    def push_audio(self, frames: _BytesLike, *, pts: Any) -> None:
         """Push one or more pre-framed audio frames."""
         ...
 
-    def send_subtitle(self, payload: _BytesLike, *, pts: Any) -> None:
+    def push_subtitle(self, payload: _BytesLike, *, pts: Any) -> None:
         """Push one subtitle payload."""
         ...
 

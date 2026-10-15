@@ -49,9 +49,9 @@ println!("serving http://{}/playlist.m3u8", publisher.local_addr().unwrap());
 
 let mut shell = MuxPublisher::with_config(publisher, mux_config)?;
 
-// send_video with key_frame=true automatically cuts a new segment.
-shell.send_video(&nal_bytes, pts, key_frame)?;
-shell.send_klv(&klv_bytes, pts, 0)?;
+// push_video with key_frame=true automatically cuts a new segment.
+shell.push_video(&nal_bytes, pts, key_frame)?;
+shell.push_klv(&klv_bytes, pts, 0)?;
 
 // Optional Basic auth: .basic_auth("user", "secret") on the builder.
 // Optional HTTPS:      .enable_tls("server.crt", "server.key") on the builder.
@@ -72,13 +72,13 @@ MuxerConfig program = MuxerConfig.builder()
     .addKlv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, true)
     .build();
 
-// withConfigHls, sendVideo, sendKlv, sendAudio, sendSubtitle and cutSegment
+// withConfigHls, pushVideo, pushKlv, pushAudio, pushSubtitle and cutSegment
 // declare checked MuxException and HlsException; finishIntoPublisher and
 // finish declare HlsException — catch both in real code.
 MuxPublisher shell = MuxPublisher.withConfigHls(pub, program); // consumes `pub`
 
-shell.sendVideo(nalBytes, pts, keyFrame);  // keyFrame=true cuts a new segment
-shell.sendKlv(klvBytes, pts, 0);
+shell.pushVideo(nalBytes, pts, keyFrame);  // keyFrame=true cuts a new segment
+shell.pushKlv(klvBytes, pts, 0);
 
 HlsPublisher back = shell.finishIntoPublisher();
 back.finish();  // writes final playlist + #EXT-X-ENDLIST (Event/Vod modes)

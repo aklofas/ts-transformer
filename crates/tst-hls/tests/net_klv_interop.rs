@@ -140,17 +140,17 @@ fn segments_are_self_contained_and_carry_klv() {
         let key_pts = frame * STEP;
         // KLV at the keyframe PTS.
         let klv = synthetic_klv(gop as u8);
-        pub_shell.send_klv(&klv, Pts90khz::new(key_pts), 0).unwrap();
+        pub_shell.push_klv(&klv, Pts90khz::new(key_pts), 0).unwrap();
         sent_klv.push(klv);
         sent_klv_pts.push(key_pts);
         // Keyframe AU, then two non-key AUs.
         pub_shell
-            .send_video(&au, Pts90khz::new(key_pts), true)
+            .push_video(&au, Pts90khz::new(key_pts), true)
             .unwrap();
         frame += 1;
         for _ in 0..2 {
             pub_shell
-                .send_video(&au, Pts90khz::new(frame * STEP), false)
+                .push_video(&au, Pts90khz::new(frame * STEP), false)
                 .unwrap();
             frame += 1;
         }
