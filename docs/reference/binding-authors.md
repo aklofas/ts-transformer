@@ -361,6 +361,9 @@ baseline (by design)" for the full rationale.
       `tst_mux_config_add_data_descriptor`, the offline muxer pair
       `tst_muxer_push_data` / `tst_muxer_push_data_to`, and the SRT-gated
       sender pair `tst_mux_sender_send_data` / `tst_mux_sender_send_data_to`.
+      Carries opaque private payloads (PES `stream_id 0xBD`, arbitrary
+      `stream_type`) alongside video/KLV, mirroring the Rust `push_data`
+      family.
     - `13` — private-data push through managed-sender and RTSP-mount shells:
       the SRT-gated pair `tst_managed_mux_sender_send_data` /
       `tst_managed_mux_sender_send_data_to` (`TST_HAS_SRT`) and the
@@ -374,15 +377,23 @@ baseline (by design)" for the full rationale.
       `tst_muxer_push_video_wire_to` pass-through push for byte-faithful
       transmux; `tst_mux_config_set_av1_carriage` mux-side carriage setter.
     - `15` — `TstNonConformantCode::PmtProgramNumberMismatch`
-      (= 33). PMT body `program_number` mismatch vs PAT assignment; `pid` is
-      the PMT PID; `programs[0]` = `pat_program`, `programs[1]` =
+      (= 33). PMT body `program_number` mismatch vs PAT assignment; surfaces
+      on `TstEventNonConformant`, the mislabeled topology is NOT adopted;
+      `pid` is the PMT PID; `programs[0]` = `pat_program`, `programs[1]` =
       `pmt_program` (reuses `programs_buf` carrier). No struct layout change.
     - `16` — demux trust-boundary diagnostics: four new
       `TstNonConformantCode` values (no struct layout change — all reuse
       existing carriers): `UnsupportedScrambling` (= 34),
       `AdaptationFieldMalformed` (= 35),
       `ZeroLengthPesNonVideo` (= 36),
-      `PsiSyntax` (= 37).
+      `PsiSyntax` (= 37). Carriers: `UnsupportedScrambling` has `pid` =
+      the scrambled PID and `table_id` = the 2-bit
+      transport_scrambling_control; `AdaptationFieldMalformed` has
+      `table_id` = a kind discriminator (0 = ReservedControl,
+      1 = BadLengthForControl, 2 = ShortPcr, 0xFF = unknown);
+      `ZeroLengthPesNonVideo` has `table_id` = the PES stream_id;
+      `PsiSyntax` has `table_id` = the PSI table_id, `obu_type` = the
+      kind, and `cc_observed` = section_number for SectionNumberNonZero.
     - `17` — DTS-aware video push through the C ABI.
       `tst_muxer_push_video_to_with_dts` and
       `tst_muxer_push_video_wire_to_with_dts` add a `dts_90khz` parameter
@@ -393,7 +404,9 @@ baseline (by design)" for the full rationale.
       returning the new opaque `TstHlsServerHandle` (`_local_addr` / `_shutdown` /
       `_free`) so VOD/EVENT playlists stay served after `finish`;
       `tst_hls_publisher_builder_max_segment_duration_ms` (wall-clock force-cut
-      cap) + `tst_hls_publisher_get_forced_cuts`. All gated `TST_HAS_HLS`; no
+      cap; `0` leaves the default) + `tst_hls_publisher_get_forced_cuts`
+      (reads `HlsStats::forced_cuts`). The HLS surface moved from `tst-tcp`
+      to the new `tst-hls` crate (link-level only; no C ABI effect). All gated `TST_HAS_HLS`; no
       struct growth (`TstHlsStats` stays 24 B — the counter rides a getter).
     - `19` — MISP timestamps (ST 0604): `tst_muxer_push_video_misp_to` /
       `tst_muxer_push_video_misp_to_with_dts` (SEI splice before the first VCL
@@ -443,7 +456,7 @@ baseline (by design)" for the full rationale.
     - `21` — Apple/VideoToolbox-consumer surface (three independent
       additions, all additive — no existing symbol, signature, or struct
       layout changed):
-      - **ST 0601 decode:** opaque `TstSt0601` (owned decode result) +
+      - **ST 0601 decode** (unconditional, no feature gate): opaque `TstSt0601` (owned decode result) +
         `tst_st0601_decode` / `_geometry` / `_get_f64` / `_get_u64` /
         `_state` / `_free`. `TstSt0601FieldState` enum (`Present = 0`,
         `Absent = 1`, `Sentinel = 2` for the MISB `INT_MIN` absent-value
@@ -452,7 +465,7 @@ baseline (by design)" for the full rationale.
         returned only by the typed getters, never by `tst_st0601_state`
         itself) reports per-tag presence; `TstSt0601Geometry` is a
         `#[repr(C)]` struct bundling the common
-        lat/lon/alt/heading/pitch/roll/hfov accessor group (each field
+        lat/lon/alt/heading/pitch/roll/hfov accessor group, a 23-tag curated set (each field
         paired with its own `_state` byte) behind one call. Two new
         error codes: `TstError::WrongType` (-47, a typed accessor called
         against a tag whose mapped field has a different native Rust
@@ -464,7 +477,11 @@ baseline (by design)" for the full rationale.
         (Annex-B start-code NAL stream → caller-provided length-prefixed
         output buffer, `length_size`-configurable) + opaque `TstParamSets`
         with `tst_param_sets_extract` / `_count` / `_get` / `_free`
-        (SPS/PPS/VPS extraction from a parameter-set NAL stream).
+        (SPS/PPS/VPS extraction from a parameter-set NAL stream). The
+        conversion uses the two-call sizing idiom; no new error codes
+        (`TST_E_BUFFER_FULL` / `TST_E_INVALID_CONFIG` / `TST_E_TOO_LARGE` /
+        `TST_E_NOT_FOUND` are reused). Unconditional, like the ST 0601
+        surface.
       - **Managed-receiver lifecycle:** `tst_managed_demux_receiver_end_reason`
         (`TST_HAS_SRT`) reuses the existing (ABI 20) `TstStreamEndReason`
         enum rather than adding a new one — `crate::receiver::demux_receiver::managed`
