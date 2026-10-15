@@ -107,7 +107,7 @@ class MuxErrorKind(enum.IntEnum):
 class DemuxErrorKind(enum.Enum):
     """`DemuxError.kind` — mirrors `tst_core::mpegts::DemuxError`'s
     variant names since 0.7.0 (`UNRECOVERABLE`, `STRICT_REJECTION`,
-    `MALFORMED_PSI`, `MALFORMED_PES`, `SYNC_BUF_EXHAUSTED`).
+    `MALFORMED_PES`, `SYNC_BUF_EXHAUSTED`).
 
     ``STRICT_REJECTION`` is the Python-side representation of
     ``DemuxError::StrictRejection`` — raised when ``StrictMode`` is
@@ -128,9 +128,6 @@ class DemuxErrorKind(enum.Enum):
     # Strict-mode policy rejection — StrictMode converted a non-conformance
     # into a fatal error.
     STRICT_REJECTION = "strict_rejection"
-    # `DemuxError::MalformedPsi` — reserved; the demuxer does not produce it
-    # (a structurally invalid PAT/PMT section is dropped).
-    MALFORMED_PSI = "malformed_psi"
     # `DemuxError::MalformedPes` — PES header/payload structurally invalid.
     MALFORMED_PES = "malformed_pes"
     # `DemuxError::SyncBufExhausted` — the resync buffer filled without
@@ -207,8 +204,6 @@ class CodecErrorKind(enum.IntEnum):
     INVALID_GOLOMB = 2
     RESERVED_VALUE = 3
     UNSUPPORTED_PROFILE = 4
-    DANGLING_SPS_REFERENCE = 5
-    DANGLING_VPS_REFERENCE = 6
     ENGINE_ERROR = 7
     INVALID_LEB128 = 8
     BAD_SYNC_WORD = 9
@@ -534,8 +529,6 @@ class CodecError(TstError):
     - `field` / `value` on RESERVED_VALUE (Forbidden has only `field`)
     - `layer` on UNSUPPORTED_FREE_FORMAT
     - `profile_idc` on UNSUPPORTED_PROFILE
-    - `sps_id` on DANGLING_SPS_REFERENCE
-    - `vps_id` on DANGLING_VPS_REFERENCE
     - `offset_bytes` on INVALID_LEB128 / TRUNCATED
     - `expected` / `found` on BAD_SYNC_WORD
     - `needed` / `had` on TRUNCATED
@@ -555,8 +548,6 @@ class CodecError(TstError):
         field: Optional[str] = None,
         value: Optional[int] = None,
         profile_idc: Optional[int] = None,
-        sps_id: Optional[int] = None,
-        vps_id: Optional[int] = None,
         offset_bytes: Optional[int] = None,
         expected: Optional[int] = None,
         found: Optional[int] = None,
@@ -577,8 +568,6 @@ class CodecError(TstError):
         self.field = field
         self.value = value
         self.profile_idc = profile_idc
-        self.sps_id = sps_id
-        self.vps_id = vps_id
         self.offset_bytes = offset_bytes
         self.expected = expected
         self.found = found

@@ -10,25 +10,6 @@
 //! |---------|------|-------|
 //! | `SyncBufExhausted` | `sync_buf_exhausted_when_no_sync_byte_for_4mib` | Reliable: the 4 MiB ceiling is unconditional |
 //! | `MalformedPes` | `malformed_pes_strict_mode_returns_malformed_pes_or_strict_rejection` | Strict-mode (`StrictMode::Full`) required; needs valid PAT/PMT first |
-//! | `MalformedPsi` | `malformed_psi_is_not_surfaceable_via_public_api_smoke` | **Smoke only** — `MalformedPsi` is never produced by the public `Demuxer` API |
-//!
-//! ### Why `MalformedPsi` falls back to a smoke test
-//!
-//! `DemuxError::MalformedPsi` exists in the error vocabulary but is
-//! **never emitted by `Demuxer::feed` or `Demuxer::feed_aligned`** through
-//! the current public API:
-//!
-//! - All `PsiParseError` variants (section-too-long, CRC mismatch,
-//!   multi-section, etc.) either surface as `NonConformant` events or are
-//!   silently discarded via `Err(_) => return` inside `handle_pat_section` /
-//!   `handle_pmt_section`.
-//! - The variant is reserved for a future strict-PSI mode that would escalate
-//!   those silent discards into fatal errors.
-//!
-//! The smoke test below constructs `DemuxError::MalformedPsi` directly (it is
-//! a `pub` struct variant) and asserts it round-trips through `Debug` and the
-//! `pid` field. That is the strongest discriminating assertion possible without
-//! a surfacing path through the demuxer state machine.
 //!
 //! ### Why `Unrecoverable` and `StrictRejection` are not covered here
 //!
@@ -204,50 +185,13 @@ fn malformed_pes_strict_mode_returns_malformed_pes_or_strict_rejection() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 3: MalformedPsi — smoke only (not surfaceable via public API)
+// Test 3: an overlong PSI section is not a DemuxError
 // ---------------------------------------------------------------------------
 
-/// `DemuxError::MalformedPsi` exists as a public enum variant but is **never
-/// returned** by `Demuxer::feed` or `Demuxer::feed_aligned` in the current
-/// implementation. All `PsiParseError` conditions (section-too-long, CRC
-/// mismatch, multi-section tables) are either surfaced as `NonConformant`
-/// events or silently discarded via `Err(_) => return` inside
-/// `handle_pat_section` / `handle_pmt_section`. The variant is reserved for
-/// a future strict-PSI mode that would escalate those paths.
-///
-/// This test verifies:
-/// 1. `DemuxError::MalformedPsi` is a public, constructible variant.
-/// 2. Its `pid` and `reason` fields are accessible as documented in
-///    the error enum.
-/// 3. A PSI packet with `section_length > 184` fed to the demuxer does NOT
-///    surface as `DemuxError::MalformedPsi` — confirming the fallback behavior
-///    that callers and binding authors should know about.
-///
-/// Feeding a PSI packet with an overlong `section_length` (bytes 1-2 encode
-/// the length, max valid = 1021; we use 0x0FF for 255 bytes which is > 184
-/// bytes remaining in a 188-byte packet) results in the PSI assembler's
-/// overflow guard firing. That surfaces as a `NonConformant` event, not a
-/// `DemuxError`.
+/// A PAT whose `section_length` (255) overruns its packet is reported as a
+/// non-conformance or dropped — `feed` returns `Ok(())`, never an error.
 #[test]
-fn malformed_psi_is_not_surfaceable_via_public_api_smoke() {
-    // Part 1: MalformedPsi is a public, constructible variant with accessible fields.
-    let e = DemuxError::MalformedPsi {
-        pid: 0x0000,
-        reason: "section_length overflows packet",
-    };
-    assert!(
-        matches!(e, DemuxError::MalformedPsi { pid: 0, .. }),
-        "MalformedPsi variant must be constructible and matchable: {e:?}"
-    );
-
-    // Part 2: An overlong section_length in a PAT packet is NOT escalated to
-    // DemuxError by the public Demuxer API — it produces a NonConformant event
-    // instead (or is silently dropped). Verify the demuxer returns Ok(()) rather
-    // than DemuxError::MalformedPsi.
-    //
-    // Craft a minimal TS packet on PID 0x0000 (PAT PID) with PUSI=1 and a
-    // section whose section_length (bytes 1-2) is 0x0FF = 255, which is well
-    // above the 184 bytes available in the TS payload after the PSI header.
+fn overlong_psi_section_is_not_a_demux_error() {
     let mut pkt = [0u8; 188];
     pkt[0] = 0x47; // sync byte
     pkt[1] = 0x40; // PUSI=1, PID high bits = 0
@@ -256,14 +200,12 @@ fn malformed_psi_is_not_surfaceable_via_public_api_smoke() {
     pkt[4] = 0x00; // pointer_field = 0 (section starts at pkt[5])
     pkt[5] = 0x00; // table_id = 0x00 (PAT)
     pkt[6] = 0xB0; // section_syntax_indicator=1, '0', reserved=11, section_length hi = 0
-    pkt[7] = 0xFF; // section_length lo = 0xFF → section_length = 255 (overlong for packet)
-    // Rest of payload is zeros.
+    pkt[7] = 0xFF; // section_length lo = 0xFF → 255, overlong for the packet
 
     let mut d = Demuxer::new();
     let result = d.feed(&pkt);
     assert!(
         result.is_ok(),
-        "overlong PSI section_length must NOT surface as DemuxError via public API \
-         (got: {result:?}). MalformedPsi is reserved for a future strict-PSI mode."
+        "an overlong PSI section must not surface as a DemuxError (got: {result:?})"
     );
 }

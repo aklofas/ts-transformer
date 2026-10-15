@@ -66,8 +66,6 @@ fn corpus_files_demux_cleanly_in_lenient_mode() {
         //   the curated corpus should be clean).
         // - `StrictRejection`: only fires under `StrictMode::*`; we use
         //   the default (`StrictMode::Off`), so unreachable here.
-        // - `MalformedPsi`: structurally invalid PSI section length (real
-        //   failure for the same reason).
         match d.feed(&bytes) {
             Ok(()) => {}
             Err(DemuxError::Unrecoverable { after_bytes }) => {

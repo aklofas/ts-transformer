@@ -148,9 +148,8 @@ Demuxer::reset_sync(&mut self)                          -> ()
 `feed` accepts arbitrary byte slices — the demuxer handles sync
 recovery internally. It can return `DemuxError::Unrecoverable` (no TS
 sync byte within the search window — ~6 KiB by default — which usually
-means the input isn't TS at all), `DemuxError::MalformedPes` /
-`DemuxError::MalformedPsi` (a PES header or PSI section that is
-structurally impossible), `DemuxError::StrictRejection` (a
+means the input isn't TS at all), `DemuxError::MalformedPes` (a PES header
+that is structurally impossible), `DemuxError::StrictRejection` (a
 strict-mode-rejected `NonConformant` issue surfaced as a fatal error), or
 `DemuxError::SyncBufExhausted` (see the sync-ingress ceiling below).
 

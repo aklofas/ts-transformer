@@ -25,12 +25,6 @@ public final class DemuxException extends BindingException {
          */
         UNRECOVERABLE,
         /**
-         * {@code DemuxError::MalformedPsi} — reserved: the demuxer does not
-         * produce it (a structurally invalid PAT/PMT section is dropped, and
-         * a CRC mismatch is reported as a non-conformance event).
-         */
-        MALFORMED_PSI,
-        /**
          * {@code DemuxError::MalformedPes} — a PES header declared a length
          * too short to contain its own claimed flags, so the reassembler
          * cannot make forward progress.

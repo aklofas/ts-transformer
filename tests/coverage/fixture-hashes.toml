@@ -216,7 +216,7 @@ sha256 = "1d021e9a4e8cb06f8e195cb923f687b3c1c4ca925ed87a48019e58c2f8b4620c"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/conformance/manifest.toml"
-sha256 = "2f47e323352f277c2262d53da46ac27da2c4ffa72254c623ec2156b5da51e05a"
+sha256 = "3e13ae9a1a057d6d1a4393d2dac50a55733d41ecc1b13112444a95fdab9f439c"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/st0601/README.md"

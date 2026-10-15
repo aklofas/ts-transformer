@@ -18,7 +18,7 @@ public final class CodecParseException extends BindingException {
      */
     public enum Kind {
         TRUNCATED_RBSP, INVALID_GOLOMB, RESERVED_VALUE, UNSUPPORTED_PROFILE,
-        DANGLING_SPS_REFERENCE, DANGLING_VPS_REFERENCE, ENGINE_ERROR,
+        ENGINE_ERROR,
         INVALID_LEB128, BAD_SYNC_WORD, TRUNCATED, FORBIDDEN, UNSUPPORTED_FREE_FORMAT,
         /**
          * {@code CodecParseError::InvalidLengthSize} — the AVCC/HVCC length
@@ -47,8 +47,6 @@ public final class CodecParseException extends BindingException {
     private final String field;
     private final Integer value;
     private final Integer profileIdc;
-    private final Integer spsId;
-    private final Integer vpsId;
     private final Integer offsetBytes;
     private final Integer expected;
     private final Integer found;
@@ -69,8 +67,6 @@ public final class CodecParseException extends BindingException {
      * @param field      field name (RESERVED_VALUE / FORBIDDEN)
      * @param value      reserved value (RESERVED_VALUE)
      * @param profileIdc profile_idc (UNSUPPORTED_PROFILE)
-     * @param spsId      SPS id (DANGLING_SPS_REFERENCE)
-     * @param vpsId      VPS id (DANGLING_VPS_REFERENCE)
      * @param offsetBytes byte offset (INVALID_LEB128)
      * @param expected   expected sync word (BAD_SYNC_WORD)
      * @param found      found sync word (BAD_SYNC_WORD)
@@ -87,8 +83,6 @@ public final class CodecParseException extends BindingException {
             String field,
             Integer value,
             Integer profileIdc,
-            Integer spsId,
-            Integer vpsId,
             Integer offsetBytes,
             Integer expected,
             Integer found,
@@ -103,8 +97,6 @@ public final class CodecParseException extends BindingException {
         this.field = field;
         this.value = value;
         this.profileIdc = profileIdc;
-        this.spsId = spsId;
-        this.vpsId = vpsId;
         this.offsetBytes = offsetBytes;
         this.expected = expected;
         this.found = found;
@@ -146,16 +138,6 @@ public final class CodecParseException extends BindingException {
     /** @return profile_idc (UNSUPPORTED_PROFILE), or {@code null}. */
     public Integer profileIdc() {
         return profileIdc;
-    }
-
-    /** @return SPS id (DANGLING_SPS_REFERENCE), or {@code null}. */
-    public Integer spsId() {
-        return spsId;
-    }
-
-    /** @return VPS id (DANGLING_VPS_REFERENCE), or {@code null}. */
-    public Integer vpsId() {
-        return vpsId;
     }
 
     /** @return byte offset (INVALID_LEB128), or {@code null}. */

@@ -20,9 +20,7 @@ use crate::mpegts::demux::event::NalUnit;
 /// SPS map: per H.264 V15 §7.4.2.2, a PPS's `seq_parameter_set_id` must
 /// refer to an SPS active in the stream. PPSes whose referenced SPS is
 /// absent from the input emit a `tracing::warn!` and are dropped from
-/// the output. (Strict cross-validation enforcement is not currently
-/// surfaced as a typed error — see [`CodecParseError::DanglingSpsReference`]
-/// for the variant reserved for future strict-mode use.)
+/// the output.
 pub fn parse_parameter_sets(nals: &[NalUnit]) -> Result<H264ParameterSets, CodecParseError> {
     let mut out = H264ParameterSets::default();
     let mut had_param_set = false;

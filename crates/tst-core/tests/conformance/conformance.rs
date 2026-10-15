@@ -81,8 +81,6 @@ fn error_variant_name(e: &CodecParseError) -> &'static str {
         CodecParseError::InvalidGolomb { .. } => "InvalidGolomb",
         CodecParseError::ReservedValue { .. } => "ReservedValue",
         CodecParseError::UnsupportedProfile { .. } => "UnsupportedProfile",
-        CodecParseError::DanglingSpsReference { .. } => "DanglingSpsReference",
-        CodecParseError::DanglingVpsReference { .. } => "DanglingVpsReference",
         CodecParseError::EngineError(_) => "EngineError",
         CodecParseError::InvalidLeb128 { .. } => "InvalidLeb128",
         CodecParseError::BadSyncWord { .. } => "BadSyncWord",

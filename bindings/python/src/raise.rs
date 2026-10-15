@@ -193,7 +193,6 @@ pub(crate) static DEMUX: Domain = Domain {
     kinds: &[
         K::DemuxUnrecoverable,
         K::DemuxStrictRejection,
-        K::DemuxMalformedPsi,
         K::DemuxMalformedPes,
         K::DemuxSyncBufExhausted,
     ],
@@ -239,8 +238,6 @@ pub(crate) static CODEC: Domain = Domain {
         K::CodecInvalidGolomb,
         K::CodecReservedValue,
         K::CodecUnsupportedProfile,
-        K::CodecDanglingSpsReference,
-        K::CodecDanglingVpsReference,
         K::CodecEngineError,
         K::CodecInvalidLeb128,
         K::CodecBadSyncWord,
