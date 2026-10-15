@@ -17,9 +17,9 @@ use bytes::Bytes;
 
 use crate::h264::depacketizer::H264DepayConfig;
 use crate::h264::receiver::H264Receiver;
-use crate::rtsp::client::end_reason::EndReasonSlot;
 use crate::rtsp::client::transport_negotiation::RtspTransportKind;
 use crate::transport::RtpRecvTransport;
+use tst_core::transport::EndReasonHandle;
 
 /// State held between SETUP and PLAY / TEARDOWN.
 ///
@@ -51,12 +51,12 @@ pub struct RtspSession {
     /// apply the deadline to before conversion.
     pub(crate) recv_timeout: Option<Duration>,
     /// Clone of the owning [`crate::rtsp::client::RtspClient`]'s
-    /// [`EndReasonSlot`] — carried forward into
+    /// [`EndReasonHandle`] — carried forward into
     /// [`Self::into_recv_transport`] / [`Self::into_h264_receiver`] so
     /// the resulting transport/receiver reports the SAME
-    /// [`crate::StreamEndReason`] the RTSP client's pump / keepalive
+    /// [`EndReason`](tst_core::transport::EndReason) the RTSP client's pump / keepalive
     /// threads record, not a fresh (always-empty) slot.
-    pub(crate) end_reason: EndReasonSlot,
+    pub(crate) end_reason: EndReasonHandle,
 }
 
 impl RtspSession {
@@ -65,7 +65,7 @@ impl RtspSession {
         rtp: UdpSocket,
         rtcp: UdpSocket,
         recv_timeout: Option<Duration>,
-        end_reason: EndReasonSlot,
+        end_reason: EndReasonHandle,
     ) -> Self {
         Self {
             session_id: sid,
@@ -87,7 +87,7 @@ impl RtspSession {
         data_rx: mpsc::Receiver<Bytes>,
         rtcp_rx: mpsc::Receiver<Bytes>,
         recv_timeout: Option<Duration>,
-        end_reason: EndReasonSlot,
+        end_reason: EndReasonHandle,
     ) -> Self {
         Self {
             session_id: sid,

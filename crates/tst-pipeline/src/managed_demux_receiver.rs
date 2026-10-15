@@ -15,7 +15,7 @@
 //! with the reconnect-epoch observer installed: it snapshots the
 //! transport's `reconnects_handle()` / `reconnecting_handle()` before the
 //! transport moves into the inner shell, hands the counter to the inner
-//! shell's epoch observer, and records the [`RecvEndReason`] from the
+//! shell's epoch observer, and records the [`EndReason`] from the
 //! inner shell's terminal results. Everything else — the stream-end
 //! flush on `EndOfStream` **and** `Closed`, the deferred terminal error,
 //! byte sinks, stats — is the plain shell's, one contract for both.
@@ -97,13 +97,13 @@
 
 use crate::demux_receiver::{ByteSink, DemuxReceiver, DemuxReceiverError};
 use crate::managed_receive::ManagedRecvTransport;
-use crate::reconnect::{RecvEndReason, RecvEndReasonHandle};
 use crate::shell_error::ShellErrorKind;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tracing::{info, info_span};
 use tst_core::mpegts::demux::{DemuxEvent, DemuxerConfig};
 use tst_core::transport::RecvTransport;
+use tst_core::transport::{EndReason, EndReasonHandle};
 
 /// Construction parameters for [`ManagedDemuxReceiver`].
 ///
@@ -163,13 +163,28 @@ pub struct ManagedDemuxReceiver<R: RecvTransport> {
     /// Backs [`Self::attempts_handle`].
     attempts: Arc<AtomicU64>,
     /// Shared, first-writer-wins record of why this receiver's stream
-    /// ended — see [`RecvEndReason`]. [`Self::end_reason_handle`] hands
+    /// ended — see [`EndReason`]. [`Self::end_reason_handle`] hands
     /// out clones so a caller can poll it independent of this receiver's
     /// lifetime (e.g. after it's been moved into a C handle, or dropped).
-    end_reason: RecvEndReasonHandle,
+    end_reason: EndReasonHandle,
     /// Lifetime span, entered only during construction and `Drop` — see
     /// [`crate::shell_error::ShellSpan`] for the unwind-safety rationale.
     _span: crate::shell_error::ShellSpan,
+}
+
+/// The reasons a managed receiver's stream can end with (see
+/// `tst_core::transport::EndReason`'s table): its reconnect budget or its
+/// caller. Every recording below goes through [`record_end`].
+pub(crate) fn managed_receiver_can_end_with(r: &EndReason) -> bool {
+    matches!(r, EndReason::ReconnectExhausted | EndReason::Cancelled)
+}
+
+fn record_end(h: &EndReasonHandle, r: EndReason) {
+    debug_assert!(
+        managed_receiver_can_end_with(&r),
+        "a managed receiver cannot end with {r:?}"
+    );
+    h.record(r);
 }
 
 impl<R: RecvTransport> std::fmt::Debug for ManagedDemuxReceiver<R> {
@@ -215,7 +230,7 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
             reconnects,
             reconnect_in_progress,
             attempts,
-            end_reason: RecvEndReasonHandle::default(),
+            end_reason: EndReasonHandle::default(),
             _span: std::panic::AssertUnwindSafe(span),
         }
     }
@@ -245,7 +260,7 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
     /// demuxer's final `flush` drain; a caller cancel/close surfaces as
     /// `Err(e)` with `e.kind == Closed`, likewise after the flush drain —
     /// exactly `DemuxReceiver::recv_event`'s "Stream-end flush" contract.
-    /// Both record the [`RecvEndReason`].
+    /// Both record the [`EndReason`].
     pub fn recv_event(&mut self) -> Result<Option<DemuxEvent>, DemuxReceiverError> {
         let result = self.inner.recv_event();
         match &result {
@@ -254,14 +269,13 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
             // — the inner SRT transport never emits a clean EOS itself (a
             // peer FIN surfaces as `Broken`, which the decorator retries).
             // So "the stream ended here" == "reconnect gave up".
-            // First-writer-wins, so a plain EOS path added later can
-            // still populate EndOfStream without this site changing.
-            Ok(None) => self.end_reason.record(RecvEndReason::ReconnectExhausted),
+            // First-writer-wins.
+            Ok(None) => record_end(&self.end_reason, EndReason::ReconnectExhausted),
             // Closed-kind on the receive side means the decorator's
             // ExplicitClose — caller-initiated close()/cancel(), not a
             // wire-level failure.
             Err(e) if e.kind == ShellErrorKind::Closed => {
-                self.end_reason.record(RecvEndReason::Cancelled)
+                record_end(&self.end_reason, EndReason::Cancelled)
             }
             _ => {}
         }
@@ -359,7 +373,7 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
     }
 
     /// Shared handle onto this receiver's stream-end reason — see
-    /// [`RecvEndReason`]. Recorded first-writer-wins at whichever
+    /// [`EndReason`]. Recorded first-writer-wins at whichever
     /// terminal-condition site actually observed it (reconnect-budget
     /// exhaustion or caller cancel/close).
     ///
@@ -374,7 +388,7 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
     /// `tst_managed_demux_receiver_end_reason` — see
     /// `bindings/c/include/tstrans.h`.
     #[must_use]
-    pub fn end_reason_handle(&self) -> RecvEndReasonHandle {
+    pub fn end_reason_handle(&self) -> EndReasonHandle {
         self.end_reason.clone()
     }
 
@@ -440,6 +454,27 @@ mod tests {
     use crate::reconnect::{BackoffStrategy, ReconnectPolicy};
     use std::time::Duration;
     use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
+
+    #[test]
+    fn a_managed_receiver_can_end_only_by_its_budget_or_its_caller() {
+        use tst_core::transport::EndReason as E;
+        let all = [
+            E::EndOfStream,
+            E::ReconnectExhausted,
+            E::Cancelled,
+            E::CleanTeardown,
+            E::SessionExpired,
+            E::KeepaliveFailed { msg: String::new() },
+            E::TransportFailed { msg: String::new() },
+            E::ProtocolError { msg: String::new() },
+        ];
+        let can: Vec<_> = all
+            .iter()
+            .filter(|r| managed_receiver_can_end_with(r))
+            .cloned()
+            .collect();
+        assert_eq!(can, vec![E::ReconnectExhausted, E::Cancelled]);
+    }
 
     /// Build a policy with zero backoff so tests don't sleep.
     fn fast_policy(max_attempts: Option<u32>) -> ReconnectPolicy {

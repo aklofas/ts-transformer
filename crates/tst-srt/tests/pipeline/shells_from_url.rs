@@ -24,7 +24,8 @@ use std::time::{Duration, Instant};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, DemuxerConfig};
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec};
-use tst_pipeline::{BackoffStrategy, MuxSender, ReconnectPolicy, RecvEndReason, ShellErrorKind};
+use tst_core::transport::EndReason;
+use tst_pipeline::{BackoffStrategy, MuxSender, ReconnectPolicy, ShellErrorKind};
 use tst_srt::shells::{
     managed_demux_receiver_from_url, managed_mux_sender_from_url, managed_raw_receiver_from_url,
     managed_raw_sender_from_url, managed_receiver_from_url, managed_recv_transport_from_url,
@@ -234,7 +235,7 @@ fn cancel_handle_ends_a_parked_recv_and_records_cancelled() {
         Ok(ev) => panic!("expected the cancelled recv to fail with kind Closed; got {ev:?}"),
     };
     assert_eq!(err.kind, ShellErrorKind::Closed, "{err:?}");
-    assert_eq!(handles.end_reason.get(), Some(RecvEndReason::Cancelled));
+    assert_eq!(handles.end_reason.get(), Some(EndReason::Cancelled));
 
     let _ = release_tx.send(());
     accept.join();

@@ -16,10 +16,10 @@ use tst_core::TransportError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
 use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-use tst_core::transport::{RecvTransport, TransportCancel};
+use tst_core::transport::{EndReason, RecvTransport, TransportCancel};
 use tst_pipeline::{
     DemuxReceiverErrorSource, ManagedDemuxReceiver, ManagedDemuxReceiverConfig,
-    ManagedRecvTransport, RecvEndReason, ShellErrorKind,
+    ManagedRecvTransport, ShellErrorKind,
 };
 
 /// Three video AUs; the last one's PES is length-0 (unbounded) and only a
@@ -132,7 +132,7 @@ fn managed_demux_receiver_flushes_final_video_au_on_cancel() {
     );
     assert_eq!(
         end_reason.get(),
-        Some(RecvEndReason::Cancelled),
+        Some(EndReason::Cancelled),
         "the end reason is still recorded on the cancel path after the flush"
     );
 }
@@ -183,6 +183,6 @@ fn managed_demux_receiver_byte_sink_sees_every_packet() {
     );
     assert_eq!(
         rx.end_reason_handle().get(),
-        Some(RecvEndReason::ReconnectExhausted)
+        Some(EndReason::ReconnectExhausted)
     );
 }

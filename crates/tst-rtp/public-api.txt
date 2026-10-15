@@ -309,7 +309,7 @@ impl tst_rtp::h264::receiver::H264Receiver
 pub fn tst_rtp::h264::receiver::H264Receiver::cancel_handle(&self) -> alloc::sync::Arc<tst_rtp::cancel::RtpCancelHandle>
 pub fn tst_rtp::h264::receiver::H264Receiver::close(&mut self)
 pub fn tst_rtp::h264::receiver::H264Receiver::depay_stats(&self) -> tst_rtp::h264::depacketizer::H264DepayStats
-pub fn tst_rtp::h264::receiver::H264Receiver::end_reason(&self) -> core::option::Option<tst_rtp::rtsp::client::end_reason::StreamEndReason>
+pub fn tst_rtp::h264::receiver::H264Receiver::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
 pub fn tst_rtp::h264::receiver::H264Receiver::listen(&str) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::h264::receiver::H264Receiver::listen_with(&tst_rtp::url::RtpUrl, tst_rtp::h264::depacketizer::H264DepayConfig) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::h264::receiver::H264Receiver::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
@@ -429,7 +429,7 @@ impl tst_rtp::h264::receiver::H264Receiver
 pub fn tst_rtp::h264::receiver::H264Receiver::cancel_handle(&self) -> alloc::sync::Arc<tst_rtp::cancel::RtpCancelHandle>
 pub fn tst_rtp::h264::receiver::H264Receiver::close(&mut self)
 pub fn tst_rtp::h264::receiver::H264Receiver::depay_stats(&self) -> tst_rtp::h264::depacketizer::H264DepayStats
-pub fn tst_rtp::h264::receiver::H264Receiver::end_reason(&self) -> core::option::Option<tst_rtp::rtsp::client::end_reason::StreamEndReason>
+pub fn tst_rtp::h264::receiver::H264Receiver::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
 pub fn tst_rtp::h264::receiver::H264Receiver::listen(&str) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::h264::receiver::H264Receiver::listen_with(&tst_rtp::url::RtpUrl, tst_rtp::h264::depacketizer::H264DepayConfig) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::h264::receiver::H264Receiver::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
@@ -704,42 +704,6 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtcp::SenderReport
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtcp::SenderReport
 pub mod tst_rtp::rtsp
 pub mod tst_rtp::rtsp::client
-pub mod tst_rtp::rtsp::client::end_reason
-#[non_exhaustive] pub enum tst_rtp::rtsp::client::end_reason::StreamEndReason
-pub tst_rtp::rtsp::client::end_reason::StreamEndReason::Cancelled
-pub tst_rtp::rtsp::client::end_reason::StreamEndReason::CleanTeardown
-pub tst_rtp::rtsp::client::end_reason::StreamEndReason::KeepaliveFailed
-pub tst_rtp::rtsp::client::end_reason::StreamEndReason::KeepaliveFailed::msg: alloc::string::String
-pub tst_rtp::rtsp::client::end_reason::StreamEndReason::ProtocolError
-pub tst_rtp::rtsp::client::end_reason::StreamEndReason::ProtocolError::msg: alloc::string::String
-pub tst_rtp::rtsp::client::end_reason::StreamEndReason::SessionExpired
-pub tst_rtp::rtsp::client::end_reason::StreamEndReason::TransportFailed
-pub tst_rtp::rtsp::client::end_reason::StreamEndReason::TransportFailed::msg: alloc::string::String
-impl core::clone::Clone for tst_rtp::rtsp::client::end_reason::StreamEndReason
-pub fn tst_rtp::rtsp::client::end_reason::StreamEndReason::clone(&self) -> tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::fmt::Debug for tst_rtp::rtsp::client::end_reason::StreamEndReason
-pub fn tst_rtp::rtsp::client::end_reason::StreamEndReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::marker::Send for tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::marker::Sync for tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::marker::Unpin for tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::end_reason::StreamEndReason
-pub struct tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle(_)
-impl tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-pub fn tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle::get(&self) -> core::option::Option<tst_rtp::rtsp::client::end_reason::StreamEndReason>
-impl core::clone::Clone for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-pub fn tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle::clone(&self) -> tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::fmt::Debug for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-pub fn tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::marker::Send for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::marker::Sync for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::marker::Unpin for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
 pub mod tst_rtp::rtsp::client::interleaved_pump
 pub mod tst_rtp::rtsp::client::keepalive
 pub mod tst_rtp::rtsp::client::options_describe
@@ -1154,8 +1118,8 @@ impl !core::panic::unwind_safe::RefUnwindSafe for tst_rtp::transport::ConnectErr
 impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::transport::ConnectError
 pub struct tst_rtp::transport::RtpRecvTransport
 impl tst_rtp::transport::RtpRecvTransport
-pub fn tst_rtp::transport::RtpRecvTransport::end_reason(&self) -> core::option::Option<tst_rtp::rtsp::client::end_reason::StreamEndReason>
-pub fn tst_rtp::transport::RtpRecvTransport::end_reason_handle(&self) -> tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
+pub fn tst_rtp::transport::RtpRecvTransport::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
+pub fn tst_rtp::transport::RtpRecvTransport::end_reason_handle(&self) -> tst_core::transport::EndReasonHandle
 pub fn tst_rtp::transport::RtpRecvTransport::listen(&str) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::transport::RtpRecvTransport::listen_with(&tst_rtp::url::RtpUrl) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::transport::RtpRecvTransport::recv_timeout(&mut self, &mut [u8], core::time::Duration) -> core::result::Result<core::option::Option<usize>, tst_core::transport::TransportError>
@@ -1167,6 +1131,7 @@ pub fn tst_rtp::transport::RtpRecvTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_rtp::transport::RtpRecvTransport
 pub fn tst_rtp::transport::RtpRecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_rtp::transport::RtpRecvTransport::close(&mut self)
+pub fn tst_rtp::transport::RtpRecvTransport::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
 pub fn tst_rtp::transport::RtpRecvTransport::is_alive(&self) -> bool
 pub fn tst_rtp::transport::RtpRecvTransport::max_payload(&self) -> usize
 pub fn tst_rtp::transport::RtpRecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
@@ -1822,27 +1787,6 @@ impl core::marker::Unpin for tst_rtp::url::RtspVersion
 impl core::marker::UnsafeUnpin for tst_rtp::url::RtspVersion
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::url::RtspVersion
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::url::RtspVersion
-#[non_exhaustive] pub enum tst_rtp::StreamEndReason
-pub tst_rtp::StreamEndReason::Cancelled
-pub tst_rtp::StreamEndReason::CleanTeardown
-pub tst_rtp::StreamEndReason::KeepaliveFailed
-pub tst_rtp::StreamEndReason::KeepaliveFailed::msg: alloc::string::String
-pub tst_rtp::StreamEndReason::ProtocolError
-pub tst_rtp::StreamEndReason::ProtocolError::msg: alloc::string::String
-pub tst_rtp::StreamEndReason::SessionExpired
-pub tst_rtp::StreamEndReason::TransportFailed
-pub tst_rtp::StreamEndReason::TransportFailed::msg: alloc::string::String
-impl core::clone::Clone for tst_rtp::rtsp::client::end_reason::StreamEndReason
-pub fn tst_rtp::rtsp::client::end_reason::StreamEndReason::clone(&self) -> tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::fmt::Debug for tst_rtp::rtsp::client::end_reason::StreamEndReason
-pub fn tst_rtp::rtsp::client::end_reason::StreamEndReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::marker::Send for tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::marker::Sync for tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::marker::Unpin for tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::end_reason::StreamEndReason
-impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::end_reason::StreamEndReason
 #[non_exhaustive] pub struct tst_rtp::H264Au
 pub tst_rtp::H264Au::annexb: alloc::vec::Vec<u8>
 pub tst_rtp::H264Au::key_frame: bool
@@ -1924,7 +1868,7 @@ impl tst_rtp::h264::receiver::H264Receiver
 pub fn tst_rtp::h264::receiver::H264Receiver::cancel_handle(&self) -> alloc::sync::Arc<tst_rtp::cancel::RtpCancelHandle>
 pub fn tst_rtp::h264::receiver::H264Receiver::close(&mut self)
 pub fn tst_rtp::h264::receiver::H264Receiver::depay_stats(&self) -> tst_rtp::h264::depacketizer::H264DepayStats
-pub fn tst_rtp::h264::receiver::H264Receiver::end_reason(&self) -> core::option::Option<tst_rtp::rtsp::client::end_reason::StreamEndReason>
+pub fn tst_rtp::h264::receiver::H264Receiver::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
 pub fn tst_rtp::h264::receiver::H264Receiver::listen(&str) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::h264::receiver::H264Receiver::listen_with(&tst_rtp::url::RtpUrl, tst_rtp::h264::depacketizer::H264DepayConfig) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::h264::receiver::H264Receiver::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
@@ -2254,8 +2198,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::builder::RtpRecvSocket
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::builder::RtpRecvSocketBuilder
 pub struct tst_rtp::RtpRecvTransport
 impl tst_rtp::transport::RtpRecvTransport
-pub fn tst_rtp::transport::RtpRecvTransport::end_reason(&self) -> core::option::Option<tst_rtp::rtsp::client::end_reason::StreamEndReason>
-pub fn tst_rtp::transport::RtpRecvTransport::end_reason_handle(&self) -> tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
+pub fn tst_rtp::transport::RtpRecvTransport::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
+pub fn tst_rtp::transport::RtpRecvTransport::end_reason_handle(&self) -> tst_core::transport::EndReasonHandle
 pub fn tst_rtp::transport::RtpRecvTransport::listen(&str) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::transport::RtpRecvTransport::listen_with(&tst_rtp::url::RtpUrl) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::transport::RtpRecvTransport::recv_timeout(&mut self, &mut [u8], core::time::Duration) -> core::result::Result<core::option::Option<usize>, tst_core::transport::TransportError>
@@ -2267,6 +2211,7 @@ pub fn tst_rtp::transport::RtpRecvTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_rtp::transport::RtpRecvTransport
 pub fn tst_rtp::transport::RtpRecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_rtp::transport::RtpRecvTransport::close(&mut self)
+pub fn tst_rtp::transport::RtpRecvTransport::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
 pub fn tst_rtp::transport::RtpRecvTransport::is_alive(&self) -> bool
 pub fn tst_rtp::transport::RtpRecvTransport::max_payload(&self) -> usize
 pub fn tst_rtp::transport::RtpRecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
@@ -2626,20 +2571,6 @@ impl core::marker::Unpin for tst_rtp::rtcp::ingest::SrAnchor
 impl core::marker::UnsafeUnpin for tst_rtp::rtcp::ingest::SrAnchor
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtcp::ingest::SrAnchor
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtcp::ingest::SrAnchor
-pub struct tst_rtp::StreamEndReasonHandle(_)
-impl tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-pub fn tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle::get(&self) -> core::option::Option<tst_rtp::rtsp::client::end_reason::StreamEndReason>
-impl core::clone::Clone for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-pub fn tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle::clone(&self) -> tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::fmt::Debug for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-pub fn tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::marker::Send for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::marker::Sync for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::marker::Unpin for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
-impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
 pub const tst_rtp::DEFAULT_PKT_SIZE: usize
 pub const tst_rtp::RTP_HEADER_LEN: usize
 pub type tst_rtp::RtspCancelHandle = tst_core::cancel::FlagCancel

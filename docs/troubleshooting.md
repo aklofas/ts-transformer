@@ -396,7 +396,7 @@ cancel-handle pattern.
 
 `RtpRecvTransport` and `H264Receiver` built from an RTSP session
 (`RtspSession::into_recv_transport` / `into_h264_receiver`) record a
-structured `StreamEndReason` the moment the interleaved pump or the
+structured `EndReason` the moment the interleaved pump or the
 keepalive thread observes the session ending, distinguishing a handful
 of cases that otherwise all look like the same disconnect from the
 caller's side: a clean

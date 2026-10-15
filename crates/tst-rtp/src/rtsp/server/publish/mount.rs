@@ -18,8 +18,8 @@ use bytes::Bytes;
 
 use crate::cancel::RtpCancelHandle;
 use crate::error::RtspServerError;
-use crate::rtsp::client::end_reason::{EndReasonSlot, StreamEndReason};
 use crate::transport::RtpRecvTransport;
+use tst_core::transport::{EndReason, EndReasonHandle};
 
 /// The application side of a publish mount, under one lock so a take and
 /// a close never interleave.
@@ -116,7 +116,7 @@ pub(crate) struct PublishMountState {
     /// `interleaved_pump.rs`'s `Ok(0)` arm). Without this, a dropped
     /// `SyncSender` is indistinguishable from a wire failure and the
     /// transport would report `Broken`, not `Closed`.
-    app_end_reason: EndReasonSlot,
+    app_end_reason: EndReasonHandle,
     /// `pub(crate)` so the publisher handlers' own test module
     /// (`publish::handlers::tests`, a sibling of this module) can assert
     /// directly on the slot and generation counter.
@@ -130,6 +130,22 @@ pub(crate) struct PublishMountState {
     pub(crate) frames_dropped_readers: Arc<AtomicU64>,
     /// The server's publisher counters (see [`ServerCounters`]).
     counters: Arc<ServerCounters>,
+}
+
+/// The reasons the application transport of a publish mount can end with
+/// (see `tst_core::transport::EndReason`'s table): the server closing the
+/// mount, or the caller cancelling the transport it was handed.
+pub(crate) fn mount_transport_can_end_with(r: &EndReason) -> bool {
+    matches!(r, EndReason::CleanTeardown | EndReason::Cancelled)
+}
+
+/// Record why a mount's application transport ended (first writer wins).
+fn record_mount_end(h: &EndReasonHandle, r: EndReason) {
+    debug_assert!(
+        mount_transport_can_end_with(&r),
+        "a publish mount's transport cannot end with {r:?}"
+    );
+    h.record(r);
 }
 
 impl PublishMountState {
@@ -170,7 +186,7 @@ impl PublishMountState {
             fanout,
             app: Mutex::new(AppSide::default()),
             app_cancel: RtpCancelHandle::new(),
-            app_end_reason: EndReasonSlot::default(),
+            app_end_reason: EndReasonHandle::default(),
             publisher: Mutex::new(PublisherSlot::default()),
             generation: AtomicU64::new(0),
             stats: Mutex::new(PublishMountStatsInner::default()),
@@ -313,7 +329,7 @@ impl PublishMountState {
     /// Takes the `app` mutex, releases it, then takes the `publisher`
     /// mutex: the two are never held together.
     pub(crate) fn close(&self) {
-        self.app_end_reason.record(StreamEndReason::CleanTeardown);
+        record_mount_end(&self.app_end_reason, EndReason::CleanTeardown);
         {
             let mut app = self.app.lock().unwrap_or_else(|e| e.into_inner());
             app.closed = true;
@@ -621,6 +637,27 @@ mod tests {
     use std::net::SocketAddr;
     use std::time::Duration;
     use tst_core::transport::{RecvTransport, TransportError};
+
+    #[test]
+    fn a_publish_mount_transport_ends_only_by_its_server_or_its_caller() {
+        use tst_core::transport::EndReason as E;
+        let all = [
+            E::EndOfStream,
+            E::ReconnectExhausted,
+            E::Cancelled,
+            E::CleanTeardown,
+            E::SessionExpired,
+            E::KeepaliveFailed { msg: String::new() },
+            E::TransportFailed { msg: String::new() },
+            E::ProtocolError { msg: String::new() },
+        ];
+        let can: Vec<_> = all
+            .iter()
+            .filter(|r| mount_transport_can_end_with(r))
+            .cloned()
+            .collect();
+        assert_eq!(can, vec![E::Cancelled, E::CleanTeardown]);
+    }
 
     fn info(g: u64) -> PublisherInfo {
         PublisherInfo {

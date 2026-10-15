@@ -1,14 +1,14 @@
-//! `tst_rtp::StreamEndReason` → JVM ordinal-coded conversion, shared by
+//! `tst_rtp::EndReason` → JVM ordinal-coded conversion, shared by
 //! `transport::JniRtpReceiver`, `demux_receiver::JniRtpDemuxReceiver`, and
 //! `h264_receiver::JniH264Receiver`.
 //!
 //! Wire values are cross-surface pinned (matching the C `TstStreamEndReason`
-//! discriminants and the Python `StreamEndReason` IntEnum): CLEAN_TEARDOWN=1,
+//! discriminants and the Python `EndReason` IntEnum): CLEAN_TEARDOWN=1,
 //! SESSION_EXPIRED=2, KEEPALIVE_FAILED=3, TRANSPORT_FAILED=4,
 //! PROTOCOL_ERROR=5, CANCELLED=6. `-1` is the "hasn't ended yet, or ended
 //! through a path this type doesn't instrument" sentinel `nEndReason` (and the
 //! ordinal slot of `nClose`'s snapshot — see below) returns; the Java side's
-//! `StreamEndReason.fromWireOrdinal` maps that (and any other unrecognized
+//! `EndReason.fromWireOrdinal` maps that (and any other unrecognized
 //! value) to `null`.
 //!
 //! ★CROSS-SURFACE RULING (from the Python PR-B `end_reason.rs` this ports):
@@ -20,7 +20,7 @@
 //! # The `nClose` snapshot problem
 //!
 //! Unlike Python (where the wrapper's PyO3 object — and any
-//! `StreamEndReasonHandle`/cancel handle field on it — outlives `inner`
+//! `EndReasonHandle`/cancel handle field on it — outlives `inner`
 //! being set to `None`) and the C ABI (whose caller-owned struct is simply
 //! never freed until the caller calls the `_free` function), a JVM
 //! `NativeHandle.close()` atomically zeroes the Java-side handle field
@@ -48,20 +48,20 @@ use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
 use jni::sys::jint;
 
-use tst_rtp::StreamEndReason;
+use tst_core::transport::EndReason;
 
-/// Convert an `Option<&StreamEndReason>` to the wire-pinned ordinal
+/// Convert an `Option<&EndReason>` to the wire-pinned ordinal
 /// `nEndReason` / `nClose`'s snapshot returns: `-1` for `None` (not ended)
-/// or a future variant this binding doesn't map yet — `StreamEndReason` is
+/// or a future variant this binding doesn't map yet — `EndReason` is
 /// non-exhaustive on the tst-rtp side.
-pub(crate) fn end_reason_ordinal(r: Option<&StreamEndReason>) -> jint {
+pub(crate) fn end_reason_ordinal(r: Option<&EndReason>) -> jint {
     match r {
-        Some(StreamEndReason::CleanTeardown) => 1,
-        Some(StreamEndReason::SessionExpired) => 2,
-        Some(StreamEndReason::KeepaliveFailed { .. }) => 3,
-        Some(StreamEndReason::TransportFailed { .. }) => 4,
-        Some(StreamEndReason::ProtocolError { .. }) => 5,
-        Some(StreamEndReason::Cancelled) => 6,
+        Some(EndReason::CleanTeardown) => 1,
+        Some(EndReason::SessionExpired) => 2,
+        Some(EndReason::KeepaliveFailed { .. }) => 3,
+        Some(EndReason::TransportFailed { .. }) => 4,
+        Some(EndReason::ProtocolError { .. }) => 5,
+        Some(EndReason::Cancelled) => 6,
         Some(_) | None => -1,
     }
 }
@@ -69,11 +69,11 @@ pub(crate) fn end_reason_ordinal(r: Option<&StreamEndReason>) -> jint {
 /// The free-text `msg` carried by `KeepaliveFailed` / `TransportFailed` /
 /// `ProtocolError`; `None` for the three detail-less variants and any
 /// future non-exhaustive variant.
-pub(crate) fn end_reason_detail(r: &StreamEndReason) -> Option<&str> {
+pub(crate) fn end_reason_detail(r: &EndReason) -> Option<&str> {
     match r {
-        StreamEndReason::KeepaliveFailed { msg }
-        | StreamEndReason::TransportFailed { msg }
-        | StreamEndReason::ProtocolError { msg } => Some(msg.as_str()),
+        EndReason::KeepaliveFailed { msg }
+        | EndReason::TransportFailed { msg }
+        | EndReason::ProtocolError { msg } => Some(msg.as_str()),
         _ => None,
     }
 }
@@ -105,12 +105,12 @@ fn end_reason_java_enum<'local>(
 }
 
 /// Build the `org.tstrans.rtp.EndReasonSnapshot` `nClose` returns: the
-/// resolved `StreamEndReason` enum constant (nullable) plus the nullable
+/// resolved `EndReason` enum constant (nullable) plus the nullable
 /// detail `String`. See the module doc for why `nClose` — not the getters —
 /// is where this is computed.
 pub(crate) fn build_close_snapshot<'local>(
     env: &mut JNIEnv<'local>,
-    reason: Option<StreamEndReason>,
+    reason: Option<EndReason>,
 ) -> jni::errors::Result<JObject<'local>> {
     let ord = end_reason_ordinal(reason.as_ref());
     let detail = reason.as_ref().and_then(|r| end_reason_detail(r));

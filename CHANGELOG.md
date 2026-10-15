@@ -21,6 +21,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `BindingError::from(err).kind`.
 - `binding::FlagCancel` is removed; use `tst_core::cancel::FlagCancel`
   (`is_set()` is `is_cancelled()`).
+- `RecvEndReason` and `RecvEndReasonHandle` (and their `reconnect::` paths)
+  are removed; use `tst_core::transport::{EndReason, EndReasonHandle}`.
+  `EndReason` is `Clone` but no longer `Copy` (it carries messages for the
+  RTSP reasons); `EndReasonHandle::get` returns a clone.
 
 ### Removed — tst-srt (BREAKING)
 
@@ -107,6 +111,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reach the same behaviour; `RtspClient::setup_h264_auto` and
   `setup_mp2t_auto` do the SDP selection. `RtspClient::last_server_version`
   is removed.
+- `StreamEndReason`, `StreamEndReasonHandle` and the
+  `rtsp::client::end_reason` module are removed; use
+  `tst_core::transport::{EndReason, EndReasonHandle}` (same variants, same
+  first-writer-wins semantics). `RtpRecvTransport::end_reason_handle` returns
+  `EndReasonHandle`, and `RtpRecvTransport` also answers the new
+  `RecvTransport::end_reason_handle`.
 
 ### Changed — tst-core (BREAKING)
 
@@ -156,6 +166,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Doc comments only: the UDP, TCP, HLS and RIST error codes name the Rust
   error variants they map from (`tst_udp::UdpError::Io` instead of the removed
   `UdpErrorKind::Io`). No declaration, value, symbol or ABI version changed.
+- Doc comment only: the `tst_stream_end_reason` enum doc and the managed receiver's end-reason getter doc no longer name a Rust type.
 
 ### Added — tst-core
 
@@ -176,6 +187,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it.
 - `net::{RecvAction, classify_recv_error}`, the receive-side twin of
   `classify_send_error`.
+- `transport::EndReason` (why a receive stream ended, one vocabulary for
+  every surface, with a table of which surface produces which reason),
+  `transport::EndReasonHandle`, and `RecvTransport::end_reason_handle`
+  (defaults to `None`; `Box<T>` forwards it).
 
 ### Added — tst-rtp
 

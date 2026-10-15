@@ -52,10 +52,11 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     AudioStreamHandle, DataStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
 };
+use tst_core::transport::EndReasonHandle;
 use tst_pipeline::binding::{BindingErrorKind, HandleState, ManagedHandles, Owned};
 use tst_pipeline::{
     ManagedDemuxReceiver as RustManagedDemuxReceiver, ManagedTransport, MuxSender as RustMuxSender,
-    MuxSenderError, MuxSenderErrorSource, RecvEndReasonHandle,
+    MuxSenderError, MuxSenderErrorSource,
 };
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
@@ -777,12 +778,12 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nIsAlive(
 /// the cancel target live in the entry's `Owned` snapshot ([`ManagedHandles`]).
 struct JniManagedDemuxReceiver {
     inner: RustManagedDemuxReceiver<SrtTransport>,
-    /// Clone of the receiver's `RecvEndReasonHandle`, captured at construction
+    /// Clone of the receiver's `EndReasonHandle`, captured at construction
     /// (obtain-before-move — the same shape as the cancel target). The *live*
     /// reads go through the registry's lock-free slot, which holds another clone
     /// of this same cell; this copy is what `nClose` snapshots from, since by
     /// then the registry entry is gone. See `super::recv_end_reason`.
-    end_reason: RecvEndReasonHandle,
+    end_reason: EndReasonHandle,
 }
 
 /// Per-type `Owned`-backed registry for `org.tstrans.srt.ManagedDemuxReceiver`.

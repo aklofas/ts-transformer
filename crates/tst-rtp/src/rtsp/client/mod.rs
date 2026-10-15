@@ -6,7 +6,6 @@
 //! keepalive thread share the SAME stream — request/response exchanges
 //! serialize under the mutex (RTSP isn't pipelined).
 
-pub mod end_reason;
 pub mod interleaved_pump;
 pub mod keepalive;
 pub mod options_describe;
@@ -29,6 +28,7 @@ use bytes::Bytes;
 use crate::error::RtspError;
 use crate::url::{RtspScheme, RtspUrl};
 use tst_core::cancel::FlagCancel;
+use tst_core::transport::EndReasonHandle;
 
 /// The control-plane byte stream — plain TCP for `rtsp://`, or
 /// rustls-wrapped TCP for `rtsps://` when the `tls` cargo feature is
@@ -206,13 +206,13 @@ pub struct RtspClient {
     pub(crate) write_gate: Arc<AtomicUsize>,
     /// Structured record of why the session ended — first-writer-wins,
     /// written by the interleaved pump's exit sites and the keepalive
-    /// thread's failure sites (see [`end_reason::StreamEndReason`]).
+    /// thread's failure sites (see [`EndReason`](tst_core::transport::EndReason)).
     /// Created unconditionally at connect time (unlike `session_dead`,
     /// which stays `None` until a keepalive is spawned) so a client that
     /// never spawns a keepalive or pump still has a slot to clone into
     /// [`session::RtspSession`] — closed only by that transport's own
     /// cancel/close path.
-    pub(crate) end_reason: end_reason::EndReasonSlot,
+    pub(crate) end_reason: EndReasonHandle,
 }
 
 /// `WWW-Authenticate` challenge cache + `qop=auth` nonce-count pair.
@@ -484,7 +484,7 @@ impl RtspClient {
             pump_state: None,
             auth: Arc::new(Mutex::new(AuthState::default())),
             write_gate: Arc::new(AtomicUsize::new(0)),
-            end_reason: end_reason::EndReasonSlot::default(),
+            end_reason: EndReasonHandle::default(),
         })
     }
 

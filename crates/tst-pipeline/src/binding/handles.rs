@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 
 use tst_core::transport::TransportCancel;
 
-use crate::reconnect::RecvEndReasonHandle;
+use tst_core::transport::EndReasonHandle;
 
 /// Observers for one managed shell. Cheap to clone; every clone reads the
 /// same live counters and fires the same cancel.
@@ -41,7 +41,7 @@ pub struct ManagedHandles {
     /// `Receiver` and both senders — gets a fresh handle that is never
     /// set: `get()` stays `None` for its whole life. Documented rather
     /// than `Option` so a binding's `end_reason()` getter has one shape.
-    pub end_reason: RecvEndReasonHandle,
+    pub end_reason: EndReasonHandle,
     /// Successful rebuilds — the factory returned a transport that was
     /// installed (`reconnect_successes` on the send side).
     pub reconnects: Arc<AtomicU64>,
@@ -91,7 +91,7 @@ mod tests {
     fn handles() -> ManagedHandles {
         ManagedHandles {
             cancel: Arc::new(Noop),
-            end_reason: RecvEndReasonHandle::default(),
+            end_reason: EndReasonHandle::default(),
             reconnects: Arc::new(AtomicU64::new(0)),
             attempts: Arc::new(AtomicU64::new(0)),
             reconnecting: Arc::new(AtomicBool::new(false)),

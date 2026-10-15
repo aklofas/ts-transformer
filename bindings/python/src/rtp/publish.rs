@@ -9,7 +9,7 @@
 //!
 //! `PublishShape` and `ClockAlignment` only ever flow Rust → Python as
 //! return values, so they are pure-Python `IntEnum`s in `tstrans/rtp.py`
-//! (the `StreamEndReason` convention); the getters here look the member up
+//! (the `EndReason` convention); the getters here look the member up
 //! by name.
 //!
 //! GIL release boundaries: `stats`, `publisher`, `cancel` and

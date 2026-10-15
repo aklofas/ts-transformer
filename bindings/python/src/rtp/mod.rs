@@ -9,7 +9,7 @@
 //! - `publish`         — `PublishMount` + `PublishMountStats` +
 //!                        `PublisherInfo` (the RTSP publisher role)
 //! - `h264_receiver`   — RFC 6184 H.264 receiver + depacketizer config/stats
-//! - `end_reason`      — `tst_rtp::StreamEndReason` → Python conversion
+//! - `end_reason`      — `tst_rtp::EndReason` → Python conversion
 //!                        helpers, shared by `transport` / `demux_receiver`
 //!                        / `h264_receiver` (no PyClasses of its own, so
 //!                        it isn't `register()`-ed below)

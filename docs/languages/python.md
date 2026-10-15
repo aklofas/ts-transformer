@@ -1841,7 +1841,7 @@ output directly when absolute byte offsets matter.
   message through the shared thread-local last-error channel
   (`tst_get_last_error_str`), resetting it on every call. Python has no
   such channel — `end_detail()` reads the `msg` field straight off the
-  Rust `StreamEndReason` value. A recorded end reason is data, not a
+  Rust `EndReason` value. A recorded end reason is data, not a
   failure, so it never touches `tstrans.exceptions`.
 - **`last_seen_micros(pid)` returns `None`, not `0`, for "never
   seen".** The C ABI has no `Option` in its getter shape, so it uses a

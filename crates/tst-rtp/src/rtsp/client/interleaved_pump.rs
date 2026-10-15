@@ -49,11 +49,12 @@ use std::thread::JoinHandle;
 use bytes::Bytes;
 
 use crate::rtsp::client::Stream;
-use crate::rtsp::client::end_reason::{EndReasonSlot, StreamEndReason};
 use crate::rtsp::client::keepalive::KEEPALIVE_CSEQ_BASE;
 use crate::rtsp::message::{
     RtspFraming, RtspResponse, pump_accumulation_exceeded, rtsp_frame_decision,
 };
+use crate::transport::record_end;
+use tst_core::transport::{EndReason, EndReasonHandle};
 
 /// Bounded depth of the media (RTP/data) hand-off queue.
 ///
@@ -203,7 +204,7 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
     auth: Arc<Mutex<crate::rtsp::client::AuthState>>,
     session_dead: Option<Arc<AtomicBool>>,
     stats: Arc<PumpStats>,
-    end_reason: EndReasonSlot,
+    end_reason: EndReasonHandle,
 ) -> std::io::Result<JoinHandle<()>> {
     std::thread::Builder::new()
         .name("rtsp-interleaved-pump".to_string())
@@ -220,7 +221,7 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                     // done (the overwhelmingly common case) reports
                     // `Cancelled` rather than leaving `end_reason()` at
                     // `None` forever.
-                    end_reason.record(StreamEndReason::Cancelled);
+                    record_end(&end_reason, EndReason::Cancelled);
                     return;
                 }
                 // Yield the stream lock to a control-path writer that is
@@ -238,7 +239,7 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                     Ok(0) => {
                         // Clean EOF — the peer closed the connection in
                         // an orderly way (TCP FIN), not a wire error.
-                        end_reason.record(StreamEndReason::CleanTeardown);
+                        record_end(&end_reason, EndReason::CleanTeardown);
                         return;
                     }
                     Ok(n) => n,
@@ -257,9 +258,12 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                             error = %e,
                             "TCP read failed; pump exiting"
                         );
-                        end_reason.record(StreamEndReason::TransportFailed {
-                            msg: format!("TCP read failed: {e}"),
-                        });
+                        record_end(
+                            &end_reason,
+                            EndReason::TransportFailed {
+                                msg: format!("TCP read failed: {e}"),
+                            },
+                        );
                         return;
                     }
                 };
@@ -282,12 +286,15 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                         "pump buffer exceeded RTSP header/body caps; closing"
                     );
                     stats.malformed_frames.fetch_add(1, Ordering::Relaxed);
-                    end_reason.record(StreamEndReason::ProtocolError {
-                        msg: format!(
-                            "pump buffer exceeded RTSP header/body caps ({} bytes buffered)",
-                            buf.len()
-                        ),
-                    });
+                    record_end(
+                        &end_reason,
+                        EndReason::ProtocolError {
+                            msg: format!(
+                                "pump buffer exceeded RTSP header/body caps ({} bytes buffered)",
+                                buf.len()
+                            ),
+                        },
+                    );
                     return;
                 }
 
@@ -359,11 +366,14 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                                         RTCP_QUEUE_BOUND
                                     );
                                     stats.malformed_frames.fetch_add(1, Ordering::Relaxed);
-                                    end_reason.record(StreamEndReason::ProtocolError {
-                                        msg: format!(
-                                            "RTCP queue flooded ({RTCP_QUEUE_BOUND} deep)"
-                                        ),
-                                    });
+                                    record_end(
+                                        &end_reason,
+                                        EndReason::ProtocolError {
+                                            msg: format!(
+                                                "RTCP queue flooded ({RTCP_QUEUE_BOUND} deep)"
+                                            ),
+                                        },
+                                    );
                                     return;
                                 }
                                 Err(mpsc::TrySendError::Disconnected(_)) => return,
@@ -401,9 +411,12 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                                     "malformed RTSP Content-Length; pump exiting"
                                 );
                                 stats.malformed_frames.fetch_add(1, Ordering::Relaxed);
-                                end_reason.record(StreamEndReason::ProtocolError {
-                                    msg: format!("malformed RTSP Content-Length: {detail}"),
-                                });
+                                record_end(
+                                    &end_reason,
+                                    EndReason::ProtocolError {
+                                        msg: format!("malformed RTSP Content-Length: {detail}"),
+                                    },
+                                );
                                 return;
                             }
                             RtspFraming::BodyOffsetOverflow => {
@@ -452,11 +465,14 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                                     CTRL_QUEUE_BOUND
                                 );
                                 stats.malformed_frames.fetch_add(1, Ordering::Relaxed);
-                                end_reason.record(StreamEndReason::ProtocolError {
-                                    msg: format!(
-                                        "RTSP control queue flooded ({CTRL_QUEUE_BOUND} deep)"
-                                    ),
-                                });
+                                record_end(
+                                    &end_reason,
+                                    EndReason::ProtocolError {
+                                        msg: format!(
+                                            "RTSP control queue flooded ({CTRL_QUEUE_BOUND} deep)"
+                                        ),
+                                    },
+                                );
                                 return;
                             }
                             Err(mpsc::TrySendError::Disconnected(_)) => {
@@ -475,7 +491,7 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                                 // Cancelled rather than ProtocolError: there
                                 // is no scenario where this queue closes
                                 // because of a peer/protocol issue.
-                                end_reason.record(StreamEndReason::Cancelled);
+                                record_end(&end_reason, EndReason::Cancelled);
                                 return;
                             }
                         }
@@ -558,7 +574,7 @@ mod tests {
             Arc::new(Mutex::new(AuthState::default())),
             None,
             stats,
-            EndReasonSlot::default(),
+            EndReasonHandle::default(),
         )
     }
 
@@ -790,7 +806,7 @@ mod tests {
             auth.clone(),
             None,
             stats.clone(),
-            EndReasonSlot::default(),
+            EndReasonHandle::default(),
         )
         .unwrap();
         let _ = handle.join();
@@ -817,7 +833,7 @@ mod tests {
         )
         .into_bytes();
         let session_dead = Arc::new(AtomicBool::new(false));
-        let end_reason = EndReasonSlot::default();
+        let end_reason = EndReasonHandle::default();
         let (dt, _dr, rt, _rr, ct, _cr, cancel, stats) = make_args();
         let handle = spawn_client_pump(
             Cursor::new(raw),
@@ -839,8 +855,8 @@ mod tests {
             "a 454 keepalive response must flip session_dead"
         );
         assert!(
-            matches!(end_reason.get(), Some(StreamEndReason::SessionExpired)),
-            "a 454 keepalive response must record StreamEndReason::SessionExpired, got {:?}",
+            matches!(end_reason.get(), Some(EndReason::SessionExpired)),
+            "a 454 keepalive response must record EndReason::SessionExpired, got {:?}",
             end_reason.get()
         );
     }
@@ -881,7 +897,7 @@ mod tests {
         ] {
             let raw = header.as_bytes().to_vec();
             let (dt, _dr, rt, _rr, ct, cr, cancel, stats) = make_args();
-            let end_reason = EndReasonSlot::default();
+            let end_reason = EndReasonHandle::default();
             let handle = spawn_client_pump(
                 Cursor::new(raw),
                 dt,
@@ -909,10 +925,7 @@ mod tests {
             );
             assert_eq!(stats.rtsp_messages_received.load(Ordering::Relaxed), 0);
             assert!(
-                matches!(
-                    end_reason.get(),
-                    Some(StreamEndReason::ProtocolError { .. })
-                ),
+                matches!(end_reason.get(), Some(EndReason::ProtocolError { .. })),
                 "a malformed Content-Length ({header:?}) must record ProtocolError, got {:?}",
                 end_reason.get()
             );
@@ -930,7 +943,7 @@ mod tests {
         // 64 KiB cap. Starts with a non-`$` byte so it's parsed as RTSP text.
         let raw = vec![b'A'; 128 * 1024];
         let (dt, _dr, rt, _rr, ct, cr, cancel, stats) = make_args();
-        let end_reason = EndReasonSlot::default();
+        let end_reason = EndReasonHandle::default();
         let handle = spawn_client_pump(
             Cursor::new(raw),
             dt,
@@ -957,10 +970,7 @@ mod tests {
         );
         assert_eq!(stats.rtsp_messages_received.load(Ordering::Relaxed), 0);
         assert!(
-            matches!(
-                end_reason.get(),
-                Some(StreamEndReason::ProtocolError { .. })
-            ),
+            matches!(end_reason.get(), Some(EndReason::ProtocolError { .. })),
             "an unterminated header flood must record ProtocolError, got {:?}",
             end_reason.get()
         );
@@ -1213,7 +1223,7 @@ mod tests {
             raw.extend_from_slice(&[b'$', 1u8, 0x00, 0x04, 0xDE, 0xAD, 0xBE, 0xEF]);
         }
         let (dt, _dr, rt, _rr, ct, _cr, cancel, stats) = make_args();
-        let end_reason = EndReasonSlot::default();
+        let end_reason = EndReasonHandle::default();
         // _rr kept alive → channel not Disconnected → overflow is `Full`.
         let handle = spawn_client_pump(
             Cursor::new(raw),
@@ -1240,10 +1250,7 @@ mod tests {
             "an RTCP flood must counter-tick + fail the session"
         );
         assert!(
-            matches!(
-                end_reason.get(),
-                Some(StreamEndReason::ProtocolError { .. })
-            ),
+            matches!(end_reason.get(), Some(EndReason::ProtocolError { .. })),
             "an RTCP queue flood must record ProtocolError, got {:?}",
             end_reason.get()
         );
@@ -1261,7 +1268,7 @@ mod tests {
             raw.extend_from_slice(format!("RTSP/1.0 200 OK\r\nCSeq: {i}\r\n\r\n").as_bytes());
         }
         let (dt, _dr, rt, _rr, ct, _cr, cancel, stats) = make_args();
-        let end_reason = EndReasonSlot::default();
+        let end_reason = EndReasonHandle::default();
         // _cr kept alive but never drained → overflow is `Full`, not closed.
         let handle = spawn_client_pump(
             Cursor::new(raw),
@@ -1292,10 +1299,7 @@ mod tests {
             "ctrl queue must be bounded by CTRL_QUEUE_BOUND"
         );
         assert!(
-            matches!(
-                end_reason.get(),
-                Some(StreamEndReason::ProtocolError { .. })
-            ),
+            matches!(end_reason.get(), Some(EndReason::ProtocolError { .. })),
             "a control-response flood must record ProtocolError, got {:?}",
             end_reason.get()
         );
@@ -1313,7 +1317,7 @@ mod tests {
         // when cancel is set.
         let raw = Vec::<u8>::new();
         let (dt, _dr, rt, _rr, ct, _cr, cancel, stats) = make_args();
-        let end_reason = EndReasonSlot::default();
+        let end_reason = EndReasonHandle::default();
         cancel.store(true, Ordering::Relaxed);
         let handle = spawn_client_pump(
             Cursor::new(raw),
@@ -1331,7 +1335,7 @@ mod tests {
         .unwrap();
         let _ = handle.join();
         assert!(
-            matches!(end_reason.get(), Some(StreamEndReason::Cancelled)),
+            matches!(end_reason.get(), Some(EndReason::Cancelled)),
             "the loop-top cancel exit must record Cancelled, got {:?}",
             end_reason.get()
         );
@@ -1426,7 +1430,7 @@ mod tests {
         );
     }
 
-    // ── StreamEndReason recording at each pump exit site ───────────────
+    // ── EndReason recording at each pump exit site ───────────────
 
     /// A `Read` impl that yields nothing then returns a hard (non-timeout)
     /// error on its first call — the shape the pump's `:235 TCP read
@@ -1443,7 +1447,7 @@ mod tests {
     #[test]
     fn clean_eof_records_clean_teardown() {
         let (dt, _dr, rt, _rr, ct, _cr, cancel, stats) = make_args();
-        let end_reason = EndReasonSlot::default();
+        let end_reason = EndReasonHandle::default();
         let handle = spawn_client_pump(
             Cursor::new(Vec::<u8>::new()), // empty -> immediate Ok(0) EOF.
             dt,
@@ -1460,7 +1464,7 @@ mod tests {
         .unwrap();
         let _ = handle.join();
         assert!(
-            matches!(end_reason.get(), Some(StreamEndReason::CleanTeardown)),
+            matches!(end_reason.get(), Some(EndReason::CleanTeardown)),
             "clean EOF must record CleanTeardown, got {:?}",
             end_reason.get()
         );
@@ -1469,7 +1473,7 @@ mod tests {
     #[test]
     fn hard_read_error_records_transport_failed() {
         let (dt, _dr, rt, _rr, ct, _cr, cancel, stats) = make_args();
-        let end_reason = EndReasonSlot::default();
+        let end_reason = EndReasonHandle::default();
         let handle = spawn_client_pump(
             ErroringReader,
             dt,
@@ -1486,10 +1490,7 @@ mod tests {
         .unwrap();
         let _ = handle.join();
         assert!(
-            matches!(
-                end_reason.get(),
-                Some(StreamEndReason::TransportFailed { .. })
-            ),
+            matches!(end_reason.get(), Some(EndReason::TransportFailed { .. })),
             "a hard TCP read error must record TransportFailed, got {:?}",
             end_reason.get()
         );
@@ -1507,7 +1508,7 @@ mod tests {
         let raw = b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n".to_vec();
         let (dt, _dr, rt, _rr, ct, cr, cancel, stats) = make_args();
         drop(cr); // ctrl_rx gone before the pump ever parses the response.
-        let end_reason = EndReasonSlot::default();
+        let end_reason = EndReasonHandle::default();
         let handle = spawn_client_pump(
             Cursor::new(raw),
             dt,
@@ -1524,7 +1525,7 @@ mod tests {
         .unwrap();
         let _ = handle.join();
         assert!(
-            matches!(end_reason.get(), Some(StreamEndReason::Cancelled)),
+            matches!(end_reason.get(), Some(EndReason::Cancelled)),
             "a dropped ctrl_rx must record Cancelled, got {:?}",
             end_reason.get()
         );

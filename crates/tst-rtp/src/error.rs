@@ -72,7 +72,7 @@ pub enum RtspError {
 
     /// The client is no longer usable. tst-rtp's own client does not return
     /// this — a 454 on a keepalive ping records
-    /// [`StreamEndReason::SessionExpired`](crate::StreamEndReason::SessionExpired)
+    /// [`EndReason::SessionExpired`](tst_core::transport::EndReason::SessionExpired)
     /// instead — but the Python and JVM bindings return it when the client
     /// they wrap was already torn down or its lock was poisoned. Build a
     /// fresh `RtspClient`.

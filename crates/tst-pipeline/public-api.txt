@@ -11,7 +11,7 @@ pub mod tst_pipeline::binding::handles
 pub struct tst_pipeline::binding::handles::ManagedHandles
 pub tst_pipeline::binding::handles::ManagedHandles::attempts: alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub tst_pipeline::binding::handles::ManagedHandles::cancel: alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
-pub tst_pipeline::binding::handles::ManagedHandles::end_reason: tst_pipeline::RecvEndReasonHandle
+pub tst_pipeline::binding::handles::ManagedHandles::end_reason: tst_core::transport::EndReasonHandle
 pub tst_pipeline::binding::handles::ManagedHandles::reconnecting: alloc::sync::Arc<core::sync::atomic::AtomicBool>
 pub tst_pipeline::binding::handles::ManagedHandles::reconnects: alloc::sync::Arc<core::sync::atomic::AtomicU64>
 impl core::clone::Clone for tst_pipeline::binding::handles::ManagedHandles
@@ -255,14 +255,14 @@ pub struct tst_pipeline::binding::owned::Owned<T, S>
 impl<T, S> tst_pipeline::binding::owned::Owned<T, S>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel(&self)
 pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel_arc(&self) -> alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
-pub fn tst_pipeline::binding::owned::Owned<T, S>::end_reason(&self) -> core::option::Option<tst_pipeline::RecvEndReason>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::is_cancelled(&self) -> bool
 pub fn tst_pipeline::binding::owned::Owned<T, S>::is_closed(&self) -> bool
 pub fn tst_pipeline::binding::owned::Owned<T, S>::new(T, alloc::sync::Arc<dyn tst_core::transport::TransportCancel>, S) -> Self
 pub fn tst_pipeline::binding::owned::Owned<T, S>::snapshot(&self) -> &S
 pub fn tst_pipeline::binding::owned::Owned<T, S>::take(&self) -> core::option::Option<T>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::try_with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::option::Option<core::result::Result<R, tst_pipeline::binding::owned::HandleState>>
-pub fn tst_pipeline::binding::owned::Owned<T, S>::with_end_reason(self, tst_pipeline::RecvEndReasonHandle) -> Self
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_end_reason(self, tst_core::transport::EndReasonHandle) -> Self
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_mut<R>(&self, impl core::ops::function::FnOnce(&mut T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
 impl<T: tst_pipeline::binding::owned::Close, S> tst_pipeline::binding::owned::Owned<T, S>
@@ -551,7 +551,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::Bindi
 pub struct tst_pipeline::binding::ManagedHandles
 pub tst_pipeline::binding::ManagedHandles::attempts: alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub tst_pipeline::binding::ManagedHandles::cancel: alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
-pub tst_pipeline::binding::ManagedHandles::end_reason: tst_pipeline::RecvEndReasonHandle
+pub tst_pipeline::binding::ManagedHandles::end_reason: tst_core::transport::EndReasonHandle
 pub tst_pipeline::binding::ManagedHandles::reconnecting: alloc::sync::Arc<core::sync::atomic::AtomicBool>
 pub tst_pipeline::binding::ManagedHandles::reconnects: alloc::sync::Arc<core::sync::atomic::AtomicU64>
 impl core::clone::Clone for tst_pipeline::binding::handles::ManagedHandles
@@ -569,14 +569,14 @@ pub struct tst_pipeline::binding::Owned<T, S>
 impl<T, S> tst_pipeline::binding::owned::Owned<T, S>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel(&self)
 pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel_arc(&self) -> alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
-pub fn tst_pipeline::binding::owned::Owned<T, S>::end_reason(&self) -> core::option::Option<tst_pipeline::RecvEndReason>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::is_cancelled(&self) -> bool
 pub fn tst_pipeline::binding::owned::Owned<T, S>::is_closed(&self) -> bool
 pub fn tst_pipeline::binding::owned::Owned<T, S>::new(T, alloc::sync::Arc<dyn tst_core::transport::TransportCancel>, S) -> Self
 pub fn tst_pipeline::binding::owned::Owned<T, S>::snapshot(&self) -> &S
 pub fn tst_pipeline::binding::owned::Owned<T, S>::take(&self) -> core::option::Option<T>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::try_with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::option::Option<core::result::Result<R, tst_pipeline::binding::owned::HandleState>>
-pub fn tst_pipeline::binding::owned::Owned<T, S>::with_end_reason(self, tst_pipeline::RecvEndReasonHandle) -> Self
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_end_reason(self, tst_core::transport::EndReasonHandle) -> Self
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_mut<R>(&self, impl core::ops::function::FnOnce(&mut T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
 impl<T: tst_pipeline::binding::owned::Close, S> tst_pipeline::binding::owned::Owned<T, S>
@@ -946,7 +946,7 @@ pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::add_byte_s
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::close(&mut self)
-pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::end_reason_handle(&self) -> tst_pipeline::RecvEndReasonHandle
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::end_reason_handle(&self) -> tst_core::transport::EndReasonHandle
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::is_alive(&self) -> bool
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::new(tst_pipeline::managed_receive::ManagedRecvTransport<R>, tst_pipeline::managed_demux_receiver::ManagedDemuxReceiverConfig) -> Self
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::reconnecting(&self) -> bool
@@ -1602,26 +1602,6 @@ impl core::marker::Unpin for tst_pipeline::reconnect::ReconnectMode
 impl core::marker::UnsafeUnpin for tst_pipeline::reconnect::ReconnectMode
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::reconnect::ReconnectMode
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ReconnectMode
-#[non_exhaustive] pub enum tst_pipeline::reconnect::RecvEndReason
-pub tst_pipeline::reconnect::RecvEndReason::Cancelled
-pub tst_pipeline::reconnect::RecvEndReason::EndOfStream
-pub tst_pipeline::reconnect::RecvEndReason::ReconnectExhausted
-impl core::clone::Clone for tst_pipeline::RecvEndReason
-pub fn tst_pipeline::RecvEndReason::clone(&self) -> tst_pipeline::RecvEndReason
-impl core::cmp::Eq for tst_pipeline::RecvEndReason
-impl core::cmp::PartialEq for tst_pipeline::RecvEndReason
-pub fn tst_pipeline::RecvEndReason::eq(&self, &tst_pipeline::RecvEndReason) -> bool
-impl core::fmt::Debug for tst_pipeline::RecvEndReason
-pub fn tst_pipeline::RecvEndReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for tst_pipeline::RecvEndReason
-impl core::marker::StructuralPartialEq for tst_pipeline::RecvEndReason
-impl core::marker::Freeze for tst_pipeline::RecvEndReason
-impl core::marker::Send for tst_pipeline::RecvEndReason
-impl core::marker::Sync for tst_pipeline::RecvEndReason
-impl core::marker::Unpin for tst_pipeline::RecvEndReason
-impl core::marker::UnsafeUnpin for tst_pipeline::RecvEndReason
-impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::RecvEndReason
-impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::RecvEndReason
 pub struct tst_pipeline::reconnect::GapBuffer
 pub tst_pipeline::reconnect::GapBuffer::bytes_dropped: u64
 pub tst_pipeline::reconnect::GapBuffer::messages_dropped: u64
@@ -1713,22 +1693,6 @@ impl core::marker::Unpin for tst_pipeline::reconnect::ReconnectPolicy
 impl core::marker::UnsafeUnpin for tst_pipeline::reconnect::ReconnectPolicy
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::reconnect::ReconnectPolicy
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ReconnectPolicy
-pub struct tst_pipeline::reconnect::RecvEndReasonHandle(_)
-impl tst_pipeline::RecvEndReasonHandle
-pub fn tst_pipeline::RecvEndReasonHandle::get(&self) -> core::option::Option<tst_pipeline::RecvEndReason>
-impl core::clone::Clone for tst_pipeline::RecvEndReasonHandle
-pub fn tst_pipeline::RecvEndReasonHandle::clone(&self) -> tst_pipeline::RecvEndReasonHandle
-impl core::default::Default for tst_pipeline::RecvEndReasonHandle
-pub fn tst_pipeline::RecvEndReasonHandle::default() -> tst_pipeline::RecvEndReasonHandle
-impl core::fmt::Debug for tst_pipeline::RecvEndReasonHandle
-pub fn tst_pipeline::RecvEndReasonHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_pipeline::RecvEndReasonHandle
-impl core::marker::Send for tst_pipeline::RecvEndReasonHandle
-impl core::marker::Sync for tst_pipeline::RecvEndReasonHandle
-impl core::marker::Unpin for tst_pipeline::RecvEndReasonHandle
-impl core::marker::UnsafeUnpin for tst_pipeline::RecvEndReasonHandle
-impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::RecvEndReasonHandle
-impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::RecvEndReasonHandle
 pub mod tst_pipeline::sender
 #[non_exhaustive] pub enum tst_pipeline::sender::SenderErrorSource
 pub tst_pipeline::sender::SenderErrorSource::Framing(tst_pipeline::sender::TsFramingError)
@@ -2132,26 +2096,6 @@ impl core::marker::Unpin for tst_pipeline::reconnect::ReconnectMode
 impl core::marker::UnsafeUnpin for tst_pipeline::reconnect::ReconnectMode
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::reconnect::ReconnectMode
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ReconnectMode
-#[non_exhaustive] pub enum tst_pipeline::RecvEndReason
-pub tst_pipeline::RecvEndReason::Cancelled
-pub tst_pipeline::RecvEndReason::EndOfStream
-pub tst_pipeline::RecvEndReason::ReconnectExhausted
-impl core::clone::Clone for tst_pipeline::RecvEndReason
-pub fn tst_pipeline::RecvEndReason::clone(&self) -> tst_pipeline::RecvEndReason
-impl core::cmp::Eq for tst_pipeline::RecvEndReason
-impl core::cmp::PartialEq for tst_pipeline::RecvEndReason
-pub fn tst_pipeline::RecvEndReason::eq(&self, &tst_pipeline::RecvEndReason) -> bool
-impl core::fmt::Debug for tst_pipeline::RecvEndReason
-pub fn tst_pipeline::RecvEndReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for tst_pipeline::RecvEndReason
-impl core::marker::StructuralPartialEq for tst_pipeline::RecvEndReason
-impl core::marker::Freeze for tst_pipeline::RecvEndReason
-impl core::marker::Send for tst_pipeline::RecvEndReason
-impl core::marker::Sync for tst_pipeline::RecvEndReason
-impl core::marker::Unpin for tst_pipeline::RecvEndReason
-impl core::marker::UnsafeUnpin for tst_pipeline::RecvEndReason
-impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::RecvEndReason
-impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::RecvEndReason
 #[non_exhaustive] pub enum tst_pipeline::SenderErrorSource
 pub tst_pipeline::SenderErrorSource::Framing(tst_pipeline::sender::TsFramingError)
 pub tst_pipeline::SenderErrorSource::Transport(tst_core::transport::TransportError)
@@ -2324,7 +2268,7 @@ pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::add_byte_s
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::close(&mut self)
-pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::end_reason_handle(&self) -> tst_pipeline::RecvEndReasonHandle
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::end_reason_handle(&self) -> tst_core::transport::EndReasonHandle
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::is_alive(&self) -> bool
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::new(tst_pipeline::managed_receive::ManagedRecvTransport<R>, tst_pipeline::managed_demux_receiver::ManagedDemuxReceiverConfig) -> Self
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::reconnecting(&self) -> bool
@@ -2850,22 +2794,6 @@ impl core::marker::Unpin for tst_pipeline::reconnect::ReconnectPolicy
 impl core::marker::UnsafeUnpin for tst_pipeline::reconnect::ReconnectPolicy
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::reconnect::ReconnectPolicy
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ReconnectPolicy
-pub struct tst_pipeline::RecvEndReasonHandle(_)
-impl tst_pipeline::RecvEndReasonHandle
-pub fn tst_pipeline::RecvEndReasonHandle::get(&self) -> core::option::Option<tst_pipeline::RecvEndReason>
-impl core::clone::Clone for tst_pipeline::RecvEndReasonHandle
-pub fn tst_pipeline::RecvEndReasonHandle::clone(&self) -> tst_pipeline::RecvEndReasonHandle
-impl core::default::Default for tst_pipeline::RecvEndReasonHandle
-pub fn tst_pipeline::RecvEndReasonHandle::default() -> tst_pipeline::RecvEndReasonHandle
-impl core::fmt::Debug for tst_pipeline::RecvEndReasonHandle
-pub fn tst_pipeline::RecvEndReasonHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_pipeline::RecvEndReasonHandle
-impl core::marker::Send for tst_pipeline::RecvEndReasonHandle
-impl core::marker::Sync for tst_pipeline::RecvEndReasonHandle
-impl core::marker::Unpin for tst_pipeline::RecvEndReasonHandle
-impl core::marker::UnsafeUnpin for tst_pipeline::RecvEndReasonHandle
-impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::RecvEndReasonHandle
-impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::RecvEndReasonHandle
 pub struct tst_pipeline::Sender<T: tst_core::transport::Transport>
 impl<T: tst_core::transport::Transport> tst_pipeline::sender::Sender<T>
 pub fn tst_pipeline::sender::Sender<T>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>

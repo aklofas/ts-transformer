@@ -90,9 +90,10 @@ use std::sync::{Arc, Mutex};
 
 use jni::JNIEnv;
 use jni::sys::jlong;
+use tst_core::transport::EndReason;
 use tst_core::transport::Transport;
+use tst_pipeline::MuxSender;
 use tst_pipeline::binding::{HandleState, Owned};
-use tst_pipeline::{MuxSender, RecvEndReason};
 
 /// An optional cross-thread cancel hook fired by [`HandleRegistry::close`] *before*
 /// the resource is taken, so a parked native op (a blocked `recv`/`accept`) wakes
@@ -548,7 +549,7 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
 
     /// The recorded end reason, read off the cell [`Owned`] holds outside the
     /// slot; `None` folds absent id / no cell / not ended yet.
-    pub(crate) fn end_reason(&self, id: u64) -> Option<RecvEndReason> {
+    pub(crate) fn end_reason(&self, id: u64) -> Option<EndReason> {
         self.lease(id).and_then(|e| e.owned.end_reason())
     }
 
@@ -1058,7 +1059,7 @@ mod tests {
         let (_rec, cancel) = recording();
         let id = reg.insert(
             Owned::new(1, cancel, "snap")
-                .with_end_reason(tst_pipeline::RecvEndReasonHandle::default()),
+                .with_end_reason(tst_core::transport::EndReasonHandle::default()),
         );
         let held = Arc::new(std::sync::Barrier::new(2));
         let release = Arc::new(std::sync::Barrier::new(2));

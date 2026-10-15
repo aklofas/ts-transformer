@@ -186,9 +186,9 @@ mod owned {
     use alloc::sync::Arc;
 
     use tst_core::cancel::FlagCancel;
+    use tst_core::transport::EndReason;
+    use tst_core::transport::EndReasonHandle;
     use tst_core::transport::TransportCancel;
-    use tst_pipeline::RecvEndReason;
-    use tst_pipeline::RecvEndReasonHandle;
     use tst_pipeline::binding::{BindingError, Close, Owned};
 
     use crate::error::record_binding_error;
@@ -207,7 +207,7 @@ mod owned {
 
         /// Receivers only: attach the end-reason cell read by `_end_reason`.
         #[allow(dead_code)] // consumed by the receiver families
-        pub(crate) fn with_end_reason(self, h: RecvEndReasonHandle) -> Self {
+        pub(crate) fn with_end_reason(self, h: EndReasonHandle) -> Self {
             Self(self.0.with_end_reason(h))
         }
 
@@ -256,7 +256,7 @@ mod owned {
         }
 
         #[allow(dead_code)] // consumed by the `_end_reason` getters
-        pub(crate) fn end_reason(&self) -> Option<RecvEndReason> {
+        pub(crate) fn end_reason(&self) -> Option<EndReason> {
             self.0.end_reason()
         }
     }

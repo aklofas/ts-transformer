@@ -39,7 +39,7 @@ use std::sync::{Arc, Mutex, TryLockError};
 use tst_core::transport::TransportCancel;
 
 use super::panic;
-use crate::reconnect::{RecvEndReason, RecvEndReasonHandle};
+use tst_core::transport::{EndReason, EndReasonHandle};
 
 /// Explicit, fallible shutdown of the value an [`Owned`] holds.
 ///
@@ -105,7 +105,7 @@ pub struct Owned<T, S = ()> {
     /// cancel fired through a handed-out handle is visible to
     /// [`Self::is_cancelled`] exactly like [`Self::cancel`].
     cancel: Arc<OwnedCancel>,
-    end_reason: Option<RecvEndReasonHandle>,
+    end_reason: Option<EndReasonHandle>,
     snapshot: S,
 }
 
@@ -164,11 +164,11 @@ impl<T, S> Owned<T, S> {
         Arc::clone(&self.cancel) as Arc<dyn TransportCancel>
     }
 
-    /// Attach the receiver's [`RecvEndReasonHandle`] (obtained BEFORE the
+    /// Attach the receiver's [`EndReasonHandle`] (obtained BEFORE the
     /// receiver moved into `inner`), so [`Self::end_reason`] answers after
     /// the value is gone. Senders never call this.
     #[must_use]
-    pub fn with_end_reason(mut self, h: RecvEndReasonHandle) -> Self {
+    pub fn with_end_reason(mut self, h: EndReasonHandle) -> Self {
         self.end_reason = Some(h);
         self
     }
@@ -201,8 +201,8 @@ impl<T, S> Owned<T, S> {
 
     /// The recorded end reason, or `None` when no handle was attached or
     /// the stream has not ended. Lock-free (the handle is a `OnceLock`).
-    pub fn end_reason(&self) -> Option<RecvEndReason> {
-        self.end_reason.as_ref().and_then(RecvEndReasonHandle::get)
+    pub fn end_reason(&self) -> Option<EndReason> {
+        self.end_reason.as_ref().and_then(EndReasonHandle::get)
     }
 
     /// Run `f` on `&mut T` — the only site that holds the lock ACROSS CALLER
@@ -414,13 +414,13 @@ mod tests {
         log: Arc<std::sync::Mutex<Vec<&'static str>>>,
         /// Attached to `owned`, so tests can drive `end_reason()`'s `Some`
         /// branch and not just its `None` short-circuit.
-        end_reason: RecvEndReasonHandle,
+        end_reason: EndReasonHandle,
     }
     fn fixture() -> Fixture {
         let flag = Arc::new(AtomicBool::new(false));
         let closes = Arc::new(AtomicU32::new(0));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let end_reason = RecvEndReasonHandle::default();
+        let end_reason = EndReasonHandle::default();
         let cancel = Arc::new(MockCancel {
             calls: AtomicU32::new(0),
             flag: Arc::clone(&flag),
@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn end_reason_reads_the_attached_handle() {
         let f = fixture();
-        let h = RecvEndReasonHandle::default();
+        let h = EndReasonHandle::default();
         // Rebuild with the handle attached (the fixture's Owned is behind an Arc).
         let flag = Arc::new(AtomicBool::new(false));
         let mock = Mock {
@@ -509,8 +509,8 @@ mod tests {
         )
         .with_end_reason(h.clone());
         assert_eq!(owned.end_reason(), None, "not yet ended");
-        h.record(RecvEndReason::Cancelled);
-        assert_eq!(owned.end_reason(), Some(RecvEndReason::Cancelled));
+        h.record(EndReason::Cancelled);
+        assert_eq!(owned.end_reason(), Some(EndReason::Cancelled));
     }
 
     #[test]
@@ -961,7 +961,7 @@ mod tests {
         // Record BEFORE parking so the reader exercises `end_reason()`'s
         // `Some` branch — an actual `OnceLock` read — rather than the
         // `self.end_reason.is_none()` short-circuit.
-        f.end_reason.record(RecvEndReason::EndOfStream);
+        f.end_reason.record(EndReason::EndOfStream);
         let (parked, _) = park_in_with_mut(&f);
         let reader = {
             let o = Arc::clone(&f.owned);
@@ -977,7 +977,7 @@ mod tests {
         let (snap, reason, cancelled, handle) = reader.join().unwrap();
         assert_eq!(
             (snap, reason, cancelled),
-            ("snap", Some(RecvEndReason::EndOfStream), false)
+            ("snap", Some(EndReason::EndOfStream), false)
         );
         handle.cancel(); // release the parked thread THROUGH the handed-out handle
         assert_eq!(parked.join().unwrap(), Ok(1));
