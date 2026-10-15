@@ -84,6 +84,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `compute_rtt_us` and `system_time_to_ntp_mid` are removed. Round-trip time
   was never computed; `rtt_us` reports 0, as before.
 - `tst_rtp::init` (a no-op) and `RtspSession::rtcp_endpoint` are removed.
+- Items with no use outside the crate are no longer public: the RTSP wire
+  messages (`RtspRequest`, `RtspResponse`, `RtspMethod`), the authentication
+  internals in `rtsp::auth` (`AuthChallenge`, `DigestAlgorithm`,
+  `DigestChallenge`, `DigestContext`, `parse_challenges`,
+  `build_basic_response`, `build_digest_response`), the SETUP negotiation
+  internals (`TransportResponse`, `parse_transport_response`,
+  `build_transport_request`, `bind_udp_pair`), `parse_rtp_info`, `RtpClock`
+  and the `clock` module, `pick_h264`, `pick_mp2t`, `H264Media`,
+  `Sdp::build_for_mount`, `H264FmtpParams`, `parse_rtpmap_h264`,
+  `RTP_VERSION`, `RTP_PT_MP2T`, `RtpHeader::encode_into`, `ingest_rr`,
+  `ingest_sr`, `MulticastGroup`, `RtspVersion::wire_str` and
+  `rtsp::server::session::ServerSessionState`. `RtspClient` and `RtspServer`
+  reach the same behaviour; `RtspClient::setup_h264_auto` and
+  `setup_mp2t_auto` do the SDP selection. `RtspClient::last_server_version`
+  is removed.
 
 ### Changed — tst-core (BREAKING)
 

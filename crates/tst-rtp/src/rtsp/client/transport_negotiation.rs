@@ -25,30 +25,28 @@ pub enum RtspTransportKind {
 
 /// Parsed `Transport:` response header.
 #[derive(Debug, Clone)]
-pub struct TransportResponse {
+pub(crate) struct TransportResponse {
     /// Which transport the server actually accepted.
     pub kind: RtspTransportKind,
-    /// For UDP: server's RTP+RTCP port range from `server_port=lo-hi`.
-    pub server_port: Option<(u16, u16)>,
     /// For UDP: client's RTP+RTCP port range from `client_port=lo-hi`.
     /// Server-side parses this from the client's SETUP request; client-side
     /// parsers leave this as `None` (the client knew its own ports).
+    #[cfg(feature = "rtsp-server")]
     pub client_port: Option<(u16, u16)>,
     /// For TCP-interleaved: channel range from `interleaved=lo-hi`.
     pub interleaved: Option<(u8, u8)>,
-    /// `ssrc=` parameter from the Transport header, if present.
-    pub ssrc: Option<u32>,
     /// `mode=` parameter, lowercased and with surrounding quotes
     /// stripped (ffmpeg sends `mode=record`; RFC 2326 shows
     /// `mode="PLAY"`). `None` when absent — a reader's SETUP omits it.
+    #[cfg(feature = "rtsp-server")]
     pub mode: Option<String>,
 }
 
 /// Parse a `Transport:` header value (server response OR client SETUP
 /// request — the syntax is shared per RFC 7826 §18.54).
 ///
-/// Recognized keys: `client_port=`, `server_port=`, `interleaved=`,
-/// `ssrc=`. The kind is inferred from the presence of `RTP/AVP/TCP` or
+/// Recognized keys: `client_port=`, `server_port=` (validated, not kept),
+/// `interleaved=`, `mode=`. The kind is inferred from the presence of `RTP/AVP/TCP` or
 /// `interleaved=`.
 ///
 /// Parsing is **strict** and parameter names are matched
@@ -65,17 +63,17 @@ pub struct TransportResponse {
 ///
 /// [`RtspError::UnsupportedTransport`] if any present port/channel pair is
 /// malformed.
-pub fn parse_transport_response(header_value: &str) -> Result<TransportResponse, RtspError> {
+pub(crate) fn parse_transport_response(header_value: &str) -> Result<TransportResponse, RtspError> {
     let lower = header_value.to_ascii_lowercase();
     let kind = if lower.contains("rtp/avp/tcp") || lower.contains("interleaved=") {
         RtspTransportKind::TcpInterleaved
     } else {
         RtspTransportKind::Udp
     };
-    let mut server_port = None;
+    #[cfg(feature = "rtsp-server")]
     let mut client_port = None;
     let mut interleaved = None;
-    let mut ssrc = None;
+    #[cfg(feature = "rtsp-server")]
     let mut mode = None;
     for part in header_value.split(';') {
         let part = part.trim();
@@ -88,23 +86,34 @@ pub fn parse_transport_response(header_value: &str) -> Result<TransportResponse,
         let key = key.trim().to_ascii_lowercase();
         let value = value.trim();
         match key.as_str() {
-            "server_port" => server_port = Some(parse_u16_pair(value)?),
-            "client_port" => client_port = Some(parse_u16_pair(value)?),
+            // Validated (a malformed pair rejects the SETUP) but not kept:
+            // nothing reads the server's ports.
+            "server_port" => {
+                parse_u16_pair(value)?;
+            }
+            // Validated on every build; kept only where the server reads it.
+            "client_port" => {
+                let _pair = parse_u16_pair(value)?;
+                #[cfg(feature = "rtsp-server")]
+                {
+                    client_port = Some(_pair);
+                }
+            }
             "interleaved" => interleaved = Some(parse_u8_pair(value)?),
-            "ssrc" => ssrc = u32::from_str_radix(value, 16).ok(),
             // Quotes stripped (RFC 2326 shows `mode="PLAY"`; ffmpeg sends
             // the bare `mode=record`), lowercased so callers can compare
             // against the one case-normalized literal "record".
+            #[cfg(feature = "rtsp-server")]
             "mode" => mode = Some(value.trim_matches('"').to_ascii_lowercase()),
             _ => {}
         }
     }
     Ok(TransportResponse {
         kind,
-        server_port,
+        #[cfg(feature = "rtsp-server")]
         client_port,
         interleaved,
-        ssrc,
+        #[cfg(feature = "rtsp-server")]
         mode,
     })
 }
@@ -208,7 +217,7 @@ fn parse_u8_pair_detail(value: &str) -> Result<(u8, u8), &'static str> {
 /// `u16::MAX` that no candidate even/odd pair fits without overflowing
 /// (the companion RTCP port is always RTP+1).
 /// [`RtspError::Io`] with `AddrInUse` if all candidate pairs fail to bind.
-pub fn bind_udp_pair(start: u16) -> Result<(UdpSocket, UdpSocket, u16), RtspError> {
+pub(crate) fn bind_udp_pair(start: u16) -> Result<(UdpSocket, UdpSocket, u16), RtspError> {
     let mut bound_overflow = false;
     for attempt in 0..8u16 {
         // start + attempt*2, then companion port+1 — both checked so a
@@ -247,7 +256,7 @@ pub fn bind_udp_pair(start: u16) -> Result<(UdpSocket, UdpSocket, u16), RtspErro
 /// [`RtspError::UnsupportedTransport`] for a UDP request when `rtp_port`
 /// is `u16::MAX` (the RTCP companion port `rtp_port + 1` would overflow
 /// `u16`).
-pub fn build_transport_request(
+pub(crate) fn build_transport_request(
     pref: RtspTransportPref,
     rtp_port: u16,
 ) -> Result<String, RtspError> {
@@ -273,7 +282,7 @@ mod tests {
         let h = "RTP/AVP;unicast;client_port=5004-5005;server_port=6970-6971;ssrc=0DEADBEEF";
         let t = parse_transport_response(h).unwrap();
         assert_eq!(t.kind, RtspTransportKind::Udp);
-        assert_eq!(t.server_port, Some((6970, 6971)));
+        #[cfg(feature = "rtsp-server")]
         assert_eq!(t.client_port, Some((5004, 5005)));
     }
 
@@ -285,6 +294,7 @@ mod tests {
         assert_eq!(t.interleaved, Some((0, 1)));
     }
 
+    #[cfg(feature = "rtsp-server")]
     #[test]
     fn mode_record_is_parsed_case_insensitively() {
         let t =
@@ -460,8 +470,8 @@ mod tests {
             parse_transport_response("RTP/AVP;UNICAST;Client_Port=5004-5005;SERVER_PORT=6970-6971")
                 .unwrap();
         assert_eq!(t.kind, RtspTransportKind::Udp);
+        #[cfg(feature = "rtsp-server")]
         assert_eq!(t.client_port, Some((5004, 5005)));
-        assert_eq!(t.server_port, Some((6970, 6971)));
     }
 
     #[test]
@@ -488,6 +498,8 @@ mod tests {
     fn parse_accepts_well_formed_lowercase_unchanged() {
         // Regression: don't break the happy path.
         let t = parse_transport_response("RTP/AVP;unicast;client_port=5004-5005").unwrap();
+        assert_eq!(t.kind, RtspTransportKind::Udp);
+        #[cfg(feature = "rtsp-server")]
         assert_eq!(t.client_port, Some((5004, 5005)));
     }
 }

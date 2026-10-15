@@ -12,8 +12,8 @@ use std::time::SystemTime;
 use crate::rtcp::stats::RtcpStats;
 use crate::rtcp::{ReceiverReport, SenderReport};
 
-/// Snapshot of the last SR observed from peer, used for RTT calc when
-/// peer's next RR arrives.
+/// Anchor from the peer's last sender report. `rtt_us` stays 0: no transport
+/// sends RTCP, so there is no report of ours for the peer to echo.
 #[derive(Debug, Clone, Copy)]
 pub struct SrAnchor {
     /// Middle 32 bits of NTP timestamp from the SR (RFC 3550 §6.4.1).
@@ -26,7 +26,7 @@ pub struct SrAnchor {
 /// cumulative_lost_send from the first report block referencing our SSRC
 /// (if matched). `rtt_us` is never updated by this function; it stays at
 /// its prior value (0 by default). Returns true if the RR was applicable.
-pub fn ingest_rr(stats: &mut RtcpStats, our_ssrc: u32, rr: &ReceiverReport) -> bool {
+pub(crate) fn ingest_rr(stats: &mut RtcpStats, our_ssrc: u32, rr: &ReceiverReport) -> bool {
     stats.rr_packets_received += 1;
     stats.last_rr_ts = Some(SystemTime::now());
     let mut matched = false;
@@ -52,7 +52,7 @@ pub fn ingest_rr(stats: &mut RtcpStats, our_ssrc: u32, rr: &ReceiverReport) -> b
 /// updates `sr_packets_received` + `last_sr_ts`. The returned anchor is
 /// a snapshot of what was written into `stats.last_sr_anchor`; callers
 /// that want the value without re-reading the struct can use the return.
-pub fn ingest_sr(stats: &mut RtcpStats, sr: &SenderReport) -> SrAnchor {
+pub(crate) fn ingest_sr(stats: &mut RtcpStats, sr: &SenderReport) -> SrAnchor {
     stats.sr_packets_received += 1;
     let received_at = SystemTime::now();
     stats.last_sr_ts = Some(received_at);

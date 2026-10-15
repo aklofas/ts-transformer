@@ -36,7 +36,7 @@
 
 pub mod builder;
 pub mod cancel;
-pub mod clock;
+pub(crate) mod clock;
 pub mod error;
 pub mod h264;
 pub mod packet;
@@ -51,26 +51,22 @@ mod binding_kind;
 // RTP transport.
 pub use builder::{RtpRecvSocketBuilder, RtpSocketBuilder};
 pub use cancel::RtpCancelHandle;
-pub use clock::RtpClock;
-pub use packet::{Parsed, RTP_HEADER_LEN, RTP_PT_MP2T, RTP_VERSION, RtpHeader, RtpParseError};
+pub use packet::{Parsed, RTP_HEADER_LEN, RtpHeader, RtpParseError};
 pub use transport::{ConnectError, RtpRecvTransport, RtpStats, RtpTransport};
 pub use url::{DEFAULT_PKT_SIZE, RtpUrl, UrlError as RtpUrlError};
 
 // RTSP client.
 pub use builder::RtspClientBuilder;
 pub use error::RtspError;
-pub use rtcp::ingest::{SrAnchor, ingest_rr, ingest_sr};
+pub use rtcp::ingest::SrAnchor;
 pub use rtcp::stats::RtcpStats;
 pub use rtcp::{ReceiverReport, ReportBlock, RtcpError, RtcpPacketType, SdesPacket, SenderReport};
-pub use rtsp::auth::{AuthChallenge, DigestAlgorithm, DigestChallenge, DigestContext};
 pub use rtsp::client::end_reason::{StreamEndReason, StreamEndReasonHandle};
 pub use rtsp::client::options_describe::OptionsResponse;
-pub use rtsp::client::play::{RtpInfo, parse_rtp_info};
+pub use rtsp::client::play::RtpInfo;
 pub use rtsp::client::session::RtspSession;
-pub use rtsp::client::transport_negotiation::{RtspTransportKind, TransportResponse};
+pub use rtsp::client::transport_negotiation::RtspTransportKind;
 pub use rtsp::client::{RtspCancelHandle, RtspClient};
-pub use rtsp::message::{RtspMethod, RtspRequest, RtspResponse};
-pub use sdp::pick::{H264Media, pick_h264, pick_mp2t};
 pub use sdp::{Sdp, SdpMedia};
 /// Re-export: the credential type accepted by
 /// [`RtspClientBuilder::auth`](crate::RtspClientBuilder::auth) — consumers
@@ -81,8 +77,7 @@ pub use url::{RtspScheme, RtspTransportPref, RtspUrl, RtspVersion};
 
 // H.264 RTP payload format (RFC 6184).
 pub use h264::{
-    H264Au, H264Depacketizer, H264DepayConfig, H264DepayStats, H264FmtpParams, H264Receiver,
-    ParameterSetInjection, parse_rtpmap_h264,
+    H264Au, H264Depacketizer, H264DepayConfig, H264DepayStats, H264Receiver, ParameterSetInjection,
 };
 
 // RTSP server (requires the `rtsp-server` feature, default-on). The error
@@ -101,7 +96,6 @@ pub use rtsp::server::publish::{
 };
 #[cfg(feature = "rtsp-server")]
 pub use rtsp::server::{RtspServer, ServerStats};
-pub use url::MulticastGroup;
 
 #[cfg(test)]
 mod tests {

@@ -25,9 +25,8 @@ pub struct RtcpStats {
     /// [`tst_core::transport::SocketStats::packets_lost_send`] by
     /// [`crate::transport::RtpRecvTransport`]'s `socket_stats`.
     pub cumulative_lost_send: u32,
-    /// Smoothed RTT in microseconds, computed from the most recent RR
-    /// after a matching SR anchor was stored. `0` until at least one
-    /// `(SR, RR)` pair has been observed. Projected into
+    /// Always 0: a round-trip time needs the peer to echo one of our own
+    /// sender reports, and no transport sends RTCP. Projected into
     /// [`tst_core::transport::SocketStats::rtt_us`] by
     /// [`crate::transport::RtpRecvTransport`]'s `socket_stats`.
     pub rtt_us: u32,

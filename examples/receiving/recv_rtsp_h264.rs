@@ -112,7 +112,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // ── (3) SETUP: setup_h264_auto ────────────────────────────────────────
     //
     // What this does:
-    //   a) Calls `pick_h264(&sdp)` — scans all m-lines for `a=rtpmap:N H264/90000`.
+    //   a) Scans all m-lines for `a=rtpmap:N H264/90000`.
     //      Fails with `RtspError::NoH264Media` if none found, or
     //      `RtspError::MultipleH264Media` if more than one is found (ambiguous;
     //      explicit `setup(&media)` is the right tool for that case).

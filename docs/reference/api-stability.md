@@ -101,11 +101,10 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-tcp | (crate) | Stable | small, settled |
 | tst-rtp | builder | Stable | RTP transport builder / URL-connect surface |
 | tst-rtp | cancel | Stable | RTP cancellation handle |
-| tst-rtp | clock | Stable | RTP clock/timestamp helper |
 | tst-rtp | error | Stable | RTP error taxonomy |
 | tst-rtp | h264 | Stable | RFC 6184 H.264 depacketizer/receiver; `H264Receiver::set_recv_timeout` and `end_reason()` are Provisional — same divergence shape as `transport`'s row below |
 | tst-rtp | packet | Stable | RTP packet parse/build |
-| tst-rtp | rtcp | Stable | RTCP sender/receiver report handling |
+| tst-rtp | rtcp | Stable | RTCP SR/RR/SDES packet codecs and `RtcpStats` |
 | tst-rtp | sdp | Stable | SDP parsing/media selection |
 | tst-rtp | transport | Stable | RTP transports (unicast/multicast, v4/v6); `RtpRecvTransport::{end_reason, end_reason_handle}` are Provisional — they return `StreamEndReason`/`StreamEndReasonHandle`, which live in and inherit the tier of the `rtsp` row below |
 | tst-rtp | url | Stable | `rtp(s)://`/`rtsp(s)://` URL parsing |
@@ -122,7 +121,7 @@ its `rtsp` row), the more specific row wins for that path.
 functions at the crate root for ergonomics — for example
 `tst_core::Transport` (from `tst_core::transport::Transport`),
 `tst_core::UasDatalinkLs` (from `tst_core::klv::st0601::UasDatalinkLs`), and
-`tst_rtp::compute_rtt_us` (from `tst_rtp::rtcp::ingest::compute_rtt_us`).
+`tst_rtp::RtspClient` (from `tst_rtp::rtsp::client::RtspClient`).
 These root items do not get their own table rows: **a root-level item's
 tier is whatever the module row that defines it says.**
 
