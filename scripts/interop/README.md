@@ -609,12 +609,8 @@ these cells with the role's fuzz targets and the soak's `rtsp-publish` leg
 endurance run, judged by `tst-interop report soak` rather than by the
 cell-based matrix above. Two legs (SRT + RIST) run through an impaired proxy;
 a third, `rtsp-publish`, has an external RTSP publisher push into the
-receiver's publish mount and drop on a schedule (see "Publish leg" below). See
-`soak.sh`'s own header comment for the full topology, prerequisites, and the
-detached-launch recipe (`setsid`/`nohup` + `disown` — never a supervising
-tool/session wrapper, which can enforce its own lifetime cap short of the
-run's actual duration). `--hours` accepts a decimal (e.g. `--hours 0.05` for
-a ~3-minute drill), not just whole hours.
+receiver's publish mount and drop on a schedule (see "Publish leg" below). `bash scripts/interop/soak.sh --help` lists the flags, env knobs and exit
+codes; the topology, prerequisites and launch recipe follow below.
 
 `soak.sh` also records three files `report soak` does **not** read — they
 are archive evidence, not verdict inputs: **`provenance.json`** (source SHA,
@@ -658,6 +654,88 @@ Those two files feed three new verdicts in `soak-results.json`:
 - **`worker_exits`** — every status in `exits.json` must be `0` unless the
   role is listed in `expected_worker_exits`; a missing `exits.json` fails
   the run.
+
+### Topology
+
+- **`srt` leg:** `tst-interop send --managed` → impairment proxy (the
+  seeded phase schedule plus a 90 s full-drop outage every 6 h) →
+  `tst-interop recv --managed`. The receiver is managed because a
+  listener-mode SRT receive accepts exactly one connection per process:
+  without it the first outage would end the capture while the sender kept
+  retrying. Both ends must survive each outage and reconnect.
+- **`rist` leg:** the same shape over RIST through a second proxy on the
+  same schedule, with no outage window. RIST has no `Managed*` wrapper
+  here, so an outage would only be sustained loss; this leg's job is
+  sustained loss / jitter / reorder over hours.
+- **`rtsp-publish` leg:** GStreamer's `rtspclientsink` publishes (ANNOUNCE
+  + RECORD, MP2T over TCP-interleaved RTP) into `tst-interop recv --url
+  rtsp-publish://...`; no proxy, no tst-interop sender. See "Publish leg"
+  below.
+
+### Running a soak on a fresh host
+
+Linux, validated on x86_64 (aarch64 has no arch-specific code in this path
+but is not yet validated). The build needs the vendored native
+dependencies' toolchains — cmake for libsrt and mbedTLS, meson + ninja for
+librist, clang / libclang for bindgen — and the rtsp-publish leg needs
+`gst-launch-1.0` with `rtspclientsink` (`--no-rtsp-publish` runs without it):
+
+```bash
+git clone --recurse-submodules https://github.com/aklofas/ts-transformer.git
+cd ts-transformer
+curl https://sh.rustup.rs -sSf | sh -s -- -y   # if rustup is missing; the repo pins 1.85
+sudo apt install -y jq python3 build-essential cmake meson ninja-build clang libclang-dev \
+  gstreamer1.0-tools gstreamer1.0-plugins-bad gstreamer1.0-rtsp
+SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop
+```
+
+Launch a real run genuinely detached and never through a session tool that
+enforces its own lifetime cap (one killed a 1-hour smoke at about 60
+minutes); then poll for `soak-results.json`, or `pids/*.pid` plus `ps`:
+
+```bash
+SRT_RECONNECT_MODE=background nohup bash scripts/interop/soak.sh --outdir ~/interop-soak-$(date +%F) --seed 1 &
+```
+
+With the rtsp-publish leg on, a 72-hour run needs about 122 GB free in the
+outdir at launch (about 1.7 GB per hour; exit 2 below 1.2 × that peak).
+`--hours 1` is the smoke: long enough for a real post-warm-up RSS window,
+too short for an outage, so it proves the managed receiver's steady state
+only. `--hours 0.05` runs launch, supervisor and report end to end in
+about three minutes.
+
+### Outputs and the supervisor
+
+Under `--outdir`: `rss.csv` (`elapsed_s,leg,process,pid,rss_kb` for every
+worker; on rtsp-publish the `publisher` row is the restart loop's shell,
+not gst-launch-1.0), `proc.csv`, `host.csv` and `provenance.json` (above),
+`soak-config.json` and `exits.json` (below), per leg
+`{srt,rist}/{proxy-stats,recv-report,send-report}.json` and
+`corruption.jsonl`, `rtsp-publish/recv-report.json` and `source.sha256`,
+`logs/*.log` (each send / recv writes a one-line heartbeat every 60 s),
+`pids/*.pid`, `soak-events.log`, `soak-results.json` and `summary.txt`.
+`klv_set_sha256` is `null` in every report (`--no-klv-digest`).
+`soak-config.json` declares what the run was launched to do, checked by the
+`*_declared_<leg>` verdicts (`profile`, `schedule`, `corruption`, `klv`,
+`reconnect_mode`): the SRT mode sits at `legs.srt.reconnect_mode`, and the
+rtsp-publish leg declares `publisher_drop_period_s`, `publisher_generations`
+and, once the source stream exists, `source_sha256`, which the receiver's
+`stream_sha256` must equal (`delivery_complete_rtsp-publish`).
+
+The supervisor polls every worker every 30 s. A death more than
+`SUPERVISOR_GRACE_S` (120 s) before the deadline kills the run at once,
+writes `soak-FAILED` naming the role and log, records it in
+`soak-events.log` and exits nonzero after attempting the report; later
+deaths are ordinary end-of-run staggering. The first 72-hour attempt lost
+both senders 14.5 h in and idled unnoticed for 12 h, which is why this
+exists.
+
+The RSS-slope gate defaults to 200 KiB/hour for runs of 72 h or more,
+pinned from the 2026-08-05 run: its worst post-warm-up slope was 68.8
+KiB/h, warm-up convergence to a ~176 MiB plateau, and every slope over its
+final 24 h was at most 18 KiB/h. Shorter runs stay provisional unless a
+threshold is passed, because under realistic AU sizes the senders take
+about 7 h to reach that plateau.
 
 ### Realism knobs
 
@@ -1017,8 +1095,7 @@ with its own default settings.
 per transport. `soak.sh` asks a different question: whether one fixed load
 survives days of impairment. Never run `stress.sh` on a host that is running
 a soak. It drives the box to its limits on purpose, which would spoil both
-runs' resource evidence. Its header comment has the full topology, knobs and
-outputs.
+runs' resource evidence. `bash scripts/interop/stress.sh --help` lists the flags, env knobs and exit codes.
 
 One stream is one `send -> proxy -> recv` triple of `tst-interop` processes.
 TCP has no proxy. Every sender runs realistic AU sizes, rich KLV and the
@@ -1060,6 +1137,27 @@ the step's largest keyframe burst (`UDP_RCVBUF_BURST_FACTOR`, default 2×)
 whenever the kernel default could not hold it; the pre-flight refuses a run
 that `net.core.rmem_max` would clamp.
 
+Per transport, a step's processes are:
+
+| Transport | Receiver | Sender |
+| --- | --- | --- |
+| srt | `srt://:PORT?mode=listener&latency=1200`, `--managed` | `srt://PROXY?latency=1200`, `--managed --reconnect-mode $SRT_RECONNECT_MODE` |
+| rist | `rist://@0.0.0.0:PORT?buffer=1200` | `rist://PROXY?buffer=1200` |
+| udp | `udp://127.0.0.1:PORT` | `udp://PROXY` |
+| tcp | `tcp://127.0.0.1:PORT?listen=1` | `tcp://127.0.0.1:PORT` (no proxy) |
+
+Stream `i` (zero-based) uses KLV seed `SEED + i` and corruption seed
+`SEED + 1 + i`; the tap runs at `rate=5` with its geometry scaled to
+`--au-scale`. A step whose aggregate nominal bitrate (1.7 Mb/s × F per
+stream) exceeds `STRESS_MAX_AGG_MBPS` is refused before launch, and each
+step has a wall-clock limit of its run time + 180 s, after which every
+process is killed and the step fails with `step_timeout`.
+
+An SRT receiver's port is probed free when its proxy launches but bound
+`HOLD_OUTAGE_DUR_S + 30` s later, so another process can take it in
+between (about 0.1 % of runs at 128 SRT streams); the run then aborts with
+`stress-FAILED` at the supervisor's first poll. Rerun it.
+
 ### The hold
 
 After the sweep, every transport runs together for `--hold-hours`, 24 h by
@@ -1068,7 +1166,7 @@ least one stream. The ceiling is the highest streams step that passed. If
 the sweep's per-stream CPU cost predicts more than 70% of the box for the
 total, every count is scaled down by the same factor (`cpu_scale_factor`);
 then likewise for memory: the per-stream RSS each transport showed at its
-ceiling step, times `HOLD_MEM_HEADROOM` (2.5), summed over the hold, must
+ceiling step, times `HOLD_MEM_HEADROOM` (2.5, margin for what a 10-minute step cannot show: gap buffers filling across outages and per-reconnect RSS steps), summed over the hold, must
 stay under `HOLD_MEM_BUDGET` (0.70) × MemTotal, or every count is scaled
 down by the same `mem_scale_factor`. Both factors and the figures are in
 `hold/hold-config.json`. A transport with no passing streams step is
@@ -1110,8 +1208,8 @@ SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=1024 \
   --dry-run-rss srt=27,rist=27,udp=22,tcp=16
 ```
 
-A real run must be launched detached, for the reason `soak.sh`'s header
-gives. `--skip-hold` runs the sweep only:
+A real run must be launched detached, for the reason under "Running a soak
+on a fresh host" above; its prerequisites are the soak's, without GStreamer. `--skip-hold` runs the sweep only:
 
 ```bash
 SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=1024 \
@@ -1123,7 +1221,7 @@ Outputs under `--outdir`:
 - `provenance.json` and `stress-config.json` are written before any process
   launches.
 - `stress-events.log` records every launch, step start, pass, fail and
-  timeout. `pids/stress.pid` holds the supervisor's own pid.
+  timeout. `pids/stress.pid` holds the supervisor's own pid (`pids/sampler.pid` the sampler's); a restart is logged to `restart-events.log` as `<elapsed_s> RESTART role=<leg>-recv old_pid=N new_pid=N`; killing it aborts the run (its INT/TERM trap kills the current step's processes).
 - `sweep/<transport>/<streams|bitrate>/<load>/` holds one step. It contains
   `config.json`, `rss.csv`, `proc.csv`, `host.csv`, `exits.json`,
   `step-results.json`, `logs/` and `pids/`, plus

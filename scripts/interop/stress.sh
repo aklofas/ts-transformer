@@ -1,113 +1,12 @@
 #!/usr/bin/env bash
-# Stress harness: find where each transport stops coping, then hold a
-# fraction of that load for a day. Where soak.sh asks "does a
-# fixed, realistic load survive 72 hours of impairment?", this script asks
-# "how much load does one box carry before a verdict fails?" — per
-# transport, on two axes, one step at a time — and hands every step to
-# `tst-interop report step` and the whole run to `tst-interop report
-# stress` for the verdicts. Bash launches, samples and reaps; every
-# judgement is Rust.
+# Stress harness: per transport, sweep load until a verdict fails, then hold
+# a fraction of every ceiling together for a day. Bash launches, samples and
+# reaps; `tst-interop report step|hold|stress` judge. Topology, the sweep and
+# hold rules, outputs and the launch recipe: scripts/interop/README.md,
+# "Stress sweep". Never run it on a host that is running a soak: the sweep
+# drives the box to its limits on purpose.
 #
-# NEVER RUN THIS ON THE RC SOAK VM. The sweep deliberately drives the box
-# to its limits; on a host that is also running a soak it would corrupt
-# that soak's resource evidence and this run's ceilings at the same time.
-# It runs on its own VM.
-#
-# # Topology
-#
-# One STREAM is one process triple, all `tst-interop` talking to itself:
-#
-#   send -> proxy (UDP relay) -> recv          srt, rist, udp
-#   send ----------------------> recv          tcp (no proxy: it relays UDP)
-#
-#   - srt:  recv `srt://:PORT?mode=listener&latency=1200 --managed`,
-#           send `srt://PROXY?latency=1200 --managed --reconnect-mode
-#           $SRT_RECONNECT_MODE` (both ends managed, as in soak.sh).
-#   - rist: recv `rist://@0.0.0.0:PORT?buffer=1200`, send
-#           `rist://PROXY?buffer=1200` (unmanaged, as in soak.sh).
-#   - udp:  recv `udp://127.0.0.1:PORT`, send `udp://PROXY`.
-#   - tcp:  recv `tcp://127.0.0.1:PORT?listen=1`, send `tcp://127.0.0.1:PORT`.
-#
-# Every sender runs `--profile baseline --au-sizes realistic --au-scale F
-# --klv-set rich` with the corruption tap on (`rate=5`; the tap's packet
-# geometry — min_gap, attribution window, recovery bound — follows
-# --au-scale, so it is NOT pinned here: at scale 4 a keyframe spans ~1160
-# packets and the soak's literal `min_gap=1000` would be refused), and
-# every receiver judges its stream against the sender's corruption log,
-# so the correctness verdicts keep their meaning under load. Stream `i`
-# (zero-based) uses KLV seed `SEED + i` and corruption seed `SEED + 1 + i`.
-# The sweep's proxies run a CLEAN link (`--loss 0 --jitter 0 --delay 0
-# --reorder 0,0`): a ceiling is measured without impairment, and the proxy
-# stays in the path so the sweep and the hold share one topology.
-#
-# # The sweep
-#
-# For each transport in `--transports` order: the STREAMS axis (N
-# streams at `--au-scale 1`, N over `--stream-ladder`), then the BITRATE
-# axis (one stream at `--au-scale F`, F over `--scale-ladder`). Each step
-# launches its streams, runs `--step-warmup-s` + `--step-hold-s` seconds,
-# reaps every process, and runs `report step` on its directory. An axis
-# stops at its first failing step; the ceiling is the last passing load.
-# A step's nominal bitrate is 1.7 Mb/s x F per stream; a step whose
-# aggregate exceeds STRESS_MAX_AGG_MBPS is refused before anything
-# launches. Each step has a hard wall-clock limit of its run time + 180s:
-# on expiry every process of the step is killed and the step FAILs with
-# `step_timeout`. Steps are strictly sequential. A step whose `report
-# step` cannot judge it (exit 2) while a worker exited nonzero or the
-# step timed out is an OVERLOADED step, not a harness error: it FAILs
-# with `step_unjudgeable` and stops the axis.
-#
-# # The hold
-#
-# After the sweep (unless --skip-hold), every transport runs together
-# for --hold-hours at a fraction of its streams ceiling C_t (the highest
-# streams load whose step-results.json passed): n_t = max(1,
-# floor(0.7 x C_t)). If the sweep's per-stream CPU cost predicts more
-# than 70% of the box for the sum, every n_t is scaled down by
-# 0.70/predicted (cpu_scale_factor). Then the same for MEMORY: the
-# per-stream RSS measured at each transport's ceiling step (sum over its
-# send/proxy/recv processes at the last sample), times HOLD_MEM_HEADROOM
-# (the hold's footprint over the sweep's: Background gap buffers filling
-# across outages, the per-reconnect RSS steps, 4 transports at once —
-# a 2.5x margin), summed over the hold,
-# must stay under HOLD_MEM_BUDGET x MemTotal, else every n_t is scaled
-# down by the same mem_scale_factor (recorded in hold-config.json). Run 2
-# (2026-10-03) had no memory rule: 356 streams / 979 processes on 16 GiB
-# were OOM-killed 190 s into the hold. A transport with no passing streams
-# step is EXCLUDED from the hold (declared in hold-config.json's
-# excluded_transports, event HOLD-EXCLUDED, a `report stress` limitation;
-# the run still exits 1 because that transport has no ceiling); the hold
-# runs on the rest. If srt is excluded there are no outages or restarts.
-# Only when NO transport has a ceiling is the hold refused. Stream i
-# (global, 0-based over every held
-# transport) has leg `<t>-<k>` (k per transport), KLV seed SEED + i,
-# corruption seed SEED + 1 + i. SRT and RIST proxies run the seeded
-# schedule `seed=SEED+i,phases=HOLD_SCHEDULE_PHASES,phase_s=hold_s/phases`;
-# UDP proxies run the sweep's clean link (raw UDP has no loss recovery and
-# nothing to reconnect, so impairing it measures the network, not the
-# library), and TCP stays direct. SRT
-# proxies also cut the link for HOLD_OUTAGE_DUR_S every
-# HOLD_OUTAGE_PERIOD_S, and are launched SRT_PROXY_WARMUP_S =
-# HOLD_OUTAGE_DUR_S + 30 s before the hold clock starts (soak.sh's
-# window-0 reasoning), so in hold time outage n >= 1 starts at
-# n x PERIOD - SRT_PROXY_WARMUP_S. Every HOLD_RESTART_PERIOD_S (first at
-# HOLD_RESTART_OFFSET_S) the supervisor kills srt-0's receiver and
-# relaunches it on the same port; `report hold` then requires srt-0's
-# sender to show a fresh reconnect within 120 s. A restart later than
-# hold_s - 120 s could not be judged, so none is scheduled there, and a
-# restart whose (t - DUR - 60, t + 120] guard band meets an outage
-# window is a usage error (exit 2), refused before anything launches:
-# its recovery would be indistinguishable from the outage's.
-#
-# Accepted race: an SRT stream's receiver port is probed free when its
-# proxy launches, but the receiver binds it only SRT_PROXY_WARMUP_S
-# later, so another process can take it in between (about 0.1% of runs
-# at 128 SRT streams). The receiver then fails to bind, the supervisor
-# sees it dead at its first poll (minute 1) and the run aborts with
-# stress-FAILED. Rerun it.
-#
-# # Usage
-#
+# Usage:
 #   stress.sh --outdir DIR --seed N [--transports srt,rist,udp,tcp]
 #             [--stream-ladder 1,2,4,8,16,32,64,128,256,512,1024] [--scale-ladder 1,2,4,8,16,32,64]
 #             [--step-warmup-s 60] [--step-hold-s 600] [--hold-hours 24]
@@ -146,102 +45,36 @@
 #              ceiling of 0 = no passing step -> that transport is
 #              excluded and the preview exits 1, as a real run would).
 #
-# # Knobs (environment; all declared in stress-config.json)
-#
-#   SRT_RECONNECT_MODE              REQUIRED, blocking|background (exit 2 if unset) —
-#                                   same rule and reasoning as soak.sh
-#   RSS_SLOPE_THRESHOLD_KB_PER_HOUR REQUIRED, > 0 (exit 2 if unset) — `report step`
-#                                   has no default for it on purpose
-#   UDP_RCVBUF_BURST_FACTOR=2       UDP receivers AND their proxies: when a step's largest
-#                                   keyframe burst (53 248 B x au_scale, as TS packets) would
-#                                   not fit the kernel's default socket buffer
-#                                   (net.core.rmem_default / 2), the receiver URL gets
-#                                   ?rcvbuf=<factor x burst> and the proxy --rcvbuf; the
-#                                   pre-flight refuses a real run whose largest need exceeds
-#                                   net.core.rmem_max (the kernel clamps silently). Run 2
-#                                   lost udp/bitrate/4 to exactly that overflow (R2-F2).
-#                                   Scale 1 never qualifies, so streams-axis steps are
-#                                   configured as in runs 1-2. 0 = never set rcvbuf.
-#   RSS_SLOPE_UNGATED=rist/send     sweep steps only: comma-separated transport/process
-#                                   whose rss_slope verdict is recorded, not gated
-#                                   (librist's sender settles ~6 MB over its first
-#                                   hour; a 10-min step can only sample that ramp —
-#                                   the hold judges it over 24 h). Empty = gate all.
+# Environment (all declared in stress-config.json):
+#   SRT_RECONNECT_MODE              REQUIRED, blocking|background (exit 2 if unset)
+#   RSS_SLOPE_THRESHOLD_KB_PER_HOUR REQUIRED, > 0 (exit 2 if unset; `report step`
+#                                   has no default)
+#   UDP_RCVBUF_BURST_FACTOR=2       UDP receivers and their proxies get ?rcvbuf= /
+#                                   --rcvbuf of factor x the step's keyframe burst
+#                                   when the kernel default (rmem_default / 2) cannot
+#                                   hold it; a real run whose need exceeds
+#                                   net.core.rmem_max is refused. 0 = never.
+#   RSS_SLOPE_UNGATED=rist/send     sweep steps only: transport/process pairs whose
+#                                   rss_slope is recorded, not gated. Empty = gate all.
 #   STRESS_MAX_AGG_MBPS=2000        refuse a step above this aggregate nominal bitrate
-#   CPU_HEADROOM_MAX=0.80           report step thresholds (see `report step`)
+#   CPU_HEADROOM_MAX=0.80           `report step` thresholds
 #   FD_DELTA_MAX=2
 #   THREAD_DELTA_MAX=1
 #   DELIVERY_SLACK=0.7
 #   QUEUE_DEPTH_FRACTION=0.9
-#   STEP_MEM_HEADROOM=1.25          sweep guard: a streams step is SKIPPED (axis ends,
-#                                   failing verdict `memory_budget`, ceiling = last pass) when
-#                                   streams x per-stream RSS of the previous passing step x
-#                                   this headroom exceeds HOLD_MEM_BUDGET x MemTotal — the
-#                                   box's memory limit is reported as such instead of the
-#                                   kernel OOM-killing the step (which would end the RUN).
-#   HOLD_MEM_BUDGET=0.70            hold sizing: predicted hold RSS must stay under this
-#   HOLD_MEM_HEADROOM=2.5             fraction of MemTotal; predicted = sum over held streams
-#                                   of (per-stream RSS at the ceiling step x headroom) —
-#                                   margin for what a 10-min sweep step cannot show: gap
-#                                   buffers filling across outages, per-reconnect RSS
-#                                   steps. (Runs 2-3 measured ~2x / ~3x the sweep's
-#                                   per-stream RSS, but that was R3-F1 — the sender
-#                                   materialised its whole --seconds schedule, ~53 MB for
-#                                   24 h — fixed in tst-interop, not a hold effect.)
-#                                   Scaled like the CPU rule (mem_scale_factor, recorded).
+#   STEP_MEM_HEADROOM=1.25          sweep: skip a streams step predicted over
+#                                   HOLD_MEM_BUDGET x MemTotal (verdict memory_budget)
+#   HOLD_MEM_BUDGET=0.70            hold sizing: predicted RSS (per-stream RSS at the
+#   HOLD_MEM_HEADROOM=2.5             ceiling step x headroom) under this x MemTotal
 #   HOLD_OUTAGE_PERIOD_S=900        hold only: SRT outage every 15 min,
 #   HOLD_OUTAGE_DUR_S=30              30s long,
 #   HOLD_RESTART_PERIOD_S=7200        one SRT receiver restarted every 2h,
 #   HOLD_RESTART_OFFSET_S=450         first restart this far into the hold,
 #   HOLD_SCHEDULE_PHASES=96           seeded impairment schedule phases.
 #
-# # Outputs under --outdir
-#
-#   provenance.json        as soak.sh (source SHA, submodules, toolchain, host,
-#                          argv, env knobs), written before the build
-#   stress-config.json     the run's declared parameters, written before any launch
-#   stress-events.log      timestamped lifecycle events for every step
-#   pids/stress.pid        this script's own pid (kill it to abort the run; the
-#                          INT/TERM trap kills the current step's processes)
-#   sweep/<transport>/<streams|bitrate>/<load>/
-#     config.json          the step declaration (`report step`'s StepDeclaration)
-#     rss.csv proc.csv host.csv   sampler series, same columns as soak.sh's
-#     exits.json           every worker's exit status (+ step_timeout: 124 on timeout)
-#     streams/<i>/{leg.txt,send-report.json,recv-report.json,proxy-stats.json,corruption.jsonl}
-#     logs/<leg>-<proxy|recv|send>.log, logs/<leg>-proxy.stdout
-#     pids/<leg>-<proxy|recv|send>.pid, pids/sampler.pid
-#     step-results.json    `report step`'s verdict document
-#   stress-FAILED          only on a harness error (names the step and reason)
-#   hold/                  the hold, laid out as one step (config.json with
-#                          transport "all" / axis "hold", CSVs, exits.json,
-#                          streams/<i>/, logs/, pids/) plus:
-#     hold-config.json     n_hold, ceilings_declared, cpu_scale_factor (before launch)
-#     hold-schedule.json   restart instants and outage-window starts, hold time
-#     restart-events.log   `<elapsed_s> RESTART role=<leg>-recv old_pid=N new_pid=N`
-#     restart-exits.json   the killed receivers' exit statuses, keyed by elapsed_s
-#     hold-results.json    `report hold`'s verdict document
-#   stress-results.json    `report stress`: per-axis steps, ceilings, first
-#                          failures, the hold
-#   summary.txt            the ceilings table and the hold lines
-#
 # Exit status: 0 = `report stress` overall pass; 1 = a verdict failed, a
 # step was refused, or the hold could not be sized; 2 = bad argument,
 # bad env knob, colliding hold schedule or harness error.
-#
-# # Launching
-#
-# Prerequisites are soak.sh's (see its header): a Rust toolchain, jq,
-# python3, build-essential, cmake, meson, ninja-build, clang, libclang-dev.
-#
-# **Launch this genuinely detached — `nohup ... &` — and NEVER through a
-# supervising tool/session mechanism that can enforce its own lifetime
-# cap** (soak.sh's header has the incident: a session tool's background
-# wrapper killed a run at ~60 min). A full sweep takes hours and the hold
-# a day more. Poll for
-# `summary.txt` / `stress-results.json`, or `pids/stress.pid` + `ps`:
-#
-#   SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=1024 \
-#     nohup bash scripts/interop/stress.sh --outdir ~/stress-$(date +%F) --seed 1 &
 #
 # Validated on linux-x86_64 only; see lib.sh's header for this
 # directory's shell-portability stance (not macOS-portable).
@@ -655,7 +488,7 @@ fi
 # Hold CPU budget: the sizing keeps the predicted aggregate under this.
 HOLD_CPU_BUDGET=0.70
 # Hold memory budget (fraction of MemTotal) and the headroom multiplier on
-# the sweep's per-stream RSS — see the header's "The hold".
+# the sweep's per-stream RSS — see README.md's "The hold".
 : "${HOLD_MEM_BUDGET:=0.70}" "${HOLD_MEM_HEADROOM:=2.5}" "${STEP_MEM_HEADROOM:=1.25}"
 pos_decimal "$HOLD_MEM_BUDGET" HOLD_MEM_BUDGET 1
 pos_decimal "$HOLD_MEM_HEADROOM" HOLD_MEM_HEADROOM
@@ -672,7 +505,7 @@ if [[ -n "${DRY_RUN_MEM_TOTAL_KB:-}" ]]; then
 fi
 
 # size_hold <ceilings-assoc> <cpu-fraction-assoc> <rss-kb-per-stream-assoc>
-# — the hold sizing rule (see the header): sets HOLD_T (the held
+# — the hold sizing rule (see README.md's "The hold"): sets HOLD_T (the held
 # transports, in TRANSPORTS order), HOLD_EXCLUDED (those with no passing
 # streams step: ceiling unset or 0), HOLD_N, HOLD_N_UNSCALED, HOLD_PRED_CPU,
 # HOLD_CPU_SCALE_FACTOR, HOLD_PRED_MEM_KB, HOLD_MEM_BUDGET_KB and
