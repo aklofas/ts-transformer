@@ -375,6 +375,15 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/ratchet-self-test.sh
 
+      - name: No duplicate test helpers
+        # A Rust fn / Python def / Java private static body identical in two
+        # or more test files fails unless listed, with a reason, in
+        # scripts/ratchets/duplicate-test-helpers.tsv (exact both ways, so
+        # the list only shrinks). Gated to linux-x86_64: a platform-
+        # independent source scan.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/no-duplicate-test-helpers.sh
+
       - name: Check Publisher trait C mirror
         # Plan A5a — every tst_core::publisher::Publisher trait method has a
         # corresponding tst_publisher_* C entry point in the generated header.

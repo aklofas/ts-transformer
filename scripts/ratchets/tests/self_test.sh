@@ -19,8 +19,8 @@
 # `scripts/check/repo/kind-equivalence.sh`, and binding-side
 # `raise.rs::check_error_kinds` at `import tstrans`.
 #
-# The surviving cases are the C-header rail's and the blocking-slot-reader
-# rail's.
+# The surviving cases are the C-header rail's, the blocking-slot-reader
+# rail's and the duplicate-test-helper rail's.
 set -uo pipefail
 DIR="$(cd "$(dirname "$0")/.." && pwd)"          # scripts/ratchets
 
@@ -272,6 +272,69 @@ printf '%s\t%s\t%s\n' "$tmp/gl/ufcs-paren/shell.rs" Publisher::outside "fixture"
 
 expect "gil locks: a UFCS lock immediately followed by another, both inside allow_threads, is never a finding (only the outside one is)" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/ufcs-paren" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv" bash "$SG"
 expect "gil locks: allowlisting only the outside UFCS lock passes"                                                                      0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/ufcs-paren" SG_LOCK_ALLOWLIST="$tmp/gl/ufcs-paren-allow.tsv" bash "$SG"
+
+# ---- duplicate test helpers (scripts/check/repo/no-duplicate-test-helpers.sh) ----
+# One helper body in two test files is caught (renamed copies too) unless it
+# is allowlisted with a reason; a stale row, a row without a reason and an
+# empty scan fail; a short body and two copies in one file are not findings.
+DTH="$DIR/../check/repo/no-duplicate-test-helpers.sh"
+mkdir -p "$tmp/dth/rs/a/tests" "$tmp/dth/rs/b/tests" "$tmp/dth/py/tests" "$tmp/dth/java/src/test" \
+         "$tmp/dth/short/x/tests" "$tmp/dth/one/x/tests" "$tmp/dth/none/src"
+for d in a b; do cat > "$tmp/dth/rs/$d/tests/t.rs" <<'XEOF'
+fn drain(mux: &mut Muxer) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut buf = vec![0u8; 1316];
+    loop {
+        let n = mux.pull(&mut buf);
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n]);
+    }
+    out
+}
+XEOF
+done
+sed -i 's/^fn drain(/fn drain_all(/' "$tmp/dth/rs/b/tests/t.rs"
+for d in a b; do cat > "$tmp/dth/py/tests/test_$d.py" <<'XEOF'
+def idr():
+    data = bytearray(b"\x00\x00\x00\x01")
+    data.append(0x65)
+    data.extend(b"\x88" * 8)
+    return bytes(data)
+
+
+def test_other():
+    assert True
+XEOF
+done
+for d in A B; do cat > "$tmp/dth/java/src/test/${d}Test.java" <<'XEOF'
+class T {
+    private static byte[] idr() {
+        byte[] b = new byte[8];
+        b[3] = 1;
+        b[4] = 0x65;
+        return b;
+    }
+}
+XEOF
+done
+for d in a b; do printf 'fn tiny() -> u8 {\n    1\n}\n' > "$tmp/dth/short/x/tests/$d.rs"; done
+{ cat "$tmp/dth/rs/a/tests/t.rs"; sed 's/^fn drain(/fn drain2(/' "$tmp/dth/rs/a/tests/t.rs"; } > "$tmp/dth/one/x/tests/t.rs"
+printf '%s\t%s\t%s\n' "$tmp/dth/rs/a/tests/t.rs" drain fixture "$tmp/dth/rs/b/tests/t.rs" drain_all fixture > "$tmp/dth/listed.tsv"
+{ cat "$tmp/dth/listed.tsv"; printf '%s\t%s\t%s\n' "$tmp/dth/rs/a/tests/t.rs" gone fixture; } > "$tmp/dth/stale.tsv"
+printf '%s\t%s\n' "$tmp/dth/rs/a/tests/t.rs" drain > "$tmp/dth/noreason.tsv"
+: > "$tmp/dth/empty.tsv"
+
+expect "dup helpers: one Rust body in two test files is caught (renamed copy too)" 1 env DTH_ROOTS="$tmp/dth/rs"    DTH_ALLOWLIST="$tmp/dth/empty.tsv"    bash "$DTH"
+expect "dup helpers: the same two copies, allowlisted, pass"                     0 env DTH_ROOTS="$tmp/dth/rs"    DTH_ALLOWLIST="$tmp/dth/listed.tsv"   bash "$DTH"
+expect "dup helpers: a stale allowlist row fails"                                1 env DTH_ROOTS="$tmp/dth/rs"    DTH_ALLOWLIST="$tmp/dth/stale.tsv"    bash "$DTH"
+expect "dup helpers: an allowlist row without a reason fails"                    1 env DTH_ROOTS="$tmp/dth/rs"    DTH_ALLOWLIST="$tmp/dth/noreason.tsv" bash "$DTH"
+expect "dup helpers: a Python def body in two test files is caught"              1 env DTH_ROOTS="$tmp/dth/py"    DTH_ALLOWLIST="$tmp/dth/empty.tsv"    bash "$DTH"
+expect "dup helpers: a Java private static body in two test files is caught"     1 env DTH_ROOTS="$tmp/dth/java"  DTH_ALLOWLIST="$tmp/dth/empty.tsv"    bash "$DTH"
+expect "dup helpers: a body under the line floor is not a finding"               0 env DTH_ROOTS="$tmp/dth/short" DTH_ALLOWLIST="$tmp/dth/empty.tsv"    bash "$DTH"
+expect "dup helpers: two copies inside ONE file are not a cross-file finding"     0 env DTH_ROOTS="$tmp/dth/one"   DTH_ALLOWLIST="$tmp/dth/empty.tsv"    bash "$DTH"
+expect "dup helpers: a scan that finds no test file fails closed"                1 env DTH_ROOTS="$tmp/dth/none"  DTH_ALLOWLIST="$tmp/dth/empty.tsv"    bash "$DTH"
 
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

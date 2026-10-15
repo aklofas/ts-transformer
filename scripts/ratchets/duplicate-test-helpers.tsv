@@ -1,0 +1,123 @@
+# Known duplicate test helpers: file<TAB>name<TAB>reason.
+# Read by scripts/check/repo/no-duplicate-test-helpers.sh, exact in both
+# directions: delete a row when its duplicate is gone; never add one for
+# new code (move the helper into the crate's tests/common or into
+# tst-test-helpers instead).
+bindings/c/tests/codec_framing.rs	last_error_msg	binding tests: shared test support not yet written
+bindings/c/tests/muxing/av1_carriage_provenance.rs	drain_mux_rust	binding tests: shared test support not yet written
+bindings/c/tests/muxing/demux_config_av1_parity.rs	drain_mux	binding tests: shared test support not yet written
+bindings/c/tests/muxing/multi_program_event_identity.rs	last_error_msg	binding tests: shared test support not yet written
+bindings/c/tests/muxing/muxer_dts.rs	drain_mux	binding tests: shared test support not yet written
+bindings/c/tests/muxing/muxer_misp.rs	drain_mux	binding tests: shared test support not yet written
+bindings/c/tests/receiving/cancel_first.rs	last_error_msg	binding tests: shared test support not yet written
+bindings/c/tests/receiving/demux_receiver_loopback.rs	last_error_msg	binding tests: shared test support not yet written
+bindings/c/tests/receiving/exit_with_parked_call.rs	reserve_port	binding tests: shared test support not yet written
+bindings/c/tests/receiving/live_pair.rs	last_error_msg	binding tests: shared test support not yet written
+bindings/c/tests/receiving/managed_listener_cancel.rs	last_error_msg	binding tests: shared test support not yet written
+bindings/c/tests/receiving/raw_receiver_loopback.rs	last_error_msg	binding tests: shared test support not yet written
+bindings/c/tests/receiving/reconnect_attempts.rs	last_error_msg	binding tests: shared test support not yet written
+bindings/c/tests/receiving/ts_receiver_loopback.rs	last_error_msg	binding tests: shared test support not yet written
+bindings/c/tests/st0601_decode.rs	last_error_msg	binding tests: shared test support not yet written
+bindings/c/tests/transports/udp_close_cancels_first.rs	ts_null_packet	binding tests: shared test support not yet written
+bindings/c/tests/url_open/mod.rs	last_error_msg	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/klv/ParseUniversalTest.java	cat	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/klv/St0806Test.java	beBytes	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/klv/St0806Test.java	cat	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/klv/St0903Test.java	beBytes	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/klv/St0903Test.java	cat	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/mpegts/DemuxerConfigTest.java	drain	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/mpegts/MuxerDtsTest.java	drain	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/mpegts/MuxerFileSinkTest.java	videoConfig	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/mpegts/MuxerMispTest.java	drain	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/mpegts/MuxerTargetedPushTest.java	drain	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/rtp/RtpConvenienceTest.java	idr	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/rtp/RtpConvenienceTest.java	videoConfig	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/rtp/RtpLoopbackScenarioTest.java	scenarioDir	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/rtp/RtpLoopbackScenarioTest.java	sha256OfDemuxedVideoUnits	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/rtp/RtpMuxDemuxLoopbackTest.java	offlineMuxDemuxSha	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/rtp/RtpMuxSenderFinishTest.java	idr	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/rtp/RtpMuxSenderFinishTest.java	videoConfig	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/rtp/RtspPanicPoisoningTest.java	idr	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/rtp/RtspServerClientLoopbackTest.java	idr	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/rtp/RtspTlsTest.java	idr	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/scenarios/ScenarioReproductionTest.java	scenarioDir	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/srt/DemuxReceiverCloseRaceTest.java	cfg	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/srt/SrtLoopbackScenarioTest.java	scenarioDir	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/srt/SrtLoopbackScenarioTest.java	sha256OfDemuxedVideoUnits	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/srt/SrtManagedCloseCancelsFirstTest.java	connectSender	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/srt/SrtManagedCloseCancelsFirstTest.java	rescue	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/srt/SrtManagedEndReasonTest.java	connectSender	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/srt/SrtManagedListenerCancelTest.java	connectSender	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/srt/SrtManagedLiveTest.java	offlineMuxDemuxSha	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/srt/SrtMuxDemuxLoopbackTest.java	offlineMuxDemuxSha	binding tests: shared test support not yet written
+bindings/jvm/src/test/java/org/tstrans/srt/SrtPlainCloseCancelsFirstTest.java	rescue	binding tests: shared test support not yet written
+bindings/python/tests/test_handle_forge.py	_simple_config	binding tests: shared test support not yet written
+bindings/python/tests/test_hls_basic.py	_video_klv_program	binding tests: shared test support not yet written
+bindings/python/tests/test_klv_universal_strict.py	_ber_long	binding tests: shared test support not yet written
+bindings/python/tests/test_mpegts_muxer_push.py	_simple_config	binding tests: shared test support not yet written
+bindings/python/tests/test_mpegts_muxer_sink.py	_cfg	binding tests: shared test support not yet written
+bindings/python/tests/test_mpegts_muxer_stats.py	_cfg	binding tests: shared test support not yet written
+bindings/python/tests/test_muxer_file_sink_memoryview.py	_cfg	binding tests: shared test support not yet written
+bindings/python/tests/test_parse_klv_universal.py	_ber_long	binding tests: shared test support not yet written
+bindings/python/tests/test_rtp_mux_sender.py	_video_data_program	binding tests: shared test support not yet written
+bindings/python/tests/test_rtp_mux_sender.py	_video_klv_program	binding tests: shared test support not yet written
+bindings/python/tests/test_srt_mux_demux.py	_video_data_program	binding tests: shared test support not yet written
+bindings/python/tests/test_srt_mux_demux.py	_video_klv_program	binding tests: shared test support not yet written
+crates/tst-core/tests/common/synthetic.rs	build_minimal_h264_au	cross-crate twin; the one copy belongs in tst-test-helpers
+crates/tst-core/tests/mpegts/demux_local.rs	fixtures_dir	cross-crate twin; the one copy belongs in tst-test-helpers
+crates/tst-hls/tests/hls_e2e.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
+crates/tst-hls/tests/klv_interop.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
+crates/tst-interop/tests/loopback.rs	header	shared test support not yet written for this crate
+crates/tst-interop/tests/loopback.rs	join_with_timeout	shared test support not yet written for this crate
+crates/tst-interop/tests/loopback.rs	status_of	shared test support not yet written for this crate
+crates/tst-interop/tests/proxy.rs	join_with_timeout	shared test support not yet written for this crate
+crates/tst-interop/tests/serve.rs	join_with_timeout	shared test support not yet written for this crate
+crates/tst-pipeline/tests/demux_receiver_malformed_pes_recovery.rs	drain_mux	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/demux_receiver_terminal_flush.rs	drain_mux	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/demux_receiver_terminal_flush.rs	to_ts_packets	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/managed_demux_receiver_reconnect.rs	fast_policy	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/managed_demux_receiver_terminal_flush.rs	drain_mux	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/managed_demux_receiver_terminal_flush.rs	fast_policy	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/managed_demux_receiver_terminal_flush.rs	to_ts_packets	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/managed_receive_attempts.rs	broken	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/managed_receive_cancel_backoff.rs	recv_bytes	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/managed_receive_cancel_factory.rs	recv_bytes	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/managed_send_inner_cancelled.rs	broken	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/pairing_demuxer_round_trip.rs	drain_mux	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/pairing_round_trip.rs	drain_mux	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/pairing_round_trip.rs	minimal_h264_au	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/reconnect_reject_overflow.rs	send_bytes	pipeline and transport tests: shared tests/common not yet written
+crates/tst-pipeline/tests/reconnect_tracing.rs	send_bytes	pipeline and transport tests: shared tests/common not yet written
+crates/tst-rist/tests/pipeline_round_trip.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
+crates/tst-rtp/tests/fixtures/raw_rtsp.rs	header	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/fixtures/raw_rtsp.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/fixtures/raw_rtsp_publisher.rs	status_of	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_client/clean_teardown_demux.rs	cseq_of	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_client/clean_teardown_demux.rs	force_reset	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_client/interleaved_e2e.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_client/stream_end_reason.rs	cseq_of	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_client/stream_end_reason.rs	force_reset	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_client/tls_keepalive.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_server/auth_basic.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_server/auth_digest.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_server/concurrent.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_server/lagging_peer.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_server/loopback_interleaved.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_server/loopback_udp.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_server/mount.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_server/multicast.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_server/notice_5402.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_server/session_keepalive.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_server/shutdown.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_server/tls.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/rtsp_server/tls_handshake_timeout.rs	make_muxer_cfg	tst-rtp tests: shared fixture not yet written
+crates/tst-srt/tests/loopback/listener_accept_one_cancellable.rs	reserve_port	pipeline and transport tests: shared tests/common not yet written
+crates/tst-srt/tests/loopback/listener_accept_one_cancellable.rs	spawn_connector	pipeline and transport tests: shared tests/common not yet written
+crates/tst-srt/tests/loopback/url_open.rs	reserve_port	pipeline and transport tests: shared tests/common not yet written
+crates/tst-srt/tests/loopback/url_open.rs	spawn_connector	pipeline and transport tests: shared tests/common not yet written
+crates/tst-srt/tests/pipeline/pipeline_receiver_live_corpus.rs	fixtures_dir	pipeline and transport tests: shared tests/common not yet written
+crates/tst-srt/tests/url/url_parser.rs	congestion_live	pipeline and transport tests: shared tests/common not yet written
+crates/tst-srt/tests/url/url_parser_boundaries.rs	enum_lowercase_live	pipeline and transport tests: shared tests/common not yet written
+crates/tst-tcp/tests/pipeline_round_trip.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
+crates/tst-udp/tests/pipeline_round_trip.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
+crates/tst-udp/tests/zero_length.rs	null_ts_packet	pipeline and transport tests: shared tests/common not yet written
