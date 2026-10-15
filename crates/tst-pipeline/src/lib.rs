@@ -71,7 +71,6 @@ mod mutex;
 #[cfg(feature = "std")]
 pub mod binding;
 pub mod demux_receiver;
-pub mod dyn_aliases;
 #[cfg(feature = "std")]
 pub mod ext;
 #[cfg(feature = "std")]
@@ -119,10 +118,6 @@ pub mod shell_error;
 pub use demux_receiver::{
     ByteSink, DemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource, DemuxReceiverStats,
 };
-pub use dyn_aliases::{
-    BoxedDemuxReceiver, BoxedMuxSender, BoxedRawReceiver, BoxedRawSender, BoxedReceiver,
-    BoxedSender,
-};
 #[cfg(feature = "std")]
 pub use managed_demux_receiver::{ManagedDemuxReceiver, ManagedDemuxReceiverConfig};
 #[cfg(feature = "std")]
@@ -156,21 +151,8 @@ pub use tst_core::transport::{
     BrokenCause, RecvTransport, Transport, TransportCancel, TransportError,
 };
 
-// Re-export the concrete SRT cross-thread shutdown primitive at the
-// crate root so FFI binding authors (`tst-jni`, `tst-uniffi`,
-// `tst-pyo3`, `tst-c`) have a single import path:
-// `tst_pipeline::SrtCancelHandle`.
-//
-// `SrtCancelHandle` is SRT-shaped (wraps a libsrt `SRTSOCKET` integer
-// handle with `i64::MIN` reserved as the cancelled sentinel). It is
-// defined in `tst-core` for layering reasons — non-SRT transports that
-// arrive in the future will add their own cancel primitives shaped for
-// their underlying I/O. The pipeline-layer trait abstraction is
-// `TransportCancel` above; shells accept `Option<Arc<dyn TransportCancel
-// + Send + Sync>>` via `cancel_handle()`. This re-export lets binding
-// authors name the concrete SRT-side type when they need to construct
-// one or type-erase to it. See [`crate`]'s `srt-cancel-handle.md` doc
-// for the full pattern.
+// Re-exported so binding authors have one import path; defined in tst-core
+// for layering.
 pub use tst_core::SrtCancelHandle;
 
 // The crate README is rendered by crates.io and GitHub, which do not

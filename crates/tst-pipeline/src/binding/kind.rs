@@ -700,17 +700,6 @@ fn map_transport(e: &TransportError) -> Option<(BindingErrorKind, String)> {
     }
 }
 
-/// Kind of a `TransportError`. `ExplicitClose` projects to `Closed`: C has
-/// no cancelled code and its numbers are frozen; the detail string carries
-/// the distinction. A variant `map_transport` does not map yet classifies
-/// as [`BindingErrorKind::Internal`]; use the `From` impl when the detail
-/// string matters, it says so explicitly.
-pub fn kind_of_transport(e: &TransportError) -> BindingErrorKind {
-    map_transport(e)
-        .map(|(kind, _)| kind)
-        .unwrap_or(BindingErrorKind::Internal)
-}
-
 impl From<TransportError> for BindingError {
     fn from(e: TransportError) -> Self {
         match map_transport(&e) {

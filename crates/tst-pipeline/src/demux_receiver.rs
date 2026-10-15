@@ -511,22 +511,6 @@ impl<R: RecvTransport> Drop for DemuxReceiver<R> {
     }
 }
 
-/// Type alias for [`DemuxReceiver`] with a boxed [`RecvTransport`] trait object.
-///
-/// See [`BoxedMuxSender`](crate::mux_sender::BoxedMuxSender) for rationale.
-///
-/// # Example
-/// ```no_run
-/// use tst_pipeline::demux_receiver::BoxedDemuxReceiver;
-/// use tst_pipeline::DemuxReceiver;
-/// use tst_core::RecvTransport;
-///
-/// fn open(transport: Box<dyn RecvTransport>) -> BoxedDemuxReceiver {
-///     DemuxReceiver::new(transport)
-/// }
-/// ```
-pub type BoxedDemuxReceiver = DemuxReceiver<Box<dyn crate::RecvTransport>>;
-
 /// Error returned by [`DemuxReceiver`] methods.
 ///
 /// # Categorization

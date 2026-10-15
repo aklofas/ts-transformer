@@ -10,7 +10,6 @@ mod framing;
 
 pub use framing::{SenderStats, TsFraming, TsFramingError, TsFramingMode};
 
-use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -453,22 +452,6 @@ impl<T: Transport> Sender<T> {
         &self.transport
     }
 }
-
-/// Type alias for [`Sender`] with a boxed [`Transport`] trait object.
-///
-/// See [`BoxedMuxSender`](crate::mux_sender::BoxedMuxSender) for rationale and the per-binding pattern.
-///
-/// # Example — opaque sender from a runtime-chosen transport
-/// ```no_run
-/// use tst_pipeline::sender::BoxedSender;
-/// use tst_pipeline::Sender;
-/// use tst_core::Transport;
-///
-/// fn open(transport: Box<dyn Transport>) -> BoxedSender {
-///     Sender::new(transport, Default::default())
-/// }
-/// ```
-pub type BoxedSender = Sender<Box<dyn crate::Transport>>;
 
 /// Drop flushes any buffered partial bundle (best-effort), then closes
 /// the transport. Equivalent to calling [`Sender::close`] explicitly —

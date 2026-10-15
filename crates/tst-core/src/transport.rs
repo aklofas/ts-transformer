@@ -558,9 +558,8 @@ pub trait RecvTransport: Send {
 // ============================================================
 //
 // These let `Box<dyn Transport>` and `Box<dyn RecvTransport>` satisfy the
-// `T: Transport` / `T: RecvTransport` trait bounds on the pipeline shells.
-// Required for the dyn-erased aliases (`BoxedMuxSender`, `BoxedDemuxReceiver`,
-// etc.) used by the FFI binding crates (`tst-jni`, `tst-uniffi`, `tst-pyo3`).
+// `T: Transport` / `T: RecvTransport` trait bounds on the pipeline shells, so
+// a caller can erase the transport type: `MuxSender<Box<dyn Transport>>`.
 //
 // Plain forwarding — no behavior change. Both source traits are object-safe;
 // these impls let consumers wrap any `Box<dyn TraitObj>` exactly the same way
@@ -612,8 +611,8 @@ impl<T: RecvTransport + ?Sized> RecvTransport for Box<T> {
 mod blanket_impl_tests {
     use super::*;
 
-    /// Smoke test: `Box<dyn Transport>` must satisfy `T: Transport` for the
-    /// dyn-erased pipeline shell aliases (`BoxedMuxSender`, etc.) to compile.
+    /// Smoke test: `Box<dyn Transport>` must satisfy `T: Transport`, so a shell
+    /// over an erased transport (`MuxSender<Box<dyn Transport>>`) compiles.
     #[test]
     fn box_dyn_transport_satisfies_transport_bound() {
         fn assert_transport<T: Transport>() {}

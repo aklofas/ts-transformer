@@ -92,7 +92,6 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-pipeline | managed_receive | Stable | `Managed*` reconnect wrapper |
 | tst-pipeline | reconnect | Stable | reconnect config |
 | tst-pipeline | shell_error | Stable | shell error taxonomy |
-| tst-pipeline | dyn_aliases | Stable | boxed-transport type aliases (plumbing/re-export); spec-silent, defaults to tst-pipeline's tier |
 | tst-pipeline | mux_publisher | Provisional | HLS-adjacent, newer |
 | tst-pipeline | ext | Provisional | extensions (pairing, file transport) — newer surface |
 | tst-pipeline | binding | Provisional | binding-shared handle layer (`Owned`, `HandleState`, panic helpers, `BindingErrorKind`, `ManagedHandles`); `std`-only; shape may still move before 1.0 |
