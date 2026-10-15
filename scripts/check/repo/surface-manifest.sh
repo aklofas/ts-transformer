@@ -44,8 +44,8 @@ SURFACE_JAVA_DIR="${SURFACE_JAVA_DIR:-$ROOT/bindings/jvm/src/main/java}"
 # [[exempt]] row names, pinned by count and by the sha256 of their sorted
 # list. The 2026-06-03 bootstrap left them uncatalogued. Giving one a row
 # shrinks the set: re-pin both values with --print-baseline in that change.
-UNAUDITED_COUNT=2036
-UNAUDITED_SHA256=e8e9014258a808c415ad7a873fd9f99c37b3cd16c8c7bc73e378e3a9a91efcfa
+UNAUDITED_COUNT=2035
+UNAUDITED_SHA256=42d5adbea6805bdb467a742b4922ae4d9ae8e4ad01a77a9a3acd782f1659e084
 
 # ---------------------------------------------------------------------------
 # extract_items: stdin is a public-api.txt; stdout is one canonical key per

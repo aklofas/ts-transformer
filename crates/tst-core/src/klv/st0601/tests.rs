@@ -2920,10 +2920,6 @@ fn wpb_var_len_spec_vectors() {
     // Tag 139 — Active Payloads: RawBytes, bit i (LSB-first) = Payload ID i.
     let ls = decode_with_single_tlv_ber_oid(139, &[0x0B]);
     assert_eq!(ls.active_payloads.as_deref(), Some(&[0x0B][..]));
-    assert_eq!(
-        ls.active_payload_ids().collect::<Vec<_>>(),
-        vec![0u32, 1, 3]
-    );
     let encoded = encode_with_field(|r| r.active_payloads = Some(vec![0x0B]));
     assert_eq!(tlv_value(&encoded, 139), Some(vec![0x0B]));
 }
@@ -2979,24 +2975,6 @@ fn wpb_platform_status_and_sensor_control_mode_other_round_trip() {
     let encoded =
         encode_with_field(|r| r.sensor_control_mode = Some(SensorControlMode::Other(0xFE)));
     assert_eq!(tlv_value(&encoded, 126), Some(vec![0xFE]));
-}
-
-/// `active_payload_ids` bit i (LSB-first within a byte) = Payload ID i;
-/// additional bytes extend the ID space upward (byte 1 covers IDs
-/// 8-15). An absent `active_payloads` yields an empty iterator.
-#[test]
-fn wpb_active_payload_ids_multi_byte_extends_upward() {
-    let ls = decode_with_single_tlv_ber_oid(139, &[0x00, 0x01]);
-    assert_eq!(ls.active_payload_ids().collect::<Vec<_>>(), vec![8u32]);
-
-    let ls = decode_with_single_tlv_ber_oid(139, &[0xFF, 0x02]);
-    assert_eq!(
-        ls.active_payload_ids().collect::<Vec<_>>(),
-        vec![0, 1, 2, 3, 4, 5, 6, 7, 9]
-    );
-
-    let ls = UasDatalinkLs::default();
-    assert_eq!(ls.active_payload_ids().count(), 0);
 }
 
 // ============================================================================

@@ -142,10 +142,6 @@ pub fn encode_to_vec_with(
 /// auto-emitted by this encoder, so the only caller-supplied mandatory
 /// item this function gates is Tag 2.
 ///
-/// The set of enforced tags is exposed (hidden from doc) as
-/// [`_mandatory_tags`] for future proptest hookup; production callers
-/// should not depend on it.
-///
 /// # Errors
 ///
 /// - [`KlvEncodeError::MissingMandatoryItem`] if `record.timestamp_us`
@@ -172,17 +168,6 @@ pub fn encode_strict_compliance(record: &UasDatalinkLs) -> Result<Vec<u8>, KlvEn
     let mut r = record.clone();
     sanitize_strings_st0601(&mut r);
     encode_to_vec(&r)
-}
-
-/// Caller-supplied mandatory ST 0601 tag IDs enforced by
-/// [`encode_strict_compliance`]. Tag 1 (Checksum) and Tag 65 (LS Version
-/// Number) are deliberately excluded — both are auto-emitted by the
-/// encoder. Validate-2 proptests may pivot on this list to fuzz strict
-/// vs. lenient encode paths.
-#[doc(hidden)]
-#[must_use]
-pub fn _mandatory_tags() -> &'static [u16] {
-    &[2]
 }
 
 pub fn encoded_len(record: &UasDatalinkLs) -> usize {

@@ -81,7 +81,7 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<H266Sps, CodecParseError> {
     // The PTL walks past its headline fields — alignment matters for
     // every subsequent ue(v) read, so the full PTL syntax must be
     // consumed (not just the 16-bit headline that the standalone
-    // `parse_profile_tier_level` exposes).
+    // PTL tests decode).
     let mut profile_tier_level = H266ProfileTierLevel::default();
     if ptl_dpb_hrd_present {
         parse_into(&mut br, true, max_sublayers_minus1, &mut profile_tier_level)?;

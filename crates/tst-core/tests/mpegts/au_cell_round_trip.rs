@@ -183,8 +183,8 @@ fn sync_klv_sequence_number_increments_across_pushes() {
 #[test]
 fn classify_klv_returns_sync_on_any_cfi_with_iter_surfacing_cfi() {
     use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
+    use tst_core::mpegts::demux::low_level::iter_au_cells;
     use tst_core::mpegts::demux::low_level::{KlvShape, classify_klv};
-    use tst_core::mpegts::demux::payload_test_hooks::iter_au_cells;
 
     for cfi in [
         CellFragmentIndication::First,
@@ -229,8 +229,8 @@ fn classify_klv_returns_sync_on_any_cfi_with_iter_surfacing_cfi() {
 #[test]
 fn classify_klv_complete_cfi_returns_sync_and_iter_recovers_inner() {
     use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
+    use tst_core::mpegts::demux::low_level::iter_au_cells;
     use tst_core::mpegts::demux::low_level::{KlvShape, classify_klv};
-    use tst_core::mpegts::demux::payload_test_hooks::iter_au_cells;
 
     // Build a Complete AU cell whose inner payload starts with the SMPTE UL.
     let inner_klv: Vec<u8> = {
@@ -276,8 +276,8 @@ fn classify_klv_complete_cfi_returns_sync_and_iter_recovers_inner() {
 #[test]
 fn classify_klv_opaque_inner_complete_cfi_returns_sync() {
     use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
+    use tst_core::mpegts::demux::low_level::iter_au_cells;
     use tst_core::mpegts::demux::low_level::{KlvShape, classify_klv};
-    use tst_core::mpegts::demux::payload_test_hooks::iter_au_cells;
 
     // Inner that does NOT start with the SMPTE UL header — opaque metadata.
     let opaque_inner = vec![0x55u8; 80];
@@ -591,8 +591,7 @@ fn iter_au_cells_walks_three_back_to_back_complete_cells() {
         ),
         (cell_header(CellFragmentIndication::Complete, 3), &[0xFF]),
     ]);
-    let cells: Vec<_> =
-        tst_core::mpegts::demux::payload_test_hooks::iter_au_cells(&payload).collect();
+    let cells: Vec<_> = tst_core::mpegts::demux::low_level::iter_au_cells(&payload).collect();
     assert_eq!(cells.len(), 3);
     let (h1, body1) = cells[0].as_ref().unwrap();
     assert_eq!(h1.sequence_number, 1);
@@ -615,7 +614,7 @@ fn iter_au_cells_walks_first_middle_last_in_one_pes() {
         ),
         (cell_header(CellFragmentIndication::Last, 12), &[0x33; 50]),
     ]);
-    let cells: Vec<_> = tst_core::mpegts::demux::payload_test_hooks::iter_au_cells(&payload)
+    let cells: Vec<_> = tst_core::mpegts::demux::low_level::iter_au_cells(&payload)
         .map(|r| r.unwrap())
         .collect();
     assert_eq!(cells.len(), 3);
@@ -635,7 +634,7 @@ fn iter_au_cells_walks_first_middle_last_in_one_pes() {
 
 #[test]
 fn iter_au_cells_empty_payload_yields_nothing() {
-    let cells: Vec<_> = tst_core::mpegts::demux::payload_test_hooks::iter_au_cells(&[]).collect();
+    let cells: Vec<_> = tst_core::mpegts::demux::low_level::iter_au_cells(&[]).collect();
     assert!(cells.is_empty());
 }
 
@@ -646,8 +645,7 @@ fn iter_au_cells_stops_at_truncated_trailing_cell() {
         &[0xAA, 0xBB],
     )]);
     payload.extend_from_slice(&[0x00, 0x02, 0xDF]);
-    let cells: Vec<_> =
-        tst_core::mpegts::demux::payload_test_hooks::iter_au_cells(&payload).collect();
+    let cells: Vec<_> = tst_core::mpegts::demux::low_level::iter_au_cells(&payload).collect();
     assert_eq!(cells.len(), 2);
     assert!(cells[0].is_ok());
     assert!(cells[1].is_err());
@@ -657,8 +655,7 @@ fn iter_au_cells_stops_at_truncated_trailing_cell() {
 fn iter_au_cells_stops_at_declared_length_overrun() {
     let mut payload = vec![0x00, 0x00, 0xDF, 0x00, 0x64];
     payload.extend_from_slice(&[0xAA; 10]);
-    let cells: Vec<_> =
-        tst_core::mpegts::demux::payload_test_hooks::iter_au_cells(&payload).collect();
+    let cells: Vec<_> = tst_core::mpegts::demux::low_level::iter_au_cells(&payload).collect();
     assert_eq!(cells.len(), 1);
     assert!(cells[0].is_err());
 }

@@ -275,52 +275,6 @@ pub enum BrokenCause {
     CleanEof,
 }
 
-#[cfg(feature = "std")]
-impl TransportError {
-    /// True when this error carries an OS errno identifying a refused
-    /// connection (ICMP port-unreachable surfaced as `ECONNREFUSED`).
-    /// Uses the std `io::ErrorKind` mapping so callers never hard-code the
-    /// platform errno split (111 Linux / 61 BSD / 10061 Windows).
-    #[must_use]
-    pub fn is_connection_refused(&self) -> bool {
-        let errno = match self {
-            Self::Backpressure { errno_code, .. } | Self::Broken { errno_code, .. } => *errno_code,
-            _ => None,
-        };
-        errno.is_some_and(|c| {
-            std::io::Error::from_raw_os_error(c).kind() == std::io::ErrorKind::ConnectionRefused
-        })
-    }
-}
-
-#[cfg(all(test, feature = "std"))]
-mod error_tests {
-    use super::*;
-
-    #[test]
-    fn is_connection_refused_classifies_portably() {
-        #[cfg(target_os = "linux")]
-        let refused: i32 = 111; // ECONNREFUSED
-        #[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "openbsd"))]
-        let refused: i32 = 61;
-        #[cfg(windows)]
-        let refused: i32 = 10061; // WSAECONNREFUSED
-        let e = TransportError::Broken {
-            msg: "send error".into(),
-            errno_code: Some(refused),
-            cause: BrokenCause::Unspecified,
-        };
-        assert!(e.is_connection_refused());
-        let none = TransportError::Broken {
-            msg: "x".into(),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        };
-        assert!(!none.is_connection_refused());
-        assert!(!TransportError::Closed.is_connection_refused());
-    }
-}
-
 /// One-shot byte transport. Each `send_bytes` call sends exactly one
 /// outbound message.
 ///

@@ -33,12 +33,6 @@ mod stats_recorder;
 
 pub mod low_level;
 
-/// Test-only re-export. NOT a stable API; used by `tests/mpegts_au_cell_round_trip.rs`.
-#[doc(hidden)]
-pub mod payload_test_hooks {
-    pub use super::payload::iter_au_cells;
-}
-
 pub use demuxer::Demuxer;
 pub use event::{
     AdaptationFieldKind, AudioCodec, Av1ObuHeaderKind, DemuxEvent, DiscontinuityKind, KlvLink,
