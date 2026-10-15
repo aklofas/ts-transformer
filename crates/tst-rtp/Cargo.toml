@@ -109,6 +109,7 @@ default-features = false
 features         = ["ring"]
 
 [dev-dependencies]
+tst-core = { path = "../tst-core", features = ["conformance"] }
 proptest         = { workspace = true }
 # Used by server::tls unit tests (negative-path cert loading); matches the
 # `tempfile = "3"` pattern from tst-core.

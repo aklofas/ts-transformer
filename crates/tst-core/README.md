@@ -36,7 +36,7 @@ KLV sets (`klv::st0102`, `klv::st0605`, `klv::st0903`, `klv::st0805`,
 `klv::st0806`, `klv::st1010`, `klv::st1204`), the newer codec parsers
 (`codec::h266`, `codec::av1`, `codec::misp_time`, `codec::nal_framing`),
 the audio parsers (`codec::aac`, `codec::ac3`, `codec::mpegaudio`), the
-`transport::conformance` table, and the HLS-adjacent `publisher` trait. This list highlights the carve-outs; the [API
+`transport::conformance` kit (behind the `conformance` feature), and the HLS-adjacent `publisher` trait. This list highlights the carve-outs; the [API
 stability
 reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md)
 is the authoritative full per-module table.

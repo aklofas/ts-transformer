@@ -33,6 +33,7 @@ secrecy       = { workspace = true }
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+tst-core = { path = "../tst-core", features = ["conformance"] }
 libc             = { workspace = true }
 proptest         = { workspace = true }
 tst-test-helpers = { path = "../tst-test-helpers" }
