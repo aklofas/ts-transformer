@@ -143,13 +143,19 @@ fn ts_sender_latency_negotiated() {
 // verifies typed overlay field population; this layer is end-to-end.
 // ============================================================================
 
-#[test]
-fn ts_sender_mss_url_open_succeeds() {
+/// Open `tst_sender_open` with `srt://127.0.0.1:<port>?<query>` against a
+/// live listener on a background thread and assert both sides succeed:
+/// the URL key survives parse -> setsockopt -> handshake.
+/// `configure_listener` adds any listener option the key needs to agree
+/// with (the FEC `packetfilter` test sets the same filter on both sides).
+fn assert_url_open_succeeds(query: &str, configure_listener: fn(&mut ListenerBuilder)) {
     let (port_tx, port_rx) = mpsc::channel::<u16>();
     let (ok_tx, ok_rx) = mpsc::channel::<bool>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut builder = ListenerBuilder::new();
+        configure_listener(&mut builder);
+        let mut listener = builder
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -161,134 +167,43 @@ fn ts_sender_mss_url_open_succeeds() {
     let port = port_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("listener did not bind in time");
-    let url = CString::new(format!("srt://127.0.0.1:{port}?mss=1316")).unwrap();
+    let url = CString::new(format!("srt://127.0.0.1:{port}?{query}")).unwrap();
 
     unsafe {
         let cfg = tst_sender_config_new();
         let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
+        assert!(!s.is_null(), "open failed ({query}): {}", last_error_msg());
 
         let accepted_ok = ok_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
+        assert!(accepted_ok, "listener accept() failed ({query})");
 
         tst_sender_close(s);
         tst_sender_config_free(cfg);
     }
 
     listener_thread.join().expect("listener thread panicked");
+}
+
+#[test]
+fn ts_sender_mss_url_open_succeeds() {
+    assert_url_open_succeeds("mss=1316", |_| {});
 }
 
 #[test]
 fn ts_sender_payloadsize_url_open_succeeds() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
-    let (ok_tx, ok_rx) = mpsc::channel::<bool>();
-
-    let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-        ok_tx.send(listener.accept().is_ok()).expect("send ok");
-    });
-
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
-    let url = CString::new(format!("srt://127.0.0.1:{port}?payloadsize=1316")).unwrap();
-
-    unsafe {
-        let cfg = tst_sender_config_new();
-        let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
-
-        let accepted_ok = ok_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
-
-        tst_sender_close(s);
-        tst_sender_config_free(cfg);
-    }
-
-    listener_thread.join().expect("listener thread panicked");
+    assert_url_open_succeeds("payloadsize=1316", |_| {});
 }
 
 #[test]
 fn ts_sender_lossmaxttl_url_open_succeeds() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
-    let (ok_tx, ok_rx) = mpsc::channel::<bool>();
-
-    let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-        ok_tx.send(listener.accept().is_ok()).expect("send ok");
-    });
-
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
-    let url = CString::new(format!("srt://127.0.0.1:{port}?lossmaxttl=20")).unwrap();
-
-    unsafe {
-        let cfg = tst_sender_config_new();
-        let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
-
-        let accepted_ok = ok_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
-
-        tst_sender_close(s);
-        tst_sender_config_free(cfg);
-    }
-
-    listener_thread.join().expect("listener thread panicked");
+    assert_url_open_succeeds("lossmaxttl=20", |_| {});
 }
 
 #[test]
 fn ts_sender_fc_url_open_succeeds() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
-    let (ok_tx, ok_rx) = mpsc::channel::<bool>();
-
-    let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-        ok_tx.send(listener.accept().is_ok()).expect("send ok");
-    });
-
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
-    let url = CString::new(format!("srt://127.0.0.1:{port}?fc=8192")).unwrap();
-
-    unsafe {
-        let cfg = tst_sender_config_new();
-        let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
-
-        let accepted_ok = ok_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
-
-        tst_sender_close(s);
-        tst_sender_config_free(cfg);
-    }
-
-    listener_thread.join().expect("listener thread panicked");
+    assert_url_open_succeeds("fc=8192", |_| {});
 }
 
 // ============================================================================
@@ -356,76 +271,12 @@ fn ts_sender_passphrase_handshake_ok() {
 
 #[test]
 fn ts_sender_rcvlatency_url_open_succeeds() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
-    let (ok_tx, ok_rx) = mpsc::channel::<bool>();
-
-    let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-        ok_tx.send(listener.accept().is_ok()).expect("send ok");
-    });
-
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
-    let url = CString::new(format!("srt://127.0.0.1:{port}?rcvlatency=120")).unwrap();
-
-    unsafe {
-        let cfg = tst_sender_config_new();
-        let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
-
-        let accepted_ok = ok_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
-
-        tst_sender_close(s);
-        tst_sender_config_free(cfg);
-    }
-
-    listener_thread.join().expect("listener thread panicked");
+    assert_url_open_succeeds("rcvlatency=120", |_| {});
 }
 
 #[test]
 fn ts_sender_peerlatency_url_open_succeeds() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
-    let (ok_tx, ok_rx) = mpsc::channel::<bool>();
-
-    let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-        ok_tx.send(listener.accept().is_ok()).expect("send ok");
-    });
-
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
-    let url = CString::new(format!("srt://127.0.0.1:{port}?peerlatency=80")).unwrap();
-
-    unsafe {
-        let cfg = tst_sender_config_new();
-        let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
-
-        let accepted_ok = ok_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
-
-        tst_sender_close(s);
-        tst_sender_config_free(cfg);
-    }
-
-    listener_thread.join().expect("listener thread panicked");
+    assert_url_open_succeeds("peerlatency=80", |_| {});
 }
 
 // ============================================================================
@@ -438,113 +289,17 @@ fn ts_sender_peerlatency_url_open_succeeds() {
 
 #[test]
 fn ts_sender_maxbw_url_open_succeeds() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
-    let (ok_tx, ok_rx) = mpsc::channel::<bool>();
-
-    let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-        ok_tx.send(listener.accept().is_ok()).expect("send ok");
-    });
-
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
-    let url = CString::new(format!("srt://127.0.0.1:{port}?maxbw=10000000")).unwrap();
-
-    unsafe {
-        let cfg = tst_sender_config_new();
-        let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
-
-        let accepted_ok = ok_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
-
-        tst_sender_close(s);
-        tst_sender_config_free(cfg);
-    }
-
-    listener_thread.join().expect("listener thread panicked");
+    assert_url_open_succeeds("maxbw=10000000", |_| {});
 }
 
 #[test]
 fn ts_sender_inputbw_url_open_succeeds() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
-    let (ok_tx, ok_rx) = mpsc::channel::<bool>();
-
-    let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-        ok_tx.send(listener.accept().is_ok()).expect("send ok");
-    });
-
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
-    let url = CString::new(format!("srt://127.0.0.1:{port}?inputbw=5000000")).unwrap();
-
-    unsafe {
-        let cfg = tst_sender_config_new();
-        let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
-
-        let accepted_ok = ok_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
-
-        tst_sender_close(s);
-        tst_sender_config_free(cfg);
-    }
-
-    listener_thread.join().expect("listener thread panicked");
+    assert_url_open_succeeds("inputbw=5000000", |_| {});
 }
 
 #[test]
 fn ts_sender_oheadbw_url_open_succeeds() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
-    let (ok_tx, ok_rx) = mpsc::channel::<bool>();
-
-    let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-        ok_tx.send(listener.accept().is_ok()).expect("send ok");
-    });
-
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
-    let url = CString::new(format!("srt://127.0.0.1:{port}?oheadbw=25")).unwrap();
-
-    unsafe {
-        let cfg = tst_sender_config_new();
-        let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
-
-        let accepted_ok = ok_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
-
-        tst_sender_close(s);
-        tst_sender_config_free(cfg);
-    }
-
-    listener_thread.join().expect("listener thread panicked");
+    assert_url_open_succeeds("oheadbw=25", |_| {});
 }
 
 // ============================================================================
@@ -556,39 +311,7 @@ fn ts_sender_oheadbw_url_open_succeeds() {
 
 #[test]
 fn ts_sender_tlpktdrop_url_open_succeeds() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
-    let (ok_tx, ok_rx) = mpsc::channel::<bool>();
-
-    let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-        ok_tx.send(listener.accept().is_ok()).expect("send ok");
-    });
-
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
-    let url = CString::new(format!("srt://127.0.0.1:{port}?tlpktdrop=1")).unwrap();
-
-    unsafe {
-        let cfg = tst_sender_config_new();
-        let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
-
-        let accepted_ok = ok_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
-
-        tst_sender_close(s);
-        tst_sender_config_free(cfg);
-    }
-
-    listener_thread.join().expect("listener thread panicked");
+    assert_url_open_succeeds("tlpktdrop=1", |_| {});
 }
 
 // ============================================================================
@@ -602,44 +325,9 @@ fn ts_sender_tlpktdrop_url_open_succeeds() {
 
 #[test]
 fn ts_sender_packetfilter_url_open_succeeds() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
-    let (ok_tx, ok_rx) = mpsc::channel::<bool>();
-
-    let listener_thread = thread::spawn(move || {
-        use tst_srt::PacketFilter;
-        let mut listener = ListenerBuilder::new()
-            .packet_filter(PacketFilter::new("fec,cols:10,rows:5,arq:onreq").unwrap())
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-        ok_tx.send(listener.accept().is_ok()).expect("send ok");
+    assert_url_open_succeeds("packetfilter=fec,cols:10,rows:5,arq:onreq", |b| {
+        b.packet_filter(tst_srt::PacketFilter::new("fec,cols:10,rows:5,arq:onreq").unwrap());
     });
-
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
-    let url = CString::new(format!(
-        "srt://127.0.0.1:{port}?packetfilter=fec,cols:10,rows:5,arq:onreq"
-    ))
-    .unwrap();
-
-    unsafe {
-        let cfg = tst_sender_config_new();
-        let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
-
-        let accepted_ok = ok_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
-
-        tst_sender_close(s);
-        tst_sender_config_free(cfg);
-    }
-
-    listener_thread.join().expect("listener thread panicked");
 }
 
 // ============================================================================
@@ -802,39 +490,7 @@ fn variant_managed_sender_get_reconnect_stats() {
 
 #[test]
 fn ts_sender_congestion_live_url_open_succeeds() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
-    let (ok_tx, ok_rx) = mpsc::channel::<bool>();
-
-    let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-        ok_tx.send(listener.accept().is_ok()).expect("send ok");
-    });
-
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
-    let url = CString::new(format!("srt://127.0.0.1:{port}?congestion=live")).unwrap();
-
-    unsafe {
-        let cfg = tst_sender_config_new();
-        let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
-
-        let accepted_ok = ok_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
-
-        tst_sender_close(s);
-        tst_sender_config_free(cfg);
-    }
-
-    listener_thread.join().expect("listener thread panicked");
+    assert_url_open_succeeds("congestion=live", |_| {});
 }
 
 // ============================================================================
@@ -848,76 +504,12 @@ fn ts_sender_congestion_live_url_open_succeeds() {
 
 #[test]
 fn ts_sender_x_recvtimeout_url_open_succeeds() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
-    let (ok_tx, ok_rx) = mpsc::channel::<bool>();
-
-    let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-        ok_tx.send(listener.accept().is_ok()).expect("send ok");
-    });
-
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
-    let url = CString::new(format!("srt://127.0.0.1:{port}?x-recvtimeout=5000")).unwrap();
-
-    unsafe {
-        let cfg = tst_sender_config_new();
-        let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
-
-        let accepted_ok = ok_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
-
-        tst_sender_close(s);
-        tst_sender_config_free(cfg);
-    }
-
-    listener_thread.join().expect("listener thread panicked");
+    assert_url_open_succeeds("x-recvtimeout=5000", |_| {});
 }
 
 #[test]
 fn ts_sender_x_sendtimeout_url_open_succeeds() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
-    let (ok_tx, ok_rx) = mpsc::channel::<bool>();
-
-    let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-        ok_tx.send(listener.accept().is_ok()).expect("send ok");
-    });
-
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
-    let url = CString::new(format!("srt://127.0.0.1:{port}?x-sendtimeout=2000")).unwrap();
-
-    unsafe {
-        let cfg = tst_sender_config_new();
-        let s = tst_sender_open(url.as_ptr(), cfg);
-        assert!(!s.is_null(), "open failed: {}", last_error_msg());
-
-        let accepted_ok = ok_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("no accept result in time");
-        assert!(accepted_ok, "listener accept() failed");
-
-        tst_sender_close(s);
-        tst_sender_config_free(cfg);
-    }
-
-    listener_thread.join().expect("listener thread panicked");
+    assert_url_open_succeeds("x-sendtimeout=2000", |_| {});
 }
 
 // ============================================================================
