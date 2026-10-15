@@ -73,8 +73,7 @@ the set — 14 published artifacts per release in total.
      consistency.sh` now asserts these match the workspace version (see
      `RVC_DEP_TOMLS` in the script), so this step is CI-enforced, not just
      convention;
-   - the workspace `Cargo.lock`, the fuzz-workspace lockfiles
-     (`crates/*/fuzz/Cargo.lock`), **and the embedded sub-project lockfiles**
+   - the workspace `Cargo.lock` **and the embedded sub-project lockfiles**
      (`embedded/baremetal-qemu{,-c}/Cargo.lock`,
      `embedded/freertos-srt/example/host/Cargo.lock`) — all record workspace
      crate versions, and the embedded QEMU gates build `--locked`, so a stale
