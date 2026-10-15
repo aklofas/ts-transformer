@@ -76,7 +76,7 @@ __all__: list[str] = [
 
 class RecvEndReason(enum.IntEnum):
     """Why a managed SRT receive session ended. Mirrors
-    `tst_pipeline::RecvEndReason` 1:1, in Rust declaration order.
+    the managed-SRT subset of `tst_core::transport::EndReason` 1:1, in Rust declaration order.
 
     Returned by `ManagedDemuxReceiver.end_reason()`; `None` means the
     stream hasn't ended yet (or ended through a path this type doesn't

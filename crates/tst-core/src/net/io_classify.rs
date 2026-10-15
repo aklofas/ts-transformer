@@ -1,8 +1,9 @@
-//! Classification of failed socket *sends* by [`std::io::ErrorKind`].
+//! Classification of failed socket sends and receives by
+//! [`std::io::ErrorKind`].
 //!
-//! Shared by the TCP and UDP transports so both agree on which kinds mean
-//! "the send deadline ticked over, nothing is wrong with the socket" and
-//! which are terminal. The transports set `SO_SNDTIMEO` to the cancel-poll
+//! Hosts both the send and the receive classifier, shared by every
+//! transport so they agree on which kinds mean "the deadline ticked over,
+//! nothing is wrong with the socket" and which are terminal. The transports set `SO_SNDTIMEO` to the cancel-poll
 //! interval ([`crate::cancel::CANCEL_POLL_INTERVAL`]) so a parked send
 //! wakes to re-check its cancel flag; `std` spells that expiry as
 //! `WouldBlock` on Linux/macOS (`EAGAIN`) and as `TimedOut` on Windows
@@ -151,6 +152,7 @@ mod recv_classify_tests {
             ErrorKind::ConnectionRefused,
             ErrorKind::ConnectionReset,
             ErrorKind::ConnectionAborted,
+            ErrorKind::BrokenPipe,
             ErrorKind::NotConnected,
         ] {
             assert_eq!(classify_recv_error(kind), RecvAction::Fatal, "{kind:?}");

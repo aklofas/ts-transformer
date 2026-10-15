@@ -22,7 +22,7 @@ import org.tstrans.mpegts.DemuxEvent;
  * {@link SrtManagedListenerCancelTest} sibling; the socket-free managed-wrapper
  * checks live in {@link SrtManagedTest}.
  *
- * <p>{@link RecvEndReason} mirrors {@code tst_pipeline::RecvEndReason},
+ * <p>{@link RecvEndReason} mirrors {@code tst_core::transport::EndReason},
  * recorded first-writer-wins by {@code ManagedDemuxReceiver::recv_event} at
  * whichever site observed the terminal condition. Two of its three variants are
  * reachable from the managed-SRT path today (see {@code RecvEndReason}'s

@@ -36,6 +36,8 @@ use crate::url::RistUrl;
 ///
 /// `close()` is a different signal: post-close calls return
 /// [`TransportError::Closed`] and the handle does not read cancelled.
+/// Obtain it from the owner's `cancel_handle()`; a handle built with
+/// `new()` or `Default` is read by nothing.
 pub type RistCancelHandle = tst_core::cancel::FlagCancel;
 
 /// Send-side RIST transport.

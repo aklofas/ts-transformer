@@ -110,6 +110,17 @@ mod tests {
         assert_eq!(body, nal[1..]);
     }
 
+    /// The FU indicator keeps the NAL header's F and NRI bits, not a fixed
+    /// value: NRI 1 (`0x25`) gives indicator `0x3C`.
+    #[test]
+    fn the_fu_indicator_keeps_a_non_zero_nri() {
+        let mut nal = vec![0x25u8];
+        nal.extend(std::iter::repeat_n(0xAB, 2500));
+        let out = packetize([nal.as_slice()], 1200);
+        assert_eq!(&out[0].payload[..2], &[0x3C, 0x85]);
+        assert_eq!(&out[2].payload[..2], &[0x3C, 0x45]);
+    }
+
     #[test]
     fn exactly_max_payload_is_not_fragmented_and_empty_input_yields_nothing() {
         let nal = vec![0x41u8; 1200];

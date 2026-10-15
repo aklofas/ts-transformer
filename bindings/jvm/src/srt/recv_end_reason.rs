@@ -1,4 +1,4 @@
-//! `tst_pipeline::EndReason` → JVM ordinal-coded conversion for
+//! `tst_core::transport::EndReason` (the managed-SRT subset) → JVM ordinal-coded conversion for
 //! `org.tstrans.srt.ManagedDemuxReceiver`.
 //!
 //! # Why a dedicated enum, not the rtp one
@@ -14,7 +14,7 @@
 //!
 //! # Wire values
 //!
-//! `0`/`1`/`2` in `tst-pipeline` declaration order (`EndOfStream`,
+//! `0`/`1`/`2` in `EndReason` declaration order (`EndOfStream`,
 //! `ReconnectExhausted`, `Cancelled`), with `-1` for "no reason recorded". These
 //! are JVM-boundary values between these natives and
 //! `EndReason.fromWireOrdinal`, NOT cross-surface-pinned constants like the
@@ -25,8 +25,8 @@
 //!
 //! # No detail string, and therefore no snapshot carrier
 //!
-//! Every `EndReason` variant is a unit variant — unlike `tst_rtp::
-//! EndReason`, none carries a `msg`. So there is no `endDetail()` twin,
+//! Every `EndReason` variant is a unit variant — unlike the RTP
+//! subset, none carries a `msg`. So there is no `endDetail()` twin,
 //! and `nClose` needs no `EndReasonSnapshot`-style object: it returns the bare
 //! ordinal. That is the same close-time-snapshot mechanism the rtp receivers use
 //! (compute it inside `nClose`, from the resource that call exclusively owns,

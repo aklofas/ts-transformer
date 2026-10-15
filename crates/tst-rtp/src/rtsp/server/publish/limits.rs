@@ -32,17 +32,20 @@ const FRAME_BYTES: usize = 12 + RTP_PAYLOAD_SIZE;
 
 impl PublishLimits {
     /// The values the server uses.
-    pub(crate) const DEFAULT: Self = Self {
-        max_au_bytes: 8 * 1024 * 1024,
-        align_hold_units: 4096,
-        align_hold_bytes: 4 * 1024 * 1024,
-        publish_queue: 64,
-        on_demand_mounts: 256,
+    pub(crate) const DEFAULT: Self = {
+        let limits = Self {
+            max_au_bytes: 8 * 1024 * 1024,
+            align_hold_units: 4096,
+            align_hold_bytes: 4 * 1024 * 1024,
+            publish_queue: 64,
+            on_demand_mounts: 256,
+        };
+        assert!(limits.is_valid());
+        limits
     };
 
     /// Every bound is non-zero. Checked at compile time for the defaults
-    /// (test builds), and by the unit tests.
-    #[cfg(test)]
+    /// and by the unit tests.
     pub(crate) const fn is_valid(&self) -> bool {
         self.max_au_bytes > 0
             && self.align_hold_units > 0
@@ -78,9 +81,6 @@ impl PublishLimits {
             + self.app_queue_frames() * FRAME_BYTES
     }
 }
-
-#[cfg(test)]
-const _: () = assert!(PublishLimits::DEFAULT.is_valid());
 
 #[cfg(test)]
 mod tests {

@@ -161,8 +161,7 @@ pub(crate) fn spawn_peer_fanout(
                                 framed.extend_from_slice(&(datagram.len() as u16).to_be_bytes());
                                 framed.extend_from_slice(&datagram);
                                 let mut g = writer.lock().await;
-                                use tokio::io::AsyncWriteExt;
-                                if let Err(e) = g.write_all(&framed).await {
+                                if let Err(e) = crate::rtsp::server::session::write_flushed(&mut **g, &framed).await {
                                     tracing::warn!(
                                         target: "tst_rtp::server",
                                         error = %e,

@@ -89,7 +89,7 @@ public sealed interface DemuxEvent
          *
          * @return the typed codec units (never {@code null}; empty only when
          *         the access unit contained no parseable units)
-         * @throws DemuxException on an internal binding failure (e.g. JNI
+         * @throws RuntimeException on an internal binding failure (demux has no INTERNAL kind; e.g. JNI
          *         allocation); never for merely-malformed access units, which
          *         yield an empty list
          */
@@ -155,7 +155,7 @@ public sealed interface DemuxEvent
          * @throws CodecParseException never in this lenient mode (kept in the
          *         signature so {@link #parse(boolean)} and this overload share
          *         one call shape)
-         * @throws DemuxException on an internal binding failure (e.g. enum
+         * @throws RuntimeException on an internal binding failure (e.g. enum
          *         drift in the native {@code nParseAudio}); mirrors
          *         {@link DemuxEvent.Video#parse()}
          */
@@ -173,7 +173,7 @@ public sealed interface DemuxEvent
          *               {@code false} to skip past corruption (as {@link #parse()})
          * @return the typed audio frames (never {@code null})
          * @throws CodecParseException in strict mode, on the first malformed frame
-         * @throws DemuxException on an internal binding failure (e.g. enum
+         * @throws RuntimeException on an internal binding failure (e.g. enum
          *         drift in the native {@code nParseAudio}); mirrors
          *         {@link DemuxEvent.Video#parse()}
          */

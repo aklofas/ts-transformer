@@ -69,6 +69,8 @@ impl TransportCancel for RtpCancelHandle {
 /// Requires the `rtsp-server` feature — this handle only exists paired
 /// with a real `RtspServer`.
 #[cfg(feature = "rtsp-server")]
+/// Obtain it from the owner's `cancel_handle()`; a handle built with
+/// `new()` or `Default` is read by nothing.
 pub type RtspServerCancelHandle = tst_core::cancel::FlagCancel;
 
 #[cfg(test)]

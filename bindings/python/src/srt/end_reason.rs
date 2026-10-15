@@ -1,4 +1,4 @@
-//! `tst_pipeline::EndReason` → Python `tstrans.srt.RecvEndReason`
+//! `tst_core::transport::EndReason` (the managed-SRT subset) → Python `tstrans.srt.RecvEndReason`
 //! conversion, used by `managed_convenience::PyManagedDemuxReceiver`.
 //!
 //! ★DEDICATED ENUM, NOT A REUSE OF `tstrans.rtp.StreamEndReason`: the C

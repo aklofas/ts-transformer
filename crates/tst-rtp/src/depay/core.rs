@@ -125,6 +125,7 @@ pub(crate) struct Core<F: Format> {
 impl<F: Format> Core<F> {
     /// Construct a new depacketizer with the given configuration.
     pub(crate) fn new(mut config: DepayConfig) -> Self {
+        const { assert!(F::PS_SLOTS <= MAX_PS_SLOTS) };
         // Seed parameter-set cache from initial_parameter_sets. Last of each
         // type wins. Does NOT tick parameter_set_updates (seeding ≠ an update).
         let mut ps_cache: [Option<Vec<u8>>; MAX_PS_SLOTS] = [None, None, None];
