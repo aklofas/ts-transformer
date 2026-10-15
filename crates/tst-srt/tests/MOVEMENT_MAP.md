@@ -92,9 +92,9 @@ tst-core +16, tst-pipeline +3 (net zero).
 
 | old `tst-srt/tests/…` | new location | why it moved |
 | --- | --- | --- |
-| `codec_av1_corpus.rs` | `tst-core/tests/codec/codec_av1_corpus.rs` | AV1 codec corpus check; imports only `tst_core`. |
-| `codec_h266_corpus.rs` | `tst-core/tests/codec/codec_h266_corpus.rs` | H.266 codec corpus check; imports only `tst_core`. |
-| `local_codec_corpus.rs` | `tst-core/tests/codec/local_codec_corpus.rs` | H.264/H.265 corpus check; imports only `tst_core`. |
+| `codec_av1_corpus.rs` | merged into `tst-core/tests/codec/corpus_cross_check.rs` | AV1 codec corpus check; imports only `tst_core`. |
+| `codec_h266_corpus.rs` | merged into `tst-core/tests/codec/corpus_cross_check.rs` | H.266 codec corpus check; imports only `tst_core`. |
+| `local_codec_corpus.rs` | merged into `tst-core/tests/codec/corpus_cross_check.rs` | H.264/H.265 corpus check; imports only `tst_core`. |
 | `local_fixtures.rs` | `tst-core/tests/klv/local_fixtures.rs` | KLV local-fixture decode; imports only `tst_core::klv`. |
 | `mpegts_demux_local.rs` | `tst-core/tests/mpegts/demux_local.rs` | demux over local TS corpus; imports only `tst_core`. |
 | `mpegts_mux_local.rs` | `tst-core/tests/mpegts/mux_local.rs` | mux over local corpus; imports only `tst_core`. |
