@@ -60,6 +60,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `DemuxErrorKind.MALFORMED_PSI`, `CodecErrorKind.DANGLING_SPS_REFERENCE`,
   `CodecErrorKind.DANGLING_VPS_REFERENCE`, and `CodecError`'s `sps_id` /
   `vps_id` keyword arguments and attributes — never raised.
+- `tstrans.rtp.RtspClientConfig` no longer takes `rtcp=` and has no `rtcp`
+  property; the flag was accepted and ignored.
 
 ### Removed — tst-jni (BREAKING)
 
@@ -68,6 +70,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `DANGLING_VPS_REFERENCE`, and `CodecParseException.spsId()` / `vpsId()`
   with their two constructor parameters (the public constructor now takes 14
   arguments) — never thrown.
+- `org.tstrans.rtp.RtspClientConfig.rtcp()` and `Builder.rtcp(boolean)` are
+  removed; the flag was carried and ignored.
 
 ### Removed — tst-rtp (BREAKING)
 
@@ -126,6 +130,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `NonConformantIssue` implements `std::error::Error`. Its `Display` text is
   unchanged.
 
+### Added — tst-rtp
+
+- `RtspClientBuilder::rtsp_version` sets the request-line version, overriding
+  the URL's `?rtsp_version=` key.
+
 ### Fixed — tst-rtp
 
 - `RtspServer::cancel_handle().cancel()` now ends every session within about
@@ -150,6 +159,13 @@ HLS playlists written on every segment cut; and the fuzz bundle running in CI
 under ClusterFuzzLite. Two source-breaking renames in tst-srt and the removal
 of the Python aliases 0.7.0 deprecated make this 0.8.0 — a `"0.7"`
 requirement will not auto-update into it.
+
+### Fixed — tst-py
+
+- `RtspClientConfig(transport_pref=…, rtsp_version=…)` now take effect at
+  connect; both were accepted and ignored. A non-default value overrides the
+  URL's `?transport=` / `?rtsp_version=` key; the defaults
+  (`TransportPref.AUTO`, `RtspVersion.V1_0`) leave the URL in charge.
 
 ### Release highlights
 

@@ -78,7 +78,6 @@ class RtspClientTest {
         assertEquals("rtsp://127.0.0.1:8554/live", cfg.url());
         assertTrue(cfg.auth().isEmpty());
         assertEquals(TransportPref.AUTO, cfg.transportPref());
-        assertTrue(cfg.rtcp());
         assertTrue(cfg.tlsRootCertsPem().isEmpty());
         assertTrue(cfg.keepalive());
         assertEquals(RtspVersion.V1_0, cfg.rtspVersion());

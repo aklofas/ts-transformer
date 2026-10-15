@@ -305,7 +305,9 @@ class RtspClientConfig:
     """RTSP client connection configuration. Frozen PyClass dataclass.
 
     `auth` is one of `BasicAuth`, `DigestAuth`, or `None`.
-    `transport_pref` controls UDP/TCP selection at SETUP.
+    `transport_pref` controls UDP/TCP selection at SETUP and `rtsp_version` the
+    request-line version; a non-default value overrides the URL's
+    `?transport=` / `?rtsp_version=`, the defaults leave the URL in charge.
     `tls_root_certs_pem` is a PEM bundle of trust anchors for
     `rtsps://` connections (private-CA / self-signed camera certs);
     platform native trust roots are used when it is `None`.
@@ -316,7 +318,6 @@ class RtspClientConfig:
         *,
         auth: Optional[Union[BasicAuth, DigestAuth]] = ...,
         transport_pref: TransportPref = ...,
-        rtcp: bool = ...,
         tls_root_certs_pem: Optional[bytes] = ...,
         keepalive: bool = ...,
         rtsp_version: RtspVersion = ...,
@@ -327,8 +328,6 @@ class RtspClientConfig:
     def auth(self) -> Optional[Union[BasicAuth, DigestAuth]]: ...
     @property
     def transport_pref(self) -> TransportPref: ...
-    @property
-    def rtcp(self) -> bool: ...
     @property
     def tls_root_certs_pem(self) -> Optional[bytes]: ...
     @property

@@ -968,6 +968,10 @@ with RtspClient.connect(cfg) as session:
     # session.play() / session.pause() / session.teardown() drive RTSP state.
 ```
 
+- **Transport and version.** `transport_pref` and `rtsp_version` override the
+  URL's `?transport=` / `?rtsp_version=` when set to a non-default value;
+  the defaults (`TransportPref.AUTO`, `RtspVersion.V1_0`) leave the URL in
+  charge.
 - **Passwords stay Rust-side.** `BasicAuth` / `DigestAuth` hold the
   password in Rust memory (never re-exposed); only `user`, `realm`, and
   `algorithm` are readable. `repr()` redacts the secret.

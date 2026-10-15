@@ -24,7 +24,7 @@ use crate::error::RtspServerError;
 use crate::rtsp::client::{ConnectParams, RtspClient};
 use crate::rtsp::message::validate_header_field;
 use crate::transport::{ConnectError, RtpRecvTransport, RtpTransport};
-use crate::url::{RtpUrl, RtspTransportPref, RtspUrl, UrlError as RtpUrlError};
+use crate::url::{RtpUrl, RtspTransportPref, RtspUrl, RtspVersion, UrlError as RtpUrlError};
 
 /// Fluent builder for send-side [`RtpTransport`].
 #[must_use]
@@ -251,6 +251,14 @@ impl RtspClientBuilder {
     /// the default try-UDP-then-fall-back-to-TCP behavior too.
     pub fn transport_preference(mut self, pref: RtspTransportPref) -> Self {
         self.url.transport_preference = pref;
+        self
+    }
+
+    /// Set the RTSP version written on request lines, overriding the URL's
+    /// `?rtsp_version=` query when both are present. Default
+    /// [`RtspVersion::V1_0`].
+    pub fn rtsp_version(mut self, version: RtspVersion) -> Self {
+        self.url.rtsp_version = version;
         self
     }
 
@@ -764,6 +772,15 @@ mod tests {
             .unwrap()
             .transport_preference(RtspTransportPref::ForceTcp);
         assert_eq!(b.url.transport_preference, RtspTransportPref::ForceTcp);
+    }
+
+    /// The version setter overrides the URL's `?rtsp_version=` query.
+    #[test]
+    fn rtsp_version_setter_overrides_the_url_query() {
+        let b = RtspClientBuilder::new("rtsp://127.0.0.1:8554/x?rtsp_version=1.0")
+            .unwrap()
+            .rtsp_version(RtspVersion::V2_0);
+        assert_eq!(b.url.rtsp_version, RtspVersion::V2_0);
     }
 
     #[test]

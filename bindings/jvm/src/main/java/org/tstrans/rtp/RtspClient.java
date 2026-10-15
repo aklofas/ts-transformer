@@ -20,7 +20,7 @@ import org.tstrans.RtspException;
  * are likewise informational/pass-through: the underlying tst-rtp connect derives
  * the transport (from a {@code ?transport=udp|tcp} URL query) and the version (from
  * the {@code rtsp://} vs {@code rtsps://} scheme) from the URL, not from these
- * fields (matching tst-py). They round-trip through the config unchanged.
+ * fields. They round-trip through the config unchanged.
  */
 public final class RtspClient {
     static { NativeLoader.load(); }

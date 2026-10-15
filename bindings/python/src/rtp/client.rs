@@ -41,7 +41,7 @@ use tst_rtp::rtsp::client::session::RtspSession as RustRtspSession;
 use tst_rtp::rtsp::client::{
     RtspCancelHandle as RustRtspCancelHandle, RtspClient as RustRtspClient,
 };
-use tst_rtp::{H264DepayConfig, RtspClientBuilder, RtspVersion};
+use tst_rtp::{H264DepayConfig, RtspClientBuilder, RtspTransportPref, RtspVersion};
 
 use crate::raise::{RTSP, raise};
 use crate::rtp::demux_receiver::PyDemuxReceiver;
@@ -88,6 +88,16 @@ pub enum PyTransportPref {
     AUTO = 0,
     UDP = 1,
     TCP = 2,
+}
+
+impl PyTransportPref {
+    fn to_rust(self) -> RtspTransportPref {
+        match self {
+            PyTransportPref::AUTO => RtspTransportPref::PreferUdp,
+            PyTransportPref::UDP => RtspTransportPref::ForceUdp,
+            PyTransportPref::TCP => RtspTransportPref::ForceTcp,
+        }
+    }
 }
 
 /// Digest authentication algorithm selector. Mirrors the user-facing
@@ -230,8 +240,10 @@ impl PyDigestAuth {
 /// fields validated at construction.
 ///
 /// `auth` is one of `BasicAuth`, `DigestAuth`, or `None`. `transport_pref`
-/// controls UDP/TCP selection at SETUP. `rtsps://` connections verify the
-/// server certificate against platform native trust roots by default;
+/// controls UDP/TCP selection at SETUP and `rtsp_version` the request-line
+/// version; a non-default value overrides the URL's `?transport=` /
+/// `?rtsp_version=`, the defaults leave the URL in charge. `rtsps://`
+/// connections verify the server certificate against platform native trust roots by default;
 /// pass `tls_root_certs_pem` (a PEM bundle) to verify against a private
 /// CA / self-signed camera cert instead.
 #[pyclass(name = "RtspClientConfig", module = "tstrans.rtp", frozen)]
@@ -242,7 +254,6 @@ pub struct PyRtspClientConfig {
     /// while preserving its concrete Python class identity.
     auth: Option<PyObject>,
     transport_pref: PyTransportPref,
-    rtcp: bool,
     tls_root_certs_pem: Option<Vec<u8>>,
     keepalive: bool,
     rtsp_version: PyRtspVersion,
@@ -256,7 +267,6 @@ impl PyRtspClientConfig {
         *,
         auth = None,
         transport_pref = PyTransportPref::AUTO,
-        rtcp = true,
         tls_root_certs_pem = None,
         keepalive = true,
         rtsp_version = PyRtspVersion::V1_0,
@@ -265,7 +275,6 @@ impl PyRtspClientConfig {
         url: String,
         auth: Option<&Bound<'_, PyAny>>,
         transport_pref: PyTransportPref,
-        rtcp: bool,
         tls_root_certs_pem: Option<Vec<u8>>,
         keepalive: bool,
         rtsp_version: PyRtspVersion,
@@ -296,7 +305,6 @@ impl PyRtspClientConfig {
             url,
             auth: auth_obj,
             transport_pref,
-            rtcp,
             tls_root_certs_pem,
             keepalive,
             rtsp_version,
@@ -319,11 +327,6 @@ impl PyRtspClientConfig {
     }
 
     #[getter]
-    fn rtcp(&self) -> bool {
-        self.rtcp
-    }
-
-    #[getter]
     fn tls_root_certs_pem(&self) -> Option<&[u8]> {
         self.tls_root_certs_pem.as_deref()
     }
@@ -340,7 +343,7 @@ impl PyRtspClientConfig {
 
     fn __repr__(&self) -> String {
         format!(
-            "RtspClientConfig(url={:?}, auth={}, transport_pref={:?}, rtcp={}, \
+            "RtspClientConfig(url={:?}, auth={}, transport_pref={:?}, \
              tls_root_certs_pem={}, keepalive={}, rtsp_version={:?})",
             self.url,
             if self.auth.is_some() {
@@ -349,7 +352,6 @@ impl PyRtspClientConfig {
                 "None"
             },
             self.transport_pref,
-            self.rtcp,
             if self.tls_root_certs_pem.is_some() {
                 "<bytes>"
             } else {
@@ -458,6 +460,23 @@ impl PyRtspCancelHandle {
     }
 }
 
+/// Apply the config's `transport_pref` / `rtsp_version`. The defaults
+/// (`AUTO`, `V1_0`) leave the URL's `?transport=` / `?rtsp_version=` in
+/// charge; any other value overrides the URL — the C builder's rule, where
+/// `tst_rtsp_client_builder_transport_pref` overrides only when called.
+fn apply_transport_and_version(
+    mut builder: RtspClientBuilder,
+    config: &PyRtspClientConfig,
+) -> RtspClientBuilder {
+    if config.transport_pref != PyTransportPref::AUTO {
+        builder = builder.transport_preference(config.transport_pref.to_rust());
+    }
+    if config.rtsp_version != PyRtspVersion::V1_0 {
+        builder = builder.rtsp_version(config.rtsp_version.to_rust());
+    }
+    builder
+}
+
 // ---------------------------------------------------------------------------
 // PyRtspClient — static facade exposing connect()
 // ---------------------------------------------------------------------------
@@ -516,18 +535,9 @@ impl PyRtspClient {
             builder = builder.no_auto_keepalive(true);
         }
 
-        // 4. `rtsp_version` and `transport_pref` are captured on the
-        //    Python side for surface parity with the C ABI but
-        //    tst-rtp's builder doesn't take them — both are derived
-        //    from the URL itself (`rtsp://` vs `rtsps://` for
-        //    version; `?transport=udp|tcp` for pref). The fields
-        //    survive a config round-trip; tighter pass-through wiring
-        //    can land in a follow-up.
-        let _ = (
-            config.rtsp_version.to_rust(),
-            config.transport_pref,
-            config.rtcp,
-        );
+        // 4. `transport_pref` / `rtsp_version` (non-default values override
+        //    the URL query).
+        builder = apply_transport_and_version(builder, config);
 
         // 5. Custom trust roots for `rtsps://` (private-CA cameras):
         //    parse the PEM bundle into a RootCertStore and hand it to
@@ -604,11 +614,7 @@ impl PyRtspClient {
             builder = builder.no_auto_keepalive(true);
         }
 
-        let _ = (
-            config.rtsp_version.to_rust(),
-            config.transport_pref,
-            config.rtcp,
-        );
+        builder = apply_transport_and_version(builder, config);
 
         builder = apply_tls_roots(py, builder, config)?;
 
