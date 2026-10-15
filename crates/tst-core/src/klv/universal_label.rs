@@ -141,6 +141,7 @@ impl fmt::Display for UniversalLabel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_prelude::*;
 
     #[test]
     fn st0601_constant_well_formed() {

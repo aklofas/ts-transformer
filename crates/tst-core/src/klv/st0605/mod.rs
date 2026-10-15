@@ -45,6 +45,7 @@ mod tests {
     use super::model::{PrecisionTimeStampPack, TimeStatus};
     use crate::error::KlvDecodeError;
     use crate::klv::universal_label::UniversalLabel;
+    use crate::test_prelude::*;
 
     #[test]
     fn time_status_locked_normal() {

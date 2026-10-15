@@ -3,6 +3,7 @@
 use crate::codec::h266::parse_sps;
 use crate::codec::test_util::{BitWriter, escape_emulation};
 use crate::codec::{ChromaFormat, CodecParseError, Rational};
+use crate::test_prelude::*;
 
 /// Construct a minimal valid H.266 SPS bitstream:
 /// sps_id=0, vps_id=0, 320x240, 8-bit 4:2:0, Main 10 profile @ Level 4.0.

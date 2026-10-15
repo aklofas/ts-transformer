@@ -4,6 +4,7 @@ use super::model::{PACK_TAGS, VTargetPack, VTargetPackError, pack_lookup};
 use crate::error::KlvEncodeError;
 use crate::error::KlvFieldError;
 use crate::klv::pack::OwnedRawField;
+use crate::test_prelude::*;
 
 #[test]
 fn pack_tags_table_has_unique_ids() {

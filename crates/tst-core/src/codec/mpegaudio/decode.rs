@@ -349,6 +349,7 @@ pub(super) fn frames_next<'a>(it: &mut Frames<'a>) -> Option<Result<Frame<'a>, C
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_prelude::*;
 
     #[test]
     fn bitrate_v1l1_index1_is_32() {

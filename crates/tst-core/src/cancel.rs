@@ -332,6 +332,7 @@ impl CancelSlot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_prelude::*;
 
     /// Construct a ResourceCancel around an integer "handle" using a stub
     /// closer that records its calls. Verifies idempotence: the closer

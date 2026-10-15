@@ -1219,6 +1219,7 @@ fn fmt_psi_syntax(
 mod tests {
     use super::*;
     use crate::shared::SharedBytes;
+    use crate::test_prelude::*;
 
     /// Every `NonConformantIssue` message, byte for byte. The JVM binding and
     /// the interop harness carry `issue.to_string()`, so the text is contract.

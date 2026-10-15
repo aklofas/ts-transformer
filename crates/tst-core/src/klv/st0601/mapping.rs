@@ -7,7 +7,6 @@
 //! - Unsigned: integer in `[0, UINT_MAX]`, no sentinel.
 
 use crate::error::{KlvEncodeError, KlvFieldError};
-#[cfg(not(feature = "std"))]
 use crate::float_ext::FloatExt;
 use crate::klv::st0601::tags::LinearRange;
 
@@ -184,7 +183,7 @@ pub(crate) fn encode_fixed_range(
         let span = range.max - range.min;
         let scale = span / (int_max as f64 - int_min_plus_one as f64);
         let midpoint = (range.min + range.max) / 2.0;
-        let mut i = ((value - midpoint) / scale).round() as i64;
+        let mut i = FloatExt::round((value - midpoint) / scale) as i64;
         if i > int_max {
             i = int_max;
         }
@@ -200,7 +199,7 @@ pub(crate) fn encode_fixed_range(
         let int_max = unsigned_max(range.byte_length);
         let span = range.max - range.min;
         let scale = span / int_max as f64;
-        let mut i = ((value - range.min) / scale).round() as i64;
+        let mut i = FloatExt::round((value - range.min) / scale) as i64;
         if i > int_max {
             i = int_max;
         }

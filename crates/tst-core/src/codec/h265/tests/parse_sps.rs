@@ -4,6 +4,7 @@ use crate::codec::h265::parse_sps;
 use crate::codec::{
     ChromaFormat, CodecParseError, ColourPrimaries, MatrixCoefficients, TransferCharacteristics,
 };
+use crate::test_prelude::*;
 
 const SPS_1080P_MAIN40: &[u8] =
     include_bytes!("../../../../tests/fixtures/codec/h265/h265_1080p_main40_sps.bin");

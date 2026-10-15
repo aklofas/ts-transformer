@@ -46,6 +46,7 @@ pub fn crc32_mpeg2(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_prelude::*;
 
     /// Empty input — init value passes through with no transformation.
     #[test]

@@ -1114,6 +1114,7 @@ mod tests {
     use crate::mpegts::demux::types::{
         DemuxerConfig, default_pes_cap_per_pid, default_pes_cap_total,
     };
+    use crate::test_prelude::*;
 
     #[test]
     fn builder_carries_defaults() {

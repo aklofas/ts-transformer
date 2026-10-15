@@ -791,6 +791,7 @@ impl MuxError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_prelude::*;
 
     #[test]
     fn descriptor_index_out_of_range_displays() {

@@ -2,6 +2,7 @@
 
 use crate::codec::CodecParseError;
 use crate::codec::ac3::{Ac3SyncInfo, parse_syncframe};
+use crate::test_prelude::*;
 
 /// Helper: build the first 8 bytes of an AC-3 syncframe with caller-chosen
 /// fscod, frmsizecod, bsid, bsmod, acmod, lfeon. Optional fields driven

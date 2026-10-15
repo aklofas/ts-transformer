@@ -6,6 +6,7 @@ use crate::codec::test_util::{BitWriter, escape_emulation};
 use crate::codec::{
     ChromaFormat, CodecParseError, ColourPrimaries, MatrixCoefficients, TransferCharacteristics,
 };
+use crate::test_prelude::*;
 
 fn nal_h264(nal_type: u8, payload: Vec<u8>) -> NalUnit {
     NalUnit::H264 {

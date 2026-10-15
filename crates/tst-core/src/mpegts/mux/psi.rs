@@ -266,6 +266,7 @@ mod tests {
         KlvStreamType, MuxerConfig, MuxerProgramConfig, MuxerProgramConfigBuilder, StreamSpec,
         VideoCodec,
     };
+    use crate::test_prelude::*;
 
     /// Build a minimal single-program config for unit tests.
     fn single_prog_config() -> MuxerConfig {
