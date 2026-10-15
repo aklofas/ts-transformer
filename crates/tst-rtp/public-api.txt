@@ -524,8 +524,6 @@ impl core::marker::UnsafeUnpin for tst_rtp::h264::receiver::H264Receiver
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::h264::receiver::H264Receiver
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::h264::receiver::H264Receiver
 pub fn tst_rtp::h264::parse_rtpmap_h264(&tst_rtp::sdp::SdpMedia) -> core::option::Option<u8>
-pub mod tst_rtp::init
-pub fn tst_rtp::init::init()
 pub mod tst_rtp::packet
 #[non_exhaustive] pub enum tst_rtp::packet::RtpParseError
 pub tst_rtp::packet::RtpParseError::Truncated
@@ -946,7 +944,6 @@ pub struct tst_rtp::rtsp::client::session::RtspSession
 impl tst_rtp::rtsp::client::session::RtspSession
 pub fn tst_rtp::rtsp::client::session::RtspSession::into_h264_receiver(self, tst_rtp::h264::depacketizer::H264DepayConfig) -> tst_rtp::h264::receiver::H264Receiver
 pub fn tst_rtp::rtsp::client::session::RtspSession::into_recv_transport(self) -> tst_rtp::transport::RtpRecvTransport
-pub fn tst_rtp::rtsp::client::session::RtspSession::rtcp_endpoint(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
 pub fn tst_rtp::rtsp::client::session::RtspSession::session_id(&self) -> &str
 pub fn tst_rtp::rtsp::client::session::RtspSession::transport_kind(&self) -> tst_rtp::rtsp::client::transport_negotiation::RtspTransportKind
 impl core::marker::Freeze for tst_rtp::rtsp::client::session::RtspSession
@@ -3049,7 +3046,6 @@ pub struct tst_rtp::RtspSession
 impl tst_rtp::rtsp::client::session::RtspSession
 pub fn tst_rtp::rtsp::client::session::RtspSession::into_h264_receiver(self, tst_rtp::h264::depacketizer::H264DepayConfig) -> tst_rtp::h264::receiver::H264Receiver
 pub fn tst_rtp::rtsp::client::session::RtspSession::into_recv_transport(self) -> tst_rtp::transport::RtpRecvTransport
-pub fn tst_rtp::rtsp::client::session::RtspSession::rtcp_endpoint(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
 pub fn tst_rtp::rtsp::client::session::RtspSession::session_id(&self) -> &str
 pub fn tst_rtp::rtsp::client::session::RtspSession::transport_kind(&self) -> tst_rtp::rtsp::client::transport_negotiation::RtspTransportKind
 impl core::marker::Freeze for tst_rtp::rtsp::client::session::RtspSession

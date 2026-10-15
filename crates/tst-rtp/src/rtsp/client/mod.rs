@@ -18,7 +18,7 @@ pub mod tls;
 pub mod transport_negotiation;
 
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -125,8 +125,6 @@ pub struct RtspClient {
     pub(crate) stream: Arc<Mutex<Stream>>,
     /// Negotiated URL — caller can re-parse for re-connects.
     pub(crate) url: RtspUrl,
-    /// Server's connection address as we resolved it.
-    pub(crate) peer: SocketAddr,
     /// Monotonic CSeq counter; every outbound request bumps this.
     pub(crate) next_cseq: AtomicU32,
     /// Session ID from the most recent SETUP success. None before
@@ -487,7 +485,6 @@ impl RtspClient {
         Ok(Self {
             stream: Arc::new(Mutex::new(stream)),
             url: url.clone(),
-            peer,
             next_cseq: AtomicU32::new(1),
             session_id: None,
             session_timeout: Duration::from_secs(60),
@@ -760,7 +757,6 @@ mod tests {
         });
         let url = format!("rtsp://127.0.0.1:{}/test", port);
         let c = RtspClient::connect(&url).unwrap();
-        assert_eq!(c.peer.port(), port);
         assert!(matches!(c.url.scheme(), RtspScheme::Rtsp));
     }
 

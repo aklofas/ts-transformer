@@ -39,7 +39,6 @@ pub mod cancel;
 pub mod clock;
 pub mod error;
 pub mod h264;
-pub mod init;
 pub mod packet;
 pub mod rtcp;
 pub mod rtsp;
