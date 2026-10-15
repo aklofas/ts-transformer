@@ -1,290 +1,64 @@
 #!/usr/bin/env bash
-# Multi-day endurance ("soak") run: concurrent legs of the tst-interop
-# driver pushing synthetic MPEG-TS/KLV traffic through an impaired UDP
-# proxy (and, on a third leg, an external RTSP publisher pushing into a
-# tst-interop receiver) for hours at a time, sampling process RSS along
-# the way, then handing everything to `tst-interop report soak` for a
-# verdict. This is the "impaired endurance" half of the published
-# interop evidence (run-matrix.sh's transport/format matrix is the
-# "real tools, short runs" half).
+# Multi-day endurance ("soak") run: tst-interop legs pushing synthetic
+# MPEG-TS/KLV through impaired UDP proxies (srt, rist) and an external RTSP
+# publisher (rtsp-publish) for hours, sampled for RSS / CPU / descriptors and
+# judged by `tst-interop report soak`. Topology, realism knobs, outputs,
+# verdicts and the fresh-host recipe: scripts/interop/README.md, "Multi-day
+# soak".
 #
-# Topology (see crates/tst-interop/src/report.rs's `soak` module doc for
-# the verdict shapes this run's evidence feeds):
-#   - `srt` leg: `tst-interop send --managed` (SRT, wrapped in
-#     `tst_pipeline::ManagedTransport` so a transport break reconnects)
-#     -> impairment proxy (a seeded PHASE SCHEDULE — see "Realism knobs"
-#     below — plus a 90s full-drop outage window every 6h) -> `tst-interop
-#     recv --managed` (`ManagedRecvTransport`/`ManagedDemuxReceiver` —
-#     a listener-mode SRT recv otherwise accepts exactly ONE connection
-#     for its whole process lifetime, so without this flag the FIRST
-#     outage would end the capture for good even though the sender
-#     keeps retrying forever on the other end). BOTH sides must survive
-#     each outage window and reconnect once it closes.
-#   - `rist` leg: the same shape over RIST, through a SECOND impaired
-#     proxy on the SAME schedule but with NO outage window.
-#     One outage-driven reconnect assertion (the srt leg) is enough —
-#     adding a second would double this run's flake surface (two
-#     independent outage/reconnect state machines to reason about) for
-#     no new signal: RIST has no `Managed*` reconnect wrapper of its
-#     own in this codebase, so a RIST outage would just be sustained
-#     data loss, not a reconnect exercise. The rist leg's job here is
-#     purely "does sustained loss/jitter/reorder over many hours behave
-#     the same as it does over a five-second interop-matrix cell."
-#   - `rtsp-publish` leg: GStreamer's `rtspclientsink` publishes
-#     (ANNOUNCE + RECORD, MP2T over TCP-interleaved RTP) into the publish
-#     mount `tst-interop recv --url rtsp-publish://...` serves — no proxy,
-#     no tst-interop sender. The publisher session is ended and a new one
-#     ANNOUNCEs every PUBLISHER_DROP_PERIOD_S (default 600 s), and the
-#     receiver must judge the generations as one unbroken stream. Each
-#     drop is GRACEFUL — the publisher reaches the end of its segment,
-#     sends EOS and closes its session — so an abrupt publisher loss (a
-#     reset with no TEARDOWN, a crash) is not exercised here; that path
-#     stays with the RTSP server's own integration tests. See the leg's
-#     own block below; `--no-rtsp-publish` drops the leg (a host without
-#     GStreamer, or a run long enough that its pre-generated stream will
-#     not fit on disk: peak ~1.7 GB per hour of run, ~122 GB for 72 h —
-#     checked at launch, exit 2 when the outdir has < 1.2 x the peak free).
+# Usage:
+#   SRT_RECONNECT_MODE=blocking|background bash scripts/interop/soak.sh
+#       [--outdir DIR] [--hours 72] [--seed 1] [--profile auto|NAME]
+#       [--no-corrupt] [--fixed-impairment] [--schedule-phases 12]
+#       [--schedule-phase-s S] [--no-rtsp-publish]
+#       [--rss-slope-threshold-kb-per-hour N]
 #
-# # Realism knobs
+#   --outdir DIR        where every artefact lands (default
+#                       ~/interop-soak-<UTC timestamp>)
+#   --hours H           run length, decimal allowed (default 72; 1 = the
+#                       smoke, 0.05 = a ~3-minute wiring drill)
+#   --seed N            seeds the profile draw, impairment schedule,
+#                       corruption taps and rich KLV (default 1)
+#   --profile auto|NAME auto draws one profile per leg from the seed; NAME
+#                       pins both legs (the bisect form)
+#   --no-corrupt        sender corruption tap off (bisect form)
+#   --fixed-impairment  one fixed loss / jitter / delay / reorder level
+#                       instead of the seeded schedule (bisect form)
+#   --schedule-phases N, --schedule-phase-s S
+#                       schedule shape (default 12 phases spanning the run)
+#   --no-rtsp-publish   drop the rtsp-publish leg (no GStreamer needed; the
+#                       leg needs ~1.7 GB free per hour of run, checked at
+#                       launch)
+#   --rss-slope-threshold-kb-per-hour N
+#                       RSS-slope gate (default 200 for runs of 72 h or
+#                       more; shorter runs are provisional unless set)
 #
-# A soak run is not one fixed impairment against one fixed stream shape.
-# Everything below is derived from the single `--seed`, so a run is fully
-# reproducible from its seed alone, and every derived choice is also
-# DECLARED in `soak-config.json` before launch so `report soak` can check
-# the run actually did what it said it would (`profile_declared_<leg>` /
-# `schedule_declared_<leg>` / `corruption_declared_<leg>` /
-# `klv_declared_<leg>` / `reconnect_mode_declared_<leg>`).
+# Environment:
+#   SRT_RECONNECT_MODE         REQUIRED, blocking|background; no default — the
+#                              two modes exercise different library code
+#   OUTAGE_PERIOD_S=21600      srt leg: full-drop outage every 6 h,
+#   OUTAGE_DUR_S=90              90 s long
+#   LOSS_PCT=2                 loss under --fixed-impairment (0 isolates outages)
+#   PUBLISHER_DROP_PERIOD_S=600  rtsp-publish leg: publisher drop / re-ANNOUNCE
+#                              period (the run must span at least two)
+#   RUST_LOG=info              passed to every tst-interop process
 #
-#   - Per-leg stream profile (`--profile auto`, the default): the two
-#     legs run two DISTINCT profiles drawn from the seed by
-#     `tst-interop pick-profiles --seed N --legs 2` (see
-#     `profiles::pick`) instead of both running `baseline` forever, so a
-#     long run also covers a codec/carriage/cadence shape the short
-#     interop matrix only sees for seconds at a time. `--profile NAME`
-#     pins BOTH legs to one named profile — that is the reproduction
-#     form (bisecting a failure a drawn profile exposed).
-#   - Impairment schedule (the default): each proxy walks a seeded
-#     `--schedule` of `--schedule-phases` phases, each in force for
-#     `--schedule-phase-s` seconds, varying loss (0.5-4%, ~30% of phases
-#     bursty), jitter, reorder and base delay per phase — a link whose
-#     conditions CHANGE, which is what a multi-day run is for. The
-#     phase table is a pure function of (seed, phases), echoed into each
-#     proxy's stats file. `--fixed-impairment` reverts to the old single
-#     fixed level (`--loss/--jitter/--delay/--reorder` below) — the
-#     bisect form for "is this failure the schedule's doing?".
-#   - Sender corruption tap (on by default; `--no-corrupt` turns it off,
-#     the other bisect form): each sender deliberately damages a small,
-#     logged fraction of its own packets, and the matching receiver reads
-#     that log and must account for every injection — see
-#     `crates/tst-interop/src/corrupt.rs`. Each leg gets its own seed
-#     offset and its own `corruption.jsonl`, so the two taps never
-#     produce the same damage at the same offsets.
-#   - Rich KLV (always, every leg): `--klv-set rich --klv-seed $SEED`
-#     replaces the 4-tag fixture record with an ST 0601 record of up to
-#     36 tags (mean ~27) carrying a nested ST 0102 security set on a
-#     seeded presence schedule, so the run exercises real metadata
-#     density rather than the matrix's minimal record.
-#   - Env overrides (drill knobs, all with the production defaults
-#     above): `OUTAGE_PERIOD_S` and `OUTAGE_DUR_S` reshape the srt leg's
-#     outage schedule so a short run can cover several windows;
-#     `LOSS_PCT` (with `--fixed-impairment`) isolates outage effects from
-#     loss when set to 0; `SRT_RECONNECT_MODE=blocking|background` picks
-#     how that leg's managed sender spends an outage, and is declared in
-#     `soak-config.json` (`legs.srt.reconnect_mode`) and checked against
-#     what the sender reports it ran. Unlike the others it has NO
-#     default and the script refuses to launch without it: the two modes
-#     exercise different library code (a Blocking outage replays the
-#     backlog as a burst; Background drains a bounded gap buffer), the
-#     declared-vs-observed verdict only checks the run did what was
-#     declared, and a run that silently inherited a default would pass
-#     that verdict while exercising the wrong mode — the 0.7.0 RC soak
-#     exists to exercise `background`. `PUBLISHER_DROP_PERIOD_S` sets how
-#     often the rtsp-publish leg's publisher drops and re-ANNOUNCEs (the
-#     run must span at least two such periods); the leg declares the
-#     resulting segment length and generation count in `soak-config.json`
-#     (`legs.rtsp-publish.publisher_drop_period_s` / `.publisher_generations`),
-#     and the generated stream's digest (`.source_sha256`) once it exists.
-#     Set them in the
-#     environment, e.g.
-#     `SRT_RECONNECT_MODE=background OUTAGE_PERIOD_S=300 OUTAGE_DUR_S=30
-#     bash soak.sh ...`.
+# Prerequisites: Linux; a Rust toolchain via rustup; jq, python3,
+# build-essential, cmake, meson, ninja-build, clang, libclang-dev; for the
+# rtsp-publish leg gst-launch-1.0 with rtspclientsink (gstreamer1.0-tools,
+# -plugins-bad, -rtsp).
 #
-# Every long-running process's stdout/stderr is redirected to
-# `--outdir/logs/*.log`; each PID is additionally recorded under
-# `--outdir/pids/*.pid` so `nohup bash soak.sh --outdir DIR &` (a real
-# multi-day invocation) leaves behind a way to check on or kill an
-# in-progress run without needing this script's own job-control state.
+# Exit status: `report soak`'s (0 = overall pass); 2 = bad argument, missing
+# prerequisite or setup error. A worker death mid-run writes soak-FAILED
+# and the run exits nonzero.
 #
-# # Running the soak on a fresh host
+# Launch a real run detached, never under a session tool that caps its
+# lifetime:
+#   SRT_RECONNECT_MODE=background nohup bash scripts/interop/soak.sh \
+#     --outdir ~/interop-soak-$(date +%F) --seed 1 &
 #
-# Prerequisites: Linux — validated on x86_64; aarch64 is expected to work
-# (no arch-specific code anywhere in this path: pure Rust + bash + /proc)
-# but hasn't actually been validated yet. `git`, a Rust toolchain via
-# rustup (this repo pins 1.85 via rust-toolchain.toml — `rustup` picks
-# it up automatically once you're inside the repo), `jq` + `python3` on
-# PATH (this script's own port allocation and small JSON assembly — the
-# SAME two tools run-matrix.sh already requires, see this directory's
-# README.md), AND the native build toolchain `SRT_FORCE_VENDORED=1
-# RIST_FORCE_VENDORED=1 cargo build` below actually needs even though
-# this script itself never calls a C/C++ compiler directly: `tst-interop`
-# depends on `tstrans-srt-sys` (vendored libsrt, built via `cmake`) and
-# `tstrans-mbedtls-src` (vendored mbedTLS, ALSO built via `cmake`, as a
-# build-dependency of the srt-sys build script) and `tstrans-rist-sys`
-# (vendored librist, built via `meson`+`ninja` — NOT cmake), so a
-# genuinely fresh host needs `build-essential` (a C/C++ compiler +
-# related tooling) and `cmake` for the first two, plus `meson` +
-# `ninja-build` for the third, or the very first `cargo build` below
-# fails with an unhelpful "cmake: command not found"/"meson: command
-# not found" instead of a clear prerequisite error. Unlike run-matrix.sh,
-# this script needs only ONE third-party media tool: the rtsp-publish
-# leg's publisher, `gst-launch-1.0` with the `rtspclientsink` element
-# (gstreamer1.0-tools + gstreamer1.0-rtsp; checked before the build, and
-# `--no-rtsp-publish` runs without it). Every other process it launches
-# is `tst-interop` talking to itself through its own impairment proxy.
-#
-#   git clone --recurse-submodules https://github.com/aklofas/ts-transformer.git
-#   cd ts-transformer            # the clone root IS the workspace root
-#   curl https://sh.rustup.rs -sSf | sh -s -- -y   # if rustup isn't already installed
-#   sudo apt install -y jq python3 build-essential cmake meson ninja-build clang libclang-dev \
-#     gstreamer1.0-tools gstreamer1.0-plugins-bad gstreamer1.0-rtsp
-#   SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop
-#
-# (`clang`/`libclang-dev`: bindgen — run by both sys crates' build
-# scripts — loads libclang at build time; librist's meson build also
-# wants a clang toolchain present. Both were missing from this list the
-# first time it ran on a genuinely fresh Ubuntu host, 2026-08-04.)
-#
-# Then launch the real 72h run (the canonical seed below reproduces the
-# exact same impairment decision sequence — see impair.rs's module doc
-# on why the engine is deterministic given seed+config). This script's
-# own send/recv invocations already pass `--no-klv-digest` on every
-# process it launches — nothing extra to pass here for that; see the
-# "Expected outputs" note below on what it changes in the per-leg JSON.
-#
-# **Launch this genuinely detached — `nohup ... & disown`, exactly as
-# shown below — and NEVER through a supervising tool/session mechanism
-# that can enforce its own lifetime cap on the invocation** (a
-# session-tool background-command wrapper has silently killed a 1-hour
-# smoke around the ~60-minute mark, well short of even that short run's
-# own deadline —
-# `nohup`+`disown` detaches the process from that supervision entirely,
-# so it keeps running past the launching tool call's own return and
-# past the launching session ending). Don't wait on the launching
-# command itself for 72 hours; instead poll for `soak-results.json`
-# (or `pids/*.pid` + `ps`) to detect completion:
-#
-#   SRT_RECONNECT_MODE=background nohup bash scripts/interop/soak.sh --outdir ~/interop-soak-$(date +%F) --seed 1 &
-#
-# (With the rtsp-publish leg on — the default — this 72 h line needs
-# GStreamer and ~122 GB free in the outdir at launch; add
-# `--no-rtsp-publish` to run the srt and rist legs alone.)
-#
-# Expected outputs under `--outdir`:
-#   rss.csv            - elapsed_s,leg,process,pid,rss_kb — every worker PID: send/proxy/recv
-#                         on the srt and rist legs, recv/publisher on rtsp-publish (8 PIDs;
-#                         6 under --no-rtsp-publish). `publisher` is the restart loop's
-#                         shell, not the publisher tool: gst-launch-1.0's own memory is
-#                         not sampled.
-#   proc.csv           - elapsed_s,leg,process,pid,utime_ticks,stime_ticks,threads,fds — the
-#                         same PIDs on the same tick as rss.csv: cumulative CPU time
-#                         (user/system clock ticks from /proc/<pid>/stat; divide by the
-#                         `clk_tck` recorded in provenance.json for seconds), thread count
-#                         and open-descriptor count. RECORDED, NOT GATED — `report soak`
-#                         never reads it. It exists so a finished run also yields CPU per
-#                         stream and so a thread or descriptor leak is visible in the
-#                         archive before anyone writes a verdict for it.
-#   host.csv           - elapsed_s,load1,load5,load15,procs_running,mem_available_kb — one
-#                         row per tick from /proc/loadavg + /proc/meminfo, so a per-process
-#                         anomaly can be told apart from host contention. Recorded, not gated.
-#   provenance.json    - what was run and where: source SHA (+ dirty flag), submodule
-#                         pins, rustc/cargo versions, host (kernel, cpus, memory, clk_tck),
-#                         this script's argv and the env knobs, written BEFORE the build.
-#                         The drill archives used to carry the SHA typed in by hand.
-#   soak-config.json   - the run's declared parameters, written BEFORE any
-#                         evidence exists (`report soak`'s `--config`)
-#   exits.json          - every worker's reaped exit status (`report soak`'s `--exits`)
-#   srt/{proxy-stats,recv-report,send-report}.json  - klv_set_sha256 is `null` in both
-#   rist/{proxy-stats,recv-report,send-report}.json   report/send JSONs (--no-klv-digest;
-#                                                      counts/every other field unaffected)
-#   {srt,rist}/corruption.jsonl - the sender's own log of every injection it
-#                         made, read back by that leg's receiver (absent
-#                         under --no-corrupt)
-#   rtsp-publish/recv-report.json - the publish leg's receiver report; its
-#                         `publish_mount` block carries the mount's counters
-#                         (`generation` = publishers that ended). klv_set_sha256
-#                         is `null` here too.
-#   rtsp-publish/source.sha256 - sha256 of the stream the publisher pushed, cut
-#                         into rtsp-publish/segments/gen-N.ts (each deleted once
-#                         published); also declared in soak-config.json as
-#                         `legs.rtsp-publish.source_sha256`, and recv's
-#                         stream_sha256 must equal it
-#                         (`delivery_complete_rtsp-publish`).
-#   logs/*.log          - one file per launched process (each send/recv beats a
-#                         one-line "heartbeat" into its log every 60s — counters +
-#                         wire bytes — so a dead process is findable to the minute)
-#   pids/*.pid          - one PID per launched process + the RSS sampler
-#   soak-events.log     - timestamped lifecycle events (launches, premature
-#                         deaths, fail-fast kills)
-#   soak-FAILED         - written ONLY when the supervisor fail-fasts a run
-#                         after a worker died mid-run (names the role + log)
-#   soak-results.json   - `report soak`'s verdict document
-#   summary.txt         - short human-readable render of the same
-#
-# Supervisor fail-fast: soak run 1 (2026-08-04) lost its BOTH senders to
-# a fixture panic 14.5h in, and the remaining processes idled for 12+
-# hours before anyone noticed — the `wait`-until-deadline shape below
-# has no way to notice a death early. The supervisor loop polls every
-# worker PID every 30s; a death more than SUPERVISOR_GRACE_S before the
-# deadline kills the whole run immediately, records soak-FAILED +
-# soak-events.log, and exits nonzero (still attempting the report over
-# whatever evidence exists). Deaths within the last SUPERVISOR_GRACE_S
-# are normal end-of-run staggering (send's own --seconds window starts
-# before the sampler's START_EPOCH), handled by the ordinary waits.
-#
-# Harvest steps once it completes: read `summary.txt` for the headline
-# (overall_pass, per-leg drop rates, RSS slopes), then feed the numbers
-# into `docs/.../validation-evidence.md`.
-#
-# The RSS-slope gate defaults ON for full-length (>= 72h) runs at
-# 200 KiB/hour, pinned from the first completed 72h run (launched
-# 2026-08-05, completed 2026-08-08, seed 1, realistic AU sizes): the
-# worst library-attributable post-warmup slope observed was 68.8
-# KiB/h (srt send), and even that is warm-up
-# convergence to the sender's ~176 MiB steady-state plateau, not
-# growth — every process's slope over the run's final 24h was
-# <= 18 KiB/h. 200 gives ~3x headroom over the worst legitimate
-# whole-run slope while still catching the digest-accumulation class
-# of harness leak this check was built for (349 and 1485 KiB/h in the
-# pre-fix smoke runs) and any real leak >= ~0.2 MiB/h. Shorter runs
-# stay provisional (no threshold) unless one is passed explicitly:
-# under realistic AU sizes the senders take ~7h to reach that plateau,
-# so a short run's post-warmup regression window is dominated by
-# convergence and would trip any honest threshold spuriously.
-#
-# `--hours 1` is the smoke mode this task's own acceptance gate runs
-# locally: short enough to finish in about an hour, long enough for the
-# RSS sampler to collect a real post-warmup regression window (this
-# module's warmup formula scales down for a short run — see report.rs).
-# A 1h run never reaches even one 6h outage window, so the smoke proves
-# `recv --managed`'s HAPPY path only (steady-state receiving is
-# unaffected by wrapping it in `ManagedRecvTransport`/
-# `ManagedDemuxReceiver` — no spurious reconnects, no throughput or
-# correctness regression); the reconnect/outage-window path itself is
-# exercised by `report.rs`'s own unit tests plus targeted short-outage
-# dry-runs (not this script) — see this task's own report for why
-# that's an accepted, well-understood trade-off ahead of the real 72h
-# run, which DOES reach the schedule's outage windows for real.
-#
-# `--hours N` (decimal allowed, e.g. 0.05 for a 3-minute drill): fast
-# enough to exercise the whole launch/supervisor/report path end-to-end
-# without waiting out even the 1h smoke above — long enough for a
-# handful of sampler ticks, too short for any real RSS-slope or outage
-# signal (both stay provisional at that length, same as any sub-72h run).
-#
-# Validated on linux-x86_64; linux-aarch64 is expected to work (no
-# arch-specific code: pure Rust + bash + /proc) but hasn't been
-# validated yet — see lib.sh's header for the shell-portability stance
-# this whole directory takes (this script is not made macOS-portable).
+# Validated on linux-x86_64; see lib.sh for this directory's portability
+# stance (not macOS-portable).
 
 set -euo pipefail
 
@@ -310,7 +84,7 @@ HOURS=72
 OUTDIR=""
 SEED=1
 RSS_SLOPE_THRESHOLD=""
-# See the header's "Realism knobs" section for what each of these does
+# See README.md's "Realism knobs" (this directory) for what each of these does
 # and which one to reach for when bisecting a failure.
 PROFILE=auto
 CORRUPT=1
@@ -468,7 +242,7 @@ fi
 [[ -n "$OUTDIR" ]] || OUTDIR="$HOME/interop-soak-$(date -u +%Y%m%dT%H%M%SZ)"
 
 # Default the RSS-slope gate ON for full-length runs only — see the
-# header's "RSS-slope gate" paragraph for the 200 KiB/h derivation and
+# README.md's "Outputs and the supervisor" for the 200 KiB/h derivation and
 # why short runs stay provisional (plateau convergence dominates their
 # post-warmup window).
 if [[ -z "$RSS_SLOPE_THRESHOLD" ]] && awk -v h="$HOURS" 'BEGIN{exit !(h>=72)}'; then
@@ -500,7 +274,7 @@ mkdir -p "$OUTDIR/srt" "$OUTDIR/rist" "$OUTDIR/logs" "$OUTDIR/pids"
 [[ "$RTSP_PUBLISH" -eq 0 ]] || mkdir -p "$OUTDIR/rtsp-publish/segments"
 RSS_CSV="$OUTDIR/rss.csv"
 printf 'elapsed_s,leg,process,pid,rss_kb\n' >"$RSS_CSV"
-# Two more time series from the same sampler tick — see the header's
+# Two more time series from the same sampler tick — see README.md's
 # outputs list. Separate files rather than new columns on rss.csv so the
 # RSS-slope verdict's input keeps its exact shape (`report soak --rss`).
 PROC_CSV="$OUTDIR/proc.csv"
@@ -508,12 +282,12 @@ printf 'elapsed_s,leg,process,pid,utime_ticks,stime_ticks,threads,fds\n' >"$PROC
 HOST_CSV="$OUTDIR/host.csv"
 printf 'elapsed_s,load1,load5,load15,procs_running,mem_available_kb\n' >"$HOST_CSV"
 
-# Timestamped lifecycle event log — see the header's outputs list.
+# Timestamped lifecycle event log — see README.md's outputs list.
 EVENTS_LOG="$OUTDIR/soak-events.log"
 event() { event_to "$EVENTS_LOG" "$@"; }
 
 TOTAL_SECONDS=$(awk -v h="$HOURS" 'BEGIN{printf "%d", h*3600 + 0.5}')
-# Outage schedule (srt leg only — see this file's header). Kept as
+# Outage schedule (srt leg only — see README.md's "Topology"). Kept as
 # separate numeric/unit-suffixed forms rather than duplicating "6h"
 # and "21600" independently: OUTAGE_PERIOD_S is the single source of
 # truth, both the proxy's own `--outage` flag string and `report
@@ -523,7 +297,7 @@ OUTAGE_DUR_S="${OUTAGE_DUR_S:-90}"
 # How the srt leg's managed sender spends an outage — see `send
 # --reconnect-mode`. `blocking` stalls the producer for the outage and
 # replays it as a burst; `background` keeps it moving and drains a bounded
-# gap buffer. REQUIRED, no default (see the header's "Realism knobs"): the
+# gap buffer. REQUIRED, no default (see README.md's "The reconnect mode"): the
 # first three runs defaulted to `blocking` and the 0.7.0 RC soak needs
 # `background`; an inherited default is the one misconfiguration the
 # declared-vs-observed verdict cannot catch, because the declaration would
@@ -597,7 +371,7 @@ JITTER_MS=20
 # over loopback's ~0ms, which no real link has).
 DELAY_MS=30
 REORDER="1,200" # 1%, held 200ms — several packet intervals at this traffic's rate
-# Sender corruption tap (see the header's "Realism knobs"): 5 injections
+# Sender corruption tap (see README.md's "Realism knobs"): 5 injections
 # per 10,000 packets, no two closer than 1000 packets. The gap is the
 # load-bearing half — `corrupt::CorruptConfig::validate` refuses a gap
 # short enough for two injections to both plausibly explain one receiver
@@ -660,7 +434,7 @@ if [[ -z "$SCHEDULE_PHASE_S" ]]; then
   [[ "$SCHEDULE_PHASE_S" -ge 1 ]] || SCHEDULE_PHASE_S=1
 fi
 # How close to the nominal deadline a worker death stops being treated
-# as a mid-run failure — see the header's "Supervisor fail-fast" note.
+# as a mid-run failure — see README.md's "Outputs and the supervisor".
 SUPERVISOR_GRACE_S=120
 
 # Settle time between binding a listener and starting its peer — see
@@ -788,7 +562,7 @@ fi
 # `profile` field and the proxy's own schedule echo. `reconnect_mode`
 # is the mode the leg's MANAGED sender is launched with, checked against
 # the send report's `managed_send.reconnect_mode`; the rist leg's sender
-# is not managed (see the header), so it declares `null`.
+# is not managed (see README.md's "Topology"), so it declares `null`.
 RSS_CADENCE_S=30
 if [[ "$CORRUPT" -eq 1 ]]; then
   CORRUPTION_DECL=true
@@ -1246,7 +1020,7 @@ record_pid sampler $!
 # Supervisor: fail fast on a mid-run worker death
 # ---------------------------------------------------------------------
 #
-# See the header's "Supervisor fail-fast" note for why this exists
+# See README.md's "Outputs and the supervisor" for why this exists
 # (run 1's senders died 14.5h in; the waits below can't notice until
 # the 72h deadline). Polls every worker + the sampler every 30s until
 # SUPERVISOR_GRACE_S before the nominal deadline; end-of-run process

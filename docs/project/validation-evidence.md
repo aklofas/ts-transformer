@@ -565,9 +565,9 @@ twelve outage windows survived with 12 reconnects and 107,849 corruption
 injections with zero unexplained, undetected or unrecovered events. The
 RIST leg failed corruption attribution: all three gating FAILs
 (`worker_exits`, `recv_invariants_rist`, `corruption_attributed_rist`)
-are that one finding, explained below. No process grew past the RSS gate. This is the latest 72-hour SRT / RIST
-endurance run; the two harness defects behind the RIST failure were fixed
-in 0.8.0.
+are that one finding, explained below. No process grew past the RSS gate.
+This is the latest 72-hour SRT / RIST endurance run; the two harness
+defects behind the RIST failure were fixed in 0.8.0.
 
 The tree was `e86dd9ea`, clean at launch (`provenance.json`:
 `dirty=false`, 10 submodules pinned), built `--release` with the vendored
@@ -650,7 +650,6 @@ applicable), provisional because the counter counts factory rebuilds, not
 windows. Every RSS slope passed the 200 KiB/hour gate after its 30-minute
 warm-up:
 
-
 | Process | Slope (KiB/hour) |
 | --- | --- |
 | RIST sender (worst) | 22.8 |
@@ -692,10 +691,10 @@ zero-length UDP / RIST datagrams and binding error kinds. Evidence on
 - a byte-identical demux comparison of `d2fa73dc` and `effc7f9c` over the
   maintainer's local corpus of 260 captures (41.5 GB; one is a
   reconstruction, whose 32 `Unknown` KLV samples are the same under both
-  trees). No raw capture's KLV PID has an `Unknown` sample. The corpus reaches neither the 13 319-byte
-  async-KLV fix (its largest KLV record is 302 B) nor the
-  malformed-PES-neighbour fix; the synthetic reproductions in the
-  CHANGELOG entries prove those;
+  trees). No raw capture's KLV PID has an `Unknown` sample. The corpus
+  reaches neither the 13 319-byte async-KLV fix (its largest KLV record is
+  302 B) nor the malformed-PES-neighbour fix; the synthetic reproductions
+  in the CHANGELOG entries prove those;
 - a one-hour soak smoke at seed 11, Background mode
   (2026-10-04T06:53Z–07:56Z), `overall_pass=true` with 41 verdicts (8
   provisional: the 6 RSS slopes and the 2 reconnect counts). SRT received
