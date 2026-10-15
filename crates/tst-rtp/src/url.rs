@@ -394,7 +394,7 @@ impl RtspVersion {
     /// Returns the wire-format string used on outgoing request lines
     /// (e.g., `OPTIONS rtsp://cam/h264 RTSP/1.0`).
     #[must_use]
-    pub fn wire_str(self) -> &'static str {
+    pub(crate) fn wire_str(self) -> &'static str {
         match self {
             RtspVersion::V1_0 => "RTSP/1.0",
             RtspVersion::V2_0 => "RTSP/2.0",
@@ -634,8 +634,9 @@ impl RtspUrl {
 /// `crate::rtsp::server::RtspServer::add_multicast_mount`.
 ///
 /// Form: `rtp://<mcast-ip>:<port>?ttl=N&iface=ethN`.
+#[cfg(feature = "rtsp-server")]
 #[derive(Debug, Clone)]
-pub struct MulticastGroup {
+pub(crate) struct MulticastGroup {
     /// Multicast destination address + port. IPv4 in `224.0.0.0/4` or
     /// IPv6 in `ff00::/8`.
     pub addr: std::net::SocketAddr,
@@ -646,6 +647,7 @@ pub struct MulticastGroup {
     pub iface: Option<String>,
 }
 
+#[cfg(feature = "rtsp-server")]
 impl MulticastGroup {
     /// Parse a multicast group URL. Returns an error if the host is not
     /// in the IPv4 multicast range (224.0.0.0/4) or IPv6 multicast range
@@ -1116,6 +1118,7 @@ mod phase3_url_tests {
         assert!(res.is_err(), "DNS hostname should not validate as bind");
     }
 
+    #[cfg(feature = "rtsp-server")]
     #[test]
     fn multicast_group_ipv4_ok() {
         let g = MulticastGroup::parse("rtp://239.0.0.1:5004").unwrap();
@@ -1124,18 +1127,21 @@ mod phase3_url_tests {
         assert!(g.iface.is_none());
     }
 
+    #[cfg(feature = "rtsp-server")]
     #[test]
     fn multicast_group_ipv4_unicast_rejected() {
         let e = MulticastGroup::parse("rtp://10.0.0.1:5004").unwrap_err();
         assert!(matches!(e, UrlError::BadHost { .. }));
     }
 
+    #[cfg(feature = "rtsp-server")]
     #[test]
     fn multicast_group_ipv6_ok() {
         let g = MulticastGroup::parse("rtp://[ff02::1]:5004").unwrap();
         assert!(g.addr.ip().is_multicast());
     }
 
+    #[cfg(feature = "rtsp-server")]
     #[test]
     fn multicast_group_ttl_and_iface_extracted() {
         let g = MulticastGroup::parse("rtp://239.0.0.1:5004?ttl=4&iface=192.168.1.50").unwrap();

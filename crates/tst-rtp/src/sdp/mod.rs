@@ -4,9 +4,10 @@
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 
 use crate::error::RtspError;
+#[cfg(feature = "rtsp-server")]
 use std::net::SocketAddr;
 
-pub mod pick;
+pub(crate) mod pick;
 
 /// A parsed SDP document.
 #[derive(Debug, Clone)]
@@ -124,7 +125,8 @@ impl Sdp {
     ///   address + port; both `c=` and the `m=` port advertise it.
     ///
     /// `mount_path` is the registered mount path (e.g., `/live`).
-    pub fn build_for_mount(
+    #[cfg(feature = "rtsp-server")]
+    pub(crate) fn build_for_mount(
         mount_path: &str,
         connection_addr: SocketAddr,
         is_multicast: bool,
@@ -224,7 +226,7 @@ a=control:trackID=1\r\n";
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "rtsp-server"))]
 mod phase3_build_for_mount_tests {
     use super::*;
 

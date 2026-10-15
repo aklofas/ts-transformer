@@ -91,10 +91,10 @@ pub enum PyTransportPref {
 }
 
 /// Digest authentication algorithm selector. Mirrors the user-facing
-/// subset of `tst_rtp::DigestAlgorithm` — the `*-sess` variants are
-/// parsed from server challenges but not selectable by the caller;
-/// tst-rtp's challenge handler picks them automatically when the
-/// server demands them.
+/// subset of the digest algorithms tst-rtp's client answers — the
+/// `*-sess` variants are parsed from server challenges but not
+/// selectable by the caller; tst-rtp's challenge handler picks them
+/// automatically when the server demands them.
 #[pyclass(eq, eq_int, name = "DigestAlgorithm", module = "tstrans.rtp")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyDigestAlgorithm {

@@ -10,5 +10,5 @@ use libfuzzer_sys::fuzz_target;
 // unbounded memory (Content-Length is capped at parse time, so a hostile
 // declared body can never drive an allocation past MAX_RTSP_BODY_BYTES).
 fuzz_target!(|data: &[u8]| {
-    let _ = tst_rtp::RtspRequest::parse(data);
+    let _ = tst_rtp::rtsp::message::RtspRequest::parse(data);
 });

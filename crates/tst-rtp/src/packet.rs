@@ -24,15 +24,15 @@ use thiserror::Error;
 pub const RTP_HEADER_LEN: usize = 12;
 
 /// RTP payload type for MPEG-2 Transport Stream per RFC 3551 §6 Table 5.
-pub const RTP_PT_MP2T: u8 = 33;
+pub(crate) const RTP_PT_MP2T: u8 = 33;
 
 /// RTP version per RFC 3550 §5.1 (always 2).
-pub const RTP_VERSION: u8 = 2;
+pub(crate) const RTP_VERSION: u8 = 2;
 
 /// One RTP fixed-header record.
 ///
 /// Field accessors return scalars; the wire encoding lives in
-/// [`Self::encode_into`]. The struct is `#[non_exhaustive]` pre-1.0 so
+/// `encode_into`. The struct is `#[non_exhaustive]` pre-1.0 so
 /// adding fields is not a breaking change.
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,7 +57,7 @@ pub struct RtpHeader {
 impl RtpHeader {
     /// Construct a header from `seq` / `timestamp` / `ssrc`. Encoding
     /// fields are pinned: V=2, P=0, X=0, CC=0. `marker` defaults to
-    /// `false` and `payload_type` defaults to [`RTP_PT_MP2T`] (33).
+    /// `false` and `payload_type` defaults to `RTP_PT_MP2T` (33).
     pub fn new(seq: u16, timestamp: u32, ssrc: u32) -> Self {
         Self {
             seq,
@@ -73,7 +73,7 @@ impl RtpHeader {
     /// # Panics
     ///
     /// Panics if `buf.len() < 12`.
-    pub fn encode_into(&self, buf: &mut [u8]) {
+    pub(crate) fn encode_into(&self, buf: &mut [u8]) {
         assert!(
             buf.len() >= RTP_HEADER_LEN,
             "RtpHeader::encode_into: buf too small ({} < {RTP_HEADER_LEN})",

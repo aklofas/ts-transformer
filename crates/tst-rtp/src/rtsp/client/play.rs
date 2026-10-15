@@ -84,7 +84,7 @@ impl RtspClient {
 
 /// Parse an `RTP-Info:` header value like
 /// `url=rtsp://cam/h264/streamid=0;seq=1234;rtptime=5000000`.
-pub fn parse_rtp_info(s: &str) -> RtpInfo {
+pub(crate) fn parse_rtp_info(s: &str) -> RtpInfo {
     let mut out = RtpInfo::default();
     for part in s.split(';') {
         let part = part.trim();

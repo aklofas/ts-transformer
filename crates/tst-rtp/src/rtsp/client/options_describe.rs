@@ -70,7 +70,6 @@ impl RtspClient {
             extra.push(("session", sid.clone()));
         }
         let resp = self.send_authenticated(RtspMethod::Options, &uri, &extra)?;
-        self.last_server_version = resp.version;
         self.expect_ok(&resp)?;
         let public_methods = resp
             .headers
@@ -103,7 +102,6 @@ impl RtspClient {
             extra.push(("session", sid.clone()));
         }
         let resp = self.send_authenticated(RtspMethod::Describe, &uri, &extra)?;
-        self.last_server_version = resp.version;
         if resp.status != 200 {
             return Err(RtspError::Protocol {
                 code: resp.status,

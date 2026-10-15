@@ -9,10 +9,10 @@
 //!
 //! # SDP parsing
 //!
-//! Use [`parse_rtpmap_h264`] to discover the dynamic payload type assigned
-//! to H.264 from the `a=rtpmap` lines, then [`H264FmtpParams::parse`] to
-//! extract packetization mode, out-of-band parameter sets (SPS/PPS), and
-//! profile information from `a=fmtp`.
+//! `RtspClient::setup_h264_auto` discovers the dynamic payload type assigned
+//! to H.264 from the `a=rtpmap` lines, and extracts packetization mode,
+//! out-of-band parameter sets (SPS/PPS), and profile information from
+//! `a=fmtp`.
 //!
 //! # Depacketizer
 //!
@@ -27,11 +27,10 @@
 //! [`H264Au`]s via [`H264Receiver::recv_au`].
 
 pub mod depacketizer;
-pub mod fmtp;
+pub(crate) mod fmtp;
 pub mod receiver;
 
 pub use depacketizer::{
     H264Au, H264Depacketizer, H264DepayConfig, H264DepayStats, ParameterSetInjection,
 };
-pub use fmtp::{H264FmtpParams, parse_rtpmap_h264};
 pub use receiver::H264Receiver;

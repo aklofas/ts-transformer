@@ -27,7 +27,7 @@ use std::time::Duration;
 use bytes::Bytes;
 
 use crate::error::RtspError;
-use crate::url::{RtspScheme, RtspUrl, RtspVersion};
+use crate::url::{RtspScheme, RtspUrl};
 
 /// The control-plane byte stream — plain TCP for `rtsp://`, or
 /// rustls-wrapped TCP for `rtsps://` when the `tls` cargo feature is
@@ -135,8 +135,6 @@ pub struct RtspClient {
     /// Cancel flag — set by `RtspCancelHandle::cancel` to break out of
     /// blocking I/O loops.
     pub(crate) cancel: Arc<AtomicBool>,
-    /// Last RTSP version observed in a server response.
-    pub(crate) last_server_version: RtspVersion,
     /// Shared flag flipped when a keepalive observes session death: the
     /// [keepalive](crate::rtsp::client::keepalive) thread sets it when a
     /// control-TCP write fails, and the read sites (interleaved pump /
@@ -489,7 +487,6 @@ impl RtspClient {
             session_id: None,
             session_timeout: Duration::from_secs(60),
             cancel: Arc::new(AtomicBool::new(false)),
-            last_server_version: RtspVersion::V1_0,
             session_dead: None,
             session_id_shared: None,
             keepalive_interval_shared: None,
@@ -510,11 +507,6 @@ impl RtspClient {
         RtspCancelHandle {
             cancel: self.cancel.clone(),
         }
-    }
-
-    /// Server's reported RTSP version from the last response we parsed.
-    pub fn last_server_version(&self) -> RtspVersion {
-        self.last_server_version
     }
 
     /// Internal helper: get the next CSeq value.
