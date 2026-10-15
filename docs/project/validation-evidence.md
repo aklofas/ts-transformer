@@ -724,6 +724,11 @@ twelve scheduled outage windows and none unscheduled, no memory growth.
 | SRT (managed send + managed recv, 90 s outage every 6 h) | 7,776,000 | 7,773,537 (99.968%) | 2,592,000 → 2,591,182 | 2.0152% vs. 2.00% | 12 (of 12 scheduled windows) | PASS |
 | RIST (continuous impairment, no outage) | 7,776,000 | 7,775,971 (99.9996%) | 2,592,000 → 2,591,991 | 2.0009% vs. 2.00% | n/a | PASS |
 
+The SRT leg's 2,463 undelivered AUs (0.032%) are outage-attributable:
+roughly seven seconds of video lost per 90-second outage, the in-flight
+data from the moment of each cut, with the continuous 2% packet loss fully
+absorbed by retransmission in between.
+
 The worst post-warm-up RSS slope was 68.8 KiB/hour (SRT sender), warm-up
 convergence to a ~176 MiB plateau reached by about 7 hours; every
 process's slope over the final 24 hours was at or below 18 KiB/hour. Those
