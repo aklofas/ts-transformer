@@ -434,6 +434,12 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/surface-manifest.sh
 
+      - name: scripts/gen unit tests (benchmarks page, LOC report)
+        # The generators' stdlib unittest suites and their committed fixtures;
+        # nothing else runs them. Stdlib only, no pip install.
+        if: matrix.name == 'linux-x86_64'
+        run: python3 -m unittest scripts/gen/test_*.py
+
       - name: check-no-unreachable-expect-in-bindings
         # Binding production code never aborts on a #[non_exhaustive]
         # wildcard or an .expect(); test tails / tests/ / build.rs excluded.
