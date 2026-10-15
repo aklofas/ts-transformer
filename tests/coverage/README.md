@@ -125,6 +125,9 @@ your item landed in a baseline without a manifest row. Add a `[[surface]]` row
 renaming an item, or giving one of the pinned items a row, changes the set too:
 re-pin with `bash scripts/check/repo/surface-manifest.sh --print-baseline` and copy
 its two values over `UNAUDITED_COUNT` / `UNAUDITED_SHA256` in the same change.
+A re-pin is legitimate only when the set shrinks or an item is removed or renamed;
+a re-pin whose count goes up is never acceptable, because a new public item gets a
+manifest row instead.
 
 **Graduating an exempt item to a surface row:** remove its `[[exempt]]` block and
 add a `[[surface]]` row with `owning_tests`, `bindings`, and optionally `scenario_ids`.
