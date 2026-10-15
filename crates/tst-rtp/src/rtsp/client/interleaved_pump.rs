@@ -138,7 +138,7 @@ pub(crate) struct InterleavedChannels {
 // publisher direction). Re-exported here so the fuzz target and any
 // external user of the old `#[doc(hidden)]` path keep compiling.
 #[doc(hidden)]
-pub use crate::rtsp::framing::parse_binary_frame_header;
+pub(crate) use crate::rtsp::framing::parse_binary_frame_header;
 
 /// Spawn the sync interleaved pump thread.
 ///

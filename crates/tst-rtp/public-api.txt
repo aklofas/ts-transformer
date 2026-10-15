@@ -703,8 +703,6 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtcp::SenderReport
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtcp::SenderReport
 pub mod tst_rtp::rtsp
 pub mod tst_rtp::rtsp::client
-pub mod tst_rtp::rtsp::client::interleaved_pump
-pub mod tst_rtp::rtsp::client::keepalive
 pub mod tst_rtp::rtsp::client::options_describe
 pub struct tst_rtp::rtsp::client::options_describe::OptionsResponse
 pub tst_rtp::rtsp::client::options_describe::OptionsResponse::headers: std::collections::hash::map::HashMap<alloc::string::String, alloc::string::String>
@@ -752,8 +750,6 @@ impl core::marker::Unpin for tst_rtp::rtsp::client::session::RtspSession
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::session::RtspSession
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::session::RtspSession
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::session::RtspSession
-pub mod tst_rtp::rtsp::client::setup
-pub mod tst_rtp::rtsp::client::teardown
 pub mod tst_rtp::rtsp::client::transport_negotiation
 #[non_exhaustive] pub enum tst_rtp::rtsp::client::transport_negotiation::RtspTransportKind
 pub tst_rtp::rtsp::client::transport_negotiation::RtspTransportKind::TcpInterleaved
@@ -806,10 +802,6 @@ impl !core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::RtspCli
 impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::RtspClient
 pub type tst_rtp::rtsp::client::RtspCancelHandle = tst_core::cancel::FlagCancel
 pub mod tst_rtp::rtsp::server
-pub mod tst_rtp::rtsp::server::auth
-pub mod tst_rtp::rtsp::server::fanout
-pub mod tst_rtp::rtsp::server::handlers
-pub mod tst_rtp::rtsp::server::listener
 pub mod tst_rtp::rtsp::server::mount
 #[non_exhaustive] pub enum tst_rtp::rtsp::server::mount::MountKind
 pub tst_rtp::rtsp::server::mount::MountKind::Multicast
@@ -886,7 +878,6 @@ impl core::marker::Unpin for tst_rtp::rtsp::server::mount::MountStats
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount::MountStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount::MountStats
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount::MountStats
-pub mod tst_rtp::rtsp::server::multicast
 pub mod tst_rtp::rtsp::server::publish
 #[non_exhaustive] pub enum tst_rtp::rtsp::server::publish::ClockAlignment
 pub tst_rtp::rtsp::server::publish::ClockAlignment::NotApplicable

@@ -6,13 +6,13 @@
 //! keepalive thread share the SAME stream — request/response exchanges
 //! serialize under the mutex (RTSP isn't pipelined).
 
-pub mod interleaved_pump;
-pub mod keepalive;
+pub(crate) mod interleaved_pump;
+pub(crate) mod keepalive;
 pub mod options_describe;
 pub mod play;
 pub mod session;
-pub mod setup;
-pub mod teardown;
+pub(crate) mod setup;
+pub(crate) mod teardown;
 pub mod tls;
 pub mod transport_negotiation;
 
