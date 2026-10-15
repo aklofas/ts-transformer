@@ -292,7 +292,7 @@ mod tests {
     use tst_core::transport::BrokenCause;
 
     // The `kind_from_*` rows are pinned through every shell's `From` impl by
-    // `tests/shell_error_kind_derivation.rs`; this module keeps only what that
+    // `tests/errors/shell_error_kind_derivation.rs`; this module keeps only what that
     // table cannot reach.
 
     /// `errno_code_from_transport` extracts the field from
