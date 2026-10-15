@@ -26,22 +26,9 @@ cd "$(dirname "$0")/../../.."
 TABLE=docs/reference/api-stability.md
 fail=0
 
-# pkg:dir:libname triples for every classified crate with a baseline.
-# tstrans-srt-sys is deliberately absent: it has never been ratcheted
-# (no crates/srt-sys/public-api.txt), so its (crate) row in the table is
-# documentation-only and this rail can't check it either direction.
-CRATES="
-tst-core:crates/tst-core:tst_core
-tst-pipeline:crates/tst-pipeline:tst_pipeline
-tst-srt:crates/tst-srt:tst_srt
-tst-rtp:crates/tst-rtp:tst_rtp
-tst-udp:crates/tst-udp:tst_udp
-tst-tcp:crates/tst-tcp:tst_tcp
-tst-hls:crates/tst-hls:tst_hls
-tst-rist:crates/tst-rist:tst_rist
-tstrans-rist-sys:crates/rist-sys:rist_sys
-tstrans-mbedtls-src:crates/mbedtls-src:tstrans_mbedtls_src
-"
+# pkg:dir:libname for every crate with a public-api.txt baseline (tstrans-srt-sys
+# has never been ratcheted, so it is absent and its (crate) row is documentation-only).
+CRATES="$(bash scripts/lib/roster.sh api-stability)"
 
 # rows: "pkg<TAB>module" (module may be "(crate)")
 # -F'|' on `| Package | Module | Tier | Why |` gives $1="" (before the

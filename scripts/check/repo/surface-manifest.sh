@@ -34,7 +34,7 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 
 SURFACE_MANIFEST="${SURFACE_MANIFEST:-$ROOT/tests/coverage/surface-manifest.toml}"
 SURFACE_BASELINE_DIR="${SURFACE_BASELINE_DIR:-$ROOT/crates}"
-SURFACE_CRATES="${SURFACE_CRATES:-rist-sys tst-core tst-pipeline tst-rist tst-rtp tst-srt tst-tcp tst-udp}"
+SURFACE_CRATES="${SURFACE_CRATES:-$(bash "$ROOT/scripts/lib/roster.sh" surface | tr '\n' ' ')}"
 SURFACE_BUILT_FEATURES="${SURFACE_BUILT_FEATURES:-srt rtp udp tcp hls rist}"
 SURFACE_C_HEADER="${SURFACE_C_HEADER:-$ROOT/bindings/c/include/tstrans.h}"
 SURFACE_PYI_DIR="${SURFACE_PYI_DIR:-$ROOT/bindings/python/python/tstrans}"
@@ -44,8 +44,8 @@ SURFACE_JAVA_DIR="${SURFACE_JAVA_DIR:-$ROOT/bindings/jvm/src/main/java}"
 # [[exempt]] row names, pinned by count and by the sha256 of their sorted
 # list. The 2026-06-03 bootstrap left them uncatalogued. Giving one a row
 # shrinks the set: re-pin both values with --print-baseline in that change.
-UNAUDITED_COUNT=2023
-UNAUDITED_SHA256=791293c44c6625520ad83e6630db8931e2e56519eed3811d086cfe564c35fcad
+UNAUDITED_COUNT=2075
+UNAUDITED_SHA256=d6484401d7d1b6c8e8f6783894899beab0c8914d39ed73997953fbd4768d7288
 
 # ---------------------------------------------------------------------------
 # extract_items: stdin is a public-api.txt; stdout is one canonical key per

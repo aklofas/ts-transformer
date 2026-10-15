@@ -674,5 +674,31 @@ expect "release version: internal dep version key flipped to 0.1.0" 1 rvc
 rvc_fixtures "0.2.0"
 expect "release version: internal dep version key restored" 0 rvc
 
+# ---- roster (scripts/lib/roster.sh) + roster-sync (scripts/check/repo/roster-sync.sh) ----
+ROSTER="$DIR/../lib/roster.sh"; RSYNC="$DIR/../check/repo/roster-sync.sh"
+mkdir -p "$tmp/ro"
+printf '{"workspace_root":"%s","workspace_members":[],"packages":[]}\n' "$tmp/ro" > "$tmp/ro/empty.json"
+expect "roster: metadata with no members fails closed" 1 env ROSTER_ROOT="$tmp/ro" ROSTER_METADATA="$tmp/ro/empty.json" bash "$ROSTER" members
+expect "roster: an unknown list name fails"             1 bash "$ROSTER" no-such-list
+REPO="$(cd "$DIR/../.." && pwd)"
+# One cargo metadata call, shared by every roster-sync row below.
+(cd "$REPO" && cargo metadata --no-deps --format-version 1) > "$tmp/ro/meta.json"
+rs_copy() { # a copy of the real files roster-sync reads, for planting
+    rm -rf "$tmp/rs"; mkdir -p "$tmp/rs/.github/workflows" "$tmp/rs/scripts/check/repo"
+    cp "$REPO/.github/workflows/ci.yml" "$REPO/.github/workflows/sanitizers.yml" "$REPO/.github/workflows/crates-io.yml" "$tmp/rs/.github/workflows/"
+    cp "$REPO/scripts/check/repo/release-version-consistency.sh" "$tmp/rs/scripts/check/repo/"
+}
+rsync_() { ROSTER_METADATA="$tmp/ro/meta.json" RSYNC_FILES_ROOT="$tmp/rs" bash "$RSYNC"; }
+rs_copy;                                                                         expect "roster-sync: the real files agree"                 0 rsync_
+rs_copy; plant "$tmp/rs/.github/workflows/sanitizers.yml" ' -p tst-hls' '';      expect "roster-sync: a crate dropped from a sanitizer job" 1 rsync_
+rs_copy; plant "$tmp/rs/.github/workflows/crates-io.yml" ' tst-rist$' '';        expect "roster-sync: a crate dropped from the publish layers" 1 rsync_
+rs_copy; plant "$tmp/rs/.github/workflows/crates-io.yml" 'publish-crates-layer.sh tst-core tst-pipeline' 'publish-crates-layer.sh tst-core'; plant "$tmp/rs/.github/workflows/crates-io.yml" 'tst-srt tst-rist$' 'tst-srt tst-rist tst-pipeline'
+                                                                                 expect "roster-sync: a crate published before its dependency" 1 rsync_
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'name: macos-arm64' 'name: macos-arm64-gone'; expect "roster-sync: a gating build leg renamed away" 1 rsync_
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'continue: false' 'continue: true';          expect "roster-sync: a build leg made non-gating" 1 rsync_
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'continue-on-error: \${{ matrix.continue }}' 'continue-on-error: true'; expect "roster-sync: the build job made continue-on-error: true" 1 rsync_
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'name: windows-msvc-features' 'name: windows-msvc-features-gone'; expect "roster-sync: the windows features leg renamed away" 1 rsync_
+rs_copy; plant "$tmp/rs/scripts/check/repo/release-version-consistency.sh" ' \$ROOT/crates/tst-udp/Cargo.toml' ''; expect "roster-sync: a manifest dropped from the version rail" 1 rsync_
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

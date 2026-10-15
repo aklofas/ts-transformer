@@ -411,6 +411,10 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/surface-manifest.sh
 
+      - name: check-roster-sync (workflow and rail lists agree with cargo metadata)
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/roster-sync.sh
+
       - name: scripts/gen unit tests (benchmarks page, LOC report)
         # The generators' stdlib unittest suites and their committed fixtures;
         # nothing else runs them. Stdlib only, no pip install.
@@ -642,8 +646,8 @@ jobs:
         run: bash scripts/check/c/examples-compile.sh
 
       - name: Public-API ratchet (no unintended SemVer breaks)
-        # Checks tst-core, tst-pipeline, and tst-srt against the committed
-        # public-api.txt baselines. tst-c is excluded: its ABI surface is a
+        # Checks every crate with a committed public-api.txt baseline
+        # (scripts/lib/roster.sh public-api) against it. tst-c is excluded: its ABI surface is a
         # C cdylib tracked via tstrans.h (cbindgen); cargo-public-api cannot
         # handle the lib-name/package-name mismatch (lib name "tstrans" ≠
         # package name "tst-c"). To land an intentional SemVer-breaking
@@ -663,27 +667,12 @@ jobs:
           # re-render all 10 baselines with it, and land both together.
           rustup toolchain install nightly-2026-07-03 --profile minimal --no-self-update
           cargo +stable install cargo-public-api --locked --quiet
-          # pkg:dir pairs — the crates-io-packaging rename (tstrans-rist-sys,
-          # tstrans-mbedtls-src) changed the PACKAGE name but not the crate's
-          # on-disk DIRECTORY, so the baseline path (crates/<dir>/public-api.txt)
-          # can't be derived from the package name alone.
-          for pair in \
-            tstrans-rist-sys:rist-sys \
-            tstrans-mbedtls-src:mbedtls-src \
-            tst-core:tst-core \
-            tst-hls:tst-hls \
-            tst-pipeline:tst-pipeline \
-            tst-rist:tst-rist \
-            tst-rtp:tst-rtp \
-            tst-srt:tst-srt \
-            tst-tcp:tst-tcp \
-            tst-udp:tst-udp \
-          ; do
+          for pair in $(bash scripts/lib/roster.sh public-api); do
             pkg="${pair%%:*}"
             dir="${pair##*:}"
             SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo +nightly-2026-07-03 public-api -p $pkg --simplified > /tmp/public-api-current-$pkg.txt
-            if ! diff -u crates/$dir/public-api.txt /tmp/public-api-current-$pkg.txt; then
-              echo "Public API drift in $pkg. Update crates/$dir/public-api.txt or revert the change." >&2
+            if ! diff -u $dir/public-api.txt /tmp/public-api-current-$pkg.txt; then
+              echo "Public API drift in $pkg. Update $dir/public-api.txt or revert the change." >&2
               exit 1
             fi
           done
