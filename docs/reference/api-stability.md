@@ -14,9 +14,11 @@ expect*, not what's public.
 Four tiers, applied uniformly pre-1.0 and restated for what they become
 once the workspace reaches 1.0:
 
-- **Stable** — breaking change requires a deprecation cycle (≥1 minor
-  release carrying a deprecation warning) + CHANGELOG migration notes.
-  Post-1.0: semver-major only.
+- **Stable** — before 1.0, a Stable item may be removed or renamed directly;
+  every such change is announced under the CHANGELOG's BREAKING heading in
+  the release that ships it, with migration notes. From 1.0, a breaking
+  change requires a deprecation cycle (≥1 minor release carrying a
+  deprecation warning) and is semver-major.
 - **Provisional** — may change in any minor release; every change lands
   with CHANGELOG migration notes; no deprecation cycle promised.
 - **Experimental** — may change or vanish in any release without notice.
