@@ -25,21 +25,13 @@ use std::ffi::CString;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use tstrans::error::{TstError, tst_get_last_error_str};
+use tstrans::error::TstError;
 use tstrans::receiver::raw_receiver::{
     tst_raw_receiver_close, tst_raw_receiver_open_listener, tst_raw_receiver_recv,
 };
 use tstrans::sender::raw_sender::{tst_raw_sender_close, tst_raw_sender_open, tst_raw_sender_send};
 
-fn last_error_msg() -> String {
-    unsafe {
-        let p = tst_get_last_error_str();
-        if p.is_null() {
-            return "<null>".into();
-        }
-        std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
-    }
-}
+use crate::common::last_error_msg;
 
 #[test]
 fn loopback_caller_sender_to_listener_receiver_delivers_bytes_and_eos() {

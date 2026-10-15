@@ -11,13 +11,13 @@
 
 #![cfg(feature = "srt")]
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use tst_srt::ListenerBuilder;
-use tstrans::error::{TstError, tst_get_last_error_str};
+use tstrans::error::TstError;
 
 /// Plain-SRT code observed by the op that a cross-thread cancel interrupts.
 /// Same as the managed one: a cancelled plain SRT op reports
@@ -26,15 +26,7 @@ pub(crate) const PLAIN_SRT_CANCEL_CODE: i32 = TstError::Closed as i32;
 pub(crate) const MANAGED_SRT_CANCEL_CODE: i32 = TstError::Closed as i32;
 pub(crate) const WATCHDOG: Duration = Duration::from_secs(10);
 
-pub(crate) fn last_error_msg() -> String {
-    unsafe {
-        let p = tst_get_last_error_str();
-        if p.is_null() {
-            return "<null>".into();
-        }
-        CStr::from_ptr(p).to_string_lossy().into_owned()
-    }
-}
+use crate::common::last_error_msg;
 
 /// A fresh listener port for each `parked_recv_cancel` call.
 ///

@@ -8,25 +8,19 @@
 //! unit tests, if any, which run in-crate). Unconditional module (no
 //! `srt`/`rtp` feature gate needed), so this file carries no
 //! `#![cfg(feature = ...)]`.
-
-use std::ffi::CStr;
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
+mod common;
 
 use tstrans::codec_framing::{
     tst_annexb_to_length_prefixed, tst_param_sets_count, tst_param_sets_extract,
     tst_param_sets_free, tst_param_sets_get,
 };
-use tstrans::error::{TstError, tst_get_last_error, tst_get_last_error_str};
+use tstrans::error::{TstError, tst_get_last_error};
 
 const TST_VIDEO_CODEC_H264: i32 = 0;
 
-fn last_error_msg() -> String {
-    unsafe {
-        CStr::from_ptr(tst_get_last_error_str())
-            .to_str()
-            .unwrap()
-            .to_owned()
-    }
-}
+use crate::common::last_error_msg;
 
 /// Hand-built Annex B access unit: SPS (0x67) + PPS (0x68) + IDR (0x65),
 /// each delimited by a 4-byte start code.

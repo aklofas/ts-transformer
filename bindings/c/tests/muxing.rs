@@ -5,6 +5,12 @@
 //! compiled into this single binary. Test bodies are unchanged; only the
 //! module path gained a `muxing::<file>::` prefix. Per-file `#![cfg(feature=…)]`
 //! gates still apply (a gated-out member compiles to an empty module).
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
+mod common;
+#[allow(dead_code)]
+#[path = "muxing/common.rs"]
+mod muxing_common;
 #[path = "muxing/audio_subtitle.rs"]
 mod audio_subtitle;
 #[path = "muxing/av1_carriage_provenance.rs"]

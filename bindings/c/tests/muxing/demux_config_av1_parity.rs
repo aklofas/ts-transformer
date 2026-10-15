@@ -16,6 +16,7 @@
 //! previous shape silently forced `av1_carriage = Mpeg2TsBinding`,
 //! hiding the configuration knob from C callers entirely.
 
+use crate::muxing_common::{drain_core_muxer, synthetic_av1_au};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::event::{
     DemuxEvent, NonConformantIssue, SamplePayload, VideoCodec, VideoPayload,
@@ -28,48 +29,6 @@ use tstrans::demux_config::{
     TstAv1CarriageMode, test_build_options, tst_demux_config_free, tst_demux_config_new,
     tst_demux_config_set_av1_carriage,
 };
-
-/// Build a minimal AV1 access unit (TD, Sequence Header, Frame Header,
-/// Tile Group OBUs). Each OBU has `obu_has_size_field = 1` so the
-/// demuxer can recover them from raw OBU framing without ambiguity
-/// (matches the existing `crates/tst-core/tests/av1_carriage_roundtrip.rs`
-/// corpus).
-fn synthetic_av1_au() -> Vec<u8> {
-    fn obu(obu_type: u8, body: &[u8]) -> Vec<u8> {
-        // AV1 spec §5.3.2 OBU header byte:
-        //   obu_forbidden_bit  f(1) = 0
-        //   obu_type           f(4)
-        //   obu_extension_flag f(1) = 0
-        //   obu_has_size_field f(1) = 1
-        //   obu_reserved_1bit  f(1) = 0
-        // = (obu_type << 3) | 0b010
-        let header = (obu_type << 3) | 0x02;
-        let mut v = vec![header];
-        // Single-byte LEB128 size (bodies < 128 bytes here).
-        v.push(body.len() as u8);
-        v.extend_from_slice(body);
-        v
-    }
-    let mut au = Vec::new();
-    au.extend(obu(2, &[])); // Temporal Delimiter
-    au.extend(obu(1, &[0x00, 0x00])); // Sequence Header (placeholder)
-    au.extend(obu(3, &[0x00])); // Frame Header (placeholder)
-    au.extend(obu(4, &[0x00, 0x01, 0x02])); // Tile Group (placeholder)
-    au
-}
-
-fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 1316];
-    loop {
-        let n = mux.pull(&mut buf);
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    out
-}
 
 /// Synthesize a TS stream carrying one AV1 AU under the requested
 /// muxer carriage mode.
@@ -86,7 +45,7 @@ fn build_av1_ts(mux_mode: Av1CarriageMode) -> Vec<u8> {
     let h = mux.video_handles()[0];
     mux.push_video_to(h, &synthetic_av1_au(), Pts90khz::new(90_000), true)
         .unwrap();
-    drain_mux(&mut mux)
+    drain_core_muxer(&mut mux)
 }
 
 /// Build a Rust `Demuxer` whose configuration originates from the C

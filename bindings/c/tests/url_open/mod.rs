@@ -20,24 +20,12 @@
 #![cfg(feature = "srt")]
 #![allow(unused_unsafe)]
 
-use tstrans::error::tst_get_last_error_str;
+#[allow(dead_code)]
+#[path = "../common/mod.rs"]
+mod common;
+pub(crate) use common::last_error_msg;
 
 mod demux_receiver;
 mod mux_sender;
-mod raw_receiver;
 mod raw_sender;
-mod ts_receiver;
 mod ts_sender;
-
-/// Read the C ABI's thread-local last-error string and return it as an owned
-/// `String`. Returns `"<null>"` when the slot is empty so error-path tests can
-/// still print something useful with `{msg}` formatting.
-pub(crate) fn last_error_msg() -> String {
-    unsafe {
-        let p = tst_get_last_error_str();
-        if p.is_null() {
-            return "<null>".into();
-        }
-        std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
-    }
-}

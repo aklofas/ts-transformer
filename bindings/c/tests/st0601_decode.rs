@@ -6,11 +6,12 @@
 //! `#[cfg(test)]` unit tests, which run in-crate). Unconditional module
 //! (no `srt`/`rtp` feature gate needed), so this file carries no
 //! `#![cfg(feature = ...)]`.
-
-use std::ffi::CStr;
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
+mod common;
 use std::path::Path;
 
-use tstrans::error::{TstError, tst_get_last_error, tst_get_last_error_str};
+use tstrans::error::{TstError, tst_get_last_error};
 use tstrans::klv_st0601::{
     TST_ST0601_TAG_PLATFORM_HEADING, TST_ST0601_TAG_PRECISION_TIMESTAMP, TstSt0601FieldState,
     TstSt0601Geometry, tst_st0601_decode, tst_st0601_free, tst_st0601_geometry, tst_st0601_get_f64,
@@ -24,14 +25,7 @@ fn load_fixture(name: &str) -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e))
 }
 
-fn last_error_msg() -> String {
-    unsafe {
-        CStr::from_ptr(tst_get_last_error_str())
-            .to_str()
-            .unwrap()
-            .to_owned()
-    }
-}
+use crate::common::last_error_msg;
 
 #[test]
 fn decode_full_fixture_then_geometry_reports_known_values() {

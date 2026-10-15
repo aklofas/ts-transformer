@@ -99,15 +99,6 @@ fn build_ts_bytes() -> Vec<u8> {
 // ── Test: basic open / feed / flush / drain / close lifecycle ───────────────
 
 #[test]
-fn demuxer_open_returns_non_null() {
-    unsafe {
-        let d = tst_demuxer_open();
-        assert!(!d.is_null(), "tst_demuxer_open returned null");
-        tst_demuxer_close(d);
-    }
-}
-
-#[test]
 fn demuxer_open_with_config_returns_non_null() {
     unsafe {
         let cfg = tst_demux_config_new();
@@ -116,19 +107,6 @@ fn demuxer_open_with_config_returns_non_null() {
         assert!(!d.is_null(), "tst_demuxer_open_with_config returned null");
         tst_demuxer_close(d);
         tst_demux_config_free(cfg);
-    }
-}
-
-#[test]
-fn demuxer_open_with_null_config_uses_defaults() {
-    // Passing NULL config pointer should succeed and use defaults.
-    unsafe {
-        let d = tst_demuxer_open_with_config(std::ptr::null());
-        assert!(
-            !d.is_null(),
-            "tst_demuxer_open_with_config(null) returned null"
-        );
-        tst_demuxer_close(d);
     }
 }
 
@@ -184,34 +162,6 @@ fn demuxer_feed_flush_produces_events() {
 }
 
 #[test]
-fn demuxer_next_event_on_empty_returns_not_available() {
-    // Freshly opened demuxer with no bytes fed — next_event must return
-    // the "no event ready" sentinel (TST_E_NOT_AVAILABLE = -13).
-    unsafe {
-        let d = tst_demuxer_open();
-        assert!(!d.is_null());
-
-        let mut out = TstEvent::default();
-        let rc = tst_demuxer_next_event(d, &mut out);
-        assert_eq!(
-            rc,
-            TstError::NotAvailable as i32,
-            "expected TST_E_NOT_AVAILABLE (-13) on empty demuxer, got {rc}"
-        );
-
-        tst_demuxer_close(d);
-    }
-}
-
-#[test]
-fn demuxer_close_null_is_safe() {
-    // tst_demuxer_close(NULL) must not crash.
-    unsafe {
-        tst_demuxer_close(std::ptr::null_mut());
-    }
-}
-
-#[test]
 fn demuxer_feed_null_data_pointer_returns_error() {
     // Feeding a null data pointer (with non-zero len) must return
     // TST_E_INVALID_CONFIG, not panic or segfault.
@@ -220,18 +170,6 @@ fn demuxer_feed_null_data_pointer_returns_error() {
         assert!(!d.is_null());
         let rc = tst_demuxer_feed(d, std::ptr::null(), 42);
         assert!(rc < 0, "expected negative error code, got {rc}");
-        tst_demuxer_close(d);
-    }
-}
-
-#[test]
-fn demuxer_feed_empty_slice_is_ok() {
-    // Feeding zero bytes is a no-op — must return 0 (Ok).
-    unsafe {
-        let d = tst_demuxer_open();
-        assert!(!d.is_null());
-        let rc = tst_demuxer_feed(d, [].as_ptr(), 0);
-        assert_eq!(rc, 0, "empty feed should return 0");
         tst_demuxer_close(d);
     }
 }

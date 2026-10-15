@@ -5,6 +5,9 @@
 //! compiled into this single binary. Test bodies are unchanged; only the
 //! module path gained a `receiving::<file>::` prefix. Each member uses a
 //! distinct loopback port band so the concurrent binary never collides.
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
+mod common;
 #[path = "receiving/cancel_first.rs"]
 mod cancel_first;
 #[path = "receiving/demux_receiver_loopback.rs"]
