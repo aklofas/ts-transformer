@@ -33,7 +33,6 @@
 //! INT_MIN as INVALID sentinel) live in `klv::st0601::mapping`.
 
 use crate::error::{KlvEncodeError, KlvFieldError};
-#[cfg(not(feature = "std"))]
 use crate::float_ext::FloatExt;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -57,9 +56,9 @@ impl ImapbParams {
     /// / `KlvFieldError::InvalidImapbParams` before invoking `sf()`.
     fn sf(&self) -> f64 {
         let span = self.max - self.min;
-        let b_pow = span.log2().ceil();
+        let b_pow = FloatExt::ceil(FloatExt::log2(span));
         let d_pow = (8 * self.length as i32 - 1) as f64;
-        2f64.powf(d_pow - b_pow)
+        FloatExt::powf(2f64, d_pow - b_pow)
     }
 
     /// Zero-Point offset per ST 1201.5 §7.1.2 step 6.
@@ -67,7 +66,7 @@ impl ImapbParams {
     fn z_offset(&self) -> f64 {
         if self.min < 0.0 && self.max > 0.0 {
             let scaled = self.sf() * self.min;
-            scaled - scaled.floor()
+            scaled - FloatExt::floor(scaled)
         } else {
             0.0
         }
@@ -166,7 +165,7 @@ pub fn encode_imapb(p: &ImapbParams, value: f64, out: &mut [u8]) -> Result<(), K
     // ST 1201.5 §7.2.1 step 4a: y = truncate(sF*(x - min) + Zoffset).
     // `truncate` = `.floor()` for x >= min (which the bounds check above guarantees).
     let y_f = p.sf() * (value - p.min) + p.z_offset();
-    let y = y_f.floor() as u64;
+    let y = FloatExt::floor(y_f) as u64;
     let mask = if p.length == 8 {
         u64::MAX
     } else {
@@ -286,7 +285,7 @@ pub fn decode_imapb(p: &ImapbParams, bytes: &[u8]) -> Result<DecodedImapb, KlvFi
     // using the float-epsilon upper bound here admitted y_max+1 as Value at
     // coarse grids (L=1) because the tolerance was exactly one quantization
     // step and the comparison was not strictly greater.
-    let y_max = (sf * (p.max - p.min) + z_offset).floor() as u64;
+    let y_max = FloatExt::floor(sf * (p.max - p.min) + z_offset) as u64;
     if y > y_max {
         return Ok(DecodedImapb::OutOfRange { decoded: value });
     }

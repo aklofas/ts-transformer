@@ -65,10 +65,17 @@
 #[macro_use]
 extern crate alloc;
 
+// Unit tests link std even when the library is no_std; this makes `std::`
+// paths resolve in test modules on that plane.
+#[cfg(test)]
+extern crate std;
+
+#[cfg(test)]
+mod test_prelude;
+
 pub mod cancel;
 pub mod codec;
 pub mod error;
-#[cfg(not(feature = "std"))]
 mod float_ext;
 #[cfg(feature = "file")]
 pub mod io_file;

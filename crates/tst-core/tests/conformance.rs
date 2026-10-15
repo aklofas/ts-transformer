@@ -10,6 +10,8 @@
 // loaded as a module twice (clippy::duplicate_mod).
 #[path = "common/mod.rs"]
 mod common;
+// serde_json (the sidecar parser) is a std-only dependency.
+#[cfg(feature = "std")]
 #[path = "conformance/conformance.rs"]
 mod conformance;
 #[path = "conformance/demux_error_discrimination.rs"]

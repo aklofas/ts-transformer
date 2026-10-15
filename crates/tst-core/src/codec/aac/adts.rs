@@ -135,6 +135,7 @@ pub(super) fn parse_header(bytes: &[u8]) -> Result<Header, CodecParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_prelude::*;
 
     /// Helper: build a 7-byte ADTS header with MPEG-2 ID bit.
     /// Defaults: MPEG-2 ID, no CRC, AAC-LC profile, 44.1 kHz, stereo.

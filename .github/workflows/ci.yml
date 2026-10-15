@@ -820,6 +820,26 @@ jobs:
       - name: cargo test (tst-c-core, --no-default-features, host)
         run: cargo test -p tst-c-core --no-default-features -- --test-threads=1
 
+      # The no_std unit-test planes of tst-core and tst-pipeline. `cargo test
+      # --workspace --no-default-features` unifies `std` back on through the
+      # bindings, so only these -p runs test the no_std code. The list check
+      # fails if `std` leaks back into tst-core's plane (a dev-dependency
+      # turning tst-core's default features on did exactly that until
+      # tst-test-helpers depended on it with default-features = false).
+      # tst-pipeline's run tests its own no_std code (the spin ShellMutex,
+      # the receiver shells) over a std tst-core: its dev-dependency enables
+      # tst-core's `conformance` feature, which implies `std`.
+      - name: cargo test (tst-core, --no-default-features, host)
+        run: |
+          if cargo test -p tst-core --no-default-features --lib -- --list | grep -q '^net::'; then
+            echo "::error::std leaked into tst-core's no_std test plane"
+            exit 1
+          fi
+          cargo test -p tst-core --no-default-features --lib
+
+      - name: cargo test (tst-pipeline, --no-default-features, host)
+        run: cargo test -p tst-pipeline --no-default-features --lib
+
       # gcc-arm-none-eabi already bundles the C++ cross-compiler (arm-none-eabi-g++);
       # there is no standalone g++-arm-none-eabi apt package. libstdc++-arm-none-eabi-newlib
       # adds the bare-metal C++ standard library needed by the S0 exceptions gate.

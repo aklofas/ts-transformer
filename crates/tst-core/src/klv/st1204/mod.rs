@@ -517,6 +517,7 @@ pub fn check_value(hex_digits: impl Iterator<Item = char>) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_prelude::*;
 
     /// ST 1204.3 Table 7 reference vector.
     /// version=0x01, usage=0x70 (b6-5=11 Physical sensor, b4-3=10 Virtual platform)

@@ -112,6 +112,7 @@ pub fn validate_latm_sync(pes_payload: &[u8]) -> Result<u16, LatmFramingKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_prelude::*;
 
     /// Helper: build a valid LOAS-framed `audioMuxElement` of `len` body
     /// bytes (zero-filled). Returns the wire bytes (3-byte header + len

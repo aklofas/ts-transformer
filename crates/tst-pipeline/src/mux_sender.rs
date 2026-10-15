@@ -1299,6 +1299,7 @@ impl crate::shell_error::ShellError for MuxSenderError {
 #[cfg(test)]
 mod multi_stream_tests {
     use super::*;
+    use alloc::string::ToString;
     use tst_core::mpegts::mux::{
         AudioCodec, KlvStreamType, MuxerProgramConfigBuilder, StreamKind, SubtitleCodec, VideoCodec,
     };
@@ -2226,6 +2227,8 @@ mod cancel_tests {
     /// of panicking. The 10 `send_*` methods must return a `MuxSenderError`
     /// whose kind is `ShellErrorKind::TransportBroken`; the 2
     /// `*_handles_for_program` methods must return `MuxError::ProgramNotFound`.
+    // std::sync::Mutex poisoning; the no_std spin ShellMutex cannot poison.
+    #[cfg(feature = "std")]
     #[test]
     fn mux_sender_inner_lock_poisoned_returns_broken_error() {
         // Snapshot handles from a fresh (unpoisoned) sender with the same
@@ -2348,6 +2351,8 @@ mod cancel_tests {
     /// Every `send_*` names its own site in the poisoned-lock message,
     /// exactly. `contains("send_video")` would also accept `send_video_to…`,
     /// so the message is compared whole.
+    // std::sync::Mutex poisoning; the no_std spin ShellMutex cannot poison.
+    #[cfg(feature = "std")]
     #[test]
     fn poisoned_lock_names_every_send_site_exactly() {
         use tst_core::codec::misp_time::MispTimestamp;
@@ -2526,6 +2531,8 @@ mod cancel_tests {
     ///
     /// Uses the same `poison_sender()` helper as the recoverable-path test —
     /// same poison mechanism, same config layout.
+    // std::sync::Mutex poisoning; the no_std spin ShellMutex cannot poison.
+    #[cfg(feature = "std")]
     #[test]
     fn mux_sender_inner_lock_poisoned_returns_safe_default() {
         let sender = poison_sender();

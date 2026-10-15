@@ -57,6 +57,7 @@ pub fn parse_frame_header_light(
 mod tests {
     use super::*;
     use crate::codec::ChromaFormat;
+    use crate::test_prelude::*;
 
     fn dummy_seq() -> Av1SequenceHeader {
         Av1SequenceHeader {

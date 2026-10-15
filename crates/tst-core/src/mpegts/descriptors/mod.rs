@@ -561,6 +561,7 @@ pub fn iso_639_language(language: [u8; 3], audio_type: u8) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_prelude::*;
 
     #[test]
     fn registration_klva_no_additional() {

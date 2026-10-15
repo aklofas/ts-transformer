@@ -5,6 +5,7 @@ use crate::codec::aac::{
     AacChannelLayout, AacProfile, AdtsFrame, AdtsFrameOwned, MpegVersion, frames,
     frames_with_resync,
 };
+use crate::test_prelude::*;
 
 /// Helper: build full ADTS frame (7-byte header + zero-fill body).
 /// Defaults: MPEG-2 ID, no CRC, AAC-LC profile, num_blocks_wire=0 (1 block).

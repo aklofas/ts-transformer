@@ -7,6 +7,7 @@ use crate::klv::pack::OwnedRawField;
 use crate::klv::st0102::enums::{
     ClassifyingCountryCodingMethod, ObjectCountryCodingMethod, SecurityClassification,
 };
+use crate::test_prelude::*;
 
 /// Build a single-tag LS body: tag (BER-OID, 1 byte for tags ≤ 127),
 /// length (BER), value bytes.

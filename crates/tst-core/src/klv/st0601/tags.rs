@@ -1357,6 +1357,7 @@ pub(crate) fn lookup(id: u8) -> Option<&'static TagSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_prelude::*;
 
     #[test]
     fn unique_tag_ids() {

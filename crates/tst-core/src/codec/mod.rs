@@ -415,6 +415,7 @@ pub(crate) fn validate_bit_depth_minus8(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_prelude::*;
 
     #[test]
     fn chroma_format_is_copy_eq() {

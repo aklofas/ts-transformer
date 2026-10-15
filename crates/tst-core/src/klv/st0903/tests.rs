@@ -8,6 +8,7 @@ use super::model::VmtiLs;
 use crate::error::{KlvDecodeError, KlvEncodeError, KlvFieldError};
 use crate::klv::pack::OwnedRawField;
 use crate::klv::st0903::vtarget_pack::VTargetPack;
+use crate::test_prelude::*;
 
 /// Build a minimal LS containing only Tag 1 (Checksum) + Tag 2 (PTS)
 /// + Tag 4 (Version) — the three commonly-required tags. (Strict

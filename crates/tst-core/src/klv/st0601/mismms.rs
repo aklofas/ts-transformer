@@ -356,6 +356,7 @@ mod tests {
         ClassifyingCountryCodingMethod, ObjectCountryCodingMethod, SecurityClassification,
         SecurityLs,
     };
+    use crate::test_prelude::*;
 
     /// Build a Security Local Set with all 9 MISMMS-required sub-items.
     fn full_security_ls_bytes() -> Vec<u8> {

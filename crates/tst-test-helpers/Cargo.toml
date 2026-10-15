@@ -9,7 +9,7 @@ license     = "MIT OR Apache-2.0"
 repository.workspace = true
 
 [dependencies]
-tst-core = { path = "../tst-core" }
+tst-core = { path = "../tst-core", default-features = false }
 
 [lints]
 workspace = true

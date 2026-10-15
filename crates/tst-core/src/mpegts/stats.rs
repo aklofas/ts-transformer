@@ -285,7 +285,9 @@ mod tests {
             items: 5,
             bytes: 1024,
             discontinuities: 0,
-            ..Default::default()
+            // `last_seen` exists only with `std`.
+            #[cfg(feature = "std")]
+            last_seen: None,
         };
         let b = a.clone();
         assert_eq!(a, b);

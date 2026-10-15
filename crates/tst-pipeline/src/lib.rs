@@ -66,6 +66,11 @@
 #[macro_use]
 extern crate alloc;
 
+// Unit tests link std even when the library is no_std; this makes `std::`
+// paths resolve in test modules on that plane.
+#[cfg(test)]
+extern crate std;
+
 mod mutex;
 
 #[cfg(feature = "std")]

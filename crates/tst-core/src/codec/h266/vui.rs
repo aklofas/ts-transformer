@@ -115,6 +115,7 @@ mod tests {
     use super::*;
     use crate::codec::bitreader::BitReader;
     use crate::codec::test_util::BitWriter;
+    use crate::test_prelude::*;
 
     /// Builds the minimum VUI bit stream that exercises the chroma_loc
     /// branch. Sequence per H.274 §7.2:

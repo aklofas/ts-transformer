@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::mpegts::common::Pts90khz;
+use crate::test_prelude::*;
 
 #[test]
 fn default_config_validates() {

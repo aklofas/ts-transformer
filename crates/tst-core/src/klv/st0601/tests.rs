@@ -18,6 +18,7 @@ use crate::error::{KlvDecodeError, KlvEncodeError, KlvPatchError};
 use crate::klv::checksum::checksum_running_sum_16;
 use crate::klv::pack::OwnedRawField;
 use crate::klv::universal_label::UniversalLabel;
+use crate::test_prelude::*;
 
 #[test]
 fn default_uses_st0601_ul() {

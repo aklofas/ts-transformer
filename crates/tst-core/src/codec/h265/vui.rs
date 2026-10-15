@@ -131,6 +131,7 @@ pub(crate) fn parse(
 mod tests {
     use super::*;
     use crate::codec::test_util::BitWriter;
+    use crate::test_prelude::*;
 
     /// VUI with only `aspect_ratio_info_present_flag = 1`,
     /// `aspect_ratio_idc = 255` (Extended_SAR) and the given

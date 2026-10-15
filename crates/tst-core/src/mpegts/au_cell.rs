@@ -174,6 +174,7 @@ pub fn read_metadata_au_cell(buf: &[u8]) -> Result<(AuCellHeader, &[u8]), KlvDec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_prelude::*;
 
     fn sample_header() -> AuCellHeader {
         AuCellHeader {
