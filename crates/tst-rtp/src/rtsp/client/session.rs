@@ -9,7 +9,7 @@
 //!   channel fed by `RtspClient`'s pump thread (spawned in SETUP via
 //!   the crate-private `RtspClient::activate_interleaved_pump`).
 
-use std::net::{SocketAddr, UdpSocket};
+use std::net::UdpSocket;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -18,7 +18,7 @@ use bytes::Bytes;
 use crate::h264::depacketizer::H264DepayConfig;
 use crate::h264::receiver::H264Receiver;
 use crate::rtsp::client::end_reason::EndReasonSlot;
-use crate::rtsp::client::transport_negotiation::{RtspTransportKind, TransportResponse};
+use crate::rtsp::client::transport_negotiation::RtspTransportKind;
 use crate::transport::RtpRecvTransport;
 
 /// State held between SETUP and PLAY / TEARDOWN.
@@ -30,10 +30,8 @@ use crate::transport::RtpRecvTransport;
 /// change.
 pub struct RtspSession {
     pub(crate) session_id: String,
-    pub(crate) transport: TransportResponse,
     pub(crate) kind: RtspTransportKind,
     pub(crate) udp_sockets: Option<(UdpSocket, UdpSocket)>,
-    pub(crate) peer_addr: Option<SocketAddr>,
     /// For TcpInterleaved: consumer side of the pump's data channel.
     /// `None` for UDP sessions.
     pub(crate) data_rx: Option<mpsc::Receiver<Bytes>>,
@@ -66,17 +64,13 @@ impl RtspSession {
         sid: String,
         rtp: UdpSocket,
         rtcp: UdpSocket,
-        transport: TransportResponse,
-        peer: SocketAddr,
         recv_timeout: Option<Duration>,
         end_reason: EndReasonSlot,
     ) -> Self {
         Self {
             session_id: sid,
             kind: RtspTransportKind::Udp,
-            transport,
             udp_sockets: Some((rtp, rtcp)),
-            peer_addr: Some(peer),
             data_rx: None,
             rtcp_rx: None,
             recv_timeout,
@@ -90,7 +84,6 @@ impl RtspSession {
     /// to `RtpRecvTransport::from_mpsc_with_rtcp` for the consumer side.
     pub(crate) fn new_interleaved_with_data_rx(
         sid: String,
-        transport: TransportResponse,
         data_rx: mpsc::Receiver<Bytes>,
         rtcp_rx: mpsc::Receiver<Bytes>,
         recv_timeout: Option<Duration>,
@@ -99,9 +92,7 @@ impl RtspSession {
         Self {
             session_id: sid,
             kind: RtspTransportKind::TcpInterleaved,
-            transport,
             udp_sockets: None,
-            peer_addr: None,
             data_rx: Some(data_rx),
             rtcp_rx: Some(rtcp_rx),
             recv_timeout,
@@ -118,15 +109,6 @@ impl RtspSession {
     /// Which transport flavor the server picked at SETUP.
     pub fn transport_kind(&self) -> RtspTransportKind {
         self.kind
-    }
-
-    /// Peer's RTCP endpoint (`peer.ip():server_rtcp_port`) for UDP
-    /// sessions, `None` for TCP-interleaved (the RTCP carrier is the
-    /// control TCP itself in that case).
-    pub fn rtcp_endpoint(&self) -> Option<SocketAddr> {
-        let peer = self.peer_addr?;
-        let port = self.transport.server_port.map(|(_, hi)| hi)?;
-        Some(SocketAddr::new(peer.ip(), port))
     }
 
     /// Consume the session and return an `RtpRecvTransport` ready for

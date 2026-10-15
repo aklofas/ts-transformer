@@ -70,10 +70,12 @@ pub enum RtspError {
     #[error("RTSP server does not support a transport we accept")]
     UnsupportedTransport,
 
-    /// Server closed our session (sent RTSP/1.0 454 Session Not Found
-    /// on a keepalive ping, or the underlying TCP went RST). After
-    /// this, no further requests succeed; caller must construct a fresh
-    /// `RtspClient`.
+    /// The client is no longer usable. tst-rtp's own client does not return
+    /// this — a 454 on a keepalive ping records
+    /// [`StreamEndReason::SessionExpired`](crate::StreamEndReason::SessionExpired)
+    /// instead — but the Python and JVM bindings return it when the client
+    /// they wrap was already torn down or its lock was poisoned. Build a
+    /// fresh `RtspClient`.
     #[error("RTSP session expired or was closed by server")]
     SessionExpired,
 
@@ -83,7 +85,7 @@ pub enum RtspError {
     /// written; whether the server acted on it is unknown, and its late
     /// response may still be in the socket — treat the control connection
     /// as indeterminate and build a fresh client. Distinct from
-    /// [`RtspError::SessionExpired`], which is the server's explicit 454.
+    /// [`RtspError::SessionExpired`] (a client that is no longer usable).
     #[error("RTSP request timed out waiting for the server's response")]
     Timeout,
 

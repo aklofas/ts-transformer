@@ -1,7 +1,7 @@
 # tst-rtp integration-test movement map
 
 The 27 former top-level `tests/*.rs` integration binaries were consolidated
-into **4 domain harnesses** (`net_rtp`, `net_rtcp`, `net_rtsp_client`, `net_rtsp_server`),
+into **3 domain harnesses** (`net_rtp`, `net_rtsp_client`, `net_rtsp_server`),
 same `#[path] mod` pattern as the other crates: `tests/<domain>.rs` includes
 its members from `tests/<domain>/`.
 
@@ -33,13 +33,6 @@ unchanged (310) and the test leaf-name multiset is byte-identical before/after
 | --- | --- |
 | `loopback_multicast.rs` | `rtp/loopback_multicast.rs` |
 | `loopback_unicast.rs` | `rtp/loopback_unicast.rs` |
-
-### `rtcp/` — RTCP receiver/sender reports over RTP and RTSP-interleaved transports
-
-| old `tests/…` | new `tests/…` |
-| --- | --- |
-| `rtcp_interleaved.rs` | `rtcp/interleaved.rs` |
-| `rtcp_via_rtsp.rs` | `rtcp/via_rtsp.rs` |
 
 ### `rtsp_client/` — RTSP client: SETUP/PLAY/TEARDOWN, auth, fallback, TLS, keepalive, interleaved
 

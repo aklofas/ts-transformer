@@ -104,7 +104,6 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-rtp | clock | Stable | RTP clock/timestamp helper |
 | tst-rtp | error | Stable | RTP error taxonomy |
 | tst-rtp | h264 | Stable | RFC 6184 H.264 depacketizer/receiver; `H264Receiver::set_recv_timeout` and `end_reason()` are Provisional — same divergence shape as `transport`'s row below |
-| tst-rtp | init | Stable | one-time RTP init |
 | tst-rtp | packet | Stable | RTP packet parse/build |
 | tst-rtp | rtcp | Stable | RTCP sender/receiver report handling |
 | tst-rtp | sdp | Stable | SDP parsing/media selection |

@@ -178,8 +178,6 @@ impl RtspClient {
                     sid,
                     rtp,
                     rtcp,
-                    transport,
-                    self.peer,
                     self.url.recv_timeout,
                     self.end_reason.clone(),
                 )
@@ -204,7 +202,6 @@ impl RtspClient {
                 let (data_rx, rtcp_rx) = self.activate_interleaved_pump(channels)?;
                 RtspSession::new_interleaved_with_data_rx(
                     sid,
-                    transport,
                     data_rx,
                     rtcp_rx,
                     self.url.recv_timeout,

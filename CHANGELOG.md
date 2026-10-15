@@ -83,6 +83,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   from the peer's reports.
 - `compute_rtt_us` and `system_time_to_ntp_mid` are removed. Round-trip time
   was never computed; `rtt_us` reports 0, as before.
+- `tst_rtp::init` (a no-op) and `RtspSession::rtcp_endpoint` are removed.
 
 ### Changed — tst-core (BREAKING)
 
