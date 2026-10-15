@@ -1,51 +1,46 @@
-//! Shared Annex-B start-code scanner.
+//! The Annex-B byte-stream scanner (H.264/H.265/H.266 Annex B): where each
+//! start code (`00 00 01` or `00 00 00 01`) is, and the NAL units between
+//! them. `no_std`, allocation-free.
 //!
-//! H.264/H.265/H.266 elementary streams delimit each NAL unit with a
-//! start code — either 3 bytes (`00 00 01`) or 4 bytes (`00 00 00 01`).
-//! Two consumers in this crate need the same scan: the demuxer's NAL
-//! splitter (`mpegts::demux::payload::split_nals`) and the Annex-B ↔
-//! length-prefixed converter (`codec::nal_framing`). Both previously
-//! carried byte-identical private copies; this module is the single
-//! definition they share.
-//!
-//! Deliberately NOT shared with `codec::util::count_annex_b_nals` or
-//! `mpegts::mux::state::validate_annex_b`: those two have different
-//! acceptance rules (counting and validation semantics respectively),
-//! not just a different presentation of the same scan.
+//! The one scan every Annex-B consumer in the crate runs: the demuxer's NAL
+//! splitter, the length-prefixed converter, the muxer's input validation,
+//! NAL counting and the MISP SEI splice. Each layers its own acceptance
+//! rule on top (the muxer rejects empty NAL units and a trailing partial
+//! start code; the counter calls a buffer with no start code one NAL); the
+//! scan itself is defined once, here.
 
 use alloc::vec::Vec;
 
 /// Offsets of one Annex-B start-code occurrence: where the prefix starts
 /// (the run of `00`s plus the trailing `01`) and where the NAL data begins
 /// (immediately after).
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct StartCode {
-    pub(crate) prefix_start: usize,
-    pub(crate) data_start: usize,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StartCode {
+    /// Offset of the first zero of the prefix.
+    pub prefix_start: usize,
+    /// Offset of the first byte after the prefix (the NAL header).
+    pub data_start: usize,
 }
 
-/// Locate every Annex-B start code (`00 00 01` or `00 00 00 01`) in `buf`.
+/// Every start code in `buf`, collected — for the one caller that needs random access (`mpegts::demux::payload::split_nals`).
 ///
-/// The scan is greedy left-to-right and non-overlapping: each match
-/// consumes its own prefix bytes before the walk resumes. A run of more
-/// than three leading zeros (e.g. `00 00 00 00 01`) therefore yields a
-/// single code whose `prefix_start` skips the surplus zeros rather than
-/// attributing them to the prefix: neither width matches at the first
-/// zero of the run (the 3-byte form wants `01` where a `00` sits, and
-/// the 4-byte form wants it one byte further on), so the walk advances
-/// a byte and the 4-byte form matches there, leaving the surplus zero
-/// outside the prefix.
-pub(crate) fn start_codes(buf: &[u8]) -> Vec<StartCode> {
+/// Same walk as [`start_codes`].
+pub(crate) fn start_code_vec(buf: &[u8]) -> Vec<StartCode> {
     StartCodes::new(buf).collect()
 }
 
-/// Lazy form of [`start_codes`]: the same walk, yielding each match as it
-/// is found instead of collecting. This is the actual scanner — the
-/// `Vec`-returning [`start_codes`] is a `collect()` over it, kept for the
-/// one consumer that needs random access to the match list
-/// (`mpegts::demux::payload::split_nals`, which pairs each match with the
-/// next to slice offsets out of a shared buffer).
-struct StartCodes<'a> {
+/// Every Annex-B start code in `buf`, in order, as it is found.
+///
+/// The scan is greedy left-to-right and non-overlapping: each match
+/// consumes its own prefix bytes before the walk resumes. A run of more
+/// than three zeros before `01` yields one 4-byte code whose
+/// `prefix_start` skips the surplus zeros.
+pub fn start_codes(buf: &[u8]) -> StartCodes<'_> {
+    StartCodes::new(buf)
+}
+
+/// Iterator returned by [`start_codes`].
+pub struct StartCodes<'a> {
     buf: &'a [u8],
     /// Index of the next byte the walk will examine.
     pos: usize,
@@ -86,8 +81,8 @@ impl Iterator for StartCodes<'_> {
     }
 }
 
-/// Iterate the NAL bodies of an Annex-B buffer: each item is the byte
-/// slice between one start code's `data_start` and the next start code's
+/// Iterate the NAL units of an Annex-B buffer: each item is one NAL unit
+/// with its header and without its start code, the byte slice between one start code's `data_start` and the next start code's
 /// `prefix_start` (or the end of `buf` for the last NAL).
 ///
 /// Allocation-free — it holds one [`StartCodes`] walk and one lookahead
@@ -95,7 +90,7 @@ impl Iterator for StartCodes<'_> {
 /// can size or convert a buffer without materializing a match list.
 /// Bytes before the first start code are not part of any NAL and are
 /// skipped; a `buf` with no start code at all yields nothing.
-pub(crate) fn nals(buf: &[u8]) -> Nals<'_> {
+pub fn nals(buf: &[u8]) -> Nals<'_> {
     let mut codes = StartCodes::new(buf);
     let current = codes.next();
     Nals {
@@ -106,7 +101,7 @@ pub(crate) fn nals(buf: &[u8]) -> Nals<'_> {
 }
 
 /// Iterator returned by [`nals`].
-pub(crate) struct Nals<'a> {
+pub struct Nals<'a> {
     buf: &'a [u8],
     codes: StartCodes<'a>,
     /// The start code whose NAL body the next `next()` call will yield;
@@ -144,7 +139,6 @@ mod tests {
     /// the expectations below read as the recognition table they are.
     fn scan(buf: &[u8]) -> Vec<(usize, usize)> {
         start_codes(buf)
-            .iter()
             .map(|s| (s.prefix_start, s.data_start))
             .collect()
     }
@@ -246,7 +240,7 @@ mod tests {
             0xFF, 0x00, 0x00, 0x00, 0x00, 0x01, 0x67, 0xAA, 0x00, 0x00, 0x01, 0x65, 0x00, 0x00,
             0x00, 0x01, 0x68, 0x00, 0x00,
         ];
-        let codes = start_codes(&buf);
+        let codes = start_code_vec(&buf);
         let mut expected: Vec<&[u8]> = codes
             .windows(2)
             .map(|w| &buf[w[0].data_start..w[1].prefix_start])

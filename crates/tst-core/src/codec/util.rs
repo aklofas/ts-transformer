@@ -41,28 +41,7 @@ fn count_annex_b_nals(buf: &[u8]) -> u64 {
     if buf.is_empty() {
         return 0;
     }
-    let mut count: u64 = 0;
-    let mut i: usize = 0;
-    while i + 3 <= buf.len() {
-        // 4-byte start code: 00 00 00 01
-        if i + 4 <= buf.len()
-            && buf[i] == 0
-            && buf[i + 1] == 0
-            && buf[i + 2] == 0
-            && buf[i + 3] == 1
-        {
-            count += 1;
-            i += 4;
-            continue;
-        }
-        // 3-byte start code: 00 00 01
-        if buf[i] == 0 && buf[i + 1] == 0 && buf[i + 2] == 1 {
-            count += 1;
-            i += 3;
-            continue;
-        }
-        i += 1;
-    }
+    let count = crate::codec::annexb::start_codes(buf).count() as u64;
     // Defensive: caller buffer with no start code at all is one NAL by
     // convention. validate_annex_b rejects this in push_video, but
     // count_nal_units must be well-defined on any byte slice.
@@ -123,6 +102,46 @@ fn count_av1_obus(buf: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The pre-refactor body, kept verbatim as a differential oracle.
+    fn old_count_annex_b_nals(buf: &[u8]) -> u64 {
+        if buf.is_empty() {
+            return 0;
+        }
+        let mut count: u64 = 0;
+        let mut i: usize = 0;
+        while i + 3 <= buf.len() {
+            // 4-byte start code: 00 00 00 01
+            if i + 4 <= buf.len()
+                && buf[i] == 0
+                && buf[i + 1] == 0
+                && buf[i + 2] == 0
+                && buf[i + 3] == 1
+            {
+                count += 1;
+                i += 4;
+                continue;
+            }
+            // 3-byte start code: 00 00 01
+            if buf[i] == 0 && buf[i + 1] == 0 && buf[i + 2] == 1 {
+                count += 1;
+                i += 3;
+                continue;
+            }
+            i += 1;
+        }
+        // Defensive: caller buffer with no start code at all is one NAL by
+        // convention. validate_annex_b rejects this in push_video, but
+        // count_nal_units must be well-defined on any byte slice.
+        if count == 0 { 1 } else { count }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn count_matches_the_old_scan(buf in proptest::collection::vec(proptest::sample::select(vec![0u8, 0, 0, 1, 2, 3, 0x65, 0xFF]), 0..64)) {
+            proptest::prop_assert_eq!(count_annex_b_nals(&buf), old_count_annex_b_nals(&buf));
+        }
+    }
 
     #[test]
     fn annex_b_empty_buf_returns_zero() {

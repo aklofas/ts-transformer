@@ -10,6 +10,8 @@
 // loaded as a module twice (clippy::duplicate_mod).
 #[path = "common/mod.rs"]
 mod common;
+#[path = "codec/annexb_public.rs"]
+mod annexb_public;
 #[path = "codec/audio_corpus_cross_check.rs"]
 mod audio_corpus_cross_check;
 #[path = "codec/audio_frame_roundtrip.rs"]

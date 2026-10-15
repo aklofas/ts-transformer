@@ -72,6 +72,8 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-core | codec::h266 | Provisional | newer codec, less field exposure |
 | tst-core | codec::av1 | Provisional | newer codec, less field exposure |
 | tst-core | codec::misp_time | Provisional | MISB ST 0604 MISP timestamp helpers, recent surface |
+| tst-core | codec::annexb | Provisional | the Annex-B start-code scanner every NAL consumer shares; new public surface |
+| tst-core | codec::nal | Provisional | NAL header type table (H.264/H.265/H.266); new public surface |
 | tst-core | codec::aac | Provisional | audio parser |
 | tst-core | codec::ac3 | Provisional | audio parser |
 | tst-core | codec::mpegaudio | Provisional | audio parser |

@@ -313,30 +313,54 @@ pub fn extract_parameter_sets(annexb: &[u8], codec: VideoCodec) -> ParameterSets
 /// other NAL type (slices, SEI, AUD, …) is silently ignored — this is a
 /// filter, not a validator.
 fn classify_parameter_set(nal: &[u8], codec: VideoCodec, sets: &mut ParameterSets) {
-    let Some(&byte0) = nal.first() else {
-        return;
-    };
-    match codec {
-        VideoCodec::H264 => match byte0 & 0x1F {
-            7 => sets.sps.push(nal.to_vec()),
-            8 => sets.pps.push(nal.to_vec()),
-            _ => {}
-        },
-        VideoCodec::H265 => match (byte0 >> 1) & 0x3F {
-            32 => sets.vps.push(nal.to_vec()),
-            33 => sets.sps.push(nal.to_vec()),
-            34 => sets.pps.push(nal.to_vec()),
-            _ => {}
-        },
-        VideoCodec::H266 | VideoCodec::Av1 => {
-            unreachable!("filtered out by extract_parameter_sets before this is called")
-        }
+    use crate::codec::nal::nal_unit_type;
+    match (codec, nal_unit_type(codec, nal)) {
+        (VideoCodec::H264, Some(7)) | (VideoCodec::H265, Some(33)) => sets.sps.push(nal.to_vec()),
+        (VideoCodec::H264, Some(8)) | (VideoCodec::H265, Some(34)) => sets.pps.push(nal.to_vec()),
+        (VideoCodec::H265, Some(32)) => sets.vps.push(nal.to_vec()),
+        // Slices, SEI, AUD, …: not a parameter set. H.266 and AV1 are
+        // filtered out by extract_parameter_sets before this is called.
+        _ => {}
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The pre-refactor body, kept verbatim as a differential oracle.
+    fn old_classify_parameter_set(nal: &[u8], codec: VideoCodec, sets: &mut ParameterSets) {
+        let Some(&byte0) = nal.first() else {
+            return;
+        };
+        match codec {
+            VideoCodec::H264 => match byte0 & 0x1F {
+                7 => sets.sps.push(nal.to_vec()),
+                8 => sets.pps.push(nal.to_vec()),
+                _ => {}
+            },
+            VideoCodec::H265 => match (byte0 >> 1) & 0x3F {
+                32 => sets.vps.push(nal.to_vec()),
+                33 => sets.sps.push(nal.to_vec()),
+                34 => sets.pps.push(nal.to_vec()),
+                _ => {}
+            },
+            VideoCodec::H266 | VideoCodec::Av1 => {
+                unreachable!("filtered out by extract_parameter_sets before this is called")
+            }
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn classify_matches_the_old_table(nal in proptest::collection::vec(proptest::num::u8::ANY, 0..4), h265 in proptest::bool::ANY) {
+            let codec = if h265 { VideoCodec::H265 } else { VideoCodec::H264 };
+            let (mut a, mut b) = (ParameterSets::default(), ParameterSets::default());
+            classify_parameter_set(&nal, codec, &mut a);
+            old_classify_parameter_set(&nal, codec, &mut b);
+            proptest::prop_assert_eq!((a.sps, a.pps, a.vps), (b.sps, b.pps, b.vps));
+        }
+    }
 
     /// Hand-built two-NAL Annex B buffer: NAL 1 uses a 4-byte start code,
     /// NAL 2 uses a 3-byte start code (mixed on purpose, since both are

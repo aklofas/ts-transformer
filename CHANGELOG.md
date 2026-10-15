@@ -141,6 +141,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   previously reachable only through a hidden test module.
 - `NonConformantIssue` implements `std::error::Error`. Its `Display` text is
   unchanged.
+- `codec::annexb` is public: `start_codes` (an allocation-free iterator of
+  `StartCode { prefix_start, data_start }`) and `nals` (the NAL units of an
+  Annex-B buffer, header included, start code excluded).
+- `codec::nal`: `header_len`, `nal_unit_type`, `is_vcl` and `is_idr` for
+  H.264, H.265 and H.266.
+- `codec::misp_time`: `append_rbsp_escaped`, `insert_sei_before_first_vcl`
+  and `build_user_data_unregistered_sei_nal` (any 16-byte UUID and payload,
+  `0xFF`-run payload size) are public; `build_sei_nal` is built on the last.
 
 ### Added — tst-rtp
 
