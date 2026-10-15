@@ -389,7 +389,7 @@ where
                 break;
             },
             _ = state.cancel_token.cancelled() => {
-                tracing::info!(target: "tst_rtp::server", peer = %peer, "graceful cancel observed");
+                tracing::info!(target: "tst_rtp::server", peer = %peer, "server cancel token observed (stop or hard cancel)");
                 break;
             }
             _ = session_entry.cancel.cancelled() => {

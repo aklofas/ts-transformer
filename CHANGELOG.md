@@ -23,10 +23,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — tst-rtp
 
-- `RtspServer::cancel_handle().cancel()` now ends a session parked in its read
-  within about 100 ms (the listener's poll period). Before, such a session
-  lived until its idle bound: 30 s before SETUP, the session timeout plus
-  grace after. The handle's shape and its signal-safety are unchanged.
+- `RtspServer::cancel_handle().cancel()` now ends every session within about
+  100 ms (the listener's poll period), along with its RTP fanout and the
+  multicast mount senders. Before, a session ended only at its idle bound, and
+  a streaming one not at all. Publish mounts' application transports stay
+  open, as before. Shape and signal-safety unchanged.
 
 ---
 
