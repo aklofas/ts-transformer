@@ -129,9 +129,9 @@ const EXIT_PARK_MAX: std::time::Duration = std::time::Duration::from_secs(3);
 /// [`EXIT_PARK_MAX`] instead of re-taking the GIL at once — see
 /// [`INTERPRETER_EXITING`]; normally the process ends during that park.
 /// Only if it is still alive afterwards does the thread return `f`'s value.
-#[allow(dead_code)]
 // every transport surface calls this; dead only in a
 // transport-less `--no-default-features` build.
+#[allow(dead_code)]
 #[expect(clippy::disallowed_methods, reason = "the parking wrapper itself")]
 pub(crate) fn allow_threads_parking<T, F>(py: Python<'_>, f: F) -> T
 where

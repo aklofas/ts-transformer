@@ -76,8 +76,8 @@ fn cdylib_exports_only_prefixed_symbols() {
 /// that the static link picks up.
 #[test]
 #[cfg_attr(
-    not(all(target_os = "linux", target_env = "gnu")),
-    ignore = "uses GNU nm + ELF-specific filters; Linux GNU coverage is sufficient"
+    not(all(target_os = "linux", target_env = "gnu", feature = "srt")),
+    ignore = "needs GNU nm on ELF and a libtstrans built with `srt` (without it no libsrt is linked and the check is vacuous)"
 )]
 fn srt_symbols_not_exported() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");

@@ -374,6 +374,75 @@ typedef enum tst_st0601_field_state {
 } tst_st0601_field_state;
 
 /**
+ * `repr(i32)` mirror of `tst_core::mpegts::mux::Av1CarriageMode`.
+ *
+ * Two-valued enum: `Mpeg2TsBinding=0` (default, spec-conformant
+ * AV1-in-MPEG-2-TS binding — PES `stream_id=0xBD` and
+ * `ts_open_bitstream_unit()` framing per AV1-in-MPEG-2-TS §3.x),
+ * `InteropRawObu=1` (interop carriage matching ffmpeg / libaom /
+ * hls.js / mediamtx — PES `stream_id=0xE0` and raw OBU payload).
+ *
+ * Set on the demuxer side via `tst_demux_config_set_av1_carriage`
+ * so the receiver matches the sender's carriage; mismatched modes
+ * surface as `TST_NONCONFORMANT_CODE_AV1_WRONG_STREAM_ID` and
+ * `TST_NONCONFORMANT_CODE_AV1_MISSING_TS_OBU_FRAMING` issues.
+ */
+enum tst_av1_carriage_mode
+#ifdef __cplusplus
+  : int32_t
+#endif // __cplusplus
+ {
+  TST_AV1_CARRIAGE_MODE_MPEG2_TS_BINDING = 0,
+  TST_AV1_CARRIAGE_MODE_INTEROP_RAW_OBU = 1,
+};
+#ifndef __cplusplus
+typedef int32_t tst_av1_carriage_mode;
+#endif // __cplusplus
+
+/**
+ * `repr(i32)` mirror of `tst_core::mpegts::au_cell::CellFragmentIndication`.
+ * Surfaced on `tst_event_t.u.nonconformant.cc_expected` (observed) and
+ * `tst_event_t.u.nonconformant.cc_observed` (substituted) when
+ * `issue_code == TST_NONCONFORMANT_CODE_CFI_TOLERATED`.
+ *
+ * Discriminants match the H.222.0 V9 Table 2-157 wire bits exactly:
+ * `Middle = 0` (0b00), `Last = 1` (0b01), `First = 2` (0b10),
+ * `Complete = 3` (0b11).
+ */
+enum tst_cell_fragment_indication
+#ifdef __cplusplus
+  : int32_t
+#endif // __cplusplus
+ {
+  TST_CELL_FRAGMENT_INDICATION_MIDDLE = 0,
+  TST_CELL_FRAGMENT_INDICATION_LAST = 1,
+  TST_CELL_FRAGMENT_INDICATION_FIRST = 2,
+  TST_CELL_FRAGMENT_INDICATION_COMPLETE = 3,
+};
+#ifndef __cplusplus
+typedef int32_t tst_cell_fragment_indication;
+#endif // __cplusplus
+
+/**
+ * `repr(i32)` mirror of `tst_core::mpegts::demux::DiscontinuityKind`'s
+ * discriminator. ContinuityJump's `expected`/`observed` and
+ * PesOversize's `pid` live on the union fields.
+ */
+enum tst_discontinuity_kind
+#ifdef __cplusplus
+  : int32_t
+#endif // __cplusplus
+ {
+  TST_DISCONTINUITY_KIND_CONTINUITY_JUMP = 0,
+  TST_DISCONTINUITY_KIND_PES_OVERSIZE = 1,
+  TST_DISCONTINUITY_KIND_PES_TOTAL_OVERSIZE = 2,
+  TST_DISCONTINUITY_KIND_ADAPTATION_FIELD_FLAG = 3,
+};
+#ifndef __cplusplus
+typedef int32_t tst_discontinuity_kind;
+#endif // __cplusplus
+
+/**
  * Negative codes returned by every fallible tst-c entry point.
  *
  * `Success = 0` is the only non-negative variant. Codes are stable
@@ -677,24 +746,20 @@ typedef int32_t tst_event_kind;
 #endif // __cplusplus
 
 /**
- * `repr(i32)` mirror of `tst_core::mpegts::demux::StreamKind`'s
- * discriminator. Variant payloads (codec, declared_link, unknown
- * stream_type) live on the per-event union fields, not on this enum.
+ * `repr(i32)` mirror of `tst_core::mpegts::demux::LinkSource`.
+ * On `tst_klv_link_t.source` and on synthetic KLV-link inference.
  */
-enum tst_stream_kind
+enum tst_link_source
 #ifdef __cplusplus
   : int32_t
 #endif // __cplusplus
  {
-  TST_STREAM_KIND_VIDEO = 0,
-  TST_STREAM_KIND_AUDIO = 1,
-  TST_STREAM_KIND_SUBTITLE = 2,
-  TST_STREAM_KIND_KLV_SYNC = 3,
-  TST_STREAM_KIND_KLV_ASYNC = 4,
-  TST_STREAM_KIND_UNKNOWN = 5,
+  TST_LINK_SOURCE_DECLARED = 0,
+  TST_LINK_SOURCE_INFERRED = 1,
+  TST_LINK_SOURCE_OVERRIDE = 2,
 };
 #ifndef __cplusplus
-typedef int32_t tst_stream_kind;
+typedef int32_t tst_link_source;
 #endif // __cplusplus
 
 /**
@@ -716,22 +781,58 @@ typedef int32_t tst_metadata_kind;
 #endif // __cplusplus
 
 /**
- * `repr(i32)` mirror of `tst_core::mpegts::demux::DiscontinuityKind`'s
- * discriminator. ContinuityJump's `expected`/`observed` and
- * PesOversize's `pid` live on the union fields.
+ * `repr(i32)` mirror of `tst_core::mpegts::demux::MultiCellAuReason`.
+ * Surfaced on `tst_event_t.u.nonconformant.multi_cell_au_reason` when
+ * `issue_code == TST_NONCONFORMANT_CODE_MULTI_CELL_AU`.
  */
-enum tst_discontinuity_kind
+enum tst_multi_cell_au_reason
 #ifdef __cplusplus
   : int32_t
 #endif // __cplusplus
  {
-  TST_DISCONTINUITY_KIND_CONTINUITY_JUMP = 0,
-  TST_DISCONTINUITY_KIND_PES_OVERSIZE = 1,
-  TST_DISCONTINUITY_KIND_PES_TOTAL_OVERSIZE = 2,
-  TST_DISCONTINUITY_KIND_ADAPTATION_FIELD_FLAG = 3,
+  /**
+   * A continuation cell (`Middle` or `Last`) arrived without a prior
+   * `First`. Stream started mid-AU or a `First` was lost upstream.
+   */
+  TST_MULTI_CELL_AU_REASON_ORPHAN = 0,
+  /**
+   * A continuation cell's `sequence_number` did not match the expected
+   * `(first.sequence_number + cells_seen) mod 256`. Cell loss between
+   * the buffered prefix and the arriving cell.
+   */
+  TST_MULTI_CELL_AU_REASON_SEQUENCE_GAP = 1,
+  /**
+   * A new `First` cell arrived while the previous AU was still being
+   * buffered (its `Last` never appeared). The partial buffer is
+   * dropped before the new `First` is processed.
+   */
+  TST_MULTI_CELL_AU_REASON_CONCURRENT_FIRST = 2,
+  /**
+   * The buffered AU's accumulated inner bytes would exceed
+   * [`tst_core::mpegts::demux::DemuxerConfig::au_cell_cap_per_pid`]
+   * (default 1 MiB). The partial buffer is dropped.
+   */
+  TST_MULTI_CELL_AU_REASON_OVERFLOW = 3,
+  /**
+   * The aggregate in-flight AU-cell bytes across all PIDs would exceed
+   * [`tst_core::mpegts::demux::DemuxerConfig::au_cell_cap_total`]
+   * (default 16 MiB). Defends a multi-PID flood where each PID stays
+   * under its own per-PID cap but the total explodes. The offending
+   * PID's partial buffer is dropped.
+   */
+  TST_MULTI_CELL_AU_REASON_OVERFLOW_TOTAL = 4,
+  /**
+   * A new `First` cell would open reassembly on a PID beyond
+   * [`tst_core::mpegts::demux::DemuxerConfig::au_cell_max_in_flight_pids`]
+   * (default 64) concurrently in-flight PIDs. Bounds active-PID count
+   * against an adversary that opens a `First` for thousands of distinct
+   * PIDs and never sends `Last`. The new cell is rejected; existing
+   * in-flight reassemblies are left intact.
+   */
+  TST_MULTI_CELL_AU_REASON_TOO_MANY_PIDS = 5,
 };
 #ifndef __cplusplus
-typedef int32_t tst_discontinuity_kind;
+typedef int32_t tst_multi_cell_au_reason;
 #endif // __cplusplus
 
 /**
@@ -919,100 +1020,47 @@ enum tst_pcr_malformed_kind
 typedef int32_t tst_pcr_malformed_kind;
 #endif // __cplusplus
 
+#if defined(TST_HAS_HLS)
 /**
- * `repr(i32)` mirror of `tst_core::mpegts::au_cell::CellFragmentIndication`.
- * Surfaced on `tst_event_t.u.nonconformant.cc_expected` (observed) and
- * `tst_event_t.u.nonconformant.cc_observed` (substituted) when
- * `issue_code == TST_NONCONFORMANT_CODE_CFI_TOLERATED`.
- *
- * Discriminants match the H.222.0 V9 Table 2-157 wire bits exactly:
- * `Middle = 0` (0b00), `Last = 1` (0b01), `First = 2` (0b10),
- * `Complete = 3` (0b11).
+ * Discriminator for the concrete publisher behind a `TstPublisher`,
+ * returned by [`tst_publisher_get_kind`].
  */
-enum tst_cell_fragment_indication
+enum tst_publisher_kind
 #ifdef __cplusplus
-  : int32_t
+  : uint32_t
 #endif // __cplusplus
  {
-  TST_CELL_FRAGMENT_INDICATION_MIDDLE = 0,
-  TST_CELL_FRAGMENT_INDICATION_LAST = 1,
-  TST_CELL_FRAGMENT_INDICATION_FIRST = 2,
-  TST_CELL_FRAGMENT_INDICATION_COMPLETE = 3,
+#if defined(TST_HAS_HLS)
+  /**
+   * HLS publisher.
+   */
+  TST_PUBLISHER_KIND_HLS = 0,
+#endif
 };
 #ifndef __cplusplus
-typedef int32_t tst_cell_fragment_indication;
+typedef uint32_t tst_publisher_kind;
 #endif // __cplusplus
+#endif
 
 /**
- * `repr(i32)` mirror of `tst_core::mpegts::demux::MultiCellAuReason`.
- * Surfaced on `tst_event_t.u.nonconformant.multi_cell_au_reason` when
- * `issue_code == TST_NONCONFORMANT_CODE_MULTI_CELL_AU`.
+ * `repr(i32)` mirror of `tst_core::mpegts::demux::StreamKind`'s
+ * discriminator. Variant payloads (codec, declared_link, unknown
+ * stream_type) live on the per-event union fields, not on this enum.
  */
-enum tst_multi_cell_au_reason
+enum tst_stream_kind
 #ifdef __cplusplus
   : int32_t
 #endif // __cplusplus
  {
-  /**
-   * A continuation cell (`Middle` or `Last`) arrived without a prior
-   * `First`. Stream started mid-AU or a `First` was lost upstream.
-   */
-  TST_MULTI_CELL_AU_REASON_ORPHAN = 0,
-  /**
-   * A continuation cell's `sequence_number` did not match the expected
-   * `(first.sequence_number + cells_seen) mod 256`. Cell loss between
-   * the buffered prefix and the arriving cell.
-   */
-  TST_MULTI_CELL_AU_REASON_SEQUENCE_GAP = 1,
-  /**
-   * A new `First` cell arrived while the previous AU was still being
-   * buffered (its `Last` never appeared). The partial buffer is
-   * dropped before the new `First` is processed.
-   */
-  TST_MULTI_CELL_AU_REASON_CONCURRENT_FIRST = 2,
-  /**
-   * The buffered AU's accumulated inner bytes would exceed
-   * [`tst_core::mpegts::demux::DemuxerConfig::au_cell_cap_per_pid`]
-   * (default 1 MiB). The partial buffer is dropped.
-   */
-  TST_MULTI_CELL_AU_REASON_OVERFLOW = 3,
-  /**
-   * The aggregate in-flight AU-cell bytes across all PIDs would exceed
-   * [`tst_core::mpegts::demux::DemuxerConfig::au_cell_cap_total`]
-   * (default 16 MiB). Defends a multi-PID flood where each PID stays
-   * under its own per-PID cap but the total explodes. The offending
-   * PID's partial buffer is dropped.
-   */
-  TST_MULTI_CELL_AU_REASON_OVERFLOW_TOTAL = 4,
-  /**
-   * A new `First` cell would open reassembly on a PID beyond
-   * [`tst_core::mpegts::demux::DemuxerConfig::au_cell_max_in_flight_pids`]
-   * (default 64) concurrently in-flight PIDs. Bounds active-PID count
-   * against an adversary that opens a `First` for thousands of distinct
-   * PIDs and never sends `Last`. The new cell is rejected; existing
-   * in-flight reassemblies are left intact.
-   */
-  TST_MULTI_CELL_AU_REASON_TOO_MANY_PIDS = 5,
+  TST_STREAM_KIND_VIDEO = 0,
+  TST_STREAM_KIND_AUDIO = 1,
+  TST_STREAM_KIND_SUBTITLE = 2,
+  TST_STREAM_KIND_KLV_SYNC = 3,
+  TST_STREAM_KIND_KLV_ASYNC = 4,
+  TST_STREAM_KIND_UNKNOWN = 5,
 };
 #ifndef __cplusplus
-typedef int32_t tst_multi_cell_au_reason;
-#endif // __cplusplus
-
-/**
- * `repr(i32)` mirror of `tst_core::mpegts::demux::LinkSource`.
- * On `tst_klv_link_t.source` and on synthetic KLV-link inference.
- */
-enum tst_link_source
-#ifdef __cplusplus
-  : int32_t
-#endif // __cplusplus
- {
-  TST_LINK_SOURCE_DECLARED = 0,
-  TST_LINK_SOURCE_INFERRED = 1,
-  TST_LINK_SOURCE_OVERRIDE = 2,
-};
-#ifndef __cplusplus
-typedef int32_t tst_link_source;
+typedef int32_t tst_stream_kind;
 #endif // __cplusplus
 
 /**
@@ -1058,54 +1106,6 @@ enum tst_subtitle_codec
 #ifndef __cplusplus
 typedef int32_t tst_subtitle_codec;
 #endif // __cplusplus
-
-/**
- * `repr(i32)` mirror of `tst_core::mpegts::mux::Av1CarriageMode`.
- *
- * Two-valued enum: `Mpeg2TsBinding=0` (default, spec-conformant
- * AV1-in-MPEG-2-TS binding — PES `stream_id=0xBD` and
- * `ts_open_bitstream_unit()` framing per AV1-in-MPEG-2-TS §3.x),
- * `InteropRawObu=1` (interop carriage matching ffmpeg / libaom /
- * hls.js / mediamtx — PES `stream_id=0xE0` and raw OBU payload).
- *
- * Set on the demuxer side via `tst_demux_config_set_av1_carriage`
- * so the receiver matches the sender's carriage; mismatched modes
- * surface as `TST_NONCONFORMANT_CODE_AV1_WRONG_STREAM_ID` and
- * `TST_NONCONFORMANT_CODE_AV1_MISSING_TS_OBU_FRAMING` issues.
- */
-enum tst_av1_carriage_mode
-#ifdef __cplusplus
-  : int32_t
-#endif // __cplusplus
- {
-  TST_AV1_CARRIAGE_MODE_MPEG2_TS_BINDING = 0,
-  TST_AV1_CARRIAGE_MODE_INTEROP_RAW_OBU = 1,
-};
-#ifndef __cplusplus
-typedef int32_t tst_av1_carriage_mode;
-#endif // __cplusplus
-
-#if defined(TST_HAS_HLS)
-/**
- * Discriminator for the concrete publisher behind a `TstPublisher`,
- * returned by [`tst_publisher_get_kind`].
- */
-enum tst_publisher_kind
-#ifdef __cplusplus
-  : uint32_t
-#endif // __cplusplus
- {
-#if defined(TST_HAS_HLS)
-  /**
-   * HLS publisher.
-   */
-  TST_PUBLISHER_KIND_HLS = 0,
-#endif
-};
-#ifndef __cplusplus
-typedef uint32_t tst_publisher_kind;
-#endif // __cplusplus
-#endif
 
 /**
  * Opaque demux-config builder. Heap-allocated via `_new`, mutated

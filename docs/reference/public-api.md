@@ -104,8 +104,8 @@ The three binding crates — `bindings/c` (tst-c), `bindings/c/core`
   the committed cbindgen-generated header `bindings/c/include/tstrans.h`, the
   `TST_ABI_VERSION_MAJOR` / `TST_ABI_VERSION_MINOR` macros it defines, and the
   C-ABI ratchets under `scripts/check/c/` (especially
-  `abi-rustdoc-coverage.sh`, `header-conditional-sections.sh`,
-  and `header-mirror-enum-export.sh`).
+  `header-conditional-sections.sh`) and the byte-for-byte drift test
+  `bindings/c/tests/abi/header_drift.rs`.
 - **tst-py.** The Rust surface is `#[pymodule]` / `#[pymethods]` PyO3 glue —
   not the Python contract. The Python consumer surface is gated by the
   committed `.pyi` stubs under `bindings/python/python/tstrans/`, the
