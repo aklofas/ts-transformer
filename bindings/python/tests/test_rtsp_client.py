@@ -112,7 +112,6 @@ def test_rtsp_client_config_defaults():
     assert cfg.url == "rtsp://127.0.0.1:8554/live"
     assert cfg.auth is None
     assert cfg.transport_pref == TransportPref.AUTO
-    assert cfg.rtcp is True
     assert cfg.tls_root_certs_pem is None
     assert cfg.keepalive is True
     assert cfg.rtsp_version == RtspVersion.V1_0
@@ -315,6 +314,122 @@ def _silent_on_pause_peer():
     return port, done, server
 
 
+def _recording_peer():
+    """A hand-rolled RTSP peer that answers OPTIONS / DESCRIBE (one MP2T
+    track) / SETUP (echoes the requested Transport) / PLAY / TEARDOWN in the
+    request's own RTSP version, and records every request head. Returns
+    (port, requests, server thread)."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    listener.settimeout(10)
+    port = listener.getsockname()[1]
+    requests: list[str] = []
+
+    def serve() -> None:
+        try:
+            sock, _ = listener.accept()
+        except OSError:
+            return
+        finally:
+            listener.close()
+        with sock:
+            sock.settimeout(10)
+            buf = b""
+            try:
+                while True:
+                    while b"\r\n\r\n" not in buf:
+                        chunk = sock.recv(8192)
+                        if not chunk:
+                            return
+                        buf += chunk
+                    head, buf = buf.split(b"\r\n\r\n", 1)
+                    req = head.decode("latin-1")
+                    requests.append(req)
+                    method = req.split(None, 1)[0]
+                    version = req.split("\r\n", 1)[0].rsplit(" ", 1)[-1]
+                    extra, body = "", b""
+                    if method == "OPTIONS":
+                        extra = "Public: OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN\r\n"
+                    elif method == "DESCRIBE":
+                        body = _SDP
+                        extra = (
+                            "Content-Type: application/sdp\r\n"
+                            f"Content-Length: {len(body)}\r\n"
+                        )
+                    elif method == "SETUP":
+                        extra = (
+                            "Session: DEADBEEF;timeout=60\r\n"
+                            f"Transport: {_header(req, 'transport')}\r\n"
+                        )
+                    elif method in ("PLAY", "TEARDOWN"):
+                        extra = "Session: DEADBEEF\r\n"
+                    cseq = _header(req, "cseq") or "1"
+                    sock.sendall(
+                        f"{version} 200 OK\r\nCSeq: {cseq}\r\n{extra}\r\n".encode()
+                        + body
+                    )
+                    if method == "TEARDOWN":
+                        return
+            except OSError:
+                return
+
+    server = threading.Thread(target=serve, daemon=True)
+    server.start()
+    return port, requests, server
+
+
+def _connect_and_teardown(cfg: RtspClientConfig, server: threading.Thread) -> None:
+    try:
+        session = RtspClient.connect(cfg)
+        session.teardown()
+    finally:
+        server.join(10)
+
+
+def _setup_transport(requests: list[str]) -> str:
+    setup = next(r for r in requests if r.startswith("SETUP "))
+    return _header(setup, "transport")
+
+
+def test_transport_pref_tcp_reaches_setup():
+    port, requests, server = _recording_peer()
+    cfg = RtspClientConfig(
+        url=f"rtsp://127.0.0.1:{port}/x",
+        transport_pref=TransportPref.TCP,
+        keepalive=False,
+    )
+    _connect_and_teardown(cfg, server)
+    assert "RTP/AVP/TCP" in _setup_transport(requests), requests
+
+
+def test_default_transport_pref_defers_to_the_url_query():
+    port, requests, server = _recording_peer()
+    cfg = RtspClientConfig(url=f"rtsp://127.0.0.1:{port}/x?transport=tcp", keepalive=False)
+    _connect_and_teardown(cfg, server)
+    assert "RTP/AVP/TCP" in _setup_transport(requests), requests
+
+
+def test_rtsp_version_reaches_every_request_line():
+    port, requests, server = _recording_peer()
+    cfg = RtspClientConfig(
+        url=f"rtsp://127.0.0.1:{port}/x",
+        transport_pref=TransportPref.TCP,
+        rtsp_version=RtspVersion.V2_0,
+        keepalive=False,
+    )
+    _connect_and_teardown(cfg, server)
+    lines = [r.split("\r\n", 1)[0] for r in requests]
+    assert lines and all(line.endswith(" RTSP/2.0") for line in lines), lines
+
+
+def test_rtsp_client_config_has_no_rtcp_knob():
+    with pytest.raises(TypeError):
+        RtspClientConfig(url="rtsp://h/p", rtcp=False)
+    assert not hasattr(RtspClientConfig(url="rtsp://h/p"), "rtcp")
+    assert "rtcp" not in repr(RtspClientConfig(url="rtsp://h/p"))
+
+
 def test_cancel_of_a_parked_control_call_is_closed():
     """A cancel fired while `pause()` is parked on a silent peer ends the
     call with `RtspError(CLOSED)` — the one cancel outcome, never
@@ -324,7 +439,6 @@ def test_cancel_of_a_parked_control_call_is_closed():
     cfg = RtspClientConfig(
         url=f"rtsp://127.0.0.1:{port}/x",
         transport_pref=TransportPref.TCP,
-        rtcp=False,
         keepalive=False,
     )
     try:

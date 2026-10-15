@@ -1661,8 +1661,8 @@ try (RtspSession session = RtspClient.connect(cfg);
   verifies against platform native roots. Invalid PEM, a rejected anchor, or
   an empty bundle throw `RtspException` of kind `TLS` before any network I/O.
 - **Pass-through config fields.** `transportPref` and `rtspVersion` are informational
-  here — the underlying connect derives transport (from a `?transport=udp|tcp` query)
-  and version (from the URL scheme) from the URL, not from these fields. Likewise
+  in the JVM binding — connect takes transport from a `?transport=udp|tcp` query and
+  the version from `?rtsp_version=`, not from these fields (tst-py applies them). Likewise
   `DigestAuth.algorithm` is retained for introspection only; the server's
   `WWW-Authenticate` challenge selects the actual digest algorithm.
 - **`stats()`** returns a zeroed `RtspStats` for now (RTCP counters wire in later).

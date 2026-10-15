@@ -102,7 +102,6 @@ class RtspCancelOutcomeTest {
             server.start();
             RtspClientConfig cfg = RtspClientConfig.builder("rtsp://127.0.0.1:" + port + "/x")
                 .transportPref(TransportPref.TCP)
-                .rtcp(false)
                 .keepalive(false)
                 .build();
             try (RtspSession session = RtspClient.connect(cfg);

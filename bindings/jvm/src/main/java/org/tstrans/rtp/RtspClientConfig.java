@@ -18,7 +18,6 @@ public final class RtspClientConfig {
     private final String url;
     private final Object auth;            // BasicAuth | DigestAuth | null
     private final TransportPref transportPref;
-    private final boolean rtcp;
     private final byte[] tlsRootCertsPem; // nullable; defensively copied
     private final boolean keepalive;
     private final RtspVersion rtspVersion;
@@ -27,7 +26,6 @@ public final class RtspClientConfig {
         this.url = b.url;
         this.auth = b.auth;
         this.transportPref = b.transportPref;
-        this.rtcp = b.rtcp;
         this.tlsRootCertsPem = b.tlsRootCertsPem == null ? null : b.tlsRootCertsPem.clone();
         this.keepalive = b.keepalive;
         this.rtspVersion = b.rtspVersion;
@@ -45,7 +43,6 @@ public final class RtspClientConfig {
 
     public TransportPref transportPref() { return transportPref; }
 
-    public boolean rtcp() { return rtcp; }
 
     /** @return a defensive copy of the PEM bytes, if set. */
     public Optional<byte[]> tlsRootCertsPem() {
@@ -60,7 +57,6 @@ public final class RtspClientConfig {
         return "RtspClientConfig(url=" + url
             + ", auth=" + (auth != null ? "<auth>" : "None")
             + ", transportPref=" + transportPref
-            + ", rtcp=" + rtcp
             + ", tlsRootCertsPem=" + (tlsRootCertsPem != null ? "<bytes>" : "None")
             + ", keepalive=" + keepalive
             + ", rtspVersion=" + rtspVersion + ")";
@@ -71,7 +67,6 @@ public final class RtspClientConfig {
         private final String url;
         private Object auth;
         private TransportPref transportPref = TransportPref.AUTO;
-        private boolean rtcp = true;
         private byte[] tlsRootCertsPem;
         private boolean keepalive = true;
         private RtspVersion rtspVersion = RtspVersion.V1_0;
@@ -95,7 +90,6 @@ public final class RtspClientConfig {
             this.transportPref = Objects.requireNonNull(p); return this;
         }
 
-        public Builder rtcp(boolean v) { this.rtcp = v; return this; }
 
         public Builder tlsRootCertsPem(byte[] pem) {
             this.tlsRootCertsPem = pem == null ? null : pem.clone(); return this;
