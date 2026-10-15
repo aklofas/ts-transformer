@@ -17,7 +17,6 @@
 //! `super::mod`; no inner `#![cfg(...)]` here (clippy flags that as a
 //! `duplicated_attributes` warning under `-D warnings`).
 
-use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -58,59 +57,17 @@ impl TlsServerConfig {
 
     /// Perform the TLS handshake on an accepted TCP connection.
     ///
-    /// Returns a [`TokioTlsServerStream`] that implements `AsyncRead +
-    /// AsyncWrite`; per-session tasks treat it interchangeably with a
-    /// plain [`TcpStream`].
+    /// Returns the TLS stream; the session splits it like a TCP stream.
     pub(crate) async fn accept(
         &self,
         tcp: TcpStream,
-    ) -> Result<TokioTlsServerStream, RtspServerError> {
+    ) -> Result<tokio_rustls::server::TlsStream<TcpStream>, RtspServerError> {
         let stream = self
             .acceptor
             .accept(tcp)
             .await
             .map_err(|e| RtspServerError::Tls(format!("TLS handshake failed: {e}")))?;
-        Ok(TokioTlsServerStream { inner: stream })
-    }
-}
-
-/// Server-side TLS stream wrapping `tokio_rustls::server::TlsStream<TcpStream>`.
-/// Implements `AsyncRead + AsyncWrite` via the inner type — the per-session
-/// task takes this and reads/writes RTSP requests + (for interleaved
-/// transport) binary RTP frames over the same TLS session.
-pub(crate) struct TokioTlsServerStream {
-    pub(crate) inner: tokio_rustls::server::TlsStream<TcpStream>,
-}
-
-impl tokio::io::AsyncRead for TokioTlsServerStream {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-}
-
-impl tokio::io::AsyncWrite for TokioTlsServerStream {
-    fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<io::Result<usize>> {
-        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
-    }
-    fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
-    }
-    fn poll_shutdown(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+        Ok(stream)
     }
 }
 

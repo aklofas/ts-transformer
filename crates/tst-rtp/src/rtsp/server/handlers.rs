@@ -676,11 +676,11 @@ pub(crate) fn bind_server_udp_pair(
 /// On 200: returns Session + RTP-Info headers. For multicast mounts the
 /// per-mount sender drives sends, so PLAY just confirms;
 /// no per-peer task is spawned. For TCP-interleaved unicast the
-/// per-session `OwnedWriteHalf` (populated by `handle_connection_inner`
-/// after the TCP split) is cloned into `PeerTransport::Interleaved` so
+/// per-session `SessionWriter` (populated by `serve_connection`, plain TCP
+/// or TLS) is cloned into `PeerTransport::Interleaved` so
 /// the per-peer fanout task can write RFC 7826 §14 `$<channel><len>`
 /// frames on the same TCP as the RTSP control responses; the
-/// `AsyncMutex` around the write half serializes the two writers.
+/// `AsyncMutex` around the writer serializes the two writers.
 /// Returns the UDP target address for a unicast PLAY: preserves the
 /// client's IP from the TCP control connection and substitutes the
 /// RTP port that the client advertised in its SETUP `client_port` field.
@@ -755,20 +755,11 @@ pub(crate) fn handle_play(
             }
         }
         RtspTransportKind::TcpInterleaved => {
-            // The per-session TCP was split in `handle_connection_inner`
-            // and the write half stashed on `session.tcp_write`. Clone
-            // the `Arc` so both the session's response writer and the
-            // fanout task can share the underlying writer via the
-            // `AsyncMutex` (serializes RTSP responses vs §14 interleaved
-            // RTP frames). Plain `rtsp://` sessions always populate
-            // `tcp_write`; `rtsps://` (TLS) sessions do NOT — the §14
-            // interleaved fanout writer is typed to the plain TCP
-            // `OwnedWriteHalf`, so TCP-interleaved PLAY over a TLS control
-            // channel is not supported and returns 461 (rtsps:// control
-            // plane + UDP-transport PLAY both work). Synthetic unit-test
-            // sessions also leave it `None` but assert at SETUP.
-            let Some(writer) = session.tcp_write.clone() else {
-                return error_response(req, 461, "Unsupported Transport");
+            // The connection handler stored the session's writer (plain TCP
+            // or TLS); the fanout task shares it with the response writer.
+            // Only a unit-test session built without a connection has none.
+            let Some(writer) = session.writer.clone() else {
+                return error_response(req, 500, "Internal Server Error");
             };
             let (rtp_channel, _rtcp_channel) = session
                 .interleaved_channels
@@ -1388,7 +1379,7 @@ mod tests {
     async fn play_replacement_preserves_an_in_progress_interleaved_frame() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::{TcpListener, TcpStream};
-        use tokio::sync::{Mutex, oneshot};
+        use tokio::sync::oneshot;
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1396,11 +1387,11 @@ mod tests {
         let mut client = client.unwrap();
         let (server, _) = accepted.unwrap();
         let (_read, write) = server.into_split();
-        let writer = std::sync::Arc::new(Mutex::new(write));
+        let writer = crate::rtsp::server::session::session_writer(write);
 
         let state = make_state_with_mount();
         let mut session = ServerSessionState::new();
-        session.tcp_write = Some(writer.clone());
+        session.writer = Some(writer.clone());
         let mut setup = make_req(RtspMethod::Setup, "rtsp://127.0.0.1:8554/live");
         setup.headers.insert(
             "transport".into(),
@@ -1454,7 +1445,7 @@ mod tests {
     /// never reaches its cancel check. Resolves `ready` once it holds the
     /// lock; sets `ended` when the task is dropped (aborted).
     fn parked_fanout(
-        writer: std::sync::Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+        writer: crate::rtsp::server::session::SessionWriter,
         ready: tokio::sync::oneshot::Sender<()>,
         ended: std::sync::Arc<AtomicBool>,
     ) -> tokio::task::JoinHandle<()> {
@@ -1478,7 +1469,7 @@ mod tests {
     async fn session_with_parked_fanout() -> (
         Arc<ServerState>,
         ServerSessionState,
-        std::sync::Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+        crate::rtsp::server::session::SessionWriter,
         std::sync::Arc<AtomicBool>,
         tokio::net::TcpStream,
     ) {
@@ -1488,11 +1479,11 @@ mod tests {
         let (client, accepted) = tokio::join!(TcpStream::connect(addr), listener.accept());
         let (server, _) = accepted.unwrap();
         let (_read, write) = server.into_split();
-        let writer = std::sync::Arc::new(tokio::sync::Mutex::new(write));
+        let writer = crate::rtsp::server::session::session_writer(write);
 
         let state = make_state_with_mount();
         let mut session = ServerSessionState::new();
-        session.tcp_write = Some(writer.clone());
+        session.writer = Some(writer.clone());
         let mut setup = make_req(RtspMethod::Setup, "rtsp://127.0.0.1:8554/live");
         setup.headers.insert(
             "transport".into(),
@@ -1510,7 +1501,7 @@ mod tests {
     /// Wait (bounded) for the parked task to be ended and the writer to
     /// become lockable again — both must follow from dropping the session.
     async fn assert_parked_fanout_ended(
-        writer: &tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>,
+        writer: &tokio::sync::Mutex<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>,
         ended: &AtomicBool,
         what: &str,
     ) {

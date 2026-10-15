@@ -9,8 +9,9 @@
 //! PAUSE/PLAY; TEARDOWN or a disconnect clears them. DESCRIBE is stateless.
 //! Invariant: one role per session (reader or publisher).
 //!
-//! A TLS variant `handle_connection_tls` is gated on `feature = "rtsp-server-tls"`.
-//! Without `tokio-rustls`, the TLS path is not implemented.
+//! Plain `rtsp://` and `rtsps://` connections share one request loop:
+//! `handle_tcp_connection` and the `rtsp-server-tls`-gated
+//! `handle_tls_connection` each box their write half as a [`SessionWriter`].
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -18,7 +19,6 @@ use std::sync::atomic::Ordering;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::error::RtspServerError;
@@ -30,6 +30,16 @@ use crate::rtsp::server::handlers;
 use crate::rtsp::server::publish;
 use crate::rtsp::server::publish::session::PublishSession;
 
+/// The write half of one RTSP session's connection — plain TCP or TLS —
+/// shared by the response writer, the interleaved fanout and
+/// `RtspServer::stop`'s Notice 5402. The mutex keeps an RTSP response and
+/// a `$`-framed RTP packet from interleaving mid-bytes.
+pub(crate) type SessionWriter = Arc<AsyncMutex<Box<dyn AsyncWrite + Send + Unpin>>>;
+
+pub(crate) fn session_writer<W: AsyncWrite + Send + Unpin + 'static>(w: W) -> SessionWriter {
+    Arc::new(AsyncMutex::new(Box::new(w)))
+}
+
 /// RAII guard for one reserved `active_sessions` slot.
 ///
 /// The accept loop reserves a slot atomically (a compare-exchange loop that
@@ -40,7 +50,7 @@ use crate::rtsp::server::publish::session::PublishSession;
 /// normal close, session error, or (for `rtsps://`) a TLS-handshake
 /// failure that returns before the session loop ever runs. Centralizing
 /// the decrement here is what prevents a leaked slot on the handshake-fail
-/// path, where the old in-`handle_connection` `fetch_sub` was never
+/// path, where the old in-handler `fetch_sub` was never
 /// reached.
 pub(crate) struct SessionSlot(Arc<ServerState>);
 
@@ -128,7 +138,7 @@ pub struct ServerSessionState {
     /// [`Self::retire_fanout`]). Their token is cancelled and they exit at
     /// their next frame boundary — which an interleaved peer that never
     /// reads defers indefinitely (the task stays parked inside its frame
-    /// write, holding `tcp_write`). The session's `Drop` aborts whatever
+    /// write, holding the session writer). The session's `Drop` aborts whatever
     /// is left here so a retired fanout never outlives its session.
     /// Finished entries are pruned on each retire.
     pub(crate) retired_fanouts: Vec<tokio::task::JoinHandle<()>>,
@@ -137,21 +147,13 @@ pub struct ServerSessionState {
     /// the fanout task even after PAUSE drops the JoinHandle. Field is
     /// `pub(crate)` because `PeerDropCounter` itself is crate-private.
     pub(crate) peer_drop_counter: Option<std::sync::Arc<PeerDropCounter>>,
-    /// Async-locked write half of the per-session TCP. Populated at
-    /// session start by `handle_connection_inner` (where the `TcpStream`
-    /// is split). The PLAY handler clones this `Arc` into
-    /// `PeerTransport::Interleaved` so the per-peer fanout task can
-    /// share the control TCP for RFC 7826 §14 interleaved RTP frames.
-    /// `None` only in unit-test constructions that don't drive a real
-    /// connection (the session loop always populates it). Field is
-    /// `pub(crate)` because `OwnedWriteHalf` is a tokio internal type
-    /// we don't expose across the crate boundary.
-    pub(crate) tcp_write: Option<Arc<AsyncMutex<OwnedWriteHalf>>>,
-    /// The TCP peer address for this session. Set by `handle_connection_inner`
+    /// The session's writer; `None` only in unit tests that build a session without a connection.
+    pub(crate) writer: Option<SessionWriter>,
+    /// The TCP peer address for this session. Set by `serve_connection`
     /// from the accepted socket's peer address. Used by `handle_play` to
     /// direct UDP RTP packets to the client's actual IP, not loopback.
     /// Defaults to `0.0.0.0:0` for unit-test sessions that don't go
-    /// through `handle_connection_inner`.
+    /// through `serve_connection`.
     pub(crate) peer_addr: std::net::SocketAddr,
     /// Publisher session state once this connection's ANNOUNCE has
     /// claimed a publish mount's publisher slot. `None` pre-ANNOUNCE, or
@@ -178,7 +180,7 @@ impl ServerSessionState {
             peer_cancel: tokio_util::sync::CancellationToken::new(),
             retired_fanouts: Vec::new(),
             peer_drop_counter: None,
-            tcp_write: None,
+            writer: None,
             peer_addr: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
             publish: None,
         }
@@ -188,7 +190,7 @@ impl ServerSessionState {
     /// frame boundary and keep its handle in `retired_fanouts` for `Drop`
     /// to abort if it is still running when the session ends. Never
     /// `abort()`s here — an interleaved fanout may be parked inside a
-    /// multi-poll `write_all` under the shared `tcp_write` mutex, and
+    /// multi-poll `write_all` under the shared session-writer mutex, and
     /// aborting it there releases the lock with a partial `$` frame on the
     /// wire, which the next RTSP response then completes with RTSP text
     /// (framing desync). Callers that allow a later PLAY replace
@@ -223,83 +225,97 @@ impl Drop for ServerSessionState {
     }
 }
 
-/// Handle one client TCP connection until disconnect or cancel.
+/// Serve one plain-TCP connection until disconnect or cancel.
 ///
-/// `_slot` is the [`SessionSlot`] guard for the `active_sessions` slot the
-/// accept loop reserved before spawning this task; holding it here (and
-/// dropping it when this future ends) releases the slot on every exit
-/// path. The counter is therefore touched only by the accept loop (+reserve)
-/// and this guard's `Drop` (-release) — never here directly.
-pub(crate) async fn handle_connection(
+/// `slot` is the [`SessionSlot`] guard for the `active_sessions` slot the
+/// accept loop reserved before spawning this task; it is dropped when this
+/// future ends, releasing the slot on every exit path.
+pub(crate) async fn handle_tcp_connection(
     state: Arc<ServerState>,
     tcp: TcpStream,
     peer: SocketAddr,
-    _slot: SessionSlot,
+    slot: SessionSlot,
 ) -> Result<(), RtspServerError> {
-    let entry = crate::rtsp::server::register_session(&state, peer);
-    let res = handle_connection_inner(state.clone(), tcp, peer, entry.clone()).await;
+    let (read_half, write_half) = tcp.into_split();
+    serve_connection(
+        state,
+        read_half,
+        session_writer(write_half),
+        peer,
+        slot,
+        "session opened",
+    )
+    .await
+}
+
+/// Serve one connection whose TLS handshake completed. The accept loop
+/// reserved the slot before the handshake and moved it here, so a failed
+/// handshake released it without reaching this function.
+#[cfg(feature = "rtsp-server-tls")]
+pub(crate) async fn handle_tls_connection(
+    state: Arc<ServerState>,
+    tls: tokio_rustls::server::TlsStream<TcpStream>,
+    peer: SocketAddr,
+    slot: SessionSlot,
+) -> Result<(), RtspServerError> {
+    let (read_half, write_half) = tokio::io::split(tls);
+    serve_connection(
+        state,
+        read_half,
+        session_writer(write_half),
+        peer,
+        slot,
+        "TLS session opened",
+    )
+    .await
+}
+
+async fn serve_connection<R: AsyncRead + Unpin + Send>(
+    state: Arc<ServerState>,
+    read_half: R,
+    writer: SessionWriter,
+    peer: SocketAddr,
+    _slot: SessionSlot,
+    opened: &'static str,
+) -> Result<(), RtspServerError> {
+    tracing::info!(target: "tst_rtp::server", peer = %peer, "{opened}");
+    // The registry entry holds the same writer so `RtspServer::stop` can
+    // send the Notice 5402 ANNOUNCE and shut the write side down.
+    let entry = crate::rtsp::server::register_session(&state, peer, writer.clone());
+    let mut session = ServerSessionState::new();
+    // PLAY clones it into `PeerTransport::Interleaved` (plain TCP and TLS).
+    session.writer = Some(writer.clone());
+    // `handle_play`'s UDP branch sends RTP to the client's real address.
+    session.peer_addr = peer;
+    let res = serve_requests(
+        state.clone(),
+        peer,
+        entry.clone(),
+        session,
+        read_half,
+        writer,
+    )
+    .await;
     crate::rtsp::server::unregister_session(&state, &entry);
     res
 }
 
-async fn handle_connection_inner(
-    state: Arc<ServerState>,
-    tcp: TcpStream,
-    peer: SocketAddr,
-    session_entry: Arc<crate::rtsp::server::ActiveSession>,
-) -> Result<(), RtspServerError> {
-    tracing::info!(target: "tst_rtp::server", peer = %peer, "session opened");
-
-    // Split the TCP up front. The write half lives behind an
-    // `Arc<AsyncMutex>` so the PLAY handler can hand a clone to the
-    // per-peer fanout task; that task interleaves RFC 7826 §14 binary
-    // RTP frames on the same TCP as the RTSP control responses. The
-    // mutex serializes the two writers so an RTSP response is never
-    // intermixed mid-bytes with a `$<channel><len><payload>` frame.
-    let (read_half, write_half) = tcp.into_split();
-    let write_half = Arc::new(AsyncMutex::new(write_half));
-
-    let mut session = ServerSessionState::new();
-    // Populate the session's write-half handle so PLAY can clone it
-    // into `PeerTransport::Interleaved` without re-plumbing through the
-    // handler signature.
-    session.tcp_write = Some(write_half.clone());
-    // Record the peer IP so `handle_play`'s UDP branch can direct RTP
-    // packets to the client's real address rather than loopback.
-    session.peer_addr = peer;
-
-    // Stash the same write-half `Arc` on the public session registry
-    // so `RtspServer::stop` can write the RFC 7826 §13.5.1 Notice 5402
-    // ANNOUNCE before cancelling. Using `if let Ok` for the std::Mutex
-    // matches the rest of the file's poison-tolerant pattern.
-    if let Ok(mut g) = session_entry.tcp_write.lock() {
-        *g = Some(write_half.clone());
-    }
-
-    serve_requests(state, peer, session_entry, session, read_half, write_half).await
-}
-
-/// The RTSP request/response loop, generic over the underlying byte
-/// stream's split halves so the plain `rtsp://` (TCP) and `rtsps://`
-/// (TLS) sessions share one implementation — the "shared generic over
-/// `AsyncRead + AsyncWrite`" shape the plain/TLS handlers were always
-/// meant to converge on.
+/// The RTSP request/response loop, generic over the read half so the plain
+/// `rtsp://` (TCP) and `rtsps://` (TLS) sessions share one implementation.
 ///
 /// Reads requests, dispatches each to its handler, writes the response,
-/// and enforces the auth-failure + TEARDOWN close semantics. The caller
-/// owns whether `session.tcp_write` is populated (plain TCP stashes its
-/// `OwnedWriteHalf` for §14 interleaved fanout; TLS leaves it `None`).
-async fn serve_requests<R, W>(
+/// and enforces the auth-failure + TEARDOWN close semantics. The connection
+/// handler owns the writer; plain TCP and TLS sessions get the same one.
+async fn serve_requests<R>(
     state: Arc<ServerState>,
     peer: SocketAddr,
     session_entry: Arc<crate::rtsp::server::ActiveSession>,
     mut session: ServerSessionState,
     mut read_half: R,
-    write_half: Arc<AsyncMutex<W>>,
+    write_half: SessionWriter,
 ) -> Result<(), RtspServerError>
 where
     R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
 {
     // Bounded read buffer — RTSP requests are typically << 4 KiB.
     let mut buf: Vec<u8> = Vec::with_capacity(8192);
@@ -718,60 +734,6 @@ fn dispatch(
     }
 }
 
-/// TLS-variant of [`handle_connection`]. Takes a tokio-rustls
-/// `TlsStream<TcpStream>` instead of plain `TcpStream` and drives the
-/// same [`serve_requests`] loop after splitting it via
-/// [`tokio::io::split`].
-///
-/// `rtsps://` covers the full control plane (OPTIONS / DESCRIBE / SETUP /
-/// PLAY / PAUSE / TEARDOWN / GET_PARAMETER) plus UDP-transport PLAY (the
-/// RTP fanout goes over independent UDP sockets). It does NOT stash a
-/// control-stream write half, so RFC 7826 §14 TCP-interleaved PLAY over a
-/// TLS session is unsupported and returns 461 (see `handle_play`): the
-/// interleaved fanout writer is typed to the plain TCP `OwnedWriteHalf`.
-///
-/// The listener calls this when the bind URL scheme is `rtsps://`.
-///
-/// The accept loop reserves the `active_sessions` slot *before* the TLS
-/// handshake and moves the [`SessionSlot`] guard into the spawning task
-/// (so the slot is released even when the handshake fails before this
-/// function runs). By the time control reaches here the slot is already
-/// accounted for; this function does not touch the counter.
-#[cfg(feature = "rtsp-server-tls")]
-pub(crate) async fn handle_connection_tls(
-    state: Arc<ServerState>,
-    tls: crate::rtsp::server::tls::TokioTlsServerStream,
-    peer: SocketAddr,
-) -> Result<(), RtspServerError> {
-    let entry = crate::rtsp::server::register_session(&state, peer);
-    let res = handle_connection_tls_inner(state.clone(), tls, peer, entry.clone()).await;
-    crate::rtsp::server::unregister_session(&state, &entry);
-    res
-}
-
-#[cfg(feature = "rtsp-server-tls")]
-async fn handle_connection_tls_inner(
-    state: Arc<ServerState>,
-    tls: crate::rtsp::server::tls::TokioTlsServerStream,
-    peer: SocketAddr,
-    session_entry: Arc<crate::rtsp::server::ActiveSession>,
-) -> Result<(), RtspServerError> {
-    tracing::info!(target: "tst_rtp::server", peer = %peer, "TLS session opened");
-    let (read_half, write_half) = tokio::io::split(tls);
-    let write_half = Arc::new(AsyncMutex::new(write_half));
-    // NOTE: `session.tcp_write` is intentionally left `None` for TLS — the
-    // §14 interleaved fanout writer is typed to the plain TCP
-    // `OwnedWriteHalf`. `RtspServer::stop`'s Notice 5402 ANNOUNCE path
-    // skips sessions whose `tcp_write` is `None` (let-else in mod.rs).
-    let mut session = ServerSessionState::new();
-    // Record the peer IP so `handle_play`'s UDP branch directs RTP to the
-    // client's real address. UDP-transport PLAY over a TLS control channel
-    // is supported (only §14 TCP-interleaved over TLS is not), so the TLS
-    // path must thread the peer the same way the plain-TCP path does.
-    session.peer_addr = peer;
-    serve_requests(state, peer, session_entry, session, read_half, write_half).await
-}
-
 #[cfg(test)]
 mod session_tests {
     use super::*;
@@ -830,7 +792,7 @@ mod session_tests {
                 .active_sessions
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let slot = SessionSlot::new(state.clone());
-            handle_connection(state, tcp, peer, slot).await
+            handle_tcp_connection(state, tcp, peer, slot).await
         });
 
         let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
@@ -899,7 +861,7 @@ mod session_tests {
                 .active_sessions
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let slot = SessionSlot::new(state.clone());
-            handle_connection(state, tcp, peer, slot).await
+            handle_tcp_connection(state, tcp, peer, slot).await
         });
 
         let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
@@ -985,7 +947,7 @@ mod session_tests {
                 .active_sessions
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let slot = SessionSlot::new(state.clone());
-            handle_connection(state, tcp, peer, slot).await
+            handle_tcp_connection(state, tcp, peer, slot).await
         });
 
         let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
@@ -1102,7 +1064,7 @@ mod session_tests {
             let (tcp, peer) = listener.accept().await.unwrap();
             let state = make_state_with_basic_auth();
             // DESCRIBE reads local_addr to build the SDP; set it before
-            // handle_connection runs.
+            // handle_tcp_connection runs.
             *state.local_addr.lock().unwrap() = Some("127.0.0.1:8554".parse().unwrap());
             // Register a real mount at /test so an auth-passing DESCRIBE
             // returns 200 (2xx), triggering the counter reset.
@@ -1117,7 +1079,7 @@ mod session_tests {
                 .active_sessions
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let slot = SessionSlot::new(state.clone());
-            handle_connection(state, tcp, peer, slot).await
+            handle_tcp_connection(state, tcp, peer, slot).await
         });
 
         let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
@@ -1260,7 +1222,7 @@ mod session_tests {
 
     // --- Publisher-side idle-bound tests (paused tokio time) ----------
     //
-    // These drive `handle_connection` over a real loopback TCP connection
+    // These drive `handle_tcp_connection` over a real loopback TCP connection
     // on a paused runtime, which only an in-process test can do. The
     // `$`-frame routing tests, which need no virtual clock, live in
     // `tests/rtsp_server/publish/interleaved_framing.rs` on the raw
@@ -1271,7 +1233,7 @@ mod session_tests {
     /// that one is private to its own test module.
     const SDP_MP2T: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 33\r\na=control:streamid=0\r\n";
 
-    /// Bound port of a test listener driving `handle_connection` on its
+    /// Bound port of a test listener driving `handle_tcp_connection` on its
     /// one accepted connection, built the same way as
     /// `session_responds_to_options`'s inline setup.
     struct PublisherTestServer {
@@ -1279,7 +1241,7 @@ mod session_tests {
     }
 
     /// `test_state()` + one `/pub` publish mount + a loopback listener
-    /// that runs `handle_connection` on the first connection it accepts
+    /// that runs `handle_tcp_connection` on the first connection it accepts
     /// (mirrors `session_responds_to_options`'s inline server task).
     /// Returns the listener's port (for `connect`) and the mount's
     /// `Arc` (for building the application-side transport and reading
@@ -1304,7 +1266,7 @@ mod session_tests {
                 .active_sessions
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let slot = SessionSlot::new(state.clone());
-            let _ = handle_connection(state, tcp, peer, slot).await;
+            let _ = handle_tcp_connection(state, tcp, peer, slot).await;
         });
 
         (PublisherTestServer { port }, mount)
