@@ -55,7 +55,7 @@ pipeline = []
 # variants of whichever transports are also enabled (weak deps — it never
 # pulls a transport in by itself): `rtsps://` client + server (tst-rtp),
 # `tcps://` caller + listener (tst-tcp), and `hlss://` HTTPS serving
-# (tst-hls). The direct rustls + rustls-pemfile deps parse
+# (tst-hls). `tst-core/tls` provides the PEM loader that parses
 # `RtspClientConfig.tls_root_certs_pem` into the RootCertStore that
 # `RtspClientBuilder::tls_root_certs` takes (private-CA `rtsps://`
 # cameras). Omit the feature (`--no-default-features --features tcp,...`)
@@ -66,7 +66,7 @@ pipeline = []
 # for clarity (tst-py's `rtp` feature always forwards `tst-rtp?/rtsp-server`,
 # so there's no reachable tst-py build with tst-rtp present but
 # `rtsp-server` off).
-tls = ["tst-rtp?/tls", "tst-rtp?/rtsp-server-tls", "tst-tcp?/tls", "tst-hls?/tls", "dep:rustls", "dep:rustls-pemfile"]
+tls = ["tst-rtp?/tls", "tst-rtp?/rtsp-server-tls", "tst-tcp?/tls", "tst-hls?/tls", "tst-core/tls"]
 
 [dependencies]
 tst-core     = { path = "../../crates/tst-core" }
@@ -93,20 +93,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # `close()` failed instead of raising (Python `close()` is documented
 # infallible + idempotent). Already linked transitively via tracing-subscriber.
 tracing = { workspace = true }
-
-# `tls` feature path — parse `RtspClientConfig.tls_root_certs_pem` into the
-# `rustls::RootCertStore` that `RtspClientBuilder::tls_root_certs` takes.
-# Version + provider MUST match tst-rtp/tst-tcp/tst-hls (`0.23`, `ring`) so
-# the RootCertStore type unifies across the crate boundary.
-[dependencies.rustls]
-version          = "0.23"
-optional         = true
-default-features = false
-features         = ["std", "ring"]
-
-[dependencies.rustls-pemfile]
-version  = "2"
-optional = true
 
 [build-dependencies]
 # On macOS, PyO3's `extension-module` feature requires the *consuming* crate

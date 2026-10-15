@@ -64,11 +64,8 @@ fn rtsps_handshake_succeeds_with_trusted_root() {
     // `RtspClient::connect_with` forwards a `Option<RootCertStore>` from
     // the builder, the line below will wire through; today it's still
     // discarded.
-    let mut roots = rustls::RootCertStore::empty();
-    for cert in rustls_pemfile::certs(&mut certs.root_pem.as_bytes()) {
-        let cert = cert.expect("PEM cert parse");
-        roots.add(cert).expect("add to root store");
-    }
+    let roots =
+        tst_core::net::tls::load_root_store(certs.root_pem.as_bytes()).expect("trust bundle");
     let mut cb = tst_rtp::RtspClientBuilder::new(&url).expect("client builder");
     cb = cb.tls_root_certs(roots);
     let mut client = cb.connect().expect("rtsps connect");

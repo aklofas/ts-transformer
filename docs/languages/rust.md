@@ -40,6 +40,7 @@ Running `cargo` inside the workspace auto-uses 1.85 via rustup.
 | `tst-srt`     | `mbedtls` | on      | Propagates to `srt-sys/mbedtls`.                                 |
 | `tst-core`    | `std`     | on      | Standard library: file I/O, net helpers, JSON/TOML. Off = `#![no_std]` + `alloc` (see [embedded](/docs/languages/embedded.md)). |
 | `tst-core`    | `file`    | on      | File I/O helpers. `file` and `std` imply each other, so they switch on and off together. |
+| `tst-core`    | `tls`     | off     | PEM loading for the rustls-based transports (`net::tls`). The transport crates' `tls` features turn it on. |
 
 A clean rebuild compiles libsrt 1.5.7 and mbedTLS 3.6.7 from vendored
 submodules — expect **3–5 minutes** on a cold cache, seconds when warm.

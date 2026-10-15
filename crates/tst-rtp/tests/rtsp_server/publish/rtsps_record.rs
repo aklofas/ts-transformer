@@ -23,10 +23,8 @@ fn rtsps_interleaved_record_reaches_app() {
     let mut app = mount.clone().into_recv_transport().unwrap();
     app.set_recv_timeout(Some(Duration::from_secs(5)));
 
-    let mut roots = rustls::RootCertStore::empty();
-    for cert in rustls_pemfile::certs(&mut certs.root_pem.as_bytes()) {
-        roots.add(cert.unwrap()).unwrap();
-    }
+    let roots =
+        tst_core::net::tls::load_root_store(certs.root_pem.as_bytes()).expect("trust bundle");
     let mut p = RawPublisher::connect_tls(port, roots);
     assert_eq!(p.announce("/pub", SDP_MP2T), 200);
     let (status, ch) = p.setup_interleaved("/pub", "streamid=0");

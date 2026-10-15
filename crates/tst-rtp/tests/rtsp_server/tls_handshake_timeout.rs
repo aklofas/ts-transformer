@@ -65,12 +65,8 @@ fn silent_connects_release_their_slots_after_the_handshake_deadline() {
 
     // A real client now gets a slot and completes the encrypted OPTIONS
     // (same trust-store wiring as `tls.rs::rtsps_handshake_succeeds_with_trusted_root`).
-    let mut roots = rustls::RootCertStore::empty();
-    for cert in rustls_pemfile::certs(&mut certs.root_pem.as_bytes()) {
-        roots
-            .add(cert.expect("PEM cert parse"))
-            .expect("add to root store");
-    }
+    let roots =
+        tst_core::net::tls::load_root_store(certs.root_pem.as_bytes()).expect("trust bundle");
     let url = format!("rtsps://127.0.0.1:{}/live", addr.port());
     let mut client = tst_rtp::RtspClientBuilder::new(&url)
         .expect("client builder")

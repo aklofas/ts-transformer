@@ -106,18 +106,11 @@ where
 ///
 /// Resolution to a socket address happens at connect time.
 pub fn connect_tls(url: &TcpUrl, cfg: &SocketConfig) -> Result<TcpTransport, TcpError> {
-    let mut roots = rustls::RootCertStore::empty();
-
-    if let Some(ca_path) = &url.ca {
-        let ca_data = std::fs::read(ca_path).map_err(TcpError::Io)?;
-        let mut reader = std::io::BufReader::new(&ca_data[..]);
-        for cert in rustls_pemfile::certs(&mut reader) {
-            let cert = cert.map_err(TcpError::Io)?;
-            roots
-                .add(cert)
-                .map_err(|e| TcpError::Tls(format!("add CA cert: {e}")))?;
-        }
+    let roots = if let Some(ca_path) = &url.ca {
+        let pem = std::fs::read(ca_path).map_err(TcpError::Io)?;
+        tst_core::net::tls::load_root_store(&pem).map_err(tls_load_error)?
     } else {
+        let mut roots = rustls::RootCertStore::empty();
         let native = rustls_native_certs::load_native_certs()
             .map_err(|e| TcpError::Tls(format!("load native certs: {e:?}")))?;
         for cert in native {
@@ -125,7 +118,8 @@ pub fn connect_tls(url: &TcpUrl, cfg: &SocketConfig) -> Result<TcpTransport, Tcp
                 .add(cert)
                 .map_err(|e| TcpError::Tls(format!("add native cert: {e}")))?;
         }
-    }
+        roots
+    };
 
     let client_config = ClientConfig::builder()
         .with_root_certificates(roots)
@@ -244,29 +238,14 @@ fn complete_client_handshake(
     Ok(())
 }
 
-/// Load a server certificate + key from PEM files.
-pub fn load_server_config(cert_path: &str, key_path: &str) -> Result<ServerConfig, TcpError> {
-    let certs = {
-        let data = std::fs::read(cert_path).map_err(TcpError::Io)?;
-        let mut reader = std::io::BufReader::new(&data[..]);
-        rustls_pemfile::certs(&mut reader)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(TcpError::Io)?
-    };
-
-    let key = {
-        let data = std::fs::read(key_path).map_err(TcpError::Io)?;
-        let mut reader = std::io::BufReader::new(&data[..]);
-        rustls_pemfile::private_key(&mut reader)
-            .map_err(TcpError::Io)?
-            .ok_or_else(|| TcpError::Tls(format!("no private key in {key_path}")))?
-    };
-
-    let config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .map_err(|e| TcpError::Tls(format!("ServerConfig build: {e}")))?;
-    Ok(config)
+/// Read and PEM-parse failures keep the `Io` kind they always had; the rest
+/// are TLS configuration errors.
+pub(crate) fn tls_load_error(e: tst_core::net::tls::TlsLoadError) -> TcpError {
+    use tst_core::net::tls::TlsLoadError as E;
+    match e {
+        E::Read { source, .. } | E::Pem { source, .. } => TcpError::Io(source),
+        other => TcpError::Tls(other.to_string()),
+    }
 }
 
 /// Accept a TLS connection (called by TcpListener::accept_blocking when tls_config is set).

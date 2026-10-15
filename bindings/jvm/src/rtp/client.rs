@@ -49,40 +49,22 @@ fn apply_tls_roots(
             return None;
         }
     };
-    let mut roots = rustls::RootCertStore::empty();
-    let mut reader = std::io::BufReader::new(&bytes[..]);
-    let mut added = 0usize;
-    for cert in rustls_pemfile::certs(&mut reader) {
-        let cert = match cert {
-            Ok(c) => c,
-            Err(e) => {
-                throw_rtsp(
-                    env,
-                    BindingErrorKind::RtspTls,
-                    &format!("tlsRootCertsPem: invalid PEM: {e}"),
-                );
-                return None;
-            }
-        };
-        if let Err(e) = roots.add(cert) {
-            throw_rtsp(
-                env,
-                BindingErrorKind::RtspTls,
-                &format!("tlsRootCertsPem: certificate rejected as trust anchor: {e}"),
-            );
-            return None;
+    use tst_core::net::tls::TlsLoadError as E;
+    match tst_core::net::tls::load_root_store(&bytes) {
+        Ok(roots) => Some(builder.tls_root_certs(roots)),
+        Err(e) => {
+            let detail = match e {
+                E::Pem { source, .. } => format!("tlsRootCertsPem: invalid PEM: {source}"),
+                E::NoCertificates { .. } => "tlsRootCertsPem contains no certificates".to_string(),
+                E::TrustAnchor(err) => {
+                    format!("tlsRootCertsPem: certificate rejected as trust anchor: {err}")
+                }
+                other => format!("tlsRootCertsPem: {other}"),
+            };
+            throw_rtsp(env, BindingErrorKind::RtspTls, &detail);
+            None
         }
-        added += 1;
     }
-    if added == 0 {
-        throw_rtsp(
-            env,
-            BindingErrorKind::RtspTls,
-            "tlsRootCertsPem contains no certificates",
-        );
-        return None;
-    }
-    Some(builder.tls_root_certs(roots))
 }
 
 /// Boxed behind `org.tstrans.rtp.RtspCancelHandle.handle`. Wraps tst-rtp's

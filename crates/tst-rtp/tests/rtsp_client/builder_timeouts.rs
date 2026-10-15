@@ -372,22 +372,11 @@ fn cancel_latency_does_not_depend_on_read_timeout() {
 #[test]
 fn request_timeout_is_not_stretched_by_a_longer_read_timeout_over_tls() {
     let certs = crate::fixtures::tls_certs::SelfSignedCert::generate();
-    let chain: Vec<_> = rustls_pemfile::certs(&mut certs.root_pem.as_bytes())
-        .map(|c| c.unwrap())
-        .collect();
     let key_pem = std::fs::read(&certs.key_path).unwrap();
-    let key = rustls_pemfile::private_key(&mut key_pem.as_slice())
-        .unwrap()
-        .unwrap();
-    let mut roots = rustls::RootCertStore::empty();
-    for cert in &chain {
-        roots.add(cert.clone()).unwrap();
-    }
+    let roots =
+        tst_core::net::tls::load_root_store(certs.root_pem.as_bytes()).expect("trust bundle");
     let config = std::sync::Arc::new(
-        rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(chain, key)
-            .unwrap(),
+        tst_core::net::tls::server_config_from_pem(certs.root_pem.as_bytes(), &key_pem).unwrap(),
     );
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

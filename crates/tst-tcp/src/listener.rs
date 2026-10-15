@@ -97,7 +97,11 @@ impl TcpListener {
             let key = parsed.key.as_deref().ok_or_else(|| {
                 TcpError::InvalidConfig("tcps:// listener requires ?key=path".into())
             })?;
-            let server_cfg = crate::tls::load_server_config(cert, key)?;
+            let server_cfg = tst_core::net::tls::load_server_config(
+                std::path::Path::new(cert),
+                std::path::Path::new(key),
+            )
+            .map_err(crate::tls::tls_load_error)?;
             listener.tls_config = Some(Arc::new(server_cfg));
         }
         #[cfg(not(feature = "tls"))]

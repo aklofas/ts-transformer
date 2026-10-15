@@ -152,7 +152,6 @@ impl !core::panic::unwind_safe::RefUnwindSafe for tst_tcp::tls::TlsStream
 impl !core::panic::unwind_safe::UnwindSafe for tst_tcp::tls::TlsStream
 pub fn tst_tcp::tls::accept_tls(std::net::tcp::TcpStream, core::net::socket_addr::SocketAddr, &tst_tcp::config::SocketConfig, alloc::sync::Arc<rustls::server::server_conn::ServerConfig>) -> core::result::Result<tst_tcp::transport::TcpTransport, tst_tcp::error::TcpError>
 pub fn tst_tcp::tls::connect_tls(&tst_tcp::url::TcpUrl, &tst_tcp::config::SocketConfig) -> core::result::Result<tst_tcp::transport::TcpTransport, tst_tcp::error::TcpError>
-pub fn tst_tcp::tls::load_server_config(&str, &str) -> core::result::Result<rustls::server::server_conn::ServerConfig, tst_tcp::error::TcpError>
 pub mod tst_tcp::transport
 pub struct tst_tcp::transport::TcpCancelHandle
 impl tst_tcp::transport::TcpCancelHandle

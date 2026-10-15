@@ -25,7 +25,7 @@ serve = [
     "dep:subtle",
 ]
 # tls: HTTPS (`hlss://`) for the built-in server. Implies serve.
-tls = ["serve", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile"]
+tls = ["serve", "dep:rustls", "dep:tokio-rustls", "tst-core/tls"]
 
 [dependencies]
 tst-core = { path = "../tst-core", version = "0.8.0" }
@@ -77,10 +77,6 @@ features         = ["std", "ring"]
 version          = "0.26"
 default-features = false
 features         = ["ring"]
-optional = true
-
-[dependencies.rustls-pemfile]
-version  = "2"
 optional = true
 
 [lints]
