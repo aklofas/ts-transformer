@@ -55,12 +55,10 @@ import tstrans.srt
 from tstrans.exceptions import SrtError, SrtErrorKind
 from tstrans.mpegts import (
     DemuxEvent,
-    KlvStreamType,
-    MuxerProgramConfigBuilder,
     Pts90khz,
-    VideoCodec,
 )
 
+from _builders.mux_programs import video_klv_program as _video_klv_program
 from _builders.mux_programs import video_only_program as _video_only_program
 from _builders.ports import free_tcp_port as _free_tcp_port
 
@@ -68,17 +66,6 @@ from _builders.ports import free_tcp_port as _free_tcp_port
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
-
-
-def _video_klv_program() -> object:
-    """Two-stream MuxerProgramConfig — H.264 video + ST 0601-style KLV.
-    Both streams configured so the muxer accepts push_video + push_klv."""
-    return (
-        MuxerProgramConfigBuilder(1, 0x100)
-        .add_video(0x101, VideoCodec.H264)
-        .add_klv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
-        .build()
-    )
 
 
 # Minimal Annex-B IDR NAL (start code + nal_unit_type=5).

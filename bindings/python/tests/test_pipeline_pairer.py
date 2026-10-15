@@ -21,16 +21,10 @@ from tstrans.pipeline import (
     PairingDemuxerConfig,
 )
 
+from _builders.nal import minimal_h264_au as _minimal_h264_au
+
 VIDEO_PID = 0x101
 KLV_PID = 0x102
-
-
-def _minimal_h264_au() -> bytes:
-    # AUD (nal_type=9) + IDR (nal_type=5), Annex-B — mirrors the Rust test
-    # fixture in pairing_demuxer_round_trip.rs for cross-language consistency.
-    return bytes(
-        [0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB, 0xCC]
-    )
 
 
 def _dummy_klv() -> bytes:

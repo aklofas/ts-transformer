@@ -16,7 +16,6 @@ import pytest
 
 from tstrans.exceptions import KlvEncodeError, KlvError
 from tstrans.klv import (
-    ST_0601_UL,
     AirbaseLocations,
     ControlCommand,
     CountryCodes,
@@ -40,7 +39,9 @@ from tstrans.klv import (
     encode_uas_datalink,
 )
 
-from _builders.klv_tlv import ber_short as _ber_short
+from _builders.klv_tlv import ber_long as _ber_long
+from _builders.st0601_wire import local_set_ber_oid_tag as _local_set_ber_oid_tag
+from _builders.st0601_wire import wrap_st0601_with_checksum as _wrap_st0601_with_checksum
 
 # ---------------------------------------------------------------------------
 # Hand-built-wire test helpers. `_tlv`/`_ber_oid_tag`/`_ber_long` are ST
@@ -54,15 +55,6 @@ def _hex(s: str) -> bytes:
     """Strip whitespace and parse a hex string — mirrors the identical
     helper in the Rust `st0601::tests` and `st1010::tests` modules."""
     return bytes.fromhex("".join(s.split()))
-
-
-def _ber_long(n: int) -> bytes:
-    """BER definite-form length: short form under 0x80, else 0x8X header
-    + X big-endian length bytes."""
-    if n < 0x80:
-        return _ber_short(n)
-    payload = n.to_bytes((n.bit_length() + 7) // 8, "big")
-    return bytes([0x80 | len(payload)]) + payload
 
 
 def _ber_oid_tag(tag: int) -> bytes:
@@ -87,26 +79,6 @@ def _tlv(tag: int, value: bytes) -> bytes:
     return _ber_oid_tag(tag) + _ber_long(len(value)) + value
 
 
-def _st0601_checksum(buf: bytes) -> int:
-    """ST 0601 §6.3 16-bit running-sum: even index -> high byte, odd -> low.
-    `buf` is `[UL .. start of Tag 1 value]`."""
-    bcc = 0
-    for i, b in enumerate(buf):
-        shift = 8 * (((i + 1) % 2))
-        bcc = (bcc + (b << shift)) & 0xFFFF
-    return bcc
-
-
-def _wrap_st0601_with_checksum(body_without_checksum: bytes) -> bytes:
-    """Wrap an ST 0601 LS body with UL + outer BER length + ... + Tag 1
-    TLV, computing a valid running-sum checksum so lenient decode accepts it."""
-    body_with_checksum_tlv = body_without_checksum + b"\x01\x02"
-    outer_len = len(body_with_checksum_tlv) + 2
-    prefix = ST_0601_UL + _ber_long(outer_len) + body_with_checksum_tlv
-    cksum = _st0601_checksum(prefix)
-    return prefix + cksum.to_bytes(2, "big")
-
-
 def _decode_single_tlv(tag: int, value: bytes) -> UasDatalinkLs:
     """Decode a minimal ST 0601 record containing exactly one TLV —
     mirrors the Rust test suite's `decode_with_single_tlv[_ber_oid]`."""
@@ -117,19 +89,6 @@ def _decode_body(body: bytes) -> UasDatalinkLs:
     """Decode a full (already TLV-framed) LS body — mirrors the Rust
     test suite's `decode_body`."""
     return decode_uas_datalink(_wrap_st0601_with_checksum(body))
-
-
-def _local_set_ber_oid_tag(buf: bytes, i: int) -> tuple[int, int]:
-    """Read a BER-OID tag starting at index i. Returns (tag, bytes_consumed)."""
-    tag = 0
-    j = i
-    while True:
-        b = buf[j]
-        tag = (tag << 7) | (b & 0x7F)
-        j += 1
-        if not (b & 0x80):
-            break
-    return tag, j - i
 
 
 def _iter_tlvs(encoded: bytes):

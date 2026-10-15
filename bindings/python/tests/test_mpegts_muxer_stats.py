@@ -11,35 +11,17 @@ for `MuxerStats` (top-level snapshot) and the tagged-union
 import pytest
 
 from tstrans.mpegts import (
-    AudioCodec,
     AudioStreamCodecStats,
     KlvStreamCodecStats,
-    KlvStreamType,
     Muxer,
-    MuxerConfigBuilder,
-    MuxerProgramConfigBuilder,
     MuxerStats,
     Pts90khz,
     StreamCodecStats,
-    VideoCodec,
     VideoStreamCodecStats,
 )
 
-
-def _cfg():
-    prog = (
-        MuxerProgramConfigBuilder(1, 0x100)
-        .add_video(0x101, VideoCodec.H264)
-        .add_audio(0x102, AudioCodec.AAC)
-        .add_klv(0x103, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
-        .build()
-    )
-    return MuxerConfigBuilder().add_program(prog).build()
-
-
-def _nal_aud() -> bytes:
-    # AUD (NAL type 9) — smallest legal H.264 NAL the muxer will accept.
-    return b"\x00\x00\x00\x01\x09\xF0"
+from _builders.mux_programs import video_audio_klv_config as _cfg
+from _builders.nal import nal_aud as _nal_aud
 
 
 def _klv_ls() -> bytes:

@@ -18,19 +18,7 @@ from tstrans.klv import (
     st0601_sentinel_meaning,
 )
 
-
-def _local_set_ber_oid_tag(buf: bytes, i: int) -> tuple[int, int]:
-    """Read a BER-OID (base-128, high-bit-continuation) local-set tag
-    starting at index i. Returns (tag, bytes_consumed)."""
-    tag = 0
-    j = i
-    while True:
-        b = buf[j]
-        tag = (tag << 7) | (b & 0x7F)
-        j += 1
-        if not (b & 0x80):
-            break
-    return tag, j - i
+from _builders.st0601_wire import local_set_ber_oid_tag as _local_set_ber_oid_tag
 
 
 def _find_tag_value_bytes(encoded: bytes, tag: int) -> bytes | None:

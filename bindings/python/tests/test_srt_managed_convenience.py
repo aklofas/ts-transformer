@@ -31,10 +31,8 @@ from tstrans.mpegts import (
     DataStreamHandle,
     DemuxEvent,
     DemuxerConfig,
-    MuxerProgramConfigBuilder,
     Pts90khz,
     StrictMode,
-    VideoCodec,
 )
 from tstrans.srt import (
     BackoffStrategy,
@@ -44,22 +42,13 @@ from tstrans.srt import (
 )
 
 from _builders.mux_programs import video_only_program as _video_only_program
+from _builders.mux_programs import video_private_data_program as _video_data_program
 from _builders.ports import free_tcp_port as _free_tcp_port
 
 
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
-
-
-def _video_data_program() -> object:
-    """Video + one private data stream (user-private stream_type 0xF0)."""
-    return (
-        MuxerProgramConfigBuilder(1, 0x100)
-        .add_video(0x101, VideoCodec.H264)
-        .add_data(0x1F0, 0xF0, carries_pts=True)
-        .build()
-    )
 
 
 def _fast_policy() -> ReconnectPolicy:

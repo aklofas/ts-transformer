@@ -47,11 +47,12 @@ from tstrans.hls import (
     PublisherStats,
 )
 from tstrans.mpegts import (
-    KlvStreamType,
     MuxerProgramConfigBuilder,
     Pts90khz,
     VideoCodec,
 )
+
+from _builders.mux_programs import video_klv_program as _video_klv_program
 
 # 376 bytes = 2 × 188-byte TS packets (aligned).
 TS_TWO_PACKETS = b"\x47" + b"\x00" * 187 + b"\x47" + b"\x00" * 187
@@ -71,15 +72,6 @@ def _video_program(pid_video: int = 0x101) -> object:
     return (
         MuxerProgramConfigBuilder(1, 0x100)
         .add_video(pid_video, VideoCodec.H264)
-        .build()
-    )
-
-
-def _video_klv_program() -> object:
-    return (
-        MuxerProgramConfigBuilder(1, 0x100)
-        .add_video(0x101, VideoCodec.H264)
-        .add_klv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
         .build()
     )
 

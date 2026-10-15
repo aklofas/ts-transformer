@@ -26,13 +26,12 @@ from tstrans.exceptions import (
 from tstrans.mpegts import (
     DemuxEvent,
     DemuxerConfig,
-    KlvStreamType,
-    MuxerProgramConfigBuilder,
     Pts90khz,
     StrictMode,
-    VideoCodec,
 )
 
+from _builders.mux_programs import video_data_program as _video_data_program
+from _builders.mux_programs import video_klv_program as _video_klv_program
 from _builders.mux_programs import video_only_program as _video_only_program
 from _builders.ports import free_tcp_port as _free_tcp_port
 
@@ -40,25 +39,6 @@ from _builders.ports import free_tcp_port as _free_tcp_port
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
-
-
-def _video_klv_program() -> object:
-    return (
-        MuxerProgramConfigBuilder(1, 0x100)
-        .add_video(0x101, VideoCodec.H264)
-        .add_klv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
-        .build()
-    )
-
-
-def _video_data_program() -> object:
-    """Video + one private data stream (bare PES-private 0x06)."""
-    return (
-        MuxerProgramConfigBuilder(1, 0x100)
-        .add_video(0x101, VideoCodec.H264)
-        .add_data(0x1F0, 0x06, carries_pts=True)
-        .build()
-    )
 
 
 def _make_mux_demux_pair(

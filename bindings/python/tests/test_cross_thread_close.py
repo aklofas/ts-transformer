@@ -23,6 +23,7 @@ from typing import Callable
 import pytest
 
 from _builders.mux_programs import video_only_program as _video_only_program
+from _builders.mux_programs import video_private_data_program as _video_data_program
 from _builders.ports import free_tcp_port as _free_tcp_port
 from _builders.ports import free_udp_port as _free_udp_port
 
@@ -1386,17 +1387,6 @@ def _stream_handles(tx) -> tuple[object, ...]:
         tx.audio_handle(),
         tx.subtitle_handle(),
         tx.data_handle(),
-    )
-
-
-def _video_data_program() -> object:
-    from tstrans.mpegts import MuxerProgramConfigBuilder, VideoCodec
-
-    return (
-        MuxerProgramConfigBuilder(1, 0x100)
-        .add_video(0x101, VideoCodec.H264)
-        .add_data(0x1F0, 0xF0, carries_pts=True)
-        .build()
     )
 
 

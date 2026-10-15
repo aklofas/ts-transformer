@@ -17,19 +17,7 @@ from tstrans.klv import (
 )
 
 from _builders.klv_tlv import tlv as _tlv
-
-
-def _ber_long(n: int) -> bytes:
-    if n < 0x80:
-        return bytes([n])
-    for nbytes in range(1, 9):
-        if n < (1 << (8 * nbytes)):
-            return bytes([0x80 | nbytes]) + n.to_bytes(nbytes, "big")
-    raise ValueError("length too large for BER")
-
-
-def _wrap_with_ul(ul: bytes, body: bytes) -> bytes:
-    return ul + _ber_long(len(body)) + body
+from _builders.klv_tlv import wrap_with_ul as _wrap_with_ul
 
 
 def test_dispatches_st0605_pack():

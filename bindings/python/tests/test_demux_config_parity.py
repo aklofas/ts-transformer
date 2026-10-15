@@ -44,6 +44,8 @@ from tstrans.mpegts import (
     _VideoEvent,
 )
 
+from _builders.nal import minimal_h264_au as _minimal_h264_au
+
 
 # ---------------------------------------------------------------------------
 # Dataclass-shape tests for the 3 new fields
@@ -343,14 +345,6 @@ def test_demuxer_config_accepts_unwrap_timestamps_kwarg() -> None:
 
 def test_demuxer_accepts_config_with_unwrap_timestamps() -> None:
     Demuxer(DemuxerConfig(unwrap_timestamps=True))
-
-
-def _minimal_h264_au() -> bytes:
-    # Annex-B: AUD (nal_type=9) + IDR (nal_type=5). The raw-first demuxer
-    # doesn't parse the AU contents — any bytes round-trip.
-    return bytes(
-        [0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB, 0xCC]
-    )
 
 
 def _wrap_crossing_reordered_ts() -> bytes:
