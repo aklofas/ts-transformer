@@ -120,63 +120,20 @@ fn send_stats_increment_per_packet() {
 // Why these tests live in the existing loopback file: they probe the
 // same `listen()` / builder entry points the tests above cover. Putting
 // them here keeps the per-port test grouping in one spot and avoids a
-// separate test binary for three tiny tests.
+// separate test binary for two tiny tests.
 
 #[test]
-fn rtcp_socket_pair_off_by_default() {
+fn listen_never_binds_the_rtcp_companion_port() {
     let base = free_rtp_port_base();
     let r = RtpRecvTransport::listen(&format!("rtp://127.0.0.1:{base}")).unwrap();
-    // The experimental SR/RR reporter (and its companion RTCP socket on
-    // port+1) is OFF by default. So port+1 must stay free — we can
-    // bind it ourselves. (A caller who explicitly opts in via
-    // `.rtcp(true)` gets the socket — see `rtcp_socket_pair_opens_when_opted_in`.)
+    // No RTP transport emits RTCP, so nothing binds port+1: we can bind it
+    // ourselves while the receiver is alive.
     let probe = std::net::UdpSocket::bind(("127.0.0.1", base + 1));
     assert!(
         probe.is_ok(),
-        "RTCP port {} should be free when the reporter is off by default",
+        "RTCP port {} must stay free: the receiver binds only its RTP port",
         base + 1
     );
-    drop(r);
-}
-
-#[test]
-fn rtcp_opt_out_skips_second_socket() {
-    let base = free_rtp_port_base();
-    let r = tst_rtp::RtpRecvSocketBuilder::from_url(&format!("rtp://127.0.0.1:{base}"))
-        .unwrap()
-        .rtcp(false)
-        .build()
-        .unwrap();
-    // With opt-out, port+1 (base+1) stays free.
-    let probe = std::net::UdpSocket::bind(("127.0.0.1", base + 1));
-    assert!(
-        probe.is_ok(),
-        "RTCP port {} should be free when builder opts out of RTCP",
-        base + 1
-    );
-    drop(r);
-}
-
-#[test]
-fn rtcp_socket_pair_opens_when_opted_in() {
-    // The experimental reporter is off by default; explicit opt-in
-    // must still bind the companion RTCP socket on port+1.
-    let base = free_rtp_port_base();
-    let r = tst_rtp::RtpRecvSocketBuilder::from_url(&format!("rtp://127.0.0.1:{base}"))
-        .unwrap()
-        .rtcp(true)
-        .build()
-        .unwrap();
-    // With opt-in, port+1 is held by the transport — binding it ourselves
-    // must fail specifically with AddrInUse (any other error would pass
-    // spuriously without proving RTCP is bound).
-    match std::net::UdpSocket::bind(("127.0.0.1", base + 1)) {
-        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {}
-        other => panic!(
-            "RTCP port {} should be held by the opted-in RtpRecvTransport (AddrInUse); got {other:?}",
-            base + 1
-        ),
-    }
     drop(r);
 }
 
@@ -185,9 +142,9 @@ fn rtcp_stats_accessor_exists() {
     let base = free_rtp_port_base();
     let r = RtpRecvTransport::listen(&format!("rtp://127.0.0.1:{base}")).unwrap();
     let stats = r.rtcp_stats();
-    // Counter stays at zero — the experimental RR reporter is off by
-    // default, so no reporter thread is spawned and no RR is sent.
-    assert_eq!(stats.rr_packets_sent, 0);
+    // A plain rtp:// receiver ingests no RTCP: the counters stay at zero.
+    assert_eq!(stats.rr_packets_received, 0);
+    assert_eq!(stats.sr_packets_received, 0);
     drop(r);
 }
 

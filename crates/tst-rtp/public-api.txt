@@ -7,7 +7,6 @@ pub fn tst_rtp::builder::RtpRecvSocketBuilder::build(self) -> core::result::Resu
 pub fn tst_rtp::builder::RtpRecvSocketBuilder::from_url(&str) -> core::result::Result<Self, tst_rtp::url::UrlError>
 pub fn tst_rtp::builder::RtpRecvSocketBuilder::iface(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
 pub fn tst_rtp::builder::RtpRecvSocketBuilder::new(impl core::convert::Into<alloc::string::String>, u16) -> Self
-pub fn tst_rtp::builder::RtpRecvSocketBuilder::rtcp(self, bool) -> Self
 impl core::clone::Clone for tst_rtp::builder::RtpRecvSocketBuilder
 pub fn tst_rtp::builder::RtpRecvSocketBuilder::clone(&self) -> tst_rtp::builder::RtpRecvSocketBuilder
 impl core::fmt::Debug for tst_rtp::builder::RtpRecvSocketBuilder
@@ -26,7 +25,6 @@ pub fn tst_rtp::builder::RtpSocketBuilder::from_url(&str) -> core::result::Resul
 pub fn tst_rtp::builder::RtpSocketBuilder::iface(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
 pub fn tst_rtp::builder::RtpSocketBuilder::new(impl core::convert::Into<alloc::string::String>, u16) -> Self
 pub fn tst_rtp::builder::RtpSocketBuilder::pkt_size(&mut self, usize) -> &mut Self
-pub fn tst_rtp::builder::RtpSocketBuilder::rtcp(self, bool) -> Self
 pub fn tst_rtp::builder::RtpSocketBuilder::ssrc(&mut self, u32) -> &mut Self
 pub fn tst_rtp::builder::RtpSocketBuilder::ttl(&mut self, u8) -> &mut Self
 impl core::clone::Clone for tst_rtp::builder::RtpSocketBuilder
@@ -619,26 +617,8 @@ impl core::marker::Unpin for tst_rtp::rtcp::ingest::SrAnchor
 impl core::marker::UnsafeUnpin for tst_rtp::rtcp::ingest::SrAnchor
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtcp::ingest::SrAnchor
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtcp::ingest::SrAnchor
-pub fn tst_rtp::rtcp::ingest::compute_rtt_us(&tst_rtp::rtcp::ReportBlock, core::option::Option<tst_rtp::rtcp::ingest::SrAnchor>) -> core::option::Option<u32>
 pub fn tst_rtp::rtcp::ingest::ingest_rr(&mut tst_rtp::rtcp::stats::RtcpStats, u32, &tst_rtp::rtcp::ReceiverReport) -> bool
 pub fn tst_rtp::rtcp::ingest::ingest_sr(&mut tst_rtp::rtcp::stats::RtcpStats, &tst_rtp::rtcp::SenderReport) -> tst_rtp::rtcp::ingest::SrAnchor
-pub fn tst_rtp::rtcp::ingest::system_time_to_ntp_mid(std::time::SystemTime) -> u32
-pub mod tst_rtp::rtcp::reporter
-pub struct tst_rtp::rtcp::reporter::RtcpReporterHandle
-impl tst_rtp::rtcp::reporter::RtcpReporterHandle
-pub fn tst_rtp::rtcp::reporter::RtcpReporterHandle::cancel(&self)
-pub fn tst_rtp::rtcp::reporter::RtcpReporterHandle::spawn(impl core::ops::function::FnMut() + core::marker::Send + 'static) -> Self
-impl core::ops::drop::Drop for tst_rtp::rtcp::reporter::RtcpReporterHandle
-pub fn tst_rtp::rtcp::reporter::RtcpReporterHandle::drop(&mut self)
-impl core::marker::Freeze for tst_rtp::rtcp::reporter::RtcpReporterHandle
-impl core::marker::Send for tst_rtp::rtcp::reporter::RtcpReporterHandle
-impl core::marker::Sync for tst_rtp::rtcp::reporter::RtcpReporterHandle
-impl core::marker::Unpin for tst_rtp::rtcp::reporter::RtcpReporterHandle
-impl core::marker::UnsafeUnpin for tst_rtp::rtcp::reporter::RtcpReporterHandle
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtcp::reporter::RtcpReporterHandle
-impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::rtcp::reporter::RtcpReporterHandle
-pub const tst_rtp::rtcp::reporter::RTCP_BASE_INTERVAL: core::time::Duration
-pub fn tst_rtp::rtcp::reporter::jitter_interval(core::time::Duration, u32) -> core::time::Duration
 pub mod tst_rtp::rtcp::stats
 pub struct tst_rtp::rtcp::stats::RtcpStats
 pub tst_rtp::rtcp::stats::RtcpStats::cumulative_lost_send: u32
@@ -648,11 +628,9 @@ pub tst_rtp::rtcp::stats::RtcpStats::last_rr_ts: core::option::Option<std::time:
 pub tst_rtp::rtcp::stats::RtcpStats::last_sr_anchor: core::option::Option<tst_rtp::rtcp::ingest::SrAnchor>
 pub tst_rtp::rtcp::stats::RtcpStats::last_sr_ts: core::option::Option<std::time::SystemTime>
 pub tst_rtp::rtcp::stats::RtcpStats::rr_packets_received: u64
-pub tst_rtp::rtcp::stats::RtcpStats::rr_packets_sent: u64
 pub tst_rtp::rtcp::stats::RtcpStats::rr_parse_errors: u64
 pub tst_rtp::rtcp::stats::RtcpStats::rtt_us: u32
 pub tst_rtp::rtcp::stats::RtcpStats::sr_packets_received: u64
-pub tst_rtp::rtcp::stats::RtcpStats::sr_packets_sent: u64
 pub tst_rtp::rtcp::stats::RtcpStats::sr_parse_errors: u64
 impl core::clone::Clone for tst_rtp::rtcp::stats::RtcpStats
 pub fn tst_rtp::rtcp::stats::RtcpStats::clone(&self) -> tst_rtp::rtcp::stats::RtcpStats
@@ -1492,7 +1470,6 @@ pub fn tst_rtp::transport::RtpRecvTransport::end_reason(&self) -> core::option::
 pub fn tst_rtp::transport::RtpRecvTransport::end_reason_handle(&self) -> tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
 pub fn tst_rtp::transport::RtpRecvTransport::listen(&str) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::transport::RtpRecvTransport::listen_with(&tst_rtp::url::RtpUrl) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
-pub fn tst_rtp::transport::RtpRecvTransport::listen_with_rtcp(&tst_rtp::url::RtpUrl, bool) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::transport::RtpRecvTransport::recv_timeout(&mut self, &mut [u8], core::time::Duration) -> core::result::Result<core::option::Option<usize>, tst_core::transport::TransportError>
 pub fn tst_rtp::transport::RtpRecvTransport::rtcp_stats(&self) -> tst_rtp::rtcp::stats::RtcpStats
 pub fn tst_rtp::transport::RtpRecvTransport::rtp_stats(&self) -> tst_rtp::transport::RtpStats
@@ -1511,8 +1488,8 @@ impl core::marker::Send for tst_rtp::transport::RtpRecvTransport
 impl !core::marker::Sync for tst_rtp::transport::RtpRecvTransport
 impl core::marker::Unpin for tst_rtp::transport::RtpRecvTransport
 impl core::marker::UnsafeUnpin for tst_rtp::transport::RtpRecvTransport
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_rtp::transport::RtpRecvTransport
-impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::transport::RtpRecvTransport
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::transport::RtpRecvTransport
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::transport::RtpRecvTransport
 #[non_exhaustive] pub struct tst_rtp::transport::RtpStats
 pub tst_rtp::transport::RtpStats::malformed_packets: u64
 pub tst_rtp::transport::RtpStats::source_rejected: u64
@@ -1538,8 +1515,6 @@ pub struct tst_rtp::transport::RtpTransport
 impl tst_rtp::transport::RtpTransport
 pub fn tst_rtp::transport::RtpTransport::connect(&str) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::transport::RtpTransport::connect_with(&tst_rtp::url::RtpUrl) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
-pub fn tst_rtp::transport::RtpTransport::connect_with_rtcp(&tst_rtp::url::RtpUrl, bool) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
-pub fn tst_rtp::transport::RtpTransport::rtcp_stats(&self) -> tst_rtp::rtcp::stats::RtcpStats
 impl core::ops::drop::Drop for tst_rtp::transport::RtpTransport
 pub fn tst_rtp::transport::RtpTransport::drop(&mut self)
 impl tst_core::transport::Transport for tst_rtp::transport::RtpTransport
@@ -1554,8 +1529,8 @@ impl core::marker::Send for tst_rtp::transport::RtpTransport
 impl core::marker::Sync for tst_rtp::transport::RtpTransport
 impl core::marker::Unpin for tst_rtp::transport::RtpTransport
 impl core::marker::UnsafeUnpin for tst_rtp::transport::RtpTransport
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_rtp::transport::RtpTransport
-impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::transport::RtpTransport
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::transport::RtpTransport
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::transport::RtpTransport
 pub mod tst_rtp::url
 #[non_exhaustive] pub enum tst_rtp::url::RtspScheme
 pub tst_rtp::url::RtspScheme::Rtsp
@@ -2660,19 +2635,6 @@ impl core::marker::Unpin for tst_rtp::rtcp::ReportBlock
 impl core::marker::UnsafeUnpin for tst_rtp::rtcp::ReportBlock
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtcp::ReportBlock
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtcp::ReportBlock
-pub struct tst_rtp::RtcpReporterHandle
-impl tst_rtp::rtcp::reporter::RtcpReporterHandle
-pub fn tst_rtp::rtcp::reporter::RtcpReporterHandle::cancel(&self)
-pub fn tst_rtp::rtcp::reporter::RtcpReporterHandle::spawn(impl core::ops::function::FnMut() + core::marker::Send + 'static) -> Self
-impl core::ops::drop::Drop for tst_rtp::rtcp::reporter::RtcpReporterHandle
-pub fn tst_rtp::rtcp::reporter::RtcpReporterHandle::drop(&mut self)
-impl core::marker::Freeze for tst_rtp::rtcp::reporter::RtcpReporterHandle
-impl core::marker::Send for tst_rtp::rtcp::reporter::RtcpReporterHandle
-impl core::marker::Sync for tst_rtp::rtcp::reporter::RtcpReporterHandle
-impl core::marker::Unpin for tst_rtp::rtcp::reporter::RtcpReporterHandle
-impl core::marker::UnsafeUnpin for tst_rtp::rtcp::reporter::RtcpReporterHandle
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtcp::reporter::RtcpReporterHandle
-impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::rtcp::reporter::RtcpReporterHandle
 pub struct tst_rtp::RtcpStats
 pub tst_rtp::RtcpStats::cumulative_lost_send: u32
 pub tst_rtp::RtcpStats::fraction_lost_q8: u8
@@ -2681,11 +2643,9 @@ pub tst_rtp::RtcpStats::last_rr_ts: core::option::Option<std::time::SystemTime>
 pub tst_rtp::RtcpStats::last_sr_anchor: core::option::Option<tst_rtp::rtcp::ingest::SrAnchor>
 pub tst_rtp::RtcpStats::last_sr_ts: core::option::Option<std::time::SystemTime>
 pub tst_rtp::RtcpStats::rr_packets_received: u64
-pub tst_rtp::RtcpStats::rr_packets_sent: u64
 pub tst_rtp::RtcpStats::rr_parse_errors: u64
 pub tst_rtp::RtcpStats::rtt_us: u32
 pub tst_rtp::RtcpStats::sr_packets_received: u64
-pub tst_rtp::RtcpStats::sr_packets_sent: u64
 pub tst_rtp::RtcpStats::sr_parse_errors: u64
 impl core::clone::Clone for tst_rtp::rtcp::stats::RtcpStats
 pub fn tst_rtp::rtcp::stats::RtcpStats::clone(&self) -> tst_rtp::rtcp::stats::RtcpStats
@@ -2785,7 +2745,6 @@ pub fn tst_rtp::builder::RtpRecvSocketBuilder::build(self) -> core::result::Resu
 pub fn tst_rtp::builder::RtpRecvSocketBuilder::from_url(&str) -> core::result::Result<Self, tst_rtp::url::UrlError>
 pub fn tst_rtp::builder::RtpRecvSocketBuilder::iface(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
 pub fn tst_rtp::builder::RtpRecvSocketBuilder::new(impl core::convert::Into<alloc::string::String>, u16) -> Self
-pub fn tst_rtp::builder::RtpRecvSocketBuilder::rtcp(self, bool) -> Self
 impl core::clone::Clone for tst_rtp::builder::RtpRecvSocketBuilder
 pub fn tst_rtp::builder::RtpRecvSocketBuilder::clone(&self) -> tst_rtp::builder::RtpRecvSocketBuilder
 impl core::fmt::Debug for tst_rtp::builder::RtpRecvSocketBuilder
@@ -2803,7 +2762,6 @@ pub fn tst_rtp::transport::RtpRecvTransport::end_reason(&self) -> core::option::
 pub fn tst_rtp::transport::RtpRecvTransport::end_reason_handle(&self) -> tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle
 pub fn tst_rtp::transport::RtpRecvTransport::listen(&str) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::transport::RtpRecvTransport::listen_with(&tst_rtp::url::RtpUrl) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
-pub fn tst_rtp::transport::RtpRecvTransport::listen_with_rtcp(&tst_rtp::url::RtpUrl, bool) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::transport::RtpRecvTransport::recv_timeout(&mut self, &mut [u8], core::time::Duration) -> core::result::Result<core::option::Option<usize>, tst_core::transport::TransportError>
 pub fn tst_rtp::transport::RtpRecvTransport::rtcp_stats(&self) -> tst_rtp::rtcp::stats::RtcpStats
 pub fn tst_rtp::transport::RtpRecvTransport::rtp_stats(&self) -> tst_rtp::transport::RtpStats
@@ -2822,8 +2780,8 @@ impl core::marker::Send for tst_rtp::transport::RtpRecvTransport
 impl !core::marker::Sync for tst_rtp::transport::RtpRecvTransport
 impl core::marker::Unpin for tst_rtp::transport::RtpRecvTransport
 impl core::marker::UnsafeUnpin for tst_rtp::transport::RtpRecvTransport
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_rtp::transport::RtpRecvTransport
-impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::transport::RtpRecvTransport
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::transport::RtpRecvTransport
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::transport::RtpRecvTransport
 pub struct tst_rtp::RtpSocketBuilder
 impl tst_rtp::builder::RtpSocketBuilder
 pub fn tst_rtp::builder::RtpSocketBuilder::build(self) -> core::result::Result<tst_rtp::transport::RtpTransport, tst_rtp::transport::ConnectError>
@@ -2831,7 +2789,6 @@ pub fn tst_rtp::builder::RtpSocketBuilder::from_url(&str) -> core::result::Resul
 pub fn tst_rtp::builder::RtpSocketBuilder::iface(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
 pub fn tst_rtp::builder::RtpSocketBuilder::new(impl core::convert::Into<alloc::string::String>, u16) -> Self
 pub fn tst_rtp::builder::RtpSocketBuilder::pkt_size(&mut self, usize) -> &mut Self
-pub fn tst_rtp::builder::RtpSocketBuilder::rtcp(self, bool) -> Self
 pub fn tst_rtp::builder::RtpSocketBuilder::ssrc(&mut self, u32) -> &mut Self
 pub fn tst_rtp::builder::RtpSocketBuilder::ttl(&mut self, u8) -> &mut Self
 impl core::clone::Clone for tst_rtp::builder::RtpSocketBuilder
@@ -2870,8 +2827,6 @@ pub struct tst_rtp::RtpTransport
 impl tst_rtp::transport::RtpTransport
 pub fn tst_rtp::transport::RtpTransport::connect(&str) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
 pub fn tst_rtp::transport::RtpTransport::connect_with(&tst_rtp::url::RtpUrl) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
-pub fn tst_rtp::transport::RtpTransport::connect_with_rtcp(&tst_rtp::url::RtpUrl, bool) -> core::result::Result<Self, tst_rtp::transport::ConnectError>
-pub fn tst_rtp::transport::RtpTransport::rtcp_stats(&self) -> tst_rtp::rtcp::stats::RtcpStats
 impl core::ops::drop::Drop for tst_rtp::transport::RtpTransport
 pub fn tst_rtp::transport::RtpTransport::drop(&mut self)
 impl tst_core::transport::Transport for tst_rtp::transport::RtpTransport
@@ -2886,8 +2841,8 @@ impl core::marker::Send for tst_rtp::transport::RtpTransport
 impl core::marker::Sync for tst_rtp::transport::RtpTransport
 impl core::marker::Unpin for tst_rtp::transport::RtpTransport
 impl core::marker::UnsafeUnpin for tst_rtp::transport::RtpTransport
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_rtp::transport::RtpTransport
-impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::transport::RtpTransport
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::transport::RtpTransport
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::transport::RtpTransport
 pub struct tst_rtp::RtpUrl
 pub tst_rtp::RtpUrl::host: alloc::string::String
 pub tst_rtp::RtpUrl::iface: core::option::Option<alloc::string::String>
@@ -3287,15 +3242,12 @@ impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::transport_negotiation:
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::transport_negotiation::TransportResponse
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::transport_negotiation::TransportResponse
 pub const tst_rtp::DEFAULT_PKT_SIZE: usize
-pub const tst_rtp::RTCP_BASE_INTERVAL: core::time::Duration
 pub const tst_rtp::RTP_HEADER_LEN: usize
 pub const tst_rtp::RTP_PT_MP2T: u8
 pub const tst_rtp::RTP_VERSION: u8
-pub fn tst_rtp::compute_rtt_us(&tst_rtp::rtcp::ReportBlock, core::option::Option<tst_rtp::rtcp::ingest::SrAnchor>) -> core::option::Option<u32>
 pub fn tst_rtp::ingest_rr(&mut tst_rtp::rtcp::stats::RtcpStats, u32, &tst_rtp::rtcp::ReceiverReport) -> bool
 pub fn tst_rtp::ingest_sr(&mut tst_rtp::rtcp::stats::RtcpStats, &tst_rtp::rtcp::SenderReport) -> tst_rtp::rtcp::ingest::SrAnchor
 pub fn tst_rtp::parse_rtp_info(&str) -> tst_rtp::rtsp::client::play::RtpInfo
 pub fn tst_rtp::parse_rtpmap_h264(&tst_rtp::sdp::SdpMedia) -> core::option::Option<u8>
 pub fn tst_rtp::pick_h264(&tst_rtp::sdp::Sdp) -> core::result::Result<tst_rtp::sdp::pick::H264Media<'_>, tst_rtp::error::RtspError>
 pub fn tst_rtp::pick_mp2t(&tst_rtp::sdp::Sdp) -> core::result::Result<&tst_rtp::sdp::SdpMedia, tst_rtp::error::RtspError>
-pub fn tst_rtp::system_time_to_ntp_mid(std::time::SystemTime) -> u32

@@ -11,7 +11,5 @@
 mod fixtures;
 #[path = "rtcp/interleaved.rs"]
 mod interleaved;
-#[path = "rtcp/loopback.rs"]
-mod loopback;
 #[path = "rtcp/via_rtsp.rs"]
 mod via_rtsp;

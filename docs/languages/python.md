@@ -824,7 +824,7 @@ end a `recv()` loop; stop on a sentinel or via `cancel_handle().cancel()`,
 which wakes a parked `send` / `recv` with `RtpError(CLOSED)` within
 ~100 ms. The RTP `CancelHandle` has `cancel()` and
 `is_cancelled()` (shared per shell). A literal `rtp://host:0` receiver binds (the kernel
-picks an ephemeral port; RTCP is off by default on this surface), but it
+picks an ephemeral port; no RTCP port is bound), but it
 is impractical: the raw receiver exposes no local-address getter, so
 there is no way to learn which port the kernel chose and no sender can
 be pointed at it — bind a concrete port. (The H.264 receiver surface

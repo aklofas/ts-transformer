@@ -39,7 +39,6 @@ unchanged (310) and the test leaf-name multiset is byte-identical before/after
 | old `tests/…` | new `tests/…` |
 | --- | --- |
 | `rtcp_interleaved.rs` | `rtcp/interleaved.rs` |
-| `rtcp_loopback.rs` | `rtcp/loopback.rs` |
 | `rtcp_via_rtsp.rs` | `rtcp/via_rtsp.rs` |
 
 ### `rtsp_client/` — RTSP client: SETUP/PLAY/TEARDOWN, auth, fallback, TLS, keepalive, interleaved
