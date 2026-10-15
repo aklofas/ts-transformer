@@ -1,11 +1,14 @@
 //! PMT descriptor configuration entry points.
 //!
-//! Houses the program- and per-stream descriptor setters/adders. Three
-//! private helpers live here:
+//! Houses the program- and per-stream descriptor setters/adders. The
+//! private helpers:
 //!
 //! - `resolve_stream_descriptor_slot` — shared resolver for all 8 per-stream
 //!   descriptor fns (5 `add_*` + 3 `set_stream_descriptors_for_*`). Routes
 //!   **both** families through the `try_from_raw` trust-boundary guard.
+//! - `DescriptorStream`, `resolve`, `add_descriptor`, `set_descriptors` — the
+//!   per-kind part of those 8 entry points (handle unpacking, `StreamSpec`
+//!   variant, error texts) as a trait, and the two bodies generic over it.
 //! - `desc_to_tlv_blob` — single-descriptor copy.
 //! - `parse_tlv_list` — multi-descriptor byte-stream parse. The
 //!   `with_capacity` reservation is clamped to `tlv_count.min(tlv_total_len
@@ -82,6 +85,124 @@ where
     }
 }
 
+/// What the eight per-stream descriptor entry points differ in: the handle
+/// kind's unpacking, its `StreamSpec` variant, and its three error texts.
+trait DescriptorStream {
+    const NON_CANONICAL: &'static str;
+    const PROGRAM_OOR: &'static str;
+    const STREAM_OOR: &'static str;
+    fn unpack_raw(raw: u32) -> Option<(usize, usize)>;
+    fn is_kind(spec: &StreamSpec) -> bool;
+}
+
+macro_rules! descriptor_stream {
+    ($handle:ty, $variant:ident, $name:literal) => {
+        impl DescriptorStream for $handle {
+            const NON_CANONICAL: &'static str = concat!(
+                "invalid ",
+                $name,
+                " stream handle (non-canonical raw bits set)"
+            );
+            const PROGRAM_OOR: &'static str =
+                concat!("invalid ", $name, " stream handle (program out of range)");
+            const STREAM_OOR: &'static str =
+                concat!("invalid ", $name, " stream handle (stream out of range)");
+            fn unpack_raw(raw: u32) -> Option<(usize, usize)> {
+                <$handle>::try_from_raw(raw).ok().map(|h| h.unpack())
+            }
+            fn is_kind(spec: &StreamSpec) -> bool {
+                matches!(spec, StreamSpec::$variant { .. })
+            }
+        }
+    };
+}
+
+descriptor_stream!(VideoStreamHandle, Video, "video");
+descriptor_stream!(KlvStreamHandle, Klv, "klv");
+descriptor_stream!(AudioStreamHandle, Audio, "audio");
+descriptor_stream!(SubtitleStreamHandle, Subtitle, "subtitle");
+descriptor_stream!(DataStreamHandle, Data, "data");
+
+/// Resolve `raw` to `(program, stream)` through the trust-boundary check:
+/// `try_from_raw` rejects handles with bits set above the canonical packed
+/// layout. A forged `valid.raw() | 0x100` would otherwise mask to the same
+/// low byte and write descriptors to the wrong elementary stream.
+fn resolve<K: DescriptorStream>(cfg: &TstMuxConfig, raw: u32) -> Result<(usize, usize), i32> {
+    resolve_stream_descriptor_slot(
+        cfg,
+        raw,
+        |raw| {
+            K::unpack_raw(raw).ok_or_else(|| {
+                set_last_error(TstError::InvalidUsage, K::NON_CANONICAL);
+                TstError::InvalidUsage as i32
+            })
+        },
+        K::is_kind,
+        K::PROGRAM_OOR,
+        K::STREAM_OOR,
+    )
+}
+
+/// Body of the five `tst_mux_config_add_<kind>_descriptor` entry points
+/// (each wraps it in `ffi_catch`).
+///
+/// # Safety
+/// `cfg` is NULL or a live `TstMuxConfig`; `desc` is NULL or a live
+/// `TstDescriptor` whose `data` is readable for `data_len` bytes.
+unsafe fn add_descriptor<K: DescriptorStream>(
+    cfg: *mut TstMuxConfig,
+    raw: u32,
+    desc: *const crate::event::TstDescriptor,
+) -> crate::c_types::c_int {
+    let Some(cfg) = (unsafe { cfg.as_mut() }) else {
+        set_last_error(TstError::InvalidConfig, "null config pointer");
+        return TstError::InvalidConfig as i32;
+    };
+    let Some(desc) = (unsafe { desc.as_ref() }) else {
+        set_last_error(TstError::InvalidConfig, "null descriptor pointer");
+        return TstError::InvalidConfig as i32;
+    };
+    let tlv = match unsafe { desc_to_tlv_blob(desc) } {
+        Ok(b) => b,
+        Err(rc) => return rc,
+    };
+    let (prog_idx, stream_idx) = match resolve::<K>(cfg, raw) {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
+    cfg.programs[prog_idx].stream_descriptors[stream_idx].push(tlv);
+    0
+}
+
+/// Body of the three `tst_mux_config_set_stream_descriptors_for_<kind>`
+/// entry points (each wraps it in `ffi_catch`).
+///
+/// # Safety
+/// `cfg` is NULL or a live `TstMuxConfig`; `tlv_bytes` is readable for
+/// `tlv_total_len` bytes when non-null.
+unsafe fn set_descriptors<K: DescriptorStream>(
+    cfg: *mut TstMuxConfig,
+    raw: u32,
+    tlv_bytes: *const u8,
+    tlv_total_len: usize,
+    tlv_count: usize,
+) -> crate::c_types::c_int {
+    let Some(cfg) = (unsafe { cfg.as_mut() }) else {
+        set_last_error(TstError::InvalidConfig, "null config pointer");
+        return TstError::InvalidConfig as i32;
+    };
+    let (prog_idx, stream_idx) = match resolve::<K>(cfg, raw) {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
+    let descs = match unsafe { parse_tlv_list(tlv_bytes, tlv_total_len, tlv_count) } {
+        Ok(d) => d,
+        Err(rc) => return rc,
+    };
+    cfg.programs[prog_idx].stream_descriptors[stream_idx] = descs;
+    0
+}
+
 // ---------------------------------------------------------------------------
 // Program-level descriptor setter
 // ---------------------------------------------------------------------------
@@ -155,44 +276,8 @@ pub unsafe extern "C" fn tst_mux_config_set_stream_descriptors_for_video(
     tlv_total_len: usize,
     tlv_count: usize,
 ) -> crate::c_types::c_int {
-    ffi_catch(TstError::Internal as i32, || {
-        let Some(cfg) = (unsafe { cfg.as_mut() }) else {
-            set_last_error(TstError::InvalidConfig, "null config pointer");
-            return TstError::InvalidConfig as i32;
-        };
-        // Trust-boundary validation via try_from_raw: rejects handles whose
-        // high bits are set above the canonical packed layout. A forged
-        // `valid.raw() | 0x100` would otherwise mask to the same low byte and
-        // silently write descriptors to the wrong elementary stream.
-        let (prog_idx, stream_idx) = match resolve_stream_descriptor_slot(
-            cfg,
-            video,
-            |raw| {
-                VideoStreamHandle::try_from_raw(raw)
-                    .map(|h| h.unpack())
-                    .map_err(|_| {
-                        set_last_error(
-                            TstError::InvalidUsage,
-                            "invalid video stream handle (non-canonical raw bits set)",
-                        );
-                        TstError::InvalidUsage as i32
-                    })
-            },
-            |s| matches!(s, StreamSpec::Video { .. }),
-            "invalid video stream handle (program out of range)",
-            "invalid video stream handle (stream out of range)",
-        ) {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        let descs = unsafe {
-            match parse_tlv_list(tlv_bytes, tlv_total_len, tlv_count) {
-                Ok(d) => d,
-                Err(rc) => return rc,
-            }
-        };
-        cfg.programs[prog_idx].stream_descriptors[stream_idx] = descs;
-        0
+    ffi_catch(TstError::Internal as i32, || unsafe {
+        set_descriptors::<VideoStreamHandle>(cfg, video, tlv_bytes, tlv_total_len, tlv_count)
     })
 }
 
@@ -211,40 +296,8 @@ pub unsafe extern "C" fn tst_mux_config_set_stream_descriptors_for_klv(
     tlv_total_len: usize,
     tlv_count: usize,
 ) -> crate::c_types::c_int {
-    ffi_catch(TstError::Internal as i32, || {
-        let Some(cfg) = (unsafe { cfg.as_mut() }) else {
-            set_last_error(TstError::InvalidConfig, "null config pointer");
-            return TstError::InvalidConfig as i32;
-        };
-        let (prog_idx, stream_idx) = match resolve_stream_descriptor_slot(
-            cfg,
-            klv,
-            |raw| {
-                KlvStreamHandle::try_from_raw(raw)
-                    .map(|h| h.unpack())
-                    .map_err(|_| {
-                        set_last_error(
-                            TstError::InvalidUsage,
-                            "invalid klv stream handle (non-canonical raw bits set)",
-                        );
-                        TstError::InvalidUsage as i32
-                    })
-            },
-            |s| matches!(s, StreamSpec::Klv { .. }),
-            "invalid klv stream handle (program out of range)",
-            "invalid klv stream handle (stream out of range)",
-        ) {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        let descs = unsafe {
-            match parse_tlv_list(tlv_bytes, tlv_total_len, tlv_count) {
-                Ok(d) => d,
-                Err(rc) => return rc,
-            }
-        };
-        cfg.programs[prog_idx].stream_descriptors[stream_idx] = descs;
-        0
+    ffi_catch(TstError::Internal as i32, || unsafe {
+        set_descriptors::<KlvStreamHandle>(cfg, klv, tlv_bytes, tlv_total_len, tlv_count)
     })
 }
 
@@ -263,40 +316,8 @@ pub unsafe extern "C" fn tst_mux_config_set_stream_descriptors_for_data(
     tlv_total_len: usize,
     tlv_count: usize,
 ) -> crate::c_types::c_int {
-    ffi_catch(TstError::Internal as i32, || {
-        let Some(cfg) = (unsafe { cfg.as_mut() }) else {
-            set_last_error(TstError::InvalidConfig, "null config pointer");
-            return TstError::InvalidConfig as i32;
-        };
-        let (prog_idx, stream_idx) = match resolve_stream_descriptor_slot(
-            cfg,
-            data,
-            |raw| {
-                DataStreamHandle::try_from_raw(raw)
-                    .map(|h| h.unpack())
-                    .map_err(|_| {
-                        set_last_error(
-                            TstError::InvalidUsage,
-                            "invalid data stream handle (non-canonical raw bits set)",
-                        );
-                        TstError::InvalidUsage as i32
-                    })
-            },
-            |s| matches!(s, StreamSpec::Data { .. }),
-            "invalid data stream handle (program out of range)",
-            "invalid data stream handle (stream out of range)",
-        ) {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        let descs = unsafe {
-            match parse_tlv_list(tlv_bytes, tlv_total_len, tlv_count) {
-                Ok(d) => d,
-                Err(rc) => return rc,
-            }
-        };
-        cfg.programs[prog_idx].stream_descriptors[stream_idx] = descs;
-        0
+    ffi_catch(TstError::Internal as i32, || unsafe {
+        set_descriptors::<DataStreamHandle>(cfg, data, tlv_bytes, tlv_total_len, tlv_count)
     })
 }
 
@@ -357,44 +378,8 @@ pub unsafe extern "C" fn tst_mux_config_add_video_descriptor(
     stream: TstVideoStreamHandle,
     desc: *const crate::event::TstDescriptor,
 ) -> crate::c_types::c_int {
-    ffi_catch(TstError::Internal as i32, || {
-        let Some(cfg) = (unsafe { cfg.as_mut() }) else {
-            set_last_error(TstError::InvalidConfig, "null config pointer");
-            return TstError::InvalidConfig as i32;
-        };
-        let Some(desc) = (unsafe { desc.as_ref() }) else {
-            set_last_error(TstError::InvalidConfig, "null descriptor pointer");
-            return TstError::InvalidConfig as i32;
-        };
-        let tlv = unsafe {
-            match desc_to_tlv_blob(desc) {
-                Ok(b) => b,
-                Err(rc) => return rc,
-            }
-        };
-        let (prog_idx, stream_idx) = match resolve_stream_descriptor_slot(
-            cfg,
-            stream,
-            |raw| {
-                VideoStreamHandle::try_from_raw(raw)
-                    .map(|h| h.unpack())
-                    .map_err(|_| {
-                        set_last_error(
-                            TstError::InvalidUsage,
-                            "invalid video stream handle (non-canonical raw bits set)",
-                        );
-                        TstError::InvalidUsage as i32
-                    })
-            },
-            |s| matches!(s, StreamSpec::Video { .. }),
-            "invalid video stream handle (program out of range)",
-            "invalid video stream handle (stream out of range)",
-        ) {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        cfg.programs[prog_idx].stream_descriptors[stream_idx].push(tlv);
-        0
+    ffi_catch(TstError::Internal as i32, || unsafe {
+        add_descriptor::<VideoStreamHandle>(cfg, stream, desc)
     })
 }
 
@@ -408,44 +393,8 @@ pub unsafe extern "C" fn tst_mux_config_add_klv_descriptor(
     stream: TstKlvStreamHandle,
     desc: *const crate::event::TstDescriptor,
 ) -> crate::c_types::c_int {
-    ffi_catch(TstError::Internal as i32, || {
-        let Some(cfg) = (unsafe { cfg.as_mut() }) else {
-            set_last_error(TstError::InvalidConfig, "null config pointer");
-            return TstError::InvalidConfig as i32;
-        };
-        let Some(desc) = (unsafe { desc.as_ref() }) else {
-            set_last_error(TstError::InvalidConfig, "null descriptor pointer");
-            return TstError::InvalidConfig as i32;
-        };
-        let tlv = unsafe {
-            match desc_to_tlv_blob(desc) {
-                Ok(b) => b,
-                Err(rc) => return rc,
-            }
-        };
-        let (prog_idx, stream_idx) = match resolve_stream_descriptor_slot(
-            cfg,
-            stream,
-            |raw| {
-                KlvStreamHandle::try_from_raw(raw)
-                    .map(|h| h.unpack())
-                    .map_err(|_| {
-                        set_last_error(
-                            TstError::InvalidUsage,
-                            "invalid klv stream handle (non-canonical raw bits set)",
-                        );
-                        TstError::InvalidUsage as i32
-                    })
-            },
-            |s| matches!(s, StreamSpec::Klv { .. }),
-            "invalid klv stream handle (program out of range)",
-            "invalid klv stream handle (stream out of range)",
-        ) {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        cfg.programs[prog_idx].stream_descriptors[stream_idx].push(tlv);
-        0
+    ffi_catch(TstError::Internal as i32, || unsafe {
+        add_descriptor::<KlvStreamHandle>(cfg, stream, desc)
     })
 }
 
@@ -459,44 +408,8 @@ pub unsafe extern "C" fn tst_mux_config_add_audio_descriptor(
     stream: TstAudioStreamHandle,
     desc: *const crate::event::TstDescriptor,
 ) -> crate::c_types::c_int {
-    ffi_catch(TstError::Internal as i32, || {
-        let Some(cfg) = (unsafe { cfg.as_mut() }) else {
-            set_last_error(TstError::InvalidConfig, "null config pointer");
-            return TstError::InvalidConfig as i32;
-        };
-        let Some(desc) = (unsafe { desc.as_ref() }) else {
-            set_last_error(TstError::InvalidConfig, "null descriptor pointer");
-            return TstError::InvalidConfig as i32;
-        };
-        let tlv = unsafe {
-            match desc_to_tlv_blob(desc) {
-                Ok(b) => b,
-                Err(rc) => return rc,
-            }
-        };
-        let (prog_idx, stream_idx) = match resolve_stream_descriptor_slot(
-            cfg,
-            stream,
-            |raw| {
-                AudioStreamHandle::try_from_raw(raw)
-                    .map(|h| h.unpack())
-                    .map_err(|_| {
-                        set_last_error(
-                            TstError::InvalidUsage,
-                            "invalid audio stream handle (non-canonical raw bits set)",
-                        );
-                        TstError::InvalidUsage as i32
-                    })
-            },
-            |s| matches!(s, StreamSpec::Audio { .. }),
-            "invalid audio stream handle (program out of range)",
-            "invalid audio stream handle (stream out of range)",
-        ) {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        cfg.programs[prog_idx].stream_descriptors[stream_idx].push(tlv);
-        0
+    ffi_catch(TstError::Internal as i32, || unsafe {
+        add_descriptor::<AudioStreamHandle>(cfg, stream, desc)
     })
 }
 
@@ -514,44 +427,8 @@ pub unsafe extern "C" fn tst_mux_config_add_subtitle_descriptor(
     stream: TstSubtitleStreamHandle,
     desc: *const crate::event::TstDescriptor,
 ) -> crate::c_types::c_int {
-    ffi_catch(TstError::Internal as i32, || {
-        let Some(cfg) = (unsafe { cfg.as_mut() }) else {
-            set_last_error(TstError::InvalidConfig, "null config pointer");
-            return TstError::InvalidConfig as i32;
-        };
-        let Some(desc) = (unsafe { desc.as_ref() }) else {
-            set_last_error(TstError::InvalidConfig, "null descriptor pointer");
-            return TstError::InvalidConfig as i32;
-        };
-        let tlv = unsafe {
-            match desc_to_tlv_blob(desc) {
-                Ok(b) => b,
-                Err(rc) => return rc,
-            }
-        };
-        let (prog_idx, stream_idx) = match resolve_stream_descriptor_slot(
-            cfg,
-            stream,
-            |raw| {
-                SubtitleStreamHandle::try_from_raw(raw)
-                    .map(|h| h.unpack())
-                    .map_err(|_| {
-                        set_last_error(
-                            TstError::InvalidUsage,
-                            "invalid subtitle stream handle (non-canonical raw bits set)",
-                        );
-                        TstError::InvalidUsage as i32
-                    })
-            },
-            |s| matches!(s, StreamSpec::Subtitle { .. }),
-            "invalid subtitle stream handle (program out of range)",
-            "invalid subtitle stream handle (stream out of range)",
-        ) {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        cfg.programs[prog_idx].stream_descriptors[stream_idx].push(tlv);
-        0
+    ffi_catch(TstError::Internal as i32, || unsafe {
+        add_descriptor::<SubtitleStreamHandle>(cfg, stream, desc)
     })
 }
 
@@ -568,44 +445,8 @@ pub unsafe extern "C" fn tst_mux_config_add_data_descriptor(
     stream: TstDataStreamHandle,
     desc: *const crate::event::TstDescriptor,
 ) -> crate::c_types::c_int {
-    ffi_catch(TstError::Internal as i32, || {
-        let Some(cfg) = (unsafe { cfg.as_mut() }) else {
-            set_last_error(TstError::InvalidConfig, "null config pointer");
-            return TstError::InvalidConfig as i32;
-        };
-        let Some(desc) = (unsafe { desc.as_ref() }) else {
-            set_last_error(TstError::InvalidConfig, "null descriptor pointer");
-            return TstError::InvalidConfig as i32;
-        };
-        let tlv = unsafe {
-            match desc_to_tlv_blob(desc) {
-                Ok(b) => b,
-                Err(rc) => return rc,
-            }
-        };
-        let (prog_idx, stream_idx) = match resolve_stream_descriptor_slot(
-            cfg,
-            stream,
-            |raw| {
-                DataStreamHandle::try_from_raw(raw)
-                    .map(|h| h.unpack())
-                    .map_err(|_| {
-                        set_last_error(
-                            TstError::InvalidUsage,
-                            "invalid data stream handle (non-canonical raw bits set)",
-                        );
-                        TstError::InvalidUsage as i32
-                    })
-            },
-            |s| matches!(s, StreamSpec::Data { .. }),
-            "invalid data stream handle (program out of range)",
-            "invalid data stream handle (stream out of range)",
-        ) {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        cfg.programs[prog_idx].stream_descriptors[stream_idx].push(tlv);
-        0
+    ffi_catch(TstError::Internal as i32, || unsafe {
+        add_descriptor::<DataStreamHandle>(cfg, stream, desc)
     })
 }
 
@@ -801,6 +642,143 @@ mod tests {
             };
             let rc = tst_mux_config_add_video_descriptor(cfg, handle, &desc as *const _);
             assert_eq!(rc, 0, "valid add-video-descriptor must return 0");
+            tst_mux_config_free(cfg);
+        }
+    }
+
+    /// Every per-stream entry point names its kind in each of its three
+    /// handle errors: a forged handle, a program out of range, a stream out
+    /// of range.
+    #[test]
+    fn per_stream_descriptor_errors_name_their_kind() {
+        fn last_msg() -> alloc::string::String {
+            unsafe { core::ffi::CStr::from_ptr(crate::error::tst_get_last_error_str()) }
+                .to_string_lossy()
+                .into_owned()
+        }
+        const NO_BODY: TstDescriptor = TstDescriptor {
+            tag: 0x02,
+            _reserved: [0; 7],
+            data: core::ptr::null(),
+            data_len: 0,
+        };
+        type Entry = fn(*mut TstMuxConfig, u32) -> i32;
+        let entries: [(&str, Entry); 8] = [
+            ("video", |c, h| unsafe {
+                tst_mux_config_add_video_descriptor(c, h, &NO_BODY)
+            }),
+            ("klv", |c, h| unsafe {
+                tst_mux_config_add_klv_descriptor(c, h, &NO_BODY)
+            }),
+            ("audio", |c, h| unsafe {
+                tst_mux_config_add_audio_descriptor(c, h, &NO_BODY)
+            }),
+            ("subtitle", |c, h| unsafe {
+                tst_mux_config_add_subtitle_descriptor(c, h, &NO_BODY)
+            }),
+            ("data", |c, h| unsafe {
+                tst_mux_config_add_data_descriptor(c, h, &NO_BODY)
+            }),
+            ("video", |c, h| unsafe {
+                tst_mux_config_set_stream_descriptors_for_video(c, h, [0x28u8, 0].as_ptr(), 2, 1)
+            }),
+            ("klv", |c, h| unsafe {
+                tst_mux_config_set_stream_descriptors_for_klv(c, h, [0x28u8, 0].as_ptr(), 2, 1)
+            }),
+            ("data", |c, h| unsafe {
+                tst_mux_config_set_stream_descriptors_for_data(c, h, [0x28u8, 0].as_ptr(), 2, 1)
+            }),
+        ];
+        let usage = TstError::InvalidUsage as i32;
+        unsafe {
+            let cfg = tst_mux_config_new();
+            let _ = tst_mux_config_add_program(cfg, 1, 0x1000); // one program, no streams
+            for (kind, entry) in entries {
+                assert_eq!(entry(cfg, 0x100), usage, "{kind}");
+                assert_eq!(
+                    last_msg(),
+                    alloc::format!("invalid {kind} stream handle (non-canonical raw bits set)")
+                );
+                assert_eq!(entry(cfg, 0xFF), usage, "{kind}");
+                assert_eq!(
+                    last_msg(),
+                    alloc::format!("invalid {kind} stream handle (program out of range)")
+                );
+                assert_eq!(entry(cfg, 0x00), usage, "{kind}");
+                assert_eq!(
+                    last_msg(),
+                    alloc::format!("invalid {kind} stream handle (stream out of range)")
+                );
+            }
+            tst_mux_config_free(cfg);
+        }
+    }
+
+    /// Valid handles: each of the eight entry points writes its TLV bytes
+    /// into its own stream's descriptor list and into no other.
+    #[test]
+    fn per_stream_descriptor_entry_points_write_their_stream_slot() {
+        use crate::config::streams::{
+            tst_mux_config_add_audio_stream, tst_mux_config_add_data_stream,
+            tst_mux_config_add_klv_stream, tst_mux_config_add_subtitle_stream_webvtt,
+        };
+        use crate::config::{TstAudioCodec, TstKlvStreamType};
+        unsafe {
+            let cfg = tst_mux_config_new();
+            let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
+            let v = tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264);
+            let k = tst_mux_config_add_klv_stream(
+                cfg,
+                prog,
+                0x101,
+                TstKlvStreamType::PrivateData,
+                false,
+            );
+            let a = tst_mux_config_add_audio_stream(cfg, prog, 0x102, TstAudioCodec::Aac);
+            let s = tst_mux_config_add_subtitle_stream_webvtt(cfg, prog, 0x103);
+            let d = tst_mux_config_add_data_stream(cfg, prog, 0x104, 0xF0, true);
+            let body = [0xAAu8, 0xBB];
+            let desc = |tag| TstDescriptor {
+                tag,
+                _reserved: [0; 7],
+                data: body.as_ptr(),
+                data_len: 2,
+            };
+            assert_eq!(tst_mux_config_add_video_descriptor(cfg, v, &desc(0x11)), 0);
+            assert_eq!(tst_mux_config_add_klv_descriptor(cfg, k, &desc(0x12)), 0);
+            assert_eq!(tst_mux_config_add_audio_descriptor(cfg, a, &desc(0x13)), 0);
+            assert_eq!(
+                tst_mux_config_add_subtitle_descriptor(cfg, s, &desc(0x14)),
+                0
+            );
+            assert_eq!(tst_mux_config_add_data_descriptor(cfg, d, &desc(0x15)), 0);
+            // A second add accumulates; the set family replaces.
+            assert_eq!(tst_mux_config_add_video_descriptor(cfg, v, &desc(0x16)), 0);
+            let tlv = [0x28u8, 0x01, 0x77];
+            assert_eq!(
+                tst_mux_config_set_stream_descriptors_for_klv(cfg, k, tlv.as_ptr(), 3, 1),
+                0
+            );
+            assert_eq!(
+                tst_mux_config_set_stream_descriptors_for_data(cfg, d, tlv.as_ptr(), 3, 1),
+                0
+            );
+            let two = [0x30u8, 0x00, 0x31, 0x01, 0x09];
+            assert_eq!(
+                tst_mux_config_set_stream_descriptors_for_video(cfg, v, two.as_ptr(), 5, 2),
+                0
+            );
+            let got = &(*cfg).programs[0].stream_descriptors;
+            let b = |tag: u8| alloc::vec![tag, 2, 0xAA, 0xBB];
+            assert_eq!(got.len(), 5);
+            assert_eq!(
+                got[0],
+                alloc::vec![alloc::vec![0x30u8, 0], alloc::vec![0x31u8, 1, 9]]
+            );
+            assert_eq!(got[1], alloc::vec![tlv.to_vec()]);
+            assert_eq!(got[2], alloc::vec![b(0x13)]);
+            assert_eq!(got[3], alloc::vec![b(0x14)]);
+            assert_eq!(got[4], alloc::vec![tlv.to_vec()]);
             tst_mux_config_free(cfg);
         }
     }
