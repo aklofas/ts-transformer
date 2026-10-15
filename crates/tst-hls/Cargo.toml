@@ -82,3 +82,6 @@ optional = true
 [dependencies.rustls-pemfile]
 version  = "2"
 optional = true
+
+[lints]
+workspace = true

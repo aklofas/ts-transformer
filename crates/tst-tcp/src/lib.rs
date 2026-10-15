@@ -21,8 +21,6 @@
 //! - `tcp://0.0.0.0:port?listen=1` — plain TCP listener
 //! - `tcps://0.0.0.0:port?listen=1&cert=path/server.crt&key=path/server.key` — TLS listener
 
-#![warn(rustdoc::broken_intra_doc_links)]
-
 pub mod builder;
 pub mod config;
 pub mod error;

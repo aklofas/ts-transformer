@@ -346,12 +346,20 @@ impl PyPublishMount {
     }
 
     /// The current publisher, or `None` when no publisher holds the mount.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "clones PublisherInfo under a short in-memory mutex"
+    )]
     pub fn publisher(&self, py: Python<'_>) -> PyResult<Option<PyPublisherInfo>> {
         let info = py.allow_threads(|| self.inner.publisher());
         info.as_ref().map(PyPublisherInfo::from_rust).transpose()
     }
 
     /// Snapshot of the mount's cumulative and live stats.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "snapshots counters under a short in-memory mutex"
+    )]
     pub fn stats(&self, py: Python<'_>) -> PyPublishMountStats {
         PyPublishMountStats {
             inner: py.allow_threads(|| self.inner.stats()),
@@ -361,6 +369,10 @@ impl PyPublishMount {
     /// End the application side only: a `DemuxReceiver` taken from this
     /// mount (now or later) raises `RtpError(CLOSED)` from its next read.
     /// PLAY readers and the publisher are unaffected. Idempotent.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "sets the shared cancel flag; no lock held across I/O"
+    )]
     pub fn cancel(&self, py: Python<'_>) {
         py.allow_threads(|| self.inner.cancel());
     }

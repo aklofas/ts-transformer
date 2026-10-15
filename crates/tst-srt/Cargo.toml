@@ -49,3 +49,6 @@ tracing-test = { version = "0.2", features = ["no-env-filter"] }
 # buffer is the thread-local that is already destroyed when `atexit`
 # handlers run.
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+
+[lints]
+workspace = true

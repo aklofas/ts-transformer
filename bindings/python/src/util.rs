@@ -129,8 +129,10 @@ const EXIT_PARK_MAX: std::time::Duration = std::time::Duration::from_secs(3);
 /// [`EXIT_PARK_MAX`] instead of re-taking the GIL at once — see
 /// [`INTERPRETER_EXITING`]; normally the process ends during that park.
 /// Only if it is still alive afterwards does the thread return `f`'s value.
-#[allow(dead_code)] // every transport surface calls this; dead only in a
+#[allow(dead_code)]
+// every transport surface calls this; dead only in a
 // transport-less `--no-default-features` build.
+#[expect(clippy::disallowed_methods, reason = "the parking wrapper itself")]
 pub(crate) fn allow_threads_parking<T, F>(py: Python<'_>, f: F) -> T
 where
     // `Send`, not `pyo3::marker::Ungil`: without PyO3's `nightly` feature
@@ -340,6 +342,10 @@ pub(crate) fn open_snapshot<T, S>(owned: &Owned<T, S>) -> Option<&S> {
 /// registered" is NOT the same question as "still open" — the latch is.
 #[pyfunction]
 #[pyo3(name = "_fire_cancel_sources_at_exit")]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the exit hook: cancelling only sets flags, then a bounded settle window"
+)]
 pub(crate) fn fire_cancel_sources_at_exit(py: Python<'_>) -> usize {
     // First: from here on a worker thread waking from a native call parks
     // instead of re-taking the GIL of an interpreter about to finalise.

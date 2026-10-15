@@ -46,6 +46,27 @@ tracing       = { version = "0.1", default-features = false, features = ["std"] 
 proptest      = "1"
 criterion     = "0.5"
 
+# The lint floor every member inherits (`[lints] workspace = true`). Stricter
+# lints are listed at "allow" and are raised one per change.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+missing_debug_implementations = "allow"
+unreachable_pub = "allow"
+rust_2018_idioms = { level = "allow", priority = -1 }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tst_lint_fixture)"] }
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "warn"
+private_intra_doc_links = "warn"
+
+[workspace.lints.clippy]
+# Methods listed in a crate's clippy.toml `disallowed-methods`
+# (bindings/c/core, bindings/python).
+disallowed_methods = "deny"
+undocumented_unsafe_blocks = "allow"
+expect_used = "allow"
+unwrap_used = "allow"
+
 [profile.release]
 lto           = "thin"
 codegen-units = 1

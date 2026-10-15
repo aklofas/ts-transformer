@@ -43,6 +43,10 @@ use alloc::format;
 ///
 /// The `(NULL, 0)` and `(non_null, 0)` cases return `Ok(&[])` without
 /// any pointer dereference and are sound even if `ptr` is dangling.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the checked helper every C-supplied slice goes through"
+)]
 pub(crate) unsafe fn ffi_slice<'a>(
     ptr: *const u8,
     len: usize,
@@ -88,6 +92,10 @@ pub(crate) unsafe fn ffi_slice<'a>(
 ///
 /// The `(NULL, 0)` and `(non_null, 0)` cases return `Ok(&mut [])` without
 /// any pointer dereference and are sound even if `ptr` is dangling.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the checked helper every C-supplied slice goes through"
+)]
 pub(crate) unsafe fn ffi_slice_mut<'a>(
     ptr: *mut u8,
     len: usize,

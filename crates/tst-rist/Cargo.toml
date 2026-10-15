@@ -31,3 +31,6 @@ mbedtls = ["rist-sys/mbedtls"]
 
 [dev-dependencies]
 tst-core = { path = "../tst-core", features = ["conformance"] }
+
+[lints]
+workspace = true

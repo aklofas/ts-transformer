@@ -301,9 +301,6 @@ jobs:
       - name: Check no direct NotAvailable/NotFound casts
         run: bash scripts/check/c/no-direct-not-available-not-found-cast.sh
 
-      - name: Check no direct from_raw_parts in C bindings
-        run: bash scripts/check/c/no-direct-from-raw-parts.sh
-
       - name: Check no slot-taking construction-constant getters in bindings
         # A getter that is constant after `_open` must read the handle's
         # snapshot, never the shell slot a parked recv/accept holds, so it
@@ -452,6 +449,8 @@ jobs:
       - name: check-no-unreachable-expect-in-bindings
         # Binding production code never aborts on a #[non_exhaustive]
         # wildcard or an .expect(); test tails / tests/ / build.rs excluded.
+        # Kept beside the clippy deny: clippy 1.85 does not lint an
+        # `.expect(` written inside a local macro_rules body, this rail does.
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/no-unreachable-expect-in-bindings.sh
 
@@ -490,6 +489,12 @@ jobs:
       - name: cargo clippy
         if: matrix.phase != 'features'
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Lint fixtures (clippy rejects each planted violation)
+        # The binding rules once kept by grep rails are clippy lints now;
+        # this proves each one still fires. One platform is enough.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/rust/lint-fixtures.sh
 
       - name: Install nightly toolchain (for doc lints)
         # Required for the cargo doc step below. Stable rustdoc 1.85
@@ -1126,14 +1131,6 @@ jobs:
         # Verifies the Python Publisher ABC method list (tstrans/hls.pyi)
         # mirrors the Rust tst_core Publisher trait.
         run: bash scripts/check/python/publisher-class-mirror.sh
-
-      - name: check-py-finalize-guard
-        # Every native call in the Python transport modules that can park
-        # releases the GIL through util::allow_threads_parking, so a thread
-        # waking after interpreter finalisation parks instead of aborting
-        # the process; the few bare sites are listed with a reason in
-        # scripts/ratchets/py-allow-threads-bare.tsv.
-        run: bash scripts/check/python/finalize-guard.sh
 
       - name: Install build prerequisites
         run: |

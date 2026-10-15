@@ -16,8 +16,6 @@
 //!
 //! See `examples/` for end-to-end runnable code.
 
-#![warn(rustdoc::broken_intra_doc_links)]
-
 pub mod builder;
 pub mod config;
 pub mod error;

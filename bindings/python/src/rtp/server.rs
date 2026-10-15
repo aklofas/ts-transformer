@@ -570,6 +570,10 @@ impl PyMountHandle {
     }
 
     /// Reset all flow counters on the mount to zero.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "zeroes counters under short in-memory mutexes"
+    )]
     pub fn reset_stats(&self, py: Python<'_>) {
         py.allow_threads(|| self.inner.reset_stats());
     }

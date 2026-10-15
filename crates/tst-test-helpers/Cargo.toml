@@ -10,3 +10,6 @@ repository.workspace = true
 
 [dependencies]
 tst-core = { path = "../tst-core" }
+
+[lints]
+workspace = true

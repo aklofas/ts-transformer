@@ -6,6 +6,14 @@
 //! Sender/Receiver/CancelHandle/Stats). The remaining `org.tstrans.*` modules
 //! mirror tst-py's surface.
 
+// A binding never aborts its host process on a panic it could have avoided:
+// no `.expect(` and no `unreachable!` outside tests.
+#![cfg_attr(not(test), deny(clippy::expect_used, clippy::unreachable))]
+
+#[cfg(tst_lint_fixture)]
+#[path = "../../../scripts/ratchets/tests/lint_fixtures/jvm.rs"]
+mod lint_fixture;
+
 mod codec;
 mod error;
 mod handle;

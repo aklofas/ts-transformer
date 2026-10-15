@@ -35,8 +35,6 @@
 //! tree through that feature. See the README's "Feature flags" section for
 //! the tokio-free client-only build.
 
-#![warn(rustdoc::broken_intra_doc_links)]
-
 pub mod builder;
 pub mod cancel;
 pub mod clock;

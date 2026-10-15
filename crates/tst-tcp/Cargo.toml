@@ -46,3 +46,6 @@ rcgen = "0.13"
 # Tempdir for PEM fixture files (cert.pem / key.pem / ca.pem) written to
 # std::env::temp_dir() — auto-cleaned on drop after the test completes.
 tempfile = "3"
+
+[lints]
+workspace = true

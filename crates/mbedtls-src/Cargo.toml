@@ -19,3 +19,6 @@ exclude = [
 
 [lib]
 doctest = false
+
+[lints]
+workspace = true

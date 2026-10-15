@@ -30,3 +30,6 @@ sha2       = "0.10"
 [dev-dependencies]
 tst-srt      = { path = "../tst-srt" }
 tst-pipeline = { path = "../tst-pipeline" }
+
+[lints]
+workspace = true

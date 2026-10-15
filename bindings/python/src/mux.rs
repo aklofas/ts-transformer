@@ -8,6 +8,10 @@
 //! Rust counterpart (and back), so Python configs can be lifted onto
 //! the Rust muxer without re-deriving the mapping.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "in-memory parse/mux calls finish in bounded time and never park"
+)]
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion, dead_code)]
 
 use pyo3::intern;

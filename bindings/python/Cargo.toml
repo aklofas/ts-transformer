@@ -115,3 +115,6 @@ optional = true
 # from the cdylib package's own build script, so PyO3 itself can't do this
 # for us. `add_extension_module_link_args()` is the documented helper.
 pyo3-build-config = "0.22"
+
+[lints]
+workspace = true
