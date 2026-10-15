@@ -118,10 +118,10 @@ let pairer = Pairer::with_config(v, k, config);          // explicit knob still 
 
 | Verb | Meaning |
 |------|---------|
-| `send_*` | **Wire / transport-bound operation.** Frames a message and pushes it to a `Transport`. May block, may fail with a transport error. Examples: `MuxSender::send_video`, `Sender::send_ts`. |
-| `recv_*` | **Wire-read counterpart of `send_*`.** Reads from a `RecvTransport`. May block, may fail with a transport error or return `None` on stream end. Examples: `DemuxReceiver::recv_event`, `RawReceiver::recv_one`. |
-| `push_*` | **In-process enqueue.** Hands data to an in-process buffer / queue / parser. No transport contract (a publisher such as HLS may write files or cut segments as part of the enqueue); the operation completes synchronously and either succeeds or returns a structural error. Examples: `Muxer::push_video`, `TsFraming::push_strict`. |
-| `pull_*` / `feed_*` | **Consume from an in-process source.** Pull existing buffered output, or feed incoming bytes to an in-process consumer. No transport contract. Example: `Demuxer::feed_aligned`. |
+| `send_*` | **Hands bytes to a `Transport` the object owns.** May block and may fail with a transport error. Examples: `MuxSender::send_video`, `Sender::send_ts`. A type that owns no `Transport` never has a `send_*` method. |
+| `recv_*` | **Reads from a `RecvTransport` the object owns.** May block; returns `None` (or an end-of-stream kind) at stream end. Examples: `DemuxReceiver::recv_event`, `RawReceiver::recv_one`. |
+| `push_*` | **Hands data to an in-process consumer**: a muxer, a publisher (which may write files or cut segments as part of the call), a server mount. No transport contract; completes synchronously. Examples: `Muxer::push_video`, `MuxPublisher::push_video`, `MountHandle::push_klv`. |
+| `next_*` / `feed*` / `pull` | **In-process pull and feed.** A source that buffers results hands them out with `next_*` (`Demuxer::next_event`, `H264Depacketizer::next_au`); bytes go into a parser with `feed*` (`Demuxer::feed_aligned`); the muxer's output is taken with `pull`. A blocking wire read is `recv_*`, never `next_*`. |
 
 **Why:** Without a codified rule, future contributors will invent local
 verb vocabularies and reviewers will have to re-litigate "is this a
@@ -129,6 +129,15 @@ wire op or a buffer op?" on every PR. The rule above already holds
 across the workspace's public methods; making
 it explicit lets new code be reviewed against it and new public APIs
 be named consistently from the start.
+
+**Suffix order:** `<verb>_<media>[_wire|_misp][_to][_with_dts]`, for
+example `Muxer::push_video_wire_to_with_dts` and
+`MuxSender::send_video_misp_to`. `_to` exists only on surfaces whose muxer
+can carry several streams of one media (it takes a stream handle):
+`Muxer`, `MuxSender` and an RTSP `MountHandle`. `MuxPublisher` takes
+exactly one video stream, so it has no `_to` form and its MISP variant is
+`push_video_misp`. `_with_dts` follows `_to` where both apply; a DTS push
+always names a stream handle.
 
 **Examples:**
 
@@ -294,6 +303,111 @@ The constructor-boundary approach is preferred over method-boundary
 checks (catching invariants only when `push_video` is called, for
 example) because the failure surfaces at construction-time, where the
 caller still has the config in hand to fix.
+
+---
+
+## Naming grammar
+
+| Pattern | Means | Examples |
+|---|---|---|
+| `<Proto>Transport` / `<Proto>RecvTransport` | The send half and the receive half of a protocol, implementing `Transport` and `RecvTransport`. One type serves both when the protocol is bidirectional on one connection. | `UdpTransport` and `UdpRecvTransport`; `TcpTransport` for both |
+| `<Proto>Url` | The parsed URL of that scheme. | `RtpUrl`, `RtspUrl`, `UdpUrl` |
+| `<Thing>Config` / `<Thing>ConfigBuilder` | Plain-data configuration and its builder. | `MuxerConfig`, `DemuxerConfigBuilder` |
+| `<Thing>Stats` | A snapshot value returned by a getter. | `MuxSenderStats`, `RtpStats` |
+| `<Proto>Error` | The error type of a protocol crate. | `UdpError`, `RtspError`, `HlsError` |
+| `<Proto>CancelHandle` | That transport's cancel handle. Most are aliases of `tst_core::cancel::FlagCancel`; `SrtCancelHandle` aliases `ResourceCancel`. | `UdpCancelHandle`, `RtspServerCancelHandle` |
+
+## Builders
+
+Rule: a builder's setters take `&mut self` and return `&mut Self`, and
+`build()` validates and constructs without network I/O. A builder whose
+product is connected or listening ends in a call named for the I/O:
+`connect()`, `bind()`, `listen()`, `start()`.
+
+Existing exceptions, kept until the next naming change:
+
+- `DemuxerConfigBuilder`, `HlsPublisherBuilder`, `RtspClientBuilder`,
+  `RistTransportBuilder` and `RistRecvTransportBuilder` take `self` in
+  their setters and return `Self`.
+- `UdpTransportBuilder::build`, `UdpRecvTransportBuilder::build`,
+  `TcpTransportBuilder::build`, `TcpListenerBuilder::build`,
+  `RtpSocketBuilder::build`, `RtpRecvSocketBuilder::build` and
+  `HlsPublisherBuilder::build` open their socket or bind their listener.
+
+## URL query keys
+
+Every key a URL parser accepts. A key listed with two spellings accepts
+either. Unknown keys are ignored by `udp`, `tcp`, `hls` and `rist` URLs and
+rejected by `srt`, `rtp` and `rtsp(s)` URLs.
+
+| Key | Meaning | Unit or values | Schemes |
+|---|---|---|---|
+| `iface` | Network interface for multicast and egress | interface name or literal IP address | `udp`, `rtp` |
+| `localaddr` | Local address to bind | IP address | `udp` |
+| `ttl` | Multicast hop limit | decimal 0 to 255 for `udp`; 1 to 255 for `rtp` | `udp`, `rtp` |
+| `tos` | IP type of service | decimal, or hex with a `0x` prefix, 0 to 255 | `udp` |
+| `rcvbuf`, `sndbuf` | Kernel socket buffer size | bytes; `K` and `M` suffixes are 1024-based; at most 256 MiB | `udp`, `tcp`, `rtp` |
+| `pkt_size` | Datagram payload size | bytes with the `K`/`M` forms for `udp`; a positive multiple of 188 for `rtp`; at most 1456 for `srt` (also `payloadsize`, `payload_size`) | `udp`, `rtp`, `srt` |
+| `ssrc` | RTP synchronisation source | decimal or `0x` hex, 32 bits | `rtp` |
+| `pt` | RTP payload type | 1 to 127, not 33 | `rtp` |
+| `source` | Accept datagrams only from this sender | IP address | `rtp` |
+| `recv_timeout` | Receive deadline | milliseconds, nonzero | `rtp`, `rtsp(s)` |
+| `transport` | RTSP media transport | `tcp` or `udp` | `rtsp(s)` |
+| `rtsp_version` | Protocol version | `1.0` or `2.0` | `rtsp(s)` |
+| `tcp_keepalive` | TCP keepalive on the control socket | seconds | `rtsp(s)` |
+| `listen` | Bind and accept instead of connecting | boolean | `tcp(s)` |
+| `nodelay` | Disable Nagle's algorithm | boolean | `tcp(s)` |
+| `keepalive` | `SO_KEEPALIVE` idle time | seconds | `tcp(s)` |
+| `connect_timeout` | Connect deadline | seconds for `tcp(s)`; milliseconds for `srt` (also `conntimeo`) | `tcp(s)`, `srt` |
+| `cert`, `key` | Server certificate and private key | PEM file paths; a `tcps` listener or an `hlss` publisher | `tcps`, `hlss` |
+| `ca` | Custom trust anchors for a caller (the system roots otherwise) | PEM file path | `tcps` |
+| `output_dir` | Where segments and playlists are written | directory path | `hls(s)` |
+| `segment_duration` | Target segment length | seconds | `hls(s)` |
+| `playlist_window` | Segments kept in a live playlist | count | `hls(s)` |
+| `mode` | Playlist mode for `hls(s)`; connection role for `srt` | `live`, `event`, `vod`; `caller`, `listener` | `hls(s)`, `srt` |
+| `auth_user`, `auth_pass` | HTTP Basic credentials | text | `hls(s)` |
+| `profile` | RIST profile | `simple` or `main` | `rist` |
+| `recovery_maxbitrate` | Retransmit bandwidth cap (also `recovery-maxbitrate`, `bandwidth`) | kilobits per second; `bandwidth` with a different value is an error | `rist` |
+| `buffer` | Recovery buffer | milliseconds | `rist` |
+| `session_timeout` | Session timeout (also `session-timeout`) | milliseconds | `rist` |
+| `aes-type`, `secret` | Encryption key size and passphrase | 128, 192 or 256; non-empty text (`aes-type` needs `secret`; `secret` alone means 256) | `rist` |
+| `cname` | RIST canonical name | text | `rist` |
+| `compression` | NULL-packet compression | boolean | `rist` |
+| `congestion` | Congestion controller (also `smoother`) | `live` or `file` | `srt` |
+| `latency` | Receiver delay (also `tsbpddelay`) | milliseconds | `srt` |
+| `peerlatency`, `rcvlatency` | Minimum delay the sender asks of the receiver; the receiver's own delay | milliseconds | `srt` |
+| `fc` | Flow-control window (also `ffs`) | packets | `srt` |
+| `inputbw` | Input rate estimate | bytes per second | `srt` |
+| `maxbw` | Bandwidth cap | bytes per second; 0 is relative to the input rate | `srt` |
+| `oheadbw` | Recovery overhead | percent, 5 to 100 | `srt` |
+| `mss` | Maximum segment size | bytes, 16 bits | `srt` |
+| `linger` | Close linger | seconds | `srt` |
+| `lossmaxttl` | Maximum reorder tolerance | packets | `srt` |
+| `packetfilter` | Packet filter specification | libsrt spec string, for example `fec,cols:10,rows:5` | `srt` |
+| `passphrase`, `pbkeylen` | Encryption passphrase and key length | text; 16, 24 or 32 bytes | `srt` |
+| `streamid` | Stream identifier (also `srt_streamid`) | text | `srt` |
+| `tlpktdrop` | Too-late packet drop | `0` or `1` | `srt` |
+| `udprcvbuf`, `udpsndbuf` | UDP buffers (also `recv_buffer_size`, `send_buffer_size`) | bytes | `srt` |
+| `x-recvtimeout`, `x-sendtimeout` | Blocking call deadlines | milliseconds | `srt` |
+
+Boolean values are `1`, `0`, `true`, `false`, `yes`, `no`, `on` and `off`
+for `tcp(s)` and `rist`; `srt` accepts only `0` and `1`. An `srt` URL names
+a libsrt option this library does not expose with an error that carries the
+`SRTO_*` name rather than ignoring it.
+
+## Stats getters
+
+- `stats()` is the object's own counters (`MuxSender::stats`,
+  `RtspServer::stats`).
+- `socket_stats()` is the transport-level `SocketStats` every transport
+  fills the same way.
+- `<native>_stats()` holds counters only one protocol has: `rtp_stats`,
+  `rtcp_stats`, `hls_stats`, `publisher_stats`, `depay_stats`,
+  `demuxer_stats`, `stream_codec_stats`.
+- `reset_stats()` resets the first kind only. It exists on the pipeline
+  shells, the demuxer and muxer, the pairer and `MountHandle`; it never
+  clears `socket_stats()`. `RtspServer`, the publish mount handle and the
+  transports have no `reset_stats()`.
 
 ---
 
