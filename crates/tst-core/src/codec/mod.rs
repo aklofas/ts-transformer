@@ -414,8 +414,6 @@ pub(crate) fn read_h273_colour(
 ///
 /// Returns `8 + value as u8` on success, [`CodecParseError::ReservedValue`]
 /// otherwise. All paths (H.264 / H.265 / H.266) use the same hand-rolled check here.
-// NOTE: `crates/tst-core/tests/tools/trace_h265_sps.rs` keeps an inlined
-// copy of this helper for diagnostic-tool purposes. Keep in sync.
 pub(crate) fn validate_bit_depth_minus8(
     field: &'static str,
     value: u32,
