@@ -45,15 +45,17 @@ pub fn request_bytes<S: Read + Write>(tcp: &mut S, req: &[u8]) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
+/// The value of header `name` (case-insensitive), trimmed, if present.
+pub fn try_header<'a>(response: &'a str, name: &str) -> Option<&'a str> {
+    response.lines().find_map(|l| {
+        let (k, v) = l.split_once(':')?;
+        k.trim().eq_ignore_ascii_case(name).then(|| v.trim())
+    })
+}
+
 /// The value of header `name` (case-insensitive), trimmed.
 pub fn header<'a>(response: &'a str, name: &str) -> &'a str {
-    response
-        .lines()
-        .find_map(|l| {
-            let (k, v) = l.split_once(':')?;
-            k.trim().eq_ignore_ascii_case(name).then(|| v.trim())
-        })
-        .unwrap_or_else(|| panic!("no {name} header in {response:?}"))
+    try_header(response, name).unwrap_or_else(|| panic!("no {name} header in {response:?}"))
 }
 
 /// `Session:` value without its `;timeout=` parameter.
