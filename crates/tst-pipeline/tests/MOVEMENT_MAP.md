@@ -81,5 +81,6 @@ after the last `::`) of `cargo nextest list -p tst-pipeline` is identical.
 | `managed/managed_demux_receiver_terminal_flush.rs` | `CancelThenBroken` | fires the managed handle from inside `recv_bytes` |
 | `managed/managed_receive_attempts.rs` | `Scripted` | delivers `b"data"` on every call, forever |
 | `managed/poison_policy.rs` | `ParkedRecv`, `ParkedRecvCancel`, `fast_policy` | parks until its own cancel; 1 ms backoff and a 16-slot gap buffer |
+| `managed/poison_policy.rs` | `OkTransport`, `OneShotBrokenThenOk` | function-scoped mocks for the lock-poison and one-shot cases; not targeted by the shared mock |
 | `shells/pipeline_receiver.rs` | `minimal_h264_au` (6-byte AUD) | a different AU than `common::build_h264_au` |
 | `shells/pipeline_sender_unit.rs`, `shells/mux_sender_golden.rs`, `shells/mux_sender_backpressure_tracing.rs`, `reconnect/reconnect_blocking_send_ownership.rs` | `synthetic_h264_au`, `synthetic_h264_idr`, `idr_nal`, `idr` | golden or sized inputs whose exact bytes the tests depend on |
