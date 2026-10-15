@@ -15,10 +15,11 @@
 //!
 //! All items are `pub(super)`.
 
+use crate::codec::{AudioCodec, VideoCodec};
 use crate::mpegts::common::{Pts90khz, StreamTypeCode, pts_diff_33bit};
 use crate::mpegts::demux::event::{
-    AudioCodec, DemuxEvent, DiscontinuityKind, MetadataKind, NonConformantIssue, SamplePayload,
-    StreamId, StreamKind, SubtitleCodec, VideoCodec,
+    DemuxEvent, DiscontinuityKind, MetadataKind, NonConformantIssue, SamplePayload, StreamId,
+    StreamKind, SubtitleCodec,
 };
 use crate::mpegts::demux::payload::{
     DvbSubStripResult, KlvShape, classify_klv, iter_au_cells, strip_dvb_sub_envelope,
@@ -231,7 +232,7 @@ impl super::demuxer::Demuxer {
                 // OBU splitting, and stays at the demux layer. In `InteropRawObu`
                 // mode the demuxer tolerates `stream_id = 0xE0` silently.
                 if codec == VideoCodec::Av1 {
-                    use crate::mpegts::mux::Av1CarriageMode;
+                    use crate::mpegts::common::Av1CarriageMode;
                     let binding_mode =
                         matches!(self.options.av1_carriage, Av1CarriageMode::Mpeg2TsBinding);
                     if binding_mode && pes.stream_id != 0xBD {

@@ -63,7 +63,7 @@
 use std::env;
 use std::fs;
 use std::io::Write;
-use tst_core::mpegts::demux::event::NalUnit;
+use tst_core::codec::NalUnit;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, SamplePayload, VideoPayload, split_video};
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
@@ -250,7 +250,7 @@ fn repack_event(
             // MuxerConfig is H.264-only, so other codecs are skipped below.
             // Adding H.265 support is straightforward — build the output
             // config for H.265 and push with `VideoCodec::H265`.
-            use tst_core::mpegts::demux::event::VideoCodec as DemuxCodec;
+            use tst_core::codec::VideoCodec as DemuxCodec;
             if matches!(codec, DemuxCodec::H264) && !raw.is_empty() {
                 // Forward the input AU's adaptation-field RAI as the output's
                 // key_frame signal. As a defensive cross-check we also scan

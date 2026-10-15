@@ -11,7 +11,8 @@
 //! These stay free functions (not wrapped in a struct): they hold no state
 //! of their own, and the classifier's scope is PMT-specific.
 
-use crate::mpegts::demux::event::{AudioCodec, StreamKind, SubtitleCodec, VideoCodec};
+use crate::codec::{AudioCodec, VideoCodec};
+use crate::mpegts::demux::event::{StreamKind, SubtitleCodec};
 use crate::mpegts::demux::psi::{
     classify_audio_stream_type, extract_metadata_link, has_klva_registration,
 };

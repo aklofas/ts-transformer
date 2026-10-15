@@ -1,11 +1,11 @@
 //! H.264 parameter-set parser tests.
 
+use crate::codec::NalUnit;
 use crate::codec::h264::{parse_parameter_sets, parse_pps, parse_sps};
 use crate::codec::test_util::{BitWriter, escape_emulation};
 use crate::codec::{
     ChromaFormat, CodecParseError, ColourPrimaries, MatrixCoefficients, TransferCharacteristics,
 };
-use crate::mpegts::demux::event::NalUnit;
 
 fn nal_h264(nal_type: u8, payload: Vec<u8>) -> NalUnit {
     NalUnit::H264 {

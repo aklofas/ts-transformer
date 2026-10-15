@@ -12,10 +12,10 @@
 //! variant that the parsers must handle gracefully.
 
 use tst_core::codec::CodecParseError;
+use tst_core::codec::Obu;
 use tst_core::codec::av1::{
     Av1SequenceHeader, parse_frame_header_light, parse_obu_stream, parse_sequence_header,
 };
-use tst_core::mpegts::demux::event::Obu;
 
 // ---------------------------------------------------------------------------
 // parse_sequence_header — truncated / malformed inputs

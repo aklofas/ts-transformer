@@ -28,6 +28,9 @@ pub mod misp_time;
 pub mod mpegaudio;
 pub mod nal_framing;
 pub mod util;
+mod vocabulary;
+
+pub use vocabulary::{AudioCodec, NalUnit, Obu, ObuExtension, VideoCodec};
 
 /// Chroma subsampling format. From H.264 / H.265 `chroma_format_idc`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -676,5 +679,52 @@ pub(crate) mod test_util {
             zeros = if b == 0 { zeros + 1 } else { 0 };
         }
         out
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod layering_tests {
+    /// `codec` is the leaf subsystem: the MPEG-TS layer imports codec
+    /// vocabulary, never the reverse. Comments and doc links may name
+    /// the MPEG-TS module path; code may not.
+    #[test]
+    fn codec_never_imports_mpegts() {
+        // Built from pieces so this file does not contain the needle itself.
+        let needle = concat!("crate::", "mpegts");
+        fn walk(
+            dir: &std::path::Path,
+            needle: &str,
+            hits: &mut std::vec::Vec<std::string::String>,
+        ) {
+            for entry in std::fs::read_dir(dir).expect("read codec dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    walk(&path, needle, hits);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).expect("read source");
+                    for (n, line) in text.lines().enumerate() {
+                        let code = line.split("//").next().unwrap_or("");
+                        if code.contains(needle) {
+                            hits.push(std::format!(
+                                "{}:{}: {}",
+                                path.display(),
+                                n + 1,
+                                line.trim()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("codec");
+        let mut hits = std::vec::Vec::new();
+        walk(&root, needle, &mut hits);
+        assert!(
+            hits.is_empty(),
+            "codec imports mpegts:\n{}",
+            hits.join("\n")
+        );
     }
 }

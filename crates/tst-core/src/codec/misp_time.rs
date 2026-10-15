@@ -15,7 +15,7 @@
 //! (`pic_timing` / `time_code` SEI, §11.2/§12.3), and AV1 / H.266
 //! (ST 0604 defines no carriage for them).
 
-use crate::mpegts::mux::VideoCodec;
+use crate::codec::VideoCodec;
 use alloc::vec::Vec;
 
 /// ST 0604.6 §7.1 Table 1 — H.262/H.264 Precision Time Stamp Identifier.
@@ -417,7 +417,7 @@ fn first_vcl_prefix_offset(au: &[u8], codec: VideoCodec) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mpegts::mux::VideoCodec;
+    use crate::codec::VideoCodec;
 
     // Minimal Annex-B AU builders for splice tests.
     fn h264_au(nal_headers: &[u8]) -> Vec<u8> {
@@ -695,12 +695,6 @@ mod tests {
     }
 
     // H.265 SUFFIX_SEI (NAL type 40) is matched by the parser.
-    #[test]
-    fn demux_codec_converts_for_extract() {
-        let d = crate::mpegts::demux::VideoCodec::H265;
-        assert_eq!(VideoCodec::from(d), VideoCodec::H265);
-    }
-
     #[test]
     fn extract_h265_suffix_sei_round_trips() {
         let ts = MispTimestamp::micros(0xDEAD_BEEF_CAFE_0001, 0x3F);

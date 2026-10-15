@@ -1103,11 +1103,10 @@ impl Default for Demuxer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::codec::{AudioCodec, VideoCodec};
     use crate::mpegts::common::Pts90khz;
     use crate::mpegts::demux::StrictMode;
-    use crate::mpegts::demux::event::{
-        AudioCodec, DiscontinuityKind, SamplePayload, SubtitleCodec, VideoCodec,
-    };
+    use crate::mpegts::demux::event::{DiscontinuityKind, SamplePayload, SubtitleCodec};
     use crate::mpegts::demux::pmt_classify::{
         classify_0x06, classify_0x06_with_ambiguity, is_malformed_av1_registration,
         stream_type_from_kind,
@@ -1607,7 +1606,7 @@ mod tests {
 
     #[test]
     fn demuxer_emits_audio_sample_for_aac_pes() {
-        use crate::mpegts::demux::event::AudioCodec;
+        use crate::codec::AudioCodec;
         use crate::mpegts::mux::{
             AudioCodec as MuxAudioCodec, MuxerConfig, MuxerProgramConfigBuilder,
         };
@@ -1678,7 +1677,7 @@ mod tests {
 
     #[test]
     fn treat_as_overrides_pmt_classification_to_typed_audio() {
-        use crate::mpegts::demux::event::AudioCodec;
+        use crate::codec::AudioCodec;
         use crate::mpegts::mux::{
             AudioCodec as MuxAudioCodec, MuxerConfig, MuxerProgramConfigBuilder,
         };

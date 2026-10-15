@@ -529,7 +529,7 @@ impl Tally {
                         // no carriage for them) or a malformed MISP SEI;
                         // either way there is no *valid* MISP timestamp to
                         // count, so both collapse to "not seen" here.
-                        if let Ok(Some(_)) = misp_time::extract(raw, (*codec).into()) {
+                        if let Ok(Some(_)) = misp_time::extract(raw, *codec) {
                             self.misp_sei_seen = true;
                         }
                     }

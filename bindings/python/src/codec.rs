@@ -1061,7 +1061,7 @@ fn parse_h264_parameter_sets_py(
     py: Python<'_>,
     nals: Vec<PyRef<'_, NalUnitPy>>,
 ) -> PyResult<H264ParameterSetsPy> {
-    use tst_core::mpegts::demux::event::NalUnit as RustNalUnit;
+    use tst_core::codec::NalUnit as RustNalUnit;
     // Convert each NalUnitPy to the Rust NalUnit::H264 variant.
     // Non-H.264 entries (H265, H266) are silently filtered out — the Rust
     // parse_parameter_sets fn already ignores non-H264 variants, but filtering
@@ -1798,7 +1798,7 @@ fn parse_h265_parameter_sets_py(
     py: Python<'_>,
     nals: Vec<PyRef<'_, NalUnitPy>>,
 ) -> PyResult<H265ParameterSetsPy> {
-    use tst_core::mpegts::demux::event::NalUnit as RustNalUnit;
+    use tst_core::codec::NalUnit as RustNalUnit;
     // Convert each NalUnitPy to the Rust NalUnit::H265 variant.
     // Non-H265 entries are silently filtered out.
     let rust_nals: Vec<RustNalUnit> = nals
@@ -2355,7 +2355,7 @@ fn parse_h266_parameter_sets_py(
     py: Python<'_>,
     nals: Vec<PyRef<'_, NalUnitPy>>,
 ) -> PyResult<H266ParameterSetsPy> {
-    use tst_core::mpegts::demux::event::NalUnit as RustNalUnit;
+    use tst_core::codec::NalUnit as RustNalUnit;
     // Convert each NalUnitPy to the Rust NalUnit::H266 variant.
     // Non-H266 entries (H264, H265) are silently filtered out.
     let rust_nals: Vec<RustNalUnit> = nals
@@ -2421,7 +2421,7 @@ use tst_core::codec::av1::{
     parse_obu_stream as rust_parse_av1_obu_stream,
     parse_sequence_header as rust_parse_av1_sequence_header,
 };
-use tst_core::mpegts::demux::event::{Obu as RustObu, ObuExtension as RustObuExtension};
+use tst_core::codec::{Obu as RustObu, ObuExtension as RustObuExtension};
 
 /// Parsed AV1 Sequence Header OBU. Mirrors `tst_core::codec::av1::Av1SequenceHeader`.
 #[pyclass(name = "Av1SequenceHeader", module = "tstrans.codec")]
@@ -3630,9 +3630,7 @@ fn extract_misp_timestamp(
     use tst_core::codec::misp_time::{MispTimeExtractError, extract};
     let coerced = crate::util::coerce_bytes_like(py, au)?;
     let au_bytes = coerced.as_bytes();
-    // Bridge via the demux codec converter, then to the mux codec via From.
-    let demux_codec = py_video_codec_to_rust(py, codec)?;
-    let mux_codec = tst_core::mpegts::mux::VideoCodec::from(demux_codec);
+    let mux_codec = py_video_codec_to_rust(py, codec)?;
     let result = py.allow_threads(|| extract(au_bytes, mux_codec));
     match result {
         Ok(None) => Ok(None),

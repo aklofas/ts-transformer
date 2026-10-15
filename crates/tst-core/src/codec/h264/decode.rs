@@ -1,12 +1,12 @@
 //! H.264 / AVC parameter-set decoders (private; re-exported through [`super`]).
 
 use super::model::{EntropyCodingMode, H264ParameterSets, H264Pps, H264Sps};
+use crate::codec::NalUnit;
 use crate::codec::bitreader::BitReader;
 use crate::codec::{
     ChromaFormat, CodecParseError, ColorInfo, ColourPrimaries, MatrixCoefficients, Rational,
     TransferCharacteristics, aspect_ratio_idc_to_sar, read_h273_colour, validate_bit_depth_minus8,
 };
-use crate::mpegts::demux::event::NalUnit;
 
 /// Parse all SPS/PPS NAL units from a slice of [`NalUnit`]s.
 ///

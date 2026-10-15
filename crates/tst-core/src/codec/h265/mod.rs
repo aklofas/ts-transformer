@@ -54,7 +54,7 @@ pub use sps::{H265Sps, parse_sps};
 pub use vps::{H265Vps, parse_vps};
 
 use crate::codec::CodecParseError;
-use crate::mpegts::demux::event::NalUnit;
+use crate::codec::NalUnit;
 use alloc::collections::BTreeMap;
 
 /// All VPS, SPS, and PPS NAL units parsed from a slice.

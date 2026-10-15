@@ -16,11 +16,10 @@
 use crate::common::bitwriter::BitWriter;
 use crate::common::mux_demux::{collect_events, drain_mux};
 use tst_core::codec::h266::{H266ParameterSets, parse_parameter_sets};
+use tst_core::codec::{NalUnit, VideoCodec};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::Demuxer;
-use tst_core::mpegts::demux::event::{
-    DemuxEvent, NalUnit, SamplePayload, VideoCodec, VideoPayload,
-};
+use tst_core::mpegts::demux::event::{DemuxEvent, SamplePayload, VideoPayload};
 use tst_core::mpegts::demux::split_video;
 use tst_core::mpegts::mux::{
     Av1CarriageMode, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,

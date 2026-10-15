@@ -1,8 +1,8 @@
 //! AV1 OBU stream collector. Per AV1 spec §5.2.
 
 use crate::codec::CodecParseError;
+use crate::codec::Obu;
 use crate::codec::av1::model::{Av1FrameHeaderLight, Av1ObuStream, Av1SequenceHeader};
-use crate::mpegts::demux::event::Obu;
 use alloc::vec::Vec;
 
 use super::frame_header::parse_frame_header_light;
@@ -62,7 +62,7 @@ pub fn parse_obu_stream(obus: &[Obu]) -> Av1ObuStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mpegts::demux::event::Obu;
+    use crate::codec::Obu;
 
     /// Minimal Sequence Header OBU body — captured byte-for-byte from
     /// `codec::av1::sequence_header::tests::minimal_sequence_header`

@@ -30,11 +30,12 @@
 //! All items are visible only within `mpegts::demux` (`pub(super)` or
 //! private).
 
+use crate::codec::VideoCodec;
 use crate::error::DemuxError;
 use crate::mpegts::common::StreamTypeCode;
 use crate::mpegts::demux::event::{
     DemuxEvent, KlvLink, LinkSource, NonConformantIssue, ProgramMap, PsiSyntaxKind, StreamId,
-    StreamInfo, StreamKind, VideoCodec,
+    StreamInfo, StreamKind,
 };
 use crate::mpegts::demux::pat_reassemble::PatReassemblyOutcome;
 use crate::mpegts::demux::psi::{PatEntry, Pmt, PsiParseError, parse_pat_section, parse_pmt};

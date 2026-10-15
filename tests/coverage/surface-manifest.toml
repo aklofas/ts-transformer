@@ -1758,7 +1758,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
-item = "tst_core::mpegts::demux::event::AudioCodec"
+item = "tst_core::codec::AudioCodec"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
 bindings = ["java:org.tstrans.mpegts.AudioCodec", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
@@ -1850,7 +1850,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
-item = "tst_core::mpegts::demux::event::VideoCodec"
+item = "tst_core::codec::VideoCodec"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
 bindings = ["java:org.tstrans.mpegts.VideoCodec", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"

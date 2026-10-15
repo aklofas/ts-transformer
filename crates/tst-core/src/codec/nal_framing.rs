@@ -17,8 +17,8 @@
 //! matching the widths ISO/IEC 14496-15's `NALUnitLength` field allows.
 
 use crate::codec::CodecParseError;
+use crate::codec::VideoCodec;
 use crate::codec::annexb::nals;
-use crate::mpegts::demux::VideoCodec;
 use alloc::vec;
 use alloc::vec::Vec;
 

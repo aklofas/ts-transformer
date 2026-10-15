@@ -9,7 +9,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use crate::shared::SharedBytes;
+use crate::codec::{AudioCodec, NalUnit, Obu, VideoCodec};
 
 use crate::mpegts::common::{Pts90khz, StreamTypeCode};
 pub use crate::mpegts::demux::ts::{AdaptationFieldKind, PcrMalformedKind};
@@ -140,42 +140,6 @@ impl StreamKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum VideoCodec {
-    H264,
-    H265,
-    /// H.266 / VVC (ITU-T H.266 V4). PMT stream_type = 0x33.
-    H266,
-    /// AV1 (AOM Bitstream Spec). PMT stream_type = 0x06 with
-    /// `registration_descriptor` `format_identifier = "AV01"`.
-    Av1,
-}
-
-impl From<VideoCodec> for crate::mpegts::mux::VideoCodec {
-    /// Demux-side to mux-side codec bridge — the two enums have
-    /// identical variants; this exists so receive-side callers can feed
-    /// [`crate::codec::misp_time::extract`] without a hand-match.
-    fn from(c: VideoCodec) -> Self {
-        match c {
-            VideoCodec::H264 => Self::H264,
-            VideoCodec::H265 => Self::H265,
-            VideoCodec::H266 => Self::H266,
-            VideoCodec::Av1 => Self::Av1,
-        }
-    }
-}
-
-/// Audio codec carried in `SamplePayload::Audio`. Identifies the codec
-/// for typed dispatch but does not parse the bitstream — `frames` holds
-/// the raw PES payload bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AudioCodec {
-    Mp2,
-    Aac,
-    AacLatm,
-    Ac3,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SubtitleCodec {
     /// DVB subtitling (bitmap-shaped). Per ETSI EN 300 468 §6.2.41 +
     /// ETSI EN 300 743. Per-stream params (language, page IDs)
@@ -234,7 +198,7 @@ pub enum SamplePayload {
         /// [`Muxer::push_video_wire_to`](crate::mpegts::mux::Muxer::push_video_wire_to).
         /// To parse it, pass this carriage to
         /// [`split_video`](crate::mpegts::demux::split_video).
-        av1_carriage: Option<crate::mpegts::mux::Av1CarriageMode>,
+        av1_carriage: Option<crate::mpegts::common::Av1CarriageMode>,
     },
     Audio {
         codec: AudioCodec,
@@ -269,76 +233,6 @@ pub enum VideoPayload {
     Nals(Vec<NalUnit>),
     /// AV1 — OBU-shaped (Open Bitstream Unit).
     Obus(Vec<Obu>),
-}
-
-/// One AV1 Open Bitstream Unit. Per AV1 Bitstream Spec §5.3.2.
-///
-/// The header byte (`obu_forbidden_bit | obu_type | obu_extension_flag |
-/// obu_has_size_field | obu_reserved_1bit`) and any extension byte are
-/// parsed during split; the LEB128 `obu_size` field is consumed and
-/// stripped. `payload` carries only the OBU body bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Obu {
-    /// 4-bit `obu_type` (AV1 §5.3.2). 1=SequenceHeader, 2=TemporalDelimiter,
-    /// 3=FrameHeader, 4=TileGroup, 5=Metadata, 6=Frame,
-    /// 7=RedundantFrameHeader, 8=TileList, 15=Padding.
-    pub obu_type: u8,
-    /// Optional extension header bytes when `obu_extension_flag = 1`.
-    pub extension: Option<ObuExtension>,
-    /// OBU payload bytes — header + extension byte + LEB128 size field
-    /// stripped. Pass-through; parsed by `codec::av1::parse_*` if the
-    /// consumer wants typed fields.
-    pub payload: SharedBytes,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ObuExtension {
-    /// 3-bit `temporal_id` (AV1 §5.3.3).
-    pub temporal_id: u8,
-    /// 2-bit `spatial_id` (AV1 §5.3.3).
-    pub spatial_id: u8,
-}
-
-/// One H.264 or H.265 NAL unit. Codec-tagged so wrapped languages
-/// (Kotlin, Swift, Java) get idiomatic `when`/`switch` exhaustiveness.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NalUnit {
-    H264 {
-        /// 5-bit `nal_unit_type` (H.264 §7.3.1).
-        nal_type: u8,
-        /// 2-bit `nal_ref_idc` (H.264 §7.3.1).
-        ref_idc: u8,
-        /// RBSP bytes; Annex-B start codes stripped, emulation prevention
-        /// bytes preserved (consumer's decoder removes them).
-        payload: SharedBytes,
-    },
-    H265 {
-        /// 6-bit `nal_unit_type` (H.265 §7.3.1.2).
-        nal_type: u8,
-        /// 6-bit `nuh_layer_id` (H.265 §7.3.1.2).
-        layer_id: u8,
-        /// 3-bit `nuh_temporal_id_plus1` (H.265 §7.3.1.2).
-        temporal_id_plus1: u8,
-        /// RBSP bytes; same stripping/preservation rules as `H264`.
-        payload: SharedBytes,
-    },
-    /// One H.266 / VVC NAL unit. Header parsed per H.266 V4 §7.3.1.2.
-    ///
-    /// Common `nal_type` values: VPS_NUT=14, SPS_NUT=15, PPS_NUT=16,
-    /// PREFIX_APS_NUT=17, SUFFIX_APS_NUT=18, PH_NUT=19, AUD_NUT=20,
-    /// IDR_W_RADL=7, IDR_N_LP=8, CRA_NUT=9, GDR_NUT=10. Full table at
-    /// H.266 V4 Table 5.
-    H266 {
-        /// 5-bit `nal_unit_type` (H.266 V4 §7.3.1.2).
-        nal_type: u8,
-        /// 6-bit `nuh_layer_id` (H.266 V4 §7.3.1.2).
-        layer_id: u8,
-        /// 3-bit `nuh_temporal_id_plus1` (H.266 V4 §7.3.1.2).
-        temporal_id_plus1: u8,
-        /// RBSP bytes; Annex-B start codes stripped, emulation
-        /// prevention preserved (consumer's decoder removes 0x03 escapes).
-        payload: SharedBytes,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1324,6 +1218,7 @@ fn fmt_psi_syntax(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::SharedBytes;
 
     /// Every `NonConformantIssue` message, byte for byte. The JVM binding and
     /// the interop harness carry `issue.to_string()`, so the text is contract.

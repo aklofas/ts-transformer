@@ -131,7 +131,7 @@ pub struct DemuxerConfig {
     /// `mpegts.c:3118-3142`.
     pub lenient_psi_reassembly: bool,
     /// AV1 PES carriage mode the demuxer expects. Default
-    /// [`crate::mpegts::mux::Av1CarriageMode::Mpeg2TsBinding`]
+    /// [`crate::mpegts::common::Av1CarriageMode::Mpeg2TsBinding`]
     /// (spec-conformant per the AV1-in-MPEG-2-TS binding).
     ///
     /// In `Mpeg2TsBinding` mode the demuxer expects PES
@@ -145,7 +145,7 @@ pub struct DemuxerConfig {
     /// In `InteropRawObu` mode the demuxer accepts raw OBUs without the
     /// `ts_open_bitstream_unit` framing (matches ffmpeg / libaom /
     /// hls.js / mediamtx today) and does not raise the binding issues.
-    pub av1_carriage: crate::mpegts::mux::Av1CarriageMode,
+    pub av1_carriage: crate::mpegts::common::Av1CarriageMode,
     /// Per-PID cap on the in-flight AU cell reassembly buffer.
     /// `None` uses `DEFAULT_AU_CELL_CAP_PER_PID` (1 MiB). When the
     /// buffered inner-byte total would exceed this, the demuxer drops
@@ -298,7 +298,7 @@ impl Default for DemuxerConfig {
             klv_link_overrides: Vec::new(),
             stream_kind_overrides: BTreeMap::new(),
             lenient_psi_reassembly: false,
-            av1_carriage: crate::mpegts::mux::Av1CarriageMode::default(),
+            av1_carriage: crate::mpegts::common::Av1CarriageMode::default(),
             au_cell_cap_per_pid: None,
             au_cell_cap_total: None,
             au_cell_max_in_flight_pids: None,
@@ -373,9 +373,9 @@ impl DemuxerConfigBuilder {
     }
 
     /// Set the expected AV1 PES carriage mode. Default
-    /// [`crate::mpegts::mux::Av1CarriageMode::Mpeg2TsBinding`] (spec-conformant).
+    /// [`crate::mpegts::common::Av1CarriageMode::Mpeg2TsBinding`] (spec-conformant).
     /// Set to `InteropRawObu` to match ffmpeg/libaom/hls.js senders.
-    pub fn av1_carriage(mut self, mode: crate::mpegts::mux::Av1CarriageMode) -> Self {
+    pub fn av1_carriage(mut self, mode: crate::mpegts::common::Av1CarriageMode) -> Self {
         self.options.av1_carriage = mode;
         self
     }

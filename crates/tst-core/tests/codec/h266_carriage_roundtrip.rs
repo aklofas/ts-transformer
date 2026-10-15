@@ -5,11 +5,10 @@
 //! stream_type 0x33 -> `VideoCodec::H266`) and the per-NAL header fields.
 
 use crate::common::mux_demux::{collect_events, drain_mux};
+use tst_core::codec::{NalUnit, VideoCodec};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::Demuxer;
-use tst_core::mpegts::demux::event::{
-    DemuxEvent, NalUnit, SamplePayload, StreamKind, VideoCodec, VideoPayload,
-};
+use tst_core::mpegts::demux::event::{DemuxEvent, SamplePayload, StreamKind, VideoPayload};
 use tst_core::mpegts::demux::split_video;
 use tst_core::mpegts::mux::{
     Av1CarriageMode, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,

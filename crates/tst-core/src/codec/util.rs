@@ -10,7 +10,7 @@
 //! has `Vec<NalUnit>` / `Vec<Obu>` directly from
 //! `mpegts::demux::payload::split_nals` and does not need this helper.
 
-use crate::mpegts::mux::VideoCodec;
+use crate::codec::VideoCodec;
 
 /// Count NAL units (H.264/H.265/H.266) or OBUs (AV1) in a single
 /// access-unit buffer.

@@ -2,8 +2,8 @@
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
-    Demuxer,
-    event::{AudioCodec, DemuxEvent, SamplePayload},
+    AudioCodec, Demuxer,
+    event::{DemuxEvent, SamplePayload},
 };
 use tst_core::mpegts::mux::{
     AudioCodec as MuxAudioCodec, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,

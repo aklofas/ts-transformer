@@ -2,9 +2,9 @@
 
 use crate::codec::annexb::start_codes;
 use crate::codec::av1::decode::leb128::read_leb128;
+use crate::codec::{NalUnit, Obu, ObuExtension, VideoCodec};
 use crate::mpegts::demux::event::{
-    Av1ObuHeaderKind, NalHeaderKind, NalUnit, NonConformantIssue, Obu, ObuExtension, VideoCodec,
-    VideoPayload,
+    Av1ObuHeaderKind, NalHeaderKind, NonConformantIssue, VideoPayload,
 };
 use crate::shared::SharedBytes;
 use alloc::vec::Vec;
@@ -333,12 +333,12 @@ pub fn split_obus(es_payload: &SharedBytes) -> (Vec<Obu>, Vec<NonConformantIssue
 /// For AV1 the `av1_carriage` parameter governs framing expectations (H.26x
 /// ignores it):
 ///
-/// - **`Mpeg2TsBinding`** ([`crate::mpegts::mux::Av1CarriageMode::Mpeg2TsBinding`]):
+/// - **`Mpeg2TsBinding`** ([`crate::mpegts::common::Av1CarriageMode::Mpeg2TsBinding`]):
 ///   reverses `ts_open_bitstream_unit()` binding framing (§3.2) when present;
 ///   if framing is absent the OBUs are split directly and
 ///   [`NonConformantIssue::Av1MissingTsObuFraming`] is included (binding
 ///   REQUIRES framing, so its absence is non-conformant).
-/// - **`InteropRawObu`** ([`crate::mpegts::mux::Av1CarriageMode::InteropRawObu`]):
+/// - **`InteropRawObu`** ([`crate::mpegts::common::Av1CarriageMode::InteropRawObu`]):
 ///   splits raw OBUs directly and does NOT surface `Av1MissingTsObuFraming`
 ///   — absent framing is correct for interop carriage.
 ///
@@ -347,9 +347,9 @@ pub fn split_obus(es_payload: &SharedBytes) -> (Vec<Obu>, Vec<NonConformantIssue
 pub fn split_video(
     raw: &SharedBytes,
     codec: VideoCodec,
-    av1_carriage: crate::mpegts::mux::Av1CarriageMode,
+    av1_carriage: crate::mpegts::common::Av1CarriageMode,
 ) -> (VideoPayload, Vec<NonConformantIssue>) {
-    use crate::mpegts::mux::Av1CarriageMode;
+    use crate::mpegts::common::Av1CarriageMode;
     match codec {
         VideoCodec::H264 | VideoCodec::H265 | VideoCodec::H266 => {
             let (nals, issues) = split_nals(raw, codec);
@@ -395,7 +395,7 @@ pub fn split_video(
 pub fn split_video_strict(
     raw: &SharedBytes,
     codec: VideoCodec,
-    av1_carriage: crate::mpegts::mux::Av1CarriageMode,
+    av1_carriage: crate::mpegts::common::Av1CarriageMode,
 ) -> Result<VideoPayload, NonConformantIssue> {
     let (payload, mut issues) = split_video(raw, codec, av1_carriage);
     if !issues.is_empty() {
@@ -1288,7 +1288,7 @@ mod tests {
         let (payload, issues) = split_video(
             &au,
             VideoCodec::H264,
-            crate::mpegts::mux::Av1CarriageMode::Mpeg2TsBinding,
+            crate::mpegts::common::Av1CarriageMode::Mpeg2TsBinding,
         );
         assert!(issues.is_empty());
         match payload {
@@ -1304,7 +1304,7 @@ mod tests {
         let res = split_video_strict(
             &au,
             VideoCodec::H264,
-            crate::mpegts::mux::Av1CarriageMode::Mpeg2TsBinding,
+            crate::mpegts::common::Av1CarriageMode::Mpeg2TsBinding,
         );
         assert!(res.is_err());
     }
