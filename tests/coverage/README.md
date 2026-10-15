@@ -113,10 +113,10 @@ un-catalogued. The ratchet (`scripts/check/repo/surface-manifest.sh`) enforces:
   wrote, a TODO rather than a claim), `"<prefix>:deferred"` (a checked gap) and
   `"<prefix>:n/a"` (no twin by design). `swift:` / `kotlin:` real symbols are
   accepted unresolved until tst-uniffi ships.
-- **(c) closure** — the items extracted from the 8 `public-api.txt` baselines
+- **(c) closure** — the items extracted from the `public-api.txt` baselines
   that no `[[surface]]` or `[[exempt]]` row names must be exactly the set the rail
-  pins as `UNAUDITED_COUNT` / `UNAUDITED_SHA256` (2 023 items the 2026-06-03
-  bootstrap left uncatalogued). `bash scripts/check/repo/surface-manifest.sh
+  pins as `UNAUDITED_COUNT` / `UNAUDITED_SHA256` (2 075 items; the 2026-06-03
+  bootstrap left most of them uncatalogued). `bash scripts/check/repo/surface-manifest.sh
   --list-unaudited` prints them.
 
 **Adding a new public API item:** a CI failure means the un-catalogued set changed —
@@ -127,7 +127,8 @@ re-pin with `bash scripts/check/repo/surface-manifest.sh --print-baseline` and c
 its two values over `UNAUDITED_COUNT` / `UNAUDITED_SHA256` in the same change.
 A re-pin is legitimate only when the set shrinks or an item is removed or renamed;
 a re-pin whose count goes up is never acceptable, because a new public item gets a
-manifest row instead.
+manifest row instead, unless the measured crate roster itself grew; then every added
+item must belong to a newly listed crate.
 
 **Graduating an exempt item to a surface row:** remove its `[[exempt]]` block and
 add a `[[surface]]` row with `owning_tests`, `bindings`, and optionally `scenario_ids`.

@@ -337,7 +337,7 @@ run_check() {
       echo "      Public items this branch added or removed: git diff main -- 'crates/*/public-api.txt'"
       echo "      A new item needs a [[surface]] row or an [[exempt]] row with a reason in surface-manifest.toml."
       echo "      Re-pin only for a deliberate change: bash scripts/check/repo/surface-manifest.sh --print-baseline"
-      echo "      A re-pin is legitimate only when the set shrinks or an item is removed or renamed; a re-pin whose count goes UP is never acceptable (a new public item gets a manifest row)."
+      echo "      A re-pin is legitimate only when the set shrinks or an item is removed or renamed; a re-pin whose count goes UP is never acceptable unless the measured crate roster itself grew; then every added item must belong to a newly listed crate (a new public item gets a manifest row)."
     } >> "$errs"
   fi
   rm -f "$unaudited"
