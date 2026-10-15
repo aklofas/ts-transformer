@@ -88,6 +88,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `mpegts::demux::low_level::iter_au_cells` — the Metadata AU cell iterator,
   previously reachable only through a hidden test module.
+- `NonConformantIssue` implements `std::error::Error`. Its `Display` text is
+  unchanged.
 
 ### Fixed — tst-rtp
 
