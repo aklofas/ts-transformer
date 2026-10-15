@@ -7,8 +7,6 @@
 //! construct each shell and let it drop at end-of-scope, then assert
 //! both events appeared in the captured `tracing` output.
 
-mod common;
-
 use crate::common::{ScriptedRecv, ScriptedSend};
 
 use tracing_test::traced_test;

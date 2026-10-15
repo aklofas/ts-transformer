@@ -9,8 +9,6 @@
 //! shells map it to `ShellErrorKind::Backpressure` and `tst-c` to
 //! `TST_E_BUFFER_FULL`.
 
-mod common;
-
 use crate::common::{ScriptedSend, broken};
 
 use std::sync::atomic::AtomicU32;

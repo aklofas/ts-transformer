@@ -4,8 +4,6 @@
 //! With the default exponential policy the wait can be 10 s,
 //! which is not "prompt" for a Ctrl-C.
 
-mod common;
-
 use crate::common::{ScriptedRecv, broken};
 
 use std::sync::Arc;

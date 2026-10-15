@@ -14,8 +14,6 @@
 //! cleanup on every path, and the cancel runs on its own thread so "cancel
 //! never returned" surfaces as `joined == false` rather than a hang.
 
-mod common;
-
 use crate::common::{broken, wait_for};
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

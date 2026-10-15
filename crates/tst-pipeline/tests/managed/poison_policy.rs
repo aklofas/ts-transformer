@@ -1,8 +1,6 @@
 //! Poison-policy tests: ExplicitClose wiring and the hybrid mutex policy
 //! (4 sites return typed errors, 2 sites are documented panics).
 
-mod common;
-
 use crate::common::{ScriptedRecv, broken};
 
 use std::sync::Arc;

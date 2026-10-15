@@ -73,7 +73,7 @@ use super::last_error_msg;
 /// assumptions predicted, making a bounded, non-flaky version
 /// impractical as a routine CI test. `reconnects_count()` incrementing
 /// IS covered without any real socket by `tst-pipeline`'s
-/// `crates/tst-pipeline/tests/managed_demux_receiver_reconnect.rs`
+/// `crates/tst-pipeline/tests/managed/managed_demux_receiver_reconnect.rs`
 /// (`ScriptedInner`-injected `RecvTransport`, deterministic, no timing
 /// dependency), and so is the `reconnecting()` true→false→latched-true
 /// flip, by that suite's

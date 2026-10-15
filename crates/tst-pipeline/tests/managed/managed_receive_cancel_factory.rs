@@ -4,8 +4,6 @@
 //! `FactoryCancel` slot; the managed transport's own cancel fires that
 //! slot, and the factory then reports `ExplicitClose`.
 
-mod common;
-
 use crate::common::{FlagCancel, ScriptedRecv, broken};
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

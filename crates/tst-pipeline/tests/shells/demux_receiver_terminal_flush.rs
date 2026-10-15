@@ -36,8 +36,6 @@
 //! some transports) — this fix does not introduce a new risk category, it
 //! just applies the same accepted behavior to more termination reasons.
 
-mod common;
-
 use crate::common::{ScriptedRecv, broken, build_h264_au, drain_mux, to_ts_packets};
 
 use tst_core::TransportError;

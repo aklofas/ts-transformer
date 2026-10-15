@@ -8,8 +8,6 @@
 //! sync-KLV, which is what the `KlvSample.kind = KlvSyncAuCell` event
 //! arm exposes).
 
-mod common;
-
 use crate::common::{build_h264_au, drain_mux, dummy_klv};
 
 use std::time::Duration;

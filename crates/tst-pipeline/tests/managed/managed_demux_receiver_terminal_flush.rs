@@ -7,8 +7,6 @@
 //! The mux, packet and policy helpers come from `common`; the fixtures
 //! that fire the managed cancel handle from inside `recv_bytes` stay local.
 
-mod common;
-
 use crate::common::{broken, build_h264_au, drain_mux, fast_policy, to_ts_packets};
 
 use std::sync::atomic::{AtomicUsize, Ordering};

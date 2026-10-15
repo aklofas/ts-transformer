@@ -8,8 +8,6 @@
 //! event AND the post-recovery video `Sample` — proving the lenient fix
 //! flows through the pipeline shell's `feed_aligned` call site.
 
-mod common;
-
 use crate::common::{ScriptedRecv, build_h264_au, drain_mux, to_ts_packets};
 
 use tst_core::TransportError;
