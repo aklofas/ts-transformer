@@ -1,21 +1,15 @@
 //! [`RistRecvTransport`] — RIST receiver impl [`RecvTransport`].
 
-use std::ffi::CString;
-use std::os::raw::c_void;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tst_core::transport::{BrokenCause, RecvTransport, TransportCancel, TransportError};
 
-use crate::config::{RistConfig, RistProfile};
+use crate::config::RistConfig;
 use crate::error::RistError;
-use crate::init::ensure_init;
-use crate::stats::{OnDrop, RistStats};
-use crate::transport::{
-    RistCancelHandle, apply_peer_overrides, global_logging_ptr, rist_profile_to_c,
-};
-use crate::url::{RistUrl, native_endpoint};
+use crate::stats::RistStats;
+use crate::transport::RistCancelHandle;
+use crate::url::RistUrl;
 
 /// Default per-`recv_bytes` poll interval in milliseconds. Short enough that
 /// `close()` from another thread (via `alive` swap) is observed quickly.
@@ -66,16 +60,11 @@ fn classify_block(payload_len: usize, payload_null: bool, buf_len: usize) -> Blo
 /// current tick with `TransportError::ExplicitClose`. Drop calls
 /// `rist_destroy`.
 pub struct RistRecvTransport {
-    ctx: *mut rist_sys::rist_ctx,
-    bind_url: String,
+    ctx: crate::ctx::RistCtx,
     alive: Arc<AtomicBool>,
     /// Set by [`RistCancelHandle::cancel`]; read at entry and at the end of
     /// every poll tick before `alive`.
     cancelled: Arc<AtomicBool>,
-    stats: Arc<Mutex<RistStats>>,
-    /// Leaked `Arc<Mutex<RistStats>>` ref handed to librist as the stats
-    /// callback `arg`. Reclaimed exactly once in `close()` after `rist_destroy`.
-    stats_arg: *mut c_void,
 }
 
 // Same Send/!Sync reasoning as RistTransport: RecvTransport methods take
@@ -101,127 +90,16 @@ impl RistRecvTransport {
 
     /// Build a receiver from a parsed URL + config.
     pub fn listen_with_config(url: &RistUrl, cfg: &RistConfig) -> Result<Self, RistError> {
-        ensure_init();
-
-        #[cfg(not(feature = "mbedtls"))]
-        if cfg.encryption.is_some() {
-            return Err(RistError::EncryptionDisabled);
-        }
-
-        // Vendored librist 0.2.20's Simple-profile receiver-side RTCP-peer
-        // creation dereferences the new peer before checking it for null
-        // (rist.c's rist_receiver_peer_create); that null case is reachable
-        // for an IPv6 bind (the RTCP peer's re-derived bind URL fails to
-        // come up as IPv6), which SIGSEGVs the whole process. Refuse here,
-        // before any librist context or peer creation, rather than let the
-        // process crash.
-        // Caller/sender side is unaffected — rist_sender_peer_create
-        // null-checks before dereferencing — so only the receiver bind is
-        // guarded.
-        if cfg.profile == RistProfile::Simple && url.addr.is_ipv6() {
-            return Err(RistError::InvalidConfig(
-                "IPv6 bind is not supported in the Simple profile: vendored librist 0.2.20 \
-                 dereferences the RTCP peer before its null check (rist.c \
-                 rist_receiver_peer_create); use RistProfile::Main"
-                    .into(),
-            ));
-        }
-
-        let profile = rist_profile_to_c(cfg.profile);
-        let logging_settings = global_logging_ptr();
-
-        // ===== Create receiver context =====
-        let mut ctx: *mut rist_sys::rist_ctx = std::ptr::null_mut();
-        let rc = unsafe { rist_sys::rist_receiver_create(&mut ctx, profile, logging_settings) };
-        if rc != 0 || ctx.is_null() {
-            return Err(RistError::ContextCreateFailed);
-        }
-        // Guard that calls rist_destroy on every error-exit path. Disarmed at
-        // the bottom of this constructor once ctx is safely in Self.
-        let mut ctx_guard = OnDrop::new(|| unsafe {
-            rist_sys::rist_destroy(ctx);
-        });
-
-        // ===== Parse bind URL into peer_config =====
-        let bind_url_str = native_endpoint(url, true);
-        let bind_url_c = CString::new(bind_url_str.clone())
-            .map_err(|e| RistError::InvalidConfig(format!("bad bind URL: {e}")))?;
-
-        let mut peer_config: *mut rist_sys::rist_peer_config = std::ptr::null_mut();
-        let rc = unsafe { rist_sys::rist_parse_address2(bind_url_c.as_ptr(), &mut peer_config) };
-        if rc != 0 || peer_config.is_null() {
-            return Err(RistError::Ffi {
-                code: rc,
-                function: "rist_parse_address2",
-            });
-            // ctx_guard drops here → rist_destroy(ctx)
-        }
-
-        // Receiver = listener: initiate_conn=0.
-        unsafe {
-            (*peer_config).initiate_conn = 0;
-        }
-
-        // Reuse the sender-side override application (cname / secret / buffer
-        // / etc. apply symmetrically).
-        if let Err(e) = apply_peer_overrides(peer_config, cfg) {
-            unsafe {
-                // peer_config_free2 must happen before rist_destroy (guard drop).
-                rist_sys::rist_peer_config_free2(&mut peer_config);
-            }
-            return Err(e);
-            // ctx_guard drops here → rist_destroy(ctx)
-        }
-
-        // ===== Add peer (bind endpoint) =====
-        let mut peer: *mut rist_sys::rist_peer = std::ptr::null_mut();
-        let rc = unsafe { rist_sys::rist_peer_create(ctx, &mut peer, peer_config) };
-        unsafe {
-            rist_sys::rist_peer_config_free2(&mut peer_config);
-        }
-        if rc != 0 {
-            return Err(RistError::PeerCreateFailed);
-            // ctx_guard drops here → rist_destroy(ctx)
-        }
-
-        // Register the librist stats callback BEFORE rist_start (interval,
-        // leak-one-Arc-ref + reclaim-at-close contract live in
-        // stats::register_stats_callback). The order is load-bearing: librist
-        // >= 0.2.20's protocol thread re-reads the stats interval lock-free on
-        // every tick, so registering once that thread is running is a data
-        // race that TSan reports. librist's own tools
-        // register before start too.
-        let (stats, stats_arg) = crate::stats::register_stats_callback(ctx);
-
-        // ===== Start the session =====
-        let rc = unsafe { rist_sys::rist_start(ctx) };
-        if rc != 0 {
-            // Mirror close(): rist_destroy first (no protocol thread ever ran,
-            // so no callback can be in flight), then reclaim the leaked Arc
-            // ref exactly once — there is no Self for close() to do it.
-            drop(ctx_guard);
-            unsafe { drop(Arc::from_raw(stats_arg as *const Mutex<RistStats>)) };
-            return Err(RistError::Ffi {
-                code: rc,
-                function: "rist_start",
-            });
-        }
-
-        // All setup succeeded — ctx ownership transfers to Self; disarm the guard.
-        ctx_guard.disarm();
         Ok(Self {
-            ctx,
-            bind_url: bind_url_str,
+            ctx: crate::ctx::RistCtx::open(url, cfg, crate::ctx::Role::Receiver)?,
             alive: Arc::new(AtomicBool::new(true)),
             cancelled: Arc::new(AtomicBool::new(false)),
-            stats,
-            stats_arg,
         })
     }
 
     /// Bind URL the receiver was built against (for diagnostics).
     pub fn bind_url(&self) -> &str {
-        &self.bind_url
+        &self.ctx.endpoint
     }
 
     /// Cross-thread cancel handle for this receiver; see [`RistCancelHandle`].
@@ -231,13 +109,13 @@ impl RistRecvTransport {
 
     /// Current snapshot of cumulative stats.
     pub fn stats(&self) -> RistStats {
-        self.stats.lock().map(|s| *s).unwrap_or_default()
+        self.ctx.stats.lock().map(|s| *s).unwrap_or_default()
     }
 
     /// Count one dropped datagram (oversize / malformed). Centralized so the
     /// counter source is consistent with stats living behind a lock.
     fn bump_dropped(&self) {
-        if let Ok(mut s) = self.stats.lock() {
+        if let Ok(mut s) = self.ctx.stats.lock() {
             s.packets_dropped = s.packets_dropped.wrapping_add(1);
         }
     }
@@ -265,8 +143,9 @@ impl RecvTransport for RistRecvTransport {
         }
 
         let mut block: *mut rist_sys::rist_data_block = std::ptr::null_mut();
-        let rc =
-            unsafe { rist_sys::rist_receiver_data_read2(self.ctx, &mut block, POLL_TIMEOUT_MS) };
+        let rc = unsafe {
+            rist_sys::rist_receiver_data_read2(self.ctx.as_ptr(), &mut block, POLL_TIMEOUT_MS)
+        };
 
         if rc < 0 {
             self.alive.store(false, Ordering::Release);
@@ -339,7 +218,7 @@ impl RecvTransport for RistRecvTransport {
                 }
                 // Still a received packet; keeps the count consistent with
                 // tst-udp.
-                if let Ok(mut s) = self.stats.lock() {
+                if let Ok(mut s) = self.ctx.stats.lock() {
                     s.packets_received = s.packets_received.wrapping_add(1);
                 }
                 Err(TransportError::Backpressure {
@@ -359,7 +238,7 @@ impl RecvTransport for RistRecvTransport {
                 unsafe {
                     rist_sys::rist_receiver_data_block_free2(&mut block);
                 }
-                if let Ok(mut s) = self.stats.lock() {
+                if let Ok(mut s) = self.ctx.stats.lock() {
                     s.bytes_received = s.bytes_received.wrapping_add(copy_n as u64);
                     s.packets_received = s.packets_received.wrapping_add(1);
                 }
@@ -396,21 +275,7 @@ impl RecvTransport for RistRecvTransport {
 
     fn close(&mut self) {
         self.alive.store(false, Ordering::Release);
-        if !self.ctx.is_null() {
-            unsafe {
-                rist_sys::rist_destroy(self.ctx);
-            }
-            self.ctx = std::ptr::null_mut();
-        }
-        // Reclaim the leaked Arc ref EXACTLY ONCE. rist_destroy above joined
-        // librist's protocol thread, so no callback can be in flight. The
-        // null-guard makes double-close / Drop-after-close a no-op.
-        if !self.stats_arg.is_null() {
-            unsafe {
-                drop(Arc::from_raw(self.stats_arg as *const Mutex<RistStats>));
-            }
-            self.stats_arg = std::ptr::null_mut();
-        }
+        self.ctx.destroy();
     }
 }
 
@@ -429,6 +294,12 @@ impl RistRecvTransport {
 
     pub(crate) fn force_dead_for_test(&self) {
         self.alive.store(false, Ordering::Release);
+    }
+
+    /// Strong references to the stats cell: 2 while librist holds the
+    /// callback's leaked one, 1 once `close()` has reclaimed it.
+    pub(crate) fn stats_refs_for_test(&self) -> usize {
+        Arc::strong_count(&self.ctx.stats)
     }
 }
 
@@ -515,5 +386,37 @@ mod tests {
             Err(_) => { /* other error acceptable (port=0 etc.) */ }
             Ok(_) => panic!("expected error for non-bind URL"),
         }
+    }
+
+    #[test]
+    fn close_reclaims_the_stats_reference_exactly_once() {
+        let mut t = match RistRecvTransport::listen("rist://@127.0.0.1:19008") {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        assert_eq!(t.stats_refs_for_test(), 2);
+        t.close();
+        assert_eq!(t.stats_refs_for_test(), 1);
+        t.close();
+        assert_eq!(t.stats_refs_for_test(), 1);
+    }
+
+    /// Without the `mbedtls` feature, a config asking for encryption is
+    /// refused as `EncryptionDisabled` before the Simple-profile IPv6 guard
+    /// looks at the address.
+    #[cfg(not(feature = "mbedtls"))]
+    #[test]
+    fn encryption_check_precedes_the_ipv6_guard() {
+        use crate::config::{EncryptionKey, RistProfile};
+        let url = RistUrl::parse("rist://@[::1]:33025").unwrap();
+        let cfg = RistConfig {
+            profile: RistProfile::Simple,
+            encryption: Some(EncryptionKey::aes128("s")),
+            ..RistConfig::default()
+        };
+        assert!(matches!(
+            RistRecvTransport::listen_with_config(&url, &cfg),
+            Err(RistError::EncryptionDisabled)
+        ));
     }
 }

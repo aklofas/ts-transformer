@@ -35,6 +35,7 @@ pub mod transport;
 pub mod url;
 
 mod binding_kind;
+mod ctx;
 
 pub use config::{EncryptionKey, RistConfig, RistProfile, RistSecret};
 pub use error::{RistError, RistErrorKind};

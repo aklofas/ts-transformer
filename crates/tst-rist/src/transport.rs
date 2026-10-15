@@ -1,18 +1,16 @@
 //! [`RistTransport`] — RIST sender impl [`Transport`].
 
-use std::ffi::CString;
-use std::os::raw::{c_char, c_void};
+use std::os::raw::c_char;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
 
 use crate::config::{EncryptionKey, RistConfig, RistProfile};
 use crate::error::RistError;
-use crate::init::{GLOBAL_LOGGING, ensure_init};
-use crate::stats::{OnDrop, RistStats};
-use crate::url::{RistUrl, native_endpoint};
+use crate::init::GLOBAL_LOGGING;
+use crate::stats::RistStats;
+use crate::url::RistUrl;
 
 /// Cheap cloneable handle that ends a [`crate::recv::RistRecvTransport`]
 /// parked in `recv_bytes` on librist's 100 ms poll and makes the *next*
@@ -77,25 +75,20 @@ impl TransportCancel for RistCancelHandle {
 /// Wraps a librist `rist_ctx` configured as a sender. Per-message send via
 /// `rist_sender_data_write`. Drop calls `rist_destroy`.
 pub struct RistTransport {
-    ctx: *mut rist_sys::rist_ctx,
+    ctx: crate::ctx::RistCtx,
     pkt_size: usize,
-    peer_url: String,
     alive: Arc<AtomicBool>,
     /// Set by [`RistCancelHandle::cancel`]; checked at `send_bytes` entry
     /// BEFORE `alive` so a cancelled transport reports `ExplicitClose`.
     cancelled: Arc<AtomicBool>,
-    stats: Arc<Mutex<RistStats>>,
-    /// Leaked `Arc<Mutex<RistStats>>` ref handed to librist as the stats
-    /// callback `arg`. Reclaimed exactly once in `close()` after `rist_destroy`.
-    stats_arg: *mut c_void,
 }
 
 // librist's rist_ctx is safe to share across threads as long as we don't pass
 // it concurrently to mutating ops from multiple threads — Transport's methods
 // take &mut self so the borrow checker enforces single-threaded access here.
-// stats_arg is a leaked Arc<Mutex<RistStats>> ref: its pointee is Send + Sync,
-// and the pointer is reclaimed (Arc::from_raw) exactly once in close() under
-// &mut self, so it is never aliased across threads.
+// The context, its stats cell and the leaked callback reference live in
+// `RistCtx` and are reclaimed exactly once in `RistCtx::destroy` under
+// `&mut self`, so they are never aliased across threads.
 unsafe impl Send for RistTransport {}
 
 impl RistTransport {
@@ -114,117 +107,22 @@ impl RistTransport {
 
     /// Build a sender from a parsed URL + config.
     pub fn connect_with_config(url: &RistUrl, cfg: &RistConfig) -> Result<Self, RistError> {
-        ensure_init();
-
-        #[cfg(not(feature = "mbedtls"))]
-        if cfg.encryption.is_some() {
-            return Err(RistError::EncryptionDisabled);
-        }
-
-        let profile = rist_profile_to_c(cfg.profile);
-        let logging_settings = global_logging_ptr();
-
-        // ===== Create sender context =====
-        let mut ctx: *mut rist_sys::rist_ctx = std::ptr::null_mut();
-        let rc = unsafe { rist_sys::rist_sender_create(&mut ctx, profile, 0, logging_settings) };
-        if rc != 0 || ctx.is_null() {
-            return Err(RistError::ContextCreateFailed);
-        }
-        // Guard that calls rist_destroy on every error-exit path. Disarmed at
-        // the bottom of this constructor once ctx is safely in Self.
-        let mut ctx_guard = OnDrop::new(|| unsafe {
-            rist_sys::rist_destroy(ctx);
-        });
-
-        // ===== Parse peer URL into peer_config =====
-        let peer_url_str = native_endpoint(url, false);
-        let peer_url_c = CString::new(peer_url_str.clone())
-            .map_err(|e| RistError::InvalidConfig(format!("bad peer URL: {e}")))?;
-
-        let mut peer_config: *mut rist_sys::rist_peer_config = std::ptr::null_mut();
-        let rc = unsafe { rist_sys::rist_parse_address2(peer_url_c.as_ptr(), &mut peer_config) };
-        if rc != 0 || peer_config.is_null() {
-            return Err(RistError::Ffi {
-                code: rc,
-                function: "rist_parse_address2",
-            });
-            // ctx_guard drops here → rist_destroy(ctx)
-        }
-
-        // Sender = caller: initiate_conn=1.
-        unsafe {
-            (*peer_config).initiate_conn = 1;
-        }
-
-        // Apply cfg overlays. apply_peer_overrides is pub(crate) so recv.rs
-        // can reuse it.
-        if let Err(e) = apply_peer_overrides(peer_config, cfg) {
-            unsafe {
-                // peer_config_free2 must happen before rist_destroy (guard drop).
-                rist_sys::rist_peer_config_free2(&mut peer_config);
-            }
-            return Err(e);
-            // ctx_guard drops here → rist_destroy(ctx)
-        }
-
-        // ===== Add peer to sender =====
-        let mut peer: *mut rist_sys::rist_peer = std::ptr::null_mut();
-        let rc = unsafe { rist_sys::rist_peer_create(ctx, &mut peer, peer_config) };
-        // peer_config is now owned by librist (or freed internally); per
-        // librist docs we still free the wrapper.
-        unsafe {
-            rist_sys::rist_peer_config_free2(&mut peer_config);
-        }
-
-        if rc != 0 {
-            return Err(RistError::PeerCreateFailed);
-            // ctx_guard drops here → rist_destroy(ctx)
-        }
-
-        // Register the librist stats callback BEFORE rist_start (interval,
-        // leak-one-Arc-ref + reclaim-at-close contract live in
-        // stats::register_stats_callback). The order is load-bearing: librist
-        // >= 0.2.20's protocol thread re-reads the stats interval lock-free on
-        // every tick, so registering once that thread is running is a data
-        // race that TSan reports. librist's own tools
-        // register before start too.
-        let (stats, stats_arg) = crate::stats::register_stats_callback(ctx);
-
-        // ===== Start the session =====
-        let rc = unsafe { rist_sys::rist_start(ctx) };
-        if rc != 0 {
-            // Mirror close(): rist_destroy first (no protocol thread ever ran,
-            // so no callback can be in flight), then reclaim the leaked Arc
-            // ref exactly once — there is no Self for close() to do it.
-            drop(ctx_guard);
-            unsafe { drop(Arc::from_raw(stats_arg as *const Mutex<RistStats>)) };
-            return Err(RistError::Ffi {
-                code: rc,
-                function: "rist_start",
-            });
-        }
-
-        // All setup succeeded — ctx ownership transfers to Self; disarm the guard.
-        ctx_guard.disarm();
         Ok(Self {
-            ctx,
+            ctx: crate::ctx::RistCtx::open(url, cfg, crate::ctx::Role::Sender)?,
             pkt_size: cfg.pkt_size,
-            peer_url: peer_url_str,
             alive: Arc::new(AtomicBool::new(true)),
             cancelled: Arc::new(AtomicBool::new(false)),
-            stats,
-            stats_arg,
         })
     }
 
     /// Peer URL the transport was built against (for diagnostics).
     pub fn peer_url(&self) -> &str {
-        &self.peer_url
+        &self.ctx.endpoint
     }
 
     /// Current snapshot of cumulative stats.
     pub fn stats(&self) -> RistStats {
-        self.stats.lock().map(|s| *s).unwrap_or_default()
+        self.ctx.stats.lock().map(|s| *s).unwrap_or_default()
     }
 
     /// Cross-thread cancel handle for this sender; see [`RistCancelHandle`].
@@ -283,7 +181,7 @@ impl Transport for RistTransport {
             ref_: std::ptr::null_mut(),
         };
 
-        let rc = unsafe { rist_sys::rist_sender_data_write(self.ctx, &block) };
+        let rc = unsafe { rist_sys::rist_sender_data_write(self.ctx.as_ptr(), &block) };
         match classify_write_rc(rc) {
             WriteOutcome::Sent => {}
             WriteOutcome::QueueFull => {
@@ -307,7 +205,7 @@ impl Transport for RistTransport {
             }
         }
 
-        if let Ok(mut s) = self.stats.lock() {
+        if let Ok(mut s) = self.ctx.stats.lock() {
             s.bytes_sent = s.bytes_sent.wrapping_add(msg.len() as u64);
             s.packets_sent = s.packets_sent.wrapping_add(1);
         }
@@ -332,21 +230,7 @@ impl Transport for RistTransport {
 
     fn close(&mut self) {
         self.alive.store(false, Ordering::Release);
-        if !self.ctx.is_null() {
-            unsafe {
-                rist_sys::rist_destroy(self.ctx);
-            }
-            self.ctx = std::ptr::null_mut();
-        }
-        // Reclaim the leaked Arc ref EXACTLY ONCE. rist_destroy above joined
-        // librist's protocol thread, so no callback can be in flight. The
-        // null-guard makes double-close / Drop-after-close a no-op.
-        if !self.stats_arg.is_null() {
-            unsafe {
-                drop(Arc::from_raw(self.stats_arg as *const Mutex<RistStats>));
-            }
-            self.stats_arg = std::ptr::null_mut();
-        }
+        self.ctx.destroy();
     }
 }
 
@@ -518,6 +402,12 @@ impl RistTransport {
     /// Does NOT touch ctx.
     pub(crate) fn force_dead_for_test(&self) {
         self.alive.store(false, Ordering::Release);
+    }
+
+    /// Strong references to the stats cell: 2 while librist holds the
+    /// callback's leaked one, 1 once `close()` has reclaimed it.
+    pub(crate) fn stats_refs_for_test(&self) -> usize {
+        Arc::strong_count(&self.ctx.stats)
     }
 }
 
@@ -769,5 +659,20 @@ mod tests {
         };
         apply_peer_overrides(&mut pc, &cfg).unwrap();
         assert_eq!(pc.recovery_maxbitrate, 4000);
+    }
+
+    /// `close()` reclaims the stats reference handed to librist exactly once;
+    /// a second close and the drop leave it alone.
+    #[test]
+    fn close_reclaims_the_stats_reference_exactly_once() {
+        let mut t = match RistTransport::connect("rist://127.0.0.1:19007") {
+            Ok(t) => t,
+            Err(_) => return, // librist unavailable on this runner — same skip as the siblings
+        };
+        assert_eq!(t.stats_refs_for_test(), 2);
+        t.close();
+        assert_eq!(t.stats_refs_for_test(), 1);
+        t.close();
+        assert_eq!(t.stats_refs_for_test(), 1);
     }
 }
