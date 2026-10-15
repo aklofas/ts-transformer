@@ -163,15 +163,19 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## ST 0102 universal-set form
 
-- **Status:** Deferred. The Local Set form ships in `klv::st0102`
-  (decode + decode_strict + encode); the parallel Universal Set form
-  (16-byte UL per item, separate from the LS encoding) is not
-  implemented.
+- **Status:** Deferred, for ST 0102 and VMTI (ST 0903) alike. The Local Set
+  form ships in `klv::st0102` and `klv::st0903` (decode + decode_strict +
+  encode); the parallel Universal Set form (16-byte UL per item, separate
+  from the LS encoding) is not implemented for either.
 - **Why deferred:** LS form is the only form on MPEG-TS+KLV streams.
   The Universal Set is for archival / file-based use cases the library
   does not target.
 - **Trigger to revisit:** A consumer ingesting archival / file-based
-  ST 0102-bearing streams that use the Universal Set encoding.
+  ST 0102- or VMTI-bearing streams that use the Universal Set encoding.
+
+### VMTI Universal Set form
+
+- **Status:** Deferred — covered by "ST 0102 universal-set form" above.
 
 ## ST 0102 country-code validation
 
@@ -232,17 +236,6 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** A consumer with VMTI on its own KLV PID
   asks for ergonomic dispatch, AND we're prepared to commit to a
   `MetadataKind::*` policy across all typed sets.
-
-## VMTI Universal Set form
-
-- **Status:** Local Set form ships in `klv::st0903` (decode +
-  decode_strict + encode); the parallel Universal Set form (16-byte UL
-  per item, separate from the LS encoding) is not implemented.
-- **Why deferred:** LS form is the only form on MPEG-TS+KLV streams.
-  The Universal Set is for archival / file-based use cases the library
-  does not target.
-- **Trigger to revisit:** A consumer ingesting archival / file-based
-  VMTI-bearing streams that use the Universal Set encoding.
 
 ## Typed ST 0601 nested local sets (ST 1206 / ST 1002 / ST 1601 / ST 1602 / ST 1607 Segment + Amend)
 
@@ -457,26 +450,36 @@ mean **Deferred**. An entry whose feature has shipped must never read
 ## Audio frame parsers — AAC LATM and AC-3
 
 - **Status:** Partially shipped. The MP2 (Layer I/II/III) and AAC ADTS
-  frame iterators ship (`codec::mpegaudio` + `codec::aac`).
+  frame iterators ship (`codec::mpegaudio::frames`, `codec::aac::frames`).
   An **AC-3 (ATSC A/52) syncframe parser ships** as `codec::ac3`
   (`parse_syncframe` / `Ac3SyncInfo`) — used by the muxer to derive the
   `AC-3_audio_stream_descriptor` and by the demuxer to enforce single-
   syncframe alignment. A **LOAS/LATM sync validator ships** as
   `codec::aac::latm` (`validate_latm_sync`). Still deferred: full AAC
-  LATM `audioMuxElement` decode (ISO/IEC 14496-3 §1.7) and a full AC-3
-  block-level frame iterator.
+  LATM `audioMuxElement` decode (ISO/IEC 14496-3 §1.7), a full AC-3
+  block-level frame iterator, and the per-frame counters that come with
+  them — LATM/AC-3 PIDs report `Some(StreamCodecStats::Unknown)` through
+  the codec-stats fallback rather than `StreamCodecStats::Audio { frames }`.
 - **Why deferred (remaining decode):** Neither codec appears in the
   local capture corpus (zero LATM events, zero AC-3 events across 250
   files / 33 GB when the audio parsers shipped). Synthetic-only fixtures would be the
   validation path; we defer the deeper decode until a consumer or
   capture surfaces them so the work is driven by real-world bytes.
 - **Trigger to revisit:** A consumer ships a stream needing full LATM
-  `audioMuxElement` decode or AC-3 block-level typed frame access, or a
+  `audioMuxElement` decode, AC-3 block-level typed frame access, or
+  per-frame counters / frame-aligned dispatch on LATM/AC-3 audio, or a
   corpus capture surfaces either need.
 - **Scope when added:** the deeper decode extends the existing
   `codec::aac::latm` / `codec::ac3` modules, following the same
   iterator-of-`Result<Frame, CodecParseError>` shape as the existing
-  ADTS / MPEG-audio slices.
+  ADTS / MPEG-audio slices, and wires the new iterators into the
+  demuxer's per-PID audio counter path the way MP2 and AAC-ADTS are; the
+  `StreamCodecStats::Audio { frames }` variant absorbs the counts without
+  an ABI change.
+
+### Audio frame iterators for LATM + AC-3
+
+- **Status:** Deferred — covered by "Audio frame parsers — AAC LATM and AC-3" above.
 
 ## Non-ATSC AC-3 variants (E-AC-3, DVB-shaped AC-3)
 
@@ -560,9 +563,10 @@ mean **Deferred**. An entry whose feature has shipped must never read
 ## URL parameter coverage (Group 3 — recognized but unsupported)
 
 - **Status:** Parser recognizes the libsrt URL key by name and rejects
-  with `UrlError::UnsupportedKey` carrying its `SRTO_*` name. No
-  silent failure; the operator gets a clear "this option exists but
-  isn't yet exposed" message.
+  with `UrlError::UnsupportedKey` carrying its `SRTO_*` name — no silent
+  failure; the operator gets a clear "this option exists but isn't yet
+  exposed" message. Of the roughly 14 Group 3 keys ffmpeg honors, only
+  Category A (5 cheap aliases mapping to existing setters) shipped.
 - **The list:** `bindtodevice` (`SRTO_BINDTODEVICE`),
   `cryptomode` (`SRTO_CRYPTOMODE`), `drifttracer`
   (`SRTO_DRIFTTRACER`), `enforcedencryption` (`SRTO_ENFORCEDENCRYPTION`),
@@ -576,32 +580,34 @@ mean **Deferred**. An entry whose feature has shipped must never read
   `retransmitalgo` (`SRTO_RETRANSMITALGO`), `snddropdelay`
   (`SRTO_SNDDROPDELAY`), `transtype` (`SRTO_TRANSTYPE`), `tsbpdmode`
   (`SRTO_TSBPDMODE`).
-- **Why deferred:** Each requires a new `SocketBuilder` setter on
-  `tst-srt` plus its typed wrapper / validation. Single-developer
-  scope discipline — none of these has a current consumer ask.
-- **Trigger to revisit:** A consumer asks for any specific key. Adding
-  one is mechanical: add the builder setter + URL parser arm + remove
-  it from this list and the parser's `GROUP3_REJECTED` table.
+- **Why deferred:** Each key needs a new `SocketBuilder` setter on
+  `tst-srt` (the Category C keys `enforcedencryption` / `kmrefreshrate` /
+  `kmpreannounce` / `iptos` / `ipttl` / `snddropdelay` / `transtype` /
+  `tsbpdmode` also a new `SocketConfig` field) plus its typed wrapper /
+  validation and URL parser arm. None has a current consumer ask, and
+  landing them together would duplicate work each key's own trigger does
+  anyway, so they are unblocked one by one.
+- **`rcvbuf` / `sndbuf` (units, not setters):** rejected to avoid a
+  foot-gun: libsrt's `SRTO_RCVBUF` / `SRTO_SNDBUF` are byte counts, and
+  earlier builder setters were misleadingly named `recv_buf_packets` /
+  `send_buf_packets`. The setters are now `recv_buf_bytes` /
+  `send_buf_bytes`, so wiring the URL keys is only the parser arms
+  (move them from `GROUP3_REJECTED` to the mapped set in `url.rs`).
+  Distinct from `udprcvbuf` / `udpsndbuf` (kernel UDP socket buffers via
+  `SRTO_UDP_RCVBUF` / `SRTO_UDP_SNDBUF`), which **are** URL keys (and
+  the `recv_buffer_size` / `send_buffer_size` ffmpeg aliases).
+- **Trigger to revisit:** A consumer asks for a specific key (for
+  `rcvbuf` / `sndbuf`: URL-driven buffer sizing). Adding one is
+  mechanical: add the builder setter + URL parser arm, then remove the
+  key from this list and the parser's `GROUP3_REJECTED` table.
 
-## URL parameter coverage — `rcvbuf` / `sndbuf` (units mismatch)
+### URL parameter coverage — `rcvbuf` / `sndbuf` (units mismatch)
 
-- **Status:** Listed in the URL parser as Group 3 (rejected). Separate
-  entry from the rest because the blocker is units, not "no setter
-  yet."
-- **Why deferred:** The URL parser currently rejects `rcvbuf`/`sndbuf`
-  to avoid a foot-gun: libsrt's `SRTO_RCVBUF` / `SRTO_SNDBUF` are
-  byte counts, and earlier builder setters were misleadingly named
-  `recv_buf_packets` / `send_buf_packets`. The units confusion is now
-  resolved: the builder setters were renamed to `recv_buf_bytes` /
-  `send_buf_bytes`. Wiring the URL keys is now
-  mechanical — the only remaining work is adding the parser arms.
-- **Note:** distinct from `udprcvbuf` / `udpsndbuf` (kernel UDP socket
-  buffer sizes via `SRTO_UDP_RCVBUF` / `SRTO_UDP_SNDBUF`), which **are**
-  exposed as URL keys (and as `recv_buffer_size` / `send_buffer_size`
-  ffmpeg aliases).
-- **Trigger to revisit:** A consumer asks for URL-driven buffer sizing.
-  Add the parser arms in `url.rs` (move `rcvbuf`/`sndbuf` from
-  `GROUP3_REJECTED` to the mapped set) and remove from this list.
+- **Status:** Deferred — covered by "URL parameter coverage (Group 3 — recognized but unsupported)" above.
+
+### URL parameter coverage — bigger Group 3 keys (Category B/C)
+
+- **Status:** Deferred — covered by "URL parameter coverage (Group 3 — recognized but unsupported)" above.
 
 ## URL-vs-builder conflict warning channel
 
@@ -621,42 +627,36 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## URL parser: additional test coverage
 
-- **Status:** Three test categories not in the initial ship:
+- **Status:** Deferred: three test categories and strict percent-encoding
+  validation.
   1. Property-based roundtrip via `proptest` (random valid URLs
-     roundtrip cleanly through parse and apply).
+     roundtrip cleanly through parse and apply); `tst-srt` already
+     carries the `proptest` dev-dependency, but no URL property test
+     uses it.
   2. Concurrent-open smoke (50–100 threads, no shared parser state).
   3. Atomicity-under-load 1000-iteration smoke (the clone-then-mutate
      atomicity invariant defended against future regression).
-- **Why deferred:** The initial ship includes a fuzz target for
-  panic-freedom and a one-shot atomicity test. (`tst-srt` already carries
-  the `proptest` dev-dependency, but no URL property test uses it.) The
-  parser's structural invariants (no
-  shared mutable state, clone-then-mutate) make 2–3 redundant for
-  initial coverage. They're additive regression-guards, not must-have
-  for first ship.
-- **Trigger to revisit:** First consumer-reported URL parser bug
-  becomes a property test; concurrent-open returns when adding builder
-  setters from Group 3 (more parser surface = more potential for
-  shared state); atomicity-under-load gets re-considered if the
-  clone-then-mutate invariant gets touched (e.g. someone optimizes the clone away for
-  performance).
+  4. Strict percent-encoding: the parser inherits
+     `url::Url::query_pairs()`'s lenient handling, so `%2` or `%XY` in a
+     query pass through as literal substrings instead of failing with
+     `UrlError::Syntax`. The fuzz target enforces panic-freedom only.
+- **Why deferred:** The shipped parser has a panic-freedom fuzz target
+  and a one-shot atomicity test, and its structural invariants (no
+  shared mutable state, clone-then-mutate) make 2–3 redundant for now.
+  Strict rejection would need a query pre-validation pass or a manual
+  percent-decode, for a low-risk failure mode: the typed per-key
+  validator usually rejects the literal substring (`StreamId::new("%2")`
+  accepts ASCII, so that escape hatch is partial).
+- **Trigger to revisit:** the first consumer-reported URL parser bug
+  becomes a property test; concurrent-open returns when Group 3 setters
+  land (more parser surface, more room for shared state); the atomicity
+  smoke returns if the clone-then-mutate invariant is touched (e.g. the
+  clone optimized away); strict validation when a consumer reports a
+  malformed URL silently parsing where they expected an error.
 
-## URL parser: strict percent-encoding validation
+### URL parser: strict percent-encoding validation
 
-- **Status:** The parser inherits `url::Url::query_pairs()`'s lenient
-  handling of malformed percent-encoding in queries. Sequences like
-  `%2` or `%XY` pass through as literal substrings rather than
-  rejecting with `UrlError::Syntax`. The fuzz target enforces
-  panic-freedom; functional rejection of malformed sequences is not
-  enforced.
-- **Why deferred:** Strict rejection would mean either pre-validating
-  the query string before handing to `url::Url::parse` or adding a
-  manual percent-decode pass. Non-trivial work for a low-risk failure
-  mode — the worst that happens is the typed validator on the per-key
-  value rejects the literal `%2` substring (e.g. `StreamId::new("%2")`
-  accepts ASCII, so even that escape hatch is partial).
-- **Trigger to revisit:** A consumer reports a malformed URL silently
-  parsing where they expected an error.
+- **Status:** Deferred — covered by "URL parser: additional test coverage" above.
 
 ## Errno-based error classification (`SrtErrno` minor codes)
 
@@ -704,23 +704,6 @@ mean **Deferred**. An entry whose feature has shipped must never read
   (LeakSanitizer is no longer a reason: the asan jobs run leak detection
   against the atexit-cleaned process today).
 
-## URL parameter coverage — bigger Group 3 keys (Category B/C)
-
-- **Status:** Roughly 14 Group 3 keys that ffmpeg honors were reviewed;
-  only Category A (5 cheap aliases mapping to existing setters) shipped.
-  Categories B (`rcvbuf` / `sndbuf` /
-  `messageapi` / `nakreport` / `minversion`) and C
-  (`enforcedencryption` / `kmrefreshrate` / `kmpreannounce` / `iptos` /
-  `ipttl` / `snddropdelay` / `transtype` / `tsbpdmode`) remain
-  deferred. Each Category C key needs a new `SocketConfig` field plus
-  typed wrapper plus URL parser arm.
-- **Why deferred:** landing them all at once would duplicate work that
-  happens anyway as each key's own trigger fires; they are unblocked one
-  by one instead.
-- **Trigger to revisit:** Each individual key's existing trigger in
-  the general "Group 3 unsupported keys" entry above; nothing
-  additional.
-
 ## Reconnect counters on `ManagedTransport` stats
 
 - **Status:** Partially resolved (0.6.0). Send-side reconnect/gap
@@ -744,20 +727,6 @@ mean **Deferred**. An entry whose feature has shipped must never read
   receive pipeline asks for visibility into how often the link is
   flapping (e.g. for alarm thresholds / backoff tuning) beyond the
   existing rebuild count.
-
-## `Socket::close` Result-type cleanup
-
-- **Status:** Resolved in 0.8.0: `tst_srt::Socket::close(self)` and
-  `tst_srt::Listener::close(self)` are infallible. Both always returned
-  `Ok`, because the `srt_close` return code is consumed inside the
-  `SrtCancelHandle` closer (a `Fn`, no return path). A caller that wrote
-  `sock.close()?` or matched on the result now fails to compile.
-
-## `MaxBandwidth` variant naming vs libsrt sentinels
-
-- **Status:** Resolved in 0.8.0: renamed to `InputRelative` (0) and
-  `Infinite` (−1); neither old name survives, so a stale use fails to
-  compile instead of changing behaviour.
 
 ## Typed WebVTT cue substrate (`mpegts::webvtt::format_pes_payload` + `WebVttCue`)
 
@@ -800,40 +769,27 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## WebVTT-in-TS interop
 
-- **Status:** Deferred. WebVTT-in-MPEG-TS carriage ships
-  (registration_descriptor `"VTTC"` + single-cue PES + subtitle PID
-  excluded from PCR fallback) and round-trips through the library's
-  own mux + demux. Interop with external tools (ffmpeg, hls.js,
-  mediamtx, etc.) has not been empirically verified.
-- **Why deferred:** The `"VTTC"` format_identifier is not defined by
-  any published normative spec (RFC 8216, draft-pantos-hls-rfc8216bis,
-  Apple HLS authoring docs — none mention it). It appears in ffmpeg's
-  `mpegtsenc.c` emitter and is widely observed in WebVTT-in-TS
-  captures, but the cross-tool interop is empirical, not normative.
-  Empirical interop testing requires fixture corpus from each tool +
-  a test matrix — a separate piece of work.
-- **Trigger to revisit:** a WebVTT subtitle profile joins
-  `crates/tst-interop`'s synthetic profile set and `scripts/interop/
-  run-matrix.sh` gains cells for it (ffmpeg `-c:s webvtt` extraction, hls.js
-  / mediamtx playback), or a consumer emits WebVTT-in-TS to a third-party
-  player. (The interop matrix exists — 12 profiles, 159 cells — but no
-  profile carries a subtitle stream.)
-
-## CEA-708 interop
-
-- **Status:** Deferred. CEA-708 caption data as a standalone
-  elementary stream ships (registration_descriptor
-  `"GA94"` + private-data PES). Library-internal round-trip works;
-  interop with ATSC ecosystem tooling (decoders, MPEG-2 video user_data
-  bridges) has not been empirically verified.
-- **Why deferred:** ATSC A/53 Part 4 §6.2.3 defines `"GA94"` as the
-  `user_data_identifier` for caption data **embedded in MPEG-2 video
-  user_data**, not as a stream-level marker. Using it for standalone
-  PES carriage is best-effort interop with ATSC ecosystem tooling,
-  not normatively defined. Empirical interop testing requires the
-  same fixture / matrix infrastructure as the WebVTT-in-TS entry
-  above.
-- **Standards-aligned form not implemented (SMPTE ST 334-2 CDP):**
+- **Status:** Deferred, for WebVTT-in-TS and CEA-708 alike, and for real
+  broadcast fixtures. Both carriages ship and round-trip through the
+  library's own mux + demux — WebVTT (registration_descriptor `"VTTC"` +
+  single-cue PES, subtitle PID excluded from PCR fallback) and CEA-708
+  caption data as a standalone elementary stream
+  (registration_descriptor `"GA94"` + private-data PES) — but interop with
+  external tools (ffmpeg, hls.js, mediamtx, ATSC decoders, MPEG-2 video
+  user_data bridges) has not been empirically verified, and the subtitle
+  tests use synthetic-only fixtures (~200 KB from
+  `gen-subtitle-fixtures`), no real broadcast captures.
+- **Why deferred:** Neither marker is normative for this use. `"VTTC"` is
+  in no published spec (RFC 8216, draft-pantos-hls-rfc8216bis, Apple HLS
+  authoring docs); it comes from ffmpeg's `mpegtsenc.c` emitter and is
+  widely observed in WebVTT-in-TS captures. ATSC A/53 Part 4 §6.2.3
+  defines `"GA94"` as the `user_data_identifier` for caption data
+  **embedded in MPEG-2 video user_data**, not as a stream-level marker,
+  so standalone PES carriage is best-effort. Empirical interop needs a
+  fixture corpus per tool and matrix cells; real broadcast captures add
+  legal / licensing overhead, and synthetic fixtures plus the ffprobe
+  cross-check were enough to ship.
+- **Standards-aligned CEA-708 form not implemented (SMPTE ST 334-2 CDP):**
   SMPTE ST 334-2
   (Caption Distribution Packet) + EG 43 §6.7 define the *standards-aligned*
   unit for standalone caption-on-a-PID carriage: a **CDP** (`0x9669`
@@ -845,10 +801,23 @@ mean **Deferred**. An entry whose feature has shipped must never read
   gives the full byte layout. Do NOT silently change the wire format: if implemented, the CDP
   form should be a distinct carriage variant, not a mutation of the
   existing raw-cc_data `Cea708Standalone`.
-- **Trigger to revisit:** a CEA-708 profile joins the interop matrix
-  (`ccextractor` / ffmpeg closed-caption decode cell), or an ATSC-ecosystem
-  consumer asks — the latter is also the trigger for the ST 334-2 CDP
-  variant. (No matrix profile carries a caption stream today.)
+- **Trigger to revisit:** a WebVTT or CEA-708 profile joins
+  `crates/tst-interop`'s synthetic profile set with `scripts/interop/
+  run-matrix.sh` cells (ffmpeg `-c:s webvtt` extraction, hls.js /
+  mediamtx playback; `ccextractor` / ffmpeg closed-caption decode) — the
+  matrix has 12 profiles and 159 cells, none carrying a subtitle or
+  caption stream; a consumer emits WebVTT-in-TS to a third-party player;
+  an ATSC-ecosystem consumer asks (also the trigger for the ST 334-2 CDP
+  variant); or a consumer reports a real-world bug the synthetic suite
+  missed (the trigger for acquiring broadcast captures).
+
+### CEA-708 interop
+
+- **Status:** Deferred — covered by "WebVTT-in-TS interop" above.
+
+### Real-world public-broadcast subtitle fixture acquisition
+
+- **Status:** Deferred — covered by "WebVTT-in-TS interop" above.
 
 ## RP 225 registered private information in KLV (in-KLV-stream vendor metadata)
 
@@ -893,19 +862,6 @@ mean **Deferred**. An entry whose feature has shipped must never read
   delivery is an HLS-packager / orchestrator concern outside this
   library.
 - **Trigger to revisit:** Never (different layer).
-
-## Real-world public-broadcast subtitle fixture acquisition
-
-- **Status:** Deferred. The subtitle tests use synthetic-only fixtures
-  (~200 KB) generated by `gen-subtitle-fixtures` — no real
-  broadcast captures.
-- **Why deferred:** Synthetic + ffprobe cross-check is enough for
-  ship; real broadcast captures add coverage if/when a real-world
-  bug surfaces that the synthetic suite missed. Acquisition has
-  legal / licensing overhead too.
-- **Trigger to revisit:** A consumer reports a real-world bug the
-  synthetic suite missed.
-
 
 ## Caller override of `random_access_indicator` / `decoder_config_flag` on mux
 
@@ -1061,29 +1017,36 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## macOS x86_64 (Intel)
 
-- **Status:** Deferred. macOS arm64 (Apple Silicon) is Tier 1.
-  The Python wheel for macOS Intel was built best-effort for
-  v0.1.0 but removed 2026-06-10 — Intel-Mac users
-  `pip install tstrans` from the sdist (it builds from source).
-- **Why deferred:** Intel Macs are a declining install base;
-  Apple Silicon covers the contributor and laptop case for
-  modern macOS. Maintaining Intel-mac support would double the
-  macOS CI surface (one runner per arch) for diminishing
-  return. The wheel leg was dropped because GitHub's `macos-13`
-  Intel runners are scarce — the job routinely sat queued for
-  hours and, since the PyPI `publish` job's `needs:` waits for
-  every matrix leg (even best-effort ones), it held up the
-  whole release train.
-- **Trigger to revisit:** A consumer running an Intel Mac
-  reports a build failure they want fixed, or asks for a
-  prebuilt wheel.
-- **Scope when added:** A `macos-13` matrix entry (last Intel-
-  only macOS runner; `macos-14`+ are arm64) in
-  `.github/workflows/ci.yml` with `continue-on-error: true`
-  initially, mirroring the Tier 1 phase-in pattern. For the
-  wheel, a standalone job in `python-wheels.yml` that the
-  `publish` job does **not** `needs:`-depend on, so a queued
-  Intel runner can never gate the publish again.
+- **Status:** Deferred. macOS arm64 (Apple Silicon) is Tier 1; no
+  Intel-Mac artefact is built. The Python wheel was built best-effort for
+  v0.1.0 and removed 2026-06-10 — Intel-Mac users `pip install tstrans`
+  from the sdist (it builds from source). The JVM fat JAR (`tstrans-jvm`)
+  bundles linux-x86_64, linux-aarch64, macos-aarch64 and windows-x86_64
+  only — Intel-Mac JVM users build the cdylib from source
+  (`cargo build --release -p tst-jni`).
+- **Why deferred:** Intel Macs are a declining install base; Apple
+  Silicon covers the contributor and laptop case for modern macOS, and
+  JVM consumers are overwhelmingly on it. GitHub's `macos-13` Intel
+  runners are scarce: a queued best-effort matrix leg never reaches
+  `continue-on-error`, so the wheel leg held the PyPI `publish` job
+  (whose `needs:` waits for every leg) for hours, and a JVM build leg sat
+  queued 40+ minutes blocking `assemble`. The gating `ci.yml` does not
+  build macos-x86_64 either.
+- **Trigger to revisit:** A consumer on an Intel Mac reports a build
+  failure they want fixed or asks for a prebuilt wheel or JVM native
+  library, or GitHub macOS-Intel runner availability stops being a
+  problem.
+- **Scope when added:** A `macos-13` entry (the last Intel-only macOS
+  runner; `macos-14`+ are arm64) in `ci.yml` with
+  `continue-on-error: true` initially. For the wheel, a standalone job in
+  `python-wheels.yml` that `publish` does **not** `needs:`-depend on. For
+  the JVM, a separate `jvm-jar.yml` job outside the gating set, its lib
+  in the staging download, and `macos-x86_64` added to the
+  `NativeLoader` / `build.gradle.kts` triple set.
+
+### macOS Intel (x86_64) JVM native library
+
+- **Status:** Deferred — covered by "macOS x86_64 (Intel)" above.
 
 ## Windows MinGW (gcc toolchain)
 
@@ -1114,30 +1077,6 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** a consumer needs IPv6 multicast reception on
   Windows (adds interface-index plumbing to the multicast join path and
   un-gates the Windows leg).
-
-## Audio frame iterators for LATM + AC-3
-
-- **Status:** Deferred. No consumer trigger. Existing iterators in
-  `tst_core::codec::*` cover MP2 (`mpegaudio::frames`) and AAC-ADTS
-  (`aac::frames`) only.
-- **Why deferred:** AAC-LATM (`audio_mux_element` +
-  `payload_length_info` framing per ISO/IEC 14496-3) and AC-3
-  (ETSI TS 102 366 §6 syncword + frame-size table) both have
-  well-defined per-spec frame boundaries; an iterator implementation
-  is roughly a day of work each. The "Audio frame parsers — AAC LATM
-  and AC-3" entry above tracks the spec-side decode (AC-3 syncframe
-  parsing and LATM sync validation already ship there; full per-frame
-  decode is the deferred part); this entry is the codec-stats-side
-  mirror — no per-frame *counter* iterator exists for LATM/AC-3 yet.
-- **Trigger to revisit:** A consumer asks for per-frame counters or
-  frame-aligned dispatch on LATM/AC-3 audio. Once added, the `Audio`
-  variant of `StreamCodecStats` automatically
-  populates `frames` for those PIDs; today LATM/AC-3 PIDs return
-  `Some(StreamCodecStats::Unknown)` via the codec-stats fallback.
-- **Scope when added:** Wire the new iterators into the demuxer's
-  per-PID audio counter-bump path in the same shape as the existing
-  MP2 + AAC-ADTS bumps; the `StreamCodecStats::Audio { frames }`
-  variant absorbs the new counts without an ABI change.
 
 ## Subtitle codec-specific stats
 
@@ -1199,28 +1138,6 @@ mean **Deferred**. An entry whose feature has shipped must never read
   fixture-generator `tests/tools/gen_*.rs` migrate too (probably not —
   raw integers are ergonomic for test scaffolding).
 - **Effort estimate:** ~4-6h API design + writeup, ~8-12h sweep.
-
-## macOS Intel (x86_64) JVM native library
-
-- **Status:** The JVM fat JAR (`tstrans-jvm`) bundles native libraries
-  for four platforms — linux-x86_64, linux-aarch64, macos-aarch64
-  (Apple Silicon), and windows-x86_64. macOS Intel (`macos-x86_64`) is
-  not built or bundled.
-- **Why deferred:** GitHub's `macos-13` (Intel) runners are scarce and
-  winding down — a build job for it sat queued 40+ minutes waiting for a
-  runner, blocking the `assemble` job (a queued best-effort matrix entry
-  never reaches `continue-on-error`, so it stalls the train rather than
-  being skipped). The gating `ci.yml` workflow does not build macos-x86_64
-  either. Apple is phasing out Intel Macs, and JVM consumers are now
-  overwhelmingly on Apple Silicon.
-- **Trigger to revisit:** A consumer needs the binding on an Intel Mac
-  JVM, or GitHub macOS-Intel runner availability stops being a problem.
-- **Scope when added:** Re-add a `macos-x86_64` / `macos-13` entry to the
-  `jvm-jar.yml` build matrix as a **separate job** outside the gating set
-  (so a scarce runner can't block `assemble`), include its lib in the
-  staging download, and add `macos-x86_64` to the `NativeLoader` /
-  `build.gradle.kts` triple set. Until then, Intel-Mac users build the
-  cdylib from source (`cargo build --release -p tst-jni`).
 
 ## `private_stream_2` (0xBF) data carriage
 
@@ -1325,24 +1242,47 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 - **Status:** Deferred. `MuxSender::send_video_to_with_dts`,
   `send_video_misp_to` and `send_video_misp_to_with_dts`
-  (`crates/tst-pipeline/src/mux_sender.rs`) are Rust-only. The C ABI has
-  those variants on the offline muxer (`tst_muxer_push_video_to_with_dts`,
-  `tst_muxer_push_video_misp_to[_with_dts]`) but every live shell —
-  `tst_mux_sender_*`, `tst_managed_mux_sender_*`, the per-transport
-  `tst_{udp,tcp,rtp,rist}_mux_sender_*` and `tst_rtsp_mount_*` — pushes
-  PTS-only video, so B-frame (DTS ≠ PTS) and ST 0604 MISP-stamped video
-  cannot be sent through a C shell. The rustdoc on the three methods says
-  "open an issue"; this entry is that record.
-- **Why deferred:** additive ABI work (a minor bump) with no C consumer ask;
-  the Python/JVM shells have the same gap, recorded under "Binding-side
-  `MuxSender` MISP timestamp mirrors".
-- **Trigger to revisit:** decided for 0.7.0 (see the shell parity matrix in
-  `docs/reference/binding-authors.md`): stays deferred — three variants
+  (`crates/tst-pipeline/src/mux_sender.rs`) and the RTSP mount's
+  `MountHandle::push_video_to_with_dts` are Rust-only beyond the offline
+  muxer:
+  - **C:** the offline muxer has `tst_muxer_push_video_to_with_dts` and
+    `tst_muxer_push_video_misp_to[_with_dts]`, but every live shell —
+    `tst_mux_sender_*`, `tst_managed_mux_sender_*`, the per-transport
+    `tst_{udp,tcp,rtp,rist}_mux_sender_*` and `tst_rtsp_mount_*` — pushes
+    PTS-only video, so B-frame (DTS ≠ PTS) and ST 0604 MISP-stamped video
+    cannot be sent through a C shell. The rustdoc on the three methods
+    says "open an issue"; this entry is that record.
+  - **Python / JVM:** the `MuxSender` shells (`tstrans.srt.MuxSender` /
+    `ManagedMuxSender`, `tstrans.rtp.MuxSender`,
+    `org.tstrans.srt.MuxSender`, …) expose no `send_video_misp_to` /
+    `sendVideoMispTo`; `Muxer` is the only binding path to an ST 0604
+    MISP splice.
+  - **RTSP mounts:** the Python, JVM and C mount push surfaces are
+    PTS-only, so a binding-managed mount always serves DTS == PTS, and no
+    language has a MISP mount variant.
+- **Why deferred:** Each mirror follows the binding DTS precedent: the
+  Rust surface ships first and a binding follows a binding consumer's
+  ask. None exists — the integrator that asked for the mount DTS method
+  consumes the Rust crates directly. For C it is additive ABI work (a
+  minor bump), decided for 0.7.0 (see the shell parity matrix in
+  `docs/reference/binding-authors.md`) to stay deferred: three variants
   across six live shells plus the RTSP mount is 21 entry points with
   per-shell tests, above the < 1-day bar for a ship-now cell.
-  Reopens on the first C consumer needing B-frame or ST 0604-stamped video
-  through a LIVE shell, or when the Python/JVM MISP mirrors entry ships
-  (then all three bindings in one pass).
+- **Trigger to revisit:** the first C consumer needing B-frame or ST
+  0604-stamped video through a LIVE shell; a Python or JVM consumer
+  asking for MISP push through the pipeline-shell layer rather than
+  `Muxer`; a Python/JVM/C consumer replaying captures through an RTSP
+  mount (DTS mirrors); any consumer wanting ST 0604 MISP timestamps on
+  served streams (mirror the `Muxer::push_video_misp_to` signature).
+  When one fires, do all three bindings in one pass.
+
+### Binding-side `MuxSender` MISP timestamp mirrors (Python / JVM)
+
+- **Status:** Deferred — covered by "`MuxSender` DTS / MISP video variants at the C ABI" above.
+
+### RTSP mount push-surface parity: DTS in bindings, MISP variants
+
+- **Status:** Deferred — covered by "`MuxSender` DTS / MISP video variants at the C ABI" above.
 
 ## RIST: IPv6 receiver bind in the Simple profile
 
@@ -1381,28 +1321,24 @@ mean **Deferred**. An entry whose feature has shipped must never read
   test, and add a Simple-profile IPv6 loopback round-trip test
   alongside the existing Main-profile one.
 
-## RIST: IPv6 receiver bind on Windows
+### RIST: IPv6 receiver bind on Windows
 
-- **Status:** Not supported. An IPv6 `rist://@[addr]:port` receiver
-  fails on Windows with `RistError::PeerCreateFailed`; the
-  `ipv6_loopback_round_trip` test skips there. IPv6 RIST *senders* work
-  on Windows, and every IPv4 path is unaffected, as are IPv6 receivers
-  on Linux and macOS.
-- **Why deferred:** The failure is inside vendored librist 0.2.20, past
-  the point this crate controls. `rist_parse_address2` accepts the
-  bracketed URL (so the endpoint rendering is correct), and
-  `rist_peer_create` then returns non-zero immediately when opening the
-  IPv6 bind socket — a Windows-only socket-layer limitation in librist,
-  not a host-capability one: a plain `UdpSocket::bind("[::1]:0")` probe
-  succeeds on the same runner. Diagnosing it means debugging librist's
-  Windows `udpsocket_open_bind` under MSVC, and any fix is an upstream
-  C patch that would have to be carried across vendor bumps. This sits
-  alongside the pre-existing IPv6-multicast-on-Windows gate.
+- **Status:** Deferred (not supported). An IPv6 `rist://@[addr]:port`
+  receiver fails on Windows with `RistError::PeerCreateFailed` (the
+  `ipv6_loopback_round_trip` test skips there); IPv6 senders on Windows,
+  every IPv4 path, and IPv6 receivers on Linux and macOS work.
+- **Why deferred:** A second vendored-librist 0.2.20 defect:
+  `rist_parse_address2` accepts the bracketed URL, then
+  `rist_peer_create` fails opening the IPv6 bind socket — a Windows-only
+  socket-layer limitation in librist, not a host one (a plain
+  `UdpSocket::bind("[::1]:0")` succeeds on the same runner). A fix is an
+  upstream C patch carried across vendor bumps. It sits beside the
+  IPv6-multicast-on-Windows gate.
 - **Trigger to revisit:** A librist release that fixes IPv6 receiver
-  binds on Windows, or a maintainer-run MSVC debugging pass that
-  isolates the failing socket call (an upstream-report candidate). On
-  that bump: drop the `cfg!(windows)` skip in `ipv6_loopback_round_trip`
-  and confirm the round trip on the Windows CI leg.
+  binds on Windows, or an MSVC debugging pass that isolates the failing
+  socket call (an upstream-report candidate). Then drop the
+  `cfg!(windows)` skip in `ipv6_loopback_round_trip` and confirm the
+  round trip on the Windows CI leg.
 
 ## C-ABI H.264 receiver family
 
@@ -1547,53 +1483,48 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## ST 0604 Commercial Time Stamp (UTC wall-clock SEI, `payloadType=21`)
 
-- **Status:** Deferred. The library's ST 0604 support covers the MISP
-  Precision Time Stamp (Class 0 microsecond and Class 1 nanosecond
-  precision) via `MispTimestamp::micros` / `::nanos` and
-  `push_video_misp_to`. The "Commercial Time Stamp" sub-family
+ST 0604 support covers the MISP Precision Time Stamp (Class 0 microsecond
+and Class 1 nanosecond precision) via `MispTimestamp::micros` / `::nanos`
+and `push_video_misp_to` / `send_video_misp_to`, spliced as SEI into H.264
+and H.265 access units. Three ST 0604 variants are deferred: this entry
+and the two below.
+
+- **Status:** Deferred. The "Commercial Time Stamp" sub-family
   (`payloadType=21`, UTC wall-clock values tied to the video bitstream
   via H.264 SPS `vui_parameters` / HRD timing / `pic_timing` SEI /
   `time_code` SEI) is not implemented.
-- **Why deferred:** Commercial Time Stamp requires tightly coupling the
-  SEI payload to SPS HRD / VUI timing parameters (CPB removal delay,
-  coded picture buffer, output delay). The library does not own or
-  inspect the encoder; reproducing a conformant `pic_timing` SEI from
-  outside the codec pipeline is error-prone and would require at
-  minimum parsing and echoing the SPS HRD fields from the caller's
-  video stream. No current consumer has requested it.
-- **Trigger to revisit:** An integrator requests timecode interop
-  with a receiver toolchain that consumes `payloadType=21` UTC
-  wall-clock SEI, specifically requiring the SPS/HRD coupling.
+- **Why deferred:** It requires coupling the SEI payload to SPS HRD / VUI
+  timing parameters (CPB removal delay, coded picture buffer, output
+  delay). The library does not own or inspect the encoder; reproducing a
+  conformant `pic_timing` SEI from outside the codec pipeline is
+  error-prone and would at minimum mean parsing and echoing the SPS HRD
+  fields from the caller's video stream. No consumer has requested it.
+- **Trigger to revisit:** An integrator requests timecode interop with a
+  receiver toolchain that consumes `payloadType=21` UTC wall-clock SEI,
+  specifically requiring the SPS/HRD coupling.
 
-## H.262 / MPEG-2 video user_data timestamps (ST 0604 §10)
+### H.262 / MPEG-2 video user_data timestamps (ST 0604 §10)
 
-- **Status:** Deferred. ST 0604.6 §10 defines timestamp embedding for
-  H.262 (MPEG-2 Video) via MPEG-2 user_data bytes in picture headers.
-  The library has no H.262 video carriage path — `VideoCodec::H262` is
-  not a variant; H.262 PIDs surface as `Unknown` on the demux side.
-- **Why deferred:** H.262 write-side carriage (a new `VideoCodec`
-  variant + PES `stream_id` selection + sequence/GOP/picture header
-  emitter) is a full video-carriage scope item of its own. ST 0604
-  timestamp embedding rides with that item, not independently.
+- **Status:** Deferred. ST 0604.6 §10 embeds the timestamp in MPEG-2
+  user_data bytes in H.262 picture headers. The library has no H.262
+  video carriage (`VideoCodec::H262` is not a variant; H.262 PIDs demux
+  as `Unknown`), and the timestamp rides with that carriage item, not
+  independently.
 - **Trigger to revisit:** MPEG-2 Video (H.262) carriage is prioritized,
-  OR a consumer specifically requests legacy-capture read-side H.262
-  user_data timestamp extraction.
+  or a consumer asks for read-side H.262 user_data timestamp extraction
+  from legacy captures.
 
-## AV1 / H.266 MISP timestamp carriage (ST 0604 future extension)
+### AV1 / H.266 MISP timestamp carriage (ST 0604 future extension)
 
-- **Status:** Deferred. `push_video_misp_to` / `send_video_misp_to`
-  splice the MISP SEI for H.264 and H.265 access units only. AV1 and
-  H.266 are not supported.
-- **Why deferred:** MISB has not defined a standardized MISP timestamp
-  carriage shape for AV1 or H.266. AV1 has no SEI NAL unit mechanism
-  (metadata OBUs are defined but no SMPTE-registered MISP payload has
-  been specified); H.266 has SEI but the MISB spec does not currently
-  reference it. Implementing an unstandardized shape risks interop
-  failures with receivers that await the official definition.
-- **Trigger to revisit:** MISB publishes a carriage spec for AV1 or
-  H.266 MISP timestamps (either via MISB ST 0604 revision or a new
-  supplemental spec), or a consumer reports a concrete interop
-  agreement with a known receiver on a proposed shape.
+- **Status:** Deferred. MISB defines no MISP timestamp carriage for AV1
+  (no SEI NAL unit; metadata OBUs exist but no SMPTE-registered MISP
+  payload) or H.266 (SEI exists, the MISB spec does not reference it);
+  an unstandardized shape risks interop failures with receivers awaiting
+  the official one.
+- **Trigger to revisit:** MISB publishes an AV1 or H.266 MISP carriage
+  spec (an ST 0604 revision or a new supplemental spec), or a consumer
+  reports a concrete interop agreement with a known receiver on a
+  proposed shape.
 
 ## EG 0104 legacy "Predator" metadata decode
 
@@ -1630,46 +1561,6 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** A conformance-audit pipeline or a recording-
   system consumer asks for a ready-made cadence tracker rather than
   implementing the window themselves.
-
-## Binding-side `MuxSender` MISP timestamp mirrors (Python / JVM)
-
-- **Status:** Deferred. `Muxer::push_video_misp_to` and the C ABI
-  `tst_muxer_push_video_misp_to` are the only shipping call sites for
-  ST 0604 MISP timestamp splice. The `MuxSender` pipeline-shell
-  wrappers in Python (`tstrans.srt.MuxSender` / `ManagedMuxSender`,
-  `tstrans.rtp.MuxSender`, etc.) and in the JVM
-  (`org.tstrans.srt.MuxSender`, etc.) do not expose a
-  `send_video_misp_to` / `sendVideoMispTo` method.
-- **Why deferred:** Follows the binding DTS precedent: the
-  `push_video_misp_to` / `send_video_misp_to` method family was
-  added to `Muxer` and `MuxSender` in Rust, then mirrored into the C
-  ABI's offline muxer at `bindings/c` at the same time. The Python
-  and JVM binding-shell mirrors follow separately once a binding-user
-  request drives them. The Rust `MuxSender::send_video_misp_to` already
-  ships; it is the Python/JVM shell layer that is missing.
-- **Trigger to revisit:** A Python or JVM consumer asks for MISP
-  timestamp push through the pipeline-shell layer rather than using
-  `Muxer` directly.
-
-## RTSP mount push-surface parity: DTS in bindings, MISP variants
-
-- **Status:** Rust-only / partially absent. `MountHandle` gained
-  `push_video_to_with_dts` (mirror of `MuxSender::send_video_to_with_dts`)
-  from an integrator field-report request — Rust only. The Python, JVM,
-  and C mount push surfaces still expose PTS-only video push, so streams
-  served from a binding-managed mount are always DTS == PTS. Separately,
-  the mount surface has no MISP variant at all
-  (`MuxSender::send_video_misp_to` has no `push_video_misp_to` mount
-  mirror in any language).
-- **Why deferred:** binding mirrors follow the same precedent as the
-  `MuxSender` MISP entry above — the Rust surface ships first, binding
-  shells follow when a binding consumer asks. The requesting integrator
-  consumes the Rust crates directly. MISP-over-mount has no requester in
-  any language yet.
-- **Trigger to revisit:** a Python/JVM/C consumer replaying captures
-  through an RTSP mount (DTS mirrors), or any consumer wanting ST 0604
-  MISP timestamps on served streams (MISP mount variant — mirror the
-  `Muxer::push_video_misp_to` signature when it comes up).
 
 ## Input-consumption detail on binding send errors
 
@@ -1709,43 +1600,31 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## ASan under the JVM test suite (tst-jni)
 
-- **Status:** Not run. The nightly sanitizer CI covers the pure-Rust
-  crates (`asan`/`tsan` jobs) and the native-linking crates with
-  instrumented libsrt/librist/mbedTLS (`asan-native` job), but the JVM
-  test suite runs no memory sanitizer. The Gradle test JVM does run
-  HotSpot's built-in JNI checker (`-Xcheck:jni`, gating in ci.yml),
+- **Status:** Deferred (not run), for the JVM test suite and for pytest
+  (tst-py) alike. The nightly sanitizer CI covers the pure-Rust crates
+  (`asan`/`tsan` jobs) and the native-linking crates with instrumented
+  libsrt/librist/mbedTLS (`asan-native` job); both bindings run over the
+  same tst-c-core / tst-srt / tst-rist paths those jobs instrument, so the
+  marginal coverage is the thin JNI / PyO3 glue. The Gradle test JVM does
+  run HotSpot's built-in JNI checker (`-Xcheck:jni`, gating in ci.yml),
   which targets the JNI-*semantic* bug class actually observed here
-  (local-ref exhaustion, handle misuse) — a class ASan would never
-  catch.
-- **Why deferred:** ASan under a JVM means `LD_PRELOAD`-ing the
-  sanitizer runtime into the Gradle test JVM with
+  (local-ref exhaustion, handle misuse) — a class ASan would never catch.
+- **Why deferred:** ASan in a managed runtime means `LD_PRELOAD`-ing the
+  sanitizer runtime into the host process. Under the JVM that needs
   `ASAN_OPTIONS=handle_segv=0` (HotSpot uses SEGV internally for
-  safepoints and implicit null checks), and the result is high-noise:
-  JVM-internal allocations report as leaks and the interceptors
-  interact poorly with HotSpot's own memory management. TSan under a
-  JVM is effectively impractical. The unsafe native code under
-  `libtstjni.so` exercises the same tst-c-core/tst-srt/tst-rist paths
-  the `asan-native` job instruments directly, so the marginal
-  coverage is the thin JNI glue itself.
-- **Trigger to revisit:** the first memory-unsafety-shaped JNI bug
-  (crash in native frames, corruption traced to the JNI layer), or
-  tst-jni gaining substantial new `unsafe` surface.
+  safepoints and implicit null checks), JVM-internal allocations report
+  as leaks and the interceptors interact poorly with HotSpot's own memory
+  management; TSan under a JVM is effectively impractical. Under CPython
+  the allocator and extension-module loading generate leak-report noise
+  that needs its own suppression curation. Either is high maintenance for
+  low marginal coverage.
+- **Trigger to revisit:** the first memory-unsafety-shaped bug traced to
+  the JNI or PyO3 layer (a crash in native frames, corruption), or either
+  binding gaining substantial new `unsafe` surface.
 
-## ASan under pytest (tst-py)
+### ASan under pytest (tst-py)
 
-- **Status:** Not run. Same shape as the JVM entry above: the Python
-  test suite runs no memory sanitizer; the native paths under the
-  `tstrans` extension module are the same core/transport code the
-  nightly `asan`/`asan-native` jobs instrument directly.
-- **Why deferred:** ASan under CPython means `LD_PRELOAD`-ing the
-  runtime into the interpreter running pytest; CPython's allocator and
-  extension-module loading generate leak-report noise that needs its
-  own suppression curation, and the PyO3 layer is a thin translation
-  over already-sanitized Rust surfaces — low marginal coverage for the
-  maintenance cost.
-- **Trigger to revisit:** the first memory-unsafety-shaped bug reported
-  through the Python surface, or tst-py gaining substantial new
-  `unsafe` surface.
+- **Status:** Deferred — covered by "ASan under the JVM test suite (tst-jni)" above.
 
 ## Python `transmux`: payload substitution beyond KLV (`write_video` / `write_audio` / …)
 
@@ -1802,36 +1681,29 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## CoT→KLV reverse conversion
 
-- **Status:** Not implemented. `klv::st0805` (and its Python/JVM
-  mirrors) convert a decoded ST 0601 UAS Datalink LS record to
-  Cursor-on-Target XML in one direction only. There is no function that
-  parses a CoT event and produces (or patches) ST 0601 KLV fields.
-- **Why deferred:** ST 0805.1 itself defines only the KLV→CoT mapping —
-  a reverse mapping isn't a spec gap we're filling, it would be a new
-  design with no spec to anchor field choices (CoT's `detail` schema is
-  intentionally open-ended per-producer, so a generic CoT→KLV mapping
-  has no single canonical source). No current consumer ingests CoT and
-  needs it turned back into KLV.
-- **Trigger to revisit:** A consumer needs to ingest CoT (e.g. from a
-  TAK server or another CoT-emitting sensor) and re-encode it as ST
-  0601 KLV for downstream MPEG-TS muxing.
+- **Status:** Deferred (not implemented), together with CoT egress.
+  `klv::st0805` (and its Python/JVM mirrors) convert a decoded ST 0601
+  UAS Datalink LS record to Cursor-on-Target XML strings, one direction
+  only: nothing parses a CoT event into (or patches) ST 0601 KLV fields,
+  and nothing opens a socket to send the CoT (conventionally UDP
+  multicast/broadcast in the ATAK/TAK ecosystem).
+- **Why deferred:** ST 0805.1 defines only the KLV→CoT mapping; a reverse
+  mapping would be a new design with no spec to anchor field choices
+  (CoT's `detail` schema is open-ended per producer). Egress is a
+  transport concern: `klv::st0805` stays a pure, `no_std`-clean conversion
+  with no I/O, like every other `klv::` submodule (`st0601`, `st0806`,
+  `st1010`, …), and a sender belongs in a transport-facing crate or
+  binding, as `tst-udp`/`tst-tcp` own TS egress. No consumer has asked
+  for either.
+- **Trigger to revisit:** A consumer needs to ingest CoT (e.g. from a TAK
+  server or another CoT-emitting sensor) and re-encode it as ST 0601 KLV
+  for MPEG-TS muxing; or a consumer asks for a wired CoT sender (e.g. a
+  `CotSender` that takes a `UasDatalinkLs` and multicasts the Platform
+  Position event every N seconds).
 
-## CoT UDP egress
+### CoT UDP egress
 
-- **Status:** Not implemented. `klv::st0805` produces CoT XML strings
-  only; nothing in the crate opens a socket or sends them anywhere. CoT
-  is conventionally distributed over UDP multicast/broadcast (the
-  ATAK/TAK ecosystem's usual transport), but that's a transport
-  concern, not a KLV-conversion concern.
-- **Why deferred:** Layering — `klv::st0805` stays a pure,
-  `no_std`-clean conversion function with no I/O, matching every other
-  `klv::` submodule (`st0601`, `st0806`, `st1010`, ...). Wiring a sender
-  belongs in a transport-facing crate or binding (mirroring how
-  `tst-udp`/`tst-tcp` already own egress for TS bytes), not in
-  `tst-core::klv`, and no current consumer has asked for one.
-- **Trigger to revisit:** A consumer asks for a wired CoT sender (e.g.
-  "give me a `CotSender` that takes a `UasDatalinkLs` and multicasts
-  the Platform Position event every N seconds").
+- **Status:** Deferred — covered by "CoT→KLV reverse conversion" above.
 
 ## SDCC-FLP wire-adjacency preservation on encode
 
@@ -1989,492 +1861,142 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## Resolved (historical)
 
-Entries whose feature shipped. Kept for the record (the decision that closed them and the release it landed in); nothing below is a deferral.
+Entries whose feature shipped, one line each: the release it landed in and
+what closed it. That release's CHANGELOG entry has the detail; nothing below
+is a deferral.
 
 ### HLS publisher — SUPPORTED
 
-- **Status:** SUPPORTED. The HLS publisher ships in its own segmenter-first
-  `tst-hls` crate. The Python wheels enable it by default (`tstrans.hls`
-  imports out of the box); the C binding exposes it behind the opt-in `hls`
-  Cargo feature (`TST_HAS_HLS`). It is no longer gated out of published
-  artifacts. The security items that previously blocked promotion are
-  closed:
-  - **Path traversal (CWE-22)** is closed — the built-in HTTP server serves
-    only files from a known set it wrote itself; request paths are not used
-    to open arbitrary files under the output directory.
-  - **VOD / EVENT serving** is closed — `HlsPublisher::finish_serving`
-    returns an `HlsServerHandle` that keeps the built-in server up so a
-    completed VOD or EVENT playlist and its segments stay fetchable after
-    the stream ends.
-  - **Bind default is loopback** (`127.0.0.1:8080`); binding all interfaces
-    is now an explicit opt-in, and the guide points operators at fronting
-    the output directory with a reverse proxy / CDN for exposure.
-  - Segments open on a decodable boundary (PAT → PMT → IDR), so a joining
-    player can decode the first segment it fetches.
-- See the [HLS guide](/docs/guides/hls.md) for the full surface, serving
-  guidance, KLV ride-along, and latency tuning. The JVM binding exposes HLS
-  since this entry shipped (see the
-  [JVM guide](/docs/languages/jvm.md#hls-publishing-orgtstranshls)).
+Shipped 0.3.0 in the `tst-hls` crate, with path traversal (CWE-22), VOD / EVENT serving and the loopback bind default closed and segments opening on PAT → PMT → IDR; see the [HLS guide](/docs/guides/hls.md).
 
 ### JVM HLS surface — SHIPPED
 
-- **Status:** SHIPPED. `org.tstrans.hls` mirrors `tstrans.hls` class for
-  class; the GIS demo site's JVM backend was the consumer the trigger
-  waited for.
+Shipped 0.8.0: `org.tstrans.hls` mirrors `tstrans.hls` class for class.
 
 ### `klv::st0806` RVT typed layer — SHIPPED
 
-- **Status:** SHIPPED. `klv::st0806` types the MISB ST 0806.4 Remote
-  Video Terminal (RVT) Local Set: the nested body form (carried via
-  `UasDatalinkLs::rvt`, ST 0601 Tag 73) and the standalone independent
-  form (own 16-byte UL, timestamp-first Tag 2, CRC-32/MPEG-2-last
-  Tag 1). The repeatable nested POI (Tag 12), AOI (Tag 13), and User
-  Defined (Tag 11) sub-sets are typed too. Decode via
-  `klv::st0806::decode` (nested) or `klv::st0806::decode_standalone`
-  (independent). See the `klv::st0806` module docs for the full
-  surface.
+Shipped 0.4.0: the nested (Tag 73) and standalone ST 0806.4 RVT forms, with typed POI / AOI / User Defined sub-sets.
 
 ### `no_std` support for `klv`
 
-- **Status:** Shipped (0.1.0, with the tst-core `no_std` baseline). `pub mod
-  klv;` (`crates/tst-core/src/lib.rs:73`) carries no `std` feature
-  gate; `no-std-baremetal.sh` compiles it for both
-  `thumbv7em-none-eabihf` and `riscv32imac-unknown-none-elf` alongside
-  the rest of `tst-core`. Residual std-only corners: none — the only
-  two `#[cfg(not(feature = "std"))]` sites under `klv/` (`imapb.rs`,
-  `st0601/mapping.rs`) are the `no_std` *enabling* code itself (routing
-  float ops through `float_ext::FloatExt`'s `libm` shim in place of
-  `std::f64` methods), not a remaining std requirement.
+Shipped 0.1.0 with the tst-core `no_std` baseline; no std-only corner remains under `klv/`.
 
 ### Multi-stream `mpegts::mux` — C / JVM binding surface
 
-- **Status:** Shipped for C and JVM. C: `tst_video_stream_handle_t` /
-  `tst_klv_stream_handle_t` (+ audio / subtitle / data handles),
-  `tst_mux_config_add_video_stream` / `_add_klv_stream` returning handles,
-  and the `_video_to(handle, …)` / `_klv_to(handle, …)` siblings on
-  `tst_muxer_t`, `tst_mux_sender_t` and `tst_managed_mux_sender_t` (the
-  single-target entry points keep their signatures and surface
-  `MuxError::AmbiguousTarget` as `TST_E_INVALID_USAGE`). JVM:
-  `org.tstrans.mpegts.{Video,Klv,Audio,Subtitle,Data}StreamHandle` and
-  `Muxer.pushVideoTo(VideoStreamHandle, …)` / `pushVideoToWithDts` /
-  `pushKlvTo`. `tst-uniffi` does not exist yet; its multi-stream shape is
-  decided with the tst-uniffi design, not here.
-- **Note on Sender / RawSender:** `tst_sender_*` / `tst_managed_sender_*`
-  and the raw senders have no `_video_to` / `_klv_to` siblings:
-  `tst_pipeline::Sender` exposes only `send_ts(bytes)` (pre-muxed TS bytes)
-  and `tst_pipeline::RawSender` exposes only `send(bytes)`. Neither carries
-  a `Muxer`, so handle-aware fan-out is meaningless on those variants. Only the three muxer-owning
-  C variants (`tst_muxer_t`, `tst_mux_sender_t`, `tst_managed_mux_sender_t`)
-  have the new `_to` surface.
+Shipped 0.1.0: stream handles and `_to` push siblings on the three muxer-owning C handles and the JVM `Muxer`; `Sender` / `RawSender` own no muxer, so they have none.
 
 ### AV1-in-MPEG-2-TS binding §3.2 / §3.4 carriage conformance
 
-- **Status:** Shipped (0.1.0). Default carriage is now
-  `Av1CarriageMode::Mpeg2TsBinding`: PES `stream_id = 0xBD`
-  (private_stream_1, §3.4) and `ts_open_bitstream_unit()` framing
-  on each OBU (3-byte `obu_start_code` = `uimsbf(24)` = `0x000001`,
-  i.e. byte sequence `0x00 0x00 0x01`, + emulation prevention
-  bytes, §3.2). Set `MuxerConfig::av1_carriage =
-  Av1CarriageMode::InteropRawObu` (escape hatch) for ffmpeg /
-  libaom / hls.js / mediamtx interop carriage.
-  Demuxer-side: matching `DemuxerConfig::av1_carriage`; binding
-  mode surfaces `NonConformantIssue::Av1WrongStreamId` /
-  `NonConformantIssue::Av1MissingTsObuFraming` on non-conforming
-  input and falls back to raw-OBU parsing in lenient mode.
+Shipped 0.1.0: `Av1CarriageMode::Mpeg2TsBinding` is the default and `InteropRawObu` the interop escape hatch, on mux and demux.
 
 ### Audio carriage at the `tst-c` C ABI
 
-- **Status:** Shipped. `tstrans.h` (ABI 0.21) carries the full audio
-  send surface: `tst_mux_config_add_audio_stream` /
-  `tst_mux_config_add_audio_stream_with_language` →
-  `tst_audio_stream_handle_t`, `tst_mux_config_add_audio_descriptor`,
-  `tst_muxer_push_audio[_to]`, `tst_mux_sender_send_audio[_to]`,
-  `tst_managed_mux_sender_send_audio[_to]`, `tst_mux_publisher_send_audio`,
-  the per-transport `tst_{udp,tcp,rtp,rist}_mux_sender_push_audio[_to]` and
-  `tst_rtsp_mount_push_audio[_to]`. The envelope is the Rust one: caller-
-  framed audio access units (ADTS / MP2 frames, AC-3 syncframes) plus one
-  PTS.
+Shipped 0.1.0: the full audio send surface (caller-framed access units plus one PTS) on every muxing handle and the RTSP mount.
 
 ### `pipeline::ext::pairing` — opt-in convenience pairing utility
 
-- **Status:** Shipped (Rust API). `tst_pipeline::ext::pairing::Pairer` with
-  `with_config` (Realtime + Buffered) and `last_before_pts` strategies.
-  The cookbook's Pairing section covers the canonical patterns, both
-  through `Pairer` and as inline patterns. C ABI exposure deferred — see
-  "`pipeline::ext::pairing` C ABI exposure" in the ledger (Python and JVM
-  ship it).
+Shipped 0.1.0 in Rust, Python and the JVM; the C ABI exposure is still deferred — see "`pipeline::ext::pairing` C ABI exposure" above.
 
 ### Multi-program demux at the C ABI
 
-- **Status:** Shipped (0.1.0). The
-  `tst_demux_receiver_t` typed-event surface includes `tst_event_t`
-  with a `PROGRAM_MAP` arm carrying `program_number`; `tst_stream_info_t`
-  carries `program_number`; multi-program streams are handled naturally
-  by the `DemuxReceiver` backend.
+Shipped 0.1.0: `PROGRAM_MAP` events and `program_number` on `tst_stream_info_t`.
 
 ### Rustdoc lift to docs.rs via `#![doc = include_str!(...)]`
 
-- **Status:** Shipped in minimal form, v0.4.0. Each of the 8
-  publishable pure-Rust crates (`tst-core`, `tst-pipeline`, `tst-srt`,
-  `tst-rtp`, `tst-udp`, `tst-tcp`, `tst-hls`, `tst-rist`) now ships a
-  `README.md` (rendered on crates.io/docs.rs via the `readme` package
-  key); the six transport crates additionally lift it into the
-  crate-level rustdoc via `#![doc = include_str!("../README.md")]`
-  (`tst-core`/`tst-pipeline` keep their existing, more detailed crate
-  docs instead of double-including — their READMEs are a terser
-  summary that agrees with, but doesn't replace, those docs).
-  docs.rs now builds real API documentation from the bundled source
-  once each crate publishes.
-- **Why deferred (partially, still):** Full migration of the
-  markdown guides under `docs/` (the per-language onramps, cookbook,
-  guides) into rustdoc is not planned — those are user-journey docs
-  meant to be browsed as a set from the repo/docs site, not per-crate
-  API reference pages. Only the per-crate README summary moved.
-- **Trigger to revisit:** Satisfied by the v0.4.0 README lift above.
-  No further trigger is tracked; revisit only if a future consumer
-  specifically asks for the full guide tree to be mirrored into
-  docs.rs.
+Shipped 0.4.0 in minimal form: every publishable crate ships a README rendered on crates.io and docs.rs; mirroring the `docs/` guides into rustdoc is not planned.
 
 ### `Listener::accept_timeout` — bounded blocking accept
 
-- **Status:** Shipped (0.1.0).
-  `Listener::accept_timeout(Duration)` uses a one-shot `srt_epoll_wait`
-  to gate readiness, then calls `srt_accept` once a connection arrives or
-  returns `AcceptError::TimedOut` on expiry. `Listener::set_recv_timeout`
-  continues to apply only to *accepted* sockets, not to the accept call
-  itself — see [`guides/srt.md`](/docs/guides/srt.md) §Blocking semantics for the distinction.
+Shipped 0.1.0; see [`guides/srt.md`](/docs/guides/srt.md) §Blocking semantics.
 
 ### Rust-API-only sender pipeline defaults
 
-- **Status:** Shipped (0.1.0). `SocketConfig::sender_defaults()` /
-  `::receiver_defaults()` constructors, `merge_sender_defaults()` /
-  `merge_receiver_defaults()` in-place merge methods, and matching
-  `SocketBuilder::sender_defaults()` / `::receiver_defaults()` chain
-  methods all live in `tst-srt`. The C sender opens and every managed
-  sender (`tst_srt::shells`) apply `SocketConfig::merge_sender_defaults`
-  through `SrtUrl::connect`; the plain Python and JVM senders open through
-  `SrtUrl::connect_recv`, which applies no preset.
-  See the "Sender / receiver presets" section in
-  `docs/guides/srt.md`.
+Shipped 0.1.0: `SocketConfig::{sender,receiver}_defaults` and the merge methods in `tst-srt`; see `docs/guides/srt.md` "Sender / receiver presets".
 
 ### Background reconnect — bindings parity (C / Python / JVM) — RESOLVED 2026-08-21
 
-- **Status:** RESOLVED. `ReconnectMode::Background`,
-  `ManagedTransport::stats_handle()`, and `ManagedStatsHandle` /
-  `ManagedTransportStats` (send-side reconnect/gap telemetry) are now
-  reachable from all three bindings: the C ABI mirror
-  (`TstReconnectMode` + `tst_reconnect_policy_set_mode` on
-  `tst_reconnect_policy_t`, plus `tst_managed_transport_stats_t` +
-  `tst_managed_{sender,mux_sender,raw_sender}_get_reconnect_stats`, ABI
-  minor 20), the Python mirror (`ReconnectMode`
-  incl. `BACKGROUND`, `.reconnect_stats()`, `ManagedTransportStats`)
-  and the JVM mirror (`ReconnectMode.BACKGROUND`,
-  `.reconnectStats()`, `ManagedTransportStats`) all shipped in 0.6.0.
-  All three stay send-side only, matching the Rust-side scope — see
-  the "Reconnect counters on `ManagedTransport` stats" entry above for
-  the still-deferred receive-side residue.
+Shipped 0.6.0 (C ABI minor 20): `ReconnectMode::Background` and the send-side reconnect stats in all three bindings; the receive-side residue is "Reconnect counters on `ManagedTransport` stats" above.
 
 ### Last-activity-wall-clock gauges per stream (C / Python / JVM) — RESOLVED 2026-08-21
 
-- **Status:** RESOLVED. `StreamStats.last_seen: Option<SystemTime>`
-  (stamped on every mux push / demux emit, `std` builds only) is now
-  reachable from all three bindings (0.6.0). The C ABI mirror (ABI
-  minor 20) does so NOT by growing
-  `tst_stream_stats_t` (still byte-size-asserted, plain-integer
-  counters only), but as a new getter,
-  `tst_*_get_stream_last_seen_micros`, on all six demux-receiver
-  handle families (plain + managed SRT, RIST, RTP, TCP, UDP), returning
-  a `uint64_t` Unix epoch microsecond timestamp (`0` if the PID has
-  never been observed). The Python mirror (`last_seen_micros(pid) ->
-  Optional[int]` on `rtp.DemuxReceiver`, `srt.DemuxReceiver`, and
-  `srt.ManagedDemuxReceiver`) and the JVM mirror
-  (`lastSeenMicros(pid) -> Long`, same three receiver classes) are
-  narrower than the C ABI's six families because neither
-  binding exposes standalone RIST/TCP/UDP receiver classes today.
-  Python and JVM diverge from the C getter's `0`-if-unseen sentinel —
-  both use their native nullable idiom (`None` / boxed `null`)
-  instead, since neither has a bare-integer ABI constraint.
+Shipped 0.6.0 (C ABI minor 20): `tst_*_get_stream_last_seen_micros` on six C demux-receiver families (`0` = never seen) and `last_seen_micros` / `lastSeenMicros` on the three Python and JVM receivers (`None` / `null`).
 
 ### Per-stream PMT descriptor surface at the C ABI
 
-- **Status:** Shipped. Send side: `tst_mux_config_set_program_descriptors`,
-  `tst_mux_config_set_stream_descriptors_for_{video,klv,data}` and the
-  per-stream `tst_mux_config_add_{video,klv,audio,subtitle,data}_descriptor`
-  appenders. Receive side: `tst_descriptor_t` (the `repr(C)` mirror of
-  `mpegts::descriptors::RawDescriptor`) exposed as
-  `tst_stream_info_t.raw_descriptors` / `descriptor_count`.
+Shipped 0.2.0: `tst_mux_config_set_stream_descriptors_for_*` and `tst_stream_info_t.raw_descriptors` (the per-stream `_descriptor` appenders since 0.1.0).
 
 ### Pre-emptive close cancellation at the C ABI
 
-- **Status:** Shipped (0.1.0): every sender `_cancel` entry point and
-  `tst_raw_receiver_cancel`, `tst_receiver_cancel` (and its managed
-  sibling) and `tst_demux_receiver_cancel`. Pre-emptive close
-  cancellation is complete across all six sender families and all three
-  receiver handle types.
-- **Why deferred (originally):** The C ABI's `Handle<T>`
-  (= `Mutex<Option<T>>`) has the same blocking issue at the C layer
-  that the Rust shells had — `tst_*_close` waits on the handle's
-  mutex, so it competes with a parked C-side data-path call. Fixing
-  it cleanly requires a side-channel `Arc<dyn TransportCancel>` +
-  `Arc<AtomicBool>` captured at `_open` time, outside the mutex —
-  the design that shipped.
-- **Since 0.7.0:** every `_cancel` reads the binding-shared cancel state
-  (`tst_pipeline::binding::Owned`); the FIRST accept of a blocking
-  `_open_listener` remains uncancellable — no handle exists to cancel
-  through until the call returns; every RE-accept is cancellable through
-  the managed slot.
+Shipped 0.1.0: a `_cancel` entry point on every sender family and receiver handle; since 0.7.0 they read the binding-shared cancel state, and only the first accept of a blocking `_open_listener` stays uncancellable.
 
 ### Subtitle carriage at the `tst-c` C ABI
 
-- **Status:** Shipped. `tstrans.h` (ABI 0.21) carries
-  `tst_mux_config_add_subtitle_stream_dvb_subtitling` / `_dvb_teletext` /
-  `_cea708` / `_webvtt` → `tst_subtitle_stream_handle_t`,
-  `tst_mux_config_add_subtitle_descriptor`, `tst_muxer_push_subtitle[_to]`,
-  `tst_mux_sender_send_subtitle[_to]`,
-  `tst_managed_mux_sender_send_subtitle[_to]`,
-  `tst_mux_publisher_send_subtitle`, the per-transport
-  `tst_{udp,tcp,rtp,rist}_mux_sender_push_subtitle[_to]` and
-  `tst_rtsp_mount_push_subtitle[_to]` — one constructor per codec family
-  settled the envelope question this entry deferred on.
+Shipped 0.1.0: one stream constructor per subtitle codec family and the push / send surface on every muxing handle and the RTSP mount.
 
 ### Multi-cell fragmented metadata AU cells
 
-- **Status:** SHIPPED (0.1.0).
-- **Behavior:** the demuxer now reassembles fragmented AU cells per
-  H.222.0 V9 §2.12.4.2 Table 2-157. Both flavors covered:
-  - Multiple AU cells back-to-back within one PES — every cell emits
-    its own event; previously only the first cell did.
-  - Cells of one AU spread across multiple PES packets — `First` +
-    `Middle`* + `Last` accumulate in a per-PID buffer until `Last`
-    completes the AU; the demuxer then emits one event with
-    `MetadataKind::KlvSyncAuCell::was_reassembled = true` and
-    `cell_count = N`.
-- **Failure modes:** `NonConformantIssue::MultiCellAu` now carries a
-  typed `reason: MultiCellAuReason` (`Orphan` / `SequenceGap` /
-  `ConcurrentFirst` / `Overflow` / `OverflowTotal` / `TooManyPids`). Per-PID buffer cap configurable via
-  `DemuxerConfig::au_cell_cap_per_pid` (default 1 MiB).
-- **Out of scope:** caller override of `random_access_indicator` /
-  `decoder_config_flag` on the mux side (its own deferred entry above);
-  mux-side emit of fragmented output (the muxer emits complete cells only).
+Shipped 0.1.0: the demuxer reassembles fragmented AU cells per H.222.0 §2.12.4.2 (typed `MultiCellAuReason` failures, `DemuxerConfig::au_cell_cap_per_pid`); mux-side fragmented output stays out of scope.
 
 ### Windows MSVC runtime tests — RESOLVED 2026-05-29
 
-- **Status:** RESOLVED. windows-msvc now runs the runtime test suite
-  and is green across all four platforms (the one carve-out is the
-  IPv6-multicast sub-deferral below). The earlier "SRT
-  loopback hangs on Windows" diagnosis turned out STALE — it was an
-  artifact of the pre-MSVC-`cl` librist build; on the cl-built libsrt
-  the blocking `srt_recv` wakes on peer-close immediately (proven by a
-  bounded diagnostic), same as Linux. The actual blocker was a real
-  `SRTO_LINGER` struct-ABI product bug: `LingerOpt` was two `int`
-  (8 bytes), but Winsock `struct linger` is two `u_short` (4 bytes), so
-  libsrt's `cast_optval<linger>` rejected the size (`MJ_NOTSUP/MN_INVAL`)
-  → every sender connect failed → receiver-accept hangs. Fixed
-  per-platform in `crates/tst-srt/src/socket.rs`. CI now runs all
-  platforms under cargo-nextest, so per-test timeouts bound any future
-  hang (one hang can no longer stall the job).
-- **Sub-deferrals (all closed; the IPv6-multicast residue has its own entry, "Windows: IPv6 multicast receive"):**
-  1. **Promote windows-msvc to gating:** DONE 2026-05-30 — all four
-     Tier-1 platforms gate CI (`continue` = false in the `ci.yml` and
-     `jvm-jar.yml` matrices).
-  2. **RIST runtime on Windows:** DONE 2026-07-26 —
-     `tst-rist/tests/{loopback,pipeline_round_trip}.rs` are un-gated.
-     The blocker was a vendored-librist bug (teardown hung ~14s+ in
-     `rist_destroy` and the data plane delivered nothing, both
-     profiles), fixed upstream in librist 0.2.18: a CI diagnostic on
-     the bumped pin showed teardown in 10–31 ms with full delivery.
-  3. **Multicast on Windows:** IPv4 DONE 2026-05-29 (the failure was
-     our `set_multicast_if_v4` being unix-only, not a runner
-     limitation; fixed via socket2 + receiver-side
-     `IP_MULTICAST_LOOP`). IPv6 multicast is tracked separately (see
-     that entry).
+Shipped 0.1.0: windows-msvc runs the runtime suite (the blocker was a `SRTO_LINGER` struct-size bug, fixed per platform) and gates CI since 2026-05-30; RIST on Windows was un-gated 2026-07-26 (librist 0.2.18); IPv6 multicast is "Windows: IPv6 multicast receive" above.
 
 ### RTSP server/client deferred test surface (`#[ignore]`d)
 
-- **Status:** Shipped. No `#[ignore]` attribute remains under
-  `crates/tst-rtp/tests` (the only textual match is a comment in
-  `rtp/loopback_multicast.rs` about runtime skips);
-  `rtsp_client/interleaved_e2e.rs::tcp_interleaved_end_to_end_round_trips_ts_bytes`
-  runs un-ignored in the `rtsp_client` binary, as do the TLS root-store
-  (`rtsp_server/tls.rs`) and `rtsp_server/lagging_peer.rs` tests.
+Shipped 0.1.0: no `#[ignore]` remains under `crates/tst-rtp/tests`.
 
 ### Python-side subtitle muxing
 
-- **Status:** Shipped. `MuxerProgramConfigBuilder.add_subtitle(pid,
-  codec_config)` (`bindings/python/src/mux.rs`) takes the structured
-  `tstrans.mpegts` dataclasses this entry asked for — `DvbSubtitlingConfig`,
-  `DvbTeletextConfig`, `Cea708StandaloneConfig`, `WebVttInTsConfig` — and
-  `push_subtitle` / `push_subtitle_to` / `subtitle_handles()` /
-  `stream_descriptors_for_subtitle` round-trip against demux output.
+Shipped 0.1.0: `MuxerProgramConfigBuilder.add_subtitle(pid, codec_config)` takes the four `tstrans.mpegts` subtitle config dataclasses.
 
 ### RTP H.264 depayloader (RFC 6184)
 
-- **Status:** Shipped (0.3.0). The
-  depacketizer (`H264Depacketizer`), receiver shell (`H264Receiver`),
-  and RTSP path (`setup_h264_auto` / `into_h264_receiver`) are all
-  implemented in Rust (`tst-rtp`) and mirrored in the Python and JVM
-  bindings. Covered: single-NAL unit, STAP-A aggregation, FU-A
-  fragmentation (packetization modes 0 and 1).
-- **What remains open:** See the ledger entries "C-ABI H.264 receiver
-  family", "H.264-over-RTP payloader (RFC 6184 send side)", "RTP
-  interleaved mode 2 (STAP-B / MTAP / FU-B / DON)" and "RTP jitter/reorder
-  buffer + H.264-path RTCP".
+Shipped 0.3.0 in Rust, Python and the JVM (packetization modes 0 and 1); the rest of RFC 6184 is the C receiver, payloader, mode 2 and jitter-buffer entries above.
 
 ### RTP receive-deadline bindings parity (C / Python / JVM) — RESOLVED 2026-08-21
 
-- **Status:** RESOLVED. The `?recv_timeout=<ms>` URL key (already
-  reaching all four Rust constructors) plus a typed per-call deadline
-  are now honored across all three bindings (0.6.0). C ABI (no new
-  symbols needed): `tst_rtp_recv_open` /
-  `tst_rtp_demux_receiver_open` now also honor `?recv_timeout=`
-  (previously only the RTSP-converted path applied it); expiry
-  surfaces as the existing `TST_E_BUFFER_FULL` (-4), retryable,
-  documented on `tst_rtp_receiver_recv_ts` /
-  `tst_rtp_demux_receiver_next_event`. Python gained
-  `timeout_ms: Optional[int]` keyword args on `recv()`/`recv_au()`
-  (layered on top of, not replacing, the URL-configured persistent
-  deadline) and a typed `RtpError(TIMEOUT)` — renamed `BACKPRESSURE` in
-  0.7.0; `TIMEOUT` was a deprecated alias through 0.7.x, removed in 0.8.0. The JVM mirrors it
-  with `recv(Integer timeoutMs)` / `recvAu(Integer timeoutMs)`
-  overloads plus a typed rtp recv-deadline kind (renamed `BACKPRESSURE`
-  in 0.7.0), and additionally ships a checked `DemuxReceiver.recvEvent()`
-  so a demux-side timeout is also that typed kind rather than an
-  ambiguous EOS-shaped `null` from the plain iterator-style `next()`.
+Shipped 0.6.0: `?recv_timeout=` on the C RTP opens (expiry = `TST_E_BUFFER_FULL`) and per-call deadlines with a typed kind (`BACKPRESSURE` since 0.7.0) in Python and the JVM.
 
 ### `ManagedRecvTransport::max_payload` during reconnect
 
-- **Status:** Resolved (0.3.0). `ManagedRecvTransport::max_payload`
-  now caches the deliverable ceiling from the most recent live inner transport
-  (set at construction, refreshed after each successful rebuild) and reports
-  that cached value during the reconnect window instead of the old fixed 1316-byte
-  fallback. Direct-caller edge only — pipeline shells (`Receiver` / `RawReceiver`
-  / `DemuxReceiver`) size their receive buffers at construction and were
-  unaffected. See the CHANGELOG's `## [0.3.0]` entry.
+Shipped 0.3.0: the deliverable ceiling is cached from the last live inner transport.
 
 ### Recv-side `pkt_size` knob (inert since the recv-ceiling change)
 
-- **Status:** Resolved (0.3.0). The inert receive-side
-  `pkt_size` knobs were removed as a breaking pre-1.0 change: Rust
-  `RtpRecvSocketBuilder::pkt_size` / `UdpRecvTransportBuilder::pkt_size` /
-  `RistRecvTransportBuilder::pkt_size`, Python `tstrans.rtp.Receiver(pkt_size=)`
-  kwarg and the udp/rist receive builders' `pkt_size` methods, and JVM
-  `org.tstrans.rtp.Receiver.fromUrl(url, pktSize)`. Receive-side URLs now
-  actively reject `?pkt_size=` with a teaching error rather than silently
-  ignoring it. Send-side `pkt_size` everywhere and TCP's receive-side
-  read-granularity knob are unchanged. See the CHANGELOG's `## [0.3.0]`
-  entry.
+Shipped 0.3.0: removed from every receive builder and binding; receive URLs reject `?pkt_size=` with a teaching error.
 
 ### Python/JVM `tracing` diagnostics bridge + structured stream-end reason — RESOLVED 2026-08-21
 
-- **Status:** RESOLVED. The Rust core logs meaningful diagnostics via
-  `tracing` (the interleaved pump WARNs on read errors, malformed
-  frames, queue floods; the keepalive WARNs on 454); previously the
-  Python and JVM bindings installed no subscriber, so all of it
-  vanished, and a dying RTSP session was largely indistinguishable
-  from a clean end of stream (`recv_au()` returning `None` for both).
-  Both pieces now ship in both bindings (0.6.0). The structured "why did
-  the stream end" surface ships Rust-side —
-  `tst_rtp::StreamEndReason` / `StreamEndReasonHandle`,
-  `RtpRecvTransport::{end_reason, end_reason_handle}`,
-  `H264Receiver::end_reason` — see
-  [troubleshooting.md](/docs/troubleshooting.md#why-did-my-rtsp-stream-end)
-  — with a C ABI mirror (ABI minor 20):
-  `TstStreamEndReason` + `tst_rtp_{receiver,demux_receiver}_end_reason`.
-  The opt-in `TSTRANS_LOG` stderr bridge (an `EnvFilter`-driven
-  `tracing-subscriber` install, `try_init` so a host's own subscriber
-  is never displaced) and the structured `end_reason()`/`end_detail()`
-  mirror both ship in Python and the JVM — the JVM's
-  bridge installs from `JNI_OnLoad`, the one guaranteed one-time
-  native-library entry point (Python's installs from the `_native`
-  module-init hook).
-- **Parity, recv side (0.7.0):** the managed-SRT analogue of that
-  end-reason surface — `tst_pipeline::RecvEndReason`, which the C ABI
-  0.21 folds onto its existing `TstStreamEndReason` — now has its own
-  Python (`srt.ManagedDemuxReceiver.end_reason()` returning
-  `srt.RecvEndReason`) and JVM (`ManagedDemuxReceiver.endReason()`
-  returning `org.tstrans.srt.RecvEndReason`) mirrors, as does the
-  demuxer's `unwrap_timestamps` / `unwrapTimestamps(boolean)` knob.
-  Neither contract is Rust/C-only any more; see the parity matrix in
-  [binding-authors.md](/docs/reference/binding-authors.md).
+Shipped 0.6.0 (C ABI minor 20 for `TstStreamEndReason`): the opt-in `TSTRANS_LOG` bridge and `end_reason()` / `end_detail()` in Python and the JVM; the managed-SRT `RecvEndReason` mirrors followed in 0.7.0. See [troubleshooting.md](/docs/troubleshooting.md#why-did-my-rtsp-stream-end).
 
 ### RTSP keepalive response handling — RESOLVED
 
-- **Status:** RESOLVED (was: "no 401 reaction / session-dead detection
-  on rejected pings" + "keepalive-auth integration coverage"). The
-  trigger fired — a field report of an interleaved receive session dying
-  mid-flight — and the investigation found the fire-and-forget design
-  was also the root cause of a hard session-death defect: keepalive
-  responses were queued into the interleaved pump's bounded control
-  queue, which nothing drains between main-thread requests, so every
-  TCP-interleaved receive session died after `CTRL_QUEUE_BOUND + 1`
-  pings (16.5 minutes at the default 30 s cadence), surfacing as a
-  clean EOS. Keepalive responses (CSeq ≥ `KEEPALIVE_CSEQ_BASE`) are now
-  consumed at whichever site owns reads — the interleaved pump, or the
-  main thread's non-pump read path (which previously could misattribute
-  a buffered keepalive 200 as the next request's response): a 401
-  refreshes the shared challenge cache so the next ping signs against
-  the rotated nonce, a 454 flips `session_dead` (surfaced via
-  `RtspClient::is_session_alive`), and anything else is dropped. The
-  keepalive cadence also now retunes to the server-advertised
-  `Session: <id>;timeout=N` at SETUP and binds pings to the session
-  (both were frozen at connect-time defaults before). The
-  challenged-OPTIONS loopback coverage shipped with it
-  (`keepalive_retune.rs::keepalive_pings_authenticate_against_challenged_options`
-  drives per-request-authenticated pings against the fixture's
-  `challenge_options` mode).
+Shipped 0.4.0: keepalive responses are consumed where reads happen (a 401 refreshes the challenge, a 454 marks the session dead), which also ended the TCP-interleaved session death after `CTRL_QUEUE_BOUND + 1` pings; the cadence retunes to the server's `Session` timeout.
 
 ### `TcpListener` cross-thread cancel
 
-- **Status:** Shipped (0.7.0): `TcpListener::cancel_handle() -> TcpCancelHandle`
-  and `TcpListener::close()`; `accept_blocking` polls a 100 ms
-  `WouldBlock` loop on an `alive` flag and returns when either fires.
-  Before it, a parked `accept_blocking` could only be released by a peer
-  connecting.
+Shipped 0.7.0: `TcpListener::cancel_handle()` and `close()`.
 
 ### Cross-thread receive cancellation for UDP / RIST — RESOLVED 2026-09
 
-- **Status:** Shipped (0.7.0): `tst_udp::UdpCancelHandle`
-  and `tst_rist::RistCancelHandle`, obtained from the inherent
-  `cancel_handle()` on all four transports (or the `Transport` /
-  `RecvTransport` trait forms, now `Some`). A `recv_bytes` parked on the
-  UDP 100 ms poll loop or on librist's 100 ms `rist_receiver_data_read2`
-  tick returns `TransportError::ExplicitClose` at its next tick when the
-  handle fires; `send_bytes` observes it at entry; `is_alive()` reads
-  `false` after a cancel and (UDP, new) after a `Broken`. Python exposes
-  `udp.CancelHandle` / `rist.CancelHandle`; the C handles fire the real
-  handle from `_close`, and the non-freeing `tst_udp_*_cancel` /
-  `tst_rist_*_cancel` entry points shipped with ABI 0.22 — see "C ABI
-  cancel entry points for `tcp://`, `udp://`, `rist://` transports —
-  RESOLVED 2026-09" below. The pre-0.7.0 "cooperative
-  timeout + stop flag" shape is still available (`recv_timeout` on UDP,
-  `timeout_ms` in Python) but is no longer the only way.
+Shipped 0.7.0: `UdpCancelHandle` / `RistCancelHandle` on all four transports, Python `CancelHandle`s, and the C `_cancel` entry points below.
 
 <a id="c-abi-cancel-entry-points-for-tcp-udp-rist-transports--resolved-2026-09-arc-2-r4-abi-022"></a>
 
 ### C ABI cancel entry points for `tcp://`, `udp://`, `rist://` transports — RESOLVED 2026-09 (ABI 0.22)
 
-- **Status:** Shipped. `tst_tcp_{sender,mux_sender,receiver,demux_receiver,listener}_cancel`,
-  `tst_udp_{sender,mux_sender,receiver,demux_receiver}_cancel` and
-  `tst_rist_{sender,mux_sender,receiver,demux_receiver}_cancel` reach the
-  `TcpCancelHandle` / `UdpCancelHandle` / `RistCancelHandle` from any
-  thread; a parked data-path call returns `TST_E_CLOSED` (the one-cancel-outcome
-  contract, `TransportError::ExplicitClose`). A stalled TCP send now has a
-  C-side remedy, a parked
-  `tst_tcp_listener_accept_*` returns NULL with the same code, and RIST — whose
-  `_recv_ts` never parks, so its caller polls in a loop that a freeing `_close`
-  would race — now has the non-freeing interrupt that shape requires (pinned by
-  `bindings/c/tests/transports/rist_cancel_from_other_thread.rs`). `_cancel` never
-  frees: the handle still takes its `_close` / `_free`.
+Shipped 0.7.0 (C ABI minor 22): non-freeing `tst_{tcp,udp,rist}_*_cancel` on every handle; a parked call returns `TST_E_CLOSED`.
 
 <a id="muxsenderfinish-bindings-parity--resolved-2026-09-arc-2-r3--debt-14-abi-022"></a>
 
 ### `MuxSender::finish` bindings parity — RESOLVED 2026-09 (ABI 0.22)
 
-- **Status:** Shipped on all three bindings: C `tst_mux_sender_finish` /
-  `tst_managed_mux_sender_finish` / `tst_{udp,tcp,rtp,rist}_mux_sender_finish`;
-  Python `MuxSender.finish()` on `srt.MuxSender`, `srt.ManagedMuxSender`,
-  `rtp.MuxSender`; JVM `finish()` on the same three classes. Same contract
-  everywhere: drain, report the first drain error, close; second call quiet;
-  does not cancel first. `FileTransport::finish` stays Rust-only (no binding
-  exposes `FileTransport`) — see the shell parity matrix in
-  `docs/reference/binding-authors.md`.
+Shipped 0.7.0 (C ABI minor 22): `finish()` on every C, Python and JVM mux sender; `FileTransport::finish` stays Rust-only.
+
+### `Socket::close` Result-type cleanup
+
+Shipped 0.8.0: `tst_srt::Socket::close` and `Listener::close` are infallible.
+
+### `MaxBandwidth` variant naming vs libsrt sentinels
+
+Shipped 0.8.0: renamed `InputRelative` (0) and `Infinite` (−1); a stale use fails to compile.
