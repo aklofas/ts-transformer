@@ -560,36 +560,26 @@ accommodate it.
 **The run went to completion, and the harness verdict is
 `overall_pass=false`.** It covered 259,137 of the configured 259,200
 seconds and produced 41 verdicts: 36 gating PASS, 3 gating FAIL and 2
-provisional PASS.
+provisional PASS. The SRT leg passed every gating verdict, including
+twelve outage windows survived with 12 reconnects and 107,849 corruption
+injections with zero unexplained, undetected or unrecovered events. The
+RIST leg failed corruption attribution: all three gating FAILs
+(`worker_exits`, `recv_invariants_rist`, `corruption_attributed_rist`)
+are that one finding, explained below. No process grew past the RSS gate. This is the latest 72-hour SRT / RIST
+endurance run; the two harness defects behind the RIST failure were fixed
+in 0.8.0.
 
-- **SRT leg:** passed every gating verdict. That covers the twelve
-  scheduled outage windows survived with 12 reconnects, and 107,849
-  corruption injections with zero unexplained, undetected or unrecovered
-  events.
-- **RIST leg:** failed corruption attribution. All three gating FAILs
-  (`worker_exits`, `recv_invariants_rist`, `corruption_attributed_rist`)
-  are that one finding, described under "The RIST attribution failure"
-  below.
-- **Memory:** no process grew past the RSS gate.
-
-What ran. The tree was `e86dd9ea`, clean at launch (`provenance.json`:
-`dirty=false`, 10 submodules pinned). It was built `--release` with the
-vendored libsrt / librist / mbedTLS on a dedicated cloud VM with 2 vCPUs
-and 3.9 GB, as `provenance.json` records it. The command was
-`SRT_RECONNECT_MODE=background bash scripts/interop/soak.sh --hours 72
---seed 11`, run from 2026-10-01T18:32Z to 2026-10-04T18:37Z.
-
-Seed 11 drew `pts-rollover` for the SRT leg and `klv-sync` for the RIST
-leg. Both legs ran the current shape described above:
-
-- twelve seeded impairment phases of six hours each, with 0.5–4 % loss;
-- the corruption tap, at 5 per 10,000 packets with seven damage classes;
-- rich ST 0601 KLV.
-
-The SRT leg's proxy also applied a 90-second full-drop outage every 6
-hours, which makes twelve windows over the run. Every one of those choices
-was declared in `soak-config.json` before launch, and every `*_declared_<leg>`
-verdict passed.
+The tree was `e86dd9ea`, clean at launch (`provenance.json`:
+`dirty=false`, 10 submodules pinned), built `--release` with the vendored
+libsrt / librist / mbedTLS on a dedicated 2-vCPU / 3.9 GB cloud VM, and run
+as `SRT_RECONNECT_MODE=background bash scripts/interop/soak.sh --hours 72
+--seed 11` from 2026-10-01T18:32Z to 2026-10-04T18:37Z. Seed 11 drew
+`pts-rollover` for the SRT leg and `klv-sync` for the RIST leg. Both legs
+ran the current shape above (twelve 6-hour impairment phases at 0.5–4 %
+loss, the corruption tap at 5 per 10,000 packets over seven damage
+classes, rich ST 0601 KLV), and the SRT proxy cut the link for 90 s every
+6 hours. Every choice was declared in `soak-config.json` before launch and
+every `*_declared_<leg>` verdict passed.
 
 | Leg | Sent → received (video AUs) | Drop rate (observed vs. phase-integrated expected) | Reconnects | Corruption | Rich KLV records judged | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -605,118 +595,61 @@ intervention):
 | 48 h (2026-10-03T19:40Z) | 7 / 7 alive, no fail-fast marker | 8 (8) | 173 MB / 181 MB | PASS |
 | 57.5 h (2026-10-04T04:07Z) | 7 / 7 alive, no fail-fast marker | 9 (9) | 173 MB / 181 MB | PASS |
 
-The 177 MB reading for the RIST sender was an ad-hoc `ps` sample. The
-gated 30-second series shows that sender flat at 181.3–181.4 MB from about
-4.5 hours to the end, so 181.4 MB is the plateau and there was no growth.
+The 177 MB RIST reading was an ad-hoc `ps` sample; the gated 30-second
+series is flat at 181.3–181.4 MB from about 4.5 hours to the end.
 
-**The RIST attribution failure.** The RIST receiver reported 8 events that
-the harness could not tie to an injection. It exited 1 on that verdict, so
-the one finding fails three gating verdicts: `worker_exits`,
-`recv_invariants_rist` and `corruption_attributed_rist`. The events are
-spread from 13.8 h to 71.6 h into the run; none falls at teardown.
+**The RIST attribution failure.** The RIST receiver reported 8 events the
+harness could not tie to an injection, spread from 13.8 h to 71.6 h. Both
+causes were harness defects, fixed in `tst-interop` for 0.8.0 (see the
+CHANGELOG's 0.8.0 entry); none of the eight is explained by a library
+defect.
 
-- **Six of the eight are a gap in the harness.** Each is a PSI checksum
-  error on the PMT PID, 5 packets after the tap truncated that PMT packet.
-  The `klv-sync` profile's PMT section runs to byte 59, so a truncation
-  that keeps fewer bytes cuts inside the section. The demuxer then
-  correctly reports the section's CRC failure. The harness's
-  injection-to-signal expectation table does not admit a PSI checksum as
-  a consequence of a truncation, so it could not attribute these events.
-  This was reproduced offline on the soaked tree: cutting a `klv-sync` PMT
-  to 45, 52 or 58 bytes reports the checksum error each time. The
-  `pts-rollover` profile's PMT section ends at byte 37, which no
-  truncation reaches; the SRT leg had 83 truncations on its PMT PID and no
-  such event.
-- **The other two are a second harness attribution defect.** One is a PAT
-  checksum error at about 58 h; the other is a resync with no PID at about
-  71.6 h. Each had its true cause 1–6 packets before it: a `psi_flip` on
-  the PAT, and a `garbage` injection on the video PID. The harness had
-  stopped tracking that cause, because its raw reader takes a PCR anchor
-  from any packet with no plausibility check. After a framing injection, a
-  mis-framed packet occasionally has its payload bytes read as a header.
-  If those bytes carry adaptation-field and PCR flags, the reader hands the
-  attribution engine a random anchor. Every pending injection that anchor
-  appears to be more than 0.4 s ahead of is then marked unresolved and
-  never judged. The report therefore named an injection about 1,100 packets
-  earlier as the "nearest". This was reproduced with the real `send` and
-  `recv` binaries over a byte-transparent relay:
-  - with no extra packets, 149 of 149 injections resolved and the run
-    passed;
-  - with 12 inserted packets carrying a PCR 100 s ahead, 84 injections
-    were stranded, 37 events were charged unexplained, and the run
-    failed, with failure text of the same shape as the soak's.
+- **Six** are PSI checksum errors on the PMT PID 5 packets after the tap
+  truncated that PMT packet inside its section (the `klv-sync` PMT section
+  runs to byte 59). The demuxer correctly reports the CRC failure; the
+  harness's injection-to-signal table did not admit a PSI checksum as a
+  consequence of a truncation. Reproduced offline by cutting a `klv-sync`
+  PMT to 45, 52 or 58 bytes. The SRT leg's `pts-rollover` PMT section ends
+  at byte 37, which no truncation reaches (83 PMT truncations, no event).
+- **Two** (a PAT checksum error at about 58 h, a PID-less resync at about
+  71.6 h) had their true causes 1–6 packets earlier: a `psi_flip` on the
+  PAT and a `garbage` injection on the video PID. The harness's raw reader
+  took a PCR anchor from any packet, so a mis-framed packet after a framing
+  injection could hand it a random anchor, which stranded every pending
+  injection more than 0.4 s behind it. Reproduced with the real `send` and
+  `recv` binaries over a byte-transparent relay: with no extra packets 149
+  of 149 injections resolved; with 12 inserted packets carrying a PCR 100 s
+  ahead, 84 were stranded and 37 events charged unexplained. The soak's own
+  anchors were not archived, so this attribution is a high-confidence
+  inference, not an observation.
 
-  The reproduction forces the anchor; the soak's own anchors are inferred
-  from its counters, since its PCR stream was not archived.
-
-Six of the eight unexplained RIST events match the reproduced
-expectation-table defect directly (each is a PSI-checksum error five
-packets after a PMT truncation past byte 44). The other two are attributed
-to the reproduced anchor-stranding defect as a high-confidence inference:
-the mechanism is reproduced, each event has a plausible cause 1–6 packets
-earlier, and the receiver logged no decode or transport error — but the
-run's own PCR anchors were not archived, so the attribution is inferred
-from the counters rather than observed. No evidence from this run
-contradicts the receiver, the demuxer or the RIST transport; none of the
-eight events is explained by a library defect. The `overall_pass=false`
-above is the harness's verdict on this run, and this page does not
-re-label it as a pass.
-
-Both fixes are in the harness, not the library, and are tracked for the
-harness follow-up:
-
-- accept PCR anchors only from declared PCR PIDs, or from confirmed-lock
-  packets, with a bound on how far an anchor may jump;
-- require two confirming anchors before an injection is stranded;
-- report any unresolved injection as a limitation;
-- admit the PSI-checksum pairing for framing injections on a PSI packet
-  in the expectation table (`tst-interop` `expects()`).
-
-Everything else on the RIST leg passed: drop rate, coverage (100.0 %
-ingested, 100.0 % resolved), detection (0 undetected), recovery (0
-unrecovered) and the rich-KLV oracles.
+The `overall_pass=false` above is the harness's verdict on this run, and
+this page does not re-label it as a pass. Everything else on the RIST leg
+passed: drop rate, coverage (100.0 % ingested and resolved), detection (0
+undetected), recovery (0 unrecovered) and the rich-KLV oracles.
 
 **What Background mode means for these numbers.** During each outage the
-SRT leg's managed sender went on producing into a bounded gap buffer (256
-messages, `drop_oldest`). When the link came back it sent what the buffer
-still held, and it evicted what it could not hold. So this run shows that
-both ends reconnect after every scheduled outage and that the received
-stream recovers. It does not show that every source frame was delivered,
-and it says nothing about Blocking mode's stalled-producer replay, which
-the 2026-08-05 run below exercised. The SRT leg received 33,090 fewer video
-AUs than it sent, by design.
+SRT sender kept producing into a bounded gap buffer (256 messages,
+`drop_oldest`) and sent what it still held on reconnect. The run shows that
+both ends reconnect after every outage and the stream recovers; it does not
+show that every source frame was delivered (33,090 fewer video AUs received
+than sent, by design), and it says nothing about Blocking mode's replay.
+Sender counters, recorded and not gated: 144 reconnect attempts, 12
+successes, 201,132 messages (236.9 MB) evicted, `gap_len_at_exit` 0. The
+eviction counters miss what the transport had accepted before it noticed
+the break; the sent-minus-received difference is the fuller figure.
 
-The sender's counters are recorded, not gated:
+**How the run was judged.** `corruption_coverage_srt` passed at 100.0 %
+ingested and 99.6 % resolved, `corruption_coverage_rist` at 100.0 % and
+100.0 % (floors 99 % and 90 %); `duration_coverage` at 259,137 s; all six
+`rss_sample_coverage_<leg>_<process>` verdicts at 8,557 of 8,578 samples
+with a largest gap of 31 s; `zero_process_exits` passed and `worker_exits`
+failed only on the RIST receiver's exit 1. The two provisional verdicts are
+the reconnect counts (SRT 12 rebuilds for 12 windows; RIST not
+applicable), provisional because the counter counts factory rebuilds, not
+windows. Every RSS slope passed the 200 KiB/hour gate after its 30-minute
+warm-up:
 
-- 144 reconnect attempts and 12 successes;
-- 201,132 messages (236.9 MB) evicted from the gap buffer;
-- an empty buffer at exit (`gap_len_at_exit` 0).
-
-The eviction counters are not the whole cost of an outage. They miss what
-the transport had already accepted before it noticed the break, and the
-sent-minus-received difference is the fuller figure. Nothing on this page
-claims that a frame accepted into the gap buffer was later delivered.
-
-**How the run was judged.** Each leg is judged by its own receiver's
-end-of-run report against its own corruption log.
-
-- **Coverage:** `corruption_coverage_srt` passed at 100.0 % ingested and
-  99.6 % resolved, `corruption_coverage_rist` at 100.0 % and 100.0 % (the
-  floors are 99 % and 90 %).
-- **Duration:** `duration_coverage` passed at 259,137 s against 259,200 s.
-- **Samples:** all six `rss_sample_coverage_<leg>_<process>` verdicts
-  passed, at 8,557 of 8,578 expected samples each with a largest gap of
-  31 s.
-- **Exits:** `zero_process_exits` passed. `worker_exits` failed only on
-  the RIST receiver's exit 1 described above.
-
-The two provisional verdicts are `reconnect_count_matches_outage_count_srt`,
-which passed at 12 rebuilds against 12 windows, and its RIST counterpart,
-which is not applicable without an outage. They stay provisional because
-the counter counts factory rebuilds, not outage windows. All 39 other
-verdicts gate.
-
-Every RSS slope passed the 200 KiB/hour gate after its 30-minute warm-up:
 
 | Process | Slope (KiB/hour) |
 | --- | --- |
@@ -727,48 +660,27 @@ Every RSS slope passed the 200 KiB/hour gate after its 30-minute warm-up:
 | RIST receiver | 1.8 |
 | RIST proxy | 0.4 |
 
-The verdict document also records five standing limitations:
+The verdict document records five standing limitations: the managed
+sender's reconnect counters are not gated; the drop-rate check is
+aggregate, not per outage window; outage-window drops are excluded from
+both sides of it; a worker killed before writing its report makes `report
+soak` exit 2 instead of naming the role; the gap-buffer eviction counters
+are not an outage's whole cost.
 
-- the managed sender's reconnect counters are recorded, not gated;
-- the drop-rate check is aggregate, not localised per event to the
-  outage windows;
-- outage-window drops are excluded from both sides of that check;
-- a worker killed before it writes its report makes `report soak` exit 2
-  rather than name the failed role;
-- the gap-buffer eviction counters are not an outage's whole cost.
+Recorded, not gated (this run is the first with `proc.csv` and
+`host.csv`): end-of-run RSS SRT sender 172.1 MB (a plateau of about 173 MB
+from 6 h), RIST sender 181.4 MB, receivers 11.4 and 10.0 MB, proxies 7.0
+and 6.5 MB; whole-run CPU between 0.54 % and 2.14 % of one core per
+process; one-minute host load median 0.06, maximum 0.73. Thread and
+descriptor counts returned to their baselines after each of the 12 outage
+windows, with no drift across the run.
 
-The CPU, file-descriptor and thread telemetry (`proc.csv`, `host.csv`)
-appears in this run for the first time. It is recorded, not gated, and the
-figures below are observations, not verdicts.
-
-- **RSS at the end of the run:** SRT sender 172.1 MB (a plateau of about
-  173 MB from 6 h), RIST sender 181.4 MB, SRT receiver 11.4 MB, RIST
-  receiver 10.0 MB, proxies 7.0 and 6.5 MB.
-- **CPU over the whole run** (one core = 100 %): SRT sender 2.14 %, SRT
-  receiver 2.07 %, RIST receiver 1.71 %, RIST sender 1.63 %, proxies 0.76 %
-  and 0.54 %. One-minute host load (2 vCPUs) had a median of 0.06 and a
-  mean of 0.08; 26 % of the 30-second samples were above 0.11 and the
-  maximum was 0.73 (at 131 073 s, outside any outage window).
-- **Threads and descriptors:** the two RIST processes and both proxies held
-  the same counts in every sample after launch. The SRT pair returned to its
-  baseline (sender 4 threads / 5 descriptors, receiver 6 / 5) after each of
-  the 12 outage windows, with bounded transients of up to 90 s inside them: the
-  receiver 5 threads / 6 descriptors, the sender 3 or 5 threads (once 7, at
-  237 482 s) and 4 to 6 descriptors. There was no drift across the run.
-
-**Which binary this is evidence for.** The soak exercised the `e86dd9ea`
-binary, not the tree tagged 0.7.0. The library changes that landed after it
-are listed in the CHANGELOG's 0.7.0 entry:
-
-- KLV classification and malformed-PES handling in the demuxer;
-- the ST 0601 Tag 102 and SPS-crop parser bounds;
-- RTSP server session teardown;
-- zero-length UDP / RIST datagrams;
-- binding error kinds.
-
-Before those, the `tcps://` close drain had also landed after `e86dd9ea`.
-The tagged tree's own evidence for these changes comes from shorter runs,
-all on `effc7f9c`, the last library change before the tag:
+**Which binary this is evidence for.** `e86dd9ea`, not the tree tagged
+0.7.0. The library changes after it are in the CHANGELOG's 0.7.0 entry:
+the `tcps://` close drain, KLV classification and malformed-PES handling,
+the ST 0601 Tag 102 and SPS-crop bounds, RTSP session teardown,
+zero-length UDP / RIST datagrams and binding error kinds. Evidence on
+`effc7f9c`, the last library change before the 0.7.0 tag:
 
 - the 157-cell interop census at 157 / 92 / 0 / 65 / 0
   ([run 37181827346](https://github.com/aklofas/ts-transformer/actions/runs/37181827346),
@@ -777,118 +689,49 @@ all on `effc7f9c`, the last library change before the tag:
   native-linking crates
   ([run 37181828490](https://github.com/aklofas/ts-transformer/actions/runs/37181828490),
   2026-10-04);
-- a comparison over the maintainer's local corpus of 260 captures (one of
-  them a reconstruction, derived rather than captured raw; 41.5 GB),
-  demuxed by the tree before those fixes (`d2fa73dc`) and by
-  `effc7f9c`. The two outputs are byte-identical. No raw capture's KLV PID
-  has an `Unknown` sample. The reconstruction has 32, and they are the
-  same under both trees. This proves only that the fixes did not change
-  how real streams demux. No corpus KLV record reaches 13 319 bytes (the
-  largest is 302 B), and no PID reported a malformed PES, so the corpus
-  does not exercise the large-async-KLV or malformed-PES-neighbour fixes.
-  The synthetic reproductions in the CHANGELOG entries are what prove
-  those;
-- a one-hour soak smoke at the shape above (seed 11, Background mode),
-  2026-10-04T06:53Z–07:56Z, with `overall_pass=true` (41 verdicts, 8 of
-  them provisional):
-  - **SRT:** 107,954 of 108,000 video AUs received, a 1.82 % drop rate
-    against 1.83 % expected, and 1,509 injections of which 1,508 resolved,
-    with 0 unexplained events.
-  - **RIST:** 107,990 of 108,000 received, 1.88 % against 1.88 %, and
-    1,534 injections, all resolved, with 0 unexplained events (1
-    unexplained discontinuity within the budget of 24) and 1 excused as
-    transport loss.
+- a byte-identical demux comparison of `d2fa73dc` and `effc7f9c` over the
+  maintainer's local corpus of 260 captures (41.5 GB; one is a
+  reconstruction, whose 32 `Unknown` KLV samples are the same under both
+  trees). No raw capture's KLV PID has an `Unknown` sample. The corpus reaches neither the 13 319-byte
+  async-KLV fix (its largest KLV record is 302 B) nor the
+  malformed-PES-neighbour fix; the synthetic reproductions in the
+  CHANGELOG entries prove those;
+- a one-hour soak smoke at seed 11, Background mode
+  (2026-10-04T06:53Z–07:56Z), `overall_pass=true` with 41 verdicts (8
+  provisional: the 6 RSS slopes and the 2 reconnect counts). SRT received
+  107,954 of 108,000 video AUs (1.82 % drop against 1.83 % expected; 1,508
+  of 1,509 injections resolved); RIST 107,990 of 108,000 (1.88 % against
+  1.88 %; 1,534 of 1,534 resolved); 0 unexplained events on either leg. No
+  outage falls inside one hour, so it does not exercise reconnects.
 
-  No outage window falls inside one hour, so this smoke does not exercise
-  the reconnect path. The provisional verdicts were the 6 RSS slopes,
-  which are not gated below 72 h, and the 2 reconnect counts.
-
-None of those runs is endurance evidence, and the 72-hour figures above
-belong to `e86dd9ea`. The raw archive (`soak-results.json`,
-`provenance.json`, the 30-second RSS samples, per-process logs and
-corruption logs) is retained offline by the maintainer. Its 32 files were
-md5-checked against the VM before teardown: 32 matched and none failed.
+None of those runs is endurance evidence. The raw archive
+(`soak-results.json`, `provenance.json`, the 30-second RSS samples,
+per-process and corruption logs; 32 files, md5-checked against the VM
+before teardown) is retained offline by the maintainer.
 
 ### The previous run (2026-08-05 → 2026-08-08, seed 1; fixed impairment, Blocking mode)
 
-This run is kept as historical evidence. It ran on a tree between the 0.4.0
-(2026-07-31) and 0.5.0 (2026-08-09) releases and was published with 0.5.0
-(CHANGELOG `## [0.5.0]`); its exact source commit was not recorded. It predates the current soak
-shape (it held one fixed impairment level, both legs ran the `baseline`
-profile, and nothing was corrupted). It also predates Background mode: its
-SRT leg ran the Blocking replay. Its delivery and drop-rate figures
-describe that configuration, not the 0.7.0 release soak above.
-
-**Overall PASS (fixed impairment, Blocking mode) — zero process exits,
-all twelve scheduled outage windows survived with exactly twelve
-reconnects and zero unscheduled ones, no memory growth on any of the six
-processes.** The run ran to its full
-72-hour deadline — the verdict document's measured sampling window
-spans 259,152 of the nominal 259,200 seconds, the 48-second difference
-being ordinary launch/shutdown process staggering, and the senders
-pushed the complete 72 hours of media (7,776,000 AUs at 30 fps) — on a
-dedicated cloud VM (AWS EC2
-t3.medium, 2 vCPU / 4 GiB, x86_64), both legs concurrently, sustaining
-~1.9 Mb/s of GOP-structured video + 10 Hz KLV per leg — about 60.8 GB
-of received wire traffic per leg.
+Historical evidence, published with 0.5.0 (CHANGELOG `## [0.5.0]`; its
+exact source commit was not recorded). It predates the current soak shape
+(one fixed impairment level, both legs on `baseline`, no corruption tap)
+and Background mode (its SRT leg ran the Blocking replay), so its figures
+describe that configuration only. **Overall PASS:** the full 72 hours
+(259,152 of 259,200 s sampled; 7,776,000 AUs sent per leg) on an AWS EC2
+t3.medium (2 vCPU / 4 GiB), zero process exits, twelve reconnects for
+twelve scheduled outage windows and none unscheduled, no memory growth.
 
 | Leg | Sent (video AUs) | Received | KLV records (sent → received) | Drop rate (observed vs. expected) | Reconnects | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
 | SRT (managed send + managed recv, 90 s outage every 6 h) | 7,776,000 | 7,773,537 (99.968%) | 2,592,000 → 2,591,182 | 2.0152% vs. 2.00% | 12 (of 12 scheduled windows) | PASS |
 | RIST (continuous impairment, no outage) | 7,776,000 | 7,775,971 (99.9996%) | 2,592,000 → 2,591,991 | 2.0009% vs. 2.00% | n/a | PASS |
 
-The reconnect story is the headline: the proxy injected a 90-second
-full-drop outage every 6 hours, twelve in all, and
-`ManagedRecvTransport`'s rebuild counter finished at exactly 12 — one
-successful receive-side transport rebuild per scheduled window, with no
-spurious rebuilds anywhere in between. (That check still reports itself
-as provisional: the rebuild counter counts factory rebuilds, not outage
-windows, and a single window *can* drive more than one rebuild — see
-`report.rs`'s module doc — but this run's observed ratio at the
-production 90-second outage duration was exactly 1:1.)
-
-The two legs' drop rates validate each other. The RIST leg, which ran
-continuous impairment with no outage windows, is the clean statistical
-control: its observed 2.0009% sits +0.0009 percentage points above the
-configured 2% — about half a standard deviation of a pure binomial at
-its 59.9-million-packet volume. The SRT leg's +0.0152pp excess is the
-documented outage-window model artifact (reconnect handshake packets
-sent while an outage is still active are counted as proxy drops — see
-the limitations note in `report.rs`), landing just under that
-artifact's predicted 0.02–0.2pp range at 72-hour scale; both legs sit
-well inside the 0.10pp verdict tolerance. The SRT leg's 2,463
-undelivered AUs (0.032%) are similarly outage-attributable — roughly
-seven seconds of video lost per 90-second outage, the in-flight data
-from the moment of each cut, with the continuous 2% packet loss fully
-absorbed by retransmission in between.
-
-Memory closed out the smoke run's open question (for that run's
-fixed-impairment, Blocking configuration). The worst
-post-warmup RSS slope across all six processes was 68.8 KiB/hour (the
-SRT sender) — and even that is warm-up convergence, not growth: both
-senders climb to a ~176 MiB working-set plateau over the first ~7
-hours and hold byte-flat after, so every process's slope over the
-run's **final 24 hours** was at or below 18 KiB/hour, with the RIST
-sender (the smoke run's watch item) at 0.1 KiB/hour. On the strength
-of these numbers the RSS gate is no longer provisional:
-[`scripts/interop/soak.sh`](/scripts/interop/soak.sh) now defaults
-`--rss-slope-threshold-kb-per-hour` to 200 for full-length runs (its
-header comment carries the derivation), a threshold this run passes
-retroactively with ~3× margin and the pre-fix digest-accumulation
-leaks would have tripped.
-
-The supervisor fail-fast machinery (added after an earlier attempt
-lost both senders to a fixture bug 14.5 hours in — a synthetic-KLV
-latitude walk crossing ST 0601's encode range, not a library bug —
-and idled undetected) was armed throughout and never fired: the run's
-event log holds exactly seven launch lines. The reproduction recipe is
-unchanged — `SRT_RECONNECT_MODE=blocking scripts/interop/soak.sh --seed 1`
-with the fixed seed making the impairment engine's decision sequence
-deterministic (the mode is now a required setting; this run predates
-Background mode and so exercised the blocking path) — and
-the full artifact set (30-second-cadence RSS samples, per-leg
-send/recv/proxy reports, per-process logs, `soak-results.json`) is
-retained offline by the maintainer.
+The worst post-warm-up RSS slope was 68.8 KiB/hour (SRT sender), warm-up
+convergence to a ~176 MiB plateau reached by about 7 hours; every
+process's slope over the final 24 hours was at or below 18 KiB/hour. Those
+figures set `soak.sh`'s 200 KiB/hour default gate for full-length runs.
+The supervisor fail-fast was armed throughout and never fired. Reproduce
+with `SRT_RECONNECT_MODE=blocking scripts/interop/soak.sh --seed 1`; the
+artifacts are retained offline by the maintainer.
 
 ## Publisher role (RTSP ANNOUNCE/RECORD ingest)
 

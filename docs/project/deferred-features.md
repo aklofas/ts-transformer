@@ -567,6 +567,10 @@ mean **Deferred**. An entry whose feature has shipped must never read
   failure; the operator gets a clear "this option exists but isn't yet
   exposed" message. Of the roughly 14 Group 3 keys ffmpeg honors, only
   Category A (5 cheap aliases mapping to existing setters) shipped.
+  Category B is `rcvbuf` / `sndbuf` / `messageapi` / `nakreport` /
+  `minversion`; Category C is `enforcedencryption` / `kmrefreshrate` /
+  `kmpreannounce` / `iptos` / `ipttl` / `snddropdelay` / `transtype` /
+  `tsbpdmode`.
 - **The list:** `bindtodevice` (`SRTO_BINDTODEVICE`),
   `cryptomode` (`SRTO_CRYPTOMODE`), `drifttracer`
   (`SRTO_DRIFTTRACER`), `enforcedencryption` (`SRTO_ENFORCEDENCRYPTION`),
@@ -1510,6 +1514,9 @@ and the two below.
   video carriage (`VideoCodec::H262` is not a variant; H.262 PIDs demux
   as `Unknown`), and the timestamp rides with that carriage item, not
   independently.
+- **Why deferred:** H.262 write-side carriage (a new `VideoCodec`
+  variant, PES `stream_id` selection and a sequence/GOP/picture header
+  emitter) is a full video-carriage scope item of its own.
 - **Trigger to revisit:** MPEG-2 Video (H.262) carriage is prioritized,
   or a consumer asks for read-side H.262 user_data timestamp extraction
   from legacy captures.
