@@ -147,7 +147,8 @@ impl RawPublisher {
         }
     }
 
-    fn uri(&self, path: &str) -> String {
+    /// The absolute request URI for `path` on this connection's server.
+    pub fn uri(&self, path: &str) -> String {
         format!("{}://127.0.0.1:{}{path}", self.scheme, self.port)
     }
 
@@ -267,14 +268,32 @@ impl RawPublisher {
 
     /// One RFC 2326 §10.12 interleaved frame: `$`, channel, BE16 length, payload.
     pub fn send_frame(&mut self, ch: u8, payload: &[u8]) {
-        let len = u16::try_from(payload.len()).expect("frame fits u16");
-        let mut f = Vec::with_capacity(4 + payload.len());
-        f.push(b'$');
-        f.push(ch);
-        f.extend_from_slice(&len.to_be_bytes());
-        f.extend_from_slice(payload);
-        self.stream.write_all(&f).expect("frame written");
-        self.stream.flush().expect("frame flushed");
+        self.write_raw(&frame(ch, payload));
+    }
+
+    /// Write `bytes` as-is — requests and `$` frames pipelined in one
+    /// write, with no response read in between — then flush.
+    pub fn write_raw(&mut self, bytes: &[u8]) {
+        self.stream.write_all(bytes).expect("bytes written");
+        self.stream.flush().expect("bytes flushed");
+    }
+
+    /// Read until `count` response heads (`CRLFCRLF`) have arrived and
+    /// return them as text. Bounded by the 2 s read timeout; the responses
+    /// a pipelined write provokes here carry no body, so counting
+    /// terminators counts responses.
+    pub fn read_responses(&mut self, count: usize) -> String {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while buf.windows(4).filter(|w| *w == b"\r\n\r\n").count() < count {
+            let n = self
+                .stream
+                .read(&mut chunk)
+                .expect("server answered within the read timeout");
+            assert!(n > 0, "connection closed before {count} complete responses");
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        String::from_utf8_lossy(&buf).into_owned()
     }
 
     /// The session id from the first SETUP.
@@ -318,6 +337,17 @@ fn transport_param<'a>(transport: &'a str, name: &str) -> Option<&'a str> {
         let (k, v) = p.split_once('=')?;
         (k.trim() == name).then(|| v.trim())
     })
+}
+
+/// `$<ch><len_be16><payload>` — one RFC 2326 §10.12 interleaved frame.
+pub fn frame(ch: u8, payload: &[u8]) -> Vec<u8> {
+    let len = u16::try_from(payload.len()).expect("frame fits u16");
+    let mut f = Vec::with_capacity(4 + payload.len());
+    f.push(b'$');
+    f.push(ch);
+    f.extend_from_slice(&len.to_be_bytes());
+    f.extend_from_slice(payload);
+    f
 }
 
 /// A 12-byte RTP header (V=2, no marker) followed by `payload`.
