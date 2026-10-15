@@ -336,5 +336,35 @@ expect "dup helpers: a body under the line floor is not a finding"              
 expect "dup helpers: two copies inside ONE file are not a cross-file finding"     0 env DTH_ROOTS="$tmp/dth/one"   DTH_ALLOWLIST="$tmp/dth/empty.tsv"    bash "$DTH"
 expect "dup helpers: a scan that finds no test file fails closed"                1 env DTH_ROOTS="$tmp/dth/none"  DTH_ALLOWLIST="$tmp/dth/empty.tsv"    bash "$DTH"
 
+# ---- duplicate test helpers, scan rules and regeneration ----
+mkdir -p "$tmp/dth/tf/a/tests" "$tmp/dth/tf/b/tests" "$tmp/dth/cm/a/tests" "$tmp/dth/cm/b/tests" \
+         "$tmp/dth/three/a/tests" "$tmp/dth/three/b/tests" "$tmp/dth/three/c/tests" \
+         "$tmp/dth/two/a/tests" "$tmp/dth/two/b/tests"
+for d in a b; do cat > "$tmp/dth/tf/$d/tests/t.rs" <<'XEOF'
+#[test]
+fn same_body() {
+    let mut out = Vec::new();
+    out.push(1u8);
+    out.push(2u8);
+    assert_eq!(out.len(), 2);
+}
+XEOF
+done
+cp "$tmp/dth/rs/a/tests/t.rs" "$tmp/dth/cm/a/tests/t.rs"
+sed 's|^    let mut out = Vec::new();|    // a note that only the copy has\n    let mut out = Vec::new();   |' "$tmp/dth/rs/a/tests/t.rs" > "$tmp/dth/cm/b/tests/t.rs"
+for d in a b c; do cp "$tmp/dth/rs/a/tests/t.rs" "$tmp/dth/three/$d/tests/t.rs"; done
+for d in a b; do cp "$tmp/dth/rs/a/tests/t.rs" "$tmp/dth/two/$d/tests/t.rs"; done
+{ for d in a b c; do printf '%s\t%s\t%s\n' "$tmp/dth/three/$d/tests/t.rs" drain fixture; done; } > "$tmp/dth/three.tsv"
+env DTH_ROOTS="$tmp/dth/rs" DTH_ALLOWLIST="$tmp/dth/listed.tsv" bash "$DTH" --print-allowlist > "$tmp/dth/printed.tsv"
+env DTH_ROOTS="$tmp/dth/rs" DTH_ALLOWLIST="$tmp/dth/empty.tsv"  bash "$DTH" --print-allowlist > "$tmp/dth/printed-new.tsv"
+
+expect "dup helpers: --print-allowlist output, fed back as the allowlist, passes"          0 env DTH_ROOTS="$tmp/dth/rs"    DTH_ALLOWLIST="$tmp/dth/printed.tsv"  bash "$DTH"
+expect "dup helpers: --print-allowlist keeps the reason of existing rows"                 0 awk -F'\t' '$3 == "fixture" { n++ } END { exit n == 2 ? 0 : 1 }' "$tmp/dth/printed.tsv"
+expect "dup helpers: --print-allowlist leaves new rows without a reason (the rail then fails them)" 1 env DTH_ROOTS="$tmp/dth/rs" DTH_ALLOWLIST="$tmp/dth/printed-new.tsv" bash "$DTH"
+expect "dup helpers: identical #[test] bodies in two files are not helpers"               0 env DTH_ROOTS="$tmp/dth/tf"    DTH_ALLOWLIST="$tmp/dth/empty.tsv"    bash "$DTH"
+expect "dup helpers: a copy that only adds a comment line is still a copy"                1 env DTH_ROOTS="$tmp/dth/cm"    DTH_ALLOWLIST="$tmp/dth/empty.tsv"    bash "$DTH"
+expect "dup helpers: a three-file group, all listed, passes"                               0 env DTH_ROOTS="$tmp/dth/three" DTH_ALLOWLIST="$tmp/dth/three.tsv"    bash "$DTH"
+expect "dup helpers: a three-file group with one file gone leaves a stale row"             1 env DTH_ROOTS="$tmp/dth/two"   DTH_ALLOWLIST="$tmp/dth/three.tsv"    bash "$DTH"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

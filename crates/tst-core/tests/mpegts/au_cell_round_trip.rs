@@ -5,26 +5,13 @@
 //! which exercised the fictional UL+BER+PTSP wrapper format.
 
 use crate::common::mux_demux::drain_mux as drain;
+use crate::common::synthetic::synthetic_klv_ls;
 use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, read_metadata_au_cell};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, MetadataKind};
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
-
-fn synthetic_klv_ls() -> Vec<u8> {
-    let mut v = Vec::new();
-    // 16-byte ST 0601 LS UL.
-    v.extend_from_slice(&[
-        0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
-        0x00,
-    ]);
-    // BER short-form length = 4.
-    v.push(0x04);
-    // 4 body bytes (just markers; no real ST 0601 content).
-    v.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
-    v
-}
 
 #[test]
 fn sync_klv_mux_demux_round_trip() {

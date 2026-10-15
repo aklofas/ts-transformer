@@ -67,3 +67,17 @@ pub fn build_adts_frame(sample_rate_index: u8, channel_config: u8, total_len: u3
     out.extend(std::iter::repeat(0u8).take(pad));
     out
 }
+
+/// One ST 0601-shaped KLV packet: the 16-byte UAS Datalink universal label,
+/// a BER short-form length of 4 and four marker bytes (no real ST 0601
+/// content).
+pub fn synthetic_klv_ls() -> Vec<u8> {
+    let mut v = Vec::new();
+    v.extend_from_slice(&[
+        0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
+        0x00,
+    ]);
+    v.push(0x04);
+    v.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+    v
+}

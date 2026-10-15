@@ -1,6 +1,7 @@
 //! MPEG-TS helpers shared by the `mpegts`, `codec` and `conformance` test
 //! binaries: drain a `Muxer` to bytes and a `Demuxer` to events.
 
+use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfigBuilder};
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
@@ -74,4 +75,59 @@ pub fn patch_pes_strip_pts(mut bytes: Vec<u8>, stream_id: u8) -> Vec<u8> {
     bytes[flags2_off] &= 0x3F;
     bytes[hdr_len_off] = 0;
     bytes
+}
+
+/// Byte offset of the first byte after the PES header of the n-th PUSI TS
+/// packet on `klv_pid`, i.e. where the 5-byte AU cell header starts. `None`
+/// if fewer than `n + 1` PUSI packets exist on that PID.
+pub fn locate_nth_au_cell_offset(klv_pid: u16, ts_bytes: &[u8], n: usize) -> Option<usize> {
+    let mut seen = 0usize;
+    for (pkt_idx, pkt) in ts_bytes.chunks_exact(188).enumerate() {
+        let pkt_pid = ((pkt[1] as u16 & 0x1F) << 8) | pkt[2] as u16;
+        if pkt_pid != klv_pid {
+            continue;
+        }
+        let pusi = (pkt[1] & 0x40) != 0;
+        if !pusi {
+            continue;
+        }
+        let af_present = (pkt[3] & 0x20) != 0;
+        let mut idx = 4usize;
+        if af_present {
+            let af_len = pkt[idx] as usize;
+            idx += 1 + af_len;
+        }
+        if idx + 9 > 188 {
+            continue;
+        }
+        let pes_header_data_length = pkt[idx + 8] as usize;
+        idx += 9 + pes_header_data_length;
+        if seen == n {
+            return Some(pkt_idx * 188 + idx);
+        }
+        seen += 1;
+    }
+    None
+}
+
+/// Rewrite the 5-byte AU cell header + N inner bytes at `offset`. Caller
+/// MUST ensure `5 + inner.len()` does not exceed the original cell footprint
+/// (we push back into the same byte run).
+pub fn patch_au_cell(
+    ts_bytes: &mut [u8],
+    offset: usize,
+    cfi: CellFragmentIndication,
+    seq: u8,
+    inner: &[u8],
+) {
+    let hdr = AuCellHeader {
+        metadata_service_id: 0x00,
+        sequence_number: seq,
+        cell_fragment_indication: cfi,
+        decoder_config_flag: false,
+        random_access_indicator: true,
+    };
+    let mut buf = Vec::with_capacity(5 + inner.len());
+    write_metadata_au_cell(&mut buf, hdr, inner).unwrap();
+    ts_bytes[offset..offset + buf.len()].copy_from_slice(&buf);
 }

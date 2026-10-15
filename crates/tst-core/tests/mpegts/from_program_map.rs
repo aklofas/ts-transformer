@@ -11,6 +11,7 @@
 //! and real mux→demux→`from_program_map` round-trips.
 
 use crate::common::mux_demux::drain_mux as drain;
+use crate::common::synthetic::synthetic_klv_ls;
 use tst_core::MuxError;
 use tst_core::mpegts::common::{Pts90khz, StreamTypeCode};
 use tst_core::mpegts::demux::{
@@ -532,18 +533,6 @@ fn synthetic_h264_au() -> Vec<u8> {
     au.extend(nal(8, &[0xCE, 0x38, 0x80])); // PPS
     au.extend(nal(5, &[0x88, 0x84, 0x0A, 0x7C, 0x11])); // IDR slice
     au
-}
-
-/// Minimal KLV LS: 16-byte ST 0601 UL + BER short-form length + 4 body bytes.
-fn synthetic_klv_ls() -> Vec<u8> {
-    let mut v = Vec::new();
-    v.extend_from_slice(&[
-        0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
-        0x00,
-    ]);
-    v.push(0x04);
-    v.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
-    v
 }
 
 #[test]
