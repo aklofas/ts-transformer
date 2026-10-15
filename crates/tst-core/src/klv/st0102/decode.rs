@@ -172,7 +172,7 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
                 let b = f.value[0];
                 match tag_u8 {
                     1 => {
-                        let v = SecurityClassification::from_u8(b);
+                        let v = SecurityClassification::from_wire(b);
                         if strict && !v.is_known_codepoint() {
                             return Err(KlvDecodeError::FieldError(
                                 KlvFieldError::InvalidCodepoint {
@@ -184,7 +184,7 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
                         record.security_classification = Some(v);
                     }
                     2 => {
-                        let v = ClassifyingCountryCodingMethod::from_u8(b);
+                        let v = ClassifyingCountryCodingMethod::from_wire(b);
                         if strict && !v.is_known_codepoint() {
                             return Err(KlvDecodeError::FieldError(
                                 KlvFieldError::InvalidCodepoint {
@@ -196,7 +196,7 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
                         record.classifying_country_coding_method = Some(v);
                     }
                     12 => {
-                        let v = ObjectCountryCodingMethod::from_u8(b);
+                        let v = ObjectCountryCodingMethod::from_wire(b);
                         if strict && !v.is_known_codepoint() {
                             return Err(KlvDecodeError::FieldError(
                                 KlvFieldError::InvalidCodepoint {

@@ -1830,9 +1830,9 @@ pub tst_core::klv::st0102::ClassifyingCountryCodingMethod::Stanag1059ThreeLetter
 pub tst_core::klv::st0102::ClassifyingCountryCodingMethod::Stanag1059TwoLetter
 pub tst_core::klv::st0102::ClassifyingCountryCodingMethod::Unknown(u8)
 impl tst_core::klv::ClassifyingCountryCodingMethod
-pub fn tst_core::klv::ClassifyingCountryCodingMethod::from_u8(u8) -> Self
+pub fn tst_core::klv::ClassifyingCountryCodingMethod::from_wire(u8) -> Self
 pub fn tst_core::klv::ClassifyingCountryCodingMethod::is_known_codepoint(self) -> bool
-pub fn tst_core::klv::ClassifyingCountryCodingMethod::to_u8(self) -> u8
+pub fn tst_core::klv::ClassifyingCountryCodingMethod::to_wire(self) -> u8
 impl core::clone::Clone for tst_core::klv::ClassifyingCountryCodingMethod
 pub fn tst_core::klv::ClassifyingCountryCodingMethod::clone(&self) -> tst_core::klv::ClassifyingCountryCodingMethod
 impl core::cmp::Eq for tst_core::klv::ClassifyingCountryCodingMethod
@@ -1868,9 +1868,9 @@ pub tst_core::klv::st0102::ObjectCountryCodingMethod::Stanag1059ThreeLetter
 pub tst_core::klv::st0102::ObjectCountryCodingMethod::Stanag1059TwoLetter
 pub tst_core::klv::st0102::ObjectCountryCodingMethod::Unknown(u8)
 impl tst_core::klv::ObjectCountryCodingMethod
-pub fn tst_core::klv::ObjectCountryCodingMethod::from_u8(u8) -> Self
+pub fn tst_core::klv::ObjectCountryCodingMethod::from_wire(u8) -> Self
 pub fn tst_core::klv::ObjectCountryCodingMethod::is_known_codepoint(self) -> bool
-pub fn tst_core::klv::ObjectCountryCodingMethod::to_u8(self) -> u8
+pub fn tst_core::klv::ObjectCountryCodingMethod::to_wire(self) -> u8
 impl core::clone::Clone for tst_core::klv::ObjectCountryCodingMethod
 pub fn tst_core::klv::ObjectCountryCodingMethod::clone(&self) -> tst_core::klv::ObjectCountryCodingMethod
 impl core::cmp::Eq for tst_core::klv::ObjectCountryCodingMethod
@@ -1895,9 +1895,9 @@ pub tst_core::klv::st0102::SecurityClassification::TopSecret
 pub tst_core::klv::st0102::SecurityClassification::Unclassified
 pub tst_core::klv::st0102::SecurityClassification::Unknown(u8)
 impl tst_core::klv::SecurityClassification
-pub fn tst_core::klv::SecurityClassification::from_u8(u8) -> Self
+pub fn tst_core::klv::SecurityClassification::from_wire(u8) -> Self
 pub fn tst_core::klv::SecurityClassification::is_known_codepoint(self) -> bool
-pub fn tst_core::klv::SecurityClassification::to_u8(self) -> u8
+pub fn tst_core::klv::SecurityClassification::to_wire(self) -> u8
 impl core::clone::Clone for tst_core::klv::SecurityClassification
 pub fn tst_core::klv::SecurityClassification::clone(&self) -> tst_core::klv::SecurityClassification
 impl core::cmp::Eq for tst_core::klv::SecurityClassification
@@ -3344,9 +3344,9 @@ pub tst_core::klv::ClassifyingCountryCodingMethod::Stanag1059ThreeLetter
 pub tst_core::klv::ClassifyingCountryCodingMethod::Stanag1059TwoLetter
 pub tst_core::klv::ClassifyingCountryCodingMethod::Unknown(u8)
 impl tst_core::klv::ClassifyingCountryCodingMethod
-pub fn tst_core::klv::ClassifyingCountryCodingMethod::from_u8(u8) -> Self
+pub fn tst_core::klv::ClassifyingCountryCodingMethod::from_wire(u8) -> Self
 pub fn tst_core::klv::ClassifyingCountryCodingMethod::is_known_codepoint(self) -> bool
-pub fn tst_core::klv::ClassifyingCountryCodingMethod::to_u8(self) -> u8
+pub fn tst_core::klv::ClassifyingCountryCodingMethod::to_wire(self) -> u8
 impl core::clone::Clone for tst_core::klv::ClassifyingCountryCodingMethod
 pub fn tst_core::klv::ClassifyingCountryCodingMethod::clone(&self) -> tst_core::klv::ClassifyingCountryCodingMethod
 impl core::cmp::Eq for tst_core::klv::ClassifyingCountryCodingMethod
@@ -3413,9 +3413,9 @@ pub tst_core::klv::ObjectCountryCodingMethod::Stanag1059ThreeLetter
 pub tst_core::klv::ObjectCountryCodingMethod::Stanag1059TwoLetter
 pub tst_core::klv::ObjectCountryCodingMethod::Unknown(u8)
 impl tst_core::klv::ObjectCountryCodingMethod
-pub fn tst_core::klv::ObjectCountryCodingMethod::from_u8(u8) -> Self
+pub fn tst_core::klv::ObjectCountryCodingMethod::from_wire(u8) -> Self
 pub fn tst_core::klv::ObjectCountryCodingMethod::is_known_codepoint(self) -> bool
-pub fn tst_core::klv::ObjectCountryCodingMethod::to_u8(self) -> u8
+pub fn tst_core::klv::ObjectCountryCodingMethod::to_wire(self) -> u8
 impl core::clone::Clone for tst_core::klv::ObjectCountryCodingMethod
 pub fn tst_core::klv::ObjectCountryCodingMethod::clone(&self) -> tst_core::klv::ObjectCountryCodingMethod
 impl core::cmp::Eq for tst_core::klv::ObjectCountryCodingMethod
@@ -3513,9 +3513,9 @@ pub tst_core::klv::SecurityClassification::TopSecret
 pub tst_core::klv::SecurityClassification::Unclassified
 pub tst_core::klv::SecurityClassification::Unknown(u8)
 impl tst_core::klv::SecurityClassification
-pub fn tst_core::klv::SecurityClassification::from_u8(u8) -> Self
+pub fn tst_core::klv::SecurityClassification::from_wire(u8) -> Self
 pub fn tst_core::klv::SecurityClassification::is_known_codepoint(self) -> bool
-pub fn tst_core::klv::SecurityClassification::to_u8(self) -> u8
+pub fn tst_core::klv::SecurityClassification::to_wire(self) -> u8
 impl core::clone::Clone for tst_core::klv::SecurityClassification
 pub fn tst_core::klv::SecurityClassification::clone(&self) -> tst_core::klv::SecurityClassification
 impl core::cmp::Eq for tst_core::klv::SecurityClassification

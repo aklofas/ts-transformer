@@ -147,7 +147,7 @@ fn build_security(env: &mut JNIEnv<'_>, s: &SecurityLs) -> jni::errors::Result<j
             &b,
             "securityClassification",
             BUILDER_SIG_INT,
-            &[JValue::Int(i32::from(v.to_u8()))],
+            &[JValue::Int(i32::from(v.to_wire()))],
         )?;
     }
 
@@ -157,7 +157,7 @@ fn build_security(env: &mut JNIEnv<'_>, s: &SecurityLs) -> jni::errors::Result<j
             &b,
             "classifyingCountryCodingMethod",
             BUILDER_SIG_INT,
-            &[JValue::Int(i32::from(v.to_u8()))],
+            &[JValue::Int(i32::from(v.to_wire()))],
         )?;
     }
 
@@ -178,7 +178,7 @@ fn build_security(env: &mut JNIEnv<'_>, s: &SecurityLs) -> jni::errors::Result<j
             &b,
             "objectCountryCodingMethod",
             BUILDER_SIG_INT,
-            &[JValue::Int(i32::from(v.to_u8()))],
+            &[JValue::Int(i32::from(v.to_wire()))],
         )?;
     }
 
@@ -332,7 +332,7 @@ fn build_security(env: &mut JNIEnv<'_>, s: &SecurityLs) -> jni::errors::Result<j
 /// and returns null.
 ///
 /// The 3 enum-typed fields are read as raw `Integer ...Code()` accessors
-/// (nullable boxed int); null → `None` in Rust, non-null → `from_u8`.
+/// (nullable boxed int); null → `None` in Rust, non-null → `from_wire`.
 /// Mirrors tst-py's `enum_field_to_u8` + `py_to_security_ls` pattern.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeSecurity<'local>(
@@ -426,19 +426,19 @@ fn read_security(env: &mut JNIEnv<'_>, rec: &JObject<'_>) -> jni::errors::Result
     // Tag 1: securityClassificationCode() → Integer | null
     if let Some(code) = read_nullable_int(env, rec, "securityClassificationCode")? {
         let c = checked_u8(env, i64::from(code), "securityClassificationCode")?;
-        r.security_classification = Some(SecurityClassification::from_u8(c));
+        r.security_classification = Some(SecurityClassification::from_wire(c));
     }
 
     // Tag 2: classifyingCountryCodingMethodCode() → Integer | null
     if let Some(code) = read_nullable_int(env, rec, "classifyingCountryCodingMethodCode")? {
         let c = checked_u8(env, i64::from(code), "classifyingCountryCodingMethodCode")?;
-        r.classifying_country_coding_method = Some(ClassifyingCountryCodingMethod::from_u8(c));
+        r.classifying_country_coding_method = Some(ClassifyingCountryCodingMethod::from_wire(c));
     }
 
     // Tag 12: objectCountryCodingMethodCode() → Integer | null
     if let Some(code) = read_nullable_int(env, rec, "objectCountryCodingMethodCode")? {
         let c = checked_u8(env, i64::from(code), "objectCountryCodingMethodCode")?;
-        r.object_country_coding_method = Some(ObjectCountryCodingMethod::from_u8(c));
+        r.object_country_coding_method = Some(ObjectCountryCodingMethod::from_wire(c));
     }
 
     // --- Integer field: version (u16) ---

@@ -75,6 +75,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   behind the non-default `conformance` feature. It is test infrastructure;
   enable it from `[dev-dependencies]`:
   `tst-core = { version = "…", features = ["conformance"] }`.
+- `klv::st0102`: `SecurityClassification`, `ClassifyingCountryCodingMethod`
+  and `ObjectCountryCodingMethod` rename `from_u8` / `to_u8` to `from_wire` /
+  `to_wire`, the names every other KLV codepoint enum uses. Behaviour is
+  unchanged.
 
 ### Changed — C header
 

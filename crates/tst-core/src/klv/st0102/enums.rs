@@ -66,7 +66,7 @@ pub enum ObjectCountryCodingMethod {
 
 impl SecurityClassification {
     crate::klv::wire_codepoints! {
-        from_u8, to_u8, Unknown, "ST 0102.12 §6.1.1";
+        from_wire, to_wire, Unknown, "ST 0102.12 §6.1.1";
         0x01 => Unclassified,
         0x02 => Restricted,
         0x03 => Confidential,
@@ -83,7 +83,7 @@ impl SecurityClassification {
 
 impl ClassifyingCountryCodingMethod {
     crate::klv::wire_codepoints! {
-        from_u8, to_u8, Unknown, "ST 0102.12 §6.1.2";
+        from_wire, to_wire, Unknown, "ST 0102.12 §6.1.2";
         0x01 => Iso3166TwoLetter,
         0x02 => Iso3166ThreeLetter,
         0x03 => Fips104TwoLetter,
@@ -115,7 +115,7 @@ impl ClassifyingCountryCodingMethod {
 
 impl ObjectCountryCodingMethod {
     crate::klv::wire_codepoints! {
-        from_u8, to_u8, Unknown, "ST 0102.12 §6.1.12";
+        from_wire, to_wire, Unknown, "ST 0102.12 §6.1.12";
         0x01 => Iso3166TwoLetter,
         0x02 => Iso3166ThreeLetter,
         0x03 => Iso3166Numeric,
@@ -154,25 +154,25 @@ mod tests {
     #[test]
     fn security_classification_round_trip_all_known() {
         for b in 0x01..=0x05 {
-            let v = SecurityClassification::from_u8(b);
-            assert_eq!(v.to_u8(), b);
+            let v = SecurityClassification::from_wire(b);
+            assert_eq!(v.to_wire(), b);
             assert!(v.is_known_codepoint());
         }
     }
 
     #[test]
     fn security_classification_unknown_preserved() {
-        let v = SecurityClassification::from_u8(0xFE);
+        let v = SecurityClassification::from_wire(0xFE);
         assert_eq!(v, SecurityClassification::Unknown(0xFE));
-        assert_eq!(v.to_u8(), 0xFE);
+        assert_eq!(v.to_wire(), 0xFE);
         assert!(!v.is_known_codepoint());
     }
 
     #[test]
     fn classifying_country_coding_method_round_trip_all_codepoints() {
         for b in 0x01..=0x10 {
-            let v = ClassifyingCountryCodingMethod::from_u8(b);
-            assert_eq!(v.to_u8(), b);
+            let v = ClassifyingCountryCodingMethod::from_wire(b);
+            assert_eq!(v.to_wire(), b);
         }
     }
 
@@ -189,16 +189,16 @@ mod tests {
 
     #[test]
     fn classifying_country_coding_method_unknown_preserved() {
-        let v = ClassifyingCountryCodingMethod::from_u8(0x7F);
+        let v = ClassifyingCountryCodingMethod::from_wire(0x7F);
         assert_eq!(v, ClassifyingCountryCodingMethod::Unknown(0x7F));
-        assert_eq!(v.to_u8(), 0x7F);
+        assert_eq!(v.to_wire(), 0x7F);
     }
 
     #[test]
     fn object_country_coding_method_round_trip_low_range() {
         for b in 0x01..=0x0F {
-            let v = ObjectCountryCodingMethod::from_u8(b);
-            assert_eq!(v.to_u8(), b);
+            let v = ObjectCountryCodingMethod::from_wire(b);
+            assert_eq!(v.to_wire(), b);
         }
     }
 
@@ -206,13 +206,13 @@ mod tests {
     fn object_country_coding_method_round_trip_admin_sub_jump() {
         // The spec is non-contiguous — 0x10..=0x3F are unknown,
         // 0x40 is `GencAdminSub`.
-        let v = ObjectCountryCodingMethod::from_u8(0x40);
+        let v = ObjectCountryCodingMethod::from_wire(0x40);
         assert_eq!(v, ObjectCountryCodingMethod::GencAdminSub);
-        assert_eq!(v.to_u8(), 0x40);
+        assert_eq!(v.to_wire(), 0x40);
         assert!(v.is_known_codepoint());
 
         // The gap between 0x0F and 0x40 is unknown.
-        let v = ObjectCountryCodingMethod::from_u8(0x10);
+        let v = ObjectCountryCodingMethod::from_wire(0x10);
         assert_eq!(v, ObjectCountryCodingMethod::Unknown(0x10));
         assert!(!v.is_known_codepoint());
     }
@@ -234,7 +234,10 @@ mod tests {
     fn object_country_coding_method_iso3166_numeric_codepoint_differs_from_tag2() {
         // ST 0102.12 §6.7 Table 2: Tag 2 ISO-3166 Numeric is 0x05;
         // Tag 12 ISO-3166 Numeric is 0x03. Verify both encodings.
-        assert_eq!(ClassifyingCountryCodingMethod::Iso3166Numeric.to_u8(), 0x05);
-        assert_eq!(ObjectCountryCodingMethod::Iso3166Numeric.to_u8(), 0x03);
+        assert_eq!(
+            ClassifyingCountryCodingMethod::Iso3166Numeric.to_wire(),
+            0x05
+        );
+        assert_eq!(ObjectCountryCodingMethod::Iso3166Numeric.to_wire(), 0x03);
     }
 }

@@ -348,7 +348,7 @@ fn convert_security_classification(py: Python<'_>, v: RustSecCls) -> PyResult<Py
         known => {
             let klv_mod = py.import_bound("tstrans.klv")?;
             let cls = klv_mod.getattr(intern!(py, "SecurityClassification"))?;
-            Ok(cls.call1((known.to_u8(),))?.unbind())
+            Ok(cls.call1((known.to_wire(),))?.unbind())
         }
     }
 }
@@ -359,7 +359,7 @@ fn convert_classifying_country(py: Python<'_>, v: RustClsCountry) -> PyResult<Py
         known => {
             let klv_mod = py.import_bound("tstrans.klv")?;
             let cls = klv_mod.getattr(intern!(py, "ClassifyingCountryCodingMethod"))?;
-            Ok(cls.call1((known.to_u8(),))?.unbind())
+            Ok(cls.call1((known.to_wire(),))?.unbind())
         }
     }
 }
@@ -370,7 +370,7 @@ fn convert_object_country(py: Python<'_>, v: RustObjCountry) -> PyResult<PyObjec
         known => {
             let klv_mod = py.import_bound("tstrans.klv")?;
             let cls = klv_mod.getattr(intern!(py, "ObjectCountryCodingMethod"))?;
-            Ok(cls.call1((known.to_u8(),))?.unbind())
+            Ok(cls.call1((known.to_wire(),))?.unbind())
         }
     }
 }
@@ -514,16 +514,17 @@ fn py_to_security_ls(p: &Bound<'_, PyAny>) -> PyResult<SecurityLs> {
     // (Unknown codepoint). Use enum_field_to_u8 to coerce both shapes.
     let sc_obj = p.getattr(intern!(py, "security_classification"))?;
     if !sc_obj.is_none() {
-        r.security_classification = Some(RustSecCls::from_u8(enum_field_to_u8(&sc_obj)?));
+        r.security_classification = Some(RustSecCls::from_wire(enum_field_to_u8(&sc_obj)?));
     }
     let cc_obj = p.getattr(intern!(py, "classifying_country_coding_method"))?;
     if !cc_obj.is_none() {
         r.classifying_country_coding_method =
-            Some(RustClsCountry::from_u8(enum_field_to_u8(&cc_obj)?));
+            Some(RustClsCountry::from_wire(enum_field_to_u8(&cc_obj)?));
     }
     let oc_obj = p.getattr(intern!(py, "object_country_coding_method"))?;
     if !oc_obj.is_none() {
-        r.object_country_coding_method = Some(RustObjCountry::from_u8(enum_field_to_u8(&oc_obj)?));
+        r.object_country_coding_method =
+            Some(RustObjCountry::from_wire(enum_field_to_u8(&oc_obj)?));
     }
 
     // Optional<String> fields (15 of them) + Optional<u16> for version.

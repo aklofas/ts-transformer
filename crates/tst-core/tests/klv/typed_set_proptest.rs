@@ -102,7 +102,7 @@ use tst_core::klv::st0102::{
 /// variants, so constructing e.g. `SecurityClassification::Unknown(0x01)`
 /// and encoding it would round-trip back as `Unclassified` (the named
 /// variant at codepoint 0x01) — breaking `assert_eq`. Each enum's safe
-/// Unknown range is the set of bytes `b` where `from_u8(b) == Unknown(b)`,
+/// Unknown range is the set of bytes `b` where `from_wire(b) == Unknown(b)`,
 /// i.e. the bytes outside the spec's named codepoint set. Confirmed
 /// against `crates/tst-core/src/klv/st0102/enums.rs` codepoint comments.
 fn st0102_one_tag_record_strategy() -> impl Strategy<Value = SecurityLs> {
@@ -133,9 +133,9 @@ fn st0102_one_tag_record_strategy() -> impl Strategy<Value = SecurityLs> {
         // Tag 2: ClassifyingCountryCodingMethod enum. Named codepoints
         // per klv/st0102/enums.rs: 0x01..=0x10 (contiguous, includes
         // OmittedValue08/09 reserved slots which are still recognized
-        // by `from_u8`). Safe Unknown bytes: 0x00 plus 0x11..=0xFF.
+        // by `from_wire`). Safe Unknown bytes: 0x00 plus 0x11..=0xFF.
         // Strategy samples all 16 named variants plus Unknown(byte) over
-        // the safe range — the named-variant encode path (`to_u8` match
+        // the safe range — the named-variant encode path (`to_wire` match
         // arm by name) is a different code path from the Unknown encode
         // path (`Unknown(b) => b`), so each named arm needs coverage.
         prop_oneof![
@@ -175,7 +175,7 @@ fn st0102_one_tag_record_strategy() -> impl Strategy<Value = SecurityLs> {
         // 0x40 for GencAdminSub. Safe Unknown bytes: 0x00, 0x10..=0x3F,
         // and 0x41..=0xFF (excluding the 0x40 island).
         // Strategy samples all 16 named variants plus Unknown(byte) over
-        // the safe ranges — the named-variant encode path (`to_u8` match
+        // the safe ranges — the named-variant encode path (`to_wire` match
         // arm by name) is a different code path from the Unknown encode
         // path (`Unknown(b) => b`), so each named arm needs coverage.
         prop_oneof![
