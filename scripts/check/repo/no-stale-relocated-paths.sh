@@ -1,86 +1,38 @@
 #!/usr/bin/env bash
-# Fail if any reference to a RELOCATED-AWAY package directory survives in the
-# tracked tree. These directories were moved during the 2026-06-02 refactor
-# series and no longer exist, so a literal reference to them is a silent dead
-# link, a stale doc path, or (worse) a broken build trigger:
-#
-#   crates/tst-c, crates/tst-c-core, crates/tst-py   -> bindings/ (relocation)
-#   bindings/c/tst-c, bindings/c/tst-c-core          -> bindings/c{,/core} (Option-B flatten)
-#   crates/baremetal-qemu, crates/baremetal-qemu-c   -> embedded/ (embedded move)
-#   vendor/{srt,mbedtls,librist} (workspace root)    -> crates/{srt-sys,mbedtls-src,rist-sys}/vendor/... (crates-io-packaging move)
-#   scripts/check-<name>.sh (flat)                   -> scripts/check/<group>/<name>.sh (2026-06-03 ratchet reorg)
-#
-# This rail exists because the moves above are path-coupled and the literal
-# grep used during each move is BLIND to a few forms (slashless `cd crates/tst-c`,
-# relative `../tst-c-core` build triggers). This catches the literal-path class
-# at CI time so it can't silently rot.
-#
-# CHANGELOG.md is exempt: it is an append-only history and its entries were
-# accurate at the time they were written.
+# Fail if a tracked file still names a package directory that has moved
+# away: a literal reference to one is a dead link, a stale doc path or a
+# broken build trigger. Each pattern below names its old and new locations;
+# the failure message repeats the mapping. CHANGELOG.md is exempt (history).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$ROOT"
 
-# Removed path prefixes. The leaf forms `crates/tst-c` and `bindings/c/tst-c`
-# carry a trailing-boundary class so they do NOT match the still-present
-# `crates/tst-core` (next char `o`) or `bindings/c/core` (no `tst-c`). The
-# `*-core` removed dirs are matched explicitly (longest-first), and `baremetal-qemu`
-# covers both `baremetal-qemu` and `baremetal-qemu-c`.
+# crates/{tst-c,tst-c-core,tst-py} -> bindings/, bindings/c/{tst-c,tst-c-core}
+# -> bindings/c{,/core}, crates/baremetal-qemu{,-c} -> embedded/. The `tst-c`
+# leaf forms carry a trailing-boundary class so the live `crates/tst-core`
+# does not match; the `-core` forms are listed first.
 PATTERN='crates/tst-c-core|crates/tst-py|crates/baremetal-qemu|bindings/c/tst-c-core|(crates|bindings/c)/tst-c([/")`, ]|$)'
 
-# 2026-07-05 embedded isolation: gate scripts -> embedded/scripts/, embedded-only
-# vendor submodules -> embedded/vendor/. The old top-level forms are dead:
-#   scripts/check/embedded/*                  -> embedded/scripts/check/
-#   scripts/check/c/firmware-qemu.sh          -> embedded/scripts/check/firmware-qemu.sh
-#   scripts/lib/run-freertos-srt-example.sh   -> embedded/scripts/lib/
-#   vendor/{freertos-kernel,freertos-plus-posix,lwip} -> embedded/vendor/...
-# The vendor class and the lib-helper form need carve-outs: their NEW paths
-# contain the old ones as suffixes (`embedded/vendor/lwip` contains `vendor/lwip`,
-# `embedded/scripts/lib/run-...` contains `scripts/lib/run-...`), so hits on the
-# new prefixes are filtered back out. The check-script forms have no such
-# collision (`embedded/scripts/check/` does not contain `scripts/check/embedded/`).
-# .gitmodules is exempt for the vendor class only: submodule NAMES keep the
-# historical `[submodule "vendor/lwip"]` form (renaming a submodule name breaks
-# existing checkouts' .git/modules state — deliberately not done).
+# Embedded gate scripts and embedded-only vendor submodules moved under
+# embedded/. The new paths contain the old ones as suffixes
+# (`embedded/vendor/lwip`, `embedded/scripts/lib/run-...`), so hits on the
+# new prefixes are filtered back out. .gitmodules is exempt for the vendor
+# class: submodule NAMES keep the old `vendor/lwip` form so existing
+# checkouts' .git/modules state stays valid.
 PATTERN_EMB='scripts/check/embedded/|scripts/check/c/firmware-qemu\.sh|scripts/lib/run-freertos-srt-example\.sh'
 PATTERN_VEND='vendor/(freertos-kernel|freertos-plus-posix|lwip)'
 
-# 2026-07-31 crates-io-packaging: the shared workspace-root vendor/{srt,mbedtls}
-# submodules (plus vendor/librist, added alongside rist-sys) moved INTO their
-# owning crate so each `-sys`/`-src` crate is a self-contained, publishable
-# package (crates.io forbids a package referencing files outside its own
-# directory):
-#   vendor/srt      -> crates/srt-sys/vendor/srt
-#   vendor/mbedtls  -> crates/mbedtls-src/vendor/mbedtls
-#   vendor/librist  -> crates/rist-sys/vendor/librist
-# UNLIKE the other classes above, this one deliberately scans only the DOCS
-# PROSE surface (docs/ + the two top-level READMEs), not the whole tracked
-# tree: a bare `vendor/srt` (no `crates/srt-sys/` prefix) is CORRECT, not
-# stale, wherever it's written relative to its own crate — Cargo resolves
-# build.rs/Cargo.toml paths relative to the manifest, so crates/srt-sys's
-# (and rist-sys's / mbedtls-src's) own Cargo.toml exclude-lists, build.rs,
-# README.md, and lib.rs doc comments legitimately keep the bare form, as do
-# incidental source comments elsewhere in the workspace that cite a libsrt/
-# librist file path rather than describe where the submodule lives. What
-# this guards against is specifically reader-facing docs implying the
-# submodule still lives at the shared workspace-root vendor/ (it hasn't
-# since this move) — narrowed to the same docs surface as the srt-sys/
-# rist-sys package-name sweep from the same arc (docs/ + the two READMEs).
-# A trailing-boundary class (mirrors the `tst-c` collision guard in PATTERN
-# above) keeps this from matching `vendor/srtcore`-style non-collisions (none
-# exist today; boundary-safe by default rather than by luck). Hits on the new
-# `crates/<c>/vendor/` prefixes are filtered back out the same way the
-# embedded class filters `embedded/vendor/` above.
+# vendor/{srt,mbedtls,librist} moved into crates/{srt-sys,mbedtls-src,
+# rist-sys}/vendor/ so each crate is a self-contained package. Only the
+# docs surface (docs/ + the two READMEs) is scanned: inside its own crate a
+# bare `vendor/srt` is correct (Cargo resolves paths from the manifest), and
+# source comments cite libsrt/librist files that way. The trailing-boundary
+# class keeps `vendor/srtcore`-style names out; hits on the new
+# `crates/<c>/vendor/` prefixes are filtered back out.
 PATTERN_VEND_NATIVE='vendor/(srt|mbedtls|librist)([/")`, .]|$)'
 
-# 2026-06-03 bash-ratchet reorg: the flat `scripts/check-<name>.sh` scripts
-# moved into per-group subdirectories (`scripts/check/<group>/<name>.sh`).
-# This class rotted silently for months (18 stale hits found across
-# bindings/python alone) because no rail caught the flat form once every
-# script moved — this closes that gap. `scripts/check-[a-z-]+\.sh` cannot
-# collide with a current path: every live rail script lives under
-# `scripts/check/<group>/`, one path segment deeper, so the flat form is
-# unambiguously dead once matched.
+# Flat `scripts/check-<name>.sh` rails moved to `scripts/check/<group>/`;
+# every live rail is one segment deeper, so the flat form cannot match one.
 PATTERN_RATCHET='scripts/check-[a-z-]+\.sh'
 
 # Exempt: CHANGELOG (history) and this script (it names the forbidden paths).
