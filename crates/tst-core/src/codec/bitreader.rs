@@ -17,9 +17,6 @@
 
 use crate::codec::CodecParseError;
 
-// NOTE: `crates/tst-core/tests/tools/trace_h265_sps.rs` keeps an inlined
-// copy of this type for diagnostic-tool purposes (the `[[bin]]` target
-// can't reach `pub(crate)` items). Keep them in sync.
 #[doc(hidden)]
 pub struct BitReader<'a> {
     bytes: &'a [u8],

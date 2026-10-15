@@ -133,11 +133,3 @@ required-features = ["std"]
 path  = "tests/tools/strip_conformance_parameter_sets.rs"
 bench = false
 doc   = false
-
-[[bin]]
-name  = "trace-h265-sps"
-required-features = ["std"]
-path  = "tests/tools/trace_h265_sps.rs"
-test  = false
-bench = false
-doc   = false
