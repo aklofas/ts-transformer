@@ -723,5 +723,25 @@ ntb_meta net_offline;       expect "net binaries: a net_ binary with no socket f
 ntb_meta net_loopy; printf 'filter = "binary(/^net_/)"\n' > "$tmp/ntb/nextest.toml"
                             expect "net binaries: a nextest override without the regex fails" 1 ntb
 
+# ---- MSRV consistency (scripts/check/repo/msrv-consistency.sh) ----
+MSRV="$DIR/../check/repo/msrv-consistency.sh"; v=9.99
+ms_copy() {
+    rm -rf "$tmp/ms"; mkdir -p "$tmp/ms/docs/languages" "$tmp/ms/docs/reference" "$tmp/ms/docs/start" "$tmp/ms/.github/workflows" "$tmp/ms/embedded/scripts/check" "$tmp/ms/scripts" "$tmp/ms/crates/foo"
+    for p in rust-toolchain.toml Cargo.toml README.md docs/languages/rust.md docs/reference/compatibility.md docs/start/quickstart.md .github/workflows/ci.yml; do cp "$REPO/$p" "$tmp/ms/$p"; done
+    printf '[package]\nname = "foo"\nrust-version.workspace = true\n' > "$tmp/ms/crates/foo/Cargo.toml"
+}
+ms() { MSRV_ROOT="$tmp/ms" bash "$MSRV"; }
+pin="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$REPO/rust-toolchain.toml")"
+ms_copy;                                                       expect "msrv: the real stated sites agree"              0 ms
+ms_copy; plant "$tmp/ms/README.md" "$pin" "$v";                expect "msrv: a stated site drifts"                     1 ms
+ms_copy; printf '[toolchain]\nchannel = "%s"\n' "$v" > "$tmp/ms/rust-toolchain.toml"; expect "msrv: channel bumped, stated sites not swept" 1 ms
+ms_copy; rm "$tmp/ms/docs/reference/compatibility.md";         expect "msrv: a stated site file removed"               1 ms
+ms_copy; printf '[toolchain]\nchannel = "stable"\n' > "$tmp/ms/rust-toolchain.toml"; expect "msrv: a non-numeric channel is not an MSRV" 1 ms
+ms_copy; printf '        toolchain: "%s"\n' "$v" >> "$tmp/ms/.github/workflows/ci.yml";        expect "msrv: a workflow toolchain literal"   1 ms
+ms_copy; printf '  RUSTUP_TOOLCHAIN: "%s"\n' "$v" >> "$tmp/ms/.github/workflows/ci.yml";      expect "msrv: a RUSTUP_TOOLCHAIN literal"     1 ms
+ms_copy; printf 'rustup target add x --toolchain %s\n' "$v" > "$tmp/ms/embedded/scripts/check/g.sh"; expect "msrv: an embedded --toolchain literal" 1 ms
+ms_copy; printf 'cargo +%s fmt\nrustup toolchain install %s\n' "$v" "$v" > "$tmp/ms/scripts/x.sh"; expect "msrv: a cargo +X / toolchain install X literal" 1 ms
+ms_copy; printf '[package]\nname = "foo"\nrust-version = "%s"\n' "$pin" > "$tmp/ms/crates/foo/Cargo.toml"; expect "msrv: a member manifest with its own rust-version" 1 ms
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

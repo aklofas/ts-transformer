@@ -46,11 +46,6 @@ on:
 permissions:
   contents: read
 
-env:
-  # Match the pin used elsewhere in the workspace so the wheel build
-  # surface matches the test surface.
-  RUSTUP_TOOLCHAIN: "1.85"
-
 jobs:
   version-preflight:
     name: version preflight
@@ -90,6 +85,10 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+
+      - uses: ./.github/actions/rust-setup
+        with:
+          toolchain: env-only
 
       - uses: actions/setup-python@v6
         with:
@@ -193,9 +192,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust-setup
         with:
-          toolchain: "1.85"
           targets: ${{ matrix.target }}
 
       # librist's vendored build is meson + ninja-driven (NOT cmake). The
@@ -249,9 +247,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
+      - uses: ./.github/actions/rust-setup
 
       # librist's vendored build is meson + ninja-driven (NOT cmake) and
       # finds the shared mbedTLS tree through pkg-config — the same
@@ -306,6 +302,10 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+
+      - uses: ./.github/actions/rust-setup
+        with:
+          toolchain: env-only
 
       - uses: actions/setup-python@v6
         with:

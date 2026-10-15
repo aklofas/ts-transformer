@@ -44,9 +44,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Same rustup-sync-vs-preinstalled-clippy avoidance as ci.yml's
-  # ubuntu-latest jobs (reference_maturin_develop_ci_venv_recipe).
-  RUSTUP_TOOLCHAIN: "1.85"
 
 jobs:
   interop-matrix:
@@ -155,12 +152,7 @@ jobs:
           rm -f /tmp/tsduck.deb
           tsp --version
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
-
-      - name: Cache cargo + build artifacts
+      - name: Rust toolchain, cargo cache
         # Own key prefix (cargo-interop-): this is a --release build of a
         # crate no other workflow builds. Never let a differently-built
         # native artifact hide behind another job's cache key — that
@@ -168,17 +160,10 @@ jobs:
         # instrumentation to protect against: a stale non-release target/
         # layout from a hypothetical future debug step in this same
         # workflow must not collide with another workflow's cache either.
-        uses: actions/cache@v5
+        uses: ./.github/actions/rust-setup
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            !target/debug/incremental
-            !target/debug/.fingerprint
-            !target/debug/deps
-          key: cargo-interop-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-interop-${{ runner.os }}-
+          cache-key: cargo-interop-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-interop-${{ runner.os }}-
 
       - name: cargo build --release -p tst-interop
         # --release: run-matrix.sh's $BIN points at target/release/tst-interop

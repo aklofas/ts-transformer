@@ -9,6 +9,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 
+# The one toolchain: rust-toolchain.toml's channel.
+TOOLCHAIN="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' rust-toolchain.toml)"
+
 # Skip when a tool is absent (local convenience) — or fail closed under
 # FIRMWARE_QEMU_REQUIRE_TOOLS=1 (the CI hard-gate sets it so a runner-image
 # regression that drops a tool goes red instead of silently skipping to a
@@ -27,7 +30,7 @@ CRATE=embedded/baremetal-qemu-c
 FW="$CRATE/firmware"
 GOLDEN_TS=crates/tst-integration/tests/fixtures/scenarios/video-roundtrip/output.ts
 
-rustup target add thumbv7em-none-eabihf --toolchain 1.85 >/dev/null 2>&1 || true
+rustup target add thumbv7em-none-eabihf --toolchain "$TOOLCHAIN" >/dev/null 2>&1 || true
 
 echo "==> generating golden.h from $GOLDEN_TS"
 bash embedded/scripts/lib/gen-golden-h.sh "$GOLDEN_TS" "$FW/golden.h"

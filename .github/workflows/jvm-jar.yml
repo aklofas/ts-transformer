@@ -39,10 +39,8 @@ jobs:
         with:
           submodules: recursive  # tst-srt builds vendor/srt + vendor/mbedtls
 
-      - name: Install Rust 1.85
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
+      - name: Rust toolchain
+        uses: ./.github/actions/rust-setup
 
       - name: Set up JDK 17
         uses: actions/setup-java@v6

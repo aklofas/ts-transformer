@@ -1,0 +1,77 @@
+name: rust-setup
+description: >-
+  Reads the channel rust-toolchain.toml pins; installs it and exports
+  RUSTUP_TOOLCHAIN (toolchain: pinned), only exports it (env-only), or does
+  neither (none); optionally installs cargo-nextest and restores the shared
+  cargo cache. Check the repository out first: a local action is read from
+  the checkout.
+inputs:
+  toolchain:
+    description: "pinned | env-only | none"
+    default: pinned
+  components:
+    description: Extra rustup components for the pinned toolchain (comma-separated)
+    default: ''
+  targets:
+    description: Extra rustup targets for the pinned toolchain (comma-separated)
+    default: ''
+  nextest:
+    description: "'true' installs cargo-nextest (per-test kill + the serialised network group, .config/nextest.toml)"
+    default: 'false'
+  cache-key:
+    description: actions/cache key; empty skips the cache
+    default: ''
+  cache-restore-key:
+    description: actions/cache restore-keys prefix
+    default: ''
+  cache-extra-paths:
+    description: Lines appended to the shared cache path list
+    default: ''
+outputs:
+  channel:
+    description: The channel rust-toolchain.toml pins
+    value: ${{ steps.channel.outputs.channel }}
+runs:
+  using: composite
+  steps:
+    - id: channel
+      shell: bash
+      env:
+        MODE: ${{ inputs.toolchain }}
+      run: |
+        set -euo pipefail
+        case "$MODE" in pinned|env-only|none) ;; *) echo "::error::rust-setup: toolchain must be pinned, env-only or none (got '$MODE')"; exit 1 ;; esac
+        channel="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' rust-toolchain.toml)"
+        [ -n "$channel" ] || { echo "::error::rust-setup: no channel in rust-toolchain.toml"; exit 1; }
+        echo "channel=$channel" >> "$GITHUB_OUTPUT"
+        # Pinning through the env (not the toolchain file) keeps rustup from
+        # re-syncing the file's component list against the runner image's
+        # preinstalled clippy mid-build.
+        if [ "$MODE" != none ]; then echo "RUSTUP_TOOLCHAIN=$channel" >> "$GITHUB_ENV"; fi
+        echo "rust-setup: channel $channel, toolchain mode $MODE"
+    - if: inputs.toolchain == 'pinned'
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: ${{ steps.channel.outputs.channel }}
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+    - if: inputs.toolchain == 'pinned'
+      shell: bash
+      run: rustc -V && cargo -V
+    - if: inputs.nextest == 'true'
+      uses: taiki-e/install-action@v2
+      with:
+        tool: nextest
+    - if: inputs.cache-key != ''
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          !target/debug/incremental
+          !target/debug/.fingerprint
+          !target/debug/deps
+          ${{ inputs.cache-extra-paths }}
+        key: ${{ inputs.cache-key }}
+        restore-keys: ${{ inputs.cache-restore-key }}

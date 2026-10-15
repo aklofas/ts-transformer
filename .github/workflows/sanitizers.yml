@@ -73,29 +73,20 @@ jobs:
           rustup toolchain install nightly --profile minimal --no-self-update
           rustup component add --toolchain nightly rust-src
 
-      - name: Install cargo-nextest
+      - name: cargo-nextest, cargo cache
         # Prebuilt binary. The `sanitizer` nextest profile provides
         # per-test kills scaled to sanitizer slowdown — a wedged test
         # fails by name instead of hanging the nightly job.
-        uses: taiki-e/install-action@v2
+        uses: ./.github/actions/rust-setup
         with:
-          tool: nextest
-
-      - name: Cache cargo artifacts
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            !target/debug/incremental
-            !target/debug/.fingerprint
-            !target/debug/deps
+          toolchain: none
+          nextest: 'true'
+          cache-key: cargo-asan-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-asan-${{ runner.os }}-
+          cache-extra-paths: |
             !target/x86_64-unknown-linux-gnu/debug/incremental
             !target/x86_64-unknown-linux-gnu/debug/.fingerprint
             !target/x86_64-unknown-linux-gnu/debug/deps
-          key: cargo-asan-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-asan-${{ runner.os }}-
 
       - name: nextest run under ASan
         env:
@@ -150,32 +141,23 @@ jobs:
           rustup toolchain install nightly --profile minimal --no-self-update
           rustup component add --toolchain nightly rust-src
 
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest
-
-      - name: Cache cargo artifacts
+      - name: cargo-nextest, cargo cache
         # Separate key from the pure-Rust asan job: this target dir holds
         # SANITIZED vendored static libs (libsrt.a, librist.a, 2x libmbed*.a).
         # Sanitized and unsanitized native artifacts must never share a cache
         # (a restored unsanitized lib would un-instrument the run invisibly;
         # build.rs rerun-if-env-changed guards the local path, the key split
         # guards the CI path — both are required).
-        uses: actions/cache@v5
+        uses: ./.github/actions/rust-setup
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            !target/debug/incremental
-            !target/debug/.fingerprint
-            !target/debug/deps
+          toolchain: none
+          nextest: 'true'
+          cache-key: cargo-asan-native-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-asan-native-${{ runner.os }}-
+          cache-extra-paths: |
             !target/x86_64-unknown-linux-gnu/debug/incremental
             !target/x86_64-unknown-linux-gnu/debug/.fingerprint
             !target/x86_64-unknown-linux-gnu/debug/deps
-          key: cargo-asan-native-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-asan-native-${{ runner.os }}-
 
       - name: nextest run under ASan (sanitized native libs)
         env:
@@ -241,30 +223,21 @@ jobs:
           rustup toolchain install nightly --profile minimal --no-self-update
           rustup component add --toolchain nightly rust-src
 
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest
-
-      - name: Cache cargo artifacts
+      - name: cargo-nextest, cargo cache
         # Separate key from BOTH the pure-Rust tsan job and asan-native:
         # this target dir holds TSan-instrumented vendored static libs.
         # Sanitized flavors must never share a cache (a restored
         # differently-instrumented lib would corrupt the run invisibly).
-        uses: actions/cache@v5
+        uses: ./.github/actions/rust-setup
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            !target/debug/incremental
-            !target/debug/.fingerprint
-            !target/debug/deps
+          toolchain: none
+          nextest: 'true'
+          cache-key: cargo-tsan-native-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-tsan-native-${{ runner.os }}-
+          cache-extra-paths: |
             !target/x86_64-unknown-linux-gnu/debug/incremental
             !target/x86_64-unknown-linux-gnu/debug/.fingerprint
             !target/x86_64-unknown-linux-gnu/debug/deps
-          key: cargo-tsan-native-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-tsan-native-${{ runner.os }}-
 
       - name: nextest run under TSan (sanitized native libs)
         env:
@@ -307,26 +280,17 @@ jobs:
           rustup toolchain install nightly --profile minimal --no-self-update
           rustup component add --toolchain nightly rust-src
 
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+      - name: cargo-nextest, cargo cache
+        uses: ./.github/actions/rust-setup
         with:
-          tool: nextest
-
-      - name: Cache cargo artifacts
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            !target/debug/incremental
-            !target/debug/.fingerprint
-            !target/debug/deps
+          toolchain: none
+          nextest: 'true'
+          cache-key: cargo-tsan-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-tsan-${{ runner.os }}-
+          cache-extra-paths: |
             !target/x86_64-unknown-linux-gnu/debug/incremental
             !target/x86_64-unknown-linux-gnu/debug/.fingerprint
             !target/x86_64-unknown-linux-gnu/debug/deps
-          key: cargo-tsan-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-tsan-${{ runner.os }}-
 
       - name: nextest run under TSan
         env:

@@ -59,7 +59,7 @@ Three ratchets need a deliberate update when your change is intentional:
   and set the baseline to the observed value.
 - **Fuzz harnesses** — separate workspaces under `crates/*/fuzz/`, not
   covered by `--workspace`; a signature change needs
-  `cargo +nightly fuzz check` in each (and `cargo +1.85 fmt --check` there).
+  `cargo +nightly fuzz check` in each (and `cargo fmt --check` there, with the pinned toolchain).
 
 Bindings: `bindings/python` builds with `maturin develop --release` in its
 own venv and tests with `pytest`; `bindings/jvm` runs `./gradlew test`.

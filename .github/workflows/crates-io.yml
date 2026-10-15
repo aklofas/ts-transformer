@@ -45,8 +45,6 @@ on:
       - "scripts/release/**"
 
 env:
-  # Match the pin used elsewhere in the workspace.
-  RUSTUP_TOOLCHAIN: "1.85"
   # Vendored native builds for the sys crates' verify step.
   SRT_FORCE_VENDORED: "1"
   CARGO_TERM_COLOR: always
@@ -95,9 +93,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=5 update
           sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
+      - uses: ./.github/actions/rust-setup
 
       - name: Resolve mode
         id: meta
