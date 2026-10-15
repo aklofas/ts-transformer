@@ -682,21 +682,17 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_get_stream_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
 
-    #[test]
-    fn null_end_reason_returns_invalid_config() {
-        let mut out = TstStreamEndReason::None;
-        let rc = unsafe { tst_managed_demux_receiver_end_reason(std::ptr::null_mut(), &mut out) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_get_reconnect_stats_returns_invalid_config() {
-        let mut out = crate::stats::TstManagedTransportStats::default();
-        let rc = unsafe {
+    null_entry_tests! {
+        null_end_reason_returns_invalid_config => invalid_config {
+            let mut out = TstStreamEndReason::None;
+            tst_managed_demux_receiver_end_reason(std::ptr::null_mut(), &mut out)
+        };
+        null_get_reconnect_stats_returns_invalid_config => invalid_config {
+            let mut out = crate::stats::TstManagedTransportStats::default();
             tst_managed_demux_receiver_get_reconnect_stats(std::ptr::null_mut(), &mut out)
         };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
     }
 
     /// `RecvEndReason` variants carry no message data, so every

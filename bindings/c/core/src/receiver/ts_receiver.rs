@@ -482,80 +482,44 @@ pub unsafe extern "C" fn tst_managed_receiver_reset_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
 
-    #[test]
-    fn null_close_is_safe() {
-        unsafe {
-            tst_receiver_close(std::ptr::null_mut());
-        }
-    }
-
-    #[test]
-    fn null_handle_recv_packet_returns_invalid_config() {
-        let mut buf = [0u8; 188];
-        let rc = unsafe { tst_receiver_recv_packet(std::ptr::null_mut(), buf.as_mut_ptr()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_buf_recv_packet_returns_invalid_config() {
-        // Both null pointers trip the p guard first; reaching the buf
-        // guard requires a non-null handle, which needs in-process
-        // loopback testing — deferred to ts_receiver_loopback.rs.
-        let rc = unsafe { tst_receiver_recv_packet(std::ptr::null_mut(), std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_cancel_returns_invalid_config() {
-        let rc = unsafe { tst_receiver_cancel(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_get_stats_returns_invalid_config() {
-        let mut stats = crate::stats::TstReceiverStats::default();
-        let rc = unsafe { tst_receiver_get_stats(std::ptr::null_mut(), &mut stats) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_reset_stats_returns_invalid_config() {
-        let rc = unsafe { tst_receiver_reset_stats(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_close_is_safe() {
-        unsafe {
-            tst_managed_receiver_close(std::ptr::null_mut());
-        }
-    }
-
-    #[test]
-    fn managed_null_cancel_returns_invalid_config() {
-        let rc = unsafe { tst_managed_receiver_cancel(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_recv_packet_returns_invalid_config() {
-        let mut buf = [0u8; 188];
-        let rc =
-            unsafe { tst_managed_receiver_recv_packet(std::ptr::null_mut(), buf.as_mut_ptr()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_get_stats_returns_invalid_config() {
-        let mut stats = crate::stats::TstReceiverStats::default();
-        let rc = unsafe { tst_managed_receiver_get_stats(std::ptr::null_mut(), &mut stats) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_reset_stats_returns_invalid_config() {
-        let rc = unsafe { tst_managed_receiver_reset_stats(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
+    null_entry_tests! {
+        null_close_is_safe => no_crash { tst_receiver_close(std::ptr::null_mut()) };
+        null_handle_recv_packet_returns_invalid_config => invalid_config {
+            let mut buf = [0u8; 188];
+            tst_receiver_recv_packet(std::ptr::null_mut(), buf.as_mut_ptr())
+        };
+        null_buf_recv_packet_returns_invalid_config => invalid_config {
+            // Both null pointers trip the p guard first; reaching the buf
+            // guard requires a non-null handle, which needs in-process
+            // loopback testing — deferred to ts_receiver_loopback.rs.
+            tst_receiver_recv_packet(std::ptr::null_mut(), std::ptr::null_mut())
+        };
+        null_cancel_returns_invalid_config => invalid_config {
+            tst_receiver_cancel(std::ptr::null_mut())
+        };
+        null_get_stats_returns_invalid_config => invalid_config {
+            let mut stats = crate::stats::TstReceiverStats::default();
+            tst_receiver_get_stats(std::ptr::null_mut(), &mut stats)
+        };
+        null_reset_stats_returns_invalid_config => invalid_config {
+            tst_receiver_reset_stats(std::ptr::null_mut())
+        };
+        managed_null_close_is_safe => no_crash { tst_managed_receiver_close(std::ptr::null_mut()) };
+        managed_null_cancel_returns_invalid_config => invalid_config {
+            tst_managed_receiver_cancel(std::ptr::null_mut())
+        };
+        managed_null_recv_packet_returns_invalid_config => invalid_config {
+            let mut buf = [0u8; 188];
+            tst_managed_receiver_recv_packet(std::ptr::null_mut(), buf.as_mut_ptr())
+        };
+        managed_null_get_stats_returns_invalid_config => invalid_config {
+            let mut stats = crate::stats::TstReceiverStats::default();
+            tst_managed_receiver_get_stats(std::ptr::null_mut(), &mut stats)
+        };
+        managed_null_reset_stats_returns_invalid_config => invalid_config {
+            tst_managed_receiver_reset_stats(std::ptr::null_mut())
+        };
     }
 }

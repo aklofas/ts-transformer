@@ -10,7 +10,8 @@
 /// final call the hand-written test ran (its `let` preludes included); the
 /// macro wraps all of it in one `unsafe` block. Arms:
 ///
-/// * `no_crash` — run `body`; a NULL `_close` / `_free` must be a no-op.
+/// * `no_crash` — run `body`; a NULL `_close` / `_free` must not crash
+///   (the arm asserts nothing beyond reaching the end).
 /// * `invalid_config` — `body` returns `TST_E_INVALID_CONFIG`.
 /// * `negative` — `body` returns a negative `TST_E_*` code.
 /// * `null` — `body` returns a null pointer.

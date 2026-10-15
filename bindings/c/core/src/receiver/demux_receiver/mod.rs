@@ -195,126 +195,76 @@ pub unsafe extern "C" fn tst_demux_receiver_close(p: *mut TstDemuxReceiver) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::{TstError, tst_get_last_error_str};
+    use crate::error::tst_get_last_error_str;
     use crate::event::TstEvent;
+    use crate::test_support::null_entry_tests;
 
-    #[test]
-    fn null_close_is_safe() {
-        unsafe {
-            tst_demux_receiver_close(std::ptr::null_mut());
-        }
-    }
-
-    #[test]
-    fn null_handle_recv_event_returns_invalid_config() {
-        let mut ev = TstEvent::default();
-        let rc = unsafe { tst_demux_receiver_recv_event(std::ptr::null_mut(), &mut ev) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_out_recv_event_returns_invalid_config() {
-        let rc =
-            unsafe { tst_demux_receiver_recv_event(std::ptr::null_mut(), std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_cancel_returns_invalid_config() {
-        let rc = unsafe { tst_demux_receiver_cancel(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_get_stats_returns_invalid_config() {
-        let mut stats = crate::stats::TstDemuxReceiverStats::default();
-        let rc = unsafe { tst_demux_receiver_get_stats(std::ptr::null_mut(), &mut stats) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_reset_stats_returns_invalid_config() {
-        let rc = unsafe { tst_demux_receiver_reset_stats(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_get_stream_stats_returns_invalid_config() {
-        let mut arr: *const crate::stats::TstStreamStats = std::ptr::null();
-        let mut count: libc::size_t = 0;
-        let rc = unsafe {
+    null_entry_tests! {
+        null_close_is_safe => no_crash { tst_demux_receiver_close(std::ptr::null_mut()) };
+        null_handle_recv_event_returns_invalid_config => invalid_config {
+            let mut ev = TstEvent::default();
+            tst_demux_receiver_recv_event(std::ptr::null_mut(), &mut ev)
+        };
+        null_out_recv_event_returns_invalid_config => invalid_config {
+            tst_demux_receiver_recv_event(std::ptr::null_mut(), std::ptr::null_mut())
+        };
+        null_cancel_returns_invalid_config => invalid_config {
+            tst_demux_receiver_cancel(std::ptr::null_mut())
+        };
+        null_get_stats_returns_invalid_config => invalid_config {
+            let mut stats = crate::stats::TstDemuxReceiverStats::default();
+            tst_demux_receiver_get_stats(std::ptr::null_mut(), &mut stats)
+        };
+        null_reset_stats_returns_invalid_config => invalid_config {
+            tst_demux_receiver_reset_stats(std::ptr::null_mut())
+        };
+        null_get_stream_stats_returns_invalid_config => invalid_config {
+            let mut arr: *const crate::stats::TstStreamStats = std::ptr::null();
+            let mut count: libc::size_t = 0;
             tst_demux_receiver_get_stream_stats(std::ptr::null_mut(), &mut arr, &mut count)
         };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_get_stream_last_seen_micros_returns_invalid_config() {
-        let mut micros: u64 = 0;
-        let rc = unsafe {
+        null_get_stream_last_seen_micros_returns_invalid_config => invalid_config {
+            let mut micros: u64 = 0;
             tst_demux_receiver_get_stream_last_seen_micros(
                 std::ptr::null_mut(),
                 0x1011,
                 &mut micros,
             )
         };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_close_is_safe() {
-        unsafe {
-            tst_managed_demux_receiver_close(std::ptr::null_mut());
-        }
-    }
-
-    #[test]
-    fn managed_null_cancel_returns_invalid_config() {
-        let rc = unsafe { tst_managed_demux_receiver_cancel(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_recv_event_returns_invalid_config() {
-        let mut ev = TstEvent::default();
-        let rc = unsafe { tst_managed_demux_receiver_recv_event(std::ptr::null_mut(), &mut ev) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_get_stats_returns_invalid_config() {
-        let mut stats = crate::stats::TstDemuxReceiverStats::default();
-        let rc = unsafe { tst_managed_demux_receiver_get_stats(std::ptr::null_mut(), &mut stats) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_reset_stats_returns_invalid_config() {
-        let rc = unsafe { tst_managed_demux_receiver_reset_stats(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_get_stream_stats_returns_invalid_config() {
-        let mut arr: *const crate::stats::TstStreamStats = std::ptr::null();
-        let mut count: libc::size_t = 0;
-        let rc = unsafe {
+        managed_null_close_is_safe => no_crash {
+            tst_managed_demux_receiver_close(std::ptr::null_mut())
+        };
+        managed_null_cancel_returns_invalid_config => invalid_config {
+            tst_managed_demux_receiver_cancel(std::ptr::null_mut())
+        };
+        managed_null_recv_event_returns_invalid_config => invalid_config {
+            let mut ev = TstEvent::default();
+            tst_managed_demux_receiver_recv_event(std::ptr::null_mut(), &mut ev)
+        };
+        managed_null_get_stats_returns_invalid_config => invalid_config {
+            let mut stats = crate::stats::TstDemuxReceiverStats::default();
+            tst_managed_demux_receiver_get_stats(std::ptr::null_mut(), &mut stats)
+        };
+        managed_null_reset_stats_returns_invalid_config => invalid_config {
+            tst_managed_demux_receiver_reset_stats(std::ptr::null_mut())
+        };
+        managed_null_get_stream_stats_returns_invalid_config => invalid_config {
+            let mut arr: *const crate::stats::TstStreamStats = std::ptr::null();
+            let mut count: libc::size_t = 0;
             tst_managed_demux_receiver_get_stream_stats(std::ptr::null_mut(), &mut arr, &mut count)
         };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn managed_null_get_stream_last_seen_micros_returns_invalid_config() {
-        let mut micros: u64 = 0;
-        let rc = unsafe {
+        managed_null_get_stream_last_seen_micros_returns_invalid_config => invalid_config {
+            let mut micros: u64 = 0;
             tst_managed_demux_receiver_get_stream_last_seen_micros(
                 std::ptr::null_mut(),
                 0x1011,
                 &mut micros,
             )
         };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
+        open_listener_invalid_url_returns_null => null {
+            let bad = std::ffi::CString::new("http://example.com").unwrap();
+            tst_demux_receiver_open_listener(bad.as_ptr())
+        };
     }
 
     /// Verify that an invalid SRT URL doesn't propagate a panic
@@ -327,13 +277,6 @@ mod tests {
         assert!(rx.is_null());
         let last = unsafe { tst_get_last_error_str() };
         assert!(!last.is_null());
-    }
-
-    #[test]
-    fn open_listener_invalid_url_returns_null() {
-        let bad = std::ffi::CString::new("http://example.com").unwrap();
-        let rx = unsafe { tst_demux_receiver_open_listener(bad.as_ptr()) };
-        assert!(rx.is_null());
     }
 
     #[test]

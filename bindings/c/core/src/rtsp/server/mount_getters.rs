@@ -192,6 +192,26 @@ mod tests {
     use crate::config::streams::TstVideoCodec;
     use crate::handle::TstRtspServerBuilder;
     use crate::rtsp::server::types::TstRtspMountHandle;
+    use crate::test_support::null_entry_tests;
+
+    null_entry_tests! {
+        null_handle_get_stats_returns_error => invalid_config {
+            let mut out = TstMountStats::default();
+            tst_rtsp_mount_get_stats(std::ptr::null(), &mut out)
+        };
+        null_handle_video_handle_returns_invalid => eq(TST_INVALID_STREAM_HANDLE) {
+            tst_rtsp_mount_video_handle(std::ptr::null())
+        };
+        null_handle_klv_handle_returns_invalid => eq(TST_INVALID_STREAM_HANDLE) {
+            tst_rtsp_mount_klv_handle(std::ptr::null())
+        };
+        null_handle_audio_handle_returns_invalid => eq(TST_INVALID_STREAM_HANDLE) {
+            tst_rtsp_mount_audio_handle(std::ptr::null())
+        };
+        null_handle_subtitle_handle_returns_invalid => eq(TST_INVALID_STREAM_HANDLE) {
+            tst_rtsp_mount_subtitle_handle(std::ptr::null())
+        };
+    }
 
     fn start_test_server() -> *mut crate::rtsp::server::types::TstRtspServer {
         let b = TstRtspServerBuilder::from_url("rtsp://127.0.0.1:0").expect("test url parses");
@@ -228,13 +248,6 @@ mod tests {
         };
         unsafe { crate::config::tst_mux_config_free(cfg) };
         mount
-    }
-
-    #[test]
-    fn null_handle_get_stats_returns_error() {
-        let mut out = TstMountStats::default();
-        let rc = unsafe { tst_rtsp_mount_get_stats(std::ptr::null(), &mut out) };
-        assert_eq!(rc, TstError::InvalidConfig as libc::c_int);
     }
 
     #[test]
@@ -294,29 +307,5 @@ mod tests {
         );
         unsafe { crate::rtsp::server::mount::tst_rtsp_mount_handle_free(mount) };
         unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
-    }
-
-    #[test]
-    fn null_handle_video_handle_returns_invalid() {
-        let vh = unsafe { tst_rtsp_mount_video_handle(std::ptr::null()) };
-        assert_eq!(vh, TST_INVALID_STREAM_HANDLE);
-    }
-
-    #[test]
-    fn null_handle_klv_handle_returns_invalid() {
-        let kh = unsafe { tst_rtsp_mount_klv_handle(std::ptr::null()) };
-        assert_eq!(kh, TST_INVALID_STREAM_HANDLE);
-    }
-
-    #[test]
-    fn null_handle_audio_handle_returns_invalid() {
-        let ah = unsafe { tst_rtsp_mount_audio_handle(std::ptr::null()) };
-        assert_eq!(ah, TST_INVALID_STREAM_HANDLE);
-    }
-
-    #[test]
-    fn null_handle_subtitle_handle_returns_invalid() {
-        let sh = unsafe { tst_rtsp_mount_subtitle_handle(std::ptr::null()) };
-        assert_eq!(sh, TST_INVALID_STREAM_HANDLE);
     }
 }

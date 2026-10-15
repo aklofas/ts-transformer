@@ -544,6 +544,37 @@ pub unsafe extern "C" fn tst_demux_config_set_sync_buf_cap(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
+
+    null_entry_tests! {
+        set_strict_mode_null_cfg_returns_invalid_config => invalid_config {
+            tst_demux_config_set_strict_mode(core::ptr::null_mut(), 0)
+        };
+        add_link_klv_null_cfg_returns_invalid_config => invalid_config {
+            tst_demux_config_add_link_klv(core::ptr::null_mut(), 0x101, 0x102)
+        };
+        set_pes_cap_null_cfg_returns_invalid_config => invalid_config {
+            tst_demux_config_set_pes_cap(core::ptr::null_mut(), 1024, 65536)
+        };
+        set_cfi_tolerance_null_cfg_returns_invalid_config => invalid_config {
+            tst_demux_config_set_cfi_tolerance(core::ptr::null_mut(), 1)
+        };
+        set_av1_carriage_null_cfg_returns_invalid_config => invalid_config {
+            tst_demux_config_set_av1_carriage(core::ptr::null_mut(), 0)
+        };
+        set_au_cell_cap_per_pid_null_cfg_returns_invalid_config => invalid_config {
+            tst_demux_config_set_au_cell_cap_per_pid(core::ptr::null_mut(), 1024)
+        };
+        set_lenient_psi_reassembly_null_cfg_returns_invalid_config => invalid_config {
+            tst_demux_config_set_lenient_psi_reassembly(core::ptr::null_mut(), 1)
+        };
+        set_unwrap_timestamps_null_cfg_returns_invalid_config => invalid_config {
+            tst_demux_config_set_unwrap_timestamps(core::ptr::null_mut(), 1)
+        };
+        set_sync_buf_cap_null_cfg_returns_invalid_config => invalid_config {
+            tst_demux_config_set_sync_buf_cap(core::ptr::null_mut(), 1024)
+        };
+    }
 
     #[test]
     fn strict_mode_round_trip() {
@@ -576,12 +607,6 @@ mod tests {
     }
 
     #[test]
-    fn set_strict_mode_null_cfg_returns_invalid_config() {
-        let rc = unsafe { tst_demux_config_set_strict_mode(core::ptr::null_mut(), 0) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
-
-    #[test]
     fn set_strict_mode_invalid_value_returns_invalid_config() {
         unsafe {
             let cfg = tst_demux_config_new();
@@ -592,12 +617,6 @@ mod tests {
     }
 
     #[test]
-    fn add_link_klv_null_cfg_returns_invalid_config() {
-        let rc = unsafe { tst_demux_config_add_link_klv(core::ptr::null_mut(), 0x101, 0x102) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
-
-    #[test]
     fn add_treat_as_unrecognized_kind_returns_invalid_config() {
         unsafe {
             let cfg = tst_demux_config_new();
@@ -605,12 +624,6 @@ mod tests {
             assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
             tst_demux_config_free(cfg);
         }
-    }
-
-    #[test]
-    fn set_pes_cap_null_cfg_returns_invalid_config() {
-        let rc = unsafe { tst_demux_config_set_pes_cap(core::ptr::null_mut(), 1024, 65536) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
     }
 
     #[test]
@@ -633,12 +646,6 @@ mod tests {
             assert!(!(*cfg).build_options().cfi_tolerance);
             tst_demux_config_free(cfg);
         }
-    }
-
-    #[test]
-    fn set_cfi_tolerance_null_cfg_returns_invalid_config() {
-        let rc = unsafe { tst_demux_config_set_cfi_tolerance(core::ptr::null_mut(), 1) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
     }
 
     #[test]
@@ -692,12 +699,6 @@ mod tests {
     }
 
     #[test]
-    fn set_av1_carriage_null_cfg_returns_invalid_config() {
-        let rc = unsafe { tst_demux_config_set_av1_carriage(core::ptr::null_mut(), 0) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
-
-    #[test]
     fn set_av1_carriage_invalid_value_returns_invalid_config() {
         unsafe {
             let cfg = tst_demux_config_new();
@@ -741,12 +742,6 @@ mod tests {
     }
 
     #[test]
-    fn set_au_cell_cap_per_pid_null_cfg_returns_invalid_config() {
-        let rc = unsafe { tst_demux_config_set_au_cell_cap_per_pid(core::ptr::null_mut(), 1024) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
-
-    #[test]
     fn lenient_psi_reassembly_default_is_false() {
         unsafe {
             let cfg = tst_demux_config_new();
@@ -766,12 +761,6 @@ mod tests {
             assert!(!(*cfg).build_options().lenient_psi_reassembly);
             tst_demux_config_free(cfg);
         }
-    }
-
-    #[test]
-    fn set_lenient_psi_reassembly_null_cfg_returns_invalid_config() {
-        let rc = unsafe { tst_demux_config_set_lenient_psi_reassembly(core::ptr::null_mut(), 1) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
     }
 
     #[test]
@@ -797,12 +786,6 @@ mod tests {
     }
 
     #[test]
-    fn set_unwrap_timestamps_null_cfg_returns_invalid_config() {
-        let rc = unsafe { tst_demux_config_set_unwrap_timestamps(core::ptr::null_mut(), 1) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
-    }
-
-    #[test]
     fn sync_buf_cap_default_is_none() {
         unsafe {
             let cfg = tst_demux_config_new();
@@ -821,11 +804,5 @@ mod tests {
             assert_eq!((*cfg).build_options().sync_buf_cap, None);
             tst_demux_config_free(cfg);
         }
-    }
-
-    #[test]
-    fn set_sync_buf_cap_null_cfg_returns_invalid_config() {
-        let rc = unsafe { tst_demux_config_set_sync_buf_cap(core::ptr::null_mut(), 1024) };
-        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
     }
 }

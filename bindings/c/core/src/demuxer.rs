@@ -260,6 +260,11 @@ pub unsafe extern "C" fn tst_demuxer_close(p: *mut TstDemuxer) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
+
+    null_entry_tests! {
+        close_null_is_safe => no_crash { tst_demuxer_close(core::ptr::null_mut()) };
+    }
 
     #[test]
     fn open_succeeds_and_close_is_safe() {
@@ -268,11 +273,6 @@ mod tests {
             assert!(!d.is_null());
             tst_demuxer_close(d);
         }
-    }
-
-    #[test]
-    fn close_null_is_safe() {
-        unsafe { tst_demuxer_close(core::ptr::null_mut()) };
     }
 
     #[test]

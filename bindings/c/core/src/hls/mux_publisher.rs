@@ -430,38 +430,24 @@ pub unsafe extern "C" fn tst_mux_publisher_get_publisher_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
 
-    #[test]
-    fn null_free_is_safe() {
-        unsafe { tst_mux_publisher_free(std::ptr::null_mut()) };
-    }
-
-    #[test]
-    fn null_send_video_returns_invalid_config() {
-        let nal = [0u8; 4];
-        let rc = unsafe {
+    null_entry_tests! {
+        null_free_is_safe => no_crash { tst_mux_publisher_free(std::ptr::null_mut()) };
+        null_send_video_returns_invalid_config => invalid_config {
+            let nal = [0u8; 4];
             tst_mux_publisher_send_video(std::ptr::null_mut(), nal.as_ptr(), 4, 0, false)
         };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_cut_segment_returns_invalid_config() {
-        let rc = unsafe { tst_mux_publisher_cut_segment(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_finish_returns_null() {
-        let p = unsafe { tst_mux_publisher_finish_into_publisher(std::ptr::null_mut()) };
-        assert!(p.is_null());
-    }
-
-    #[test]
-    fn null_get_stats_returns_invalid_config() {
-        let mut stats = TstMuxPublisherStats::default();
-        let rc = unsafe { tst_mux_publisher_get_stats(std::ptr::null_mut(), &mut stats) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
+        null_cut_segment_returns_invalid_config => invalid_config {
+            tst_mux_publisher_cut_segment(std::ptr::null_mut())
+        };
+        null_finish_returns_null => null {
+            tst_mux_publisher_finish_into_publisher(std::ptr::null_mut())
+        };
+        null_get_stats_returns_invalid_config => invalid_config {
+            let mut stats = TstMuxPublisherStats::default();
+            tst_mux_publisher_get_stats(std::ptr::null_mut(), &mut stats)
+        };
     }
 
     #[test]

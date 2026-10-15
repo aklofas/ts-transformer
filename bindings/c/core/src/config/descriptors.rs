@@ -684,6 +684,20 @@ mod tests {
         tst_mux_config_free, tst_mux_config_new,
     };
     use crate::event::TstDescriptor;
+    use crate::test_support::null_entry_tests;
+
+    null_entry_tests! {
+        /// Null config pointer → `TST_E_INVALID_CONFIG`.
+        null_cfg_returns_invalid_config => invalid_config {
+            let desc = TstDescriptor {
+                tag: 0x02,
+                _reserved: [0; 7],
+                data: core::ptr::null(),
+                data_len: 0,
+            };
+            tst_mux_config_add_video_descriptor(core::ptr::null_mut(), 0, &desc as *const _)
+        };
+    }
 
     /// Helper: a zero-body TLV (2 bytes: tag + zero body_len).
     fn zero_body_tlv(tag: u8) -> [u8; 2] {
@@ -789,20 +803,5 @@ mod tests {
             assert_eq!(rc, 0, "valid add-video-descriptor must return 0");
             tst_mux_config_free(cfg);
         }
-    }
-
-    /// Null config pointer → `TST_E_INVALID_CONFIG`.
-    #[test]
-    fn null_cfg_returns_invalid_config() {
-        let desc = TstDescriptor {
-            tag: 0x02,
-            _reserved: [0; 7],
-            data: core::ptr::null(),
-            data_len: 0,
-        };
-        let rc = unsafe {
-            tst_mux_config_add_video_descriptor(core::ptr::null_mut(), 0, &desc as *const _)
-        };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
     }
 }

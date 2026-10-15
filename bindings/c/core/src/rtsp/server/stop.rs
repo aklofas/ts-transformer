@@ -355,19 +355,28 @@ pub unsafe extern "C" fn tst_rtsp_server_free(server: *mut TstRtspServer) {
 mod tests {
     use super::*;
     use crate::handle::TstRtspServerBuilder;
+    use crate::test_support::null_entry_tests;
+
+    null_entry_tests! {
+        null_server_get_stats_returns_error => invalid_config {
+            let mut out = TstServerStats::default();
+            tst_rtsp_server_get_stats(std::ptr::null_mut(), &mut out)
+        };
+        null_cancel_handle_is_noop => no_crash {
+            tst_rtsp_cancel_handle_cancel(std::ptr::null_mut());
+            tst_rtsp_cancel_handle_free(std::ptr::null_mut());
+        };
+        null_server_cancel_handle_returns_null => null {
+            tst_rtsp_server_cancel_handle(std::ptr::null_mut())
+        };
+        server_free_null_is_noop => no_crash { tst_rtsp_server_free(std::ptr::null_mut()) };
+    }
 
     /// Helper: start a server on 127.0.0.1:0 and return the raw handle.
     fn start_test_server() -> *mut TstRtspServer {
         let b = TstRtspServerBuilder::from_url("rtsp://127.0.0.1:0").expect("test url parses");
         let raw_b = TstRtspServerBuilder::into_raw(Box::new(b));
         unsafe { crate::rtsp::server::start::tst_rtsp_server_builder_start(raw_b) }
-    }
-
-    #[test]
-    fn null_server_get_stats_returns_error() {
-        let mut out = TstServerStats::default();
-        let rc = unsafe { tst_rtsp_server_get_stats(std::ptr::null_mut(), &mut out) };
-        assert_eq!(rc, TstError::InvalidConfig as libc::c_int);
     }
 
     #[test]
@@ -404,18 +413,6 @@ mod tests {
         assert!(unsafe { (*ch).inner.is_cancelled() });
         unsafe { tst_rtsp_cancel_handle_free(ch) };
         unsafe { tst_rtsp_server_free(server) };
-    }
-
-    #[test]
-    fn null_cancel_handle_is_noop() {
-        unsafe { tst_rtsp_cancel_handle_cancel(std::ptr::null_mut()) };
-        unsafe { tst_rtsp_cancel_handle_free(std::ptr::null_mut()) };
-    }
-
-    #[test]
-    fn null_server_cancel_handle_returns_null() {
-        let ch = unsafe { tst_rtsp_server_cancel_handle(std::ptr::null_mut()) };
-        assert!(ch.is_null());
     }
 
     #[test]
@@ -467,11 +464,6 @@ mod tests {
             TstError::Closed as libc::c_int
         );
         unsafe { tst_rtsp_server_free(server) };
-    }
-
-    #[test]
-    fn server_free_null_is_noop() {
-        unsafe { tst_rtsp_server_free(std::ptr::null_mut()) };
     }
 
     #[test]

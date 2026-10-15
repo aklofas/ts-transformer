@@ -509,41 +509,24 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::null_entry_tests;
 
-    #[test]
-    fn null_connect_returns_null() {
-        let p = unsafe { tst_rtsp_client_builder_connect(std::ptr::null_mut()) };
-        assert!(p.is_null());
-    }
-
-    #[test]
-    fn null_play_returns_invalid_config() {
-        let rc = unsafe { tst_rtsp_session_play(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_pause_returns_invalid_config() {
-        let rc = unsafe { tst_rtsp_session_pause(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_teardown_and_free_is_noop() {
-        let rc = unsafe { tst_rtsp_session_teardown_and_free(std::ptr::null_mut()) };
-        assert_eq!(rc, 0);
-    }
-
-    #[test]
-    fn null_cancel_returns_invalid_config() {
-        let rc = unsafe { tst_rtsp_session_cancel(std::ptr::null_mut()) };
-        assert_eq!(rc, TstError::InvalidConfig as i32);
-    }
-
-    #[test]
-    fn null_into_demux_receiver_returns_null() {
-        let p =
-            unsafe { tst_rtsp_session_into_demux_receiver(std::ptr::null_mut(), std::ptr::null()) };
-        assert!(p.is_null());
+    null_entry_tests! {
+        null_connect_returns_null => null { tst_rtsp_client_builder_connect(std::ptr::null_mut()) };
+        null_play_returns_invalid_config => invalid_config {
+            tst_rtsp_session_play(std::ptr::null_mut())
+        };
+        null_pause_returns_invalid_config => invalid_config {
+            tst_rtsp_session_pause(std::ptr::null_mut())
+        };
+        null_teardown_and_free_is_noop => eq(0) {
+            tst_rtsp_session_teardown_and_free(std::ptr::null_mut())
+        };
+        null_cancel_returns_invalid_config => invalid_config {
+            tst_rtsp_session_cancel(std::ptr::null_mut())
+        };
+        null_into_demux_receiver_returns_null => null {
+            tst_rtsp_session_into_demux_receiver(std::ptr::null_mut(), std::ptr::null())
+        };
     }
 }
