@@ -121,7 +121,7 @@ let pairer = Pairer::with_config(v, k, config);          // explicit knob still 
 | `send_*` | **Hands bytes to a `Transport` the object owns.** May block and may fail with a transport error. Examples: `MuxSender::send_video`, `Sender::send_ts`. A type that owns no `Transport` never has a `send_*` method. |
 | `recv_*` | **Reads from a `RecvTransport` the object owns.** May block; returns `None` (or an end-of-stream kind) at stream end. Examples: `DemuxReceiver::recv_event`, `RawReceiver::recv_one`. |
 | `push_*` | **Hands data to an in-process consumer**: a muxer, a publisher (which may write files or cut segments as part of the call), a server mount. No transport contract; completes synchronously. Examples: `Muxer::push_video`, `MuxPublisher::push_video`, `MountHandle::push_klv`. |
-| `next_*` / `feed*` / `pull` | **In-process pull and feed.** A source that buffers results hands them out with `next_*` (`Demuxer::next_event`, `H264Depacketizer::next_au`); bytes go into a parser with `feed*` (`Demuxer::feed_aligned`); the muxer's output is taken with `pull`. A blocking wire read is `recv_*`, never `next_*`. |
+| `next_*` / `feed*` / `pull` | **In-process pull and feed.** A source that buffers results hands them out with `next_*` (`Demuxer::next_event`, `H264Depacketizer::next_au`); bytes go into a parser with `feed*` (`Demuxer::feed_aligned`); the muxer's output is taken with `pull`. A blocking wire read is `recv_*`, never `next_*`; today's exception is `Receiver::next_packet`, which blocks on its transport. |
 
 **Why:** Without a codified rule, future contributors will invent local
 verb vocabularies and reviewers will have to re-litigate "is this a

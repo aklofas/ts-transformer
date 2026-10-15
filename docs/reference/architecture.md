@@ -382,10 +382,10 @@ today's owners.
 
 | Crate | Owner | Thread or runtime | Started | Stopped | Exit with it still running |
 |---|---|---|---|---|---|
-| `tst-rtp` | `RtspServer` | private multi-thread tokio runtime, threads named `tst-rtp-server` | the runtime is built by `RtspServerBuilder::build`; `start()` spawns the listener task | `stop()` sends the Notice 5402 ANNOUNCE, cancels every session, waits `graceful_shutdown_drain` plus 1 s, then shuts each session's write half (500 ms each). `Drop` hard-cancels and shuts the runtime down with a 5 s bound | no exit hook; the runtime ends with the process and no Notice or TEARDOWN is sent |
+| `tst-rtp` | `RtspServer` | private multi-thread tokio runtime, threads named `tst-rtp-server` | the runtime is built by `RtspServerBuilder::build`; `start()` spawns the listener task | `stop()` sends the Notice 5402 ANNOUNCE, cancels every session, waits `graceful_shutdown_drain` plus 1 s, then shuts each session's write half (500 ms each). `Drop` hard-cancels and waits up to 5 s for the runtime to shut down | no exit hook; the runtime ends with the process and no Notice or TEARDOWN is sent |
 | `tst-rtp` | `RtspClient` | two std threads, `rtsp-keepalive` and `rtsp-interleaved-pump` | the keepalive thread at `RtspClientBuilder::connect` (unless auto keepalive is off); the pump at SETUP when media is TCP-interleaved | the client's cancel flag stops both. `Drop` sets it, sends a TEARDOWN bounded to 500 ms, then joins both threads. There is no `close()` | no exit hook; the threads end with the process |
 | `tst-rtp` | `RtpRecvTransport` built from an RTSP session | one std thread, `rtsp-rtcp-ingest` | when the transport is built from the interleaved pump's channels | never signalled and never joined; it exits when the pump's RTCP sender drops, which the client's `Drop` causes | no exit hook; the thread ends with the process |
-| `tst-hls` | `HlsPublisher` (only when it serves HTTP) | private tokio runtime with 2 worker threads named `tst-hls-rt` | `HlsPublisher::with_config`, which binds the listener | `HlsServerHandle::shutdown()` after `finish_serving()`, or `Drop` of the publisher or handle: cancel, then a 2 s bounded runtime shutdown | no exit hook; the runtime ends with the process |
+| `tst-hls` | `HlsPublisher` (only when it serves HTTP) | private tokio runtime with 2 worker threads named `tst-hls-rt` | `HlsPublisher::with_config`, which binds the listener | `HlsServerHandle::shutdown()` after `finish_serving()`, or `Drop` of the publisher or handle: cancel, then a wait of up to 2 s for the runtime to shut down | no exit hook; the runtime ends with the process |
 | `tst-pipeline` | `ManagedTransport` with `ReconnectMode::Background` | one unnamed std thread per outage | the first send that finds the inner transport down spawns it, and so does a send that meets a backlog after a give-up | `close()` latches closed, wakes the backoff wait and the inner transport's cancel handle, then joins; the join waits for an in-flight factory call. `Drop` signals the same way and detaches | no exit hook; a worker still running ends with the process |
 | `tst-srt` | libsrt itself (garbage-collector and queue worker threads); not a Rust object | libsrt's threads, process-wide | the first libsrt use (`srt_startup`) | each `Socket` and `Listener` `close()`; `srt_cleanup()` stops the library | guarded: the `atexit` handler in `exit_guard.rs` closes every open socket, waits up to 2 s for operations in flight, then runs `srt_cleanup()` |
 | `tst-rist` | `RistTransport`, `RistRecvTransport` (one librist context each) | librist's protocol thread | `RistCtx::new` calls `rist_start` | `close()` calls `rist_destroy`, which joins the thread. `Drop` calls `close()`, so it waits too | not guarded: there is no exit hook, so keep the owner alive until `close()` returns |
@@ -394,6 +394,9 @@ Where today's code differs from the rule, the difference stays until the
 owner's next structural change:
 
 - `RtspClient` and the two RIST transports join in `Drop`; the rule says
+  detach.
+- `RtspServer`'s `Drop` waits up to 5 s for its runtime to shut down, and
+  the HLS server's `Drop` waits up to 2 s for its runtime; the rule says
   detach.
 - `RtspServer::stop()` quiesces sessions but does not release the runtime;
   `Drop` does.
@@ -435,5 +438,5 @@ canonical list and the rationale for each entry.
 
 ## See also
 
-- [Resource policy](./resource-policy.md) — the bounds, reservations and full-queue policies of the RTSP server.
+- [Resource policy](/docs/reference/resource-policy.md) — the bounds, reservations and full-queue policies of the RTSP server.
 - [Binding-author starter](./binding-authors.md) — entry point for `tst-jni` and `tst-uniffi` authors (plus the existing `tst-c` ABI).
