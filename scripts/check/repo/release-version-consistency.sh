@@ -34,9 +34,8 @@
 # Run it:    bash scripts/check/repo/release-version-consistency.sh
 # Tag check: bash scripts/check/repo/release-version-consistency.sh 0.2.0
 #            (or, on a v* tag build, GITHUB_REF_NAME=vX.Y.Z is honoured)
-# Self-test: bash scripts/check/repo/release-version-consistency.sh --self-test
 #
-# Overridable (for the self-test, which points these at temp fixtures):
+# Overridable (scripts/ratchets/tests/self_test.sh points these at temp fixtures):
 #   RVC_CARGO_TOML   workspace Cargo.toml
 #   RVC_PYPROJECT    bindings/python/pyproject.toml
 #   RVC_PY_CARGO     bindings/python/Cargo.toml
@@ -207,98 +206,6 @@ run_check() { # [EXPECTED_VERSION]
 }
 
 # ---------------------------------------------------------------------------
-# self_test — drive the REAL script (recursively, via env overrides) against
-# throwaway fixtures and assert each expected outcome.
-# ---------------------------------------------------------------------------
-self_test() {
-  # Explicit template: BSD/macOS mktemp requires one (GNU accepts it too).
-  local tmp; tmp="$(mktemp -d "${TMPDIR:-/tmp}/rvc-selftest.XXXXXX")"
-  trap 'rm -rf "$tmp"' RETURN
-
-  write_fixtures() { # <version>
-    local ver="$1"
-    local maj="${ver%%.*}" rest="${ver#*.}" min pat
-    min="${rest%%.*}"; pat="${rest#*.}"
-
-    printf '[workspace.package]\nversion      = "%s"\nrust-version = "1.85"\n' "$ver" > "$tmp/Cargo.toml"
-    printf '[project]\nname    = "tstrans"\nversion = "%s"\n' "$ver" > "$tmp/pyproject.toml"
-    printf '[package]\nname    = "tst-py"\nversion = "%s"\n' "$ver" > "$tmp/py-cargo.toml"
-    # Include an ABI line to prove the TST_VERSION_ anchor skips TST_ABI_VERSION_.
-    {
-      printf 'pub const TST_VERSION_MAJOR: crate::c_types::c_int = %s;\n' "$maj"
-      printf 'pub const TST_VERSION_MINOR: crate::c_types::c_int = %s;\n' "$min"
-      printf 'pub const TST_VERSION_PATCH: crate::c_types::c_int = %s;\n' "$pat"
-      printf 'pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 13;\n'
-    } > "$tmp/lib.rs"
-    {
-      printf '#define TST_ABI_VERSION_MINOR 13\n'
-      printf '#define TST_VERSION_MAJOR %s\n' "$maj"
-      printf '#define TST_VERSION_MINOR %s\n' "$min"
-      printf '#define TST_VERSION_PATCH %s\n' "$pat"
-    } > "$tmp/tstrans.h"
-    printf '    assert tstrans.__version__ == "%s"\n' "$ver" > "$tmp/test_version.py"
-    # A single-line inline-table internal path-dependency, mirroring the real
-    # `crates/*/Cargo.toml` shape the (2.5) check scans.
-    printf '[dependencies]\ntst-core = { path = "../tst-core", version = "%s" }\n' "$ver" > "$tmp/dep-crate.toml"
-  }
-
-  # Run the real script with env pointed at the fixtures. $@ -> positional args.
-  run_real() {
-    RVC_CARGO_TOML="$tmp/Cargo.toml" \
-    RVC_PYPROJECT="$tmp/pyproject.toml" \
-    RVC_PY_CARGO="$tmp/py-cargo.toml" \
-    RVC_C_LIB="$tmp/lib.rs" \
-    RVC_C_HEADER="$tmp/tstrans.h" \
-    RVC_PY_TEST="$tmp/test_version.py" \
-    RVC_DEP_TOMLS="$tmp/dep-crate.toml" \
-    GITHUB_REF_NAME="" \
-    bash "$0" "$@"
-  }
-
-  expect() { # <pass|fail> <label> [args...]
-    local want="$1" label="$2"; shift 2
-    local rc
-    if run_real "$@" >/dev/null 2>&1; then rc=pass; else rc=fail; fi
-    if [ "$rc" = "$want" ]; then
-      echo "  ok: $label (expected $want)"
-    else
-      echo "  SELF-TEST FAIL: $label expected $want got $rc" >&2
-      return 1
-    fi
-  }
-
-  # (1) all six fixtures consistent -> pass
-  write_fixtures "0.2.0"
-  expect pass "all sources consistent" || return 1
-
-  # (2) flip ONE fixture -> cross-source mismatch -> fail
-  printf '    assert tstrans.__version__ == "0.1.0"\n' > "$tmp/test_version.py"
-  expect fail "one source flipped to 0.1.0" || return 1
-
-  # (3) consistent fixtures + matching expected arg -> pass
-  write_fixtures "0.2.0"
-  expect pass "expected arg 0.2.0 matches" 0.2.0 || return 1
-
-  # (4) consistent fixtures + wrong expected arg -> tag mismatch -> fail
-  expect fail "expected arg 9.9.9 mismatches" 9.9.9 || return 1
-
-  # (5) internal dep-version key flipped -> fail
-  write_fixtures "0.2.0"
-  printf '[dependencies]\ntst-core = { path = "../tst-core", version = "0.1.0" }\n' > "$tmp/dep-crate.toml"
-  expect fail "internal dep version key flipped to 0.1.0" || return 1
-
-  # (6) restore -> pass
-  write_fixtures "0.2.0"
-  expect pass "internal dep version key restored" || return 1
-
-  echo "release-version-consistency self-test: OK"
-}
-
-# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
-if [ "${1:-}" = "--self-test" ]; then
-  self_test
-else
-  run_check "${1:-}"
-fi
+run_check "${1:-}"

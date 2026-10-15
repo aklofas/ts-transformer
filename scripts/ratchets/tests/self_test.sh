@@ -38,6 +38,10 @@ expect() { # <desc> <want_rc> <cmd...>
     fi
 }
 
+# plant <file> <from> <to> : replace every <from> (a sed BRE, no `|`) with <to>
+# in <file>. Portable: no `sed -i`.
+plant() { sed "s|$2|$3|g" "$1" > "$1.new" && mv "$1.new" "$1"; }
+
 # ---- header rail: tool-failure fixtures ----------------------------------
 # The rail must never print PASS when the generator failed, and must
 # distinguish "not installed locally" (SKIP, rc 0) from "not installed in
@@ -379,6 +383,296 @@ XEOF
 cat "$tmp/dth/rs/a/tests/t.rs" >> "$tmp/dth/tr/a/tests/t.rs"
 cp "$tmp/dth/rs/a/tests/t.rs" "$tmp/dth/tr/b/tests/t.rs"
 expect "dup helpers: a bodiless multi-line trait declaration does not hide a duplicate after it" 1 env DTH_ROOTS="$tmp/dth/tr" DTH_ALLOWLIST="$tmp/dth/empty.tsv" bash "$DTH"
+
+# ---- feature-table currency (scripts/check/repo/feature-table-currency.sh) ----
+FTC="$DIR/../check/repo/feature-table-currency.sh"
+mkdir -p "$tmp/ftc/crates/foo"
+printf '[package]\nname = "foo"\n\n[features]\ndefault = ["alpha"]\nalpha = []\nbeta = ["dep:x"]\n\n[dependencies]\nx = "1"\n' > "$tmp/ftc/crates/foo/Cargo.toml"
+ftc() { FTC_RUST_MD="$tmp/ftc/rust.md" FTC_CRATES_DIR="$tmp/ftc/crates" bash "$FTC"; }
+printf '| Crate | Feature | Default | Effect |\n| --- | --- | --- | --- |\n| `foo` | `alpha` | on | a |\n| `foo` (published as `bar-foo`) | `beta` | off | b |\n' > "$tmp/ftc/rust.md"
+expect "feature table: every row exists"          0 ftc
+printf '| `foo` | `alpha` | on | a |\n| `foo` | `zzz` | on | planted |\n' > "$tmp/ftc/rust.md"
+expect "feature table: planted missing feature"   1 ftc
+printf '| `nope` | `alpha` | on | a |\n' > "$tmp/ftc/rust.md"
+expect "feature table: planted missing crate"     1 ftc
+printf '| Crate | Feature |\n| --- | --- |\n' > "$tmp/ftc/rust.md"
+expect "feature table: table with no rows"        1 ftc
+
+# ---- doc ABI currency (scripts/check/repo/doc-abi-and-st1910-currency.sh) ----
+DAC="$DIR/../check/repo/doc-abi-and-st1910-currency.sh"
+d="$tmp/dac"; mkdir -p "$d/bindings/c/core/src" "$d/docs/languages" "$d/docs/reference" "$d/crates"
+printf 'pub const TST_ABI_VERSION_MINOR: c_int = 21;\n' > "$d/bindings/c/core/src/lib.rs"
+printf '[workspace.package]\nversion = "0.6.0"\n' > "$d/Cargo.toml"
+printf '# x\n\nC ABI **0.21** today.\n' > "$d/README.md"
+printf '#define TST_ABI_VERSION_MINOR 21\n#define TST_VERSION_MAJOR 0\n#define TST_VERSION_MINOR 6\n#define TST_VERSION_PATCH 0\n' > "$d/docs/languages/c.md"
+printf 'ABI minor is **21** today.\n' > "$d/docs/reference/binding-authors.md"
+dac() { DOC_ABI_ROOT="$d" bash "$DAC"; }
+printf '| `tst-c` | ABI version **0.20** (additive). |\n' > "$d/docs/reference/compatibility.md"
+expect "doc ABI: planted stale bold minor fails"  1 dac
+printf '| `tst-c` | ABI version 0.20 (additive). |\n' > "$d/docs/reference/compatibility.md"
+expect "doc ABI: planted stale plain minor fails" 1 dac
+printf '| `tst-c` | ABI version **0.21** (additive). |\n' > "$d/docs/reference/compatibility.md"
+expect "doc ABI: current minor passes"            0 dac
+
+# ---- scenario manifest (scripts/check/repo/scenario-manifest.sh) ----
+R_SM="$DIR/../check/repo/scenario-manifest.sh"
+mkdir -p "$tmp/sm/s"
+: > "$tmp/sm/s/in.ts"
+printf '{}' > "$tmp/sm/s/g.json"
+sm() { SCENARIO_MANIFEST="$tmp/sm/scenarios.toml" bash "$R_SM"; }
+cat > "$tmp/sm/scenarios.toml" <<'TOML'
+[[scenario]]
+id = "a"
+kind = "demux"
+input = "s/in.ts"
+golden = "s/g.json"
+features = []
+tier = "A"
+schema_version = 0
+TOML
+expect "scenario manifest: valid single-scenario manifest" 0 sm
+cat > "$tmp/sm/scenarios.toml" <<'TOML'
+[[scenario]]
+id = "a"
+kind = "demux"
+input = "s/in.ts"
+golden = "s/g.json"
+features = []
+tier = "A"
+schema_version = 0
+
+[[scenario]]
+id = "a"
+kind = "roundtrip"
+input = "s/in.ts"
+golden = "s/g.json"
+features = []
+tier = "A"
+schema_version = 0
+TOML
+expect "scenario manifest: duplicate id" 1 sm
+cat > "$tmp/sm/scenarios.toml" <<'TOML'
+[[scenario]]
+id = "b"
+kind = "badkind"
+input = "s/in.ts"
+golden = "s/g.json"
+features = []
+tier = "A"
+schema_version = 0
+TOML
+expect "scenario manifest: unknown kind" 1 sm
+cat > "$tmp/sm/scenarios.toml" <<'TOML'
+[[scenario]]
+id = "c"
+kind = "demux"
+input = "s/in.ts"
+golden = "s/g.json"
+features = ["srt", "quic"]
+tier = "A"
+schema_version = 0
+TOML
+expect "scenario manifest: unknown feature token" 1 sm
+cat > "$tmp/sm/scenarios.toml" <<'TOML'
+[[scenario]]
+id = "d"
+kind = "demux"
+input = "s/no-such-input.ts"
+golden = "s/g.json"
+features = []
+tier = "A"
+schema_version = 0
+TOML
+expect "scenario manifest: missing input file" 1 sm
+cat > "$tmp/sm/scenarios.toml" <<'TOML'
+[[scenario]]
+id = "e"
+kind = "demux"
+input = "s/in.ts"
+golden = "s/no-such-golden.json"
+features = []
+tier = "A"
+schema_version = 0
+TOML
+expect "scenario manifest: missing golden file" 1 sm
+# No ids must fail cleanly, not abort the script under `set -euo pipefail`
+# when the id grep finds no matches.
+printf '# manifest with no scenarios\n' > "$tmp/sm/scenarios.toml"
+expect "scenario manifest: manifest with no scenario ids" 1 sm
+
+# ---- surface manifest (scripts/check/repo/surface-manifest.sh) ----
+R_SMF="$DIR/../check/repo/surface-manifest.sh"
+mkdir -p "$tmp/smf/crates/demo" "$tmp/smf/py" "$tmp/smf/py-empty"
+printf 'pub fn demo::a()\npub struct demo::B\n' > "$tmp/smf/crates/demo/public-api.txt"
+: > "$tmp/smf/h.h"   # empty C header
+# smf_* shell variables are the per-case knobs; the defaults pin an empty
+# un-catalogued set (sha256 of no lines).
+smf_pyi="$tmp/smf"; smf_count=0
+smf_sha=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+smf() {
+    SURFACE_BASELINE_DIR="$tmp/smf/crates" SURFACE_CRATES=demo SURFACE_MANIFEST="$tmp/smf/m.toml" \
+    SURFACE_C_HEADER="$tmp/smf/h.h" SURFACE_PYI_DIR="$smf_pyi" SURFACE_BUILT_FEATURES=srt \
+    SURFACE_UNAUDITED_COUNT="$smf_count" SURFACE_UNAUDITED_SHA256="$smf_sha" bash "$R_SMF"
+}
+smf_req() { SURFACE_REQUIRED_PREFIXES="c python" smf; }
+smf_row() { # <item> <python cell> <exempt item>
+    printf '[[surface]]\nitem = "%s"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:%s", "java:deferred", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "%s"\n' \
+        "$1" "$2" "$3" > "$tmp/smf/m.toml"
+}
+printf '[[exempt]]\nitem = "demo::a"\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/smf/m.toml"
+expect "surface manifest: all exempted" 0 smf
+printf '[[exempt]]\nitem = "demo::a"\n' > "$tmp/smf/m.toml"
+expect "surface manifest: un-catalogued item" 1 smf
+# Five-column sentinels so the expected failure can only come from rule (a).
+printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/NO_SUCH_FILE.rs"]\nbindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/smf/m.toml"
+expect "surface manifest: missing owning test" 1 smf
+# A real repo-relative path that exists (tests/coverage/README.md).
+printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:nope_sym_xyz", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/smf/m.toml"
+expect "surface manifest: unresolved c symbol" 1 smf
+printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/smf/m.toml"
+expect "surface manifest: row missing the kotlin column" 1 smf
+printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:n/a", "java:unaudited", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/smf/m.toml"
+expect "surface manifest: all five columns present as sentinels (:deferred / :n/a / :unaudited)" 0 smf
+# SURFACE_REQUIRED_PREFIXES really drives rule (b2): the same two-column row
+# that fails under the default set passes when the set is narrowed.
+printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/smf/m.toml"
+expect "surface manifest: a two-column row under the default prefix set" 1 smf
+expect "surface manifest: the same row under SURFACE_REQUIRED_PREFIXES='c python'" 0 smf_req
+# python: cells resolve by definition. A fake package with one class defined
+# in two modules, one module-level function and one unique class.
+printf 'class Transport:\n    def send(self, payload: bytes) -> None: ...\n\ndef decode_thing(buf: bytes) -> int: ...\n' > "$tmp/smf/py/udp.pyi"
+printf 'class Transport:\n    def send(self, payload: bytes) -> None: ...\n' > "$tmp/smf/py/tcp.pyi"
+printf 'class B:\n    count: int\n    def feed(self, buf: bytes) -> None: ...\n\nclass BEvent: ...\n' > "$tmp/smf/py/mpegts.pyi"
+smf_pyi="$tmp/smf/py"
+smf_row "demo::a" "decode_thing" "demo::B"
+expect "surface manifest: python: module-level function, unqualified" 0 smf
+smf_row "demo::a" "send" "demo::B"
+expect "surface manifest: python: bare method name (the old leaf match resolved it)" 1 smf
+smf_row "demo::a" "Transport.send" "demo::B"
+expect "surface manifest: python: Class.member defined in two modules, no module given" 1 smf
+smf_row "demo::a" "tstrans.udp.Transport.send" "demo::B"
+expect "surface manifest: python: module-qualified Class.member" 0 smf
+smf_row "demo::a" "tstrans.tcp.decode_thing" "demo::B"
+expect "surface manifest: python: defined, but not in the module the cell names" 1 smf
+smf_row "demo::a" "B.nope" "demo::B"
+expect "surface manifest: python: class exists, member does not" 1 smf
+smf_row "demo::a" "B.count" "demo::B"
+expect "surface manifest: python: class attribute" 0 smf
+smf_row "demo::a" "decode_thing [feature=rist]" "demo::B"
+expect "surface manifest: python: unbuilt feature is skipped" 0 smf
+smf_row "demo::a" "send [feature=srt]" "demo::B"
+expect "surface manifest: python: built feature is resolved" 1 smf
+# Owner rule: demo::B::x is a member of B, and B has a Python class.
+printf 'pub fn demo::a()\npub fn demo::B::x()\n' > "$tmp/smf/crates/demo/public-api.txt"
+smf_row "demo::B::x" "decode_thing" "demo::a"
+expect "surface manifest: python: a real function that is not the owner class's member" 1 smf
+smf_row "demo::B::x" "BEvent" "demo::a"
+expect "surface manifest: python: a real class that is not the owner class" 1 smf
+smf_row "demo::B::x" "B.feed" "demo::a"
+expect "surface manifest: python: the owner class's member" 0 smf
+smf_row "demo::B::x" "B" "demo::a"
+expect "surface manifest: python: the owner class itself" 0 smf
+# An EMPTY definition index resolves nothing: a package directory with no
+# .pyi/.py in it (a moved tree, a wrong SURFACE_PYI_DIR) must fail every
+# python: cell that names a symbol; only sentinel cells survive it.
+smf_pyi="$tmp/smf/py-empty"
+smf_row "demo::a" "no_such_function" "demo::B::x"
+expect "surface manifest: python: a named symbol against an empty definition index" 1 smf
+smf_row "demo::a" "deferred" "demo::B::x"
+expect "surface manifest: python: sentinel cells against an empty definition index" 0 smf
+# Rule (c) pins the un-catalogued SET, not only its size: the pinned set
+# passes, and the same count with a different item (one gone, one new) fails
+# on the digest.
+printf 'pub fn demo::a()\npub struct demo::B\n' > "$tmp/smf/crates/demo/public-api.txt"
+smf_count=1; smf_sha=4b00f8db406822b96eeba4fc4cff6c67f0df4cc48602125672ed68077e174a47
+printf '[[exempt]]\nitem = "demo::a"\n' > "$tmp/smf/m.toml"
+expect "surface manifest: closure: the pinned un-catalogued set {demo::B}" 0 smf
+printf '[[exempt]]\nitem = "demo::B"\n' > "$tmp/smf/m.toml"
+expect "surface manifest: closure: same count, different item" 1 smf
+smf_count=0; smf_sha=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+# An item key followed by an inline comment still names its item.
+printf '[[exempt]]\nitem = "demo::a" # kept\n[[exempt]]\nitem = "demo::B" # kept\n' > "$tmp/smf/m.toml"
+expect "surface manifest: closure: item keys with trailing inline comments" 0 smf
+
+# ---- platform capabilities (scripts/check/repo/platform-capabilities.sh) ----
+R_PC="$DIR/../check/repo/platform-capabilities.sh"
+mkdir -p "$tmp/pc/crates/demo/tests"
+printf '#![cfg(not(target_os = "windows"))]\n#[test]\nfn a(){}\n' > "$tmp/pc/crates/demo/tests/g.rs"
+# All three overrides point at the temp tree so the enumerator strips $tmp/pc
+# as the root prefix and every file reference resolves inside it.
+pc() { PLATCAP_SCAN_DIRS="$tmp/pc/crates" PLATCAP_FILE="$tmp/pc/m.toml" PLATCAP_ROOT="$tmp/pc" bash "$R_PC"; }
+printf '[[platform_skip]]\nfile = "crates/demo/tests/g.rs"\nplatform = "windows-msvc"\ncapability = "x"\nclass = "gap"\n' > "$tmp/pc/m.toml"
+expect "platform capabilities: synced gate" 0 pc
+: > "$tmp/pc/m.toml"
+expect "platform capabilities: unlisted gate" 1 pc
+printf '[[platform_skip]]\nfile = "crates/demo/tests/ghost.rs"\nplatform = "windows-msvc"\ncapability = "x"\nclass = "gap"\n' > "$tmp/pc/m.toml"
+expect "platform capabilities: stale entry" 1 pc
+printf '[[platform_skip]]\nfile = "crates/demo/tests/g.rs"\nplatform = "windows-msvc"\ncapability = "x"\nclass = "blocked_bug"\nexpires_after = "2000-01-01"\n' > "$tmp/pc/m.toml"
+expect "platform capabilities: expired blocked_bug" 1 pc
+printf '[[platform_skip]]\nfile = "crates/demo/tests/g.rs"\nplatform = "windows-msvc"\ncapability = "x"\nclass = "gap"\n[[capability]]\nplatform = "macos-arm64"\nstatus = "A-soft"\nsoft_until = "2000-01-01"\n' > "$tmp/pc/m.toml"
+expect "platform capabilities: lapsed A-soft" 1 pc
+
+# ---- skip ledger (scripts/check/repo/skip-ledger-sync.sh) ----
+R_SL="$DIR/../check/repo/skip-ledger-sync.sh"
+mkdir -p "$tmp/sl/crates/demo/tests"
+printf '#[test]\n#[ignore = "x"]\nfn alpha() {}\n' > "$tmp/sl/crates/demo/tests/a.rs"
+sl() { SKIP_SCAN_DIRS="$tmp/sl/crates" SKIP_LEDGER_FILE="$tmp/sl/ledger.toml" bash "$R_SL"; }
+printf '[[skip]]\ntest = "alpha"\nclass = "diagnostic"\n' > "$tmp/sl/ledger.toml"
+expect "skip ledger: synced ledger" 0 sl
+: > "$tmp/sl/ledger.toml"
+expect "skip ledger: unledgered #[ignore]" 1 sl
+printf '[[skip]]\ntest = "alpha"\nclass = "diagnostic"\n[[skip]]\ntest = "ghost"\nclass = "diagnostic"\n' > "$tmp/sl/ledger.toml"
+expect "skip ledger: stale ledger entry" 1 sl
+printf '[[skip]]\ntest = "alpha"\nclass = "diagnostic"\n[[skip]]\ntest = "ghost"\nclass = "blocked_bug"\nresolved = "2026-01-01"\n' > "$tmp/sl/ledger.toml"
+expect "skip ledger: resolved history entry" 0 sl
+printf '[[skip]]\ntest = "alpha"\nclass = "placeholder"\nexpires_after = "2000-01-01"\n' > "$tmp/sl/ledger.toml"
+expect "skip ledger: expired placeholder" 1 sl
+
+# ---- release version consistency (scripts/check/repo/release-version-consistency.sh) ----
+R_RVC="$DIR/../check/repo/release-version-consistency.sh"
+mkdir -p "$tmp/rvc"
+rvc_fixtures() { # <version>
+    local ver="$1" maj rest min pat
+    maj="${ver%%.*}"; rest="${ver#*.}"; min="${rest%%.*}"; pat="${rest#*.}"
+    printf '[workspace.package]\nversion      = "%s"\n' "$ver" > "$tmp/rvc/Cargo.toml"
+    printf '[project]\nname    = "tstrans"\nversion = "%s"\n' "$ver" > "$tmp/rvc/pyproject.toml"
+    printf '[package]\nname    = "tst-py"\nversion = "%s"\n' "$ver" > "$tmp/rvc/py-cargo.toml"
+    # An ABI line proves the TST_VERSION_ anchor skips TST_ABI_VERSION_.
+    {
+        printf 'pub const TST_VERSION_MAJOR: crate::c_types::c_int = %s;\n' "$maj"
+        printf 'pub const TST_VERSION_MINOR: crate::c_types::c_int = %s;\n' "$min"
+        printf 'pub const TST_VERSION_PATCH: crate::c_types::c_int = %s;\n' "$pat"
+        printf 'pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 13;\n'
+    } > "$tmp/rvc/lib.rs"
+    {
+        printf '#define TST_ABI_VERSION_MINOR 13\n'
+        printf '#define TST_VERSION_MAJOR %s\n' "$maj"
+        printf '#define TST_VERSION_MINOR %s\n' "$min"
+        printf '#define TST_VERSION_PATCH %s\n' "$pat"
+    } > "$tmp/rvc/tstrans.h"
+    printf '    assert tstrans.__version__ == "%s"\n' "$ver" > "$tmp/rvc/test_version.py"
+    # A single-line inline-table internal path-dependency, mirroring the real
+    # `crates/*/Cargo.toml` shape the dep-version check scans.
+    printf '[dependencies]\ntst-core = { path = "../tst-core", version = "%s" }\n' "$ver" > "$tmp/rvc/dep-crate.toml"
+}
+rvc() {
+    RVC_CARGO_TOML="$tmp/rvc/Cargo.toml" RVC_PYPROJECT="$tmp/rvc/pyproject.toml" \
+    RVC_PY_CARGO="$tmp/rvc/py-cargo.toml" RVC_C_LIB="$tmp/rvc/lib.rs" \
+    RVC_C_HEADER="$tmp/rvc/tstrans.h" RVC_PY_TEST="$tmp/rvc/test_version.py" \
+    RVC_DEP_TOMLS="$tmp/rvc/dep-crate.toml" GITHUB_REF_NAME="" bash "$R_RVC" "$@"
+}
+rvc_fixtures "0.2.0"
+expect "release version: all sources consistent" 0 rvc
+printf '    assert tstrans.__version__ == "0.1.0"\n' > "$tmp/rvc/test_version.py"
+expect "release version: one source flipped to 0.1.0" 1 rvc
+rvc_fixtures "0.2.0"
+expect "release version: expected arg 0.2.0 matches" 0 rvc 0.2.0
+expect "release version: expected arg 9.9.9 mismatches" 1 rvc 9.9.9
+rvc_fixtures "0.2.0"
+printf '[dependencies]\ntst-core = { path = "../tst-core", version = "0.1.0" }\n' > "$tmp/rvc/dep-crate.toml"
+expect "release version: internal dep version key flipped to 0.1.0" 1 rvc
+rvc_fixtures "0.2.0"
+expect "release version: internal dep version key restored" 0 rvc
 
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

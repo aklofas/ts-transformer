@@ -305,9 +305,8 @@ jobs:
         # trivially-infallible allowlist. Caught tst_demux_config_free
         # which had bypassed the lifecycle ratchet by being named
         # _free.
-        # Linux-only:
-        # platform-independent source scan whose ffi_catch guard uses
-        # GNU-grep `\s`, which BSD grep on macOS would mis-match.
+        # Linux-only: platform-independent source scan whose ffi_catch guard
+        # uses GNU-grep `\s`, which BSD grep on macOS would mis-match.
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/c/extern-c-ffi-catch-coverage.sh
 
@@ -321,14 +320,14 @@ jobs:
         # standard), and on `receiver-surface ... pending` wording in tst-c
         # crate docs. Rule 4 (docs deep edit 2026-07-12) pins README /
         # languages/c.md / binding-authors.md current-version sites to the
-        # source constants. The self-test plants a stale minor first.
-        run: bash scripts/check/repo/doc-abi-and-st1910-currency.sh --self-test && bash scripts/check/repo/doc-abi-and-st1910-currency.sh
+        # source constants.
+        run: bash scripts/check/repo/doc-abi-and-st1910-currency.sh
 
       - name: Check rust.md feature-table currency
         # Every `| crate | feature |` row in docs/languages/rust.md must
         # exist in that crate's [features] (rust.md carried a phantom
         # tst-srt `log` feature for months).
-        run: bash scripts/check/repo/feature-table-currency.sh --self-test && bash scripts/check/repo/feature-table-currency.sh
+        run: bash scripts/check/repo/feature-table-currency.sh
 
       - name: Check docs internal links
         # Docs deep-edit rail (2026-07-12) — every intra-repo markdown link
@@ -441,11 +440,10 @@ jobs:
         # This workflow runs only on push/PR to main (never on tags), so here
         # the rail enforces cross-source EQUALITY; the tag == source-version
         # enforcement lives in the release workflows (python-wheels.yml +
-        # jvm-jar.yml), where GITHUB_REF_NAME is the v* tag. Self-test runs
-        # first to prove the rail still catches its negatives. Gated to
+        # jvm-jar.yml), where GITHUB_REF_NAME is the v* tag. Gated to
         # linux-x86_64 — the sources are platform-independent.
         if: matrix.name == 'linux-x86_64'
-        run: bash scripts/check/repo/release-version-consistency.sh --self-test && bash scripts/check/repo/release-version-consistency.sh
+        run: bash scripts/check/repo/release-version-consistency.sh
 
       - name: check-msrv-consistency (every pinned-toolchain site == rust-toolchain.toml)
         # The MSRV is repeated at ~30 literal sites (workflows, crate

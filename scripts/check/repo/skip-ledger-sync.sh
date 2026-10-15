@@ -17,9 +17,8 @@
 # Python `pytest.mark.skipif` capability guards.
 #
 # Run it:   bash scripts/check/repo/skip-ledger-sync.sh
-# Self-test: bash scripts/check/repo/skip-ledger-sync.sh --self-test
 #
-# Overridable for the self-test (defaults point at the real tree):
+# Overridable (scripts/ratchets/tests/self_test.sh points these at fixtures):
 #   SKIP_LEDGER_FILE   path to the ledger TOML
 #   SKIP_SCAN_DIRS     space-separated dirs scanned for `#[ignore]`
 set -euo pipefail
@@ -136,56 +135,5 @@ EOF
   return "$fail"
 }
 
-self_test() {
-  local tmp; tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
-  local rc
-
-  expect() { # <expected pass|fail> <label>
-    local want="$1" label="$2"
-    if run_check >/dev/null 2>&1; then rc=pass; else rc=fail; fi
-    if [ "$rc" = "$want" ]; then
-      echo "  ok: $label (expected $want)"
-    else
-      echo "  SELF-TEST FAIL: $label expected $want got $rc" >&2
-      return 1
-    fi
-  }
-
-  mkdir -p "$tmp/crates/demo/tests"
-  printf '#[test]\n#[ignore = "x"]\nfn alpha() {}\n' > "$tmp/crates/demo/tests/a.rs"
-  export SKIP_SCAN_DIRS="$tmp/crates"
-  export SKIP_LEDGER_FILE="$tmp/ledger.toml"
-
-  # (a) synced: alpha ignored + ledgered -> pass
-  printf '[[skip]]\ntest = "alpha"\nclass = "diagnostic"\n' > "$tmp/ledger.toml"
-  expect pass "synced ledger" || return 1
-
-  # (b) unledgered skip: alpha ignored, ledger empty -> fail
-  : > "$tmp/ledger.toml"
-  expect fail "unledgered #[ignore]" || return 1
-
-  # (c) stale entry: ledger names a non-existent ignore -> fail
-  printf '[[skip]]\ntest = "alpha"\nclass = "diagnostic"\n[[skip]]\ntest = "ghost"\nclass = "diagnostic"\n' > "$tmp/ledger.toml"
-  expect fail "stale ledger entry" || return 1
-
-  # (d) resolved entry for a removed ignore is fine -> pass
-  printf '[[skip]]\ntest = "alpha"\nclass = "diagnostic"\n[[skip]]\ntest = "ghost"\nclass = "blocked_bug"\nresolved = "2026-01-01"\n' > "$tmp/ledger.toml"
-  expect pass "resolved history entry" || return 1
-
-  # (e) expired placeholder -> fail
-  printf '[[skip]]\ntest = "alpha"\nclass = "placeholder"\nexpires_after = "2000-01-01"\n' > "$tmp/ledger.toml"
-  expect fail "expired placeholder" || return 1
-
-  echo "self-test: PASS"
-}
-
-if [ "${1:-}" = "--self-test" ]; then
-  self_test
-else
-  # Prove the checker still catches its negatives before trusting a pass.
-  # Subshell so the self-test's SKIP_* env overrides can't leak into run_check.
-  ( self_test ) >/dev/null
-  run_check
-  echo "skip-ledger-sync: OK"
-fi
+run_check
+echo "skip-ledger-sync: OK"
