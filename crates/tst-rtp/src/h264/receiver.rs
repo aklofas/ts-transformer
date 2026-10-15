@@ -54,9 +54,10 @@ use tst_core::transport::{SocketStats, TransportError};
 use crate::cancel::RtpCancelHandle;
 use crate::h264::depacketizer::{H264Au, H264Depacketizer, H264DepayConfig, H264DepayStats};
 use crate::packet::RtpHeader;
-use crate::rtsp::client::end_reason::{EndReasonSlot, StreamEndReason};
+use crate::transport::record_end;
 use crate::transport::{ConnectError, MPSC_PUMP_DISCONNECTED, RECV_SCRATCH_LEN, RtpStats, Source};
 use crate::url::RtpUrl;
+use tst_core::transport::{EndReason, EndReasonHandle};
 
 /// Blocking H.264-over-RTP receive shell.
 ///
@@ -150,7 +151,7 @@ pub struct H264Receiver {
     /// an RTSP-shared slot (set via [`Self::set_end_reason_slot`]) and a
     /// fresh slot for a plain `rtp://` receiver, written only by
     /// [`Self::close`] / an explicit [`Self::cancel_handle`] fire.
-    end_reason: EndReasonSlot,
+    end_reason: EndReasonHandle,
 }
 
 impl H264Receiver {
@@ -236,7 +237,7 @@ impl H264Receiver {
             eos: false,
             recv_timeout: None,
             rtcp_drain: None,
-            end_reason: EndReasonSlot::default(),
+            end_reason: EndReasonHandle::default(),
         })
     }
 
@@ -277,7 +278,7 @@ impl H264Receiver {
             eos: false,
             recv_timeout: None,
             rtcp_drain: rtcp_rx,
-            end_reason: EndReasonSlot::default(),
+            end_reason: EndReasonHandle::default(),
         }
     }
 
@@ -325,10 +326,10 @@ impl H264Receiver {
         self.recv_timeout = timeout;
     }
 
-    /// The recorded [`StreamEndReason`], or `None` if the session hasn't
+    /// The recorded [`EndReason`], or `None` if the session hasn't
     /// ended yet (or ended through a path that records no reason —
     /// see the field doc on `end_reason` for the plain-`rtp://` case).
-    pub fn end_reason(&self) -> Option<StreamEndReason> {
+    pub fn end_reason(&self) -> Option<EndReason> {
         self.end_reason.get()
     }
 
@@ -336,7 +337,7 @@ impl H264Receiver {
     /// [`crate::rtsp::client::session::RtspSession::into_h264_receiver`]
     /// to swap in the owning `RtspClient`'s shared slot — mirrors
     /// `RtpRecvTransport::set_end_reason_slot`.
-    pub(crate) fn set_end_reason_slot(&mut self, slot: EndReasonSlot) {
+    pub(crate) fn set_end_reason_slot(&mut self, slot: EndReasonHandle) {
         self.end_reason = slot;
     }
 
@@ -407,7 +408,7 @@ impl H264Receiver {
                     // this directly when there's no recv in flight, so
                     // this branch is reached for a bare
                     // `cancel_handle().cancel()` fired mid-recv.
-                    self.end_reason.record(StreamEndReason::Cancelled);
+                    record_end(&self.end_reason, EndReason::Cancelled);
                     self.eos = true;
                     return Ok(self.depay.flush());
                 }
@@ -517,7 +518,7 @@ impl H264Receiver {
         self.cancel.cancel();
         self.source = None;
         self.eos = true;
-        self.end_reason.record(StreamEndReason::Cancelled);
+        record_end(&self.end_reason, EndReason::Cancelled);
     }
 }
 
@@ -827,7 +828,7 @@ mod tests {
         drop(tx);
     }
 
-    // ── StreamEndReason: plain rtp:// receiver (no owning RtspClient) ───
+    // ── EndReason: plain rtp:// receiver (no owning RtspClient) ───
 
     /// A fresh, never-touched receiver reports `None`.
     #[test]
@@ -845,7 +846,7 @@ mod tests {
         let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
         r.close();
         assert!(
-            matches!(r.end_reason(), Some(StreamEndReason::Cancelled)),
+            matches!(r.end_reason(), Some(EndReason::Cancelled)),
             "close() must record Cancelled, got {:?}",
             r.end_reason()
         );
@@ -865,7 +866,7 @@ mod tests {
             "a cancelled receiver must still surface clean EOS, got {result:?}"
         );
         assert!(
-            matches!(r.end_reason(), Some(StreamEndReason::Cancelled)),
+            matches!(r.end_reason(), Some(EndReason::Cancelled)),
             "a cancel-handle fire observed at recv must record Cancelled, got {:?}",
             r.end_reason()
         );
@@ -887,7 +888,7 @@ mod tests {
         assert!(slot.get().is_none(), "fresh receiver must start unrecorded");
         drop(r);
         assert!(
-            matches!(slot.get(), Some(StreamEndReason::Cancelled)),
+            matches!(slot.get(), Some(EndReason::Cancelled)),
             "Drop must record Cancelled, got {:?}",
             slot.get()
         );

@@ -1,4 +1,4 @@
-//! `tst_rtp::StreamEndReason` → Python `tstrans.rtp.StreamEndReason`
+//! `tst_rtp::EndReason` → Python `tstrans.rtp.StreamEndReason`
 //! conversion, shared by `transport::PyReceiver`, `demux_receiver::PyDemuxReceiver`,
 //! and `h264_receiver::PyH264Receiver`.
 //!
@@ -16,31 +16,31 @@
 use pyo3::intern;
 use pyo3::prelude::*;
 
-use tst_rtp::StreamEndReason;
+use tst_core::transport::EndReason;
 
-/// Convert a recorded [`StreamEndReason`] to the matching
+/// Convert a recorded [`EndReason`] to the matching
 /// `tstrans.rtp.StreamEndReason` IntEnum member.
 ///
 /// Looks up the member by name via `py.import_bound("tstrans.rtp")` —
 /// the same call-into-Python-defined-class pattern
 /// `mpegts.rs::stream_kind_to_py` uses for `StreamKindTag` (kept in
 /// pure Python so `isinstance`/pattern-matching works the same whether
-/// a caller constructs a `StreamEndReason` member directly or receives
+/// a caller constructs a `EndReason` member directly or receives
 /// one from this conversion).
 ///
-/// `StreamEndReason` is non-exhaustive on the tst-rtp side; a
+/// `EndReason` is non-exhaustive on the tst-rtp side; a
 /// future variant this binding doesn't know how to map yet returns
 /// `Ok(None)` rather than erroring — matching the "ended through a path
 /// this type doesn't instrument" contract documented on
-/// `StreamEndReasonHandle::get`.
-pub(crate) fn end_reason_to_py(py: Python<'_>, r: &StreamEndReason) -> PyResult<Option<PyObject>> {
+/// `EndReasonHandle::get`.
+pub(crate) fn end_reason_to_py(py: Python<'_>, r: &EndReason) -> PyResult<Option<PyObject>> {
     let name = match r {
-        StreamEndReason::CleanTeardown => "CLEAN_TEARDOWN",
-        StreamEndReason::SessionExpired => "SESSION_EXPIRED",
-        StreamEndReason::KeepaliveFailed { .. } => "KEEPALIVE_FAILED",
-        StreamEndReason::TransportFailed { .. } => "TRANSPORT_FAILED",
-        StreamEndReason::ProtocolError { .. } => "PROTOCOL_ERROR",
-        StreamEndReason::Cancelled => "CANCELLED",
+        EndReason::CleanTeardown => "CLEAN_TEARDOWN",
+        EndReason::SessionExpired => "SESSION_EXPIRED",
+        EndReason::KeepaliveFailed { .. } => "KEEPALIVE_FAILED",
+        EndReason::TransportFailed { .. } => "TRANSPORT_FAILED",
+        EndReason::ProtocolError { .. } => "PROTOCOL_ERROR",
+        EndReason::Cancelled => "CANCELLED",
         _ => return Ok(None),
     };
     let rtp = py.import_bound("tstrans.rtp")?;
@@ -53,11 +53,11 @@ pub(crate) fn end_reason_to_py(py: Python<'_>, r: &StreamEndReason) -> PyResult<
 /// `ProtocolError`; `None` for the three detail-less variants
 /// (`CleanTeardown`, `SessionExpired`, `Cancelled`) and any future
 /// non-exhaustive variant.
-pub(crate) fn end_reason_detail(r: &StreamEndReason) -> Option<&str> {
+pub(crate) fn end_reason_detail(r: &EndReason) -> Option<&str> {
     match r {
-        StreamEndReason::KeepaliveFailed { msg }
-        | StreamEndReason::TransportFailed { msg }
-        | StreamEndReason::ProtocolError { msg } => Some(msg.as_str()),
+        EndReason::KeepaliveFailed { msg }
+        | EndReason::TransportFailed { msg }
+        | EndReason::ProtocolError { msg } => Some(msg.as_str()),
         _ => None,
     }
 }

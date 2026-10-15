@@ -692,7 +692,7 @@ impl PyManagedDemuxReceiver {
     /// Raises `StopIteration` on a clean end of stream — which includes an
     /// exhausted reconnect budget: the decorator's give-up reaches the shell
     /// as `EndOfStream`, so iteration ends cleanly and `end_reason()` reports
-    /// `RecvEndReason.RECONNECT_EXHAUSTED`. Raises `SrtError` on a
+    /// `EndReason.RECONNECT_EXHAUSTED`. Raises `SrtError` on a
     /// transport-side failure the decorator did not absorb (a cancel arrives
     /// as `SrtError(CLOSED)`); `DemuxError` on demuxer failure.
     fn __next__(&self, py: Python<'_>) -> PyResult<PyObject> {

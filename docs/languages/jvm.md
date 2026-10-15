@@ -2151,7 +2151,7 @@ Gotchas:
   message through the shared thread-local last-error channel
   (`tst_get_last_error_str`), resetting it on every call. This binding
   has no such channel — `endDetail()` reads the `msg` field straight
-  off the Rust `StreamEndReason` value (same approach as Python). A
+  off the Rust `EndReason` value (same approach as Python). A
   recorded end reason is data, not a failure, so it never touches
   `RtpException`.
 - **`lastSeenMicros(pid)` returns `null`, not `0`, for "never

@@ -437,7 +437,7 @@ baseline (by design)" for the full rationale.
         `TST_E_SUCCESS` + the detail message (or `""` for msg-less
         reasons) on every call, overwriting any pending failure; `None`
         touches last-error not at all (see `tst_get_last_error`'s doc).
-        **Wildcard aliasing:** a future Rust `StreamEndReason` variant this
+        **Wildcard aliasing:** a future Rust `EndReason` variant this
         binding doesn't know about yet maps to `TstStreamEndReason::None`
         until the C mapping is updated in a later release.
       - **Per-stream last-seen gauges:**
@@ -486,9 +486,8 @@ baseline (by design)" for the full rationale.
       - **Managed-receiver lifecycle:** `tst_managed_demux_receiver_end_reason`
         (`TST_HAS_SRT`) reuses the existing (ABI 20) `TstStreamEndReason`
         enum rather than adding a new one — `crate::receiver::demux_receiver::managed`
-        gained a `convert_recv_end_reason` mapping `tst-pipeline`'s own
-        `RecvEndReason` (new Rust-side type, `tst-pipeline`'s recv
-        analogue of `tst_rtp::StreamEndReason`) onto the shared C enum.
+        gained a mapping of `tst_core::transport::EndReason` (now the one
+        converter, `convert_end_reason`) onto the shared C enum.
         `tst_managed_demux_receiver_get_reconnect_stats` (`TST_HAS_SRT`)
         likewise reuses the existing `tst_managed_transport_stats_t`
         struct from ABI 20. `tst_demux_config_set_unwrap_timestamps`
@@ -636,13 +635,13 @@ follow-up:
 | Capability | Rust core | C (`tst-c`) | Python (`tst-py`) | JVM (`tst-jni`) |
 |---|---|---|---|---|
 | Continuous-timestamp unwrap across the 33-bit rollover (`DemuxerConfig::unwrap_timestamps`) | ✅ | ✅ `tst_demux_config_set_unwrap_timestamps` | ✅ `DemuxerConfig.unwrap_timestamps` | ✅ `DemuxerConfig.Builder.unwrapTimestamps(boolean)` |
-| Managed-receiver end reason (`ManagedDemuxReceiver::end_reason_handle()` → `RecvEndReasonHandle` → `RecvEndReason`) | ✅ | ✅ `tst_managed_demux_receiver_end_reason` | ✅ `ManagedDemuxReceiver.end_reason() -> Optional[RecvEndReason]` | ✅ `ManagedDemuxReceiver.endReason()` → `RecvEndReason` or `null` |
+| Managed-receiver end reason (`ManagedDemuxReceiver::end_reason_handle()` → `EndReasonHandle` → `EndReason`) | ✅ | ✅ `tst_managed_demux_receiver_end_reason` | ✅ `ManagedDemuxReceiver.end_reason() -> Optional[RecvEndReason]` | ✅ `ManagedDemuxReceiver.endReason()` → `RecvEndReason` or `null` |
 | Pre-sync ingress ceiling (`DemuxerConfig::sync_buf_cap`) | ✅ | ✅ `tst_demux_config_set_sync_buf_cap` (ABI 0.22; 0 = default) | ✅ `DemuxerConfig.sync_buf_cap` | ✅ `DemuxerConfig.Builder.syncBufCap(long)` (0 = default) |
 
 **Notes on specific cells.**
 
 - **C reuses the ABI 20 enum; Python/JVM define a distinct one.** The C
-  getter maps `tst-pipeline`'s `RecvEndReason` (`EndOfStream` /
+  getter maps tst-core's `EndReason` (`EndOfStream` /
   `ReconnectExhausted` / `Cancelled`) onto the shared `TstStreamEndReason`
   enum the RTP surface already uses, to avoid adding a second wire enum
   (see the ABI 21 history entry's "Managed-receiver lifecycle" bullet).

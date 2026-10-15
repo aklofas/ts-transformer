@@ -40,13 +40,12 @@ use std::sync::Arc;
 
 use tst_core::mpegts::demux::DemuxerConfig;
 use tst_core::mpegts::mux::MuxerConfig;
-use tst_core::transport::{BrokenCause, RecvTransport, Transport, TransportError};
+use tst_core::transport::{BrokenCause, EndReasonHandle, RecvTransport, Transport, TransportError};
 use tst_pipeline::binding::ManagedHandles;
 use tst_pipeline::{
     FactoryCancel, ManagedDemuxReceiver, ManagedDemuxReceiverConfig, ManagedRecvTransport,
     ManagedStatsHandle, ManagedTransport, MuxSender, RawReceiver, RawReceiverConfig, RawSender,
-    RawSenderConfig, Receiver, ReceiverConfig, ReconnectPolicy, RecvEndReasonHandle, Sender,
-    SenderConfig,
+    RawSenderConfig, Receiver, ReceiverConfig, ReconnectPolicy, Sender, SenderConfig,
 };
 
 use crate::error::{OptionError, SrtError};
@@ -126,7 +125,7 @@ fn recv_handles(managed: &ManagedRecvTransport<SrtTransport>) -> ManagedHandles 
         cancel: managed
             .cancel_handle()
             .expect("ManagedRecvTransport::cancel_handle is always Some"),
-        end_reason: RecvEndReasonHandle::default(),
+        end_reason: EndReasonHandle::default(),
         reconnects: managed.reconnects_handle(),
         attempts: managed.attempts_handle(),
         reconnecting: managed.reconnecting_handle(),
@@ -241,7 +240,7 @@ fn send_handles(managed: &ManagedTransport<SrtTransport>) -> (ManagedHandles, Ma
         cancel: managed
             .cancel_handle()
             .expect("ManagedTransport::cancel_handle is always Some"),
-        end_reason: RecvEndReasonHandle::default(),
+        end_reason: EndReasonHandle::default(),
         reconnects: managed.reconnects_handle(),
         attempts: managed.attempts_handle(),
         reconnecting: managed.reconnecting_handle(),

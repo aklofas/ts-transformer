@@ -6983,6 +6983,33 @@ impl core::marker::Unpin for tst_core::transport::BrokenCause
 impl core::marker::UnsafeUnpin for tst_core::transport::BrokenCause
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::BrokenCause
 impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::BrokenCause
+#[non_exhaustive] pub enum tst_core::transport::EndReason
+pub tst_core::transport::EndReason::Cancelled
+pub tst_core::transport::EndReason::CleanTeardown
+pub tst_core::transport::EndReason::EndOfStream
+pub tst_core::transport::EndReason::KeepaliveFailed
+pub tst_core::transport::EndReason::KeepaliveFailed::msg: alloc::string::String
+pub tst_core::transport::EndReason::ProtocolError
+pub tst_core::transport::EndReason::ProtocolError::msg: alloc::string::String
+pub tst_core::transport::EndReason::ReconnectExhausted
+pub tst_core::transport::EndReason::SessionExpired
+pub tst_core::transport::EndReason::TransportFailed
+pub tst_core::transport::EndReason::TransportFailed::msg: alloc::string::String
+impl core::clone::Clone for tst_core::transport::EndReason
+pub fn tst_core::transport::EndReason::clone(&self) -> tst_core::transport::EndReason
+impl core::cmp::Eq for tst_core::transport::EndReason
+impl core::cmp::PartialEq for tst_core::transport::EndReason
+pub fn tst_core::transport::EndReason::eq(&self, &tst_core::transport::EndReason) -> bool
+impl core::fmt::Debug for tst_core::transport::EndReason
+pub fn tst_core::transport::EndReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_core::transport::EndReason
+impl core::marker::Freeze for tst_core::transport::EndReason
+impl core::marker::Send for tst_core::transport::EndReason
+impl core::marker::Sync for tst_core::transport::EndReason
+impl core::marker::Unpin for tst_core::transport::EndReason
+impl core::marker::UnsafeUnpin for tst_core::transport::EndReason
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::EndReason
+impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::EndReason
 #[non_exhaustive] pub enum tst_core::transport::TransportError
 pub tst_core::transport::TransportError::Backpressure
 pub tst_core::transport::TransportError::Backpressure::errno_code: core::option::Option<i32>
@@ -7014,6 +7041,23 @@ impl core::marker::Unpin for tst_core::transport::TransportError
 impl core::marker::UnsafeUnpin for tst_core::transport::TransportError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::TransportError
 impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::TransportError
+pub struct tst_core::transport::EndReasonHandle(_)
+impl tst_core::transport::EndReasonHandle
+pub fn tst_core::transport::EndReasonHandle::get(&self) -> core::option::Option<tst_core::transport::EndReason>
+pub fn tst_core::transport::EndReasonHandle::record(&self, tst_core::transport::EndReason)
+impl core::clone::Clone for tst_core::transport::EndReasonHandle
+pub fn tst_core::transport::EndReasonHandle::clone(&self) -> tst_core::transport::EndReasonHandle
+impl core::default::Default for tst_core::transport::EndReasonHandle
+pub fn tst_core::transport::EndReasonHandle::default() -> tst_core::transport::EndReasonHandle
+impl core::fmt::Debug for tst_core::transport::EndReasonHandle
+pub fn tst_core::transport::EndReasonHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_core::transport::EndReasonHandle
+impl core::marker::Send for tst_core::transport::EndReasonHandle
+impl core::marker::Sync for tst_core::transport::EndReasonHandle
+impl core::marker::Unpin for tst_core::transport::EndReasonHandle
+impl core::marker::UnsafeUnpin for tst_core::transport::EndReasonHandle
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::EndReasonHandle
+impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::EndReasonHandle
 #[non_exhaustive] pub struct tst_core::transport::SocketStats
 pub tst_core::transport::SocketStats::bytes_lost_recv: u64
 pub tst_core::transport::SocketStats::bytes_received: u64
@@ -7052,6 +7096,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::SocketStats
 pub trait tst_core::transport::RecvTransport: core::marker::Send
 pub fn tst_core::transport::RecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_core::transport::RecvTransport::close(&mut self)
+pub fn tst_core::transport::RecvTransport::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
 pub fn tst_core::transport::RecvTransport::is_alive(&self) -> bool
 pub fn tst_core::transport::RecvTransport::max_payload(&self) -> usize
 pub fn tst_core::transport::RecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
@@ -7059,6 +7104,7 @@ pub fn tst_core::transport::RecvTransport::socket_stats(&self) -> core::option::
 impl<T: tst_core::transport::RecvTransport + ?core::marker::Sized> tst_core::transport::RecvTransport for alloc::boxed::Box<T>
 pub fn alloc::boxed::Box<T>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn alloc::boxed::Box<T>::close(&mut self)
+pub fn alloc::boxed::Box<T>::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
 pub fn alloc::boxed::Box<T>::is_alive(&self) -> bool
 pub fn alloc::boxed::Box<T>::max_payload(&self) -> usize
 pub fn alloc::boxed::Box<T>::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
@@ -7896,6 +7942,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::UasDatalinkLs
 pub trait tst_core::RecvTransport: core::marker::Send
 pub fn tst_core::RecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_core::RecvTransport::close(&mut self)
+pub fn tst_core::RecvTransport::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
 pub fn tst_core::RecvTransport::is_alive(&self) -> bool
 pub fn tst_core::RecvTransport::max_payload(&self) -> usize
 pub fn tst_core::RecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
@@ -7903,6 +7950,7 @@ pub fn tst_core::RecvTransport::socket_stats(&self) -> core::option::Option<tst_
 impl<T: tst_core::transport::RecvTransport + ?core::marker::Sized> tst_core::transport::RecvTransport for alloc::boxed::Box<T>
 pub fn alloc::boxed::Box<T>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn alloc::boxed::Box<T>::close(&mut self)
+pub fn alloc::boxed::Box<T>::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
 pub fn alloc::boxed::Box<T>::is_alive(&self) -> bool
 pub fn alloc::boxed::Box<T>::max_payload(&self) -> usize
 pub fn alloc::boxed::Box<T>::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>

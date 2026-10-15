@@ -53,11 +53,10 @@ use std::time::Duration;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+use tst_core::transport::EndReason;
 use tst_pipeline::binding::{BindingError, HandleState, Owned};
 use tst_rtp::transport::RtpStats;
-use tst_rtp::{
-    H264Au, H264DepayConfig, H264DepayStats, H264Receiver, ParameterSetInjection, StreamEndReason,
-};
+use tst_rtp::{H264Au, H264DepayConfig, H264DepayStats, H264Receiver, ParameterSetInjection};
 
 use crate::raise::{RTP, pyok, pyres, raise};
 use crate::rtp::transport::{PyCancelHandle, PySocketStats};
@@ -421,7 +420,7 @@ pub struct PyH264Receiver {
     /// there is no cross-drop handle to hold onto. `Owned::close` runs
     /// `Close::close`, which is the only moment the reason can be read
     /// before the receiver drops. Shared with the held value.
-    closed_end_reason: Arc<Mutex<Option<StreamEndReason>>>,
+    closed_end_reason: Arc<Mutex<Option<EndReason>>>,
 }
 
 /// `H264Receiver` plus the end-reason snapshot its `close()` takes —
@@ -429,7 +428,7 @@ pub struct PyH264Receiver {
 /// can be read before the receiver drops.
 pub(crate) struct H264Held {
     rx: H264Receiver,
-    closed_end_reason: Arc<Mutex<Option<StreamEndReason>>>,
+    closed_end_reason: Arc<Mutex<Option<EndReason>>>,
 }
 
 impl tst_pipeline::binding::Close for H264Held {
@@ -474,7 +473,7 @@ impl PyH264Receiver {
     /// another thread (the reason is not final until that call returns —
     /// the one place this shell differs from `Receiver.end_reason()`,
     /// which reads a lock-free handle).
-    fn current_end_reason(&self) -> Option<StreamEndReason> {
+    fn current_end_reason(&self) -> Option<EndReason> {
         match self.owned.try_with_ref(|h| h.rx.end_reason()) {
             Some(Ok(r)) => r,
             Some(Err(_)) => self
@@ -656,7 +655,7 @@ impl PyH264Receiver {
     /// taking the slot so a thread parked in `recv_au` unparks at the
     /// next cancel-poll tick (~100 ms) and returns `None`; then calls the
     /// inner `H264Receiver`'s own idempotent `close()` (records
-    /// `StreamEndReason::Cancelled` unless some earlier signal already
+    /// `EndReason::Cancelled` unless some earlier signal already
     /// claimed the slot), snapshots its `end_reason()` into
     /// `closed_end_reason`, and drops the source.
     fn close(&self, py: Python<'_>) -> PyResult<()> {

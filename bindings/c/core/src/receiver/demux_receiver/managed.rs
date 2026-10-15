@@ -49,7 +49,7 @@ use tst_pipeline::binding::BindingError;
 use tst_srt::SrtTransport;
 use tst_srt::SrtUrl;
 
-use crate::stream_end_reason::TstStreamEndReason;
+use crate::stream_end_reason::{TstStreamEndReason, convert_end_reason};
 
 pub struct TstManagedDemuxReceiver {
     /// Snapshot = the five lock-free observers (`ManagedHandles`) captured
@@ -330,33 +330,31 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_cancel(
 /// only returns a nonzero code for a null-pointer argument.
 ///
 /// **Last-error is untouched only for the "hasn't ended yet" sub-case**
-/// (`RecvEndReasonHandle::get()` returns `None` — no reason was ever
+/// (`EndReasonHandle::get()` returns `None` — no reason was ever
 /// recorded, so any pending failure from an earlier call is still
 /// readable). The "recorded but this binding doesn't map that variant
-/// yet" sub-case is different: `convert_recv_end_reason`'s `#[non_exhaustive]`
+/// yet" sub-case is different: the converter's `#[non_exhaustive]`
 /// wildcard fallback still degrades to `None` for the *return value*,
 /// but it runs through the same unconditional last-error reset every
-/// other arm does (see that function's doc) — so last-error IS reset to
-/// `TST_E_SUCCESS` there, not left untouched. This only bites if
-/// `tst-pipeline` adds a `RecvEndReason` variant before this binding's
-/// match is updated for it (mirrors `crate::rtp::end_reason::convert_end_reason`'s
-/// wildcard, which has the same property).
+/// other arm does — so last-error IS reset to `TST_E_SUCCESS` there, not
+/// left untouched. This only bites if `tst-core` adds an `EndReason`
+/// variant before this binding's match is updated for it.
 ///
 /// Reuses the RTP-side `TstStreamEndReason` enum — its RTSP-shaped
 /// variant names (`SessionExpired`, `KeepaliveFailed`, `ProtocolError`)
 /// are never produced on this SRT recv path; only three of its six
 /// non-`None` variants apply here:
-/// - `tst_pipeline::RecvEndReason::EndOfStream` → `CleanTeardown`
-/// - `tst_pipeline::RecvEndReason::ReconnectExhausted` → `TransportFailed`
+/// - `tst_core::transport::EndReason::EndOfStream` → `CleanTeardown`
+/// - `tst_core::transport::EndReason::ReconnectExhausted` → `TransportFailed`
 ///   (the reconnect decorator exhausted its policy budget — the peer
 ///   never came back)
-/// - `tst_pipeline::RecvEndReason::Cancelled` → `Cancelled`
+/// - `tst_core::transport::EndReason::Cancelled` → `Cancelled`
 ///
 /// **Last-error side effect on every ACTUALLY-recorded reason:** unlike
 /// the "hasn't ended" case above, once the session has ended this getter
 /// unconditionally resets the thread-local last-error channel to
 /// `TST_E_SUCCESS` with an EMPTY detail message — none of the three
-/// `RecvEndReason` variants above carry a detail string (unlike the RTP
+/// `EndReason` variants above carry a detail string (unlike the RTP
 /// side's `KeepaliveFailed`/`TransportFailed`/`ProtocolError`), so
 /// `tst_get_last_error_str()` always reads `""` once a reason has been
 /// recorded, never a stale message left over from some earlier,
@@ -396,43 +394,13 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_end_reason(
             return TstError::InvalidConfig as i32;
         }
         let reason = match handle.inner.end_reason() {
-            Some(r) => convert_recv_end_reason(&r),
+            Some(r) => convert_end_reason(&r),
             None => TstStreamEndReason::None,
         };
         // SAFETY: out non-null per guard above.
         unsafe { *out = reason };
         0
     })
-}
-
-/// Convert a recorded [`tst_pipeline::RecvEndReason`] to its C
-/// discriminant. Only called by `tst_managed_demux_receiver_end_reason`
-/// when it already holds a `Some` from `RecvEndReasonHandle::get()` —
-/// i.e. every arm here corresponds to an ACTUALLY-RECORDED reason, never
-/// the "hasn't ended yet" case (that short-circuits to
-/// `TstStreamEndReason::None` at the call site without reaching this
-/// function — see the getter's doc for why that split matters to the
-/// last-error contract).
-///
-/// Every arm therefore unconditionally resets the thread-local
-/// last-error channel to `TstError::Success` with an empty detail
-/// message — `RecvEndReason` carries no per-variant message data (unlike
-/// `tst_rtp::StreamEndReason`), so there is nothing to forward.
-///
-/// `RecvEndReason` is `#[non_exhaustive]` on the `tst-pipeline` side; a
-/// future variant this binding doesn't know how to map yet degrades to
-/// `None` rather than panicking, mirroring
-/// `crate::rtp::end_reason::convert_end_reason`'s wildcard fallback.
-fn convert_recv_end_reason(r: &tst_pipeline::RecvEndReason) -> TstStreamEndReason {
-    use tst_pipeline::RecvEndReason;
-    let converted = match r {
-        RecvEndReason::EndOfStream => TstStreamEndReason::CleanTeardown,
-        RecvEndReason::ReconnectExhausted => TstStreamEndReason::TransportFailed,
-        RecvEndReason::Cancelled => TstStreamEndReason::Cancelled,
-        _ => TstStreamEndReason::None,
-    };
-    set_last_error(TstError::Success, "");
-    converted
 }
 
 /// Close and free a `tst_managed_demux_receiver_t`.
@@ -693,38 +661,5 @@ mod tests {
             let mut out = crate::stats::TstManagedTransportStats::default();
             tst_managed_demux_receiver_get_reconnect_stats(std::ptr::null_mut(), &mut out)
         };
-    }
-
-    /// `RecvEndReason` variants carry no message data, so every
-    /// ACTUALLY-recorded reason must reset last-error to `(Success, "")`
-    /// — pinned directly against the conversion helper, independent of
-    /// live-socket setup. Mirrors `convert_end_reason`'s own unit tests
-    /// in `crate::rtp::end_reason`.
-    #[test]
-    fn convert_recv_end_reason_sets_empty_last_error_detail_for_every_variant() {
-        for (reason, expected) in [
-            (
-                tst_pipeline::RecvEndReason::EndOfStream,
-                TstStreamEndReason::CleanTeardown,
-            ),
-            (
-                tst_pipeline::RecvEndReason::ReconnectExhausted,
-                TstStreamEndReason::TransportFailed,
-            ),
-            (
-                tst_pipeline::RecvEndReason::Cancelled,
-                TstStreamEndReason::Cancelled,
-            ),
-        ] {
-            crate::error::clear_last_error_for_test();
-            let converted = convert_recv_end_reason(&reason);
-            // TstStreamEndReason has no Debug impl; compare discriminants.
-            assert_eq!(converted as i32, expected as i32, "mapping for {reason:?}");
-            assert_eq!(
-                crate::error::test_last_error_code(),
-                TstError::Success as i32
-            );
-            assert_eq!(crate::error::test_last_error_msg(), "");
-        }
     }
 }

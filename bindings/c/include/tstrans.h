@@ -165,8 +165,8 @@
  * `Option::None`, e.g. a plain `rtp://` receiver that was never
  * `_cancel`'d or `_close`'d). Some variants are transport-specific: the
  * RTSP-shaped `SessionExpired` / `KeepaliveFailed` / `ProtocolError`
- * only ever surface from the RTP/RTSP side — the SRT managed receiver's
- * `RecvEndReason` has no equivalent and never produces them.
+ * only ever surface from the RTP/RTSP side — the SRT managed receiver
+ * never produces them.
  * Discriminants 1-6 are cross-surface stable — the Python and JVM
  * bindings use the same numbering.
  */
@@ -5243,33 +5243,31 @@ void tst_managed_demux_receiver_close(struct tst_managed_demux_receiver_t *p);
  * only returns a nonzero code for a null-pointer argument.
  *
  * **Last-error is untouched only for the "hasn't ended yet" sub-case**
- * (`RecvEndReasonHandle::get()` returns `None` — no reason was ever
+ * (`EndReasonHandle::get()` returns `None` — no reason was ever
  * recorded, so any pending failure from an earlier call is still
  * readable). The "recorded but this binding doesn't map that variant
- * yet" sub-case is different: `convert_recv_end_reason`'s `#[non_exhaustive]`
+ * yet" sub-case is different: the converter's `#[non_exhaustive]`
  * wildcard fallback still degrades to `None` for the *return value*,
  * but it runs through the same unconditional last-error reset every
- * other arm does (see that function's doc) — so last-error IS reset to
- * `TST_E_SUCCESS` there, not left untouched. This only bites if
- * `tst-pipeline` adds a `RecvEndReason` variant before this binding's
- * match is updated for it (mirrors `crate::rtp::end_reason::convert_end_reason`'s
- * wildcard, which has the same property).
+ * other arm does — so last-error IS reset to `TST_E_SUCCESS` there, not
+ * left untouched. This only bites if `tst-core` adds an `EndReason`
+ * variant before this binding's match is updated for it.
  *
  * Reuses the RTP-side `TstStreamEndReason` enum — its RTSP-shaped
  * variant names (`SessionExpired`, `KeepaliveFailed`, `ProtocolError`)
  * are never produced on this SRT recv path; only three of its six
  * non-`None` variants apply here:
- * - `tst_pipeline::RecvEndReason::EndOfStream` → `CleanTeardown`
- * - `tst_pipeline::RecvEndReason::ReconnectExhausted` → `TransportFailed`
+ * - `tst_core::transport::EndReason::EndOfStream` → `CleanTeardown`
+ * - `tst_core::transport::EndReason::ReconnectExhausted` → `TransportFailed`
  *   (the reconnect decorator exhausted its policy budget — the peer
  *   never came back)
- * - `tst_pipeline::RecvEndReason::Cancelled` → `Cancelled`
+ * - `tst_core::transport::EndReason::Cancelled` → `Cancelled`
  *
  * **Last-error side effect on every ACTUALLY-recorded reason:** unlike
  * the "hasn't ended" case above, once the session has ended this getter
  * unconditionally resets the thread-local last-error channel to
  * `TST_E_SUCCESS` with an EMPTY detail message — none of the three
- * `RecvEndReason` variants above carry a detail string (unlike the RTP
+ * `EndReason` variants above carry a detail string (unlike the RTP
  * side's `KeepaliveFailed`/`TransportFailed`/`ProtocolError`), so
  * `tst_get_last_error_str()` always reads `""` once a reason has been
  * recorded, never a stale message left over from some earlier,

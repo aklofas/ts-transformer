@@ -61,7 +61,6 @@ pub use error::RtspError;
 pub use rtcp::ingest::SrAnchor;
 pub use rtcp::stats::RtcpStats;
 pub use rtcp::{ReceiverReport, ReportBlock, RtcpError, RtcpPacketType, SdesPacket, SenderReport};
-pub use rtsp::client::end_reason::{StreamEndReason, StreamEndReasonHandle};
 pub use rtsp::client::options_describe::OptionsResponse;
 pub use rtsp::client::play::RtpInfo;
 pub use rtsp::client::session::RtspSession;

@@ -1,4 +1,4 @@
-//! `StreamEndReason` recorded at every session-death site.
+//! `EndReason` recorded at every session-death site.
 //!
 //! `clean_teardown_records_clean_teardown` uses the shared tokio fixture
 //! (`fixtures::rtsp_loopback_server`) — its TEARDOWN handler already
@@ -20,8 +20,9 @@ use std::net::TcpListener;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use tst_core::transport::EndReason;
 use tst_core::transport::TransportError;
-use tst_rtp::{H264DepayConfig, RtspClient, StreamEndReason};
+use tst_rtp::{H264DepayConfig, RtspClient};
 
 use crate::fixtures::raw_rtsp_server::{
     SDP_BODY, answer_describe_and_setup, cseq_of, force_reset, method_of, read_request,
@@ -50,7 +51,7 @@ fn clean_teardown_records_clean_teardown() {
 
     let reason = wait_for(Duration::from_secs(3), || transport.end_reason());
     assert!(
-        matches!(reason, StreamEndReason::CleanTeardown),
+        matches!(reason, EndReason::CleanTeardown),
         "expected CleanTeardown after the peer's orderly close, got {reason:?}"
     );
 
@@ -142,10 +143,7 @@ fn keepalive_454_records_session_expired() {
     client.teardown().unwrap();
 
     assert!(
-        matches!(
-            transport.end_reason(),
-            Some(StreamEndReason::SessionExpired)
-        ),
+        matches!(transport.end_reason(), Some(EndReason::SessionExpired)),
         "expected SessionExpired after a 454 keepalive answer, got {:?}",
         transport.end_reason()
     );
@@ -219,7 +217,7 @@ fn keepalive_write_failure_records_keepalive_failed() {
 
     let reason = wait_for(Duration::from_secs(5), || transport.end_reason());
     assert!(
-        matches!(reason, StreamEndReason::KeepaliveFailed { .. }),
+        matches!(reason, EndReason::KeepaliveFailed { .. }),
         "expected KeepaliveFailed after the control TCP reset, got {reason:?}"
     );
 
@@ -261,7 +259,7 @@ fn pump_read_error_records_transport_failed() {
 
     let reason = wait_for(Duration::from_secs(3), || transport.end_reason());
     assert!(
-        matches!(reason, StreamEndReason::TransportFailed { .. }),
+        matches!(reason, EndReason::TransportFailed { .. }),
         "expected TransportFailed after the reset, got {reason:?}"
     );
 
@@ -324,7 +322,7 @@ fn h264_pump_death_records_transport_failed_and_recv_au_returns_none() {
     assert!(
         matches!(
             receiver.end_reason(),
-            Some(StreamEndReason::TransportFailed { .. })
+            Some(EndReason::TransportFailed { .. })
         ),
         "expected TransportFailed to discriminate the reset from a clean teardown, got {:?}",
         receiver.end_reason()

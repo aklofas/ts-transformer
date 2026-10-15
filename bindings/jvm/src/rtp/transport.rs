@@ -2,7 +2,7 @@
 //!
 //! Each Java class is handle-backed by an `OwnedRegistry` entry:
 //! - `Sender`   → `Owned<SendHalf<tst_rtp::RtpTransport>>`.
-//! - `Receiver` → `Owned<JniRtpReceiver, StreamEndReasonHandle>` (the transport
+//! - `Receiver` → `Owned<JniRtpReceiver, EndReasonHandle>` (the transport
 //!   plus a reusable recv scratch buffer, mirroring tst-py's
 //!   `PyReceiver.scratch`; the end-reason cell is the lock-free snapshot).
 //!
@@ -17,9 +17,10 @@ use std::time::Duration;
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jbyteArray, jint, jlong, jobject};
+use tst_core::transport::EndReasonHandle;
 use tst_core::transport::{RecvTransport, Transport};
 use tst_rtp::builder::RtpRecvSocketBuilder;
-use tst_rtp::{RtpRecvTransport, RtpSocketBuilder, RtpTransport, StreamEndReasonHandle};
+use tst_rtp::{RtpRecvTransport, RtpSocketBuilder, RtpTransport};
 
 use tst_pipeline::binding::{BindingErrorKind, Owned, SendHalf};
 
@@ -36,7 +37,7 @@ struct JniRtpReceiver {
     /// module doc for why that has to happen inside `nClose` itself. The
     /// LOCK-FREE getters read the entry's `Owned` snapshot, another clone of
     /// this same `Arc<OnceLock>` cell.
-    end_reason: StreamEndReasonHandle,
+    end_reason: EndReasonHandle,
     scratch: Vec<u8>,
 }
 
@@ -46,9 +47,9 @@ struct JniRtpReceiver {
 /// the same entry type for a raw transport.
 static REGISTRY_SENDER: LazyLock<OwnedRegistry<SendHalf<RtpTransport>>> =
     LazyLock::new(OwnedRegistry::new);
-/// `S = StreamEndReasonHandle`: the construction-time cell `nEndReason` /
+/// `S = EndReasonHandle`: the construction-time cell `nEndReason` /
 /// `nEndDetail` read without the slot a parked `recv` holds.
-static REGISTRY_RECEIVER: LazyLock<OwnedRegistry<JniRtpReceiver, StreamEndReasonHandle>> =
+static REGISTRY_RECEIVER: LazyLock<OwnedRegistry<JniRtpReceiver, EndReasonHandle>> =
     LazyLock::new(OwnedRegistry::new);
 
 /// Unbox a nullable `java.lang.Long` SSRC arg into `Option<u32>`. Returns

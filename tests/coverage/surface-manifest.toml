@@ -2843,63 +2843,55 @@ reason = "derive impl for ReconnectMode; covered by reconnect_policy_default_mod
 item = "tst_pipeline::reconnect::ReconnectMode::fmt"
 reason = "derive impl for ReconnectMode; Debug bound required by reconnect_policy_default_mode_is_blocking's assert_eq (mod.rs)"
 
-# c-abi-apple-poc arc, 2026-09-02 — RecvEndReasonHandle is
-# ManagedDemuxReceiver::end_reason_handle()'s cloneable-observer, the recv-side
-# analogue of tst-rtp's StreamEndReasonHandle; owning test is the
+# EndReasonHandle is the cloneable end-reason observer every receive surface
+# hands out (ManagedDemuxReceiver::end_reason_handle(),
+# RtpRecvTransport::end_reason_handle()); transport.rs end_reason_tests pin the
+# cell, and the managed receiver's own battery is
 # end_reason_reconnect_exhausted_on_budget_giveup /
 # end_reason_cancelled_on_caller_cancel / end_reason_none_while_live /
 # end_reason_first_writer_wins_across_repeated_terminal_calls battery.
 
 [[surface]]
 kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::reconnect::RecvEndReasonHandle"
-owning_tests = ["crates/tst-pipeline/tests/managed/managed_demux_receiver_reconnect.rs"]
+crate = "tst-core"
+item = "tst_core::transport::EndReasonHandle"
+owning_tests = ["crates/tst-core/src/transport.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::RecvEndReasonHandle"
-owning_tests = ["crates/tst-pipeline/tests/managed/managed_demux_receiver_reconnect.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
-scenario_ids = []
-tier = "A"
-
-[[surface]]
-kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::RecvEndReasonHandle::get"
-owning_tests = ["crates/tst-pipeline/tests/managed/managed_demux_receiver_reconnect.rs"]
+crate = "tst-core"
+item = "tst_core::transport::EndReasonHandle::get"
+owning_tests = ["crates/tst-core/src/transport.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[exempt]]
-item = "tst_pipeline::RecvEndReasonHandle::clone"
-reason = "derive impl for RecvEndReasonHandle, mirroring ManagedStatsHandle's cloneable-observer contract; exercised internally by ManagedDemuxReceiver::end_reason_handle() but not via a direct in-tree .clone() call site — interim exemption alongside ManagedStatsHandle::clone"
+item = "tst_core::transport::EndReasonHandle::clone"
+reason = "derive impl for EndReasonHandle; shared by every receive surface and exercised in transport.rs end_reason_tests
 
 [[exempt]]
-item = "tst_pipeline::RecvEndReasonHandle::default"
-reason = "derive impl backing RecvEndReasonHandle::default(), used to construct the empty handle in ManagedDemuxReceiver::new()/with_demux_options() and throughout recv_end_reason.rs's unit tests"
+item = "tst_core::transport::EndReasonHandle::default"
+reason = "derive impl backing EndReasonHandle::default(), used to build the empty handle in every receive surface and in transport.rs end_reason_tests
 
 [[exempt]]
-item = "tst_pipeline::RecvEndReasonHandle::fmt"
-reason = "derive impl for RecvEndReasonHandle; Debug bound required by assert_eq! failure-message formatting in recv_end_reason.rs's unit tests"
+item = "tst_core::transport::EndReasonHandle::fmt"
+reason = "derive impl for EndReasonHandle; Debug bound required by assert_eq! failure-message formatting across the receive-surface tests
 
 [[exempt]]
-item = "tst_pipeline::RecvEndReason::clone"
-reason = "derive impl for RecvEndReason (a Copy type); RecvEndReasonHandle::get() reads via .copied(), not .clone() — no in-tree call site exercises the derived Clone directly"
+item = "tst_core::transport::EndReason::clone"
+derive impl for EndReason; exercised by assert_eq! across the receive-surface end_reason tests
 
 [[exempt]]
-item = "tst_pipeline::RecvEndReason::eq"
-reason = "derive impl for RecvEndReason; exercised pervasively via assert_eq! across recv_end_reason.rs's unit tests and managed_demux_receiver_reconnect.rs's end_reason_* battery"
+item = "tst_core::transport::EndReason::eq"
+derive impl for EndReason; exercised by assert_eq! across the receive-surface end_reason tests
 
 [[exempt]]
-item = "tst_pipeline::RecvEndReason::fmt"
-reason = "derive impl for RecvEndReason; Debug bound required by the same assert_eq! call sites as ::eq"
+item = "tst_core::transport::EndReason::fmt"
+derive impl for EndReason; exercised by assert_eq! across the receive-surface end_reason tests
 
 [[exempt]]
 item = "tst_rist::RistSecret"
@@ -3050,21 +3042,6 @@ bindings = ["java:org.tstrans.rtp.RtspSession", "c:unaudited", "python:unaudited
 scenario_ids = []
 tier = "A"
 
-# StreamEndReasonHandle: crate-root re-export of
-# rtsp::client::end_reason::StreamEndReasonHandle; same type, covered by
-# the same tests as the canonical-path row below.
-[[surface]]
-kind = "rust"
-crate = "tst-rtp"
-item = "tst_rtp::StreamEndReasonHandle"
-owning_tests = [
-  "crates/tst-rtp/src/rtsp/client/end_reason.rs",
-  "crates/tst-rtp/src/transport.rs",
-]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
-scenario_ids = []
-tier = "A"
-
 # request_timeout: per-request response deadline — the producer of
 # RtspError::Timeout. Builder default-pin in builder.rs plus a live
 # silent-peer integration test in tests/rtsp_client/builder_timeouts.rs.
@@ -3115,66 +3092,11 @@ reason = "round-2 T2-RTCP-ENC fallible encoders (2026-06-08); derived; graduate 
 item = "tst_rtp::rtcp::RtcpError::fmt"
 reason = "round-2 T2-RTCP-ENC fallible encoders (2026-06-08); Debug+Display; graduate to [[surface]] as coverage is asserted"
 
-# StreamEndReason::clone: the derived Clone genuinely runs on every
-# EndReasonSlot::get() / StreamEndReasonHandle::get() call (the method
-# body clones the recorded value out of the OnceLock) — exercised by
-# every owning test cited on the end_reason()/end_reason_handle() rows
-# above, plus end_reason.rs's own unit tests directly.
-[[surface]]
-kind = "rust"
-crate = "tst-rtp"
-item = "tst_rtp::rtsp::client::end_reason::StreamEndReason::clone"
-owning_tests = ["crates/tst-rtp/src/rtsp/client/end_reason.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
-scenario_ids = []
-tier = "A"
-
-[[exempt]]
-item = "tst_rtp::rtsp::client::end_reason::StreamEndReason::fmt"
-reason = "derived Debug; every {:?} use across the end_reason test files sits inside a lazily-evaluated assert!/panic! message argument, so it only actually runs on an assertion failure — not exercised on the green-suite happy path"
-
-# StreamEndReasonHandle: cross-thread handle onto an EndReasonSlot,
-# constructed by end_reason()'s own unit tests and by
-# RtpRecvTransport::end_reason_handle (see that row above).
-[[surface]]
-kind = "rust"
-crate = "tst-rtp"
-item = "tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle"
-owning_tests = [
-  "crates/tst-rtp/src/rtsp/client/end_reason.rs",
-  "crates/tst-rtp/src/transport.rs",
-]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
-scenario_ids = []
-tier = "A"
-
-[[exempt]]
-item = "tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle::clone"
-reason = "derived Clone on the public handle type; no test clones a StreamEndReasonHandle value directly (the underlying EndReasonSlot::clone it wraps is exercised via clone_shares_the_same_cell in end_reason.rs)"
-
-[[exempt]]
-item = "tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle::fmt"
-reason = "derived Debug on the public handle type; no test formats a StreamEndReasonHandle value directly"
-
-# StreamEndReasonHandle::get: exercised in end_reason.rs directly and via
-# RtpRecvTransport::end_reason_handle's own tests in transport.rs.
-[[surface]]
-kind = "rust"
-crate = "tst-rtp"
-item = "tst_rtp::rtsp::client::end_reason::StreamEndReasonHandle::get"
-owning_tests = [
-  "crates/tst-rtp/src/rtsp/client/end_reason.rs",
-  "crates/tst-rtp/src/transport.rs",
-]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
-scenario_ids = []
-tier = "A"
-
 [[exempt]]
 item = "tst_rtp::rtsp::server::mount::MountHandle::push_video_to_with_dts"
 reason = "unit-covered (mount.rs push_video_to_with_dts_serves_distinct_dts); Rust-only by design (bindings parity deferred — see deferred-features); graduate with the mount push family"
 
-# end_reason: StreamEndReason accessor — first-writer-wins record of why
+# end_reason: EndReason accessor — first-writer-wins record of why
 # an RTSP-backed session ended; unit-tested for the plain-rtp:// (no
 # owning RtspClient) case in transport.rs (fresh/close/cancel-handle-fire),
 # exercised against a real RTSP session (clean teardown, keepalive 454,
@@ -3192,7 +3114,7 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
-# end_reason_handle: cloneable cross-thread StreamEndReasonHandle onto the
+# end_reason_handle: cloneable cross-thread EndReasonHandle onto the
 # same slot end_reason() reads — unit-tested (fresh handle, handle obtained
 # before a cancel-handle fire observes the recording) in transport.rs.
 [[surface]]
@@ -3341,7 +3263,7 @@ reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings lan
 item = "tst_rtp::h264::receiver::H264Receiver::drop"
 reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
-# end_reason: StreamEndReason accessor mirroring RtpRecvTransport::end_reason,
+# end_reason: EndReason accessor mirroring RtpRecvTransport::end_reason,
 # populated by RtspSession::into_h264_receiver; unit-tested for the plain-rtp://
 # (no owning RtspClient) case in receiver.rs, exercised against a real RTSP
 # session (a live TCP reset) in tests/rtsp_client/stream_end_reason.rs.

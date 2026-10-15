@@ -1,8 +1,8 @@
-//! `tst_pipeline::RecvEndReason` → Python `tstrans.srt.RecvEndReason`
+//! `tst_pipeline::EndReason` → Python `tstrans.srt.RecvEndReason`
 //! conversion, used by `managed_convenience::PyManagedDemuxReceiver`.
 //!
 //! ★DEDICATED ENUM, NOT A REUSE OF `tstrans.rtp.StreamEndReason`: the C
-//! ABI maps `RecvEndReason` onto its RTP-shaped `TstStreamEndReason` to
+//! ABI maps `EndReason` onto its RTP-shaped `TstStreamEndReason` to
 //! avoid minting a second ABI type (see
 //! `bindings/c/core/src/receiver/demux_receiver/managed.rs`). Python has
 //! no such constraint and the two are genuinely different types in Rust,
@@ -23,29 +23,26 @@
 use pyo3::intern;
 use pyo3::prelude::*;
 
-use tst_pipeline::RecvEndReason;
+use tst_core::transport::EndReason;
 
-/// Convert a recorded [`RecvEndReason`] to the matching
+/// Convert a recorded [`EndReason`] to the matching
 /// `tstrans.srt.RecvEndReason` IntEnum member.
 ///
 /// Looks up the member by name via `py.import_bound("tstrans.srt")` —
 /// the same call-into-Python-defined-class pattern
 /// `crate::rtp::end_reason::end_reason_to_py` uses.
 ///
-/// `RecvEndReason` is `#[non_exhaustive]` on the tst-pipeline side; a
+/// `EndReason` is `#[non_exhaustive]` on the tst-pipeline side; a
 /// future variant this binding doesn't know how to map yet returns
 /// `Ok(None)` rather than erroring — matching the "ended through a path
 /// this type doesn't instrument" contract documented on
-/// `RecvEndReasonHandle::get`, and the same wildcard degradation the C
+/// `EndReasonHandle::get`, and the same wildcard degradation the C
 /// converter (`convert_recv_end_reason`) applies.
-pub(crate) fn recv_end_reason_to_py(
-    py: Python<'_>,
-    r: &RecvEndReason,
-) -> PyResult<Option<PyObject>> {
+pub(crate) fn recv_end_reason_to_py(py: Python<'_>, r: &EndReason) -> PyResult<Option<PyObject>> {
     let name = match r {
-        RecvEndReason::EndOfStream => "END_OF_STREAM",
-        RecvEndReason::ReconnectExhausted => "RECONNECT_EXHAUSTED",
-        RecvEndReason::Cancelled => "CANCELLED",
+        EndReason::EndOfStream => "END_OF_STREAM",
+        EndReason::ReconnectExhausted => "RECONNECT_EXHAUSTED",
+        EndReason::Cancelled => "CANCELLED",
         _ => return Ok(None),
     };
     let srt = py.import_bound("tstrans.srt")?;

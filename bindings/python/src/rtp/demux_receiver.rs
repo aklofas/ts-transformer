@@ -33,12 +33,13 @@ use pyo3::Py;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+use tst_core::transport::EndReasonHandle;
 use tst_core::transport::RecvTransport;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Owned};
 use tst_pipeline::{
     DemuxReceiver as RustDemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource,
 };
-use tst_rtp::{RtpRecvSocketBuilder, RtpRecvTransport, StreamEndReasonHandle};
+use tst_rtp::{RtpRecvSocketBuilder, RtpRecvTransport};
 
 use crate::mpegts::demux_error_to_pyerr;
 use crate::mux::PyMuxerStats;
@@ -99,16 +100,16 @@ pub struct PyDemuxReceiver {
     /// PyO3's "Already borrowed" check.
     owned: Owned<RustDemuxReceiver<RtpRecvTransport>>,
     /// Handle onto the underlying `RtpRecvTransport`'s
-    /// [`StreamEndReasonHandle`], captured from the transport BEFORE it
+    /// [`EndReasonHandle`], captured from the transport BEFORE it
     /// moves into `DemuxReceiver::new`/`with_demux_options` — the
     /// pipeline shell (generic over `RecvTransport`) has no
     /// `end_reason_handle()` delegate of its own, so this must be pulled
-    /// pre-move. It is a `tst_rtp::StreamEndReasonHandle` — a different
-    /// type and enum from the `RecvEndReasonHandle` that
+    /// pre-move. It is a `tst_rtp::EndReasonHandle` — a different
+    /// type and enum from the `EndReasonHandle` that
     /// `Owned::with_end_reason` takes, which is why it stays a field.
     /// Independent of the slot's lifetime, so `end_reason()` /
     /// `end_detail()` keep answering after `close()`.
-    end_reason: StreamEndReasonHandle,
+    end_reason: EndReasonHandle,
     /// First exception raised by a registered byte sink (see
     /// `add_byte_sink`). The sink closure runs inside `recv_event`, where
     /// it cannot return a `PyResult` to the iterator, so on error it
@@ -333,10 +334,10 @@ impl PyDemuxReceiver {
     /// Why the receive session ended, or `None` if it hasn't ended yet
     /// (or ended through a path this type doesn't instrument). Still
     /// readable after `close()` — `end_reason` is a
-    /// [`tst_rtp::StreamEndReasonHandle`] captured from the underlying
+    /// [`tst_rtp::EndReasonHandle`] captured from the underlying
     /// transport at construction, independent of `inner`'s lifetime.
     ///
-    /// `StreamEndReasonHandle::get` is a lock-free `Arc<OnceLock<_>>`
+    /// `EndReasonHandle::get` is a lock-free `Arc<OnceLock<_>>`
     /// read — no blocking, so no `py.allow_threads` is needed and no
     /// `inner` mutex is touched.
     fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {

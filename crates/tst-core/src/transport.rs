@@ -410,6 +410,86 @@ pub trait TransportCancel: Send + Sync {
     fn is_cancelled(&self) -> bool;
 }
 
+/// Why a receive stream ended, recorded once by the site that saw it end.
+///
+/// One vocabulary for every receive surface; each surface produces only a
+/// subset (the table below), enforced where it records. Match with a
+/// wildcard arm: the enum is `#[non_exhaustive]` and grows with new
+/// surfaces (a WebRTC session will add its own).
+///
+/// | Surface | Can end with |
+/// |---|---|
+/// | `tst_pipeline::ManagedDemuxReceiver` | `ReconnectExhausted`, `Cancelled` |
+/// | `tst_rtp::RtpRecvTransport` / `H264Receiver` fed by an `RtspClient` | `CleanTeardown`, `SessionExpired`, `KeepaliveFailed`, `TransportFailed`, `ProtocolError`, `Cancelled` |
+/// | a plain `rtp://` `RtpRecvTransport` | `Cancelled` |
+/// | the application transport of an RTSP publish mount | `CleanTeardown`, `Cancelled` |
+///
+/// The C binding reports these through `tst_stream_end_reason`
+/// (`EndOfStream` → `CLEAN_TEARDOWN`, `ReconnectExhausted` →
+/// `TRANSPORT_FAILED`).
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EndReason {
+    /// The transport reported a clean end of stream that was not a
+    /// reconnect budget running out. No surface produces it today; it is
+    /// kept for a receive transport that can tell the two apart.
+    EndOfStream,
+    /// A reconnecting receiver gave up after exhausting its policy's
+    /// attempts — the peer never came back.
+    ReconnectExhausted,
+    /// The caller cancelled or closed the receiver — not a wire failure.
+    Cancelled,
+    /// The peer closed the connection in an orderly way (TCP EOF, or an
+    /// RTSP mount closed by its server) with no protocol or transport error.
+    CleanTeardown,
+    /// The server no longer honours the session: a keepalive was answered
+    /// `454 Session Not Found`.
+    SessionExpired,
+    /// The keepalive thread failed to encode or send a ping.
+    KeepaliveFailed {
+        /// Detail from the underlying failure.
+        msg: String,
+    },
+    /// A hard I/O error on the underlying transport (a read failure other
+    /// than a clean EOF).
+    TransportFailed {
+        /// Detail from the underlying failure.
+        msg: String,
+    },
+    /// The peer violated the wire protocol (oversized or malformed framing,
+    /// a queue flood) and the session was failed.
+    ProtocolError {
+        /// Detail from the underlying failure.
+        msg: String,
+    },
+}
+
+/// A shared, first-writer-wins cell holding a stream's [`EndReason`].
+///
+/// Clones share one cell, and a value recorded on one thread is visible to
+/// a clone read on another, so a watchdog can poll a receiver another
+/// thread drives — and keep polling after the receiver is gone, if it took
+/// the handle first. The first site to see the stream end owns the
+/// reason; a later, less specific signal cannot overwrite it.
+#[cfg(feature = "std")]
+#[derive(Debug, Clone, Default)]
+pub struct EndReasonHandle(std::sync::Arc<std::sync::OnceLock<EndReason>>);
+
+#[cfg(feature = "std")]
+impl EndReasonHandle {
+    /// Record `r` unless a reason is already recorded.
+    pub fn record(&self, r: EndReason) {
+        let _ = self.0.set(r);
+    }
+
+    /// The recorded reason, or `None` while the stream is live (or when it
+    /// ended through a path that records nothing).
+    #[must_use]
+    pub fn get(&self) -> Option<EndReason> {
+        self.0.get().cloned()
+    }
+}
+
 // ============================================================
 // Receive side: RecvTransport
 // ============================================================
@@ -505,6 +585,15 @@ pub trait RecvTransport: Send {
     fn socket_stats(&self) -> Option<SocketStats> {
         None
     }
+
+    /// A handle reporting why this stream ended, for transports that
+    /// record one ([`EndReason`]'s table lists them). Obtain it before
+    /// moving the transport into a shell or a binding handle. Defaults to
+    /// `None`.
+    #[cfg(feature = "std")]
+    fn end_reason_handle(&self) -> Option<EndReasonHandle> {
+        None
+    }
 }
 
 // ============================================================
@@ -559,6 +648,10 @@ impl<T: RecvTransport + ?Sized> RecvTransport for Box<T> {
     fn socket_stats(&self) -> Option<SocketStats> {
         (**self).socket_stats()
     }
+    #[cfg(feature = "std")]
+    fn end_reason_handle(&self) -> Option<EndReasonHandle> {
+        (**self).end_reason_handle()
+    }
 }
 
 #[cfg(test)]
@@ -600,5 +693,46 @@ mod blanket_impl_tests {
         }
         let t: Box<dyn Transport> = Box::new(DummyTransport);
         assert!(t.socket_stats().is_none());
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod end_reason_tests {
+    use super::{EndReason, EndReasonHandle, RecvTransport, TransportError};
+
+    #[test]
+    fn first_writer_wins_and_clones_share_the_cell() {
+        let h = EndReasonHandle::default();
+        let other = h.clone();
+        assert_eq!(other.get(), None);
+        h.record(EndReason::Cancelled);
+        h.record(EndReason::TransportFailed { msg: "late".into() });
+        assert_eq!(other.get(), Some(EndReason::Cancelled));
+    }
+
+    #[test]
+    fn a_handle_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<EndReasonHandle>();
+    }
+
+    struct Silent;
+    impl RecvTransport for Silent {
+        fn recv_bytes(&mut self, _: &mut [u8]) -> Result<usize, TransportError> {
+            Ok(0)
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn is_alive(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn a_transport_that_records_nothing_returns_no_handle_even_boxed() {
+        assert!(Silent.end_reason_handle().is_none());
+        let boxed: std::boxed::Box<dyn RecvTransport> = std::boxed::Box::new(Silent);
+        assert!(boxed.end_reason_handle().is_none());
     }
 }

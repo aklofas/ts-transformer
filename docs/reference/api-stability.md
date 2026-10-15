@@ -78,7 +78,7 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-core | codec::ac3 | Provisional | audio parser |
 | tst-core | codec::mpegaudio | Provisional | audio parser |
 | tst-core | codec::nal_framing | Provisional | new module, Annex B ↔ length-prefixed NAL conversion for VideoToolbox-style consumers |
-| tst-core | transport | Stable | trait contract all transports implement; the executable form (`transport::conformance`) sits behind the non-default `conformance` feature |
+| tst-core | transport | Stable | trait contract all transports implement; the executable form (`transport::conformance`) sits behind the non-default `conformance` feature; `EndReason` and `EndReasonHandle` are Provisional (new; surfaces will add variants). |
 | tst-core | error | Stable | error taxonomy |
 | tst-core | cancel | Stable | cancellation plumbing shared across transports; spec-silent, defaults to tst-core's tier. `FlagCancel` and `ResourceCancel` (formerly `SrtCancelHandle`, kept as a deprecated alias for one minor) are Stable. `CancelSlot` (re-exported by `tst-pipeline` as the `FactoryCancel` alias) is Provisional — same divergence shape as `tst-rtp`'s `h264` row below |
 | tst-core | io_file | Stable | file I/O convenience layer over mux/demux (`file` feature); spec-silent, defaults to tst-core's tier |
@@ -110,9 +110,9 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-rtp | packet | Stable | RTP packet parse/build |
 | tst-rtp | rtcp | Stable | RTCP SR/RR/SDES packet codecs and `RtcpStats` |
 | tst-rtp | sdp | Stable | SDP parsing (`Sdp`, `SdpMedia`) |
-| tst-rtp | transport | Stable | RTP transports (unicast/multicast, v4/v6); `RtpRecvTransport::{end_reason, end_reason_handle}` are Provisional — they return `StreamEndReason`/`StreamEndReasonHandle`, which live in and inherit the tier of the `rtsp` row below |
+| tst-rtp | transport | Stable | RTP transports (unicast/multicast, v4/v6); `RtpRecvTransport::{end_reason, end_reason_handle}` are Provisional — they return tst-core's `EndReason`/`EndReasonHandle` |
 | tst-rtp | url | Stable | `rtp(s)://`/`rtsp(s)://` URL parsing |
-| tst-rtp | rtsp | Provisional | server surface (`RtspServer`) still evolving; the client API (`RtspClient`) is stable in practice, but the module's tier is set by the server surface — the rail is module-granular, not sub-module. Also covers `rtsp::client::end_reason` (`StreamEndReason`, `StreamEndReasonHandle`, re-exported at the crate root) |
+| tst-rtp | rtsp | Provisional | server surface (`RtspServer`) still evolving; the client API (`RtspClient`) is stable in practice, but the module's tier is set by the server surface — the rail is module-granular, not sub-module |
 | tst-hls | (crate) | Provisional | crate split out of `tst-tcp` in 0.3.0 |
 | tst-rist | (crate) | Provisional | profile coverage still evolving |
 | tstrans-srt-sys | (crate) | Internal | raw FFI, no direct-consumer promise; documentation-only row — no `public-api.txt` baseline exists for this crate |

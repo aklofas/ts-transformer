@@ -10,7 +10,7 @@
 //! - `demux_receiver`: DemuxReceiver convenience wrapper
 //! - `policy`:         ReconnectPolicy, BackoffStrategy, OverflowPolicy
 //! - `managed`:        ManagedSender, ManagedReceiver, ManagedMuxSender, ManagedDemuxReceiver
-//! - `end_reason`:     RecvEndReason conversion for ManagedDemuxReceiver.end_reason()
+//! - `end_reason`:     EndReason conversion for ManagedDemuxReceiver.end_reason()
 //!
 //! Error mapping goes through `crate::raise`: every Rust error
 //! type in this surface has a `From<…> for tst_pipeline::binding::BindingError`

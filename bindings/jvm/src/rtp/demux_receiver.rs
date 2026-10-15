@@ -34,12 +34,13 @@ use jni::JNIEnv;
 use jni::objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue};
 use jni::sys::{jboolean, jint, jlong, jobject};
 
+use tst_core::transport::EndReasonHandle;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned};
 use tst_pipeline::{
     DemuxReceiver as RustDemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource,
 };
+use tst_rtp::RtpRecvTransport;
 use tst_rtp::builder::RtpRecvSocketBuilder;
-use tst_rtp::{RtpRecvTransport, StreamEndReasonHandle};
 
 use crate::handle::OwnedRegistry;
 use crate::jutil::build_socket_stats;
@@ -65,16 +66,16 @@ struct JniRtpDemuxReceiver {
     /// shape as `end_reason` on `transport::JniRtpReceiver`. See that
     /// module's `end_reason` doc for why `nClose` (not the getters) builds
     /// the post-close snapshot.
-    end_reason: StreamEndReasonHandle,
+    end_reason: EndReasonHandle,
     sink_error: Arc<Mutex<Option<GlobalRef>>>,
 }
 
 /// Per-type `Owned`-backed registry for `org.tstrans.rtp.DemuxReceiver`.
 /// `OwnedRegistry::close` cancels first, so a cross-thread `close()` wakes a
 /// parked `recv_event` (the headline rtp divergence — there is no public cancel
-/// handle). `S = StreamEndReasonHandle`: the construction-time cell
+/// handle). `S = EndReasonHandle`: the construction-time cell
 /// `nEndReason`/`nEndDetail` read WITHOUT the slot a parked recv holds.
-static REGISTRY: LazyLock<OwnedRegistry<JniRtpDemuxReceiver, StreamEndReasonHandle>> =
+static REGISTRY: LazyLock<OwnedRegistry<JniRtpDemuxReceiver, EndReasonHandle>> =
     LazyLock::new(OwnedRegistry::new);
 
 /// Map a `DemuxReceiverError` raised by `recv_event` onto a thrown Java exception.

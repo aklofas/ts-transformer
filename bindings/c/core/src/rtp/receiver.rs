@@ -21,9 +21,8 @@ use tst_rtp::RtpRecvTransport;
 use crate::error::{TstError, record_recv_error, set_last_error};
 use crate::handle::CHandle;
 use crate::rtp::RtpRecvSnap;
-use crate::rtp::end_reason::convert_end_reason;
 use crate::stats::TstReceiverStats;
-use crate::stream_end_reason::TstStreamEndReason;
+use crate::stream_end_reason::{TstStreamEndReason, convert_end_reason};
 
 // ---------------------------------------------------------------------------
 // Handle type

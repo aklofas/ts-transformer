@@ -18,10 +18,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tst_core::mpegts::demux::DemuxEvent;
-use tst_core::transport::TransportError;
-use tst_pipeline::{
-    ManagedDemuxReceiver, ManagedDemuxReceiverConfig, ManagedRecvTransport, RecvEndReason,
-};
+use tst_core::transport::{EndReason, TransportError};
+use tst_pipeline::{ManagedDemuxReceiver, ManagedDemuxReceiverConfig, ManagedRecvTransport};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -421,7 +419,7 @@ fn clean_reconnect_drops_first_post_reconnect_packet() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5 — RecvEndReason: reconnect-budget exhaustion, cancel, live, and
+// Test 5 — EndReason: reconnect-budget exhaustion, cancel, live, and
 // first-writer-wins under repeated terminal polling.
 // ---------------------------------------------------------------------------
 
@@ -458,7 +456,7 @@ fn end_reason_reconnect_exhausted_on_budget_giveup() {
     }
     assert_eq!(
         rx.end_reason_handle().get(),
-        Some(RecvEndReason::ReconnectExhausted),
+        Some(EndReason::ReconnectExhausted),
         "budget give-up must record ReconnectExhausted"
     );
 }
@@ -498,7 +496,7 @@ fn end_reason_cancelled_on_caller_cancel() {
     }
     assert_eq!(
         end_reason.get(),
-        Some(RecvEndReason::Cancelled),
+        Some(EndReason::Cancelled),
         "caller-initiated cancel must record Cancelled"
     );
 }
@@ -559,7 +557,7 @@ fn end_reason_first_writer_wins_across_repeated_terminal_calls() {
     }
     assert_eq!(
         rx.end_reason_handle().get(),
-        Some(RecvEndReason::ReconnectExhausted)
+        Some(EndReason::ReconnectExhausted)
     );
 
     // Poll several more times on the now-terminally-closed receiver. Each
@@ -569,7 +567,7 @@ fn end_reason_first_writer_wins_across_repeated_terminal_calls() {
         let _ = rx.recv_event();
         assert_eq!(
             rx.end_reason_handle().get(),
-            Some(RecvEndReason::ReconnectExhausted),
+            Some(EndReason::ReconnectExhausted),
             "repeated terminal observation must not change the latched reason"
         );
     }
@@ -712,7 +710,7 @@ fn reconnecting_flag_true_during_outage_false_after_rebuild_latched_after_giveup
     assert!(!rx.is_alive(), "budget exhaustion closes the receiver");
     assert_eq!(
         rx.end_reason_handle().get(),
-        Some(RecvEndReason::ReconnectExhausted)
+        Some(EndReason::ReconnectExhausted)
     );
     assert_eq!(
         calls.load(Ordering::SeqCst),

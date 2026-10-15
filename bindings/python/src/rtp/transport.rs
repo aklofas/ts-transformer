@@ -26,10 +26,11 @@ use pyo3::Py;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+use tst_core::transport::EndReasonHandle;
 use tst_core::transport::{RecvTransport, SocketStats, Transport, TransportCancel, TransportError};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Owned, SendHalf};
 use tst_rtp::builder::RtpRecvSocketBuilder;
-use tst_rtp::{RtpRecvTransport, RtpSocketBuilder, RtpTransport, StreamEndReasonHandle};
+use tst_rtp::{RtpRecvTransport, RtpSocketBuilder, RtpTransport};
 
 use crate::raise::{RTP, pyok, pyres, raise};
 use crate::util::{CancelSource, close_owned};
@@ -336,13 +337,13 @@ pub(crate) struct PyReceiver {
     owned: Owned<RtpRecvInner>,
     /// Shared cancel state — see `crate::util::CancelSource`.
     cancel: Arc<CancelSource>,
-    /// Handle onto the transport's [`StreamEndReasonHandle`], pulled at
+    /// Handle onto the transport's [`EndReasonHandle`], pulled at
     /// construction — before the slot is ever emptied by `close()`, so
     /// `end_reason()` / `end_detail()` keep working after close (`close()`
     /// records `Cancelled` on the transport before dropping it, and this
     /// handle shares the same underlying cell). Lock-free: never touches
     /// the slot, so a watchdog can read it while a recv is parked.
-    end_reason: StreamEndReasonHandle,
+    end_reason: EndReasonHandle,
 }
 
 #[pymethods]
@@ -418,7 +419,7 @@ impl PyReceiver {
         // `CleanTeardown` is a peer EOS; everything else keeps `CLOSED`.
         let clean_eos = matches!(
             self.end_reason.get(),
-            Some(tst_rtp::StreamEndReason::CleanTeardown)
+            Some(tst_core::transport::EndReason::CleanTeardown)
         );
         let res = res.map(|r| {
             r.map_err(|e| match e {
@@ -470,10 +471,10 @@ impl PyReceiver {
     /// Why the receive session ended, or `None` if it hasn't ended yet
     /// (or ended through a path this type doesn't instrument). Still
     /// readable after `close()` — `end_reason` is a
-    /// [`StreamEndReasonHandle`] captured at construction, independent of
+    /// [`EndReasonHandle`] captured at construction, independent of
     /// the slot's lifetime.
     ///
-    /// `StreamEndReasonHandle::get` is a lock-free `Arc<OnceLock<_>>`
+    /// `EndReasonHandle::get` is a lock-free `Arc<OnceLock<_>>`
     /// read — no blocking, so no `py.allow_threads` is needed here even
     /// though this touches Rust-owned shared state.
     fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
