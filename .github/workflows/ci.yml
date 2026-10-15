@@ -687,7 +687,10 @@ jobs:
           # ClockAlignment, PublishShape, PublishMountStats, PublisherInfo.
           # 193->189 (2026-10-15): phase 5 removed UdpErrorKind, TcpErrorKind,
           # RistErrorKind and HlsErrorKind.
-          BASELINE=189
+          # 189->191 (2026-10-15): +EndReason, +TlsLoadError, +packet::Chunk,
+          # +binding::Domain; -RecvEndReason, -StreamEndReason (merged into
+          # EndReason). The depay types and Av1CarriageMode moved with theirs.
+          BASELINE=191
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
             echo "non_exhaustive count regressed: expected >= $BASELINE, observed $OBSERVED" >&2
