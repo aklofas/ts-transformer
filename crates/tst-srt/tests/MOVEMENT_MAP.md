@@ -3,8 +3,8 @@
 Two changes landed together:
 
 1. **Within-crate consolidation.** The SRT transport tests were grouped
-   from per-file binaries into **5 domain harnesses** (`url`, `stats`,
-   `builder`, `loopback`, `pipeline`). Same `#[path] mod` pattern as tst-core:
+   from per-file binaries into **5 domain harnesses** (`url`, `net_stats`,
+   `net_builder`, `net_loopback`, `net_pipeline`). Same `#[path] mod` pattern as tst-core:
    `tests/<domain>.rs` includes its members from `tests/<domain>/`.
 2. **Cross-crate ownership cleanup.** Eight tests that did **not** depend on
    SRT were moved to the crate that owns the behavior they exercise (see the
@@ -15,7 +15,7 @@ Two changes landed together:
 
 - **Test bodies are unchanged.** Pure relocation.
 - Fully-qualified paths gained a `<domain>::<file>::` prefix (members are now
-  modules). Filtering still works: `cargo test -p tst-srt --test loopback handshake::`.
+  modules). Filtering still works: `cargo test -p tst-srt --test net_loopback handshake::`.
 - The shared loopback helpers + the `require_loopback!` macro live in
   `tests/common/mod.rs`. Because that macro is `#[macro_export]` and resolves
   `$crate::common::…`, `common` is now declared **once at each domain binary's

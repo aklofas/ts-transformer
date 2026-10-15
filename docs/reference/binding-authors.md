@@ -204,7 +204,7 @@ wrappers — and on the RTSP control plane: a cancelled `RtspClient` call
 (`RtspError::LocalCancel`) projects to the same `Closed` kind
 — the normative table lives in the `tst_core::transport` rustdoc
 and `tst_core::transport::conformance` pins it in each crate's
-`tests/conformance.rs`. Bindings therefore project one kind for a cancel:
+`tests/*conformance.rs`. Bindings therefore project one kind for a cancel:
 `TstError::Closed` (−7) / `SrtError(CLOSED)` / `SrtException(CLOSED)`, via
 `BindingErrorKind`. The detail is `cancelled from another thread` wherever
 the `BindingError` reaches the caller unchanged — the Rust binding layer,

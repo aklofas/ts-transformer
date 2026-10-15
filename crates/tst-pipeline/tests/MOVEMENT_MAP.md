@@ -21,7 +21,7 @@ own like the kit binary in every transport crate.
   `ScriptedSend` + `SendStep`, `FlagCancel`, `flag`, `broken`, `fast_policy`,
   `wait_for`, `build_h264_au`, `dummy_klv`, `drain_mux`, `to_ts_packets`.
 - **`tests/support/round_trip.rs`** is not a test target; tst-udp, tst-tcp
-  and tst-rist include it in their `pipeline_round_trip.rs`.
+  and tst-rist include it in their `net_pipeline_round_trip.rs`.
 - **The kind-derivation table**: `errors/shell_error_kind_derivation.rs` holds
   one test, `every_inner_variant_routes_to_its_kind`, over 49 rows (32
   `MuxError`, 5 `TransportError` through each sender and each receiver

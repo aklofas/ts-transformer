@@ -19,7 +19,7 @@
  *   5. Prints a per-scenario pass/fail line; exits non-zero if any fail.
  *
  * The normalisation rules mirror the Rust adapter in
- * `crates/tst-integration/tests/rust_scenarios.rs` and the Python adapter in
+ * `crates/tst-integration/tests/net_rust_scenarios.rs` and the Python adapter in
  * `bindings/python/tests/test_scenarios.py` exactly.
  *
  * HOW TO BUILD AND RUN

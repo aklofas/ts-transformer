@@ -41,11 +41,7 @@ network = { max-threads = 1 }
 # SYNC WITH IT.
 platform = 'cfg(windows)'
 filter = """
-    binary(loopback) | binary(loopback_multicast) | binary(pipeline_round_trip)
-  | binary(hls_e2e) | binary(pipeline) | binary(stats) | binary(receiving)
-  | binary(muxing) | binary(transports) | binary(url_open) | binary(rtp)
-  | binary(rtcp) | binary(rtsp_client) | binary(rtsp_server)
-  | binary(tls_hostname) | binary(conformance)
+    binary(/^net_/)
   | test(loopback) | test(round_trip) | test(roundtrip) | test(pairing)
   | test(multicast) | test(reconnect) | test(rtsp) | test(live_pair)
 """
@@ -54,17 +50,14 @@ slow-timeout = { period = "20s", terminate-after = 2 }
 [[profile.default.overrides]]
 # Assign network tests to the capped group + give them a tight timeout (20s;
 # the slowest legitimate loopback is an SRT/RIST encrypted handshake at ~1-5s).
-# Matched broadly by the integration binaries that do loopback plus loopback-
-# style test names: over-matching a fast test is harmless (it just serialises),
-# missing a network test is not (it would contend). `test(...)` is a substring
-# match; `binary(...)` is a glob, i.e. an exact binary name unless it contains
-# a wildcard.
+# Integration binaries that open a socket are named `net_*`
+# (scripts/check/repo/net-test-binaries.sh enforces it); the test(...)
+# substrings catch socket-using unit tests inside lib binaries. Over-matching a
+# fast test is harmless (it just serialises), missing a network test is not
+# (it would contend). `test(...)` is a substring match; `binary(/re/)` is a
+# regex match on the binary name.
 filter = """
-    binary(loopback) | binary(loopback_multicast) | binary(pipeline_round_trip)
-  | binary(hls_e2e) | binary(pipeline) | binary(stats) | binary(receiving)
-  | binary(muxing) | binary(transports) | binary(url_open) | binary(rtp)
-  | binary(rtcp) | binary(rtsp_client) | binary(rtsp_server)
-  | binary(tls_hostname) | binary(conformance)
+    binary(/^net_/)
   | test(loopback) | test(round_trip) | test(roundtrip) | test(pairing)
   | test(multicast) | test(reconnect) | test(rtsp) | test(live_pair)
 """
@@ -90,11 +83,7 @@ slow-timeout = { period = "120s", terminate-after = 2 }
 # duplicated from the default network override — KEEP THIS FILTER IN SYNC
 # WITH IT.
 filter = """
-    binary(loopback) | binary(loopback_multicast) | binary(pipeline_round_trip)
-  | binary(hls_e2e) | binary(pipeline) | binary(stats) | binary(receiving)
-  | binary(muxing) | binary(transports) | binary(url_open) | binary(rtp)
-  | binary(rtcp) | binary(rtsp_client) | binary(rtsp_server)
-  | binary(tls_hostname) | binary(conformance)
+    binary(/^net_/)
   | test(loopback) | test(round_trip) | test(roundtrip) | test(pairing)
   | test(multicast) | test(reconnect) | test(rtsp) | test(live_pair)
 """

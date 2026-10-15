@@ -71,11 +71,11 @@ tool_versions_json() {
 # TCP bind is not a race — it is asking the wrong question, and it is
 # what made rtsp-serve/ffmpeg-pull fail with "RtspServer::start: bind
 # address in use" while an unrelated TCP socket held the port.
-# crates/tst-interop/tests/serve.rs already draws this distinction with
+# crates/tst-interop/tests/net_serve.rs already draws this distinction with
 # its own `free_tcp_port()`; this is the shell orchestrator catching up.
 #
 # The residual same-protocol TOCTOU between this probe's close and the
-# real bind is the accepted trade-off crates/tst-interop/tests/loopback.rs
+# real bind is the accepted trade-off crates/tst-interop/tests/net_loopback.rs
 # documents; deliberately NOT papered over with a retry loop, which would
 # mask genuine bind failures.
 free_port() {

@@ -415,6 +415,10 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/roster-sync.sh
 
+      - name: check-net-test-binaries (socket-using test binaries are net_*)
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/net-test-binaries.sh
+
       - name: scripts/gen unit tests (benchmarks page, LOC report)
         # The generators' stdlib unittest suites and their committed fixtures;
         # nothing else runs them. Stdlib only, no pip install.

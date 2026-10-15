@@ -6,7 +6,7 @@
 //! - `scenarios/golden.rs` — the golden envelope + `CoreEvent` types.
 //! - `bin/gen_scenarios.rs` — generator binary (default mode: write fixtures;
 //!   `--check` mode: diff against committed).
-//! - `tests/rust_scenarios.rs` — Rust adapter integration tests.
+//! - `tests/net_rust_scenarios.rs` — Rust adapter integration tests.
 //!
 //! # C and Python adapters
 //!

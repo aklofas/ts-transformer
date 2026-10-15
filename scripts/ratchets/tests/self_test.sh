@@ -700,5 +700,28 @@ rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'continue-on-error: \${{ matri
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'name: windows-msvc-features' 'name: windows-msvc-features-gone'; expect "roster-sync: the windows features leg renamed away" 1 rsync_
 rs_copy; plant "$tmp/rs/scripts/check/repo/release-version-consistency.sh" ' \$ROOT/crates/tst-udp/Cargo.toml' ''; expect "roster-sync: a manifest dropped from the version rail" 1 rsync_
 
+# ---- network test binaries (scripts/check/repo/net-test-binaries.sh) ----
+NTB="$DIR/../check/repo/net-test-binaries.sh"
+mkdir -p "$tmp/ntb/tests/loopy"
+printf 'fn t() { let _ = std::net::UdpSocket::bind("127.0.0.1:0"); }\n' > "$tmp/ntb/tests/loopy/a.rs"
+printf '#[path = "loopy/a.rs"] mod a;\n' > "$tmp/ntb/tests/loopy.rs"
+printf 'fn offline() {}\n' > "$tmp/ntb/tests/offline.rs"
+cp "$tmp/ntb/tests/loopy.rs" "$tmp/ntb/tests/net_loopy.rs"
+ntb_meta() { # <test target name>... : a metadata file listing those targets
+    local t first=1
+    { printf '{"workspace_root":"%s","workspace_members":["x"],"packages":[{"id":"x","name":"x","publish":[],"manifest_path":"%s/Cargo.toml","dependencies":[],"targets":[' "$tmp/ntb" "$tmp/ntb"
+      for t in "$@"; do [ $first = 1 ] || printf ','; first=0; printf '{"name":"%s","kind":["test"],"src_path":"%s/tests/%s.rs"}' "$t" "$tmp/ntb" "$t"; done
+      printf ']}]}\n'; } > "$tmp/ntb/meta.json"
+}
+ntb() { ROSTER_METADATA="$tmp/ntb/meta.json" NTB_NEXTEST="$tmp/ntb/nextest.toml" bash "$NTB"; }
+printf 'filter = "binary(/^net_/)"\nfilter = "binary(/^net_/)"\nfilter = "binary(/^net_/)"\n' > "$tmp/ntb/nextest.toml"
+ntb_meta net_loopy offline; expect "net binaries: socket binary named net_* passes"       0 ntb
+ntb_meta loopy offline;     expect "net binaries: socket binary not named net_* fails"    1 ntb
+ntb_meta;                   expect "net binaries: no test targets fails closed"           1 ntb
+printf 'fn offline() {}\n' > "$tmp/ntb/tests/net_offline.rs"
+ntb_meta net_offline;       expect "net binaries: a net_ binary with no socket fails"     1 ntb
+ntb_meta net_loopy; printf 'filter = "binary(/^net_/)"\n' > "$tmp/ntb/nextest.toml"
+                            expect "net binaries: a nextest override without the regex fails" 1 ntb
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

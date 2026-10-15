@@ -11,7 +11,7 @@
 //!
 //! Every `Transport` / `RecvTransport` implementation honours the rows
 //! below; the `conformance` kit (behind the `conformance` feature) is the executable form and
-//! each transport crate runs it in its `tests/conformance.rs`.
+//! each transport crate runs it in its `tests/*conformance.rs`.
 //!
 //! | Transport | after own `close()` | cancel during a parked op | `is_alive()` after `Broken` / after cancel | handle type |
 //! |---|---|---|---|---|
@@ -59,7 +59,7 @@ use thiserror::Error;
 
 // Executable form of the contract table above (Provisional), behind the
 // non-default `conformance` feature: every transport crate enables it from its
-// dev-dependencies and runs the kit in `tests/conformance.rs`. The summary
+// dev-dependencies and runs the kit in `tests/*conformance.rs`. The summary
 // rustdoc lives in the module file's own `//!` docs — an outer `///` here
 // would make rustdoc resolve the module's intra-doc links in THIS module's
 // scope and break every one of them.

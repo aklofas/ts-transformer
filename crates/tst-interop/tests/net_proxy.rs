@@ -9,7 +9,7 @@
 //! This binary's name (`proxy`) doesn't match any of
 //! `.config/nextest.toml`'s `binary(...)` filter entries, so no test
 //! here lands in the capped `network` test-group by binary name alone.
-//! Following `tests/serve.rs`'s and `tests/loopback.rs`'s own convention
+//! Following `tests/net_serve.rs`'s and `tests/net_loopback.rs`'s own convention
 //! (deliberately naming a timing-sensitive network test so its NAME
 //! matches one of the `test(...)` filter entries, opting it into the
 //! serialized group), only
@@ -49,7 +49,7 @@
 //! `.config/nextest.toml` override) is the fix; nothing about that
 //! decision belongs in `proxy.rs` itself.
 //!
-//! Deterministic-test policy (mirrors `tests/loopback.rs`/`tests/
+//! Deterministic-test policy (mirrors `tests/net_loopback.rs`/`tests/
 //! serve.rs`): ports are ephemeral (OS-assigned via a throwaway bind);
 //! `proxy::run`'s `on_bound` callback (not stdout-JSON parsing) is how
 //! these tests learn the proxy's actual listen port; every thread join
@@ -102,7 +102,7 @@ fn widen_rcvbuf(sock: &UdpSocket, what: &str) {
 }
 
 /// Ask the OS for an unused port via a throwaway UDP bind — mirrors
-/// `tests/loopback.rs::free_port` (this crate's convention: small
+/// `tests/net_loopback.rs::free_port` (this crate's convention: small
 /// per-test-file duplicated helpers rather than a shared test-utils
 /// module).
 fn free_port() -> u16 {
@@ -111,7 +111,7 @@ fn free_port() -> u16 {
 }
 
 /// Poll `handle.is_finished()` until it's done or `timeout` elapses —
-/// mirrors `tests/loopback.rs::join_with_timeout`.
+/// mirrors `tests/net_loopback.rs::join_with_timeout`.
 fn join_with_timeout<T>(handle: thread::JoinHandle<T>, timeout: Duration) -> T {
     let deadline = Instant::now() + timeout;
     loop {
@@ -126,7 +126,7 @@ fn join_with_timeout<T>(handle: thread::JoinHandle<T>, timeout: Duration) -> T {
     }
 }
 
-/// Retry `send::run` on a bounded budget — mirrors `tests/loopback.rs::
+/// Retry `send::run` on a bounded budget — mirrors `tests/net_loopback.rs::
 /// send_with_retry` (a failed SRT `connect()` attempt sends no data at
 /// all, so retrying the whole call never risks a double/partial send).
 fn send_with_retry(
@@ -1114,7 +1114,7 @@ fn srt_round_trip_through_lossy_proxy_recovers_via_retransmission() {
     //      explicit flush) on `EndOfStream` specifically; `Broken`
     //      bypasses that flush entirely.
     //   5. Confirmed this is NOT proxy/impairment-specific: the same
-    //      exact-video-AU check against `tests/loopback.rs`'s plain,
+    //      exact-video-AU check against `tests/net_loopback.rs`'s plain,
     //      UNIMPAIRED SRT loopback cell showed the identical shape (5/5
     //      runs, deficit exactly 1, e.g. sent=90/received=89) -- this is
     //      a pre-existing gap in `tst-pipeline`/`tst-srt`'s
@@ -1139,7 +1139,7 @@ fn srt_round_trip_through_lossy_proxy_recovers_via_retransmission() {
     );
 
     // Don't wait out the proxy's own run_seconds budget on the happy
-    // path (mirrors tests/serve.rs's convention for its lingering
+    // path (mirrors tests/net_serve.rs's convention for its lingering
     // producer threads) — only surface its result if it already
     // finished (a fast failure). nextest reaps this test process's
     // threads at process exit either way.
@@ -1393,7 +1393,7 @@ fn spawn_counting_relay(forward: SocketAddr) -> CountingRelay {
 /// `SEND_SECONDS = 10` leaves about 2.5 s of stream after the reconnect.
 /// The receiver's capture ends `RECV_SECONDS + 2 s` after its first
 /// event, and `recv::run_managed` then returns within one accept
-/// timeout (`conntimeo=2000`, the value `tests/loopback.rs` settled on
+/// timeout (`conntimeo=2000`, the value `tests/net_loopback.rs` settled on
 /// for a managed listener). That is about 12 s of test and 13 s of
 /// process — libsrt's teardown at exit is the last second — against the
 /// `network` group's 20 s kill (this test's name matches

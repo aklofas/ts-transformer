@@ -1,7 +1,7 @@
 # tst-rtp integration-test movement map
 
 The 27 former top-level `tests/*.rs` integration binaries were consolidated
-into **4 domain harnesses** (`rtp`, `rtcp`, `rtsp_client`, `rtsp_server`),
+into **4 domain harnesses** (`net_rtp`, `net_rtcp`, `net_rtsp_client`, `net_rtsp_server`),
 same `#[path] mod` pattern as the other crates: `tests/<domain>.rs` includes
 its members from `tests/<domain>/`.
 
@@ -11,7 +11,7 @@ its members from `tests/<domain>/`.
 - The `rtcp_` / `rtsp_client_` / `rtsp_server_` filename prefixes (redundant
   with the domain dir) were dropped; the `rtp` members kept their names.
 - Fully-qualified paths gained a `<domain>::<file>::` prefix. Filtering still
-  works: `cargo test -p tst-rtp --test rtsp_server mount::`.
+  works: `cargo test -p tst-rtp --test net_rtsp_server mount::`.
 - The shared fixtures (`fixtures/rtsp_loopback_server.rs`,
   `fixtures/tls_certs.rs`) are now declared once at each domain binary's root
   (`#[path = "fixtures/mod.rs"] mod fixtures;`) instead of per-file; member
@@ -84,10 +84,10 @@ unchanged (310) and the test leaf-name multiset is byte-identical before/after
 
 ### `rtsp_server/publish/` — RTSP publisher role (ANNOUNCE / SETUP `mode=record` / RECORD), MP2T
 
-New members (no former top-level file), registered at the `rtsp_server.rs`
+New members (no former top-level file), registered at the `net_rtsp_server.rs`
 root as `#[path = "rtsp_server/publish/<file>.rs"] mod publish_<file>;` — one
 `#[path] mod` per file, no `publish/mod.rs`. Filter with
-`cargo test -p tst-rtp --test rtsp_server publish_`.
+`cargo test -p tst-rtp --test net_rtsp_server publish_`.
 
 | file | covers |
 | --- | --- |

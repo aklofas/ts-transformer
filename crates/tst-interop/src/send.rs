@@ -117,7 +117,7 @@ pub fn heartbeat_line(
 }
 
 /// Core of [`run`], split out so a caller that already holds a
-/// constructed transport (e.g. this crate's `tests/loopback.rs`) can
+/// constructed transport (e.g. this crate's `tests/net_loopback.rs`) can
 /// drive the same push loop without going through `--url` parsing
 /// twice.
 ///

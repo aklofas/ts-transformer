@@ -9,12 +9,12 @@ bindings/c/tests/transports/udp_close_cancels_first.rs	ts_null_packet	cross-crat
 bindings/jvm/src/test/java/org/tstrans/srt/SrtManagedCloseCancelsFirstTest.java	rescue	identical body to SrtPlainCloseCancelsFirstTest; parameter types differ (ManagedMuxSender vs MuxSender)
 bindings/jvm/src/test/java/org/tstrans/srt/SrtPlainCloseCancelsFirstTest.java	rescue	identical body to SrtManagedCloseCancelsFirstTest; parameter types differ (MuxSender vs ManagedMuxSender)
 crates/tst-core/tests/mpegts/demux_local.rs	fixtures_dir	cross-crate twin; the one copy belongs in tst-test-helpers
-crates/tst-hls/tests/hls_e2e.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
-crates/tst-hls/tests/klv_interop.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
-crates/tst-interop/tests/loopback.rs	join_with_timeout	shared test support not yet written for this crate
-crates/tst-interop/tests/loopback.rs	status_of	shared test support not yet written for this crate
-crates/tst-interop/tests/proxy.rs	join_with_timeout	shared test support not yet written for this crate
-crates/tst-interop/tests/serve.rs	join_with_timeout	shared test support not yet written for this crate
+crates/tst-hls/tests/net_hls_e2e.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
+crates/tst-hls/tests/net_klv_interop.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
+crates/tst-interop/tests/net_loopback.rs	join_with_timeout	shared test support not yet written for this crate
+crates/tst-interop/tests/net_loopback.rs	status_of	shared test support not yet written for this crate
+crates/tst-interop/tests/net_proxy.rs	join_with_timeout	shared test support not yet written for this crate
+crates/tst-interop/tests/net_serve.rs	join_with_timeout	shared test support not yet written for this crate
 crates/tst-pipeline/tests/shells/pipeline_receiver.rs	minimal_klv	cross-crate twin of the tst-srt live receiver test helper; consolidation into tst-test-helpers deferred
 crates/tst-pipeline/tests/support/round_trip.rs	synthetic_h264_au	cross-crate twin of the hls/udp/tcp/rist round-trip helper; consolidation into tst-test-helpers deferred
 crates/tst-rtp/tests/fixtures/raw_rtsp_publisher.rs	status_of	tst-rtp tests: shared fixture not yet written
@@ -24,4 +24,4 @@ crates/tst-srt/tests/loopback/url_open.rs	reserve_port	pipeline and transport te
 crates/tst-srt/tests/loopback/url_open.rs	spawn_connector	pipeline and transport tests: shared tests/common not yet written
 crates/tst-srt/tests/pipeline/pipeline_receiver_live.rs	minimal_klv	pipeline and transport tests: shared tests/common not yet written
 crates/tst-srt/tests/pipeline/pipeline_receiver_live_corpus.rs	fixtures_dir	pipeline and transport tests: shared tests/common not yet written
-crates/tst-udp/tests/zero_length.rs	null_ts_packet	pipeline and transport tests: shared tests/common not yet written
+crates/tst-udp/tests/net_zero_length.rs	null_ts_packet	pipeline and transport tests: shared tests/common not yet written

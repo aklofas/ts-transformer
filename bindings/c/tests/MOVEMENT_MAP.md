@@ -1,8 +1,8 @@
 # tst-c integration-test movement map
 
 The 22 auto-discovered top-level `tests/*.rs` integration binaries were
-consolidated into **4 domain harnesses** (`abi`, `receiving`, `muxing`,
-`transports`), same `#[path] mod` pattern as the other crates.
+consolidated into **4 domain harnesses** (`abi`, `net_receiving`, `net_muxing`,
+`net_transports`), same `#[path] mod` pattern as the other crates.
 
 ## What changed (and what did not)
 
@@ -17,12 +17,12 @@ consolidated into **4 domain harnesses** (`abi`, `receiving`, `muxing`,
   distinct 1000-wide bands (raw 27_000, ts 28_000, demux 29_000); `live_pair`
   already uses an ephemeral `:0` port. Verified stable 8/8 under consolidation.
 - Fully-qualified paths gained a `<domain>::<file>::` prefix. Filtering still
-  works: `cargo test -p tst-c --test muxing multi_program::`.
+  works: `cargo test -p tst-c --test net_muxing multi_program::`.
 - Each member keeps its file-level `#![cfg(feature = "…")]` gate (srt/rtp/
   udp/tcp/hls/rist); a gated-out member compiles to an empty module, so every
   feature mode builds. No paths needed fixing — the hygiene tests anchor on
   `env!("CARGO_MANIFEST_DIR")`, which is unaffected by the move.
-- **Not touched:** the explicit `url_open` `[[test]]` (already folder-shaped)
+- **Not touched:** the explicit `net_url_open` `[[test]]` (already folder-shaped)
   and `tests/smoke.c` (a C source read by `abi/smoke.rs` via the manifest path).
 
 ## Offline-muxer module relocation (ABI 8 → 9)

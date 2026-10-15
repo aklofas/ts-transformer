@@ -19,7 +19,7 @@
 //! mid-fetch of the terminal ENDLIST-tagged playlist) then hangs forever
 //! against a server that's already gone. This exact deadlock previously
 //! wedged this project's own `hls_e2e` ffmpeg test — see
-//! `crates/tst-hls/tests/hls_e2e.rs`'s
+//! `crates/tst-hls/tests/net_hls_e2e.rs`'s
 //! `hls_pipeline_via_ffmpeg_validates_playlist` doc comment.
 //! `finish_serving` keeps the server up — serving the now-complete VOD
 //! asset — for `LINGER` past the last push, giving a puller time to
