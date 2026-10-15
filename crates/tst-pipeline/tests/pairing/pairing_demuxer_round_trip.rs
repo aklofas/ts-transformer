@@ -4,8 +4,6 @@
 //! bytes. `PairingDemuxer` must produce a byte-identical `PairerOutput`
 //! sequence — proving the composite is a faithful, lossless wrapper.
 
-mod common;
-
 use crate::common::{build_h264_au, drain_mux, dummy_klv};
 
 use std::time::Duration;

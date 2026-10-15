@@ -31,8 +31,6 @@
 //!   - Push 7 (same oversized): also BufferFull, Overflow→Overflow is
 //!     not a transition. **No warn fires.**
 
-mod common;
-
 use crate::common::ScriptedSend;
 
 use tracing_test::traced_test;

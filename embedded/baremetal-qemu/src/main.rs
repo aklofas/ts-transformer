@@ -111,7 +111,7 @@ fn video_roundtrip_ts_bytes() -> Vec<u8> {
 /// Minimal in-memory `Transport`. `Transport: Send` is unconditional, so the
 /// single-threaded sink uses `Arc<spin::Mutex<_>>` (Send/Sync) rather than the
 /// `!Send` `Rc<RefCell<_>>`. Mirrors the std Task-3 sink in
-/// `crates/tst-pipeline/tests/mux_sender_golden.rs`.
+/// `crates/tst-pipeline/tests/shells/mux_sender_golden.rs`.
 /// (Verbatim-local per spec decision A: the no_std binary cannot depend on the
 /// std-only tst-integration; the on-device byte-compare detects drift.)
 #[derive(Clone)]

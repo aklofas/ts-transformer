@@ -5,8 +5,6 @@
 //! (info on each reconnect attempt, warn on terminal give-up) actually
 //! fire during a real reconnect-and-give-up flow.
 
-mod common;
-
 use crate::common::{ScriptedSend, broken};
 
 use std::sync::Arc;

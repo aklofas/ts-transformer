@@ -56,8 +56,9 @@ slow-timeout = { period = "20s", terminate-after = 2 }
 # the slowest legitimate loopback is an SRT/RIST encrypted handshake at ~1-5s).
 # Matched broadly by the integration binaries that do loopback plus loopback-
 # style test names: over-matching a fast test is harmless (it just serialises),
-# missing a network test is not (it would contend). `binary(...)` / `test(...)`
-# are substring matches.
+# missing a network test is not (it would contend). `test(...)` is a substring
+# match; `binary(...)` is a glob, i.e. an exact binary name unless it contains
+# a wildcard.
 filter = """
     binary(loopback) | binary(loopback_multicast) | binary(pipeline_round_trip)
   | binary(hls_e2e) | binary(pipeline) | binary(stats) | binary(receiving)

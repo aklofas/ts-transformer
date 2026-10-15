@@ -4,8 +4,6 @@
 //! (`ManagedTransportStats::reconnect_attempts`); the two sides are
 //! symmetric and the counter is exposed lock-free.
 
-mod common;
-
 use crate::common::{broken, fast_policy, wait_for};
 
 use std::sync::Arc;

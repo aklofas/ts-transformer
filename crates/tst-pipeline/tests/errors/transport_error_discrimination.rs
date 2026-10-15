@@ -32,8 +32,6 @@
 //!   error-code decisions; `err.source` gives power users the inner-variant
 //!   discrimination needed to route logs and telemetry.
 
-mod common;
-
 use crate::common::{ScriptedRecv, ScriptedSend};
 
 use tst_core::transport::TransportError;

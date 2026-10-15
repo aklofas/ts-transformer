@@ -10,8 +10,6 @@
 //! any of these. A copy left behind in the gap buffer would reach the wire as
 //! well, so every test here counts what the wire carried.
 
-mod common;
-
 use crate::common::{ScriptedSend, SendStep, broken};
 
 use std::collections::VecDeque;

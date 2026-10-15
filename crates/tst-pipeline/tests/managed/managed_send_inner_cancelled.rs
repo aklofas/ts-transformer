@@ -12,8 +12,6 @@
 //! counting it, the drop counters do not), exactly as after a cancel through
 //! the wrapper's own handle.
 
-mod common;
-
 use crate::common::{FlagCancel, broken, flag, wait_for};
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

@@ -2,8 +2,6 @@
 //! byte-identical to the CI-guarded video-roundtrip golden. This is the std
 //! mirror of the on-device check in `embedded/baremetal-qemu/`.
 
-mod common;
-
 use crate::common::ScriptedSend;
 
 use tst_core::mpegts::common::Pts90khz;
@@ -23,8 +21,9 @@ fn synthetic_h264_idr() -> Vec<u8> {
 
 #[test]
 fn mux_sender_matches_video_roundtrip_golden() {
-    let golden =
-        include_bytes!("../../tst-integration/tests/fixtures/scenarios/video-roundtrip/output.ts");
+    let golden = include_bytes!(
+        "../../../tst-integration/tests/fixtures/scenarios/video-roundtrip/output.ts"
+    );
 
     let cfg = {
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
