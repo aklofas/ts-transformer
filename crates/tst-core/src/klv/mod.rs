@@ -121,6 +121,39 @@ macro_rules! inventory_test {
 #[cfg(test)]
 pub(crate) use inventory_test;
 
+/// Emits a coded-value enum's two wire conversions from one table.
+///
+/// Invoke it inside the enum's inherent `impl`, so the type keeps a single
+/// `impl` block and its public-API rendering does not change.
+///
+/// `$from(u8) -> Self` maps each listed code to its variant and every other
+/// byte to `$escape(byte)`; `$to(self) -> u8` is its exact inverse, so a
+/// wire-unknown code round-trips byte-exact. `$spec` names the table in the
+/// generated docs. The `match` in `$to` is exhaustive over the enum, so a
+/// variant missing from the table does not compile.
+macro_rules! wire_codepoints {
+    ($from:ident, $to:ident, $escape:ident, $spec:literal;
+     $($code:literal => $variant:ident),+ $(,)?) => {
+            #[doc = concat!($spec, " wire codepoint → variant (`", stringify!($escape), "(b)` for unknown codes).")]
+            pub fn $from(b: u8) -> Self {
+                match b {
+                    $($code => Self::$variant,)+
+                    other => Self::$escape(other),
+                }
+            }
+
+            #[doc = concat!("Variant → ", $spec, " wire codepoint (inverse of [`Self::", stringify!($from), "`]).")]
+            pub fn $to(self) -> u8 {
+                match self {
+                    $(Self::$variant => $code,)+
+                    Self::$escape(b) => b,
+                }
+            }
+    };
+}
+
+pub(crate) use wire_codepoints;
+
 /// Shared body of the typed sets' BER-OID unknown-tag tests.
 ///
 /// Generates four `#[test]`s, one per BER-OID width boundary of a tag in the
@@ -179,3 +212,99 @@ macro_rules! ber_oid_unknown_tag_tests {
 
 #[cfg(test)]
 pub(crate) use ber_oid_unknown_tag_tests;
+
+#[cfg(test)]
+mod wire_codepoint_tests {
+    //! Every byte of every coded-value enum, both directions. The expected
+    //! strings list the named codepoints; every other byte must come back as
+    //! the escape variant carrying the same byte.
+    use super::st0601::{
+        IcingDetected, OperationalMode, PlatformStatus, SensorControlMode, SensorFovName,
+    };
+    use super::{
+        ClassifyingCountryCodingMethod, ObjectCountryCodingMethod, RvtAoiType, RvtPoiType,
+        SecurityClassification,
+    };
+    use alloc::format;
+    use alloc::string::String;
+    use core::fmt::Write as _;
+
+    fn table<T: core::fmt::Debug + Copy>(from: fn(u8) -> T, to: fn(T) -> u8) -> String {
+        let mut named = String::new();
+        for b in 0..=u8::MAX {
+            let v = from(b);
+            assert_eq!(to(v), b, "{v:?} does not map back to {b}");
+            let d = format!("{v:?}");
+            if d.starts_with("Other(") || d.starts_with("Unknown(") {
+                assert!(d.ends_with(&format!("({b})")), "{d} should carry {b}");
+            } else {
+                let _ = write!(named, "{b}={d} ");
+            }
+        }
+        named
+    }
+
+    #[test]
+    fn wire_codepoint_tables_are_pinned() {
+        assert_eq!(
+            table(IcingDetected::from_wire, IcingDetected::to_wire),
+            "0=DetectorOff 1=NoIcingDetected 2=IcingDetected "
+        );
+        assert_eq!(
+            table(SensorFovName::from_wire, SensorFovName::to_wire),
+            "0=Ultranarrow 1=Narrow 2=Medium 3=Wide 4=Ultrawide 5=NarrowMedium \
+             6=TwoXUltranarrow 7=FourXUltranarrow 8=ContinuousZoom "
+        );
+        assert_eq!(
+            table(OperationalMode::from_wire, OperationalMode::to_wire),
+            "0=OtherMode 1=Operational 2=Training 3=Exercise 4=Maintenance 5=Test "
+        );
+        assert_eq!(
+            table(PlatformStatus::from_wire, PlatformStatus::to_wire),
+            "0=Active 1=PreFlight 2=PreFlightTaxiing 3=RunUp 4=TakeOff 5=Ingress \
+             6=ManualOperation 7=AutomatedOrbit 8=Transitioning 9=Egress 10=Landing \
+             11=LandedTaxiing 12=LandedParked "
+        );
+        assert_eq!(
+            table(SensorControlMode::from_wire, SensorControlMode::to_wire),
+            "0=Off 1=HomePosition 2=Uncontrolled 3=ManualControl 4=Calibrating \
+             5=AutoHoldingPosition 6=AutoTracking "
+        );
+        assert_eq!(
+            table(
+                SecurityClassification::from_u8,
+                SecurityClassification::to_u8
+            ),
+            "1=Unclassified 2=Restricted 3=Confidential 4=Secret 5=TopSecret "
+        );
+        assert_eq!(
+            table(
+                ClassifyingCountryCodingMethod::from_u8,
+                ClassifyingCountryCodingMethod::to_u8
+            ),
+            "1=Iso3166TwoLetter 2=Iso3166ThreeLetter 3=Fips104TwoLetter 4=Fips104FourLetter \
+             5=Iso3166Numeric 6=Stanag1059TwoLetter 7=Stanag1059ThreeLetter 8=OmittedValue08 \
+             9=OmittedValue09 10=Fips104Mixed 11=Iso3166Mixed 12=Stanag1059Mixed \
+             13=GencTwoLetter 14=GencThreeLetter 15=GencNumeric 16=GencMixed "
+        );
+        assert_eq!(
+            table(
+                ObjectCountryCodingMethod::from_u8,
+                ObjectCountryCodingMethod::to_u8
+            ),
+            "1=Iso3166TwoLetter 2=Iso3166ThreeLetter 3=Iso3166Numeric 4=Fips104TwoLetter \
+             5=Fips104FourLetter 6=Stanag1059TwoLetter 7=Stanag1059ThreeLetter \
+             8=OmittedValue08 9=OmittedValue09 10=OmittedValue0A 11=OmittedValue0B \
+             12=OmittedValue0C 13=GencTwoLetter 14=GencThreeLetter 15=GencNumeric \
+             64=GencAdminSub "
+        );
+        assert_eq!(
+            table(RvtPoiType::from_wire, RvtPoiType::to_wire),
+            "1=Friendly 2=Hostile 3=Target 4=Unknown "
+        );
+        assert_eq!(
+            table(RvtAoiType::from_wire, RvtAoiType::to_wire),
+            "1=Friendly 2=Hostile 3=Reserved 4=Unknown "
+        );
+    }
+}

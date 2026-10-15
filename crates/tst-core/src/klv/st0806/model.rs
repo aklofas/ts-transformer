@@ -78,27 +78,12 @@ impl RvtPoiType {
         Self::Other(0xFF),
     ];
 
-    /// ST 0806.4 Table 8-2 Tag 5 wire codepoint → variant (`Other(v)` for
-    /// unknown codes).
-    pub fn from_wire(v: u8) -> Self {
-        match v {
-            1 => Self::Friendly,
-            2 => Self::Hostile,
-            3 => Self::Target,
-            4 => Self::Unknown,
-            o => Self::Other(o),
-        }
-    }
-    /// Variant → ST 0806.4 Table 8-2 Tag 5 wire codepoint (inverse of
-    /// [`Self::from_wire`]).
-    pub fn to_wire(self) -> u8 {
-        match self {
-            Self::Friendly => 1,
-            Self::Hostile => 2,
-            Self::Target => 3,
-            Self::Unknown => 4,
-            Self::Other(o) => o,
-        }
+    crate::klv::wire_codepoints! {
+        from_wire, to_wire, Other, "ST 0806.4 Table 8-2 Tag 5";
+        1 => Friendly,
+        2 => Hostile,
+        3 => Target,
+        4 => Unknown,
     }
 }
 impl RvtAoiType {
@@ -120,27 +105,12 @@ impl RvtAoiType {
         Self::Other(0xFF),
     ];
 
-    /// ST 0806.4 Table 8-3 Tag 6 wire codepoint → variant (`Other(v)` for
-    /// unknown codes).
-    pub fn from_wire(v: u8) -> Self {
-        match v {
-            1 => Self::Friendly,
-            2 => Self::Hostile,
-            3 => Self::Reserved,
-            4 => Self::Unknown,
-            o => Self::Other(o),
-        }
-    }
-    /// Variant → ST 0806.4 Table 8-3 Tag 6 wire codepoint (inverse of
-    /// [`Self::from_wire`]).
-    pub fn to_wire(self) -> u8 {
-        match self {
-            Self::Friendly => 1,
-            Self::Hostile => 2,
-            Self::Reserved => 3,
-            Self::Unknown => 4,
-            Self::Other(o) => o,
-        }
+    crate::klv::wire_codepoints! {
+        from_wire, to_wire, Other, "ST 0806.4 Table 8-3 Tag 6";
+        1 => Friendly,
+        2 => Hostile,
+        3 => Reserved,
+        4 => Unknown,
     }
 }
 
