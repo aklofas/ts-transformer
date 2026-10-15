@@ -132,3 +132,6 @@ rcgen            = "0.13"
 # virtual clock instead of sleeping. Dev builds only: the library's own
 # tokio dependency above does not enable it.
 tokio            = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "macros", "test-util"] }
+
+[lints]
+workspace = true

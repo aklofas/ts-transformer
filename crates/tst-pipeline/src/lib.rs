@@ -61,7 +61,6 @@
 //!   shells hold no internal lock (their hot-path methods take `&mut
 //!   self`), so this concurrency caveat does not apply to them.
 
-#![warn(rustdoc::broken_intra_doc_links)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 #[macro_use]

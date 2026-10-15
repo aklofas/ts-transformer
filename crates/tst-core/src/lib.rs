@@ -61,7 +61,6 @@
 //!   `tst-core = { default-features = false }`.
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![warn(rustdoc::broken_intra_doc_links)]
 
 #[macro_use]
 extern crate alloc;

@@ -69,3 +69,6 @@ libc             = { workspace = true }
 [[test]]
 name = "url_open"
 path = "tests/url_open/mod.rs"
+
+[lints]
+workspace = true

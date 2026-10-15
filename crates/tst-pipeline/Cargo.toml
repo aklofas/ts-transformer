@@ -58,3 +58,6 @@ harness = false
 [[bench]]
 name    = "pairer"
 harness = false
+
+[lints]
+workspace = true

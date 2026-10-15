@@ -139,3 +139,6 @@ doc   = false
 
 [package.metadata.docs.rs]
 features = ["conformance"]
+
+[lints]
+workspace = true

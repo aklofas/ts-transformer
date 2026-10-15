@@ -61,3 +61,6 @@ default = ["mbedtls"]
 # librist 0.2.18 supports mbedTLS 3.x natively (srp.c defines its own 3.x
 # compat macros for the _ret SHA-256 names; no compat-2.x.h needed).
 mbedtls = []
+
+[lints]
+workspace = true

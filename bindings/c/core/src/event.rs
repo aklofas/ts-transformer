@@ -1631,6 +1631,10 @@ fn obu_to_c(o: &tst_core::mpegts::demux::Obu) -> TstObu {
 // reference for the "owns its own bytes" check.
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests read arena-internal lengths, never a caller-supplied pair"
+)]
 mod tests {
     use super::*;
     use alloc::vec;

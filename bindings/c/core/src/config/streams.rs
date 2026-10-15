@@ -269,6 +269,10 @@ pub unsafe extern "C" fn tst_mux_config_add_audio_stream_with_language(
             return TST_INVALID_STREAM_HANDLE;
         }
         // SAFETY: caller documented contract — pointer to 3-byte ISO 639-2 array.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fixed 3-byte ISO 639-2 code, not a caller-supplied length"
+        )]
         let lang = unsafe { core::slice::from_raw_parts(language, 3) };
         let mut buf = [0u8; 3];
         buf.copy_from_slice(lang);
@@ -356,6 +360,10 @@ pub unsafe extern "C" fn tst_mux_config_add_subtitle_stream_dvb_subtitling(
             return TST_INVALID_STREAM_HANDLE;
         }
         // SAFETY: caller documented contract — pointer to 3-byte ISO 639-2 array.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fixed 3-byte ISO 639-2 code, not a caller-supplied length"
+        )]
         let lang_slice = unsafe { core::slice::from_raw_parts(language, 3) };
         let mut lang = [0u8; 3];
         lang.copy_from_slice(lang_slice);
@@ -402,6 +410,10 @@ pub unsafe extern "C" fn tst_mux_config_add_subtitle_stream_dvb_teletext(
             return TST_INVALID_STREAM_HANDLE;
         }
         // SAFETY: caller documented contract — pointer to 3-byte ISO 639-2 array.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fixed 3-byte ISO 639-2 code, not a caller-supplied length"
+        )]
         let lang_slice = unsafe { core::slice::from_raw_parts(language, 3) };
         let mut lang = [0u8; 3];
         lang.copy_from_slice(lang_slice);

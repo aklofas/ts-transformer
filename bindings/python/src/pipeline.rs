@@ -18,6 +18,10 @@
 //! `#![allow(...)]` mirrors `mpegts.rs` — PyO3 0.22 + Rust 2024 macro
 //! expansions trip these lints. Hand-written code here has no unsafe
 //! blocks.
+#![expect(
+    clippy::disallowed_methods,
+    reason = "in-memory parse/mux calls finish in bounded time and never park"
+)]
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
 use std::time::Duration;

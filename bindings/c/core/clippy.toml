@@ -1,0 +1,7 @@
+# Read by clippy for tst-c-core only (nearest clippy.toml above the crate).
+# Byte slices built from a C-supplied (ptr, len) go through crate::ffi_slice,
+# which enforces the (NULL, 0) and len <= isize::MAX preconditions.
+disallowed-methods = [
+    { path = "core::slice::from_raw_parts", reason = "use crate::ffi_slice::ffi_slice" },
+    { path = "core::slice::from_raw_parts_mut", reason = "use crate::ffi_slice::ffi_slice_mut" },
+]

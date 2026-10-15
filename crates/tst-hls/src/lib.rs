@@ -24,8 +24,6 @@
 //! web server (nginx, a media server, a CDN origin) pointed at `output_dir`
 //! serves the stream, live or finished.
 
-#![warn(rustdoc::broken_intra_doc_links)]
-
 pub mod builder;
 pub mod config;
 pub mod error;

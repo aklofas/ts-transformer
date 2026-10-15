@@ -7,6 +7,14 @@
 //! Exports `__version__`, the exception handles, and the PyClass
 //! wrappers for the `mpegts`, `klv`, and `codec` submodules.
 
+// A binding never aborts its host process on a panic it could have avoided:
+// no `.expect(` and no `unreachable!` outside tests.
+#![cfg_attr(not(test), deny(clippy::expect_used, clippy::unreachable))]
+
+#[cfg(tst_lint_fixture)]
+#[path = "../../../scripts/ratchets/tests/lint_fixtures/py.rs"]
+mod lint_fixture;
+
 mod codec;
 mod errors;
 mod klv;

@@ -53,3 +53,6 @@ spin         = { version = "0.9", default-features = false, features = ["spin_mu
 # gets the crate's std implementation from here. Dev-only, so the library's
 # MCU builds stay implementation-free.
 critical-section = { version = "1", features = ["std"] }
+
+[lints]
+workspace = true

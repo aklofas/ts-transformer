@@ -25,8 +25,6 @@
 //! - `?session_timeout=N` — receiver session timeout, ms
 //! - `?compression=0|1` — NULL-packet deletion
 
-#![warn(rustdoc::broken_intra_doc_links)]
-
 pub mod builder;
 pub mod config;
 pub mod error;

@@ -45,3 +45,6 @@ default = ["mbedtls"]
 # USE_ENCLIB=mbedtls. Disabling this feature reverts to an
 # ENABLE_ENCRYPTION=OFF build.
 mbedtls = []
+
+[lints]
+workspace = true

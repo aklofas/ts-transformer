@@ -209,3 +209,6 @@ path = "operations/tee_disk_and_demux.rs"
 [[example]]
 name = "managed_reconnect_background"
 path = "operations/managed_reconnect_background.rs"
+
+[lints]
+workspace = true

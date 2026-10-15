@@ -87,3 +87,6 @@ version = "2"
 # (tracing-subscriber does not re-export it). Same version pin as
 # tst-rtp/tst-pipeline.
 tracing = { version = "0.1", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

@@ -16,7 +16,15 @@
 //! `srt` in ABI 0.9). ABI minor is `0.23` (see [`TST_ABI_VERSION_MINOR`]).
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![allow(clippy::missing_safety_doc)] // every extern "C" fn has a /// header documenting the contract
+#![allow(clippy::missing_safety_doc)]
+// every extern "C" fn has a /// header documenting the contract
+// A binding never aborts its host process on a panic it could have avoided:
+// no `.expect(` and no `unreachable!` outside tests.
+#![cfg_attr(not(test), deny(clippy::expect_used, clippy::unreachable))]
+
+#[cfg(tst_lint_fixture)]
+#[path = "../../../../scripts/ratchets/tests/lint_fixtures/c_core.rs"]
+mod lint_fixture;
 
 extern crate alloc;
 
