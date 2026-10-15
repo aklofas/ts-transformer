@@ -676,6 +676,8 @@ jobs:
           # and tst_pipeline::binding::kind::BindingErrorKind.
           # 189->193 (2026-10-08): tst_rtp RTSP publisher role —
           # ClockAlignment, PublishShape, PublishMountStats, PublisherInfo.
+          # 193->189 (2026-10-15): phase 5 removed UdpErrorKind, TcpErrorKind,
+          # RistErrorKind and HlsErrorKind.
           BASELINE=189
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
