@@ -15,37 +15,6 @@ pub struct H266ProfileTierLevel {
     pub general_level_idc: u8,
 }
 
-/// Parse an H.266 PTL syntax structure standalone. Per H.266 V4 §7.3.3.
-///
-/// `profile_tier_present_flag` is the spec's outer guard (caller knows
-/// from context — usually `true` for the first PTL in an SPS). When
-/// `false` we skip the headline fields and return a default-zeroed PTL.
-///
-/// `max_num_sub_layers_minus1` controls how many sub-layer PTL records
-/// follow; the current scope reads but ignores them — only the headline fields matter
-/// for metadata extraction.
-///
-/// This standalone variant is for callers that only have the PTL bytes
-/// (e.g., tests, future external parameter-set walkers). Sub-parsers
-/// embedded in SPS/VPS use `parse_into` instead, which shares the
-/// caller's bit cursor so subsequent fields stay aligned.
-#[allow(dead_code)] // kept for tests + future external parameter-set walkers
-pub(crate) fn parse_profile_tier_level(
-    rbsp: &[u8],
-    profile_tier_present_flag: bool,
-    max_num_sub_layers_minus1: u8,
-) -> Result<H266ProfileTierLevel, CodecParseError> {
-    let mut br = BitReader::new(rbsp);
-    let mut out = H266ProfileTierLevel::default();
-    parse_into(
-        &mut br,
-        profile_tier_present_flag,
-        max_num_sub_layers_minus1,
-        &mut out,
-    )?;
-    Ok(out)
-}
-
 /// Walk the full PTL syntax via a caller-supplied bit cursor.
 ///
 /// Per H.266 V4 §7.3.3.1. Surfaces only the headline three fields into
@@ -151,6 +120,24 @@ fn parse_general_constraints_info(br: &mut BitReader<'_>) -> Result<(), CodecPar
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Parse one PTL from its own bytes (the SPS parser calls `parse_into`
+    /// with its shared cursor instead).
+    fn parse_profile_tier_level(
+        rbsp: &[u8],
+        profile_tier_present_flag: bool,
+        max_num_sub_layers_minus1: u8,
+    ) -> Result<H266ProfileTierLevel, CodecParseError> {
+        let mut br = BitReader::new(rbsp);
+        let mut out = H266ProfileTierLevel::default();
+        parse_into(
+            &mut br,
+            profile_tier_present_flag,
+            max_num_sub_layers_minus1,
+            &mut out,
+        )?;
+        Ok(out)
+    }
 
     /// Parse a constructed PTL with profile_idc=1 (Main 10), tier=0, level=63 (4.0).
     /// MaxNumSubLayersMinus1=0, gci_present_flag=0, ptl_num_sub_profiles=0.

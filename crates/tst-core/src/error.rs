@@ -594,8 +594,7 @@ pub enum MuxError {
 /// to map muxer failures into a language-native exception hierarchy without
 /// enumerating the 36 underlying [`MuxError`] variants. For spec-aware
 /// diagnostic code (KLV-handling, DVB-subtitling, descriptor validation),
-/// match on the full [`MuxError`] variant set directly via the
-/// [`crate::mpegts::mux::_detail::MuxError`] re-export.
+/// match on the full [`MuxError`] variant set directly.
 ///
 /// This is distinct from the **outer-tier** `tst_pipeline::ShellErrorKind`
 /// (6 variants, shell-agnostic). The two tiers complement each other:
@@ -714,9 +713,7 @@ impl MuxError {
     ///
     /// For spec-aware diagnostic code (KLV-handling, DVB-subtitling,
     /// descriptor validation), match on the full [`MuxError`] variant
-    /// set directly via the [`crate::mpegts::mux::_detail::MuxError`]
-    /// re-export (the same enum; the re-export signals intent at the
-    /// import site).
+    /// set directly.
     ///
     /// Per-variant routing is enforced by the compiler: the match below
     /// lives in [`MuxError`]'s own crate and carries no wildcard, so a new

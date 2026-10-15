@@ -32,48 +32,6 @@ mod config;
 pub use config::*;
 pub use stats_accounting::MuxerStats;
 
-/// Spec-domain tier of muxer errors.
-///
-/// The [`crate::error::MuxError`] enum (canonical home at
-/// [`crate::error::MuxError`]) is re-exported here under the `_detail`
-/// convention to signal "spec-knowledge tier; production binding code
-/// should prefer [`crate::error::MuxError::kind()`] for
-/// action-discriminating dispatch".
-///
-/// The underscore prefix follows the workspace convention for re-export
-/// modules that signal "opt into the spec-domain tier" at the import site:
-///
-/// ```
-/// use tst_core::mpegts::mux::_detail::MuxError;
-///
-/// fn diagnose_klv(e: &MuxError) -> Option<String> {
-///     match e {
-///         MuxError::KlvTooLarge { size, max } => Some(format!(
-///             "KLV LS exceeds PES cap: {size} > {max}"
-///         )),
-///         _ => None,
-///     }
-/// }
-/// ```
-///
-/// Equivalent to importing from the canonical path [`crate::error::MuxError`];
-/// the re-export exists for documentary intent (the underscore signals
-/// "I know I'm pattern-matching the spec-domain variants and I accept
-/// future variant additions").
-///
-/// # Stability
-///
-/// The inner variant set is `#[non_exhaustive]` and may grow.
-/// New variants WILL be added without a major version bump;
-/// pattern-matching code here should include a wildcard arm. If you
-/// only need action-discriminating categorization, prefer the
-/// coarse-tier [`crate::error::MuxErrorKind`] enum via
-/// [`crate::error::MuxError::kind()`].
-pub mod _detail {
-    /// The canonical [`crate::error::MuxError`].
-    pub use crate::error::MuxError;
-}
-
 // Re-exported through `super::` / `super::*` by sibling modules (scheduling.rs
 // uses `super::StreamType`; the tests/ files use `super::*` glob). Keep here
 // even though mod.rs itself no longer references these directly — the

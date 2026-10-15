@@ -37,6 +37,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `HlsPublisherBuilder::from_url` returns `HlsUrlError`, as before, and
   `HlsError` no longer implements `From<HlsUrlError>`.
 
+### Removed — tst-core (BREAKING)
+
+- `TransportError::is_connection_refused` — nothing called it. Classify the
+  `errno_code` with `std::io::Error::from_raw_os_error(code).kind()`.
+- `UasDatalinkLs::active_payload_ids` — read `active_payloads` (Item 139):
+  bit *i* of byte *k*, LSB first, is Payload ID 8*k* + *i*.
+- `mpegts::common::{PTS_TICKS_PER_SECOND, PCR_TICKS_PER_SECOND}` — the values
+  are 90 000 and 27 000 000.
+- `mpegts::mux::_detail` — import `MuxError` from `tst_core::error`.
+
 ### Changed — tst-core (BREAKING)
 
 - `tst_core::transport::conformance` (the transport conformance kit) is now
@@ -51,6 +61,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Doc comments only: the UDP, TCP, HLS and RIST error codes name the Rust
   error variants they map from (`tst_udp::UdpError::Io` instead of the removed
   `UdpErrorKind::Io`). No declaration, value, symbol or ABI version changed.
+
+### Added — tst-core
+
+- `mpegts::demux::low_level::iter_au_cells` — the Metadata AU cell iterator,
+  previously reachable only through a hidden test module.
 
 ### Fixed — tst-rtp
 

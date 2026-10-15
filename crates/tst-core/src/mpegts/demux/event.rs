@@ -499,7 +499,7 @@ pub enum NonConformantIssue {
     /// via [`pcr_diff_27mhz`](crate::mpegts::common::pcr_diff_27mhz). A
     /// large-magnitude delta indicates a discontinuous jump (forward seek,
     /// missed packets, or non-conformant encoder). Convert to seconds by
-    /// dividing by [`PCR_TICKS_PER_SECOND`](crate::mpegts::common::PCR_TICKS_PER_SECOND).
+    /// dividing by 27 000 000 (the 27 MHz PCR clock).
     ///
     /// Only reported for a PID some PMT declares as its `PCR_PID`. A PCR
     /// on any other PID is ignored — neither compared nor remembered — so a

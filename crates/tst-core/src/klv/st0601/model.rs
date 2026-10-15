@@ -410,8 +410,7 @@ pub struct UasDatalinkLs {
     /// 138, Payload List — [`Self::payload_list`]) are currently active.
     /// Raw bytes, LSB-first within each byte: bit *i* of byte 0 is
     /// Payload ID *i* (0-7), byte 1 covers IDs 8-15, and so on
-    /// (multi-byte extends upward). Use [`Self::active_payload_ids`] to
-    /// iterate the set IDs instead of unpacking the bits by hand.
+    /// (multi-byte extends upward).
     pub active_payloads: Option<Vec<u8>>,
 
     // Misc
@@ -1267,22 +1266,6 @@ impl UasDatalinkLs {
             p3: (lat0 + dl3, lon0 + do3),
             p4: (lat0 + dl4, lon0 + do4),
         })
-    }
-
-    /// Iterate the Payload IDs marked active in [`Self::active_payloads`]
-    /// (Item 139), decoding the LSB-first bitmask. Empty (or absent)
-    /// bytes yield an empty iterator, never a panic.
-    pub fn active_payload_ids(&self) -> impl Iterator<Item = u32> + '_ {
-        self.active_payloads
-            .iter()
-            .flatten()
-            .copied()
-            .enumerate()
-            .flat_map(|(byte_i, b): (usize, u8)| {
-                (0u32..8)
-                    .filter(move |bit| b & (1 << bit) != 0)
-                    .map(move |bit| byte_i as u32 * 8 + bit)
-            })
     }
 }
 

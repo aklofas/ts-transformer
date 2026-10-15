@@ -110,7 +110,7 @@ impl AuCellReassembler {
 
     /// Decrement the aggregate counter by a just-dropped buffer's length.
     ///
-    /// Every drop path (the `process_cell` failure arms plus `reset_pid`
+    /// Every drop path (the `process_cell` failure arms
     /// and `clear_after_emit`) routes through here so the accounting
     /// invariant is checked uniformly. `debug_assert!` surfaces a future
     /// under-decrement bug (the counter should always be at least as large
@@ -296,17 +296,6 @@ impl AuCellReassembler {
                     cell_count: state_ref.cell_count,
                 }
             }
-        }
-    }
-
-    /// Clear the buffer for one PID (operational reset, not a wire-format
-    /// violation; no NonConformant emit). Reserved for future hooks; not
-    /// called from the current pes_emit / reset_sync paths (those use
-    /// [`Self::reset_all`]).
-    #[allow(dead_code)]
-    pub(crate) fn reset_pid(&mut self, pid: u16) {
-        if let Some(dropped) = self.per_pid.remove(&pid) {
-            self.decrement_total(dropped.buf.len());
         }
     }
 
@@ -621,7 +610,6 @@ mod tests {
     /// - `Last` arm: per-PID overflow, sequence gap.
     /// - `Buffering+First` ConcurrentFirst drop.
     /// - `Buffering+Complete` ConcurrentFirst drop.
-    /// - `reset_pid`.
     /// - clean emit + `clear_after_emit`.
     ///
     /// After every mutation the aggregate counter is asserted equal to the
@@ -707,14 +695,6 @@ mod tests {
             }
         ));
         assert!(!r.per_pid.contains_key(&0x60));
-        assert_eq!(r.total_buffered, live_sum(&r));
-
-        // reset_pid drops a still-open PID.
-        r.process_cell(0x70, hdr(CellFragmentIndication::First, 0), &[0x66; 12]);
-        assert_eq!(r.total_buffered, live_sum(&r));
-        r.reset_pid(0x70);
-        assert!(!r.per_pid.contains_key(&0x70));
-        assert_eq!(r.total_buffered, 0);
         assert_eq!(r.total_buffered, live_sum(&r));
 
         // Clean emit path: First+Last, clear_after_emit zeroes the counter.

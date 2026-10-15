@@ -29,9 +29,9 @@ pub use crate::mpegts::demux::psi::{
     has_klva_registration, parse_pat, parse_pmt, walk_descriptors,
 };
 
-// Payload classification helpers (consumed by integration test
-// `mpegts_au_cell_round_trip`).
-pub use crate::mpegts::demux::payload::{KlvShape, classify_klv};
+// Payload classification and AU-cell iteration (consumed by the integration
+// test `au_cell_round_trip`).
+pub use crate::mpegts::demux::payload::{KlvShape, classify_klv, iter_au_cells};
 
 // Canonical descriptor type (definition lives at `crate::mpegts::descriptors`;
 // re-exported here so low-level consumers don't need to cross module boundaries).
