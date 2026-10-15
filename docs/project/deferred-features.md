@@ -1376,13 +1376,13 @@ mean **Deferred**. An entry whose feature has shipped must never read
 ## RTP jitter/reorder buffer + H.264-path RTCP
 
 - **Status:** Deferred. The `H264Receiver` processes packets in arrival
-  order without a jitter buffer or sequence-number reorder window. RTCP
-  RR/SR emission on the H.264 path is also not implemented (v1 decision).
+  order without a jitter buffer or sequence-number reorder window. No path
+  emits RTCP (v1 decision).
 - **Why deferred:** A jitter buffer requires a configurable depth and a
   flush strategy that interacts with the access-unit boundary rules (a
   reordered FU-A fragment may arrive after the next AU's start). The
-  design is non-trivial. RTCP SR/RR support exists on the MPEG-TS-over-
-  RTP path (interleaved pump) but was not wired to the H.264 path.
+  design is non-trivial. RTCP SR/RR reception exists on the interleaved
+  MPEG-TS path; no path emits RTCP.
 - **Large-payload handling (resolved in 0.3.0).** Receive-side
   `max_payload()` now reports each transport's *deliverable ceiling*
   (RTP: 65523; SRT: at least the 1456 live-mode wire max; RIST/UDP:
