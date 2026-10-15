@@ -200,7 +200,7 @@ pub unsafe extern "C" fn tst_mux_publisher_send_video(
     };
     let pts = Pts90khz::new(pts);
     unsafe {
-        with_mux_publisher(p, |mp| match mp.send_video(slice, pts, key_frame) {
+        with_mux_publisher(p, |mp| match mp.push_video(slice, pts, key_frame) {
             Ok(()) => 0,
             Err(e) => record_mux_publisher_error(e),
         })
@@ -235,7 +235,7 @@ pub unsafe extern "C" fn tst_mux_publisher_send_klv(
     };
     let pts = Pts90khz::new(pts);
     unsafe {
-        with_mux_publisher(p, |mp| match mp.send_klv(slice, pts, stream_index) {
+        with_mux_publisher(p, |mp| match mp.push_klv(slice, pts, stream_index) {
             Ok(()) => 0,
             Err(e) => record_mux_publisher_error(e),
         })
@@ -266,7 +266,7 @@ pub unsafe extern "C" fn tst_mux_publisher_send_audio(
     };
     let pts = Pts90khz::new(pts);
     unsafe {
-        with_mux_publisher(p, |mp| match mp.send_audio(slice, pts) {
+        with_mux_publisher(p, |mp| match mp.push_audio(slice, pts) {
             Ok(()) => 0,
             Err(e) => record_mux_publisher_error(e),
         })
@@ -297,7 +297,7 @@ pub unsafe extern "C" fn tst_mux_publisher_send_subtitle(
     };
     let pts = Pts90khz::new(pts);
     unsafe {
-        with_mux_publisher(p, |mp| match mp.send_subtitle(slice, pts) {
+        with_mux_publisher(p, |mp| match mp.push_subtitle(slice, pts) {
             Ok(()) => 0,
             Err(e) => record_mux_publisher_error(e),
         })

@@ -87,12 +87,12 @@ fn unique_suffix() -> u128 {
 ///
 /// # Scope
 /// `MuxPublisher` (the pipeline shell this function pushes through)
-/// exposes only single-target `send_*` methods — no `send_*_to(handle,
+/// exposes only single-target `push_*` methods — no `push_*_to(handle,
 /// ...)` family. A `two-program` profile's second video/KLV stream has
 /// no way to receive its own pushes here, so that profile surfaces
 /// `MuxPublisherError::Mux(MuxError::AmbiguousTarget)` the first time
 /// this function pushes video. `MISP` (`KlvMode::AsyncWithMisp`, the
-/// `misp` profile) IS supported — `MuxPublisher::send_video_misp` exists.
+/// `misp` profile) IS supported — `MuxPublisher::push_video_misp` exists.
 ///
 /// `klv`/`klv_seed` pick the ST 0601 record factory and `au_sizes` the
 /// video AU size regime — see `gen::run`'s doc comment for both.
@@ -163,25 +163,25 @@ fn run_hls_inner(
                     let misp_us = (pts_ticks as u64).wrapping_mul(1_000_000) / PTS_HZ as u64;
                     let misp = MispTimestamp::micros(misp_us, 0x1F);
                     shell
-                        .send_video_misp(&au, pts, keyframe, &misp)
-                        .map_err(|e| format!("send_video_misp: {e}"))?;
+                        .push_video_misp(&au, pts, keyframe, &misp)
+                        .map_err(|e| format!("push_video_misp: {e}"))?;
                 } else {
                     shell
-                        .send_video(&au, pts, keyframe)
-                        .map_err(|e| format!("send_video: {e}"))?;
+                        .push_video(&au, pts, keyframe)
+                        .map_err(|e| format!("push_video: {e}"))?;
                 }
             }
             Event::Klv { seq } => {
                 let record = fixtures::klv_record_for(klv, klv_seed, seq)?;
                 shell
-                    .send_klv(&record, pts, 0x00)
-                    .map_err(|e| format!("send_klv: {e}"))?;
+                    .push_klv(&record, pts, 0x00)
+                    .map_err(|e| format!("push_klv: {e}"))?;
             }
             Event::Audio { frame_idx } => {
                 let frame = fixtures::aac_frame(frame_idx);
                 shell
-                    .send_audio(&frame, pts)
-                    .map_err(|e| format!("send_audio: {e}"))?;
+                    .push_audio(&frame, pts)
+                    .map_err(|e| format!("push_audio: {e}"))?;
             }
         }
     }

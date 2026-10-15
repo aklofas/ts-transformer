@@ -156,6 +156,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CANCEL_POLL_INTERVAL` and `ACCEPT_POLL_INTERVAL` move from
   `net::udp_socket` to `cancel`.
 
+### Changed — tst-pipeline (BREAKING)
+
+- `MuxPublisher::send_*` are renamed `push_*` (`push_video`,
+  `push_video_misp`, `push_klv`, `push_audio`, `push_subtitle`,
+  `push_data`): `send` names an operation that hands bytes to a
+  `Transport`, and a publisher has none. Signatures are unchanged. The C
+  functions keep their names (`tst_mux_publisher_send_*`).
+
 ### Changed — tst-rtp (BREAKING)
 
 - `RtspCancelHandle` and `RtspServerCancelHandle` are aliases of
@@ -177,6 +185,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tst_core::cancel::FlagCancel` (they gain `Default`; behaviour is
   unchanged). `TcpCancelHandle` keeps its type and API.
 
+### Changed — tst-py (BREAKING)
+
+- `tstrans.hls.MuxPublisher.send_video` / `send_klv` / `send_audio` /
+  `send_subtitle` are renamed `push_video` / `push_klv` / `push_audio` /
+  `push_subtitle`.
+
 ### Changed — tst-jni (BREAKING)
 
 - The `Kind` enums of `SrtException`, `RtpException`, `RtspException`,
@@ -184,6 +198,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `KlvEncodeException`, `CodecParseException` and `HlsException` declare their constants in the
   Python binding's member order, so `ordinal()` values change; match on the
   constant, not its ordinal.
+- `org.tstrans.hls.MuxPublisher.sendVideo` / `sendKlv` / `sendAudio` /
+  `sendSubtitle` are renamed `pushVideo` / `pushKlv` / `pushAudio` /
+  `pushSubtitle`.
 
 ### Changed — C header
 

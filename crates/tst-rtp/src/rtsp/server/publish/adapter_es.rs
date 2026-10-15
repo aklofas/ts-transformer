@@ -80,8 +80,7 @@ const KLV_PID: u16 = 0x101;
 /// for the publisher's life: neither its packet queue (about 17 MB at the
 /// cap) nor its PES scratch buffer (about 8 MiB) shrinks once drained.
 fn muxer_buffer_packets() -> usize {
-    let largest_au = H264DepayConfig::default().max_au_bytes;
-    10_000.max((1 + 1) * largest_au.div_ceil(184))
+    super::limits::PublishLimits::DEFAULT.muxer_queue_packets()
 }
 
 /// RTCP packet type of a sender report (RFC 3550 §6.4.1).

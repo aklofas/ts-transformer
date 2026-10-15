@@ -22,7 +22,7 @@
 //!
 //! GIL: every method that needs the shell takes the mutex inside
 //! `py.allow_threads` (`with_inner`), never while holding the GIL — a
-//! `send_*` on another thread holds that mutex with the GIL released and
+//! push_* on another thread holds that mutex with the GIL released and
 //! needs the GIL back to let go of it. `__repr__` takes no lock.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
@@ -100,7 +100,7 @@ impl PyMuxPublisherStats {
 /// pub = HlsPublisher.builder().bind("127.0.0.1:0").output_dir("/tmp/hls").build()
 /// program = MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H264).build()
 /// mp = MuxPublisher.with_config_hls(pub, program)
-/// mp.send_video(b"\x00\x00\x00\x01\x65...", pts=Pts90khz.from_raw(0), key_frame=True)
+/// mp.push_video(b"\x00\x00\x00\x01\x65...", pts=Pts90khz.from_raw(0), key_frame=True)
 /// pub = mp.finish_into_publisher()
 /// pub.finish()
 /// ```
@@ -212,7 +212,7 @@ impl PyMuxPublisher {
     /// Push one video access unit (Annex-B framing). When `key_frame` is
     /// true the shell auto-cuts a segment after the push.
     #[pyo3(signature = (nal, *, pts, key_frame = false))]
-    fn send_video(
+    fn push_video(
         &self,
         py: Python<'_>,
         nal: &Bound<'_, PyAny>,
@@ -222,13 +222,13 @@ impl PyMuxPublisher {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let slice = coerced.as_bytes();
-        self.with_inner(py, |mp| mp.send_video(slice, rust_pts, key_frame))
+        self.with_inner(py, |mp| mp.push_video(slice, rust_pts, key_frame))
     }
 
     /// Push one KLV blob. `stream_index` selects the KLV stream when
     /// multiple are configured (default 0 for single-stream).
     #[pyo3(signature = (klv, *, pts, stream_index = 0))]
-    fn send_klv(
+    fn push_klv(
         &self,
         py: Python<'_>,
         klv: &Bound<'_, PyAny>,
@@ -238,13 +238,13 @@ impl PyMuxPublisher {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let slice = coerced.as_bytes();
-        self.with_inner(py, |mp| mp.send_klv(slice, rust_pts, stream_index))
+        self.with_inner(py, |mp| mp.push_klv(slice, rust_pts, stream_index))
     }
 
     /// Push one or more pre-framed audio frames (ADTS for AAC,
     /// MPEG-2 audio frames for MP2).
     #[pyo3(signature = (frames, *, pts))]
-    fn send_audio(
+    fn push_audio(
         &self,
         py: Python<'_>,
         frames: &Bound<'_, PyAny>,
@@ -253,12 +253,12 @@ impl PyMuxPublisher {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, frames)?;
         let slice = coerced.as_bytes();
-        self.with_inner(py, |mp| mp.send_audio(slice, rust_pts))
+        self.with_inner(py, |mp| mp.push_audio(slice, rust_pts))
     }
 
     /// Push one subtitle payload.
     #[pyo3(signature = (payload, *, pts))]
-    fn send_subtitle(
+    fn push_subtitle(
         &self,
         py: Python<'_>,
         payload: &Bound<'_, PyAny>,
@@ -267,7 +267,7 @@ impl PyMuxPublisher {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice = coerced.as_bytes();
-        self.with_inner(py, |mp| mp.send_subtitle(slice, rust_pts))
+        self.with_inner(py, |mp| mp.push_subtitle(slice, rust_pts))
     }
 
     /// Explicit segment-cut hint (IDR boundary). Cuts the current HLS

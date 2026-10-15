@@ -17,7 +17,7 @@ import org.tstrans.mpegts.MuxerConfig;
  * usable — the handle is read, never claimed, until the native call succeeds.
  * {@link #finishIntoPublisher()} consumes this shell and hands back a fresh
  * {@link HlsPublisher} to {@code finish()} or {@code finishServing()}.
- * {@link #close()} finishes both quietly. A {@code sendVideo} with
+ * {@link #close()} finishes both quietly. A {@code pushVideo} with
  * {@code keyFrame=true} cuts a segment first.
  *
  * <p>Errors: a muxer rejection is a {@link MuxException}; everything else is an
@@ -62,25 +62,25 @@ public final class MuxPublisher extends NativeHandle {
     }
 
     /** Push one Annex-B access unit; a key frame cuts a segment first. */
-    public void sendVideo(byte[] nal, long pts, boolean keyFrame) throws MuxException, HlsException {
+    public void pushVideo(byte[] nal, long pts, boolean keyFrame) throws MuxException, HlsException {
         ensureOpen("MuxPublisher is closed");
         nSendVideo(peekHandle(), nal, pts, keyFrame);
     }
 
     /** Push raw KLV LS bytes (the muxer adds the AU-cell header on sync streams). */
-    public void sendKlv(byte[] klv, long pts, int streamIndex) throws MuxException, HlsException {
+    public void pushKlv(byte[] klv, long pts, int streamIndex) throws MuxException, HlsException {
         ensureOpen("MuxPublisher is closed");
         nSendKlv(peekHandle(), klv, pts, streamIndex);
     }
 
     /** Push pre-framed audio (ADTS for AAC, MPEG-2 audio frames for MP2). */
-    public void sendAudio(byte[] frames, long pts) throws MuxException, HlsException {
+    public void pushAudio(byte[] frames, long pts) throws MuxException, HlsException {
         ensureOpen("MuxPublisher is closed");
         nSendAudio(peekHandle(), frames, pts);
     }
 
     /** Push one subtitle payload. */
-    public void sendSubtitle(byte[] payload, long pts) throws MuxException, HlsException {
+    public void pushSubtitle(byte[] payload, long pts) throws MuxException, HlsException {
         ensureOpen("MuxPublisher is closed");
         nSendSubtitle(peekHandle(), payload, pts);
     }

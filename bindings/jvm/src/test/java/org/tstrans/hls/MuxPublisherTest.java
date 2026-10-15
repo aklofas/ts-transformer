@@ -52,7 +52,7 @@ class MuxPublisherTest {
         HlsPublisher source = pub(dir, HlsMode.LIVE);
         MuxPublisher mp = MuxPublisher.withConfigHls(source, video());
         assertThrows(IllegalStateException.class, source::stats, "source consumed");
-        for (int i = 0; i < 3; i++) mp.sendVideo(syntheticH264Idr(), i * 90_000L, true);
+        for (int i = 0; i < 3; i++) mp.pushVideo(syntheticH264Idr(), i * 90_000L, true);
         MuxPublisherStats ms = mp.stats();
         assertTrue(ms.bytesPushed() > 0);
         assertTrue(ms.cutCalls() >= 2, "3 keyframes → ≥ 2 cuts");
@@ -61,15 +61,15 @@ class MuxPublisherTest {
         recovered.finish();
         assertTrue(Files.exists(dir.resolve("playlist.m3u8")));
         assertThrows(IllegalStateException.class, mp::finishIntoPublisher);
-        assertThrows(IllegalStateException.class, () -> mp.sendVideo(syntheticH264Idr(), 0, true));
+        assertThrows(IllegalStateException.class, () -> mp.pushVideo(syntheticH264Idr(), 0, true));
         mp.close(); // quiet after consume
     }
 
     @Test
     void klvPreservedInSegment(@TempDir Path dir) throws Exception {
         MuxPublisher mp = MuxPublisher.withConfigHls(pub(dir, HlsMode.LIVE), videoKlv());
-        mp.sendKlv(KLV, 0L, 0);
-        mp.sendVideo(syntheticH264Idr(), 90_000L, true);
+        mp.pushKlv(KLV, 0L, 0);
+        mp.pushVideo(syntheticH264Idr(), 90_000L, true);
         mp.cutSegment();
         mp.finishIntoPublisher().finish();
         byte[] seg = Files.readAllBytes(firstSegment(dir));
@@ -88,9 +88,9 @@ class MuxPublisherTest {
     @Test
     void extinfIsMediaDerived(@TempDir Path dir) throws Exception {
         MuxPublisher mp = MuxPublisher.withConfigHls(pub(dir, HlsMode.EVENT), video());
-        mp.sendVideo(syntheticH264Idr(), 0L, true);
-        mp.sendVideo(syntheticH264Idr(), 90_000L, false);
-        mp.sendVideo(syntheticH264Idr(), 261_000L, true); // cuts 0..261000 = 2.900 s
+        mp.pushVideo(syntheticH264Idr(), 0L, true);
+        mp.pushVideo(syntheticH264Idr(), 90_000L, false);
+        mp.pushVideo(syntheticH264Idr(), 261_000L, true); // cuts 0..261000 = 2.900 s
         HlsPublisher hls = mp.finishIntoPublisher();
         String pl = hls.renderPlaylist(false);
         hls.finish();
@@ -118,7 +118,7 @@ class MuxPublisherTest {
     @Test
     void closeWithoutFinishIsQuiet(@TempDir Path dir) throws Exception {
         MuxPublisher mp = MuxPublisher.withConfigHls(pub(dir, HlsMode.LIVE), video());
-        mp.sendVideo(syntheticH264Idr(), 0L, true);
+        mp.pushVideo(syntheticH264Idr(), 0L, true);
         mp.close();
         mp.close();
         assertTrue(Files.exists(dir.resolve("playlist.m3u8")), "close() finishes shell + publisher");

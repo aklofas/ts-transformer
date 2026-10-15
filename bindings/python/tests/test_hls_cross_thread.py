@@ -101,7 +101,7 @@ _MUX_SEND_VIDEO = """
     with tempfile.TemporaryDirectory() as d:
         mp = mux_publisher(d)
         hammer(
-            lambda i: mp.send_video(NAL, pts=Pts90khz.from_raw(i * 3000), key_frame=(i == 0)),
+            lambda i: mp.push_video(NAL, pts=Pts90khz.from_raw(i * 3000), key_frame=(i == 0)),
             lambda i: {call},
         )
         mp.finish_into_publisher().close()

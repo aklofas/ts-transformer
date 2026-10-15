@@ -18,7 +18,7 @@ both the native `misbklv` path and a UL-anchored fallback for stock hls.js).
 
 Configure the KLV stream as `PrivateData` (PMT `stream_type = 0x06` +
 `KLVA` registration descriptor) — the web-friendly carriage that hls.js can
-surface. Pass **raw KLV LS bytes** to `send_klv`.
+surface. Pass **raw KLV LS bytes** to `push_klv`.
 
 ```python
 from tstrans.hls import HlsPublisher, MuxPublisher
@@ -46,8 +46,8 @@ mp = MuxPublisher.with_config_hls(publisher, program)
 
 # Push one keyframe-aligned AU + its KLV record at a shared PTS.
 # key_frame=True auto-cuts a segment at the keyframe.
-mp.send_video(nal, pts=Pts90khz.from_raw(pts), key_frame=True)
-mp.send_klv(klv_ls_bytes, pts=Pts90khz.from_raw(pts))
+mp.push_video(nal, pts=Pts90khz.from_raw(pts), key_frame=True)
+mp.push_klv(klv_ls_bytes, pts=Pts90khz.from_raw(pts))
 
 # ... push the rest of the stream, then finalize ...
 pub = mp.finish_into_publisher()

@@ -143,7 +143,7 @@ pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nSendVideo<'local>(
             return;
         };
         with_shell(env, handle, |s| {
-            s.send_video(&buf, Pts90khz::new(pts), key_frame != 0)
+            s.push_video(&buf, Pts90khz::new(pts), key_frame != 0)
         });
     })
 }
@@ -164,7 +164,7 @@ pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nSendKlv<'local>(
         let Some(buf) = read_bytes(env, &klv) else {
             return;
         };
-        with_shell(env, handle, |s| s.send_klv(&buf, Pts90khz::new(pts), idx));
+        with_shell(env, handle, |s| s.push_klv(&buf, Pts90khz::new(pts), idx));
     })
 }
 
@@ -180,7 +180,7 @@ pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nSendAudio<'local>(
         let Some(buf) = read_bytes(env, &frames) else {
             return;
         };
-        with_shell(env, handle, |s| s.send_audio(&buf, Pts90khz::new(pts)));
+        with_shell(env, handle, |s| s.push_audio(&buf, Pts90khz::new(pts)));
     })
 }
 
@@ -196,7 +196,7 @@ pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nSendSubtitle<'local>(
         let Some(buf) = read_bytes(env, &payload) else {
             return;
         };
-        with_shell(env, handle, |s| s.send_subtitle(&buf, Pts90khz::new(pts)));
+        with_shell(env, handle, |s| s.push_subtitle(&buf, Pts90khz::new(pts)));
     })
 }
 

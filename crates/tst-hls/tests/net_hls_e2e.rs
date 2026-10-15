@@ -63,7 +63,7 @@ fn hls_pipeline_event_mode_writes_three_segments_locally() {
     let au = synthetic_h264_au();
     for i in 0i64..3 {
         let pts = Pts90khz::new(i * 9001);
-        pub_shell.send_video(&au, pts, true).unwrap();
+        pub_shell.push_video(&au, pts, true).unwrap();
     }
 
     let publisher = pub_shell.finish().unwrap();
@@ -112,13 +112,13 @@ fn hls_extinf_is_media_derived_and_target_is_immutable() {
     //   finish():    finalize cuts seg2 (single AU) → wall-clock fallback (tiny).
     let idr_ticks = [0i64, 180_000, 360_000];
     for (gop, &idr) in idr_ticks.iter().enumerate() {
-        pub_shell.send_video(&au, Pts90khz::new(idr), true).unwrap();
+        pub_shell.push_video(&au, Pts90khz::new(idr), true).unwrap();
         if gop + 1 < idr_ticks.len() {
             pub_shell
-                .send_video(&au, Pts90khz::new(idr + 60_000), false)
+                .push_video(&au, Pts90khz::new(idr + 60_000), false)
                 .unwrap();
             pub_shell
-                .send_video(&au, Pts90khz::new(idr + 120_000), false)
+                .push_video(&au, Pts90khz::new(idr + 120_000), false)
                 .unwrap();
         }
     }
@@ -176,7 +176,7 @@ fn hls_pipeline_via_ffmpeg_validates_playlist() {
     let au = synthetic_h264_au();
     for i in 0i64..3 {
         let pts = Pts90khz::new(i * 9001);
-        pub_shell.send_video(&au, pts, true).unwrap();
+        pub_shell.push_video(&au, pts, true).unwrap();
     }
 
     // Finish the stream BEFORE pointing ffmpeg at it, keeping the server up

@@ -93,13 +93,15 @@ pub(crate) const PLACED_WAIT_MAX_TICKS: i64 = PLACED_WAIT_MAX.as_millis() as i64
 /// Maximum number of KLV units [`Aligner`] holds, waiting for alignment
 /// and placed but waiting for the video together. Bounded, drop-oldest —
 /// see [`Aligner::on_klv_unit`].
-pub(crate) const ALIGN_HOLD_MAX_UNITS: usize = 4096;
+pub(crate) const ALIGN_HOLD_MAX_UNITS: usize =
+    super::limits::PublishLimits::DEFAULT.align_hold_units;
 
 /// Maximum total payload bytes [`Aligner`] holds, waiting for alignment
 /// and placed but waiting for the video together, drop-oldest. With units capped at the muxer's KLV ceiling
 /// (`MAX_KLV_UNIT_BYTES`, about 64 KiB) this is the bound that binds for
 /// large units; [`ALIGN_HOLD_MAX_UNITS`] binds for small ones.
-pub(crate) const ALIGN_HOLD_MAX_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const ALIGN_HOLD_MAX_BYTES: usize =
+    super::limits::PublishLimits::DEFAULT.align_hold_bytes;
 
 /// A new sender-report mapping that moves the KLV-to-video offset by at
 /// most this many ticks (1 ms at 90 kHz) replaces the old one without
