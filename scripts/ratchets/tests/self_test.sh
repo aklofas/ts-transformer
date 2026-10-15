@@ -807,5 +807,10 @@ expect "kind-equivalence: an unchanged copy passes" 0 env KIND_EQUIV_ROOT="$ke" 
 plant "$ke/bindings/python/python/tstrans/exceptions.py" '    INPUT_MALFORMED = 0' '    INPUT_MALFORMED = 99'
 expect "kind-equivalence: a hand-edited Python value fails" 1 env KIND_EQUIV_ROOT="$ke" bash "$KE_REPO/scripts/check/repo/kind-equivalence.sh"
 
+# dependency-lattice: a false row fails, the committed table passes.
+printf 'tst-core\t(default)\t-\tserde_json\n' > "$tmp/lattice.tsv"
+expect "dependency-lattice: a plane holding a forbidden crate fails" 1 env LATTICE_TSV="$tmp/lattice.tsv" bash scripts/check/repo/dependency-lattice.sh
+expect "dependency-lattice: the committed table passes"              0 bash scripts/check/repo/dependency-lattice.sh
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

@@ -534,16 +534,25 @@ jobs:
         # 16 such bodies accumulated as `dead_code` warnings on every
         # single-feature build until the 2026-09-05 sweep. Check mode reuses
         # this combo's build-script outputs, so it costs seconds per combo.
+        # `srt,rtp` is the committed header's flavour; `tcp,hls,rtp,tls`
+        # builds, lints and (nextest below) tests the C `tls` forwards
+        # outside `--all-features`.
         # bash (not pwsh) so a failing combo stops the step on windows too.
         shell: bash
         run: |
-          for feats in srt rtp udp tcp hls rist udp,tcp,hls,rist; do
+          for feats in srt rtp udp tcp hls rist udp,tcp,hls,rist srt,rtp tcp,hls,rtp,tls; do
             cargo build -p tst-c --no-default-features --features "$feats"
             # Scope EVERY feature to tst-c (`a,b` -> `tst-c/a,tst-c/b`): with
             # two -p packages a bare name would apply to both, and tst-c's
             # features forward to tst-c-core's anyway.
             cargo clippy -p tst-c -p tst-c-core --all-targets --no-default-features \
               --features "tst-c/${feats//,/,tst-c/}" -- -D warnings
+            # The tcps:// loopback test otherwise runs only under
+            # --all-features; run it in the flavour that ships the C tls forwards.
+            if [ "$feats" = "tcp,hls,rtp,tls" ]; then
+              cargo nextest run -p tst-c --no-default-features --features "$feats" \
+                --test net_transports --no-fail-fast
+            fi
           done
 
       - name: cargo build (all crate types, all-features)
@@ -717,12 +726,14 @@ jobs:
         run: cargo test -p tst-core -p tst-pipeline --target x86_64-unknown-linux-musl
 
   tst-rtp-client-only:
-    name: test (tst-rtp client-only plane, linux-x86_64)
+    name: test (transport bare planes + dependency lattice, linux-x86_64)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # The tokio-free client-only feature plane (`--no-default-features
-    # --features tls`) is what the planned tst-uniffi mobile binding
-    # consumes. No other CI job compiles
+    # Three bare planes: the tokio-free client-only tst-rtp plane
+    # (`--no-default-features --features tls`, what the planned tst-uniffi
+    # mobile binding consumes), tst-rtp with no features at all, and tst-hls
+    # with no features, plus the dependency lattice over every
+    # (package, flags) plane. No other CI job compiles
     # these targets — every other leg builds tst-rtp with default
     # features (rtsp-server on) — so without this leg a client-only
     # compile break or a tokio leak into the client plane would ship
@@ -744,25 +755,27 @@ jobs:
           cache-key: cargo-rtp-client-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           cache-restore-key: cargo-rtp-client-${{ runner.os }}-
 
-      # A client-only build ships no tokio (the server's runtime). Scoped
-      # to `-e normal` — tokio IS
-      # present as a dev-dependency (the RTSP loopback test fixture runs
-      # a tokio runtime), but dev-deps never reach consumers; the leak
-      # this guards against is tokio re-entering the NORMAL tree.
-      - name: Client-only dependency tree is tokio-free
-        run: |
-          if cargo tree -p tst-rtp --no-default-features --features tls -e normal -i tokio 2>/dev/null | grep -q "^tokio"; then
-            echo "::error::tokio leaked into the client-only tst-rtp dependency tree"
-            cargo tree -p tst-rtp --no-default-features --features tls -e normal -i tokio
-            exit 1
-          fi
-          echo "client-only plane is tokio-free"
+      # Every (package, flags) plane keeps the dependencies it promises,
+      # incl. the tokio-free client-only tst-rtp plane (the mobile and WebRTC
+      # bindings' dependency) and the tst-c `tls` forwards.
+      - name: Dependency lattice
+        run: bash scripts/check/repo/dependency-lattice.sh
 
       - name: cargo nextest (tst-rtp, --no-default-features --features tls)
         run: cargo nextest run -p tst-rtp --no-default-features --features tls --no-fail-fast
 
       - name: cargo test --doc (tst-rtp, client-only)
         run: cargo test --doc -p tst-rtp --no-default-features --features tls
+
+      - name: cargo clippy + nextest (tst-rtp, --no-default-features)
+        run: |
+          cargo clippy -p tst-rtp --all-targets --no-default-features -- -D warnings
+          cargo nextest run -p tst-rtp --no-default-features --no-fail-fast
+
+      - name: cargo clippy + nextest (tst-hls, --no-default-features)
+        run: |
+          cargo clippy -p tst-hls --all-targets --no-default-features -- -D warnings
+          cargo nextest run -p tst-hls --no-default-features --no-fail-fast
 
   no-std-baremetal:
     name: no_std bare-metal (compile + QEMU runtime)

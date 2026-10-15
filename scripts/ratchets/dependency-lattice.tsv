@@ -1,0 +1,17 @@
+# dependency-lattice: one row per (package, cargo flags) plane.
+# package	flags ((default) = none)	must contain (, list or -)	must not contain (, list or -)
+# Checked by scripts/check/repo/dependency-lattice.sh over `cargo tree -e normal`.
+tst-core	--no-default-features	-	serde_json,toml,socket2,rustls,tokio
+tst-core	(default)	serde_json	rustls,tokio
+tst-core	--features tls	rustls	tokio
+tst-pipeline	--no-default-features	-	serde_json,socket2,tokio
+tst-rtp	--no-default-features	-	tokio,tokio-util,rustls
+tst-rtp	--no-default-features --features tls	rustls	tokio,tokio-util,tokio-rustls
+tst-rtp	(default)	tokio	rustls
+tst-hls	--no-default-features	-	tokio,hyper,rustls
+tst-udp	(default)	-	tokio,rustls
+tst-tcp	--no-default-features	-	rustls,tokio
+tst-c	--no-default-features	-	tst-srt,tst-rtp,tst-udp,tst-tcp,tst-hls,tst-rist,rustls
+tst-c	--no-default-features --features tcp	tst-tcp	rustls
+tst-c	--no-default-features --features tcp,tls	tst-tcp,rustls	tokio
+tst-c	--no-default-features --features rtp,tls	tst-rtp,rustls,tokio-rustls	-
