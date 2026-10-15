@@ -23,8 +23,7 @@ lifecycle, the shared cancel latch and the stats snapshot.
 
 `Box<dyn Transport>` (and `Box<dyn RecvTransport>`) still satisfy the shell
 bounds through the blanket impls, so a Rust caller can erase the transport
-by hand. The `Boxed*` aliases in `tst_pipeline::dyn_aliases` are unused by
-any binding and are scheduled for removal.
+by writing the type out: `MuxSender<Box<dyn Transport>>`.
 
 ## Per-language patterns
 

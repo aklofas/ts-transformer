@@ -12,7 +12,6 @@
 //! - You want to handle framing yourself.
 //! - You're writing a test that needs a bare receive loop.
 
-use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use tracing::info_span;
@@ -304,22 +303,6 @@ impl<R: RecvTransport> Drop for RawReceiver<R> {
         tracing::info!("RawReceiver closed");
     }
 }
-
-/// Type alias for [`RawReceiver`] with a boxed [`RecvTransport`] trait object.
-///
-/// See [`BoxedMuxSender`](crate::mux_sender::BoxedMuxSender) for rationale.
-///
-/// # Example
-/// ```no_run
-/// use tst_pipeline::raw_receiver::BoxedRawReceiver;
-/// use tst_pipeline::{RawReceiver, RawReceiverConfig};
-/// use tst_core::RecvTransport;
-///
-/// fn open(transport: Box<dyn RecvTransport>) -> BoxedRawReceiver {
-///     RawReceiver::new(transport, RawReceiverConfig::default())
-/// }
-/// ```
-pub type BoxedRawReceiver = RawReceiver<Box<dyn crate::RecvTransport>>;
 
 #[cfg(test)]
 mod tests {

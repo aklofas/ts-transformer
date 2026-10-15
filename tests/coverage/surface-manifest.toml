@@ -4632,15 +4632,6 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
-[[surface]]
-kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::binding::kind::kind_of_transport"
-owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
-scenario_ids = []
-tier = "A"
-
 # --- SRT open path + managed handles ------------------------------------
 # `ManagedHandles` is covered by its own in-module tests; the tst-srt open
 # path and the `from_url` family by the two loopback domains below.

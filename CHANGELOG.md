@@ -9,6 +9,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed — tst-pipeline (BREAKING)
+
+- The dyn-erased shell aliases are removed: the `tst_pipeline::dyn_aliases`
+  module and the six `Boxed*` type aliases (`BoxedMuxSender`, `BoxedSender`,
+  `BoxedRawSender`, `BoxedDemuxReceiver`, `BoxedReceiver`, `BoxedRawReceiver`),
+  at the crate root and in their shell modules. No binding used them. Write
+  the type out instead — `MuxSender<Box<dyn Transport>>`; `Box<dyn Transport>`
+  and `Box<dyn RecvTransport>` still satisfy the shell bounds.
+- `tst_pipeline::binding::kind::kind_of_transport` is removed; use
+  `BindingError::from(err).kind`.
+
 ### Changed — tst-core (BREAKING)
 
 - `tst_core::transport::conformance` (the transport conformance kit) is now

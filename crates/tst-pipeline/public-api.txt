@@ -215,7 +215,6 @@ pub fn tst_pipeline::binding::kind::kind_of_klv_decode(&tst_core::error::KlvDeco
 pub fn tst_pipeline::binding::kind::kind_of_klv_encode(&tst_core::error::KlvEncodeError) -> tst_pipeline::binding::kind::BindingErrorKind
 pub fn tst_pipeline::binding::kind::kind_of_klv_field(&tst_core::error::KlvFieldError) -> tst_pipeline::binding::kind::BindingErrorKind
 pub fn tst_pipeline::binding::kind::kind_of_mux(&tst_core::error::MuxError) -> tst_pipeline::binding::kind::BindingErrorKind
-pub fn tst_pipeline::binding::kind::kind_of_transport(&tst_core::transport::TransportError) -> tst_pipeline::binding::kind::BindingErrorKind
 pub mod tst_pipeline::binding::owned
 pub enum tst_pipeline::binding::owned::CloseFailure<E>
 pub tst_pipeline::binding::owned::CloseFailure::Inner(E)
@@ -784,15 +783,7 @@ impl core::marker::Unpin for tst_pipeline::demux_receiver::DemuxReceiverStats
 impl core::marker::UnsafeUnpin for tst_pipeline::demux_receiver::DemuxReceiverStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::demux_receiver::DemuxReceiverStats
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::demux_receiver::DemuxReceiverStats
-pub type tst_pipeline::demux_receiver::BoxedDemuxReceiver = tst_pipeline::demux_receiver::DemuxReceiver<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>
 pub type tst_pipeline::demux_receiver::ByteSink = alloc::boxed::Box<(dyn core::ops::function::FnMut(&[u8]) + core::marker::Send)>
-pub mod tst_pipeline::dyn_aliases
-pub type tst_pipeline::dyn_aliases::BoxedDemuxReceiver = tst_pipeline::demux_receiver::DemuxReceiver<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>
-pub type tst_pipeline::dyn_aliases::BoxedMuxSender = tst_pipeline::mux_sender::MuxSender<alloc::boxed::Box<dyn tst_core::transport::Transport>>
-pub type tst_pipeline::dyn_aliases::BoxedRawReceiver = tst_pipeline::raw_receiver::RawReceiver<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>
-pub type tst_pipeline::dyn_aliases::BoxedRawSender = tst_pipeline::raw_sender::RawSender<alloc::boxed::Box<dyn tst_core::transport::Transport>>
-pub type tst_pipeline::dyn_aliases::BoxedReceiver = tst_pipeline::receiver::Receiver<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>
-pub type tst_pipeline::dyn_aliases::BoxedSender = tst_pipeline::sender::Sender<alloc::boxed::Box<dyn tst_core::transport::Transport>>
 pub mod tst_pipeline::ext
 pub mod tst_pipeline::ext::file_transport
 pub struct tst_pipeline::ext::file_transport::FileTransport
@@ -1244,7 +1235,6 @@ impl core::marker::Unpin for tst_pipeline::mux_sender::MuxSenderStats
 impl core::marker::UnsafeUnpin for tst_pipeline::mux_sender::MuxSenderStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::mux_sender::MuxSenderStats
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::mux_sender::MuxSenderStats
-pub type tst_pipeline::mux_sender::BoxedMuxSender = tst_pipeline::mux_sender::MuxSender<alloc::boxed::Box<dyn tst_core::transport::Transport>>
 pub mod tst_pipeline::raw_receiver
 #[non_exhaustive] pub enum tst_pipeline::raw_receiver::RawReceiverErrorSource
 pub tst_pipeline::raw_receiver::RawReceiverErrorSource::Transport(tst_core::transport::TransportError)
@@ -1345,7 +1335,6 @@ impl core::marker::Unpin for tst_pipeline::raw_receiver::RawRecvStats
 impl core::marker::UnsafeUnpin for tst_pipeline::raw_receiver::RawRecvStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::raw_receiver::RawRecvStats
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::raw_receiver::RawRecvStats
-pub type tst_pipeline::raw_receiver::BoxedRawReceiver = tst_pipeline::raw_receiver::RawReceiver<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>
 pub mod tst_pipeline::raw_sender
 #[non_exhaustive] pub enum tst_pipeline::raw_sender::RawSenderErrorSource
 pub tst_pipeline::raw_sender::RawSenderErrorSource::Transport(tst_core::transport::TransportError)
@@ -1446,7 +1435,6 @@ impl core::marker::Unpin for tst_pipeline::raw_sender::RawSenderError
 impl core::marker::UnsafeUnpin for tst_pipeline::raw_sender::RawSenderError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::raw_sender::RawSenderError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::raw_sender::RawSenderError
-pub type tst_pipeline::raw_sender::BoxedRawSender = tst_pipeline::raw_sender::RawSender<alloc::boxed::Box<dyn tst_core::transport::Transport>>
 pub mod tst_pipeline::receiver
 pub mod tst_pipeline::receiver::sync
 pub enum tst_pipeline::receiver::sync::SyncState
@@ -1590,7 +1578,6 @@ impl core::marker::Unpin for tst_pipeline::receiver::ReceiverStats
 impl core::marker::UnsafeUnpin for tst_pipeline::receiver::ReceiverStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::receiver::ReceiverStats
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::receiver::ReceiverStats
-pub type tst_pipeline::receiver::BoxedReceiver = tst_pipeline::receiver::Receiver<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>
 pub mod tst_pipeline::reconnect
 pub enum tst_pipeline::reconnect::BackoffStrategy
 pub tst_pipeline::reconnect::BackoffStrategy::Constant(core::time::Duration)
@@ -1960,7 +1947,6 @@ impl core::marker::Unpin for tst_pipeline::sender::TsFraming
 impl core::marker::UnsafeUnpin for tst_pipeline::sender::TsFraming
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::sender::TsFraming
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::sender::TsFraming
-pub type tst_pipeline::sender::BoxedSender = tst_pipeline::sender::Sender<alloc::boxed::Box<dyn tst_core::transport::Transport>>
 pub mod tst_pipeline::shell_error
 #[non_exhaustive] pub enum tst_pipeline::shell_error::ShellErrorKind
 pub tst_pipeline::shell_error::ShellErrorKind::Backpressure
@@ -3032,11 +3018,5 @@ pub fn tst_pipeline::receiver::ReceiverError::kind(&self) -> tst_pipeline::shell
 impl tst_pipeline::shell_error::ShellError for tst_pipeline::sender::SenderError
 pub fn tst_pipeline::sender::SenderError::errno_code(&self) -> core::option::Option<i32>
 pub fn tst_pipeline::sender::SenderError::kind(&self) -> tst_pipeline::shell_error::ShellErrorKind
-pub type tst_pipeline::BoxedDemuxReceiver = tst_pipeline::demux_receiver::DemuxReceiver<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>
-pub type tst_pipeline::BoxedMuxSender = tst_pipeline::mux_sender::MuxSender<alloc::boxed::Box<dyn tst_core::transport::Transport>>
-pub type tst_pipeline::BoxedRawReceiver = tst_pipeline::raw_receiver::RawReceiver<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>
-pub type tst_pipeline::BoxedRawSender = tst_pipeline::raw_sender::RawSender<alloc::boxed::Box<dyn tst_core::transport::Transport>>
-pub type tst_pipeline::BoxedReceiver = tst_pipeline::receiver::Receiver<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>
-pub type tst_pipeline::BoxedSender = tst_pipeline::sender::Sender<alloc::boxed::Box<dyn tst_core::transport::Transport>>
 pub type tst_pipeline::ByteSink = alloc::boxed::Box<(dyn core::ops::function::FnMut(&[u8]) + core::marker::Send)>
 pub type tst_pipeline::FactoryCancel = tst_core::cancel::CancelSlot
