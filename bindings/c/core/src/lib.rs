@@ -272,7 +272,7 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 /// Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 23` in the
 /// generated header. Runtime accessor: [`tst_get_abi_version_minor`].
 ///
-/// What each minor added is recorded once, in
+/// What each minor added is recorded once, in the repository's
 /// `docs/reference/binding-authors.md` § "Versioning".
 pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 23;
 
