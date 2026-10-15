@@ -307,6 +307,9 @@ impl core::panic::unwind_safe::UnwindSafe for tst_rtp::h264::depacketizer::H264D
 pub type tst_rtp::h264::depacketizer::H264Au = tst_rtp::depay::AccessUnit
 pub type tst_rtp::h264::depacketizer::H264DepayConfig = tst_rtp::depay::DepayConfig
 pub type tst_rtp::h264::depacketizer::H264DepayStats = tst_rtp::depay::DepayStats
+pub mod tst_rtp::h264::packetizer
+pub const tst_rtp::h264::packetizer::MIN_MAX_PAYLOAD: usize
+pub fn tst_rtp::h264::packetizer::packetize<'a, I>(I, usize) -> alloc::vec::Vec<tst_rtp::packet::Chunk> where I: core::iter::traits::collect::IntoIterator<Item = &'a [u8]>
 pub mod tst_rtp::h264::receiver
 pub struct tst_rtp::h264::receiver::H264Receiver
 impl tst_rtp::h264::receiver::H264Receiver
@@ -392,6 +395,39 @@ impl core::panic::unwind_safe::UnwindSafe for tst_rtp::h264::receiver::H264Recei
 pub type tst_rtp::h264::H264Au = tst_rtp::depay::AccessUnit
 pub type tst_rtp::h264::H264DepayConfig = tst_rtp::depay::DepayConfig
 pub type tst_rtp::h264::H264DepayStats = tst_rtp::depay::DepayStats
+pub mod tst_rtp::h265
+pub mod tst_rtp::h265::depacketizer
+pub struct tst_rtp::h265::depacketizer::H265Depacketizer
+impl tst_rtp::h265::depacketizer::H265Depacketizer
+pub fn tst_rtp::h265::depacketizer::H265Depacketizer::feed(&mut self, &tst_rtp::packet::RtpHeader, &[u8])
+pub fn tst_rtp::h265::depacketizer::H265Depacketizer::flush(&mut self) -> core::option::Option<tst_rtp::depay::AccessUnit>
+pub fn tst_rtp::h265::depacketizer::H265Depacketizer::new(tst_rtp::depay::DepayConfig) -> Self
+pub fn tst_rtp::h265::depacketizer::H265Depacketizer::next_au(&mut self) -> core::option::Option<tst_rtp::depay::AccessUnit>
+pub fn tst_rtp::h265::depacketizer::H265Depacketizer::stats(&self) -> tst_rtp::depay::DepayStats
+impl core::marker::Freeze for tst_rtp::h265::depacketizer::H265Depacketizer
+impl core::marker::Send for tst_rtp::h265::depacketizer::H265Depacketizer
+impl core::marker::Sync for tst_rtp::h265::depacketizer::H265Depacketizer
+impl core::marker::Unpin for tst_rtp::h265::depacketizer::H265Depacketizer
+impl core::marker::UnsafeUnpin for tst_rtp::h265::depacketizer::H265Depacketizer
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::h265::depacketizer::H265Depacketizer
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::h265::depacketizer::H265Depacketizer
+pub mod tst_rtp::h265::packetizer
+pub const tst_rtp::h265::packetizer::MIN_MAX_PAYLOAD: usize
+pub fn tst_rtp::h265::packetizer::packetize<'a, I>(I, usize) -> alloc::vec::Vec<tst_rtp::packet::Chunk> where I: core::iter::traits::collect::IntoIterator<Item = &'a [u8]>
+pub struct tst_rtp::h265::H265Depacketizer
+impl tst_rtp::h265::depacketizer::H265Depacketizer
+pub fn tst_rtp::h265::depacketizer::H265Depacketizer::feed(&mut self, &tst_rtp::packet::RtpHeader, &[u8])
+pub fn tst_rtp::h265::depacketizer::H265Depacketizer::flush(&mut self) -> core::option::Option<tst_rtp::depay::AccessUnit>
+pub fn tst_rtp::h265::depacketizer::H265Depacketizer::new(tst_rtp::depay::DepayConfig) -> Self
+pub fn tst_rtp::h265::depacketizer::H265Depacketizer::next_au(&mut self) -> core::option::Option<tst_rtp::depay::AccessUnit>
+pub fn tst_rtp::h265::depacketizer::H265Depacketizer::stats(&self) -> tst_rtp::depay::DepayStats
+impl core::marker::Freeze for tst_rtp::h265::depacketizer::H265Depacketizer
+impl core::marker::Send for tst_rtp::h265::depacketizer::H265Depacketizer
+impl core::marker::Sync for tst_rtp::h265::depacketizer::H265Depacketizer
+impl core::marker::Unpin for tst_rtp::h265::depacketizer::H265Depacketizer
+impl core::marker::UnsafeUnpin for tst_rtp::h265::depacketizer::H265Depacketizer
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::h265::depacketizer::H265Depacketizer
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::h265::depacketizer::H265Depacketizer
 pub mod tst_rtp::packet
 #[non_exhaustive] pub enum tst_rtp::packet::RtpParseError
 pub tst_rtp::packet::RtpParseError::Truncated
@@ -416,6 +452,24 @@ impl core::marker::Unpin for tst_rtp::packet::RtpParseError
 impl core::marker::UnsafeUnpin for tst_rtp::packet::RtpParseError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::packet::RtpParseError
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::packet::RtpParseError
+#[non_exhaustive] pub struct tst_rtp::packet::Chunk
+pub tst_rtp::packet::Chunk::marker: bool
+pub tst_rtp::packet::Chunk::payload: alloc::vec::Vec<u8>
+impl core::clone::Clone for tst_rtp::packet::Chunk
+pub fn tst_rtp::packet::Chunk::clone(&self) -> tst_rtp::packet::Chunk
+impl core::cmp::Eq for tst_rtp::packet::Chunk
+impl core::cmp::PartialEq for tst_rtp::packet::Chunk
+pub fn tst_rtp::packet::Chunk::eq(&self, &tst_rtp::packet::Chunk) -> bool
+impl core::fmt::Debug for tst_rtp::packet::Chunk
+pub fn tst_rtp::packet::Chunk::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_rtp::packet::Chunk
+impl core::marker::Freeze for tst_rtp::packet::Chunk
+impl core::marker::Send for tst_rtp::packet::Chunk
+impl core::marker::Sync for tst_rtp::packet::Chunk
+impl core::marker::Unpin for tst_rtp::packet::Chunk
+impl core::marker::UnsafeUnpin for tst_rtp::packet::Chunk
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::packet::Chunk
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::packet::Chunk
 #[non_exhaustive] pub struct tst_rtp::packet::Parsed
 pub tst_rtp::packet::Parsed::header: tst_rtp::packet::RtpHeader
 pub tst_rtp::packet::Parsed::payload_end: usize
