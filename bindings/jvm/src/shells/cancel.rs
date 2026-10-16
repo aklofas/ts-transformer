@@ -6,10 +6,9 @@
 //! `close()`, agree. Per-type plain registry: the view has no parked op of
 //! its own.
 
+use crate::panic::jni_native;
 use std::sync::LazyLock;
 
-use jni::JNIEnv;
-use jni::objects::JClass;
 use jni::sys::{jboolean, jlong};
 
 use crate::handle::{CancelView, HandleRegistry};
@@ -21,29 +20,19 @@ pub(crate) fn cancel_view_handle(view: CancelView) -> jlong {
     REGISTRY_CANCEL.insert(view) as jlong
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_CancelHandle_nCancel(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    fn Java_org_tstrans_shells_CancelHandle_nCancel(env, _class, handle: jlong) = () => {
         if REGISTRY_CANCEL
             .with(handle as u64, |c| c.0.cancel())
             .is_none()
         {
             crate::error::throw_closed(env, "CancelHandle");
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_CancelHandle_nIsCancelled(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jboolean {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    fn Java_org_tstrans_shells_CancelHandle_nIsCancelled(env, _class, handle: jlong) -> jboolean = 0 => {
         match REGISTRY_CANCEL.with(handle as u64, |c| u8::from(c.0.is_cancelled())) {
             Some(v) => v,
             None => {
@@ -51,17 +40,12 @@ pub extern "system" fn Java_org_tstrans_shells_CancelHandle_nIsCancelled(
                 0
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_CancelHandle_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    fn Java_org_tstrans_shells_CancelHandle_nClose(_env, _class, handle: jlong) = () => {
         // Atomic + idempotent drop.
         let _ = REGISTRY_CANCEL.close(handle as u64);
-    })
+    }
 }
