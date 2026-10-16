@@ -4,8 +4,8 @@
 #
 #   1. The body wraps work in `crate::panic::ffi_catch(...)` (the
 #      open-path + builder-setter pattern).
-#   2. The body uses `Handle::with_inner_mut(...)` or
-#      `Handle::with_inner_ref(...)` — both already wrap their closure
+#   2. The body uses `CHandle::with_inner_mut(...)` or
+#      `CHandle::with_inner_ref(...)` — both already wrap their closure
 #      in `catch_unwind` internally (see bindings/c/core/src/handle.rs).
 #   3. The function name is in the trivially-infallible allowlist
 #      below (constant returns with no internal locking, panics, or
@@ -110,7 +110,7 @@ for entry in "${ENTRIES[@]}"; do
     # Step 3: scan body for one of the panic-isolation patterns. The
     # `with_mux_publisher(` HLS helper (bindings/c/core/src/hls/mux_publisher.rs)
     # wraps its closure in crate::panic::ffi_catch internally — same contract
-    # as Handle::with_inner_mut — so callers delegating through it are isolated.
+    # as CHandle::with_inner_mut — so callers delegating through it are isolated.
     # `crate::transport_impls::` calls (WP18 genericization) forward directly
     # to generic bodies in transport_impls.rs, which route through with_inner_mut
     # / with_inner_ref internally; the isolation guarantee is preserved
@@ -135,7 +135,7 @@ if [[ $missing -gt 0 ]]; then
     echo
     echo "Fix options:"
     echo "  1. Wrap the body in crate::panic::ffi_catch(default, || { ... })"
-    echo "  2. Route mutation through Handle::with_inner_mut(|inner| { ... })"
+    echo "  2. Route mutation through CHandle::with_inner_mut(|inner| { ... })"
     echo "  3. If the function is provably infallible (constant return,"
     echo "     no allocation, no locking), add it to the ALLOWLIST in"
     echo "     scripts/check/c/extern-c-ffi-catch-coverage.sh"

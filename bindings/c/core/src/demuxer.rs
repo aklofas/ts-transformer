@@ -20,26 +20,38 @@
 use crate::demux_config::TstDemuxConfig;
 use crate::error::{TstError, record_demux_error, record_not_available, set_last_error};
 use crate::event::{EventArena, TstEvent};
-use crate::handle::Handle;
+use crate::handle::CHandle;
 use alloc::boxed::Box;
 use tst_core::mpegts::demux::Demuxer;
 
-#[cfg(not(feature = "std"))]
-use crate::nostd_mutex::Mutex;
-#[cfg(feature = "std")]
-use std::sync::Mutex;
+/// What a `TstDemuxer` owns: the demuxer and the `EventArena` the caller's
+/// `TstEvent` pointers borrow from (§4.5 borrowed-buffer policy: pointer
+/// fields on `TstEvent` are valid until the next `tst_demuxer_next_event`
+/// or `tst_demuxer_close` call on this handle). Both sit behind the one
+/// handle slot, so the arena needs no lock of its own.
+struct DemuxState {
+    demuxer: Demuxer,
+    arena: EventArena,
+}
+
+impl DemuxState {
+    fn new(demuxer: Demuxer) -> Self {
+        Self {
+            demuxer,
+            arena: EventArena::new(),
+        }
+    }
+}
 
 /// Opaque handle wrapping a `tst_core::mpegts::demux::Demuxer`.
 ///
 /// Allocated by `tst_demuxer_open` / `tst_demuxer_open_with_config`
-/// and freed by `tst_demuxer_close`. The `arena` is shared between
-/// the data-path lock and the caller's `TstEvent` lifetime contract
-/// (§4.5 borrowed-buffer policy: pointer fields on `TstEvent` are
-/// valid until the next `tst_demuxer_next_event` or `tst_demuxer_close`
-/// call on this handle).
+/// and freed by `tst_demuxer_close`. Pointer fields on a `TstEvent` borrow
+/// from the handle's event arena and are valid until the next
+/// `tst_demuxer_next_event` or `tst_demuxer_close` call on this handle
+/// (§4.5 borrowed-buffer policy).
 pub struct TstDemuxer {
-    inner: Handle<Demuxer>,
-    arena: Mutex<EventArena>,
+    inner: CHandle<DemuxState>,
 }
 
 /// Open a standalone offline demuxer with default configuration.
@@ -59,8 +71,7 @@ pub unsafe extern "C" fn tst_demuxer_open() -> *mut TstDemuxer {
     crate::panic::ffi_catch(core::ptr::null_mut(), || {
         let demuxer = Demuxer::new();
         Box::into_raw(Box::new(TstDemuxer {
-            inner: Handle::new(demuxer),
-            arena: Mutex::new(EventArena::new()),
+            inner: CHandle::offline(DemuxState::new(demuxer)),
         }))
     })
 }
@@ -91,8 +102,7 @@ pub unsafe extern "C" fn tst_demuxer_open_with_config(
             None => Demuxer::new(),
         };
         Box::into_raw(Box::new(TstDemuxer {
-            inner: Handle::new(demuxer),
-            arena: Mutex::new(EventArena::new()),
+            inner: CHandle::offline(DemuxState::new(demuxer)),
         }))
     })
 }
@@ -147,10 +157,12 @@ pub unsafe extern "C" fn tst_demuxer_feed(
         Ok(s) => s,
         Err(code) => return code,
     };
-    handle.inner.with_inner_mut(|d| match d.feed(slice) {
-        Ok(()) => 0,
-        Err(e) => record_demux_error(&e),
-    })
+    handle
+        .inner
+        .with_inner_mut(|st| match st.demuxer.feed(slice) {
+            Ok(()) => 0,
+            Err(e) => record_demux_error(&e),
+        })
 }
 
 /// Flush partial PES still buffered at end-of-stream.
@@ -172,8 +184,8 @@ pub unsafe extern "C" fn tst_demuxer_flush(p: *mut TstDemuxer) -> crate::c_types
         set_last_error(TstError::InvalidConfig, "null demuxer pointer");
         return TstError::InvalidConfig as i32;
     };
-    handle.inner.with_inner_mut(|d| {
-        d.flush();
+    handle.inner.with_inner_mut(|st| {
+        st.demuxer.flush();
         0
     })
 }
@@ -220,24 +232,23 @@ pub unsafe extern "C" fn tst_demuxer_next_event(
         set_last_error(TstError::InvalidConfig, "null out_event pointer");
         return TstError::InvalidConfig as i32;
     }
-    handle.inner.with_inner_mut(|d| match d.next_event() {
-        Some(ev) => {
-            // Poison = a panic mid-write on another call; the arena is
-            // rewritten before it is read, so recover (binding poison
-            // policy: readers recover).
-            let mut arena = handle.arena.lock().unwrap_or_else(|e| e.into_inner());
-            // SAFETY: out_event non-null per guard above.
-            // event::convert writes through the pointer; pointer fields on the
-            // result alias the arena Vecs (held under the Mutex for this call;
-            // released before the closure returns, but Vec base pointers are
-            // stable until the next convert() call clears them — §4.5 lifetime).
-            unsafe {
-                crate::event::convert(&mut arena, &ev, &mut *out_event);
+    handle
+        .inner
+        .with_inner_mut(|st| match st.demuxer.next_event() {
+            Some(ev) => {
+                // SAFETY: out_event non-null per guard above.
+                // event::convert writes through the pointer; pointer fields on the
+                // result alias the arena Vecs (written under the handle slot for
+                // this call; released before the closure returns, but Vec base
+                // pointers are stable until the next convert() call clears them —
+                // §4.5 lifetime).
+                unsafe {
+                    crate::event::convert(&mut st.arena, &ev, &mut *out_event);
+                }
+                0
             }
-            0
-        }
-        None => record_not_available("no demux event ready; feed more bytes or flush first"),
-    })
+            None => record_not_available("no demux event ready; feed more bytes or flush first"),
+        })
 }
 
 /// Close and free the demuxer handle.
@@ -252,7 +263,7 @@ pub unsafe extern "C" fn tst_demuxer_close(p: *mut TstDemuxer) {
             return;
         }
         let boxed = unsafe { Box::from_raw(p) };
-        boxed.inner.close();
+        boxed.inner.release();
         drop(boxed);
     });
 }

@@ -1,305 +1,151 @@
-//! `Handle<T>` — the no_std wrapper for the offline C-side opaque pointers,
-//! and `CHandle<T, S>` — the std transport-handle shape over
-//! `tst_pipeline::binding::Owned`.
+//! `CHandle<T, S>` — every C-side opaque handle that owns a value, over
+//! `tst_pipeline::binding::Owned` (the one handle state machine shared with
+//! the Python and JVM bindings): the slot, the lock-free cancel handle, the
+//! construction-time snapshot `S`, and one panic policy (a mutator panic
+//! drops the value, a reader panic keeps it).
 //!
-//! `Handle<T> = Mutex<Option<T>>`. `_open` returns
-//! `Box::into_raw(Box::new(Handle::new(inner)))`. Data-path entry points
-//! call `Handle::with_inner_mut`; `_close` calls `Handle::close`. Drop of
-//! the inner runs Drop, which closes the underlying transport / muxer.
-//!
-//! `Handle<T>` serves ONLY the three offline handles that must
-//! build without std (`TstMuxer`, `TstDemuxer`, `TstSt0601`). Every
-//! transport-bearing handle holds a `CHandle<T, S>` instead — the one
-//! handle state machine shared with the Python and JVM bindings, which
-//! carries the cancel handle and the construction-time snapshot beside the
-//! slot so neither is reached through the lock. `binding` is std-only,
-//! which is why both shapes live here.
-//!
-//! Under `no_std` the lock is the spin-backed `nostd_mutex::Mutex` — no
-//! priority inheritance, no interrupt masking — so each C handle must be
-//! driven from a single task (one-handle-per-task), the same contract
-//! `tst-pipeline` documents for its sender shells. Sharing one handle
-//! across preemptive tasks can livelock a higher-priority task against a
-//! preempted lock-holder. (`std` builds use `std::sync::Mutex`; the
-//! contract applies only to no_std/bare-metal embeddings.)
+//! The offline handles (`TstMuxer`, `TstDemuxer`, `TstSt0601`) use
+//! `CHandle::offline` and build without `std`. Under `no_std` the slot
+//! lock is a spin lock — no priority inheritance, no interrupt masking —
+//! and a panic aborts, so each C handle must be driven from a single task
+//! (one-handle-per-task), the contract `tst-pipeline` documents for its
+//! shells. Sharing one handle across preemptive tasks can livelock a
+//! higher-priority task against a preempted lock holder.
 
-use crate::error::{TstError, record_internal, record_panic_caught, set_last_error};
+use alloc::sync::Arc;
 
-#[cfg(not(feature = "std"))]
-use crate::nostd_mutex::Mutex;
+use tst_core::cancel::FlagCancel;
+use tst_core::transport::TransportCancel;
 #[cfg(feature = "std")]
-use std::sync::Mutex;
+use tst_core::transport::{EndReason, EndReasonHandle};
+use tst_pipeline::binding::{BindingError, Close, Owned};
 
-/// Run `f` catching any panic (std). Returns `Ok(result)` or `Err(detail)`.
-///
-/// Delegates to the shared binding-layer helper so C, Python and the JVM
-/// render panic payloads identically.
-#[cfg(feature = "std")]
-fn catch<R>(f: impl FnOnce() -> R) -> Result<R, alloc::string::String> {
-    tst_pipeline::binding::panic::catch(f)
-}
+use crate::error::record_binding_error;
 
-/// Under no_std (panic = abort), run the closure directly — no unwinding possible.
-#[cfg(not(feature = "std"))]
-fn catch<R>(f: impl FnOnce() -> R) -> Result<R, alloc::string::String> {
-    Ok(f())
-}
+/// Newtype over [`Owned`] that projects the handle state machine onto
+/// the C `int` + last-error contract. The `with_inner_*` names are the call
+/// shape the `extern-c-ffi-catch-coverage.sh` rail looks for.
+pub(crate) struct CHandle<T, S = ()>(Owned<T, S>);
 
-pub(crate) struct Handle<T> {
-    inner: Mutex<Option<T>>,
-}
+impl<T, S> CHandle<T, S> {
+    #[allow(dead_code)] // consumed by every `_open`
+    pub(crate) fn new(inner: T, cancel: Arc<dyn TransportCancel>, snapshot: S) -> Self {
+        Self(Owned::new(inner, cancel, snapshot))
+    }
 
-impl<T> Handle<T> {
-    pub(crate) fn new(value: T) -> Self {
-        Self {
-            inner: Mutex::new(Some(value)),
+    /// Receivers only: attach the end-reason cell read by `_end_reason`.
+    #[cfg(feature = "std")]
+    #[allow(dead_code)] // consumed by the receiver families
+    pub(crate) fn with_end_reason(self, h: EndReasonHandle) -> Self {
+        Self(self.0.with_end_reason(h))
+    }
+
+    /// Run `f` against `&mut T`. Closed / poisoned / panicked handles are
+    /// recorded through the ONE error path (`record_binding_error`):
+    /// `Closed` → TST_E_CLOSED, `Poisoned` → TST_E_INTERNAL,
+    /// `Panicked` → TST_E_PANIC_CAUGHT. A caught panic in a MUTATOR drops
+    /// the inner (later calls are `Closed`); [`Self::with_inner_ref`] keeps it.
+    #[allow(dead_code)] // consumed by the data-path entry points
+    pub(crate) fn with_inner_mut(&self, f: impl FnOnce(&mut T) -> i32) -> i32 {
+        match self.0.with_mut(f) {
+            Ok(rc) => rc,
+            Err(state) => record_binding_error(BindingError::from(state)),
         }
     }
 
-    /// Run `f` against `&mut T` if the handle is live. If the handle is
-    /// closed, sets `TST_E_CLOSED` and returns its code.
-    ///
-    /// The closure is run inside `std::panic::catch_unwind`. A panic
-    /// transitively reachable from any tst-c data-path call is caught
-    /// at the FFI boundary, recorded as `TST_E_PANIC_CAUGHT`, and the
-    /// inner state is dropped (subsequent calls on the same handle
-    /// return `TST_E_CLOSED`). `AssertUnwindSafe` is sound here because
-    /// we catch and clear; no further use of `T` happens after a panic.
-    pub(crate) fn with_inner_mut<F>(&self, f: F) -> i32
-    where
-        F: FnOnce(&mut T) -> i32,
-    {
-        let mut guard = match self.inner.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                record_internal("mutex poisoned");
-                return TstError::Internal as i32;
-            }
-        };
-        match guard.as_mut() {
-            Some(t) => match catch(|| f(t)) {
-                Ok(rc) => rc,
-                Err(detail) => {
-                    record_panic_caught(&detail);
-                    // After a panic the inner state is indeterminate.
-                    // Drop it so subsequent calls return Closed rather
-                    // than reusing potentially-corrupted state.
-                    *guard = None;
-                    TstError::PanicCaught as i32
-                }
-            },
-            None => {
-                set_last_error(TstError::Closed, "handle is closed");
-                TstError::Closed as i32
-            }
+    /// Reader twin of [`Self::with_inner_mut`] (recovers a poisoned lock,
+    /// and a caught panic leaves the inner in place).
+    #[allow(dead_code)] // consumed by the stats/is_alive getters
+    pub(crate) fn with_inner_ref(&self, f: impl FnOnce(&T) -> i32) -> i32 {
+        match self.0.with_ref(f) {
+            Ok(rc) => rc,
+            Err(state) => record_binding_error(BindingError::from(state)),
         }
     }
 
-    /// Run `f` against `&T` if the handle is live (same close semantics).
-    ///
-    /// Mirrors the panic-isolation behavior of `with_inner_mut`: a
-    /// panic in `f` is caught at the FFI boundary and the inner state
-    /// is dropped. Even though `&T` did not mutate the inner directly,
-    /// the panic could have left external state (global mutexes, file
-    /// descriptors, etc.) in an indeterminate state — defense-in-depth
-    /// drops the inner anyway.
-    pub(crate) fn with_inner_ref<F>(&self, f: F) -> i32
-    where
-        F: FnOnce(&T) -> i32,
-    {
-        let mut guard = match self.inner.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                record_internal("mutex poisoned");
-                return TstError::Internal as i32;
-            }
-        };
-        match guard.as_ref() {
-            Some(t) => match catch(|| f(t)) {
-                Ok(rc) => rc,
-                Err(detail) => {
-                    record_panic_caught(&detail);
-                    *guard = None;
-                    TstError::PanicCaught as i32
-                }
-            },
-            None => {
-                set_last_error(TstError::Closed, "handle is closed");
-                TstError::Closed as i32
-            }
-        }
+    /// Run `f` against `&T` WITHOUT touching the last-error channel on
+    /// any path: a closed handle or a caught panic returns `default`. For
+    /// side-channel queries documented never to clobber a caller's
+    /// pending last-error (`tst_st0601_state`). A caught panic keeps the
+    /// value, as every reader does.
+    pub(crate) fn with_inner_ref_silent<R>(&self, default: R, f: impl FnOnce(&T) -> R) -> R {
+        self.0.with_ref(f).unwrap_or(default)
     }
 
-    /// Take the inner value (idempotent — second call is a no-op).
-    /// Triggers Drop of the inner, which closes the underlying resource.
+    /// Lock-free: never touches the slot a parked call holds, so the
+    /// cancel always reaches the call it must stop.
+    #[allow(dead_code)] // consumed by the `_cancel` entry points
+    pub(crate) fn cancel(&self) {
+        self.0.cancel();
+    }
+
+    #[allow(dead_code)] // consumed by the recv-side CLOSED relabellers
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.0.is_cancelled()
+    }
+
+    /// Construction-constant state (side-channel handles, addresses).
+    /// Getters that are constant after `_open` read HERE, never the slot
+    /// (`scripts/check/c/snapshot-getters.sh`).
+    #[allow(dead_code)] // consumed by the snapshot-bearing families
+    pub(crate) fn snapshot(&self) -> &S {
+        self.0.snapshot()
+    }
+
+    #[cfg(feature = "std")]
+    #[allow(dead_code)] // consumed by the `_end_reason` getters
+    pub(crate) fn end_reason(&self) -> Option<EndReason> {
+        self.0.end_reason()
+    }
+}
+
+impl<T: Close, S> CHandle<T, S> {
+    /// Cancel-first close. `_close` returns `void`, so a close failure
+    /// is recorded to last-error and otherwise swallowed; a second
+    /// close is `Ok(())` in `Owned`. `From<CloseFailure<E>>` is the
+    /// shared rendering (`Inner` → INTERNAL, `Panicked` → PANIC_CAUGHT).
+    #[allow(dead_code)] // consumed by the `_close` entry points
     pub(crate) fn close(&self) {
-        if let Ok(mut guard) = self.inner.lock() {
-            *guard = None;
-        }
-    }
-
-    /// Run `f` against `&T` if the handle is live, WITHOUT touching the
-    /// last-error channel on any path — closed handle, poisoned mutex, or
-    /// a caught panic all just return `default`, silently. For
-    /// side-channel query entry points (e.g. `tst_st0601_state`) that are
-    /// documented to never clobber a caller's pending last-error just by
-    /// being polled — `with_inner_ref` cannot be reused for those because
-    /// it unconditionally calls `set_last_error`/`record_panic_caught` on
-    /// its non-live paths.
-    ///
-    /// Panics are still caught (no unwinding crosses this boundary) and
-    /// the inner state is still dropped afterward, for the same
-    /// indeterminate-state reason as `with_inner_ref` — only the
-    /// recording to last-error is skipped.
-    pub(crate) fn with_inner_ref_silent<R, F>(&self, default: R, f: F) -> R
-    where
-        F: FnOnce(&T) -> R,
-    {
-        let mut guard = match self.inner.lock() {
-            Ok(g) => g,
-            Err(_) => return default,
-        };
-        match guard.as_ref() {
-            Some(t) => match catch(|| f(t)) {
-                Ok(r) => r,
-                Err(_detail) => {
-                    *guard = None;
-                    default
-                }
-            },
-            None => default,
+        if let Err(f) = self.0.close() {
+            record_binding_error(BindingError::from(f));
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// CHandle<T, S> — the std transport-handle shape (tst_pipeline::binding::Owned)
-//
-// Every transport-bearing C handle (srt/rtp/udp/tcp/rist senders and
-// receivers, plain and managed) holds exactly one of these. `Handle<T>`
-// above stays ONLY for the three no_std offline handles (muxer, demuxer,
-// st0601): `tst_pipeline::binding` is std-only.
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "std")]
-mod owned {
-    use alloc::sync::Arc;
-
-    use tst_core::cancel::FlagCancel;
-    use tst_core::transport::EndReason;
-    use tst_core::transport::EndReasonHandle;
-    use tst_core::transport::TransportCancel;
-    use tst_pipeline::binding::{BindingError, Close, Owned};
-
-    use crate::error::record_binding_error;
-
-    /// Newtype over [`Owned`] that projects the handle state machine onto
-    /// the C `int` + thread-local last-error contract. The method names
-    /// mirror the no_std [`super::Handle`] so family modules and the
-    /// `extern-c-ffi-catch-coverage.sh` rail see the same call shape.
-    pub(crate) struct CHandle<T, S = ()>(Owned<T, S>);
-
-    impl<T, S> CHandle<T, S> {
-        #[allow(dead_code)] // consumed by every `_open`
-        pub(crate) fn new(inner: T, cancel: Arc<dyn TransportCancel>, snapshot: S) -> Self {
-            Self(Owned::new(inner, cancel, snapshot))
-        }
-
-        /// Receivers only: attach the end-reason cell read by `_end_reason`.
-        #[allow(dead_code)] // consumed by the receiver families
-        pub(crate) fn with_end_reason(self, h: EndReasonHandle) -> Self {
-            Self(self.0.with_end_reason(h))
-        }
-
-        /// Run `f` against `&mut T`. Closed / poisoned / panicked handles are
-        /// recorded through the ONE error path (`record_binding_error`):
-        /// `Closed` → TST_E_CLOSED, `Poisoned` → TST_E_INTERNAL,
-        /// `Panicked` → TST_E_PANIC_CAUGHT. As with the no_std `Handle`, a
-        /// caught panic in a MUTATOR drops the inner (later calls are
-        /// `Closed`); [`Self::with_inner_ref`] keeps it.
-        #[allow(dead_code)] // consumed by the data-path entry points
-        pub(crate) fn with_inner_mut(&self, f: impl FnOnce(&mut T) -> i32) -> i32 {
-            match self.0.with_mut(f) {
-                Ok(rc) => rc,
-                Err(state) => record_binding_error(BindingError::from(state)),
-            }
-        }
-
-        /// Reader twin of [`Self::with_inner_mut`] (recovers a poisoned lock,
-        /// and a caught panic leaves the inner in place).
-        #[allow(dead_code)] // consumed by the stats/is_alive getters
-        pub(crate) fn with_inner_ref(&self, f: impl FnOnce(&T) -> i32) -> i32 {
-            match self.0.with_ref(f) {
-                Ok(rc) => rc,
-                Err(state) => record_binding_error(BindingError::from(state)),
-            }
-        }
-
-        /// Lock-free: never touches the slot a parked call holds, so the
-        /// cancel always reaches the call it must stop.
-        #[allow(dead_code)] // consumed by the `_cancel` entry points
-        pub(crate) fn cancel(&self) {
-            self.0.cancel();
-        }
-
-        #[allow(dead_code)] // consumed by the recv-side CLOSED relabellers
-        pub(crate) fn is_cancelled(&self) -> bool {
-            self.0.is_cancelled()
-        }
-
-        /// Construction-constant state (side-channel handles, addresses).
-        /// Getters that are constant after `_open` read HERE, never the slot
-        /// (`scripts/check/c/snapshot-getters.sh`).
-        #[allow(dead_code)] // consumed by the snapshot-bearing families
-        pub(crate) fn snapshot(&self) -> &S {
-            self.0.snapshot()
-        }
-
-        #[allow(dead_code)] // consumed by the `_end_reason` getters
-        pub(crate) fn end_reason(&self) -> Option<EndReason> {
-            self.0.end_reason()
-        }
+impl<T> CHandle<T, ()> {
+    /// An offline handle (muxer, demuxer, ST 0601 state): nothing to cancel,
+    /// so the cancel handle is a plain latch.
+    pub(crate) fn offline(inner: T) -> Self {
+        Self::new(inner, Arc::new(FlagCancel::new()), ())
     }
 
-    impl<T: Close, S> CHandle<T, S> {
-        /// Cancel-first close. `_close` returns `void`, so a close failure
-        /// is recorded to last-error and otherwise swallowed; a second
-        /// close is `Ok(())` in `Owned`. `From<CloseFailure<E>>` is the
-        /// shared rendering (`Inner` → INTERNAL, `Panicked` → PANIC_CAUGHT).
-        #[allow(dead_code)] // consumed by the `_close` entry points
-        pub(crate) fn close(&self) {
-            if let Err(f) = self.0.close() {
-                record_binding_error(BindingError::from(f));
-            }
-        }
-    }
-
-    /// The shells' `cancel_handle()` returns an `Option`; this is the ONE
-    /// place it is resolved. `None` → `FlagCancel` (a plain
-    /// latch that records the request and wakes nothing).
-    ///
-    /// Every transport this binding opens returns `Some`, so the `None` arm
-    /// is a defensive fallback rather than a live path. The function stays
-    /// because the shell-level `cancel_handle()` is `Option`-typed, so all
-    /// ~22 call sites across every family need the resolution, and
-    /// replacing it with `.expect()` would trade a safe fallback for a
-    /// panic path.
-    #[allow(dead_code)] // consumed by the udp/rist `_open` paths
-    pub(crate) fn cancel_or_latch(
-        c: Option<Arc<dyn TransportCancel + Send + Sync>>,
-    ) -> Arc<dyn TransportCancel> {
-        match c {
-            Some(c) => c,
-            None => Arc::new(FlagCancel::new()),
-        }
+    /// Release the value by dropping it. The offline types have no `Close`
+    /// impl (dropping them is their whole teardown), so the `_free` paths
+    /// cannot use [`Self::close`]. Idempotent.
+    pub(crate) fn release(&self) {
+        drop(self.0.take());
     }
 }
 
-// Re-exported unconditionally so the family modules import
-// `crate::handle::CHandle` exactly like `crate::handle::Handle`.
-#[cfg(feature = "std")]
-#[allow(unused_imports)]
-pub(crate) use owned::{CHandle, cancel_or_latch};
+/// The shells' `cancel_handle()` returns an `Option`; this is the ONE
+/// place it is resolved. `None` → `FlagCancel` (a plain
+/// latch that records the request and wakes nothing).
+///
+/// Every transport this binding opens returns `Some`, so the `None` arm
+/// is a defensive fallback rather than a live path. The function stays
+/// because the shell-level `cancel_handle()` is `Option`-typed, so all
+/// ~22 call sites across every family need the resolution, and
+/// replacing it with `.expect()` would trade a safe fallback for a
+/// panic path.
+#[allow(dead_code)] // consumed by the udp/rist `_open` paths
+pub(crate) fn cancel_or_latch(
+    c: Option<Arc<dyn TransportCancel + Send + Sync>>,
+) -> Arc<dyn TransportCancel> {
+    match c {
+        Some(c) => c,
+        None => Arc::new(FlagCancel::new()),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // RTSP client builder opaque handle (rtp feature)
@@ -586,10 +432,11 @@ pub const TST_INVALID_STREAM_HANDLE: u32 = u32::MAX;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::TstError;
 
     #[test]
     fn with_inner_runs_when_live() {
-        let h = Handle::new(7i32);
+        let h = CHandle::offline(7i32);
         let rc = h.with_inner_mut(|n| {
             *n += 1;
             0
@@ -601,17 +448,17 @@ mod tests {
 
     #[test]
     fn with_inner_after_close_returns_closed_code() {
-        let h = Handle::new(7i32);
-        h.close();
+        let h = CHandle::offline(7i32);
+        h.release();
         let rc = h.with_inner_mut(|_| 0);
         assert_eq!(rc, TstError::Closed as i32);
     }
 
     #[test]
     fn close_is_idempotent() {
-        let h = Handle::new(7i32);
-        h.close();
-        h.close();
+        let h = CHandle::offline(7i32);
+        h.release();
+        h.release();
     }
 
     #[cfg(feature = "std")] // exercises catch_unwind; no_std has no unwinding
@@ -619,7 +466,7 @@ mod tests {
     fn panic_in_inner_closure_is_caught() {
         use crate::error::clear_last_error_for_test;
         clear_last_error_for_test();
-        let h = Handle::new(7i32);
+        let h = CHandle::offline(7i32);
         let rc = h.with_inner_mut(|_| panic!("test panic"));
         assert_eq!(rc, TstError::PanicCaught as i32);
         // After a caught panic, the inner is dropped: subsequent calls
@@ -630,24 +477,22 @@ mod tests {
 
     #[cfg(feature = "std")] // exercises catch_unwind; no_std has no unwinding
     #[test]
-    fn panic_in_inner_ref_closure_is_caught() {
+    fn offline_handle_reader_panic_keeps_the_value() {
         use crate::error::clear_last_error_for_test;
         clear_last_error_for_test();
-        let h = Handle::new(7i32);
+        let h: CHandle<i32> = CHandle::offline(7);
         let rc = h.with_inner_ref(|_| panic!("test panic ref"));
         assert_eq!(rc, TstError::PanicCaught as i32);
-        // Defense-in-depth: even though &T didn't mutate, external state
-        // could be in an indeterminate post-panic state, so we drop the
-        // inner. Subsequent calls return Closed.
-        let rc2 = h.with_inner_ref(|_| 0);
-        assert_eq!(rc2, TstError::Closed as i32);
+        // One policy for every handle (Owned's): a reader panic keeps the
+        // value, a mutator panic drops it.
+        assert_eq!(h.with_inner_ref(|n| *n), 7);
     }
 
     #[test]
     fn with_inner_ref_silent_runs_when_live_and_does_not_touch_last_error() {
         use crate::error::{clear_last_error_for_test, tst_get_last_error};
         clear_last_error_for_test();
-        let h = Handle::new(7i32);
+        let h = CHandle::offline(7i32);
         let value = h.with_inner_ref_silent(-1, |n| *n);
         assert_eq!(value, 7);
         assert_eq!(unsafe { tst_get_last_error() }, 0);
@@ -657,8 +502,8 @@ mod tests {
     fn with_inner_ref_silent_on_closed_handle_returns_default_without_recording() {
         use crate::error::{clear_last_error_for_test, tst_get_last_error};
         clear_last_error_for_test();
-        let h = Handle::new(7i32);
-        h.close();
+        let h = CHandle::offline(7i32);
+        h.release();
         let value = h.with_inner_ref_silent(-1, |n| *n);
         assert_eq!(value, -1);
         // The whole point of the _silent variant: unlike with_inner_ref,
@@ -671,16 +516,15 @@ mod tests {
     fn with_inner_ref_silent_panic_is_caught_without_recording() {
         use crate::error::{clear_last_error_for_test, tst_get_last_error};
         clear_last_error_for_test();
-        let h = Handle::new(7i32);
+        let h = CHandle::offline(7i32);
         let rc = h.with_inner_ref_silent(-1, |_| panic!("test silent panic"));
         assert_eq!(rc, -1);
         // Unlike with_inner_ref, a caught panic here must NOT record
         // PanicCaught to last-error.
         assert_eq!(unsafe { tst_get_last_error() }, 0);
-        // Defense-in-depth still applies: the inner state is dropped, so
-        // a subsequent call also returns the default.
+        // A caught panic keeps the value, as every reader does.
         let rc2 = h.with_inner_ref_silent(-1, |_| 0);
-        assert_eq!(rc2, -1);
+        assert_eq!(rc2, 0);
     }
 
     // ---- CHandle (the std transport-handle shape over tst_pipeline::binding::Owned) ----
@@ -797,7 +641,7 @@ mod tests {
                 "got {}",
                 test_last_error_msg()
             );
-            // A MUTATOR panic drops the slot (same as the no_std `Handle` —
+            // A MUTATOR panic drops the slot (as a mutator always does —
             // see `panic_in_inner_closure_is_caught` above); later calls are
             // Closed.
             assert_eq!(h.with_inner_ref(|n| *n), TstError::Closed as i32);

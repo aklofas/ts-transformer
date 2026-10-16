@@ -207,9 +207,6 @@ pub enum TstError {
     KlvDecode = -48,
 }
 
-// Std-only: the projection's only consumer is `from_kind`, which resolves
-// `tst_pipeline::binding::BindingErrorKind` — and `binding` is std-only.
-#[cfg(feature = "std")]
 impl TstError {
     /// Exhaustive inverse of the `#[repr(i32)]` discriminants — every
     /// variant listed, no wildcard on the variant side, so adding a
@@ -297,7 +294,7 @@ fn with_last_error<R>(f: impl FnOnce(&mut (i32, CString)) -> R) -> R {
     LAST_ERROR.with(|cell| f(&mut cell.borrow_mut()))
 }
 
-// Under no_std (bare-metal, single-core): use critical-section + spin to
+// Under no_std (bare-metal, single-core): use critical-section to
 // protect a static Option<(i32, CString)>.
 // The Option is required because CString::new("") is NOT const-evaluable
 // on Rust 1.85, so the static must be initialised to None and lazily
@@ -417,7 +414,6 @@ pub unsafe extern "C" fn tst_clear_last_error() {
 use tst_core::error::{DemuxError, KlvDecodeError, MuxError};
 #[cfg(test)]
 use tst_core::mpegts::mux::StreamKind;
-#[cfg(feature = "std")]
 use tst_pipeline::binding::BindingError;
 #[cfg(feature = "std")]
 use tst_pipeline::{ShellError, ShellErrorKind};
@@ -434,7 +430,6 @@ pub(crate) fn tst_error_from_kind(kind: ShellErrorKind) -> TstError {
 
 /// THE error path for every data-path failure: writes the kind's frozen C
 /// code + the error's detail to the thread-local slot and returns the code.
-#[cfg(feature = "std")]
 pub(crate) fn record_binding_error(e: BindingError) -> i32 {
     let code = TstError::from_kind(e.kind);
     set_last_error(code, &e.detail);
@@ -465,40 +460,13 @@ pub(crate) fn record_with_context(e: impl Into<BindingError>, ctx: &str) -> i32 
 }
 
 /// Standalone-muxer path (`tst_muxer_*`, `tst_mux_config_*`): the
-/// per-variant routing now lives in `tst_pipeline::binding::kind::kind_of_mux`
+/// per-variant routing lives in `tst_pipeline::binding::kind::kind_of_mux`
 /// (`InvalidNal` -2, `KlvTooLarge` -5, `InvalidAv1Obu` -44, `MispTime`
 /// -45 keep their precise codes; everything else folds through
 /// `MuxError::kind()`). `Display` still carries the spec-rich diagnostic.
 /// Returns the code it stored, ready to hand back from the C entry point.
-#[cfg(feature = "std")]
 pub(crate) fn record_mux_error(e: &MuxError) -> i32 {
     let code = TstError::from_kind(tst_pipeline::binding::kind::kind_of_mux(e));
-    set_last_error(code, &e.to_string());
-    code as i32
-}
-
-/// no_std twin of [`record_mux_error`]: `tst_pipeline::binding` is
-/// std-only, so the bare offline muxer keeps the fold locally. Same
-/// projection as the std path (both planes agree, including
-/// `InputMalformed` -> `TST_E_INVALID_TS`). Returns the code it stored, ready
-/// to hand back from the C entry point.
-#[cfg(not(feature = "std"))]
-pub(crate) fn record_mux_error(e: &MuxError) -> i32 {
-    use tst_core::error::MuxErrorKind;
-    let code = match e {
-        MuxError::InvalidNal => TstError::InvalidNal,
-        MuxError::InvalidAv1Obu => TstError::InvalidAv1Obu,
-        MuxError::MispTime(_) => TstError::MispTime,
-        MuxError::KlvTooLarge { .. } => TstError::KlvTooLarge,
-        _ => match e.kind() {
-            MuxErrorKind::ConfigInvalid => TstError::InvalidConfig,
-            MuxErrorKind::InvalidUsage => TstError::InvalidUsage,
-            MuxErrorKind::Backpressure => TstError::BufferFull,
-            MuxErrorKind::InputMalformed => TstError::InvalidTs,
-            MuxErrorKind::Internal => TstError::Internal,
-            _ => TstError::Internal,
-        },
-    };
     set_last_error(code, &e.to_string());
     code as i32
 }
@@ -510,7 +478,6 @@ pub(crate) fn record_mux_error(e: &MuxError) -> i32 {
 /// (1:1 over the five variants); the transport-coupled
 /// `tst_demux_receiver_*` surface reaches the same table through
 /// `record_shell_error`.
-#[cfg(feature = "std")]
 pub(crate) fn record_demux_error(e: &DemuxError) -> i32 {
     record_binding_error(BindingError::new(
         tst_pipeline::binding::kind::kind_of_demux(e),
@@ -518,25 +485,8 @@ pub(crate) fn record_demux_error(e: &DemuxError) -> i32 {
     ))
 }
 
-/// no_std twin of [`record_demux_error`] (see [`record_mux_error`]'s twin).
-#[cfg(not(feature = "std"))]
-pub(crate) fn record_demux_error(e: &DemuxError) -> i32 {
-    let code = match e {
-        DemuxError::StrictRejection(_) => TstError::InvalidTs,
-        DemuxError::Unrecoverable { .. } => TstError::InvalidTs,
-        DemuxError::MalformedPes { .. } => TstError::InvalidTs,
-        // Fired when the caller feeds a pathologically large byte stream with
-        // no 0x47 sync bytes — the sync buffer hit its 4 MiB cap.
-        DemuxError::SyncBufExhausted { .. } => TstError::TooLarge,
-        // Required by #[non_exhaustive]. Future variants map to InvalidTs
-        // (the most generic demux-parse error bucket) until explicitly added.
-        _ => TstError::InvalidTs,
-    };
-    set_last_error(code, &e.to_string());
-    code as i32
-}
-
 /// Helper for entry points that catch panics or Mutex poison.
+#[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
 pub(crate) fn record_internal(detail: &str) {
     set_last_error(
         TstError::Internal,
@@ -544,7 +494,7 @@ pub(crate) fn record_internal(detail: &str) {
     );
 }
 
-/// Helper for the `catch_unwind` arm of `Handle::with_inner_*`. Records
+/// Helper for the `catch_unwind` arm of `CHandle::with_inner_*`. Records
 /// a `PanicCaught` last-error with a useful detail message extracted
 /// from the panic payload.
 pub(crate) fn record_panic_caught(detail: &str) {
@@ -660,19 +610,11 @@ pub(crate) fn record_wrong_type(msg: &str) -> i32 {
 /// raise, so the routing lives in `tst_pipeline::binding::kind::kind_of_klv_decode`
 /// rather than here. The `Display` impl still carries the spec-rich
 /// diagnostic (offset, expected/found bytes, ...) into the message.
-#[cfg(feature = "std")]
 pub(crate) fn record_klv_decode_error(e: &KlvDecodeError) -> i32 {
     record_binding_error(BindingError::new(
         tst_pipeline::binding::kind::kind_of_klv_decode(e),
         e.to_string(),
     ))
-}
-
-/// no_std twin of [`record_klv_decode_error`] (see [`record_mux_error`]'s twin).
-#[cfg(not(feature = "std"))]
-pub(crate) fn record_klv_decode_error(e: &KlvDecodeError) -> i32 {
-    set_last_error(TstError::KlvDecode, &e.to_string());
-    TstError::KlvDecode as i32
 }
 
 /// Expose `record_shell_error` to integration tests that cannot access
@@ -711,7 +653,6 @@ pub fn test_clear_last_error() {
 mod tests {
     use super::*;
     use alloc::{vec, vec::Vec};
-    #[cfg(feature = "std")]
     use tst_pipeline::TransportError;
 
     /// A typed caller-side close on the receive path
@@ -1063,7 +1004,6 @@ mod tests {
     /// `c_projection()` (the fold table, always in -48..=-1) names a real
     /// `TstError` variant, a C-frozen kind projects to its own discriminant,
     /// and `from_kind` never falls back to `Internal` for a table entry.
-    #[cfg(feature = "std")]
     #[test]
     fn from_kind_is_total_over_the_kind_table() {
         use tst_pipeline::binding::BindingErrorKind;
@@ -1097,7 +1037,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn from_c_code_round_trips_every_tst_error_variant() {
         for code in -48..=0 {
@@ -1110,7 +1049,6 @@ mod tests {
 
     /// One path, one answer: `TransportError::Backpressure` projects to -4;
     /// a second (raw) projection path would let it surface as -8.
-    #[cfg(feature = "std")]
     #[test]
     fn backpressure_projects_to_buffer_full_on_the_one_path() {
         use tst_pipeline::binding::BindingError;

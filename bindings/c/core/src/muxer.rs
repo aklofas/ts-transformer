@@ -7,8 +7,8 @@
 use crate::config::TstMuxConfig;
 use crate::error::{TstError, record_mux_error, record_not_found, set_last_error};
 use crate::handle::{
-    Handle, TstAudioStreamHandle, TstDataStreamHandle, TstKlvStreamHandle, TstSubtitleStreamHandle,
-    TstVideoStreamHandle,
+    CHandle, TstAudioStreamHandle, TstDataStreamHandle, TstKlvStreamHandle,
+    TstSubtitleStreamHandle, TstVideoStreamHandle,
 };
 use alloc::boxed::Box;
 use alloc::format;
@@ -20,7 +20,7 @@ use tst_core::mpegts::mux::{
 };
 
 pub struct TstMuxer {
-    inner: Handle<Muxer>,
+    inner: CHandle<Muxer>,
 }
 
 /// Open a standalone muxer. Builds the config from `cfg` so the caller may
@@ -48,7 +48,7 @@ pub unsafe extern "C" fn tst_muxer_open(cfg: *mut TstMuxConfig) -> *mut TstMuxer
             }
         };
         Box::into_raw(Box::new(TstMuxer {
-            inner: Handle::new(muxer),
+            inner: CHandle::offline(muxer),
         }))
     })
 }
@@ -840,7 +840,7 @@ pub unsafe extern "C" fn tst_muxer_close(p: *mut TstMuxer) {
             return;
         }
         let boxed = unsafe { Box::from_raw(p) };
-        boxed.inner.close();
+        boxed.inner.release();
         drop(boxed);
     });
 }

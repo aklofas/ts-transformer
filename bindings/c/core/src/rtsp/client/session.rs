@@ -38,9 +38,9 @@
 //!   packages the socket into an `RtpRecvTransport`.
 //!
 //! Both must remain live and paired.  Wrapping them in a single `Option` behind
-//! a `Mutex` gives close-idempotence and panic isolation identical to `Handle<T>`,
+//! a `Mutex` gives close-idempotence and panic isolation identical to `CHandle`,
 //! but lets `into_demux_receiver` consume the pair (move it out of the `Option`)
-//! in a single lock acquisition.  Using `Handle<T>` directly is not possible
+//! in a single lock acquisition.  Using `CHandle` directly is not possible
 //! here because `with_inner_mut` does not support moving values out of the
 //! closure.
 //!
@@ -81,9 +81,9 @@ use crate::rtp::demux_receiver::TstRtpDemuxReceiver;
 pub struct TstRtspSession {
     /// Mutex-wrapped optional pair `(RtspClient, RtspSession)`.
     ///
-    /// Using `Mutex<Option<Box<(…)>>>` rather than `Handle<Box<(…)>>` lets
+    /// Using `Mutex<Option<Box<(…)>>>` rather than `CHandle<Box<(…)>>` lets
     /// `into_demux_receiver` move the value out of the `Option` in a single
-    /// lock acquisition.  `Handle::with_inner_mut` does not support consuming
+    /// lock acquisition.  `CHandle::with_inner_mut` does not support consuming
     /// moves.  `None` after `into_demux_receiver` or `teardown_and_free`
     /// consumes the pair; subsequent calls return `TST_E_CLOSED`.
     pub(crate) pair: Mutex<Option<Box<(RtspClient, RtspSession)>>>,
