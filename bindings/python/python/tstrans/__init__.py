@@ -69,6 +69,14 @@ try:
 except ImportError:
     _PIPELINE_AVAILABLE = False
 
+# `shells` import is conditional on at least one transport cargo feature
+# (srt/rtp/udp/tcp/rist); same shape as the transport submodules above.
+try:
+    from tstrans import shells  # noqa: F401
+    _SHELLS_AVAILABLE = True
+except ImportError:
+    _SHELLS_AVAILABLE = False
+
 __version__: str = _native.__version__
 
 __all__: list[str] = [
@@ -94,3 +102,5 @@ if _RIST_AVAILABLE:
     __all__.append("rist")
 if _PIPELINE_AVAILABLE:
     __all__.append("pipeline")
+if _SHELLS_AVAILABLE:
+    __all__.append("shells")

@@ -159,7 +159,7 @@ pub(crate) struct PySrtStats {
 }
 
 impl PySrtStats {
-    fn from_srt(s: &tst_srt::Stats) -> Self {
+    pub(crate) fn from_srt(s: &tst_srt::Stats) -> Self {
         let rtt_us = u32::try_from(s.rtt.as_micros()).unwrap_or(u32::MAX);
         Self {
             bytes_sent: s.bytes_sent,

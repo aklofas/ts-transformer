@@ -24,7 +24,7 @@ pub(crate) mod managed_basic;
 pub(crate) mod managed_convenience;
 pub(crate) mod mux_sender;
 pub(crate) mod policy;
-mod transport;
+pub(crate) mod transport;
 
 use pyo3::prelude::*;
 

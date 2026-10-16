@@ -161,7 +161,7 @@ where
 static LIVE_CANCEL_SOURCES: Mutex<Vec<Weak<CancelSource>>> = Mutex::new(Vec::new());
 
 impl CancelSource {
-    pub(crate) fn new(inner: Arc<dyn TransportCancel + Send + Sync>) -> Arc<Self> {
+    pub(crate) fn new(inner: Arc<dyn TransportCancel>) -> Arc<Self> {
         let me = Arc::new(Self {
             latch: CancelLatch::new(inner),
         });
@@ -349,4 +349,25 @@ impl TransportCancel for SlotCancel {
 #[allow(dead_code)] // srt-feature-gated callers
 pub(crate) fn register_accept_slot(slot: &Arc<tst_core::cancel::CancelSlot>) -> Arc<CancelSource> {
     CancelSource::new(Arc::new(SlotCancel(Arc::clone(slot))))
+}
+
+/// Emit one `DeprecationWarning` attributed to the caller's line (stacklevel 1:
+/// a native method has no Python frame of its own, so level 1 is its caller).
+// the shells module is cfg'd on a transport feature; dead only in a
+// transport-less `--no-default-features` build.
+#[allow(dead_code)]
+pub(crate) fn deprecated(py: Python<'_>, msg: &str) -> PyResult<()> {
+    PyErr::warn_bound(
+        py,
+        &py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
+        msg,
+        1,
+    )
+}
+
+/// Append `key=value` to `url`'s query.
+#[allow(dead_code)] // same as `deprecated`
+pub(crate) fn with_query(url: &str, key: &str, value: impl core::fmt::Display) -> String {
+    let sep = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{sep}{key}={value}")
 }
