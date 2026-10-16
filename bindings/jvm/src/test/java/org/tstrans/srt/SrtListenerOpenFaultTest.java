@@ -7,6 +7,8 @@ import static org.tstrans.TestSupport.isLinux;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
+import org.tstrans.shells.Receiver;
+import org.tstrans.shells.DemuxReceiver;
 
 /**
  * The one-shot listener opens ({@link Receiver#fromUrl} /
@@ -35,13 +37,13 @@ class SrtListenerOpenFaultTest {
             int port = held.localAddr().port();
             String url = "srt://127.0.0.1:" + port + "?mode=listener";
 
-            SrtException e = assertThrows(SrtException.class, () -> Receiver.fromUrl(url));
+            SrtException e = assertThrows(SrtException.class, () -> Receiver.open(url));
             assertEquals(SrtException.Kind.BROKEN, e.kind(),
                 "a bind fault on the one-shot open is BROKEN (was CONNECT_FAILED before 0.7.0)");
             assertTrue(e.getMessage().contains("bind: "),
                 "the message names the failing stage, got: " + e.getMessage());
 
-            SrtException d = assertThrows(SrtException.class, () -> DemuxReceiver.fromUrl(url));
+            SrtException d = assertThrows(SrtException.class, () -> DemuxReceiver.open(url));
             assertEquals(SrtException.Kind.BROKEN, d.kind(), "DemuxReceiver.fromUrl agrees");
             assertTrue(d.getMessage().contains("bind: "),
                 "the message names the failing stage, got: " + d.getMessage());
@@ -55,7 +57,7 @@ class SrtListenerOpenFaultTest {
     void nonListenerUrlIsConfigInvalid() {
         // No socket involved: the mode pre-check fires before any bind.
         SrtException e = assertThrows(SrtException.class,
-            () -> Receiver.fromUrl("srt://127.0.0.1:9000?mode=caller"));
+            () -> Receiver.open("srt://127.0.0.1:9000?mode=caller"));
         assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
     }
 }

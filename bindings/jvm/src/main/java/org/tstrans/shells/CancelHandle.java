@@ -20,10 +20,11 @@ import org.tstrans.NativeHandle;
  * native call concurrent with {@code close()}: a use-after-close is a clean
  * {@link IllegalStateException}, never UB.
  */
-public final class CancelHandle extends NativeHandle {
+public class CancelHandle extends NativeHandle {
     static { org.tstrans.NativeLoader.load(); }
 
-    CancelHandle(long h) { setHandle(h); }
+    /** Wrap a native cancel-view key; for the binding classes that hand handles out. */
+    protected CancelHandle(long h) { setHandle(h); }
 
     /** Signal cancellation. Idempotent. */
     public synchronized void cancel() { nCancel(requireOpen("CancelHandle is closed")); }

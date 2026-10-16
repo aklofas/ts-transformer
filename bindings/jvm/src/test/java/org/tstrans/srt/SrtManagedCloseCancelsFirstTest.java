@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.shells.EndReason;
 
 /**
  * The cancel-first {@code close()} contract of the managed srt receivers:
@@ -41,7 +42,7 @@ class SrtManagedCloseCancelsFirstTest {
     /**
      * {@code close()} while {@code next()} is parked on another thread ends that
      * iteration with {@code SrtException(CLOSED)}, records
-     * {@link RecvEndReason#CANCELLED}, and returns — the reason is then the
+     * {@link EndReason#CANCELLED}, and returns — the reason is then the
      * close-time snapshot {@link ManagedDemuxReceiver#endReason()} keeps serving.
      */
     @Test
@@ -116,7 +117,7 @@ class SrtManagedCloseCancelsFirstTest {
             "expected the iteration to end with SrtException(CLOSED), got " + end);
         assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
             "a close-initiated cancel surfaces as CLOSED");
-        assertEquals(RecvEndReason.CANCELLED, rx.endReason(),
+        assertEquals(EndReason.CANCELLED, rx.endReason(),
             "close() cancels first, so the parked iteration recorded CANCELLED "
                 + "and the close-time snapshot carries it");
         sender.close();

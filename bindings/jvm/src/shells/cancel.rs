@@ -17,7 +17,7 @@ use crate::handle::{CancelView, HandleRegistry};
 static REGISTRY_CANCEL: LazyLock<HandleRegistry<CancelView>> = LazyLock::new(HandleRegistry::new);
 
 /// Register a cancel view and return its `org.tstrans.shells.CancelHandle` key.
-pub(super) fn cancel_view_handle(view: CancelView) -> jlong {
+pub(crate) fn cancel_view_handle(view: CancelView) -> jlong {
     REGISTRY_CANCEL.insert(view) as jlong
 }
 

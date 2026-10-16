@@ -22,13 +22,13 @@ use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jboolean, jlong};
 use tst_core::transport::Transport;
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
-use tst_pipeline::binding::{BindingError, Domain};
+use tst_pipeline::binding::{BindingError, Domain, Opened, Owned};
 use tst_pipeline::{Sender as PlSender, SenderConfig};
 
 use super::cancel::cancel_view_handle;
 use super::open::{open_send, read_url};
 use super::{domain_or_closed, throw_state};
-use crate::error::throw_binding;
+use crate::error::{throw_binding, throw_handle_state};
 use crate::handle::OwnedRegistry;
 use crate::jutil::build_socket_stats;
 use crate::srt::stats::build_srt_stats;
@@ -54,22 +54,29 @@ pub extern "system" fn Java_org_tstrans_shells_Sender_nOpen(
         let Some(opened) = open_send(env, &url) else {
             return 0;
         };
-        let tst_pipeline::binding::Opened {
-            transport,
-            cancel,
-            domain,
-            ..
-        } = opened;
-        let inner = PlSender::new(transport, SenderConfig::default());
-        REGISTRY.insert(tst_pipeline::binding::Owned::new(
-            inner,
-            cancel,
-            Snapshot {
-                domain,
-                handles: (),
-            },
-        )) as jlong
+        register(opened)
     })
+}
+
+/// Wrap an opened send transport in a sender and register it. Shared by
+/// `nOpen` and by `srt.Socket.intoSender`, which opens its transport from an
+/// already-connected socket.
+pub(crate) fn register(opened: Opened<Box<dyn Transport>>) -> jlong {
+    let Opened {
+        transport,
+        cancel,
+        domain,
+        ..
+    } = opened;
+    let inner = PlSender::new(transport, SenderConfig::default());
+    REGISTRY.insert(Owned::new(
+        inner,
+        cancel,
+        Snapshot {
+            domain,
+            handles: (),
+        },
+    )) as jlong
 }
 
 /// Send pre-muxed TS bytes. Throws the transport's exception on a
@@ -147,9 +154,6 @@ pub extern "system" fn Java_org_tstrans_shells_Sender_nSocketStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "Sender") else {
-            return JObject::null();
-        };
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -158,7 +162,7 @@ pub extern "system" fn Java_org_tstrans_shells_Sender_nSocketStats<'local>(
         ) {
             Ok(v) => v,
             Err(state) => {
-                throw_state(env, domain, "Sender", &state);
+                throw_handle_state(env, "Sender", &state);
                 return JObject::null();
             }
         };
@@ -176,9 +180,6 @@ pub extern "system" fn Java_org_tstrans_shells_Sender_nSrtStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "Sender") else {
-            return JObject::null();
-        };
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -192,7 +193,7 @@ pub extern "system" fn Java_org_tstrans_shells_Sender_nSrtStats<'local>(
         ) {
             Ok(v) => v,
             Err(state) => {
-                throw_state(env, domain, "Sender", &state);
+                throw_handle_state(env, "Sender", &state);
                 return JObject::null();
             }
         };

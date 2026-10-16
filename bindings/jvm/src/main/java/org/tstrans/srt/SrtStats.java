@@ -5,7 +5,7 @@ package org.tstrans.srt;
  * tst-py {@code tstrans.srt.SrtStats}. All counters are widened to {@code long}
  * (Java has no unsigned) except {@link #mbpsEstimatedBandwidth} which is a
  * {@code double}. For the abstract transport view shared with RTP use
- * {@link SocketStats}.
+ * {@link org.tstrans.shells.SocketStats}.
  */
 public record SrtStats(
         long bytesSent,

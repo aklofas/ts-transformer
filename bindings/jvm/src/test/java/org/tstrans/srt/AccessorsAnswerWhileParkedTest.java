@@ -25,9 +25,12 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import org.tstrans.SrtException;
+import org.tstrans.BindingException;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.srt.SrtSenderParkSupport.Pump;
+import org.tstrans.shells.Sender;
+import org.tstrans.shells.Receiver;
+import org.tstrans.shells.MuxSender;
 
 /**
  * Accessors that must answer while another thread is parked inside a native
@@ -108,11 +111,11 @@ class AccessorsAnswerWhileParkedTest {
     /** Connect a caller, retrying while the listener is between binds. */
     private static <T> T connect(String what, Connector<T> c) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        SrtException last = null;
+        BindingException last = null;
         while (System.nanoTime() < deadline) {
             try {
                 return c.connect();
-            } catch (SrtException e) {
+            } catch (BindingException e) {
                 last = e;
                 Thread.sleep(50);
             }
@@ -122,7 +125,7 @@ class AccessorsAnswerWhileParkedTest {
 
     @FunctionalInterface
     private interface Connector<T> {
-        T connect() throws SrtException;
+        T connect() throws BindingException;
     }
 
     /** Open a listener-mode receiver on a daemon thread; the open blocks until a caller connects. */
@@ -259,7 +262,7 @@ class AccessorsAnswerWhileParkedTest {
         String callerUrl = "srt://127.0.0.1:" + port + "?latency=" + LATENCY_MS;
 
         CompletableFuture<Receiver> peerFuture = peerListener(listenUrl);
-        Sender sender = connect("Sender", () -> Sender.fromUrl(callerUrl));
+        Sender sender = connect("Sender", () -> Sender.open(callerUrl));
         Receiver peer = peerFuture.get(5, TimeUnit.SECONDS);
         try {
             byte[] block = nullTsBlock();
@@ -286,8 +289,8 @@ class AccessorsAnswerWhileParkedTest {
         String listenUrl = "srt://:" + port + "?mode=listener&latency=" + LATENCY_MS;
         String callerUrl = "srt://127.0.0.1:" + port + "?latency=" + LATENCY_MS;
 
-        CompletableFuture<Receiver> rxFuture = listen("receiver", () -> Receiver.fromUrl(listenUrl));
-        Sender peer = connect("the silent peer", () -> Sender.fromUrl(callerUrl));
+        CompletableFuture<Receiver> rxFuture = listen("receiver", () -> Receiver.open(listenUrl));
+        Sender peer = connect("the silent peer", () -> Sender.open(callerUrl));
         Receiver rx = rxFuture.get(5, TimeUnit.SECONDS);
         try {
             ParkedReader reader = new ParkedReader("parked-receiver", rx::recvBytes);
@@ -312,7 +315,7 @@ class AccessorsAnswerWhileParkedTest {
 
         CompletableFuture<ManagedReceiver> rxFuture = listen("managed-receiver",
             () -> ManagedReceiver.fromUrl(listenUrl, managedParkPolicy()));
-        Sender peer = connect("the silent peer", () -> Sender.fromUrl(callerUrl));
+        Sender peer = connect("the silent peer", () -> Sender.open(callerUrl));
         ManagedReceiver rx = rxFuture.get(5, TimeUnit.SECONDS);
         try {
             ParkedReader reader = new ParkedReader("parked-managed-receiver", rx::recvBytes);
@@ -337,7 +340,7 @@ class AccessorsAnswerWhileParkedTest {
 
         CompletableFuture<ManagedDemuxReceiver> rxFuture = listen("managed-demux-receiver",
             () -> ManagedDemuxReceiver.fromUrl(listenUrl, managedParkPolicy()));
-        Sender peer = connect("the silent peer", () -> Sender.fromUrl(callerUrl));
+        Sender peer = connect("the silent peer", () -> Sender.open(callerUrl));
         ManagedDemuxReceiver rx = rxFuture.get(5, TimeUnit.SECONDS);
         try {
             ParkedReader reader = new ParkedReader("parked-managed-demux-receiver", () -> {

@@ -33,7 +33,7 @@ public enum EndReason {
     public int wireValue() { return wireValue; }
 
     /** @return the constant with this wire value, or {@code null} for anything else. */
-    static EndReason fromWireValue(int v) {
+    public static EndReason fromWireValue(int v) {
         for (EndReason r : values()) {
             if (r.wireValue == v) return r;
         }
@@ -41,17 +41,24 @@ public enum EndReason {
     }
 
     /**
-     * Package-private carrier {@code nClose} returns: the receiver's end reason
+     * The close-time carrier a receiver's {@code nClose} returns: the end reason
      * and detail as they stood after teardown, cached by the Java object because
-     * its native handle no longer exists.
+     * its native handle no longer exists. Internal to the binding classes, not
+     * for application use.
      */
-    static final class Snapshot {
-        final EndReason reason;
-        final String detail;
+    public static final class Snapshot {
+        private final EndReason reason;
+        private final String detail;
 
         Snapshot(int wireValue, String detail) {
             this.reason = fromWireValue(wireValue);
             this.detail = detail;
         }
+
+        /** @return the end reason, or {@code null} when none was recorded. */
+        public EndReason reason() { return reason; }
+
+        /** @return the free-text detail, or {@code null}. */
+        public String detail() { return detail; }
     }
 }

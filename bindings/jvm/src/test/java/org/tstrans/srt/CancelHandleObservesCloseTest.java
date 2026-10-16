@@ -12,6 +12,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.CancelHandle;
 
 /**
  * {@code CancelHandle.isCancelled()} reads the shell's ONE cancel state
@@ -45,7 +48,7 @@ final class CancelHandleObservesCloseTest {
         int port = listener.localAddr().port();
         CountDownLatch release = new CountDownLatch(1);
         Thread peer = new Thread(() -> {
-            try (MuxSender tx = MuxSender.fromUrl(
+            try (MuxSender tx = MuxSender.open(
                     "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS,
                     roundtripConfig())) {
                 release.await();

@@ -4,21 +4,22 @@
 //! transport crate's opener (`srt://`, `rtp://`, `udp://`, `tcp://`,
 //! `tcps://`, `rist://`), and the shell holds it type-erased
 //! (`Box<dyn Transport>`). The transport's error domain travels in the
-//! shell's [`Snapshot`], which stays readable after the Java handle is
-//! closed, so a `CLOSED` on a `rtp://` shell throws `RtpException` and on a
-//! `udp://` shell `UdpException`.
+//! shell's [`Snapshot`]; it is read before each operation, so a `CLOSED` on a
+//! `rtp://` shell throws `RtpException` and on a `udp://` shell
+//! `UdpException`. After `close()` the Java handle is gone and every call
+//! throws `IllegalStateException` from the class's `ensureOpen`.
 //!
 //! Each class owns one [`OwnedRegistry`]; the Java `long` is the registry
 //! key. A key that is absent (the Java handle was closed) is an
 //! `IllegalStateException`, thrown by [`throw_state`] below.
 
-mod cancel;
-mod demux_receiver;
-mod end_reason;
-mod mux_sender;
+pub(crate) mod cancel;
+pub(crate) mod demux_receiver;
+pub(crate) mod end_reason;
+pub(crate) mod mux_sender;
 mod open;
-mod receiver;
-mod sender;
+pub(crate) mod receiver;
+pub(crate) mod sender;
 
 use jni::JNIEnv;
 use jni::sys::jlong;
@@ -50,6 +51,9 @@ fn domain_or_closed<T: Send + 'static, H: Send + Sync + 'static>(
 /// taken by a concurrent `close()` is the transport's own `CLOSED` in the
 /// shell's domain, as Python raises it; a poisoned slot and a panic keep the
 /// one handle-state mapping.
+/// Only the operations that can park (send, receive, iterate, finish) use this;
+/// the stats and accessor natives throw `IllegalStateException` for a closed
+/// handle through `throw_handle_state`, the established JVM idiom.
 fn throw_state(env: &mut JNIEnv, domain: Domain, what: &str, state: &HandleState) {
     if matches!(state, HandleState::Closed) {
         throw_binding(env, domain, &BindingError::from(state.clone()));

@@ -21,7 +21,7 @@ import org.tstrans.SrtException;
  *
  * <pre>{@code
  * try (Socket s = new Builder("srt://127.0.0.1:9000").caller().connect()) {
- *     Sender sender = s.intoSender(); // Socket handle consumed here
+ *     org.tstrans.shells.Sender sender = s.intoSender(); // Socket handle consumed here
  *     try (sender) {
  *         sender.sendBytes(tsData);
  *     }
@@ -44,14 +44,14 @@ public final class Socket extends NativeHandle {
      * @throws IllegalStateException if the socket is already closed
      * @throws SrtException on transport error
      */
-    public Sender intoSender() throws SrtException {
+    public org.tstrans.shells.Sender intoSender() throws SrtException {
         ensureOpen("Socket is closed");
         // Claim the registry id atomically before the native call (consume-first);
         // a concurrent close/consume that wins leaves us with 0 and the native call
         // throws IllegalStateException.
         long sock = consumeHandle(); // consumed — moved into the Sender
         long h = nIntoSender(sock);
-        return new Sender(h);
+        return ShellAdapters.sender(h);
     }
 
     /**
@@ -62,11 +62,11 @@ public final class Socket extends NativeHandle {
      * @throws IllegalStateException if the socket is already closed
      * @throws SrtException on transport error
      */
-    public Receiver intoReceiver() throws SrtException {
+    public org.tstrans.shells.Receiver intoReceiver() throws SrtException {
         ensureOpen("Socket is closed");
         long sock = consumeHandle(); // consumed — moved into the Receiver
         long h = nIntoReceiver(sock);
-        return new Receiver(h);
+        return ShellAdapters.receiver(h);
     }
 
     /**
@@ -84,7 +84,7 @@ public final class Socket extends NativeHandle {
      * @throws SrtException on transport error; {@link org.tstrans.MuxException}
      *     ({@code CONFIG_INVALID}) if the muxer config is rejected
      */
-    public MuxSender intoMuxSender(org.tstrans.mpegts.MuxerConfig programConfig)
+    public org.tstrans.shells.MuxSender intoMuxSender(org.tstrans.mpegts.MuxerConfig programConfig)
             throws SrtException, MuxException {
         ensureOpen("Socket is closed");
         // Claim the registry id BEFORE the native call (consume-first). nIntoMuxSender
@@ -99,7 +99,7 @@ public final class Socket extends NativeHandle {
             programConfig.streamPids(), programConfig.streamKinds(), programConfig.streamCodecs(),
             programConfig.streamTypeCodes(), programConfig.streamCarriesPts(),
             programConfig.dataDescBytes(), programConfig.dataDescLens());
-        return new MuxSender(h);
+        return ShellAdapters.muxSender(h);
     }
 
     /**
@@ -114,12 +114,12 @@ public final class Socket extends NativeHandle {
      * @throws IllegalStateException if the socket is already closed
      * @throws SrtException on transport error
      */
-    public DemuxReceiver intoDemuxReceiver() throws SrtException {
+    public org.tstrans.shells.DemuxReceiver intoDemuxReceiver() throws SrtException {
         ensureOpen("Socket is closed");
         // Claim the registry id first (consume-first), uniform with intoMuxSender.
         long sock = consumeHandle();
         long h = nIntoDemuxReceiver(sock);
-        return new DemuxReceiver(h);
+        return ShellAdapters.demuxReceiver(h);
     }
 
     /**
@@ -133,7 +133,7 @@ public final class Socket extends NativeHandle {
      * @throws IllegalStateException if the socket is already closed
      * @throws SrtException on transport error
      */
-    public DemuxReceiver intoDemuxReceiver(org.tstrans.mpegts.DemuxerConfig demuxConfig)
+    public org.tstrans.shells.DemuxReceiver intoDemuxReceiver(org.tstrans.mpegts.DemuxerConfig demuxConfig)
             throws SrtException {
         ensureOpen("Socket is closed");
         // Consume-first (see intoDemuxReceiver()).
@@ -144,7 +144,7 @@ public final class Socket extends NativeHandle {
             demuxConfig.av1Carriage().ordinal(), demuxConfig.auCellCapPerPid(),
             demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap(),
             demuxConfig.unwrapTimestamps());
-        return new DemuxReceiver(h);
+        return ShellAdapters.demuxReceiver(h);
     }
 
     /**

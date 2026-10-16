@@ -21,6 +21,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
 import org.tstrans.srt.SrtSenderParkSupport.Pump;
+import org.tstrans.shells.Receiver;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.CancelHandle;
 
 /**
  * {@link MuxSender#cancelHandle()} / {@link ManagedMuxSender#cancelHandle()}:

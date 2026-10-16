@@ -15,6 +15,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.shells.Sender;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.CancelHandle;
 
 /**
  * Memory-safety stress test for {@link DemuxReceiver#close()} racing a concurrent native call.
@@ -48,7 +52,7 @@ final class DemuxReceiverCloseRaceTest {
 
         // Continuous caller-mode sender on a daemon: connects, then streams muxed TS until stop.
         Thread sender = new Thread(() -> {
-            try (MuxSender tx = MuxSender.fromUrl(
+            try (MuxSender tx = MuxSender.open(
                     "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS, roundtripConfig())) {
                 long pts = 0;
                 while (!stop.get()) {

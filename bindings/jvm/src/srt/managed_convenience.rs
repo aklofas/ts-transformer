@@ -56,8 +56,8 @@ use tst_core::mpegts::mux::{
 use tst_core::transport::EndReasonHandle;
 use tst_pipeline::binding::{BindingErrorKind, HandleState, ManagedHandles, Owned};
 use tst_pipeline::{
-    ManagedDemuxReceiver as RustManagedDemuxReceiver, ManagedTransport, MuxSender as RustMuxSender,
-    MuxSenderError, MuxSenderErrorSource,
+    DemuxReceiverError, DemuxReceiverErrorSource, ManagedDemuxReceiver as RustManagedDemuxReceiver,
+    ManagedTransport, MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource,
 };
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
@@ -70,8 +70,22 @@ use tst_pipeline::binding::view::StreamHandles;
 
 use super::ManagedSenderSnapshot;
 use super::errors::{srt_error, throw_srt, transport_error};
-use super::mux_sender::build_transport_stats;
 use super::stats::build_managed_transport_stats;
+use crate::shells::mux_sender::build_transport_stats;
+
+/// Map a `DemuxReceiverError` raised by `recv_event` onto a thrown Java
+/// exception: transport-side errors become `SrtException` (via
+/// `transport_error`), demux-side errors `DemuxException`. No end-of-stream
+/// arm: `recv_event` swallows a clean end of stream, returning `Ok(None)`.
+fn throw_demux_recv_error(env: &mut JNIEnv, e: &DemuxReceiverError) {
+    match &e.source {
+        DemuxReceiverErrorSource::Transport(t) => transport_error(env, t),
+        DemuxReceiverErrorSource::Demux(d) => crate::mpegts::throw_demux_error(env, d),
+        // `DemuxReceiverErrorSource` is non-exhaustive; route any future variant
+        // through `SrtException(IO)` with the Display message preserved.
+        _ => throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // JniManagedMuxSender — wraps MuxSender<ManagedTransport<SrtTransport>>.
@@ -624,7 +638,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nStats<'local>(
             }
         };
 
-        let sock_obj = match build_socket_stats(env, "org/tstrans/srt/SocketStats", &sock) {
+        let sock_obj = match build_socket_stats(env, "org/tstrans/shells/SocketStats", &sock) {
             Ok(o) => o,
             Err(_) => return JObject::null(),
         };
@@ -716,7 +730,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nCancelHandle(
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
         match REGISTRY_MUX.cancel_view(handle as u64) {
-            Some(view) => super::cancel_view_handle(view),
+            Some(view) => crate::shells::cancel::cancel_view_handle(view),
             None => {
                 crate::error::throw_closed(env, "ManagedMuxSender");
                 0
@@ -1019,7 +1033,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nNext<'local>(
                 }
             },
             Err(e) => {
-                super::demux_receiver::throw_demux_recv_error(env, &e);
+                throw_demux_recv_error(env, &e);
                 JObject::null().into_raw()
             }
         }
@@ -1039,7 +1053,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nCancelHandle(
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
         match REGISTRY_DEMUX.cancel_view(handle as u64) {
-            Some(view) => super::cancel_view_handle(view),
+            Some(view) => crate::shells::cancel::cancel_view_handle(view),
             None => {
                 crate::error::throw_closed(env, "ManagedDemuxReceiver");
                 0
@@ -1070,7 +1084,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nSocketStats<'l
                 return JObject::null();
             }
         };
-        match build_socket_stats(env, "org/tstrans/srt/SocketStats", &stats) {
+        match build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats) {
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }
@@ -1099,7 +1113,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nSrtStats<'loca
                 return JObject::null();
             }
         };
-        match build_socket_stats(env, "org/tstrans/srt/SocketStats", &stats) {
+        match build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats) {
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }
@@ -1185,7 +1199,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nEndReason(
     handle: jlong,
 ) -> jint {
     crate::panic::jni_catch(&mut env, -1, |_env| {
-        super::recv_end_reason::recv_end_reason_ordinal(REGISTRY_DEMUX.end_reason(handle as u64))
+        crate::shells::end_reason::wire_value(REGISTRY_DEMUX.end_reason(handle as u64).as_ref())
     })
 }
 
@@ -1215,7 +1229,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nClose(
         } else {
             None
         };
-        super::recv_end_reason::recv_end_reason_ordinal(reason)
+        crate::shells::end_reason::wire_value(reason.as_ref())
     })
 }
 

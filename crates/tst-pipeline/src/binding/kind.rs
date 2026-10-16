@@ -537,6 +537,8 @@ impl Domain {
                 K::RtpIo,
                 K::RtpIfaceUnsupported,
                 K::EndOfStream,
+                K::InputMalformed,
+                K::ConfigInvalid,
             ],
             Domain::Rtsp => &[
                 K::RtspProtocol,

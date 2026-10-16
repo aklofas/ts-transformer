@@ -578,26 +578,6 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
     }
 }
 
-/// Lease `handle` on `registry` and run a push op under the resource lock. A
-/// closed/absent handle throws `IllegalStateException` naming `what`; any error
-/// from `op` is mapped by `throw_err`. Shared by every `MuxSender`-shaped push
-/// surface (srt + rtp): `send_*` methods take `&self`, so the shared `&mut T`
-/// lease coerces fine.
-pub(crate) fn with_push<T: Send + 'static, S: Send + Sync + 'static, E>(
-    env: &mut JNIEnv,
-    registry: &OwnedRegistry<T, S>,
-    handle: jlong,
-    what: &str,
-    op: impl FnOnce(&T) -> Result<(), E>,
-    throw_err: impl FnOnce(&mut JNIEnv, &E),
-) {
-    match registry.with_mut(handle as u64, |inner| op(inner)) {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => throw_err(env, &e),
-        Err(state) => crate::error::throw_handle_state(env, what, &state),
-    }
-}
-
 /// Return the first handle-of-kind `pick` reads out of the entry's
 /// construction-time snapshot (`-1` if none). Never takes the slot. A
 /// closed/absent handle throws `IllegalStateException` naming `what` and

@@ -89,6 +89,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the demux domain (byte reads, enum drift, event conversion) now throws
   `RuntimeException`, as Python raises
   `RuntimeError`.
+- `org.tstrans.srt.{CancelHandle, SocketStats, TransportStats,
+  RecvEndReason}` and `org.tstrans.rtp.{CancelHandle, SocketStats,
+  TransportStats, StreamEndReason}`: every method that returned one returns
+  `org.tstrans.shells.{CancelHandle, SocketStats, TransportStats,
+  EndReason}`. Java has no type aliases, so records, enums and returned
+  final classes cannot be kept as deprecated names.
+- `RtspStats.rrPacketsSent()` / `srPacketsSent()` and their record
+  components: the RTCP report emitter they counted was removed.
 
 ### Removed — tst-rtp (BREAKING)
 
@@ -252,6 +260,26 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `org.tstrans.hls.MuxPublisher.sendVideo` / `sendKlv` / `sendAudio` /
   `sendSubtitle` are renamed `pushVideo` / `pushKlv` / `pushAudio` /
   `pushSubtitle`.
+- The shell classes live in `org.tstrans.shells` (see Added). Their methods
+  declare `throws BindingException` (plus `MuxException` on pushes): a
+  transport failure throws that transport's exception, and every one of
+  them is a `BindingException`. `Socket.intoSender()` / `intoReceiver()` /
+  `intoMuxSender()` / `intoDemuxReceiver()`, `RtspSession.intoDemuxReceiver()`
+  and `PublishMount.intoDemuxReceiver()` return the `org.tstrans.shells`
+  classes.
+- `org.tstrans.rtp.Sender` / `Receiver` were raw RTP transports, not TS
+  shells; they are now `org.tstrans.rtp.Transport` / `RecvTransport` with
+  the same factories and methods. The TS shells over `rtp://` are
+  `org.tstrans.shells.Sender` / `Receiver`.
+- `EndReason` (one enum for every receiver) replaces `srt.RecvEndReason` and
+  `rtp.StreamEndReason`; constant names are unchanged.
+- `Class.open(url)` and the deprecated `fromUrl` factories throw
+  `IllegalArgumentException` for a URL whose scheme no shell supports;
+  previously the srt or rtp class threw its transport's `CONFIG_INVALID`. A
+  supported scheme with a bad URL still throws that transport's exception.
+  A raw stream handle that no stream of the muxer owns throws the
+  transport's `CONFIG_INVALID` from every `MuxSender` `send*To` (it was
+  `IO` on an `rtp://` sender).
 
 ### Changed — tst-c
 
@@ -393,6 +421,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and RIST gain these shells; every shell has `cancel_handle()`; failures
   raise the transport's exception class. `srt_stats()` raises `TypeError`
   on a non-SRT shell.
+- `tstrans.RtpErrorKind` gains `INPUT_MALFORMED` and `CONFIG_INVALID`: the
+  kinds a TS shell over `rtp://` raises for a framing or configuration
+  error, as every other transport's kind enum already does.
 
 ### Added — tst-jni
 
@@ -415,6 +446,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The JAR's native library includes librist (RIST) on every platform.
 
+- `RtpException.Kind.INPUT_MALFORMED` and `CONFIG_INVALID`: the kinds a TS
+  shell over `rtp://` throws for a framing or configuration error, as the
+  other transports' exceptions already have.
+
+- `org.tstrans.shells.DemuxReceiver.recvEvent()`: the next event, or `null`
+  at the end of the stream, with the checked exceptions the iterator wraps.
+
 ### Deprecated — tst-py
 
 - Module aliases, each emitting `DeprecationWarning` on access and removed in
@@ -429,12 +467,29 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Class.open(url, ...)`. The rtp `pkt_size=` keyword is the `?pkt_size=` URL
   key. Each emits `DeprecationWarning`; removed in 0.10.0.
 
+### Deprecated — tst-jni
+
+- `org.tstrans.srt.{Sender, Receiver, MuxSender, DemuxReceiver}` and
+  `org.tstrans.rtp.{MuxSender, DemuxReceiver}` are
+  `@Deprecated(forRemoval = true)` subclasses of the `org.tstrans.shells`
+  classes whose `fromUrl` factories keep their 0.8 signatures;
+  `org.tstrans.rtp.{Sender, Receiver}` likewise extend
+  `org.tstrans.rtp.{Transport, RecvTransport}`. Use `Class.open(url, ...)`
+  (the rtp `pktSize` argument is the `?pkt_size=` URL key). Removed in
+  0.10.0.
+
 ### Fixed — tst-py
 
 - `RtspClientConfig(transport_pref=…, rtsp_version=…)` now take effect at
   connect; both were accepted and ignored. A non-default value overrides the
   URL's `?transport=` / `?rtsp_version=` key; the defaults
   (`TransportPref.AUTO`, `RtspVersion.V1_0`) leave the URL in charge.
+
+### Fixed — tst-jni
+
+- `RtspClientConfig.transportPref` and `rtspVersion` take effect: a
+  non-default value overrides the URL's `?transport=` / `?rtsp_version=`
+  (they were carried but ignored).
 
 ### Fixed — tst-rtp
 

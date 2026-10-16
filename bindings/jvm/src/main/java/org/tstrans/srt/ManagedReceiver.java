@@ -3,6 +3,8 @@ package org.tstrans.srt;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.SrtException;
+import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.SocketStats;
 
 /**
  * Auto-reconnect SRT receiver — wraps {@code tst_pipeline::Receiver
@@ -155,7 +157,7 @@ public final class ManagedReceiver extends NativeHandle {
     public CancelHandle cancelHandle() {
         ensureOpen("ManagedReceiver is closed");
         long ch = nCancelHandle(peekHandle());
-        return new CancelHandle(ch);
+        return ShellAdapters.cancelHandle(ch);
     }
 
     /**

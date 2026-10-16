@@ -2,38 +2,17 @@
 
 pub(crate) mod errors;
 mod client;
-mod demux_receiver;
-pub(crate) mod end_reason;
 pub(crate) mod h264_receiver;
-mod mux_sender;
 mod publish;
 mod server;
 mod transport;
 
 use std::sync::Arc;
-use std::sync::LazyLock;
 
-use jni::JNIEnv;
-use jni::objects::JClass;
 use jni::sys::jlong;
-use tst_core::transport::TransportCancel;
-
-use tst_pipeline::binding::{BindingError, BindingErrorKind};
-
-use crate::handle::{CancelView, HandleRegistry};
-
-/// Per-type leased-handle registry for `org.tstrans.rtp.CancelHandle`, which
-/// boxes a [`CancelView`] over the shell's `Owned` entry. A cancel view has no
-/// parked op of its own, so it registers plain (cancel = None).
-///
-/// `org.tstrans.rtp.CancelHandle` exposes only `cancel()` — no
-/// `isCancelled()`, unlike the srt twin.
-static REGISTRY_CANCEL: LazyLock<HandleRegistry<CancelView>> = LazyLock::new(HandleRegistry::new);
-
-/// Register a cancel view and return its `org.tstrans.rtp.CancelHandle` key.
-pub(crate) fn cancel_view_handle(view: CancelView) -> jlong {
-    REGISTRY_CANCEL.insert(view) as jlong
-}
+use tst_core::transport::{RecvTransport, TransportCancel};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened};
+use tst_rtp::RtpRecvTransport;
 
 /// The rtp transports expose their cancel only through the trait's `Option`
 /// (no inherent non-`Option` accessor exists on `RtpTransport` /
@@ -52,33 +31,16 @@ pub(crate) fn rtp_cancel(
     }
 }
 
-/// Signal cancellation. Wakes a thread parked in `Sender.send` / `Receiver.recv`
-/// at the next ~100 ms cancel-poll tick.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_CancelHandle_nCancel(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
-        if REGISTRY_CANCEL
-            .with(handle as u64, |c| c.0.cancel())
-            .is_none()
-        {
-            crate::error::throw_closed(env, "CancelHandle");
-        }
-    })
-}
-
-/// Free the boxed cancel handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_CancelHandle_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    // Atomic + idempotent drop.
-    crate::panic::jni_catch(&mut env, (), |_env| {
-        let _ = REGISTRY_CANCEL.close(handle as u64);
-    })
+/// Wrap the SETUP-time receive transport an RTSP session hands over in a
+/// `DemuxReceiver` shell (default or explicit demux options) and register it.
+/// A transport with no cancel handle is a tst-rtp bug, reported as `Internal`.
+pub(crate) fn demux_receiver_handle_from_transport(
+    transport: RtpRecvTransport,
+    opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
+) -> Result<jlong, BindingError> {
+    let cancel = rtp_cancel(RecvTransport::cancel_handle(&transport), "RtpRecvTransport")?;
+    Ok(crate::shells::demux_receiver::register(
+        Opened::new(Box::new(transport), cancel, Domain::Rtp),
+        opts,
+    ))
 }

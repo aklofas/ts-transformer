@@ -3,10 +3,7 @@ package org.tstrans.rtp;
 /**
  * Wire-time RTSP version. Mirrors tst-py {@code tstrans.rtp.RtspVersion}.
  *
- * <p><b>Currently informational on this binding:</b> {@code RtspClient.connect}
- * does not plumb {@code RtspClientConfig.rtspVersion} into the native builder —
- * tst-rtp derives the version from the {@code rtsp://} vs {@code rtsps://} URL
- * scheme, not from this enum (matching tst-py). The value round-trips through the
- * config but does not yet change behavior.
+ * <p>{@code V2_0} overrides the URL's {@code ?rtsp_version=} key; {@code V1_0}
+ * (the default) leaves the URL in charge.
  */
 public enum RtspVersion { V1_0, V2_0 }

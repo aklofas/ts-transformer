@@ -21,7 +21,7 @@ use super::cancel::cancel_view_handle;
 use super::end_reason::{build_close_snapshot, detail, wire_value};
 use super::open::{open_recv, read_url};
 use super::{domain_or_closed, throw_state};
-use crate::error::throw_binding;
+use crate::error::{throw_binding, throw_handle_state};
 use crate::handle::OwnedRegistry;
 use crate::jutil::build_socket_stats;
 use crate::srt::stats::build_srt_stats;
@@ -47,28 +47,34 @@ pub extern "system" fn Java_org_tstrans_shells_Receiver_nOpen(
         let Some(opened) = open_recv(env, &url) else {
             return 0;
         };
-        let Opened {
-            transport,
-            cancel,
-            domain,
-            ..
-        } = opened;
-        // Taken before the transport moves into the shell.
-        let end_reason = transport.end_reason_handle();
-        let inner = PlReceiver::new(transport, ReceiverConfig::default());
-        let mut owned = Owned::new(
-            inner,
-            cancel,
-            Snapshot {
-                domain,
-                handles: (),
-            },
-        );
-        if let Some(h) = end_reason {
-            owned = owned.with_end_reason(h);
-        }
-        REGISTRY.insert(owned) as jlong
+        register(opened)
     })
+}
+
+/// Wrap an opened receive transport in a receiver and register it. Shared by
+/// `nOpen` and by `srt.Socket.intoReceiver`.
+pub(crate) fn register(opened: Opened<Box<dyn RecvTransport>>) -> jlong {
+    let Opened {
+        transport,
+        cancel,
+        domain,
+        ..
+    } = opened;
+    // Taken before the transport moves into the shell.
+    let end_reason = transport.end_reason_handle();
+    let inner = PlReceiver::new(transport, ReceiverConfig::default());
+    let mut owned = Owned::new(
+        inner,
+        cancel,
+        Snapshot {
+            domain,
+            handles: (),
+        },
+    );
+    if let Some(h) = end_reason {
+        owned = owned.with_end_reason(h);
+    }
+    REGISTRY.insert(owned) as jlong
 }
 
 /// One 188-byte TS packet per call. `maxLen` is accepted for API symmetry
@@ -131,9 +137,6 @@ pub extern "system" fn Java_org_tstrans_shells_Receiver_nSocketStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "Receiver") else {
-            return JObject::null();
-        };
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -142,7 +145,7 @@ pub extern "system" fn Java_org_tstrans_shells_Receiver_nSocketStats<'local>(
         ) {
             Ok(v) => v,
             Err(state) => {
-                throw_state(env, domain, "Receiver", &state);
+                throw_handle_state(env, "Receiver", &state);
                 return JObject::null();
             }
         };
@@ -160,9 +163,6 @@ pub extern "system" fn Java_org_tstrans_shells_Receiver_nSrtStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "Receiver") else {
-            return JObject::null();
-        };
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -176,7 +176,7 @@ pub extern "system" fn Java_org_tstrans_shells_Receiver_nSrtStats<'local>(
         ) {
             Ok(v) => v,
             Err(state) => {
-                throw_state(env, domain, "Receiver", &state);
+                throw_handle_state(env, "Receiver", &state);
                 return JObject::null();
             }
         };

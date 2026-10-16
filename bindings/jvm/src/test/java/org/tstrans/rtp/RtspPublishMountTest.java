@@ -27,6 +27,8 @@ import org.tstrans.RtspException;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.Muxer;
+import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.EndReason;
 
 /**
  * The RTSP publisher role: {@link RtspServer#addPublishMount}, {@link
@@ -151,7 +153,7 @@ class RtspPublishMountTest {
             mount.cancel();
             RtpException e = assertThrows(RtpException.class, rx::recvEvent);
             assertEquals(RtpException.Kind.CLOSED, e.kind());
-            assertEquals(StreamEndReason.CANCELLED, rx.endReason());
+            assertEquals(EndReason.CANCELLED, rx.endReason());
         }
     }
 
@@ -175,7 +177,7 @@ class RtspPublishMountTest {
                 () -> "expected RtpException(CLOSED), got "
                     + (e != null ? e : "value " + parked.value.get()));
             assertEquals(RtpException.Kind.CLOSED, ((RtpException) e).kind());
-            assertEquals(StreamEndReason.CANCELLED, rx.endReason());
+            assertEquals(EndReason.CANCELLED, rx.endReason());
         }
     }
 
@@ -196,7 +198,7 @@ class RtspPublishMountTest {
             // END_OF_STREAM: recvEvent returns null, never an exception.
             assertNull(parked.error.get(), () -> "unexpected " + parked.error.get());
             assertNull(parked.value.get());
-            assertEquals(StreamEndReason.CLEAN_TEARDOWN, rx.endReason());
+            assertEquals(EndReason.CLEAN_TEARDOWN, rx.endReason());
         }
     }
 
@@ -377,7 +379,7 @@ class RtspPublishMountTest {
             // ... and the publish mount's receiver reads end of stream.
             assertNull(recv.error.get(), () -> "receiver: unexpected " + recv.error.get());
             assertNull(recv.value.get());
-            assertEquals(StreamEndReason.CLEAN_TEARDOWN, rx.endReason());
+            assertEquals(EndReason.CLEAN_TEARDOWN, rx.endReason());
         } finally {
             rx.close();
             mount.close();

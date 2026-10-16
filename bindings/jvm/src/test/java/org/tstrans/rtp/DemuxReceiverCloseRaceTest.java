@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.tstrans.shells.DemuxReceiver;
 
 /**
  * Memory-safety stress test for the rtp {@link DemuxReceiver#close()} racing a concurrent native
@@ -35,7 +36,7 @@ final class DemuxReceiverCloseRaceTest {
     private static DemuxReceiver tryReceiver() throws Exception {
         for (int attempt = 0; attempt < 8; attempt++) {
             try {
-                return DemuxReceiver.fromUrl("rtp://127.0.0.1:" + freeUdpPort());
+                return DemuxReceiver.open("rtp://127.0.0.1:" + freeUdpPort());
             } catch (Exception bindCollision) {
                 // port+1 was taken; try a different ephemeral port.
             }

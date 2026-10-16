@@ -8,11 +8,10 @@ import java.util.Optional;
  * {@code tstrans.rtp.RtspClientConfig} (a frozen dataclass). Build via
  * {@link #of(String)} (all defaults) or {@link #builder(String)}.
  *
- * <p>{@code transportPref} and {@code rtspVersion} are carried but not yet applied
- * by the JVM binding: connect takes the transport from the URL's {@code ?transport=}
- * query and the version from {@code ?rtsp_version=}. {@code tlsRootCertsPem}, however, IS read at
- * connect — a PEM bundle of custom trust anchors for {@code rtsps://} servers with
- * a private CA; see {@link RtspClient}.
+ * <p>{@code transportPref} and {@code rtspVersion} override the URL's
+ * {@code ?transport=} / {@code ?rtsp_version=} when not at their defaults.
+ * {@code tlsRootCertsPem} is read at connect too: a PEM bundle of custom trust
+ * anchors for {@code rtsps://} servers with a private CA; see {@link RtspClient}.
  */
 public final class RtspClientConfig {
     private final String url;

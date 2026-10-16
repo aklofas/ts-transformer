@@ -10,16 +10,12 @@ package org.tstrans.rtp;
  *
  * @param rrPacketsReceived   RTCP Receiver Reports received
  * @param srPacketsReceived   RTCP Sender Reports received
- * @param rrPacketsSent       RTCP Receiver Reports sent
- * @param srPacketsSent       RTCP Sender Reports sent
  * @param interarrivalJitterUs interarrival jitter (microseconds, u32)
  * @param fractionLostQ8       fraction lost, 8-bit fixed point (u8)
  */
 public record RtspStats(
         long rrPacketsReceived,
         long srPacketsReceived,
-        long rrPacketsSent,
-        long srPacketsSent,
         long interarrivalJitterUs,
         int fractionLostQ8) {
 }

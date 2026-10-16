@@ -12,6 +12,8 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.CancelHandle;
 
 /**
  * Live-socket RECONNECT parity test for the managed (auto-reconnect) SRT shells.

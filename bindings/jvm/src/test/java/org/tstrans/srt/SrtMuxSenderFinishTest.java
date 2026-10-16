@@ -16,6 +16,8 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
+import org.tstrans.shells.Receiver;
+import org.tstrans.shells.MuxSender;
 
 /**
  * {@code finish()} drains, reports, closes; a second call

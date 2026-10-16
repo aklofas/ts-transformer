@@ -50,21 +50,21 @@ public final class PublishMount extends NativeHandle {
     public PublishMountStats stats() { return nStats(requireOpen(CLOSED)); }
 
     /**
-     * End the application side only: a {@link DemuxReceiver} taken from this mount,
+     * End the application side only: a {@link org.tstrans.shells.DemuxReceiver} taken from this mount,
      * now or later, throws {@link org.tstrans.RtpException} of kind {@code CLOSED}
      * from its next read. PLAY readers and the publisher are unaffected. Idempotent.
      */
     public void cancel() { nCancel(requireOpen(CLOSED)); }
 
     /** {@link #intoDemuxReceiver(DemuxerConfig)} with the default demuxer configuration. */
-    public DemuxReceiver intoDemuxReceiver() throws RtspException {
+    public org.tstrans.shells.DemuxReceiver intoDemuxReceiver() throws RtspException {
         long h = nIntoDemuxReceiver(requireOpen(CLOSED),
             false, 0, 0L, 0L, false, 0, 0L, false, 0L, false);
         return wrap(h);
     }
 
     /**
-     * Take the mount's received MPEG-TS as a {@link DemuxReceiver}.
+     * Take the mount's received MPEG-TS as a {@link org.tstrans.shells.DemuxReceiver}.
      *
      * <p>Take-once across every handle to the mount (including the one {@link
      * RtspServer#nextPublisher(long)} returned for it): a second call throws
@@ -83,7 +83,7 @@ public final class PublishMount extends NativeHandle {
      *     configuration does not spend it.
      * @throws RtspException {@code CLOSED} if the transport was already taken
      */
-    public DemuxReceiver intoDemuxReceiver(DemuxerConfig demuxConfig) throws RtspException {
+    public org.tstrans.shells.DemuxReceiver intoDemuxReceiver(DemuxerConfig demuxConfig) throws RtspException {
         long h = nIntoDemuxReceiver(requireOpen(CLOSED), true,
             demuxConfig.strictMode().ordinal(), demuxConfig.pesCapPerPid(),
             demuxConfig.pesCapTotal(), demuxConfig.cfiTolerance(),
@@ -100,12 +100,12 @@ public final class PublishMount extends NativeHandle {
 
     private static final String CLOSED = "PublishMount is closed";
 
-    private static DemuxReceiver wrap(long h) throws RtspException {
+    private static org.tstrans.shells.DemuxReceiver wrap(long h) throws RtspException {
         if (h == 0) {
             throw new RtspException(RtspException.Kind.CLOSED,
                 "nIntoDemuxReceiver returned 0 without throwing");
         }
-        return new DemuxReceiver(h);
+        return ShellAdapters.demuxReceiver(h);
     }
 
     private static native String nMountPath(long handle);

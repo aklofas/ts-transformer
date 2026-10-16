@@ -20,6 +20,8 @@ import org.tstrans.RtpException;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.Muxer;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.DemuxReceiver;
 
 /**
  * Live cross-binding loopback parity test for the RTP convenience shells
@@ -78,7 +80,7 @@ class RtpMuxDemuxLoopbackTest {
         // can close() it cross-thread. Register the byte sink before iterating.
         AtomicInteger sinkCount = new AtomicInteger();
         ConcurrentLinkedQueue<Integer> sinkLens = new ConcurrentLinkedQueue<>();
-        DemuxReceiver rx = DemuxReceiver.fromUrl("rtp://127.0.0.1:" + port);
+        DemuxReceiver rx = DemuxReceiver.open("rtp://127.0.0.1:" + port);
         rx.addByteSink(pkt -> {
             sinkCount.incrementAndGet();
             sinkLens.add(pkt.length);
@@ -149,7 +151,7 @@ class RtpMuxDemuxLoopbackTest {
         // Sender on the main thread: push PUSH_COUNT IDRs, pause for delivery,
         // then close. (The receiver is already bound, so kernel UDP buffers hold
         // datagrams until the daemon drains them.)
-        try (MuxSender s = MuxSender.fromUrl("rtp://127.0.0.1:" + port, roundtripConfigWithData())) {
+        try (MuxSender s = MuxSender.open("rtp://127.0.0.1:" + port, roundtripConfigWithData())) {
             for (int i = 0; i < PUSH_COUNT; i++) {
                 s.sendVideo(syntheticH264Idr(), i * 3000L, true);
                 // A private-data record EVERY iteration (the lone-data-stream

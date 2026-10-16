@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.tstrans.RtpException;
 import org.tstrans.codec.VideoUnit;
+import org.tstrans.shells.CancelHandle;
 
 /**
  * Cross-binding loopback parity test for the JVM RTP transport surface.
@@ -32,8 +33,8 @@ import org.tstrans.codec.VideoUnit;
  * <ul>
  *   <li><b>RTP is byte-faithful.</b> The scenario {@code input.ts} (752 bytes,
  *       4 × 188) is below the 1316-byte packet size, so a single
- *       {@link Sender#send(byte[])} produces one RTP datagram and a single
- *       {@link Receiver#recv()} returns all 752 bytes (verified against
+ *       {@link Transport#send(byte[])} produces one RTP datagram and a single
+ *       {@link RecvTransport#recv()} returns all 752 bytes (verified against
  *       {@code crates/tst-rtp/tests/rtp/loopback_unicast.rs}: one
  *       {@code send_bytes} → one datagram → one {@code recv_bytes}). The
  *       received bytes must equal {@code input.ts} exactly.</li>
@@ -44,7 +45,7 @@ import org.tstrans.codec.VideoUnit;
  * <h2>Topology + safety</h2>
  * UDP is connectionless — there is no SRT-style connect/close linger, so the
  * discover-then-rebind free-port pattern is safe here. The blocking
- * {@link Receiver#recv()} loop runs on a daemon thread feeding a
+ * {@link RecvTransport#recv()} loop runs on a daemon thread feeding a
  * {@link CompletableFuture}; a watchdog cancels a pre-obtained
  * {@link CancelHandle} after a ceiling so {@code recv()} can never wedge the
  * gating macOS/Windows runners. Linux-gated (real sockets), mirroring the Rust
@@ -77,7 +78,7 @@ class RtpLoopbackScenarioTest {
         // run the blocking recv loop on a daemon thread feeding a future. The
         // accumulation loop is robust to fragmentation, but the single-datagram
         // path (752 < 1316) completes after the first recv.
-        Receiver receiver = Receiver.fromUrl("rtp://127.0.0.1:" + port);
+        RecvTransport receiver = RecvTransport.fromUrl("rtp://127.0.0.1:" + port);
         CancelHandle watchdogHandle = receiver.cancelHandle(); // pre-obtained
         CompletableFuture<byte[]> receivedFuture = new CompletableFuture<>();
 
@@ -126,7 +127,7 @@ class RtpLoopbackScenarioTest {
         watchdog.start();
 
         // Sender on the main thread: send the scenario bytes once.
-        try (Sender sender = Sender.fromUrl("rtp://127.0.0.1:" + port)) {
+        try (Transport sender = Transport.fromUrl("rtp://127.0.0.1:" + port)) {
             sender.send(input);
             // Give the datagram time to traverse loopback + be drained.
             Thread.sleep(500);

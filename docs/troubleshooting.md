@@ -474,15 +474,16 @@ Set `TSTRANS_LOG=tst_rtp=debug` (`EnvFilter` syntax, same as
 pump/keepalive `tracing` events on stderr — the same signal
 `end_reason()` distills into a single enum member.
 
-**JVM** (`org.tstrans.rtp`) mirrors this too: `Receiver`,
-`DemuxReceiver`, and `H264Receiver` each expose `endReason()` (a
-`StreamEndReason` member, or `null`) and `endDetail()` (the free-text
+**JVM** (`org.tstrans.rtp` / `org.tstrans.shells`) mirrors this too: `Receiver`,
+`DemuxReceiver`, and `H264Receiver` each expose `endReason()` (an
+`org.tstrans.shells.EndReason` member, or `null`) and `endDetail()` (the free-text
 message for `KEEPALIVE_FAILED` / `TRANSPORT_FAILED` /
 `PROTOCOL_ERROR`, `null` otherwise) — both stay readable after
 `close()`:
 
 ```java
 import org.tstrans.rtp.*;
+import org.tstrans.shells.EndReason;
 
 try (RtspSession session = RtspClient.connectH264(cfg);
      H264Receiver rx = session.intoH264Receiver()) {
@@ -490,10 +491,10 @@ try (RtspSession session = RtspClient.connectH264(cfg);
         // ...
     }
     // loop exited (EOS or a caught error) — ask why
-    StreamEndReason reason = rx.endReason();
+    EndReason reason = rx.endReason();
     if (reason == EndReason.SESSION_EXPIRED) {
         // re-DESCRIBE + SETUP
-    } else if (reason == StreamEndReason.KEEPALIVE_FAILED || reason == StreamEndReason.TRANSPORT_FAILED) {
+    } else if (reason == EndReason.KEEPALIVE_FAILED || reason == EndReason.TRANSPORT_FAILED) {
         System.out.println("stream died: " + rx.endDetail());
     }
 }

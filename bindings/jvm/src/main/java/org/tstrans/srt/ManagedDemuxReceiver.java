@@ -8,6 +8,9 @@ import org.tstrans.NativeLoader;
 import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.DemuxerConfig;
+import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.EndReason;
+import org.tstrans.shells.SocketStats;
 
 /**
  * Single-call convenience wrapper that owns a managed-reconnect demuxer over an
@@ -72,7 +75,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     // Populated by nativeClose from nClose's close-time ordinal (see
     // endReason()'s javadoc for why: once closed, peekHandle() is 0 and the
     // native registry entry is gone for good).
-    private volatile RecvEndReason closedEndReason;
+    private volatile EndReason closedEndReason;
 
     /** Package-private constructor from a native handle. */
     ManagedDemuxReceiver(long h) { setHandle(h); }
@@ -207,7 +210,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     public CancelHandle cancelHandle() {
         ensureOpen("ManagedDemuxReceiver is closed");
         long ch = nCancelHandle(peekHandle());
-        return new CancelHandle(ch);
+        return ShellAdapters.cancelHandle(ch);
     }
 
     /**
@@ -294,7 +297,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      *
      * <p>If another thread is parked in iteration ({@code next()}), the cancel
      * wakes it: that iteration ends with {@code SrtException(CLOSED)} and records
-     * {@link RecvEndReason#CANCELLED}, and {@code close()} completes as soon as
+     * {@link EndReason#CANCELLED}, and {@code close()} completes as soon as
      * the parked call has released the receiver. Same contract as the C ABI's
      * {@code tst_managed_demux_receiver_close} and tst-py's {@code close()}.
      */
@@ -306,13 +309,13 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      *
      * <p>Recorded once, first-writer-wins, by the iteration itself at the moment
      * it observes the terminal condition — so read it <em>after</em> iteration
-     * ends to learn why: {@link RecvEndReason#CANCELLED} when
+     * ends to learn why: {@link EndReason#CANCELLED} when
      * {@link #cancelHandle()}{@code .cancel()} or a {@link #close()} from another
      * thread stopped it ({@code close()} cancels first; a close with no iteration
      * in flight ends nothing and so records nothing),
-     * {@link RecvEndReason#RECONNECT_EXHAUSTED} when the
-     * {@link ReconnectPolicy} budget ran out. See {@link RecvEndReason} for why
-     * {@link RecvEndReason#END_OF_STREAM} does not occur here.
+     * {@link EndReason#RECONNECT_EXHAUSTED} when the
+     * {@link ReconnectPolicy} budget ran out. {@link EndReason#END_OF_STREAM} does
+     * not occur here: a managed receiver reconnects instead of ending on a peer close.
      *
      * <p><b>Non-blocking, unlike the other getters.</b> {@link #socketStats()}
      * and {@link #lastSeenMicros(int)} take the internal resource lock a parked
@@ -336,10 +339,10 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      *
      * @return the recorded reason, or {@code null}
      */
-    public RecvEndReason endReason() {
+    public EndReason endReason() {
         long h = peekHandle();
         if (h == 0) return closedEndReason;
-        return RecvEndReason.fromWireOrdinal(nEndReason(h));
+        return EndReason.fromWireValue(nEndReason(h));
     }
 
     /**
@@ -356,7 +359,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
         // Runs at most once per receiver: NativeHandle.close() only calls this for
         // the caller that atomically claimed a non-zero handle. `-1` (nothing was
         // recorded) maps to null, which is what the field already held.
-        closedEndReason = RecvEndReason.fromWireOrdinal(nClose(h));
+        closedEndReason = EndReason.fromWireValue(nClose(h));
     }
 
     // --- Natives ---

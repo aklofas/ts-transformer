@@ -497,7 +497,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nSocketStats<'local>(
                 return JObject::null().into_raw();
             }
         };
-        match build_socket_stats(env, "org/tstrans/rtp/SocketStats", &s) {
+        match build_socket_stats(env, "org/tstrans/shells/SocketStats", &s) {
             Ok(o) => o.into_raw(),
             Err(e) => {
                 let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
@@ -555,7 +555,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nCancelHandle(
         // Lock-free: the view is the `Owned` entry itself, so this returns
         // while `recvAu` is parked on the slot.
         match REGISTRY.cancel_view(handle as u64) {
-            Some(view) => crate::rtp::cancel_view_handle(view),
+            Some(view) => crate::shells::cancel::cancel_view_handle(view),
             None => {
                 crate::error::throw_closed(env, "H264Receiver");
                 0
@@ -582,7 +582,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nEndReason(
     crate::panic::jni_catch(&mut env, -1, |_env| {
         REGISTRY
             .try_with_ref(handle as u64, |jdr| {
-                super::end_reason::end_reason_ordinal(jdr.inner.end_reason().as_ref())
+                crate::shells::end_reason::wire_value(jdr.inner.end_reason().as_ref())
             })
             .ok()
             .flatten()
@@ -605,7 +605,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nEndDetail<'local>(
             .try_with_ref(handle as u64, |jdr| {
                 jdr.inner
                     .end_reason()
-                    .and_then(|r| super::end_reason::end_reason_detail(&r).map(str::to_owned))
+                    .and_then(|r| crate::shells::end_reason::detail(&r).map(str::to_owned))
             })
             .ok()
             .flatten()
@@ -661,7 +661,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nClose(
         } else {
             None
         };
-        super::end_reason::build_close_snapshot(env, reason)
+        crate::shells::end_reason::build_close_snapshot(env, reason)
             .map(|obj| obj.into_raw())
             .unwrap_or(std::ptr::null_mut())
     })

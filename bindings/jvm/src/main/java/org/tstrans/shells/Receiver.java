@@ -188,8 +188,8 @@ public class Receiver extends NativeHandle {
     @Override protected void nativeClose(long h) {
         EndReason.Snapshot snapshot = nClose(h);
         if (snapshot != null) {
-            closedEndDetail = snapshot.detail;
-            closedEndReason = snapshot.reason;
+            closedEndDetail = snapshot.detail();
+            closedEndReason = snapshot.reason();
         }
     }
 

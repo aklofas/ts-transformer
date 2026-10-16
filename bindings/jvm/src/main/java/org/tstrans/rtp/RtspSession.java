@@ -66,22 +66,22 @@ public final class RtspSession extends NativeHandle {
      */
     public RtspStats stats() {
         ensureOpen("RtspSession is closed");
-        return new RtspStats(0L, 0L, 0L, 0L, 0L, 0);
+        return new RtspStats(0L, 0L, 0L, 0);
     }
 
     /** Consume the data plane with default demux options. See {@link #intoDemuxReceiver(DemuxerConfig)}. */
-    public DemuxReceiver intoDemuxReceiver() throws RtspException {
+    public org.tstrans.shells.DemuxReceiver intoDemuxReceiver() throws RtspException {
         ensureOpen("RtspSession is closed");
         long h = nIntoDemuxReceiver(peekHandle(), false, 0, 0L, 0L, false, 0, 0L, false, 0L, false);
         if (h == 0) {
             throw new RtspException(RtspException.Kind.PROTOCOL,
                 "nIntoDemuxReceiver returned 0 without throwing");
         }
-        return new DemuxReceiver(h);
+        return ShellAdapters.demuxReceiver(h);
     }
 
     /**
-     * Consume the session's RTP data plane and return a {@link DemuxReceiver} over
+     * Consume the session's RTP data plane and return a {@link org.tstrans.shells.DemuxReceiver} over
      * the demuxed {@code DemuxEvent} stream. The control methods remain usable
      * afterward (only the internal data-plane transport is consumed). Calling this
      * twice raises {@link RtspException} of kind {@code CLOSED}.
@@ -99,7 +99,7 @@ public final class RtspSession extends NativeHandle {
      * @param demuxConfig demuxer configuration (must not be null; use
      *     {@link #intoDemuxReceiver()} for defaults)
      */
-    public DemuxReceiver intoDemuxReceiver(DemuxerConfig demuxConfig) throws RtspException {
+    public org.tstrans.shells.DemuxReceiver intoDemuxReceiver(DemuxerConfig demuxConfig) throws RtspException {
         ensureOpen("RtspSession is closed");
         long h = nIntoDemuxReceiver(peekHandle(), true,
             demuxConfig.strictMode().ordinal(), demuxConfig.pesCapPerPid(),
@@ -111,7 +111,7 @@ public final class RtspSession extends NativeHandle {
             throw new RtspException(RtspException.Kind.PROTOCOL,
                 "nIntoDemuxReceiver returned 0 without throwing");
         }
-        return new DemuxReceiver(h);
+        return ShellAdapters.demuxReceiver(h);
     }
 
     /**
@@ -154,7 +154,7 @@ public final class RtspSession extends NativeHandle {
      *
      * <p><b>Failure with a live DemuxReceiver.</b> If {@link #intoDemuxReceiver()}
      * previously consumed the data plane, this call still consumes and tears down the
-     * session before throwing {@link RtspException}. Any live {@link DemuxReceiver}
+     * session before throwing {@link RtspException}. Any live {@link org.tstrans.shells.DemuxReceiver}
      * backed by this session will reach EOS on its next iteration.
      *
      * @return an {@link H264Receiver} over the post-SETUP RTP data plane

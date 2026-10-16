@@ -11,9 +11,10 @@ import java.net.InetSocketAddress;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtpException;
+import org.tstrans.shells.MuxSender;
 
 /**
- * {@code org.tstrans.rtp.MuxSender.finish()} drains,
+ * {@code org.tstrans.shells.MuxSender.finish()} drains,
  * reports, closes; a second call is quiet.
  *
  * <p>The RTP twin of {@code org.tstrans.srt.SrtMuxSenderFinishTest}. The peer
@@ -29,7 +30,7 @@ class RtpMuxSenderFinishTest {
     void finishClosesAndIsIdempotent() throws Exception {
         try (DatagramSocket peer = new DatagramSocket(new InetSocketAddress("127.0.0.1", 0))) {
             String url = "rtp://127.0.0.1:" + peer.getLocalPort();
-            MuxSender s = MuxSender.fromUrl(url, roundtripConfig());
+            MuxSender s = MuxSender.open(url, roundtripConfig());
             try {
                 s.sendVideo(syntheticH264Idr(), 0L, true);
                 s.finish();
@@ -49,7 +50,7 @@ class RtpMuxSenderFinishTest {
     void finishAfterCloseIsQuiet() throws Exception {
         try (DatagramSocket peer = new DatagramSocket(new InetSocketAddress("127.0.0.1", 0))) {
             String url = "rtp://127.0.0.1:" + peer.getLocalPort();
-            MuxSender s = MuxSender.fromUrl(url, roundtripConfig());
+            MuxSender s = MuxSender.open(url, roundtripConfig());
             s.close();
             s.finish();                      // no handle left: quiet, not a throw
         }

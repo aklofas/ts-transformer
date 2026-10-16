@@ -581,7 +581,7 @@ mod tests {
     fn domain_kind_sets_are_deduplicated_and_sized() {
         for (d, n) in [
             (Domain::Srt, 11),
-            (Domain::Rtp, 11),
+            (Domain::Rtp, 13),
             (Domain::Rtsp, 11), // + CLOSED (a cancelled control call, a consumed data plane)
             (Domain::Demux, 4),
             (Domain::Mux, 9),

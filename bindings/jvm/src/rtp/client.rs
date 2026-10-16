@@ -24,7 +24,7 @@ use tst_rtp::rtsp::client::session::RtspSession as RustRtspSession;
 use crate::handle::{HandleRegistry, TryWith};
 use crate::mpegts::build_demux_config_from_args;
 
-use super::demux_receiver::demux_receiver_handle_from_transport;
+use super::demux_receiver_handle_from_transport;
 use super::errors::{rtsp_error_to_jvm, throw_rtsp};
 
 /// Parse `RtspClientConfig.tlsRootCertsPem` (a PEM bundle) into a

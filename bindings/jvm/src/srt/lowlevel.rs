@@ -4,8 +4,8 @@
 //! Handle lifecycle:
 //! - `nConnect` / `nListen` register via `REGISTRY.insert[_with_cancel]`.
 //! - Non-consuming methods lease via `REGISTRY.with`.
-//! - `nIntoSender` / `nIntoReceiver` CONSUME the `Socket` via `REGISTRY.close`
-//!   and return a new `Sender` / `Receiver` handle. The Java caller zeros its own
+//! - `nInto*` CONSUME the `Socket` via `REGISTRY.close` and return a new
+//!   `org.tstrans.shells` handle. The Java caller zeros its own
 //!   socket handle on success — the `handle = 0` assignment is the next statement
 //!   after the native call.
 //! - `nClose` takes + tears down via `REGISTRY.close`.
@@ -20,11 +20,10 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use jni::JNIEnv;
-use jni::objects::{JClass, JObject, JString, JValue};
-use jni::sys::{jlong, jobject};
-use tst_core::transport::TransportCancel;
-use tst_pipeline::binding::{BindingErrorKind, Owned};
-use tst_pipeline::{Receiver as PlReceiver, ReceiverConfig, Sender as PlSender, SenderConfig};
+use jni::objects::{JBooleanArray, JByteArray, JClass, JIntArray, JObject, JString, JValue};
+use jni::sys::{jboolean, jint, jlong, jobject};
+use tst_core::transport::{RecvTransport, Transport, TransportCancel};
+use tst_pipeline::binding::{BindingErrorKind, Domain, Opened, Owned};
 use tst_srt::{
     Listener as SrtListener, ListenerConfig, Socket as SrtSocket, SocketConfig, SrtTransport,
     SrtUrl,
@@ -35,6 +34,9 @@ use tst_srt::{
 use super::errors::{srt_error, throw_srt, url_error};
 use crate::handle::{HandleRegistry, OwnedRegistry};
 use crate::jutil::{checked_u16, join_host_port};
+use crate::mpegts::build_demux_config_from_args;
+use crate::mpegts::muxer::build_muxer_config_from_arrays;
+use crate::shells;
 
 /// Per-type leased-handle registry for `org.tstrans.srt.Socket` (an `SrtSocket`).
 /// `nConnect`/`nAccept` insert; per-call methods lease; `nClose` and the
@@ -535,11 +537,30 @@ pub extern "system" fn Java_org_tstrans_srt_Builder_nListen<'local>(
 }
 
 // ---------------------------------------------------------------------------
-// Socket — nIntoSender
+// Socket — nInto{Sender,Receiver,MuxSender,DemuxReceiver}
 // ---------------------------------------------------------------------------
+//
+// Each CONSUMES the `Socket` via `REGISTRY_SOCKET.close` and returns the key of
+// a new `org.tstrans.shells` handle over it; the Java caller zeroes its own
+// socket handle unconditionally after the call (the socket is consumed even
+// when a config error follows).
 
-/// Consume a `Box<Socket>` and produce a `Box<PlSender<SrtTransport>>`.
-/// The Java caller MUST zero its socket handle field after this returns.
+/// The socket as an opened send transport. The cancel target is read BEFORE the
+/// socket moves into the transport (obtain-before-move); `Owned` keeps it
+/// outside the slot, so `nCancelHandle` answers while a send is parked and
+/// `close()` cancels first.
+fn opened_send(socket: SrtSocket) -> Opened<Box<dyn Transport>> {
+    let cancel: Arc<dyn TransportCancel> = Arc::new(socket.cancel_handle());
+    Opened::new(Box::new(SrtTransport::new(socket)), cancel, Domain::Srt)
+}
+
+/// The socket as an opened receive transport; see [`opened_send`].
+fn opened_recv(socket: SrtSocket) -> Opened<Box<dyn RecvTransport>> {
+    let cancel: Arc<dyn TransportCancel> = Arc::new(socket.cancel_handle());
+    Opened::new(Box::new(SrtTransport::new(socket)), cancel, Domain::Srt)
+}
+
+/// `Socket.nIntoSender(handle)`.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoSender(
     mut env: JNIEnv<'_>,
@@ -547,23 +568,16 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoSender(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        // Take the Socket out of its registry (atomic; idempotent). `None` = already
-        // closed/consumed → the Java caller zeroed its field, so this is a stale call.
+        // `None` = already closed/consumed: a stale call.
         let Some(socket) = REGISTRY_SOCKET.close(handle as u64) else {
             crate::error::throw_closed(env, "Socket");
             return 0;
         };
-        let transport = SrtTransport::new(socket);
-        let sender = PlSender::new(transport, SenderConfig::default());
-        super::transport::register_sender(sender)
+        shells::sender::register(opened_send(socket))
     })
 }
 
-// ---------------------------------------------------------------------------
-// Socket — nIntoReceiver
-// ---------------------------------------------------------------------------
-
-/// Consume a `Box<Socket>` and produce a `Box<PlReceiver<SrtTransport>>`.
+/// `Socket.nIntoReceiver(handle)`.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoReceiver(
     mut env: JNIEnv<'_>,
@@ -575,9 +589,113 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoReceiver(
             crate::error::throw_closed(env, "Socket");
             return 0;
         };
-        let transport = SrtTransport::new(socket);
-        let receiver = PlReceiver::new(transport, ReceiverConfig::default());
-        super::transport::register_receiver(receiver)
+        shells::receiver::register(opened_recv(socket))
+    })
+}
+
+/// `Socket.nIntoMuxSender(handle, ...programConfig...)`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoMuxSender<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    program_number: jint,
+    pmt_pid: jint,
+    pcr_pid: jint,
+    pcr_interval_ms: jint,
+    psi_interval_ms: jint,
+    buffer_packets: jint,
+    av1_carriage: jint,
+    stream_pids: JIntArray<'local>,
+    stream_kinds: JIntArray<'local>,
+    stream_codecs: JIntArray<'local>,
+    stream_type_codes: JIntArray<'local>,
+    stream_carries_pts: JBooleanArray<'local>,
+    data_desc_bytes: JByteArray<'local>,
+    data_desc_lens: JIntArray<'local>,
+) -> jlong {
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        let Some(socket) = REGISTRY_SOCKET.close(handle as u64) else {
+            crate::error::throw_closed(env, "Socket");
+            return 0;
+        };
+        let cfg = match build_muxer_config_from_arrays(
+            env,
+            program_number,
+            pmt_pid,
+            pcr_pid,
+            pcr_interval_ms,
+            psi_interval_ms,
+            buffer_packets,
+            av1_carriage,
+            &stream_pids,
+            &stream_kinds,
+            &stream_codecs,
+            &stream_type_codes,
+            &stream_carries_pts,
+            &data_desc_bytes,
+            &data_desc_lens,
+        ) {
+            Ok(c) => c,
+            // The socket is already consumed (dropped here); the exception is pending.
+            Err(()) => return 0,
+        };
+        shells::mux_sender::register(env, opened_send(socket), cfg)
+    })
+}
+
+/// `Socket.nIntoDemuxReceiver(handle)` — default demux options.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoDemuxReceiver(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jlong {
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        let Some(socket) = REGISTRY_SOCKET.close(handle as u64) else {
+            crate::error::throw_closed(env, "Socket");
+            return 0;
+        };
+        shells::demux_receiver::register(opened_recv(socket), None)
+    })
+}
+
+/// `Socket.nIntoDemuxReceiverWithConfig(handle, ...)` — explicit `DemuxerConfig`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoDemuxReceiverWithConfig(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    strict: jint,
+    pes_cap_per_pid: jlong,
+    pes_cap_total: jlong,
+    cfi: jboolean,
+    av1: jint,
+    au_cell_cap: jlong,
+    lenient_psi: jboolean,
+    sync_buf_cap: jlong,
+    unwrap_timestamps: jboolean,
+) -> jlong {
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        let Some(socket) = REGISTRY_SOCKET.close(handle as u64) else {
+            crate::error::throw_closed(env, "Socket");
+            return 0;
+        };
+        let Some(opts) = build_demux_config_from_args(
+            env,
+            strict,
+            pes_cap_per_pid,
+            pes_cap_total,
+            cfi,
+            av1,
+            au_cell_cap,
+            lenient_psi,
+            sync_buf_cap,
+            unwrap_timestamps,
+        ) else {
+            return 0;
+        };
+        shells::demux_receiver::register(opened_recv(socket), Some(opts))
     })
 }
 
@@ -730,7 +848,7 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nCancelHandle(
         // sanctioned cross-thread wake. Mirrors tst-py's PyCancelHandle.
         REGISTRY_LISTENER
             .cancel_view(handle as u64)
-            .map_or(0, super::cancel_view_handle)
+            .map_or(0, crate::shells::cancel::cancel_view_handle)
     })
 }
 

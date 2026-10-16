@@ -9,6 +9,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.tstrans.SrtException;
+import org.tstrans.shells.Sender;
+import org.tstrans.shells.Receiver;
+import org.tstrans.shells.MuxSender;
 
 /**
  * Shared machinery for the sender-side cancel-first tests: park a daemon
@@ -61,7 +64,7 @@ final class SrtSenderParkSupport {
         CompletableFuture<Receiver> peerFuture = new CompletableFuture<>();
         Thread peer = new Thread(() -> {
             try {
-                peerFuture.complete(Receiver.fromUrl(listenUrl)); // blocks until a caller connects
+                peerFuture.complete(Receiver.open(listenUrl)); // blocks until a caller connects
             } catch (Exception ex) {
                 peerFuture.completeExceptionally(ex);
             }
@@ -92,7 +95,7 @@ final class SrtSenderParkSupport {
         SrtException last = null;
         while (System.nanoTime() < deadline) {
             try {
-                return MuxSender.fromUrl(url, roundtripConfigWithData());
+                return MuxSender.open(url, roundtripConfigWithData());
             } catch (SrtException e) {
                 last = e;
                 Thread.sleep(50);

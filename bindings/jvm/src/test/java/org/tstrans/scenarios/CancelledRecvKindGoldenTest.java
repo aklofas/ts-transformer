@@ -17,10 +17,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
 import org.tstrans.srt.Builder;
-import org.tstrans.srt.CancelHandle;
+import org.tstrans.shells.CancelHandle;
 import org.tstrans.srt.Listener;
-import org.tstrans.srt.MuxSender;
-import org.tstrans.srt.Receiver;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.Receiver;
 import org.tstrans.srt.Socket;
 
 /**
@@ -81,7 +81,7 @@ final class CancelledRecvKindGoldenTest {
         int port = listener.localAddr().port();
         CountDownLatch release = new CountDownLatch(1);
         Thread peer = new Thread(() -> {
-            try (MuxSender tx = MuxSender.fromUrl(
+            try (MuxSender tx = MuxSender.open(
                     "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS,
                     roundtripConfig())) {
                 release.await();

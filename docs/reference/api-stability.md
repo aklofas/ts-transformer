@@ -109,6 +109,7 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-rtp | error | Stable | RTP error taxonomy |
 | tst-rtp | h264 | Stable | RFC 6184 H.264 packetizer, depacketizer and receiver; `H264Receiver::set_recv_timeout` and `end_reason()` are Provisional — same divergence shape as `transport`'s row below |
 | tst-rtp | h265 | Provisional | RFC 7798 H.265 packetizer and depacketizer; new surface |
+| tst-rtp | opener | Provisional | URL opener for the language bindings' shells (type-erased transport + cancel + domain) |
 | tst-rtp | packet | Stable | RTP packet parse/build |
 | tst-rtp | rtcp | Stable | RTCP SR/RR/SDES packet codecs and `RtcpStats` |
 | tst-rtp | sdp | Stable | SDP parsing (`Sdp`, `SdpMedia`) |

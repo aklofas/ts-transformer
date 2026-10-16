@@ -5,6 +5,7 @@ import java.util.NoSuchElementException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.SrtException;
+import org.tstrans.shells.CancelHandle;
 
 /**
  * Bound SRT listener. Returned by {@link Builder#listen()}. Iterate to consume
@@ -55,7 +56,7 @@ public final class Listener extends NativeHandle implements Iterable<Socket> {
      */
     public CancelHandle cancelHandle() {
         ensureOpen("Listener is closed");
-        return new CancelHandle(nCancelHandle(peekHandle()));
+        return ShellAdapters.cancelHandle(nCancelHandle(peekHandle()));
     }
 
     /**

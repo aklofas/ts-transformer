@@ -82,7 +82,7 @@ fn unbox_ssrc(env: &mut JNIEnv, obj: &JObject) -> Result<Option<u32>, ()> {
 /// throws `RtpException` and returns 0 on error. `pktSize` is the UDP datagram
 /// size; `ssrcBoxed` is a nullable `java.lang.Long` SSRC (random when null).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Sender_nFromUrl(
+pub extern "system" fn Java_org_tstrans_rtp_Transport_nFromUrl(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     url: JString<'_>,
@@ -139,7 +139,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Sender_nFromUrl(
 
 /// Send one MPEG-TS payload chunk over RTP. Throws `RtpException` on failure.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Sender_nSend(
+pub extern "system" fn Java_org_tstrans_rtp_Transport_nSend(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
@@ -163,7 +163,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Sender_nSend(
 
 /// Return a `SocketStats` record. Returns null on JNI builder error (non-fatal).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Sender_nSocketStats<'local>(
+pub extern "system" fn Java_org_tstrans_rtp_Transport_nSocketStats<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     handle: jlong,
@@ -175,14 +175,14 @@ pub extern "system" fn Java_org_tstrans_rtp_Sender_nSocketStats<'local>(
         else {
             return JObject::null();
         };
-        build_socket_stats(env, "org/tstrans/rtp/SocketStats", &stats)
+        build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats)
             .unwrap_or_else(|_| JObject::null())
     })
 }
 
 /// Return a cancel-handle `jlong` (a `CancelView` over the `Owned` entry).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Sender_nCancelHandle(
+pub extern "system" fn Java_org_tstrans_rtp_Transport_nCancelHandle(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
@@ -191,14 +191,14 @@ pub extern "system" fn Java_org_tstrans_rtp_Sender_nCancelHandle(
         // Lock-free (see the registration comment); closed handle → 0.
         REGISTRY_SENDER
             .cancel_view(handle as u64)
-            .map_or(0, super::cancel_view_handle)
+            .map_or(0, crate::shells::cancel::cancel_view_handle)
     })
 }
 
 /// Close the Sender, freeing the native box. The cancel hook fires first (waking
 /// a parked `send`) before the resource is taken.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Sender_nClose(
+pub extern "system" fn Java_org_tstrans_rtp_Transport_nClose(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
@@ -216,7 +216,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Sender_nClose(
 /// Allocate a `Receiver` bound to an `rtp://host:port` URL. Returns a `jlong`
 /// handle; throws `RtpException` and returns 0 on error.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Receiver_nFromUrl(
+pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nFromUrl(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     url: JString<'_>,
@@ -274,7 +274,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nFromUrl(
 /// Receive one MPEG-TS payload chunk (RTP header already stripped). Returns the
 /// bytes as a `jbyteArray`; throws `RtpException` and returns null on failure.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Receiver_nRecv(
+pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nRecv(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
@@ -329,7 +329,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nRecv(
 /// below, since that outcome never reaches `transport_error` (which
 /// only sees `Err`).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Receiver_nRecvTimeout(
+pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nRecvTimeout(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
@@ -385,7 +385,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nRecvTimeout(
 
 /// Return a `SocketStats` record. Returns null on JNI builder error (non-fatal).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Receiver_nSocketStats<'local>(
+pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nSocketStats<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     handle: jlong,
@@ -399,14 +399,14 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nSocketStats<'local>(
         ) else {
             return JObject::null();
         };
-        build_socket_stats(env, "org/tstrans/rtp/SocketStats", &stats)
+        build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats)
             .unwrap_or_else(|_| JObject::null())
     })
 }
 
 /// Return a cancel-handle `jlong` (a `CancelView` over the `Owned` entry).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Receiver_nCancelHandle(
+pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nCancelHandle(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
@@ -415,7 +415,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nCancelHandle(
         // Lock-free (see the registration comment); closed handle → 0.
         REGISTRY_RECEIVER
             .cancel_view(handle as u64)
-            .map_or(0, super::cancel_view_handle)
+            .map_or(0, crate::shells::cancel::cancel_view_handle)
     })
 }
 
@@ -427,7 +427,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nCancelHandle(
 /// `Receiver.endReason()` reads the Java-side snapshot once `peekHandle()`
 /// is 0).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Receiver_nEndReason(
+pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nEndReason(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
@@ -438,7 +438,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nEndReason(
         // behind a parked call.
         REGISTRY_RECEIVER
             .snapshot(handle as u64, |h| {
-                super::end_reason::end_reason_ordinal(h.get().as_ref())
+                crate::shells::end_reason::wire_value(h.get().as_ref())
             })
             .unwrap_or(-1)
     })
@@ -449,7 +449,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nEndReason(
 /// every other reason (including "hasn't ended yet" and a closed/absent
 /// handle).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Receiver_nEndDetail<'local>(
+pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nEndDetail<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     handle: jlong,
@@ -458,7 +458,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nEndDetail<'local>(
         let detail = REGISTRY_RECEIVER
             .snapshot(handle as u64, |h| {
                 h.get()
-                    .and_then(|r| super::end_reason::end_reason_detail(&r).map(str::to_owned))
+                    .and_then(|r| crate::shells::end_reason::detail(&r).map(str::to_owned))
             })
             .flatten();
         match detail {
@@ -482,7 +482,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nEndDetail<'local>(
 /// function returns. `null` only on a JNI allocation failure building the
 /// snapshot (`nativeClose` null-checks before touching it).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Receiver_nClose(
+pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nClose(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
@@ -495,7 +495,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nClose(
         } else {
             None
         };
-        super::end_reason::build_close_snapshot(env, reason)
+        crate::shells::end_reason::build_close_snapshot(env, reason)
             .map(|obj| obj.into_raw())
             .unwrap_or(std::ptr::null_mut())
     })

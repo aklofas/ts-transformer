@@ -16,6 +16,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.tstrans.SrtException;
+import org.tstrans.shells.Sender;
+import org.tstrans.shells.Receiver;
 
 /**
  * Cross-binding loopback parity test for the JVM SRT surface.
@@ -228,7 +230,7 @@ class SrtLoopbackScenarioTest {
             throw new AssertionError("receiver thread failed to publish port", e);
         }
 
-        try (Sender sender = Sender.fromUrl(
+        try (Sender sender = Sender.open(
                 "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS)) {
             // sendPayload is exactly SRT_CHUNK = 1316 bytes (one full SRT live-mode
             // bundle). The TS framer emits this as a single srt_send call during

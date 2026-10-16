@@ -19,6 +19,10 @@ import org.tstrans.RtpException;
 import org.tstrans.RtspException;
 import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
+import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.SocketStats;
+import org.tstrans.shells.EndReason;
 
 /**
  * Unit tests for {@link H264Receiver}.
@@ -352,7 +356,7 @@ class H264ReceiverTest {
             rx.close();
         }
         returned.get(5, TimeUnit.SECONDS);
-        assertEquals(StreamEndReason.CANCELLED, rx.endReason(),
+        assertEquals(EndReason.CANCELLED, rx.endReason(),
             "close() records the end reason and it stays readable");
     }
 
