@@ -16,11 +16,19 @@ live peer, and must honour the same rules whichever transport it landed on:
 5. `srt` and `tcp` senders: once the peer is gone, further sends end in
    `BROKEN` or `CLOSED`. libsrt notices a closed peer only through its 5 s
    peer-idle timeout, so the window is 15 s.
+6. A `MuxSender` and a `DemuxReceiver` repeat the rules over the same
+   peers as `Sender` and `Receiver`.
+7. A `Sender` fed bytes that hold no TS sync for more than the framing
+   limit raises the transport's own exception class (exactly) with kind
+   `INPUT_MALFORMED`, on every transport.
+8. `srt` and `tcp` receivers: once the peer closes cleanly, the first
+   `recv_bytes()` raises the transport's class with kind `BROKEN` and
+   every later one raises it with kind `END_OF_STREAM`; `end_reason()`
+   stays `None`. A datagram transport (`rtp`, `udp`, `rist`) cannot see a
+   peer close, so it has no rule 8 case.
 
-Test ids read `{shell}-{scheme}-r{rule}`. A `MuxSender` and a
-`DemuxReceiver` repeat the rules over the same peers as `Sender` and
-`Receiver`. A `rist` case skips only when librist cannot bind an even
-loopback port.
+Test ids read `{shell}-{scheme}-r{rule}`. A `rist` case skips only when
+librist cannot bind an even loopback port.
 """
 
 from __future__ import annotations
@@ -67,6 +75,8 @@ RECEIVERS = ("Receiver", "DemuxReceiver")
 TS_PACKET = b"\x47" + b"\x00" * 187
 TS_BUNDLE = TS_PACKET * 6
 NAL_IDR = b"\x00\x00\x00\x01\x65\xBB"
+# More than the sender's 18 800-byte framing limit, and no 0x47 anywhere.
+NOT_TS = b"\x00" * 20_000
 
 _PEER_WAIT_S = 10.0
 
@@ -119,7 +129,23 @@ def _retry_open(open_fn: Callable[[], object], err: type[BaseException]) -> obje
 @contextlib.contextmanager
 def _receiver_with_peer(shell: str, scheme: str) -> Iterator[object]:
     """Yield an open receiver shell with a live, silent peer attached."""
+    with _receiver_and_peer(shell, scheme) as (rx, _drop):
+        yield rx
+
+
+def _no_peer() -> None:
+    """The datagram transports' peer is not connected; nothing to close."""
+
+
+@contextlib.contextmanager
+def _receiver_and_peer(
+    shell: str, scheme: str
+) -> Iterator[tuple[object, Callable[[], None]]]:
+    """Yield `(receiver, close_peer)`: an open receiver shell with a live,
+    silent peer, and a callable that closes the peer cleanly (a no-op on
+    the datagram transports, whose peer is not connected)."""
     cleanup: list[Callable[[], None]] = []
+    close_peer: Callable[[], None] = _no_peer
     try:
         if scheme == "srt":
             port = free_tcp_port()
@@ -138,6 +164,7 @@ def _receiver_with_peer(shell: str, scheme: str) -> Iterator[object]:
                 lambda: shells.Sender.open(f"srt://127.0.0.1:{port}?mode=caller"), SrtError
             )
             cleanup.append(peer.close)
+            close_peer = peer.close
             t.join(_PEER_WAIT_S)
             assert not t.is_alive() and box, f"srt listener did not accept: {errs!r}"
             rx = box[0]
@@ -155,10 +182,20 @@ def _receiver_with_peer(shell: str, scheme: str) -> Iterator[object]:
             threading.Thread(target=accept_one, daemon=True).start()
             rx = _open_receiver(shell, f"tcp://127.0.0.1:{listener.local_port()}")
             cleanup.append(lambda: [h.close() for h in held])
+
+            def close_tcp_peer() -> None:
+                end = time.monotonic() + _PEER_WAIT_S
+                while not held and time.monotonic() < end:
+                    time.sleep(0.01)
+                assert held, "tcp listener did not accept"
+                held[0].close()
+
+            close_peer = close_tcp_peer
+
         else:
             rx, _ = bind_even_port_or_skip(lambda p: _open_receiver(shell, f"rist://@127.0.0.1:{p}"))
         cleanup.append(rx.close)
-        yield rx
+        yield rx, close_peer
     finally:
         for fn in reversed(cleanup):
             with contextlib.suppress(BaseException):
@@ -369,3 +406,44 @@ def test_sends_end_broken_or_closed_once_the_peer_is_gone(shell: str, scheme: st
         assert err is not None, "sends kept succeeding for 15 s after the peer went away"
         assert type(err) is error_class, repr(err)
         assert err.kind in (kind_enum.BROKEN, kind_enum.CLOSED)
+
+
+@pytest.mark.parametrize(("shell", "scheme"), _cases(("Sender",), 7))
+def test_bytes_without_ts_sync_raise_input_malformed(shell: str, scheme: str) -> None:
+    error_class, kind_enum = ERRORS[scheme]
+    with _sender_with_peer(shell, scheme) as (tx, _drop):
+        with pytest.raises(error_class) as e:
+            tx.send_bytes(NOT_TS)
+        assert type(e.value) is error_class, repr(e.value)
+        assert e.value.kind == kind_enum.INPUT_MALFORMED
+
+
+@pytest.mark.parametrize(("shell", "scheme"), _cases(("Receiver",), 8, schemes=("srt", "tcp")))
+def test_a_clean_peer_close_ends_in_broken_then_end_of_stream(shell: str, scheme: str) -> None:
+    error_class, kind_enum = ERRORS[scheme]
+    with _receiver_and_peer(shell, scheme) as (rx, close_peer):
+        close_peer()
+
+        def recv_until_it_fails() -> BaseException | None:
+            end = time.monotonic() + 15.0
+            while time.monotonic() < end:
+                try:
+                    _recv_once(shell, rx)
+                except BaseException as exc:  # noqa: BLE001
+                    return exc
+            return None
+
+        blocked, got = call_with_hang_deadline(recv_until_it_fails, 25.0)
+        if blocked:
+            rx.cancel_handle().cancel()
+        assert not blocked, "a recv hung after the peer closed"
+        first = got.get("value")
+        assert first is not None, "the receiver kept delivering for 15 s after the peer closed"
+        assert type(first) is error_class, repr(first)
+        assert first.kind == kind_enum.BROKEN
+        for _ in range(2):
+            with pytest.raises(error_class) as e:
+                _recv_once(shell, rx)
+            assert type(e.value) is error_class, repr(e.value)
+            assert e.value.kind == kind_enum.END_OF_STREAM
+        assert rx.end_reason() is None

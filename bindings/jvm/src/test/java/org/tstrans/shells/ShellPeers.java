@@ -31,6 +31,8 @@ final class ShellPeers {
     static final byte[] TS_PACKET = tsPacket();
     static final byte[] TS_BUNDLE = bundle();
     static final byte[] NAL_IDR = {0, 0, 0, 1, 0x65, (byte) 0xBB};
+    /** More than the sender's 18 800-byte framing limit, and no 0x47 anywhere. */
+    static final byte[] NOT_TS = new byte[20_000];
 
     private static byte[] tsPacket() {
         byte[] p = new byte[188];
@@ -118,11 +120,18 @@ final class ShellPeers {
     /** Open on a free even loopback port, or skip the test when librist cannot bind one. */
     static <T> Bound<T> bindEven(java.util.function.IntFunction<Callable<T>> open) {
         for (int attempt = 0; attempt < 20; attempt++) {
+            int port;
             try {
-                int port = TestSupport.freeUdpPort() & ~1;
+                port = TestSupport.freeUdpPort() & ~1;
+            } catch (java.io.IOException e) {
+                continue;
+            }
+            try {
                 return new Bound<>(open.apply(port).call(), port);
+            } catch (RistException e) {
+                // librist could not bind that port (taken since the probe); try another
             } catch (Exception e) {
-                // that port was taken or odd-only; try another
+                throw new AssertionError("opening on even port " + port + " failed", e);
             }
         }
         assumeTrue(false, "librist could not bind an even loopback port");
@@ -177,6 +186,8 @@ final class ShellPeers {
     /** A sender shell, whichever of Sender / MuxSender it is. */
     interface Tx extends AutoCloseable {
         void sendOnce() throws Exception;
+        /** Raw TS bytes; only a {@code Sender} takes them. */
+        void sendBytes(byte[] bytes) throws Exception;
         CancelHandle cancelHandle();
         boolean isAlive();
         @Override void close();
@@ -198,6 +209,7 @@ final class ShellPeers {
             Sender s = Sender.open(url);
             return new Tx() {
                 @Override public void sendOnce() throws Exception { s.sendBytes(TS_BUNDLE); }
+                @Override public void sendBytes(byte[] bytes) throws Exception { s.sendBytes(bytes); }
                 @Override public CancelHandle cancelHandle() { return s.cancelHandle(); }
                 @Override public boolean isAlive() { return s.isAlive(); }
                 @Override public void close() { s.close(); }
@@ -206,6 +218,9 @@ final class ShellPeers {
         MuxSender m = MuxSender.open(url, TestSupport.roundtripConfig());
         return new Tx() {
             @Override public void sendOnce() throws Exception { m.sendVideo(NAL_IDR, 0L, true); }
+            @Override public void sendBytes(byte[] bytes) {
+                throw new UnsupportedOperationException("a MuxSender takes no raw TS bytes");
+            }
             @Override public CancelHandle cancelHandle() { return m.cancelHandle(); }
             @Override public boolean isAlive() { return m.isAlive(); }
             @Override public void close() { m.close(); }
@@ -244,13 +259,25 @@ final class ShellPeers {
 
     /** An open receiver shell with a live, silent peer attached; everything is closed with {@code c}. */
     static Rx receiverWithPeer(String shell, String scheme, Cleanup c) throws Exception {
+        return receiverAndPeer(shell, scheme, c).rx();
+    }
+
+    /**
+     * A receiver shell with a live, silent peer, plus a runnable that closes the peer cleanly (a
+     * no-op on the datagram transports, whose peer is not connected).
+     */
+    record ReceiverPeer(Rx rx, Runnable closePeer) {}
+
+    static ReceiverPeer receiverAndPeer(String shell, String scheme, Cleanup c) throws Exception {
         int port = TestSupport.freeUdpPort();
         Rx rx;
+        Runnable closePeer = () -> {};
         switch (scheme) {
             case "srt": {
                 Pending<Rx> listening = openInBackground(
                     () -> openRx(shell, "srt://:" + port + "?mode=listener"));
-                c.add(retryCaller(() -> Sender.open("srt://127.0.0.1:" + port + "?mode=caller")));
+                Sender peer = c.add(retryCaller(() -> Sender.open("srt://127.0.0.1:" + port + "?mode=caller")));
+                closePeer = peer::close;
                 rx = listening.await();
                 break;
             }
@@ -261,16 +288,25 @@ final class ShellPeers {
             case "tcp": {
                 java.net.ServerSocket server = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress());
                 c.add(server);
+                CompletableFuture<java.net.Socket> accepted = new CompletableFuture<>();
                 Thread accept = new Thread(() -> {
                     try {
-                        c.add(server.accept());
-                    } catch (java.io.IOException ignored) {
+                        accepted.complete(c.add(server.accept()));
+                    } catch (java.io.IOException e) {
                         // closed during teardown
+                        accepted.completeExceptionally(e);
                     }
                 }, "shell-tcp-accept");
                 accept.setDaemon(true);
                 accept.start();
                 rx = openRx(shell, "tcp://127.0.0.1:" + server.getLocalPort());
+                closePeer = () -> {
+                    try {
+                        accepted.get(PEER_WAIT_MS, TimeUnit.MILLISECONDS).close();
+                    } catch (Exception e) {
+                        throw new AssertionError("the tcp peer was not accepted", e);
+                    }
+                };
                 break;
             }
             case "rist":
@@ -280,7 +316,7 @@ final class ShellPeers {
                 throw new IllegalArgumentException(scheme);
         }
         c.add(rx);
-        return rx;
+        return new ReceiverPeer(rx, closePeer);
     }
 
     /** A sender shell with a live peer draining it, plus a runnable that makes the peer go away. */
