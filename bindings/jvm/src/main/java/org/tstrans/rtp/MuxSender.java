@@ -26,6 +26,7 @@ public final class MuxSender extends org.tstrans.shells.MuxSender {
      */
     @Deprecated(since = "0.9.0", forRemoval = true)
     public static MuxSender fromUrl(String url, MuxerConfig programConfig) throws RtpException, MuxException {
+        ShellAdapters.requireRtp(url, "MuxSender");
         try {
             return new MuxSender(openHandle(url, programConfig));
         } catch (MuxException e) {
@@ -41,6 +42,7 @@ public final class MuxSender extends org.tstrans.shells.MuxSender {
     @Deprecated(since = "0.9.0", forRemoval = true)
     public static MuxSender fromUrl(String url, MuxerConfig programConfig, int pktSize) throws RtpException, MuxException {
         if (pktSize < 0) throw new IllegalArgumentException("pktSize must be >= 0: " + pktSize);
+        ShellAdapters.requireRtp(url, "MuxSender");
         try {
             return new MuxSender(openHandle(withPktSize(url, pktSize), programConfig));
         } catch (MuxException e) {

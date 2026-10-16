@@ -19,6 +19,7 @@ public final class MuxSender extends org.tstrans.shells.MuxSender {
      */
     @Deprecated(since = "0.9.0", forRemoval = true)
     public static MuxSender fromUrl(String url, MuxerConfig programConfig) throws SrtException, MuxException {
+        ShellAdapters.requireSrt(url, "MuxSender");
         try {
             return new MuxSender(openHandle(url, programConfig));
         } catch (MuxException e) {

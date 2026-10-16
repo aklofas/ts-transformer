@@ -17,6 +17,7 @@ public final class Receiver extends org.tstrans.shells.Receiver {
      */
     @Deprecated(since = "0.9.0", forRemoval = true)
     public static Receiver fromUrl(String url) throws SrtException {
+        ShellAdapters.requireSrt(url, "Receiver");
         try {
             return new Receiver(openHandle(url));
         } catch (BindingException e) {
