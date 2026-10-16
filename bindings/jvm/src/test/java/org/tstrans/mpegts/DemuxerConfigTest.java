@@ -14,13 +14,20 @@ class DemuxerConfigTest {
     // StrictMode.FULL the demuxer escalates the PsiChecksumMismatch to a hard
     // StrictRejection (→ JNI code STRICT_REJECTION); under the default StrictMode.OFF
     // it tolerates the mismatch (no throw, surfaces a NonConformant event). The
-    // sibling `strict-rejection` fixture is NOT used here: it is garbage bytes that
-    // hit DemuxError::Unrecoverable (→ INTERNAL) regardless of strictness, so it
-    // does not exercise the strict-MODE knob.
-    private static final Path FIXTURE =
-        Path.of(System.getProperty("user.dir"), "..", "..",
-                "crates/tst-integration/tests/fixtures/scenarios/malformed-psi-strict/input.bin")
+    // sibling `strict-rejection` fixture is garbage bytes that hit
+    // DemuxError::Unrecoverable (→ UNRECOVERABLE) regardless of strictness, so it
+    // does not exercise the strict-MODE knob; strictFullRejectsGarbageAsUnrecoverable
+    // pins that outcome.
+    private static final Path FIXTURE = scenarioInput("malformed-psi-strict");
+
+    /** 8192 × 0xFF: no sync byte anywhere. */
+    private static final Path GARBAGE = scenarioInput("strict-rejection");
+
+    private static Path scenarioInput(String id) {
+        return Path.of(System.getProperty("user.dir"), "..", "..",
+                "crates/tst-integration/tests/fixtures/scenarios/" + id + "/input.bin")
             .normalize();
+    }
 
     @Test
     void strictFullRejectsNonConformantInput() throws Exception {
@@ -32,6 +39,21 @@ class DemuxerConfigTest {
             DemuxException ex = assertThrows(DemuxException.class, () -> d.feed(bytes));
             assertEquals(DemuxException.Kind.STRICT_REJECTION, ex.kind(),
                 "StrictMode.FULL must reject the corrupted-PMT-CRC fixture with STRICT_REJECTION");
+        }
+    }
+
+    @Test
+    void strictFullRejectsGarbageAsUnrecoverable() throws Exception {
+        byte[] bytes = Files.readAllBytes(GARBAGE);
+        assertEquals(8192, bytes.length);
+        DemuxerConfig cfg = DemuxerConfig.builder().strictMode(StrictMode.FULL).build();
+        try (Demuxer d = new Demuxer(cfg)) {
+            DemuxException ex = assertThrows(DemuxException.class, () -> {
+                d.feed(bytes);
+                d.flush();
+            });
+            assertEquals(DemuxException.Kind.UNRECOVERABLE, ex.kind(),
+                "bytes with no TS sync are unrecoverable, strict or not");
         }
     }
 
