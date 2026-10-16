@@ -4,22 +4,64 @@ use crate::emit_jvm_rs::CTOR_MAX;
 use crate::schema::{Entry, lookup, para};
 use crate::typemap::{Fld, Ty, resolve};
 
-/// Javadoc text that cannot close the comment or start a unicode escape;
-/// a backtick pair becomes `{@code …}`.
-pub fn escape_javadoc(doc: &str) -> String {
-    let safe = doc.replace("*/", "*&#47;").replace("\\u", "&#92;u");
-    let parts: Vec<&str> = safe.split('`').collect();
-    if parts.len() % 2 == 0 {
-        return safe; // an unpaired backtick stays as written
-    }
+/// Javadoc text from a Rust doc paragraph. The text cannot close the
+/// comment, start a unicode escape, open an HTML tag or entity, or start a
+/// block tag. A backtick pair becomes `{@code …}` (its text as written, with
+/// a Rust field name renamed to its Java name by `rename`), and an
+/// intra-doc link `` [`X`] `` becomes `{@code X}`.
+pub fn escape_javadoc(doc: &str, rename: &[(&str, &str)]) -> String {
+    let doc = unlink(doc);
+    let parts: Vec<&str> = doc.split('`').collect();
+    let out = if parts.len() % 2 == 0 {
+        html(&doc) // an unpaired backtick stays as written
+    } else {
+        let mut out = String::new();
+        for (i, p) in parts.iter().enumerate() {
+            if i % 2 == 1 {
+                let code = rename
+                    .iter()
+                    .find(|(rust, _)| rust == p)
+                    .map_or(*p, |(_, java)| java);
+                out.push_str(&format!("{{@code {code}}}"));
+            } else {
+                out.push_str(&html(p));
+            }
+        }
+        out
+    };
+    out.replace("*/", "*&#47;").replace("\\u", "&#92;u")
+}
+
+/// Prose outside a code span: `&`, `<` and `>` as entities, and `@` too, so
+/// no word reads as a block or inline tag.
+fn html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('@', "&#64;")
+}
+
+/// `` [`X`] `` to `` `X` ``: Javadoc has no target for a rustdoc link.
+fn unlink(doc: &str) -> String {
     let mut out = String::new();
-    for (i, p) in parts.iter().enumerate() {
-        if i % 2 == 1 {
-            out.push_str(&format!("{{@code {p}}}"));
-        } else {
-            out.push_str(p);
+    let mut rest = doc;
+    while let Some(i) = rest.find("[`") {
+        let after = &rest[i + 2..];
+        match after.find("`]") {
+            Some(j) if !after[..j].contains('`') => {
+                out.push_str(&rest[..i]);
+                out.push('`');
+                out.push_str(&after[..j]);
+                out.push('`');
+                rest = &after[j + 2..];
+            }
+            _ => {
+                out.push_str(&rest[..i + 2]);
+                rest = after;
+            }
         }
     }
+    out.push_str(rest);
     out
 }
 
@@ -62,10 +104,14 @@ fn imports(reg: &[Entry], e: &Entry, flds: &[Fld]) -> Vec<String> {
 }
 
 fn javadoc(e: &Entry, flds: &[&Fld]) -> String {
+    let rename: Vec<(&str, &str)> = flds
+        .iter()
+        .map(|f| (f.spec.name, f.java.as_str()))
+        .collect();
     let mut o = String::from("/**\n");
     let doc = para(e.schema.doc);
     if !doc.is_empty() {
-        o.push_str(&format!(" * {}\n", escape_javadoc(&doc)));
+        o.push_str(&format!(" * {}\n", escape_javadoc(&doc, &rename)));
     }
     let documented: Vec<&&Fld> = flds
         .iter()
@@ -80,7 +126,7 @@ fn javadoc(e: &Entry, flds: &[&Fld]) -> String {
             o.push_str(&format!(
                 " * @param {:<w$} {}\n",
                 f.java,
-                escape_javadoc(&para(f.spec.doc)),
+                escape_javadoc(&para(f.spec.doc), &rename),
                 w = w
             ));
         }

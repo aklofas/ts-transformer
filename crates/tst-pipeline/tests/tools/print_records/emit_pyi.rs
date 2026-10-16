@@ -13,6 +13,44 @@ pub fn escape_docstring(doc: &str) -> String {
     s
 }
 
+/// A backtick pair as the RST double backticks of the hand docstrings; an
+/// unpaired backtick stays as written.
+pub fn rst_code(doc: &str) -> String {
+    let parts: Vec<&str> = doc.split('`').collect();
+    if parts.len() % 2 == 0 {
+        return doc.to_string();
+    }
+    parts.join("``")
+}
+
+/// The longest line a generated `.py` docstring writes.
+const DOC_WIDTH: usize = 79;
+
+/// A class docstring at four spaces: one line when it fits in
+/// [`DOC_WIDTH`], else wrapped at word boundaries with the closing quotes
+/// on the last text line, as the hand-written docstrings are.
+pub fn docstring(text: &str) -> String {
+    // Every line leaves room for the closing quotes.
+    let width = DOC_WIDTH - 3;
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::from("    \"\"\"");
+    let mut empty = true;
+    for w in text.split_whitespace() {
+        if !empty && cur.chars().count() + 1 + w.chars().count() > width {
+            lines.push(std::mem::replace(&mut cur, String::from("    ")));
+            empty = true;
+        }
+        if !empty {
+            cur.push(' ');
+        }
+        cur.push_str(w);
+        empty = false;
+    }
+    cur.push_str("\"\"\"");
+    lines.push(cur);
+    lines.join("\n") + "\n"
+}
+
 fn fields(reg: &[Entry], e: &Entry, stub: bool) -> Result<String, String> {
     let mut o = String::new();
     for f in resolve(reg, &e.schema)?.iter().filter(|f| f.ty.is_some()) {
@@ -35,7 +73,8 @@ pub fn py_block(reg: &[Entry], e: &Entry) -> Result<String, String> {
     o.push_str(&format!("class {}:\n", s.name));
     let doc = para(s.doc);
     if !doc.is_empty() {
-        o.push_str(&format!("    \"\"\"{}\"\"\"\n\n", escape_docstring(&doc)));
+        o.push_str(&docstring(&escape_docstring(&rst_code(&doc))));
+        o.push('\n');
     }
     let body = fields(reg, e, false)?;
     o.push_str(if body.is_empty() { "    pass\n" } else { &body });

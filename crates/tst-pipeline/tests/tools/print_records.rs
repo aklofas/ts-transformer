@@ -1,10 +1,11 @@
 //! Maintainer tool: renders the Python and JVM projections of every record
 //! declared with `tst_core::binding_record!` and listed in the registry.
 //!
-//!   print-records --list        each record and its target count
+//!   print-records --list        each record, then the record and target counts
 //!   print-records --write       write every generated file and block
 //!   print-records --check       exit 1 (listing every path) if a committed copy
-//!                               differs from a fresh render
+//!                               differs from a fresh render, or generated text
+//!                               is left that no registered record renders
 //!   --root `<dir>`              the workspace root (default: the current directory)
 //!
 //! Not learner code. `scripts/check/repo/binding-records.sh` runs `--check`.
@@ -64,17 +65,31 @@ fn main() {
             }
         };
         let stale = write::stale(&targets);
+        let orphans = write::orphans(&root, &targets);
+        for (p, why) in stale.iter().chain(&orphans) {
+            eprintln!("binding-records: {} {why}", p.display());
+        }
         if !stale.is_empty() {
-            for (p, why) in &stale {
-                eprintln!("binding-records: {} {why}", p.display());
-            }
             eprintln!("Regenerate: cargo run -p tst-pipeline --bin print-records -- --write");
+        }
+        if !orphans.is_empty() {
+            eprintln!("Delete the generated files and blocks no registered record renders.");
+        }
+        if !stale.is_empty() || !orphans.is_empty() {
             std::process::exit(1);
         }
         println!("binding-records: OK ({} records)", reg.len());
     } else {
+        let targets = match write::targets(&root, &reg) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("print-records: {e}");
+                std::process::exit(2);
+            }
+        };
         for e in &reg {
-            println!("{} {} → 5 targets", e.family, e.schema.name);
+            println!("{} {}", e.family, e.schema.name);
         }
+        println!("{} records → {} targets", reg.len(), targets.len());
     }
 }
