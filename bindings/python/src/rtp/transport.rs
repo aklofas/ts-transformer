@@ -53,10 +53,10 @@ pub(crate) fn rtp_cancel_source(
         raise(
             py,
             &RTP,
-            BindingError {
-                kind: BindingErrorKind::Internal,
-                detail: "RTP transport returned no cancel handle".into(),
-            },
+            BindingError::new(
+                BindingErrorKind::Internal,
+                "RTP transport returned no cancel handle",
+            ),
         )
     })?;
     Ok(CancelSource::new(handle))
@@ -437,10 +437,7 @@ impl PyReceiver {
             None => Err(raise(
                 py,
                 &RTP,
-                BindingError {
-                    kind: BindingErrorKind::Backpressure,
-                    detail: "recv deadline elapsed".into(),
-                },
+                BindingError::new(BindingErrorKind::Backpressure, "recv deadline elapsed"),
             )),
         }
     }

@@ -278,3 +278,25 @@ fn every_inner_variant_routes_to_its_kind() {
         assert_eq!(got, expected, "TsFramingError::{row} via SenderError");
     }
 }
+
+/// A shell error's binding envelope carries the shell's own flag and the
+/// inner error's detail.
+#[test]
+fn binding_diagnostics_follow_the_shell_error() {
+    use tst_pipeline::binding::BindingError;
+    let broken = || TransportError::Broken {
+        msg: "reset".into(),
+        errno_code: Some(104),
+        cause: BrokenCause::CleanEof,
+    };
+    let err = SenderError::from(broken());
+    let consumed = err.input_consumed;
+    let b = BindingError::from(err);
+    assert_eq!(b.diagnostics.input_consumed, consumed);
+    assert_eq!(b.diagnostics.native_code, Some(104));
+    assert_eq!(b.diagnostics.broken_cause, Some(BrokenCause::CleanEof));
+    let b = BindingError::from(MuxSenderError::from(MuxError::KlvPidUsedAsPcrPid {
+        pid: 0x101,
+    }));
+    assert_eq!(b.diagnostics.pid, Some(0x101));
+}

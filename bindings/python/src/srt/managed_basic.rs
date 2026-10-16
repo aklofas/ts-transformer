@@ -123,13 +123,13 @@ impl PyManagedSender {
             return Err(raise(
                 py,
                 &SRT,
-                BindingError {
-                    kind: BindingErrorKind::ConfigInvalid,
-                    detail: format!(
+                BindingError::new(
+                    BindingErrorKind::ConfigInvalid,
+                    format!(
                         "ManagedSender.from_url requires ?mode=caller (default); got mode={:?}",
                         parsed.mode
                     ),
-                },
+                ),
             ));
         }
         let policy_inner = policy.map(|p| p.inner.clone()).unwrap_or_default();
@@ -340,13 +340,13 @@ impl PyManagedReceiver {
             return Err(raise(
                 py,
                 &SRT,
-                BindingError {
-                    kind: BindingErrorKind::ConfigInvalid,
-                    detail: format!(
+                BindingError::new(
+                    BindingErrorKind::ConfigInvalid,
+                    format!(
                         "ManagedReceiver.from_url requires ?mode=listener; got mode={:?}",
                         parsed.mode
                     ),
-                },
+                ),
             ));
         }
         let policy_inner = policy.map(|p| p.inner.clone()).unwrap_or_default();

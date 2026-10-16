@@ -171,13 +171,13 @@ impl PyDemuxReceiver {
             return Err(raise(
                 py,
                 &SRT,
-                BindingError {
-                    kind: BindingErrorKind::ConfigInvalid,
-                    detail: format!(
+                BindingError::new(
+                    BindingErrorKind::ConfigInvalid,
+                    format!(
                         "DemuxReceiver.from_url requires ?mode=listener; got mode={:?}",
                         parsed.mode
                     ),
-                },
+                ),
             ));
         }
         // Translate the DemuxerConfig dataclass with the GIL held, before

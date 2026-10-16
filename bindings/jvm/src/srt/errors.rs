@@ -20,10 +20,7 @@ pub(crate) fn throw_srt(env: &mut JNIEnv, kind: BindingErrorKind, message: &str)
     throw_binding(
         env,
         Domain::Srt,
-        &BindingError {
-            kind,
-            detail: message.to_owned(),
-        },
+        &BindingError::new(kind, message.to_owned()),
     );
 }
 

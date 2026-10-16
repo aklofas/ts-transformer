@@ -156,7 +156,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeVmti<'local>(
                     }
                 },
                 Err(e) => {
-                    map_klv_encode_error(env, &e);
+                    map_klv_encode_error(env, e);
                     JObject::null().into_raw()
                 }
             },
@@ -199,7 +199,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeVmtiStandalone<'local>(
                     }
                 },
                 Err(e) => {
-                    map_klv_encode_error(env, &e);
+                    map_klv_encode_error(env, e);
                     JObject::null().into_raw()
                 }
             },
@@ -244,7 +244,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeVmtiStrictCompliance<'loc
                     }
                 },
                 Err(e) => {
-                    map_klv_encode_error(env, &e);
+                    map_klv_encode_error(env, e);
                     JObject::null().into_raw()
                 }
             },
@@ -289,7 +289,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeVmtiStandaloneStrictCompl
                     }
                 },
                 Err(e) => {
-                    map_klv_encode_error(env, &e);
+                    map_klv_encode_error(env, e);
                     JObject::null().into_raw()
                 }
             },
