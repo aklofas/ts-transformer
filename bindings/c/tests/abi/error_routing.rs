@@ -92,7 +92,7 @@ fn mux_sender_config_invalid_returns_invalid_config_code() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn mux_sender_invalid_nal_returns_invalid_nal_code() {
+fn mux_sender_input_malformed_returns_invalid_ts_code() {
     reset();
     // `MuxError::AudioTooLarge` carries kind InputMalformed: TST_E_INVALID_TS.
     let e = MuxSenderError::from(MuxError::AudioTooLarge { size: 2, max: 1 });
@@ -100,12 +100,17 @@ fn mux_sender_invalid_nal_returns_invalid_nal_code() {
     assert_eq!(rc, TST_E_INVALID_TS, "MuxSender InputMalformed: wrong code");
     assert_eq!(test_last_error_code(), TST_E_INVALID_TS);
     assert!(!test_last_error_msg().is_empty());
-    // `InvalidNal` keeps its own precise code, as on the offline muxer.
+}
+
+#[test]
+fn mux_sender_invalid_nal_returns_invalid_nal_code() {
     reset();
+    // `InvalidNal` keeps its own precise code, as on the offline muxer.
     assert_eq!(
         test_record_shell_error(MuxSenderError::from(MuxError::InvalidNal)),
         TstError::InvalidNal as i32
     );
+    assert_eq!(test_last_error_code(), TstError::InvalidNal as i32);
 }
 
 // ---------------------------------------------------------------------------
