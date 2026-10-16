@@ -97,8 +97,9 @@ jni_native! {
     /// version (e.g. "0.2.0") as a Java string, proving a value crosses the JNI
     /// boundary from Rust to the JVM.
     ///
-    /// `Java_org_tstrans_Version_versionString` so the JVM's native-method linker
-    /// resolves it.
+    /// `jni_native!` emits `#[unsafe(no_mangle)]` (edition 2024 spelling), which
+    /// keeps the symbol name exactly `Java_org_tstrans_Version_versionString` so
+    /// the JVM's native-method linker resolves it.
     fn Java_org_tstrans_Version_versionString<'local>(
         env,
         _class,
