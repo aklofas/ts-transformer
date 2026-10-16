@@ -342,6 +342,9 @@ class St0601PacksTest {
         assertEquals(1, wl.size());
         WavelengthRecord w = wl.get(0);
         assertEquals(21L, w.id());
+        // IMAPB(0, 1e9, 4) of 0x000007D0 and 0x00000FA0: a 0.5 nm step, so exact.
+        assertEquals(1000.0, w.minNm());
+        assertEquals(2000.0, w.maxNm());
         assertEquals("NNIR", w.name());
         assertArrayEquals(v, reencodedTagValue(128, rec));
     }

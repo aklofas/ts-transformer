@@ -280,6 +280,9 @@ def test_wavelengths_list_vector():
     assert len(wl) == 1
     w = wl[0]
     assert w.id == 21
+    # IMAPB(0, 1e9, 4) of 0x000007D0 and 0x00000FA0: a 0.5 nm step, so exact.
+    assert w.min_nm == 1000.0
+    assert w.max_nm == 2000.0
     assert w.name == "NNIR"
     assert _reencoded_tag_value(128, rec) == v
 
