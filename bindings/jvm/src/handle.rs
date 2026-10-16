@@ -391,8 +391,8 @@ impl<T> HandleRegistry<T> {
 /// ([`Owned::cancel_arc`]). `cancel()` never takes the slot and
 /// `is_cancelled()` reads the shell's ONE flag, so two handles on one
 /// shell, and a handle that outlives `close()`, always agree.
-/// Boxed behind `org.tstrans.srt.CancelHandle` and `org.tstrans.rtp.CancelHandle`
-/// (each in its own plain `HandleRegistry<CancelView>`, so their ids stay per-type).
+/// Boxed behind `org.tstrans.shells.CancelHandle`
+/// (in its own plain `HandleRegistry<CancelView>`, so its ids stay per-type).
 pub(crate) struct CancelView(pub(crate) Arc<dyn TransportCancel>);
 
 /// An [`OwnedRegistry`] entry. Nothing here but the `Owned` — the slot,

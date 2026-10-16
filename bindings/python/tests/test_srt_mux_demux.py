@@ -112,7 +112,7 @@ def test_mux_demux_module_re_exports() -> None:
 
 
 def test_mux_sender_wrong_mode_raises_config_invalid() -> None:
-    """`MuxSender.from_url` requires `?mode=caller`; explicit listener
+    """`MuxSender.open` requires `?mode=caller`; explicit listener
     URL → SrtError(CONFIG_INVALID)."""
     port = _free_tcp_port()
     with pytest.raises(SrtError) as exc_info:
@@ -123,7 +123,7 @@ def test_mux_sender_wrong_mode_raises_config_invalid() -> None:
 
 
 def test_demux_receiver_wrong_mode_raises_config_invalid() -> None:
-    """`DemuxReceiver.from_url` requires `?mode=listener`; explicit
+    """`DemuxReceiver.open` requires `?mode=listener`; explicit
     caller URL → SrtError(CONFIG_INVALID)."""
     port = _free_tcp_port()
     with pytest.raises(SrtError) as exc_info:
@@ -150,7 +150,7 @@ def test_mux_sender_unsupported_scheme_raises_value_error() -> None:
 
 
 def test_from_url_round_trip_via_loopback() -> None:
-    """End-to-end: MuxSender.from_url(caller) <-> DemuxReceiver.from_url
+    """End-to-end: MuxSender.open(caller) <-> DemuxReceiver.open
     (listener). Push a video NAL; verify the DemuxReceiver iterates a
     Sample/Video event without raising.
 
@@ -661,7 +661,7 @@ def test_send_video_malformed_nal_raises_mux_error() -> None:
 
 def test_demux_receiver_accepts_demux_config() -> None:
     """Pass an explicit `DemuxerConfig` dataclass to
-    `DemuxReceiver.from_url(demux_config=...)`. Smoke — verifies the
+    `DemuxReceiver.open(demux_config=...)`. Smoke — verifies the
     helper routes through `crate::mpegts::build_demuxer_config`."""
     from tstrans.mpegts import DemuxerConfig, StrictMode
 

@@ -100,7 +100,7 @@ PARKED_LISTENER = (
 )
 
 # The ONE shape `util::SlotCancel` / `register_accept_slot` exist for: the
-# FIRST accept happens INSIDE `Receiver.from_url`, so no Python handle exists
+# FIRST accept happens INSIDE `Receiver.open`, so no Python handle exists
 # yet and nothing the user can hold could cancel it. The binding
 # registers the `CancelSlot` it hands `SrtUrl::accept_one` for the duration of
 # the call, purely so the exit hook can reach it.
@@ -114,7 +114,7 @@ PARKED_IN_FROM_URL = (
         daemon=True,
     ).start()
     assert_parked()
-    # No handle to close: from_url has not returned.
+    # No handle to close: open has not returned.
 """
 )
 
@@ -192,19 +192,19 @@ def test_the_exit_hook_reports_an_unclosed_shell() -> None:
 
 
 def test_exit_is_clean_with_a_thread_parked_in_the_first_accept() -> None:
-    """`Receiver.from_url` in listener mode parks inside libsrt's `accept()`
+    """`Receiver.open` in listener mode parks inside libsrt's `accept()`
     before returning anything the caller could cancel. Without
     `util::register_accept_slot` the exit hook has nothing to fire and
     `srt_cleanup` deadlocks joining `SRT:GC` — this is the hang the exit
     hook exists to prevent, and the only one no user-visible
     handle can reach."""
-    r = _run(PARKED_IN_FROM_URL, what=" with a thread parked in from_url's first accept")
+    r = _run(PARKED_IN_FROM_URL, what=" with a thread parked in open's first accept")
     assert "PARKED" in r.stdout, r.stderr
     assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr}"
 
 
 def test_the_exit_hook_sees_the_first_accept_slot() -> None:
-    """The registration half of the test above: the slot a parked `from_url`
+    """The registration half of the test above: the slot a parked `open`
     is blocked on IS in the exit registry, so the hook reports firing it."""
     r = _run(
         PARKED_IN_FROM_URL
@@ -212,7 +212,7 @@ def test_the_exit_hook_sees_the_first_accept_slot() -> None:
     from tstrans._native import _fire_cancel_sources_at_exit
     print("HOOK=%d" % _fire_cancel_sources_at_exit(), flush=True)
 """,
-        what=" with a thread parked in from_url's first accept",
+        what=" with a thread parked in open's first accept",
     )
     fired = [line for line in r.stdout.splitlines() if line.startswith("HOOK=")]
     assert fired, f"{r.stdout}\n{r.stderr}"
