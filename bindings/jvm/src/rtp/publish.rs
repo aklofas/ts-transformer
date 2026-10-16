@@ -10,11 +10,12 @@
 //! needs no cancel hook: `close` frees the wrapper only, and the mount stays
 //! in the server's table until `RtspServer.removeMount` or the server stops.
 
+use crate::panic::jni_native;
 use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
 
 use jni::JNIEnv;
-use jni::objects::{JClass, JObject, JString, JValue};
+use jni::objects::{JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jlong};
 
 use tst_core::mpegts::demux::DemuxerConfig;
@@ -158,114 +159,95 @@ fn build_info<'local>(
     )
 }
 
-/// `PublishMount.nMountPath(handle)` → the mount path.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_PublishMount_nMountPath<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JString<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `PublishMount.nMountPath(handle)` → the mount path.
+    fn Java_org_tstrans_rtp_PublishMount_nMountPath<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JString<'local> = JObject::null().into() => {
         let Some(path) = with_publish(env, handle, |m| m.mount_path().to_owned()) else {
             return JObject::null().into();
         };
         env.new_string(path)
             .unwrap_or_else(|_| JObject::null().into())
-    })
+    }
 }
 
-/// `PublishMount.nPeerCount(handle)` → live PLAY readers.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_PublishMount_nPeerCount(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `PublishMount.nPeerCount(handle)` → live PLAY readers.
+    fn Java_org_tstrans_rtp_PublishMount_nPeerCount(env, _class, handle: jlong) -> jlong = 0 => {
         with_publish(env, handle, |m| m.peer_count() as jlong).unwrap_or(0)
-    })
+    }
 }
 
-/// `PublishMount.nGeneration(handle)` → publishers that have ended on the mount.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_PublishMount_nGeneration(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `PublishMount.nGeneration(handle)` → publishers that have ended on the mount.
+    fn Java_org_tstrans_rtp_PublishMount_nGeneration(env, _class, handle: jlong) -> jlong = 0 => {
         with_publish(env, handle, |m| m.generation() as jlong).unwrap_or(0)
-    })
+    }
 }
 
-/// `PublishMount.nPublisher(handle)` → `PublisherInfo`, or null when no
-/// publisher holds the mount.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_PublishMount_nPublisher<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// `PublishMount.nPublisher(handle)` → `PublisherInfo`, or null when no
+    /// publisher holds the mount.
+    fn Java_org_tstrans_rtp_PublishMount_nPublisher<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         let Some(Some(info)) = with_publish(env, handle, |m| m.publisher()) else {
             return JObject::null();
         };
         build_info(env, &info).unwrap_or_else(|_| JObject::null())
-    })
+    }
 }
 
-/// `PublishMount.nStats(handle)` → `PublishMountStats`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_PublishMount_nStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// `PublishMount.nStats(handle)` → `PublishMountStats`.
+    fn Java_org_tstrans_rtp_PublishMount_nStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         let Some(s) = with_publish(env, handle, |m| m.stats()) else {
             return JObject::null();
         };
         build_stats(env, &s).unwrap_or_else(|_| JObject::null())
-    })
+    }
 }
 
-/// `PublishMount.nCancel(handle)` — end the application side only: the
-/// mount's `DemuxReceiver` (taken now or later) reads CLOSED.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_PublishMount_nCancel(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `PublishMount.nCancel(handle)` — end the application side only: the
+    /// mount's `DemuxReceiver` (taken now or later) reads CLOSED.
+    fn Java_org_tstrans_rtp_PublishMount_nCancel(env, _class, handle: jlong) = () => {
         with_publish(env, handle, |m| m.cancel());
-    })
+    }
 }
 
-/// `PublishMount.nIntoDemuxReceiver(handle, withConfig, ...demuxer config...)`
-/// → `DemuxReceiver` handle, or 0 with a pending exception. Does not consume
-/// the `PublishMount` wrapper: the take-once rule lives in the mount, so a
-/// second take, through this or any other handle to the mount, is the
-/// `TransportTaken` error (`RtspException` kind `CLOSED`). The config is
-/// validated before the take, so a bad config does not spend it.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_rtp_PublishMount_nIntoDemuxReceiver(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    with_config: jboolean,
-    strict: jint,
-    pes_cap_per_pid: jlong,
-    pes_cap_total: jlong,
-    cfi: jboolean,
-    av1: jint,
-    au_cell_cap: jlong,
-    lenient_psi: jboolean,
-    sync_buf_cap: jlong,
-    unwrap_timestamps: jboolean,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `PublishMount.nIntoDemuxReceiver(handle, withConfig, ...demuxer config...)`
+    /// → `DemuxReceiver` handle, or 0 with a pending exception. Does not consume
+    /// the `PublishMount` wrapper: the take-once rule lives in the mount, so a
+    /// second take, through this or any other handle to the mount, is the
+    /// `TransportTaken` error (`RtspException` kind `CLOSED`). The config is
+    /// validated before the take, so a bad config does not spend it.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_rtp_PublishMount_nIntoDemuxReceiver(
+        env,
+        _class,
+        handle: jlong,
+        with_config: jboolean,
+        strict: jint,
+        pes_cap_per_pid: jlong,
+        pes_cap_total: jlong,
+        cfi: jboolean,
+        av1: jint,
+        au_cell_cap: jlong,
+        lenient_psi: jboolean,
+        sync_buf_cap: jlong,
+        unwrap_timestamps: jboolean,
+    ) -> jlong = 0 => {
         let opts: Option<DemuxerConfig> = if with_config != 0 {
             let Some(cfg) = build_demux_config_from_args(
                 env,
@@ -302,18 +284,13 @@ pub extern "system" fn Java_org_tstrans_rtp_PublishMount_nIntoDemuxReceiver(
                 0
             }
         }
-    })
+    }
 }
 
-/// `PublishMount.nClose(handle)` — free the wrapper. The mount stays in the
-/// server's table until `removeMount` or the server stops.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_PublishMount_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// `PublishMount.nClose(handle)` — free the wrapper. The mount stays in the
+    /// server's table until `removeMount` or the server stops.
+    fn Java_org_tstrans_rtp_PublishMount_nClose(_env, _class, handle: jlong) = () => {
         let _ = REGISTRY_PUBLISH.close(handle as u64);
-    })
+    }
 }

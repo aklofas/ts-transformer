@@ -15,10 +15,10 @@
 //! Java while the slot is held. There is no GIL analog in JNI; calls block on
 //! the native thread and a cross-thread stop is `cancelHandle().cancel()`.
 
+use crate::panic::jni_native;
 use std::sync::LazyLock;
 
-use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JString};
+use jni::objects::{JByteArray, JObject, JString};
 use jni::sys::{jboolean, jlong};
 use tst_core::transport::Transport;
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
@@ -37,17 +37,12 @@ type Shell = PlSender<Box<dyn Transport>>;
 
 static REGISTRY: LazyLock<OwnedRegistry<Shell, Snapshot<()>>> = LazyLock::new(OwnedRegistry::new);
 
-/// `Sender.nOpen(url)` — open the transport named by the URL's scheme and
-/// wrap it in a sender. Throws `IllegalArgumentException` for an unsupported
-/// scheme and the transport's exception for a bad URL or a connect failure;
-/// returns 0 with the exception pending.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Sender_nOpen(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    url: JString<'_>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `Sender.nOpen(url)` — open the transport named by the URL's scheme and
+    /// wrap it in a sender. Throws `IllegalArgumentException` for an unsupported
+    /// scheme and the transport's exception for a bad URL or a connect failure;
+    /// returns 0 with the exception pending.
+    fn Java_org_tstrans_shells_Sender_nOpen(env, _class, url: JString<'_>) -> jlong = 0 => {
         let Some(url) = read_url(env, &url) else {
             return 0;
         };
@@ -55,7 +50,7 @@ pub extern "system" fn Java_org_tstrans_shells_Sender_nOpen(
             return 0;
         };
         register(opened)
-    })
+    }
 }
 
 /// Wrap an opened send transport in a sender and register it. Shared by
@@ -79,16 +74,15 @@ pub(crate) fn register(opened: Opened<Box<dyn Transport>>) -> jlong {
     )) as jlong
 }
 
-/// Send pre-muxed TS bytes. Throws the transport's exception on a
-/// transport or framing failure.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Sender_nSendBytes(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    data: JByteArray<'_>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// Send pre-muxed TS bytes. Throws the transport's exception on a
+    /// transport or framing failure.
+    fn Java_org_tstrans_shells_Sender_nSendBytes(
+        env,
+        _class,
+        handle: jlong,
+        data: JByteArray<'_>,
+    ) = () => {
         let bytes: Vec<u8> = match env.convert_byte_array(&data) {
             Ok(b) => b,
             Err(e) => {
@@ -104,17 +98,12 @@ pub extern "system" fn Java_org_tstrans_shells_Sender_nSendBytes(
             Ok(Err(e)) => throw_binding(env, domain, &BindingError::from(e)),
             Err(state) => throw_state(env, domain, "Sender", &state),
         }
-    })
+    }
 }
 
-/// Flush any buffered partial TS bundle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Sender_nFlush(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// Flush any buffered partial TS bundle.
+    fn Java_org_tstrans_shells_Sender_nFlush(env, _class, handle: jlong) = () => {
         let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "Sender") else {
             return;
         };
@@ -123,18 +112,13 @@ pub extern "system" fn Java_org_tstrans_shells_Sender_nFlush(
             Ok(Err(e)) => throw_binding(env, domain, &BindingError::from(e)),
             Err(state) => throw_state(env, domain, "Sender", &state),
         }
-    })
+    }
 }
 
-/// A shareable cancel handle. Lock-free: the view is the `Owned` entry
-/// itself, so this answers even while a send is parked on the slot.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Sender_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// A shareable cancel handle. Lock-free: the view is the `Owned` entry
+    /// itself, so this answers even while a send is parked on the slot.
+    fn Java_org_tstrans_shells_Sender_nCancelHandle(env, _class, handle: jlong) -> jlong = 0 => {
         match REGISTRY.cancel_view(handle as u64) {
             Some(view) => cancel_view_handle(view),
             None => {
@@ -142,18 +126,17 @@ pub extern "system" fn Java_org_tstrans_shells_Sender_nCancelHandle(
                 0
             }
         }
-    })
+    }
 }
 
-/// The scheme-neutral 16-counter `SocketStats` record. Null on a JNI builder
-/// failure (non-fatal; no throw).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Sender_nSocketStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// The scheme-neutral 16-counter `SocketStats` record. Null on a JNI builder
+    /// failure (non-fatal; no throw).
+    fn Java_org_tstrans_shells_Sender_nSocketStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -168,18 +151,17 @@ pub extern "system" fn Java_org_tstrans_shells_Sender_nSocketStats<'local>(
         };
         build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats)
             .unwrap_or_else(|_| JObject::null())
-    })
+    }
 }
 
-/// The SRT-rich `SrtStats` record. `UnsupportedOperationException` unless the
-/// shell was opened from an `srt://` URL.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Sender_nSrtStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// The SRT-rich `SrtStats` record. `UnsupportedOperationException` unless the
+    /// shell was opened from an `srt://` URL.
+    fn Java_org_tstrans_shells_Sender_nSrtStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -211,34 +193,24 @@ pub extern "system" fn Java_org_tstrans_shells_Sender_nSrtStats<'local>(
                 JObject::null()
             }
         }
-    })
+    }
 }
 
-/// Close the sender, deallocating the native box. Cancel first, so a send
-/// parked on another thread ends promptly.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Sender_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// Close the sender, deallocating the native box. Cancel first, so a send
+    /// parked on another thread ends promptly.
+    fn Java_org_tstrans_shells_Sender_nClose(_env, _class, handle: jlong) = () => {
         // Atomic + idempotent: the winning close gets the shell back for teardown.
         if let Some(mut inner) = REGISTRY.close(handle as u64) {
             inner.close();
         }
-    })
+    }
 }
 
-/// Whether the sender owns a live transport. Non-blocking: a `sendBytes`
-/// parked on another thread holds the slot, and reads as alive.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Sender_nIsAlive(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jboolean {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// Whether the sender owns a live transport. Non-blocking: a `sendBytes`
+    /// parked on another thread holds the slot, and reads as alive.
+    fn Java_org_tstrans_shells_Sender_nIsAlive(_env, _class, handle: jlong) -> jboolean = 0 => {
         u8::from(REGISTRY.is_alive(handle as u64, |s| s.is_alive()))
-    })
+    }
 }

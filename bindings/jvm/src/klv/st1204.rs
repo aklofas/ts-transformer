@@ -14,8 +14,9 @@
 //! `validate_mismms`, and marshals the `Vec<MismmsViolation>` into an `ArrayList`
 //! of `MismmsViolation` Java records.
 
+use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JValue};
+use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::jobject;
 use tst_core::klv::st0601::{MismmsViolation, validate_mismms};
 use tst_core::klv::st1204::{CoreId, IdType, St1204Error, decode, encode_to_vec};
@@ -303,18 +304,17 @@ fn read_core_id<'a>(env: &mut JNIEnv<'a>, obj: &JObject<'a>) -> jni::errors::Res
 
 // ── JNI entry points ─────────────────────────────────────────────────────────
 
-/// `org.tstrans.klv.Klv.decodeCoreIdNative(byte[]) -> CoreId`
-///
-/// Decodes a MIIS Core Identifier from its binary wire form. On success,
-/// constructs and returns a `CoreId` record. On failure, throws a
-/// `KlvDecodeException` and returns null.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_decodeCoreIdNative<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    buf: JByteArray<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.decodeCoreIdNative(byte[]) -> CoreId`
+    ///
+    /// Decodes a MIIS Core Identifier from its binary wire form. On success,
+    /// constructs and returns a `CoreId` record. On failure, throws a
+    /// `KlvDecodeException` and returns null.
+    fn Java_org_tstrans_klv_Klv_decodeCoreIdNative<'local>(
+        env,
+        _c,
+        buf: JByteArray<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&buf) {
             Ok(b) => b,
             Err(e) => {
@@ -332,21 +332,20 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_decodeCoreIdNative<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-/// `org.tstrans.klv.Klv.encodeCoreIdNative(CoreId) -> byte[]`
-///
-/// Encodes a `CoreId` record to its binary wire form. Infallible on the Rust
-/// side; throws `RuntimeException` only on JNI-level failures (field reads or
-/// byte-array allocation).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_encodeCoreIdNative<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    id: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.encodeCoreIdNative(CoreId) -> byte[]`
+    ///
+    /// Encodes a `CoreId` record to its binary wire form. Infallible on the Rust
+    /// side; throws `RuntimeException` only on JNI-level failures (field reads or
+    /// byte-array allocation).
+    fn Java_org_tstrans_klv_Klv_encodeCoreIdNative<'local>(
+        env,
+        _c,
+        id: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         // Null args must throw NPE, never fall into the reader's silent
         // Err(NullPtr)-with-no-pending-exception path (see require_non_null).
         if require_non_null(env, &id, "id").is_err() {
@@ -368,19 +367,18 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_encodeCoreIdNative<'local>(
             }
             Err(_) => JObject::null().into_raw(),
         }
-    })
+    }
 }
 
-/// `org.tstrans.klv.Klv.coreIdTextNative(CoreId) -> String`
-///
-/// Returns the ST 1204.3 §7.4.2 textual representation of the given `CoreId`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_coreIdTextNative<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    id: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.coreIdTextNative(CoreId) -> String`
+    ///
+    /// Returns the ST 1204.3 §7.4.2 textual representation of the given `CoreId`.
+    fn Java_org_tstrans_klv_Klv_coreIdTextNative<'local>(
+        env,
+        _c,
+        id: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         // Same NPE-first contract as encodeCoreIdNative above.
         if require_non_null(env, &id, "id").is_err() {
             return JObject::null().into_raw();
@@ -401,21 +399,20 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_coreIdTextNative<'local>(
             }
             Err(_) => JObject::null().into_raw(),
         }
-    })
+    }
 }
 
-/// `org.tstrans.klv.Klv.validateMismmsNative(UasDatalinkLs) -> List<MismmsViolation>`
-///
-/// Re-reads the `UasDatalinkLs` Java record into a Rust value (reusing the
-/// `read_uas_datalink` helper from st0601), calls `validate_mismms`, then
-/// marshals the `Vec<MismmsViolation>` into an `ArrayList<MismmsViolation>`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_validateMismmsNative<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    record: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.validateMismmsNative(UasDatalinkLs) -> List<MismmsViolation>`
+    ///
+    /// Re-reads the `UasDatalinkLs` Java record into a Rust value (reusing the
+    /// `read_uas_datalink` helper from st0601), calls `validate_mismms`, then
+    /// marshals the `Vec<MismmsViolation>` into an `ArrayList<MismmsViolation>`.
+    fn Java_org_tstrans_klv_Klv_validateMismmsNative<'local>(
+        env,
+        _c,
+        record: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         // Same NPE-first contract as encodeCoreIdNative above.
         if require_non_null(env, &record, "record").is_err() {
             return JObject::null().into_raw();
@@ -430,7 +427,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_validateMismmsNative<'local>(
             Ok(list) => list,
             Err(_) => JObject::null().into_raw(),
         }
-    })
+    }
 }
 
 /// Build a `java.util.List<MismmsViolation>` (an `ArrayList`) from a slice of

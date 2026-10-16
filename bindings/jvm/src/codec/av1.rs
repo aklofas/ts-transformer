@@ -26,8 +26,9 @@
 //! same re-parse pattern as the H.26x modules. tst-py passes its stored inner
 //! Rust seq directly; this binding reconstructs it from `raw`.
 
+use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JValue};
+use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::jobject;
 use tst_core::codec::av1::{
     Av1FrameHeaderLight, Av1ObuStream, Av1SequenceHeader, parse_frame_header_light,
@@ -220,13 +221,12 @@ fn read_obu(env: &mut JNIEnv, item: &JObject) -> jni::errors::Result<Obu> {
     })
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseAv1SequenceHeader<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    payload: JByteArray<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseAv1SequenceHeader<'local>(
+        env,
+        _class,
+        payload: JByteArray<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&payload) {
             Ok(b) => b,
             Err(_) => return JObject::null().into_raw(),
@@ -241,17 +241,16 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseAv1SequenceHeader<'loc
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseAv1FrameHeaderLight<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    payload: JByteArray<'local>,
-    seq: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseAv1FrameHeaderLight<'local>(
+        env,
+        _class,
+        payload: JByteArray<'local>,
+        seq: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&payload) {
             Ok(b) => b,
             Err(_) => return JObject::null().into_raw(),
@@ -288,16 +287,15 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseAv1FrameHeaderLight<'l
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseAv1ObuStream<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    obus: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseAv1ObuStream<'local>(
+        env,
+        _class,
+        obus: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         // INFALLIBLE: failures are collected into the result's `unparseable` list,
         // never thrown. Read each Java Obu inside a per-element local frame.
         let size = match env.call_method(&obus, "size", "()I", &[]) {
@@ -327,7 +325,7 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseAv1ObuStream<'local>(
             Ok(obj) => obj.into_raw(),
             Err(()) => JObject::null().into_raw(),
         }
-    })
+    }
 }
 
 /// Build a Java

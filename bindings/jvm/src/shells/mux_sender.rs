@@ -19,10 +19,11 @@
 //! Errors: a mux-sourced failure is a `MuxException`; every other source is
 //! thrown in the shell's transport domain.
 
+use crate::panic::jni_native;
 use std::sync::LazyLock;
 
 use jni::JNIEnv;
-use jni::objects::{JBooleanArray, JByteArray, JClass, JIntArray, JObject, JString, JValue};
+use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jlong};
 
 use tst_core::mpegts::common::Pts90khz;
@@ -100,30 +101,29 @@ fn first_handle(
     crate::handle::first_handle(env, &REGISTRY, handle, "MuxSender", |s| pick(&s.handles))
 }
 
-/// `MuxSender.nOpen(url, ...programConfig...)` — build the muxer config, open
-/// the transport named by the URL's scheme and return the shell's key.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nOpen<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    url: JString<'local>,
-    program_number: jint,
-    pmt_pid: jint,
-    pcr_pid: jint,
-    pcr_interval_ms: jint,
-    psi_interval_ms: jint,
-    buffer_packets: jint,
-    av1_carriage: jint,
-    stream_pids: JIntArray<'local>,
-    stream_kinds: JIntArray<'local>,
-    stream_codecs: JIntArray<'local>,
-    stream_type_codes: JIntArray<'local>,
-    stream_carries_pts: JBooleanArray<'local>,
-    data_desc_bytes: JByteArray<'local>,
-    data_desc_lens: JIntArray<'local>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `MuxSender.nOpen(url, ...programConfig...)` — build the muxer config, open
+    /// the transport named by the URL's scheme and return the shell's key.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_shells_MuxSender_nOpen<'local>(
+        env,
+        _class,
+        url: JString<'local>,
+        program_number: jint,
+        pmt_pid: jint,
+        pcr_pid: jint,
+        pcr_interval_ms: jint,
+        psi_interval_ms: jint,
+        buffer_packets: jint,
+        av1_carriage: jint,
+        stream_pids: JIntArray<'local>,
+        stream_kinds: JIntArray<'local>,
+        stream_codecs: JIntArray<'local>,
+        stream_type_codes: JIntArray<'local>,
+        stream_carries_pts: JBooleanArray<'local>,
+        data_desc_bytes: JByteArray<'local>,
+        data_desc_lens: JIntArray<'local>,
+    ) -> jlong = 0 => {
         // Build the MuxerConfig FIRST — a pending MuxException is thrown on Err(()).
         let cfg = match build_muxer_config_from_arrays(
             env,
@@ -152,7 +152,7 @@ pub extern "system" fn Java_org_tstrans_shells_MuxSender_nOpen<'local>(
             return 0;
         };
         register(env, opened, cfg)
-    })
+    }
 }
 
 /// Wrap an opened send transport in a `MuxSender` for `cfg` and register it;
@@ -185,39 +185,37 @@ pub(crate) fn register(
 
 // ── Send family — single-stream variants ───────────────────────────────────
 
-/// `nSendVideo(handle, nal, pts, keyFrame)` — send one video access unit.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendVideo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    nal: JByteArray<'local>,
-    pts: jlong,
-    key_frame: jboolean,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendVideo(handle, nal, pts, keyFrame)` — send one video access unit.
+    fn Java_org_tstrans_shells_MuxSender_nSendVideo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        key_frame: jboolean,
+    ) = () => {
         let Some(buf) = read_bytes(env, &nal) else {
             return;
         };
         with_push(env, handle, |inner| {
             inner.send_video(&buf, Pts90khz::new(pts), key_frame != 0)
         });
-    })
+    }
 }
 
-/// `nSendKlv(handle, klv, pts, metadataServiceId)` — send one KLV blob. The
-/// muxer auto-wraps the AU-cell header for synchronous-metadata streams; the
-/// caller passes raw KLV LS bytes.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendKlv<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    klv: JByteArray<'local>,
-    pts: jlong,
-    metadata_service_id: jint,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendKlv(handle, klv, pts, metadataServiceId)` — send one KLV blob. The
+    /// muxer auto-wraps the AU-cell header for synchronous-metadata streams; the
+    /// caller passes raw KLV LS bytes.
+    fn Java_org_tstrans_shells_MuxSender_nSendKlv<'local>(
+        env,
+        _class,
+        handle: jlong,
+        klv: JByteArray<'local>,
+        pts: jlong,
+        metadata_service_id: jint,
+    ) = () => {
         // `metadata_service_id` is `u8`; range-check before narrowing.
         let Ok(service_id) = checked_u8(env, i64::from(metadata_service_id), "metadataServiceId")
         else {
@@ -229,83 +227,79 @@ pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendKlv<'local>(
         with_push(env, handle, |inner| {
             inner.send_klv(&buf, Pts90khz::new(pts), service_id)
         });
-    })
+    }
 }
 
-/// `nSendAudio(handle, frames, pts)` — send one encoded audio frame.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendAudio<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    frames: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendAudio(handle, frames, pts)` — send one encoded audio frame.
+    fn Java_org_tstrans_shells_MuxSender_nSendAudio<'local>(
+        env,
+        _class,
+        handle: jlong,
+        frames: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(buf) = read_bytes(env, &frames) else {
             return;
         };
         with_push(env, handle, |inner| {
             inner.send_audio(&buf, Pts90khz::new(pts))
         });
-    })
+    }
 }
 
-/// `nSendSubtitle(handle, pts, payload)` — send one subtitle access unit.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendSubtitle<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    pts: jlong,
-    payload: JByteArray<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendSubtitle(handle, pts, payload)` — send one subtitle access unit.
+    fn Java_org_tstrans_shells_MuxSender_nSendSubtitle<'local>(
+        env,
+        _class,
+        handle: jlong,
+        pts: jlong,
+        payload: JByteArray<'local>,
+    ) = () => {
         let Some(buf) = read_bytes(env, &payload) else {
             return;
         };
         with_push(env, handle, |inner| {
             inner.send_subtitle(&buf, Pts90khz::new(pts))
         });
-    })
+    }
 }
 
-/// `nSendData(handle, data, pts)` — pass-through send onto the lone configured
-/// data stream. No AU-cell wrap, no framing; one send = one PES on stream_id
-/// `0xBD` (`private_stream_1`). `pts` is written into the PES header only for
-/// `carries_pts` streams but always drives PSI/PCR pacing.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendData<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    data: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendData(handle, data, pts)` — pass-through send onto the lone configured
+    /// data stream. No AU-cell wrap, no framing; one send = one PES on stream_id
+    /// `0xBD` (`private_stream_1`). `pts` is written into the PES header only for
+    /// `carries_pts` streams but always drives PSI/PCR pacing.
+    fn Java_org_tstrans_shells_MuxSender_nSendData<'local>(
+        env,
+        _class,
+        handle: jlong,
+        data: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(buf) = read_bytes(env, &data) else {
             return;
         };
         with_push(env, handle, |inner| {
             inner.send_data(&buf, Pts90khz::new(pts))
         });
-    })
+    }
 }
 
 // ── Send family — handle-targeted variants ─────────────────────────────────
 
-/// `nSendVideoTo(handle, streamHandleRaw, nal, pts, keyFrame)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendVideoTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    nal: JByteArray<'local>,
-    pts: jlong,
-    key_frame: jboolean,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendVideoTo(handle, streamHandleRaw, nal, pts, keyFrame)`.
+    fn Java_org_tstrans_shells_MuxSender_nSendVideoTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        key_frame: jboolean,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
             throw_invalid_stream_handle(env, handle);
@@ -317,21 +311,20 @@ pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendVideoTo<'local>(
         with_push(env, handle, |inner| {
             inner.send_video_to(h, &buf, Pts90khz::new(pts), key_frame != 0)
         });
-    })
+    }
 }
 
-/// `nSendKlvTo(handle, streamHandleRaw, klv, pts, metadataServiceId)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendKlvTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    klv: JByteArray<'local>,
-    pts: jlong,
-    metadata_service_id: jint,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendKlvTo(handle, streamHandleRaw, klv, pts, metadataServiceId)`.
+    fn Java_org_tstrans_shells_MuxSender_nSendKlvTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        klv: JByteArray<'local>,
+        pts: jlong,
+        metadata_service_id: jint,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, KlvStreamHandle::try_from_raw) else {
             throw_invalid_stream_handle(env, handle);
             return;
@@ -346,20 +339,19 @@ pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendKlvTo<'local>(
         with_push(env, handle, |inner| {
             inner.send_klv_to(h, &buf, Pts90khz::new(pts), service_id)
         });
-    })
+    }
 }
 
-/// `nSendAudioTo(handle, streamHandleRaw, frames, pts)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendAudioTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    frames: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendAudioTo(handle, streamHandleRaw, frames, pts)`.
+    fn Java_org_tstrans_shells_MuxSender_nSendAudioTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        frames: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, AudioStreamHandle::try_from_raw)
         else {
             throw_invalid_stream_handle(env, handle);
@@ -371,20 +363,19 @@ pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendAudioTo<'local>(
         with_push(env, handle, |inner| {
             inner.send_audio_to(h, &buf, Pts90khz::new(pts))
         });
-    })
+    }
 }
 
-/// `nSendSubtitleTo(handle, streamHandleRaw, pts, payload)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendSubtitleTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    pts: jlong,
-    payload: JByteArray<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendSubtitleTo(handle, streamHandleRaw, pts, payload)`.
+    fn Java_org_tstrans_shells_MuxSender_nSendSubtitleTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        pts: jlong,
+        payload: JByteArray<'local>,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, SubtitleStreamHandle::try_from_raw)
         else {
             throw_invalid_stream_handle(env, handle);
@@ -396,23 +387,22 @@ pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendSubtitleTo<'local>
         with_push(env, handle, |inner| {
             inner.send_subtitle_to(h, &buf, Pts90khz::new(pts))
         });
-    })
+    }
 }
 
-/// `nSendDataTo(handle, streamHandleRaw, data, pts)`. The raw handle is
-/// validated via the strict `u32::try_from` + `DataStreamHandle::try_from_raw`
-/// chain (rejecting negative / out-of-u32 values up front rather than
-/// truncating, mirroring `Muxer::nPushDataTo`).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendDataTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    data: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendDataTo(handle, streamHandleRaw, data, pts)`. The raw handle is
+    /// validated via the strict `u32::try_from` + `DataStreamHandle::try_from_raw`
+    /// chain (rejecting negative / out-of-u32 values up front rather than
+    /// truncating, mirroring `Muxer::nPushDataTo`).
+    fn Java_org_tstrans_shells_MuxSender_nSendDataTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        data: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, DataStreamHandle::try_from_raw)
         else {
             throw_invalid_stream_handle(env, handle);
@@ -424,7 +414,7 @@ pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendDataTo<'local>(
         with_push(env, handle, |inner| {
             inner.send_data_to(h, &buf, Pts90khz::new(pts))
         });
-    })
+    }
 }
 
 // ── Handle getters ─────────────────────────────────────────────────────────
@@ -433,64 +423,43 @@ pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSendDataTo<'local>(
 // for the single-program ctor is also the only program). `-1` = none, which
 // the Java side maps to `Optional.empty()`.
 
-/// `nVideoHandle(handle)` — first configured video stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nVideoHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nVideoHandle(handle)` — first configured video stream handle, or `-1`.
+    fn Java_org_tstrans_shells_MuxSender_nVideoHandle(env, _class, handle: jlong) -> jlong = 0 => {
         first_handle(env, handle, |s| s.video.map(|h| h.raw()))
-    })
+    }
 }
 
-/// `nKlvHandle(handle)` — first configured KLV stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nKlvHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nKlvHandle(handle)` — first configured KLV stream handle, or `-1`.
+    fn Java_org_tstrans_shells_MuxSender_nKlvHandle(env, _class, handle: jlong) -> jlong = 0 => {
         first_handle(env, handle, |s| s.klv.map(|h| h.raw()))
-    })
+    }
 }
 
-/// `nAudioHandle(handle)` — first configured audio stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nAudioHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nAudioHandle(handle)` — first configured audio stream handle, or `-1`.
+    fn Java_org_tstrans_shells_MuxSender_nAudioHandle(env, _class, handle: jlong) -> jlong = 0 => {
         first_handle(env, handle, |s| s.audio.map(|h| h.raw()))
-    })
+    }
 }
 
-/// `nSubtitleHandle(handle)` — first configured subtitle stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nSubtitleHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nSubtitleHandle(handle)` — first configured subtitle stream handle, or `-1`.
+    fn Java_org_tstrans_shells_MuxSender_nSubtitleHandle(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         first_handle(env, handle, |s| s.subtitle.map(|h| h.raw()))
-    })
+    }
 }
 
-/// `nDataHandle(handle)` — first configured data stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nDataHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nDataHandle(handle)` — first configured data stream handle, or `-1`.
+    fn Java_org_tstrans_shells_MuxSender_nDataHandle(env, _class, handle: jlong) -> jlong = 0 => {
         first_handle(env, handle, |s| s.data.map(|h| h.raw()))
-    })
+    }
 }
 
 // ── Stats ──────────────────────────────────────────────────────────────────
@@ -510,16 +479,15 @@ pub(crate) fn build_transport_stats<'local>(
     )
 }
 
-/// `nStats(handle)` — a `TransportStats` projecting the transport's socket
-/// counters + the muxer's program/packet totals. Null on a JNI builder error
-/// (non-fatal).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// `nStats(handle)` — a `TransportStats` projecting the transport's socket
+    /// counters + the muxer's program/packet totals. Null on a JNI builder error
+    /// (non-fatal).
+    fn Java_org_tstrans_shells_MuxSender_nStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let (sock, pipe) = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -547,20 +515,15 @@ pub extern "system" fn Java_org_tstrans_shells_MuxSender_nStats<'local>(
             Err(_) => return JObject::null(),
         };
         build_transport_stats(env, &sock_obj, &mux_obj).unwrap_or_else(|_| JObject::null())
-    })
+    }
 }
 
 // ── Cancellation ───────────────────────────────────────────────────────────
 
-/// `nCancelHandle(handle)` — a shareable cancel handle that wakes a thread
-/// parked in any `nSend*`. Lock-free: answers while a send is parked.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nCancelHandle(handle)` — a shareable cancel handle that wakes a thread
+    /// parked in any `nSend*`. Lock-free: answers while a send is parked.
+    fn Java_org_tstrans_shells_MuxSender_nCancelHandle(env, _class, handle: jlong) -> jlong = 0 => {
         match REGISTRY.cancel_view(handle as u64) {
             Some(view) => cancel_view_handle(view),
             None => {
@@ -568,39 +531,29 @@ pub extern "system" fn Java_org_tstrans_shells_MuxSender_nCancelHandle(
                 0
             }
         }
-    })
+    }
 }
 
 // ── Lifecycle ──────────────────────────────────────────────────────────────
 
-/// `nClose(handle)` — cancel first, then take the sender and close it
-/// (best-effort drain). Atomic + idempotent: a double `close()` is safe.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// `nClose(handle)` — cancel first, then take the sender and close it
+    /// (best-effort drain). Atomic + idempotent: a double `close()` is safe.
+    fn Java_org_tstrans_shells_MuxSender_nClose(_env, _class, handle: jlong) = () => {
         if let Some(inner) = REGISTRY.close(handle as u64) {
             inner.close();
         }
-    })
+    }
 }
 
-/// `nFinish(handle)` — drain the muxer's pending bytes to the live transport,
-/// report the first drain error, then close the transport
-/// (`MuxSender::finish`). Unlike `nClose` this does NOT cancel first and does
-/// NOT free the registry entry: the Java side still calls `close()`. A
-/// closed handle is quiet, the same answer a second `finish()` gets from the
-/// shell itself.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nFinish(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nFinish(handle)` — drain the muxer's pending bytes to the live transport,
+    /// report the first drain error, then close the transport
+    /// (`MuxSender::finish`). Unlike `nClose` this does NOT cancel first and does
+    /// NOT free the registry entry: the Java side still calls `close()`. A
+    /// closed handle is quiet, the same answer a second `finish()` gets from the
+    /// shell itself.
+    fn Java_org_tstrans_shells_MuxSender_nFinish(env, _class, handle: jlong) = () => {
         // Closed between the Java-side `peekHandle()` and here: stay quiet.
         let Some(domain) = REGISTRY.snapshot(handle as u64, |s| s.domain) else {
             return;
@@ -614,18 +567,13 @@ pub extern "system" fn Java_org_tstrans_shells_MuxSender_nFinish(
             Err(HandleState::Closed) => {}
             Err(state) => throw_state(env, domain, "MuxSender", &state),
         }
-    })
+    }
 }
 
-/// `nIsAlive(handle)` — whether the sender owns a live transport. Non-blocking:
-/// a `send*` parked on another thread holds the slot, and reads as alive.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_MuxSender_nIsAlive(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jboolean {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// `nIsAlive(handle)` — whether the sender owns a live transport. Non-blocking:
+    /// a `send*` parked on another thread holds the slot, and reads as alive.
+    fn Java_org_tstrans_shells_MuxSender_nIsAlive(_env, _class, handle: jlong) -> jboolean = 0 => {
         u8::from(REGISTRY.is_alive(handle as u64, |inner| inner.is_alive()))
-    })
+    }
 }

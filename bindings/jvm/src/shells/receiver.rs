@@ -7,10 +7,10 @@
 //! reason it reads after the teardown so the Java object can keep answering
 //! once its handle is zeroed.
 
+use crate::panic::jni_native;
 use std::sync::LazyLock;
 
-use jni::JNIEnv;
-use jni::objects::{JClass, JObject, JString};
+use jni::objects::{JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring};
 use tst_core::transport::RecvTransport;
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
@@ -30,17 +30,12 @@ type Shell = PlReceiver<Box<dyn RecvTransport>>;
 
 static REGISTRY: LazyLock<OwnedRegistry<Shell, Snapshot<()>>> = LazyLock::new(OwnedRegistry::new);
 
-/// `Receiver.nOpen(url)` — for `srt://` the URL must carry `?mode=listener`;
-/// the open binds, listens and accepts ONE peer (not cancellable: no handle
-/// exists until it returns). Throws `IllegalArgumentException` for an
-/// unsupported scheme and the transport's exception otherwise.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Receiver_nOpen(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    url: JString<'_>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `Receiver.nOpen(url)` — for `srt://` the URL must carry `?mode=listener`;
+    /// the open binds, listens and accepts ONE peer (not cancellable: no handle
+    /// exists until it returns). Throws `IllegalArgumentException` for an
+    /// unsupported scheme and the transport's exception otherwise.
+    fn Java_org_tstrans_shells_Receiver_nOpen(env, _class, url: JString<'_>) -> jlong = 0 => {
         let Some(url) = read_url(env, &url) else {
             return 0;
         };
@@ -48,7 +43,7 @@ pub extern "system" fn Java_org_tstrans_shells_Receiver_nOpen(
             return 0;
         };
         register(opened)
-    })
+    }
 }
 
 /// Wrap an opened receive transport in a receiver and register it. Shared by
@@ -77,18 +72,17 @@ pub(crate) fn register(opened: Opened<Box<dyn RecvTransport>>) -> jlong {
     REGISTRY.insert(owned) as jlong
 }
 
-/// One 188-byte TS packet per call. `maxLen` is accepted for API symmetry
-/// and ignored. Throws the transport's exception on failure, including
-/// `END_OF_STREAM` when the peer closed cleanly (an `srt://` shell reads
-/// `BROKEN` first: libsrt reports a broken link, never a clean EOF).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Receiver_nRecvBytes(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    _max_len: jint,
-) -> jbyteArray {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// One 188-byte TS packet per call. `maxLen` is accepted for API symmetry
+    /// and ignored. Throws the transport's exception on failure, including
+    /// `END_OF_STREAM` when the peer closed cleanly (an `srt://` shell reads
+    /// `BROKEN` first: libsrt reports a broken link, never a clean EOF).
+    fn Java_org_tstrans_shells_Receiver_nRecvBytes(
+        env,
+        _class,
+        handle: jlong,
+        _max_len: jint,
+    ) -> jbyteArray = std::ptr::null_mut() => {
         let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "Receiver") else {
             return std::ptr::null_mut();
         };
@@ -109,17 +103,12 @@ pub extern "system" fn Java_org_tstrans_shells_Receiver_nRecvBytes(
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-/// A shareable cancel handle. Lock-free: answers while `recvBytes` is parked.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Receiver_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// A shareable cancel handle. Lock-free: answers while `recvBytes` is parked.
+    fn Java_org_tstrans_shells_Receiver_nCancelHandle(env, _class, handle: jlong) -> jlong = 0 => {
         match REGISTRY.cancel_view(handle as u64) {
             Some(view) => cancel_view_handle(view),
             None => {
@@ -127,17 +116,16 @@ pub extern "system" fn Java_org_tstrans_shells_Receiver_nCancelHandle(
                 0
             }
         }
-    })
+    }
 }
 
-/// The scheme-neutral 16-counter `SocketStats` record.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Receiver_nSocketStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// The scheme-neutral 16-counter `SocketStats` record.
+    fn Java_org_tstrans_shells_Receiver_nSocketStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -152,18 +140,17 @@ pub extern "system" fn Java_org_tstrans_shells_Receiver_nSocketStats<'local>(
         };
         build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats)
             .unwrap_or_else(|_| JObject::null())
-    })
+    }
 }
 
-/// The SRT-rich `SrtStats` record. `UnsupportedOperationException` unless the
-/// shell was opened from an `srt://` URL.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Receiver_nSrtStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// The SRT-rich `SrtStats` record. `UnsupportedOperationException` unless the
+    /// shell was opened from an `srt://` URL.
+    fn Java_org_tstrans_shells_Receiver_nSrtStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -195,65 +182,53 @@ pub extern "system" fn Java_org_tstrans_shells_Receiver_nSrtStats<'local>(
                 JObject::null()
             }
         }
-    })
+    }
 }
 
-/// Why the receive session ended, as a wire value (`-1` while it has not
-/// ended or the transport records none). Lock-free.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Receiver_nEndReason(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jint {
-    crate::panic::jni_catch(&mut env, -1, |_env| {
+jni_native! {
+    /// Why the receive session ended, as a wire value (`-1` while it has not
+    /// ended or the transport records none). Lock-free.
+    fn Java_org_tstrans_shells_Receiver_nEndReason(_env, _class, handle: jlong) -> jint = -1 => {
         wire_value(REGISTRY.end_reason(handle as u64).as_ref())
-    })
+    }
 }
 
-/// Free-text detail for `nEndReason`; null for a variant without one.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Receiver_nEndDetail(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jstring {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// Free-text detail for `nEndReason`; null for a variant without one.
+    fn Java_org_tstrans_shells_Receiver_nEndDetail(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jstring = std::ptr::null_mut() => {
         match REGISTRY.end_reason(handle as u64).as_ref().and_then(detail) {
             Some(d) => env
                 .new_string(d)
                 .map_or(std::ptr::null_mut(), |s| s.into_raw()),
             None => std::ptr::null_mut(),
         }
-    })
+    }
 }
 
-/// Close the receiver. Cancel first, so a `recvBytes` parked on another
-/// thread ends with the transport's `CLOSED`. Returns the end-reason snapshot
-/// (`EndReason$Snapshot`), null when the close lost the race.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Receiver_nClose<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// Close the receiver. Cancel first, so a `recvBytes` parked on another
+    /// thread ends with the transport's `CLOSED`. Returns the end-reason snapshot
+    /// (`EndReason$Snapshot`), null when the close lost the race.
+    fn Java_org_tstrans_shells_Receiver_nClose<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         match REGISTRY.close_with_end_reason(handle as u64, |mut r| r.close()) {
             Some(reason) => build_close_snapshot(env, reason).unwrap_or_else(|_| JObject::null()),
             None => JObject::null(),
         }
-    })
+    }
 }
 
-/// Whether the receiver owns a live transport. Non-blocking: a parked
-/// `recvBytes` holds the slot, and reads as alive.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_Receiver_nIsAlive(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jboolean {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// Whether the receiver owns a live transport. Non-blocking: a parked
+    /// `recvBytes` holds the slot, and reads as alive.
+    fn Java_org_tstrans_shells_Receiver_nIsAlive(_env, _class, handle: jlong) -> jboolean = 0 => {
         u8::from(REGISTRY.is_alive(handle as u64, |r| r.is_alive()))
-    })
+    }
 }

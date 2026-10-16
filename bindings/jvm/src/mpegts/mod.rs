@@ -27,10 +27,11 @@
 
 pub mod muxer;
 
+use crate::panic::jni_native;
 use std::sync::LazyLock;
 
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JValue};
+use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::{jboolean, jint, jlong, jobject};
 
 use tst_core::error::DemuxError;
@@ -56,37 +57,32 @@ use tst_pipeline::binding::kind::kind_of_demux;
 /// Per-type leased-handle registry for `org.tstrans.mpegts.Demuxer`.
 static REGISTRY: LazyLock<HandleRegistry<Demuxer>> = LazyLock::new(HandleRegistry::new);
 
-/// `org.tstrans.mpegts.Demuxer.nOpen()` — allocate a [`Demuxer`] and hand the JVM
-/// its raw pointer as a `jlong` handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nOpen<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |_env| REGISTRY.insert(Demuxer::new()) as jlong)
+jni_native! {
+    /// `org.tstrans.mpegts.Demuxer.nOpen()` — allocate a [`Demuxer`] and hand the JVM
+    /// its raw pointer as a `jlong` handle.
+    fn Java_org_tstrans_mpegts_Demuxer_nOpen<'local>(_env, _class) -> jlong = 0 => { REGISTRY.insert(Demuxer::new()) as jlong }
 }
 
-/// `nOpenWithConfig(...)` — build a configured [`Demuxer`]. The `strict`/`av1`
-/// ints are the Java enum ORDINALS (contract: must mirror the Java enum
-/// declaration order — `StrictMode`: 0=OFF,1=TIMING_ONLY,2=PSI_ONLY,3=FULL;
-/// `Av1CarriageMode`: 0=MPEG2_TS_BINDING,1=INTEROP_RAW_OBU). A `0` cap means
-/// "use the Rust default" (mapped to `None`). Mirrors tst-py's
-/// `build_demuxer_config` field-by-field.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nOpenWithConfig<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    strict: jint,
-    pes_cap_per_pid: jlong,
-    pes_cap_total: jlong,
-    cfi: jboolean,
-    av1: jint,
-    au_cell_cap: jlong,
-    lenient_psi: jboolean,
-    sync_buf_cap: jlong,
-    unwrap_timestamps: jboolean,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nOpenWithConfig(...)` — build a configured [`Demuxer`]. The `strict`/`av1`
+    /// ints are the Java enum ORDINALS (contract: must mirror the Java enum
+    /// declaration order — `StrictMode`: 0=OFF,1=TIMING_ONLY,2=PSI_ONLY,3=FULL;
+    /// `Av1CarriageMode`: 0=MPEG2_TS_BINDING,1=INTEROP_RAW_OBU). A `0` cap means
+    /// "use the Rust default" (mapped to `None`). Mirrors tst-py's
+    /// `build_demuxer_config` field-by-field.
+    fn Java_org_tstrans_mpegts_Demuxer_nOpenWithConfig<'local>(
+        env,
+        _class,
+        strict: jint,
+        pes_cap_per_pid: jlong,
+        pes_cap_total: jlong,
+        cfi: jboolean,
+        av1: jint,
+        au_cell_cap: jlong,
+        lenient_psi: jboolean,
+        sync_buf_cap: jlong,
+        unwrap_timestamps: jboolean,
+    ) -> jlong = 0 => {
         let Some(opts) = build_demux_config_from_args(
             env,
             strict,
@@ -102,7 +98,7 @@ pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nOpenWithConfig<'local>(
             return 0;
         };
         REGISTRY.insert(Demuxer::with_config(opts)) as jlong
-    })
+    }
 }
 
 /// Assemble a `tst_core` [`DemuxerConfig`] from the 9 marshalled JNI primitives
@@ -174,35 +170,29 @@ pub(crate) fn build_demux_config_from_args(
     Some(opts)
 }
 
-/// `nClose(handle)` — take + drop the registered [`Demuxer`]. Atomic +
-/// idempotent via `REGISTRY.close`, so a double `close()` is
-/// UAF/double-free-safe. The demuxer's teardown is a plain drop (no
-/// flush/finalize).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nClose<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// `nClose(handle)` — take + drop the registered [`Demuxer`]. Atomic +
+    /// idempotent via `REGISTRY.close`, so a double `close()` is
+    /// UAF/double-free-safe. The demuxer's teardown is a plain drop (no
+    /// flush/finalize).
+    fn Java_org_tstrans_mpegts_Demuxer_nClose<'local>(_env, _class, handle: jlong) = () => {
         // The winning close gets the demuxer back; it has no extra teardown, so just
         // let it drop here.
         let _ = REGISTRY.close(handle as u64);
-    })
+    }
 }
 
-/// `nFeed(handle, bytes)` — read the Java byte array into a Rust buffer and feed
-/// it to the demuxer. A `DemuxError` is mapped inline to a thrown
-/// `DemuxException` (see the `match` below); the literal discriminant per arm is
-/// what the error-mapping ratchet greps for.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nFeed<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    bytes: JByteArray<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nFeed(handle, bytes)` — read the Java byte array into a Rust buffer and feed
+    /// it to the demuxer. A `DemuxError` is mapped inline to a thrown
+    /// `DemuxException` (see the `match` below); the literal discriminant per arm is
+    /// what the error-mapping ratchet greps for.
+    fn Java_org_tstrans_mpegts_Demuxer_nFeed<'local>(
+        env,
+        _class,
+        handle: jlong,
+        bytes: JByteArray<'local>,
+    ) = () => {
         let buf = match env.convert_byte_array(&bytes) {
             Ok(b) => b,
             Err(_) => {
@@ -220,7 +210,7 @@ pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nFeed<'local>(
             Some(Err(e)) => throw_demux_error(env, &e),
             None => closed(env),
         }
-    })
+    }
 }
 
 /// Map a `tst_core` [`DemuxError`] to a thrown `org.tstrans.DemuxException`,
@@ -238,35 +228,29 @@ pub(crate) fn throw_demux_error(env: &mut JNIEnv, e: &DemuxError) {
     crate::error::throw_demux(env, kind_of_demux(e), &e.to_string());
 }
 
-/// `nFlush(handle)` — flush in-flight PES reassembly (call once at EOF).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nFlush<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nFlush(handle)` — flush in-flight PES reassembly (call once at EOF).
+    fn Java_org_tstrans_mpegts_Demuxer_nFlush<'local>(env, _class, handle: jlong) = () => {
         if REGISTRY
             .with_poisoning(handle as u64, |dx| dx.flush())
             .is_none()
         {
             closed(env);
         }
-    })
+    }
 }
 
-/// `nNextEvent(handle)` — pull the next event, converting it to a Java
-/// `DemuxEvent` record. Every current `DemuxEvent` variant maps to a record, so
-/// the loop returns the first event pulled; the `Ok(None) => continue` arm is a
-/// retained forward-compat guard (currently unreachable). Returns Java `null`
-/// when the queue drains.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nNextEvent<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `nNextEvent(handle)` — pull the next event, converting it to a Java
+    /// `DemuxEvent` record. Every current `DemuxEvent` variant maps to a record, so
+    /// the loop returns the first event pulled; the `Ok(None) => continue` arm is a
+    /// retained forward-compat guard (currently unreachable). Returns Java `null`
+    /// when the queue drains.
+    fn Java_org_tstrans_mpegts_Demuxer_nNextEvent<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         // Lease + drive the pull loop under the resource lock. `with` runs the
         // closure synchronously, so capturing `env` (`&mut JNIEnv`) to build the
         // Java record in-place is sound. `None` (closed/absent) → IllegalStateException.
@@ -296,26 +280,25 @@ pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nNextEvent<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-/// `DemuxEventVideoNatives.nSplitVideo(raw, codecOrdinal, av1CarriageOrdinal)` — the
-/// opt-in unit-split native backing [`DemuxEvent.Video.parse()`]. Calls
-/// `tst_core::mpegts::demux::split_video` on `raw` and converts the resulting
-/// [`VideoPayload`] into the same `java.util.List<VideoUnit>` the eager path
-/// formerly produced. The codec ordinal maps the Java `VideoCodec` enum
-/// declaration order; the av1 carriage ordinal maps `Av1CarriageMode`
-/// (0 = MPEG2_TS_BINDING, 1 = INTEROP_RAW_OBU; non-AV1 callers pass 0 and
-/// `split_video` ignores it). Mirrors tst-py's `Video.parse()`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_DemuxEventVideoNatives_nSplitVideo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: jni::objects::JClass<'local>,
-    raw: jni::objects::JByteArray<'local>,
-    codec_ordinal: jni::sys::jint,
-    av1_carriage_ordinal: jni::sys::jint,
-) -> jni::sys::jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `DemuxEventVideoNatives.nSplitVideo(raw, codecOrdinal, av1CarriageOrdinal)` — the
+    /// opt-in unit-split native backing [`DemuxEvent.Video.parse()`]. Calls
+    /// `tst_core::mpegts::demux::split_video` on `raw` and converts the resulting
+    /// [`VideoPayload`] into the same `java.util.List<VideoUnit>` the eager path
+    /// formerly produced. The codec ordinal maps the Java `VideoCodec` enum
+    /// declaration order; the av1 carriage ordinal maps `Av1CarriageMode`
+    /// (0 = MPEG2_TS_BINDING, 1 = INTEROP_RAW_OBU; non-AV1 callers pass 0 and
+    /// `split_video` ignores it). Mirrors tst-py's `Video.parse()`.
+    fn Java_org_tstrans_mpegts_DemuxEventVideoNatives_nSplitVideo<'local>(
+        env,
+        _class,
+        raw: jni::objects::JByteArray<'local>,
+        codec_ordinal: jni::sys::jint,
+        av1_carriage_ordinal: jni::sys::jint,
+    ) -> jni::sys::jobject = std::ptr::null_mut() => {
         let raw_bytes = match env.convert_byte_array(&raw) {
             Ok(b) => b,
             Err(_) => {
@@ -366,31 +349,30 @@ pub extern "system" fn Java_org_tstrans_mpegts_DemuxEventVideoNatives_nSplitVide
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-/// `DemuxEventAudioNatives.nParseAudio(raw, codecOrdinal, strict)` — the opt-in
-/// frame-parse native backing [`DemuxEvent.Audio.parse()`]. Parses the raw audio
-/// elementary-stream bytes into the same `java.util.List<AudioFrame>` the eager
-/// path formerly produced — `AdtsFrame`s for AAC, `Mpeg2AudioFrame`s for MP2, and
-/// an EMPTY list for codecs with no typed parser (AAC-LATM, AC-3). `strict=false`
-/// uses `frames_with_resync` (skips past corruption to the next valid frame, never
-/// throws); `strict=true` uses `frames` (throws `CodecParseException` on the first
-/// malformed frame). Mirrors tst-py's `codec.parse_audio(raw, codec, strict=...)`
-/// decision-for-decision (the strict codec labels `"aac"` / `"mpeg2audio"` match
-/// tst-py's `parse_audio`, not the muxer-side `"mp2"` short name).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_DemuxEventAudioNatives_nParseAudio<'local>(
-    mut env: JNIEnv<'local>,
-    _class: jni::objects::JClass<'local>,
-    raw: jni::objects::JByteArray<'local>,
-    codec_ordinal: jni::sys::jint,
-    strict: jni::sys::jboolean,
-) -> jni::sys::jobject {
-    use tst_core::codec::aac::{frames as aac_frames, frames_with_resync as aac_resync};
-    use tst_core::codec::mpegaudio::{frames as mp2_frames, frames_with_resync as mp2_resync};
+jni_native! {
+    /// `DemuxEventAudioNatives.nParseAudio(raw, codecOrdinal, strict)` — the opt-in
+    /// frame-parse native backing [`DemuxEvent.Audio.parse()`]. Parses the raw audio
+    /// elementary-stream bytes into the same `java.util.List<AudioFrame>` the eager
+    /// path formerly produced — `AdtsFrame`s for AAC, `Mpeg2AudioFrame`s for MP2, and
+    /// an EMPTY list for codecs with no typed parser (AAC-LATM, AC-3). `strict=false`
+    /// uses `frames_with_resync` (skips past corruption to the next valid frame, never
+    /// throws); `strict=true` uses `frames` (throws `CodecParseException` on the first
+    /// malformed frame). Mirrors tst-py's `codec.parse_audio(raw, codec, strict=...)`
+    /// decision-for-decision (the strict codec labels `"aac"` / `"mpeg2audio"` match
+    /// tst-py's `parse_audio`, not the muxer-side `"mp2"` short name).
+    fn Java_org_tstrans_mpegts_DemuxEventAudioNatives_nParseAudio<'local>(
+        env,
+        _class,
+        raw: jni::objects::JByteArray<'local>,
+        codec_ordinal: jni::sys::jint,
+        strict: jni::sys::jboolean,
+    ) -> jni::sys::jobject = std::ptr::null_mut() => {
+        use tst_core::codec::aac::{frames as aac_frames, frames_with_resync as aac_resync};
+        use tst_core::codec::mpegaudio::{frames as mp2_frames, frames_with_resync as mp2_resync};
 
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
         let raw_bytes = match env.convert_byte_array(&raw) {
             Ok(b) => b,
             Err(_) => {
@@ -487,7 +469,7 @@ pub extern "system" fn Java_org_tstrans_mpegts_DemuxEventAudioNatives_nParseAudi
                 Err(_) => std::ptr::null_mut(),
             },
         }
-    })
+    }
 }
 
 /// Throw `IllegalStateException` for a leased call that found a closed/absent

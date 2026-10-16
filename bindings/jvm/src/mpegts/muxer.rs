@@ -28,10 +28,11 @@
 //! array-read failures fail closed (a thrown `MuxException`/`RuntimeException` +
 //! a Rust default), never an `.unwrap()` panic across the FFI boundary.
 
+use crate::panic::jni_native;
 use std::sync::LazyLock;
 
 use jni::JNIEnv;
-use jni::objects::{JBooleanArray, JByteArray, JClass, JIntArray, JLongArray, JObject};
+use jni::objects::{JBooleanArray, JByteArray, JIntArray, JLongArray, JObject};
 use jni::sys::{jboolean, jint, jlong};
 
 use tst_core::error::MuxError;
@@ -51,37 +52,36 @@ use tst_pipeline::binding::kind::kind_of_mux;
 /// Per-type leased-handle registry for `org.tstrans.mpegts.Muxer`.
 static REGISTRY: LazyLock<HandleRegistry<Muxer>> = LazyLock::new(HandleRegistry::new);
 
-/// `org.tstrans.mpegts.Muxer.nOpen(...)` — build a configured [`Muxer`] from the
-/// parallel-array config description and hand the JVM its raw pointer as a
-/// `jlong` handle. Returns `0` (with a pending `MuxException`) on any config or
-/// marshalling failure.
-///
-/// The per-stream arrays (`stream_pids` / `stream_kinds` / `stream_codecs` /
-/// `stream_type_codes` / `stream_carries_pts`) are decoded by Java enum
-/// ORDINAL (`stream_type_codes` is the raw PMT stream_type byte for kind=data)
-/// — see the `*_codec` / `klv_type` / `av1_mode` mappers below for the exact
-/// ordinal → Rust-enum contract.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nOpen<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    program_number: jint,
-    pmt_pid: jint,
-    pcr_pid: jint,
-    pcr_interval_ms: jint,
-    psi_interval_ms: jint,
-    buffer_packets: jint,
-    av1_carriage: jint,
-    stream_pids: JIntArray<'local>,
-    stream_kinds: JIntArray<'local>,
-    stream_codecs: JIntArray<'local>,
-    stream_type_codes: JIntArray<'local>,
-    stream_carries_pts: JBooleanArray<'local>,
-    data_desc_bytes: JByteArray<'local>,
-    data_desc_lens: JIntArray<'local>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `org.tstrans.mpegts.Muxer.nOpen(...)` — build a configured [`Muxer`] from the
+    /// parallel-array config description and hand the JVM its raw pointer as a
+    /// `jlong` handle. Returns `0` (with a pending `MuxException`) on any config or
+    /// marshalling failure.
+    ///
+    /// The per-stream arrays (`stream_pids` / `stream_kinds` / `stream_codecs` /
+    /// `stream_type_codes` / `stream_carries_pts`) are decoded by Java enum
+    /// ORDINAL (`stream_type_codes` is the raw PMT stream_type byte for kind=data)
+    /// — see the `*_codec` / `klv_type` / `av1_mode` mappers below for the exact
+    /// ordinal → Rust-enum contract.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_mpegts_Muxer_nOpen<'local>(
+        env,
+        _class,
+        program_number: jint,
+        pmt_pid: jint,
+        pcr_pid: jint,
+        pcr_interval_ms: jint,
+        psi_interval_ms: jint,
+        buffer_packets: jint,
+        av1_carriage: jint,
+        stream_pids: JIntArray<'local>,
+        stream_kinds: JIntArray<'local>,
+        stream_codecs: JIntArray<'local>,
+        stream_type_codes: JIntArray<'local>,
+        stream_carries_pts: JBooleanArray<'local>,
+        data_desc_bytes: JByteArray<'local>,
+        data_desc_lens: JIntArray<'local>,
+    ) -> jlong = 0 => {
         // Build the MuxerConfig from the parallel arrays via the shared helper (a
         // pending MuxException is already thrown on `Err(())`).
         let cfg = match build_muxer_config_from_arrays(
@@ -112,7 +112,7 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nOpen<'local>(
             }
         };
         REGISTRY.insert(mux) as jlong
-    })
+    }
 }
 
 /// Build a [`MuxerConfig`] from the parallel-array config description that both
@@ -310,41 +310,39 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
     }
 }
 
-/// `nPushVideo(handle, nal, pts, keyFrame)` — push one Annex-B access unit.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    nal: JByteArray<'local>,
-    pts: jlong,
-    key_frame: jboolean,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushVideo(handle, nal, pts, keyFrame)` — push one Annex-B access unit.
+    fn Java_org_tstrans_mpegts_Muxer_nPushVideo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        key_frame: jboolean,
+    ) = () => {
         let Some(buf) = read_mux_bytes(env, &nal) else {
             return;
         };
         with_mux_push(env, handle, |mux| {
             mux.push_video(&buf, Pts90khz::new(pts), key_frame != 0)
         });
-    })
+    }
 }
 
-/// `nPushVideoWire(handle, wire, pts, keyFrame)` — pass-through push of an
-/// already-carried on-wire video AU. Emits `wire` verbatim — no Annex-B
-/// start-code validation, no AV1 OBU re-wrapping. Mirrors the C ABI's
-/// `tst_muxer_push_video_wire`: resolves the single configured video stream
-/// handle via `video_handles()` and then calls `push_video_wire_to`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoWire<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    wire: JByteArray<'local>,
-    pts: jlong,
-    key_frame: jboolean,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushVideoWire(handle, wire, pts, keyFrame)` — pass-through push of an
+    /// already-carried on-wire video AU. Emits `wire` verbatim — no Annex-B
+    /// start-code validation, no AV1 OBU re-wrapping. Mirrors the C ABI's
+    /// `tst_muxer_push_video_wire`: resolves the single configured video stream
+    /// handle via `video_handles()` and then calls `push_video_wire_to`.
+    fn Java_org_tstrans_mpegts_Muxer_nPushVideoWire<'local>(
+        env,
+        _class,
+        handle: jlong,
+        wire: JByteArray<'local>,
+        pts: jlong,
+        key_frame: jboolean,
+    ) = () => {
         let Some(buf) = read_mux_bytes(env, &wire) else {
             return;
         };
@@ -360,22 +358,21 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoWire<'local>(
                 }),
             }
         });
-    })
+    }
 }
 
-/// `nPushKlv(handle, klv, pts, metadataServiceId)` — push one KLV blob. The
-/// muxer auto-wraps the AU-cell header for synchronous-metadata streams; the
-/// caller passes raw KLV LS bytes.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushKlv<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    klv: JByteArray<'local>,
-    pts: jlong,
-    metadata_service_id: jint,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushKlv(handle, klv, pts, metadataServiceId)` — push one KLV blob. The
+    /// muxer auto-wraps the AU-cell header for synchronous-metadata streams; the
+    /// caller passes raw KLV LS bytes.
+    fn Java_org_tstrans_mpegts_Muxer_nPushKlv<'local>(
+        env,
+        _class,
+        handle: jlong,
+        klv: JByteArray<'local>,
+        pts: jlong,
+        metadata_service_id: jint,
+    ) = () => {
         let Some(buf) = read_mux_bytes(env, &klv) else {
             return;
         };
@@ -383,80 +380,76 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushKlv<'local>(
         with_mux_push(env, handle, |mux| {
             mux.push_klv(&buf, Pts90khz::new(pts), metadata_service_id as u8)
         });
-    })
+    }
 }
 
-/// `nPushAudio(handle, frames, pts)` — push one audio access unit.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushAudio<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    frames: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushAudio(handle, frames, pts)` — push one audio access unit.
+    fn Java_org_tstrans_mpegts_Muxer_nPushAudio<'local>(
+        env,
+        _class,
+        handle: jlong,
+        frames: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(buf) = read_mux_bytes(env, &frames) else {
             return;
         };
         with_mux_push(env, handle, |mux| mux.push_audio(&buf, Pts90khz::new(pts)));
-    })
+    }
 }
 
-/// `nPushSubtitle(handle, pts, payload)` — push one subtitle access unit. Note
-/// the `(pts, payload)` arg order on `Muxer::push_subtitle`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushSubtitle<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    pts: jlong,
-    payload: JByteArray<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushSubtitle(handle, pts, payload)` — push one subtitle access unit. Note
+    /// the `(pts, payload)` arg order on `Muxer::push_subtitle`.
+    fn Java_org_tstrans_mpegts_Muxer_nPushSubtitle<'local>(
+        env,
+        _class,
+        handle: jlong,
+        pts: jlong,
+        payload: JByteArray<'local>,
+    ) = () => {
         let Some(buf) = read_mux_bytes(env, &payload) else {
             return;
         };
         with_mux_push(env, handle, |mux| {
             mux.push_subtitle(Pts90khz::new(pts), &buf)
         });
-    })
+    }
 }
 
-/// `nPushData(handle, data, pts)` — pass-through push onto the lone configured
-/// data stream. No AU-cell wrap, no framing; one push = one PES on stream_id
-/// `0xBD` (`private_stream_1`). `pts` is written into the PES header only for
-/// `carries_pts` streams but always drives PSI/PCR pacing.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushData<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    data: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushData(handle, data, pts)` — pass-through push onto the lone configured
+    /// data stream. No AU-cell wrap, no framing; one push = one PES on stream_id
+    /// `0xBD` (`private_stream_1`). `pts` is written into the PES header only for
+    /// `carries_pts` streams but always drives PSI/PCR pacing.
+    fn Java_org_tstrans_mpegts_Muxer_nPushData<'local>(
+        env,
+        _class,
+        handle: jlong,
+        data: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(buf) = read_mux_bytes(env, &data) else {
             return;
         };
         with_mux_push(env, handle, |mux| mux.push_data(&buf, Pts90khz::new(pts)));
-    })
+    }
 }
 
-/// `nPushDataTo(handle, streamHandleRaw, data, pts)` — pass-through push onto a
-/// specific data stream. The raw handle is validated via
-/// `DataStreamHandle::try_from_raw` (Java's `fromRaw` does no validation), so a
-/// malformed (bad bit-layout) or out-of-range handle surfaces as `MuxException(INVALID_USAGE)` here.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushDataTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    data: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushDataTo(handle, streamHandleRaw, data, pts)` — pass-through push onto a
+    /// specific data stream. The raw handle is validated via
+    /// `DataStreamHandle::try_from_raw` (Java's `fromRaw` does no validation), so a
+    /// malformed (bad bit-layout) or out-of-range handle surfaces as `MuxException(INVALID_USAGE)` here.
+    fn Java_org_tstrans_mpegts_Muxer_nPushDataTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        data: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         // Reject any jlong outside the packed-u32 handle layout (negative, > u32,
         // or high bits set within u32) up front, rather than truncating.
         let Some(h) = decode_stream_handle(stream_handle_raw, DataStreamHandle::try_from_raw)
@@ -474,24 +467,23 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushDataTo<'local>(
         with_mux_push(env, handle, |mux| {
             mux.push_data_to(h, &buf, Pts90khz::new(pts))
         });
-    })
+    }
 }
 
-/// `nPushVideoTo(handle, streamHandleRaw, nal, pts, keyFrame)` — targeted
-/// Annex-B AU push. The raw stream handle is validated via
-/// `VideoStreamHandle::try_from_raw`; a malformed (bad bit-layout) or out-of-range handle surfaces as
-/// `MuxException(INVALID_USAGE)` here.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    nal: JByteArray<'local>,
-    pts: jlong,
-    key_frame: jboolean,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushVideoTo(handle, streamHandleRaw, nal, pts, keyFrame)` — targeted
+    /// Annex-B AU push. The raw stream handle is validated via
+    /// `VideoStreamHandle::try_from_raw`; a malformed (bad bit-layout) or out-of-range handle surfaces as
+    /// `MuxException(INVALID_USAGE)` here.
+    fn Java_org_tstrans_mpegts_Muxer_nPushVideoTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        key_frame: jboolean,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
             throw_mux(
@@ -507,24 +499,23 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoTo<'local>(
         with_mux_push(env, handle, |mux| {
             mux.push_video_to(h, &buf, Pts90khz::new(pts), key_frame != 0)
         });
-    })
+    }
 }
 
-/// `nPushVideoWireTo(handle, streamHandleRaw, wire, pts, keyFrame)` — targeted
-/// on-wire AU push (emits `wire` verbatim, no Annex-B validation or AV1
-/// re-wrapping). The raw stream handle is validated via
-/// `VideoStreamHandle::try_from_raw`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoWireTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    wire: JByteArray<'local>,
-    pts: jlong,
-    key_frame: jboolean,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushVideoWireTo(handle, streamHandleRaw, wire, pts, keyFrame)` — targeted
+    /// on-wire AU push (emits `wire` verbatim, no Annex-B validation or AV1
+    /// re-wrapping). The raw stream handle is validated via
+    /// `VideoStreamHandle::try_from_raw`.
+    fn Java_org_tstrans_mpegts_Muxer_nPushVideoWireTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        wire: JByteArray<'local>,
+        pts: jlong,
+        key_frame: jboolean,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
             throw_mux(
@@ -540,27 +531,26 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoWireTo<'local>(
         with_mux_push(env, handle, |mux| {
             mux.push_video_wire_to(h, &buf, Pts90khz::new(pts), key_frame != 0)
         });
-    })
+    }
 }
 
-/// `nPushVideoToWithDts(handle, streamHandleRaw, nal, pts, dts, keyFrame)` —
-/// targeted Annex-B AU push with an explicit decode timestamp. The raw stream
-/// handle is validated via `VideoStreamHandle::try_from_raw`; a malformed
-/// (bad bit-layout) or out-of-range handle surfaces as `MuxException(INVALID_USAGE)`.
-/// The PES header will carry `PTS_DTS_flags = '11'`, enabling demux of a non-null
-/// `DemuxEvent.Video.dts`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoToWithDts<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    nal: JByteArray<'local>,
-    pts: jlong,
-    dts: jlong,
-    key_frame: jboolean,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushVideoToWithDts(handle, streamHandleRaw, nal, pts, dts, keyFrame)` —
+    /// targeted Annex-B AU push with an explicit decode timestamp. The raw stream
+    /// handle is validated via `VideoStreamHandle::try_from_raw`; a malformed
+    /// (bad bit-layout) or out-of-range handle surfaces as `MuxException(INVALID_USAGE)`.
+    /// The PES header will carry `PTS_DTS_flags = '11'`, enabling demux of a non-null
+    /// `DemuxEvent.Video.dts`.
+    fn Java_org_tstrans_mpegts_Muxer_nPushVideoToWithDts<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        dts: jlong,
+        key_frame: jboolean,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
             throw_mux(
@@ -582,25 +572,24 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoToWithDts<'local>
                 key_frame != 0,
             )
         });
-    })
+    }
 }
 
-/// `nPushVideoWireToWithDts(handle, streamHandleRaw, wire, pts, dts, keyFrame)` —
-/// targeted on-wire AU push with an explicit decode timestamp. Emits `wire`
-/// verbatim — no Annex-B validation or AV1 re-wrapping. The raw stream handle is
-/// validated via `VideoStreamHandle::try_from_raw`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoWireToWithDts<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    wire: JByteArray<'local>,
-    pts: jlong,
-    dts: jlong,
-    key_frame: jboolean,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushVideoWireToWithDts(handle, streamHandleRaw, wire, pts, dts, keyFrame)` —
+    /// targeted on-wire AU push with an explicit decode timestamp. Emits `wire`
+    /// verbatim — no Annex-B validation or AV1 re-wrapping. The raw stream handle is
+    /// validated via `VideoStreamHandle::try_from_raw`.
+    fn Java_org_tstrans_mpegts_Muxer_nPushVideoWireToWithDts<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        wire: JByteArray<'local>,
+        pts: jlong,
+        dts: jlong,
+        key_frame: jboolean,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
             throw_mux(
@@ -622,29 +611,28 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoWireToWithDts<'lo
                 key_frame != 0,
             )
         });
-    })
+    }
 }
 
-/// `nPushVideoMispTo(handle, streamHandleRaw, nal, pts, keyFrame, kind, timeStatus, value)` —
-/// targeted Annex-B AU push with a MISB ST 0604 MISP timestamp SEI spliced
-/// before the first VCL NAL. `kind` is the `MispTimeKind` ordinal (0=MICRO,
-/// 1=NANO); `value` is treated as unsigned 64-bit (bit-pattern reinterpret from
-/// `jlong`). Out-of-range kind → `MuxException(INVALID_USAGE)`. An H.264 stream
-/// with `kind=NANO` → `MuxException(INPUT_MALFORMED)` via the Rust `MispTimeError`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoMispTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    nal: JByteArray<'local>,
-    pts: jlong,
-    key_frame: jboolean,
-    kind: jint,
-    time_status: jint,
-    value: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushVideoMispTo(handle, streamHandleRaw, nal, pts, keyFrame, kind, timeStatus, value)` —
+    /// targeted Annex-B AU push with a MISB ST 0604 MISP timestamp SEI spliced
+    /// before the first VCL NAL. `kind` is the `MispTimeKind` ordinal (0=MICRO,
+    /// 1=NANO); `value` is treated as unsigned 64-bit (bit-pattern reinterpret from
+    /// `jlong`). Out-of-range kind → `MuxException(INVALID_USAGE)`. An H.264 stream
+    /// with `kind=NANO` → `MuxException(INPUT_MALFORMED)` via the Rust `MispTimeError`.
+    fn Java_org_tstrans_mpegts_Muxer_nPushVideoMispTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        key_frame: jboolean,
+        kind: jint,
+        time_status: jint,
+        value: jlong,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
             throw_mux(
@@ -664,26 +652,25 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoMispTo<'local>(
         with_mux_push(env, handle, |mux| {
             mux.push_video_misp_to(h, &buf, Pts90khz::new(pts), key_frame != 0, &misp)
         });
-    })
+    }
 }
 
-/// `nPushVideoMispToWithDts(handle, streamHandleRaw, nal, pts, dts, keyFrame, kind, timeStatus, value)` —
-/// targeted Annex-B AU push with explicit DTS and MISP SEI splice.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoMispToWithDts<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    nal: JByteArray<'local>,
-    pts: jlong,
-    dts: jlong,
-    key_frame: jboolean,
-    kind: jint,
-    time_status: jint,
-    value: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushVideoMispToWithDts(handle, streamHandleRaw, nal, pts, dts, keyFrame, kind, timeStatus, value)` —
+    /// targeted Annex-B AU push with explicit DTS and MISP SEI splice.
+    fn Java_org_tstrans_mpegts_Muxer_nPushVideoMispToWithDts<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        dts: jlong,
+        key_frame: jboolean,
+        kind: jint,
+        time_status: jint,
+        value: jlong,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
             throw_mux(
@@ -710,23 +697,22 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoMispToWithDts<'lo
                 &misp,
             )
         });
-    })
+    }
 }
 
-/// `nPushKlvTo(handle, streamHandleRaw, klv, pts, metadataServiceId)` —
-/// targeted KLV push. The raw stream handle is validated via
-/// `KlvStreamHandle::try_from_raw`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushKlvTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    klv: JByteArray<'local>,
-    pts: jlong,
-    metadata_service_id: jint,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushKlvTo(handle, streamHandleRaw, klv, pts, metadataServiceId)` —
+    /// targeted KLV push. The raw stream handle is validated via
+    /// `KlvStreamHandle::try_from_raw`.
+    fn Java_org_tstrans_mpegts_Muxer_nPushKlvTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        klv: JByteArray<'local>,
+        pts: jlong,
+        metadata_service_id: jint,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, KlvStreamHandle::try_from_raw) else {
             throw_mux(
                 env,
@@ -741,24 +727,23 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushKlvTo<'local>(
         with_mux_push(env, handle, |mux| {
             mux.push_klv_to(h, &buf, Pts90khz::new(pts), metadata_service_id as u8)
         });
-    })
+    }
 }
 
-/// `nPushAudioTo(handle, streamHandleRaw, frames, pts)` — targeted audio
-/// push. The raw stream handle is validated via
-/// `AudioStreamHandle::try_from_raw`. Note the core's `push_audio_to` takes
-/// `(handle, pts, frames)` — the JNI argument order (frames before pts) matches
-/// the Java-facing API convention; the core call re-orders them.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushAudioTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    frames: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushAudioTo(handle, streamHandleRaw, frames, pts)` — targeted audio
+    /// push. The raw stream handle is validated via
+    /// `AudioStreamHandle::try_from_raw`. Note the core's `push_audio_to` takes
+    /// `(handle, pts, frames)` — the JNI argument order (frames before pts) matches
+    /// the Java-facing API convention; the core call re-orders them.
+    fn Java_org_tstrans_mpegts_Muxer_nPushAudioTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        frames: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, AudioStreamHandle::try_from_raw)
         else {
             throw_mux(
@@ -775,23 +760,22 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushAudioTo<'local>(
         with_mux_push(env, handle, |mux| {
             mux.push_audio_to(h, Pts90khz::new(pts), &buf)
         });
-    })
+    }
 }
 
-/// `nPushSubtitleTo(handle, streamHandleRaw, pts, payload)` — targeted
-/// subtitle push. The raw stream handle is validated via
-/// `SubtitleStreamHandle::try_from_raw`. Note the `(pts, payload)` arg order
-/// matches the core's `push_subtitle_to`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushSubtitleTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    pts: jlong,
-    payload: JByteArray<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nPushSubtitleTo(handle, streamHandleRaw, pts, payload)` — targeted
+    /// subtitle push. The raw stream handle is validated via
+    /// `SubtitleStreamHandle::try_from_raw`. Note the `(pts, payload)` arg order
+    /// matches the core's `push_subtitle_to`.
+    fn Java_org_tstrans_mpegts_Muxer_nPushSubtitleTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        pts: jlong,
+        payload: JByteArray<'local>,
+    ) = () => {
         let Some(h) = decode_stream_handle(stream_handle_raw, SubtitleStreamHandle::try_from_raw)
         else {
             throw_mux(
@@ -807,22 +791,21 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushSubtitleTo<'local>(
         with_mux_push(env, handle, |mux| {
             mux.push_subtitle_to(h, Pts90khz::new(pts), &buf)
         });
-    })
+    }
 }
 
-/// `nDataHandles(handle)` → `long[]` of all data stream handles (packed `u32`
-/// raws widened to `jlong`), in `addData` declaration order. On a closed/absent
-/// handle throws `IllegalStateException` and returns a null array; on a JNI
-/// alloc/write failure throws an unchecked `RuntimeException` (the Java decl
-/// has no `throws`, so the checked `MuxException` can't be used here) and
-/// returns a null array.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nDataHandles<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JLongArray<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `nDataHandles(handle)` → `long[]` of all data stream handles (packed `u32`
+    /// raws widened to `jlong`), in `addData` declaration order. On a closed/absent
+    /// handle throws `IllegalStateException` and returns a null array; on a JNI
+    /// alloc/write failure throws an unchecked `RuntimeException` (the Java decl
+    /// has no `throws`, so the checked `MuxException` can't be used here) and
+    /// returns a null array.
+    fn Java_org_tstrans_mpegts_Muxer_nDataHandles<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JLongArray<'local> = JObject::null().into() => {
         let Some(raws) = REGISTRY.with(handle as u64, |mux| {
             mux.data_handles()
                 .into_iter()
@@ -850,20 +833,19 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nDataHandles<'local>(
             return JObject::null().into();
         }
         arr
-    })
+    }
 }
 
-/// `nVideoHandles(handle)` → `long[]` of all video stream handles (packed `u32`
-/// raws widened to `jlong`), in declaration order. On a closed/absent handle
-/// throws `IllegalStateException`; on a JNI alloc/write failure throws
-/// `RuntimeException`. Mirrors `nDataHandles`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nVideoHandles<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JLongArray<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `nVideoHandles(handle)` → `long[]` of all video stream handles (packed `u32`
+    /// raws widened to `jlong`), in declaration order. On a closed/absent handle
+    /// throws `IllegalStateException`; on a JNI alloc/write failure throws
+    /// `RuntimeException`. Mirrors `nDataHandles`.
+    fn Java_org_tstrans_mpegts_Muxer_nVideoHandles<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JLongArray<'local> = JObject::null().into() => {
         let Some(raws) = REGISTRY.with(handle as u64, |mux| {
             mux.video_handles()
                 .into_iter()
@@ -891,20 +873,19 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nVideoHandles<'local>(
             return JObject::null().into();
         }
         arr
-    })
+    }
 }
 
-/// `nAudioHandles(handle)` → `long[]` of all audio stream handles (packed `u32`
-/// raws widened to `jlong`), in declaration order. On a closed/absent handle
-/// throws `IllegalStateException`; on a JNI alloc/write failure throws
-/// `RuntimeException`. Mirrors `nDataHandles`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nAudioHandles<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JLongArray<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `nAudioHandles(handle)` → `long[]` of all audio stream handles (packed `u32`
+    /// raws widened to `jlong`), in declaration order. On a closed/absent handle
+    /// throws `IllegalStateException`; on a JNI alloc/write failure throws
+    /// `RuntimeException`. Mirrors `nDataHandles`.
+    fn Java_org_tstrans_mpegts_Muxer_nAudioHandles<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JLongArray<'local> = JObject::null().into() => {
         let Some(raws) = REGISTRY.with(handle as u64, |mux| {
             mux.audio_handles()
                 .into_iter()
@@ -932,20 +913,19 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nAudioHandles<'local>(
             return JObject::null().into();
         }
         arr
-    })
+    }
 }
 
-/// `nKlvHandles(handle)` → `long[]` of all KLV stream handles (packed `u32`
-/// raws widened to `jlong`), in declaration order. On a closed/absent handle
-/// throws `IllegalStateException`; on a JNI alloc/write failure throws
-/// `RuntimeException`. Mirrors `nDataHandles`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nKlvHandles<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JLongArray<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `nKlvHandles(handle)` → `long[]` of all KLV stream handles (packed `u32`
+    /// raws widened to `jlong`), in declaration order. On a closed/absent handle
+    /// throws `IllegalStateException`; on a JNI alloc/write failure throws
+    /// `RuntimeException`. Mirrors `nDataHandles`.
+    fn Java_org_tstrans_mpegts_Muxer_nKlvHandles<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JLongArray<'local> = JObject::null().into() => {
         let Some(raws) = REGISTRY.with(handle as u64, |mux| {
             mux.klv_handles()
                 .into_iter()
@@ -973,20 +953,19 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nKlvHandles<'local>(
             return JObject::null().into();
         }
         arr
-    })
+    }
 }
 
-/// `nSubtitleHandles(handle)` → `long[]` of all subtitle stream handles (packed `u32`
-/// raws widened to `jlong`), in declaration order. On a closed/absent handle
-/// throws `IllegalStateException`; on a JNI alloc/write failure throws
-/// `RuntimeException`. Mirrors `nDataHandles`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nSubtitleHandles<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JLongArray<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `nSubtitleHandles(handle)` → `long[]` of all subtitle stream handles (packed `u32`
+    /// raws widened to `jlong`), in declaration order. On a closed/absent handle
+    /// throws `IllegalStateException`; on a JNI alloc/write failure throws
+    /// `RuntimeException`. Mirrors `nDataHandles`.
+    fn Java_org_tstrans_mpegts_Muxer_nSubtitleHandles<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JLongArray<'local> = JObject::null().into() => {
         let Some(raws) = REGISTRY.with(handle as u64, |mux| {
             mux.subtitle_handles()
                 .into_iter()
@@ -1014,20 +993,19 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nSubtitleHandles<'local>(
             return JObject::null().into();
         }
         arr
-    })
+    }
 }
 
-/// `nPull(handle, out)` — drain whole TS packets into the caller's `byte[]`,
-/// returning the number of bytes written (a multiple of 188; `0` if `out` is
-/// under 188 or the queue is empty).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPull<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    out: JByteArray<'local>,
-) -> jint {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nPull(handle, out)` — drain whole TS packets into the caller's `byte[]`,
+    /// returning the number of bytes written (a multiple of 188; `0` if `out` is
+    /// under 188 or the queue is empty).
+    fn Java_org_tstrans_mpegts_Muxer_nPull<'local>(
+        env,
+        _class,
+        handle: jlong,
+        out: JByteArray<'local>,
+    ) -> jint = 0 => {
         let out_len = match env.get_array_length(&out) {
             Ok(l) => l as usize,
             Err(_) => {
@@ -1057,17 +1035,12 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPull<'local>(
             return 0;
         }
         n as jint
-    })
+    }
 }
 
-/// `nPending(handle)` — TS packets currently queued.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPending<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nPending(handle)` — TS packets currently queued.
+    fn Java_org_tstrans_mpegts_Muxer_nPending<'local>(env, _class, handle: jlong) -> jlong = 0 => {
         match REGISTRY.with(handle as u64, |mux| mux.pending_packets() as jlong) {
             Some(v) => v,
             None => {
@@ -1075,17 +1048,12 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPending<'local>(
                 0
             }
         }
-    })
+    }
 }
 
-/// `nCapacity(handle)` — configured queue capacity in TS packets.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nCapacity<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nCapacity(handle)` — configured queue capacity in TS packets.
+    fn Java_org_tstrans_mpegts_Muxer_nCapacity<'local>(env, _class, handle: jlong) -> jlong = 0 => {
         match REGISTRY.with(handle as u64, |mux| mux.capacity_packets() as jlong) {
             Some(v) => v,
             None => {
@@ -1093,23 +1061,18 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nCapacity<'local>(
                 0
             }
         }
-    })
+    }
 }
 
-/// `nClose(handle)` — take + drop the registered [`Muxer`]. Atomic + idempotent
-/// via `REGISTRY.close`, so a double `close()` is UAF/double-free-safe. The
-/// muxer's teardown is a plain drop (no flush/finalize).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nClose<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// `nClose(handle)` — take + drop the registered [`Muxer`]. Atomic + idempotent
+    /// via `REGISTRY.close`, so a double `close()` is UAF/double-free-safe. The
+    /// muxer's teardown is a plain drop (no flush/finalize).
+    fn Java_org_tstrans_mpegts_Muxer_nClose<'local>(_env, _class, handle: jlong) = () => {
         // The winning close gets the muxer back; it has no extra teardown, so just
         // let it drop here.
         let _ = REGISTRY.close(handle as u64);
-    })
+    }
 }
 
 /// Construct a `MispTimestamp` from the JNI scalar fields (kind ordinal 0/1,

@@ -13,12 +13,13 @@
 //! address cannot change, and a cached value answers while another thread is
 //! inside a push (the snapshot-read rule, without an `OwnedRegistry`).
 
+use crate::panic::jni_native;
 use std::net::SocketAddr;
 use std::sync::LazyLock;
 use std::time::Duration;
 
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JString, JValue};
+use jni::objects::{JByteArray, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 
 use tst_core::publisher::{Publisher, PublisherStats};
@@ -111,28 +112,27 @@ fn build_hls_stats<'local>(
     )
 }
 
-/// `nBuild(url, bind, outputDir, segmentDurationMs, maxSegmentDurationMs,
-/// playlistWindow, mode, authUser, authPass, tlsCert, tlsKey)`.
-/// Sentinels: `null` string = unset; `0` ms = unset; `-1` window/mode = unset.
-/// Order = tst-py: `from_url` seeds, every set field overlays.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nBuild<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    url: JString<'local>,
-    bind: JString<'local>,
-    output_dir: JString<'local>,
-    segment_duration_ms: jlong,
-    max_segment_duration_ms: jlong,
-    playlist_window: jint,
-    mode: jint,
-    auth_user: JString<'local>,
-    auth_pass: JString<'local>,
-    tls_cert: JString<'local>,
-    tls_key: JString<'local>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nBuild(url, bind, outputDir, segmentDurationMs, maxSegmentDurationMs,
+    /// playlistWindow, mode, authUser, authPass, tlsCert, tlsKey)`.
+    /// Sentinels: `null` string = unset; `0` ms = unset; `-1` window/mode = unset.
+    /// Order = tst-py: `from_url` seeds, every set field overlays.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_hls_HlsPublisher_nBuild<'local>(
+        env,
+        _class,
+        url: JString<'local>,
+        bind: JString<'local>,
+        output_dir: JString<'local>,
+        segment_duration_ms: jlong,
+        max_segment_duration_ms: jlong,
+        playlist_window: jint,
+        mode: jint,
+        auth_user: JString<'local>,
+        auth_pass: JString<'local>,
+        tls_cert: JString<'local>,
+        tls_key: JString<'local>,
+    ) -> jlong = 0 => {
         let Some(url) = opt_string(env, &url) else {
             return 0;
         };
@@ -215,17 +215,16 @@ pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nBuild<'local>(
                 0
             }
         }
-    })
+    }
 }
 
-/// `nLocalAddr(handle)` — `"ip:port"` or `null` when built without a server.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nLocalAddr<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jstring {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `nLocalAddr(handle)` — `"ip:port"` or `null` when built without a server.
+    fn Java_org_tstrans_hls_HlsPublisher_nLocalAddr<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jstring = std::ptr::null_mut() => {
         match REGISTRY.with(handle as u64, |p| p.local_addr().map(|a| a.to_string())) {
             Some(Some(addr)) => env
                 .new_string(addr)
@@ -237,43 +236,36 @@ pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nLocalAddr<'local>(
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nPushTs<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    ts_bytes: JByteArray<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    fn Java_org_tstrans_hls_HlsPublisher_nPushTs<'local>(
+        env,
+        _class,
+        handle: jlong,
+        ts_bytes: JByteArray<'local>,
+    ) = () => {
         let Some(buf) = read_bytes(env, &ts_bytes) else {
             return;
         };
         with_pub(env, handle, (), |p| Publisher::push_ts(p, &buf));
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nCutSegment<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    fn Java_org_tstrans_hls_HlsPublisher_nCutSegment<'local>(env, _class, handle: jlong) = () => {
         with_pub(env, handle, (), Publisher::cut_segment);
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nCutSegmentWithDuration<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    media_duration_us: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    fn Java_org_tstrans_hls_HlsPublisher_nCutSegmentWithDuration<'local>(
+        env,
+        _class,
+        handle: jlong,
+        media_duration_us: jlong,
+    ) = () => {
         if media_duration_us < 0 {
             let _ = env.throw_new(
                 "java/lang/IllegalArgumentException",
@@ -285,34 +277,28 @@ pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nCutSegmentWithDuration
         with_pub(env, handle, (), |p| {
             Publisher::cut_segment_with_duration(p, d)
         });
-    })
+    }
 }
 
-/// `nFinish(handle)` — take + consume. The Java side has zeroed its handle
-/// already; a miss here is the "already consumed" case.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nFinish<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| match REGISTRY.close(handle as u64) {
+jni_native! {
+    /// `nFinish(handle)` — take + consume. The Java side has zeroed its handle
+    /// already; a miss here is the "already consumed" case.
+    fn Java_org_tstrans_hls_HlsPublisher_nFinish<'local>(env, _class, handle: jlong) = () => { match REGISTRY.close(handle as u64) {
         Some(p) => {
             if let Err(e) = Publisher::finish(p) {
                 hls_error(env, e);
             }
         }
         None => throw_closed(env, "HlsPublisher"),
-    })
+    } }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_hls_HlsPublisher_nStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         match REGISTRY.with(handle as u64, |p| Publisher::stats(p)) {
             Some(s) => build_publisher_stats(env, &s)
                 .map(|o| o.into_raw())
@@ -322,16 +308,15 @@ pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nStats<'local>(
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nHlsStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_hls_HlsPublisher_nHlsStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         match REGISTRY.with(handle as u64, |p| p.hls_stats()) {
             Some(s) => build_hls_stats(env, &s)
                 .map(|o| o.into_raw())
@@ -341,17 +326,16 @@ pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nHlsStats<'local>(
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nRenderPlaylist<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    is_event: jboolean,
-) -> jstring {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_hls_HlsPublisher_nRenderPlaylist<'local>(
+        env,
+        _class,
+        handle: jlong,
+        is_event: jboolean,
+    ) -> jstring = std::ptr::null_mut() => {
         match REGISTRY.with(handle as u64, |p| p.render_playlist(is_event != 0)) {
             Some(text) => env
                 .new_string(text)
@@ -362,32 +346,26 @@ pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nRenderPlaylist<'local>
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-/// `nClose(handle)` — quiet: take + finish, errors dropped, idempotent.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nClose<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// `nClose(handle)` — quiet: take + finish, errors dropped, idempotent.
+    fn Java_org_tstrans_hls_HlsPublisher_nClose<'local>(_env, _class, handle: jlong) = () => {
         if let Some(p) = REGISTRY.close(handle as u64) {
             let _ = Publisher::finish(p);
         }
-    })
+    }
 }
 
-/// `nFinishServing(handle)` — take + consume into an `HlsServerHandle`;
-/// returns the new server handle key, or `0` with a pending exception.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nFinishServing<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| match REGISTRY.close(handle as u64) {
+jni_native! {
+    /// `nFinishServing(handle)` — take + consume into an `HlsServerHandle`;
+    /// returns the new server handle key, or `0` with a pending exception.
+    fn Java_org_tstrans_hls_HlsPublisher_nFinishServing<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => { match REGISTRY.close(handle as u64) {
         Some(p) => match p.finish_serving() {
             Ok(h) => super::server_handle::register(h),
             Err(e) => {
@@ -399,5 +377,5 @@ pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nFinishServing<'local>(
             throw_closed(env, "HlsPublisher");
             0
         }
-    })
+    } }
 }

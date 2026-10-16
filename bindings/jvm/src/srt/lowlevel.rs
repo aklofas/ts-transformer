@@ -15,12 +15,13 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use crate::panic::jni_native;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::Duration;
 
 use jni::JNIEnv;
-use jni::objects::{JBooleanArray, JByteArray, JClass, JIntArray, JObject, JString, JValue};
+use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jlong, jobject};
 use tst_core::transport::{RecvTransport, Transport, TransportCancel};
 use tst_pipeline::binding::{BindingErrorKind, Domain, Opened, Owned};
@@ -311,33 +312,32 @@ fn build_listener_config(
 // Builder — nConnect
 // ---------------------------------------------------------------------------
 
-/// Open a caller-mode SRT socket. Returns `Box<Socket>` as `jlong`.
-///
-/// Mode ordinal mapping (Builder.Mode enum):
-/// - 0 = URL_CHOICE: defer to the URL's ?mode= (default is caller)
-/// - 1 = CALLER: assert URL mode must be caller
-/// - 2 = LISTENER: reject from nConnect (wrong finalizer)
-/// - 3 = RENDEZVOUS: reject (not supported)
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Builder_nConnect<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    url: JString<'local>,
-    mode: jni::sys::jint,
-    latency_ms: JObject<'local>,
-    passphrase: JString<'local>,
-    stream_id: JString<'local>,
-    congestion: JString<'local>,
-    connect_timeout_ms: JObject<'local>,
-    recv_timeout_ms: JObject<'local>,
-    send_timeout_ms: JObject<'local>,
-    peer_latency_ms: JObject<'local>,
-    recv_latency_ms: JObject<'local>,
-    max_bandwidth_bps: JObject<'local>,
-    mss: JObject<'local>,
-    payload_size: JObject<'local>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// Open a caller-mode SRT socket. Returns `Box<Socket>` as `jlong`.
+    ///
+    /// Mode ordinal mapping (Builder.Mode enum):
+    /// - 0 = URL_CHOICE: defer to the URL's ?mode= (default is caller)
+    /// - 1 = CALLER: assert URL mode must be caller
+    /// - 2 = LISTENER: reject from nConnect (wrong finalizer)
+    /// - 3 = RENDEZVOUS: reject (not supported)
+    fn Java_org_tstrans_srt_Builder_nConnect<'local>(
+        env,
+        _class,
+        url: JString<'local>,
+        mode: jni::sys::jint,
+        latency_ms: JObject<'local>,
+        passphrase: JString<'local>,
+        stream_id: JString<'local>,
+        congestion: JString<'local>,
+        connect_timeout_ms: JObject<'local>,
+        recv_timeout_ms: JObject<'local>,
+        send_timeout_ms: JObject<'local>,
+        peer_latency_ms: JObject<'local>,
+        recv_latency_ms: JObject<'local>,
+        max_bandwidth_bps: JObject<'local>,
+        mss: JObject<'local>,
+        payload_size: JObject<'local>,
+    ) -> jlong = 0 => {
         // Ordinal 3 = RENDEZVOUS, ordinal 2 = LISTENER (wrong for connect).
         if mode == 3 {
             throw_srt(
@@ -416,40 +416,39 @@ pub extern "system" fn Java_org_tstrans_srt_Builder_nConnect<'local>(
         };
 
         REGISTRY_SOCKET.insert(socket) as jlong
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Builder — nListen
 // ---------------------------------------------------------------------------
 
-/// Bind a listener-mode SRT socket. Returns `Box<Listener>` as `jlong`.
-///
-/// Mode ordinal mapping (same as nConnect):
-/// - 0 = URL_CHOICE: defer to URL (must have ?mode=listener)
-/// - 1 = CALLER: reject from nListen (wrong finalizer)
-/// - 2 = LISTENER: assert URL mode must be listener
-/// - 3 = RENDEZVOUS: reject (not supported)
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Builder_nListen<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    url: JString<'local>,
-    mode: jni::sys::jint,
-    latency_ms: JObject<'local>,
-    passphrase: JString<'local>,
-    stream_id: JString<'local>, // accepted but ignored for listener (no ListenerConfig.stream_id)
-    congestion: JString<'local>,
-    connect_timeout_ms: JObject<'local>, // accepted but ignored (no ListenerConfig.connect_timeout)
-    recv_timeout_ms: JObject<'local>,
-    send_timeout_ms: JObject<'local>,
-    peer_latency_ms: JObject<'local>, // accepted but ignored (no ListenerConfig.peer_latency)
-    recv_latency_ms: JObject<'local>,
-    max_bandwidth_bps: JObject<'local>,
-    mss: JObject<'local>,
-    payload_size: JObject<'local>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// Bind a listener-mode SRT socket. Returns `Box<Listener>` as `jlong`.
+    ///
+    /// Mode ordinal mapping (same as nConnect):
+    /// - 0 = URL_CHOICE: defer to URL (must have ?mode=listener)
+    /// - 1 = CALLER: reject from nListen (wrong finalizer)
+    /// - 2 = LISTENER: assert URL mode must be listener
+    /// - 3 = RENDEZVOUS: reject (not supported)
+    fn Java_org_tstrans_srt_Builder_nListen<'local>(
+        env,
+        _class,
+        url: JString<'local>,
+        mode: jni::sys::jint,
+        latency_ms: JObject<'local>,
+        passphrase: JString<'local>,
+        stream_id: JString<'local>, // accepted but ignored for listener (no ListenerConfig.stream_id)
+        congestion: JString<'local>,
+        connect_timeout_ms: JObject<'local>, // accepted but ignored (no ListenerConfig.connect_timeout)
+        recv_timeout_ms: JObject<'local>,
+        send_timeout_ms: JObject<'local>,
+        peer_latency_ms: JObject<'local>, // accepted but ignored (no ListenerConfig.peer_latency)
+        recv_latency_ms: JObject<'local>,
+        max_bandwidth_bps: JObject<'local>,
+        mss: JObject<'local>,
+        payload_size: JObject<'local>,
+    ) -> jlong = 0 => {
         if mode == 3 {
             throw_srt(
                 env,
@@ -533,7 +532,7 @@ pub extern "system" fn Java_org_tstrans_srt_Builder_nListen<'local>(
         };
 
         register_listener(listener) as jlong
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -560,61 +559,50 @@ fn opened_recv(socket: SrtSocket) -> Opened<Box<dyn RecvTransport>> {
     Opened::new(Box::new(SrtTransport::new(socket)), cancel, Domain::Srt)
 }
 
-/// `Socket.nIntoSender(handle)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoSender(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `Socket.nIntoSender(handle)`.
+    fn Java_org_tstrans_srt_Socket_nIntoSender(env, _class, handle: jlong) -> jlong = 0 => {
         // `None` = already closed/consumed: a stale call.
         let Some(socket) = REGISTRY_SOCKET.close(handle as u64) else {
             crate::error::throw_closed(env, "Socket");
             return 0;
         };
         shells::sender::register(opened_send(socket))
-    })
+    }
 }
 
-/// `Socket.nIntoReceiver(handle)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoReceiver(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `Socket.nIntoReceiver(handle)`.
+    fn Java_org_tstrans_srt_Socket_nIntoReceiver(env, _class, handle: jlong) -> jlong = 0 => {
         let Some(socket) = REGISTRY_SOCKET.close(handle as u64) else {
             crate::error::throw_closed(env, "Socket");
             return 0;
         };
         shells::receiver::register(opened_recv(socket))
-    })
+    }
 }
 
-/// `Socket.nIntoMuxSender(handle, ...programConfig...)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoMuxSender<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    program_number: jint,
-    pmt_pid: jint,
-    pcr_pid: jint,
-    pcr_interval_ms: jint,
-    psi_interval_ms: jint,
-    buffer_packets: jint,
-    av1_carriage: jint,
-    stream_pids: JIntArray<'local>,
-    stream_kinds: JIntArray<'local>,
-    stream_codecs: JIntArray<'local>,
-    stream_type_codes: JIntArray<'local>,
-    stream_carries_pts: JBooleanArray<'local>,
-    data_desc_bytes: JByteArray<'local>,
-    data_desc_lens: JIntArray<'local>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `Socket.nIntoMuxSender(handle, ...programConfig...)`.
+    fn Java_org_tstrans_srt_Socket_nIntoMuxSender<'local>(
+        env,
+        _class,
+        handle: jlong,
+        program_number: jint,
+        pmt_pid: jint,
+        pcr_pid: jint,
+        pcr_interval_ms: jint,
+        psi_interval_ms: jint,
+        buffer_packets: jint,
+        av1_carriage: jint,
+        stream_pids: JIntArray<'local>,
+        stream_kinds: JIntArray<'local>,
+        stream_codecs: JIntArray<'local>,
+        stream_type_codes: JIntArray<'local>,
+        stream_carries_pts: JBooleanArray<'local>,
+        data_desc_bytes: JByteArray<'local>,
+        data_desc_lens: JIntArray<'local>,
+    ) -> jlong = 0 => {
         let Some(socket) = REGISTRY_SOCKET.close(handle as u64) else {
             crate::error::throw_closed(env, "Socket");
             return 0;
@@ -641,42 +629,36 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoMuxSender<'local>(
             Err(()) => return 0,
         };
         shells::mux_sender::register(env, opened_send(socket), cfg)
-    })
+    }
 }
 
-/// `Socket.nIntoDemuxReceiver(handle)` — default demux options.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoDemuxReceiver(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `Socket.nIntoDemuxReceiver(handle)` — default demux options.
+    fn Java_org_tstrans_srt_Socket_nIntoDemuxReceiver(env, _class, handle: jlong) -> jlong = 0 => {
         let Some(socket) = REGISTRY_SOCKET.close(handle as u64) else {
             crate::error::throw_closed(env, "Socket");
             return 0;
         };
         shells::demux_receiver::register(opened_recv(socket), None)
-    })
+    }
 }
 
-/// `Socket.nIntoDemuxReceiverWithConfig(handle, ...)` — explicit `DemuxerConfig`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoDemuxReceiverWithConfig(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    strict: jint,
-    pes_cap_per_pid: jlong,
-    pes_cap_total: jlong,
-    cfi: jboolean,
-    av1: jint,
-    au_cell_cap: jlong,
-    lenient_psi: jboolean,
-    sync_buf_cap: jlong,
-    unwrap_timestamps: jboolean,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `Socket.nIntoDemuxReceiverWithConfig(handle, ...)` — explicit `DemuxerConfig`.
+    fn Java_org_tstrans_srt_Socket_nIntoDemuxReceiverWithConfig(
+        env,
+        _class,
+        handle: jlong,
+        strict: jint,
+        pes_cap_per_pid: jlong,
+        pes_cap_total: jlong,
+        cfi: jboolean,
+        av1: jint,
+        au_cell_cap: jlong,
+        lenient_psi: jboolean,
+        sync_buf_cap: jlong,
+        unwrap_timestamps: jboolean,
+    ) -> jlong = 0 => {
         let Some(socket) = REGISTRY_SOCKET.close(handle as u64) else {
             crate::error::throw_closed(env, "Socket");
             return 0;
@@ -696,20 +678,19 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoDemuxReceiverWithConfig(
             return 0;
         };
         shells::demux_receiver::register(opened_recv(socket), Some(opts))
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Socket — nLocalAddr / nPeerAddr / nStreamId / nClose
 // ---------------------------------------------------------------------------
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Socket_nLocalAddr<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_srt_Socket_nLocalAddr<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         let addr = match REGISTRY_SOCKET.with(handle as u64, |s| s.local_addr()) {
             Some(r) => r,
             None => {
@@ -727,16 +708,15 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nLocalAddr<'local>(
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Socket_nPeerAddr<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_srt_Socket_nPeerAddr<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         let addr = match REGISTRY_SOCKET.with(handle as u64, |s| s.peer_addr()) {
             Some(r) => r,
             None => {
@@ -754,16 +734,15 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nPeerAddr<'local>(
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Socket_nStreamId<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_srt_Socket_nStreamId<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         // Closed handle or absent stream-id both yield null (no throw, matching the
         // original contract).
         let id = REGISTRY_SOCKET
@@ -776,35 +755,29 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nStreamId<'local>(
             },
             None => std::ptr::null_mut(),
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Socket_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    fn Java_org_tstrans_srt_Socket_nClose(_env, _class, handle: jlong) = () => {
         // Atomic + idempotent: only the winning close gets the Socket back.
         if let Some(socket) = REGISTRY_SOCKET.close(handle as u64) {
             socket.close();
         }
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Listener — nAccept
 // ---------------------------------------------------------------------------
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Listener_nAccept(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    timeout_ms: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    fn Java_org_tstrans_srt_Listener_nAccept(
+        env,
+        _class,
+        handle: jlong,
+        timeout_ms: jlong,
+    ) -> jlong = 0 => {
         // Run accept INSIDE the registry lease — the closure holds the entry's
         // resource lock, so a racing `nClose` (which fires the cancel hook before
         // taking the lock) wakes a parked accept rather than freeing under it.
@@ -827,20 +800,15 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nAccept(
                 0
             }
         }
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Listener — nCancelHandle
 // ---------------------------------------------------------------------------
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Listener_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    fn Java_org_tstrans_srt_Listener_nCancelHandle(_env, _class, handle: jlong) -> jlong = 0 => {
         // The listener's independent `SrtCancelHandle`, captured at
         // registration and read WITHOUT the resource lock — a parked `accept`
         // holds that lock, and this is exactly the call that must wake it.
@@ -849,20 +817,19 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nCancelHandle(
         REGISTRY_LISTENER
             .cancel_view(handle as u64)
             .map_or(0, crate::shells::cancel::cancel_view_handle)
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Listener — nLocalAddr / nClose
 // ---------------------------------------------------------------------------
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Listener_nLocalAddr<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_srt_Listener_nLocalAddr<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         // Lock-free: the bound address was snapshotted at registration, so this
         // answers while `accept` is parked on the slot — a getter must never
         // block behind a parked call.
@@ -880,16 +847,11 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nLocalAddr<'local>(
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_Listener_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    fn Java_org_tstrans_srt_Listener_nClose(_env, _class, handle: jlong) = () => {
         // `OwnedRegistry::close` cancels FIRST (waking any parked accept via the
         // independent SRTSOCKET cancel WITHOUT touching the Listener allocation),
         // THEN takes the Listener out of the slot — blocking until the woken
@@ -898,5 +860,5 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nClose(
         if let Some(listener) = REGISTRY_LISTENER.close(handle as u64) {
             listener.close();
         }
-    })
+    }
 }

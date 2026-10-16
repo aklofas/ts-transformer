@@ -26,10 +26,11 @@
 //! first-wins into `sink_error` (as a `GlobalRef`) and re-thrown from the next
 //! `nNext` after the slot is released.
 
+use crate::panic::jni_native;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use jni::JNIEnv;
-use jni::objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue};
+use jni::objects::{GlobalRef, JObject, JString, JThrowable, JValue};
 use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 
 use tst_core::transport::RecvTransport;
@@ -134,37 +135,35 @@ pub(crate) fn register(
     REGISTRY.insert(owned) as jlong
 }
 
-/// `DemuxReceiver.nOpen(url)` — default demux options. For `srt://` the URL
-/// must carry `?mode=listener`; the open accepts one peer (not cancellable).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nOpen<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    url: JString<'local>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| open_with(env, &url, None))
+jni_native! {
+    /// `DemuxReceiver.nOpen(url)` — default demux options. For `srt://` the URL
+    /// must carry `?mode=listener`; the open accepts one peer (not cancellable).
+    fn Java_org_tstrans_shells_DemuxReceiver_nOpen<'local>(
+        env,
+        _class,
+        url: JString<'local>,
+    ) -> jlong = 0 => { open_with(env, &url, None) }
 }
 
-/// `DemuxReceiver.nOpenWithConfig(url, ...)` — same with an explicit
-/// `DemuxerConfig` (the 10 marshalled primitives; see
-/// `crate::mpegts::build_demux_config_from_args`).
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nOpenWithConfig<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    url: JString<'local>,
-    strict: jint,
-    pes_cap_per_pid: jlong,
-    pes_cap_total: jlong,
-    cfi: jboolean,
-    av1: jint,
-    au_cell_cap: jlong,
-    lenient_psi: jboolean,
-    sync_buf_cap: jlong,
-    unwrap_timestamps: jboolean,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `DemuxReceiver.nOpenWithConfig(url, ...)` — same with an explicit
+    /// `DemuxerConfig` (the 10 marshalled primitives; see
+    /// `crate::mpegts::build_demux_config_from_args`).
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_shells_DemuxReceiver_nOpenWithConfig<'local>(
+        env,
+        _class,
+        url: JString<'local>,
+        strict: jint,
+        pes_cap_per_pid: jlong,
+        pes_cap_total: jlong,
+        cfi: jboolean,
+        av1: jint,
+        au_cell_cap: jlong,
+        lenient_psi: jboolean,
+        sync_buf_cap: jlong,
+        unwrap_timestamps: jboolean,
+    ) -> jlong = 0 => {
         let Some(opts) = build_demux_config_from_args(
             env,
             strict,
@@ -180,21 +179,20 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nOpenWithConfig<'lo
             return 0;
         };
         open_with(env, &url, Some(opts))
-    })
+    }
 }
 
-/// `nNext(handle)` — block until the next `DemuxEvent`, returning it as a Java
-/// object; Java `null` on a clean end (the peer closed, or the demuxer
-/// drained), which ends the Java iterator. Throws the transport's exception /
-/// `DemuxException` on a recv-side error, or re-raises a captured byte-sink
-/// exception fail-loud.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nNext<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `nNext(handle)` — block until the next `DemuxEvent`, returning it as a Java
+    /// object; Java `null` on a clean end (the peer closed, or the demuxer
+    /// drained), which ends the Java iterator. Throws the transport's exception /
+    /// `DemuxException` on a recv-side error, or re-raises a captured byte-sink
+    /// exception fail-loud.
+    fn Java_org_tstrans_shells_DemuxReceiver_nNext<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "DemuxReceiver") else {
             return JObject::null().into_raw();
         };
@@ -247,21 +245,20 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nNext<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-/// `nAddByteSink(handle, consumer)` — register a fan-out `Consumer<byte[]>` that
-/// fires once per 188-byte TS packet before demux. See the module doc
-/// for the monitor discipline: the closure attaches to the JVM and upcalls with
-/// NO Rust lock and NO Java monitor held.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nAddByteSink<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    consumer: JObject<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nAddByteSink(handle, consumer)` — register a fan-out `Consumer<byte[]>` that
+    /// fires once per 188-byte TS packet before demux. See the module doc
+    /// for the monitor discipline: the closure attaches to the JVM and upcalls with
+    /// NO Rust lock and NO Java monitor held.
+    fn Java_org_tstrans_shells_DemuxReceiver_nAddByteSink<'local>(
+        env,
+        _class,
+        handle: jlong,
+        consumer: JObject<'local>,
+    ) = () => {
         // Capture owned `Send` state for the closure: a cached `JavaVM` (to attach
         // the receiver thread per packet), a `GlobalRef` to the consumer (local refs
         // can't cross the call). These touch `env`, so build them BEFORE leasing.
@@ -328,24 +325,23 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nAddByteSink<'local
         if let Err(state) = registered {
             throw_handle_state(env, "DemuxReceiver", &state);
         }
-    })
+    }
 }
 
-/// `nLastSeenMicros(handle, pid)` — Unix-epoch microsecond timestamp the
-/// stream identified by `pid` last carried a demuxed item through this
-/// receiver (last emitted event); `-1` if `pid` was never seen — including
-/// an unrecognized PID (no range check beyond the native `u16` truncating
-/// cast, same as `pmtPid`/`pcrPid` elsewhere in this binding) — or a
-/// timestamp predating the Unix epoch. Boxed to `Long` (`null` for `-1`) at
-/// the Java layer. Same registry-lock discipline as `nStats`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nLastSeenMicros(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    pid: jint,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, -1, |env| {
+jni_native! {
+    /// `nLastSeenMicros(handle, pid)` — Unix-epoch microsecond timestamp the
+    /// stream identified by `pid` last carried a demuxed item through this
+    /// receiver (last emitted event); `-1` if `pid` was never seen — including
+    /// an unrecognized PID (no range check beyond the native `u16` truncating
+    /// cast, same as `pmtPid`/`pcrPid` elsewhere in this binding) — or a
+    /// timestamp predating the Unix epoch. Boxed to `Long` (`null` for `-1`) at
+    /// the Java layer. Same registry-lock discipline as `nStats`.
+    fn Java_org_tstrans_shells_DemuxReceiver_nLastSeenMicros(
+        env,
+        _class,
+        handle: jlong,
+        pid: jint,
+    ) -> jlong = -1 => {
         // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
         let last_seen = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -368,18 +364,17 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nLastSeenMicros(
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_micros() as i64)
             .unwrap_or(-1)
-    })
+    }
 }
 
-/// `nCancelHandle(handle)` — a shareable cancel handle that wakes a thread
-/// parked in `nNext`. Lock-free: answers while `nNext` is parked.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nCancelHandle(handle)` — a shareable cancel handle that wakes a thread
+    /// parked in `nNext`. Lock-free: answers while `nNext` is parked.
+    fn Java_org_tstrans_shells_DemuxReceiver_nCancelHandle(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         match REGISTRY.cancel_view(handle as u64) {
             Some(view) => cancel_view_handle(view),
             None => {
@@ -387,18 +382,17 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nCancelHandle(
                 0
             }
         }
-    })
+    }
 }
 
-/// `nSocketStats(handle)` — scheme-neutral 16-field wire stats. Null on a JNI
-/// builder error (non-fatal).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nSocketStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// `nSocketStats(handle)` — scheme-neutral 16-field wire stats. Null on a JNI
+    /// builder error (non-fatal).
+    fn Java_org_tstrans_shells_DemuxReceiver_nSocketStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -413,21 +407,20 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nSocketStats<'local
         };
         build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats)
             .unwrap_or_else(|_| JObject::null())
-    })
+    }
 }
 
-/// `nStats(handle)` — `(SocketStats, MuxerStats)` projection. The socket stats
-/// carry only the pipeline-tracked byte/packet counters (a partial
-/// `SocketStats`); the demux side is reshaped as a `MuxerStats` projection so
-/// callers read the same `TransportStats` shape on `MuxSender` and
-/// `DemuxReceiver`. Null on a JNI builder error.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// `nStats(handle)` — `(SocketStats, MuxerStats)` projection. The socket stats
+    /// carry only the pipeline-tracked byte/packet counters (a partial
+    /// `SocketStats`); the demux side is reshaped as a `MuxerStats` projection so
+    /// callers read the same `TransportStats` shape on `MuxSender` and
+    /// `DemuxReceiver`. Null on a JNI builder error.
+    fn Java_org_tstrans_shells_DemuxReceiver_nStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let combined = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -459,66 +452,62 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nStats<'local>(
             Err(_) => return JObject::null(),
         };
         build_transport_stats(env, &sock_obj, &mux_obj).unwrap_or_else(|_| JObject::null())
-    })
+    }
 }
 
-/// `nEndReason(handle)` — why the receive session ended, as a wire value
-/// (`-1` while it has not ended or the transport records none). Lock-free.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nEndReason(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jint {
-    crate::panic::jni_catch(&mut env, -1, |_env| {
+jni_native! {
+    /// `nEndReason(handle)` — why the receive session ended, as a wire value
+    /// (`-1` while it has not ended or the transport records none). Lock-free.
+    fn Java_org_tstrans_shells_DemuxReceiver_nEndReason(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jint = -1 => {
         wire_value(REGISTRY.end_reason(handle as u64).as_ref())
-    })
+    }
 }
 
-/// `nEndDetail(handle)` — free-text detail for `nEndReason`; null for a variant
-/// without one.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nEndDetail(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jstring {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `nEndDetail(handle)` — free-text detail for `nEndReason`; null for a variant
+    /// without one.
+    fn Java_org_tstrans_shells_DemuxReceiver_nEndDetail(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jstring = std::ptr::null_mut() => {
         match REGISTRY.end_reason(handle as u64).as_ref().and_then(detail) {
             Some(d) => env
                 .new_string(d)
                 .map_or(std::ptr::null_mut(), |s| s.into_raw()),
             None => std::ptr::null_mut(),
         }
-    })
+    }
 }
 
-/// `nClose(handle)` — cancel first, then take the receiver and close it.
-/// Returns the end-reason snapshot (`EndReason$Snapshot`), null when the
-/// close lost the race (a double `close()` is safe).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nClose<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// `nClose(handle)` — cancel first, then take the receiver and close it.
+    /// Returns the end-reason snapshot (`EndReason$Snapshot`), null when the
+    /// close lost the race (a double `close()` is safe).
+    fn Java_org_tstrans_shells_DemuxReceiver_nClose<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         match REGISTRY.close_with_end_reason(handle as u64, |mut jdr| jdr.inner.close()) {
             Some(reason) => build_close_snapshot(env, reason).unwrap_or_else(|_| JObject::null()),
             None => JObject::null(),
         }
-    })
+    }
 }
 
-/// `nIsAlive(handle)` — whether the receiver owns a live transport.
-/// Non-blocking: a parked `nNext` holds the slot, and reads as alive.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nIsAlive(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jboolean {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// `nIsAlive(handle)` — whether the receiver owns a live transport.
+    /// Non-blocking: a parked `nNext` holds the slot, and reads as alive.
+    fn Java_org_tstrans_shells_DemuxReceiver_nIsAlive(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jboolean = 0 => {
         match REGISTRY.try_with_ref(handle as u64, |jdr| u8::from(jdr.inner.is_alive())) {
             Ok(Some(v)) => v,
             // A parked next() holds the slot: the receiver is live.
@@ -526,5 +515,5 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nIsAlive(
             // Taken/absent: closed.
             Err(_) => 0,
         }
-    })
+    }
 }

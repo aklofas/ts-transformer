@@ -63,8 +63,9 @@
 //! `ensure_local_capacity` needed. `RvtUserData` (2 fields) runs inside a
 //! 16-slot per-item frame.
 
+use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JValue};
+use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::jobject;
 use tst_core::klv::st0806::{
     RvtAoi as RustRvtAoi, RvtAoiType as RustRvtAoiType, RvtLs as RustRvtLs, RvtPoi as RustRvtPoi,
@@ -143,18 +144,17 @@ fn aoi_type_from_code(b: u8) -> RustRvtAoiType {
 // Decode entry points
 // -----------------------------------------------------------------------
 
-/// `org.tstrans.klv.Klv.nDecodeRvt(byte[]) -> RvtLs`
-///
-/// Decodes an RVT LS body (no UL / outer BER wrapper). On success, builds
-/// and returns a Java `RvtLs`. On failure, throws a `KlvDecodeException`
-/// and returns null.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nDecodeRvt<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    buf: JByteArray<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nDecodeRvt(byte[]) -> RvtLs`
+    ///
+    /// Decodes an RVT LS body (no UL / outer BER wrapper). On success, builds
+    /// and returns a Java `RvtLs`. On failure, throws a `KlvDecodeException`
+    /// and returns null.
+    fn Java_org_tstrans_klv_Klv_nDecodeRvt<'local>(
+        env,
+        _c,
+        buf: JByteArray<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&buf) {
             Ok(b) => b,
             Err(e) => {
@@ -172,20 +172,19 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nDecodeRvt<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-/// `org.tstrans.klv.Klv.nDecodeRvtStandalone(byte[]) -> RvtLs`
-///
-/// Decodes a standalone RVT LS: 16-byte UL + BER length + body, verifying
-/// the CRC-32/MPEG-2 checksum (Tag 1) when present.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nDecodeRvtStandalone<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    buf: JByteArray<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nDecodeRvtStandalone(byte[]) -> RvtLs`
+    ///
+    /// Decodes a standalone RVT LS: 16-byte UL + BER length + body, verifying
+    /// the CRC-32/MPEG-2 checksum (Tag 1) when present.
+    fn Java_org_tstrans_klv_Klv_nDecodeRvtStandalone<'local>(
+        env,
+        _c,
+        buf: JByteArray<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&buf) {
             Ok(b) => b,
             Err(e) => {
@@ -203,25 +202,24 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nDecodeRvtStandalone<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
 // -----------------------------------------------------------------------
 // Encode entry points
 // -----------------------------------------------------------------------
 
-/// `org.tstrans.klv.Klv.nEncodeRvt(RvtLs) -> byte[]`
-///
-/// Reads all fields from the Java `RvtLs` record, builds a Rust `RvtLs`,
-/// calls `encode_to_vec` (embedded body — no UL, no BER length, no Tag 1
-/// CRC). Mirrors tst-py's `encode_rvt`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeRvt<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    record: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nEncodeRvt(RvtLs) -> byte[]`
+    ///
+    /// Reads all fields from the Java `RvtLs` record, builds a Rust `RvtLs`,
+    /// calls `encode_to_vec` (embedded body — no UL, no BER length, no Tag 1
+    /// CRC). Mirrors tst-py's `encode_rvt`.
+    fn Java_org_tstrans_klv_Klv_nEncodeRvt<'local>(
+        env,
+        _c,
+        record: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         match read_rvt_ls(env, &record) {
             Ok(rust_rec) => match encode_rvt(&rust_rec) {
                 Ok(bytes) => match env.byte_array_from_slice(&bytes) {
@@ -249,22 +247,21 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeRvt<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-/// `org.tstrans.klv.Klv.nEncodeRvtStandalone(RvtLs) -> byte[]`
-///
-/// Same read path as `nEncodeRvt`, calls `encode_to_vec_standalone`
-/// instead: `[RVT_LS_UL:16][outer BER length][Tag2 timestamp first][body]
-/// [Tag1 CRC-32/MPEG-2 last]` per ST 0806.4-02/-04. Mirrors tst-py's
-/// `encode_rvt_standalone`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeRvtStandalone<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    record: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nEncodeRvtStandalone(RvtLs) -> byte[]`
+    ///
+    /// Same read path as `nEncodeRvt`, calls `encode_to_vec_standalone`
+    /// instead: `[RVT_LS_UL:16][outer BER length][Tag2 timestamp first][body]
+    /// [Tag1 CRC-32/MPEG-2 last]` per ST 0806.4-02/-04. Mirrors tst-py's
+    /// `encode_rvt_standalone`.
+    fn Java_org_tstrans_klv_Klv_nEncodeRvtStandalone<'local>(
+        env,
+        _c,
+        record: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         match read_rvt_ls(env, &record) {
             Ok(rust_rec) => match encode_rvt_standalone(&rust_rec) {
                 Ok(bytes) => match env.byte_array_from_slice(&bytes) {
@@ -292,7 +289,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeRvtStandalone<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
 // -----------------------------------------------------------------------
