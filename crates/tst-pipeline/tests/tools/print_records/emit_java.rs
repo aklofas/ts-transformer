@@ -11,7 +11,7 @@ use crate::typemap::{Fld, resolve};
 /// Javadoc text from a Rust doc paragraph. The text cannot close the
 /// comment, start a unicode escape, open an HTML tag or entity, or start a
 /// block tag. A backtick pair becomes `{@code …}` (its text as written, with
-/// a Rust field name renamed to its Java name by `rename`), and an
+/// a Rust field name, with or without a `Self::` prefix, renamed to its Java name by `rename`), and an
 /// intra-doc link `` [`X`] `` becomes `{@code X}`.
 pub fn escape_javadoc(doc: &str, rename: &[(&str, &str)]) -> String {
     let doc = unlink(doc);
@@ -22,9 +22,11 @@ pub fn escape_javadoc(doc: &str, rename: &[(&str, &str)]) -> String {
         let mut out = String::new();
         for (i, p) in parts.iter().enumerate() {
             if i % 2 == 1 {
+                // `Self::field` names the field too.
+                let field = p.strip_prefix("Self::").unwrap_or(p);
                 let code = rename
                     .iter()
-                    .find(|(rust, _)| rust == p)
+                    .find(|(rust, _)| *rust == field)
                     .map_or(*p, |(_, java)| java);
                 out.push_str(&format!("{{@code {code}}}"));
             } else {

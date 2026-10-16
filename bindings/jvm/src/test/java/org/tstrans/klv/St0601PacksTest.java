@@ -887,10 +887,10 @@ class St0601PacksTest {
         // The pack/list fields' own worst case: every one of them set simultaneously,
         // with multi-item lists on every Vec-shaped field (not a claim that
         // the record's other 133 pre-existing fields are populated too) —
-        // exercises build_uas_datalink's and read_uas_datalink's
-        // ensure_local_capacity(320) empirically (a shortfall aborts the JVM
+        // exercises the generated builder's and reader's
+        // ensure_local_capacity empirically (a shortfall aborts the JVM
         // outright, not a catchable exception), rather than resting on the
-        // module doc's hand-derived tally alone.
+        // formula alone.
         ImageHorizonPixels horizon = new ImageHorizonPixels.Builder()
                 .x0Pct(1).y0Pct(2).x1Pct(3).y1Pct(4)
                 .startLatDeg(10.0).startLonDeg(-20.0).endLatDeg(30.0).endLonDeg(-40.0)
@@ -1003,8 +1003,8 @@ class St0601PacksTest {
         assertViewDomainPairCloseTo(viewDomain.roll(), decoded.viewDomain().roll());
 
         // Round-trip again through a full decode -> re-encode -> decode
-        // cycle to exercise BOTH read_uas_datalink (encode direction) and
-        // build_uas_datalink (decode direction) with every field
+        // cycle to exercise BOTH the generated reader (encode direction) and
+        // builder (decode direction) with every field
         // populated — the empirical capacity check itself; the exact
         // fields are sufficient evidence nothing was dropped or crashed.
         UasDatalinkLs again = Klv.decodeUasDatalink(Klv.encodeUasDatalink(decoded));
@@ -1012,6 +1012,40 @@ class St0601PacksTest {
         assertEquals(decoded.weaponsStores(), again.weaponsStores());
         assertEquals(decoded.waypointList().size(), again.waypointList().size());
         assertEquals(decoded.sdccFlps().size(), again.sdccFlps().size());
+    }
+
+    @Test
+    void tenThousandWavelengthRecordsRoundTripThroughTheNativeLayer()
+            throws KlvDecodeException, KlvEncodeException {
+        // Every list item is built and read inside its own local frame, so the
+        // live local-reference count does not grow with the list. A reference
+        // leaked per item would exhaust the table long before 10 000 items;
+        // the Gradle test task runs under -Xcheck:jni.
+        int n = 10_000;
+        List<WavelengthRecord> bands = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            bands.add(new WavelengthRecord(i, 400.0 + i, 700.0 + i, "band-" + i));
+        }
+        UasDatalinkLs rec = new UasDatalinkLs.Builder()
+                .universalLabel(ByteBuffer.wrap(UL))
+                .wavelengthsList(bands)
+                .build();
+
+        UasDatalinkLs decoded = Klv.decodeUasDatalink(Klv.encodeUasDatalink(rec));
+        UasDatalinkLs again = Klv.decodeUasDatalink(Klv.encodeUasDatalink(decoded));
+
+        for (UasDatalinkLs side : List.of(decoded, again)) {
+            assertEquals(n, side.wavelengthsList().size());
+            for (int i = 0; i < n; i++) {
+                WavelengthRecord got = side.wavelengthsList().get(i);
+                WavelengthRecord want = bands.get(i);
+                assertEquals(want.id(), got.id());
+                assertEquals(want.name(), got.name());
+                assertEquals(want.minNm(), got.minNm(), 1.0);
+                assertEquals(want.maxNm(), got.maxNm(), 1.0);
+            }
+        }
+        assertEquals(decoded.wavelengthsList(), again.wavelengthsList());
     }
 
     private static void assertImageHorizonCloseTo(ImageHorizonPixels expected, ImageHorizonPixels actual) {

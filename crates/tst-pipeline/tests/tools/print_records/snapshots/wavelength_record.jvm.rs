@@ -6,6 +6,7 @@ pub(crate) fn build_wavelength_record<'l>(env: &mut JNIEnv<'l>, r: &tst_core::kl
 }
 
 pub(crate) fn read_wavelength_record(env: &mut JNIEnv<'_>, obj: &JObject<'_>) -> jni::errors::Result<tst_core::klv::st0601::WavelengthRecord> {
+    env.ensure_local_capacity(40)?;
     let id = env.call_method(obj, "id", "()J", &[])?.j()?;
     let id = crate::jutil::checked_u64(env, id, "WavelengthRecord.id")?;
     let min_nm = env.call_method(obj, "minNm", "()D", &[])?.d()?;

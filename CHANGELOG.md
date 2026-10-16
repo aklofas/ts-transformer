@@ -265,6 +265,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tstrans.shells.DemuxReceiver` over `tcp://` ends its iteration there
   (`StopIteration`); both previously raised `BROKEN` once first. Raw
   `tstrans.tcp.RecvTransport` and `srt://` shells are unchanged.
+- `tstrans.klv.UasDatalinkLs` lists its fields in the order of the Rust
+  declaration, so constructing it with positional arguments changes; construct
+  it with keyword arguments, the documented path, which are unaffected.
+- `tstrans.klv.PayloadList.records` has no default; pass it explicitly.
 
 ### Changed — tst-jni (BREAKING)
 
@@ -306,6 +310,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `org.tstrans.shells.DemuxReceiver` over `tcp://` ends its iteration there
   (`hasNext()` false); both previously threw `BROKEN` once first. Raw
   `org.tstrans.tcp` transports and `srt://` shells are unchanged.
+- `org.tstrans.klv.UasDatalinkLs` lists its components in the order of the Rust
+  declaration, so the canonical constructor's argument order changes; build it
+  with `UasDatalinkLs.Builder`, the documented path, whose setters keep their
+  names.
+- `UasDatalinkLs.Builder.icingDetectedCode`, `sensorFovNameCode`,
+  `operationalModeCode`, `platformStatusCode` and `sensorControlModeCode` take
+  an `Integer` where they took an `int`. A call with an `int` still compiles;
+  code compiled against 0.8 must be recompiled.
 
 ### Changed — tst-c
 
@@ -463,8 +475,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tstrans.RtpErrorKind` gains `INPUT_MALFORMED` (12) and `CONFIG_INVALID`
   (13): the kinds a TS shell over `rtp://` raises for a framing or configuration
   error, as every other transport's kind enum already does.
-- `tstrans.klv.WavelengthRecord` is generated from its Rust declaration
-  (`print-records`); the class, its fields and behaviour are unchanged.
+- The ST 0601 records are generated from their Rust declarations
+  (`print-records`): `tstrans.klv.UasDatalinkLs` and its pack and list-item
+  dataclasses (`ImageHorizonPixels`, `ControlCommand`, `SensorFrameRate`,
+  `MetadataSubstreamId`, `CountryCodes`, `Location`, `AirbaseLocations`,
+  `PayloadRecord`, `PayloadList`, `WeaponsStore`, `Waypoint`, `ViewDomainPair`,
+  `ViewDomain`, `SdccFlpField`) and `WavelengthRecord`. Fields and behaviour are
+  unchanged except as listed under Changed; their docstrings are the Rust
+  documentation.
 
 ### Added — tst-jni
 
@@ -493,8 +511,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `org.tstrans.shells.DemuxReceiver.recvEvent()`: the next event, or `null`
   at the end of the stream, with the checked exceptions the iterator wraps.
-- `org.tstrans.klv.WavelengthRecord` is generated from its Rust declaration
-  (`print-records`); the record, its components and behaviour are unchanged.
+- The ST 0601 records are generated from their Rust declarations
+  (`print-records`): `org.tstrans.klv.UasDatalinkLs` and its pack and list-item
+  records (`ImageHorizonPixels`, `ControlCommand`, `SensorFrameRate`,
+  `MetadataSubstreamId`, `CountryCodes`, `Location`, `AirbaseLocations`,
+  `PayloadRecord`, `PayloadList`, `WeaponsStore`, `Waypoint`, `ViewDomainPair`,
+  `ViewDomain`, `SdccFlpField`) and `WavelengthRecord`. Components and
+  behaviour are unchanged except as listed under Changed; their Javadoc is the
+  Rust documentation.
 
 ### Deprecated — tst-py
 

@@ -5,7 +5,7 @@
 
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyBytes, PyDict, PyTuple};
 
 pub(crate) fn wavelength_record_to_py(
     py: Python<'_>,
@@ -30,5 +30,2170 @@ pub(crate) fn wavelength_record_from_py(
         min_nm: obj.getattr(intern!(py, "min_nm"))?.extract()?,
         max_nm: obj.getattr(intern!(py, "max_nm"))?.extract()?,
         name: obj.getattr(intern!(py, "name"))?.extract()?,
+    })
+}
+
+pub(crate) fn image_horizon_pixels_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::ImageHorizonPixels,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "ImageHorizonPixels"))?;
+    let kwargs = PyDict::new_bound(py);
+    kwargs.set_item(intern!(py, "x0_pct"), r.x0_pct)?;
+    kwargs.set_item(intern!(py, "y0_pct"), r.y0_pct)?;
+    kwargs.set_item(intern!(py, "x1_pct"), r.x1_pct)?;
+    kwargs.set_item(intern!(py, "y1_pct"), r.y1_pct)?;
+    if let Some(v) = &r.start_lat_deg {
+        kwargs.set_item(intern!(py, "start_lat_deg"), *v)?;
+    }
+    if let Some(v) = &r.start_lon_deg {
+        kwargs.set_item(intern!(py, "start_lon_deg"), *v)?;
+    }
+    if let Some(v) = &r.end_lat_deg {
+        kwargs.set_item(intern!(py, "end_lat_deg"), *v)?;
+    }
+    if let Some(v) = &r.end_lon_deg {
+        kwargs.set_item(intern!(py, "end_lon_deg"), *v)?;
+    }
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn image_horizon_pixels_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::ImageHorizonPixels> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::ImageHorizonPixels {
+        x0_pct: obj.getattr(intern!(py, "x0_pct"))?.extract()?,
+        y0_pct: obj.getattr(intern!(py, "y0_pct"))?.extract()?,
+        x1_pct: obj.getattr(intern!(py, "x1_pct"))?.extract()?,
+        y1_pct: obj.getattr(intern!(py, "y1_pct"))?.extract()?,
+        start_lat_deg: {
+            let v = obj.getattr(intern!(py, "start_lat_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        start_lon_deg: {
+            let v = obj.getattr(intern!(py, "start_lon_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        end_lat_deg: {
+            let v = obj.getattr(intern!(py, "end_lat_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        end_lon_deg: {
+            let v = obj.getattr(intern!(py, "end_lon_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+    })
+}
+
+pub(crate) fn control_command_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::ControlCommand,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "ControlCommand"))?;
+    let kwargs = PyDict::new_bound(py);
+    kwargs.set_item(intern!(py, "id"), r.id)?;
+    kwargs.set_item(intern!(py, "command"), r.command.as_str())?;
+    if let Some(v) = &r.time_us {
+        kwargs.set_item(intern!(py, "time_us"), *v)?;
+    }
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn control_command_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::ControlCommand> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::ControlCommand {
+        id: obj.getattr(intern!(py, "id"))?.extract()?,
+        command: obj.getattr(intern!(py, "command"))?.extract()?,
+        time_us: {
+            let v = obj.getattr(intern!(py, "time_us"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+    })
+}
+
+pub(crate) fn sensor_frame_rate_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::SensorFrameRate,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "SensorFrameRate"))?;
+    let kwargs = PyDict::new_bound(py);
+    kwargs.set_item(intern!(py, "numerator"), r.numerator)?;
+    kwargs.set_item(intern!(py, "denominator"), r.denominator)?;
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn sensor_frame_rate_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::SensorFrameRate> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::SensorFrameRate {
+        numerator: obj.getattr(intern!(py, "numerator"))?.extract()?,
+        denominator: obj.getattr(intern!(py, "denominator"))?.extract()?,
+    })
+}
+
+pub(crate) fn metadata_substream_id_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::MetadataSubstreamId,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "MetadataSubstreamId"))?;
+    let kwargs = PyDict::new_bound(py);
+    kwargs.set_item(intern!(py, "local_id"), r.local_id)?;
+    kwargs.set_item(
+        intern!(py, "uuid"),
+        crate::custom::metadata_substream_id_uuid_to_py(py, &r.uuid)?,
+    )?;
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn metadata_substream_id_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::MetadataSubstreamId> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::MetadataSubstreamId {
+        local_id: obj.getattr(intern!(py, "local_id"))?.extract()?,
+        uuid: crate::custom::metadata_substream_id_uuid_from_py(obj)?,
+    })
+}
+
+pub(crate) fn country_codes_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::CountryCodes,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "CountryCodes"))?;
+    let kwargs = PyDict::new_bound(py);
+    kwargs.set_item(intern!(py, "coding_method"), r.coding_method)?;
+    if let Some(v) = &r.overflight {
+        kwargs.set_item(intern!(py, "overflight"), v.as_str())?;
+    }
+    if let Some(v) = &r.operator {
+        kwargs.set_item(intern!(py, "operator"), v.as_str())?;
+    }
+    if let Some(v) = &r.manufacture {
+        kwargs.set_item(intern!(py, "manufacture"), v.as_str())?;
+    }
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn country_codes_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::CountryCodes> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::CountryCodes {
+        coding_method: obj.getattr(intern!(py, "coding_method"))?.extract()?,
+        overflight: {
+            let v = obj.getattr(intern!(py, "overflight"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        operator: {
+            let v = obj.getattr(intern!(py, "operator"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        manufacture: {
+            let v = obj.getattr(intern!(py, "manufacture"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+    })
+}
+
+pub(crate) fn location_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::Location,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "Location"))?;
+    let kwargs = PyDict::new_bound(py);
+    if let Some(v) = &r.lat_deg {
+        kwargs.set_item(intern!(py, "lat_deg"), *v)?;
+    }
+    if let Some(v) = &r.lon_deg {
+        kwargs.set_item(intern!(py, "lon_deg"), *v)?;
+    }
+    if let Some(v) = &r.hae_m {
+        kwargs.set_item(intern!(py, "hae_m"), *v)?;
+    }
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn location_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::Location> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::Location {
+        lat_deg: {
+            let v = obj.getattr(intern!(py, "lat_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        lon_deg: {
+            let v = obj.getattr(intern!(py, "lon_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        hae_m: {
+            let v = obj.getattr(intern!(py, "hae_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+    })
+}
+
+pub(crate) fn airbase_locations_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::AirbaseLocations,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "AirbaseLocations"))?;
+    let kwargs = PyDict::new_bound(py);
+    if let Some(v) = &r.take_off {
+        kwargs.set_item(intern!(py, "take_off"), location_to_py(py, v)?)?;
+    }
+    if let Some(v) = &r.recovery {
+        kwargs.set_item(intern!(py, "recovery"), location_to_py(py, v)?)?;
+    }
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn airbase_locations_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::AirbaseLocations> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::AirbaseLocations {
+        take_off: {
+            let v = obj.getattr(intern!(py, "take_off"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(location_from_py(&v)?)
+            }
+        },
+        recovery: {
+            let v = obj.getattr(intern!(py, "recovery"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(location_from_py(&v)?)
+            }
+        },
+    })
+}
+
+pub(crate) fn payload_record_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::PayloadRecord,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "PayloadRecord"))?;
+    let kwargs = PyDict::new_bound(py);
+    kwargs.set_item(intern!(py, "id"), r.id)?;
+    kwargs.set_item(
+        intern!(py, "payload_type"),
+        crate::custom::payload_record_payload_type_to_py(py, &r.payload_type)?,
+    )?;
+    kwargs.set_item(intern!(py, "name"), r.name.as_str())?;
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn payload_record_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::PayloadRecord> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::PayloadRecord {
+        id: obj.getattr(intern!(py, "id"))?.extract()?,
+        payload_type: crate::custom::payload_record_payload_type_from_py(obj)?,
+        name: obj.getattr(intern!(py, "name"))?.extract()?,
+    })
+}
+
+pub(crate) fn payload_list_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::PayloadList,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "PayloadList"))?;
+    let kwargs = PyDict::new_bound(py);
+    kwargs.set_item(intern!(py, "count"), r.count)?;
+    let r_records_items = r
+        .records
+        .iter()
+        .map(|x| payload_record_to_py(py, x))
+        .collect::<PyResult<Vec<_>>>()?;
+    kwargs.set_item(
+        intern!(py, "records"),
+        PyTuple::new_bound(py, r_records_items),
+    )?;
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn payload_list_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::PayloadList> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::PayloadList {
+        count: obj.getattr(intern!(py, "count"))?.extract()?,
+        records: {
+            let v = obj.getattr(intern!(py, "records"))?;
+            v.iter()?
+                .map(|x| x.and_then(|x| payload_record_from_py(&x)))
+                .collect::<PyResult<Vec<_>>>()?
+        },
+    })
+}
+
+pub(crate) fn weapons_store_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::WeaponsStore,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "WeaponsStore"))?;
+    let kwargs = PyDict::new_bound(py);
+    kwargs.set_item(intern!(py, "station_id"), r.station_id)?;
+    kwargs.set_item(intern!(py, "hardpoint_id"), r.hardpoint_id)?;
+    kwargs.set_item(intern!(py, "carriage_id"), r.carriage_id)?;
+    kwargs.set_item(intern!(py, "store_id"), r.store_id)?;
+    kwargs.set_item(intern!(py, "status_raw"), r.status_raw)?;
+    kwargs.set_item(intern!(py, "weapon_type"), r.weapon_type.as_str())?;
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn weapons_store_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::WeaponsStore> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::WeaponsStore {
+        station_id: obj.getattr(intern!(py, "station_id"))?.extract()?,
+        hardpoint_id: obj.getattr(intern!(py, "hardpoint_id"))?.extract()?,
+        carriage_id: obj.getattr(intern!(py, "carriage_id"))?.extract()?,
+        store_id: obj.getattr(intern!(py, "store_id"))?.extract()?,
+        status_raw: obj.getattr(intern!(py, "status_raw"))?.extract()?,
+        weapon_type: obj.getattr(intern!(py, "weapon_type"))?.extract()?,
+    })
+}
+
+pub(crate) fn waypoint_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::Waypoint,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "Waypoint"))?;
+    let kwargs = PyDict::new_bound(py);
+    kwargs.set_item(intern!(py, "id"), r.id)?;
+    kwargs.set_item(intern!(py, "prosecution_order"), r.prosecution_order)?;
+    if let Some(v) = &r.info {
+        kwargs.set_item(intern!(py, "info"), *v)?;
+    }
+    if let Some(v) = &r.location {
+        kwargs.set_item(intern!(py, "location"), location_to_py(py, v)?)?;
+    }
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn waypoint_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::Waypoint> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::Waypoint {
+        id: obj.getattr(intern!(py, "id"))?.extract()?,
+        prosecution_order: obj.getattr(intern!(py, "prosecution_order"))?.extract()?,
+        info: {
+            let v = obj.getattr(intern!(py, "info"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        location: {
+            let v = obj.getattr(intern!(py, "location"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(location_from_py(&v)?)
+            }
+        },
+    })
+}
+
+pub(crate) fn view_domain_pair_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::ViewDomainPair,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "ViewDomainPair"))?;
+    let kwargs = PyDict::new_bound(py);
+    kwargs.set_item(intern!(py, "start_deg"), r.start_deg)?;
+    kwargs.set_item(intern!(py, "range_deg"), r.range_deg)?;
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn view_domain_pair_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::ViewDomainPair> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::ViewDomainPair {
+        start_deg: obj.getattr(intern!(py, "start_deg"))?.extract()?,
+        range_deg: obj.getattr(intern!(py, "range_deg"))?.extract()?,
+    })
+}
+
+pub(crate) fn view_domain_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::ViewDomain,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "ViewDomain"))?;
+    let kwargs = PyDict::new_bound(py);
+    if let Some(v) = &r.azimuth {
+        kwargs.set_item(intern!(py, "azimuth"), view_domain_pair_to_py(py, v)?)?;
+    }
+    if let Some(v) = &r.elevation {
+        kwargs.set_item(intern!(py, "elevation"), view_domain_pair_to_py(py, v)?)?;
+    }
+    if let Some(v) = &r.roll {
+        kwargs.set_item(intern!(py, "roll"), view_domain_pair_to_py(py, v)?)?;
+    }
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn view_domain_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::ViewDomain> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::ViewDomain {
+        azimuth: {
+            let v = obj.getattr(intern!(py, "azimuth"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(view_domain_pair_from_py(&v)?)
+            }
+        },
+        elevation: {
+            let v = obj.getattr(intern!(py, "elevation"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(view_domain_pair_from_py(&v)?)
+            }
+        },
+        roll: {
+            let v = obj.getattr(intern!(py, "roll"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(view_domain_pair_from_py(&v)?)
+            }
+        },
+    })
+}
+
+pub(crate) fn sdcc_flp_field_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::SdccFlpField,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "SdccFlpField"))?;
+    let kwargs = PyDict::new_bound(py);
+    let r_preceding_tags_items = r.preceding_tags.iter().collect::<Vec<_>>();
+    kwargs.set_item(
+        intern!(py, "preceding_tags"),
+        PyTuple::new_bound(py, r_preceding_tags_items),
+    )?;
+    kwargs.set_item(intern!(py, "bytes"), PyBytes::new_bound(py, &r.bytes))?;
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn sdcc_flp_field_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::SdccFlpField> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::SdccFlpField {
+        preceding_tags: obj.getattr(intern!(py, "preceding_tags"))?.extract()?,
+        bytes: obj.getattr(intern!(py, "bytes"))?.extract()?,
+    })
+}
+
+pub(crate) fn uas_datalink_ls_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0601::UasDatalinkLs,
+) -> PyResult<PyObject> {
+    let module = py.import_bound("tstrans.klv")?;
+    let cls = module.getattr(intern!(py, "UasDatalinkLs"))?;
+    let kwargs = PyDict::new_bound(py);
+    kwargs.set_item(
+        intern!(py, "universal_label"),
+        crate::custom::uas_datalink_ls_universal_label_to_py(py, &r.universal_label)?,
+    )?;
+    kwargs.set_item(intern!(py, "declared_version"), r.declared_version)?;
+    if let Some(v) = &r.mission_id {
+        kwargs.set_item(intern!(py, "mission_id"), v.as_str())?;
+    }
+    if let Some(v) = &r.platform_tail_number {
+        kwargs.set_item(intern!(py, "platform_tail_number"), v.as_str())?;
+    }
+    if let Some(v) = &r.platform_designation {
+        kwargs.set_item(intern!(py, "platform_designation"), v.as_str())?;
+    }
+    if let Some(v) = &r.image_source_sensor {
+        kwargs.set_item(intern!(py, "image_source_sensor"), v.as_str())?;
+    }
+    if let Some(v) = &r.image_coordinate_system {
+        kwargs.set_item(intern!(py, "image_coordinate_system"), v.as_str())?;
+    }
+    if let Some(v) = &r.platform_call_sign {
+        kwargs.set_item(intern!(py, "platform_call_sign"), v.as_str())?;
+    }
+    if let Some(v) = &r.uas_ls_version {
+        kwargs.set_item(intern!(py, "uas_ls_version"), *v)?;
+    }
+    if let Some(v) = &r.timestamp_us {
+        kwargs.set_item(intern!(py, "timestamp_us"), *v)?;
+    }
+    if let Some(v) = &r.platform_heading_deg {
+        kwargs.set_item(intern!(py, "platform_heading_deg"), *v)?;
+    }
+    if let Some(v) = &r.platform_pitch_deg {
+        kwargs.set_item(intern!(py, "platform_pitch_deg"), *v)?;
+    }
+    if let Some(v) = &r.platform_roll_deg {
+        kwargs.set_item(intern!(py, "platform_roll_deg"), *v)?;
+    }
+    if let Some(v) = &r.platform_true_airspeed {
+        kwargs.set_item(intern!(py, "platform_true_airspeed"), *v)?;
+    }
+    if let Some(v) = &r.platform_indicated_airspeed {
+        kwargs.set_item(intern!(py, "platform_indicated_airspeed"), *v)?;
+    }
+    if let Some(v) = &r.platform_pitch_full_deg {
+        kwargs.set_item(intern!(py, "platform_pitch_full_deg"), *v)?;
+    }
+    if let Some(v) = &r.platform_roll_full_deg {
+        kwargs.set_item(intern!(py, "platform_roll_full_deg"), *v)?;
+    }
+    kwargs.set_item(
+        intern!(py, "miis_core_id"),
+        crate::custom::uas_datalink_ls_miis_core_id_to_py(py, &r.miis_core_id)?,
+    )?;
+    if let Some(v) = &r.platform_angle_of_attack_deg {
+        kwargs.set_item(intern!(py, "platform_angle_of_attack_deg"), *v)?;
+    }
+    if let Some(v) = &r.sensor_lat_deg {
+        kwargs.set_item(intern!(py, "sensor_lat_deg"), *v)?;
+    }
+    if let Some(v) = &r.sensor_lon_deg {
+        kwargs.set_item(intern!(py, "sensor_lon_deg"), *v)?;
+    }
+    if let Some(v) = &r.sensor_alt_m {
+        kwargs.set_item(intern!(py, "sensor_alt_m"), *v)?;
+    }
+    if let Some(v) = &r.sensor_ellipsoid_height_m {
+        kwargs.set_item(intern!(py, "sensor_ellipsoid_height_m"), *v)?;
+    }
+    if let Some(v) = &r.sensor_hfov_deg {
+        kwargs.set_item(intern!(py, "sensor_hfov_deg"), *v)?;
+    }
+    if let Some(v) = &r.sensor_vfov_deg {
+        kwargs.set_item(intern!(py, "sensor_vfov_deg"), *v)?;
+    }
+    if let Some(v) = &r.sensor_rel_az_deg {
+        kwargs.set_item(intern!(py, "sensor_rel_az_deg"), *v)?;
+    }
+    if let Some(v) = &r.sensor_rel_el_deg {
+        kwargs.set_item(intern!(py, "sensor_rel_el_deg"), *v)?;
+    }
+    if let Some(v) = &r.sensor_rel_roll_deg {
+        kwargs.set_item(intern!(py, "sensor_rel_roll_deg"), *v)?;
+    }
+    if let Some(v) = &r.slant_range_m {
+        kwargs.set_item(intern!(py, "slant_range_m"), *v)?;
+    }
+    if let Some(v) = &r.target_width_m {
+        kwargs.set_item(intern!(py, "target_width_m"), *v)?;
+    }
+    if let Some(v) = &r.frame_center_lat_deg {
+        kwargs.set_item(intern!(py, "frame_center_lat_deg"), *v)?;
+    }
+    if let Some(v) = &r.frame_center_lon_deg {
+        kwargs.set_item(intern!(py, "frame_center_lon_deg"), *v)?;
+    }
+    if let Some(v) = &r.frame_center_elev_m {
+        kwargs.set_item(intern!(py, "frame_center_elev_m"), *v)?;
+    }
+    if let Some(v) = &r.frame_center_ellipsoid_height_m {
+        kwargs.set_item(intern!(py, "frame_center_ellipsoid_height_m"), *v)?;
+    }
+    if let Some(v) = &r.corner_lat_offset_p1_deg {
+        kwargs.set_item(intern!(py, "corner_lat_offset_p1_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lon_offset_p1_deg {
+        kwargs.set_item(intern!(py, "corner_lon_offset_p1_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lat_offset_p2_deg {
+        kwargs.set_item(intern!(py, "corner_lat_offset_p2_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lon_offset_p2_deg {
+        kwargs.set_item(intern!(py, "corner_lon_offset_p2_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lat_offset_p3_deg {
+        kwargs.set_item(intern!(py, "corner_lat_offset_p3_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lon_offset_p3_deg {
+        kwargs.set_item(intern!(py, "corner_lon_offset_p3_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lat_offset_p4_deg {
+        kwargs.set_item(intern!(py, "corner_lat_offset_p4_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lon_offset_p4_deg {
+        kwargs.set_item(intern!(py, "corner_lon_offset_p4_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lat_p1_deg {
+        kwargs.set_item(intern!(py, "corner_lat_p1_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lon_p1_deg {
+        kwargs.set_item(intern!(py, "corner_lon_p1_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lat_p2_deg {
+        kwargs.set_item(intern!(py, "corner_lat_p2_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lon_p2_deg {
+        kwargs.set_item(intern!(py, "corner_lon_p2_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lat_p3_deg {
+        kwargs.set_item(intern!(py, "corner_lat_p3_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lon_p3_deg {
+        kwargs.set_item(intern!(py, "corner_lon_p3_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lat_p4_deg {
+        kwargs.set_item(intern!(py, "corner_lat_p4_deg"), *v)?;
+    }
+    if let Some(v) = &r.corner_lon_p4_deg {
+        kwargs.set_item(intern!(py, "corner_lon_p4_deg"), *v)?;
+    }
+    if let Some(v) = &r.target_location_lat_deg {
+        kwargs.set_item(intern!(py, "target_location_lat_deg"), *v)?;
+    }
+    if let Some(v) = &r.target_location_lon_deg {
+        kwargs.set_item(intern!(py, "target_location_lon_deg"), *v)?;
+    }
+    if let Some(v) = &r.target_location_elev_m {
+        kwargs.set_item(intern!(py, "target_location_elev_m"), *v)?;
+    }
+    if let Some(v) = &r.target_track_gate_width_px {
+        kwargs.set_item(intern!(py, "target_track_gate_width_px"), *v)?;
+    }
+    if let Some(v) = &r.target_track_gate_height_px {
+        kwargs.set_item(intern!(py, "target_track_gate_height_px"), *v)?;
+    }
+    if let Some(v) = &r.target_error_ce90_m {
+        kwargs.set_item(intern!(py, "target_error_ce90_m"), *v)?;
+    }
+    if let Some(v) = &r.target_error_le90_m {
+        kwargs.set_item(intern!(py, "target_error_le90_m"), *v)?;
+    }
+    if let Some(v) = &r.wind_direction_deg {
+        kwargs.set_item(intern!(py, "wind_direction_deg"), *v)?;
+    }
+    if let Some(v) = &r.wind_speed {
+        kwargs.set_item(intern!(py, "wind_speed"), *v)?;
+    }
+    if let Some(v) = &r.static_pressure_mbar {
+        kwargs.set_item(intern!(py, "static_pressure_mbar"), *v)?;
+    }
+    if let Some(v) = &r.density_altitude_m {
+        kwargs.set_item(intern!(py, "density_altitude_m"), *v)?;
+    }
+    if let Some(v) = &r.differential_pressure_mbar {
+        kwargs.set_item(intern!(py, "differential_pressure_mbar"), *v)?;
+    }
+    if let Some(v) = &r.airfield_barometric_pressure_mbar {
+        kwargs.set_item(intern!(py, "airfield_barometric_pressure_mbar"), *v)?;
+    }
+    if let Some(v) = &r.airfield_elevation_m {
+        kwargs.set_item(intern!(py, "airfield_elevation_m"), *v)?;
+    }
+    if let Some(v) = &r.relative_humidity_pct {
+        kwargs.set_item(intern!(py, "relative_humidity_pct"), *v)?;
+    }
+    if let Some(v) = &r.platform_vertical_speed {
+        kwargs.set_item(intern!(py, "platform_vertical_speed"), *v)?;
+    }
+    if let Some(v) = &r.platform_sideslip_deg {
+        kwargs.set_item(intern!(py, "platform_sideslip_deg"), *v)?;
+    }
+    if let Some(v) = &r.platform_ground_speed {
+        kwargs.set_item(intern!(py, "platform_ground_speed"), *v)?;
+    }
+    if let Some(v) = &r.ground_range_m {
+        kwargs.set_item(intern!(py, "ground_range_m"), *v)?;
+    }
+    if let Some(v) = &r.platform_fuel_remaining_kg {
+        kwargs.set_item(intern!(py, "platform_fuel_remaining_kg"), *v)?;
+    }
+    if let Some(v) = &r.platform_magnetic_heading_deg {
+        kwargs.set_item(intern!(py, "platform_magnetic_heading_deg"), *v)?;
+    }
+    if let Some(v) = &r.platform_angle_of_attack_full_deg {
+        kwargs.set_item(intern!(py, "platform_angle_of_attack_full_deg"), *v)?;
+    }
+    if let Some(v) = &r.platform_sideslip_full_deg {
+        kwargs.set_item(intern!(py, "platform_sideslip_full_deg"), *v)?;
+    }
+    if let Some(v) = &r.alternate_platform_lat_deg {
+        kwargs.set_item(intern!(py, "alternate_platform_lat_deg"), *v)?;
+    }
+    if let Some(v) = &r.alternate_platform_lon_deg {
+        kwargs.set_item(intern!(py, "alternate_platform_lon_deg"), *v)?;
+    }
+    if let Some(v) = &r.alternate_platform_alt_m {
+        kwargs.set_item(intern!(py, "alternate_platform_alt_m"), *v)?;
+    }
+    if let Some(v) = &r.alternate_platform_heading_deg {
+        kwargs.set_item(intern!(py, "alternate_platform_heading_deg"), *v)?;
+    }
+    if let Some(v) = &r.alternate_platform_ellipsoid_height_m {
+        kwargs.set_item(intern!(py, "alternate_platform_ellipsoid_height_m"), *v)?;
+    }
+    if let Some(v) = &r.sensor_north_velocity {
+        kwargs.set_item(intern!(py, "sensor_north_velocity"), *v)?;
+    }
+    if let Some(v) = &r.sensor_east_velocity {
+        kwargs.set_item(intern!(py, "sensor_east_velocity"), *v)?;
+    }
+    if let Some(v) = &r.target_width_extended_m {
+        kwargs.set_item(intern!(py, "target_width_extended_m"), *v)?;
+    }
+    if let Some(v) = &r.density_altitude_extended_m {
+        kwargs.set_item(intern!(py, "density_altitude_extended_m"), *v)?;
+    }
+    if let Some(v) = &r.sensor_ellipsoid_height_extended_m {
+        kwargs.set_item(intern!(py, "sensor_ellipsoid_height_extended_m"), *v)?;
+    }
+    if let Some(v) = &r.alternate_platform_ellipsoid_height_extended_m {
+        kwargs.set_item(
+            intern!(py, "alternate_platform_ellipsoid_height_extended_m"),
+            *v,
+        )?;
+    }
+    if let Some(v) = &r.range_to_recovery_km {
+        kwargs.set_item(intern!(py, "range_to_recovery_km"), *v)?;
+    }
+    if let Some(v) = &r.platform_course_angle_deg {
+        kwargs.set_item(intern!(py, "platform_course_angle_deg"), *v)?;
+    }
+    if let Some(v) = &r.altitude_agl_m {
+        kwargs.set_item(intern!(py, "altitude_agl_m"), *v)?;
+    }
+    if let Some(v) = &r.radar_altimeter_m {
+        kwargs.set_item(intern!(py, "radar_altimeter_m"), *v)?;
+    }
+    if let Some(v) = &r.sensor_azimuth_rate_dps {
+        kwargs.set_item(intern!(py, "sensor_azimuth_rate_dps"), *v)?;
+    }
+    if let Some(v) = &r.sensor_elevation_rate_dps {
+        kwargs.set_item(intern!(py, "sensor_elevation_rate_dps"), *v)?;
+    }
+    if let Some(v) = &r.sensor_roll_rate_dps {
+        kwargs.set_item(intern!(py, "sensor_roll_rate_dps"), *v)?;
+    }
+    if let Some(v) = &r.mi_storage_percent_full {
+        kwargs.set_item(intern!(py, "mi_storage_percent_full"), *v)?;
+    }
+    if let Some(v) = &r.transmission_frequency_mhz {
+        kwargs.set_item(intern!(py, "transmission_frequency_mhz"), *v)?;
+    }
+    if let Some(v) = &r.zoom_percentage {
+        kwargs.set_item(intern!(py, "zoom_percentage"), *v)?;
+    }
+    if let Some(v) = &r.time_airborne_s {
+        kwargs.set_item(intern!(py, "time_airborne_s"), *v)?;
+    }
+    if let Some(v) = &r.propulsion_unit_speed_rpm {
+        kwargs.set_item(intern!(py, "propulsion_unit_speed_rpm"), *v)?;
+    }
+    if let Some(v) = &r.navsats_in_view {
+        kwargs.set_item(intern!(py, "navsats_in_view"), *v)?;
+    }
+    if let Some(v) = &r.positioning_method_source {
+        kwargs.set_item(intern!(py, "positioning_method_source"), *v)?;
+    }
+    kwargs.set_item(
+        intern!(py, "platform_status"),
+        crate::custom::uas_datalink_ls_platform_status_to_py(py, &r.platform_status)?,
+    )?;
+    kwargs.set_item(
+        intern!(py, "sensor_control_mode"),
+        crate::custom::uas_datalink_ls_sensor_control_mode_to_py(py, &r.sensor_control_mode)?,
+    )?;
+    if let Some(v) = &r.take_off_time_us {
+        kwargs.set_item(intern!(py, "take_off_time_us"), *v)?;
+    }
+    if let Some(v) = &r.mi_storage_capacity_gb {
+        kwargs.set_item(intern!(py, "mi_storage_capacity_gb"), *v)?;
+    }
+    if let Some(v) = &r.leap_seconds {
+        kwargs.set_item(intern!(py, "leap_seconds"), *v)?;
+    }
+    if let Some(v) = &r.correction_offset_us {
+        kwargs.set_item(intern!(py, "correction_offset_us"), *v)?;
+    }
+    if let Some(v) = &r.active_payloads {
+        kwargs.set_item(intern!(py, "active_payloads"), PyBytes::new_bound(py, v))?;
+    }
+    if let Some(v) = &r.generic_flag_data {
+        kwargs.set_item(intern!(py, "generic_flag_data"), *v)?;
+    }
+    if let Some(v) = &r.security_local_set {
+        kwargs.set_item(intern!(py, "security_local_set"), PyBytes::new_bound(py, v))?;
+    }
+    if let Some(v) = &r.rvt {
+        kwargs.set_item(intern!(py, "rvt"), PyBytes::new_bound(py, v))?;
+    }
+    if let Some(v) = &r.vmti {
+        kwargs.set_item(intern!(py, "vmti"), PyBytes::new_bound(py, v))?;
+    }
+    if let Some(v) = &r.sar_mi_local_set {
+        kwargs.set_item(intern!(py, "sar_mi_local_set"), PyBytes::new_bound(py, v))?;
+    }
+    if let Some(v) = &r.range_image_local_set {
+        kwargs.set_item(
+            intern!(py, "range_image_local_set"),
+            PyBytes::new_bound(py, v),
+        )?;
+    }
+    if let Some(v) = &r.geo_registration_local_set {
+        kwargs.set_item(
+            intern!(py, "geo_registration_local_set"),
+            PyBytes::new_bound(py, v),
+        )?;
+    }
+    if let Some(v) = &r.composite_imaging_local_set {
+        kwargs.set_item(
+            intern!(py, "composite_imaging_local_set"),
+            PyBytes::new_bound(py, v),
+        )?;
+    }
+    if let Some(v) = &r.segment_local_set {
+        kwargs.set_item(intern!(py, "segment_local_set"), PyBytes::new_bound(py, v))?;
+    }
+    if let Some(v) = &r.amend_local_set {
+        kwargs.set_item(intern!(py, "amend_local_set"), PyBytes::new_bound(py, v))?;
+    }
+    if let Some(v) = &r.outside_air_temp_c {
+        kwargs.set_item(intern!(py, "outside_air_temp_c"), *v)?;
+    }
+    if let Some(v) = &r.weapon_load {
+        kwargs.set_item(intern!(py, "weapon_load"), *v)?;
+    }
+    if let Some(v) = &r.weapon_fired {
+        kwargs.set_item(intern!(py, "weapon_fired"), *v)?;
+    }
+    if let Some(v) = &r.laser_prf_code {
+        kwargs.set_item(intern!(py, "laser_prf_code"), *v)?;
+    }
+    if let Some(v) = &r.alternate_platform_name {
+        kwargs.set_item(intern!(py, "alternate_platform_name"), v.as_str())?;
+    }
+    if let Some(v) = &r.event_start_time_us {
+        kwargs.set_item(intern!(py, "event_start_time_us"), *v)?;
+    }
+    if let Some(v) = &r.stream_designator {
+        kwargs.set_item(intern!(py, "stream_designator"), v.as_str())?;
+    }
+    if let Some(v) = &r.operational_base {
+        kwargs.set_item(intern!(py, "operational_base"), v.as_str())?;
+    }
+    if let Some(v) = &r.broadcast_source {
+        kwargs.set_item(intern!(py, "broadcast_source"), v.as_str())?;
+    }
+    if let Some(v) = &r.target_id {
+        kwargs.set_item(intern!(py, "target_id"), v.as_str())?;
+    }
+    if let Some(v) = &r.communications_method {
+        kwargs.set_item(intern!(py, "communications_method"), v.as_str())?;
+    }
+    kwargs.set_item(
+        intern!(py, "icing_detected"),
+        crate::custom::uas_datalink_ls_icing_detected_to_py(py, &r.icing_detected)?,
+    )?;
+    kwargs.set_item(
+        intern!(py, "sensor_fov_name"),
+        crate::custom::uas_datalink_ls_sensor_fov_name_to_py(py, &r.sensor_fov_name)?,
+    )?;
+    kwargs.set_item(
+        intern!(py, "operational_mode"),
+        crate::custom::uas_datalink_ls_operational_mode_to_py(py, &r.operational_mode)?,
+    )?;
+    if let Some(v) = &r.image_horizon {
+        kwargs.set_item(
+            intern!(py, "image_horizon"),
+            image_horizon_pixels_to_py(py, v)?,
+        )?;
+    }
+    let r_control_commands_items = r
+        .control_commands
+        .iter()
+        .map(|x| control_command_to_py(py, x))
+        .collect::<PyResult<Vec<_>>>()?;
+    kwargs.set_item(
+        intern!(py, "control_commands"),
+        PyTuple::new_bound(py, r_control_commands_items),
+    )?;
+    if let Some(v) = &r.control_command_verification {
+        let v_items = v.iter().collect::<Vec<_>>();
+        kwargs.set_item(
+            intern!(py, "control_command_verification"),
+            PyTuple::new_bound(py, v_items),
+        )?;
+    }
+    if let Some(v) = &r.active_wavelengths {
+        let v_items = v.iter().collect::<Vec<_>>();
+        kwargs.set_item(
+            intern!(py, "active_wavelengths"),
+            PyTuple::new_bound(py, v_items),
+        )?;
+    }
+    if let Some(v) = &r.sensor_frame_rate {
+        kwargs.set_item(
+            intern!(py, "sensor_frame_rate"),
+            sensor_frame_rate_to_py(py, v)?,
+        )?;
+    }
+    if let Some(v) = &r.metadata_substream_id {
+        kwargs.set_item(
+            intern!(py, "metadata_substream_id"),
+            metadata_substream_id_to_py(py, v)?,
+        )?;
+    }
+    if let Some(v) = &r.country_codes {
+        kwargs.set_item(intern!(py, "country_codes"), country_codes_to_py(py, v)?)?;
+    }
+    if let Some(v) = &r.wavelengths_list {
+        let v_items = v
+            .iter()
+            .map(|x| wavelength_record_to_py(py, x))
+            .collect::<PyResult<Vec<_>>>()?;
+        kwargs.set_item(
+            intern!(py, "wavelengths_list"),
+            PyTuple::new_bound(py, v_items),
+        )?;
+    }
+    if let Some(v) = &r.airbase_locations {
+        kwargs.set_item(
+            intern!(py, "airbase_locations"),
+            airbase_locations_to_py(py, v)?,
+        )?;
+    }
+    if let Some(v) = &r.payload_list {
+        kwargs.set_item(intern!(py, "payload_list"), payload_list_to_py(py, v)?)?;
+    }
+    if let Some(v) = &r.weapons_stores {
+        let v_items = v
+            .iter()
+            .map(|x| weapons_store_to_py(py, x))
+            .collect::<PyResult<Vec<_>>>()?;
+        kwargs.set_item(
+            intern!(py, "weapons_stores"),
+            PyTuple::new_bound(py, v_items),
+        )?;
+    }
+    if let Some(v) = &r.waypoint_list {
+        let v_items = v
+            .iter()
+            .map(|x| waypoint_to_py(py, x))
+            .collect::<PyResult<Vec<_>>>()?;
+        kwargs.set_item(
+            intern!(py, "waypoint_list"),
+            PyTuple::new_bound(py, v_items),
+        )?;
+    }
+    if let Some(v) = &r.view_domain {
+        kwargs.set_item(intern!(py, "view_domain"), view_domain_to_py(py, v)?)?;
+    }
+    let r_sdcc_flps_items = r
+        .sdcc_flps
+        .iter()
+        .map(|x| sdcc_flp_field_to_py(py, x))
+        .collect::<PyResult<Vec<_>>>()?;
+    kwargs.set_item(
+        intern!(py, "sdcc_flps"),
+        PyTuple::new_bound(py, r_sdcc_flps_items),
+    )?;
+    kwargs.set_item(
+        intern!(py, "unknown"),
+        crate::custom::uas_datalink_ls_unknown_to_py(py, &r.unknown)?,
+    )?;
+    kwargs.set_item(
+        intern!(py, "field_errors"),
+        crate::custom::uas_datalink_ls_field_errors_to_py(py, &r.field_errors)?,
+    )?;
+    kwargs.set_item(
+        intern!(py, "sentinel_tags"),
+        crate::custom::uas_datalink_ls_sentinel_tags_to_py(py, &r.sentinel_tags)?,
+    )?;
+    kwargs.set_item(
+        intern!(py, "imapb_specials"),
+        crate::custom::uas_datalink_ls_imapb_specials_to_py(py, &r.imapb_specials)?,
+    )?;
+    Ok(cls.call((), Some(&kwargs))?.unbind())
+}
+
+pub(crate) fn uas_datalink_ls_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<tst_core::klv::st0601::UasDatalinkLs> {
+    let py = obj.py();
+    Ok(tst_core::klv::st0601::UasDatalinkLs {
+        universal_label: crate::custom::uas_datalink_ls_universal_label_from_py(obj)?,
+        declared_version: obj.getattr(intern!(py, "declared_version"))?.extract()?,
+        mission_id: {
+            let v = obj.getattr(intern!(py, "mission_id"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_tail_number: {
+            let v = obj.getattr(intern!(py, "platform_tail_number"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_designation: {
+            let v = obj.getattr(intern!(py, "platform_designation"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        image_source_sensor: {
+            let v = obj.getattr(intern!(py, "image_source_sensor"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        image_coordinate_system: {
+            let v = obj.getattr(intern!(py, "image_coordinate_system"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_call_sign: {
+            let v = obj.getattr(intern!(py, "platform_call_sign"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        uas_ls_version: {
+            let v = obj.getattr(intern!(py, "uas_ls_version"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        timestamp_us: {
+            let v = obj.getattr(intern!(py, "timestamp_us"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_heading_deg: {
+            let v = obj.getattr(intern!(py, "platform_heading_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_pitch_deg: {
+            let v = obj.getattr(intern!(py, "platform_pitch_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_roll_deg: {
+            let v = obj.getattr(intern!(py, "platform_roll_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_true_airspeed: {
+            let v = obj.getattr(intern!(py, "platform_true_airspeed"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_indicated_airspeed: {
+            let v = obj.getattr(intern!(py, "platform_indicated_airspeed"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_pitch_full_deg: {
+            let v = obj.getattr(intern!(py, "platform_pitch_full_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_roll_full_deg: {
+            let v = obj.getattr(intern!(py, "platform_roll_full_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        miis_core_id: crate::custom::uas_datalink_ls_miis_core_id_from_py(obj)?,
+        platform_angle_of_attack_deg: {
+            let v = obj.getattr(intern!(py, "platform_angle_of_attack_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_lat_deg: {
+            let v = obj.getattr(intern!(py, "sensor_lat_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_lon_deg: {
+            let v = obj.getattr(intern!(py, "sensor_lon_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_alt_m: {
+            let v = obj.getattr(intern!(py, "sensor_alt_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_ellipsoid_height_m: {
+            let v = obj.getattr(intern!(py, "sensor_ellipsoid_height_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_hfov_deg: {
+            let v = obj.getattr(intern!(py, "sensor_hfov_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_vfov_deg: {
+            let v = obj.getattr(intern!(py, "sensor_vfov_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_rel_az_deg: {
+            let v = obj.getattr(intern!(py, "sensor_rel_az_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_rel_el_deg: {
+            let v = obj.getattr(intern!(py, "sensor_rel_el_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_rel_roll_deg: {
+            let v = obj.getattr(intern!(py, "sensor_rel_roll_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        slant_range_m: {
+            let v = obj.getattr(intern!(py, "slant_range_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        target_width_m: {
+            let v = obj.getattr(intern!(py, "target_width_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        frame_center_lat_deg: {
+            let v = obj.getattr(intern!(py, "frame_center_lat_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        frame_center_lon_deg: {
+            let v = obj.getattr(intern!(py, "frame_center_lon_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        frame_center_elev_m: {
+            let v = obj.getattr(intern!(py, "frame_center_elev_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        frame_center_ellipsoid_height_m: {
+            let v = obj.getattr(intern!(py, "frame_center_ellipsoid_height_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lat_offset_p1_deg: {
+            let v = obj.getattr(intern!(py, "corner_lat_offset_p1_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lon_offset_p1_deg: {
+            let v = obj.getattr(intern!(py, "corner_lon_offset_p1_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lat_offset_p2_deg: {
+            let v = obj.getattr(intern!(py, "corner_lat_offset_p2_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lon_offset_p2_deg: {
+            let v = obj.getattr(intern!(py, "corner_lon_offset_p2_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lat_offset_p3_deg: {
+            let v = obj.getattr(intern!(py, "corner_lat_offset_p3_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lon_offset_p3_deg: {
+            let v = obj.getattr(intern!(py, "corner_lon_offset_p3_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lat_offset_p4_deg: {
+            let v = obj.getattr(intern!(py, "corner_lat_offset_p4_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lon_offset_p4_deg: {
+            let v = obj.getattr(intern!(py, "corner_lon_offset_p4_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lat_p1_deg: {
+            let v = obj.getattr(intern!(py, "corner_lat_p1_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lon_p1_deg: {
+            let v = obj.getattr(intern!(py, "corner_lon_p1_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lat_p2_deg: {
+            let v = obj.getattr(intern!(py, "corner_lat_p2_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lon_p2_deg: {
+            let v = obj.getattr(intern!(py, "corner_lon_p2_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lat_p3_deg: {
+            let v = obj.getattr(intern!(py, "corner_lat_p3_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lon_p3_deg: {
+            let v = obj.getattr(intern!(py, "corner_lon_p3_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lat_p4_deg: {
+            let v = obj.getattr(intern!(py, "corner_lat_p4_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        corner_lon_p4_deg: {
+            let v = obj.getattr(intern!(py, "corner_lon_p4_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        target_location_lat_deg: {
+            let v = obj.getattr(intern!(py, "target_location_lat_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        target_location_lon_deg: {
+            let v = obj.getattr(intern!(py, "target_location_lon_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        target_location_elev_m: {
+            let v = obj.getattr(intern!(py, "target_location_elev_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        target_track_gate_width_px: {
+            let v = obj.getattr(intern!(py, "target_track_gate_width_px"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        target_track_gate_height_px: {
+            let v = obj.getattr(intern!(py, "target_track_gate_height_px"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        target_error_ce90_m: {
+            let v = obj.getattr(intern!(py, "target_error_ce90_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        target_error_le90_m: {
+            let v = obj.getattr(intern!(py, "target_error_le90_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        wind_direction_deg: {
+            let v = obj.getattr(intern!(py, "wind_direction_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        wind_speed: {
+            let v = obj.getattr(intern!(py, "wind_speed"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        static_pressure_mbar: {
+            let v = obj.getattr(intern!(py, "static_pressure_mbar"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        density_altitude_m: {
+            let v = obj.getattr(intern!(py, "density_altitude_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        differential_pressure_mbar: {
+            let v = obj.getattr(intern!(py, "differential_pressure_mbar"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        airfield_barometric_pressure_mbar: {
+            let v = obj.getattr(intern!(py, "airfield_barometric_pressure_mbar"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        airfield_elevation_m: {
+            let v = obj.getattr(intern!(py, "airfield_elevation_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        relative_humidity_pct: {
+            let v = obj.getattr(intern!(py, "relative_humidity_pct"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_vertical_speed: {
+            let v = obj.getattr(intern!(py, "platform_vertical_speed"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_sideslip_deg: {
+            let v = obj.getattr(intern!(py, "platform_sideslip_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_ground_speed: {
+            let v = obj.getattr(intern!(py, "platform_ground_speed"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        ground_range_m: {
+            let v = obj.getattr(intern!(py, "ground_range_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_fuel_remaining_kg: {
+            let v = obj.getattr(intern!(py, "platform_fuel_remaining_kg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_magnetic_heading_deg: {
+            let v = obj.getattr(intern!(py, "platform_magnetic_heading_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_angle_of_attack_full_deg: {
+            let v = obj.getattr(intern!(py, "platform_angle_of_attack_full_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_sideslip_full_deg: {
+            let v = obj.getattr(intern!(py, "platform_sideslip_full_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        alternate_platform_lat_deg: {
+            let v = obj.getattr(intern!(py, "alternate_platform_lat_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        alternate_platform_lon_deg: {
+            let v = obj.getattr(intern!(py, "alternate_platform_lon_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        alternate_platform_alt_m: {
+            let v = obj.getattr(intern!(py, "alternate_platform_alt_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        alternate_platform_heading_deg: {
+            let v = obj.getattr(intern!(py, "alternate_platform_heading_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        alternate_platform_ellipsoid_height_m: {
+            let v = obj.getattr(intern!(py, "alternate_platform_ellipsoid_height_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_north_velocity: {
+            let v = obj.getattr(intern!(py, "sensor_north_velocity"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_east_velocity: {
+            let v = obj.getattr(intern!(py, "sensor_east_velocity"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        target_width_extended_m: {
+            let v = obj.getattr(intern!(py, "target_width_extended_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        density_altitude_extended_m: {
+            let v = obj.getattr(intern!(py, "density_altitude_extended_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_ellipsoid_height_extended_m: {
+            let v = obj.getattr(intern!(py, "sensor_ellipsoid_height_extended_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        alternate_platform_ellipsoid_height_extended_m: {
+            let v = obj.getattr(intern!(
+                py,
+                "alternate_platform_ellipsoid_height_extended_m"
+            ))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        range_to_recovery_km: {
+            let v = obj.getattr(intern!(py, "range_to_recovery_km"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_course_angle_deg: {
+            let v = obj.getattr(intern!(py, "platform_course_angle_deg"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        altitude_agl_m: {
+            let v = obj.getattr(intern!(py, "altitude_agl_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        radar_altimeter_m: {
+            let v = obj.getattr(intern!(py, "radar_altimeter_m"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_azimuth_rate_dps: {
+            let v = obj.getattr(intern!(py, "sensor_azimuth_rate_dps"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_elevation_rate_dps: {
+            let v = obj.getattr(intern!(py, "sensor_elevation_rate_dps"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_roll_rate_dps: {
+            let v = obj.getattr(intern!(py, "sensor_roll_rate_dps"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        mi_storage_percent_full: {
+            let v = obj.getattr(intern!(py, "mi_storage_percent_full"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        transmission_frequency_mhz: {
+            let v = obj.getattr(intern!(py, "transmission_frequency_mhz"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        zoom_percentage: {
+            let v = obj.getattr(intern!(py, "zoom_percentage"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        time_airborne_s: {
+            let v = obj.getattr(intern!(py, "time_airborne_s"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        propulsion_unit_speed_rpm: {
+            let v = obj.getattr(intern!(py, "propulsion_unit_speed_rpm"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        navsats_in_view: {
+            let v = obj.getattr(intern!(py, "navsats_in_view"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        positioning_method_source: {
+            let v = obj.getattr(intern!(py, "positioning_method_source"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        platform_status: crate::custom::uas_datalink_ls_platform_status_from_py(obj)?,
+        sensor_control_mode: crate::custom::uas_datalink_ls_sensor_control_mode_from_py(obj)?,
+        take_off_time_us: {
+            let v = obj.getattr(intern!(py, "take_off_time_us"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        mi_storage_capacity_gb: {
+            let v = obj.getattr(intern!(py, "mi_storage_capacity_gb"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        leap_seconds: {
+            let v = obj.getattr(intern!(py, "leap_seconds"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        correction_offset_us: {
+            let v = obj.getattr(intern!(py, "correction_offset_us"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        active_payloads: {
+            let v = obj.getattr(intern!(py, "active_payloads"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        generic_flag_data: {
+            let v = obj.getattr(intern!(py, "generic_flag_data"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        security_local_set: {
+            let v = obj.getattr(intern!(py, "security_local_set"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        rvt: {
+            let v = obj.getattr(intern!(py, "rvt"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        vmti: {
+            let v = obj.getattr(intern!(py, "vmti"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sar_mi_local_set: {
+            let v = obj.getattr(intern!(py, "sar_mi_local_set"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        range_image_local_set: {
+            let v = obj.getattr(intern!(py, "range_image_local_set"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        geo_registration_local_set: {
+            let v = obj.getattr(intern!(py, "geo_registration_local_set"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        composite_imaging_local_set: {
+            let v = obj.getattr(intern!(py, "composite_imaging_local_set"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        segment_local_set: {
+            let v = obj.getattr(intern!(py, "segment_local_set"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        amend_local_set: {
+            let v = obj.getattr(intern!(py, "amend_local_set"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        outside_air_temp_c: {
+            let v = obj.getattr(intern!(py, "outside_air_temp_c"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        weapon_load: {
+            let v = obj.getattr(intern!(py, "weapon_load"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        weapon_fired: {
+            let v = obj.getattr(intern!(py, "weapon_fired"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        laser_prf_code: {
+            let v = obj.getattr(intern!(py, "laser_prf_code"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        alternate_platform_name: {
+            let v = obj.getattr(intern!(py, "alternate_platform_name"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        event_start_time_us: {
+            let v = obj.getattr(intern!(py, "event_start_time_us"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        stream_designator: {
+            let v = obj.getattr(intern!(py, "stream_designator"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        operational_base: {
+            let v = obj.getattr(intern!(py, "operational_base"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        broadcast_source: {
+            let v = obj.getattr(intern!(py, "broadcast_source"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        target_id: {
+            let v = obj.getattr(intern!(py, "target_id"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        communications_method: {
+            let v = obj.getattr(intern!(py, "communications_method"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        icing_detected: crate::custom::uas_datalink_ls_icing_detected_from_py(obj)?,
+        sensor_fov_name: crate::custom::uas_datalink_ls_sensor_fov_name_from_py(obj)?,
+        operational_mode: crate::custom::uas_datalink_ls_operational_mode_from_py(obj)?,
+        image_horizon: {
+            let v = obj.getattr(intern!(py, "image_horizon"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(image_horizon_pixels_from_py(&v)?)
+            }
+        },
+        control_commands: {
+            let v = obj.getattr(intern!(py, "control_commands"))?;
+            v.iter()?
+                .map(|x| x.and_then(|x| control_command_from_py(&x)))
+                .collect::<PyResult<Vec<_>>>()?
+        },
+        control_command_verification: {
+            let v = obj.getattr(intern!(py, "control_command_verification"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        active_wavelengths: {
+            let v = obj.getattr(intern!(py, "active_wavelengths"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(v.extract()?)
+            }
+        },
+        sensor_frame_rate: {
+            let v = obj.getattr(intern!(py, "sensor_frame_rate"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(sensor_frame_rate_from_py(&v)?)
+            }
+        },
+        metadata_substream_id: {
+            let v = obj.getattr(intern!(py, "metadata_substream_id"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(metadata_substream_id_from_py(&v)?)
+            }
+        },
+        country_codes: {
+            let v = obj.getattr(intern!(py, "country_codes"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(country_codes_from_py(&v)?)
+            }
+        },
+        wavelengths_list: {
+            let v = obj.getattr(intern!(py, "wavelengths_list"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(
+                    v.iter()?
+                        .map(|x| x.and_then(|x| wavelength_record_from_py(&x)))
+                        .collect::<PyResult<Vec<_>>>()?,
+                )
+            }
+        },
+        airbase_locations: {
+            let v = obj.getattr(intern!(py, "airbase_locations"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(airbase_locations_from_py(&v)?)
+            }
+        },
+        payload_list: {
+            let v = obj.getattr(intern!(py, "payload_list"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(payload_list_from_py(&v)?)
+            }
+        },
+        weapons_stores: {
+            let v = obj.getattr(intern!(py, "weapons_stores"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(
+                    v.iter()?
+                        .map(|x| x.and_then(|x| weapons_store_from_py(&x)))
+                        .collect::<PyResult<Vec<_>>>()?,
+                )
+            }
+        },
+        waypoint_list: {
+            let v = obj.getattr(intern!(py, "waypoint_list"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(
+                    v.iter()?
+                        .map(|x| x.and_then(|x| waypoint_from_py(&x)))
+                        .collect::<PyResult<Vec<_>>>()?,
+                )
+            }
+        },
+        view_domain: {
+            let v = obj.getattr(intern!(py, "view_domain"))?;
+            if v.is_none() {
+                None
+            } else {
+                Some(view_domain_from_py(&v)?)
+            }
+        },
+        sdcc_flps: {
+            let v = obj.getattr(intern!(py, "sdcc_flps"))?;
+            v.iter()?
+                .map(|x| x.and_then(|x| sdcc_flp_field_from_py(&x)))
+                .collect::<PyResult<Vec<_>>>()?
+        },
+        unknown: crate::custom::uas_datalink_ls_unknown_from_py(obj)?,
+        field_errors: crate::custom::uas_datalink_ls_field_errors_from_py(obj)?,
+        sentinel_tags: crate::custom::uas_datalink_ls_sentinel_tags_from_py(obj)?,
+        imapb_specials: crate::custom::uas_datalink_ls_imapb_specials_from_py(obj)?,
     })
 }

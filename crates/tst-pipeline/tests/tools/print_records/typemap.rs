@@ -33,6 +33,10 @@ struct CustomRow {
     py_default: Option<&'static str>,
     /// The Builder's initial value, when the Java default is not `null`/zero.
     java_default: Option<&'static str>,
+    /// The `JValue` constructor (`Long`, `Int`, …) when the Java type is a
+    /// primitive: the builder converter then returns that primitive instead
+    /// of an object, and the field must be required.
+    prim: Option<&'static str>,
 }
 
 const EMPTY_LIST: &str = "java.util.Collections.emptyList()";
@@ -45,6 +49,7 @@ const CUSTOM: &[CustomRow] = &[
         sig: "Ljava/nio/ByteBuffer;",
         py_default: Some("b\"\\x00\" * 16"),
         java_default: None,
+        prim: None,
     },
     // A byte string the Java record carries as `byte[]` rather than as the
     // `ByteBuffer` a plain `Vec<u8>` field gets (the hand ST 0601 record's
@@ -56,6 +61,27 @@ const CUSTOM: &[CustomRow] = &[
         sig: "[B",
         py_default: None,
         java_default: None,
+        prim: None,
+    },
+    // A 16-byte identifier, `byte[]` in Java.
+    CustomRow {
+        rust: "[u8;16]",
+        py: "bytes",
+        java: "byte[]",
+        sig: "[B",
+        py_default: None,
+        java_default: None,
+        prim: None,
+    },
+    // A coded enum whose code point is a full-range `u64`: a Java `long`.
+    CustomRow {
+        rust: "PayloadType",
+        py: "PayloadType | int",
+        java: "long",
+        sig: "J",
+        py_default: None,
+        java_default: None,
+        prim: Some("Long"),
     },
     // Coded enums cross as their raw code point.
     CustomRow {
@@ -65,6 +91,7 @@ const CUSTOM: &[CustomRow] = &[
         sig: "Ljava/lang/Integer;",
         py_default: None,
         java_default: None,
+        prim: None,
     },
     CustomRow {
         rust: "OperationalMode",
@@ -73,6 +100,7 @@ const CUSTOM: &[CustomRow] = &[
         sig: "Ljava/lang/Integer;",
         py_default: None,
         java_default: None,
+        prim: None,
     },
     CustomRow {
         rust: "PlatformStatus",
@@ -81,6 +109,7 @@ const CUSTOM: &[CustomRow] = &[
         sig: "Ljava/lang/Integer;",
         py_default: None,
         java_default: None,
+        prim: None,
     },
     CustomRow {
         rust: "SensorControlMode",
@@ -89,6 +118,7 @@ const CUSTOM: &[CustomRow] = &[
         sig: "Ljava/lang/Integer;",
         py_default: None,
         java_default: None,
+        prim: None,
     },
     CustomRow {
         rust: "SensorFovName",
@@ -97,6 +127,7 @@ const CUSTOM: &[CustomRow] = &[
         sig: "Ljava/lang/Integer;",
         py_default: None,
         java_default: None,
+        prim: None,
     },
     // The ST 0601 pass-through lists, whose host item types are not the
     // Rust ones.
@@ -107,6 +138,16 @@ const CUSTOM: &[CustomRow] = &[
         sig: "Ljava/util/List;",
         py_default: Some("()"),
         java_default: Some(EMPTY_LIST),
+        prim: None,
+    },
+    CustomRow {
+        rust: "Vec<u32>",
+        py: "tuple[int, ...]",
+        java: "List<Long>",
+        sig: "Ljava/util/List;",
+        py_default: Some("()"),
+        java_default: Some(EMPTY_LIST),
+        prim: None,
     },
     CustomRow {
         rust: "Vec<KlvFieldError>",
@@ -115,6 +156,7 @@ const CUSTOM: &[CustomRow] = &[
         sig: "Ljava/util/List;",
         py_default: Some("()"),
         java_default: Some(EMPTY_LIST),
+        prim: None,
     },
     CustomRow {
         rust: "Vec<(u32,ImapbSpecial)>",
@@ -123,6 +165,7 @@ const CUSTOM: &[CustomRow] = &[
         sig: "Ljava/util/List;",
         py_default: Some("()"),
         java_default: Some(EMPTY_LIST),
+        prim: None,
     },
 ];
 
@@ -353,6 +396,14 @@ fn custom_row(name: &str) -> &'static CustomRow {
 }
 
 impl Ty {
+    /// The `JValue` constructor of a custom field whose Java type is a primitive.
+    pub fn custom_prim(&self) -> Option<&'static str> {
+        match self {
+            Ty::Custom(n) => custom_row(n).prim,
+            _ => None,
+        }
+    }
+
     pub fn is_opt(&self) -> bool {
         matches!(self, Ty::Opt(_))
     }
@@ -482,6 +533,14 @@ pub fn resolve<'a>(reg: &[Entry], schema: &'a RecordSchema) -> Result<Vec<Fld<'a
         };
         let mut py_default = None;
         let mut java_default = None;
+        if let Some(Ty::Opt(inner)) = &ty {
+            if inner.custom_prim().is_some() {
+                return Err(ctx(
+                    "a primitive custom type cannot be optional: a Java primitive has no null"
+                        .into(),
+                ));
+            }
+        }
         if let Some(t) = &ty {
             if t.is_opt() {
                 py_default = Some("None".to_string());

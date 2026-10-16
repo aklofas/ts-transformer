@@ -462,6 +462,8 @@ Field types and defaults:
   as `int`, `u32`/`u64` as `long`, `Vec<u8>` as `ByteBuffer`, `Vec<T>` as
   `List<T>`; an `Option<T>` is the boxed type, and a Builder sets an optional
   scalar by its primitive.
+- A `@[custom]` `Vec<u8>` or `[u8; 16]` field is `byte[]` in Java and `bytes` in
+  Python; a plain `Vec<u8>` is a `ByteBuffer`.
 - A required field that follows an optional one takes a host default: the
   dataclass writes `= 0` / `= 0.0` / `= False` / `= ""` / `= b""` / `= ()`, and
   the Builder starts it at the same value. A required record has no such
@@ -478,6 +480,10 @@ removed). The converters are hand-written functions with these signatures:
 | Python | `<record>_<field>_from_py` | `(obj: &Bound<'_, PyAny>) -> PyResult<Rust>`; receives the record object and reads the field itself |
 | JVM | `build_<record>_<field>` | `(env: &mut JNIEnv<'l>, &Rust) -> jni::errors::Result<JObject<'l>>`; `null` for an absent value |
 | JVM | `read_<record>_<field>` | `(env: &mut JNIEnv<'_>, obj: &JObject<'_>) -> jni::errors::Result<Rust>`; receives the record object and reads the field itself |
+
+A custom row whose Java type is a primitive (`PayloadType`, a Java `long`) is
+a required field only: its `build_<record>_<field>` returns that primitive
+(`i64`) instead of an object, and the generator passes it by value.
 
 The Python annotation of a custom enum field is `<Enum> | int | None`: the
 enum when the code point is known, the raw `int` when it is not.

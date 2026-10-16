@@ -381,7 +381,7 @@ def test_encode_rvt_unknown_tag_clobbering_timestamp_dropped():
     # Python `py_to_unknown` translator filters typed-tag collisions out
     # of `unknown` BEFORE the Rust encoder ever sees them -- "typed
     # wins, drop silently" is this binding's own consistency policy
-    # (matches `py_to_vmti_ls`/`py_to_uas_datalink_ls`), so no exception
+    # (matches `py_to_vmti_ls` and the generated UasDatalinkLs converter), so no exception
     # reaches here. Round-trips cleanly with the typed field intact.
     ls = RvtLs(timestamp_us=1, unknown=((2, bytes(8)),))
     back = decode_rvt(encode_rvt(ls))
