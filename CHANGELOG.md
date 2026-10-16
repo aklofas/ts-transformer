@@ -361,6 +361,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `END_OF_STREAM` and `CONFIG_INVALID` (`UdpErrorKind` 9, 10, 11;
   `TcpErrorKind` and `RistErrorKind` 10, 11, 12). Existing members keep
   their values.
+- `tstrans.shells`: one `Sender`, `Receiver`, `MuxSender` and `DemuxReceiver`
+  class for every transport, opened with `Class.open(url, ...)` (the URL's
+  scheme picks SRT, RTP, UDP, TCP/TLS or RIST; per-transport options are
+  URL keys), plus `CancelHandle`, `SocketStats` and `EndReason`. UDP, TCP
+  and RIST gain these shells; every shell has `cancel_handle()`; failures
+  raise the transport's exception class. `srt_stats()` raises `TypeError`
+  on a non-SRT shell.
 
 ### Added — tst-jni
 

@@ -1,0 +1,365 @@
+"""Type stubs for `tstrans.shells` — one class per pipeline shell, over
+every transport.
+
+Mirrors the public surface exported from
+`bindings/python/python/tstrans/shells.py`. mypy --strict clean.
+
+The PyClass-backed types (Sender, Receiver, MuxSender, DemuxReceiver,
+CancelHandle, SocketStats) live in `_native.shells` (Rust source under
+`bindings/python/src/shells/`); `EndReason` is pure Python. Each shell
+opens from a URL (`srt://`, `rtp://`, `udp://`, `tcp://`, `tcps://`,
+`rist://`) and raises the transport's exception class.
+"""
+
+from __future__ import annotations
+
+import enum
+from typing import (
+    Any,
+    Callable,
+    Iterator,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+    final,
+)
+
+from tstrans.mpegts import (
+    AudioStreamHandle,
+    DataStreamHandle,
+    DemuxerConfig,
+    DemuxEvent,
+    KlvStreamHandle,
+    MuxerProgramConfig,
+    MuxerStats,
+    Pts90khz,
+    SubtitleStreamHandle,
+    VideoStreamHandle,
+)
+from tstrans.srt import SrtStats
+
+# A bytes-like input — `bytes`, `bytearray`, `memoryview`, NumPy uint8,
+# or any object implementing the buffer protocol.
+_BytesLike = Union[bytes, bytearray, memoryview, Any]
+
+__all__: list[str] = [
+    "CancelHandle",
+    "DemuxReceiver",
+    "EndReason",
+    "MuxSender",
+    "Receiver",
+    "Sender",
+    "SocketStats",
+]
+
+
+class EndReason(enum.IntEnum):
+    """Why a receive session ended (`Receiver.end_reason()`,
+    `DemuxReceiver.end_reason()`, the managed SRT receivers); `None` while
+    it has not ended. Values start at 1 so `if rx.end_reason():` is
+    unambiguous."""
+
+    CLEAN_TEARDOWN = 1
+    SESSION_EXPIRED = 2
+    KEEPALIVE_FAILED = 3
+    TRANSPORT_FAILED = 4
+    PROTOCOL_ERROR = 5
+    CANCELLED = 6
+    END_OF_STREAM = 7
+    RECONNECT_EXHAUSTED = 8
+
+
+@final
+class SocketStats:
+    """Frozen wire-level statistics snapshot. Mirror of
+    `tst_core::transport::SocketStats`. All fields are integer-valued.
+
+    The same 16 fields on every transport. For SRT-specific extras
+    (`mbps_estimated_bandwidth`, the symmetric send/recv-side byte-loss
+    split), use `srt_stats()` on an `srt://` shell.
+    """
+
+    rtt_us: int
+    send_bandwidth_bps: int
+    recv_bandwidth_bps: int
+    link_bandwidth_bps: int
+    bytes_sent: int
+    packets_sent: int
+    bytes_received: int
+    packets_received: int
+    bytes_lost_recv: int
+    packets_lost_recv: int
+    packets_lost_send: int
+    packets_retransmitted: int
+    packets_dropped_send: int
+    packets_dropped_recv: int
+    send_buffer_packets: int
+    recv_buffer_packets: int
+
+    def __repr__(self) -> str: ...
+
+
+@final
+class CancelHandle:
+    """Cancel handle for `Sender` / `Receiver` / `MuxSender` /
+    `DemuxReceiver`. Calling `.cancel()` from any thread wakes a thread
+    parked in `.send_bytes()` / `.recv_bytes()` / `.__next__()`; that call
+    raises the transport's error class with kind `CLOSED`.
+
+    `is_cancelled()` is SHARED per shell: every handle obtained from the
+    same shell, and the shell's own `close()`, flips the same state, so a
+    watchdog can observe a cancel issued elsewhere.
+    """
+
+    def cancel(self) -> None: ...
+    def is_cancelled(self) -> bool: ...
+    def __repr__(self) -> str: ...
+
+
+@final
+class Sender:
+    """TS bytes in, any transport out, opened from the transport's URL.
+
+    `Sender.open("srt://host:port?...")` (or `rtp://`, `udp://`, `tcp://`,
+    `tcps://`, `rist://`). An `srt://` URL must use `mode=caller` (the
+    default); query parameters apply as the transport defines them.
+    """
+
+    @classmethod
+    def open(cls, url: str) -> Sender: ...
+    @staticmethod
+    def from_url(url: str) -> Sender:
+        """Deprecated: use `open`. Emits DeprecationWarning; removed in 0.10.0."""
+    def send_bytes(self, data: _BytesLike) -> None: ...
+    def flush(self) -> None: ...
+    def cancel_handle(self) -> CancelHandle: ...
+    def socket_stats(self) -> SocketStats: ...
+    def srt_stats(self) -> SrtStats:
+        """Raises TypeError unless the shell was opened from an srt:// URL."""
+    def close(self) -> None: ...
+    def is_alive(self) -> bool: ...
+    def __enter__(self) -> Sender: ...
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_value: Optional[BaseException],
+        traceback: Optional[Any],
+    ) -> bool: ...
+    def __repr__(self) -> str: ...
+
+
+@final
+class Receiver:
+    """Any transport in, TS bytes out, opened from the transport's URL.
+
+    `Receiver.open("srt://...?mode=listener")` binds the socket, listens
+    and blocks on the first incoming handshake; this is a one-shot accept
+    (a later peer needs a fresh `open` or the lower-level `Listener`). The
+    datagram and stream transports open their socket.
+
+    Raises:
+        SrtError(kind=CONFIG_INVALID): Bad URL, or a non-listener mode.
+        SrtError(kind=BROKEN): Any bind or accept fault; the message is
+            prefixed `bind: ` or `accept: `.
+    """
+
+    @classmethod
+    def open(cls, url: str) -> Receiver: ...
+    @staticmethod
+    def from_url(url: str) -> Receiver:
+        """Deprecated: use `open`. Emits DeprecationWarning; removed in 0.10.0."""
+    def recv_bytes(self, max_len: int = ...) -> bytes: ...
+    def cancel_handle(self) -> CancelHandle: ...
+    def socket_stats(self) -> SocketStats: ...
+    def srt_stats(self) -> SrtStats:
+        """Raises TypeError unless the shell was opened from an srt:// URL."""
+    def end_reason(self) -> Optional[EndReason]: ...
+    def end_detail(self) -> Optional[str]: ...
+    def close(self) -> None: ...
+    def is_alive(self) -> bool: ...
+    def __enter__(self) -> Receiver: ...
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_value: Optional[BaseException],
+        traceback: Optional[Any],
+    ) -> bool: ...
+    def __repr__(self) -> str: ...
+
+
+@final
+class MuxSender:
+    """`Sender` + `Muxer` constructed together, opened from any
+    transport's URL.
+
+    Construct via `MuxSender.open(url, program_config)`. Send methods accept any
+    bytes-like input (`bytes`, `bytearray`, `memoryview`, NumPy `uint8`).
+    `pts` is keyword-only on every send method. The GIL is released
+    around the muxer + transport work via `py.allow_threads()`.
+    """
+
+    @classmethod
+    def open(cls, url: str, program_config: MuxerProgramConfig) -> MuxSender: ...
+    @staticmethod
+    def from_url(url: str, program_config: MuxerProgramConfig) -> MuxSender:
+        """Deprecated: use `open`. Emits DeprecationWarning; removed in 0.10.0."""
+    def __new__(
+        cls,
+        url: str,
+        program_config: MuxerProgramConfig,
+        *,
+        pkt_size: Optional[int] = ...,
+    ) -> MuxSender:
+        """Deprecated: use `MuxSender.open`, with `pkt_size` as the `?pkt_size=`
+        URL key. Emits DeprecationWarning; removed in 0.10.0."""
+
+    # Send surface — single stream.
+    def send_video(
+        self,
+        nal: _BytesLike,
+        *,
+        pts: Pts90khz,
+        key_frame: bool = ...,
+    ) -> None: ...
+    def send_klv(
+        self,
+        klv: _BytesLike,
+        *,
+        pts: Pts90khz,
+        metadata_service_id: int = ...,
+    ) -> None: ...
+    def send_audio(self, adts: _BytesLike, *, pts: Pts90khz) -> None: ...
+    def send_subtitle(self, payload: _BytesLike, *, pts: Pts90khz) -> None: ...
+    def send_data(self, data: _BytesLike, *, pts: Pts90khz) -> None: ...
+
+    # Send surface — multi-stream variants (explicit handle).
+    def send_video_to(
+        self,
+        handle: VideoStreamHandle,
+        nal: _BytesLike,
+        *,
+        pts: Pts90khz,
+        key_frame: bool = ...,
+    ) -> None: ...
+    def send_klv_to(
+        self,
+        handle: KlvStreamHandle,
+        klv: _BytesLike,
+        *,
+        pts: Pts90khz,
+        metadata_service_id: int = ...,
+    ) -> None: ...
+    def send_audio_to(
+        self,
+        handle: AudioStreamHandle,
+        adts: _BytesLike,
+        *,
+        pts: Pts90khz,
+    ) -> None: ...
+    def send_subtitle_to(
+        self,
+        handle: SubtitleStreamHandle,
+        payload: _BytesLike,
+        *,
+        pts: Pts90khz,
+    ) -> None: ...
+    def send_data_to(
+        self,
+        handle: DataStreamHandle,
+        data: _BytesLike,
+        *,
+        pts: Pts90khz,
+    ) -> None: ...
+
+    # Stream handle accessors (first-of-kind).
+    def video_handle(self) -> Optional[VideoStreamHandle]: ...
+    def klv_handle(self) -> Optional[KlvStreamHandle]: ...
+    def audio_handle(self) -> Optional[AudioStreamHandle]: ...
+    def subtitle_handle(self) -> Optional[SubtitleStreamHandle]: ...
+    def data_handle(self) -> Optional[DataStreamHandle]: ...
+
+    def stats(self) -> Tuple[SocketStats, MuxerStats]: ...
+    def cancel_handle(self) -> CancelHandle: ...
+    def close(self) -> None: ...
+    def finish(self) -> None:
+        """Drain pending bytes to the transport, raise the first drain error
+        (the transport's error class), then close.
+        The sender is closed either way; a second ``finish()`` is a no-op,
+        and so is a ``finish()`` after ``close()``. It does NOT free the
+        handle — call ``close()`` (or use the ``with`` block) to release it.
+        Unlike ``close()`` this does not cancel a parked send first."""
+    def is_alive(self) -> bool: ...
+    def __enter__(self) -> MuxSender: ...
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_value: Optional[BaseException],
+        traceback: Optional[Any],
+    ) -> bool: ...
+    def __repr__(self) -> str: ...
+
+
+@final
+class DemuxReceiver:
+    """`Receiver` + `Demuxer` constructed together, opened from any
+    transport's URL.
+
+    Construct via `DemuxReceiver.open(url, demux_config=None)`. For an
+    `srt://` URL the mode must be `listener`. Iterating yields
+    `tstrans.mpegts.DemuxEvent` subclass instances — no duplicated
+    event type hierarchy. `__next__` blocks (releases the GIL) on the
+    underlying transport read.
+
+    `stats()` returns a tuple `(SocketStats, MuxerStats)` — same shape
+    as `MuxSender.stats()` so cross-direction code can read both
+    accessors identically.
+
+    An `srt://` bind or accept fault raises `SrtError(kind=BROKEN)` with
+    the message prefixed `bind: ` or `accept: `.
+    """
+
+    @classmethod
+    def open(
+        cls,
+        url: str,
+        demux_config: Optional[DemuxerConfig] = ...,
+    ) -> DemuxReceiver: ...
+    @staticmethod
+    def from_url(
+        url: str,
+        *,
+        demux_config: Optional[DemuxerConfig] = ...,
+    ) -> DemuxReceiver:
+        """Deprecated: use `open`. Emits DeprecationWarning; removed in 0.10.0."""
+    def __new__(
+        cls,
+        url: str,
+        *,
+        demux_config: Optional[DemuxerConfig] = ...,
+    ) -> DemuxReceiver:
+        """Deprecated: use `DemuxReceiver.open`. Emits DeprecationWarning;
+        removed in 0.10.0."""
+    def __iter__(self) -> Iterator[DemuxEvent]: ...
+    def __next__(self) -> DemuxEvent: ...
+    # Register a fan-out callback invoked with every 188-byte TS packet
+    # (as `bytes`) BEFORE demuxing, in registration order. If the
+    # callback raises, the exception is re-raised fail-loud from the next
+    # `__next__` and iteration stops. Append-only for the receiver's life.
+    def add_byte_sink(self, callback: Callable[[bytes], None]) -> None: ...
+    def cancel_handle(self) -> CancelHandle: ...
+    def socket_stats(self) -> SocketStats: ...
+    def stats(self) -> Tuple[SocketStats, MuxerStats]: ...
+    def last_seen_micros(self, pid: int) -> Optional[int]: ...
+    def end_reason(self) -> Optional[EndReason]: ...
+    def end_detail(self) -> Optional[str]: ...
+    def close(self) -> None: ...
+    def is_alive(self) -> bool: ...
+    def __enter__(self) -> DemuxReceiver: ...
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_value: Optional[BaseException],
+        traceback: Optional[Any],
+    ) -> bool: ...
+    def __repr__(self) -> str: ...

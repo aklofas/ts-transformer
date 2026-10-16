@@ -38,6 +38,14 @@ mod hls;
 mod rist;
 #[cfg(feature = "pipeline")]
 mod pipeline;
+#[cfg(any(
+    feature = "srt",
+    feature = "rtp",
+    feature = "udp",
+    feature = "tcp",
+    feature = "rist"
+))]
+mod shells;
 
 use pyo3::prelude::*;
 
@@ -147,6 +155,16 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     hls::register(m)?;
     #[cfg(feature = "rist")]
     rist::register(m)?;
+    // shells submodule — one Sender/Receiver/MuxSender/DemuxReceiver over
+    // every transport's URL.
+    #[cfg(any(
+        feature = "srt",
+        feature = "rtp",
+        feature = "udp",
+        feature = "tcp",
+        feature = "rist"
+    ))]
+    shells::register(m)?;
     // pipeline submodule — the ext::pairing PairingDemuxer composite,
     // exposed as tstrans.pipeline.Pairer.
     #[cfg(feature = "pipeline")]
