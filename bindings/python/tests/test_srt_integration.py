@@ -16,7 +16,7 @@ Test inventory:
    observe at least one Video / Klv / ProgramMap event.
 
 2. `test_from_url_shortcut_equivalent_to_builder_path` —
-   MuxSender.from_url(caller) ↔ DemuxReceiver.from_url(listener)
+   MuxSender.open(caller) ↔ DemuxReceiver.open(listener)
    end-to-end on a loopback pair; verifies the from_url shortcut path
    produces the same observable event set as the explicit Builder →
    Socket promotion path from test #1.
@@ -205,7 +205,7 @@ def test_full_pipeline_via_builder_socket_promotion() -> None:
 
 
 def test_from_url_shortcut_equivalent_to_builder_path() -> None:
-    """Smoke-verify that `MuxSender.from_url` + `DemuxReceiver.from_url`
+    """Smoke-verify that `MuxSender.open` + `DemuxReceiver.open`
     produce the same observable event surface as the explicit
     Builder/Socket promotion path in test 1. Doesn't byte-compare —
     libsrt's framing layer can shuffle TS packets across the
@@ -233,7 +233,7 @@ def test_from_url_shortcut_equivalent_to_builder_path() -> None:
     if rx_err:
         mux_sender.close()
         raise rx_err[0]
-    assert rx_box, "DemuxReceiver.from_url did not accept within 5 s"
+    assert rx_box, "DemuxReceiver.open did not accept within 5 s"
     demux_receiver = rx_box[0]
 
     events: list[object] = []

@@ -2188,7 +2188,7 @@ Python binding's gaps.
 
 ### Moving from 0.8
 
-Deprecated in 0.9.0, removed in 0.10.0. Each old class is a
+Deprecated in 0.9.0, removed in 0.10.0. Each old shell class is a
 `@Deprecated(forRemoval = true)` subclass of its replacement and keeps its
 0.8 `fromUrl` factories.
 
@@ -2196,8 +2196,12 @@ Deprecated in 0.9.0, removed in 0.10.0. Each old class is a
 |---|---|
 | `org.tstrans.srt.{Sender, Receiver, MuxSender, DemuxReceiver}`, `org.tstrans.rtp.{MuxSender, DemuxReceiver}` | `org.tstrans.shells.*`, opened with `Class.open(url, ...)` |
 | `org.tstrans.rtp.Sender` / `Receiver` | `org.tstrans.rtp.Transport` / `RecvTransport` |
-| the `pktSize` argument of the rtp factories | the `?pkt_size=` URL key |
-| `CancelHandle`, `SocketStats`, `TransportStats` per package | the one `org.tstrans.shells.{CancelHandle, SocketStats, TransportStats}` |
+| the `pktSize` argument of the rtp shell factories | the `?pkt_size=` URL key (`rtp.Transport.fromUrl` still takes `pktSize`) |
+
+Removed in 0.9.0 with no deprecated alias: the per-package `CancelHandle`,
+`SocketStats`, `TransportStats`, `RecvEndReason` and `StreamEndReason` of
+`org.tstrans.srt` and `org.tstrans.rtp`. Use the one
+`org.tstrans.shells.{CancelHandle, SocketStats, TransportStats, EndReason}`.
 
 `ManagedSender` / `ManagedReceiver` / `ManagedMuxSender` /
 `ManagedDemuxReceiver` keep `fromUrl`: they are SRT-specific.

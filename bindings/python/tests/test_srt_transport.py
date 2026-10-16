@@ -114,7 +114,7 @@ def test_sender_unsupported_scheme_raises_value_error() -> None:
 
 
 def test_sender_wrong_mode_raises_config_invalid() -> None:
-    """Sender.from_url requires mode=caller (default); explicit
+    """Sender.open requires mode=caller (default); explicit
     listener → SrtError(CONFIG_INVALID)."""
     port = _free_tcp_port()
     with pytest.raises(SrtError) as exc_info:
@@ -123,7 +123,7 @@ def test_sender_wrong_mode_raises_config_invalid() -> None:
 
 
 def test_receiver_wrong_mode_raises_config_invalid() -> None:
-    """Receiver.from_url requires mode=listener; default caller →
+    """Receiver.open requires mode=listener; default caller →
     SrtError(CONFIG_INVALID)."""
     port = _free_tcp_port()
     with pytest.raises(SrtError) as exc_info:
