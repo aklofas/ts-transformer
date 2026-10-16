@@ -915,7 +915,9 @@ try (var rx = Receiver.open("srt://:9000?mode=listener")) {
 Break the loop on three kinds, which together cover every way a receive ends:
 `SrtException(END_OF_STREAM)` — the peer closed the session cleanly (what a
 C-ABI sender, a `ManagedSender` or `srt-live-transmit` produces, and what a
-`ManagedReceiver` reports once its reconnect budget is exhausted);
+`ManagedReceiver` reports once its reconnect budget is exhausted; on a plain
+`srt://` shell libsrt reports the close as a broken link first, so expect
+`BROKEN` before `END_OF_STREAM`);
 `SrtException(CLOSED)` — you closed or cancelled this receiver;
 `SrtException(BROKEN)` — the link failed. Catching only `CLOSED` and `BROKEN`
 (the pre-0.7.0 advice) rethrows at a clean hang-up.

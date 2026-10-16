@@ -190,7 +190,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `std::error::Error`).
 - `ShellErrorKind` is computed by coarsening the binding error-kind table
   (`binding::BindingErrorKind`), so a shell and a binding classify one error
-  through the same table. No `ShellErrorKind` value changes for any error.
+  through the same table. One `ShellErrorKind` value changes: a receive-side
+  `TransportError::Broken` whose cause is `BrokenCause::CleanEof` coarsens to
+  `EndOfStream` (was `TransportBroken`), as the binding kind does.
   The table maps every tst-core error through its exhaustive `kind()`; the
   "unmapped variant" `Internal` fallback is gone.
 - `binding::BindingError` has a third public field, `diagnostics`; build one
@@ -258,9 +260,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tstrans.rtp.MuxSender(url, cfg)` (0.8 and the deprecated 0.9 spelling)
   forced `pkt_size=1316` over a `?pkt_size=` key in the URL; in 0.9 the URL
   key wins, so the RTP datagram size of such a URL changes.
-- `tstrans.shells.Receiver` and `tstrans.shells.DemuxReceiver` over
-  `tcp://` raise kind `END_OF_STREAM` on the first receive after the
-  peer's clean close (was `BROKEN` once, then `END_OF_STREAM`). Raw
+- `tstrans.shells.Receiver` over `tcp://` raises kind `END_OF_STREAM` on
+  the first receive after the peer's clean close, and
+  `tstrans.shells.DemuxReceiver` over `tcp://` ends its iteration there
+  (`StopIteration`); both previously raised `BROKEN` once first. Raw
   `tstrans.tcp.RecvTransport` and `srt://` shells are unchanged.
 
 ### Changed — tst-jni (BREAKING)
@@ -298,9 +301,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A raw stream handle that no stream of the muxer owns throws the
   transport's `CONFIG_INVALID` from every `MuxSender` `send*To` (it was
   `IO` on an `rtp://` sender).
-- `org.tstrans.shells.Receiver` and `org.tstrans.shells.DemuxReceiver` over
-  `tcp://` throw kind `END_OF_STREAM` on the first receive after the
-  peer's clean close (was `BROKEN` once, then `END_OF_STREAM`). Raw
+- `org.tstrans.shells.Receiver` over `tcp://` throws kind `END_OF_STREAM`
+  on the first receive after the peer's clean close, and
+  `org.tstrans.shells.DemuxReceiver` over `tcp://` ends its iteration there
+  (`hasNext()` false); both previously threw `BROKEN` once first. Raw
   `org.tstrans.tcp` transports and `srt://` shells are unchanged.
 
 ### Changed — tst-c
@@ -329,6 +333,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   | `MuxError::MispTime` | −3 | −45 `TST_E_MISP_TIME` |
   | `TransportError::TooLarge` (every shell) | −3 | −6 `TST_E_TOO_LARGE` (as the 0.7.0 notes already stated) |
   | `DemuxError::SyncBufExhausted` (demux receivers) | −3 | −6 `TST_E_TOO_LARGE` |
+- A plain receiver whose caller has already cancelled and whose transport then
+  reports a clean EOF returns `TST_E_CLOSED` (-7); it returned
+  `TST_E_TRANSPORT` (-8). An uncancelled clean EOF still returns
+  `TST_E_END_OF_STREAM` (-12).
 
 ### Changed — C header
 
