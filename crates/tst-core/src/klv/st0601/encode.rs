@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use super::mapping::encode_fixed_range;
 use super::model::{EncodeConfig, OutOfRangePolicy, UasDatalinkLs};
 use super::packs;
-use super::tags::{Encoding, TAGS, TagSpec, lookup as lookup_tag};
+use super::tags::{Encoding, FieldValue, LinearRange, TAGS, TagSpec, lookup as lookup_tag};
 
 /// Encode a UAS Datalink Local Set into the caller-provided buffer per
 /// MISB ST 0601. Returns the number of bytes written.
@@ -255,157 +255,19 @@ pub(super) fn each_typed_field<F: FnMut(u8, usize)>(
     _opts: &EncodeConfig,
     mut visit: F,
 ) {
-    // Tag 65 auto-emit if not explicitly set.
-    let auto_version = record.uas_ls_version.is_none();
-
     for spec in TAGS {
-        if spec.id == 1 {
-            continue; // checksum is appended after
-        }
-        if spec.id == 102 {
-            continue; // MULTI-INSTANCE — handled below, one visit() call per Vec entry
-        }
-        if spec.id == 115 {
-            continue; // MULTI-INSTANCE — handled below, one visit() call per Vec entry
-        }
-        let len = match spec.id {
-            2 => record.timestamp_us.map(|_| 8),
-            3 => record.mission_id.as_ref().map(|s| str_wire_len(s)),
-            4 => record
-                .platform_tail_number
-                .as_ref()
-                .map(|s| str_wire_len(s)),
-            10 => record
-                .platform_designation
-                .as_ref()
-                .map(|s| str_wire_len(s)),
-            11 => record.image_source_sensor.as_ref().map(|s| str_wire_len(s)),
-            12 => record
-                .image_coordinate_system
-                .as_ref()
-                .map(|s| str_wire_len(s)),
-            34 => record.icing_detected.map(|_| 1),
-            39 => record.outside_air_temp_c.map(|_| 1),
-            47 => record.generic_flag_data.map(|_| 1),
-            48 => record.security_local_set.as_ref().map(|v| v.len()),
-            59 => record.platform_call_sign.as_ref().map(|s| str_wire_len(s)),
-            60 => record.weapon_load.map(|_| 2),
-            61 => record.weapon_fired.map(|_| 1),
-            62 => record.laser_prf_code.map(|_| 2),
-            63 => record.sensor_fov_name.map(|_| 1),
-            65 => record
-                .uas_ls_version
-                .map(|_| 1)
-                .or(if auto_version { Some(1) } else { None }),
-            70 => record
-                .alternate_platform_name
-                .as_ref()
-                .map(|s| str_wire_len(s)),
-            72 => record.event_start_time_us.map(|_| 8),
-            73 => record.rvt.as_ref().map(|v| v.len()),
-            74 => record.vmti.as_ref().map(|v| v.len()),
-            77 => record.operational_mode.map(|_| 1),
-            94 => record.miis_core_id.as_ref().map(|v| v.len()),
-            95 => record.sar_mi_local_set.as_ref().map(|v| v.len()),
-            97 => record.range_image_local_set.as_ref().map(|v| v.len()),
-            98 => record.geo_registration_local_set.as_ref().map(|v| v.len()),
-            99 => record.composite_imaging_local_set.as_ref().map(|v| v.len()),
-            100 => record.segment_local_set.as_ref().map(|v| v.len()),
-            101 => record.amend_local_set.as_ref().map(|v| v.len()),
-            106 => record.stream_designator.as_ref().map(|s| str_wire_len(s)),
-            107 => record.operational_base.as_ref().map(|s| str_wire_len(s)),
-            108 => record.broadcast_source.as_ref().map(|s| str_wire_len(s)),
-            129 => record.target_id.as_ref().map(|s| str_wire_len(s)),
-            135 => record
-                .communications_method
-                .as_ref()
-                .map(|s| str_wire_len(s)),
-            // Var-length int/enum fields — shortest-form
-            // length, computed without allocating the value bytes.
-            110 => record
-                .time_airborne_s
-                .map(|v| crate::klv::length::var_uint_min_len(v as u64)),
-            111 => record
-                .propulsion_unit_speed_rpm
-                .map(|v| crate::klv::length::var_uint_min_len(v as u64)),
-            123 => record
-                .navsats_in_view
-                .map(|v| crate::klv::length::var_uint_min_len(v as u64)),
-            124 => record
-                .positioning_method_source
-                .map(|v| crate::klv::length::var_uint_min_len(v as u64)),
-            125 => record
-                .platform_status
-                .map(|v| crate::klv::length::var_uint_min_len(v.to_wire() as u64)),
-            126 => record
-                .sensor_control_mode
-                .map(|v| crate::klv::length::var_uint_min_len(v.to_wire() as u64)),
-            131 => record
-                .take_off_time_us
-                .map(crate::klv::length::var_uint_min_len),
-            133 => record
-                .mi_storage_capacity_gb
-                .map(|v| crate::klv::length::var_uint_min_len(v as u64)),
-            136 => record
-                .leap_seconds
-                .map(|v| crate::klv::length::var_int_min_len(v as i64)),
-            137 => record
-                .correction_offset_us
-                .map(crate::klv::length::var_int_min_len),
-            139 => record.active_payloads.as_ref().map(|v| v.len()),
-            // Pack/list items (single-instance; Tags 102
-            // and 115 are multi-instance and are handled after this loop).
-            81 => record.image_horizon.map(|h| packs::image_horizon_len(&h)),
-            116 => record
-                .control_command_verification
-                .as_ref()
-                .map(|ids| packs::id_list_len(ids)),
-            121 => record
-                .active_wavelengths
-                .as_ref()
-                .map(|ids| packs::id_list_len(ids)),
-            122 => record.country_codes.as_ref().map(packs::country_codes_len),
-            127 => record
-                .sensor_frame_rate
-                .map(|fr| packs::sensor_frame_rate_len(&fr)),
-            128 => record
-                .wavelengths_list
-                .as_ref()
-                .map(|l| packs::wavelengths_list_len(l)),
-            130 => record
-                .airbase_locations
-                .map(|al| packs::airbase_locations_len(&al)),
-            138 => record.payload_list.as_ref().map(packs::payload_list_len),
-            140 => record
-                .weapons_stores
-                .as_ref()
-                .map(|l| packs::weapons_stores_len(l)),
-            141 => record
-                .waypoint_list
-                .as_ref()
-                .map(|l| packs::waypoints_len(l)),
-            142 => record.view_domain.map(|vd| packs::view_domain_len(&vd)),
-            143 => record
-                .metadata_substream_id
-                .map(|ms| packs::metadata_substream_id_len(&ms)),
-            // All 69 LinearRange Option<f64> fields — driven from the `TAGS` row accessors
-            // so that `byte_length` comes from the single `tags::TAGS` source.
-            _ if spec.range.is_some() => spec
-                .get_f64(record)
-                .map(|_| spec.range.as_ref().unwrap().byte_length),
-            // The 14 IMAPB extended-range fields — always sized at
-            // default_len whether the eventual bytes are a normal-range
-            // encode or (under OutOfRangePolicy::Indicator) a special;
-            // both are default_len bytes. An Error-policy out-of-range
-            // value still sizes here — `encode_tag_value` is what surfaces
-            // the actual OutOfRange error during emission.
-            _ if matches!(spec.encoding, Encoding::Imapb { .. }) => {
-                let Encoding::Imapb { default_len, .. } = spec.encoding else {
-                    unreachable!()
-                };
-                spec.get_f64(record).map(|_| default_len)
+        let len = if spec.encoding == Encoding::Pack {
+            // Tags 102 and 115 are multi-instance: their loops follow.
+            pack_len(record, spec.id)
+        } else {
+            // The checksum row has no accessor; the caller appends it.
+            let Some(get) = spec.get else { continue };
+            match get(record) {
+                Some(v) => Some(scalar_len(spec, &v)),
+                // Tag 65 is auto-emitted when the record leaves it unset.
+                None if spec.id == 65 => Some(1),
+                None => None,
             }
-            _ => None,
         };
         if let Some(len) = len {
             visit(spec.id, len);
@@ -425,6 +287,275 @@ pub(super) fn each_typed_field<F: FnMut(u8, usize)>(
     }
 }
 
+/// The wire length of one scalar row's value. A string or an integer is
+/// sized without building its bytes. Ranged and IMAPB rows are sized at
+/// their fixed length whether the eventual bytes are a normal-range
+/// encode or (under `OutOfRangePolicy::Indicator`) a special; an
+/// Error-policy out-of-range value still sizes here, and `encode_scalar`
+/// is what surfaces the actual `OutOfRange` error during emission.
+fn scalar_len(spec: &TagSpec, v: &FieldValue) -> usize {
+    match spec.encoding {
+        Encoding::U8 | Encoding::I8 => 1,
+        Encoding::U16 => 2,
+        Encoding::U64 => 8,
+        Encoding::U8Range
+        | Encoding::U16Range
+        | Encoding::I16Range
+        | Encoding::U32Range
+        | Encoding::I32Range => linear_range(spec).byte_length,
+        Encoding::Imapb { default_len, .. } => default_len,
+        Encoding::Utf8 { .. } => match v {
+            FieldValue::Str(s) => str_wire_len(s),
+            _ => wrong_variant(spec),
+        },
+        Encoding::RawBytes => match v {
+            FieldValue::Bytes(b) => b.len(),
+            _ => wrong_variant(spec),
+        },
+        Encoding::VarUint { .. } => crate::klv::length::var_uint_min_len(wire_u64(spec, v)),
+        Encoding::VarInt { .. } => crate::klv::length::var_int_min_len(wire_i64(spec, v)),
+        Encoding::Pack => wrong_variant(spec),
+    }
+}
+
+/// The value bytes of one scalar row. Calls `encode_fixed_range`,
+/// `encode_imapb_field` and the shortest-form varint writers exactly as
+/// the table's float and integer semantics need; no expression here is
+/// reordered from the wire definitions.
+fn encode_scalar(
+    spec: &TagSpec,
+    v: &FieldValue,
+    policy: OutOfRangePolicy,
+) -> Result<Vec<u8>, KlvEncodeError> {
+    Ok(match spec.encoding {
+        Encoding::U8 => vec![wire_u64(spec, v) as u8],
+        Encoding::I8 => vec![wire_i64(spec, v) as u8],
+        Encoding::U16 => (wire_u64(spec, v) as u16).to_be_bytes().to_vec(),
+        Encoding::U64 => wire_u64(spec, v).to_be_bytes().to_vec(),
+        Encoding::U8Range
+        | Encoding::U16Range
+        | Encoding::I16Range
+        | Encoding::U32Range
+        | Encoding::I32Range => encode_ranged(wire_f64(spec, v), spec, policy)?,
+        Encoding::Imapb {
+            min,
+            max,
+            default_len,
+            ..
+        } => encode_imapb_field(
+            wire_f64(spec, v),
+            spec.id as u32,
+            min,
+            max,
+            default_len,
+            policy,
+        )?,
+        Encoding::Utf8 { .. } => match v {
+            FieldValue::Str(s) => {
+                check_string(spec.id as u32, s, &spec.encoding)?;
+                str_to_bytes(s)
+            }
+            _ => wrong_variant(spec),
+        },
+        Encoding::RawBytes => match v {
+            FieldValue::Bytes(b) => b.clone(),
+            _ => wrong_variant(spec),
+        },
+        Encoding::VarUint { .. } => crate::klv::length::write_var_uint_min(wire_u64(spec, v)),
+        Encoding::VarInt { .. } => crate::klv::length::write_var_int_min(wire_i64(spec, v)),
+        Encoding::Pack => wrong_variant(spec),
+    })
+}
+
+/// A row's accessor yields the variant its encoding names (a coded enum
+/// travels as its wire code), so these are unreachable by construction.
+fn wrong_variant(spec: &TagSpec) -> ! {
+    unreachable!(
+        "tag {} ({}) accessor yielded the wrong value variant",
+        spec.id, spec.name
+    )
+}
+
+fn wire_u64(spec: &TagSpec, v: &FieldValue) -> u64 {
+    match v {
+        FieldValue::U64(n) => *n,
+        FieldValue::Code(c) => u64::from(*c),
+        _ => wrong_variant(spec),
+    }
+}
+
+fn wire_i64(spec: &TagSpec, v: &FieldValue) -> i64 {
+    match v {
+        FieldValue::I64(n) => *n,
+        _ => wrong_variant(spec),
+    }
+}
+
+fn wire_f64(spec: &TagSpec, v: &FieldValue) -> f64 {
+    match v {
+        FieldValue::F64(n) => *n,
+        _ => wrong_variant(spec),
+    }
+}
+
+fn linear_range(spec: &TagSpec) -> &LinearRange {
+    spec.range
+        .as_ref()
+        .expect("ranged tag must have LinearRange")
+}
+
+/// The wire length of a single-instance pack row's value, `None` when the
+/// record leaves the pack unset. Tags 102 and 115 are multi-instance and
+/// are sized by `each_typed_field`'s trailing loops.
+fn pack_len(record: &UasDatalinkLs, tag: u8) -> Option<usize> {
+    match tag {
+        81 => record.image_horizon.map(|h| packs::image_horizon_len(&h)),
+        116 => record
+            .control_command_verification
+            .as_ref()
+            .map(|ids| packs::id_list_len(ids)),
+        121 => record
+            .active_wavelengths
+            .as_ref()
+            .map(|ids| packs::id_list_len(ids)),
+        122 => record.country_codes.as_ref().map(packs::country_codes_len),
+        127 => record
+            .sensor_frame_rate
+            .map(|fr| packs::sensor_frame_rate_len(&fr)),
+        128 => record
+            .wavelengths_list
+            .as_ref()
+            .map(|l| packs::wavelengths_list_len(l)),
+        130 => record
+            .airbase_locations
+            .map(|al| packs::airbase_locations_len(&al)),
+        138 => record.payload_list.as_ref().map(packs::payload_list_len),
+        140 => record
+            .weapons_stores
+            .as_ref()
+            .map(|l| packs::weapons_stores_len(l)),
+        141 => record
+            .waypoint_list
+            .as_ref()
+            .map(|l| packs::waypoints_len(l)),
+        142 => record.view_domain.map(|vd| packs::view_domain_len(&vd)),
+        143 => record
+            .metadata_substream_id
+            .map(|ms| packs::metadata_substream_id_len(&ms)),
+        _ => None,
+    }
+}
+
+/// Build one pack's value bytes into a buffer sized for `len`.
+fn pack_buf<T>(
+    len: usize,
+    emit: impl FnOnce(&mut Vec<u8>) -> Result<T, KlvEncodeError>,
+) -> Result<Vec<u8>, KlvEncodeError> {
+    let mut buf = Vec::with_capacity(len);
+    emit(&mut buf)?;
+    Ok(buf)
+}
+
+/// The value bytes of a single-instance pack row, `None` when the record
+/// leaves the pack unset. Tags 102 and 115 are multi-instance and are
+/// emitted by `write_typed_fields`'s trailing loops, so they yield `None`.
+fn pack_value(record: &UasDatalinkLs, tag: u8) -> Result<Option<Vec<u8>>, KlvEncodeError> {
+    match tag {
+        81 => record
+            .image_horizon
+            .map(|h| {
+                pack_buf(packs::image_horizon_len(&h), |b| {
+                    packs::emit_image_horizon(&h, b)
+                })
+            })
+            .transpose(),
+        116 => record
+            .control_command_verification
+            .as_ref()
+            .map(|ids| pack_buf(packs::id_list_len(ids), |b| packs::emit_id_list(ids, b)))
+            .transpose(),
+        121 => record
+            .active_wavelengths
+            .as_ref()
+            .map(|ids| pack_buf(packs::id_list_len(ids), |b| packs::emit_id_list(ids, b)))
+            .transpose(),
+        122 => record
+            .country_codes
+            .as_ref()
+            .map(|cc| {
+                pack_buf(packs::country_codes_len(cc), |b| {
+                    packs::emit_country_codes(cc, b)
+                })
+            })
+            .transpose(),
+        127 => record
+            .sensor_frame_rate
+            .map(|fr| {
+                pack_buf(packs::sensor_frame_rate_len(&fr), |b| {
+                    packs::emit_sensor_frame_rate(&fr, b)
+                })
+            })
+            .transpose(),
+        128 => record
+            .wavelengths_list
+            .as_ref()
+            .map(|l| {
+                pack_buf(packs::wavelengths_list_len(l), |b| {
+                    packs::emit_wavelengths_list(l, b)
+                })
+            })
+            .transpose(),
+        130 => record
+            .airbase_locations
+            .map(|al| {
+                pack_buf(packs::airbase_locations_len(&al), |b| {
+                    packs::emit_airbase_locations(&al, b)
+                })
+            })
+            .transpose(),
+        138 => record
+            .payload_list
+            .as_ref()
+            .map(|pl| {
+                pack_buf(packs::payload_list_len(pl), |b| {
+                    packs::emit_payload_list(pl, b)
+                })
+            })
+            .transpose(),
+        140 => record
+            .weapons_stores
+            .as_ref()
+            .map(|l| {
+                pack_buf(packs::weapons_stores_len(l), |b| {
+                    packs::emit_weapons_stores(l, b)
+                })
+            })
+            .transpose(),
+        141 => record
+            .waypoint_list
+            .as_ref()
+            .map(|l| pack_buf(packs::waypoints_len(l), |b| packs::emit_waypoints(l, b)))
+            .transpose(),
+        142 => record
+            .view_domain
+            .map(|vd| {
+                pack_buf(packs::view_domain_len(&vd), |b| {
+                    packs::emit_view_domain(&vd, b)
+                })
+            })
+            .transpose(),
+        143 => record
+            .metadata_substream_id
+            .map(|ms| {
+                pack_buf(packs::metadata_substream_id_len(&ms), |b| {
+                    packs::emit_metadata_substream_id(&ms, b)
+                })
+            })
+            .transpose(),
+        _ => Ok(None),
+    }
+}
+
 /// Encode the VALUE bytes for one typed tag from `record`, or `None`
 /// when the corresponding field is absent. `version_fallback` supplies
 /// the Tag 65 auto-version used by the `encode*` entry points; `patch`
@@ -435,250 +566,18 @@ pub(super) fn encode_tag_value(
     version_fallback: Option<u8>,
     policy: OutOfRangePolicy,
 ) -> Result<Option<Vec<u8>>, KlvEncodeError> {
-    let mut scratch = [0u8; 8];
-    Ok(match spec.id {
-        2 => record.timestamp_us.map(|t| t.to_be_bytes().to_vec()),
-        3 => record
-            .mission_id
-            .as_ref()
-            .map(|s| check_string(3, s, &spec.encoding).map(|_| str_to_bytes(s)))
-            .transpose()?,
-        4 => record
-            .platform_tail_number
-            .as_ref()
-            .map(|s| check_string(4, s, &spec.encoding).map(|_| str_to_bytes(s)))
-            .transpose()?,
-        10 => record
-            .platform_designation
-            .as_ref()
-            .map(|s| check_string(10, s, &spec.encoding).map(|_| str_to_bytes(s)))
-            .transpose()?,
-        11 => record
-            .image_source_sensor
-            .as_ref()
-            .map(|s| check_string(11, s, &spec.encoding).map(|_| str_to_bytes(s)))
-            .transpose()?,
-        12 => record
-            .image_coordinate_system
-            .as_ref()
-            .map(|s| check_string(12, s, &spec.encoding).map(|_| str_to_bytes(s)))
-            .transpose()?,
-        34 => record.icing_detected.map(|v| vec![v.to_wire()]),
-        39 => record.outside_air_temp_c.map(|v| vec![v as u8]),
-        47 => record.generic_flag_data.map(|b| vec![b]),
-        48 => record.security_local_set.clone(),
-        59 => record
-            .platform_call_sign
-            .as_ref()
-            .map(|s| check_string(59, s, &spec.encoding).map(|_| str_to_bytes(s)))
-            .transpose()?,
-        60 => record.weapon_load.map(|v| v.to_be_bytes().to_vec()),
-        61 => record.weapon_fired.map(|b| vec![b]),
-        62 => record.laser_prf_code.map(|v| v.to_be_bytes().to_vec()),
-        63 => record.sensor_fov_name.map(|v| vec![v.to_wire()]),
-        65 => match (record.uas_ls_version, version_fallback) {
-            (Some(v), _) => Some(vec![v]),
-            (None, Some(fallback)) => Some(vec![fallback]),
-            (None, None) => None,
-        },
-        70 => record
-            .alternate_platform_name
-            .as_ref()
-            .map(|s| check_string(70, s, &spec.encoding).map(|_| str_to_bytes(s)))
-            .transpose()?,
-        72 => record.event_start_time_us.map(|t| t.to_be_bytes().to_vec()),
-        73 => record.rvt.clone(),
-        74 => record.vmti.clone(),
-        77 => record.operational_mode.map(|v| vec![v.to_wire()]),
-        94 => record.miis_core_id.clone(),
-        95 => record.sar_mi_local_set.clone(),
-        97 => record.range_image_local_set.clone(),
-        98 => record.geo_registration_local_set.clone(),
-        99 => record.composite_imaging_local_set.clone(),
-        100 => record.segment_local_set.clone(),
-        101 => record.amend_local_set.clone(),
-        106 => record
-            .stream_designator
-            .as_ref()
-            .map(|s| check_string(106, s, &spec.encoding).map(|_| str_to_bytes(s)))
-            .transpose()?,
-        107 => record
-            .operational_base
-            .as_ref()
-            .map(|s| check_string(107, s, &spec.encoding).map(|_| str_to_bytes(s)))
-            .transpose()?,
-        108 => record
-            .broadcast_source
-            .as_ref()
-            .map(|s| check_string(108, s, &spec.encoding).map(|_| str_to_bytes(s)))
-            .transpose()?,
-        129 => record
-            .target_id
-            .as_ref()
-            .map(|s| check_string(129, s, &spec.encoding).map(|_| str_to_bytes(s)))
-            .transpose()?,
-        135 => record
-            .communications_method
-            .as_ref()
-            .map(|s| check_string(135, s, &spec.encoding).map(|_| str_to_bytes(s)))
-            .transpose()?,
-        // Var-length int/enum fields — always shortest-form.
-        110 => record
-            .time_airborne_s
-            .map(|v| crate::klv::length::write_var_uint_min(v as u64)),
-        111 => record
-            .propulsion_unit_speed_rpm
-            .map(|v| crate::klv::length::write_var_uint_min(v as u64)),
-        123 => record
-            .navsats_in_view
-            .map(|v| crate::klv::length::write_var_uint_min(v as u64)),
-        124 => record
-            .positioning_method_source
-            .map(|v| crate::klv::length::write_var_uint_min(v as u64)),
-        125 => record
-            .platform_status
-            .map(|v| crate::klv::length::write_var_uint_min(v.to_wire() as u64)),
-        126 => record
-            .sensor_control_mode
-            .map(|v| crate::klv::length::write_var_uint_min(v.to_wire() as u64)),
-        131 => record
-            .take_off_time_us
-            .map(crate::klv::length::write_var_uint_min),
-        133 => record
-            .mi_storage_capacity_gb
-            .map(|v| crate::klv::length::write_var_uint_min(v as u64)),
-        136 => record
-            .leap_seconds
-            .map(|v| crate::klv::length::write_var_int_min(v as i64)),
-        137 => record
-            .correction_offset_us
-            .map(crate::klv::length::write_var_int_min),
-        139 => record.active_payloads.clone(),
-        // Pack/list items (single-instance). Tags 102 and
-        // 115 are MULTI-INSTANCE and fall to the `_ => None` arm below —
-        // their TLVs are emitted directly by `write_typed_fields`'s
-        // inline loops over `record.sdcc_flps` / `record.control_commands`,
-        // bypassing this once-per-tag function entirely.
-        81 => record
-            .image_horizon
-            .map(|h| {
-                let mut buf = Vec::with_capacity(packs::image_horizon_len(&h));
-                packs::emit_image_horizon(&h, &mut buf).map(|_| buf)
-            })
-            .transpose()?,
-        116 => record
-            .control_command_verification
-            .as_ref()
-            .map(|ids| {
-                let mut buf = Vec::with_capacity(packs::id_list_len(ids));
-                packs::emit_id_list(ids, &mut buf).map(|_| buf)
-            })
-            .transpose()?,
-        121 => record
-            .active_wavelengths
-            .as_ref()
-            .map(|ids| {
-                let mut buf = Vec::with_capacity(packs::id_list_len(ids));
-                packs::emit_id_list(ids, &mut buf).map(|_| buf)
-            })
-            .transpose()?,
-        122 => record
-            .country_codes
-            .as_ref()
-            .map(|cc| {
-                let mut buf = Vec::with_capacity(packs::country_codes_len(cc));
-                packs::emit_country_codes(cc, &mut buf).map(|_| buf)
-            })
-            .transpose()?,
-        127 => record
-            .sensor_frame_rate
-            .map(|fr| {
-                let mut buf = Vec::with_capacity(packs::sensor_frame_rate_len(&fr));
-                packs::emit_sensor_frame_rate(&fr, &mut buf).map(|_| buf)
-            })
-            .transpose()?,
-        128 => record
-            .wavelengths_list
-            .as_ref()
-            .map(|l| {
-                let mut buf = Vec::with_capacity(packs::wavelengths_list_len(l));
-                packs::emit_wavelengths_list(l, &mut buf).map(|_| buf)
-            })
-            .transpose()?,
-        130 => record
-            .airbase_locations
-            .map(|al| {
-                let mut buf = Vec::with_capacity(packs::airbase_locations_len(&al));
-                packs::emit_airbase_locations(&al, &mut buf).map(|_| buf)
-            })
-            .transpose()?,
-        138 => record
-            .payload_list
-            .as_ref()
-            .map(|pl| {
-                let mut buf = Vec::with_capacity(packs::payload_list_len(pl));
-                packs::emit_payload_list(pl, &mut buf).map(|_| buf)
-            })
-            .transpose()?,
-        140 => record
-            .weapons_stores
-            .as_ref()
-            .map(|l| {
-                let mut buf = Vec::with_capacity(packs::weapons_stores_len(l));
-                packs::emit_weapons_stores(l, &mut buf).map(|_| buf)
-            })
-            .transpose()?,
-        141 => record
-            .waypoint_list
-            .as_ref()
-            .map(|l| {
-                let mut buf = Vec::with_capacity(packs::waypoints_len(l));
-                packs::emit_waypoints(l, &mut buf).map(|_| buf)
-            })
-            .transpose()?,
-        142 => record
-            .view_domain
-            .map(|vd| {
-                let mut buf = Vec::with_capacity(packs::view_domain_len(&vd));
-                packs::emit_view_domain(&vd, &mut buf).map(|_| buf)
-            })
-            .transpose()?,
-        143 => record
-            .metadata_substream_id
-            .map(|ms| {
-                let mut buf = Vec::with_capacity(packs::metadata_substream_id_len(&ms));
-                packs::emit_metadata_substream_id(&ms, &mut buf).map(|_| buf)
-            })
-            .transpose()?,
-        // All 69 LinearRange Option<f64> fields — driven from the `TAGS` row accessors so
-        // the tag→field mapping is the single source of truth across decode + encode.
-        _ if spec.range.is_some() => {
-            encode_ranged(spec.get_f64(record), spec, &mut scratch, policy)?
-        }
-        // The 14 IMAPB extended-range fields — share the
-        // row accessors with the LinearRange fields above;
-        // the wire format is what differs (encode_imapb_field vs encode_ranged).
-        _ if matches!(spec.encoding, Encoding::Imapb { .. }) => {
-            let Encoding::Imapb {
-                min,
-                max,
-                default_len,
-                ..
-            } = spec.encoding
-            else {
-                unreachable!()
-            };
-            encode_imapb_field(
-                spec.get_f64(record),
-                spec.id as u32,
-                min,
-                max,
-                default_len,
-                policy,
-            )?
-        }
-        _ => None,
-    })
+    if spec.encoding == Encoding::Pack {
+        return pack_value(record, spec.id);
+    }
+    // The checksum row has no accessor; the caller appends it.
+    let Some(get) = spec.get else {
+        return Ok(None);
+    };
+    match get(record) {
+        Some(v) => encode_scalar(spec, &v, policy).map(Some),
+        None if spec.id == 65 => Ok(version_fallback.map(|v| vec![v])),
+        None => Ok(None),
+    }
 }
 
 fn write_typed_fields(
@@ -803,18 +702,14 @@ fn write_unknown_fields(record: &UasDatalinkLs, body: &mut Vec<u8>) -> Result<()
 }
 
 fn encode_ranged(
-    value: Option<f64>,
-    spec: &super::tags::TagSpec,
-    scratch: &mut [u8; 8],
+    v: f64,
+    spec: &TagSpec,
     policy: OutOfRangePolicy,
-) -> Result<Option<Vec<u8>>, KlvEncodeError> {
-    let Some(v) = value else { return Ok(None) };
-    let r = spec
-        .range
-        .as_ref()
-        .expect("ranged tag must have LinearRange");
+) -> Result<Vec<u8>, KlvEncodeError> {
+    let r = linear_range(spec);
+    let mut scratch = [0u8; 8];
     encode_fixed_range(r, spec.id as u32, v, &mut scratch[..r.byte_length], policy)?;
-    Ok(Some(scratch[..r.byte_length].to_vec()))
+    Ok(scratch[..r.byte_length].to_vec())
 }
 
 /// Encode one ST 1201.5 IMAPB extended-range field — the IMAPB
@@ -824,14 +719,13 @@ fn encode_ranged(
 /// `AboveMax` special at `default_len` instead. Non-finite input always
 /// errors regardless of policy.
 fn encode_imapb_field(
-    value: Option<f64>,
+    v: f64,
     tag: u32,
     min: f64,
     max: f64,
     default_len: usize,
     policy: OutOfRangePolicy,
-) -> Result<Option<Vec<u8>>, KlvEncodeError> {
-    let Some(v) = value else { return Ok(None) };
+) -> Result<Vec<u8>, KlvEncodeError> {
     let mut buf = vec![0u8; default_len];
     if v.is_finite() && v >= min && v <= max {
         let p = crate::klv::imapb::ImapbParams {
@@ -840,7 +734,7 @@ fn encode_imapb_field(
             length: default_len,
         };
         crate::klv::imapb::encode_imapb(&p, v, &mut buf)?;
-        return Ok(Some(buf));
+        return Ok(buf);
     }
     if policy == OutOfRangePolicy::Indicator && v.is_finite() {
         let special = if v < min {
@@ -849,7 +743,7 @@ fn encode_imapb_field(
             crate::klv::imapb::ImapbSpecial::AboveMax
         };
         crate::klv::imapb::encode_imapb_special(special, default_len, &mut buf)?;
-        return Ok(Some(buf));
+        return Ok(buf);
     }
     // Extended items have no LinearRange twin of their own to name in a
     // hint (`mapping::range_hint` only covers LinearRange fields).

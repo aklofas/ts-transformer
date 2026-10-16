@@ -194,7 +194,6 @@ pub(crate) type FieldSet = fn(&mut UasDatalinkLs, FieldValue) -> Result<(), KlvF
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TagSpec {
     pub id: u8,
-    #[allow(dead_code, reason = "diagnostic label; read by the table tests")]
     pub name: &'static str,
     pub encoding: Encoding,
     pub range: Option<LinearRange>,
@@ -214,7 +213,8 @@ impl TagSpec {
     }
 
     /// Store `v` into a ranged or IMAPB row's field; a row without a
-    /// scalar field ignores the call.
+    /// scalar field ignores the call. Tests only: the encoder reads fields
+    /// and the decoder writes them through `set`, never through this view.
     #[cfg(test)]
     pub(crate) fn set_f64(&self, r: &mut UasDatalinkLs, v: f64) {
         if let Some(set) = self.set {
@@ -2204,7 +2204,7 @@ pub(crate) fn lookup(id: u8) -> Option<&'static TagSpec> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     #[test]
@@ -2417,7 +2417,7 @@ mod tests {
     /// A per-encoding sample inside every row's range: midpoints for ranged
     /// rows, 1 for integers, "a" for strings, [0x47] for bytes, code 1 for
     /// the coded enums.
-    fn sample_value(spec: &TagSpec) -> FieldValue {
+    pub(crate) fn sample_value(spec: &TagSpec) -> FieldValue {
         const CODED: &[u8] = &[34, 63, 77, 125, 126];
         if CODED.contains(&spec.id) {
             return FieldValue::Code(1);

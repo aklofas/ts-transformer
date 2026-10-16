@@ -11,22 +11,13 @@ use super::packs::{
     ControlCommand, ImageHorizonPixels, MetadataSubstreamId, PayloadType, SensorFrameRate,
 };
 use super::patch::patch;
-use super::tags::{Encoding, TAGS};
+use super::tags::tests::sample_value;
+use super::tags::{Encoding, FieldValue, TAGS, TagSpec};
 use crate::error::{KlvDecodeError, KlvEncodeError, KlvPatchError};
 use crate::klv::checksum::checksum_running_sum_16;
 use crate::klv::pack::OwnedRawField;
 use crate::klv::universal_label::UniversalLabel;
 use crate::test_prelude::*;
-
-/// Store `v` into the ranged field of `tag` (the `Option<f64>` view of its row).
-fn assign_ranged(record: &mut UasDatalinkLs, tag: u32, v: f64) {
-    if let Some(spec) = u8::try_from(tag)
-        .ok()
-        .and_then(crate::klv::st0601::tags::lookup)
-    {
-        spec.set_f64(record, v);
-    }
-}
 
 #[test]
 fn default_uses_st0601_ul() {
@@ -720,291 +711,201 @@ fn vmti_tag_74_round_trips_verbatim() {
     );
 }
 
+/// Whether `got` is the value `want` survived encode and decode as: exact
+/// for everything but the ranged floats, which come back within the row's
+/// quantisation step.
+fn survives(spec: &TagSpec, got: &FieldValue, want: &FieldValue) -> bool {
+    let (FieldValue::F64(g), FieldValue::F64(w)) = (got, want) else {
+        return got == want;
+    };
+    let (span, len) = match (spec.range, spec.encoding) {
+        (Some(r), _) => (r.max - r.min, r.byte_length),
+        (
+            None,
+            Encoding::Imapb {
+                min,
+                max,
+                default_len,
+                ..
+            },
+        ) => (max - min, default_len),
+        (None, _) => return got == want,
+    };
+    (g - w).abs() <= span / 2f64.powi(8 * len as i32 - 1)
+}
+
+/// Every `TAGS` row with a scalar field survives encode and decode with a
+/// sample value, and the decoded record holds it in the field the row
+/// names (read back through `get`). The pack rows and the two
+/// multi-instance tags have no scalar field; `every_pack_tag_round_trips`
+/// covers them.
 #[test]
 fn every_typed_tag_round_trips() {
-    // For every TagSpec in TAGS, set its corresponding field in
-    // UasDatalinkLs to a sentinel value, encode the record, decode
-    // it back, and verify the field survived the round trip. This
-    // catches "tag added to TAGS but apply_typed_tag/assign_ranged/
-    // walk_typed_lens/write_typed_fields not updated" drift.
-
-    for spec in TAGS {
-        // Skip Tag 1 (checksum: not user-set) and Tag 47/65
-        // (handled by separate U8 dispatch; round-trip test below
-        // exercises them implicitly via auto_version).
-        if spec.id == 1 {
-            continue;
-        }
+    for spec in TAGS.iter().filter(|s| s.set.is_some()) {
         let mut record = UasDatalinkLs {
-            timestamp_us: Some(1_700_000_000_000_000),
+            timestamp_us: Some(1),
             ..Default::default()
         };
-        // Set the field we expect for this tag. The choice of
-        // sentinel value just has to be inside the spec range.
-        match spec.id {
-            2 => {} // already set
-            3 => record.mission_id = Some("M".to_string()),
-            4 => record.platform_tail_number = Some("T".to_string()),
-            10 => record.platform_designation = Some("D".to_string()),
-            11 => record.image_source_sensor = Some("S".to_string()),
-            12 => record.image_coordinate_system = Some("WGS84".to_string()),
-            34 => record.icing_detected = Some(IcingDetected::IcingDetected),
-            39 => record.outside_air_temp_c = Some(-16),
-            47 => record.generic_flag_data = Some(0xAB),
-            48 => record.security_local_set = Some(vec![0x01, 0x02]),
-            59 => record.platform_call_sign = Some("CS".to_string()),
-            60 => record.weapon_load = Some(45016),
-            61 => record.weapon_fired = Some(186),
-            62 => record.laser_prf_code = Some(1743),
-            63 => record.sensor_fov_name = Some(SensorFovName::ContinuousZoom),
-            65 => record.uas_ls_version = Some(0x13),
-            70 => record.alternate_platform_name = Some("APACHE".to_string()),
-            72 => record.event_start_time_us = Some(798_039_894_000_000),
-            73 => record.rvt = Some(vec![0xAA, 0xBB]),
-            74 => record.vmti = Some(vec![0xDE, 0xAD, 0xBE, 0xEF]),
-            77 => record.operational_mode = Some(OperationalMode::Operational),
-            94 => record.miis_core_id = Some(vec![0x01, 0x70, 0xCA, 0xFE]),
-            95 => record.sar_mi_local_set = Some(vec![0x01, 0x02, 0x03]),
-            97 => record.range_image_local_set = Some(vec![0x04, 0x05, 0x06]),
-            98 => record.geo_registration_local_set = Some(vec![0x07, 0x08, 0x09]),
-            99 => record.composite_imaging_local_set = Some(vec![0x0A, 0x0B, 0x0C]),
-            100 => record.segment_local_set = Some(vec![0x0D, 0x0E, 0x0F]),
-            101 => record.amend_local_set = Some(vec![0x10, 0x11, 0x12]),
-            106 => record.stream_designator = Some("BLUE".to_string()),
-            107 => record.operational_base = Some("BASE01".to_string()),
-            108 => record.broadcast_source = Some("HOME".to_string()),
-            129 => record.target_id = Some("A123".to_string()),
-            135 => record.communications_method = Some("Frequency Modulation".to_string()),
-            110 => record.time_airborne_s = Some(19887),
-            111 => record.propulsion_unit_speed_rpm = Some(3000),
-            123 => record.navsats_in_view = Some(7),
-            124 => record.positioning_method_source = Some(3),
-            125 => record.platform_status = Some(PlatformStatus::Egress),
-            126 => record.sensor_control_mode = Some(SensorControlMode::AutoHoldingPosition),
-            131 => record.take_off_time_us = Some(1_529_588_637_122_999),
-            133 => record.mi_storage_capacity_gb = Some(10000),
-            136 => record.leap_seconds = Some(30),
-            137 => record.correction_offset_us = Some(5_025_678_901),
-            139 => record.active_payloads = Some(vec![0x0B]),
-            102 => record.sdcc_flps.push(SdccFlpField {
-                preceding_tags: vec![13],
-                bytes: hex(concat!(
-                    "03 84 04",
-                    "3F800000 40000000 40800000",
-                    "3F000000 00000000 BF000000",
-                )),
-            }),
-            81 => {
-                record.image_horizon = Some(ImageHorizonPixels {
-                    x0_pct: 10,
-                    y0_pct: 20,
-                    x1_pct: 30,
-                    y1_pct: 40,
-                    start_lat_deg: Some(10.0),
-                    start_lon_deg: Some(-20.0),
-                    end_lat_deg: Some(30.0),
-                    end_lon_deg: Some(-40.0),
-                })
-            }
-            115 => record.control_commands.push(ControlCommand {
-                id: 42,
-                command: "TEST".to_string(),
-                time_us: Some(1234),
-            }),
-            116 => record.control_command_verification = Some(vec![3, 7]),
-            121 => record.active_wavelengths = Some(vec![1, 3]),
-            127 => {
-                record.sensor_frame_rate = Some(SensorFrameRate {
-                    numerator: 60000,
-                    denominator: 1001,
-                })
-            }
-            143 => {
-                record.metadata_substream_id = Some(MetadataSubstreamId {
-                    local_id: 5,
-                    uuid: None,
-                })
-            }
-            122 => {
-                record.country_codes = Some(super::packs::CountryCodes {
-                    coding_method: 14,
-                    overflight: Some("CAN".to_string()),
-                    operator: None,
-                    manufacture: Some("FRA".to_string()),
-                })
-            }
-            128 => {
-                record.wavelengths_list = Some(vec![super::packs::WavelengthRecord {
-                    id: 21,
-                    min_nm: 1000.0,
-                    max_nm: 2000.0,
-                    name: "NNIR".to_string(),
-                }])
-            }
-            130 => {
-                record.airbase_locations = Some(super::packs::AirbaseLocations {
-                    take_off: Some(super::packs::Location {
-                        lat_deg: Some(38.8),
-                        lon_deg: Some(-77.0),
-                        hae_m: Some(3.0),
-                    }),
-                    recovery: None,
-                })
-            }
-            138 => {
-                record.payload_list = Some(super::packs::PayloadList {
-                    count: 1,
-                    records: vec![super::packs::PayloadRecord {
-                        id: 0,
-                        payload_type: super::packs::PayloadType::ElectroOptical,
-                        name: "VIS Nose Camera".to_string(),
-                    }],
-                })
-            }
-            140 => {
-                record.weapons_stores = Some(vec![super::packs::WeaponsStore {
-                    station_id: 1,
-                    hardpoint_id: 1,
-                    carriage_id: 1,
-                    store_id: 3,
-                    status_raw: 0x103,
-                    weapon_type: "Harpoon".to_string(),
-                }])
-            }
-            141 => {
-                record.waypoint_list = Some(vec![super::packs::Waypoint {
-                    id: 0,
-                    prosecution_order: 1,
-                    info: Some(3),
-                    location: Some(super::packs::Location {
-                        lat_deg: Some(38.889422),
-                        lon_deg: Some(-77.035162),
-                        hae_m: Some(200.0),
-                    }),
-                }])
-            }
-            142 => {
-                record.view_domain = Some(super::packs::ViewDomain {
-                    azimuth: Some(super::packs::ViewDomainPair {
-                        start_deg: 210.0,
-                        range_deg: 300.0,
-                    }),
-                    elevation: None,
-                    roll: None,
-                })
-            }
-            _ => {
-                // Ranged numeric: pick a value at the midpoint of the spec
-                // range. LinearRange tags carry their range in `spec.range`;
-                // Imapb tags carry it in `spec.encoding` instead.
-                let (min, max) = match (spec.range, spec.encoding) {
-                    (Some(r), _) => (r.min, r.max),
-                    (None, Encoding::Imapb { min, max, .. }) => (min, max),
-                    (None, _) => panic!(
-                        "tag {} ({}) is neither LinearRange nor Imapb (and isn't one of the \
-                         explicit VarUint/VarInt/RawBytes arms above either) — \
-                         every_typed_tag_round_trips needs a new arm",
-                        spec.id, spec.name
-                    ),
-                };
-                let midpoint = (min + max) / 2.0;
-                assign_ranged(&mut record, spec.id as u32, midpoint);
-                // Sanity-check: the field actually got set.
-                let mut probe = UasDatalinkLs::default();
-                assign_ranged(&mut probe, spec.id as u32, midpoint);
-                assert_ne!(
-                    format!("{probe:?}"),
-                    format!("{:?}", UasDatalinkLs::default()),
-                    "assign_ranged for tag {} ({}) is a no-op — missing arm",
-                    spec.id,
-                    spec.name
-                );
-            }
-        }
-        // Encode and decode round trip.
+        let sample = sample_value(spec);
+        (spec.set.expect("set"))(&mut record, sample.clone()).expect("sample fits the field");
         let buf = encode_to_vec(&record)
             .unwrap_or_else(|e| panic!("encode failed for tag {} ({}): {e}", spec.id, spec.name));
         let back = decode(&buf)
             .unwrap_or_else(|e| panic!("decode failed for tag {} ({}): {e}", spec.id, spec.name));
-        // Field must be present in the decoded record (we don't
-        // compare exact values because IMAPB scaling is lossy).
-        let present = match spec.id {
-            3 => back.mission_id.is_some(),
-            4 => back.platform_tail_number.is_some(),
-            10 => back.platform_designation.is_some(),
-            11 => back.image_source_sensor.is_some(),
-            12 => back.image_coordinate_system.is_some(),
-            34 => back.icing_detected.is_some(),
-            39 => back.outside_air_temp_c.is_some(),
-            47 => back.generic_flag_data.is_some(),
-            48 => back.security_local_set.is_some(),
-            59 => back.platform_call_sign.is_some(),
-            60 => back.weapon_load.is_some(),
-            61 => back.weapon_fired.is_some(),
-            62 => back.laser_prf_code.is_some(),
-            63 => back.sensor_fov_name.is_some(),
-            65 => back.uas_ls_version.is_some(),
-            70 => back.alternate_platform_name.is_some(),
-            72 => back.event_start_time_us.is_some(),
-            73 => back.rvt.is_some(),
-            74 => back.vmti.is_some(),
-            77 => back.operational_mode.is_some(),
-            94 => back.miis_core_id.is_some(),
-            95 => back.sar_mi_local_set.is_some(),
-            97 => back.range_image_local_set.is_some(),
-            98 => back.geo_registration_local_set.is_some(),
-            99 => back.composite_imaging_local_set.is_some(),
-            100 => back.segment_local_set.is_some(),
-            101 => back.amend_local_set.is_some(),
-            106 => back.stream_designator.is_some(),
-            107 => back.operational_base.is_some(),
-            108 => back.broadcast_source.is_some(),
-            129 => back.target_id.is_some(),
-            135 => back.communications_method.is_some(),
-            110 => back.time_airborne_s.is_some(),
-            111 => back.propulsion_unit_speed_rpm.is_some(),
-            123 => back.navsats_in_view.is_some(),
-            124 => back.positioning_method_source.is_some(),
-            125 => back.platform_status.is_some(),
-            126 => back.sensor_control_mode.is_some(),
-            131 => back.take_off_time_us.is_some(),
-            133 => back.mi_storage_capacity_gb.is_some(),
-            136 => back.leap_seconds.is_some(),
-            137 => back.correction_offset_us.is_some(),
-            139 => back.active_payloads.is_some(),
-            102 => !back.sdcc_flps.is_empty(),
-            81 => back.image_horizon.is_some(),
-            115 => !back.control_commands.is_empty(),
-            116 => back.control_command_verification.is_some(),
-            121 => back.active_wavelengths.is_some(),
-            127 => back.sensor_frame_rate.is_some(),
-            143 => back.metadata_substream_id.is_some(),
-            122 => back.country_codes.is_some(),
-            128 => back.wavelengths_list.is_some(),
-            130 => back.airbase_locations.is_some(),
-            138 => back.payload_list.is_some(),
-            140 => back.weapons_stores.is_some(),
-            141 => back.waypoint_list.is_some(),
-            142 => back.view_domain.is_some(),
-            2 => back.timestamp_us.is_some(),
-            _ => {
-                // For ranged numeric, presence == any of our ranged fields is set.
-                // We reuse assign_ranged to a default record to compare which field
-                // changed; back must have that same field set.
-                let mut probe = UasDatalinkLs::default();
-                assign_ranged(&mut probe, spec.id as u32, 0.0);
-                // Compute a Debug snapshot of `back` field vs `probe`'s expected
-                // field. Practically: we just check that *some* numeric field
-                // changed in `back` relative to default.
-                format!("{back:?}") != format!("{:?}", UasDatalinkLs::default())
-            }
-        };
+        let got = (spec.get.expect("get"))(&back)
+            .unwrap_or_else(|| panic!("tag {} ({}) did not round-trip", spec.id, spec.name));
         assert!(
-            present,
-            "round trip lost tag {} ({}); encoder or decoder dispatch arm missing",
-            spec.id, spec.name
+            survives(spec, &got, &sample),
+            "tag {} ({}) did not round-trip: wrote {sample:?}, read {got:?}",
+            spec.id,
+            spec.name
+        );
+        assert!(
+            back.field_errors.is_empty(),
+            "tag {} ({}) produced field errors {:?}",
+            spec.id,
+            spec.name,
+            back.field_errors
         );
     }
+}
+
+/// The pack rows and the two multi-instance tags: one record carries all
+/// of them, and each comes back (the lossy-float packs by presence). The list of pack tags is pinned so
+/// a new pack row cannot be added without extending this test.
+#[test]
+fn every_pack_tag_round_trips() {
+    let pack_tags: Vec<u8> = TAGS
+        .iter()
+        .filter(|s| s.encoding == Encoding::Pack)
+        .map(|s| s.id)
+        .collect();
+    assert_eq!(
+        pack_tags,
+        [
+            81, 102, 115, 116, 121, 122, 127, 128, 130, 138, 140, 141, 142, 143
+        ]
+    );
+    let record = UasDatalinkLs {
+        timestamp_us: Some(1_700_000_000_000_000),
+        image_horizon: Some(ImageHorizonPixels {
+            x0_pct: 10,
+            y0_pct: 20,
+            x1_pct: 30,
+            y1_pct: 40,
+            start_lat_deg: Some(10.0),
+            start_lon_deg: Some(-20.0),
+            end_lat_deg: Some(30.0),
+            end_lon_deg: Some(-40.0),
+        }),
+        sdcc_flps: vec![SdccFlpField {
+            preceding_tags: vec![13],
+            bytes: hex(concat!(
+                "03 84 04",
+                "3F800000 40000000 40800000",
+                "3F000000 00000000 BF000000",
+            )),
+        }],
+        control_commands: vec![ControlCommand {
+            id: 42,
+            command: "TEST".to_string(),
+            time_us: Some(1234),
+        }],
+        control_command_verification: Some(vec![3, 7]),
+        active_wavelengths: Some(vec![1, 3]),
+        country_codes: Some(super::packs::CountryCodes {
+            coding_method: 14,
+            overflight: Some("CAN".to_string()),
+            operator: None,
+            manufacture: Some("FRA".to_string()),
+        }),
+        sensor_frame_rate: Some(SensorFrameRate {
+            numerator: 60000,
+            denominator: 1001,
+        }),
+        wavelengths_list: Some(vec![super::packs::WavelengthRecord {
+            id: 21,
+            min_nm: 1000.0,
+            max_nm: 2000.0,
+            name: "NNIR".to_string(),
+        }]),
+        airbase_locations: Some(super::packs::AirbaseLocations {
+            take_off: Some(super::packs::Location {
+                lat_deg: Some(38.8),
+                lon_deg: Some(-77.0),
+                hae_m: Some(3.0),
+            }),
+            recovery: None,
+        }),
+        payload_list: Some(super::packs::PayloadList {
+            count: 1,
+            records: vec![super::packs::PayloadRecord {
+                id: 0,
+                payload_type: super::packs::PayloadType::ElectroOptical,
+                name: "VIS Nose Camera".to_string(),
+            }],
+        }),
+        weapons_stores: Some(vec![super::packs::WeaponsStore {
+            station_id: 1,
+            hardpoint_id: 1,
+            carriage_id: 1,
+            store_id: 3,
+            status_raw: 0x103,
+            weapon_type: "Harpoon".to_string(),
+        }]),
+        waypoint_list: Some(vec![super::packs::Waypoint {
+            id: 0,
+            prosecution_order: 1,
+            info: Some(3),
+            location: Some(super::packs::Location {
+                lat_deg: Some(38.889422),
+                lon_deg: Some(-77.035162),
+                hae_m: Some(200.0),
+            }),
+        }]),
+        view_domain: Some(super::packs::ViewDomain {
+            azimuth: Some(super::packs::ViewDomainPair {
+                start_deg: 210.0,
+                range_deg: 300.0,
+            }),
+            elevation: None,
+            roll: None,
+        }),
+        metadata_substream_id: Some(MetadataSubstreamId {
+            local_id: 5,
+            uuid: None,
+        }),
+        ..Default::default()
+    };
+    let back = decode(&encode_to_vec(&record).unwrap()).unwrap();
+    assert!(back.field_errors.is_empty(), "{:?}", back.field_errors);
+    assert!(back.image_horizon.is_some(), "tag 81");
+    assert_eq!(back.sdcc_flps.len(), 1, "tag 102");
+    assert_eq!(
+        back.sdcc_flps[0].bytes, record.sdcc_flps[0].bytes,
+        "tag 102"
+    );
+    assert_eq!(back.control_commands, record.control_commands, "tag 115");
+    assert_eq!(
+        back.control_command_verification, record.control_command_verification,
+        "tag 116"
+    );
+    assert_eq!(
+        back.active_wavelengths, record.active_wavelengths,
+        "tag 121"
+    );
+    assert_eq!(back.country_codes, record.country_codes, "tag 122");
+    assert_eq!(back.sensor_frame_rate, record.sensor_frame_rate, "tag 127");
+    assert_eq!(back.wavelengths_list, record.wavelengths_list, "tag 128");
+    assert!(back.airbase_locations.is_some(), "tag 130");
+    assert_eq!(back.payload_list, record.payload_list, "tag 138");
+    assert_eq!(back.weapons_stores, record.weapons_stores, "tag 140");
+    assert!(back.waypoint_list.is_some(), "tag 141");
+    assert_eq!(back.view_domain, record.view_domain, "tag 142");
+    assert_eq!(
+        back.metadata_substream_id, record.metadata_substream_id,
+        "tag 143"
+    );
 }
 
 /// Walk the body of an encoded ST 0601 record and locate a tag's TLV.

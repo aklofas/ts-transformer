@@ -73,6 +73,10 @@ name    = "klv_decode"
 harness = false
 
 [[bench]]
+name    = "klv_encode"
+harness = false
+
+[[bench]]
 name    = "demuxer_ingest"
 harness = false
 
