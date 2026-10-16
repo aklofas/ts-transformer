@@ -471,7 +471,7 @@ pub(crate) fn bit_vector_slots(bitvec: &[u8], n: usize) -> Vec<bool> {
 
 /// Cheap peek at Element 1 (Matrix Size) for callers that need `N` before
 /// deciding how many preceding Local Set items an SDCC-FLP occurrence
-/// refines (`st0601::decode::apply_typed_tag`'s Tag 102 arm). `N` is
+/// refines (`st0601::decode::apply_multi_instance`'s Tag 102 arm). `N` is
 /// bounded by what the pack's own bytes can hold — Element 2's Parse
 /// Control plus [`check_matrix_size_fits`], the rule `decode_sdcc_flp`
 /// applies before it allocates — so a hostile `N` cannot make the caller
