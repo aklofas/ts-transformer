@@ -21,11 +21,13 @@ live peer, and must honour the same rules whichever transport it landed on:
 7. A `Sender` fed bytes that hold no TS sync for more than the framing
    limit raises the transport's own exception class (exactly) with kind
    `INPUT_MALFORMED`, on every transport.
-8. `srt` and `tcp` receivers: once the peer closes cleanly, the first
-   `recv_bytes()` raises the transport's class with kind `BROKEN` and
-   every later one raises it with kind `END_OF_STREAM`; `end_reason()`
-   stays `None`. A datagram transport (`rtp`, `udp`, `rist`) cannot see a
-   peer close, so it has no rule 8 case.
+8. `srt` and `tcp` receivers: once the peer closes, `recv_bytes()` raises
+   the transport's class. A `tcp` peer's clean close reads `END_OF_STREAM`
+   on the first receive and every later one. An `srt` peer's close reads
+   `BROKEN` first (libsrt reports a broken link, never a clean EOF) and
+   `END_OF_STREAM` after. `end_reason()` stays `None`. A datagram
+   transport (`rtp`, `udp`, `rist`) cannot see a peer close, so it has no
+   rule 8 case.
 
 Test ids read `{shell}-{scheme}-r{rule}`. A `rist` case skips only when
 librist cannot bind an even loopback port.
@@ -419,7 +421,7 @@ def test_bytes_without_ts_sync_raise_input_malformed(shell: str, scheme: str) ->
 
 
 @pytest.mark.parametrize(("shell", "scheme"), _cases(("Receiver",), 8, schemes=("srt", "tcp")))
-def test_a_clean_peer_close_ends_in_broken_then_end_of_stream(shell: str, scheme: str) -> None:
+def test_a_peer_close_ends_in_end_of_stream(shell: str, scheme: str) -> None:
     error_class, kind_enum = ERRORS[scheme]
     with _receiver_and_peer(shell, scheme) as (rx, close_peer):
         close_peer()
@@ -440,7 +442,10 @@ def test_a_clean_peer_close_ends_in_broken_then_end_of_stream(shell: str, scheme
         first = got.get("value")
         assert first is not None, "the receiver kept delivering for 15 s after the peer closed"
         assert type(first) is error_class, repr(first)
-        assert first.kind == kind_enum.BROKEN
+        # tcp reports the clean EOF itself; libsrt only ever reports a broken
+        # link, so an srt shell reads BROKEN once before the stream is over.
+        expected_first = kind_enum.BROKEN if scheme == "srt" else kind_enum.END_OF_STREAM
+        assert first.kind == expected_first
         for _ in range(2):
             with pytest.raises(error_class) as e:
                 _recv_once(shell, rx)
