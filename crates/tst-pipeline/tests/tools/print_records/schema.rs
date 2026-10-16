@@ -43,19 +43,60 @@ pub struct Entry {
     pub schema: RecordSchema,
 }
 
-/// Every generated record. A record declared with `binding_record!` and
-/// absent here is caught by the registry-completeness test.
-pub fn records() -> Vec<Entry> {
-    use tst_core::klv::st0601::WavelengthRecord;
-    vec![Entry {
+/// One ST 0601 record: both directions, the `tstrans.klv` module and the
+/// `org.tstrans.klv` package.
+fn st0601(rust_path: &'static str, java_implements: &'static str, schema: RecordSchema) -> Entry {
+    Entry {
         family: "st0601",
         py_module: "tstrans.klv",
         java_pkg: "org/tstrans/klv",
         direction: Direction::Both,
-        rust_path: "tst_core::klv::st0601::WavelengthRecord",
-        java_implements: "",
-        schema: WavelengthRecord::BINDING_SCHEMA,
-    }]
+        rust_path,
+        java_implements,
+        schema,
+    }
+}
+
+/// Every generated record. A record declared with `binding_record!` and
+/// absent here is caught by the registry-completeness test.
+pub fn records() -> Vec<Entry> {
+    use tst_core::klv::st0601::{
+        AirbaseLocations, ControlCommand, CountryCodes, ImageHorizonPixels, Location,
+        MetadataSubstreamId, PayloadList, PayloadRecord, SdccFlpField, SensorFrameRate,
+        UasDatalinkLs, ViewDomain, ViewDomainPair, WavelengthRecord, Waypoint, WeaponsStore,
+    };
+    macro_rules! rec {
+        ($name:ident) => {
+            rec!($name, "")
+        };
+        ($name:ident, $implements:expr) => {
+            st0601(
+                concat!("tst_core::klv::st0601::", stringify!($name)),
+                $implements,
+                $name::BINDING_SCHEMA,
+            )
+        };
+    }
+    // The list items and nested records come first: a record is registered
+    // before the records that hold it.
+    vec![
+        rec!(WavelengthRecord),
+        rec!(ImageHorizonPixels),
+        rec!(ControlCommand),
+        rec!(SensorFrameRate),
+        rec!(MetadataSubstreamId),
+        rec!(CountryCodes),
+        rec!(Location),
+        rec!(AirbaseLocations),
+        rec!(PayloadRecord),
+        rec!(PayloadList),
+        rec!(WeaponsStore),
+        rec!(Waypoint),
+        rec!(ViewDomainPair),
+        rec!(ViewDomain),
+        rec!(SdccFlpField),
+        rec!(UasDatalinkLs, "KlvSet"),
+    ]
 }
 
 /// The paragraphs of a joined doc text: runs of lines between empty ones,

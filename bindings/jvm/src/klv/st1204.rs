@@ -10,7 +10,7 @@
 //! `coreIdTextNative(CoreId) -> String` — same read path, calls `Display`.
 //!
 //! `validateMismmsNative(UasDatalinkLs) -> List<MismmsViolation>` — re-uses
-//! `read_uas_datalink` from the st0601 module (via a re-export below), calls
+//! `read_uas_datalink_for_validate` from the st0601 module (via a re-export below), calls
 //! `validate_mismms`, and marshals the `Vec<MismmsViolation>` into an `ArrayList`
 //! of `MismmsViolation` Java records.
 
@@ -406,7 +406,7 @@ jni_native! {
     /// `org.tstrans.klv.Klv.validateMismmsNative(UasDatalinkLs) -> List<MismmsViolation>`
     ///
     /// Re-reads the `UasDatalinkLs` Java record into a Rust value (reusing the
-    /// `read_uas_datalink` helper from st0601), calls `validate_mismms`, then
+    /// `read_uas_datalink_for_validate` helper from st0601), calls `validate_mismms`, then
     /// marshals the `Vec<MismmsViolation>` into an `ArrayList<MismmsViolation>`.
     fn Java_org_tstrans_klv_Klv_validateMismmsNative<'local>(
         env,

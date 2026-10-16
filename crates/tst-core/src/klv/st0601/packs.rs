@@ -55,37 +55,39 @@ fn truncated(tag: u32) -> impl FnOnce(KlvDecodeError) -> KlvFieldError {
     move |_| KlvFieldError::TruncatedField { tag }
 }
 
-/// Item 81: Image Horizon Pixels (ST 0601.19 §8.81) — screen-space
-/// horizon line endpoints as percentages of image width/height, plus an
-/// optional geodetic pair for each endpoint.
-///
-/// Wire shape (DLP, ST 0107 truncatable-trailing convention): 4
-/// mandatory percentage bytes, then 0-4 further int32 linear-mapped
-/// fields in strict order (`start_lat`, `start_lon`, `end_lat`,
-/// `end_lon`) — the pack may end after any of them. A wire int32 exactly
-/// at `INT_MIN` (`0x80000000`) on any of the four trailing fields is the
-/// item's spec-defined "error" indicator (§8.81): that field decodes to
-/// `None` just like a truncated-away field, but the byte position IS
-/// consumed (parsing continues to the next field).
-///
-/// **Encode semantics:** a `None` field that lies BEFORE the last `Some`
-/// field (in wire order) is re-encoded as the `INT_MIN` sentinel — the
-/// spec's own error indicator, which decode maps straight back to `None`
-/// — so a later `Some` field is never silently dropped just because an
-/// earlier optional field is absent. Only a `None` AFTER the last `Some`
-/// (or all four `None`) truncates the pack there, matching decode's own
-/// truncation semantics: there is no wire difference between "never
-/// sent" and "sentinel would be redundant here" once the pack has ended.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct ImageHorizonPixels {
-    pub x0_pct: u8,
-    pub y0_pct: u8,
-    pub x1_pct: u8,
-    pub y1_pct: u8,
-    pub start_lat_deg: Option<f64>,
-    pub start_lon_deg: Option<f64>,
-    pub end_lat_deg: Option<f64>,
-    pub end_lon_deg: Option<f64>,
+crate::binding_record! {
+    /// Item 81: Image Horizon Pixels (ST 0601.19 §8.81) — screen-space
+    /// horizon line endpoints as percentages of image width/height, plus an
+    /// optional geodetic pair for each endpoint.
+    ///
+    /// Wire shape (DLP, ST 0107 truncatable-trailing convention): 4
+    /// mandatory percentage bytes, then 0-4 further int32 linear-mapped
+    /// fields in strict order (`start_lat`, `start_lon`, `end_lat`,
+    /// `end_lon`) — the pack may end after any of them. A wire int32 exactly
+    /// at `INT_MIN` (`0x80000000`) on any of the four trailing fields is the
+    /// item's spec-defined "error" indicator (§8.81): that field decodes to
+    /// `None` just like a truncated-away field, but the byte position IS
+    /// consumed (parsing continues to the next field).
+    ///
+    /// **Encode semantics:** a `None` field that lies BEFORE the last `Some`
+    /// field (in wire order) is re-encoded as the `INT_MIN` sentinel — the
+    /// spec's own error indicator, which decode maps straight back to `None`
+    /// — so a later `Some` field is never silently dropped just because an
+    /// earlier optional field is absent. Only a `None` AFTER the last `Some`
+    /// (or all four `None`) truncates the pack there, matching decode's own
+    /// truncation semantics: there is no wire difference between "never
+    /// sent" and "sentinel would be redundant here" once the pack has ended.
+    #[derive(Debug, Clone, Copy, PartialEq, Default)]
+    pub struct ImageHorizonPixels {
+        pub x0_pct: u8,
+        pub y0_pct: u8,
+        pub x1_pct: u8,
+        pub y1_pct: u8,
+        pub start_lat_deg: Option<f64>,
+        pub start_lon_deg: Option<f64>,
+        pub end_lat_deg: Option<f64>,
+        pub end_lon_deg: Option<f64>,
+    }
 }
 
 /// The four optional trailing fields of [`ImageHorizonPixels`], in wire
@@ -201,21 +203,23 @@ pub(crate) fn emit_image_horizon(
     Ok(())
 }
 
-/// Item 115: Control Command (ST 0601.19 §8.115) — one command sent to
-/// the platform. MULTI-INSTANCE per ST 0601.19 Table 1 ("Multiples
-/// Allowed" = Yes): every wire occurrence of Tag 115 appends one
-/// `ControlCommand` to `UasDatalinkLs::control_commands` rather than
-/// overwriting a single field.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ControlCommand {
-    /// BER-OID command id.
-    pub id: u64,
-    /// Command text, UTF-8, at most 127 bytes.
-    pub command: String,
-    /// Time the command was issued/executed, microseconds — MISB
-    /// var-length truncatable trailing field (present iff the wire pack
-    /// has trailing bytes after `command`).
-    pub time_us: Option<u64>,
+crate::binding_record! {
+    /// Item 115: Control Command (ST 0601.19 §8.115) — one command sent to
+    /// the platform. MULTI-INSTANCE per ST 0601.19 Table 1 ("Multiples
+    /// Allowed" = Yes): every wire occurrence of Tag 115 appends one
+    /// `ControlCommand` to `UasDatalinkLs::control_commands` rather than
+    /// overwriting a single field.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct ControlCommand {
+        /// BER-OID command id.
+        pub id: u64,
+        /// Command text, UTF-8, at most 127 bytes.
+        pub command: String,
+        /// Time the command was issued/executed, microseconds — MISB
+        /// var-length truncatable trailing field (present iff the wire pack
+        /// has trailing bytes after `command`).
+        pub time_us: Option<u64>,
+    }
 }
 
 /// Wire shape: `id (BER-OID, M)` + `string_len (BER) + command (UTF-8,
@@ -312,15 +316,17 @@ pub(crate) fn emit_id_list(ids: &[u64], out: &mut Vec<u8>) -> Result<(), KlvEnco
     Ok(())
 }
 
-/// Item 127: Sensor Frame Rate Pack (ST 0601.19 §8.127) — frame rate as a
-/// numerator/denominator ratio; `denominator` defaults to 1 when the wire
-/// pack ends after the numerator.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SensorFrameRate {
-    /// BER-OID numerator.
-    pub numerator: u64,
-    /// BER-OID denominator; wire-absent means 1 (whole-number fps).
-    pub denominator: u64,
+crate::binding_record! {
+    /// Item 127: Sensor Frame Rate Pack (ST 0601.19 §8.127) — frame rate as a
+    /// numerator/denominator ratio; `denominator` defaults to 1 when the wire
+    /// pack ends after the numerator.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct SensorFrameRate {
+        /// BER-OID numerator.
+        pub numerator: u64,
+        /// BER-OID denominator; wire-absent means 1 (whole-number fps).
+        pub denominator: u64,
+    }
 }
 
 impl SensorFrameRate {
@@ -376,16 +382,18 @@ pub(crate) fn emit_sensor_frame_rate(
     Ok(())
 }
 
-/// Item 143: Metadata Substream Id (ST 0601.19 §8.143) — identifies
-/// which metadata substream this Local Set belongs to. Per §8.143, `uuid`
-/// is REQUIRED when `local_id == 0` and OMITTED when `local_id > 0`; this
-/// decoder is lenient and stores whatever combination the wire carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MetadataSubstreamId {
-    /// BER-OID local substream id.
-    pub local_id: u64,
-    /// RFC 4122 UUID bytes, present per the §8.143 rule above.
-    pub uuid: Option<[u8; 16]>,
+crate::binding_record! {
+    /// Item 143: Metadata Substream Id (ST 0601.19 §8.143) — identifies
+    /// which metadata substream this Local Set belongs to. Per §8.143, `uuid`
+    /// is REQUIRED when `local_id == 0` and OMITTED when `local_id > 0`; this
+    /// decoder is lenient and stores whatever combination the wire carries.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct MetadataSubstreamId {
+        /// BER-OID local substream id.
+        pub local_id: u64,
+        /// RFC 4122 UUID bytes, present per the §8.143 rule above.
+        @[custom] pub uuid: Option<[u8; 16]>,
+    }
 }
 
 pub(crate) fn parse_metadata_substream_id(
@@ -505,32 +513,34 @@ fn decode_imapb_optional(p: &ImapbParams, bytes: &[u8]) -> Result<Option<f64>, K
     })
 }
 
-/// Item 122: Country Codes (ST 0601.19 §8.122) — country-code metadata
-/// about the platform's operation and manufacture. VLP of four
-/// `[BER length][value]` fields in strict order: `coding_method`
-/// (mandatory uint — an enumeration from MISB ST 0102 Table 2 Item 12),
-/// `overflight` (mandatory utf8 — though its own length may be 0,
-/// meaning "unknown"), `operator` (optional utf8), `manufacture`
-/// (optional utf8).
-///
-/// Per §8.122.1: "if one of the country values is unknown, set the
-/// length for the country code to zero (0) and do not include the
-/// country code string" — length-0 always means "unknown", never a
-/// distinct empty string. Truncation removes a length-value pair
-/// ENTIRELY from the end ("When truncating a value, the length-value
-/// pair are both removed") — distinct from the length-0 marker, which
-/// still writes a (zero) length byte. Re-encode canonicalizes a
-/// length-0 `manufacture` immediately followed by nothing else down to
-/// plain truncation (no `operator`/`manufacture` bytes at all) when
-/// both are absent; an absent `operator` with a present `manufacture`
-/// still gets its own length-0 marker so `manufacture` is never
-/// silently swallowed by truncation.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct CountryCodes {
-    pub coding_method: u64,
-    pub overflight: Option<String>,
-    pub operator: Option<String>,
-    pub manufacture: Option<String>,
+crate::binding_record! {
+    /// Item 122: Country Codes (ST 0601.19 §8.122) — country-code metadata
+    /// about the platform's operation and manufacture. VLP of four
+    /// `[BER length][value]` fields in strict order: `coding_method`
+    /// (mandatory uint — an enumeration from MISB ST 0102 Table 2 Item 12),
+    /// `overflight` (mandatory utf8 — though its own length may be 0,
+    /// meaning "unknown"), `operator` (optional utf8), `manufacture`
+    /// (optional utf8).
+    ///
+    /// Per §8.122.1: "if one of the country values is unknown, set the
+    /// length for the country code to zero (0) and do not include the
+    /// country code string" — length-0 always means "unknown", never a
+    /// distinct empty string. Truncation removes a length-value pair
+    /// ENTIRELY from the end ("When truncating a value, the length-value
+    /// pair are both removed") — distinct from the length-0 marker, which
+    /// still writes a (zero) length byte. Re-encode canonicalizes a
+    /// length-0 `manufacture` immediately followed by nothing else down to
+    /// plain truncation (no `operator`/`manufacture` bytes at all) when
+    /// both are absent; an absent `operator` with a present `manufacture`
+    /// still gets its own length-0 marker so `manufacture` is never
+    /// silently swallowed by truncation.
+    #[derive(Debug, Clone, PartialEq, Default)]
+    pub struct CountryCodes {
+        pub coding_method: u64,
+        pub overflight: Option<String>,
+        pub operator: Option<String>,
+        pub manufacture: Option<String>,
+    }
 }
 
 /// Index of the last `Some` among `[operator, manufacture]`, or `None`
@@ -623,35 +633,37 @@ fn emit_len_prefixed(value: &[u8], out: &mut Vec<u8>) -> Result<(), KlvEncodeErr
 // (Waypoint List)
 // ============================================================================
 
-/// A WGS84 geodetic point: latitude, longitude, and Height Above
-/// Ellipsoid (HAE), each ST 1201.5 IMAPB-encoded. Shared substrate for
-/// Item 130 (Airbase Locations, ST 0601.19 §8.130) and the per-waypoint
-/// location in Item 141 (Waypoint List, §8.141).
-///
-/// Wire shape (truncatable DLP, per §8.130.1 bullet 4): `lat`
-/// IMAPB(-90,90,4) + `lon` IMAPB(-180,180,4) + `hae` IMAPB(-900,9000,3)
-/// (NB 9000 max, not the 40000 used by the ST 0601 items with their own
-/// tag — this is the ST 0601.19 Table 16 range, distinct from e.g. Item
-/// 113's Altitude AGL). `lat`/`lon` are mandatory once any bytes are
-/// present; only the trailing `hae` is truncatable.
-///
-/// **Encode semantics for an interior-absent field** (e.g. `lat: None`
-/// while `hae: Some(..)`): IMAPB has no INT_MIN-style sentinel of its
-/// own, so this repurposes the ST 1201.5 special-value space —
-/// specifically `ImapbSpecial::UserDefined { signal: 0 }` — as an
-/// "absent" filler at that field's wire position, matching decode's
-/// `decode_imapb_optional`, which maps ANY special/reserved/out-of-range
-/// pattern back to `None`. This is spec-legal (§7.2.3's special-value
-/// space is defined at the IMAPB layer, independent of the ST 0601 item
-/// using it) even though it is not itself a case ST 0601.19 §8.130
-/// describes — the spec only ever truncates `hae` from the end, never
-/// leaves `lat`/`lon` absent with `hae` present. Only a trailing `None`
-/// (or all three `None`) truncates the pack.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Location {
-    pub lat_deg: Option<f64>,
-    pub lon_deg: Option<f64>,
-    pub hae_m: Option<f64>,
+crate::binding_record! {
+    /// A WGS84 geodetic point: latitude, longitude, and Height Above
+    /// Ellipsoid (HAE), each ST 1201.5 IMAPB-encoded. Shared substrate for
+    /// Item 130 (Airbase Locations, ST 0601.19 §8.130) and the per-waypoint
+    /// location in Item 141 (Waypoint List, §8.141).
+    ///
+    /// Wire shape (truncatable DLP, per §8.130.1 bullet 4): `lat`
+    /// IMAPB(-90,90,4) + `lon` IMAPB(-180,180,4) + `hae` IMAPB(-900,9000,3)
+    /// (NB 9000 max, not the 40000 used by the ST 0601 items with their own
+    /// tag — this is the ST 0601.19 Table 16 range, distinct from e.g. Item
+    /// 113's Altitude AGL). `lat`/`lon` are mandatory once any bytes are
+    /// present; only the trailing `hae` is truncatable.
+    ///
+    /// **Encode semantics for an interior-absent field** (e.g. `lat: None`
+    /// while `hae: Some(..)`): IMAPB has no INT_MIN-style sentinel of its
+    /// own, so this repurposes the ST 1201.5 special-value space —
+    /// specifically `ImapbSpecial::UserDefined { signal: 0 }` — as an
+    /// "absent" filler at that field's wire position, matching decode's
+    /// `decode_imapb_optional`, which maps ANY special/reserved/out-of-range
+    /// pattern back to `None`. This is spec-legal (§7.2.3's special-value
+    /// space is defined at the IMAPB layer, independent of the ST 0601 item
+    /// using it) even though it is not itself a case ST 0601.19 §8.130
+    /// describes — the spec only ever truncates `hae` from the end, never
+    /// leaves `lat`/`lon` absent with `hae` present. Only a trailing `None`
+    /// (or all three `None`) truncates the pack.
+    #[derive(Debug, Clone, Copy, PartialEq, Default)]
+    pub struct Location {
+        pub lat_deg: Option<f64>,
+        pub lon_deg: Option<f64>,
+        pub hae_m: Option<f64>,
+    }
 }
 
 const LOCATION_PARAMS: [ImapbParams; 3] = [
@@ -761,25 +773,27 @@ pub(crate) fn emit_location(loc: &Location, out: &mut Vec<u8>) -> Result<(), Klv
     Ok(())
 }
 
-/// Item 130: Airbase Locations (ST 0601.19 §8.130) — the take-off and
-/// recovery site locations. VLP: `[BER length][Location]` × 2 (take-off,
-/// then recovery).
-///
-/// Per §8.130.1's bandwidth optimizations: a [`Location`] slot whose own
-/// length is 0 decodes to `None` ("unknown"); recovery ABSENT from the
-/// wire ENTIRELY (no second length-value pair at all, not even a
-/// length-0 one) decodes to `Some(take_off)` — "if the Recovery Location
-/// is absent then the Recovery Location is set equal to the Take-Off
-/// location". Encode mirrors this: when `recovery == take_off` the
-/// second pair is omitted entirely (canonicalizing bullet-1's
-/// optimization); a `recovery` that differs from `take_off` — including
-/// `None` while `take_off` is `Some` (deliberately unknown, not
-/// "same-as-take-off") — always gets its own explicit pair, so the two
-/// cases stay distinguishable through a round trip.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct AirbaseLocations {
-    pub take_off: Option<Location>,
-    pub recovery: Option<Location>,
+crate::binding_record! {
+    /// Item 130: Airbase Locations (ST 0601.19 §8.130) — the take-off and
+    /// recovery site locations. VLP: `[BER length][Location]` × 2 (take-off,
+    /// then recovery).
+    ///
+    /// Per §8.130.1's bandwidth optimizations: a [`Location`] slot whose own
+    /// length is 0 decodes to `None` ("unknown"); recovery ABSENT from the
+    /// wire ENTIRELY (no second length-value pair at all, not even a
+    /// length-0 one) decodes to `Some(take_off)` — "if the Recovery Location
+    /// is absent then the Recovery Location is set equal to the Take-Off
+    /// location". Encode mirrors this: when `recovery == take_off` the
+    /// second pair is omitted entirely (canonicalizing bullet-1's
+    /// optimization); a `recovery` that differs from `take_off` — including
+    /// `None` while `take_off` is `Some` (deliberately unknown, not
+    /// "same-as-take-off") — always gets its own explicit pair, so the two
+    /// cases stay distinguishable through a round trip.
+    #[derive(Debug, Clone, Copy, PartialEq, Default)]
+    pub struct AirbaseLocations {
+        pub take_off: Option<Location>,
+        pub recovery: Option<Location>,
+    }
 }
 
 pub(crate) fn parse_airbase_locations(bytes: &[u8]) -> Result<AirbaseLocations, KlvFieldError> {
@@ -1007,12 +1021,14 @@ impl PayloadType {
     }
 }
 
-/// One record of Item 138, Payload List (ST 0601.19 §8.138).
-#[derive(Debug, Clone, PartialEq)]
-pub struct PayloadRecord {
-    pub id: u64,
-    pub payload_type: PayloadType,
-    pub name: String,
+crate::binding_record! {
+    /// One record of Item 138, Payload List (ST 0601.19 §8.138).
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct PayloadRecord {
+        pub id: u64,
+        @[custom] @[java("payloadTypeCode")] pub payload_type: PayloadType,
+        pub name: String,
+    }
 }
 
 fn parse_payload_record(bytes: &[u8]) -> Result<PayloadRecord, KlvFieldError> {
@@ -1053,12 +1069,14 @@ fn emit_payload_record(r: &PayloadRecord, out: &mut Vec<u8>) -> Result<(), KlvEn
     Ok(())
 }
 
-/// Item 138 value (ST 0601.19 §8.138): `count` (BER-OID Payload Count)
-/// followed by a VLP of `[BER length][PayloadRecord]` entries.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PayloadList {
-    pub count: u64,
-    pub records: Vec<PayloadRecord>,
+crate::binding_record! {
+    /// Item 138 value (ST 0601.19 §8.138): `count` (BER-OID Payload Count)
+    /// followed by a VLP of `[BER length][PayloadRecord]` entries.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct PayloadList {
+        pub count: u64,
+        pub records: Vec<PayloadRecord>,
+    }
 }
 
 pub(crate) fn parse_payload_list(bytes: &[u8]) -> Result<PayloadList, KlvFieldError> {
@@ -1101,21 +1119,23 @@ pub(crate) fn emit_payload_list(pl: &PayloadList, out: &mut Vec<u8>) -> Result<(
 // Item 140: Weapons Stores
 // ============================================================================
 
-/// One record of Item 140, Weapons Stores (ST 0601.19 §8.140) — a single
-/// weapon's physical address, status, and type. `status_raw` packs the
-/// spec's 14-bit Status BER-OID value verbatim: the low 8 bits are the
-/// §Table 21 General Status enumeration, the next 4 bits are the
-/// §Table 22 Engagement Status flags, and any remaining high bits are
-/// spec-reserved (preserved verbatim, not masked away, in case a future
-/// revision widens the field).
-#[derive(Debug, Clone, PartialEq)]
-pub struct WeaponsStore {
-    pub station_id: u64,
-    pub hardpoint_id: u64,
-    pub carriage_id: u64,
-    pub store_id: u64,
-    pub status_raw: u64,
-    pub weapon_type: String,
+crate::binding_record! {
+    /// One record of Item 140, Weapons Stores (ST 0601.19 §8.140) — a single
+    /// weapon's physical address, status, and type. `status_raw` packs the
+    /// spec's 14-bit Status BER-OID value verbatim: the low 8 bits are the
+    /// §Table 21 General Status enumeration, the next 4 bits are the
+    /// §Table 22 Engagement Status flags, and any remaining high bits are
+    /// spec-reserved (preserved verbatim, not masked away, in case a future
+    /// revision widens the field).
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct WeaponsStore {
+        pub station_id: u64,
+        pub hardpoint_id: u64,
+        pub carriage_id: u64,
+        pub store_id: u64,
+        pub status_raw: u64,
+        pub weapon_type: String,
+    }
 }
 
 impl WeaponsStore {
@@ -1234,30 +1254,32 @@ pub(crate) fn emit_weapons_stores(
 // Item 141: Waypoint List
 // ============================================================================
 
-/// One record of Item 141, Waypoint List (ST 0601.19 §8.141).
-///
-/// `info` (the Mode/Source bitfield) and `location` are both optional
-/// trailing fields, but only `location` is self-delimiting by its own
-/// wire length the way [`Location`]'s internal truncation is — `info`
-/// is a self-delimiting BER-OID (so its presence never needs an
-/// external marker), and this decoder distinguishes "info present" from
-/// "info absent, straight to location" by checking whether the
-/// remaining byte count already matches a valid [`Location`] length
-/// (`0`, `8`, or `11`, per [`Location`]'s truncation rule — the pair of
-/// Latitude/Longitude is mandatory both-or-neither, only HAE truncates
-/// independently) BEFORE attempting to consume an `info` BER-OID. This
-/// is unambiguous only because no two members of `{0, 8, 11}` differ by
-/// exactly the 1 byte a conformant `info` value occupies (values 0-3
-/// per §8.141's 2-bit Mode/Source field) — a future revision that
-/// widened `info` enough to need e.g. 8 BER-OID bytes could collide
-/// with a location-only remainder and misparse; not a concern for the
-/// field as currently defined.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Waypoint {
-    pub id: u64,
-    pub prosecution_order: i16,
-    pub info: Option<u64>,
-    pub location: Option<Location>,
+crate::binding_record! {
+    /// One record of Item 141, Waypoint List (ST 0601.19 §8.141).
+    ///
+    /// `info` (the Mode/Source bitfield) and `location` are both optional
+    /// trailing fields, but only `location` is self-delimiting by its own
+    /// wire length the way [`Location`]'s internal truncation is — `info`
+    /// is a self-delimiting BER-OID (so its presence never needs an
+    /// external marker), and this decoder distinguishes "info present" from
+    /// "info absent, straight to location" by checking whether the
+    /// remaining byte count already matches a valid [`Location`] length
+    /// (`0`, `8`, or `11`, per [`Location`]'s truncation rule — the pair of
+    /// Latitude/Longitude is mandatory both-or-neither, only HAE truncates
+    /// independently) BEFORE attempting to consume an `info` BER-OID. This
+    /// is unambiguous only because no two members of `{0, 8, 11}` differ by
+    /// exactly the 1 byte a conformant `info` value occupies (values 0-3
+    /// per §8.141's 2-bit Mode/Source field) — a future revision that
+    /// widened `info` enough to need e.g. 8 BER-OID bytes could collide
+    /// with a location-only remainder and misparse; not a concern for the
+    /// field as currently defined.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Waypoint {
+        pub id: u64,
+        pub prosecution_order: i16,
+        pub info: Option<u64>,
+        pub location: Option<Location>,
+    }
 }
 
 fn parse_waypoint(bytes: &[u8]) -> Result<Waypoint, KlvFieldError> {
@@ -1354,32 +1376,36 @@ pub(crate) fn emit_waypoints(list: &[Waypoint], out: &mut Vec<u8>) -> Result<(),
 // Item 142: View Domain
 // ============================================================================
 
-/// One `(start, range)` pair of Item 142, View Domain (ST 0601.19
-/// §8.142). `start` uses the axis-specific IMAPB range (see
-/// [`ViewDomain`]'s azimuth/elevation/roll fields); `range` always uses
-/// IMAPB(0,360) — "the
-/// angular range specifies the limit from the starting point to the
-/// sensor's maximum value; numerically the angular range is always a
-/// positive value". Both fields of a pair always share the same IMAPB
-/// byte length (whatever the producer chose; this crate encodes at 3
-/// bytes).
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct ViewDomainPair {
-    pub start_deg: f64,
-    pub range_deg: f64,
+crate::binding_record! {
+    /// One `(start, range)` pair of Item 142, View Domain (ST 0601.19
+    /// §8.142). `start` uses the axis-specific IMAPB range (see
+    /// [`ViewDomain`]'s azimuth/elevation/roll fields); `range` always uses
+    /// IMAPB(0,360) — "the
+    /// angular range specifies the limit from the starting point to the
+    /// sensor's maximum value; numerically the angular range is always a
+    /// positive value". Both fields of a pair always share the same IMAPB
+    /// byte length (whatever the producer chose; this crate encodes at 3
+    /// bytes).
+    #[derive(Debug, Clone, Copy, PartialEq, Default)]
+    pub struct ViewDomainPair {
+        pub start_deg: f64,
+        pub range_deg: f64,
+    }
 }
 
-/// Item 142 value (ST 0601.19 §8.142): up to three [`ViewDomainPair`]s
-/// — azimuth, elevation, roll, in that fixed order — each preceded by a
-/// BER pair-length. A pair-length of 0 means "unknown" (the pair is
-/// absent, but a byte was still spent saying so); the pack is also a
-/// truncation pack, so trailing pairs may be dropped from the wire
-/// entirely (no pair-length byte at all).
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct ViewDomain {
-    pub azimuth: Option<ViewDomainPair>,
-    pub elevation: Option<ViewDomainPair>,
-    pub roll: Option<ViewDomainPair>,
+crate::binding_record! {
+    /// Item 142 value (ST 0601.19 §8.142): up to three [`ViewDomainPair`]s
+    /// — azimuth, elevation, roll, in that fixed order — each preceded by a
+    /// BER pair-length. A pair-length of 0 means "unknown" (the pair is
+    /// absent, but a byte was still spent saying so); the pack is also a
+    /// truncation pack, so trailing pairs may be dropped from the wire
+    /// entirely (no pair-length byte at all).
+    #[derive(Debug, Clone, Copy, PartialEq, Default)]
+    pub struct ViewDomain {
+        pub azimuth: Option<ViewDomainPair>,
+        pub elevation: Option<ViewDomainPair>,
+        pub roll: Option<ViewDomainPair>,
+    }
 }
 
 /// Byte width this crate uses to encode each field of a

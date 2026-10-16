@@ -29,6 +29,7 @@ pub(crate) fn read_wavelength_record(
     env: &mut JNIEnv<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<tst_core::klv::st0601::WavelengthRecord> {
+    env.ensure_local_capacity(40)?;
     let id = env.call_method(obj, "id", "()J", &[])?.j()?;
     let id = crate::jutil::checked_u64(env, id, "WavelengthRecord.id")?;
     let min_nm = env.call_method(obj, "minNm", "()D", &[])?.d()?;
@@ -45,5 +46,3775 @@ pub(crate) fn read_wavelength_record(
         min_nm,
         max_nm,
         name,
+    })
+}
+
+pub(crate) fn build_image_horizon_pixels<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::ImageHorizonPixels,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(48)?;
+    let start_lat_deg = match &r.start_lat_deg {
+        Some(v) => {
+            let o1 = env
+                .call_static_method(
+                    "java/lang/Double",
+                    "valueOf",
+                    "(D)Ljava/lang/Double;",
+                    &[JValue::Double(*v)],
+                )?
+                .l()?;
+            JObject::from(o1)
+        }
+        None => JObject::null(),
+    };
+    let start_lon_deg = match &r.start_lon_deg {
+        Some(v) => {
+            let o2 = env
+                .call_static_method(
+                    "java/lang/Double",
+                    "valueOf",
+                    "(D)Ljava/lang/Double;",
+                    &[JValue::Double(*v)],
+                )?
+                .l()?;
+            JObject::from(o2)
+        }
+        None => JObject::null(),
+    };
+    let end_lat_deg = match &r.end_lat_deg {
+        Some(v) => {
+            let o3 = env
+                .call_static_method(
+                    "java/lang/Double",
+                    "valueOf",
+                    "(D)Ljava/lang/Double;",
+                    &[JValue::Double(*v)],
+                )?
+                .l()?;
+            JObject::from(o3)
+        }
+        None => JObject::null(),
+    };
+    let end_lon_deg = match &r.end_lon_deg {
+        Some(v) => {
+            let o4 = env
+                .call_static_method(
+                    "java/lang/Double",
+                    "valueOf",
+                    "(D)Ljava/lang/Double;",
+                    &[JValue::Double(*v)],
+                )?
+                .l()?;
+            JObject::from(o4)
+        }
+        None => JObject::null(),
+    };
+    let obj = env.new_object(
+        "org/tstrans/klv/ImageHorizonPixels",
+        "(IIIILjava/lang/Double;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Double;)V",
+        &[
+            JValue::Int(r.x0_pct as i32),
+            JValue::Int(r.y0_pct as i32),
+            JValue::Int(r.x1_pct as i32),
+            JValue::Int(r.y1_pct as i32),
+            JValue::Object(&start_lat_deg),
+            JValue::Object(&start_lon_deg),
+            JValue::Object(&end_lat_deg),
+            JValue::Object(&end_lon_deg),
+        ],
+    )?;
+    Ok(obj)
+}
+
+pub(crate) fn read_image_horizon_pixels(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::ImageHorizonPixels> {
+    env.ensure_local_capacity(48)?;
+    let x0_pct = env.call_method(obj, "x0Pct", "()I", &[])?.i()?;
+    let x0_pct = crate::jutil::checked_u8(env, i64::from(x0_pct), "ImageHorizonPixels.x0Pct")?;
+    let y0_pct = env.call_method(obj, "y0Pct", "()I", &[])?.i()?;
+    let y0_pct = crate::jutil::checked_u8(env, i64::from(y0_pct), "ImageHorizonPixels.y0Pct")?;
+    let x1_pct = env.call_method(obj, "x1Pct", "()I", &[])?.i()?;
+    let x1_pct = crate::jutil::checked_u8(env, i64::from(x1_pct), "ImageHorizonPixels.x1Pct")?;
+    let y1_pct = env.call_method(obj, "y1Pct", "()I", &[])?.i()?;
+    let y1_pct = crate::jutil::checked_u8(env, i64::from(y1_pct), "ImageHorizonPixels.y1Pct")?;
+    let o1 = env
+        .call_method(obj, "startLatDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let start_lat_deg = if o1.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o1, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o2 = env
+        .call_method(obj, "startLonDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let start_lon_deg = if o2.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o2, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o3 = env
+        .call_method(obj, "endLatDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let end_lat_deg = if o3.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o3, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o4 = env
+        .call_method(obj, "endLonDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let end_lon_deg = if o4.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o4, "doubleValue", "()D", &[])?.d()?)
+    };
+    Ok(tst_core::klv::st0601::ImageHorizonPixels {
+        x0_pct,
+        y0_pct,
+        x1_pct,
+        y1_pct,
+        start_lat_deg,
+        start_lon_deg,
+        end_lat_deg,
+        end_lon_deg,
+    })
+}
+
+pub(crate) fn build_control_command<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::ControlCommand,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(38)?;
+    let command = env.new_string(&r.command)?;
+    let time_us = match &r.time_us {
+        Some(v) => {
+            let o1 = env
+                .call_static_method(
+                    "java/lang/Long",
+                    "valueOf",
+                    "(J)Ljava/lang/Long;",
+                    &[JValue::Long(*v as i64)],
+                )?
+                .l()?;
+            JObject::from(o1)
+        }
+        None => JObject::null(),
+    };
+    let obj = env.new_object(
+        "org/tstrans/klv/ControlCommand",
+        "(JLjava/lang/String;Ljava/lang/Long;)V",
+        &[
+            JValue::Long(r.id as i64),
+            JValue::Object(&command),
+            JValue::Object(&time_us),
+        ],
+    )?;
+    Ok(obj)
+}
+
+pub(crate) fn read_control_command(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::ControlCommand> {
+    env.ensure_local_capacity(38)?;
+    let id = env.call_method(obj, "id", "()J", &[])?.j()?;
+    let id = crate::jutil::checked_u64(env, id, "ControlCommand.id")?;
+    let o1 = env
+        .call_method(obj, "command", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let command = {
+        let s2: &jni::objects::JString = (&o1).into();
+        String::from(env.get_string(s2)?)
+    };
+    let o3 = env
+        .call_method(obj, "timeUs", "()Ljava/lang/Long;", &[])?
+        .l()?;
+    let time_us = if o3.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o3, "longValue", "()J", &[])?.j()?;
+            crate::jutil::checked_u64(env, n, "ControlCommand.timeUs")?
+        })
+    };
+    Ok(tst_core::klv::st0601::ControlCommand {
+        id,
+        command,
+        time_us,
+    })
+}
+
+pub(crate) fn build_sensor_frame_rate<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::SensorFrameRate,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(36)?;
+    let obj = env.new_object(
+        "org/tstrans/klv/SensorFrameRate",
+        "(JJ)V",
+        &[
+            JValue::Long(r.numerator as i64),
+            JValue::Long(r.denominator as i64),
+        ],
+    )?;
+    Ok(obj)
+}
+
+pub(crate) fn read_sensor_frame_rate(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::SensorFrameRate> {
+    env.ensure_local_capacity(36)?;
+    let numerator = env.call_method(obj, "numerator", "()J", &[])?.j()?;
+    let numerator = crate::jutil::checked_u64(env, numerator, "SensorFrameRate.numerator")?;
+    let denominator = env.call_method(obj, "denominator", "()J", &[])?.j()?;
+    let denominator = crate::jutil::checked_u64(env, denominator, "SensorFrameRate.denominator")?;
+    Ok(tst_core::klv::st0601::SensorFrameRate {
+        numerator,
+        denominator,
+    })
+}
+
+pub(crate) fn build_metadata_substream_id<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::MetadataSubstreamId,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(36)?;
+    let uuid = crate::custom::build_metadata_substream_id_uuid(env, &r.uuid)?;
+    let obj = env.new_object(
+        "org/tstrans/klv/MetadataSubstreamId",
+        "(J[B)V",
+        &[JValue::Long(r.local_id as i64), JValue::Object(&uuid)],
+    )?;
+    Ok(obj)
+}
+
+pub(crate) fn read_metadata_substream_id(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::MetadataSubstreamId> {
+    env.ensure_local_capacity(36)?;
+    let local_id = env.call_method(obj, "localId", "()J", &[])?.j()?;
+    let local_id = crate::jutil::checked_u64(env, local_id, "MetadataSubstreamId.localId")?;
+    let uuid = crate::custom::read_metadata_substream_id_uuid(env, obj)?;
+    Ok(tst_core::klv::st0601::MetadataSubstreamId { local_id, uuid })
+}
+
+pub(crate) fn build_country_codes<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::CountryCodes,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(40)?;
+    let overflight = match &r.overflight {
+        Some(v) => {
+            let o1 = env.new_string(v)?;
+            JObject::from(o1)
+        }
+        None => JObject::null(),
+    };
+    let operator = match &r.operator {
+        Some(v) => {
+            let o2 = env.new_string(v)?;
+            JObject::from(o2)
+        }
+        None => JObject::null(),
+    };
+    let manufacture = match &r.manufacture {
+        Some(v) => {
+            let o3 = env.new_string(v)?;
+            JObject::from(o3)
+        }
+        None => JObject::null(),
+    };
+    let obj = env.new_object(
+        "org/tstrans/klv/CountryCodes",
+        "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+        &[
+            JValue::Long(r.coding_method as i64),
+            JValue::Object(&overflight),
+            JValue::Object(&operator),
+            JValue::Object(&manufacture),
+        ],
+    )?;
+    Ok(obj)
+}
+
+pub(crate) fn read_country_codes(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::CountryCodes> {
+    env.ensure_local_capacity(40)?;
+    let coding_method = env.call_method(obj, "codingMethod", "()J", &[])?.j()?;
+    let coding_method = crate::jutil::checked_u64(env, coding_method, "CountryCodes.codingMethod")?;
+    let o1 = env
+        .call_method(obj, "overflight", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let overflight = if o1.is_null() {
+        None
+    } else {
+        Some({
+            let s2: &jni::objects::JString = (&o1).into();
+            String::from(env.get_string(s2)?)
+        })
+    };
+    let o3 = env
+        .call_method(obj, "operator", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let operator = if o3.is_null() {
+        None
+    } else {
+        Some({
+            let s4: &jni::objects::JString = (&o3).into();
+            String::from(env.get_string(s4)?)
+        })
+    };
+    let o5 = env
+        .call_method(obj, "manufacture", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let manufacture = if o5.is_null() {
+        None
+    } else {
+        Some({
+            let s6: &jni::objects::JString = (&o5).into();
+            String::from(env.get_string(s6)?)
+        })
+    };
+    Ok(tst_core::klv::st0601::CountryCodes {
+        coding_method,
+        overflight,
+        operator,
+        manufacture,
+    })
+}
+
+pub(crate) fn build_location<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::Location,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(38)?;
+    let lat_deg = match &r.lat_deg {
+        Some(v) => {
+            let o1 = env
+                .call_static_method(
+                    "java/lang/Double",
+                    "valueOf",
+                    "(D)Ljava/lang/Double;",
+                    &[JValue::Double(*v)],
+                )?
+                .l()?;
+            JObject::from(o1)
+        }
+        None => JObject::null(),
+    };
+    let lon_deg = match &r.lon_deg {
+        Some(v) => {
+            let o2 = env
+                .call_static_method(
+                    "java/lang/Double",
+                    "valueOf",
+                    "(D)Ljava/lang/Double;",
+                    &[JValue::Double(*v)],
+                )?
+                .l()?;
+            JObject::from(o2)
+        }
+        None => JObject::null(),
+    };
+    let hae_m = match &r.hae_m {
+        Some(v) => {
+            let o3 = env
+                .call_static_method(
+                    "java/lang/Double",
+                    "valueOf",
+                    "(D)Ljava/lang/Double;",
+                    &[JValue::Double(*v)],
+                )?
+                .l()?;
+            JObject::from(o3)
+        }
+        None => JObject::null(),
+    };
+    let obj = env.new_object(
+        "org/tstrans/klv/Location",
+        "(Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Double;)V",
+        &[
+            JValue::Object(&lat_deg),
+            JValue::Object(&lon_deg),
+            JValue::Object(&hae_m),
+        ],
+    )?;
+    Ok(obj)
+}
+
+pub(crate) fn read_location(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::Location> {
+    env.ensure_local_capacity(38)?;
+    let o1 = env
+        .call_method(obj, "latDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let lat_deg = if o1.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o1, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o2 = env
+        .call_method(obj, "lonDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let lon_deg = if o2.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o2, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o3 = env
+        .call_method(obj, "haeM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let hae_m = if o3.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o3, "doubleValue", "()D", &[])?.d()?)
+    };
+    Ok(tst_core::klv::st0601::Location {
+        lat_deg,
+        lon_deg,
+        hae_m,
+    })
+}
+
+pub(crate) fn build_airbase_locations<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::AirbaseLocations,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(36)?;
+    let take_off = match &r.take_off {
+        Some(v) => {
+            let o1 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+                build_location(env, v)
+            })?;
+            JObject::from(o1)
+        }
+        None => JObject::null(),
+    };
+    let recovery = match &r.recovery {
+        Some(v) => {
+            let o2 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+                build_location(env, v)
+            })?;
+            JObject::from(o2)
+        }
+        None => JObject::null(),
+    };
+    let obj = env.new_object(
+        "org/tstrans/klv/AirbaseLocations",
+        "(Lorg/tstrans/klv/Location;Lorg/tstrans/klv/Location;)V",
+        &[JValue::Object(&take_off), JValue::Object(&recovery)],
+    )?;
+    Ok(obj)
+}
+
+pub(crate) fn read_airbase_locations(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::AirbaseLocations> {
+    env.ensure_local_capacity(36)?;
+    let o1 = env
+        .call_method(obj, "takeOff", "()Lorg/tstrans/klv/Location;", &[])?
+        .l()?;
+    let take_off = if o1.is_null() {
+        None
+    } else {
+        Some(read_location(env, &o1)?)
+    };
+    let o2 = env
+        .call_method(obj, "recovery", "()Lorg/tstrans/klv/Location;", &[])?
+        .l()?;
+    let recovery = if o2.is_null() {
+        None
+    } else {
+        Some(read_location(env, &o2)?)
+    };
+    Ok(tst_core::klv::st0601::AirbaseLocations { take_off, recovery })
+}
+
+pub(crate) fn build_payload_record<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::PayloadRecord,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(38)?;
+    let payload_type = crate::custom::build_payload_record_payload_type(env, &r.payload_type)?;
+    let name = env.new_string(&r.name)?;
+    let obj = env.new_object(
+        "org/tstrans/klv/PayloadRecord",
+        "(JJLjava/lang/String;)V",
+        &[
+            JValue::Long(r.id as i64),
+            JValue::Long(payload_type),
+            JValue::Object(&name),
+        ],
+    )?;
+    Ok(obj)
+}
+
+pub(crate) fn read_payload_record(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::PayloadRecord> {
+    env.ensure_local_capacity(38)?;
+    let id = env.call_method(obj, "id", "()J", &[])?.j()?;
+    let id = crate::jutil::checked_u64(env, id, "PayloadRecord.id")?;
+    let payload_type = crate::custom::read_payload_record_payload_type(env, obj)?;
+    let o1 = env
+        .call_method(obj, "name", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let name = {
+        let s2: &jni::objects::JString = (&o1).into();
+        String::from(env.get_string(s2)?)
+    };
+    Ok(tst_core::klv::st0601::PayloadRecord {
+        id,
+        payload_type,
+        name,
+    })
+}
+
+pub(crate) fn build_payload_list<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::PayloadList,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(36)?;
+    let records = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+        let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+        for item in r.records.iter() {
+            env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                let o1 = env
+                    .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+                        build_payload_record(env, item)
+                    })?;
+                env.call_method(
+                    &list,
+                    "add",
+                    "(Ljava/lang/Object;)Z",
+                    &[JValue::Object(&o1)],
+                )?;
+                Ok(())
+            })?;
+        }
+        Ok(list)
+    })?;
+    let obj = env.new_object(
+        "org/tstrans/klv/PayloadList",
+        "(JLjava/util/List;)V",
+        &[JValue::Long(r.count as i64), JValue::Object(&records)],
+    )?;
+    Ok(obj)
+}
+
+pub(crate) fn read_payload_list(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::PayloadList> {
+    env.ensure_local_capacity(36)?;
+    let count = env.call_method(obj, "count", "()J", &[])?.j()?;
+    let count = crate::jutil::checked_u64(env, count, "PayloadList.count")?;
+    let o1 = env
+        .call_method(obj, "records", "()Ljava/util/List;", &[])?
+        .l()?;
+    let records = {
+        let size = env.call_method(&o1, "size", "()I", &[])?.i()?;
+        let mut items = Vec::with_capacity(size.max(0) as usize);
+        for i in 0..size {
+            let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {
+                let e2 = env
+                    .call_method(&o1, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                    .l()?;
+                read_payload_record(env, &e2)
+            })?;
+            items.push(item);
+        }
+        items
+    };
+    Ok(tst_core::klv::st0601::PayloadList { count, records })
+}
+
+pub(crate) fn build_weapons_store<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::WeaponsStore,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(44)?;
+    let weapon_type = env.new_string(&r.weapon_type)?;
+    let obj = env.new_object(
+        "org/tstrans/klv/WeaponsStore",
+        "(JJJJJLjava/lang/String;)V",
+        &[
+            JValue::Long(r.station_id as i64),
+            JValue::Long(r.hardpoint_id as i64),
+            JValue::Long(r.carriage_id as i64),
+            JValue::Long(r.store_id as i64),
+            JValue::Long(r.status_raw as i64),
+            JValue::Object(&weapon_type),
+        ],
+    )?;
+    Ok(obj)
+}
+
+pub(crate) fn read_weapons_store(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::WeaponsStore> {
+    env.ensure_local_capacity(44)?;
+    let station_id = env.call_method(obj, "stationId", "()J", &[])?.j()?;
+    let station_id = crate::jutil::checked_u64(env, station_id, "WeaponsStore.stationId")?;
+    let hardpoint_id = env.call_method(obj, "hardpointId", "()J", &[])?.j()?;
+    let hardpoint_id = crate::jutil::checked_u64(env, hardpoint_id, "WeaponsStore.hardpointId")?;
+    let carriage_id = env.call_method(obj, "carriageId", "()J", &[])?.j()?;
+    let carriage_id = crate::jutil::checked_u64(env, carriage_id, "WeaponsStore.carriageId")?;
+    let store_id = env.call_method(obj, "storeId", "()J", &[])?.j()?;
+    let store_id = crate::jutil::checked_u64(env, store_id, "WeaponsStore.storeId")?;
+    let status_raw = env.call_method(obj, "statusRaw", "()J", &[])?.j()?;
+    let status_raw = crate::jutil::checked_u64(env, status_raw, "WeaponsStore.statusRaw")?;
+    let o1 = env
+        .call_method(obj, "weaponType", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let weapon_type = {
+        let s2: &jni::objects::JString = (&o1).into();
+        String::from(env.get_string(s2)?)
+    };
+    Ok(tst_core::klv::st0601::WeaponsStore {
+        station_id,
+        hardpoint_id,
+        carriage_id,
+        store_id,
+        status_raw,
+        weapon_type,
+    })
+}
+
+pub(crate) fn build_waypoint<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::Waypoint,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(40)?;
+    let info = match &r.info {
+        Some(v) => {
+            let o1 = env
+                .call_static_method(
+                    "java/lang/Long",
+                    "valueOf",
+                    "(J)Ljava/lang/Long;",
+                    &[JValue::Long(*v as i64)],
+                )?
+                .l()?;
+            JObject::from(o1)
+        }
+        None => JObject::null(),
+    };
+    let location = match &r.location {
+        Some(v) => {
+            let o2 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+                build_location(env, v)
+            })?;
+            JObject::from(o2)
+        }
+        None => JObject::null(),
+    };
+    let obj = env.new_object(
+        "org/tstrans/klv/Waypoint",
+        "(JILjava/lang/Long;Lorg/tstrans/klv/Location;)V",
+        &[
+            JValue::Long(r.id as i64),
+            JValue::Int(r.prosecution_order as i32),
+            JValue::Object(&info),
+            JValue::Object(&location),
+        ],
+    )?;
+    Ok(obj)
+}
+
+pub(crate) fn read_waypoint(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::Waypoint> {
+    env.ensure_local_capacity(40)?;
+    let id = env.call_method(obj, "id", "()J", &[])?.j()?;
+    let id = crate::jutil::checked_u64(env, id, "Waypoint.id")?;
+    let prosecution_order = env.call_method(obj, "prosecutionOrder", "()I", &[])?.i()?;
+    let prosecution_order = crate::jutil::checked_i16(
+        env,
+        i64::from(prosecution_order),
+        "Waypoint.prosecutionOrder",
+    )?;
+    let o1 = env
+        .call_method(obj, "info", "()Ljava/lang/Long;", &[])?
+        .l()?;
+    let info = if o1.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o1, "longValue", "()J", &[])?.j()?;
+            crate::jutil::checked_u64(env, n, "Waypoint.info")?
+        })
+    };
+    let o2 = env
+        .call_method(obj, "location", "()Lorg/tstrans/klv/Location;", &[])?
+        .l()?;
+    let location = if o2.is_null() {
+        None
+    } else {
+        Some(read_location(env, &o2)?)
+    };
+    Ok(tst_core::klv::st0601::Waypoint {
+        id,
+        prosecution_order,
+        info,
+        location,
+    })
+}
+
+pub(crate) fn build_view_domain_pair<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::ViewDomainPair,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(36)?;
+    let obj = env.new_object(
+        "org/tstrans/klv/ViewDomainPair",
+        "(DD)V",
+        &[JValue::Double(r.start_deg), JValue::Double(r.range_deg)],
+    )?;
+    Ok(obj)
+}
+
+pub(crate) fn read_view_domain_pair(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::ViewDomainPair> {
+    env.ensure_local_capacity(36)?;
+    let start_deg = env.call_method(obj, "startDeg", "()D", &[])?.d()?;
+    let range_deg = env.call_method(obj, "rangeDeg", "()D", &[])?.d()?;
+    Ok(tst_core::klv::st0601::ViewDomainPair {
+        start_deg,
+        range_deg,
+    })
+}
+
+pub(crate) fn build_view_domain<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::ViewDomain,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(38)?;
+    let azimuth = match &r.azimuth {
+        Some(v) => {
+            let o1 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+                build_view_domain_pair(env, v)
+            })?;
+            JObject::from(o1)
+        }
+        None => JObject::null(),
+    };
+    let elevation = match &r.elevation {
+        Some(v) => {
+            let o2 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+                build_view_domain_pair(env, v)
+            })?;
+            JObject::from(o2)
+        }
+        None => JObject::null(),
+    };
+    let roll = match &r.roll {
+        Some(v) => {
+            let o3 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+                build_view_domain_pair(env, v)
+            })?;
+            JObject::from(o3)
+        }
+        None => JObject::null(),
+    };
+    let obj = env.new_object("org/tstrans/klv/ViewDomain", "(Lorg/tstrans/klv/ViewDomainPair;Lorg/tstrans/klv/ViewDomainPair;Lorg/tstrans/klv/ViewDomainPair;)V", &[JValue::Object(&azimuth), JValue::Object(&elevation), JValue::Object(&roll)])?;
+    Ok(obj)
+}
+
+pub(crate) fn read_view_domain(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::ViewDomain> {
+    env.ensure_local_capacity(38)?;
+    let o1 = env
+        .call_method(obj, "azimuth", "()Lorg/tstrans/klv/ViewDomainPair;", &[])?
+        .l()?;
+    let azimuth = if o1.is_null() {
+        None
+    } else {
+        Some(read_view_domain_pair(env, &o1)?)
+    };
+    let o2 = env
+        .call_method(obj, "elevation", "()Lorg/tstrans/klv/ViewDomainPair;", &[])?
+        .l()?;
+    let elevation = if o2.is_null() {
+        None
+    } else {
+        Some(read_view_domain_pair(env, &o2)?)
+    };
+    let o3 = env
+        .call_method(obj, "roll", "()Lorg/tstrans/klv/ViewDomainPair;", &[])?
+        .l()?;
+    let roll = if o3.is_null() {
+        None
+    } else {
+        Some(read_view_domain_pair(env, &o3)?)
+    };
+    Ok(tst_core::klv::st0601::ViewDomain {
+        azimuth,
+        elevation,
+        roll,
+    })
+}
+
+pub(crate) fn build_sdcc_flp_field<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::SdccFlpField,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(36)?;
+    let preceding_tags =
+        env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+            for item in r.preceding_tags.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let o1 = env
+                        .call_static_method(
+                            "java/lang/Long",
+                            "valueOf",
+                            "(J)Ljava/lang/Long;",
+                            &[JValue::Long(*item as i64)],
+                        )?
+                        .l()?;
+                    env.call_method(
+                        &list,
+                        "add",
+                        "(Ljava/lang/Object;)Z",
+                        &[JValue::Object(&o1)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(list)
+        })?;
+    let bytes = crate::jutil::wrap_heap_byte_buffer(env, &r.bytes)
+        .map_err(|()| jni::errors::Error::JavaException)?;
+    let obj = env.new_object(
+        "org/tstrans/klv/SdccFlpField",
+        "(Ljava/util/List;Ljava/nio/ByteBuffer;)V",
+        &[JValue::Object(&preceding_tags), JValue::Object(&bytes)],
+    )?;
+    Ok(obj)
+}
+
+pub(crate) fn read_sdcc_flp_field(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::SdccFlpField> {
+    env.ensure_local_capacity(36)?;
+    let o1 = env
+        .call_method(obj, "precedingTags", "()Ljava/util/List;", &[])?
+        .l()?;
+    let preceding_tags = {
+        let size = env.call_method(&o1, "size", "()I", &[])?.i()?;
+        let mut items = Vec::with_capacity(size.max(0) as usize);
+        for i in 0..size {
+            let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {
+                let e2 = env
+                    .call_method(&o1, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                    .l()?;
+                Ok({
+                    let n = env.call_method(&e2, "longValue", "()J", &[])?.j()?;
+                    crate::jutil::checked_u32(env, n, "SdccFlpField.precedingTags")?
+                })
+            })?;
+            items.push(item);
+        }
+        items
+    };
+    let o3 = env
+        .call_method(obj, "bytes", "()Ljava/nio/ByteBuffer;", &[])?
+        .l()?;
+    let bytes = crate::jutil::read_byte_buffer(env, &o3)?;
+    Ok(tst_core::klv::st0601::SdccFlpField {
+        preceding_tags,
+        bytes,
+    })
+}
+
+pub(crate) fn build_uas_datalink_ls<'l>(
+    env: &mut JNIEnv<'l>,
+    r: &tst_core::klv::st0601::UasDatalinkLs,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(326)?;
+    let b = env.new_object("org/tstrans/klv/UasDatalinkLs$Builder", "()V", &[])?;
+    let universal_label =
+        crate::custom::build_uas_datalink_ls_universal_label(env, &r.universal_label)?;
+    env.call_method(
+        &b,
+        "universalLabel",
+        "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Object(&universal_label)],
+    )?;
+    env.call_method(
+        &b,
+        "declaredVersion",
+        "(I)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Int(r.declared_version as i32)],
+    )?;
+    if let Some(v) = &r.mission_id {
+        let o1 = env.new_string(v)?;
+        env.call_method(
+            &b,
+            "missionId",
+            "(Ljava/lang/String;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o1)],
+        )?;
+    }
+    if let Some(v) = &r.platform_tail_number {
+        let o2 = env.new_string(v)?;
+        env.call_method(
+            &b,
+            "platformTailNumber",
+            "(Ljava/lang/String;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o2)],
+        )?;
+    }
+    if let Some(v) = &r.platform_designation {
+        let o3 = env.new_string(v)?;
+        env.call_method(
+            &b,
+            "platformDesignation",
+            "(Ljava/lang/String;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o3)],
+        )?;
+    }
+    if let Some(v) = &r.image_source_sensor {
+        let o4 = env.new_string(v)?;
+        env.call_method(
+            &b,
+            "imageSourceSensor",
+            "(Ljava/lang/String;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o4)],
+        )?;
+    }
+    if let Some(v) = &r.image_coordinate_system {
+        let o5 = env.new_string(v)?;
+        env.call_method(
+            &b,
+            "imageCoordinateSystem",
+            "(Ljava/lang/String;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o5)],
+        )?;
+    }
+    if let Some(v) = &r.platform_call_sign {
+        let o6 = env.new_string(v)?;
+        env.call_method(
+            &b,
+            "platformCallSign",
+            "(Ljava/lang/String;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o6)],
+        )?;
+    }
+    if let Some(v) = &r.uas_ls_version {
+        env.call_method(
+            &b,
+            "uasLsVersion",
+            "(I)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Int(*v as i32)],
+        )?;
+    }
+    if let Some(v) = &r.timestamp_us {
+        env.call_method(
+            &b,
+            "timestampUs",
+            "(J)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Long(*v as i64)],
+        )?;
+    }
+    if let Some(v) = &r.platform_heading_deg {
+        env.call_method(
+            &b,
+            "platformHeadingDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_pitch_deg {
+        env.call_method(
+            &b,
+            "platformPitchDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_roll_deg {
+        env.call_method(
+            &b,
+            "platformRollDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_true_airspeed {
+        env.call_method(
+            &b,
+            "platformTrueAirspeed",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_indicated_airspeed {
+        env.call_method(
+            &b,
+            "platformIndicatedAirspeed",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_pitch_full_deg {
+        env.call_method(
+            &b,
+            "platformPitchFullDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_roll_full_deg {
+        env.call_method(
+            &b,
+            "platformRollFullDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    let miis_core_id = crate::custom::build_uas_datalink_ls_miis_core_id(env, &r.miis_core_id)?;
+    env.call_method(
+        &b,
+        "miisCoreId",
+        "([B)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Object(&miis_core_id)],
+    )?;
+    if let Some(v) = &r.platform_angle_of_attack_deg {
+        env.call_method(
+            &b,
+            "platformAngleOfAttackDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_lat_deg {
+        env.call_method(
+            &b,
+            "sensorLatDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_lon_deg {
+        env.call_method(
+            &b,
+            "sensorLonDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_alt_m {
+        env.call_method(
+            &b,
+            "sensorAltM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_ellipsoid_height_m {
+        env.call_method(
+            &b,
+            "sensorEllipsoidHeightM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_hfov_deg {
+        env.call_method(
+            &b,
+            "sensorHfovDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_vfov_deg {
+        env.call_method(
+            &b,
+            "sensorVfovDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_rel_az_deg {
+        env.call_method(
+            &b,
+            "sensorRelAzDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_rel_el_deg {
+        env.call_method(
+            &b,
+            "sensorRelElDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_rel_roll_deg {
+        env.call_method(
+            &b,
+            "sensorRelRollDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.slant_range_m {
+        env.call_method(
+            &b,
+            "slantRangeM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.target_width_m {
+        env.call_method(
+            &b,
+            "targetWidthM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.frame_center_lat_deg {
+        env.call_method(
+            &b,
+            "frameCenterLatDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.frame_center_lon_deg {
+        env.call_method(
+            &b,
+            "frameCenterLonDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.frame_center_elev_m {
+        env.call_method(
+            &b,
+            "frameCenterElevM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.frame_center_ellipsoid_height_m {
+        env.call_method(
+            &b,
+            "frameCenterEllipsoidHeightM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lat_offset_p1_deg {
+        env.call_method(
+            &b,
+            "cornerLatOffsetP1Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lon_offset_p1_deg {
+        env.call_method(
+            &b,
+            "cornerLonOffsetP1Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lat_offset_p2_deg {
+        env.call_method(
+            &b,
+            "cornerLatOffsetP2Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lon_offset_p2_deg {
+        env.call_method(
+            &b,
+            "cornerLonOffsetP2Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lat_offset_p3_deg {
+        env.call_method(
+            &b,
+            "cornerLatOffsetP3Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lon_offset_p3_deg {
+        env.call_method(
+            &b,
+            "cornerLonOffsetP3Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lat_offset_p4_deg {
+        env.call_method(
+            &b,
+            "cornerLatOffsetP4Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lon_offset_p4_deg {
+        env.call_method(
+            &b,
+            "cornerLonOffsetP4Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lat_p1_deg {
+        env.call_method(
+            &b,
+            "cornerLatP1Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lon_p1_deg {
+        env.call_method(
+            &b,
+            "cornerLonP1Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lat_p2_deg {
+        env.call_method(
+            &b,
+            "cornerLatP2Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lon_p2_deg {
+        env.call_method(
+            &b,
+            "cornerLonP2Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lat_p3_deg {
+        env.call_method(
+            &b,
+            "cornerLatP3Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lon_p3_deg {
+        env.call_method(
+            &b,
+            "cornerLonP3Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lat_p4_deg {
+        env.call_method(
+            &b,
+            "cornerLatP4Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.corner_lon_p4_deg {
+        env.call_method(
+            &b,
+            "cornerLonP4Deg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.target_location_lat_deg {
+        env.call_method(
+            &b,
+            "targetLocationLatDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.target_location_lon_deg {
+        env.call_method(
+            &b,
+            "targetLocationLonDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.target_location_elev_m {
+        env.call_method(
+            &b,
+            "targetLocationElevM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.target_track_gate_width_px {
+        env.call_method(
+            &b,
+            "targetTrackGateWidthPx",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.target_track_gate_height_px {
+        env.call_method(
+            &b,
+            "targetTrackGateHeightPx",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.target_error_ce90_m {
+        env.call_method(
+            &b,
+            "targetErrorCe90M",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.target_error_le90_m {
+        env.call_method(
+            &b,
+            "targetErrorLe90M",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.wind_direction_deg {
+        env.call_method(
+            &b,
+            "windDirectionDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.wind_speed {
+        env.call_method(
+            &b,
+            "windSpeed",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.static_pressure_mbar {
+        env.call_method(
+            &b,
+            "staticPressureMbar",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.density_altitude_m {
+        env.call_method(
+            &b,
+            "densityAltitudeM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.differential_pressure_mbar {
+        env.call_method(
+            &b,
+            "differentialPressureMbar",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.airfield_barometric_pressure_mbar {
+        env.call_method(
+            &b,
+            "airfieldBarometricPressureMbar",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.airfield_elevation_m {
+        env.call_method(
+            &b,
+            "airfieldElevationM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.relative_humidity_pct {
+        env.call_method(
+            &b,
+            "relativeHumidityPct",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_vertical_speed {
+        env.call_method(
+            &b,
+            "platformVerticalSpeed",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_sideslip_deg {
+        env.call_method(
+            &b,
+            "platformSideslipDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_ground_speed {
+        env.call_method(
+            &b,
+            "platformGroundSpeed",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.ground_range_m {
+        env.call_method(
+            &b,
+            "groundRangeM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_fuel_remaining_kg {
+        env.call_method(
+            &b,
+            "platformFuelRemainingKg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_magnetic_heading_deg {
+        env.call_method(
+            &b,
+            "platformMagneticHeadingDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_angle_of_attack_full_deg {
+        env.call_method(
+            &b,
+            "platformAngleOfAttackFullDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_sideslip_full_deg {
+        env.call_method(
+            &b,
+            "platformSideslipFullDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.alternate_platform_lat_deg {
+        env.call_method(
+            &b,
+            "alternatePlatformLatDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.alternate_platform_lon_deg {
+        env.call_method(
+            &b,
+            "alternatePlatformLonDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.alternate_platform_alt_m {
+        env.call_method(
+            &b,
+            "alternatePlatformAltM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.alternate_platform_heading_deg {
+        env.call_method(
+            &b,
+            "alternatePlatformHeadingDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.alternate_platform_ellipsoid_height_m {
+        env.call_method(
+            &b,
+            "alternatePlatformEllipsoidHeightM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_north_velocity {
+        env.call_method(
+            &b,
+            "sensorNorthVelocity",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_east_velocity {
+        env.call_method(
+            &b,
+            "sensorEastVelocity",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.target_width_extended_m {
+        env.call_method(
+            &b,
+            "targetWidthExtendedM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.density_altitude_extended_m {
+        env.call_method(
+            &b,
+            "densityAltitudeExtendedM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_ellipsoid_height_extended_m {
+        env.call_method(
+            &b,
+            "sensorEllipsoidHeightExtendedM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.alternate_platform_ellipsoid_height_extended_m {
+        env.call_method(
+            &b,
+            "alternatePlatformEllipsoidHeightExtendedM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.range_to_recovery_km {
+        env.call_method(
+            &b,
+            "rangeToRecoveryKm",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.platform_course_angle_deg {
+        env.call_method(
+            &b,
+            "platformCourseAngleDeg",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.altitude_agl_m {
+        env.call_method(
+            &b,
+            "altitudeAglM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.radar_altimeter_m {
+        env.call_method(
+            &b,
+            "radarAltimeterM",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_azimuth_rate_dps {
+        env.call_method(
+            &b,
+            "sensorAzimuthRateDps",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_elevation_rate_dps {
+        env.call_method(
+            &b,
+            "sensorElevationRateDps",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_roll_rate_dps {
+        env.call_method(
+            &b,
+            "sensorRollRateDps",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.mi_storage_percent_full {
+        env.call_method(
+            &b,
+            "miStoragePercentFull",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.transmission_frequency_mhz {
+        env.call_method(
+            &b,
+            "transmissionFrequencyMhz",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.zoom_percentage {
+        env.call_method(
+            &b,
+            "zoomPercentage",
+            "(D)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Double(*v)],
+        )?;
+    }
+    if let Some(v) = &r.time_airborne_s {
+        env.call_method(
+            &b,
+            "timeAirborneS",
+            "(J)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Long(*v as i64)],
+        )?;
+    }
+    if let Some(v) = &r.propulsion_unit_speed_rpm {
+        env.call_method(
+            &b,
+            "propulsionUnitSpeedRpm",
+            "(J)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Long(*v as i64)],
+        )?;
+    }
+    if let Some(v) = &r.navsats_in_view {
+        env.call_method(
+            &b,
+            "navsatsInView",
+            "(I)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Int(*v as i32)],
+        )?;
+    }
+    if let Some(v) = &r.positioning_method_source {
+        env.call_method(
+            &b,
+            "positioningMethodSource",
+            "(I)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Int(*v as i32)],
+        )?;
+    }
+    let platform_status =
+        crate::custom::build_uas_datalink_ls_platform_status(env, &r.platform_status)?;
+    env.call_method(
+        &b,
+        "platformStatusCode",
+        "(Ljava/lang/Integer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Object(&platform_status)],
+    )?;
+    let sensor_control_mode =
+        crate::custom::build_uas_datalink_ls_sensor_control_mode(env, &r.sensor_control_mode)?;
+    env.call_method(
+        &b,
+        "sensorControlModeCode",
+        "(Ljava/lang/Integer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Object(&sensor_control_mode)],
+    )?;
+    if let Some(v) = &r.take_off_time_us {
+        env.call_method(
+            &b,
+            "takeOffTimeUs",
+            "(J)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Long(*v as i64)],
+        )?;
+    }
+    if let Some(v) = &r.mi_storage_capacity_gb {
+        env.call_method(
+            &b,
+            "miStorageCapacityGb",
+            "(J)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Long(*v as i64)],
+        )?;
+    }
+    if let Some(v) = &r.leap_seconds {
+        env.call_method(
+            &b,
+            "leapSeconds",
+            "(I)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Int(*v)],
+        )?;
+    }
+    if let Some(v) = &r.correction_offset_us {
+        env.call_method(
+            &b,
+            "correctionOffsetUs",
+            "(J)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Long(*v)],
+        )?;
+    }
+    if let Some(v) = &r.active_payloads {
+        let o7 = crate::jutil::wrap_heap_byte_buffer(env, v)
+            .map_err(|()| jni::errors::Error::JavaException)?;
+        env.call_method(
+            &b,
+            "activePayloads",
+            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o7)],
+        )?;
+    }
+    if let Some(v) = &r.generic_flag_data {
+        env.call_method(
+            &b,
+            "genericFlagData",
+            "(I)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Int(*v as i32)],
+        )?;
+    }
+    if let Some(v) = &r.security_local_set {
+        let o8 = crate::jutil::wrap_heap_byte_buffer(env, v)
+            .map_err(|()| jni::errors::Error::JavaException)?;
+        env.call_method(
+            &b,
+            "securityLocalSet",
+            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o8)],
+        )?;
+    }
+    if let Some(v) = &r.rvt {
+        let o9 = crate::jutil::wrap_heap_byte_buffer(env, v)
+            .map_err(|()| jni::errors::Error::JavaException)?;
+        env.call_method(
+            &b,
+            "rvt",
+            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o9)],
+        )?;
+    }
+    if let Some(v) = &r.vmti {
+        let o10 = crate::jutil::wrap_heap_byte_buffer(env, v)
+            .map_err(|()| jni::errors::Error::JavaException)?;
+        env.call_method(
+            &b,
+            "vmti",
+            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o10)],
+        )?;
+    }
+    if let Some(v) = &r.sar_mi_local_set {
+        let o11 = crate::jutil::wrap_heap_byte_buffer(env, v)
+            .map_err(|()| jni::errors::Error::JavaException)?;
+        env.call_method(
+            &b,
+            "sarMiLocalSet",
+            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o11)],
+        )?;
+    }
+    if let Some(v) = &r.range_image_local_set {
+        let o12 = crate::jutil::wrap_heap_byte_buffer(env, v)
+            .map_err(|()| jni::errors::Error::JavaException)?;
+        env.call_method(
+            &b,
+            "rangeImageLocalSet",
+            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o12)],
+        )?;
+    }
+    if let Some(v) = &r.geo_registration_local_set {
+        let o13 = crate::jutil::wrap_heap_byte_buffer(env, v)
+            .map_err(|()| jni::errors::Error::JavaException)?;
+        env.call_method(
+            &b,
+            "geoRegistrationLocalSet",
+            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o13)],
+        )?;
+    }
+    if let Some(v) = &r.composite_imaging_local_set {
+        let o14 = crate::jutil::wrap_heap_byte_buffer(env, v)
+            .map_err(|()| jni::errors::Error::JavaException)?;
+        env.call_method(
+            &b,
+            "compositeImagingLocalSet",
+            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o14)],
+        )?;
+    }
+    if let Some(v) = &r.segment_local_set {
+        let o15 = crate::jutil::wrap_heap_byte_buffer(env, v)
+            .map_err(|()| jni::errors::Error::JavaException)?;
+        env.call_method(
+            &b,
+            "segmentLocalSet",
+            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o15)],
+        )?;
+    }
+    if let Some(v) = &r.amend_local_set {
+        let o16 = crate::jutil::wrap_heap_byte_buffer(env, v)
+            .map_err(|()| jni::errors::Error::JavaException)?;
+        env.call_method(
+            &b,
+            "amendLocalSet",
+            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o16)],
+        )?;
+    }
+    if let Some(v) = &r.outside_air_temp_c {
+        env.call_method(
+            &b,
+            "outsideAirTempC",
+            "(I)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Int(*v as i32)],
+        )?;
+    }
+    if let Some(v) = &r.weapon_load {
+        env.call_method(
+            &b,
+            "weaponLoad",
+            "(I)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Int(*v as i32)],
+        )?;
+    }
+    if let Some(v) = &r.weapon_fired {
+        env.call_method(
+            &b,
+            "weaponFired",
+            "(I)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Int(*v as i32)],
+        )?;
+    }
+    if let Some(v) = &r.laser_prf_code {
+        env.call_method(
+            &b,
+            "laserPrfCode",
+            "(I)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Int(*v as i32)],
+        )?;
+    }
+    if let Some(v) = &r.alternate_platform_name {
+        let o17 = env.new_string(v)?;
+        env.call_method(
+            &b,
+            "alternatePlatformName",
+            "(Ljava/lang/String;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o17)],
+        )?;
+    }
+    if let Some(v) = &r.event_start_time_us {
+        env.call_method(
+            &b,
+            "eventStartTimeUs",
+            "(J)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Long(*v as i64)],
+        )?;
+    }
+    if let Some(v) = &r.stream_designator {
+        let o18 = env.new_string(v)?;
+        env.call_method(
+            &b,
+            "streamDesignator",
+            "(Ljava/lang/String;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o18)],
+        )?;
+    }
+    if let Some(v) = &r.operational_base {
+        let o19 = env.new_string(v)?;
+        env.call_method(
+            &b,
+            "operationalBase",
+            "(Ljava/lang/String;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o19)],
+        )?;
+    }
+    if let Some(v) = &r.broadcast_source {
+        let o20 = env.new_string(v)?;
+        env.call_method(
+            &b,
+            "broadcastSource",
+            "(Ljava/lang/String;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o20)],
+        )?;
+    }
+    if let Some(v) = &r.target_id {
+        let o21 = env.new_string(v)?;
+        env.call_method(
+            &b,
+            "targetId",
+            "(Ljava/lang/String;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o21)],
+        )?;
+    }
+    if let Some(v) = &r.communications_method {
+        let o22 = env.new_string(v)?;
+        env.call_method(
+            &b,
+            "communicationsMethod",
+            "(Ljava/lang/String;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o22)],
+        )?;
+    }
+    let icing_detected =
+        crate::custom::build_uas_datalink_ls_icing_detected(env, &r.icing_detected)?;
+    env.call_method(
+        &b,
+        "icingDetectedCode",
+        "(Ljava/lang/Integer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Object(&icing_detected)],
+    )?;
+    let sensor_fov_name =
+        crate::custom::build_uas_datalink_ls_sensor_fov_name(env, &r.sensor_fov_name)?;
+    env.call_method(
+        &b,
+        "sensorFovNameCode",
+        "(Ljava/lang/Integer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Object(&sensor_fov_name)],
+    )?;
+    let operational_mode =
+        crate::custom::build_uas_datalink_ls_operational_mode(env, &r.operational_mode)?;
+    env.call_method(
+        &b,
+        "operationalModeCode",
+        "(Ljava/lang/Integer;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Object(&operational_mode)],
+    )?;
+    if let Some(v) = &r.image_horizon {
+        let o23 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            build_image_horizon_pixels(env, v)
+        })?;
+        env.call_method(
+            &b,
+            "imageHorizon",
+            "(Lorg/tstrans/klv/ImageHorizonPixels;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o23)],
+        )?;
+    }
+    let control_commands =
+        env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+            for item in r.control_commands.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let o24 = env
+                        .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+                            build_control_command(env, item)
+                        })?;
+                    env.call_method(
+                        &list,
+                        "add",
+                        "(Ljava/lang/Object;)Z",
+                        &[JValue::Object(&o24)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(list)
+        })?;
+    env.call_method(
+        &b,
+        "controlCommands",
+        "(Ljava/util/List;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Object(&control_commands)],
+    )?;
+    if let Some(v) = &r.control_command_verification {
+        let o25 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+            for item in v.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let o26 = env
+                        .call_static_method(
+                            "java/lang/Long",
+                            "valueOf",
+                            "(J)Ljava/lang/Long;",
+                            &[JValue::Long(*item as i64)],
+                        )?
+                        .l()?;
+                    env.call_method(
+                        &list,
+                        "add",
+                        "(Ljava/lang/Object;)Z",
+                        &[JValue::Object(&o26)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(list)
+        })?;
+        env.call_method(
+            &b,
+            "controlCommandVerification",
+            "(Ljava/util/List;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o25)],
+        )?;
+    }
+    if let Some(v) = &r.active_wavelengths {
+        let o27 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+            for item in v.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let o28 = env
+                        .call_static_method(
+                            "java/lang/Long",
+                            "valueOf",
+                            "(J)Ljava/lang/Long;",
+                            &[JValue::Long(*item as i64)],
+                        )?
+                        .l()?;
+                    env.call_method(
+                        &list,
+                        "add",
+                        "(Ljava/lang/Object;)Z",
+                        &[JValue::Object(&o28)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(list)
+        })?;
+        env.call_method(
+            &b,
+            "activeWavelengths",
+            "(Ljava/util/List;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o27)],
+        )?;
+    }
+    if let Some(v) = &r.sensor_frame_rate {
+        let o29 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            build_sensor_frame_rate(env, v)
+        })?;
+        env.call_method(
+            &b,
+            "sensorFrameRate",
+            "(Lorg/tstrans/klv/SensorFrameRate;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o29)],
+        )?;
+    }
+    if let Some(v) = &r.metadata_substream_id {
+        let o30 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            build_metadata_substream_id(env, v)
+        })?;
+        env.call_method(
+            &b,
+            "metadataSubstreamId",
+            "(Lorg/tstrans/klv/MetadataSubstreamId;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o30)],
+        )?;
+    }
+    if let Some(v) = &r.country_codes {
+        let o31 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            build_country_codes(env, v)
+        })?;
+        env.call_method(
+            &b,
+            "countryCodes",
+            "(Lorg/tstrans/klv/CountryCodes;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o31)],
+        )?;
+    }
+    if let Some(v) = &r.wavelengths_list {
+        let o32 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+            for item in v.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let o33 = env
+                        .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+                            build_wavelength_record(env, item)
+                        })?;
+                    env.call_method(
+                        &list,
+                        "add",
+                        "(Ljava/lang/Object;)Z",
+                        &[JValue::Object(&o33)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(list)
+        })?;
+        env.call_method(
+            &b,
+            "wavelengthsList",
+            "(Ljava/util/List;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o32)],
+        )?;
+    }
+    if let Some(v) = &r.airbase_locations {
+        let o34 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            build_airbase_locations(env, v)
+        })?;
+        env.call_method(
+            &b,
+            "airbaseLocations",
+            "(Lorg/tstrans/klv/AirbaseLocations;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o34)],
+        )?;
+    }
+    if let Some(v) = &r.payload_list {
+        let o35 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            build_payload_list(env, v)
+        })?;
+        env.call_method(
+            &b,
+            "payloadList",
+            "(Lorg/tstrans/klv/PayloadList;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o35)],
+        )?;
+    }
+    if let Some(v) = &r.weapons_stores {
+        let o36 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+            for item in v.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let o37 = env
+                        .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+                            build_weapons_store(env, item)
+                        })?;
+                    env.call_method(
+                        &list,
+                        "add",
+                        "(Ljava/lang/Object;)Z",
+                        &[JValue::Object(&o37)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(list)
+        })?;
+        env.call_method(
+            &b,
+            "weaponsStores",
+            "(Ljava/util/List;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o36)],
+        )?;
+    }
+    if let Some(v) = &r.waypoint_list {
+        let o38 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+            for item in v.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let o39 = env
+                        .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+                            build_waypoint(env, item)
+                        })?;
+                    env.call_method(
+                        &list,
+                        "add",
+                        "(Ljava/lang/Object;)Z",
+                        &[JValue::Object(&o39)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(list)
+        })?;
+        env.call_method(
+            &b,
+            "waypointList",
+            "(Ljava/util/List;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o38)],
+        )?;
+    }
+    if let Some(v) = &r.view_domain {
+        let o40 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            build_view_domain(env, v)
+        })?;
+        env.call_method(
+            &b,
+            "viewDomain",
+            "(Lorg/tstrans/klv/ViewDomain;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+            &[JValue::Object(&o40)],
+        )?;
+    }
+    let sdcc_flps = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+        let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+        for item in r.sdcc_flps.iter() {
+            env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                let o41 = env
+                    .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+                        build_sdcc_flp_field(env, item)
+                    })?;
+                env.call_method(
+                    &list,
+                    "add",
+                    "(Ljava/lang/Object;)Z",
+                    &[JValue::Object(&o41)],
+                )?;
+                Ok(())
+            })?;
+        }
+        Ok(list)
+    })?;
+    env.call_method(
+        &b,
+        "sdccFlps",
+        "(Ljava/util/List;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Object(&sdcc_flps)],
+    )?;
+    let unknown = crate::custom::build_uas_datalink_ls_unknown(env, &r.unknown)?;
+    env.call_method(
+        &b,
+        "unknown",
+        "(Ljava/util/List;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Object(&unknown)],
+    )?;
+    let field_errors = crate::custom::build_uas_datalink_ls_field_errors(env, &r.field_errors)?;
+    env.call_method(
+        &b,
+        "fieldErrors",
+        "(Ljava/util/List;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Object(&field_errors)],
+    )?;
+    let sentinel_tags = crate::custom::build_uas_datalink_ls_sentinel_tags(env, &r.sentinel_tags)?;
+    env.call_method(
+        &b,
+        "sentinelTags",
+        "(Ljava/util/List;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Object(&sentinel_tags)],
+    )?;
+    let imapb_specials =
+        crate::custom::build_uas_datalink_ls_imapb_specials(env, &r.imapb_specials)?;
+    env.call_method(
+        &b,
+        "imapbSpecials",
+        "(Ljava/util/List;)Lorg/tstrans/klv/UasDatalinkLs$Builder;",
+        &[JValue::Object(&imapb_specials)],
+    )?;
+    let obj = env
+        .call_method(&b, "build", "()Lorg/tstrans/klv/UasDatalinkLs;", &[])?
+        .l()?;
+    Ok(obj)
+}
+
+pub(crate) fn read_uas_datalink_ls(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<tst_core::klv::st0601::UasDatalinkLs> {
+    env.ensure_local_capacity(326)?;
+    let universal_label = crate::custom::read_uas_datalink_ls_universal_label(env, obj)?;
+    let declared_version = env.call_method(obj, "declaredVersion", "()I", &[])?.i()?;
+    let declared_version = crate::jutil::checked_u8(
+        env,
+        i64::from(declared_version),
+        "UasDatalinkLs.declaredVersion",
+    )?;
+    let o1 = env
+        .call_method(obj, "missionId", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let mission_id = if o1.is_null() {
+        None
+    } else {
+        Some({
+            let s2: &jni::objects::JString = (&o1).into();
+            String::from(env.get_string(s2)?)
+        })
+    };
+    let o3 = env
+        .call_method(obj, "platformTailNumber", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let platform_tail_number = if o3.is_null() {
+        None
+    } else {
+        Some({
+            let s4: &jni::objects::JString = (&o3).into();
+            String::from(env.get_string(s4)?)
+        })
+    };
+    let o5 = env
+        .call_method(obj, "platformDesignation", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let platform_designation = if o5.is_null() {
+        None
+    } else {
+        Some({
+            let s6: &jni::objects::JString = (&o5).into();
+            String::from(env.get_string(s6)?)
+        })
+    };
+    let o7 = env
+        .call_method(obj, "imageSourceSensor", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let image_source_sensor = if o7.is_null() {
+        None
+    } else {
+        Some({
+            let s8: &jni::objects::JString = (&o7).into();
+            String::from(env.get_string(s8)?)
+        })
+    };
+    let o9 = env
+        .call_method(obj, "imageCoordinateSystem", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let image_coordinate_system = if o9.is_null() {
+        None
+    } else {
+        Some({
+            let s10: &jni::objects::JString = (&o9).into();
+            String::from(env.get_string(s10)?)
+        })
+    };
+    let o11 = env
+        .call_method(obj, "platformCallSign", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let platform_call_sign = if o11.is_null() {
+        None
+    } else {
+        Some({
+            let s12: &jni::objects::JString = (&o11).into();
+            String::from(env.get_string(s12)?)
+        })
+    };
+    let o13 = env
+        .call_method(obj, "uasLsVersion", "()Ljava/lang/Integer;", &[])?
+        .l()?;
+    let uas_ls_version = if o13.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o13, "intValue", "()I", &[])?.i()?;
+            crate::jutil::checked_u8(env, i64::from(n), "UasDatalinkLs.uasLsVersion")?
+        })
+    };
+    let o14 = env
+        .call_method(obj, "timestampUs", "()Ljava/lang/Long;", &[])?
+        .l()?;
+    let timestamp_us = if o14.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o14, "longValue", "()J", &[])?.j()?;
+            crate::jutil::checked_u64(env, n, "UasDatalinkLs.timestampUs")?
+        })
+    };
+    let o15 = env
+        .call_method(obj, "platformHeadingDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let platform_heading_deg = if o15.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o15, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o16 = env
+        .call_method(obj, "platformPitchDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let platform_pitch_deg = if o16.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o16, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o17 = env
+        .call_method(obj, "platformRollDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let platform_roll_deg = if o17.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o17, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o18 = env
+        .call_method(obj, "platformTrueAirspeed", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let platform_true_airspeed = if o18.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o18, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o19 = env
+        .call_method(
+            obj,
+            "platformIndicatedAirspeed",
+            "()Ljava/lang/Double;",
+            &[],
+        )?
+        .l()?;
+    let platform_indicated_airspeed = if o19.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o19, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o20 = env
+        .call_method(obj, "platformPitchFullDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let platform_pitch_full_deg = if o20.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o20, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o21 = env
+        .call_method(obj, "platformRollFullDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let platform_roll_full_deg = if o21.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o21, "doubleValue", "()D", &[])?.d()?)
+    };
+    let miis_core_id = crate::custom::read_uas_datalink_ls_miis_core_id(env, obj)?;
+    let o22 = env
+        .call_method(obj, "platformAngleOfAttackDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let platform_angle_of_attack_deg = if o22.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o22, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o23 = env
+        .call_method(obj, "sensorLatDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_lat_deg = if o23.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o23, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o24 = env
+        .call_method(obj, "sensorLonDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_lon_deg = if o24.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o24, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o25 = env
+        .call_method(obj, "sensorAltM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_alt_m = if o25.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o25, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o26 = env
+        .call_method(obj, "sensorEllipsoidHeightM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_ellipsoid_height_m = if o26.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o26, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o27 = env
+        .call_method(obj, "sensorHfovDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_hfov_deg = if o27.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o27, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o28 = env
+        .call_method(obj, "sensorVfovDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_vfov_deg = if o28.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o28, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o29 = env
+        .call_method(obj, "sensorRelAzDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_rel_az_deg = if o29.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o29, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o30 = env
+        .call_method(obj, "sensorRelElDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_rel_el_deg = if o30.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o30, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o31 = env
+        .call_method(obj, "sensorRelRollDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_rel_roll_deg = if o31.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o31, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o32 = env
+        .call_method(obj, "slantRangeM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let slant_range_m = if o32.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o32, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o33 = env
+        .call_method(obj, "targetWidthM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let target_width_m = if o33.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o33, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o34 = env
+        .call_method(obj, "frameCenterLatDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let frame_center_lat_deg = if o34.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o34, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o35 = env
+        .call_method(obj, "frameCenterLonDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let frame_center_lon_deg = if o35.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o35, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o36 = env
+        .call_method(obj, "frameCenterElevM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let frame_center_elev_m = if o36.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o36, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o37 = env
+        .call_method(
+            obj,
+            "frameCenterEllipsoidHeightM",
+            "()Ljava/lang/Double;",
+            &[],
+        )?
+        .l()?;
+    let frame_center_ellipsoid_height_m = if o37.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o37, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o38 = env
+        .call_method(obj, "cornerLatOffsetP1Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lat_offset_p1_deg = if o38.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o38, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o39 = env
+        .call_method(obj, "cornerLonOffsetP1Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lon_offset_p1_deg = if o39.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o39, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o40 = env
+        .call_method(obj, "cornerLatOffsetP2Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lat_offset_p2_deg = if o40.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o40, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o41 = env
+        .call_method(obj, "cornerLonOffsetP2Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lon_offset_p2_deg = if o41.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o41, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o42 = env
+        .call_method(obj, "cornerLatOffsetP3Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lat_offset_p3_deg = if o42.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o42, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o43 = env
+        .call_method(obj, "cornerLonOffsetP3Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lon_offset_p3_deg = if o43.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o43, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o44 = env
+        .call_method(obj, "cornerLatOffsetP4Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lat_offset_p4_deg = if o44.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o44, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o45 = env
+        .call_method(obj, "cornerLonOffsetP4Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lon_offset_p4_deg = if o45.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o45, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o46 = env
+        .call_method(obj, "cornerLatP1Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lat_p1_deg = if o46.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o46, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o47 = env
+        .call_method(obj, "cornerLonP1Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lon_p1_deg = if o47.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o47, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o48 = env
+        .call_method(obj, "cornerLatP2Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lat_p2_deg = if o48.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o48, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o49 = env
+        .call_method(obj, "cornerLonP2Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lon_p2_deg = if o49.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o49, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o50 = env
+        .call_method(obj, "cornerLatP3Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lat_p3_deg = if o50.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o50, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o51 = env
+        .call_method(obj, "cornerLonP3Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lon_p3_deg = if o51.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o51, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o52 = env
+        .call_method(obj, "cornerLatP4Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lat_p4_deg = if o52.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o52, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o53 = env
+        .call_method(obj, "cornerLonP4Deg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let corner_lon_p4_deg = if o53.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o53, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o54 = env
+        .call_method(obj, "targetLocationLatDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let target_location_lat_deg = if o54.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o54, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o55 = env
+        .call_method(obj, "targetLocationLonDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let target_location_lon_deg = if o55.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o55, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o56 = env
+        .call_method(obj, "targetLocationElevM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let target_location_elev_m = if o56.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o56, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o57 = env
+        .call_method(obj, "targetTrackGateWidthPx", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let target_track_gate_width_px = if o57.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o57, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o58 = env
+        .call_method(obj, "targetTrackGateHeightPx", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let target_track_gate_height_px = if o58.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o58, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o59 = env
+        .call_method(obj, "targetErrorCe90M", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let target_error_ce90_m = if o59.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o59, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o60 = env
+        .call_method(obj, "targetErrorLe90M", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let target_error_le90_m = if o60.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o60, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o61 = env
+        .call_method(obj, "windDirectionDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let wind_direction_deg = if o61.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o61, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o62 = env
+        .call_method(obj, "windSpeed", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let wind_speed = if o62.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o62, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o63 = env
+        .call_method(obj, "staticPressureMbar", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let static_pressure_mbar = if o63.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o63, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o64 = env
+        .call_method(obj, "densityAltitudeM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let density_altitude_m = if o64.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o64, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o65 = env
+        .call_method(obj, "differentialPressureMbar", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let differential_pressure_mbar = if o65.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o65, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o66 = env
+        .call_method(
+            obj,
+            "airfieldBarometricPressureMbar",
+            "()Ljava/lang/Double;",
+            &[],
+        )?
+        .l()?;
+    let airfield_barometric_pressure_mbar = if o66.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o66, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o67 = env
+        .call_method(obj, "airfieldElevationM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let airfield_elevation_m = if o67.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o67, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o68 = env
+        .call_method(obj, "relativeHumidityPct", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let relative_humidity_pct = if o68.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o68, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o69 = env
+        .call_method(obj, "platformVerticalSpeed", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let platform_vertical_speed = if o69.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o69, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o70 = env
+        .call_method(obj, "platformSideslipDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let platform_sideslip_deg = if o70.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o70, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o71 = env
+        .call_method(obj, "platformGroundSpeed", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let platform_ground_speed = if o71.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o71, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o72 = env
+        .call_method(obj, "groundRangeM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let ground_range_m = if o72.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o72, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o73 = env
+        .call_method(obj, "platformFuelRemainingKg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let platform_fuel_remaining_kg = if o73.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o73, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o74 = env
+        .call_method(
+            obj,
+            "platformMagneticHeadingDeg",
+            "()Ljava/lang/Double;",
+            &[],
+        )?
+        .l()?;
+    let platform_magnetic_heading_deg = if o74.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o74, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o75 = env
+        .call_method(
+            obj,
+            "platformAngleOfAttackFullDeg",
+            "()Ljava/lang/Double;",
+            &[],
+        )?
+        .l()?;
+    let platform_angle_of_attack_full_deg = if o75.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o75, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o76 = env
+        .call_method(obj, "platformSideslipFullDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let platform_sideslip_full_deg = if o76.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o76, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o77 = env
+        .call_method(obj, "alternatePlatformLatDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let alternate_platform_lat_deg = if o77.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o77, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o78 = env
+        .call_method(obj, "alternatePlatformLonDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let alternate_platform_lon_deg = if o78.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o78, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o79 = env
+        .call_method(obj, "alternatePlatformAltM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let alternate_platform_alt_m = if o79.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o79, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o80 = env
+        .call_method(
+            obj,
+            "alternatePlatformHeadingDeg",
+            "()Ljava/lang/Double;",
+            &[],
+        )?
+        .l()?;
+    let alternate_platform_heading_deg = if o80.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o80, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o81 = env
+        .call_method(
+            obj,
+            "alternatePlatformEllipsoidHeightM",
+            "()Ljava/lang/Double;",
+            &[],
+        )?
+        .l()?;
+    let alternate_platform_ellipsoid_height_m = if o81.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o81, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o82 = env
+        .call_method(obj, "sensorNorthVelocity", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_north_velocity = if o82.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o82, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o83 = env
+        .call_method(obj, "sensorEastVelocity", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_east_velocity = if o83.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o83, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o84 = env
+        .call_method(obj, "targetWidthExtendedM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let target_width_extended_m = if o84.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o84, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o85 = env
+        .call_method(obj, "densityAltitudeExtendedM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let density_altitude_extended_m = if o85.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o85, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o86 = env
+        .call_method(
+            obj,
+            "sensorEllipsoidHeightExtendedM",
+            "()Ljava/lang/Double;",
+            &[],
+        )?
+        .l()?;
+    let sensor_ellipsoid_height_extended_m = if o86.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o86, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o87 = env
+        .call_method(
+            obj,
+            "alternatePlatformEllipsoidHeightExtendedM",
+            "()Ljava/lang/Double;",
+            &[],
+        )?
+        .l()?;
+    let alternate_platform_ellipsoid_height_extended_m = if o87.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o87, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o88 = env
+        .call_method(obj, "rangeToRecoveryKm", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let range_to_recovery_km = if o88.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o88, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o89 = env
+        .call_method(obj, "platformCourseAngleDeg", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let platform_course_angle_deg = if o89.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o89, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o90 = env
+        .call_method(obj, "altitudeAglM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let altitude_agl_m = if o90.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o90, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o91 = env
+        .call_method(obj, "radarAltimeterM", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let radar_altimeter_m = if o91.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o91, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o92 = env
+        .call_method(obj, "sensorAzimuthRateDps", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_azimuth_rate_dps = if o92.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o92, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o93 = env
+        .call_method(obj, "sensorElevationRateDps", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_elevation_rate_dps = if o93.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o93, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o94 = env
+        .call_method(obj, "sensorRollRateDps", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let sensor_roll_rate_dps = if o94.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o94, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o95 = env
+        .call_method(obj, "miStoragePercentFull", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let mi_storage_percent_full = if o95.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o95, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o96 = env
+        .call_method(obj, "transmissionFrequencyMhz", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let transmission_frequency_mhz = if o96.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o96, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o97 = env
+        .call_method(obj, "zoomPercentage", "()Ljava/lang/Double;", &[])?
+        .l()?;
+    let zoom_percentage = if o97.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o97, "doubleValue", "()D", &[])?.d()?)
+    };
+    let o98 = env
+        .call_method(obj, "timeAirborneS", "()Ljava/lang/Long;", &[])?
+        .l()?;
+    let time_airborne_s = if o98.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o98, "longValue", "()J", &[])?.j()?;
+            crate::jutil::checked_u32(env, n, "UasDatalinkLs.timeAirborneS")?
+        })
+    };
+    let o99 = env
+        .call_method(obj, "propulsionUnitSpeedRpm", "()Ljava/lang/Long;", &[])?
+        .l()?;
+    let propulsion_unit_speed_rpm = if o99.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o99, "longValue", "()J", &[])?.j()?;
+            crate::jutil::checked_u32(env, n, "UasDatalinkLs.propulsionUnitSpeedRpm")?
+        })
+    };
+    let o100 = env
+        .call_method(obj, "navsatsInView", "()Ljava/lang/Integer;", &[])?
+        .l()?;
+    let navsats_in_view = if o100.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o100, "intValue", "()I", &[])?.i()?;
+            crate::jutil::checked_u8(env, i64::from(n), "UasDatalinkLs.navsatsInView")?
+        })
+    };
+    let o101 = env
+        .call_method(obj, "positioningMethodSource", "()Ljava/lang/Integer;", &[])?
+        .l()?;
+    let positioning_method_source = if o101.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o101, "intValue", "()I", &[])?.i()?;
+            crate::jutil::checked_u8(env, i64::from(n), "UasDatalinkLs.positioningMethodSource")?
+        })
+    };
+    let platform_status = crate::custom::read_uas_datalink_ls_platform_status(env, obj)?;
+    let sensor_control_mode = crate::custom::read_uas_datalink_ls_sensor_control_mode(env, obj)?;
+    let o102 = env
+        .call_method(obj, "takeOffTimeUs", "()Ljava/lang/Long;", &[])?
+        .l()?;
+    let take_off_time_us = if o102.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o102, "longValue", "()J", &[])?.j()?;
+            crate::jutil::checked_u64(env, n, "UasDatalinkLs.takeOffTimeUs")?
+        })
+    };
+    let o103 = env
+        .call_method(obj, "miStorageCapacityGb", "()Ljava/lang/Long;", &[])?
+        .l()?;
+    let mi_storage_capacity_gb = if o103.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o103, "longValue", "()J", &[])?.j()?;
+            crate::jutil::checked_u32(env, n, "UasDatalinkLs.miStorageCapacityGb")?
+        })
+    };
+    let o104 = env
+        .call_method(obj, "leapSeconds", "()Ljava/lang/Integer;", &[])?
+        .l()?;
+    let leap_seconds = if o104.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o104, "intValue", "()I", &[])?.i()?)
+    };
+    let o105 = env
+        .call_method(obj, "correctionOffsetUs", "()Ljava/lang/Long;", &[])?
+        .l()?;
+    let correction_offset_us = if o105.is_null() {
+        None
+    } else {
+        Some(env.call_method(&o105, "longValue", "()J", &[])?.j()?)
+    };
+    let o106 = env
+        .call_method(obj, "activePayloads", "()Ljava/nio/ByteBuffer;", &[])?
+        .l()?;
+    let active_payloads = if o106.is_null() {
+        None
+    } else {
+        Some(crate::jutil::read_byte_buffer(env, &o106)?)
+    };
+    let o107 = env
+        .call_method(obj, "genericFlagData", "()Ljava/lang/Integer;", &[])?
+        .l()?;
+    let generic_flag_data = if o107.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o107, "intValue", "()I", &[])?.i()?;
+            crate::jutil::checked_u8(env, i64::from(n), "UasDatalinkLs.genericFlagData")?
+        })
+    };
+    let o108 = env
+        .call_method(obj, "securityLocalSet", "()Ljava/nio/ByteBuffer;", &[])?
+        .l()?;
+    let security_local_set = if o108.is_null() {
+        None
+    } else {
+        Some(crate::jutil::read_byte_buffer(env, &o108)?)
+    };
+    let o109 = env
+        .call_method(obj, "rvt", "()Ljava/nio/ByteBuffer;", &[])?
+        .l()?;
+    let rvt = if o109.is_null() {
+        None
+    } else {
+        Some(crate::jutil::read_byte_buffer(env, &o109)?)
+    };
+    let o110 = env
+        .call_method(obj, "vmti", "()Ljava/nio/ByteBuffer;", &[])?
+        .l()?;
+    let vmti = if o110.is_null() {
+        None
+    } else {
+        Some(crate::jutil::read_byte_buffer(env, &o110)?)
+    };
+    let o111 = env
+        .call_method(obj, "sarMiLocalSet", "()Ljava/nio/ByteBuffer;", &[])?
+        .l()?;
+    let sar_mi_local_set = if o111.is_null() {
+        None
+    } else {
+        Some(crate::jutil::read_byte_buffer(env, &o111)?)
+    };
+    let o112 = env
+        .call_method(obj, "rangeImageLocalSet", "()Ljava/nio/ByteBuffer;", &[])?
+        .l()?;
+    let range_image_local_set = if o112.is_null() {
+        None
+    } else {
+        Some(crate::jutil::read_byte_buffer(env, &o112)?)
+    };
+    let o113 = env
+        .call_method(
+            obj,
+            "geoRegistrationLocalSet",
+            "()Ljava/nio/ByteBuffer;",
+            &[],
+        )?
+        .l()?;
+    let geo_registration_local_set = if o113.is_null() {
+        None
+    } else {
+        Some(crate::jutil::read_byte_buffer(env, &o113)?)
+    };
+    let o114 = env
+        .call_method(
+            obj,
+            "compositeImagingLocalSet",
+            "()Ljava/nio/ByteBuffer;",
+            &[],
+        )?
+        .l()?;
+    let composite_imaging_local_set = if o114.is_null() {
+        None
+    } else {
+        Some(crate::jutil::read_byte_buffer(env, &o114)?)
+    };
+    let o115 = env
+        .call_method(obj, "segmentLocalSet", "()Ljava/nio/ByteBuffer;", &[])?
+        .l()?;
+    let segment_local_set = if o115.is_null() {
+        None
+    } else {
+        Some(crate::jutil::read_byte_buffer(env, &o115)?)
+    };
+    let o116 = env
+        .call_method(obj, "amendLocalSet", "()Ljava/nio/ByteBuffer;", &[])?
+        .l()?;
+    let amend_local_set = if o116.is_null() {
+        None
+    } else {
+        Some(crate::jutil::read_byte_buffer(env, &o116)?)
+    };
+    let o117 = env
+        .call_method(obj, "outsideAirTempC", "()Ljava/lang/Integer;", &[])?
+        .l()?;
+    let outside_air_temp_c = if o117.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o117, "intValue", "()I", &[])?.i()?;
+            crate::jutil::checked_i8(env, i64::from(n), "UasDatalinkLs.outsideAirTempC")?
+        })
+    };
+    let o118 = env
+        .call_method(obj, "weaponLoad", "()Ljava/lang/Integer;", &[])?
+        .l()?;
+    let weapon_load = if o118.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o118, "intValue", "()I", &[])?.i()?;
+            crate::jutil::checked_u16(env, i64::from(n), "UasDatalinkLs.weaponLoad")?
+        })
+    };
+    let o119 = env
+        .call_method(obj, "weaponFired", "()Ljava/lang/Integer;", &[])?
+        .l()?;
+    let weapon_fired = if o119.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o119, "intValue", "()I", &[])?.i()?;
+            crate::jutil::checked_u8(env, i64::from(n), "UasDatalinkLs.weaponFired")?
+        })
+    };
+    let o120 = env
+        .call_method(obj, "laserPrfCode", "()Ljava/lang/Integer;", &[])?
+        .l()?;
+    let laser_prf_code = if o120.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o120, "intValue", "()I", &[])?.i()?;
+            crate::jutil::checked_u16(env, i64::from(n), "UasDatalinkLs.laserPrfCode")?
+        })
+    };
+    let o121 = env
+        .call_method(obj, "alternatePlatformName", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let alternate_platform_name = if o121.is_null() {
+        None
+    } else {
+        Some({
+            let s122: &jni::objects::JString = (&o121).into();
+            String::from(env.get_string(s122)?)
+        })
+    };
+    let o123 = env
+        .call_method(obj, "eventStartTimeUs", "()Ljava/lang/Long;", &[])?
+        .l()?;
+    let event_start_time_us = if o123.is_null() {
+        None
+    } else {
+        Some({
+            let n = env.call_method(&o123, "longValue", "()J", &[])?.j()?;
+            crate::jutil::checked_u64(env, n, "UasDatalinkLs.eventStartTimeUs")?
+        })
+    };
+    let o124 = env
+        .call_method(obj, "streamDesignator", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let stream_designator = if o124.is_null() {
+        None
+    } else {
+        Some({
+            let s125: &jni::objects::JString = (&o124).into();
+            String::from(env.get_string(s125)?)
+        })
+    };
+    let o126 = env
+        .call_method(obj, "operationalBase", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let operational_base = if o126.is_null() {
+        None
+    } else {
+        Some({
+            let s127: &jni::objects::JString = (&o126).into();
+            String::from(env.get_string(s127)?)
+        })
+    };
+    let o128 = env
+        .call_method(obj, "broadcastSource", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let broadcast_source = if o128.is_null() {
+        None
+    } else {
+        Some({
+            let s129: &jni::objects::JString = (&o128).into();
+            String::from(env.get_string(s129)?)
+        })
+    };
+    let o130 = env
+        .call_method(obj, "targetId", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let target_id = if o130.is_null() {
+        None
+    } else {
+        Some({
+            let s131: &jni::objects::JString = (&o130).into();
+            String::from(env.get_string(s131)?)
+        })
+    };
+    let o132 = env
+        .call_method(obj, "communicationsMethod", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let communications_method = if o132.is_null() {
+        None
+    } else {
+        Some({
+            let s133: &jni::objects::JString = (&o132).into();
+            String::from(env.get_string(s133)?)
+        })
+    };
+    let icing_detected = crate::custom::read_uas_datalink_ls_icing_detected(env, obj)?;
+    let sensor_fov_name = crate::custom::read_uas_datalink_ls_sensor_fov_name(env, obj)?;
+    let operational_mode = crate::custom::read_uas_datalink_ls_operational_mode(env, obj)?;
+    let o134 = env
+        .call_method(
+            obj,
+            "imageHorizon",
+            "()Lorg/tstrans/klv/ImageHorizonPixels;",
+            &[],
+        )?
+        .l()?;
+    let image_horizon = if o134.is_null() {
+        None
+    } else {
+        Some(read_image_horizon_pixels(env, &o134)?)
+    };
+    let o135 = env
+        .call_method(obj, "controlCommands", "()Ljava/util/List;", &[])?
+        .l()?;
+    let control_commands = {
+        let size = env.call_method(&o135, "size", "()I", &[])?.i()?;
+        let mut items = Vec::with_capacity(size.max(0) as usize);
+        for i in 0..size {
+            let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {
+                let e136 = env
+                    .call_method(&o135, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                    .l()?;
+                read_control_command(env, &e136)
+            })?;
+            items.push(item);
+        }
+        items
+    };
+    let o137 = env
+        .call_method(obj, "controlCommandVerification", "()Ljava/util/List;", &[])?
+        .l()?;
+    let control_command_verification = if o137.is_null() {
+        None
+    } else {
+        Some({
+            let size = env.call_method(&o137, "size", "()I", &[])?.i()?;
+            let mut items = Vec::with_capacity(size.max(0) as usize);
+            for i in 0..size {
+                let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {
+                    let e138 = env
+                        .call_method(&o137, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                        .l()?;
+                    Ok({
+                        let n = env.call_method(&e138, "longValue", "()J", &[])?.j()?;
+                        crate::jutil::checked_u64(
+                            env,
+                            n,
+                            "UasDatalinkLs.controlCommandVerification",
+                        )?
+                    })
+                })?;
+                items.push(item);
+            }
+            items
+        })
+    };
+    let o139 = env
+        .call_method(obj, "activeWavelengths", "()Ljava/util/List;", &[])?
+        .l()?;
+    let active_wavelengths = if o139.is_null() {
+        None
+    } else {
+        Some({
+            let size = env.call_method(&o139, "size", "()I", &[])?.i()?;
+            let mut items = Vec::with_capacity(size.max(0) as usize);
+            for i in 0..size {
+                let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {
+                    let e140 = env
+                        .call_method(&o139, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                        .l()?;
+                    Ok({
+                        let n = env.call_method(&e140, "longValue", "()J", &[])?.j()?;
+                        crate::jutil::checked_u64(env, n, "UasDatalinkLs.activeWavelengths")?
+                    })
+                })?;
+                items.push(item);
+            }
+            items
+        })
+    };
+    let o141 = env
+        .call_method(
+            obj,
+            "sensorFrameRate",
+            "()Lorg/tstrans/klv/SensorFrameRate;",
+            &[],
+        )?
+        .l()?;
+    let sensor_frame_rate = if o141.is_null() {
+        None
+    } else {
+        Some(read_sensor_frame_rate(env, &o141)?)
+    };
+    let o142 = env
+        .call_method(
+            obj,
+            "metadataSubstreamId",
+            "()Lorg/tstrans/klv/MetadataSubstreamId;",
+            &[],
+        )?
+        .l()?;
+    let metadata_substream_id = if o142.is_null() {
+        None
+    } else {
+        Some(read_metadata_substream_id(env, &o142)?)
+    };
+    let o143 = env
+        .call_method(obj, "countryCodes", "()Lorg/tstrans/klv/CountryCodes;", &[])?
+        .l()?;
+    let country_codes = if o143.is_null() {
+        None
+    } else {
+        Some(read_country_codes(env, &o143)?)
+    };
+    let o144 = env
+        .call_method(obj, "wavelengthsList", "()Ljava/util/List;", &[])?
+        .l()?;
+    let wavelengths_list = if o144.is_null() {
+        None
+    } else {
+        Some({
+            let size = env.call_method(&o144, "size", "()I", &[])?.i()?;
+            let mut items = Vec::with_capacity(size.max(0) as usize);
+            for i in 0..size {
+                let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {
+                    let e145 = env
+                        .call_method(&o144, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                        .l()?;
+                    read_wavelength_record(env, &e145)
+                })?;
+                items.push(item);
+            }
+            items
+        })
+    };
+    let o146 = env
+        .call_method(
+            obj,
+            "airbaseLocations",
+            "()Lorg/tstrans/klv/AirbaseLocations;",
+            &[],
+        )?
+        .l()?;
+    let airbase_locations = if o146.is_null() {
+        None
+    } else {
+        Some(read_airbase_locations(env, &o146)?)
+    };
+    let o147 = env
+        .call_method(obj, "payloadList", "()Lorg/tstrans/klv/PayloadList;", &[])?
+        .l()?;
+    let payload_list = if o147.is_null() {
+        None
+    } else {
+        Some(read_payload_list(env, &o147)?)
+    };
+    let o148 = env
+        .call_method(obj, "weaponsStores", "()Ljava/util/List;", &[])?
+        .l()?;
+    let weapons_stores = if o148.is_null() {
+        None
+    } else {
+        Some({
+            let size = env.call_method(&o148, "size", "()I", &[])?.i()?;
+            let mut items = Vec::with_capacity(size.max(0) as usize);
+            for i in 0..size {
+                let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {
+                    let e149 = env
+                        .call_method(&o148, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                        .l()?;
+                    read_weapons_store(env, &e149)
+                })?;
+                items.push(item);
+            }
+            items
+        })
+    };
+    let o150 = env
+        .call_method(obj, "waypointList", "()Ljava/util/List;", &[])?
+        .l()?;
+    let waypoint_list = if o150.is_null() {
+        None
+    } else {
+        Some({
+            let size = env.call_method(&o150, "size", "()I", &[])?.i()?;
+            let mut items = Vec::with_capacity(size.max(0) as usize);
+            for i in 0..size {
+                let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {
+                    let e151 = env
+                        .call_method(&o150, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                        .l()?;
+                    read_waypoint(env, &e151)
+                })?;
+                items.push(item);
+            }
+            items
+        })
+    };
+    let o152 = env
+        .call_method(obj, "viewDomain", "()Lorg/tstrans/klv/ViewDomain;", &[])?
+        .l()?;
+    let view_domain = if o152.is_null() {
+        None
+    } else {
+        Some(read_view_domain(env, &o152)?)
+    };
+    let o153 = env
+        .call_method(obj, "sdccFlps", "()Ljava/util/List;", &[])?
+        .l()?;
+    let sdcc_flps = {
+        let size = env.call_method(&o153, "size", "()I", &[])?.i()?;
+        let mut items = Vec::with_capacity(size.max(0) as usize);
+        for i in 0..size {
+            let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {
+                let e154 = env
+                    .call_method(&o153, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                    .l()?;
+                read_sdcc_flp_field(env, &e154)
+            })?;
+            items.push(item);
+        }
+        items
+    };
+    let unknown = crate::custom::read_uas_datalink_ls_unknown(env, obj)?;
+    let field_errors = crate::custom::read_uas_datalink_ls_field_errors(env, obj)?;
+    let sentinel_tags = crate::custom::read_uas_datalink_ls_sentinel_tags(env, obj)?;
+    let imapb_specials = crate::custom::read_uas_datalink_ls_imapb_specials(env, obj)?;
+    Ok(tst_core::klv::st0601::UasDatalinkLs {
+        universal_label,
+        declared_version,
+        mission_id,
+        platform_tail_number,
+        platform_designation,
+        image_source_sensor,
+        image_coordinate_system,
+        platform_call_sign,
+        uas_ls_version,
+        timestamp_us,
+        platform_heading_deg,
+        platform_pitch_deg,
+        platform_roll_deg,
+        platform_true_airspeed,
+        platform_indicated_airspeed,
+        platform_pitch_full_deg,
+        platform_roll_full_deg,
+        miis_core_id,
+        platform_angle_of_attack_deg,
+        sensor_lat_deg,
+        sensor_lon_deg,
+        sensor_alt_m,
+        sensor_ellipsoid_height_m,
+        sensor_hfov_deg,
+        sensor_vfov_deg,
+        sensor_rel_az_deg,
+        sensor_rel_el_deg,
+        sensor_rel_roll_deg,
+        slant_range_m,
+        target_width_m,
+        frame_center_lat_deg,
+        frame_center_lon_deg,
+        frame_center_elev_m,
+        frame_center_ellipsoid_height_m,
+        corner_lat_offset_p1_deg,
+        corner_lon_offset_p1_deg,
+        corner_lat_offset_p2_deg,
+        corner_lon_offset_p2_deg,
+        corner_lat_offset_p3_deg,
+        corner_lon_offset_p3_deg,
+        corner_lat_offset_p4_deg,
+        corner_lon_offset_p4_deg,
+        corner_lat_p1_deg,
+        corner_lon_p1_deg,
+        corner_lat_p2_deg,
+        corner_lon_p2_deg,
+        corner_lat_p3_deg,
+        corner_lon_p3_deg,
+        corner_lat_p4_deg,
+        corner_lon_p4_deg,
+        target_location_lat_deg,
+        target_location_lon_deg,
+        target_location_elev_m,
+        target_track_gate_width_px,
+        target_track_gate_height_px,
+        target_error_ce90_m,
+        target_error_le90_m,
+        wind_direction_deg,
+        wind_speed,
+        static_pressure_mbar,
+        density_altitude_m,
+        differential_pressure_mbar,
+        airfield_barometric_pressure_mbar,
+        airfield_elevation_m,
+        relative_humidity_pct,
+        platform_vertical_speed,
+        platform_sideslip_deg,
+        platform_ground_speed,
+        ground_range_m,
+        platform_fuel_remaining_kg,
+        platform_magnetic_heading_deg,
+        platform_angle_of_attack_full_deg,
+        platform_sideslip_full_deg,
+        alternate_platform_lat_deg,
+        alternate_platform_lon_deg,
+        alternate_platform_alt_m,
+        alternate_platform_heading_deg,
+        alternate_platform_ellipsoid_height_m,
+        sensor_north_velocity,
+        sensor_east_velocity,
+        target_width_extended_m,
+        density_altitude_extended_m,
+        sensor_ellipsoid_height_extended_m,
+        alternate_platform_ellipsoid_height_extended_m,
+        range_to_recovery_km,
+        platform_course_angle_deg,
+        altitude_agl_m,
+        radar_altimeter_m,
+        sensor_azimuth_rate_dps,
+        sensor_elevation_rate_dps,
+        sensor_roll_rate_dps,
+        mi_storage_percent_full,
+        transmission_frequency_mhz,
+        zoom_percentage,
+        time_airborne_s,
+        propulsion_unit_speed_rpm,
+        navsats_in_view,
+        positioning_method_source,
+        platform_status,
+        sensor_control_mode,
+        take_off_time_us,
+        mi_storage_capacity_gb,
+        leap_seconds,
+        correction_offset_us,
+        active_payloads,
+        generic_flag_data,
+        security_local_set,
+        rvt,
+        vmti,
+        sar_mi_local_set,
+        range_image_local_set,
+        geo_registration_local_set,
+        composite_imaging_local_set,
+        segment_local_set,
+        amend_local_set,
+        outside_air_temp_c,
+        weapon_load,
+        weapon_fired,
+        laser_prf_code,
+        alternate_platform_name,
+        event_start_time_us,
+        stream_designator,
+        operational_base,
+        broadcast_source,
+        target_id,
+        communications_method,
+        icing_detected,
+        sensor_fov_name,
+        operational_mode,
+        image_horizon,
+        control_commands,
+        control_command_verification,
+        active_wavelengths,
+        sensor_frame_rate,
+        metadata_substream_id,
+        country_codes,
+        wavelengths_list,
+        airbase_locations,
+        payload_list,
+        weapons_stores,
+        waypoint_list,
+        view_domain,
+        sdcc_flps,
+        unknown,
+        field_errors,
+        sentinel_tags,
+        imapb_specials,
     })
 }

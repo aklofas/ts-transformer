@@ -228,7 +228,10 @@ fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
                 "let {var} = crate::custom::build_{}_{name}(env, &r.{name})?;",
                 snake(s.name)
             ));
-            format!("JValue::Object(&{var})")
+            match ty.custom_prim() {
+                Some(kind) => format!("JValue::{kind}({var})"),
+                None => format!("JValue::Object(&{var})"),
+            }
         } else if let Ty::Scalar(sc) = ty {
             scalar_jvalue(*sc, &format!("r.{name}"))
         } else if skip_absent {
@@ -296,6 +299,12 @@ fn read(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
         "pub(crate) fn read_{}(env: &mut JNIEnv<'_>, obj: &JObject<'_>) -> jni::errors::Result<{path}> {{\n",
         snake(s.name)
     );
+    // Every object-valued getter mints a local reference that lives until
+    // the caller returns, so the reader reserves what the builder does.
+    o.push_str(&format!(
+        "    env.ensure_local_capacity({})?;\n",
+        capacity(flds.iter().filter(|f| f.ty.is_some()).count())
+    ));
     for f in flds.iter().filter(|f| f.ty.is_some()) {
         let ty = f.ty.as_ref().expect("crossing");
         let name = f.spec.name;

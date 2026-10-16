@@ -13,623 +13,626 @@ use super::packs::{
     PayloadList, SensorFrameRate, ViewDomain, WavelengthRecord, Waypoint, WeaponsStore,
 };
 
-/// One ST 0601 UAS Datalink Local Set, one field per tag.
-///
-/// A field whose doc states a range is checked when the record is
-/// encoded: under the default [`OutOfRangePolicy::Error`] a value outside it
-/// raises [`crate::error::KlvEncodeError::OutOfRange`]; see
-/// [`OutOfRangePolicy`] for the tags that can carry the spec's Out-of-Range
-/// indicator instead.
-///
-/// The composite views (sensor position, platform and sensor attitude, field
-/// of view, frame center and corners) are accessors that return nothing when
-/// any of the fields they combine is absent.
-#[must_use]
-#[derive(Debug, Clone, PartialEq)]
-pub struct UasDatalinkLs {
-    /// The 16-byte SMPTE universal label that opens the local set.
-    pub universal_label: UniversalLabel,
-    /// The version byte the label declares.
-    pub declared_version: u8,
-
-    // Identity
-    pub mission_id: Option<String>,
-    pub platform_tail_number: Option<String>,
-    pub platform_designation: Option<String>,
-    pub image_source_sensor: Option<String>,
-    pub image_coordinate_system: Option<String>,
-    pub platform_call_sign: Option<String>,
-    pub uas_ls_version: Option<u8>,
-
-    // Time
-    pub timestamp_us: Option<u64>,
-
-    // Platform state
-    /// Item 5: Platform Heading Angle — encode range [0, 360] deg (uint16).
-    pub platform_heading_deg: Option<f64>,
-    /// Item 6: Platform Pitch Angle — encode range [-20, 20] deg (int16).
-    /// For the full ±90° range use [`Self::platform_pitch_full_deg`] (Item 90).
-    pub platform_pitch_deg: Option<f64>,
-    /// Item 7: Platform Roll Angle — encode range [-50, 50] deg (int16).
-    /// For the full ±90° range use [`Self::platform_roll_full_deg`] (Item 91).
-    pub platform_roll_deg: Option<f64>,
-    /// Item 8: Platform True Airspeed — encode range [0, 255] m/s (uint8).
-    pub platform_true_airspeed: Option<f64>,
-    /// Item 9: Platform Indicated Airspeed — encode range [0, 255] m/s (uint8).
-    pub platform_indicated_airspeed: Option<f64>,
-    /// Item 90: Platform Pitch Angle (Full) — encode range [-90, 90] deg (int32).
-    /// Full-range twin of [`Self::platform_pitch_deg`] (Item 6, ±20°).
-    pub platform_pitch_full_deg: Option<f64>,
-    /// Item 91: Platform Roll Angle (Full) — encode range [-90, 90] deg (int32).
-    /// Full-range twin of [`Self::platform_roll_deg`] (Item 7, ±50°).
-    pub platform_roll_full_deg: Option<f64>,
-    /// Item 94: MIIS Core Identifier (MISB ST 1204 binary format).
-    /// Raw bytes — decode/inspect via [`crate::klv::st1204`].
-    pub miis_core_id: Option<Vec<u8>>,
-    /// Item 50: Platform Angle of Attack — encode range [-20, 20] deg (int16).
-    pub platform_angle_of_attack_deg: Option<f64>,
-
-    // Sensor pose & position
-    /// Item 13: Sensor Latitude — encode range [-90, 90] deg (int32).
-    pub sensor_lat_deg: Option<f64>,
-    /// Item 14: Sensor Longitude — encode range [-180, 180] deg (int32).
-    pub sensor_lon_deg: Option<f64>,
-    /// Item 15: Sensor True Altitude — encode range [-900, 19000] m (uint16).
-    pub sensor_alt_m: Option<f64>,
-    /// Item 75: Sensor Ellipsoid Height (WGS84) — encode range [-900, 19000] m (uint16).
-    /// For the extended [-900, 40000] m range use
-    /// [`Self::sensor_ellipsoid_height_extended_m`] (Item 104, IMAPB).
-    /// Per ST 0601.19 requirements 0601.9-20/-21, a decoder that
-    /// understands Item 104 shall use it and ignore this restricted
-    /// twin when both are present; this struct populates both fields
-    /// on decode — prefer [`Self::sensor_ellipsoid_height_extended_m`]
-    /// when producing new records.
-    pub sensor_ellipsoid_height_m: Option<f64>,
-    /// Item 16: Sensor Horizontal FOV — encode range [0, 180] deg (uint16).
-    pub sensor_hfov_deg: Option<f64>,
-    /// Item 17: Sensor Vertical FOV — encode range [0, 180] deg (uint16).
-    pub sensor_vfov_deg: Option<f64>,
-    /// Item 18: Sensor Relative Azimuth — encode range [0, 360] deg (uint32).
-    pub sensor_rel_az_deg: Option<f64>,
-    /// Item 19: Sensor Relative Elevation — encode range [-180, 180] deg (int32).
-    pub sensor_rel_el_deg: Option<f64>,
-    /// Item 20: Sensor Relative Roll — encode range [0, 360] deg (uint32).
-    pub sensor_rel_roll_deg: Option<f64>,
-
-    // Ranging & frame center
-    /// Item 21: Slant Range — encode range [0, 5000000] m (uint32).
-    pub slant_range_m: Option<f64>,
-    /// Item 22: Target Width — encode range [0, 10000] m (uint16).
-    /// For the extended [0, 1500000] m range use
-    /// [`Self::target_width_extended_m`] (Item 96, IMAPB).
-    /// Per ST 0601.19 requirements 0601.9-20/-21, a decoder that
-    /// understands Item 96 shall use it and ignore this restricted
-    /// twin when both are present; this struct populates both fields
-    /// on decode — prefer [`Self::target_width_extended_m`] when
-    /// producing new records.
-    pub target_width_m: Option<f64>,
-    /// Item 23: Frame Center Latitude — encode range [-90, 90] deg (int32).
-    pub frame_center_lat_deg: Option<f64>,
-    /// Item 24: Frame Center Longitude — encode range [-180, 180] deg (int32).
-    pub frame_center_lon_deg: Option<f64>,
-    /// Item 25: Frame Center Elevation — encode range [-900, 19000] m (uint16).
-    pub frame_center_elev_m: Option<f64>,
-    /// Item 78: Frame Center Height Above Ellipsoid (WGS84) — encode range
-    /// [-900, 19000] m (uint16).
-    pub frame_center_ellipsoid_height_m: Option<f64>,
-
-    // Image corners — offsets from frame center (tags 26-33)
-    /// Item 26: Offset Corner Latitude Point 1 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full latitude range use [`Self::corner_lat_p1_deg`] (Item 82, ±90°).
-    pub corner_lat_offset_p1_deg: Option<f64>,
-    /// Item 27: Offset Corner Longitude Point 1 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full longitude range use [`Self::corner_lon_p1_deg`] (Item 83, ±180°).
-    pub corner_lon_offset_p1_deg: Option<f64>,
-    /// Item 28: Offset Corner Latitude Point 2 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full latitude range use [`Self::corner_lat_p2_deg`] (Item 84, ±90°).
-    pub corner_lat_offset_p2_deg: Option<f64>,
-    /// Item 29: Offset Corner Longitude Point 2 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full longitude range use [`Self::corner_lon_p2_deg`] (Item 85, ±180°).
-    pub corner_lon_offset_p2_deg: Option<f64>,
-    /// Item 30: Offset Corner Latitude Point 3 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full latitude range use [`Self::corner_lat_p3_deg`] (Item 86, ±90°).
-    pub corner_lat_offset_p3_deg: Option<f64>,
-    /// Item 31: Offset Corner Longitude Point 3 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full longitude range use [`Self::corner_lon_p3_deg`] (Item 87, ±180°).
-    pub corner_lon_offset_p3_deg: Option<f64>,
-    /// Item 32: Offset Corner Latitude Point 4 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full latitude range use [`Self::corner_lat_p4_deg`] (Item 88, ±90°).
-    pub corner_lat_offset_p4_deg: Option<f64>,
-    /// Item 33: Offset Corner Longitude Point 4 — encode range [-0.075, 0.075] deg (int16).
-    /// For the full longitude range use [`Self::corner_lon_p4_deg`] (Item 89, ±180°).
-    pub corner_lon_offset_p4_deg: Option<f64>,
-
-    // Image corners — full lat/lon (tags 82-89, ST 0601.13+)
-    /// Item 82: Corner Latitude Point 1 (Full) — encode range [-90, 90] deg (int32).
-    /// Full-range twin of [`Self::corner_lat_offset_p1_deg`] (Item 26, ±0.075°).
-    pub corner_lat_p1_deg: Option<f64>,
-    /// Item 83: Corner Longitude Point 1 (Full) — encode range [-180, 180] deg (int32).
-    /// Full-range twin of [`Self::corner_lon_offset_p1_deg`] (Item 27, ±0.075°).
-    pub corner_lon_p1_deg: Option<f64>,
-    /// Item 84: Corner Latitude Point 2 (Full) — encode range [-90, 90] deg (int32).
-    /// Full-range twin of [`Self::corner_lat_offset_p2_deg`] (Item 28, ±0.075°).
-    pub corner_lat_p2_deg: Option<f64>,
-    /// Item 85: Corner Longitude Point 2 (Full) — encode range [-180, 180] deg (int32).
-    /// Full-range twin of [`Self::corner_lon_offset_p2_deg`] (Item 29, ±0.075°).
-    pub corner_lon_p2_deg: Option<f64>,
-    /// Item 86: Corner Latitude Point 3 (Full) — encode range [-90, 90] deg (int32).
-    /// Full-range twin of [`Self::corner_lat_offset_p3_deg`] (Item 30, ±0.075°).
-    pub corner_lat_p3_deg: Option<f64>,
-    /// Item 87: Corner Longitude Point 3 (Full) — encode range [-180, 180] deg (int32).
-    /// Full-range twin of [`Self::corner_lon_offset_p3_deg`] (Item 31, ±0.075°).
-    pub corner_lon_p3_deg: Option<f64>,
-    /// Item 88: Corner Latitude Point 4 (Full) — encode range [-90, 90] deg (int32).
-    /// Full-range twin of [`Self::corner_lat_offset_p4_deg`] (Item 32, ±0.075°).
-    pub corner_lat_p4_deg: Option<f64>,
-    /// Item 89: Corner Longitude Point 4 (Full) — encode range [-180, 180] deg (int32).
-    /// Full-range twin of [`Self::corner_lon_offset_p4_deg`] (Item 33, ±0.075°).
-    pub corner_lon_p4_deg: Option<f64>,
-
-    // Target location & tracking (tags 40-46)
-    /// Item 40: Target Location Latitude — encode range [-90, 90] deg (int32).
-    pub target_location_lat_deg: Option<f64>,
-    /// Item 41: Target Location Longitude — encode range [-180, 180] deg (int32).
-    pub target_location_lon_deg: Option<f64>,
-    /// Item 42: Target Location Elevation — encode range [-900, 19000] m (uint16).
-    pub target_location_elev_m: Option<f64>,
-    /// Item 43: Target Track Gate Width — encode range [0, 510] px (uint8).
-    pub target_track_gate_width_px: Option<f64>,
-    /// Item 44: Target Track Gate Height — encode range [0, 510] px (uint8).
-    pub target_track_gate_height_px: Option<f64>,
-    /// Item 45: Target Error Estimate - CE90 — encode range [0, 4095] m (uint16).
-    pub target_error_ce90_m: Option<f64>,
-    /// Item 46: Target Error Estimate - LE90 — encode range [0, 4095] m (uint16).
-    pub target_error_le90_m: Option<f64>,
-
-    // Weather / atmospheric (tags 35-38, 49, 53-55)
-    /// Item 35: Wind Direction — encode range [0, 360] deg (uint16).
-    pub wind_direction_deg: Option<f64>,
-    /// Item 36: Wind Speed — encode range [0, 100] m/s (uint8).
-    pub wind_speed: Option<f64>,
-    /// Item 37: Static Pressure — encode range [0, 5000] mbar (uint16).
-    pub static_pressure_mbar: Option<f64>,
-    /// Item 38: Density Altitude — encode range [-900, 19000] m (uint16).
-    /// For the extended [-900, 40000] m range use
-    /// [`Self::density_altitude_extended_m`] (Item 103, IMAPB).
-    /// Per ST 0601.19 requirements 0601.9-20/-21, a decoder that
-    /// understands Item 103 shall use it and ignore this restricted
-    /// twin when both are present; this struct populates both fields
-    /// on decode — prefer [`Self::density_altitude_extended_m`] when
-    /// producing new records.
-    pub density_altitude_m: Option<f64>,
-    /// Item 49: Differential Pressure — encode range [0, 5000] mbar (uint16).
-    pub differential_pressure_mbar: Option<f64>,
-    /// Item 53: Airfield Barometric Pressure — encode range [0, 5000] mbar (uint16).
-    pub airfield_barometric_pressure_mbar: Option<f64>,
-    /// Item 54: Airfield Elevation — encode range [-900, 19000] m (uint16).
-    pub airfield_elevation_m: Option<f64>,
-    /// Item 55: Relative Humidity — encode range [0, 100] % (uint8).
-    pub relative_humidity_pct: Option<f64>,
-
-    // Extended platform state (tags 51, 52, 56-58, 64, 92, 93)
-    /// Item 51: Platform Vertical Speed — encode range [-180, 180] m/s (int16).
-    pub platform_vertical_speed: Option<f64>,
-    /// Item 52: Platform Sideslip Angle — encode range [-20, 20] deg (int16).
-    /// For the full ±180° range use [`Self::platform_sideslip_full_deg`] (Item 93).
-    pub platform_sideslip_deg: Option<f64>,
-    /// Item 56: Platform Ground Speed — encode range [0, 255] m/s (uint8).
-    pub platform_ground_speed: Option<f64>,
-    /// Item 57: Ground Range — encode range [0, 5000000] m (uint32).
-    pub ground_range_m: Option<f64>,
-    /// Item 58: Platform Fuel Remaining — encode range [0, 10000] kg (uint16).
-    pub platform_fuel_remaining_kg: Option<f64>,
-    /// Item 64: Platform Magnetic Heading — encode range [0, 360] deg (uint16).
-    pub platform_magnetic_heading_deg: Option<f64>,
-    /// Item 92: Platform Angle of Attack (Full) — encode range [-90, 90] deg (int32).
-    pub platform_angle_of_attack_full_deg: Option<f64>,
-    /// Item 93: Platform Sideslip Angle (Full) — encode range [-180, 180] deg (int32).
-    /// Full-range twin of [`Self::platform_sideslip_deg`] (Item 52, ±20°).
-    pub platform_sideslip_full_deg: Option<f64>,
-
-    // Alternate platform (tags 67-69, 71, 76)
-    /// Item 67: Alternate Platform Latitude — encode range [-90, 90] deg (int32).
-    pub alternate_platform_lat_deg: Option<f64>,
-    /// Item 68: Alternate Platform Longitude — encode range [-180, 180] deg (int32).
-    pub alternate_platform_lon_deg: Option<f64>,
-    /// Item 69: Alternate Platform Altitude — encode range [-900, 19000] m (uint16).
-    /// Not to be confused with [`Self::alternate_platform_ellipsoid_height_extended_m`]
-    /// (Item 105) — Item 105 extends Item 76 (Alternate Platform Ellipsoid
-    /// Height, a WGS84 ellipsoid-height item), not this plain-altitude item;
-    /// Item 69 has no IMAPB extended-range twin of its own. Per ST 0601.19
-    /// §8.105, legacy systems preferring one representation should favor
-    /// Item 105 over Item 76 over this item — consistent with the
-    /// requirements 0601.9-20/-21 extended-representation precedence rule
-    /// on the 76/105 pair (see [`Self::alternate_platform_ellipsoid_height_m`]).
-    pub alternate_platform_alt_m: Option<f64>,
-    /// Item 71: Alternate Platform Heading — encode range [0, 360] deg (uint16).
-    pub alternate_platform_heading_deg: Option<f64>,
-    /// Item 76: Alternate Platform Ellipsoid Height (WGS84) — encode range
-    /// [-900, 19000] m (uint16). For the extended
-    /// [-900, 40000] m range use
-    /// [`Self::alternate_platform_ellipsoid_height_extended_m`] (Item 105, IMAPB).
-    /// Per ST 0601.19 requirements 0601.9-20/-21, a decoder that
-    /// understands Item 105 shall use it and ignore this restricted
-    /// twin when both are present; this struct populates both fields
-    /// on decode — prefer
-    /// [`Self::alternate_platform_ellipsoid_height_extended_m`] when
-    /// producing new records.
-    pub alternate_platform_ellipsoid_height_m: Option<f64>,
-
-    // Sensor velocity (tags 79-80)
-    /// Item 79: Sensor North Velocity — encode range [-327, 327] m/s (int16).
-    pub sensor_north_velocity: Option<f64>,
-    /// Item 80: Sensor East Velocity — encode range [-327, 327] m/s (int16).
-    pub sensor_east_velocity: Option<f64>,
-
-    // Extended-range items (ST 1201.5 IMAPB-encoded, tags 96-134).
-    // Unlike the fixed-width LinearRange fields above, IMAPB
-    // wire values decode at any length 1..=max_len and encode at
-    // default_len; out-of-range encodes error by default or, under
-    // `OutOfRangePolicy::Indicator`, emit the tag's ST 1201.5
-    // BelowMin/AboveMax special (see `Self::imapb_specials`).
-    /// Item 96: Target Width Extended — ST 1201.5 IMAPB range
-    /// [0, 1500000] m, wire length 1..=8 bytes (encode emits 3 bytes).
-    /// Extended-range twin of [`Self::target_width_m`] (Item 22, uint16,
-    /// [0, 10000] m) — see that field's docs for the ST 0601.19
-    /// extended-representation precedence rule (prefer this field).
-    pub target_width_extended_m: Option<f64>,
-    /// Item 103: Density Altitude Extended — ST 1201.5 IMAPB range
-    /// [-900, 40000] m, wire length 1..=8 bytes (encode emits 3 bytes).
-    /// Extended-range twin of [`Self::density_altitude_m`] (Item 38,
-    /// uint16, [-900, 19000] m) — see that field's docs for the
-    /// ST 0601.19 extended-representation precedence rule (prefer this
-    /// field).
-    pub density_altitude_extended_m: Option<f64>,
-    /// Item 104: Sensor Ellipsoid Height Extended — ST 1201.5 IMAPB range
-    /// [-900, 40000] m, wire length 1..=8 bytes (encode emits 3 bytes).
-    /// Extended-range twin of [`Self::sensor_ellipsoid_height_m`]
-    /// (Item 75, uint16, [-900, 19000] m) — see that field's docs for
-    /// the ST 0601.19 extended-representation precedence rule (prefer
-    /// this field).
-    pub sensor_ellipsoid_height_extended_m: Option<f64>,
-    /// Item 105: Alternate Platform Ellipsoid Height Extended —
-    /// ST 1201.5 IMAPB range [-900, 40000] m, wire length 1..=8 bytes
-    /// (encode emits 3 bytes). Extended-range twin
-    /// of [`Self::alternate_platform_ellipsoid_height_m`] (Item 76,
-    /// uint16, [-900, 19000] m) — see that field's docs for the
-    /// ST 0601.19 extended-representation precedence rule (prefer this
-    /// field); see also [`Self::alternate_platform_alt_m`]
-    /// (Item 69) for the disambiguation from plain (non-ellipsoid) altitude.
-    pub alternate_platform_ellipsoid_height_extended_m: Option<f64>,
-    /// Item 109: Range To Recovery Location — distance from current
-    /// position to airframe recovery position. ST 1201.5 IMAPB range
-    /// [0, 21000] km, wire length 1..=4 bytes (encode emits 3 bytes).
-    pub range_to_recovery_km: Option<f64>,
-    /// Item 112: Platform Course Angle — direction the aircraft is
-    /// moving relative to True North. ST 1201.5 IMAPB range [0, 360] deg,
-    /// wire length 1..=8 bytes (encode emits 2 bytes).
-    pub platform_course_angle_deg: Option<f64>,
-    /// Item 113: Altitude AGL — Above Ground Level height above the
-    /// ground/water. ST 1201.5 IMAPB range [-900, 40000] m, wire length
-    /// 1..=4 bytes (encode emits 3 bytes).
-    pub altitude_agl_m: Option<f64>,
-    /// Item 114: Radar Altimeter — height above the ground/water as
-    /// reported by a RADAR altimeter (AGL, see [`Self::altitude_agl_m`]).
-    /// ST 1201.5 IMAPB range [-900, 40000] m, wire length 1..=4 bytes
-    /// (encode emits 3 bytes).
-    pub radar_altimeter_m: Option<f64>,
-    /// Item 117: Sensor Azimuth Rate — rate the sensor's azimuth angle
-    /// is changing. ST 1201.5 IMAPB range [-1000, 1000] deg/s, wire
-    /// length 1..=4 bytes (encode emits 2 bytes).
-    pub sensor_azimuth_rate_dps: Option<f64>,
-    /// Item 118: Sensor Elevation Rate — rate the sensor's elevation
-    /// angle is changing. ST 1201.5 IMAPB range [-1000, 1000] deg/s,
-    /// wire length 1..=4 bytes (encode emits 3 bytes).
-    pub sensor_elevation_rate_dps: Option<f64>,
-    /// Item 119: Sensor Roll Rate — rate the sensor's roll angle is
-    /// changing. ST 1201.5 IMAPB range [-1000, 1000] deg/s, wire length
-    /// 1..=4 bytes (encode emits 2 bytes).
-    pub sensor_roll_rate_dps: Option<f64>,
-    /// Item 120: On-board MI Storage Percent Full — amount of on-board
-    /// Motion Imagery storage used, as a percentage of total storage.
-    /// ST 1201.5 IMAPB range [0, 100] %, wire length 1..=3 bytes (encode
-    /// emits 2 bytes).
-    pub mi_storage_percent_full: Option<f64>,
-    /// Item 132: Transmission Frequency — radio frequency used to
-    /// transmit the Motion Imagery. ST 1201.5 IMAPB range [1, 99999] MHz,
-    /// wire length 1..=4 bytes (encode emits 3 bytes). First IMAPB
-    /// item whose own tag number is 2-byte BER-OID encoded (like Items
-    /// 129/135 in the raw/UTF-8 set).
-    pub transmission_frequency_mhz: Option<f64>,
-    /// Item 134: Zoom Percentage — for a variable-zoom system, the
-    /// percentage of zoom. ST 1201.5 IMAPB range [0, 100] %, wire length
-    /// 1..=4 bytes (encode emits 2 bytes).
-    pub zoom_percentage: Option<f64>,
-
-    // Var-length int/enum items (ST 0601, tags 110-139) —
-    // MISB variable-length truncatable integer encoding (see
-    // `crate::klv::length::{read_var_uint, read_var_int}`): the TLV
-    // length IS the byte count (not BER-OID), decode accepts any wire
-    // length 1..=max_len, encode always emits the shortest form. Direct
-    // integers/enums, not IMAPB-scaled floats.
-    /// Item 110: Time Airborne — cumulative time the platform has been
-    /// airborne. MISB var-length uint, wire length 1..=4 bytes (seconds).
-    pub time_airborne_s: Option<u32>,
-    /// Item 111: Propulsion Unit Speed — rotational speed of the
-    /// platform's propulsion unit. MISB var-length uint, wire length
-    /// 1..=4 bytes (RPM).
-    pub propulsion_unit_speed_rpm: Option<u32>,
-    /// Item 123: Number of NAVSATs in View — count of navigation
-    /// satellites contributing to the platform's position solution.
-    /// MISB var-length uint, wire length 1 byte.
-    pub navsats_in_view: Option<u8>,
-    /// Item 124: Positioning Method Source — bitfield naming which
-    /// satellite positioning system(s) contributed to the platform's
-    /// position solution. MISB var-length uint, wire length 1 byte.
+crate::binding_record! {
+    /// One ST 0601 UAS Datalink Local Set, one field per tag.
     ///
-    /// | Bit | System |
-    /// |---:|---|
-    /// | 0 | INS |
-    /// | 1 | GPS |
-    /// | 2 | Galileo |
-    /// | 3 | QZSS |
-    /// | 4 | NAVIC |
-    /// | 5 | GLONASS |
-    /// | 6 | BeiDou-1 |
-    /// | 7 | BeiDou-2 |
+    /// A field whose doc states a range is checked when the record is
+    /// encoded: under the default out-of-range policy a value outside it is an
+    /// `OutOfRange` encode error; see [`OutOfRangePolicy`] for the tags that can
+    /// carry the spec's Out-of-Range indicator instead.
     ///
-    /// Per ST 0601.19 §8.124 a conformant producer sets at least one bit
-    /// (an all-zero value is out of the item's declared `1..255` range);
-    /// decode stays lenient and does not reject `0x00`.
-    pub positioning_method_source: Option<u8>,
-    /// Item 125: Platform Status — operational status of the platform.
-    /// MISB var-length uint, wire length 1 byte. See [`PlatformStatus`].
-    pub platform_status: Option<PlatformStatus>,
-    /// Item 126: Sensor Control Mode — what is currently controlling
-    /// the sensor. MISB var-length uint, wire length 1 byte. See
-    /// [`SensorControlMode`].
-    pub sensor_control_mode: Option<SensorControlMode>,
-    /// Item 131: Take-off Time — MISB ST 0603 timestamp of the
-    /// platform's take-off. MISB var-length uint, wire length 1..=8
-    /// bytes (microseconds).
-    pub take_off_time_us: Option<u64>,
-    /// Item 133: On-board MI Storage Capacity — total on-board Motion
-    /// Imagery storage capacity (compare
-    /// [`Self::mi_storage_percent_full`], Item 120, the *used*
-    /// percentage of that capacity). MISB var-length uint, wire length
-    /// 1..=4 bytes (gigabytes).
-    pub mi_storage_capacity_gb: Option<u32>,
-    /// Item 136: Leap Seconds — the TAI-UTC leap-second offset in
-    /// effect for [`Self::timestamp_us`]. MISB var-length int, wire
-    /// length 1..=4 bytes (seconds).
-    pub leap_seconds: Option<i32>,
-    /// Item 137: Correction Offset — signed correction applied to a
-    /// platform time source (e.g. GPS-disciplined clock drift). MISB
-    /// var-length int, wire length 1..=8 bytes (microseconds).
-    ///
-    /// **Spec typo:** ST 0601.19 §8.137 prints this item's decode type as
-    /// "KLVuint" (unsigned), but its own worked example only decodes
-    /// correctly as SIGNED (MISB var-length int) — this implementation
-    /// follows the worked example, not the printed type name.
-    pub correction_offset_us: Option<i64>,
-    /// Item 139: Active Payloads — bitmask of which Payload IDs (Item
-    /// 138, Payload List — [`Self::payload_list`]) are currently active.
-    /// Raw bytes, LSB-first within each byte: bit *i* of byte 0 is
-    /// Payload ID *i* (0-7), byte 1 covers IDs 8-15, and so on
-    /// (multi-byte extends upward).
-    pub active_payloads: Option<Vec<u8>>,
+    /// The composite views (sensor position, platform and sensor attitude, field
+    /// of view, frame center and corners) are accessors that return nothing when
+    /// any of the fields they combine is absent.
+    #[must_use]
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct UasDatalinkLs {
+        /// The 16-byte SMPTE universal label that opens the local set.
+        @[custom] pub universal_label: UniversalLabel,
+        /// The version byte the label declares.
+        pub declared_version: u8,
 
-    // Misc
-    /// Item 47: Generic Flag Data — bitfield per ST 0601.19 Table 3:
-    /// bit 0 laser range on, bit 1 auto-track on, bit 2 IR polarity
-    /// (set = black hot), bit 3 icing detected, bit 4 slant range
-    /// measured (vs. calculated), bit 5 image invalid, bits 6-7 reserved.
-    pub generic_flag_data: Option<u8>,
-    /// Tag 48: the ST 0102 Security Local Set body bytes (no universal-label
-    /// prefix). Pass-through bytes; consumers needing typed access call
-    /// `klv::st0102::decode` on `security_local_set.as_deref()?`.
-    pub security_local_set: Option<Vec<u8>>,
-    /// Item 73: MISB ST 0806 Remote Video Terminal LS bytes.
-    /// Pass-through bytes; consumers needing typed access call
-    /// `klv::st0806::decode` on `rvt.as_deref()?`. See
-    /// [`crate::klv::st0806`] for the typed layer.
-    pub rvt: Option<Vec<u8>>,
-    /// Tag 74 — VMTI Local Set (MISB ST 0903). Pass-through bytes;
-    /// consumers needing typed access call `klv::st0903::decode` on
-    /// `vmti.as_deref()?`. See `klv::st0903` for the typed layer.
-    /// Sibling-layer pattern matches `security_local_set` (Tag 48 →
-    /// `klv::st0102`).
-    pub vmti: Option<Vec<u8>>,
-    /// Item 95: MISB ST 1206 SAR Motion Imagery Local Set bytes.
-    /// Pass-through bytes; interior typing deferred.
-    pub sar_mi_local_set: Option<Vec<u8>>,
-    /// Item 97: MISB ST 1002 Range Image Local Set bytes. Pass-through
-    /// bytes; interior typing deferred.
-    pub range_image_local_set: Option<Vec<u8>>,
-    /// Item 98: MISB ST 1601 Geo-Registration Local Set bytes.
-    /// Pass-through bytes; interior typing deferred.
-    pub geo_registration_local_set: Option<Vec<u8>>,
-    /// Item 99: MISB ST 1602 Composite Imaging Local Set bytes.
-    /// Pass-through bytes; interior typing deferred.
-    pub composite_imaging_local_set: Option<Vec<u8>>,
-    /// Item 100: MISB ST 1607 Segment Local Set bytes. Pass-through
-    /// bytes; interior typing deferred.
-    pub segment_local_set: Option<Vec<u8>>,
-    /// Item 101: MISB ST 1607 Amend Local Set bytes. Pass-through
-    /// bytes; interior typing deferred.
-    pub amend_local_set: Option<Vec<u8>>,
+        // Identity
+        pub mission_id: Option<String>,
+        pub platform_tail_number: Option<String>,
+        pub platform_designation: Option<String>,
+        pub image_source_sensor: Option<String>,
+        pub image_coordinate_system: Option<String>,
+        pub platform_call_sign: Option<String>,
+        pub uas_ls_version: Option<u8>,
 
-    // Raw scalar & string items (tags 39, 60-62, 70, 72, 106-108, 129, 135)
-    pub outside_air_temp_c: Option<i8>,
-    /// Item 60: Weapon Load — bit-packed nibbles (high→low): store
-    /// station, store substation, weapon type, weapon variant. Kept as a
-    /// raw opaque `u16`, not a sub-struct — callers needing individual
-    /// nibbles shift and mask this value themselves.
-    pub weapon_load: Option<u16>,
-    pub weapon_fired: Option<u8>,
-    pub laser_prf_code: Option<u16>,
-    pub alternate_platform_name: Option<String>,
-    pub event_start_time_us: Option<u64>,
-    pub stream_designator: Option<String>,
-    pub operational_base: Option<String>,
-    pub broadcast_source: Option<String>,
-    pub target_id: Option<String>,
-    pub communications_method: Option<String>,
+        // Time
+        pub timestamp_us: Option<u64>,
 
-    // Coded enums (tags 34, 63, 77)
-    /// Item 34: Icing Detected — icing-detector state. See [`IcingDetected`].
-    pub icing_detected: Option<IcingDetected>,
-    /// Item 63: Sensor Field of View Name — named FOV preset. See [`SensorFovName`].
-    pub sensor_fov_name: Option<SensorFovName>,
-    /// Item 77: Operational Mode — operating mode of the portrayed event.
-    /// See [`OperationalMode`].
-    pub operational_mode: Option<OperationalMode>,
+        // Platform state
+        /// Item 5: Platform Heading Angle — encode range [0, 360] deg (uint16).
+        pub platform_heading_deg: Option<f64>,
+        /// Item 6: Platform Pitch Angle — encode range [-20, 20] deg (int16).
+        /// For the full ±90° range use [`Self::platform_pitch_full_deg`] (Item 90).
+        pub platform_pitch_deg: Option<f64>,
+        /// Item 7: Platform Roll Angle — encode range [-50, 50] deg (int16).
+        /// For the full ±90° range use [`Self::platform_roll_full_deg`] (Item 91).
+        pub platform_roll_deg: Option<f64>,
+        /// Item 8: Platform True Airspeed — encode range [0, 255] m/s (uint8).
+        pub platform_true_airspeed: Option<f64>,
+        /// Item 9: Platform Indicated Airspeed — encode range [0, 255] m/s (uint8).
+        pub platform_indicated_airspeed: Option<f64>,
+        /// Item 90: Platform Pitch Angle (Full) — encode range [-90, 90] deg (int32).
+        /// Full-range twin of [`Self::platform_pitch_deg`] (Item 6, ±20°).
+        pub platform_pitch_full_deg: Option<f64>,
+        /// Item 91: Platform Roll Angle (Full) — encode range [-90, 90] deg (int32).
+        /// Full-range twin of [`Self::platform_roll_deg`] (Item 7, ±50°).
+        pub platform_roll_full_deg: Option<f64>,
+        /// Item 94: MIIS Core Identifier (MISB ST 1204 binary format).
+        /// Raw bytes — decode/inspect via [`crate::klv::st1204`].
+        @[custom] pub miis_core_id: Option<Vec<u8>>,
+        /// Item 50: Platform Angle of Attack — encode range [-20, 20] deg (int16).
+        pub platform_angle_of_attack_deg: Option<f64>,
 
-    // Pack & list items
-    /// Item 81: Image Horizon Pixels. See [`ImageHorizonPixels`].
-    pub image_horizon: Option<ImageHorizonPixels>,
-    /// Item 115: Control Command — MULTI-INSTANCE (ST 0601.19 Table 1
-    /// "Multiples Allowed" = Yes); every wire occurrence appends one
-    /// [`ControlCommand`]. Empty means none were present.
-    pub control_commands: Vec<ControlCommand>,
-    /// Item 116: Control Command Verification List — BER-OID command ids
-    /// the platform has acknowledged/verified.
-    pub control_command_verification: Option<Vec<u64>>,
-    /// Item 121: Active Wavelength List — BER-OID wavelength ids
-    /// currently active (`0` = none active, exclusive per ST 0601.19
-    /// §8.121).
-    pub active_wavelengths: Option<Vec<u64>>,
-    /// Item 127: Sensor Frame Rate Pack. See [`SensorFrameRate`].
-    pub sensor_frame_rate: Option<SensorFrameRate>,
-    /// Item 143: Metadata Substream Id. See [`MetadataSubstreamId`].
-    pub metadata_substream_id: Option<MetadataSubstreamId>,
-    /// Item 122: Country Codes. See [`CountryCodes`].
-    pub country_codes: Option<CountryCodes>,
-    /// Item 128: Wavelengths List. See [`WavelengthRecord`].
-    pub wavelengths_list: Option<Vec<WavelengthRecord>>,
-    /// Item 130: Airbase Locations. See [`AirbaseLocations`].
-    pub airbase_locations: Option<AirbaseLocations>,
-    /// Item 138: Payload List. See [`PayloadList`].
-    pub payload_list: Option<PayloadList>,
-    /// Item 140: Weapons Stores. See [`WeaponsStore`].
-    pub weapons_stores: Option<Vec<WeaponsStore>>,
-    /// Item 141: Waypoint List. See [`Waypoint`].
-    pub waypoint_list: Option<Vec<Waypoint>>,
-    /// Item 142: View Domain. See [`ViewDomain`].
-    pub view_domain: Option<ViewDomain>,
-    /// Item 102: SDCC-FLP (Standard Deviation and Correlation
-    /// Coefficient, Floating-Point). MULTI-INSTANCE per ST 0601.19
-    /// Table 1 ("Multiples Allowed" = Yes) — the "Refined Source List"
-    /// binding: every wire occurrence appends one [`SdccFlpField`],
-    /// capturing which preceding items it refines. See [`SdccFlpField`]
-    /// for the capture rule and the encode-side adjacency caveat.
-    pub sdcc_flps: Vec<SdccFlpField>,
+        // Sensor pose & position
+        /// Item 13: Sensor Latitude — encode range [-90, 90] deg (int32).
+        pub sensor_lat_deg: Option<f64>,
+        /// Item 14: Sensor Longitude — encode range [-180, 180] deg (int32).
+        pub sensor_lon_deg: Option<f64>,
+        /// Item 15: Sensor True Altitude — encode range [-900, 19000] m (uint16).
+        pub sensor_alt_m: Option<f64>,
+        /// Item 75: Sensor Ellipsoid Height (WGS84) — encode range [-900, 19000] m (uint16).
+        /// For the extended [-900, 40000] m range use
+        /// [`Self::sensor_ellipsoid_height_extended_m`] (Item 104, IMAPB).
+        /// Per ST 0601.19 requirements 0601.9-20/-21, a decoder that
+        /// understands Item 104 shall use it and ignore this restricted
+        /// twin when both are present; this struct populates both fields
+        /// on decode — prefer [`Self::sensor_ellipsoid_height_extended_m`]
+        /// when producing new records.
+        pub sensor_ellipsoid_height_m: Option<f64>,
+        /// Item 16: Sensor Horizontal FOV — encode range [0, 180] deg (uint16).
+        pub sensor_hfov_deg: Option<f64>,
+        /// Item 17: Sensor Vertical FOV — encode range [0, 180] deg (uint16).
+        pub sensor_vfov_deg: Option<f64>,
+        /// Item 18: Sensor Relative Azimuth — encode range [0, 360] deg (uint32).
+        pub sensor_rel_az_deg: Option<f64>,
+        /// Item 19: Sensor Relative Elevation — encode range [-180, 180] deg (int32).
+        pub sensor_rel_el_deg: Option<f64>,
+        /// Item 20: Sensor Relative Roll — encode range [0, 360] deg (uint32).
+        pub sensor_rel_roll_deg: Option<f64>,
 
-    // Pass-through
-    /// Every tag the typed set does not model, preserved as raw bytes per the
-    /// ST 0107.5 §6 future-proof skip rule. An entry whose tag a typed field
-    /// owns is dropped on encode: the typed field wins.
-    pub unknown: Vec<OwnedRawField>,
-    /// Per-field decode failures collected by a lenient decode; a strict
-    /// decode returns an error instead. A parser diagnostic: it is not
-    /// re-encoded.
-    pub field_errors: Vec<KlvFieldError>,
+        // Ranging & frame center
+        /// Item 21: Slant Range — encode range [0, 5000000] m (uint32).
+        pub slant_range_m: Option<f64>,
+        /// Item 22: Target Width — encode range [0, 10000] m (uint16).
+        /// For the extended [0, 1500000] m range use
+        /// [`Self::target_width_extended_m`] (Item 96, IMAPB).
+        /// Per ST 0601.19 requirements 0601.9-20/-21, a decoder that
+        /// understands Item 96 shall use it and ignore this restricted
+        /// twin when both are present; this struct populates both fields
+        /// on decode — prefer [`Self::target_width_extended_m`] when
+        /// producing new records.
+        pub target_width_m: Option<f64>,
+        /// Item 23: Frame Center Latitude — encode range [-90, 90] deg (int32).
+        pub frame_center_lat_deg: Option<f64>,
+        /// Item 24: Frame Center Longitude — encode range [-180, 180] deg (int32).
+        pub frame_center_lon_deg: Option<f64>,
+        /// Item 25: Frame Center Elevation — encode range [-900, 19000] m (uint16).
+        pub frame_center_elev_m: Option<f64>,
+        /// Item 78: Frame Center Height Above Ellipsoid (WGS84) — encode range
+        /// [-900, 19000] m (uint16).
+        pub frame_center_ellipsoid_height_m: Option<f64>,
 
-    /// Tags whose wire value was the INT_MIN sentinel for their signed linear
-    /// mapping. INT_MIN is a spec-defined signal (not an error), so the
-    /// corresponding typed field is left as `None` and the tag is recorded
-    /// here instead of in `field_errors`.
-    ///
-    /// Use [`crate::klv::st0601::st0601_sentinel_meaning`] to look up the
-    /// spec-defined meaning for each tag (Out of Range / Reserved / N/A).
-    ///
-    /// **Encode semantics:** encoding a record that carries sentinel tags
-    /// re-emits the INT_MIN bytes for each sentinel tag whose typed field is
-    /// `None`. If the typed field is `Some(v)`, the value `v` is encoded
-    /// instead — a non-None field always wins over a `sentinel_tags` entry.
-    /// The encoder also auto-injects Tag 65 (version) and the trailing
-    /// checksum, so the output byte sequence is not guaranteed to match the
-    /// original wire input byte-for-byte; the sentinel *value* round-trips,
-    /// but the emission order is: typed fields in ascending tag order, then
-    /// `sentinel_tags` entries, then `unknown` fields in caller order.
-    pub sentinel_tags: Vec<u32>,
+        // Image corners — offsets from frame center (tags 26-33)
+        /// Item 26: Offset Corner Latitude Point 1 — encode range [-0.075, 0.075] deg (int16).
+        /// For the full latitude range use [`Self::corner_lat_p1_deg`] (Item 82, ±90°).
+        pub corner_lat_offset_p1_deg: Option<f64>,
+        /// Item 27: Offset Corner Longitude Point 1 — encode range [-0.075, 0.075] deg (int16).
+        /// For the full longitude range use [`Self::corner_lon_p1_deg`] (Item 83, ±180°).
+        pub corner_lon_offset_p1_deg: Option<f64>,
+        /// Item 28: Offset Corner Latitude Point 2 — encode range [-0.075, 0.075] deg (int16).
+        /// For the full latitude range use [`Self::corner_lat_p2_deg`] (Item 84, ±90°).
+        pub corner_lat_offset_p2_deg: Option<f64>,
+        /// Item 29: Offset Corner Longitude Point 2 — encode range [-0.075, 0.075] deg (int16).
+        /// For the full longitude range use [`Self::corner_lon_p2_deg`] (Item 85, ±180°).
+        pub corner_lon_offset_p2_deg: Option<f64>,
+        /// Item 30: Offset Corner Latitude Point 3 — encode range [-0.075, 0.075] deg (int16).
+        /// For the full latitude range use [`Self::corner_lat_p3_deg`] (Item 86, ±90°).
+        pub corner_lat_offset_p3_deg: Option<f64>,
+        /// Item 31: Offset Corner Longitude Point 3 — encode range [-0.075, 0.075] deg (int16).
+        /// For the full longitude range use [`Self::corner_lon_p3_deg`] (Item 87, ±180°).
+        pub corner_lon_offset_p3_deg: Option<f64>,
+        /// Item 32: Offset Corner Latitude Point 4 — encode range [-0.075, 0.075] deg (int16).
+        /// For the full latitude range use [`Self::corner_lat_p4_deg`] (Item 88, ±90°).
+        pub corner_lat_offset_p4_deg: Option<f64>,
+        /// Item 33: Offset Corner Longitude Point 4 — encode range [-0.075, 0.075] deg (int16).
+        /// For the full longitude range use [`Self::corner_lon_p4_deg`] (Item 89, ±180°).
+        pub corner_lon_offset_p4_deg: Option<f64>,
 
-    /// Tags whose ST 1201.5 IMAPB wire value decoded to a spec-defined
-    /// special value (§7.2.3 — `+∞`/`−∞`, NaN families, the
-    /// MISB-defined `BelowMin`/`AboveMax` overflow signals, or a
-    /// user-defined signal) rather than a normal-range float. The
-    /// corresponding typed `Option<f64>` field is left `None` and the
-    /// tag+special pair is recorded here instead. Use
-    /// [`crate::klv::ImapbSpecial`] to inspect which special was
-    /// signaled.
-    ///
-    /// **Encode semantics:** mirrors [`Self::sentinel_tags`] — encoding a
-    /// record re-emits the special's bytes (at the tag's `default_len`)
-    /// for each `(tag, special)` entry whose typed field is currently
-    /// `None`. If the typed field is `Some(v)`, the value wins and the
-    /// special entry is not re-emitted. Entries whose tag is not an IMAPB-encoded
-    /// item are silently skipped on encode.
-    ///
-    /// **Decode semantics for the two IMAPB outcomes NOT carried here:**
-    /// a wire integer in ST 1201.5's reserved-but-unrecognized
-    /// special-value space (`DecodedImapb::ReservedSpecial`) or one that
-    /// arithmetic-decodes outside the tag's `[min, max]`
-    /// (`DecodedImapb::OutOfRange`) are both treated as producer
-    /// non-conformance from this typed consumer's view: they are NOT
-    /// pushed here, and the raw wire bytes are NOT preserved. Instead
-    /// they are recorded in [`Self::field_errors`] as
-    /// [`crate::error::KlvFieldError::OutOfRange`] — `value: f64::NAN`
-    /// for `ReservedSpecial` (no arithmetic decode exists for a
-    /// non-conformant bit pattern), or the raw arithmetic decode for
-    /// `OutOfRange`. This differs from `unknown`/`patch()`, which
-    /// preserve raw bytes verbatim for genuinely untyped tags — these
-    /// tags ARE typed, so a malformed value is a decode error, not a
-    /// pass-through.
-    pub imapb_specials: Vec<(u32, crate::klv::imapb::ImapbSpecial)>,
+        // Image corners — full lat/lon (tags 82-89, ST 0601.13+)
+        /// Item 82: Corner Latitude Point 1 (Full) — encode range [-90, 90] deg (int32).
+        /// Full-range twin of [`Self::corner_lat_offset_p1_deg`] (Item 26, ±0.075°).
+        pub corner_lat_p1_deg: Option<f64>,
+        /// Item 83: Corner Longitude Point 1 (Full) — encode range [-180, 180] deg (int32).
+        /// Full-range twin of [`Self::corner_lon_offset_p1_deg`] (Item 27, ±0.075°).
+        pub corner_lon_p1_deg: Option<f64>,
+        /// Item 84: Corner Latitude Point 2 (Full) — encode range [-90, 90] deg (int32).
+        /// Full-range twin of [`Self::corner_lat_offset_p2_deg`] (Item 28, ±0.075°).
+        pub corner_lat_p2_deg: Option<f64>,
+        /// Item 85: Corner Longitude Point 2 (Full) — encode range [-180, 180] deg (int32).
+        /// Full-range twin of [`Self::corner_lon_offset_p2_deg`] (Item 29, ±0.075°).
+        pub corner_lon_p2_deg: Option<f64>,
+        /// Item 86: Corner Latitude Point 3 (Full) — encode range [-90, 90] deg (int32).
+        /// Full-range twin of [`Self::corner_lat_offset_p3_deg`] (Item 30, ±0.075°).
+        pub corner_lat_p3_deg: Option<f64>,
+        /// Item 87: Corner Longitude Point 3 (Full) — encode range [-180, 180] deg (int32).
+        /// Full-range twin of [`Self::corner_lon_offset_p3_deg`] (Item 31, ±0.075°).
+        pub corner_lon_p3_deg: Option<f64>,
+        /// Item 88: Corner Latitude Point 4 (Full) — encode range [-90, 90] deg (int32).
+        /// Full-range twin of [`Self::corner_lat_offset_p4_deg`] (Item 32, ±0.075°).
+        pub corner_lat_p4_deg: Option<f64>,
+        /// Item 89: Corner Longitude Point 4 (Full) — encode range [-180, 180] deg (int32).
+        /// Full-range twin of [`Self::corner_lon_offset_p4_deg`] (Item 33, ±0.075°).
+        pub corner_lon_p4_deg: Option<f64>,
+
+        // Target location & tracking (tags 40-46)
+        /// Item 40: Target Location Latitude — encode range [-90, 90] deg (int32).
+        pub target_location_lat_deg: Option<f64>,
+        /// Item 41: Target Location Longitude — encode range [-180, 180] deg (int32).
+        pub target_location_lon_deg: Option<f64>,
+        /// Item 42: Target Location Elevation — encode range [-900, 19000] m (uint16).
+        pub target_location_elev_m: Option<f64>,
+        /// Item 43: Target Track Gate Width — encode range [0, 510] px (uint8).
+        pub target_track_gate_width_px: Option<f64>,
+        /// Item 44: Target Track Gate Height — encode range [0, 510] px (uint8).
+        pub target_track_gate_height_px: Option<f64>,
+        /// Item 45: Target Error Estimate - CE90 — encode range [0, 4095] m (uint16).
+        pub target_error_ce90_m: Option<f64>,
+        /// Item 46: Target Error Estimate - LE90 — encode range [0, 4095] m (uint16).
+        pub target_error_le90_m: Option<f64>,
+
+        // Weather / atmospheric (tags 35-38, 49, 53-55)
+        /// Item 35: Wind Direction — encode range [0, 360] deg (uint16).
+        pub wind_direction_deg: Option<f64>,
+        /// Item 36: Wind Speed — encode range [0, 100] m/s (uint8).
+        pub wind_speed: Option<f64>,
+        /// Item 37: Static Pressure — encode range [0, 5000] mbar (uint16).
+        pub static_pressure_mbar: Option<f64>,
+        /// Item 38: Density Altitude — encode range [-900, 19000] m (uint16).
+        /// For the extended [-900, 40000] m range use
+        /// [`Self::density_altitude_extended_m`] (Item 103, IMAPB).
+        /// Per ST 0601.19 requirements 0601.9-20/-21, a decoder that
+        /// understands Item 103 shall use it and ignore this restricted
+        /// twin when both are present; this struct populates both fields
+        /// on decode — prefer [`Self::density_altitude_extended_m`] when
+        /// producing new records.
+        pub density_altitude_m: Option<f64>,
+        /// Item 49: Differential Pressure — encode range [0, 5000] mbar (uint16).
+        pub differential_pressure_mbar: Option<f64>,
+        /// Item 53: Airfield Barometric Pressure — encode range [0, 5000] mbar (uint16).
+        pub airfield_barometric_pressure_mbar: Option<f64>,
+        /// Item 54: Airfield Elevation — encode range [-900, 19000] m (uint16).
+        pub airfield_elevation_m: Option<f64>,
+        /// Item 55: Relative Humidity — encode range [0, 100] % (uint8).
+        pub relative_humidity_pct: Option<f64>,
+
+        // Extended platform state (tags 51, 52, 56-58, 64, 92, 93)
+        /// Item 51: Platform Vertical Speed — encode range [-180, 180] m/s (int16).
+        pub platform_vertical_speed: Option<f64>,
+        /// Item 52: Platform Sideslip Angle — encode range [-20, 20] deg (int16).
+        /// For the full ±180° range use [`Self::platform_sideslip_full_deg`] (Item 93).
+        pub platform_sideslip_deg: Option<f64>,
+        /// Item 56: Platform Ground Speed — encode range [0, 255] m/s (uint8).
+        pub platform_ground_speed: Option<f64>,
+        /// Item 57: Ground Range — encode range [0, 5000000] m (uint32).
+        pub ground_range_m: Option<f64>,
+        /// Item 58: Platform Fuel Remaining — encode range [0, 10000] kg (uint16).
+        pub platform_fuel_remaining_kg: Option<f64>,
+        /// Item 64: Platform Magnetic Heading — encode range [0, 360] deg (uint16).
+        pub platform_magnetic_heading_deg: Option<f64>,
+        /// Item 92: Platform Angle of Attack (Full) — encode range [-90, 90] deg (int32).
+        pub platform_angle_of_attack_full_deg: Option<f64>,
+        /// Item 93: Platform Sideslip Angle (Full) — encode range [-180, 180] deg (int32).
+        /// Full-range twin of [`Self::platform_sideslip_deg`] (Item 52, ±20°).
+        pub platform_sideslip_full_deg: Option<f64>,
+
+        // Alternate platform (tags 67-69, 71, 76)
+        /// Item 67: Alternate Platform Latitude — encode range [-90, 90] deg (int32).
+        pub alternate_platform_lat_deg: Option<f64>,
+        /// Item 68: Alternate Platform Longitude — encode range [-180, 180] deg (int32).
+        pub alternate_platform_lon_deg: Option<f64>,
+        /// Item 69: Alternate Platform Altitude — encode range [-900, 19000] m (uint16).
+        /// Not to be confused with [`Self::alternate_platform_ellipsoid_height_extended_m`]
+        /// (Item 105) — Item 105 extends Item 76 (Alternate Platform Ellipsoid
+        /// Height, a WGS84 ellipsoid-height item), not this plain-altitude item;
+        /// Item 69 has no IMAPB extended-range twin of its own. Per ST 0601.19
+        /// §8.105, legacy systems preferring one representation should favor
+        /// Item 105 over Item 76 over this item — consistent with the
+        /// requirements 0601.9-20/-21 extended-representation precedence rule
+        /// on the 76/105 pair (see [`Self::alternate_platform_ellipsoid_height_m`]).
+        pub alternate_platform_alt_m: Option<f64>,
+        /// Item 71: Alternate Platform Heading — encode range [0, 360] deg (uint16).
+        pub alternate_platform_heading_deg: Option<f64>,
+        /// Item 76: Alternate Platform Ellipsoid Height (WGS84) — encode range
+        /// [-900, 19000] m (uint16). For the extended
+        /// [-900, 40000] m range use
+        /// [`Self::alternate_platform_ellipsoid_height_extended_m`] (Item 105, IMAPB).
+        /// Per ST 0601.19 requirements 0601.9-20/-21, a decoder that
+        /// understands Item 105 shall use it and ignore this restricted
+        /// twin when both are present; this struct populates both fields
+        /// on decode — prefer
+        /// [`Self::alternate_platform_ellipsoid_height_extended_m`] when
+        /// producing new records.
+        pub alternate_platform_ellipsoid_height_m: Option<f64>,
+
+        // Sensor velocity (tags 79-80)
+        /// Item 79: Sensor North Velocity — encode range [-327, 327] m/s (int16).
+        pub sensor_north_velocity: Option<f64>,
+        /// Item 80: Sensor East Velocity — encode range [-327, 327] m/s (int16).
+        pub sensor_east_velocity: Option<f64>,
+
+        // Extended-range items (ST 1201.5 IMAPB-encoded, tags 96-134).
+        // Unlike the fixed-width LinearRange fields above, IMAPB
+        // wire values decode at any length 1..=max_len and encode at
+        // default_len; out-of-range encodes error by default or, under
+        // `OutOfRangePolicy::Indicator`, emit the tag's ST 1201.5
+        // BelowMin/AboveMax special (see `Self::imapb_specials`).
+        /// Item 96: Target Width Extended — ST 1201.5 IMAPB range
+        /// [0, 1500000] m, wire length 1..=8 bytes (encode emits 3 bytes).
+        /// Extended-range twin of [`Self::target_width_m`] (Item 22, uint16,
+        /// [0, 10000] m) — see that field's docs for the ST 0601.19
+        /// extended-representation precedence rule (prefer this field).
+        pub target_width_extended_m: Option<f64>,
+        /// Item 103: Density Altitude Extended — ST 1201.5 IMAPB range
+        /// [-900, 40000] m, wire length 1..=8 bytes (encode emits 3 bytes).
+        /// Extended-range twin of [`Self::density_altitude_m`] (Item 38,
+        /// uint16, [-900, 19000] m) — see that field's docs for the
+        /// ST 0601.19 extended-representation precedence rule (prefer this
+        /// field).
+        pub density_altitude_extended_m: Option<f64>,
+        /// Item 104: Sensor Ellipsoid Height Extended — ST 1201.5 IMAPB range
+        /// [-900, 40000] m, wire length 1..=8 bytes (encode emits 3 bytes).
+        /// Extended-range twin of [`Self::sensor_ellipsoid_height_m`]
+        /// (Item 75, uint16, [-900, 19000] m) — see that field's docs for
+        /// the ST 0601.19 extended-representation precedence rule (prefer
+        /// this field).
+        pub sensor_ellipsoid_height_extended_m: Option<f64>,
+        /// Item 105: Alternate Platform Ellipsoid Height Extended —
+        /// ST 1201.5 IMAPB range [-900, 40000] m, wire length 1..=8 bytes
+        /// (encode emits 3 bytes). Extended-range twin
+        /// of [`Self::alternate_platform_ellipsoid_height_m`] (Item 76,
+        /// uint16, [-900, 19000] m) — see that field's docs for the
+        /// ST 0601.19 extended-representation precedence rule (prefer this
+        /// field); see also [`Self::alternate_platform_alt_m`]
+        /// (Item 69) for the disambiguation from plain (non-ellipsoid) altitude.
+        pub alternate_platform_ellipsoid_height_extended_m: Option<f64>,
+        /// Item 109: Range To Recovery Location — distance from current
+        /// position to airframe recovery position. ST 1201.5 IMAPB range
+        /// [0, 21000] km, wire length 1..=4 bytes (encode emits 3 bytes).
+        pub range_to_recovery_km: Option<f64>,
+        /// Item 112: Platform Course Angle — direction the aircraft is
+        /// moving relative to True North. ST 1201.5 IMAPB range [0, 360] deg,
+        /// wire length 1..=8 bytes (encode emits 2 bytes).
+        pub platform_course_angle_deg: Option<f64>,
+        /// Item 113: Altitude AGL — Above Ground Level height above the
+        /// ground/water. ST 1201.5 IMAPB range [-900, 40000] m, wire length
+        /// 1..=4 bytes (encode emits 3 bytes).
+        pub altitude_agl_m: Option<f64>,
+        /// Item 114: Radar Altimeter — height above the ground/water as
+        /// reported by a RADAR altimeter (AGL, see [`Self::altitude_agl_m`]).
+        /// ST 1201.5 IMAPB range [-900, 40000] m, wire length 1..=4 bytes
+        /// (encode emits 3 bytes).
+        pub radar_altimeter_m: Option<f64>,
+        /// Item 117: Sensor Azimuth Rate — rate the sensor's azimuth angle
+        /// is changing. ST 1201.5 IMAPB range [-1000, 1000] deg/s, wire
+        /// length 1..=4 bytes (encode emits 2 bytes).
+        pub sensor_azimuth_rate_dps: Option<f64>,
+        /// Item 118: Sensor Elevation Rate — rate the sensor's elevation
+        /// angle is changing. ST 1201.5 IMAPB range [-1000, 1000] deg/s,
+        /// wire length 1..=4 bytes (encode emits 3 bytes).
+        pub sensor_elevation_rate_dps: Option<f64>,
+        /// Item 119: Sensor Roll Rate — rate the sensor's roll angle is
+        /// changing. ST 1201.5 IMAPB range [-1000, 1000] deg/s, wire length
+        /// 1..=4 bytes (encode emits 2 bytes).
+        pub sensor_roll_rate_dps: Option<f64>,
+        /// Item 120: On-board MI Storage Percent Full — amount of on-board
+        /// Motion Imagery storage used, as a percentage of total storage.
+        /// ST 1201.5 IMAPB range [0, 100] %, wire length 1..=3 bytes (encode
+        /// emits 2 bytes).
+        pub mi_storage_percent_full: Option<f64>,
+        /// Item 132: Transmission Frequency — radio frequency used to
+        /// transmit the Motion Imagery. ST 1201.5 IMAPB range [1, 99999] MHz,
+        /// wire length 1..=4 bytes (encode emits 3 bytes). First IMAPB
+        /// item whose own tag number is 2-byte BER-OID encoded (like Items
+        /// 129/135 in the raw/UTF-8 set).
+        pub transmission_frequency_mhz: Option<f64>,
+        /// Item 134: Zoom Percentage — for a variable-zoom system, the
+        /// percentage of zoom. ST 1201.5 IMAPB range [0, 100] %, wire length
+        /// 1..=4 bytes (encode emits 2 bytes).
+        pub zoom_percentage: Option<f64>,
+
+        // Var-length int/enum items (ST 0601, tags 110-139) —
+        // MISB variable-length truncatable integer encoding (see
+        // `crate::klv::length::{read_var_uint, read_var_int}`): the TLV
+        // length IS the byte count (not BER-OID), decode accepts any wire
+        // length 1..=max_len, encode always emits the shortest form. Direct
+        // integers/enums, not IMAPB-scaled floats.
+        /// Item 110: Time Airborne — cumulative time the platform has been
+        /// airborne. MISB var-length uint, wire length 1..=4 bytes (seconds).
+        pub time_airborne_s: Option<u32>,
+        /// Item 111: Propulsion Unit Speed — rotational speed of the
+        /// platform's propulsion unit. MISB var-length uint, wire length
+        /// 1..=4 bytes (RPM).
+        pub propulsion_unit_speed_rpm: Option<u32>,
+        /// Item 123: Number of NAVSATs in View — count of navigation
+        /// satellites contributing to the platform's position solution.
+        /// MISB var-length uint, wire length 1 byte.
+        pub navsats_in_view: Option<u8>,
+        /// Item 124: Positioning Method Source — bitfield naming which
+        /// satellite positioning system(s) contributed to the platform's
+        /// position solution. MISB var-length uint, wire length 1 byte.
+        ///
+        /// | Bit | System |
+        /// |---:|---|
+        /// | 0 | INS |
+        /// | 1 | GPS |
+        /// | 2 | Galileo |
+        /// | 3 | QZSS |
+        /// | 4 | NAVIC |
+        /// | 5 | GLONASS |
+        /// | 6 | BeiDou-1 |
+        /// | 7 | BeiDou-2 |
+        ///
+        /// Per ST 0601.19 §8.124 a conformant producer sets at least one bit
+        /// (an all-zero value is out of the item's declared `1..255` range);
+        /// decode stays lenient and does not reject `0x00`.
+        pub positioning_method_source: Option<u8>,
+        /// Item 125: Platform Status — operational status of the platform.
+        /// MISB var-length uint, wire length 1 byte. See [`PlatformStatus`].
+        @[custom] @[java("platformStatusCode")] pub platform_status: Option<PlatformStatus>,
+        /// Item 126: Sensor Control Mode — what is currently controlling
+        /// the sensor. MISB var-length uint, wire length 1 byte. See
+        /// [`SensorControlMode`].
+        @[custom] @[java("sensorControlModeCode")] pub sensor_control_mode: Option<SensorControlMode>,
+        /// Item 131: Take-off Time — MISB ST 0603 timestamp of the
+        /// platform's take-off. MISB var-length uint, wire length 1..=8
+        /// bytes (microseconds).
+        pub take_off_time_us: Option<u64>,
+        /// Item 133: On-board MI Storage Capacity — total on-board Motion
+        /// Imagery storage capacity (compare
+        /// [`Self::mi_storage_percent_full`], Item 120, the *used*
+        /// percentage of that capacity). MISB var-length uint, wire length
+        /// 1..=4 bytes (gigabytes).
+        pub mi_storage_capacity_gb: Option<u32>,
+        /// Item 136: Leap Seconds — the TAI-UTC leap-second offset in
+        /// effect for [`Self::timestamp_us`]. MISB var-length int, wire
+        /// length 1..=4 bytes (seconds).
+        pub leap_seconds: Option<i32>,
+        /// Item 137: Correction Offset — signed correction applied to a
+        /// platform time source (e.g. GPS-disciplined clock drift). MISB
+        /// var-length int, wire length 1..=8 bytes (microseconds).
+        ///
+        /// **Spec typo:** ST 0601.19 §8.137 prints this item's decode type as
+        /// "KLVuint" (unsigned), but its own worked example only decodes
+        /// correctly as SIGNED (MISB var-length int) — this implementation
+        /// follows the worked example, not the printed type name.
+        pub correction_offset_us: Option<i64>,
+        /// Item 139: Active Payloads — bitmask of which Payload IDs (Item
+        /// 138, Payload List — [`Self::payload_list`]) are currently active.
+        /// Raw bytes, LSB-first within each byte: bit *i* of byte 0 is
+        /// Payload ID *i* (0-7), byte 1 covers IDs 8-15, and so on
+        /// (multi-byte extends upward).
+        pub active_payloads: Option<Vec<u8>>,
+
+        // Misc
+        /// Item 47: Generic Flag Data — bitfield per ST 0601.19 Table 3:
+        /// bit 0 laser range on, bit 1 auto-track on, bit 2 IR polarity
+        /// (set = black hot), bit 3 icing detected, bit 4 slant range
+        /// measured (vs. calculated), bit 5 image invalid, bits 6-7 reserved.
+        pub generic_flag_data: Option<u8>,
+        /// Tag 48: the ST 0102 Security Local Set body bytes (no universal-label
+        /// prefix). Pass-through bytes; consumers needing typed access call
+        /// `klv::st0102::decode` on `security_local_set.as_deref()?`.
+        pub security_local_set: Option<Vec<u8>>,
+        /// Item 73: MISB ST 0806 Remote Video Terminal LS bytes.
+        /// Pass-through bytes; consumers needing typed access call
+        /// `klv::st0806::decode` on `rvt.as_deref()?`. See
+        /// [`crate::klv::st0806`] for the typed layer.
+        pub rvt: Option<Vec<u8>>,
+        /// Tag 74 — VMTI Local Set (MISB ST 0903). Pass-through bytes;
+        /// consumers needing typed access call `klv::st0903::decode` on
+        /// `vmti.as_deref()?`. See `klv::st0903` for the typed layer.
+        /// Sibling-layer pattern matches `security_local_set` (Tag 48 →
+        /// `klv::st0102`).
+        pub vmti: Option<Vec<u8>>,
+        /// Item 95: MISB ST 1206 SAR Motion Imagery Local Set bytes.
+        /// Pass-through bytes; interior typing deferred.
+        pub sar_mi_local_set: Option<Vec<u8>>,
+        /// Item 97: MISB ST 1002 Range Image Local Set bytes. Pass-through
+        /// bytes; interior typing deferred.
+        pub range_image_local_set: Option<Vec<u8>>,
+        /// Item 98: MISB ST 1601 Geo-Registration Local Set bytes.
+        /// Pass-through bytes; interior typing deferred.
+        pub geo_registration_local_set: Option<Vec<u8>>,
+        /// Item 99: MISB ST 1602 Composite Imaging Local Set bytes.
+        /// Pass-through bytes; interior typing deferred.
+        pub composite_imaging_local_set: Option<Vec<u8>>,
+        /// Item 100: MISB ST 1607 Segment Local Set bytes. Pass-through
+        /// bytes; interior typing deferred.
+        pub segment_local_set: Option<Vec<u8>>,
+        /// Item 101: MISB ST 1607 Amend Local Set bytes. Pass-through
+        /// bytes; interior typing deferred.
+        pub amend_local_set: Option<Vec<u8>>,
+
+        // Raw scalar & string items (tags 39, 60-62, 70, 72, 106-108, 129, 135)
+        pub outside_air_temp_c: Option<i8>,
+        /// Item 60: Weapon Load — bit-packed nibbles (high→low): store
+        /// station, store substation, weapon type, weapon variant. Kept as a
+        /// raw opaque `u16`, not a sub-struct — callers needing individual
+        /// nibbles shift and mask this value themselves.
+        pub weapon_load: Option<u16>,
+        pub weapon_fired: Option<u8>,
+        pub laser_prf_code: Option<u16>,
+        pub alternate_platform_name: Option<String>,
+        pub event_start_time_us: Option<u64>,
+        pub stream_designator: Option<String>,
+        pub operational_base: Option<String>,
+        pub broadcast_source: Option<String>,
+        pub target_id: Option<String>,
+        pub communications_method: Option<String>,
+
+        // Coded enums (tags 34, 63, 77)
+        /// Item 34: Icing Detected — icing-detector state. See [`IcingDetected`].
+        @[custom] @[java("icingDetectedCode")] pub icing_detected: Option<IcingDetected>,
+        /// Item 63: Sensor Field of View Name — named FOV preset. See [`SensorFovName`].
+        @[custom] @[java("sensorFovNameCode")] pub sensor_fov_name: Option<SensorFovName>,
+        /// Item 77: Operational Mode — operating mode of the portrayed event.
+        /// See [`OperationalMode`].
+        @[custom] @[java("operationalModeCode")] pub operational_mode: Option<OperationalMode>,
+
+        // Pack & list items
+        /// Item 81: Image Horizon Pixels. See [`ImageHorizonPixels`].
+        pub image_horizon: Option<ImageHorizonPixels>,
+        /// Item 115: Control Command — MULTI-INSTANCE (ST 0601.19 Table 1
+        /// "Multiples Allowed" = Yes); every wire occurrence appends one
+        /// [`ControlCommand`]. Empty means none were present.
+        pub control_commands: Vec<ControlCommand>,
+        /// Item 116: Control Command Verification List — BER-OID command ids
+        /// the platform has acknowledged/verified.
+        pub control_command_verification: Option<Vec<u64>>,
+        /// Item 121: Active Wavelength List — BER-OID wavelength ids
+        /// currently active (`0` = none active, exclusive per ST 0601.19
+        /// §8.121).
+        pub active_wavelengths: Option<Vec<u64>>,
+        /// Item 127: Sensor Frame Rate Pack. See [`SensorFrameRate`].
+        pub sensor_frame_rate: Option<SensorFrameRate>,
+        /// Item 143: Metadata Substream Id. See [`MetadataSubstreamId`].
+        pub metadata_substream_id: Option<MetadataSubstreamId>,
+        /// Item 122: Country Codes. See [`CountryCodes`].
+        pub country_codes: Option<CountryCodes>,
+        /// Item 128: Wavelengths List. See [`WavelengthRecord`].
+        pub wavelengths_list: Option<Vec<WavelengthRecord>>,
+        /// Item 130: Airbase Locations. See [`AirbaseLocations`].
+        pub airbase_locations: Option<AirbaseLocations>,
+        /// Item 138: Payload List. See [`PayloadList`].
+        pub payload_list: Option<PayloadList>,
+        /// Item 140: Weapons Stores. See [`WeaponsStore`].
+        pub weapons_stores: Option<Vec<WeaponsStore>>,
+        /// Item 141: Waypoint List. See [`Waypoint`].
+        pub waypoint_list: Option<Vec<Waypoint>>,
+        /// Item 142: View Domain. See [`ViewDomain`].
+        pub view_domain: Option<ViewDomain>,
+        /// Item 102: SDCC-FLP (Standard Deviation and Correlation
+        /// Coefficient, Floating-Point). MULTI-INSTANCE per ST 0601.19
+        /// Table 1 ("Multiples Allowed" = Yes) — the "Refined Source List"
+        /// binding: every wire occurrence appends one [`SdccFlpField`],
+        /// capturing which preceding items it refines. See [`SdccFlpField`]
+        /// for the capture rule and the encode-side adjacency caveat.
+        pub sdcc_flps: Vec<SdccFlpField>,
+
+        // Pass-through
+        /// Every tag the typed set does not model, preserved as raw bytes per the
+        /// ST 0107.5 §6 future-proof skip rule. An entry whose tag a typed field
+        /// owns is dropped on encode: the typed field wins.
+        @[custom] pub unknown: Vec<OwnedRawField>,
+        /// Per-field decode failures collected by a lenient decode; a strict
+        /// decode returns an error instead. A parser diagnostic: it is not
+        /// re-encoded.
+        @[custom] pub field_errors: Vec<KlvFieldError>,
+
+        /// Tags whose wire value was the INT_MIN sentinel for their signed linear
+        /// mapping. INT_MIN is a spec-defined signal (not an error), so the
+        /// corresponding typed field is left as `None` and the tag is recorded
+        /// here instead of in `field_errors`.
+        ///
+        /// Use [`crate::klv::st0601::st0601_sentinel_meaning`] to look up the
+        /// spec-defined meaning for each tag (Out of Range / Reserved / N/A).
+        ///
+        /// **Encode semantics:** encoding a record that carries sentinel tags
+        /// re-emits the INT_MIN bytes for each sentinel tag whose typed field is
+        /// `None`. If the typed field is `Some(v)`, the value `v` is encoded
+        /// instead — a non-None field always wins over a `sentinel_tags` entry.
+        /// The encoder also auto-injects Tag 65 (version) and the trailing
+        /// checksum, so the output byte sequence is not guaranteed to match the
+        /// original wire input byte-for-byte; the sentinel *value* round-trips,
+        /// but the emission order is: typed fields in ascending tag order, then
+        /// `sentinel_tags` entries, then `unknown` fields in caller order.
+        @[custom] pub sentinel_tags: Vec<u32>,
+
+        /// Tags whose ST 1201.5 IMAPB wire value decoded to a spec-defined
+        /// special value (§7.2.3 — `+∞`/`−∞`, NaN families, the
+        /// MISB-defined `BelowMin`/`AboveMax` overflow signals, or a
+        /// user-defined signal) rather than a normal-range float. The
+        /// corresponding typed `Option<f64>` field is left `None` and the
+        /// tag+special pair is recorded here instead. Use
+        /// [`crate::klv::ImapbSpecial`] to inspect which special was
+        /// signaled.
+        ///
+        /// **Encode semantics:** mirrors [`Self::sentinel_tags`] — encoding a
+        /// record re-emits the special's bytes (at the tag's `default_len`)
+        /// for each `(tag, special)` entry whose typed field is currently
+        /// `None`. If the typed field is `Some(v)`, the value wins and the
+        /// special entry is not re-emitted. Entries whose tag is not an IMAPB-encoded
+        /// item are silently skipped on encode.
+        ///
+        /// **Decode semantics for the two IMAPB outcomes NOT carried here:**
+        /// a wire integer in ST 1201.5's reserved-but-unrecognized
+        /// special-value space (`DecodedImapb::ReservedSpecial`) or one that
+        /// arithmetic-decodes outside the tag's `[min, max]`
+        /// (`DecodedImapb::OutOfRange`) are both treated as producer
+        /// non-conformance from this typed consumer's view: they are NOT
+        /// pushed here, and the raw wire bytes are NOT preserved. Instead
+        /// they are recorded in [`Self::field_errors`] as
+        /// [`crate::error::KlvFieldError::OutOfRange`] — `value: f64::NAN`
+        /// for `ReservedSpecial` (no arithmetic decode exists for a
+        /// non-conformant bit pattern), or the raw arithmetic decode for
+        /// `OutOfRange`. This differs from `unknown`/`patch()`, which
+        /// preserve raw bytes verbatim for genuinely untyped tags — these
+        /// tags ARE typed, so a malformed value is a decode error, not a
+        /// pass-through.
+        @[custom] pub imapb_specials: Vec<(u32, crate::klv::imapb::ImapbSpecial)>,
+    }
 }
 
-/// One captured ST 0601 Item 102 (SDCC-FLP) occurrence, with its
-/// "Refined Source List" positional context (ST 0601.19 §8.102).
-///
-/// Tag 102 is MULTI-INSTANCE (ST 0601.19 Table 1 "Multiples Allowed" =
-/// Yes): each occurrence's SDCC-FLP pack (MISB ST 1010.3 — parse with
-/// [`crate::klv::st1010::decode_sdcc_flp`]) refines the accuracy of the
-/// Local Set items that immediately precede it on the wire. This struct
-/// keeps the raw pack bytes rather than a parsed
-/// [`crate::klv::st1010::SdccFlp`] so a malformed or foreign-encoder
-/// pack still round-trips byte-exact even when this crate cannot parse
-/// its interior — provided its declared matrix size fits the pack's own
-/// bytes (Parse Control plus the ST 1010 size bound); otherwise the
-/// occurrence is recorded as a
-/// [`crate::error::KlvFieldError::TruncatedField`] and not captured. The
-/// encoder still emits caller-supplied `sdcc_flps` bytes verbatim, so a
-/// caller who supplies a pack whose matrix cannot fit will see it
-/// rejected on decode.
-///
-/// **Capture semantics (decode):** `preceding_tags` is the `N` wire-order
-/// item tags — known or unknown, but never another Tag 102 — immediately
-/// before this occurrence, where `N` is this pack's own parsed matrix
-/// size (fewer if the Local Set had fewer prior items).
-///
-/// **Ascending-order emission caveat (encode):** every `sdcc_flps` entry
-/// is re-emitted verbatim from one place in tag-ascending order, grouping
-/// all occurrences together. This means the *original* interleaving with
-/// `preceding_tags` (e.g. tags 13/14/15 followed by one Tag 102
-/// occurrence, then tags 5/6/7 followed by another) is generally NOT
-/// reproduced on re-encode — the re-encoded wire carries both
-/// occurrences back to back instead. `preceding_tags` therefore records
-/// what the *original* wire order was, not a guarantee about the
-/// re-encoded one; the pack `bytes` themselves are still byte-exact.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SdccFlpField {
-    /// Wire-order item tags immediately preceding this occurrence (see
-    /// struct doc for the capture rule). Empty if this occurrence had no
-    /// preceding items (matrix size 0, or fewer prior items than the
-    /// matrix size — spec-legal-but-degenerate, not an error).
-    pub preceding_tags: Vec<u32>,
-    /// Raw SDCC-FLP pack bytes, exactly as they appeared on the wire —
-    /// parse with [`crate::klv::st1010::decode_sdcc_flp`].
-    pub bytes: Vec<u8>,
+crate::binding_record! {
+    /// One captured ST 0601 Item 102 (SDCC-FLP) occurrence, with its
+    /// "Refined Source List" positional context (ST 0601.19 §8.102).
+    ///
+    /// Tag 102 is MULTI-INSTANCE (ST 0601.19 Table 1 "Multiples Allowed" =
+    /// Yes): each occurrence's SDCC-FLP pack (MISB ST 1010.3 — parse with
+    /// [`crate::klv::st1010::decode_sdcc_flp`]) refines the accuracy of the
+    /// Local Set items that immediately precede it on the wire. This struct
+    /// keeps the raw pack bytes rather than a parsed
+    /// [`crate::klv::st1010::SdccFlp`] so a malformed or foreign-encoder
+    /// pack still round-trips byte-exact even when this crate cannot parse
+    /// its interior — provided its declared matrix size fits the pack's own
+    /// bytes (Parse Control plus the ST 1010 size bound); otherwise the
+    /// occurrence is recorded as a
+    /// [`crate::error::KlvFieldError::TruncatedField`] and not captured. The
+    /// encoder still emits caller-supplied `sdcc_flps` bytes verbatim, so a
+    /// caller who supplies a pack whose matrix cannot fit will see it
+    /// rejected on decode.
+    ///
+    /// **Capture semantics (decode):** `preceding_tags` is the `N` wire-order
+    /// item tags — known or unknown, but never another Tag 102 — immediately
+    /// before this occurrence, where `N` is this pack's own parsed matrix
+    /// size (fewer if the Local Set had fewer prior items).
+    ///
+    /// **Ascending-order emission caveat (encode):** every `sdcc_flps` entry
+    /// is re-emitted verbatim from one place in tag-ascending order, grouping
+    /// all occurrences together. This means the *original* interleaving with
+    /// `preceding_tags` (e.g. tags 13/14/15 followed by one Tag 102
+    /// occurrence, then tags 5/6/7 followed by another) is generally NOT
+    /// reproduced on re-encode — the re-encoded wire carries both
+    /// occurrences back to back instead. `preceding_tags` therefore records
+    /// what the *original* wire order was, not a guarantee about the
+    /// re-encoded one; the pack `bytes` themselves are still byte-exact.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct SdccFlpField {
+        /// Wire-order item tags immediately preceding this occurrence (see
+        /// struct doc for the capture rule). Empty if this occurrence had no
+        /// preceding items (matrix size 0, or fewer prior items than the
+        /// matrix size — spec-legal-but-degenerate, not an error).
+        pub preceding_tags: Vec<u32>,
+        /// Raw SDCC-FLP pack bytes, exactly as they appeared on the wire —
+        /// parse with [`crate::klv::st1010::decode_sdcc_flp`].
+        pub bytes: Vec<u8>,
+    }
 }
 
 impl Default for UasDatalinkLs {
