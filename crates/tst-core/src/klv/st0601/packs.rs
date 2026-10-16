@@ -848,16 +848,18 @@ pub(crate) fn emit_airbase_locations(
 // Item 128: Wavelengths List
 // ============================================================================
 
-/// One record of Item 128, Wavelengths List (ST 0601.19 §8.128) — a
-/// sensor wavelength band definition. `min_nm`/`max_nm` are ST 1201.5
-/// IMAPB(0,1e9,4)-encoded, giving ~½ nm precision across the full
-/// X-ray-to-VHF spectrum span the spec cites.
-#[derive(Debug, Clone, PartialEq)]
-pub struct WavelengthRecord {
-    pub id: u64,
-    pub min_nm: f64,
-    pub max_nm: f64,
-    pub name: String,
+crate::binding_record! {
+    /// One record of Item 128, Wavelengths List (ST 0601.19 §8.128) — a
+    /// sensor wavelength band definition. `min_nm`/`max_nm` are ST 1201.5
+    /// IMAPB(0,1e9,4)-encoded, giving ~½ nm precision across the full
+    /// X-ray-to-VHF spectrum span the spec cites.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct WavelengthRecord {
+        pub id: u64,
+        pub min_nm: f64,
+        pub max_nm: f64,
+        pub name: String,
+    }
 }
 
 const WAVELENGTH_IMAPB: ImapbParams = ImapbParams {

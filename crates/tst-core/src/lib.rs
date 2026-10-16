@@ -73,6 +73,7 @@ extern crate std;
 #[cfg(test)]
 mod test_prelude;
 
+pub mod binding_schema;
 pub mod cancel;
 pub mod codec;
 pub mod error;

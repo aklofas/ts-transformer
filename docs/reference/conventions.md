@@ -424,6 +424,25 @@ match. The error enums themselves stay `#[non_exhaustive]`, and `kind()` is
 written in the defining crate with no wildcard, so a new error variant is a
 compile error until it is classified.
 
+## Crossing records
+
+A struct that crosses to Python and the JVM field by field is declared once,
+through `tst_core::binding_record!`. The macro emits the struct exactly as
+written (derives, docs, visibility) plus a hidden `BINDING_SCHEMA` constant
+that the binding generator reads, so the struct is the schema.
+
+A field takes at most one prefix:
+
+- `@[custom]` — the field crosses through a hand-written converter per host,
+  named `<record>_<field>_to_py` / `<record>_<field>_from_py` (Python) and
+  `build_<record>_<field>` / `read_<record>_<field>` (JVM).
+- `@[skip]` — the field does not cross.
+- `@[java("name")]` — the JVM name, where it is not the camelCase of the Rust
+  field.
+
+The generator is never its own oracle: byte-level expectations come from the
+hand-built spec bytes and the hash-pinned fixtures, not from generated text.
+
 ## See also
 
 - `docs/reference/binding-authors.md` § "Builder shape" — the

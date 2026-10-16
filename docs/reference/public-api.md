@@ -37,6 +37,8 @@ Three layers of intended-public surface, from most stable to least:
    internals. **Stability: Internal** (the tier table in [api-stability.md](./api-stability.md) is authoritative). May change between minor
    versions before 1.0. `tst_core::mpegts::demux::low_level::iter_au_cells`
    (the Metadata AU cell iterator) lives here since 0.9.0.
+   `tst_core::binding_schema` (the record schema behind `binding_record!`)
+   is Internal too: it exists for the binding generator.
 
 Anything not in one of these three categories is **private** and may
 change without notice.

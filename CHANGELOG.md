@@ -351,6 +351,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — tst-core
 
+- `binding_schema::{RecordSchema, FieldSpec, FieldMark}` and the
+  `binding_record!` macro (Internal tier): one declaration per crossing record,
+  from which the Python and JVM projections are generated. `WavelengthRecord`
+  is declared through it; its fields and derives are unchanged.
 - `mpegts::demux::low_level::iter_au_cells` — the Metadata AU cell iterator,
   previously reachable only through a hidden test module.
 - `NonConformantIssue` implements `std::error::Error`. Its `Display` text is
