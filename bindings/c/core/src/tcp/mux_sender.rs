@@ -181,7 +181,7 @@ pub unsafe extern "C" fn tst_tcp_mux_sender_finish(p: *mut TstTcpMuxSender) -> l
         // so there is no `Err(state)` arm here.
         handle.inner.with_inner_ref(|s| match s.finish() {
             Ok(()) => 0,
-            Err(e) => crate::error::record_shell_error(&e),
+            Err(e) => crate::error::record_shell_error(e),
         })
     })
 }

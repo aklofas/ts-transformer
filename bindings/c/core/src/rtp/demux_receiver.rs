@@ -144,7 +144,9 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_close(p: *mut TstRtpDemuxReceive
 ///   `?recv_timeout=<ms>` and no event arrived before the configured
 ///   deadline — retryable, the session stays alive (the same code SRT's
 ///   recv-deadline expiry already returns to C consumers)
-/// - `TST_E_INVALID_TS` (-3) on a demuxer error
+/// - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
+///   unrecoverable packet malformation, or a malformed PES)
+/// - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
 ///
 /// # Safety

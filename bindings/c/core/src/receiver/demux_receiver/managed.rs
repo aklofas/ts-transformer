@@ -290,7 +290,7 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_recv_event(
             0
         }
         Ok(None) => record_recv_closed(cancelled || handle.inner.is_cancelled()),
-        Err(e) => record_recv_error(&e, cancelled || handle.inner.is_cancelled(), false),
+        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
     })
 }
 

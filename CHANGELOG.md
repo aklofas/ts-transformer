@@ -233,6 +233,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   leaves the handle usable; before, it closed the handle. A panic inside a
   mutating call still closes it. No symbol, code or non-comment header line
   changes.
+- The live shells (`tst_*_sender_*`, `tst_*_mux_sender_*`, `tst_*_receiver_*`,
+  `tst_*_demux_receiver_*`, plain and managed) now classify their errors
+  through the same kind table as the offline `tst_muxer_*` / `tst_demuxer_*`
+  functions and the Python and JVM bindings, so one Rust error has one code
+  on every path. Observed code changes on live shells (no code value or
+  meaning changes; the last-error message is unchanged):
+
+  | Error | Before | Now |
+  |---|---|---|
+  | `MuxError::InvalidStreamHandle`, `AmbiguousTarget`, `NoKlvStreamsConfigured`, `NoAudioStreamsConfigured`, `NoSubtitleStreamsConfigured`, `NoDataStreamsConfigured`, `ProgramNotFound`, `DescriptorIndexOutOfRange`, `AbsIndexOutOfRange` | −1 `TST_E_INVALID_CONFIG` | −9 `TST_E_INVALID_USAGE` |
+  | `MuxError::InvalidNal` | −3 `TST_E_INVALID_TS` | −2 `TST_E_INVALID_NAL` |
+  | `MuxError::KlvTooLarge` | −3 | −5 `TST_E_KLV_TOO_LARGE` |
+  | `MuxError::InvalidAv1Obu` | −3 | −44 `TST_E_INVALID_AV1_OBU` |
+  | `MuxError::MispTime` | −3 | −45 `TST_E_MISP_TIME` |
+  | `TransportError::TooLarge` (every shell) | −3 | −6 `TST_E_TOO_LARGE` (as the 0.7.0 notes already stated) |
+  | `DemuxError::SyncBufExhausted` (demux receivers) | −3 | −6 `TST_E_TOO_LARGE` |
 
 ### Changed — C header
 
@@ -242,6 +258,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   error variants they map from (`tst_udp::UdpError::Io` instead of the removed
   `UdpErrorKind::Io`). No declaration, value, symbol or ABI version changed.
 - Doc comment only: the `tst_stream_end_reason` enum doc and the managed receiver's end-reason getter doc no longer name a Rust type.
+- Doc comments only: the demux receivers' `_recv_event` error lists name `TST_E_TOO_LARGE` (-6) for a pre-sync buffer that outgrew `sync_buf_cap`. No declaration, value or symbol changed.
 - `TST_ABI_VERSION_MINOR` is 24, the trailer defines `TST_HAS_TLS` (0 unless built with `tls`), and the TLS setters' docs describe the `tls` feature.
 
 ### Added — tst-core

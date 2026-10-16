@@ -445,18 +445,6 @@ use tst_core::error::{DemuxError, KlvDecodeError, MuxError};
 #[cfg(test)]
 use tst_core::mpegts::mux::StreamKind;
 use tst_pipeline::binding::BindingError;
-#[cfg(feature = "std")]
-use tst_pipeline::{ShellError, ShellErrorKind};
-
-/// Map a [`ShellErrorKind`] to its [`TstError`] code — a projection of the
-/// binding-shared table (`ShellErrorKind` → `BindingErrorKind` →
-/// [`TstError::from_kind`]). Kept because `hls/mux_publisher.rs` projects
-/// `MuxPublisherError::kind()` through it.
-#[cfg(feature = "std")]
-#[allow(dead_code)] // hls-feature-gated caller; unused in minimal builds
-pub(crate) fn tst_error_from_kind(kind: ShellErrorKind) -> TstError {
-    TstError::from_kind(kind.into())
-}
 
 /// THE error path for every data-path failure: writes the kind's frozen C
 /// code + the error's detail to the thread-local slot and returns the code.
@@ -466,14 +454,19 @@ pub(crate) fn record_binding_error(e: BindingError) -> i32 {
     code as i32
 }
 
-/// Record a shell error through [`record_binding_error`]. Used by every
-/// transport-bearing C ABI entry point's error path.
-///
-/// Returns the negative TST_E_* code suitable for direct return from
-/// the C entry point.
+/// Record a shell error: the frozen code of its kind in the binding table
+/// (`BindingError::from`, the projection Python and the JVM use) and the
+/// shell error's own message. Used by every transport-bearing C ABI entry
+/// point's error path. Returns the code.
 #[cfg(feature = "std")]
-pub(crate) fn record_shell_error<E: ShellError>(e: &E) -> i32 {
-    record_binding_error(BindingError::new(e.kind().into(), e.to_string()))
+pub(crate) fn record_shell_error<E>(e: E) -> i32
+where
+    E: core::fmt::Display,
+    BindingError: From<E>,
+{
+    let detail = e.to_string();
+    let kind = BindingError::from(e).kind;
+    record_binding_error(BindingError::new(kind, detail))
 }
 
 /// Open-path shape: the callers used to write
@@ -574,14 +567,21 @@ pub(crate) fn record_recv_closed(cancelled: bool) -> i32 {
 /// reports the cancel rather than the broken connection `srt_close` provoked.
 #[cfg(feature = "std")]
 #[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
-pub(crate) fn record_recv_error<E: ShellError>(e: &E, cancelled: bool, broken_is_eos: bool) -> i32 {
-    match e.kind() {
+pub(crate) fn record_recv_error<E>(e: E, cancelled: bool, broken_is_eos: bool) -> i32
+where
+    E: core::fmt::Display,
+    BindingError: From<E>,
+{
+    use tst_pipeline::binding::BindingErrorKind as K;
+    let detail = e.to_string();
+    let kind = BindingError::from(e).kind;
+    match kind {
         // A typed caller-side close (`ExplicitClose` → `Closed`) is -7
         // whether or not the C-side latch saw the cancel: the inner or
         // factory transport can report it on its own at process exit.
         // On the receive direction a peer EOS is
         // `EndOfStream`, never `Closed`, so this arm is never a disconnect.
-        ShellErrorKind::Closed => {
+        K::Closed => {
             set_last_error(
                 TstError::Closed,
                 "receiver was cancelled or closed by caller",
@@ -590,12 +590,12 @@ pub(crate) fn record_recv_error<E: ShellError>(e: &E, cancelled: bool, broken_is
         }
         // The ambiguous end of stream still consults the latch so a caller
         // close and a peer EOS can be told apart.
-        ShellErrorKind::EndOfStream => record_recv_closed(cancelled),
-        ShellErrorKind::TransportBroken if broken_is_eos && !cancelled => {
+        K::EndOfStream => record_recv_closed(cancelled),
+        K::Broken if broken_is_eos && !cancelled => {
             record_eos();
             TstError::EndOfStream as i32
         }
-        _ => record_shell_error(e),
+        _ => record_binding_error(BindingError::new(kind, detail)),
     }
 }
 
@@ -656,8 +656,28 @@ pub(crate) fn record_klv_decode_error(e: &KlvDecodeError) -> i32 {
 /// Rust tests that link the rlib. Named with a `test_` prefix so call sites
 /// are self-documenting about their test-only status.
 #[cfg(feature = "std")]
-pub fn test_record_shell_error<E: ShellError>(e: &E) -> i32 {
+pub fn test_record_shell_error<E>(e: E) -> i32
+where
+    E: core::fmt::Display,
+    BindingError: From<E>,
+{
     record_shell_error(e)
+}
+
+/// Expose the offline muxer's projection to integration tests (not
+/// `extern "C"`; not in the header).
+pub fn test_record_mux_error(e: &MuxError) -> i32 {
+    record_mux_error(e)
+}
+
+/// Expose the receive-side projection to integration tests.
+#[cfg(feature = "std")]
+pub fn test_record_recv_error<E>(e: E, cancelled: bool, broken_is_eos: bool) -> i32
+where
+    E: core::fmt::Display,
+    BindingError: From<E>,
+{
+    record_recv_error(e, cancelled, broken_is_eos)
 }
 
 /// Read the thread-local last-error code for test assertions. Equivalent to
@@ -692,22 +712,22 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn explicit_close_is_closed_even_without_an_outer_cancel_latch() {
-        let closed = tst_pipeline::ReceiverError::from(TransportError::ExplicitClose);
+        let closed = || tst_pipeline::ReceiverError::from(TransportError::ExplicitClose);
         assert_eq!(
-            record_recv_error(&closed, false, false),
+            record_recv_error(closed(), false, false),
             TstError::Closed as i32
         );
         assert_eq!(
-            record_recv_error(&closed, false, true),
+            record_recv_error(closed(), false, true),
             TstError::Closed as i32
         );
-        let eos = tst_pipeline::ReceiverError::from(TransportError::Closed);
+        let eos = || tst_pipeline::ReceiverError::from(TransportError::Closed);
         assert_eq!(
-            record_recv_error(&eos, false, false),
+            record_recv_error(eos(), false, false),
             TstError::EndOfStream as i32
         );
         assert_eq!(
-            record_recv_error(&eos, true, false),
+            record_recv_error(eos(), true, false),
             TstError::Closed as i32
         );
     }

@@ -81,7 +81,7 @@ pub unsafe extern "C" fn tst_raw_sender_send(
     };
     handle.inner.with_inner_mut(|s| match s.send(slice) {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 
@@ -199,7 +199,7 @@ pub unsafe extern "C" fn tst_managed_raw_sender_send(
     };
     handle.inner.with_inner_mut(|s| match s.send(slice) {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 

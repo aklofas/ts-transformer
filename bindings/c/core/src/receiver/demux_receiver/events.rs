@@ -31,8 +31,9 @@ use crate::event::TstEvent;
 /// - `TST_E_CLOSED` (-7) if the handle was `_close`'d, or on the call that
 ///   observes a cross-thread `_cancel` and every one after it
 /// - `TST_E_TRANSPORT` (-8) on transport failure
-/// - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection
-///   or unrecoverable packet malformation)
+/// - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
+///   unrecoverable packet malformation, or a malformed PES)
+/// - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
 ///
 /// On any non-zero return the contents of `*out_event` are unspecified.
@@ -74,7 +75,7 @@ pub unsafe extern "C" fn tst_demux_receiver_recv_event(
             0
         }
         Ok(None) => record_recv_closed(cancelled || handle.inner.is_cancelled()),
-        Err(e) => record_recv_error(&e, cancelled || handle.inner.is_cancelled(), true),
+        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), true),
     })
 }
 

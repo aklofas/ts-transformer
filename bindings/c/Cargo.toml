@@ -61,6 +61,7 @@ tempfile         = "3"
 tst-srt          = { path = "../../crates/tst-srt", default-features = false }
 tst-core         = { path = "../../crates/tst-core", default-features = false }
 tst-pipeline     = { path = "../../crates/tst-pipeline", default-features = false }
+tst-test-helpers = { path = "../../crates/tst-test-helpers" }
 libc             = { workspace = true }
 # Self-signed certificates for the tcps:// / rtsps:// loopback tests (`tls` builds).
 rcgen            = "0.13"

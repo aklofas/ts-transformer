@@ -272,7 +272,7 @@ pub unsafe extern "C" fn tst_mux_sender_send_data(
         .inner
         .with_inner_ref(|s| match s.send_data(slice, pts) {
             Ok(()) => 0,
-            Err(e) => record_shell_error(&e),
+            Err(e) => record_shell_error(e),
         })
 }
 
@@ -316,7 +316,7 @@ pub unsafe extern "C" fn tst_mux_sender_send_data_to(
         .inner
         .with_inner_ref(|s| match s.send_data_to(stream, slice, pts) {
             Ok(()) => 0,
-            Err(e) => record_shell_error(&e),
+            Err(e) => record_shell_error(e),
         })
 }
 
@@ -615,7 +615,7 @@ pub unsafe extern "C" fn tst_mux_sender_finish(p: *mut TstMuxSender) -> libc::c_
         // so there is no `Err(state)` arm here.
         handle.inner.with_inner_ref(|s| match s.finish() {
             Ok(()) => 0,
-            Err(e) => crate::error::record_shell_error(&e),
+            Err(e) => crate::error::record_shell_error(e),
         })
     })
 }
@@ -1034,7 +1034,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_data(
         .inner
         .with_inner_ref(|s| match s.send_data(slice, pts) {
             Ok(()) => 0,
-            Err(e) => record_shell_error(&e),
+            Err(e) => record_shell_error(e),
         })
 }
 
@@ -1070,7 +1070,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_data_to(
         .inner
         .with_inner_ref(|s| match s.send_data_to(stream, slice, pts) {
             Ok(()) => 0,
-            Err(e) => record_shell_error(&e),
+            Err(e) => record_shell_error(e),
         })
 }
 
@@ -1277,7 +1277,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_finish(p: *mut TstManagedMuxSend
         };
         handle.inner.with_inner_ref(|s| match s.finish() {
             Ok(()) => 0,
-            Err(e) => crate::error::record_shell_error(&e),
+            Err(e) => crate::error::record_shell_error(e),
         })
     })
 }

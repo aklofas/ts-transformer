@@ -235,7 +235,7 @@ pub unsafe extern "C" fn tst_raw_receiver_recv(
             unsafe { *out_len = v.len() };
             0
         }
-        Err(e) => record_recv_error(&e, cancelled || handle.inner.is_cancelled(), true),
+        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), true),
     })
 }
 
@@ -390,7 +390,7 @@ pub unsafe extern "C" fn tst_managed_raw_receiver_recv(
             unsafe { *out_len = v.len() };
             0
         }
-        Err(e) => record_recv_error(&e, cancelled || handle.inner.is_cancelled(), false),
+        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
     })
 }
 

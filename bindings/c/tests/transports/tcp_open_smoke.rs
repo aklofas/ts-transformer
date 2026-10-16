@@ -697,7 +697,7 @@ fn tcp_listener_cancel_wakes_parked_accept() {
 /// chunk the transport rejected, plus whatever the muxer still holds). Every
 /// other `_finish` test in this PR takes the empty-drain path and therefore
 /// exercises only the `Ok(())` arm; this one pins the
-/// `Err(e) => record_shell_error(&e)` projection end to end.
+/// `Err(e) => record_shell_error(e)` projection end to end.
 ///
 /// How the drain is made to fail deterministically: the peer accepts and
 /// immediately drops its socket. The first write lands in the kernel send
