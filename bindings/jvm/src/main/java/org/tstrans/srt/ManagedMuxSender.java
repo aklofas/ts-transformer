@@ -11,6 +11,8 @@ import org.tstrans.mpegts.KlvStreamHandle;
 import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.SubtitleStreamHandle;
 import org.tstrans.mpegts.VideoStreamHandle;
+import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.TransportStats;
 
 /**
  * Single-call convenience wrapper that owns a {@code Muxer} plus a managed
@@ -399,7 +401,7 @@ public final class ManagedMuxSender extends NativeHandle {
     public CancelHandle cancelHandle() {
         ensureOpen("ManagedMuxSender is closed");
         long ch = nCancelHandle(peekHandle());
-        return new CancelHandle(ch);
+        return ShellAdapters.cancelHandle(ch);
     }
 
     /**

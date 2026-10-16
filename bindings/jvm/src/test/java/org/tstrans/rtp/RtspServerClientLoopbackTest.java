@@ -18,6 +18,7 @@ import org.tstrans.RtspException;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.Muxer;
+import org.tstrans.shells.DemuxReceiver;
 
 /**
  * Capstone live cross-binding loopback: an in-JVM {@link RtspServer} (mount fed by
@@ -183,6 +184,68 @@ class RtspServerClientLoopbackTest {
             assertEquals(offlineSha, liveSha,
                 "live RtspServer→RtspClient→DemuxReceiver path must demux to the same "
                     + "video payload SHA as the offline Muxer→Demuxer path");
+        }
+    }
+
+    @Test
+    @Timeout(TIMEOUT_SEC + 10)
+    void tcpTransportPreferenceStillPlays() throws Exception {
+        assumeTrue(isLinux(),
+            "RTSP live loopback gated to Linux (real sockets + tokio runtime)");
+
+        try (RtspServer server = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"))) {
+            String addr = server.localAddr();
+            int port = Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1));
+            MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
+
+            CountDownLatch done = new CountDownLatch(1);
+            Thread producer = new Thread(() -> {
+                long pts = 0;
+                try {
+                    while (done.getCount() > 0) {
+                        mount.pushVideo(syntheticH264Idr(), pts, true);
+                        mount.flush();
+                        pts += 3000;
+                        Thread.sleep(20);
+                    }
+                } catch (Exception ignored) {
+                    // server stop / mount close races teardown
+                }
+            });
+            producer.setDaemon(true);
+            producer.start();
+
+            RtspClientConfig cfg = RtspClientConfig.builder("rtsp://127.0.0.1:" + port + "/live")
+                .transportPref(TransportPref.TCP).build();
+            RtspSession session = RtspClient.connect(cfg);
+            DemuxReceiver rx = session.intoDemuxReceiver();
+            // A parked read must not wedge the runner: close() cancels first.
+            Thread watchdog = new Thread(() -> {
+                try {
+                    Thread.sleep(TimeUnit.SECONDS.toMillis(TIMEOUT_SEC - 3));
+                    rx.close();
+                } catch (InterruptedException ignored) {
+                    // happy path
+                }
+            });
+            watchdog.setDaemon(true);
+            watchdog.start();
+            try {
+                boolean sawVideo = false;
+                for (DemuxEvent e : rx) {
+                    if (e instanceof DemuxEvent.Video v && !v.parse().isEmpty()) {
+                        sawVideo = true;
+                        break;
+                    }
+                }
+                assertTrue(sawVideo, "a Video event arrived over the interleaved TCP session");
+            } finally {
+                done.countDown();
+                watchdog.interrupt();
+                producer.join(TimeUnit.SECONDS.toMillis(2));
+                rx.close();
+                mount.close();
+            }
         }
     }
 

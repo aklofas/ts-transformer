@@ -3,6 +3,8 @@ package org.tstrans.srt;
 import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.Test;
 import org.tstrans.SrtException;
+import org.tstrans.shells.Sender;
+import org.tstrans.shells.Receiver;
 
 class SrtTransportTest {
 
@@ -15,7 +17,7 @@ class SrtTransportTest {
     void senderRejectsListenerModeUrl() {
         var e = assertThrows(
             SrtException.class,
-            () -> Sender.fromUrl("srt://127.0.0.1:9000?mode=listener")
+            () -> Sender.open("srt://127.0.0.1:9000?mode=listener")
         );
         assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
     }
@@ -29,21 +31,20 @@ class SrtTransportTest {
     void receiverRejectsCallerModeUrl() {
         var e = assertThrows(
             SrtException.class,
-            () -> Receiver.fromUrl("srt://127.0.0.1:9000?mode=caller")
+            () -> Receiver.open("srt://127.0.0.1:9000?mode=caller")
         );
         assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
     }
 
     /**
-     * A clearly-malformed URL (no scheme, no port) should fail
-     * {@code SrtUrl::parse} and surface as {@code CONFIG_INVALID}.
+     * A URL with no supported scheme is rejected before any transport opens, as an
+     * {@code IllegalArgumentException}.
      */
     @Test
     void senderRejectsMalformedUrl() {
-        var e = assertThrows(
-            SrtException.class,
-            () -> Sender.fromUrl("not-a-url")
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> Sender.open("not-a-url")
         );
-        assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
     }
 }

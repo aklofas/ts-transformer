@@ -15,6 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.shells.Receiver;
+import org.tstrans.shells.CancelHandle;
 
 /**
  * {@code cancel()} must wake a listener-mode {@link ManagedDemuxReceiver} — or

@@ -102,6 +102,9 @@ EXPECTED = {
         ("IO", 9),
         ("IFACE_UNSUPPORTED", 10),
         ("END_OF_STREAM", 11),
+        # Members appended for the shell-generic kinds the unified shells raise; every earlier pair is unchanged.
+        ("INPUT_MALFORMED", 12),
+        ("CONFIG_INVALID", 13),
     ],
     "RtspErrorKind": [
         ("PROTOCOL", 1),

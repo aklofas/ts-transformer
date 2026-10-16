@@ -15,6 +15,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.shells.Receiver;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.DemuxReceiver;
 
 /**
  * The cancel-first {@code close()} contract of the PLAIN srt receivers,
@@ -50,7 +53,7 @@ class SrtPlainCloseCancelsFirstTest {
         SrtException last = null;
         while (System.nanoTime() < deadline) {
             try {
-                return MuxSender.fromUrl(url, roundtripConfig());
+                return MuxSender.open(url, roundtripConfig());
             } catch (SrtException e) {
                 last = e;
                 Thread.sleep(50);
@@ -78,7 +81,7 @@ class SrtPlainCloseCancelsFirstTest {
         Thread reader = new Thread(() -> {
             DemuxReceiver rx;
             try {
-                rx = DemuxReceiver.fromUrl(listenUrl); // blocks until a peer connects
+                rx = DemuxReceiver.open(listenUrl); // blocks until a peer connects
             } catch (Exception ex) {
                 rxFuture.completeExceptionally(ex);
                 endFuture.complete(ex);
@@ -157,7 +160,7 @@ class SrtPlainCloseCancelsFirstTest {
         Thread reader = new Thread(() -> {
             Receiver rx;
             try {
-                rx = Receiver.fromUrl(listenUrl); // blocks until a peer connects
+                rx = Receiver.open(listenUrl); // blocks until a peer connects
             } catch (Exception ex) {
                 rxFuture.completeExceptionally(ex);
                 endFuture.complete(ex);
@@ -172,7 +175,7 @@ class SrtPlainCloseCancelsFirstTest {
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 endFuture.complete(ie);
-            } catch (RuntimeException | SrtException e) {
+            } catch (RuntimeException | org.tstrans.BindingException e) {
                 endFuture.complete(e);
             }
         });

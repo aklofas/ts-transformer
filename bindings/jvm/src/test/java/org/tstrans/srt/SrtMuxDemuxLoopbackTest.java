@@ -21,6 +21,9 @@ import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.DemuxerConfig;
 import org.tstrans.mpegts.Muxer;
 import org.tstrans.mpegts.MuxerConfig;
+import org.tstrans.shells.Sender;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.DemuxReceiver;
 
 /**
  * Live cross-binding loopback parity test for the high-level SRT convenience
@@ -220,7 +223,7 @@ class SrtMuxDemuxLoopbackTest {
             throw new AssertionError("receiver thread failed to publish port", e);
         }
 
-        try (MuxSender s = MuxSender.fromUrl(
+        try (MuxSender s = MuxSender.open(
                 "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS,
                 roundtripConfigWithData())) {
             for (int i = 0; i < PUSH_COUNT; i++) {

@@ -14,6 +14,9 @@ import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
+import org.tstrans.shells.Receiver;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.CancelHandle;
 
 /**
  * {@code ManagedReceiver.reconnectAttempts()} counts
@@ -80,7 +83,7 @@ final class ManagedReceiverAttemptsLockFreeTest {
         SrtException last = null;
         while (peer == null && System.nanoTime() < deadline) {
             try {
-                peer = MuxSender.fromUrl(callerUrl, roundtripConfig());
+                peer = MuxSender.open(callerUrl, roundtripConfig());
             } catch (SrtException e) {
                 last = e;
                 Thread.sleep(50);

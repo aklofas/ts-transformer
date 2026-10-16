@@ -44,7 +44,7 @@ use super::end_reason::{build_close_snapshot, detail, wire_value};
 use super::mux_sender::build_transport_stats;
 use super::open::{open_recv, read_url};
 use super::{domain_or_closed, throw_state};
-use crate::error::throw_binding;
+use crate::error::{throw_binding, throw_handle_state};
 use crate::handle::OwnedRegistry;
 use crate::jutil::build_socket_stats;
 use crate::mpegts::{
@@ -94,6 +94,16 @@ fn open_with(
     let Some(opened) = open_recv(env, &url) else {
         return 0;
     };
+    register(opened, opts)
+}
+
+/// Wrap an opened receive transport in a `DemuxReceiver` (with or without
+/// explicit demux options) and register it. Shared by `open_with` and by
+/// `srt.Socket.intoDemuxReceiver`.
+pub(crate) fn register(
+    opened: Opened<Box<dyn RecvTransport>>,
+    opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
+) -> jlong {
     let Opened {
         transport,
         cancel,
@@ -252,9 +262,6 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nAddByteSink<'local
     consumer: JObject<'local>,
 ) {
     crate::panic::jni_catch(&mut env, (), |env| {
-        let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "DemuxReceiver") else {
-            return;
-        };
         // Capture owned `Send` state for the closure: a cached `JavaVM` (to attach
         // the receiver thread per packet), a `GlobalRef` to the consumer (local refs
         // can't cross the call). These touch `env`, so build them BEFORE leasing.
@@ -319,7 +326,7 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nAddByteSink<'local
             }));
         });
         if let Err(state) = registered {
-            throw_state(env, domain, "DemuxReceiver", &state);
+            throw_handle_state(env, "DemuxReceiver", &state);
         }
     })
 }
@@ -339,9 +346,6 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nLastSeenMicros(
     pid: jint,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, -1, |env| {
-        let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "DemuxReceiver") else {
-            return -1;
-        };
         // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
         let last_seen = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -356,7 +360,7 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nLastSeenMicros(
         ) {
             Ok(v) => v,
             Err(state) => {
-                throw_state(env, domain, "DemuxReceiver", &state);
+                throw_handle_state(env, "DemuxReceiver", &state);
                 return -1;
             }
         };
@@ -395,9 +399,6 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nSocketStats<'local
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "DemuxReceiver") else {
-            return JObject::null();
-        };
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -406,7 +407,7 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nSocketStats<'local
         ) {
             Ok(v) => v,
             Err(state) => {
-                throw_state(env, domain, "DemuxReceiver", &state);
+                throw_handle_state(env, "DemuxReceiver", &state);
                 return JObject::null();
             }
         };
@@ -427,9 +428,6 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "DemuxReceiver") else {
-            return JObject::null();
-        };
         // counters live inside the shell and have no value to report while a parked call holds it
         let combined = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -438,7 +436,7 @@ pub extern "system" fn Java_org_tstrans_shells_DemuxReceiver_nStats<'local>(
         ) {
             Ok(v) => v,
             Err(state) => {
-                throw_state(env, domain, "DemuxReceiver", &state);
+                throw_handle_state(env, "DemuxReceiver", &state);
                 return JObject::null();
             }
         };

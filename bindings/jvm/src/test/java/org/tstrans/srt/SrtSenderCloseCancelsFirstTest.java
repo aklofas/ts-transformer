@@ -23,6 +23,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
 import org.tstrans.srt.SrtSenderParkSupport.Pump;
+import org.tstrans.shells.Sender;
+import org.tstrans.shells.Receiver;
+import org.tstrans.shells.MuxSender;
 
 /**
  * The cancel-first {@code close()} contract of the srt SENDERS —
@@ -67,7 +70,7 @@ class SrtSenderCloseCancelsFirstTest {
         SrtException last = null;
         while (System.nanoTime() < deadline) {
             try {
-                return Sender.fromUrl(url);
+                return Sender.open(url);
             } catch (SrtException e) {
                 last = e;
                 Thread.sleep(50);

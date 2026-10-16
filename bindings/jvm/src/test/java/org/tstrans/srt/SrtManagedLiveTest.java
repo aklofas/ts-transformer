@@ -22,6 +22,13 @@ import org.tstrans.mpegts.DataStreamHandle;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.Muxer;
+import org.tstrans.shells.Sender;
+import org.tstrans.shells.Receiver;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.SocketStats;
+import org.tstrans.shells.TransportStats;
 
 /**
  * Live-socket happy-path + stats-drift parity tests for the four managed
@@ -730,7 +737,7 @@ class SrtManagedLiveTest {
         Sender sender = null;
         for (int i = 0; i < 60 && sender == null; i++) {
             try {
-                sender = Sender.fromUrl(
+                sender = Sender.open(
                     "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS);
             } catch (SrtException e) {
                 Thread.sleep(50); // not bound yet — retry

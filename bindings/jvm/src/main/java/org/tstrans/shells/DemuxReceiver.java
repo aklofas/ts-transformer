@@ -4,6 +4,7 @@ import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.function.Consumer;
 import org.tstrans.BindingException;
+import org.tstrans.DemuxException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.mpegts.DemuxEvent;
@@ -122,6 +123,33 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
             demuxConfig.av1Carriage().ordinal(), demuxConfig.auCellCapPerPid(),
             demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap(),
             demuxConfig.unwrapTimestamps());
+    }
+
+    /**
+     * Receive the next demuxed event. Blocks until an event is produced, the
+     * transport ends cleanly, or an error occurs.
+     *
+     * <p>Unlike {@link #iterator()}, which wraps the checked exceptions in an
+     * unchecked {@link RuntimeException} (the {@code Iterator} contract forbids
+     * checked ones), this method surfaces them directly. A configured persistent
+     * receive deadline (the {@code ?recv_timeout=<ms>} URL key) expiring throws
+     * the transport's exception with kind {@code BACKPRESSURE} here; the receiver
+     * stays usable and the next {@code recvEvent()} resumes normally.
+     *
+     * <p>{@code recvEvent()} and {@link #iterator()} share the single-iterator
+     * contract documented on the class: do not call this method concurrently
+     * with an in-flight iteration on the same receiver.
+     *
+     * @return the next {@link DemuxEvent}, or {@code null} at end of stream
+     * @throws IllegalStateException if the receiver is closed
+     * @throws BindingException the transport's exception: {@code CLOSED} if a
+     *     cancel fired, {@code BACKPRESSURE} if a persistent deadline expires,
+     *     {@code IO} or the transport's own kind otherwise
+     * @throws DemuxException on a demux-side error
+     */
+    public DemuxEvent recvEvent() throws BindingException, DemuxException {
+        ensureOpen("DemuxReceiver is closed");
+        return nNext(peekHandle());
     }
 
     /**
@@ -310,8 +338,8 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     @Override protected void nativeClose(long h) {
         EndReason.Snapshot snapshot = nClose(h);
         if (snapshot != null) {
-            closedEndDetail = snapshot.detail;
-            closedEndReason = snapshot.reason;
+            closedEndDetail = snapshot.detail();
+            closedEndReason = snapshot.reason();
         }
     }
 

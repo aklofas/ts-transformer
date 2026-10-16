@@ -27,7 +27,7 @@ use tst_core::transport::EndReason;
 
 /// The wire value for `r`; `-1` for `None` and for a future `#[non_exhaustive]`
 /// variant this binding does not map yet.
-pub(super) fn wire_value(r: Option<&EndReason>) -> jint {
+pub(crate) fn wire_value(r: Option<&EndReason>) -> jint {
     match r {
         Some(EndReason::CleanTeardown) => 1,
         Some(EndReason::SessionExpired) => 2,
@@ -42,7 +42,7 @@ pub(super) fn wire_value(r: Option<&EndReason>) -> jint {
 }
 
 /// The free-text `msg` of the three variants that carry one.
-pub(super) fn detail(r: &EndReason) -> Option<&str> {
+pub(crate) fn detail(r: &EndReason) -> Option<&str> {
     match r {
         EndReason::KeepaliveFailed { msg }
         | EndReason::TransportFailed { msg }
@@ -52,7 +52,7 @@ pub(super) fn detail(r: &EndReason) -> Option<&str> {
 }
 
 /// Build the package-private `EndReason$Snapshot` `nClose` returns.
-pub(super) fn build_close_snapshot<'local>(
+pub(crate) fn build_close_snapshot<'local>(
     env: &mut JNIEnv<'local>,
     reason: Option<EndReason>,
 ) -> jni::errors::Result<JObject<'local>> {

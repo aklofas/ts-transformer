@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtpException;
 import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.DemuxReceiver;
 
 /**
  * Unit tests for the public {@link DemuxReceiver#recvEvent()} checked-exception
@@ -50,7 +52,7 @@ class DemuxReceiverTest {
         for (int attempt = 0; attempt < 8 && rx == null; attempt++) {
             int candidate = freeUdpPort();
             try {
-                rx = DemuxReceiver.fromUrl("rtp://127.0.0.1:" + candidate + "?recv_timeout=200");
+                rx = DemuxReceiver.open("rtp://127.0.0.1:" + candidate + "?recv_timeout=200");
                 port = candidate;
             } catch (RtpException bindCollision) {
                 // port+1 was taken; try a different ephemeral port.
@@ -69,7 +71,7 @@ class DemuxReceiverTest {
             // closes the first video PES well before the sender's final
             // close()-triggered flush) and confirm the SAME receiver's
             // recvEvent() call delivers a real event.
-            try (MuxSender tx = MuxSender.fromUrl("rtp://127.0.0.1:" + port, roundtripConfig())) {
+            try (MuxSender tx = MuxSender.open("rtp://127.0.0.1:" + port, roundtripConfig())) {
                 for (int i = 0; i < 8; i++) {
                     tx.sendVideo(syntheticH264Idr(), i * 3000L, true);
                 }
@@ -107,7 +109,7 @@ class DemuxReceiverTest {
         for (int attempt = 0; attempt < 8 && rx == null; attempt++) {
             int candidate = freeUdpPort();
             try {
-                rx = DemuxReceiver.fromUrl("rtp://127.0.0.1:" + candidate + "?recv_timeout=2000");
+                rx = DemuxReceiver.open("rtp://127.0.0.1:" + candidate + "?recv_timeout=2000");
                 port = candidate;
             } catch (RtpException bindCollision) {
                 // port+1 (the RTCP companion) was taken; try a different ephemeral port.
@@ -123,7 +125,7 @@ class DemuxReceiverTest {
             assertNull(receiver.lastSeenMicros(0x1FFF),
                 "lastSeenMicros must be null for an unrecognized PID");
 
-            try (MuxSender tx = MuxSender.fromUrl("rtp://127.0.0.1:" + port, roundtripConfig())) {
+            try (MuxSender tx = MuxSender.open("rtp://127.0.0.1:" + port, roundtripConfig())) {
                 for (int i = 0; i < 8; i++) {
                     tx.sendVideo(syntheticH264Idr(), i * 3000L, true);
                 }

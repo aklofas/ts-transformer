@@ -143,18 +143,26 @@ class RtspClientTest {
         assertDoesNotThrow(() -> RtspCancelHandle.class.getMethod("close"));
     }
 
+    // ---- transportPref / rtspVersion reach the connect URL ----
+    @Test void nonDefaultTransportAndVersionAreFoldedIntoTheUrl() {
+        assertEquals("rtsp://h/a", RtspClient.effectiveUrl(RtspClientConfig.of("rtsp://h/a")));
+        assertEquals("rtsp://h/a?transport=tcp",
+            RtspClient.effectiveUrl(RtspClientConfig.builder("rtsp://h/a").transportPref(TransportPref.TCP).build()));
+        assertEquals("rtsp://h/a?x=1&transport=udp&rtsp_version=2.0",
+            RtspClient.effectiveUrl(RtspClientConfig.builder("rtsp://h/a?x=1")
+                .transportPref(TransportPref.UDP).rtspVersion(RtspVersion.V2_0).build()));
+    }
+
     // ---- RtspStats ----
     @Test void rtspStatsComponentsRoundTrip() {
-        var s = new RtspStats(1L, 2L, 3L, 4L, 5L, 6);
+        var s = new RtspStats(1L, 2L, 5L, 6);
         assertEquals(1L, s.rrPacketsReceived());
         assertEquals(2L, s.srPacketsReceived());
-        assertEquals(3L, s.rrPacketsSent());
-        assertEquals(4L, s.srPacketsSent());
         assertEquals(5L, s.interarrivalJitterUs());
         assertEquals(6, s.fractionLostQ8());
     }
     @Test void rtspStatsDefaultIsZero() {
-        var s = new RtspStats(0L, 0L, 0L, 0L, 0L, 0);
+        var s = new RtspStats(0L, 0L, 0L, 0);
         assertEquals(0L, s.rrPacketsReceived());
         assertEquals(0, s.fractionLostQ8());
     }

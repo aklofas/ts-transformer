@@ -1246,7 +1246,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
     says "open an issue"; this entry is that record.
   - **Python / JVM:** the `MuxSender` shells (`tstrans.shells.MuxSender` /
     `ManagedMuxSender`,
-    `org.tstrans.srt.MuxSender`, …) expose no `send_video_misp_to` /
+    `org.tstrans.shells.MuxSender`, …) expose no `send_video_misp_to` /
     `sendVideoMispTo`; `Muxer` is the only binding path to an ST 0604
     MISP splice.
   - **RTSP mounts:** the Python, JVM and C mount push surfaces are
@@ -1965,7 +1965,7 @@ Shipped 0.3.0: removed from every receive builder and binding; receive URLs reje
 
 ### Python/JVM `tracing` diagnostics bridge + structured stream-end reason — RESOLVED 2026-08-21
 
-Shipped 0.6.0 (C ABI minor 20 for `TstStreamEndReason`): the opt-in `TSTRANS_LOG` bridge and `end_reason()` / `end_detail()` in Python and the JVM; the managed-SRT `RecvEndReason` mirrors followed in 0.7.0. See [troubleshooting.md](/docs/troubleshooting.md#why-did-my-rtsp-stream-end).
+Shipped 0.6.0 (C ABI minor 20 for `TstStreamEndReason`): the opt-in `TSTRANS_LOG` bridge and `end_reason()` / `end_detail()` in Python and the JVM; the managed-SRT end-reason mirrors followed in 0.7.0. See [troubleshooting.md](/docs/troubleshooting.md#why-did-my-rtsp-stream-end).
 
 ### RTSP keepalive response handling — RESOLVED
 

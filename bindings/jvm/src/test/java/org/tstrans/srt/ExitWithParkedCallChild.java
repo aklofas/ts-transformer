@@ -1,6 +1,8 @@
 package org.tstrans.srt;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.tstrans.shells.Receiver;
+import org.tstrans.shells.DemuxReceiver;
 
 /**
  * Child-JVM entry point for {@link ExitWithParkedCallTest}: parks a daemon
@@ -38,8 +40,8 @@ public final class ExitWithParkedCallChild {
             entered.set(true);
             try {
                 switch (shape) {
-                    case "demux" -> DemuxReceiver.fromUrl(LISTEN_URL);
-                    case "receiver" -> Receiver.fromUrl(LISTEN_URL);
+                    case "demux" -> DemuxReceiver.open(LISTEN_URL);
+                    case "receiver" -> Receiver.open(LISTEN_URL);
                     case "managed" -> ManagedDemuxReceiver.fromUrl(LISTEN_URL);
                     default -> throw new IllegalArgumentException("unknown shape: " + shape);
                 }

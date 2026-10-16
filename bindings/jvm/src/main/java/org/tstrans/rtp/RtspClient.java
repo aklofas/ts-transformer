@@ -16,11 +16,8 @@ import org.tstrans.RtspException;
  * bundle, a certificate rejected as a trust anchor, or an empty bundle all surface
  * {@link RtspException} of kind {@code TLS} before any connect I/O begins.
  *
- * <p><b>Pass-through config fields.</b> {@code transportPref} and {@code rtspVersion}
- * are likewise informational/pass-through: the underlying tst-rtp connect derives
- * the transport (from a {@code ?transport=udp|tcp} URL query) and the version (from
- * {@code ?rtsp_version=}) from the URL, not from these
- * fields. They round-trip through the config unchanged.
+ * <p>{@code transportPref} and {@code rtspVersion} override the URL's
+ * {@code ?transport=} / {@code ?rtsp_version=} when they are not at their defaults.
  */
 public final class RtspClient {
     static { NativeLoader.load(); }
@@ -45,7 +42,7 @@ public final class RtspClient {
             authUser = d.user(); authPassword = d.password();
         }
         byte[] tlsRoots = config.tlsRootCertsPem().orElse(null);
-        long h = nConnect(config.url(), authUser, authPassword, config.keepalive(), tlsRoots);
+        long h = nConnect(effectiveUrl(config), authUser, authPassword, config.keepalive(), tlsRoots);
         if (h == 0) {
             throw new RtspException(RtspException.Kind.PROTOCOL,
                 "nConnect returned 0 without throwing");
@@ -87,12 +84,34 @@ public final class RtspClient {
             authUser = d.user(); authPassword = d.password();
         }
         byte[] tlsRoots = config.tlsRootCertsPem().orElse(null);
-        long h = nConnectH264(config.url(), authUser, authPassword, config.keepalive(), tlsRoots);
+        long h = nConnectH264(effectiveUrl(config), authUser, authPassword, config.keepalive(), tlsRoots);
         if (h == 0) {
             throw new RtspException(RtspException.Kind.PROTOCOL,
                 "nConnectH264 returned 0 without throwing");
         }
         return new RtspSession(h);
+    }
+
+    /**
+     * The URL the native connect sees: {@code config.url()} with a
+     * non-default {@code transportPref} / {@code rtspVersion} appended as the
+     * {@code ?transport=} / {@code ?rtsp_version=} query keys. The URL parser
+     * lets the last occurrence of a key win, so a non-default config value
+     * overrides the URL's own; the defaults ({@code AUTO}, {@code V1_0})
+     * leave the URL in charge, as the C builder and the Python binding do.
+     */
+    static String effectiveUrl(RtspClientConfig config) {
+        StringBuilder u = new StringBuilder(config.url());
+        char sep = config.url().indexOf('?') >= 0 ? '&' : '?';
+        if (config.transportPref() != TransportPref.AUTO) {
+            u.append(sep).append("transport=")
+                .append(config.transportPref() == TransportPref.TCP ? "tcp" : "udp");
+            sep = '&';
+        }
+        if (config.rtspVersion() != RtspVersion.V1_0) {
+            u.append(sep).append("rtsp_version=2.0");
+        }
+        return u.toString();
     }
 
     // authUser/authPassword null when no auth. The algorithm is NOT passed: tst-rtp's

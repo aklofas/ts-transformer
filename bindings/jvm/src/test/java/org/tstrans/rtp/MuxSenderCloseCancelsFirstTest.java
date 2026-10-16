@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtpException;
+import org.tstrans.shells.MuxSender;
 
 /**
  * The rtp {@link MuxSender} is an {@code Owned} entry: {@code close()}
@@ -35,7 +36,7 @@ final class MuxSenderCloseCancelsFirstTest {
             // RtpException(BROKEN) — a true transport failure that would mask
             // the close/send race this test is about.
             try (java.net.DatagramSocket peer = new java.net.DatagramSocket(0)) {
-            MuxSender tx = MuxSender.fromUrl("rtp://127.0.0.1:" + peer.getLocalPort(), roundtripConfig());
+            MuxSender tx = MuxSender.open("rtp://127.0.0.1:" + peer.getLocalPort(), roundtripConfig());
             byte[] idr = syntheticH264Idr();
             CountDownLatch ready = new CountDownLatch(1);
             AtomicReference<Throwable> unexpected = new AtomicReference<>();

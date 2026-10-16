@@ -15,6 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.EndReason;
 
 /**
  * Live-socket checks for {@link ManagedDemuxReceiver#endReason()}. Every test
@@ -22,10 +24,10 @@ import org.tstrans.mpegts.DemuxEvent;
  * {@link SrtManagedListenerCancelTest} sibling; the socket-free managed-wrapper
  * checks live in {@link SrtManagedTest}.
  *
- * <p>{@link RecvEndReason} mirrors {@code tst_core::transport::EndReason},
+ * <p>{@link EndReason} mirrors {@code tst_core::transport::EndReason},
  * recorded first-writer-wins by {@code ManagedDemuxReceiver::recv_event} at
  * whichever site observed the terminal condition. Two of its three variants are
- * reachable from the managed-SRT path today (see {@code RecvEndReason}'s
+ * reachable from the managed-SRT path today (see {@code EndReason}'s
  * javadoc): {@code RECONNECT_EXHAUSTED} when the reconnect budget runs out,
  * {@code CLOSED} on a caller-fired cancel. {@code END_OF_STREAM} is not
  * produced here.
@@ -139,7 +141,7 @@ class SrtManagedEndReasonTest {
         Thread.sleep(1_000);
 
         // Off-thread so a regression fails the assertion instead of wedging main.
-        CompletableFuture<RecvEndReason> reasonFuture = CompletableFuture.supplyAsync(
+        CompletableFuture<EndReason> reasonFuture = CompletableFuture.supplyAsync(
             rx::endReason, r -> {
                 Thread t = new Thread(r, "end-reason-getter");
                 t.setDaemon(true);
@@ -170,7 +172,7 @@ class SrtManagedEndReasonTest {
 
     /**
      * A caller-initiated {@code cancel()} that ends a parked iteration records
-     * {@link RecvEndReason#CANCELLED}.
+     * {@link EndReason#CANCELLED}.
      *
      * <p>The cancel handle is obtained BEFORE the reader iterates — the pattern
      * the class doc recommends and the one a caller can always rely on. The
@@ -250,16 +252,16 @@ class SrtManagedEndReasonTest {
 
         assertTrue(end instanceof SrtException,
             "expected the iteration to end with SrtException(CLOSED), got " + end);
-        assertEquals(RecvEndReason.CANCELLED, rx.endReason(),
+        assertEquals(EndReason.CANCELLED, rx.endReason(),
             "a caller-initiated cancel records CANCELLED");
         rx.close();
-        assertEquals(RecvEndReason.CANCELLED, rx.endReason(),
+        assertEquals(EndReason.CANCELLED, rx.endReason(),
             "the close-time snapshot must preserve CANCELLED after close()");
     }
 
     /**
      * A peer that connects, sends, then leaves — against a zero-retry policy —
-     * records {@link RecvEndReason#RECONNECT_EXHAUSTED}, and that value
+     * records {@link EndReason#RECONNECT_EXHAUSTED}, and that value
      * survives {@code close()}.
      *
      * <p>Which variant fires is dictated by {@code tst-pipeline}: a peer FIN
@@ -267,7 +269,7 @@ class SrtManagedEndReasonTest {
      * ManagedRecvTransport} treats as recoverable and retries. With {@code
      * maxAttempts(0)} the budget is exhausted on the first attempt, so the
      * decorator gives up with {@code TransportError::Closed} → shell {@code
-     * EndOfStream} → {@code RecvEndReason::ReconnectExhausted}. {@code
+     * EndOfStream} → {@code EndReason::ReconnectExhausted}. {@code
      * END_OF_STREAM} is NOT produced by the managed-SRT path (see
      * {@code recv_end_reason.rs}).
      *
@@ -335,10 +337,10 @@ class SrtManagedEndReasonTest {
         reader.join(TimeUnit.SECONDS.toMillis(2));
         assertNull(end, "a budget-exhausted managed receiver ends iteration cleanly, got " + end);
 
-        assertEquals(RecvEndReason.RECONNECT_EXHAUSTED, rx.endReason(),
+        assertEquals(EndReason.RECONNECT_EXHAUSTED, rx.endReason(),
             "an exhausted reconnect budget records RECONNECT_EXHAUSTED");
         rx.close();
-        assertEquals(RecvEndReason.RECONNECT_EXHAUSTED, rx.endReason(),
+        assertEquals(EndReason.RECONNECT_EXHAUSTED, rx.endReason(),
             "the close-time snapshot must preserve the reason after close()");
     }
     /**

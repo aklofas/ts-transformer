@@ -208,7 +208,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nCancelHandle(
         // (no throw, matching the original contract).
         REGISTRY_SENDER
             .cancel_view(handle as u64)
-            .map_or(0, super::cancel_view_handle)
+            .map_or(0, crate::shells::cancel::cancel_view_handle)
     })
 }
 
@@ -230,7 +230,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nSocketStats<'local>(
         ) else {
             return JObject::null();
         };
-        match build_socket_stats(env, "org/tstrans/srt/SocketStats", &stats) {
+        match build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats) {
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }
@@ -480,7 +480,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nCancelHandle(
         // (no throw, matching the original contract).
         REGISTRY_RECEIVER
             .cancel_view(handle as u64)
-            .map_or(0, super::cancel_view_handle)
+            .map_or(0, crate::shells::cancel::cancel_view_handle)
     })
 }
 
@@ -500,7 +500,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nSocketStats<'local>
         ) else {
             return JObject::null();
         };
-        match build_socket_stats(env, "org/tstrans/srt/SocketStats", &stats) {
+        match build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats) {
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }

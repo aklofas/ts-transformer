@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtspException;
 import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.shells.DemuxReceiver;
 
 /**
  * rtsps:// end-to-end: server bound with the committed CA:FALSE fixture

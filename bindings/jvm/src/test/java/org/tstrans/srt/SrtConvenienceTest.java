@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.tstrans.SrtException;
 import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.DemuxReceiver;
 
 /**
  * Offline (no live socket) tests for the srt convenience wrappers.
@@ -33,22 +35,21 @@ class SrtConvenienceTest {
     void muxSenderRejectsListenerModeUrl() {
         var e = assertThrows(
             SrtException.class,
-            () -> MuxSender.fromUrl("srt://127.0.0.1:9000?mode=listener", sampleConfig())
+            () -> MuxSender.open("srt://127.0.0.1:9000?mode=listener", sampleConfig())
         );
         assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
     }
 
     /**
-     * A clearly-malformed URL (no scheme, no port) should fail
-     * {@code SrtUrl::parse} and surface as {@code CONFIG_INVALID}.
+     * A URL with no supported scheme is rejected before any transport opens, as an
+     * {@code IllegalArgumentException}.
      */
     @Test
     void muxSenderRejectsMalformedUrl() {
-        var e = assertThrows(
-            SrtException.class,
-            () -> MuxSender.fromUrl("not-a-url", sampleConfig())
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> MuxSender.open("not-a-url", sampleConfig())
         );
-        assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
     }
 
     /**
@@ -61,26 +62,25 @@ class SrtConvenienceTest {
     void demuxReceiverRejectsCallerModeUrl() {
         var e = assertThrows(
             SrtException.class,
-            () -> DemuxReceiver.fromUrl("srt://127.0.0.1:9000?mode=caller")
+            () -> DemuxReceiver.open("srt://127.0.0.1:9000?mode=caller")
         );
         assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
     }
 
     /**
-     * A clearly-malformed URL (no scheme, no port) should fail
-     * {@code SrtUrl::parse} and surface as {@code CONFIG_INVALID}.
+     * A URL with no supported scheme is rejected before any transport opens, as an
+     * {@code IllegalArgumentException}.
      */
     @Test
     void demuxReceiverRejectsMalformedUrl() {
-        var e = assertThrows(
-            SrtException.class,
-            () -> DemuxReceiver.fromUrl("not-a-url")
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> DemuxReceiver.open("not-a-url")
         );
-        assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
     }
 
     /**
-     * {@code DemuxReceiver.fromUrl(url, DemuxerConfig)} routes through
+     * {@code DemuxReceiver.open(url, DemuxerConfig)} routes through
      * {@code nFromUrlWithConfig} — the flattened-args native NOT otherwise
      * exercised by this file's malformed-URL checks. A malformed URL fails at
      * parse time before any bind, so this stays socket-free while still driving
@@ -91,10 +91,9 @@ class SrtConvenienceTest {
     @Test
     void demuxReceiverWithConfigRejectsMalformedUrl() {
         var cfg = org.tstrans.mpegts.DemuxerConfig.builder().unwrapTimestamps(true).build();
-        var e = assertThrows(
-            SrtException.class,
-            () -> DemuxReceiver.fromUrl("not-a-url", cfg)
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> DemuxReceiver.open("not-a-url", cfg)
         );
-        assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
     }
 }

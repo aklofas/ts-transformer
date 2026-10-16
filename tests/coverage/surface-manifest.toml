@@ -2302,7 +2302,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::ResourceCancel"
 owning_tests = ["crates/tst-srt/tests/loopback/cancellation_loopback.rs"]
-bindings = ["java:org.tstrans.srt.CancelHandle", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.shells.CancelHandle", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 # No scenario_ids: neither the owning Rust test nor the JVM loopback test
 # exercises CancelHandle via the h264-st0601-mp scenario (the loopback test
 # never calls cancelHandle()); coverage is the dedicated cancellation_loopback test.
@@ -2314,7 +2314,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::Sender"
 owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_ts_sender.rs"]
-bindings = ["java:org.tstrans.srt.Sender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.shells.Sender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -2323,7 +2323,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::Receiver"
 owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
-bindings = ["java:org.tstrans.srt.Receiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.shells.Receiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -2544,7 +2544,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::DemuxReceiver"
 owning_tests = ["crates/tst-pipeline/tests/shells/demux_receiver_malformed_pes_recovery.rs"]
-bindings = ["java:org.tstrans.srt.DemuxReceiver", "java:org.tstrans.rtp.DemuxReceiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.shells.DemuxReceiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2618,7 +2618,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::MuxSender"
 owning_tests = ["crates/tst-pipeline/tests/shells/mux_sender_golden.rs"]
-bindings = ["java:org.tstrans.srt.MuxSender", "java:org.tstrans.rtp.MuxSender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.shells.MuxSender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["video-roundtrip"]
 tier = "A"
 
@@ -2762,7 +2762,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::mux_sender::MuxSender"
 owning_tests = ["crates/tst-pipeline/src/mux_sender.rs", "crates/tst-pipeline/tests/shells/mux_sender_golden.rs"]
-bindings = ["java:org.tstrans.srt.MuxSender", "java:org.tstrans.rtp.MuxSender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.shells.MuxSender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["video-roundtrip"]
 tier = "A"
 
@@ -2930,7 +2930,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpCancelHandle"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["java:org.tstrans.rtp.CancelHandle", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.shells.CancelHandle", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2939,7 +2939,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpRecvSocketBuilder"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["java:org.tstrans.rtp.Receiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.RecvTransport", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -2948,7 +2948,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpRecvTransport"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["java:org.tstrans.rtp.Receiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.RecvTransport", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -2957,7 +2957,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpSocketBuilder"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["java:org.tstrans.rtp.Sender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.Transport", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -2966,7 +2966,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpTransport"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["java:org.tstrans.rtp.Sender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.Transport", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 

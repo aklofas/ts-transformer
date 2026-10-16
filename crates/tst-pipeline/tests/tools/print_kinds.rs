@@ -55,6 +55,8 @@ fn py_values(d: Domain) -> Option<&'static [(BindingErrorKind, i64)]> {
             (K::RtpIo, 9),
             (K::RtpIfaceUnsupported, 10),
             (K::EndOfStream, 11),
+            (K::InputMalformed, 12),
+            (K::ConfigInvalid, 13),
         ],
         Domain::Rtsp => &[
             (K::RtspProtocol, 1),

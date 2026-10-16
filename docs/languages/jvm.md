@@ -11,7 +11,7 @@
 > - How to configure the demuxer with a fluent `DemuxerConfig` builder
 > - How to decode / encode typed KLV sets (ST 0601 / 0102 / 0605 / 0903) under `org.tstrans.klv`, plus ST 0806 RVT, ST 1010 SDCC error covariance, and the ST 0805 KLV → CoT conversion layer
 > - How to use the file I/O helpers (`Io.parseFile`, `probe`, `extractKlv`, `Muxer.writeFile`)
-> - How to send and receive MPEG-TS over RTP and SRT (`org.tstrans.rtp` / `org.tstrans.srt`) — pre-muxed bytes or the `MuxSender`/`DemuxReceiver` shells — and how to drive RTSP (client + server)
+> - How to send and receive MPEG-TS over RTP and SRT (`org.tstrans.shells` / `org.tstrans.rtp` / `org.tstrans.srt`) — pre-muxed bytes or the `MuxSender`/`DemuxReceiver` shells — and how to drive RTSP (client + server)
 > - How to pair video with KLV metadata by PTS using `org.tstrans.pipeline.Pairer`
 > - The JVM-specific gotchas: heap-copied `ByteBuffer` payloads, nullable `Long` DTS
 > - How this binding differs from the Rust core
@@ -862,20 +862,24 @@ variants (`pushVideoToWithDts`, `pushVideoWireToWithDts`) — and also declares
 
 ## SRT transport (`org.tstrans.srt`)
 
-The `org.tstrans.srt` package wraps `tst_pipeline::Sender`/`Receiver` and the
-low-level `tst_srt::SocketBuilder`/`Socket`/`Listener` for sending and receiving
-pre-muxed MPEG-TS bytes over SRT. SRT is default-on — no feature flag is needed.
+The shells (`Sender`, `Receiver`, `MuxSender`, `DemuxReceiver`) live in
+`org.tstrans.shells` and open any transport from a URL (`Class.open(url, ...)`);
+the `org.tstrans.srt` package holds the low-level `Builder`/`Socket`/`Listener`,
+the `Managed*` reconnect family and the SRT policy types. SRT is default-on — no
+feature flag is needed. The 0.8 names `org.tstrans.srt.{Sender, Receiver,
+MuxSender, DemuxReceiver}` and `org.tstrans.rtp.{MuxSender, DemuxReceiver}`
+remain as `@Deprecated` subclasses with their `fromUrl` factories until 0.10.0.
 
 ### Sender hello
 
 The simplest sender: connect to a peer in caller mode and stream bytes.
 
 ```java
-import org.tstrans.srt.Sender;
+import org.tstrans.shells.Sender;
 import org.tstrans.SrtException;
 
 // mode=caller is the default when ?mode= is omitted.
-try (var tx = Sender.fromUrl(
+try (var tx = Sender.open(
         "srt://host:9000?mode=caller&passphrase=secret")) {
     tx.sendBytes(tsBytes);  // push pre-muxed TS bytes (any length)
     tx.flush();             // emit any buffered partial bundle
@@ -886,17 +890,17 @@ try (var tx = Sender.fromUrl(
 them into 7-packet (1316-byte) SRT bundles. Call `flush()` after the last push
 to emit any partial bundle.
 
-### Receiver hello
+### RecvTransport hello
 
 The simplest receiver: bind in listener mode, accept one connection, and drain
 packets.
 
 ```java
-import org.tstrans.srt.Receiver;
+import org.tstrans.shells.Receiver;
 import org.tstrans.SrtException;
 
-// Receiver.fromUrl does a one-shot bind + accept.
-try (var rx = Receiver.fromUrl("srt://:9000?mode=listener")) {
+// Receiver.open does a one-shot bind + accept.
+try (var rx = Receiver.open("srt://:9000?mode=listener")) {
     while (true) {
         byte[] pkt = rx.recvBytes();  // one 188-byte TS packet per call
         // process pkt ...
@@ -921,6 +925,7 @@ ephemeral `:0` port and reporting it to the sender):
 
 ```java
 import org.tstrans.srt.*;
+import org.tstrans.shells.Receiver;
 import org.tstrans.SrtException;
 
 // Bind to a kernel-assigned ephemeral port.
@@ -955,7 +960,7 @@ try (Socket sock = new Builder("srt://host:9000")
         .latencyMs(200)
         .passphrase("hunter2hunter2")
         .connect()) {
-    try (Sender tx = sock.intoSender()) {
+    try (org.tstrans.shells.Sender tx = sock.intoSender()) {
         tx.sendBytes(tsBytes);
         tx.flush();
     }
@@ -964,12 +969,12 @@ try (Socket sock = new Builder("srt://host:9000")
 
 ### Cancellation
 
-Obtain a `CancelHandle` from an open `Sender`, `Receiver`, `MuxSender` or
-`DemuxReceiver` (and their `Managed*` twins) and call `cancel()` from another
+Obtain a `org.tstrans.shells.CancelHandle` from an open `Sender`, `Receiver`,
+`MuxSender` or `DemuxReceiver` (and their `Managed*` twins) and call `cancel()` from another
 thread to unblock a parked `sendBytes` / `send*` / `recvBytes` / `next()` call:
 
 ```java
-var tx = Sender.fromUrl("srt://host:9000?mode=caller");
+var tx = Sender.open("srt://host:9000?mode=caller");
 var cancel = tx.cancelHandle();
 
 // On another thread:
@@ -1044,8 +1049,8 @@ sender that still has unsent data takes up to that socket's linger time
 (`?linger=` on the URL; 5 s by default on the sender opens), and the handler
 closes the open sockets one after the other before the wait starts.
 
-This matters most for the listener-mode opens — `DemuxReceiver.fromUrl`,
-`Receiver.fromUrl` and `ManagedDemuxReceiver.fromUrl` with `?mode=listener`
+This matters most for the listener-mode opens — `DemuxReceiver.open`,
+`Receiver.open` and `ManagedDemuxReceiver.fromUrl` with `?mode=listener`
 block in their first accept BEFORE returning an object, so there is nothing
 to `close()` or cancel while they wait for a peer. The unparked thread does
 not get to observe an exception: the JVM is already past the point where Java
@@ -1053,7 +1058,7 @@ code runs. A program that closed everything pays nothing at exit.
 
 ### SRT-specific Gotchas
 
-- **One-shot accept on `Receiver.fromUrl`.** `Receiver.fromUrl` binds,
+- **One-shot accept on `Receiver.open`.** `Receiver.open` binds,
   listens, and accepts exactly one connection — it is not a multi-client
   server. For a server that accepts many peers, use `Builder.listener().listen()`
   and iterate or call `listener.accept(null)` in a loop.
@@ -1063,7 +1068,7 @@ code runs. A program that closed everything pays nothing at exit.
   where the accept epoll subscription can prevent `srt_recv` from waking on
   TSBPD delivery when data arrives before `recvBytes()` is called. Prefer
   `accept(null)` (direct `srt_accept`) for the accepted socket's receiver path.
-  `Receiver.fromUrl` always uses `srt_accept` directly and is unaffected.
+  `Receiver.open` always uses `srt_accept` directly and is unaffected.
 - **Cancel wakes with `CLOSED`.** `CancelHandle.cancel()` wakes a thread
   parked in `sendBytes` or `recvBytes`; that call throws
   `SrtException(CLOSED)`. (Through 0.6.x the plain shells threw `BROKEN`.)
@@ -1071,7 +1076,7 @@ code runs. A program that closed everything pays nothing at exit.
   either from another thread while `recvBytes()` / `next()` is parked wakes
   that call — it throws `SrtException(CLOSED)` — and `close()` returns
   promptly. The managed pair (`ManagedReceiver` / `ManagedDemuxReceiver`) does
-  the same and records `RecvEndReason.CANCELLED`. A `close()` with nothing
+  the same and records `EndReason.CANCELLED`. A `close()` with nothing
   parked simply closes.
 - **Every srt sender's `close()` cancels first too.** `MuxSender.close()` /
   `Sender.close()` from another thread while a `send*` / `sendBytes()` is
@@ -1099,19 +1104,21 @@ code runs. A program that closed everything pays nothing at exit.
 
 ## SRT convenience (`MuxSender` / `DemuxReceiver`)
 
-The `org.tstrans.srt` package also exposes the high-level convenience shells that
+The `org.tstrans.shells` package also exposes the high-level convenience shells that
 own a muxer / demuxer and a transport in one object, so you never touch raw TS
-bytes: `MuxSender` wraps `tst_pipeline::MuxSender<SrtTransport>` (send elementary
-streams → it muxes + sends) and `DemuxReceiver` wraps
-`tst_pipeline::DemuxReceiver<SrtTransport>` (it recvs + demuxes → you iterate
-typed `DemuxEvent`s).
+bytes: `MuxSender` (send elementary streams → it muxes + sends) and
+`DemuxReceiver` (it recvs + demuxes → you iterate typed `DemuxEvent`s). Each
+opens the transport its URL names: `srt://`, `rtp://`, `udp://`, `tcp(s)://`
+or `rist://`. A transport failure throws that transport's exception
+(`SrtException`, `RtpException`, `UdpException`, `TcpException`,
+`RistException`), each a `BindingException`.
 
 ### Send: `MuxSender`
 
 Build a `MuxerConfig`, connect in caller mode, and send elementary streams:
 
 ```java
-import org.tstrans.srt.MuxSender;
+import org.tstrans.shells.MuxSender;
 import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
 
@@ -1120,7 +1127,7 @@ MuxerConfig program = MuxerConfig.builder()
     .addVideo(0x1011, VideoCodec.H264)
     .build();
 
-try (MuxSender s = MuxSender.fromUrl(
+try (MuxSender s = MuxSender.open(
         "srt://host:9000?mode=caller&latency=120", program)) {
     long pts = 0;
     for (byte[] annexBNal : accessUnits) {
@@ -1140,9 +1147,7 @@ close.
 `finish()` drains them, throws the first drain error as `SrtException`, then
 closes. `finish()` does not cancel a parked `send*` first, so it waits behind
 one; a second `finish()` (or a `finish()` after `close()`) is a no-op, and the
-handle still takes a `close()` afterwards. `ManagedMuxSender` and
-`org.tstrans.rtp.MuxSender` have the same method (the latter throws
-`RtpException`).
+handle still takes a `close()` afterwards. `ManagedMuxSender` has the same method.
 
 `sendKlv`, `sendAudio`, `sendSubtitle`, and `sendData` (raw private-data
 bytes, passed through verbatim — same PTS / ceiling semantics as
@@ -1156,10 +1161,10 @@ Bind in listener mode and iterate the same sealed `DemuxEvent` hierarchy the
 offline `org.tstrans.mpegts.Demuxer` produces:
 
 ```java
-import org.tstrans.srt.DemuxReceiver;
+import org.tstrans.shells.DemuxReceiver;
 import org.tstrans.mpegts.DemuxEvent;
 
-try (DemuxReceiver rx = DemuxReceiver.fromUrl("srt://:9000?mode=listener")) {
+try (DemuxReceiver rx = DemuxReceiver.open("srt://:9000?mode=listener")) {
     for (DemuxEvent e : rx) {
         if (e instanceof DemuxEvent.Video v) {
             // Opt-in typed units; parse() throws the checked DemuxException,
@@ -1179,7 +1184,7 @@ try (DemuxReceiver rx = DemuxReceiver.fromUrl("srt://:9000?mode=listener")) {
 or a parallel parser without consuming the event iterator:
 
 ```java
-try (DemuxReceiver rx = DemuxReceiver.fromUrl("srt://:9000?mode=listener")) {
+try (DemuxReceiver rx = DemuxReceiver.open("srt://:9000?mode=listener")) {
     rx.addByteSink(pkt -> recorder.write(pkt));  // pkt.length == 188
     for (DemuxEvent e : rx) {
         // ... normal event handling continues unaffected ...
@@ -1302,7 +1307,7 @@ re-accept parked with no peer in sight — and the iterator ends with
 
 **Why did a managed session end? (`endReason()`)** Once the receive loop has
 stopped for good, `rx.endReason()` (on `ManagedDemuxReceiver` only — none of
-the other three managed shells expose it) answers with a `RecvEndReason`
+the other three managed shells expose it) answers with an `org.tstrans.shells.EndReason`
 member — or `null` before any ending, including while a reconnect is still
 in progress. Two of its three members are reachable on the managed-SRT path
 today: `RECONNECT_EXHAUSTED` (the `ReconnectPolicy`'s `maxAttempts` budget
@@ -1311,7 +1316,7 @@ since a peer FIN reaches the reconnect decorator as a retryable break) and
 `CANCELLED` (`cancelHandle().cancel()` fired, or `close()` was called from
 another thread while `next()` was parked — `close()` cancels first, so the
 parked iteration ends with `SrtException(CLOSED)`; a `close()` with no
-iteration in flight ends nothing and records nothing). `RecvEndReason.END_OF_STREAM`
+iteration in flight ends nothing and records nothing). `EndReason.END_OF_STREAM`
 is reserved for a future receive transport that can signal a clean end
 distinct from budget exhaustion — do not confuse it with the unrelated
 `SrtException.Kind.END_OF_STREAM`, which 0.7.0 added for the ERROR a receive
@@ -1329,7 +1334,7 @@ carefully, they are not uniform across the four shells:**
 - **`ManagedSender.srtStats()` and `ManagedReceiver.srtStats()` always throw
   `SrtException(IO)`** today (the managed send/recv transports expose no
   SRT-rich shape). Use `socketStats()` instead — it returns the scheme-neutral
-  16-field `SocketStats`.
+  16-field `org.tstrans.shells.SocketStats`.
 - **`ManagedMuxSender` has no `srtStats()` at all.** It exposes a combined
   `stats()` returning a `TransportStats` (socket + muxer); use that.
 - **`ManagedDemuxReceiver.srtStats()` returns a `SocketStats`** (NOT `SrtStats`)
@@ -1386,8 +1391,10 @@ a warning and those classes reconnect on the caller's thread anyway.
 
 The `org.tstrans.rtp` package covers two RTP receive shapes:
 
-- **MPEG-TS-over-RTP (RFC 2250, PT=33):** `RtpTransport` / `RtpRecvTransport`
-  send/receive pre-muxed MPEG-TS bytes over RTP/UDP. Each `send` produces one
+- **MPEG-TS-over-RTP (RFC 2250, PT=33):** `org.tstrans.rtp.Transport` /
+  `RecvTransport` send/receive pre-muxed MPEG-TS bytes over RTP/UDP (the raw
+  transports; the TS shells over `rtp://` are `org.tstrans.shells.Sender` /
+  `Receiver`). Each `send` produces one
   datagram (12-byte RTP header + TS payload); each `recv` returns one datagram's
   TS payload with the header stripped.
 - **H.264-over-RTP (RFC 6184):** `H264Receiver` and `RtspClient.connectH264`
@@ -1396,24 +1403,24 @@ The `org.tstrans.rtp` package covers two RTP receive shapes:
 
 RTP is default-on — no feature flag is needed.
 
-### Sender hello
+### Transport hello
 
 The simplest sender: bind to a destination and push TS bytes. Each call sends
 one datagram.
 
 ```java
-import org.tstrans.rtp.Sender;
+import org.tstrans.rtp.Transport;
 import org.tstrans.RtpException;
 
 // Send pre-muxed TS bytes over RTP-over-UDP:
-try (Sender s = Sender.fromUrl("rtp://239.0.0.1:5004")) {
+try (Transport s = Transport.fromUrl("rtp://239.0.0.1:5004")) {
     s.send(tsBytes);  // one UDP datagram, framed with an RTP header
 }
 ```
 
 `send(byte[])` accepts a TS payload up to the configured packet size **minus the
 12-byte RTP header** prepended to every datagram — i.e. up to
-`Sender.DEFAULT_PKT_SIZE - 12` = 1304 bytes at the default `pkt_size` of 1316. A
+`Transport.DEFAULT_PKT_SIZE - 12` = 1304 bytes at the default `pkt_size` of 1316. A
 payload that exceeds the cap throws `RtpException(TOO_LARGE)`.
 
 ### Receiver hello
@@ -1422,11 +1429,11 @@ The simplest receiver: bind to the same group/port and read one datagram per
 `recv()` call. For multicast URLs the group is joined automatically.
 
 ```java
-import org.tstrans.rtp.Receiver;
+import org.tstrans.rtp.RecvTransport;
 import org.tstrans.RtpException;
 
 // Receive on the same group/port:
-try (Receiver r = Receiver.fromUrl("rtp://239.0.0.1:5004")) {
+try (RecvTransport r = RecvTransport.fromUrl("rtp://239.0.0.1:5004")) {
     byte[] payload = r.recv(); // one datagram's TS payload (RTP header stripped)
     // process payload ...
 }
@@ -1440,11 +1447,11 @@ in a loop and concatenate.
 
 ### Cancellation
 
-Obtain a `CancelHandle` from an open `Sender` or `Receiver` and call `cancel()`
+Obtain a `org.tstrans.shells.CancelHandle` from an open `Transport` or `RecvTransport` and call `cancel()`
 from another thread to unblock a parked `send` / `recv` call:
 
 ```java
-var rx = Receiver.fromUrl("rtp://127.0.0.1:5004");
+var rx = RecvTransport.fromUrl("rtp://127.0.0.1:5004");
 var cancel = rx.cancelHandle();
 
 // On another thread:
@@ -1456,18 +1463,17 @@ cancel.cancel();  // wakes rx.recv() → throws RtpException(CLOSED)
 
 ### RTP-specific gotchas
 
-- **`Sender` / `Receiver` are not thread-safe.** Use one per thread. A
+- **`Transport` / `RecvTransport` are not thread-safe.** Use one per thread. A
   cross-thread stop goes through `cancelHandle().cancel()`, which wakes a parked
   `send`/`recv` with `RtpException(CLOSED)` (detail `cancelled from another
   thread`).
-- **`org.tstrans.rtp.SocketStats` is a distinct type from
-  `org.tstrans.srt.SocketStats`.** Same 16-field shape, different package. The
-  RTCP-derived fields (`rttUs`, `packetsLost*`) stay zero until RTCP ingest is
-  wired; `RtpTransport` populates the send-side counters, `RtpRecvTransport` the
+- **One `org.tstrans.shells.SocketStats` for every transport.** The 16-field
+  record is the same type the srt and rtp shells return. The RTCP-derived
+  fields (`rttUs`, `packetsLost*`) stay zero until RTCP ingest is wired;
+  `Transport` populates the send-side counters, `RecvTransport` the
   receive-side.
-- **`rtp` `CancelHandle` has no `isCancelled()`.** Unlike the srt
-  `CancelHandle` (and tst-py's `tstrans.rtp.CancelHandle`), the JVM RTP
-  one exposes only `cancel()`.
+- **One `org.tstrans.shells.CancelHandle`** for every transport; it has
+  `cancel()` and `isCancelled()`.
 - **Closed handle → `IllegalStateException`.** Calling `send` / `recv` /
   `socketStats` / `cancelHandle` after `close()` throws `IllegalStateException`,
   the established JVM idiom (tst-py raises `RtpError` instead).
@@ -1479,24 +1485,24 @@ See [`/docs/languages/python.md`](/docs/languages/python.md) for the canonical
 
 ### RTP convenience: MuxSender / DemuxReceiver
 
-`org.tstrans.rtp.MuxSender` bundles a `Muxer` + an RTP transport — send encoded
-video/KLV/audio/subtitle/private-data and it muxes to MPEG-TS and sends over
-RTP/UDP in one call. The send surface matches the srt `MuxSender`: the per-kind
-`send*` shorthands (including `sendData`), the handle-targeted `send*To`
-variants (including `sendDataTo`), and the per-kind handle accessors
-(including `dataHandle()`). `org.tstrans.rtp.DemuxReceiver` bundles a `Demuxer`
-+ an RTP recv transport and iterates `DemuxEvent`s.
+`org.tstrans.shells.MuxSender` over an `rtp://` URL bundles a `Muxer` + an RTP
+transport — send encoded video/KLV/audio/subtitle/private-data and it muxes to
+MPEG-TS and sends over RTP/UDP in one call: the per-kind `send*` shorthands
+(including `sendData`), the handle-targeted `send*To` variants (including
+`sendDataTo`), and the per-kind handle accessors (including `dataHandle()`).
+`org.tstrans.shells.DemuxReceiver` bundles a `Demuxer` + an RTP recv transport
+and iterates `DemuxEvent`s.
 
 ```java
 MuxerConfig program = MuxerConfig.builder()
     .programNumber(1).pmtPid(0x1000)
     .addVideo(0x1011, VideoCodec.H264)
     .build();
-try (MuxSender s = MuxSender.fromUrl("rtp://127.0.0.1:5004", program)) {
+try (MuxSender s = MuxSender.open("rtp://127.0.0.1:5004", program)) {
     s.sendVideo(annexBNal, /*pts*/ 0L, /*keyFrame*/ true);
 }
 
-try (DemuxReceiver rx = DemuxReceiver.fromUrl("rtp://0.0.0.0:5004")) {
+try (DemuxReceiver rx = DemuxReceiver.open("rtp://0.0.0.0:5004")) {
     rx.addByteSink(pkt -> record(pkt)); // fans out each raw 188-byte TS packet
     for (DemuxEvent e : rx) {
         if (e instanceof DemuxEvent.Video v) { /* ... */ }
@@ -1506,15 +1512,15 @@ try (DemuxReceiver rx = DemuxReceiver.fromUrl("rtp://0.0.0.0:5004")) {
 
 **Gotchas:**
 
-- `MuxSender.fromUrl` takes an optional `pktSize` (default 1316); a negative
-  `pktSize` is rejected with `IllegalArgumentException`. The payload cap per push
-  is `pktSize − 12` (the RTP header is prepended by the transport).
-- The RTP `MuxSender` / `DemuxReceiver` expose **no `cancelHandle()` and no
-  `socketStats()`** (matching the Python surface; unlike the srt `MuxSender`,
-  which does expose `cancelHandle()`) — only `stats()` (a
-  `(SocketStats, MuxerStats)` snapshot). To stop a `DemuxReceiver` iteration that
-  is parked waiting for the next datagram, call `close()` from another thread; it
-  cancels the in-flight recv first, then frees the receiver (safe cross-thread).
+- The datagram size is the `?pkt_size=` URL key (default 1316); a negative
+  value is rejected with `RtpException(URL)`. The payload cap per push is
+  `pkt_size − 12` (the RTP header is prepended by the transport).
+- Every shell has `cancelHandle()` and `socketStats()` (the `rtp://` open adds
+  nothing and removes nothing), and `stats()` is a `(SocketStats, MuxerStats)`
+  snapshot. To stop a `DemuxReceiver` iteration that is parked waiting for the
+  next datagram, call `cancelHandle().cancel()` or `close()` from another
+  thread; `close()` cancels the in-flight recv first, then frees the receiver
+  (safe cross-thread).
 - RTP/UDP is connectionless: a remote sender closing does **not** end a
   `DemuxReceiver` iteration. Break out of the loop on a sentinel event (or close
   the receiver) rather than waiting for end-of-stream.
@@ -1558,12 +1564,12 @@ below) so `next()` returns — and releases the lock — on its own cadence even
 when the stream is silent, letting a separate watchdog thread's poll go
 through between those returns.
 
-The same method exists on `org.tstrans.srt.DemuxReceiver` and
+The same method exists on `org.tstrans.shells.DemuxReceiver` and
 `org.tstrans.srt.ManagedDemuxReceiver` (same blocking caveat).
 
 ### Recv deadlines (`?recv_timeout=` / per-call overloads)
 
-Both `Receiver.recv()` and `DemuxReceiver` iteration block indefinitely by
+Both `RecvTransport.recv()` and `DemuxReceiver` iteration block indefinitely by
 default — fine for a live camera, less fine for a quiet socket you want to
 notice going quiet. `?recv_timeout=<ms>` on a `rtp://` (or `rtsp(s)://`) URL
 arms a persistent receive deadline: a `recv()` / `recvEvent()` call that
@@ -1573,10 +1579,10 @@ keep waiting:
 
 ```java
 import org.tstrans.RtpException;
-import org.tstrans.rtp.DemuxReceiver;
+import org.tstrans.shells.DemuxReceiver;
 import org.tstrans.mpegts.DemuxEvent;
 
-try (DemuxReceiver rx = DemuxReceiver.fromUrl("rtp://0.0.0.0:5004?recv_timeout=5000")) {
+try (DemuxReceiver rx = DemuxReceiver.open("rtp://0.0.0.0:5004?recv_timeout=5000")) {
     while (true) {
         DemuxEvent event;
         try {
@@ -1660,15 +1666,15 @@ try (RtspSession session = RtspClient.connect(cfg);
   custom trust anchors (private-CA cameras) — without it the handshake
   verifies against platform native roots. Invalid PEM, a rejected anchor, or
   an empty bundle throw `RtspException` of kind `TLS` before any network I/O.
-- **Pass-through config fields.** `transportPref` and `rtspVersion` are informational
-  in the JVM binding — connect takes transport from a `?transport=udp|tcp` query and
-  the version from `?rtsp_version=`, not from these fields (tst-py applies them). Likewise
-  `DigestAuth.algorithm` is retained for introspection only; the server's
+- **`transportPref` and `rtspVersion` apply.** A non-default value overrides the URL's
+  `?transport=udp|tcp` / `?rtsp_version=` query (`AUTO` and `V1_0` leave the URL in
+  charge), as in tst-py and the C builder. `DigestAuth.algorithm` is
+  retained for introspection only; the server's
   `WWW-Authenticate` challenge selects the actual digest algorithm.
 - **`stats()`** returns a zeroed `RtspStats` for now (RTCP counters wire in later).
 - **Why did the stream end?** When a `for (var event : rx)` loop exits or a
   call throws, `rx.endReason()` (on `Receiver`, `DemuxReceiver`, and
-  `H264Receiver` alike) answers with a `StreamEndReason` member —
+  `H264Receiver` alike) answers with an `org.tstrans.shells.EndReason` member —
   `CLEAN_TEARDOWN`, `SESSION_EXPIRED`, `KEEPALIVE_FAILED`,
   `TRANSPORT_FAILED`, `PROTOCOL_ERROR`, or `CANCELLED` — or `null` if the
   session hasn't ended yet (or ended through a path that records no
@@ -1760,7 +1766,7 @@ try (RtspServer server = RtspServer.start(cfg);
 
 The server's publisher role lets an encoder push into it with ANNOUNCE /
 SETUP `mode=record` / RECORD. Each pushed stream reaches the application as
-MPEG-TS through an ordinary `org.tstrans.rtp.DemuxReceiver`, and the same mount
+MPEG-TS through an ordinary `org.tstrans.shells.DemuxReceiver`, and the same mount
 keeps serving PLAY readers from the published bytes. A publish mount accepts
 one publisher at a time, in one of two shapes (`PublishShape`):
 
@@ -1924,8 +1930,7 @@ reach EOS on its next iteration. Ensure only one `into*` call is made per
 session.
 
 **`socket_stats()` is not Optional.** `H264Receiver.socketStats()` returns a
-bare `SocketStats` (never null), whereas the SRT `Receiver.socketStats()`
-returns `Optional<SocketStats>`. This matches the Rust
+bare `SocketStats` (never null). This matches the Rust
 `H264Receiver::socket_stats()` → `SocketStats` signature directly, which has
 no "no socket" code path once constructed.
 
@@ -2127,11 +2132,12 @@ Gotchas:
   KLV → CoT conversion layer), the `org.tstrans.codec` elementary-stream parsers (H.264 /
   H.265 / H.266 / AV1 / AAC / MPEG-2 audio), the `org.tstrans.io` file
   helpers (`parseFile`, `probe`, `extractKlv`), the `org.tstrans.srt` SRT
-  transport surface (`Sender`/`Receiver` pipeline shells + the low-level
-  `Builder`/`Socket`/`Listener`/`CancelHandle` + the `MuxSender`/
-  `DemuxReceiver` convenience shells + the `Managed*` reconnect family),
-  the `org.tstrans.rtp` RTP transport surface (`Sender`/`Receiver` +
-  `MuxSender`/`DemuxReceiver` + RTSP client/server), the `org.tstrans.hls`
+  transport surface (the low-level `Builder`/`Socket`/`Listener` + the
+  `Managed*` reconnect family), the `org.tstrans.shells` pipeline shells
+  (`Sender`/`Receiver`/`MuxSender`/`DemuxReceiver` over every transport URL +
+  `CancelHandle`/`SocketStats`/`TransportStats`/`EndReason`), the
+  `org.tstrans.rtp` RTP transport surface (`Transport`/`RecvTransport` +
+  RTSP client/server), the `org.tstrans.hls`
   HLS publisher family (`HlsPublisher`/`HlsPublisherBuilder`/
   `HlsServerHandle` + the `MuxPublisher` shell), the
   `org.tstrans.pipeline` pairing shell (`Pairer`), and the
@@ -2180,12 +2186,13 @@ Python binding's gaps.
 - **codec** — H.264 / H.265 / H.266 / AV1 + audio parsers under
   `org.tstrans.codec`; typed elementary-stream payloads (NAL / OBU / ADTS).
 - **io** — file inspection helpers (`Io.parseFile`, `probe`, `extractKlv`, `Muxer.writeFile`).
-- **srt** — `Sender` / `Receiver` pipeline shells + `Builder` /
-  `Socket` / `Listener` / `CancelHandle` / `SocketStats` / `SrtStats`;
-  `MuxSender` / `DemuxReceiver` high-level shells +
-  `DemuxReceiver.addByteSink` fan-out + the `ReconnectPolicy` /
-  `BackoffStrategy` / `OverflowPolicy` types; the `Managed*` reconnect wrappers.
-- **rtp** — MPEG-TS-over-RTP transport + `MuxSender` / `DemuxReceiver` +
+- **shells** — `Sender` / `Receiver` / `MuxSender` / `DemuxReceiver` over every
+  transport URL, with `CancelHandle` / `SocketStats` / `TransportStats` /
+  `EndReason` and the `DemuxReceiver.addByteSink` fan-out.
+- **srt** — `Builder` / `Socket` / `Listener` / `SrtStats`; the
+  `ReconnectPolicy` / `BackoffStrategy` / `OverflowPolicy` types; the
+  `Managed*` reconnect wrappers.
+- **rtp** — MPEG-TS-over-RTP transports (`Transport` / `RecvTransport`) +
   RTSP client / server (incl. the publisher role: `PublishMount`) +
   `H264Receiver`.
 - **hls** — `HlsPublisher` + `MuxPublisher` HLS segmenter/server under

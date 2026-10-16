@@ -5,6 +5,9 @@ import java.util.NoSuchElementException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.RtpException;
+import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.EndReason;
+import org.tstrans.shells.SocketStats;
 
 /**
  * Blocking H.264-over-RTP receiver. Wraps {@code tst_rtp::H264Receiver}.
@@ -38,7 +41,7 @@ import org.tstrans.RtpException;
  * <p>Three complementary views, mirroring {@code tst_rtp::H264Receiver}:
  * <ul>
  *   <li>{@link #socketStats()} — wire-level throughput (bytes/packets received).
- *       Note: unlike {@link DemuxReceiver#stats()}, this returns {@link SocketStats}
+ *       Note: unlike {@link org.tstrans.shells.DemuxReceiver#stats()}, this returns {@link SocketStats}
  *       directly (not wrapped in a {@code TransportStats}). The Rust/Python surface
  *       has the same asymmetry — {@code H264Receiver.socket_stats()} returns a bare
  *       {@code SocketStats}; {@code DemuxReceiver.stats()} returns a combined view.
@@ -69,7 +72,7 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
     // Populated by nativeClose from nClose's close-time snapshot (see
     // endReason()/endDetail()'s javadoc for why: once closed, peekHandle()
     // is 0 and there is no handle left to pass to a live-getter native).
-    private volatile StreamEndReason closedEndReason;
+    private volatile EndReason closedEndReason;
     private volatile String closedEndDetail;
 
     H264Receiver(long h) { setHandle(h); }
@@ -275,7 +278,7 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
         ensureOpen("H264Receiver is closed");
         long h = nCancelHandle(peekHandle());
         if (h == 0) throw new IllegalStateException("H264Receiver: cancelHandle native returned 0");
-        return new CancelHandle(h);
+        return ShellAdapters.cancelHandle(h);
     }
 
     /**
@@ -312,10 +315,10 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * reports closed as soon as {@code close()} claims the handle, before
      * the native teardown (which computes the snapshot) completes.
      */
-    public StreamEndReason endReason() {
+    public EndReason endReason() {
         long h = peekHandle();
         if (h == 0) return closedEndReason;
-        return StreamEndReason.fromWireOrdinal(nEndReason(h));
+        return EndReason.fromWireValue(nEndReason(h));
     }
 
     /**
@@ -333,13 +336,13 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
     }
 
     @Override protected void nativeClose(long h) {
-        EndReasonSnapshot snapshot = nClose(h);
+        EndReason.Snapshot snapshot = nClose(h);
         if (snapshot == null) return;
         // Detail FIRST, reason SECOND: a reader that observes the (volatile)
         // reason write is then guaranteed (JMM happens-before) to also see
         // this detail write, which happened-before it in program order.
-        closedEndDetail = snapshot.detail;
-        closedEndReason = snapshot.reason;
+        closedEndDetail = snapshot.detail();
+        closedEndReason = snapshot.reason();
     }
 
     // --- Natives ---
@@ -357,5 +360,5 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
     private static native long nCancelHandle(long handle);
     private static native int nEndReason(long handle);
     private static native String nEndDetail(long handle);
-    private static native EndReasonSnapshot nClose(long handle);
+    private static native EndReason.Snapshot nClose(long handle);
 }

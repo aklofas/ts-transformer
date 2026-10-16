@@ -8,6 +8,9 @@ import static org.tstrans.TestSupport.syntheticH264Idr;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import org.junit.jupiter.api.Test;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.TransportStats;
 
 /**
  * Standalone (non-live) unit tests for the RTP convenience wrappers. The live
@@ -34,7 +37,7 @@ class RtpConvenienceTest {
     void muxSenderConstructsPushesAndReportsStats() throws Exception {
         try (DatagramSocket peer = peer()) {
             String url = "rtp://127.0.0.1:" + peer.getLocalPort();
-            try (MuxSender s = MuxSender.fromUrl(url, roundtripConfig())) {
+            try (MuxSender s = MuxSender.open(url, roundtripConfig())) {
                 assertTrue(s.isAlive());
                 s.sendVideo(syntheticH264Idr(), 0L, true);
                 s.sendVideo(syntheticH264Idr(), 3000L, true);
@@ -58,7 +61,7 @@ class RtpConvenienceTest {
     void muxSenderWithExplicitPktSize() throws Exception {
         try (DatagramSocket peer = peer()) {
             String url = "rtp://127.0.0.1:" + peer.getLocalPort();
-            try (MuxSender s = MuxSender.fromUrl(url, roundtripConfig(), 188)) {
+            try (MuxSender s = MuxSender.open(url + "?pkt_size=188", roundtripConfig())) {
                 assertTrue(s.isAlive());
                 s.sendVideo(syntheticH264Idr(), 0L, true);
             }
@@ -67,13 +70,13 @@ class RtpConvenienceTest {
 
     @Test
     void muxSenderRejectsNegativePktSize() {
-        assertThrows(IllegalArgumentException.class,
-            () -> MuxSender.fromUrl("rtp://127.0.0.1:5006", roundtripConfig(), -1));
+        assertThrows(org.tstrans.RtpException.class,
+            () -> MuxSender.open("rtp://127.0.0.1:5006?pkt_size=-1", roundtripConfig()));
     }
 
     @Test
     void muxSenderClosedStateThrows() throws Exception {
-        MuxSender s = MuxSender.fromUrl("rtp://127.0.0.1:5007", roundtripConfig());
+        MuxSender s = MuxSender.open("rtp://127.0.0.1:5007", roundtripConfig());
         s.close();
         assertFalse(s.isAlive());
         assertThrows(IllegalStateException.class, () -> s.sendVideo(syntheticH264Idr(), 0L, true));
@@ -83,15 +86,15 @@ class RtpConvenienceTest {
 
     @Test
     void muxSenderRejectsBadUrl() {
-        assertThrows(org.tstrans.RtpException.class,
-            () -> MuxSender.fromUrl("not-a-url", roundtripConfig()));
+        assertThrows(IllegalArgumentException.class,
+            () -> MuxSender.open("not-a-url", roundtripConfig()));
     }
 
     // ── DemuxReceiver standalone (non-live) tests ──────────────────────────
 
     @Test
     void demuxReceiverConstructsAndReportsClosedState() throws Exception {
-        DemuxReceiver rx = DemuxReceiver.fromUrl("rtp://127.0.0.1:" + freeUdpPort());
+        DemuxReceiver rx = DemuxReceiver.open("rtp://127.0.0.1:" + freeUdpPort());
         assertTrue(rx.isAlive());
         // No sender → stats are zeroed but the call succeeds.
         TransportStats st = rx.stats();
@@ -108,15 +111,15 @@ class RtpConvenienceTest {
 
     @Test
     void demuxReceiverRejectsBadUrl() {
-        assertThrows(org.tstrans.RtpException.class,
-            () -> DemuxReceiver.fromUrl("not-a-url"));
+        assertThrows(IllegalArgumentException.class,
+            () -> DemuxReceiver.open("not-a-url"));
     }
 
     @Test
     void demuxReceiverWithConfig() throws Exception {
         org.tstrans.mpegts.DemuxerConfig cfg =
             org.tstrans.mpegts.DemuxerConfig.builder().build();
-        try (DemuxReceiver rx = DemuxReceiver.fromUrl("rtp://127.0.0.1:" + freeUdpPort(), cfg)) {
+        try (DemuxReceiver rx = DemuxReceiver.open("rtp://127.0.0.1:" + freeUdpPort(), cfg)) {
             assertTrue(rx.isAlive());
         }
     }
