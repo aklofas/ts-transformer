@@ -1,0 +1,369 @@
+//! The JNI pair: `build_<snake>` and `read_<snake>` as committed Rust text
+//! for `bindings/jvm/src/generated/<family>.rs`.
+
+use crate::emit_py::HEADER;
+use crate::schema::{Entry, lookup, public_path, snake};
+use crate::typemap::{Fld, Sc, Ty, resolve};
+
+/// A record with more crossing fields than this is built through its `Builder`.
+pub const CTOR_MAX: usize = 8;
+
+/// Local references reserved up front: two per crossing field plus headroom
+/// for the temporaries a conversion mints.
+pub fn capacity(fields: usize) -> usize {
+    2 * fields + 32
+}
+
+/// The `JValue` for a scalar given a by-value expression.
+fn scalar_jvalue(sc: Sc, val: &str) -> String {
+    let i = sc.info();
+    let arg = match sc {
+        Sc::U8 | Sc::U16 => format!("{val} as i32"),
+        Sc::U32 | Sc::U64 => format!("{val} as i64"),
+        Sc::Bool => format!("u8::from({val})"),
+        _ => val.to_string(),
+    };
+    format!("JValue::{}({arg})", i.jvalue)
+}
+
+/// `&expr` to `expr`, anything else to `*expr`.
+fn deref(src: &str) -> String {
+    match src.strip_prefix('&') {
+        Some(rest) => rest.to_string(),
+        None => format!("*{src}"),
+    }
+}
+
+fn conv_fn(reg: &[Entry], from: &Entry, name: &str, prefix: &str) -> String {
+    let to = lookup(reg, name).expect("registered");
+    let f = format!("{prefix}_{}", snake(name));
+    if to.family == from.family {
+        f
+    } else {
+        format!("crate::generated::{}::{f}", to.family)
+    }
+}
+
+struct Gen<'a> {
+    reg: &'a [Entry],
+    e: &'a Entry,
+    n: usize,
+}
+
+impl Gen<'_> {
+    fn fresh(&mut self, base: &str) -> String {
+        self.n += 1;
+        format!("{base}{}", self.n)
+    }
+
+    /// Statements that build a Java object for `src` (a `&T` expression);
+    /// returns the variable that holds it.
+    fn build_obj(
+        &mut self,
+        ty: &Ty,
+        src: &str,
+        hint: Option<&str>,
+        pre: &mut Vec<String>,
+    ) -> String {
+        let var = match hint {
+            Some(h) => h.to_string(),
+            None => self.fresh("o"),
+        };
+        match ty {
+            Ty::Str => pre.push(format!("let {var} = env.new_string({src})?;")),
+            Ty::Bytes => pre.push(format!(
+                "let {var} = crate::jutil::wrap_heap_byte_buffer(env, {src}).map_err(|()| jni::errors::Error::JavaException)?;"
+            )),
+            Ty::Record(n) => pre.push(format!(
+                "let {var} = {}(env, {src})?;",
+                conv_fn(self.reg, self.e, n, "build")
+            )),
+            Ty::Scalar(sc) => {
+                let i = sc.info();
+                pre.push(format!(
+                    "let {var} = env.new_object(\"java/lang/{}\", \"({})V\", &[{}])?;",
+                    i.boxed,
+                    i.sig,
+                    scalar_jvalue(*sc, &deref(src))
+                ));
+            }
+            Ty::Opt(inner) => {
+                let mut inner_pre = Vec::new();
+                let x = self.build_obj(inner, "v", None, &mut inner_pre);
+                let body = if inner_pre.is_empty() {
+                    format!("JObject::from({x})")
+                } else {
+                    format!("{{ {} JObject::from({x}) }}", inner_pre.join(" "))
+                };
+                pre.push(format!(
+                    "let {var} = match {src} {{ Some(v) => {body}, None => JObject::null() }};"
+                ));
+            }
+            Ty::List(inner) => {
+                let mut item_pre = Vec::new();
+                let x = self.build_obj(inner, "item", None, &mut item_pre);
+                let seq = src.strip_prefix('&').unwrap_or(src);
+                pre.push(format!(
+                    "let {var} = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {{ \
+                     let list = env.new_object(\"java/util/ArrayList\", \"()V\", &[])?; \
+                     for item in {seq}.iter() {{ \
+                     env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {{ \
+                     {} env.call_method(&list, \"add\", \"(Ljava/lang/Object;)Z\", &[JValue::Object(&{x})])?; Ok(()) }})?; }} \
+                     Ok(list) }})?;",
+                    item_pre.join(" ")
+                ));
+            }
+            Ty::Custom(_) => unreachable!("custom fields are converted by name"),
+        }
+        var
+    }
+
+    /// An expression that reads the Java object `o` as `ty`.
+    fn read_obj(&mut self, ty: &Ty, o: &str, path: &str) -> String {
+        match ty {
+            Ty::Str => {
+                let s = self.fresh("s");
+                format!(
+                    "{{ let {s}: &jni::objects::JString = (&{o}).into(); String::from(env.get_string({s})?) }}"
+                )
+            }
+            Ty::Bytes => format!("crate::jutil::read_byte_buffer(env, &{o})?"),
+            Ty::Record(n) => format!("{}(env, &{o})?", conv_fn(self.reg, self.e, n, "read")),
+            Ty::Scalar(sc) => {
+                let i = sc.info();
+                let raw = format!(
+                    "env.call_method(&{o}, \"{}\", \"(){}\", &[])?.{}()?",
+                    i.unbox, i.sig, i.extract
+                );
+                self.narrow(*sc, &raw, path)
+            }
+            Ty::Opt(inner) => {
+                let v = self.read_obj(inner, o, path);
+                format!("if {o}.is_null() {{ None }} else {{ Some({v}) }}")
+            }
+            Ty::List(inner) => {
+                let e = self.fresh("e");
+                let item = self.read_obj(inner, &e, path);
+                // `Ok(x?)` is `x`; clippy flags the former.
+                let tail = match item.strip_suffix('?') {
+                    Some(call) if !call.starts_with('{') && !call.starts_with("if ") => {
+                        call.to_string()
+                    }
+                    _ => format!("Ok({item})"),
+                };
+                format!(
+                    "{{ let size = env.call_method(&{o}, \"size\", \"()I\", &[])?.i()?; \
+                     let mut items = Vec::with_capacity(size.max(0) as usize); \
+                     for i in 0..size {{ \
+                     let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {{ \
+                     let {e} = env.call_method(&{o}, \"get\", \"(I)Ljava/lang/Object;\", &[JValue::Int(i)])?.l()?; \
+                     {tail} }})?; items.push(item); }} items }}"
+                )
+            }
+            Ty::Custom(_) => unreachable!("custom fields are converted by name"),
+        }
+    }
+
+    /// `raw` is a value of the scalar's Java width; unsigned types are
+    /// range-checked. The raw read is bound first: `env` cannot be borrowed
+    /// twice in one call.
+    fn narrow(&mut self, sc: Sc, raw: &str, path: &str) -> String {
+        match sc.narrow() {
+            None => raw.to_string(),
+            Some(f) => {
+                let wide = match sc {
+                    Sc::U8 | Sc::U16 => "i64::from(n)",
+                    _ => "n",
+                };
+                format!("{{ let n = {raw}; crate::jutil::{f}(env, {wide}, \"{path}\")? }}")
+            }
+        }
+    }
+}
+
+const RESERVED: &[&str] = &[
+    "env", "r", "obj", "b", "v", "item", "list", "size", "items", "i",
+];
+
+fn var_of(name: &str) -> String {
+    if RESERVED.contains(&name) {
+        format!("{name}_f")
+    } else {
+        name.to_string()
+    }
+}
+
+fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
+    let s = &e.schema;
+    let path = public_path(s);
+    let class = format!("{}/{}", e.java_pkg, s.name);
+    let crossing: Vec<&Fld> = flds.iter().filter(|f| f.ty.is_some()).collect();
+    let mut g = Gen { reg, e, n: 0 };
+    let mut o = format!(
+        "pub(crate) fn build_{}<'l>(env: &mut JNIEnv<'l>, r: &{path}) -> jni::errors::Result<JObject<'l>> {{\n",
+        snake(s.name)
+    );
+    o.push_str(&format!(
+        "    env.ensure_local_capacity({})?;\n",
+        capacity(crossing.len())
+    ));
+    let builder = crossing.len() > CTOR_MAX;
+    let mut vals = Vec::new();
+    let mut setters = Vec::new();
+    for f in &crossing {
+        let ty = f.ty.as_ref().expect("crossing");
+        let name = f.spec.name;
+        let var = var_of(name);
+        let mut pre = Vec::new();
+        let val = if f.custom {
+            pre.push(format!(
+                "let {var} = crate::custom::build_{}_{name}(env, &r.{name})?;",
+                snake(s.name)
+            ));
+            format!("JValue::Object(&{var})")
+        } else if let Ty::Scalar(sc) = ty {
+            scalar_jvalue(*sc, &format!("r.{name}"))
+        } else {
+            let x = g.build_obj(ty, &format!("&r.{name}"), Some(&var), &mut pre);
+            format!("JValue::Object(&{x})")
+        };
+        for p in pre {
+            o.push_str(&format!("    {p}\n"));
+        }
+        if builder {
+            setters.push((f.java.clone(), ty.sig(reg), val));
+        } else {
+            vals.push((ty.sig(reg), val));
+        }
+    }
+    if builder {
+        let bclass = format!("{class}$Builder");
+        o.push_str(&format!(
+            "    let b = env.new_object(\"{bclass}\", \"()V\", &[])?;\n"
+        ));
+        for (java, sig, val) in &setters {
+            o.push_str(&format!(
+                "    env.call_method(&b, \"{java}\", \"({sig})L{bclass};\", &[{val}])?;\n"
+            ));
+        }
+        o.push_str(&format!(
+            "    let obj = env.call_method(&b, \"build\", \"()L{class};\", &[])?.l()?;\n"
+        ));
+    } else {
+        let desc: String = vals.iter().map(|(s, _)| s.as_str()).collect();
+        let args: Vec<&str> = vals.iter().map(|(_, v)| v.as_str()).collect();
+        o.push_str(&format!(
+            "    let obj = env.new_object(\"{class}\", \"({desc})V\", &[{}])?;\n",
+            args.join(", ")
+        ));
+    }
+    o.push_str("    Ok(obj)\n}\n");
+    o
+}
+
+fn read(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
+    let s = &e.schema;
+    let path = public_path(s);
+    let mut g = Gen { reg, e, n: 0 };
+    let mut o = format!(
+        "pub(crate) fn read_{}(env: &mut JNIEnv<'_>, obj: &JObject<'_>) -> jni::errors::Result<{path}> {{\n",
+        snake(s.name)
+    );
+    for f in flds.iter().filter(|f| f.ty.is_some()) {
+        let ty = f.ty.as_ref().expect("crossing");
+        let name = f.spec.name;
+        let var = var_of(name);
+        let fpath = format!("{}.{}", s.name, f.java);
+        if f.custom {
+            o.push_str(&format!(
+                "    let {var} = crate::custom::read_{}_{name}(env, obj)?;\n",
+                snake(s.name)
+            ));
+        } else if let Ty::Scalar(sc) = ty {
+            let i = sc.info();
+            let raw = format!(
+                "env.call_method(obj, \"{}\", \"(){}\", &[])?.{}()?",
+                f.java, i.sig, i.extract
+            );
+            o.push_str(&format!("    let {var} = {raw};\n"));
+            if let Some(f) = sc.narrow() {
+                let wide = match sc {
+                    Sc::U8 | Sc::U16 => format!("i64::from({var})"),
+                    _ => var.clone(),
+                };
+                o.push_str(&format!(
+                    "    let {var} = crate::jutil::{f}(env, {wide}, \"{fpath}\")?;\n"
+                ));
+            }
+        } else {
+            let obj = g.fresh("o");
+            o.push_str(&format!(
+                "    let {obj} = env.call_method(obj, \"{}\", \"(){}\", &[])?.l()?;\n",
+                f.java,
+                ty.sig(reg)
+            ));
+            let x = g.read_obj(ty, &obj, &fpath);
+            o.push_str(&format!("    let {var} = {x};\n"));
+        }
+    }
+    if s.non_exhaustive {
+        o.push_str(&format!("    let mut r = {path}::default();\n"));
+        for f in flds.iter().filter(|f| f.ty.is_some()) {
+            o.push_str(&format!(
+                "    r.{} = {};\n",
+                f.spec.name,
+                var_of(f.spec.name)
+            ));
+        }
+        o.push_str("    Ok(r)\n}\n");
+    } else {
+        o.push_str(&format!("    Ok({path} {{\n"));
+        for f in flds {
+            if f.ty.is_some() {
+                let v = var_of(f.spec.name);
+                if v == f.spec.name {
+                    o.push_str(&format!("        {v},\n"));
+                } else {
+                    o.push_str(&format!("        {}: {v},\n", f.spec.name));
+                }
+            } else {
+                o.push_str(&format!("        {}: Default::default(),\n", f.spec.name));
+            }
+        }
+        o.push_str("    })\n}\n");
+    }
+    o
+}
+
+/// The builder and reader text for one record, per its direction.
+pub fn record_pair(reg: &[Entry], e: &Entry) -> Result<String, String> {
+    let flds = resolve(reg, &e.schema)?;
+    let mut parts = Vec::new();
+    if e.direction.crosses_out() {
+        parts.push(build(reg, e, &flds));
+    }
+    if e.direction.crosses_in() {
+        parts.push(read(reg, e, &flds));
+    }
+    Ok(parts.join("\n"))
+}
+
+/// The whole `generated/<family>.rs` text.
+pub fn file(reg: &[Entry], family: &str) -> Result<String, String> {
+    let mut body = Vec::new();
+    for e in reg.iter().filter(|e| e.family == family) {
+        body.push(record_pair(reg, e)?);
+    }
+    let body = body.join("\n");
+    let mut out = String::from(HEADER);
+    out.push_str("\n#![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]\n\n");
+    out.push_str("use jni::JNIEnv;\n");
+    if body.contains("JValue::") {
+        out.push_str("use jni::objects::{JObject, JValue};\n");
+    } else {
+        out.push_str("use jni::objects::JObject;\n");
+    }
+    out.push('\n');
+    out.push_str(&body);
+    Ok(out)
+}
