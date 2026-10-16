@@ -1333,10 +1333,8 @@ fn fill_nonconformant(
                 }
                 // PcrMalformedKind is #[non_exhaustive]; future variants
                 // fall back to InvalidReservedBits until the C surface
-                // gains a discriminator entry. The kind-table ratchet
-                // scripts/check/rust/kind-table-coverage.sh covers MuxError /
-                // TransportError but not PcrMalformedKind; rely on this
-                // wildcard plus the explicit arms above.
+                // gains a discriminator entry. Rely on this wildcard plus
+                // the explicit arms above.
                 _ => 0xFF,
             };
         }

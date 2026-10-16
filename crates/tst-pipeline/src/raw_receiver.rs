@@ -18,6 +18,7 @@ use tracing::info_span;
 use tst_core::transport::RecvTransport;
 use tst_core::transport::TransportError;
 
+use crate::binding::kind::{coarsen, kind_of_transport};
 use crate::shell_error::ShellErrorKind;
 
 /// Aggregate receive stats for [`RawReceiver`].
@@ -136,7 +137,7 @@ pub enum RawReceiverErrorSource {
 impl From<TransportError> for RawReceiverError {
     fn from(e: TransportError) -> Self {
         Self {
-            kind: crate::shell_error::kind_from_transport(&e, crate::shell_error::Direction::Recv),
+            kind: coarsen(kind_of_transport(&e, crate::shell_error::Direction::Recv)),
             source: RawReceiverErrorSource::Transport(e),
         }
     }

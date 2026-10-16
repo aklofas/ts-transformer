@@ -160,7 +160,7 @@ def test_udp_error_recv_timeout() -> None:
 
 def test_udp_error_kind_count() -> None:
     """Sentinel: catches drift if Rust adds a new UdpErrorKind variant."""
-    assert len(UdpErrorKind) == 7
+    assert len(UdpErrorKind) == 10
 
 
 def test_udp_error_wiring_via_test_helper() -> None:

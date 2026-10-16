@@ -76,7 +76,7 @@ pub(crate) fn throw_sender_error(env: &mut JNIEnv, e: &SenderError) {
 /// receiver shell.
 ///
 /// The shell has already classified the error direction-sensitively:
-/// `tst_pipeline::shell_error::kind_from_transport(.., Direction::Recv)` turns
+/// `tst_pipeline::binding::kind::kind_of_transport(.., Direction::Recv)` turns
 /// a `TransportError::Closed` on a RECEIVER into
 /// [`ShellErrorKind::EndOfStream`] — the peer hung up cleanly, which on SRT is
 /// `srt_recv` returning 0 and the shell converting that to `Closed`

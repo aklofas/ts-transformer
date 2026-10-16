@@ -23,6 +23,7 @@ use tst_core::mpegts::common::TS_PACKET_SIZE;
 use tst_core::transport::RecvTransport;
 use tst_core::transport::TransportError;
 
+use crate::binding::kind::{coarsen, kind_of_transport};
 use crate::shell_error::ShellErrorKind;
 
 /// Application-level stats for [`Receiver`].
@@ -183,7 +184,7 @@ pub enum ReceiverErrorSource {
 impl From<TransportError> for ReceiverError {
     fn from(e: TransportError) -> Self {
         Self {
-            kind: crate::shell_error::kind_from_transport(&e, crate::shell_error::Direction::Recv),
+            kind: coarsen(kind_of_transport(&e, crate::shell_error::Direction::Recv)),
             source: ReceiverErrorSource::Transport(e),
         }
     }

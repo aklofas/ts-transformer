@@ -1,9 +1,6 @@
 //! Every inner-error variant routes through the shell's `From<inner>` impl
-//! (and so through the matching `kind_from_*` helper) to the expected
-//! `ShellErrorKind`. The CI ratchet
-//! `scripts/check/rust/pipeline-kind-classification.sh` enforces that every
-//! upstream inner variant has a match arm before the wildcard; the tables
-//! below pin the value of each arm. A failure names the variant (`{e:?}`)
+//! (and so through `binding::kind::coarsen`) to the expected
+//! `ShellErrorKind`. The tables below pin the value of each variant. A failure names the variant (`{e:?}`)
 //! and, for transport rows, the shell it went through.
 //!
 //! 49 rows: 32 `MuxError`; 5 `TransportError` through each of the three

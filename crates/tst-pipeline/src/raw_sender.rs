@@ -14,6 +14,7 @@ use alloc::sync::Arc;
 use tracing::info_span;
 use tst_core::transport::{Transport, TransportError};
 
+use crate::binding::kind::{coarsen, kind_of_transport};
 use crate::shell_error::ShellErrorKind;
 
 /// Construction-time knobs for [`RawSender`].
@@ -64,7 +65,7 @@ pub enum RawSenderErrorSource {
 impl From<TransportError> for RawSenderError {
     fn from(e: TransportError) -> Self {
         Self {
-            kind: crate::shell_error::kind_from_transport(&e, crate::shell_error::Direction::Send),
+            kind: coarsen(kind_of_transport(&e, crate::shell_error::Direction::Send)),
             source: RawSenderErrorSource::Transport(e),
         }
     }

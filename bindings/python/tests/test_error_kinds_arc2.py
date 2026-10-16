@@ -46,6 +46,9 @@ EXPECTED = {
         "INVALID_CONFIG": 6,
         "BACKPRESSURE": 7,
         "BROKEN": 8,
+        "INPUT_MALFORMED": 9,
+        "END_OF_STREAM": 10,
+        "CONFIG_INVALID": 11,
     },
     exc.TcpErrorKind: {
         "URL": 0,
@@ -58,6 +61,9 @@ EXPECTED = {
         "TLS_DISABLED": 7,
         "BACKPRESSURE": 8,
         "BROKEN": 9,
+        "INPUT_MALFORMED": 10,
+        "END_OF_STREAM": 11,
+        "CONFIG_INVALID": 12,
     },
     exc.RistErrorKind: {
         "URL": 0,
@@ -70,6 +76,9 @@ EXPECTED = {
         "PEER_CREATE_FAILED": 7,
         "BACKPRESSURE": 8,
         "BROKEN": 9,
+        "INPUT_MALFORMED": 10,
+        "END_OF_STREAM": 11,
+        "CONFIG_INVALID": 12,
     },
     exc.HlsErrorKind: {
         "URL": 0,

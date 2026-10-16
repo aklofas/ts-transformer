@@ -9,10 +9,7 @@
 //! variants, 1:1 with TST_E codes); power users `match err.source` for the
 //! full inner-error variant set.
 
-use tst_core::error::{DemuxError, MuxError};
 use tst_core::transport::TransportError;
-
-use crate::sender::TsFramingError;
 
 /// Lifetime span field shared by the pipeline shells (the sender/receiver
 /// families plus [`crate::MuxPublisher`] and the managed shells).
@@ -158,131 +155,17 @@ pub(crate) fn errno_code_from_transport(e: &TransportError) -> Option<i32> {
     }
 }
 
-/// Direction parameter for `kind_from_transport` — `TransportError::Closed`
-/// has different shell-kind disposition on senders (`Closed`) vs receivers
-/// (`EndOfStream`). See `kind_from_transport` for the routing.
+/// Direction of a transport failure as a shell sees it: `TransportError::Closed`
+/// is the caller's own close on a sender (`Closed`) and the peer's close on a
+/// receiver (`EndOfStream`). See `binding::kind::kind_of_transport`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Direction {
     Send,
     // Only constructed by the receiver-side shells, which are gated behind the
     // `std` feature. Under `no_std` (sender-only) the variant is never built,
-    // but `kind_from_transport` still matches it exhaustively.
+    // but `kind_of_transport` still matches it.
     #[cfg_attr(not(feature = "std"), allow(dead_code))]
     Recv,
-}
-
-/// Compute the shell-kind for a `MuxError`. Used by `MuxSender`'s
-/// `From<MuxError>` impl. **Every MuxError variant is matched explicitly**
-/// — the CI ratchet `scripts/check/rust/pipeline-kind-classification.sh`
-/// enforces that no variant escapes through a wildcard.
-pub(crate) fn kind_from_mux(e: &MuxError) -> ShellErrorKind {
-    use ShellErrorKind::*;
-    match e {
-        MuxError::InvalidConfig(_) => ConfigInvalid,
-        MuxError::ConfigInvalid { .. } => ConfigInvalid,
-        MuxError::InvalidNal => InputMalformed,
-        MuxError::InvalidAv1Obu => InputMalformed,
-        MuxError::BufferFull { .. } => Backpressure,
-        MuxError::KlvTooLarge { .. } => InputMalformed,
-        MuxError::AudioTooLarge { .. } => InputMalformed,
-        MuxError::InvalidStreamHandle { .. } => ConfigInvalid,
-        MuxError::AmbiguousTarget { .. } => ConfigInvalid,
-        MuxError::NoKlvStreamsConfigured => ConfigInvalid,
-        MuxError::NoAudioStreamsConfigured => ConfigInvalid,
-        MuxError::NoSubtitleStreamsConfigured => ConfigInvalid,
-        MuxError::NoDataStreamsConfigured => ConfigInvalid,
-        MuxError::TooManyVideoStreams { .. } => ConfigInvalid,
-        MuxError::TooManyKlvStreams { .. } => ConfigInvalid,
-        MuxError::TooManyAudioStreams { .. } => ConfigInvalid,
-        MuxError::TooManySubtitleStreams { .. } => ConfigInvalid,
-        MuxError::TooManyDataStreams { .. } => ConfigInvalid,
-        MuxError::SubtitleTooLarge { .. } => InputMalformed,
-        MuxError::DataTooLarge { .. } => InputMalformed,
-        MuxError::SubtitlePidUsedAsPcrPid { .. } => ConfigInvalid,
-        MuxError::KlvPidUsedAsPcrPid { .. } => ConfigInvalid,
-        MuxError::DataPidUsedAsPcrPid { .. } => ConfigInvalid,
-        MuxError::InvalidLanguageCode { .. } => ConfigInvalid,
-        MuxError::InvalidTeletextField { .. } => ConfigInvalid,
-        MuxError::PmtTooLarge { .. } => ConfigInvalid,
-        MuxError::MalformedDescriptor { .. } => ConfigInvalid,
-        MuxError::TooManyPrograms { .. } => ConfigInvalid,
-        MuxError::EmptyProgram { .. } => ConfigInvalid,
-        MuxError::DuplicateProgramNumber { .. } => ConfigInvalid,
-        MuxError::DuplicatePmtPid { .. } => ConfigInvalid,
-        MuxError::DuplicatePidAcrossPrograms { .. } => ConfigInvalid,
-        MuxError::ProgramNotFound { .. } => ConfigInvalid,
-        MuxError::PmtPidConflictsWithStream { .. } => ConfigInvalid,
-        MuxError::NoPcrEligibleStream { .. } => ConfigInvalid,
-        MuxError::DescriptorIndexOutOfRange { .. } => ConfigInvalid,
-        MuxError::AbsIndexOutOfRange { .. } => ConfigInvalid,
-        MuxError::MispTime(_) => InputMalformed,
-        // Required by #[non_exhaustive]. CI ratchet
-        // scripts/check/rust/pipeline-kind-classification.sh enforces every
-        // upstream MuxError variant is matched above before this arm.
-        // If this arm fires, the ratchet failed or was bypassed; the
-        // shell error reports ConfigInvalid as a safe-default category
-        // because the most common cause of an unmatched MuxError would
-        // be a new config-validate failure.
-        _ => ConfigInvalid,
-    }
-}
-
-/// Compute the shell-kind for a `TransportError`. The `direction`
-/// parameter distinguishes sender-shell-side (`Closed` -> `Closed` kind,
-/// caller-initiated) from receiver-shell-side (`Closed` -> `EndOfStream`
-/// kind, peer-initiated). `ExplicitClose` always maps to `Closed` kind
-/// regardless of direction.
-pub(crate) fn kind_from_transport(e: &TransportError, direction: Direction) -> ShellErrorKind {
-    use ShellErrorKind::*;
-    match e {
-        TransportError::Backpressure { .. } => Backpressure,
-        TransportError::Broken { .. } => TransportBroken,
-        TransportError::Closed => match direction {
-            Direction::Send => Closed,
-            Direction::Recv => EndOfStream,
-        },
-        TransportError::TooLarge { .. } => InputMalformed,
-        TransportError::ExplicitClose => Closed,
-        // Required by #[non_exhaustive]. CI ratchet enforces every variant
-        // matched above. Safe default: TransportBroken (most common
-        // category for a new transport-layer failure).
-        _ => TransportBroken,
-    }
-}
-
-/// Compute the shell-kind for a `DemuxError`. All 5 variants represent
-/// "the input byte stream is malformed at this point" — all map to
-/// `InputMalformed`. The exhaustive match documents that no variant has
-/// a different disposition.
-///
-/// Only the receiver-side shells (gated behind `std`) call this; under
-/// `no_std` (sender-only) it is dead.
-#[cfg_attr(not(feature = "std"), allow(dead_code))]
-pub(crate) fn kind_from_demux(e: &DemuxError) -> ShellErrorKind {
-    use ShellErrorKind::*;
-    match e {
-        DemuxError::Unrecoverable { .. } => InputMalformed,
-        DemuxError::StrictRejection(_) => InputMalformed,
-        DemuxError::MalformedPes { .. } => InputMalformed,
-        DemuxError::SyncBufExhausted { .. } => InputMalformed,
-        // Required by #[non_exhaustive]. Safe default: InputMalformed
-        // (matches every existing variant's disposition).
-        _ => InputMalformed,
-    }
-}
-
-/// Compute the shell-kind for a `TsFramingError`. Both variants are TS
-/// sync-loss failures — `InputMalformed`. Same exhaustive-match pattern.
-///
-/// No wildcard needed: TsFramingError is defined in the same crate as
-/// this helper, so Rust treats the #[non_exhaustive] match as exhaustive
-/// in-crate.
-pub(crate) fn kind_from_framing(e: &TsFramingError) -> ShellErrorKind {
-    use ShellErrorKind::*;
-    match e {
-        TsFramingError::SyncLost { .. } => InputMalformed,
-        TsFramingError::NoSyncAfterLimit { .. } => InputMalformed,
-    }
 }
 
 #[cfg(test)]
@@ -290,7 +173,7 @@ mod tests {
     use super::*;
     use tst_core::transport::BrokenCause;
 
-    // The `kind_from_*` rows are pinned through every shell's `From` impl by
+    // The shell kinds are pinned through every shell's `From` impl by
     // `tests/errors/shell_error_kind_derivation.rs`; this module keeps only what that
     // table cannot reach.
 

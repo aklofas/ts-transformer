@@ -13,7 +13,8 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{Muxer, MuxerConfig, StreamKind};
 use tst_core::publisher::{Publisher, PublisherStats};
 
-use crate::shell_error::{ShellErrorKind, kind_from_mux};
+use crate::binding::kind::{coarsen, kind_of_mux};
+use crate::shell_error::ShellErrorKind;
 
 /// Cumulative stats for a single `MuxPublisher`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -399,7 +400,7 @@ impl<E: std::error::Error + Send + Sync + 'static> MuxPublisherError<E> {
     /// Cross-impl categorization for bindings.
     pub fn kind(&self) -> ShellErrorKind {
         match self {
-            Self::Mux(e) => kind_from_mux(e),
+            Self::Mux(e) => coarsen(kind_of_mux(e)),
             Self::Publisher(_) => ShellErrorKind::TransportBroken,
             Self::Closed => ShellErrorKind::Closed,
             Self::LockPoisoned => ShellErrorKind::TransportBroken,
@@ -501,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn send_data_pushes_ts_bytes() {
+    fn push_data_pushes_ts_bytes() {
         use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
         prog.add_video(0x100, VideoCodec::H264);
@@ -656,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn send_video_derives_media_duration_from_pts() {
+    fn push_video_derives_media_duration_from_pts() {
         // Keyframes BEGIN segments (cut-before-push): IDR@0 is the stream
         // head — it opens the first segment and emits NO cut. P@9000, P@18000
         // extend it; IDR@270000 closes it with the PTS span 0..270000 =
@@ -777,7 +778,7 @@ mod tests {
     /// `push_video_misp` splices the ST 0604 SEI; bytes demux to a Video
     /// sample from which `misp_time::extract` recovers the timestamp.
     #[test]
-    fn send_video_misp_recovers_timestamp() {
+    fn push_video_misp_recovers_timestamp() {
         use tst_core::codec::misp_time::MispTimestamp;
         use tst_core::mpegts::demux::event::{DemuxEvent, SamplePayload};
         use tst_core::mpegts::demux::{Demuxer, DemuxerConfig};

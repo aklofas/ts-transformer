@@ -63,6 +63,7 @@ use tst_core::mpegts::mux::{
 };
 use tst_core::transport::{BrokenCause, Transport, TransportError};
 
+use crate::binding::kind::{coarsen, kind_of_mux, kind_of_transport};
 use crate::mutex::ShellMutex;
 use crate::shell_error::ShellErrorKind;
 
@@ -1266,7 +1267,7 @@ pub enum MuxSenderErrorSource {
 impl From<MuxError> for MuxSenderError {
     fn from(e: MuxError) -> Self {
         Self {
-            kind: crate::shell_error::kind_from_mux(&e),
+            kind: coarsen(kind_of_mux(&e)),
             source: MuxSenderErrorSource::Mux(e),
             input_consumed: None,
         }
@@ -1276,7 +1277,7 @@ impl From<MuxError> for MuxSenderError {
 impl From<TransportError> for MuxSenderError {
     fn from(e: TransportError) -> Self {
         Self {
-            kind: crate::shell_error::kind_from_transport(&e, crate::shell_error::Direction::Send),
+            kind: coarsen(kind_of_transport(&e, crate::shell_error::Direction::Send)),
             source: MuxSenderErrorSource::Transport(e),
             input_consumed: None,
         }

@@ -140,7 +140,7 @@ kinds! {
     ///
     /// `MuxErrorKind::InvalidUsage`.
     InvalidUsage = -9 => "INVALID_USAGE", "INVALID_USAGE", -9;
-    /// Library-internal failure: an invariant tripped that should not occur in well-formed use (file an issue with reproduction bytes), a poisoned handle lock, or an unmapped variant of a `#[non_exhaustive]` upstream enum.
+    /// Library-internal failure: an invariant tripped that should not occur in well-formed use (file an issue with reproduction bytes), or a poisoned handle lock.
     Internal = -10 => "INTERNAL", "INTERNAL", -10;
     /// A panic caught at the binding boundary (`HandleState::Panicked`).
     PanicCaught = -11 => "PANIC_CAUGHT", "PANIC_CAUGHT", -11;
@@ -558,6 +558,9 @@ impl Domain {
                 K::UdpInvalidConfig,
                 K::Backpressure,
                 K::Broken,
+                K::InputMalformed,
+                K::EndOfStream,
+                K::ConfigInvalid,
             ],
             Domain::Tcp => &[
                 K::TcpUrl,
@@ -570,6 +573,9 @@ impl Domain {
                 K::TcpTlsDisabled,
                 K::Backpressure,
                 K::Broken,
+                K::InputMalformed,
+                K::EndOfStream,
+                K::ConfigInvalid,
             ],
             Domain::Hls => &[
                 K::HlsUrl,
@@ -594,6 +600,9 @@ impl Domain {
                 K::RistPeerCreateFailed,
                 K::Backpressure,
                 K::Broken,
+                K::InputMalformed,
+                K::EndOfStream,
+                K::ConfigInvalid,
             ],
             Domain::Mux => &[
                 K::InputMalformed,
@@ -735,31 +744,8 @@ impl core::fmt::Display for BindingError {
 
 impl core::error::Error for BindingError {}
 
-/// The error a wildcard arm produces: a variant of a `#[non_exhaustive]`
-/// upstream enum that this table does not map yet. Loud on purpose — the
-/// `scripts/check/rust/kind-table-coverage.sh` rail fails before such a
-/// variant can reach a user, so this string only ever appears if the rail
-/// itself was bypassed.
-///
-/// Only a wildcard ARM calls this. The kind is never inspected to decide
-/// whether a mapping was found: a deliberate `=> Internal` row must keep its
-/// own detail, so "unmapped" is a property of the arm, not of the kind.
-fn unmapped(enum_name: &str, e: &dyn core::fmt::Debug) -> BindingError {
-    BindingError::new(
-        BindingErrorKind::Internal,
-        format!("unmapped {enum_name} variant: {e:?}"),
-    )
-}
-
-/// The five `MuxErrorKind` buckets, 1:1. Its own function rather than an inner
-/// match so `scripts/check/rust/kind-table-coverage.sh` can anchor on it: the
-/// extractor stops at the FIRST wildcard in a function, which for
-/// [`kind_of_mux`] is the outer `_ => …` — these arms would sit behind it,
-/// uncovered.
-///
-/// `Internal` here is a real bucket AND the wildcard's default; that is
-/// harmless because this classifier feeds no unmapped detail (`From<MuxError>`
-/// always surfaces the error's own `Display`).
+/// The five `MuxErrorKind` buckets, 1:1, no wildcard: a new bucket is a
+/// compile error here until it is given a binding kind.
 fn map_mux_kind(k: MuxErrorKind) -> BindingErrorKind {
     match k {
         MuxErrorKind::InputMalformed => BindingErrorKind::InputMalformed,
@@ -771,11 +757,10 @@ fn map_mux_kind(k: MuxErrorKind) -> BindingErrorKind {
 }
 
 /// The four `MuxError` variants C already numbers precisely keep their
-/// own kinds; everything else folds to `MuxError::kind()`, whose per-variant
-/// coverage the compiler pins inside tst-core (its match has no wildcard).
-/// Both matches HERE need one (`MuxError` and `MuxErrorKind` are
-/// `#[non_exhaustive]` and foreign to this crate); the second one lives in
-/// `map_mux_kind` so `kind-table-coverage.sh` can read it.
+/// own kinds; everything else folds to `MuxError::kind()`, which the
+/// compiler pins inside tst-core (its match has no wildcard) and
+/// `map_mux_kind` maps without one. The fallback arm is total:
+/// `MuxError::kind()` classifies every variant in tst-core.
 pub fn kind_of_mux(e: &MuxError) -> BindingErrorKind {
     match e {
         MuxError::InvalidNal => BindingErrorKind::InvalidNal,
@@ -788,93 +773,56 @@ pub fn kind_of_mux(e: &MuxError) -> BindingErrorKind {
 
 impl From<MuxError> for BindingError {
     fn from(e: MuxError) -> Self {
-        // Every `MuxError` has a detail worth surfacing, including the ones
-        // that classify as `Internal` (table row 10) — `MuxError::kind()`
-        // covers the whole enum, so there is no unmapped case here.
         BindingError::new(kind_of_mux(&e), e.to_string())
     }
 }
 
-/// Every `DemuxError` variant, 1:1. Wildcard required; the
-/// kind-table rail greps every variant before it.
-/// `None` is the wildcard arm — the one place that decides a variant
-/// is unmapped, so a deliberate `=> Internal` row keeps its own detail.
-fn map_demux(e: &DemuxError) -> Option<BindingErrorKind> {
-    match e {
-        DemuxError::Unrecoverable { .. } => Some(BindingErrorKind::DemuxUnrecoverable),
-        DemuxError::StrictRejection(_) => Some(BindingErrorKind::DemuxStrictRejection),
-        DemuxError::MalformedPes { .. } => Some(BindingErrorKind::DemuxMalformedPes),
-        DemuxError::SyncBufExhausted { .. } => Some(BindingErrorKind::DemuxSyncBufExhausted),
-        _ => None,
+/// Every `DemuxError`, through its exhaustive kind.
+fn map_demux(e: &DemuxError) -> BindingErrorKind {
+    use tst_core::error::DemuxErrorKind as D;
+    match e.kind() {
+        D::Unrecoverable => BindingErrorKind::DemuxUnrecoverable,
+        D::StrictRejection => BindingErrorKind::DemuxStrictRejection,
+        D::MalformedPes => BindingErrorKind::DemuxMalformedPes,
+        D::SyncBufExhausted => BindingErrorKind::DemuxSyncBufExhausted,
     }
 }
 
 /// The kind of a `DemuxError` (bindings classify by reference without
-/// consuming the error). A variant `map_demux` does not map yet
-/// classifies as [`BindingErrorKind::Internal`]; use the `From` impl
-/// when the detail string matters, it says so explicitly.
+/// consuming the error).
 pub fn kind_of_demux(e: &DemuxError) -> BindingErrorKind {
-    map_demux(e).unwrap_or(BindingErrorKind::Internal)
+    map_demux(e)
 }
 
 impl From<DemuxError> for BindingError {
     fn from(e: DemuxError) -> Self {
-        match map_demux(&e) {
-            Some(k) => BindingError::new(k, e.to_string()),
-            None => unmapped("DemuxError", &e),
-        }
+        BindingError::new(map_demux(&e), e.to_string())
     }
 }
 
 /// The six KLV-decode buckets, byte-for-byte the routing at
 /// `bindings/python/src/klv.rs:97-121` / `bindings/jvm/src/error.rs:138-163`.
-/// `None` is the wildcard arm — the one place that decides a variant
-/// is unmapped, so a deliberate `=> Internal` row keeps its own detail.
-fn map_klv_decode(e: &KlvDecodeError) -> Option<BindingErrorKind> {
-    match e {
-        KlvDecodeError::Truncated { .. }
-        | KlvDecodeError::MalformedLength { .. }
-        | KlvDecodeError::LengthOverflow { .. } => Some(BindingErrorKind::KlvDecodeTruncatedSet),
-        KlvDecodeError::UnexpectedUniversalLabel { .. } => {
-            Some(BindingErrorKind::KlvDecodeBadUniversalLabel)
-        }
-        KlvDecodeError::ChecksumMismatch { .. } | KlvDecodeError::Crc32Mismatch { .. } => {
-            Some(BindingErrorKind::KlvDecodeChecksumMismatch)
-        }
-        KlvDecodeError::DuplicateTag { .. } => Some(BindingErrorKind::KlvDecodeDuplicateTag),
-        KlvDecodeError::Tag2NotFirst
-        | KlvDecodeError::Tag1NotLast
-        | KlvDecodeError::MissingTag65
-        | KlvDecodeError::St0102MissingRequiredTag { .. }
-        | KlvDecodeError::St0903MissingRequiredTag { .. } => {
-            Some(BindingErrorKind::KlvDecodeMissingRequiredTag)
-        }
-        KlvDecodeError::MalformedTag { .. }
-        | KlvDecodeError::NonCanonicalLength { .. }
-        | KlvDecodeError::NonCanonicalTag { .. }
-        | KlvDecodeError::TrailingBytes { .. }
-        | KlvDecodeError::BadTimeStampPackLength { .. }
-        | KlvDecodeError::ReservedBitsInvalid { .. }
-        | KlvDecodeError::St0903InvalidVTargetPack { .. }
-        | KlvDecodeError::FieldError(_) => Some(BindingErrorKind::KlvDecodeMalformedBytes),
-        _ => None,
+fn map_klv_decode(e: &KlvDecodeError) -> BindingErrorKind {
+    use tst_core::error::KlvDecodeErrorKind as D;
+    match e.kind() {
+        D::Truncated => BindingErrorKind::KlvDecodeTruncatedSet,
+        D::BadUniversalLabel => BindingErrorKind::KlvDecodeBadUniversalLabel,
+        D::ChecksumMismatch => BindingErrorKind::KlvDecodeChecksumMismatch,
+        D::DuplicateTag => BindingErrorKind::KlvDecodeDuplicateTag,
+        D::MissingRequiredTag => BindingErrorKind::KlvDecodeMissingRequiredTag,
+        D::Malformed => BindingErrorKind::KlvDecodeMalformedBytes,
     }
 }
 
 /// The kind of a `KlvDecodeError` (bindings classify by reference without
-/// consuming the error). A variant `map_klv_decode` does not map yet
-/// classifies as [`BindingErrorKind::Internal`]; use the `From` impl
-/// when the detail string matters, it says so explicitly.
+/// consuming the error).
 pub fn kind_of_klv_decode(e: &KlvDecodeError) -> BindingErrorKind {
-    map_klv_decode(e).unwrap_or(BindingErrorKind::Internal)
+    map_klv_decode(e)
 }
 
 impl From<KlvDecodeError> for BindingError {
     fn from(e: KlvDecodeError) -> Self {
-        match map_klv_decode(&e) {
-            Some(k) => BindingError::new(k, e.to_string()),
-            None => unmapped("KlvDecodeError", &e),
-        }
+        BindingError::new(map_klv_decode(&e), e.to_string())
     }
 }
 
@@ -882,132 +830,85 @@ impl From<KlvDecodeError> for BindingError {
 /// klv module raises it directly): `TruncatedField` is a truncated set,
 /// every other field failure is malformed bytes
 /// (`bindings/python/src/klv.rs:140-141`, table rows 67 + 72).
-/// `None` is the wildcard arm — the one place that decides a variant
-/// is unmapped, so a deliberate `=> Internal` row keeps its own detail.
-fn map_klv_field(e: &KlvFieldError) -> Option<BindingErrorKind> {
-    match e {
-        KlvFieldError::TruncatedField { .. } => Some(BindingErrorKind::KlvDecodeTruncatedSet),
-        KlvFieldError::OutOfRange { .. }
-        | KlvFieldError::InvalidUtf8 { .. }
-        | KlvFieldError::InvalidLength { .. }
-        | KlvFieldError::InvalidUtf16 { .. }
-        | KlvFieldError::InvalidCodepoint { .. }
-        | KlvFieldError::UnsupportedImapbLength { .. }
-        | KlvFieldError::InvalidImapbParams { .. } => {
-            Some(BindingErrorKind::KlvDecodeMalformedBytes)
-        }
-        _ => None,
+fn map_klv_field(e: &KlvFieldError) -> BindingErrorKind {
+    use tst_core::error::KlvFieldErrorKind as F;
+    match e.kind() {
+        F::Truncated => BindingErrorKind::KlvDecodeTruncatedSet,
+        F::Malformed => BindingErrorKind::KlvDecodeMalformedBytes,
     }
 }
 
 /// The kind of a `KlvFieldError` (bindings classify by reference without
-/// consuming the error). A variant `map_klv_field` does not map yet
-/// classifies as [`BindingErrorKind::Internal`]; use the `From` impl
-/// when the detail string matters, it says so explicitly.
+/// consuming the error).
 pub fn kind_of_klv_field(e: &KlvFieldError) -> BindingErrorKind {
-    map_klv_field(e).unwrap_or(BindingErrorKind::Internal)
+    map_klv_field(e)
 }
 
 impl From<KlvFieldError> for BindingError {
     fn from(e: KlvFieldError) -> Self {
-        match map_klv_field(&e) {
-            Some(k) => BindingError::new(k, e.to_string()),
-            None => unmapped("KlvFieldError", &e),
-        }
+        BindingError::new(map_klv_field(&e), e.to_string())
     }
 }
 
-/// Every `KlvEncodeError` variant, 1:1.
-/// `None` is the wildcard arm — the one place that decides a variant
-/// is unmapped, so a deliberate `=> Internal` row keeps its own detail.
-fn map_klv_encode(e: &KlvEncodeError) -> Option<BindingErrorKind> {
-    match e {
-        KlvEncodeError::BufferTooSmall { .. } => Some(BindingErrorKind::KlvEncodeBufferTooSmall),
-        KlvEncodeError::RecordTooLarge => Some(BindingErrorKind::KlvEncodeRecordTooLarge),
-        KlvEncodeError::OutOfRange { .. } => Some(BindingErrorKind::KlvEncodeOutOfRange),
-        KlvEncodeError::StringTooLong { .. } => Some(BindingErrorKind::KlvEncodeStringTooLong),
-        KlvEncodeError::UnsupportedImapbLength { .. } => {
-            Some(BindingErrorKind::KlvEncodeUnsupportedImapbLength)
-        }
-        KlvEncodeError::InvalidImapbParams { .. } => {
-            Some(BindingErrorKind::KlvEncodeInvalidImapbParams)
-        }
-        KlvEncodeError::MissingMandatoryItem { .. } => {
-            Some(BindingErrorKind::KlvEncodeMissingMandatoryItem)
-        }
-        KlvEncodeError::ReservedTagInUnknown { .. } => {
-            Some(BindingErrorKind::KlvEncodeReservedTagInUnknown)
-        }
-        KlvEncodeError::VTargetPackEmpty { .. } => {
-            Some(BindingErrorKind::KlvEncodeVTargetPackEmpty)
-        }
-        KlvEncodeError::DuplicateTargetId { .. } => {
-            Some(BindingErrorKind::KlvEncodeDuplicateTargetId)
-        }
-        KlvEncodeError::ForbiddenStandaloneOffset { .. } => {
-            Some(BindingErrorKind::KlvEncodeForbiddenStandaloneOffset)
-        }
-        _ => None,
+/// Every `KlvEncodeError`, 1:1 through its exhaustive kind.
+fn map_klv_encode(e: &KlvEncodeError) -> BindingErrorKind {
+    use tst_core::error::KlvEncodeErrorKind as E;
+    match e.kind() {
+        E::BufferTooSmall => BindingErrorKind::KlvEncodeBufferTooSmall,
+        E::RecordTooLarge => BindingErrorKind::KlvEncodeRecordTooLarge,
+        E::OutOfRange => BindingErrorKind::KlvEncodeOutOfRange,
+        E::StringTooLong => BindingErrorKind::KlvEncodeStringTooLong,
+        E::UnsupportedImapbLength => BindingErrorKind::KlvEncodeUnsupportedImapbLength,
+        E::InvalidImapbParams => BindingErrorKind::KlvEncodeInvalidImapbParams,
+        E::MissingMandatoryItem => BindingErrorKind::KlvEncodeMissingMandatoryItem,
+        E::ReservedTagInUnknown => BindingErrorKind::KlvEncodeReservedTagInUnknown,
+        E::VTargetPackEmpty => BindingErrorKind::KlvEncodeVTargetPackEmpty,
+        E::DuplicateTargetId => BindingErrorKind::KlvEncodeDuplicateTargetId,
+        E::ForbiddenStandaloneOffset => BindingErrorKind::KlvEncodeForbiddenStandaloneOffset,
     }
 }
 
 /// The kind of a `KlvEncodeError` (bindings classify by reference without
-/// consuming the error). A variant `map_klv_encode` does not map yet
-/// classifies as [`BindingErrorKind::Internal`]; use the `From` impl
-/// when the detail string matters, it says so explicitly.
+/// consuming the error).
 pub fn kind_of_klv_encode(e: &KlvEncodeError) -> BindingErrorKind {
-    map_klv_encode(e).unwrap_or(BindingErrorKind::Internal)
+    map_klv_encode(e)
 }
 
 impl From<KlvEncodeError> for BindingError {
     fn from(e: KlvEncodeError) -> Self {
-        match map_klv_encode(&e) {
-            Some(k) => BindingError::new(k, e.to_string()),
-            None => unmapped("KlvEncodeError", &e),
-        }
+        BindingError::new(map_klv_encode(&e), e.to_string())
     }
 }
 
-/// Every `CodecParseError` variant, 1:1.
-/// `None` is the wildcard arm — the one place that decides a variant
-/// is unmapped, so a deliberate `=> Internal` row keeps its own detail.
-fn map_codec(e: &CodecParseError) -> Option<BindingErrorKind> {
-    match e {
-        CodecParseError::TruncatedRbsp { .. } => Some(BindingErrorKind::CodecTruncatedRbsp),
-        CodecParseError::InvalidGolomb { .. } => Some(BindingErrorKind::CodecInvalidGolomb),
-        CodecParseError::ReservedValue { .. } => Some(BindingErrorKind::CodecReservedValue),
-        CodecParseError::UnsupportedProfile { .. } => {
-            Some(BindingErrorKind::CodecUnsupportedProfile)
-        }
-        CodecParseError::EngineError(_) => Some(BindingErrorKind::CodecEngineError),
-        CodecParseError::InvalidLeb128 { .. } => Some(BindingErrorKind::CodecInvalidLeb128),
-        CodecParseError::BadSyncWord { .. } => Some(BindingErrorKind::CodecBadSyncWord),
-        CodecParseError::Truncated { .. } => Some(BindingErrorKind::CodecTruncated),
-        CodecParseError::Forbidden { .. } => Some(BindingErrorKind::CodecForbidden),
-        CodecParseError::UnsupportedFreeFormat { .. } => {
-            Some(BindingErrorKind::CodecUnsupportedFreeFormat)
-        }
-        CodecParseError::InvalidLengthSize { .. } => Some(BindingErrorKind::CodecInvalidLengthSize),
-        CodecParseError::NalLengthOverflow { .. } => Some(BindingErrorKind::CodecNalLengthOverflow),
-        CodecParseError::BufferTooSmall { .. } => Some(BindingErrorKind::CodecBufferTooSmall),
-        _ => None,
+/// Every `CodecParseError`, 1:1 through its exhaustive kind.
+fn map_codec(e: &CodecParseError) -> BindingErrorKind {
+    use tst_core::codec::CodecParseErrorKind as C;
+    match e.kind() {
+        C::TruncatedRbsp => BindingErrorKind::CodecTruncatedRbsp,
+        C::InvalidGolomb => BindingErrorKind::CodecInvalidGolomb,
+        C::ReservedValue => BindingErrorKind::CodecReservedValue,
+        C::UnsupportedProfile => BindingErrorKind::CodecUnsupportedProfile,
+        C::EngineError => BindingErrorKind::CodecEngineError,
+        C::InvalidLeb128 => BindingErrorKind::CodecInvalidLeb128,
+        C::BadSyncWord => BindingErrorKind::CodecBadSyncWord,
+        C::Truncated => BindingErrorKind::CodecTruncated,
+        C::Forbidden => BindingErrorKind::CodecForbidden,
+        C::UnsupportedFreeFormat => BindingErrorKind::CodecUnsupportedFreeFormat,
+        C::InvalidLengthSize => BindingErrorKind::CodecInvalidLengthSize,
+        C::NalLengthOverflow => BindingErrorKind::CodecNalLengthOverflow,
+        C::BufferTooSmall => BindingErrorKind::CodecBufferTooSmall,
     }
 }
 
 /// The kind of a `CodecParseError` (bindings classify by reference without
-/// consuming the error). A variant `map_codec` does not map yet
-/// classifies as [`BindingErrorKind::Internal`]; use the `From` impl
-/// when the detail string matters, it says so explicitly.
+/// consuming the error).
 pub fn kind_of_codec(e: &CodecParseError) -> BindingErrorKind {
-    map_codec(e).unwrap_or(BindingErrorKind::Internal)
+    map_codec(e)
 }
 
 impl From<CodecParseError> for BindingError {
     fn from(e: CodecParseError) -> Self {
-        match map_codec(&e) {
-            Some(k) => BindingError::new(k, e.to_string()),
-            None => unmapped("CodecParseError", &e),
-        }
+        BindingError::new(map_codec(&e), e.to_string())
     }
 }
 
@@ -1066,36 +967,150 @@ impl From<ShellErrorKind> for BindingErrorKind {
     }
 }
 
-/// Kind AND detail in ONE match, so a variant can never be classified without
-/// also being given a message: a second match would be invisible to
-/// `scripts/check/rust/kind-table-coverage.sh` (it reads this function), and a
-/// variant with an arm here but none there would silently become `Internal`.
-/// `None` is the wildcard — the one place that decides a variant is
-/// unmapped, so a deliberate `=> Internal` row would keep its own detail.
-fn map_transport(e: &TransportError) -> Option<(BindingErrorKind, String)> {
-    match e {
-        TransportError::Backpressure { msg, .. } => {
-            Some((BindingErrorKind::Backpressure, msg.clone()))
+/// The kind of a transport failure and the detail the binding surfaces.
+/// The kind comes from the exhaustive `TransportError::kind()`; the detail
+/// is a second match whose fallback is not a classification.
+fn map_transport(e: &TransportError) -> (BindingErrorKind, String) {
+    use tst_core::transport::TransportErrorKind as T;
+    let kind = match e.kind() {
+        T::Backpressure => BindingErrorKind::Backpressure,
+        T::Broken => BindingErrorKind::Broken,
+        T::Closed | T::ExplicitClose => BindingErrorKind::Closed,
+        T::TooLarge => BindingErrorKind::TooLarge,
+    };
+    let detail = match e {
+        TransportError::Backpressure { msg, .. } | TransportError::Broken { msg, .. } => {
+            msg.clone()
         }
-        TransportError::Broken { msg, .. } => Some((BindingErrorKind::Broken, msg.clone())),
-        TransportError::Closed => {
-            Some((BindingErrorKind::Closed, String::from("transport closed")))
-        }
-        TransportError::TooLarge { .. } => Some((BindingErrorKind::TooLarge, e.to_string())),
-        TransportError::ExplicitClose => Some((
-            BindingErrorKind::Closed,
-            String::from("cancelled from another thread"),
-        )),
-        _ => None,
-    }
+        TransportError::Closed => String::from("transport closed"),
+        TransportError::ExplicitClose => String::from("cancelled from another thread"),
+        _ => e.to_string(),
+    };
+    (kind, detail)
 }
 
 impl From<TransportError> for BindingError {
     fn from(e: TransportError) -> Self {
-        match map_transport(&e) {
-            Some((kind, detail)) => BindingError::new(kind, detail),
-            None => unmapped("TransportError", &e),
-        }
+        let (kind, detail) = map_transport(&e);
+        BindingError::new(kind, detail)
+    }
+}
+
+/// The binding kind of a transport failure seen by a shell: on the
+/// receive direction `TransportError::Closed` is the PEER closing
+/// (`EndOfStream`); a caller's cancel arrives as `ExplicitClose` (`Closed`).
+pub(crate) fn kind_of_transport(
+    e: &TransportError,
+    d: crate::shell_error::Direction,
+) -> BindingErrorKind {
+    use tst_core::transport::TransportErrorKind as T;
+    match (e.kind(), d) {
+        (T::Closed, crate::shell_error::Direction::Recv) => BindingErrorKind::EndOfStream,
+        _ => map_transport(e).0,
+    }
+}
+
+/// The coarse shell vocabulary of a binding kind: `ShellErrorKind` is a
+/// projection of this table. Exhaustive, so a new kind is a compile error
+/// until it is coarsened.
+pub(crate) fn coarsen(k: BindingErrorKind) -> ShellErrorKind {
+    use BindingErrorKind as K;
+    use ShellErrorKind as S;
+    match k {
+        K::ConfigInvalid | K::InvalidUsage => S::ConfigInvalid,
+        K::InputMalformed
+        | K::InvalidNal
+        | K::KlvTooLarge
+        | K::InvalidAv1Obu
+        | K::MispTime
+        | K::MispTimeMalformed
+        | K::TooLarge
+        | K::WrongType
+        | K::DemuxUnrecoverable
+        | K::DemuxStrictRejection
+        | K::DemuxMalformedPes
+        | K::DemuxSyncBufExhausted
+        | K::KlvDecodeTruncatedSet
+        | K::KlvDecodeBadUniversalLabel
+        | K::KlvDecodeChecksumMismatch
+        | K::KlvDecodeDuplicateTag
+        | K::KlvDecodeMissingRequiredTag
+        | K::KlvDecodeMalformedBytes
+        | K::KlvEncodeBufferTooSmall
+        | K::KlvEncodeRecordTooLarge
+        | K::KlvEncodeOutOfRange
+        | K::KlvEncodeStringTooLong
+        | K::KlvEncodeUnsupportedImapbLength
+        | K::KlvEncodeInvalidImapbParams
+        | K::KlvEncodeMissingMandatoryItem
+        | K::KlvEncodeReservedTagInUnknown
+        | K::KlvEncodeVTargetPackEmpty
+        | K::KlvEncodeDuplicateTargetId
+        | K::KlvEncodeForbiddenStandaloneOffset
+        | K::CodecTruncatedRbsp
+        | K::CodecInvalidGolomb
+        | K::CodecReservedValue
+        | K::CodecUnsupportedProfile
+        | K::CodecEngineError
+        | K::CodecInvalidLeb128
+        | K::CodecBadSyncWord
+        | K::CodecTruncated
+        | K::CodecForbidden
+        | K::CodecUnsupportedFreeFormat
+        | K::CodecInvalidLengthSize
+        | K::CodecNalLengthOverflow
+        | K::CodecBufferTooSmall => S::InputMalformed,
+        K::Backpressure => S::Backpressure,
+        K::Closed => S::Closed,
+        K::EndOfStream => S::EndOfStream,
+        K::Broken
+        | K::Internal
+        | K::PanicCaught
+        | K::NotAvailable
+        | K::NotFound
+        | K::RtspProtocol
+        | K::RtspAuthFailed
+        | K::RtspAuthRequired
+        | K::RtspNotFound
+        | K::RtspUnsupportedTransport
+        | K::RtspTls
+        | K::RtspIo
+        | K::RtspTimeout
+        | K::RtspServer
+        | K::RtspMount
+        | K::UdpIo
+        | K::UdpInvalidConfig
+        | K::UdpUrl
+        | K::TcpIo
+        | K::TcpInvalidConfig
+        | K::TcpConnectTimeout
+        | K::TcpTls
+        | K::TcpUrl
+        | K::TcpTlsDisabled
+        | K::HlsIo
+        | K::HlsInvalidConfig
+        | K::HlsFinished
+        | K::HlsTls
+        | K::HlsUrl
+        | K::HlsBindFailed
+        | K::HlsUnalignedPushTs
+        | K::HlsTlsDisabled
+        | K::RistFfi
+        | K::RistInvalidConfig
+        | K::RistEncryptionDisabled
+        | K::RistUrl
+        | K::RistContextCreateFailed
+        | K::RistPeerCreateFailed
+        | K::SrtConnectFailed
+        | K::SrtAcceptFailed
+        | K::SrtTimeout
+        | K::SrtIo
+        | K::RtpPayloadTypeParam
+        | K::RtpMissingPayloadTypeParam
+        | K::RtpUrl
+        | K::RtpHostNotLiteral
+        | K::RtpIo
+        | K::RtpIfaceUnsupported => S::TransportBroken,
     }
 }
 
@@ -1821,5 +1836,79 @@ mod tests {
         );
         assert_eq!(K::CodecInvalidLengthSize.c_projection(), -1);
         assert_eq!(K::CodecNalLengthOverflow.c_projection(), -6);
+    }
+
+    /// Every shell error's kind is the coarsening of the binding kind its
+    /// source projects to: the shells and the bindings classify through one
+    /// table. Covers every `MuxError`, `TransportError` (both directions)
+    /// and `DemuxError` variant.
+    #[test]
+    fn shell_error_kind_is_the_coarsening_of_the_binding_kind() {
+        use crate::shell_error::ShellError;
+        use crate::{DemuxReceiverError, MuxSenderError, ReceiverError};
+        use tst_test_helpers::errors::{every_demux_error, every_mux_error, every_transport_error};
+
+        let muxes = every_mux_error();
+        assert_eq!(muxes.len(), 38);
+        for m in muxes {
+            let e = MuxSenderError::from(m.clone());
+            let shell = e.kind();
+            assert_eq!(shell, coarsen(BindingError::from(e).kind), "{m:?}");
+        }
+        for t in every_transport_error() {
+            let e = MuxSenderError::from(t.clone());
+            let shell = e.kind();
+            assert_eq!(shell, coarsen(BindingError::from(e).kind), "send {t:?}");
+            let e = ReceiverError::from(t.clone());
+            let shell = e.kind();
+            assert_eq!(shell, coarsen(BindingError::from(e).kind), "recv {t:?}");
+        }
+        for d in every_demux_error() {
+            let e = DemuxReceiverError::from(d.clone());
+            let shell = e.kind();
+            assert_eq!(shell, coarsen(BindingError::from(e).kind), "{d:?}");
+        }
+    }
+
+    #[test]
+    fn coarsen_round_trips_shell_kinds() {
+        for s in [
+            ShellErrorKind::ConfigInvalid,
+            ShellErrorKind::InputMalformed,
+            ShellErrorKind::Backpressure,
+            ShellErrorKind::TransportBroken,
+            ShellErrorKind::Closed,
+            ShellErrorKind::EndOfStream,
+        ] {
+            assert_eq!(coarsen(BindingErrorKind::from(s)), s);
+        }
+    }
+
+    /// `coarsen` is total by construction (no wildcard arm); this pins that
+    /// the table reaches every shell kind.
+    #[test]
+    fn coarsen_is_total() {
+        use std::collections::HashSet;
+        let reached: HashSet<_> = BindingErrorKind::ALL.iter().map(|k| coarsen(*k)).collect();
+        assert_eq!(reached.len(), 6, "every ShellErrorKind has a source kind");
+    }
+
+    #[test]
+    fn kind_docs_render_safely_into_javadoc_and_python_comments() {
+        for k in BindingErrorKind::ALL {
+            for line in k.doc().lines() {
+                let l = line.trim();
+                assert!(!l.contains("*/"), "{k:?}: `*/` ends a Javadoc comment");
+                assert!(!l.contains('@'), "{k:?}: `@` starts a Javadoc tag");
+                assert!(
+                    !l.contains('<') && !l.contains('&'),
+                    "{k:?}: HTML in Javadoc"
+                );
+                assert!(
+                    !l.starts_with('#'),
+                    "{k:?}: a leading `#` reads as a Markdown heading in the generated docs"
+                );
+            }
+        }
     }
 }

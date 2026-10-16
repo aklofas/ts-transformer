@@ -118,48 +118,27 @@ record_shell_error<E: ShellError>(e: &E) -> i32
 // 4. return negative code
 ```
 
-Two invariants guard this path against silent regressions:
+Two invariants guard this path against silent regressions, both checked
+by the compiler:
 
-- `tst_error_from_kind` is `TstError::from_kind(BindingErrorKind::from(kind))`;
-  `From<ShellErrorKind> for BindingErrorKind` is an in-crate exhaustive match
-  (the compiler is the rail), and `from_kind_is_total_over_the_kind_table` in
-  `bindings/c/core/src/error.rs` pins the C projection.
-- `scripts/check/rust/pipeline-kind-classification.sh` — fails if a future
-  variant of `MuxError`, `TransportError`, `DemuxError`, or
-  `TsFramingError` is added without an explicit arm in the
-  corresponding `kind_from_*` helper in
-  `crates/tst-pipeline/src/shell_error.rs`.
+- every tst-core error the table classifies has a `kind()` written in
+  tst-core with no wildcard, returning an exhaustive kind enum
+  (`conventions.md` §"Exhaustive kind enums"); `kind.rs` maps each kind
+  enum with no wildcard, so a new error variant or a new kind fails to
+  build until it is classified;
+- `ShellErrorKind` is `coarsen(BindingErrorKind)` (an exhaustive match in
+  `kind.rs`); the shells compute their `kind` through it, so a shell and a
+  binding cannot classify one error differently.
 
-**Raw-mapper path (standalone-muxer + open helpers).** Every raw error
+**Raw-mapper path (standalone muxer + open helpers).** Every raw error
 reaching the C ABI (`MuxError`, `DemuxError`, `KlvDecodeError`, the
 transport crates' own errors) projects through
-`tst_pipeline::binding::BindingError` → `TstError::from_kind`; variant
-coverage is enforced once, in tst-pipeline, by
-`scripts/check/rust/kind-table-coverage.sh`. The C-side entry points
-(`record_mux_error`, `record_demux_error`, `record_klv_decode_error`,
-`record_with_context`) are thin wrappers over that one table.
-
-Most wildcard `_ => ...` arms in the table exist only to satisfy Rust's
-`#[non_exhaustive]` requirement and are unreachable while
-`kind-table-coverage.sh` is green — that rail names every upstream
-variant before the wildcard. Two are DELIBERATE fallbacks the rail does
-not watch, and both are documented at the arm:
-
-- `kind_of_mux`'s wildcard forwards to `MuxError::kind()`, i.e. the
-  coarse bucket, for every `MuxError` variant that has no precise code
-  of its own. That is the routing, not a gap.
-- `map_mux_kind`'s own trailing arm folds an unknown future
-  `MuxErrorKind` to `Internal`.
-
-So binding authors can assume that every documented `TstError` code maps
-to a specific upstream condition, with that one coarsening: a new
-`MuxError` variant lands in its `kind()`'s bucket rather than degrading
-to `TST_E_INTERNAL`.
-
-If you encounter a `tst_get_last_error_str()` value beginning with
-`"unmapped <Enum> variant: ..."`, that means the kind-table ratchet was
-bypassed or failed; please file an issue with the variant name from the
-last-error string.
+`tst_pipeline::binding::BindingError` → `TstError::from_kind`. The C-side
+entry points (`record_mux_error`, `record_demux_error`,
+`record_klv_decode_error`, `record_with_context`) are thin wrappers over
+that one table. `kind_of_mux`'s fallback arm forwards to
+`MuxError::kind()` for every `MuxError` variant with no precise code of
+its own; that fallback is total.
 
 ### Adding an error kind
 

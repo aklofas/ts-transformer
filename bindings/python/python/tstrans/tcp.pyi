@@ -44,7 +44,9 @@ class TcpErrorKind(IntEnum):
     Rust ``tst_pipeline::binding::BindingErrorKind`` table: ``URL`` / ``IO`` /
     ``CLOSED`` / ``CONNECT_TIMEOUT`` / ``INVALID_CONFIG`` / ``TLS`` /
     ``TLS_DISABLED`` from ``tst_tcp::TcpError``, ``BROKEN`` /
-    ``BACKPRESSURE`` / ``TOO_LARGE`` from the transport."""
+    ``BACKPRESSURE`` / ``TOO_LARGE`` from the transport, and
+    ``INPUT_MALFORMED`` / ``END_OF_STREAM`` / ``CONFIG_INVALID`` shared with
+    every pipeline shell."""
 
     URL = 0
     IO = 1
@@ -56,6 +58,9 @@ class TcpErrorKind(IntEnum):
     TLS_DISABLED = 7
     BACKPRESSURE = 8
     BROKEN = 9
+    INPUT_MALFORMED = 10
+    END_OF_STREAM = 11
+    CONFIG_INVALID = 12
 
 
 class TcpError(Exception):

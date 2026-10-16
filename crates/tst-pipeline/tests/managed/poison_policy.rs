@@ -123,7 +123,7 @@ fn cancel_during_active_recv_returns_explicit_close() {
 
 /// Peer disconnects cleanly (no caller cancel). After the reconnect budget
 /// is exhausted, ManagedRecvTransport returns Closed (peer-EOS-ish path —
-/// the shell's kind_from_transport will map this to EndOfStream kind).
+/// the shell's kind_of_transport will map this to EndOfStream kind).
 #[test]
 fn peer_eos_returns_closed_not_explicit_close() {
     let factory_calls = Arc::new(AtomicUsize::new(0));
