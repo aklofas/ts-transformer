@@ -1,6 +1,6 @@
 //! The dataclass text: the `.py` definition and its `.pyi` stub.
 
-use crate::schema::Entry;
+use crate::schema::{Entry, para};
 use crate::typemap::resolve;
 
 /// A docstring body: backslashes and triple quotes cannot end the string early.
@@ -33,8 +33,9 @@ pub fn py_block(reg: &[Entry], e: &Entry) -> Result<String, String> {
     let s = &e.schema;
     let mut o = String::from("@dataclass(frozen=True, slots=True)\n");
     o.push_str(&format!("class {}:\n", s.name));
-    if !s.doc.is_empty() {
-        o.push_str(&format!("    \"\"\"{}\"\"\"\n\n", escape_docstring(s.doc)));
+    let doc = para(s.doc);
+    if !doc.is_empty() {
+        o.push_str(&format!("    \"\"\"{}\"\"\"\n\n", escape_docstring(&doc)));
     }
     let body = fields(reg, e, false)?;
     o.push_str(if body.is_empty() { "    pass\n" } else { &body });

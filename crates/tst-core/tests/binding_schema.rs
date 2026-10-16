@@ -21,6 +21,28 @@ fn wavelength_record_schema_names_its_four_fields_in_order() {
 }
 
 #[test]
+fn wavelength_record_docs_are_joined_lines() {
+    let s = WavelengthRecord::BINDING_SCHEMA;
+    assert!(
+        s.doc
+            .starts_with(" One record of Item 128, Wavelengths List (ST 0601.19 §8.128) — a\n"),
+        "{:?}",
+        s.doc
+    );
+    assert!(s.doc.contains("\n sensor wavelength band definition."));
+    let docs: Vec<_> = s.fields.iter().map(|f| f.doc).collect();
+    assert_eq!(
+        docs,
+        [
+            " BER-OID wavelength band id.",
+            " Band minimum wavelength, nanometres.",
+            " Band maximum wavelength, nanometres.",
+            " Band name."
+        ]
+    );
+}
+
+#[test]
 fn the_struct_is_unchanged() {
     let w = WavelengthRecord {
         id: 1,
@@ -63,11 +85,11 @@ fn marks_and_java_override_are_reported() {
     assert_eq!(by["d"].mark, FieldMark::Plain);
     assert_eq!(by["d"].java, Some("dCode"));
     assert_eq!(by["a"].java, None);
-    assert_eq!(by["a"].doc, "Plain field.");
-    assert_eq!(by["e"].doc, "First line of two.");
+    assert_eq!(by["a"].doc, " Plain field.");
+    assert_eq!(by["e"].doc, " First line of two.\n Second line.");
     assert_eq!(by["f"].doc, "");
     assert_eq!(by["e2"].mark, FieldMark::Custom);
     assert_eq!(by["e2"].java, Some("eCode"));
-    assert_eq!(s.doc, "A fixture record for the schema tests.");
+    assert_eq!(s.doc, " A fixture record for the schema tests.");
     assert!(s.non_exhaustive);
 }

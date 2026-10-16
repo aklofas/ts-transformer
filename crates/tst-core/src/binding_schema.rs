@@ -50,7 +50,8 @@ pub struct FieldSpec {
     pub mark: FieldMark,
     /// Host name override; `None` means the camelCase of `name`.
     pub java: Option<&'static str>,
-    /// The field's first doc line, `""` when it has none.
+    /// The field's doc lines joined by `"\n"`, each as written after `///`;
+    /// `""` when it has none.
     pub doc: &'static str,
 }
 
@@ -65,32 +66,23 @@ pub struct RecordSchema {
     pub non_exhaustive: bool,
     /// The fields in declaration order.
     pub fields: &'static [FieldSpec],
-    /// The record's first doc line, `""` when it has none.
+    /// The record's doc lines joined by `"\n"`, each as written after `///`;
+    /// `""` when it has none.
     pub doc: &'static str,
 }
 
-/// Strips the single leading space a `///` comment leaves in its doc text.
-#[doc(hidden)]
-pub const fn __doc_line(s: &'static str) -> &'static str {
-    let b = s.as_bytes();
-    if !b.is_empty() && b[0] == b' ' {
-        let (_, rest) = b.split_at(1);
-        match core::str::from_utf8(rest) {
-            Ok(t) => t,
-            Err(_) => s,
-        }
-    } else {
-        s
-    }
-}
-
-/// The text of the first `#[doc = "…"]` among the attributes, or `""`.
+/// Every `#[doc = "…"]` among the attributes, joined by `"\n"` with each line
+/// as written after `///` (a leading space stays); `""` when there is none.
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __first_doc {
-    () => { "" };
-    (#[doc = $d:literal] $($rest:tt)*) => { $crate::binding_schema::__doc_line($d) };
-    (#[$($x:tt)*] $($rest:tt)*) => { $crate::__first_doc!($($rest)*) };
+macro_rules! __docs {
+    (@go [$($acc:tt)*];) => { concat!($($acc)*) };
+    (@go []; #[doc = $d:literal] $($r:tt)*) => { $crate::__docs!(@go [$d,]; $($r)*) };
+    (@go [$($acc:tt)+]; #[doc = $d:literal] $($r:tt)*) => {
+        $crate::__docs!(@go [$($acc)+ "\n", $d,]; $($r)*)
+    };
+    (@go [$($acc:tt)*]; #[$($x:tt)*] $($r:tt)*) => { $crate::__docs!(@go [$($acc)*]; $($r)*) };
+    ($($t:tt)*) => { $crate::__docs!(@go []; $($t)*) };
 }
 
 /// `true` when `non_exhaustive` is among the attributes.
@@ -184,9 +176,9 @@ macro_rules! binding_record {
                         ty: stringify!($fty),
                         mark: $crate::__mark!($($($mark)*)*),
                         java: $crate::__java!($($($mark)*)*),
-                        doc: $crate::__first_doc!($(#[$($fmeta)*])*),
+                        doc: $crate::__docs!($(#[$($fmeta)*])*),
                     } ),* ],
-                    doc: $crate::__first_doc!($(#[$($meta)*])*),
+                    doc: $crate::__docs!($(#[$($meta)*])*),
                 };
         }
     };

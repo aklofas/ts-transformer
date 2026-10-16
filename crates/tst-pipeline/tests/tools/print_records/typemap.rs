@@ -186,7 +186,11 @@ fn map_norm(s: &str, names: &[&str]) -> Result<Ty, String> {
         return Ok(Ty::Bytes);
     }
     if let Some(inner) = s.strip_prefix("Vec<").and_then(|r| r.strip_suffix('>')) {
-        return Ok(Ty::List(Box::new(map_norm(inner, names)?)));
+        let t = map_norm(inner, names)?;
+        if matches!(t, Ty::Opt(_)) {
+            return Err("Vec<Option<T>> is not mapped".into());
+        }
+        return Ok(Ty::List(Box::new(t)));
     }
     if s == "String" {
         return Ok(Ty::Str);

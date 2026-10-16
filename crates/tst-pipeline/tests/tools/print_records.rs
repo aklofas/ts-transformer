@@ -26,21 +26,34 @@ mod typemap;
 #[path = "print_records/write.rs"]
 mod write;
 
+fn usage(msg: &str) -> ! {
+    eprintln!("print-records: {msg}");
+    eprintln!("usage: print-records [--list | --write | --check] [--root <dir>]");
+    std::process::exit(2);
+}
+
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let root = args
-        .iter()
-        .position(|a| a == "--root")
-        .map(|i| PathBuf::from(&args[i + 1]))
-        .unwrap_or_else(|| PathBuf::from("."));
+    let mut mode = "--list".to_string();
+    let mut root = PathBuf::from(".");
+    let mut it = std::env::args().skip(1);
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--list" | "--write" | "--check" => mode = a,
+            "--root" => match it.next() {
+                Some(d) => root = PathBuf::from(d),
+                None => usage("--root takes a directory"),
+            },
+            other => usage(&format!("unknown argument `{other}`")),
+        }
+    }
     let reg = schema::records();
-    if args.iter().any(|a| a == "--write") {
+    if mode == "--write" {
         let result = write::targets(&root, &reg).and_then(|t| write::write_all(&t));
         if let Err(e) = result {
             eprintln!("print-records: {e}");
             std::process::exit(2);
         }
-    } else if args.iter().any(|a| a == "--check") {
+    } else if mode == "--check" {
         let targets = match write::targets(&root, &reg) {
             Ok(t) => t,
             Err(e) => {

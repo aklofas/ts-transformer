@@ -208,13 +208,17 @@ fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
         capacity(crossing.len())
     ));
     let builder = crossing.len() > CTOR_MAX;
+    let bclass = format!("{class}$Builder");
     let mut vals = Vec::new();
-    let mut setters = Vec::new();
+    let mut setters = String::new();
     for f in &crossing {
         let ty = f.ty.as_ref().expect("crossing");
         let name = f.spec.name;
         let var = var_of(name);
         let mut pre = Vec::new();
+        // A builder leaves an absent optional field unset: the setter call sits
+        // inside `if let Some(v)`, and the value is built from the inner type.
+        let skip_absent = builder && !f.custom && ty.is_opt();
         let val = if f.custom {
             pre.push(format!(
                 "let {var} = crate::custom::build_{}_{name}(env, &r.{name})?;",
@@ -223,29 +227,43 @@ fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
             format!("JValue::Object(&{var})")
         } else if let Ty::Scalar(sc) = ty {
             scalar_jvalue(*sc, &format!("r.{name}"))
+        } else if skip_absent {
+            let Ty::Opt(inner) = ty else { unreachable!() };
+            let x = g.build_obj(inner, "v", None, &mut pre);
+            format!("JValue::Object(&{x})")
         } else {
             let x = g.build_obj(ty, &format!("&r.{name}"), Some(&var), &mut pre);
             format!("JValue::Object(&{x})")
         };
-        for p in pre {
-            o.push_str(&format!("    {p}\n"));
-        }
         if builder {
-            setters.push((f.java.clone(), ty.sig(reg), val));
+            let call = format!(
+                "env.call_method(&b, \"{}\", \"({})L{bclass};\", &[{val}])?;",
+                f.java,
+                ty.sig(reg)
+            );
+            if skip_absent {
+                setters.push_str(&format!(
+                    "    if let Some(v) = &r.{name} {{ {} {call} }}\n",
+                    pre.join(" ")
+                ));
+            } else {
+                for p in pre {
+                    setters.push_str(&format!("    {p}\n"));
+                }
+                setters.push_str(&format!("    {call}\n"));
+            }
         } else {
+            for p in pre {
+                o.push_str(&format!("    {p}\n"));
+            }
             vals.push((ty.sig(reg), val));
         }
     }
     if builder {
-        let bclass = format!("{class}$Builder");
         o.push_str(&format!(
             "    let b = env.new_object(\"{bclass}\", \"()V\", &[])?;\n"
         ));
-        for (java, sig, val) in &setters {
-            o.push_str(&format!(
-                "    env.call_method(&b, \"{java}\", \"({sig})L{bclass};\", &[{val}])?;\n"
-            ));
-        }
+        o.push_str(&setters);
         o.push_str(&format!(
             "    let obj = env.call_method(&b, \"build\", \"()L{class};\", &[])?.l()?;\n"
         ));
