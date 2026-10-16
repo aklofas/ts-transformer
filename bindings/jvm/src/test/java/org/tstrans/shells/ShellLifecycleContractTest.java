@@ -46,6 +46,14 @@ import org.tstrans.shells.ShellPeers.Tx;
  *       peer-idle timeout, so the srt window is 15 s and the tcp window 5 s.
  *   <li>{@code MuxSender} and {@code DemuxReceiver} repeat 1 to 3 over the same peers as
  *       {@code Sender} and {@code Receiver}.
+ *   <li>A {@code Sender} fed bytes that hold no TS sync for more than the framing limit throws the
+ *       transport's own exception class (exactly) with kind {@code INPUT_MALFORMED}, on every
+ *       transport.
+ *   <li>{@code srt} and {@code tcp} receivers: once the peer closes cleanly, the first
+ *       {@code recvBytes()} throws the transport's class with kind {@code BROKEN} and every later
+ *       one throws it with kind {@code END_OF_STREAM}; {@code endReason()} stays {@code null}. A
+ *       datagram transport ({@code rtp}, {@code udp}, {@code rist}) cannot see a peer close, so it
+ *       has no rule 8 case.
  * </ol>
  *
  * Case names read {@code {shell}-{scheme}-r{rule}}. A {@code rist} case skips only when librist
@@ -70,6 +78,12 @@ class ShellLifecycleContractTest {
     static Stream<Arguments> senders() { return cases(SENDERS, SCHEMES); }
 
     static Stream<Arguments> senderPeersThatNoticeADroppedPeer() { return cases(SENDERS, List.of("srt", "tcp")); }
+
+    static Stream<Arguments> plainSenders() { return cases(List.of("Sender"), SCHEMES); }
+
+    static Stream<Arguments> plainReceiversThatSeeAPeerClose() {
+        return cases(List.of("Receiver"), List.of("srt", "tcp"));
+    }
 
     private static boolean isSender(String shell) { return SENDERS.contains(shell); }
 
@@ -134,12 +148,13 @@ class ShellLifecycleContractTest {
     void accessorsDoNotWaitBehindAParkedRecv(String shell, String scheme) throws Exception {
         try (Cleanup c = new Cleanup()) {
             Rx rx = ShellPeers.receiverWithPeer(shell, scheme, c);
+            CancelHandle cancel = rx.cancelHandle();
             try (Parked parked = new Parked(rx)) {
                 try {
                     assertTrue(ShellPeers.within(1_000, "isAlive()", rx::isAlive));
                     assertNotNull(ShellPeers.within(1_000, "cancelHandle()", rx::cancelHandle));
                 } finally {
-                    rx.cancelHandle().cancel();
+                    cancel.cancel();
                 }
                 parked.awaitEnd(5_000);
             }
@@ -182,6 +197,58 @@ class ShellLifecycleContractTest {
             assertEquals(ShellPeers.errorClass(scheme), err.getClass(), String.valueOf(err));
             String kind = ShellPeers.kindName(err);
             assertTrue(kind.equals("BROKEN") || kind.equals("CLOSED"), kind);
+        }
+    }
+
+    @ParameterizedTest(name = "{0}-{1}-r7")
+    @MethodSource("plainSenders")
+    void bytesWithoutTsSyncThrowInputMalformed(String shell, String scheme) throws Exception {
+        try (Cleanup c = new Cleanup()) {
+            Tx tx = ShellPeers.senderWithPeer(shell, scheme, c).tx();
+            Throwable err = assertThrows(ShellPeers.errorClass(scheme), () -> tx.sendBytes(ShellPeers.NOT_TS));
+            assertEquals(ShellPeers.errorClass(scheme), err.getClass(), String.valueOf(err));
+            assertEquals("INPUT_MALFORMED", ShellPeers.kindName(err));
+        }
+    }
+
+    @ParameterizedTest(name = "{0}-{1}-r8")
+    @MethodSource("plainReceiversThatSeeAPeerClose")
+    void aCleanPeerCloseEndsInBrokenThenEndOfStream(String shell, String scheme) throws Exception {
+        try (Cleanup c = new Cleanup()) {
+            ShellPeers.ReceiverPeer rp = ShellPeers.receiverAndPeer(shell, scheme, c);
+            Rx rx = rp.rx();
+            CancelHandle watchdog = rx.cancelHandle();
+            rp.closePeer().run();
+            CompletableFuture<Throwable> first = new CompletableFuture<>();
+            Thread receiver = new Thread(() -> {
+                long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+                try {
+                    while (System.nanoTime() < end) {
+                        rx.recvOnce();
+                    }
+                    first.complete(null);
+                } catch (Throwable e) {
+                    first.complete(e);
+                }
+            }, "shell-recv-loop");
+            receiver.setDaemon(true);
+            receiver.start();
+            Throwable err;
+            try {
+                err = first.get(25, TimeUnit.SECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                watchdog.cancel();
+                throw new AssertionError("a recv hung after the peer closed");
+            }
+            assertNotNull(err, "the receiver kept delivering for 15 s after the peer closed");
+            assertEquals(ShellPeers.errorClass(scheme), err.getClass(), String.valueOf(err));
+            assertEquals("BROKEN", ShellPeers.kindName(err));
+            for (int i = 0; i < 2; i++) {
+                Throwable later = assertThrows(ShellPeers.errorClass(scheme), rx::recvOnce);
+                assertEquals(ShellPeers.errorClass(scheme), later.getClass(), String.valueOf(later));
+                assertEquals("END_OF_STREAM", ShellPeers.kindName(later));
+            }
+            assertNull(rx.endReason(), scheme + " records no end reason");
         }
     }
 }
