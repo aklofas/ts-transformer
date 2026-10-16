@@ -24,6 +24,7 @@ mod mpegts;
 mod panic;
 mod pipeline;
 mod rtp;
+mod shells;
 mod srt;
 
 #[cfg(feature = "jni-test-hooks")]

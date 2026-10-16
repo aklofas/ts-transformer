@@ -553,6 +553,29 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
         entry.owned.cancel();
         entry.owned.take()
     }
+
+    /// [`Self::close`] for a shell whose end reason must outlive the id:
+    /// the winning close removes the id, cancels, takes the shell and hands
+    /// it to `teardown` (its own `close()`), and only THEN reads the end-reason
+    /// cell — so a reason the teardown records (`Cancelled`) is part of the
+    /// snapshot. The outer `None` is the lost race (second close, absent
+    /// id); the inner `None` is "no reason recorded".
+    pub(crate) fn close_with_end_reason(
+        &self,
+        id: u64,
+        teardown: impl FnOnce(T),
+    ) -> Option<Option<EndReason>> {
+        let entry = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id)?;
+        entry.owned.cancel();
+        if let Some(shell) = entry.owned.take() {
+            teardown(shell);
+        }
+        Some(entry.owned.end_reason())
+    }
 }
 
 /// Lease `handle` on `registry` and run a push op under the resource lock. A
@@ -1145,5 +1168,28 @@ mod tests {
         assert_eq!(reg.with_mut(id, |v| *v), Err(HandleState::Closed));
         assert!(reg.cancel_view(id).is_none());
         assert!(reg.snapshot(id, |_| ()).is_none());
+    }
+
+    /// `close_with_end_reason` runs the teardown exactly once, cancels first,
+    /// and a lost race (second close, absent id) neither runs it nor answers.
+    #[test]
+    fn owned_registry_close_with_end_reason_tears_down_once() {
+        let reg: OwnedRegistry<u64> = OwnedRegistry::new();
+        let (rec, cancel) = recording();
+        let id = reg.insert(Owned::new(5, cancel, ()));
+        let mut torn_down = Vec::new();
+        assert_eq!(
+            reg.close_with_end_reason(id, |v| torn_down.push(v)),
+            Some(None),
+            "no end-reason cell attached: the winning close answers Some(None)"
+        );
+        assert_eq!(torn_down, vec![5]);
+        assert!(rec.fired.load(Ordering::SeqCst), "close cancels first");
+        assert_eq!(
+            reg.close_with_end_reason(id, |v| torn_down.push(v)),
+            None,
+            "the second close loses the race"
+        );
+        assert_eq!(torn_down, vec![5], "the teardown did not run again");
     }
 }

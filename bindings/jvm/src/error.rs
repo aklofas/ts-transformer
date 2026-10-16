@@ -51,8 +51,8 @@ pub fn throw_closed(env: &mut JNIEnv, what: &str) {
 // only in messages.
 pub(crate) use tst_pipeline::binding::Domain;
 
-/// JNI class of the domain's exception. Only the JVM's nine domains reach a
-/// throw site; any other falls back to `RuntimeException`.
+/// JNI class of the domain's exception. A domain the JVM binding does not
+/// expose (`java_exception_class` is `None`) falls back to `RuntimeException`.
 pub(crate) fn exc_class(domain: Domain) -> &'static str {
     domain
         .java_exception_class()
@@ -78,13 +78,13 @@ pub(crate) fn throw_binding(env: &mut JNIEnv, domain: Domain, e: &BindingError) 
         let _ = env.throw_new("java/lang/RuntimeException", e.detail.as_str());
         return;
     }
-    let exc_class = exc_class(domain);
+    let class = exc_class(domain);
     let Some(member) = declared_member(env, domain, e.kind, &e.detail) else {
         return;
     };
-    let kind_sig = format!("L{exc_class}$Kind;");
-    if let Err(err) = throw_kinded(env, exc_class, &kind_sig, member, &e.detail) {
-        let simple_name = exc_class.rsplit('/').next().unwrap_or(exc_class);
+    let kind_sig = format!("L{class}$Kind;");
+    if let Err(err) = throw_kinded(env, class, &kind_sig, member, &e.detail) {
+        let simple_name = class.rsplit('/').next().unwrap_or(class);
         let _ = env.throw_new(
             "java/lang/RuntimeException",
             format!(
@@ -553,12 +553,12 @@ mod tests {
             let kind = BindingError::from(v.clone()).kind;
             assert!(
                 Domain::Srt.kinds().contains(&kind),
-                "{v:?} → {} missing from SRT_KINDS",
+                "{v:?} → {} missing from Domain::Srt.kinds()",
                 kind.variant_name()
             );
             assert!(
                 Domain::Rtp.kinds().contains(&kind),
-                "{v:?} → {} missing from RTP_KINDS",
+                "{v:?} → {} missing from Domain::Rtp.kinds()",
                 kind.variant_name()
             );
         }
@@ -574,7 +574,7 @@ mod tests {
         );
     }
 
-    /// The eight domains' declared sets have the sizes the Java enums
+    /// The JVM domains' declared sets have the sizes the Java enums
     /// declare and contain no duplicate MEMBER (two kinds with
     /// the same `name()` in one domain would be unresolvable by name).
     #[test]
@@ -589,6 +589,9 @@ mod tests {
             (Domain::KlvEncode, 11),
             (Domain::Codec, 13),
             (Domain::Hls, 10),
+            (Domain::Udp, 10),
+            (Domain::Tcp, 13),
+            (Domain::Rist, 13),
         ] {
             let members: std::collections::BTreeSet<&str> =
                 d.kinds().iter().map(|k| k.name()).collect();
@@ -604,7 +607,7 @@ mod tests {
                 .iter()
                 .filter(|d| d.java_exception_class().is_some())
                 .count(),
-            9
+            12
         );
     }
 
