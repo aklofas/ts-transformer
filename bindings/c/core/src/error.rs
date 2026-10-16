@@ -666,6 +666,7 @@ where
 
 /// Expose the offline muxer's projection to integration tests (not
 /// `extern "C"`; not in the header).
+#[cfg(feature = "std")]
 pub fn test_record_mux_error(e: &MuxError) -> i32 {
     record_mux_error(e)
 }

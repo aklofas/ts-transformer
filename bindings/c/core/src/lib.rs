@@ -145,11 +145,10 @@ pub mod rist;
 /// integration tests in `tests/` are separate crates that cannot see
 /// `pub(crate)` items.
 pub use error::{test_clear_last_error, test_last_error_code, test_last_error_msg};
-// `record_shell_error` and `record_recv_error` classify through the std-only
-// binding kind table, so their test aliases follow the same gate.
-pub use error::test_record_mux_error;
+// The classification test aliases are std-only, like `record_shell_error` and
+// `record_recv_error`: only the std integration tests call them.
 #[cfg(feature = "std")]
-pub use error::{test_record_recv_error, test_record_shell_error};
+pub use error::{test_record_mux_error, test_record_recv_error, test_record_shell_error};
 
 // Feature-gated re-exports used by the `feature_matrix_compile` integration
 // test to verify that each cargo feature exposes the expected entry points.

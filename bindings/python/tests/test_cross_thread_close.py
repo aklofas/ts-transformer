@@ -25,10 +25,10 @@ import pytest
 
 from _builders.hang_deadline import call_with_hang_deadline
 from _builders.mux_programs import video_only_program as _video_only_program
-from _builders.rist_ports import bind_even_port_or_skip
 from _builders.mux_programs import video_private_data_program as _video_data_program
 from _builders.ports import free_tcp_port as _free_tcp_port
 from _builders.ports import free_udp_port as _free_udp_port
+from _builders.rist_ports import bind_even_port_or_skip
 
 TS_PACKET = b"\x47" + b"\x00" * 187
 TS_BUNDLE = TS_PACKET * 7          # one full 1316-byte framing bundle

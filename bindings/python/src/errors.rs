@@ -297,7 +297,7 @@ pub(crate) fn klv_encode_error_to_pyerr(py: Python<'_>, e: tst_core::KlvEncodeEr
     let envelope = BindingError::from(e);
     let kind_str = envelope.kind.name();
     let tag: Option<u64> = envelope.diagnostics.tag;
-    let msg = envelope.detail.clone();
+    let msg = envelope.detail;
     let exceptions = match py.import_bound("tstrans.exceptions") {
         Ok(m) => m,
         Err(err) => return err,
