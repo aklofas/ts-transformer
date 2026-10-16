@@ -15,7 +15,9 @@
 mod lint_fixture;
 
 mod codec;
+mod custom;
 mod error;
+mod generated;
 mod handle;
 mod hls;
 mod jutil;

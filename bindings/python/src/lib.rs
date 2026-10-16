@@ -16,7 +16,9 @@
 mod lint_fixture;
 
 mod codec;
+mod custom;
 mod errors;
+mod generated;
 mod klv;
 mod mpegts;
 mod mux;

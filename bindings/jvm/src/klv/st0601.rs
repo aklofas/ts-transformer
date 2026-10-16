@@ -88,8 +88,8 @@ use tst_core::klv::st0601::{
     ImageHorizonPixels, Location, MetadataSubstreamId, OperationalMode, OutOfRangePolicy,
     PayloadList, PayloadRecord, PayloadType, PlatformStatus, SdccFlpField, SensorControlMode,
     SensorFovName, SensorFrameRate, St0601SentinelMeaning, UasDatalinkLs, ViewDomain,
-    ViewDomainPair, WavelengthRecord, Waypoint, WeaponsStore, decode as decode_lenient,
-    decode_strict, decode_strict_compliance, encode_strict_compliance, encode_to_vec_with,
+    ViewDomainPair, Waypoint, WeaponsStore, decode as decode_lenient, decode_strict,
+    decode_strict_compliance, encode_strict_compliance, encode_to_vec_with,
     st0601_sentinel_meaning,
 };
 use tst_core::klv::st1010::{SdccFlp, decode_sdcc_flp, encode_sdcc_flp_mode2};
@@ -554,42 +554,6 @@ fn read_country_codes(
         overflight: read_nullable_string(env, obj, "overflight")?,
         operator: read_nullable_string(env, obj, "operator")?,
         manufacture: read_nullable_string(env, obj, "manufacture")?,
-    })
-}
-
-// -- Item 128: Wavelengths List -----------------------------------------------
-
-fn build_wavelength_record(
-    env: &mut JNIEnv<'_>,
-    w: &WavelengthRecord,
-) -> jni::errors::Result<jobject> {
-    let name = env.new_string(&w.name)?;
-    let obj = env.new_object(
-        "org/tstrans/klv/WavelengthRecord",
-        "(JDDLjava/lang/String;)V",
-        &[
-            JValue::Long(w.id as i64),
-            JValue::Double(w.min_nm),
-            JValue::Double(w.max_nm),
-            JValue::Object(&name),
-        ],
-    )?;
-    Ok(obj.into_raw())
-}
-
-fn read_wavelength_record(
-    env: &mut JNIEnv<'_>,
-    obj: &JObject<'_>,
-) -> jni::errors::Result<WavelengthRecord> {
-    let id = env.call_method(obj, "id", "()J", &[])?.j()?;
-    let min_nm = env.call_method(obj, "minNm", "()D", &[])?.d()?;
-    let max_nm = env.call_method(obj, "maxNm", "()D", &[])?.d()?;
-    let name = read_string(env, obj, "name")?;
-    Ok(WavelengthRecord {
-        id: checked_u64(env, id, "WavelengthRecord.id")?,
-        min_nm,
-        max_nm,
-        name,
     })
 }
 
@@ -2318,8 +2282,7 @@ fn build_uas_datalink(env: &mut JNIEnv<'_>, r: &UasDatalinkLs) -> jni::errors::R
         let jlist = env.new_object("java/util/ArrayList", "()V", &[])?;
         for w in list {
             env.with_local_frame(16, |inner_env| -> jni::errors::Result<()> {
-                let raw = build_wavelength_record(inner_env, w)?;
-                let obj = unsafe { JObject::from_raw(raw) };
+                let obj = crate::generated::st0601::build_wavelength_record(inner_env, w)?;
                 inner_env.call_method(
                     &jlist,
                     "add",
@@ -3075,7 +3038,9 @@ fn read_uas_datalink(
                     let item = inner_env
                         .call_method(&list_obj, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
                         .l()?;
-                    list.push(read_wavelength_record(inner_env, &item)?);
+                    list.push(crate::generated::st0601::read_wavelength_record(
+                        inner_env, &item,
+                    )?);
                     Ok(())
                 })?;
             }
