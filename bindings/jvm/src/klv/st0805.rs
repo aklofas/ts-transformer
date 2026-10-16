@@ -34,8 +34,9 @@
 //! keeping cross-binding symmetry: both are "caller passed something the
 //! value cannot satisfy" errors, not codec/decode failures.
 
+use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JClass, JObject};
+use jni::objects::JObject;
 use jni::sys::{jlong, jobject};
 use tst_core::error::CotError;
 use tst_core::klv::st0805::{
@@ -135,16 +136,15 @@ fn new_string_or_throw(env: &mut JNIEnv<'_>, s: &str, caller: &str) -> jobject {
 
 // ── JNI entry points ─────────────────────────────────────────────────────────
 
-/// `org.tstrans.klv.Klv.platformPositionXmlNative(UasDatalinkLs, CotConfig, long) -> String`
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_platformPositionXmlNative<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    record: JObject<'local>,
-    config: JObject<'local>,
-    generated_us: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.platformPositionXmlNative(UasDatalinkLs, CotConfig, long) -> String`
+    fn Java_org_tstrans_klv_Klv_platformPositionXmlNative<'local>(
+        env,
+        _c,
+        record: JObject<'local>,
+        config: JObject<'local>,
+        generated_us: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         // Null args must throw NPE, never fall into the readers' silent
         // Err(NullPtr)-with-no-pending-exception path (see require_non_null).
         if require_non_null(env, &record, "record").is_err()
@@ -171,19 +171,18 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_platformPositionXmlNative<'local
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-/// `org.tstrans.klv.Klv.sensorPointOfInterestXmlNative(UasDatalinkLs, CotConfig, long) -> String`
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_sensorPointOfInterestXmlNative<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    record: JObject<'local>,
-    config: JObject<'local>,
-    generated_us: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.sensorPointOfInterestXmlNative(UasDatalinkLs, CotConfig, long) -> String`
+    fn Java_org_tstrans_klv_Klv_sensorPointOfInterestXmlNative<'local>(
+        env,
+        _c,
+        record: JObject<'local>,
+        config: JObject<'local>,
+        generated_us: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         // Same NPE-first contract as platformPositionXmlNative above.
         if require_non_null(env, &record, "record").is_err()
             || require_non_null(env, &config, "config").is_err()
@@ -209,17 +208,16 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_sensorPointOfInterestXmlNative<'
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-/// `org.tstrans.klv.Klv.platformUidNative(UasDatalinkLs) -> String`
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_platformUidNative<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    record: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.platformUidNative(UasDatalinkLs) -> String`
+    fn Java_org_tstrans_klv_Klv_platformUidNative<'local>(
+        env,
+        _c,
+        record: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         // Same NPE-first contract as platformPositionXmlNative above.
         if require_non_null(env, &record, "record").is_err() {
             return std::ptr::null_mut();
@@ -235,17 +233,16 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_platformUidNative<'local>(
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-/// `org.tstrans.klv.Klv.spiUidNative(UasDatalinkLs) -> String`
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_spiUidNative<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    record: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.spiUidNative(UasDatalinkLs) -> String`
+    fn Java_org_tstrans_klv_Klv_spiUidNative<'local>(
+        env,
+        _c,
+        record: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         // Same NPE-first contract as platformPositionXmlNative above.
         if require_non_null(env, &record, "record").is_err() {
             return std::ptr::null_mut();
@@ -261,5 +258,5 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_spiUidNative<'local>(
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }

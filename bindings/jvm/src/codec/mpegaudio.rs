@@ -18,8 +18,9 @@
 //! [`build_mpeg2_audio_frame`] is `pub(crate)` because the demux audio-retype
 //! task reuses it to surface typed `Mpeg2AudioFrame`s on `Sample` payloads.
 
+use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JValue};
+use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::jobject;
 use tst_core::codec::mpegaudio::{
     ChannelMode, FrameOwned, Layer, Version, frames, frames_with_resync,
@@ -147,13 +148,12 @@ fn build_frame_list<'local>(
     Ok(list)
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseMpeg2AudioFrames<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    bytes: JByteArray<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseMpeg2AudioFrames<'local>(
+        env,
+        _class,
+        bytes: JByteArray<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let buf = match env.convert_byte_array(&bytes) {
             Ok(b) => b,
             Err(_) => return JObject::null().into_raw(),
@@ -175,16 +175,15 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseMpeg2AudioFrames<'loca
             Ok(obj) => obj.into_raw(),
             Err(()) => JObject::null().into_raw(),
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseMpeg2AudioFramesWithResync<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    bytes: JByteArray<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseMpeg2AudioFramesWithResync<'local>(
+        env,
+        _class,
+        bytes: JByteArray<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let buf = match env.convert_byte_array(&bytes) {
             Ok(b) => b,
             Err(_) => return JObject::null().into_raw(),
@@ -201,5 +200,5 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseMpeg2AudioFramesWithRe
             Ok(obj) => obj.into_raw(),
             Err(()) => JObject::null().into_raw(),
         }
-    })
+    }
 }

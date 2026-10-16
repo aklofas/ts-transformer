@@ -13,10 +13,11 @@
 //! take `&self` (the shell serialises internally), so they lease with the
 //! non-poisoning `with`.
 
+use crate::panic::jni_native;
 use std::sync::LazyLock;
 
 use jni::JNIEnv;
-use jni::objects::{JBooleanArray, JByteArray, JClass, JIntArray, JValue};
+use jni::objects::{JBooleanArray, JByteArray, JIntArray, JValue};
 use jni::sys::{jboolean, jint, jlong, jobject};
 
 use tst_core::mpegts::common::Pts90khz;
@@ -63,34 +64,33 @@ fn build_mux_publisher_stats<'local>(
     )
 }
 
-/// `nWithConfigHls(publisherHandle, ...programConfig...)` — consume the
-/// publisher, build the shell. The Java side passes the LIVE handle and
-/// zeroes it only after this returns nonzero, so the `REGISTRY_HLS.close`
-/// below is the single atomic claim; a registry miss here means a
-/// concurrent `close()`/`finish()`/`withConfigHls` on the same publisher won
-/// the race.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nWithConfigHls<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    publisher_handle: jlong,
-    program_number: jint,
-    pmt_pid: jint,
-    pcr_pid: jint,
-    pcr_interval_ms: jint,
-    psi_interval_ms: jint,
-    buffer_packets: jint,
-    av1_carriage: jint,
-    stream_pids: JIntArray<'local>,
-    stream_kinds: JIntArray<'local>,
-    stream_codecs: JIntArray<'local>,
-    stream_type_codes: JIntArray<'local>,
-    stream_carries_pts: JBooleanArray<'local>,
-    data_desc_bytes: JByteArray<'local>,
-    data_desc_lens: JIntArray<'local>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nWithConfigHls(publisherHandle, ...programConfig...)` — consume the
+    /// publisher, build the shell. The Java side passes the LIVE handle and
+    /// zeroes it only after this returns nonzero, so the `REGISTRY_HLS.close`
+    /// below is the single atomic claim; a registry miss here means a
+    /// concurrent `close()`/`finish()`/`withConfigHls` on the same publisher won
+    /// the race.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_hls_MuxPublisher_nWithConfigHls<'local>(
+        env,
+        _class,
+        publisher_handle: jlong,
+        program_number: jint,
+        pmt_pid: jint,
+        pcr_pid: jint,
+        pcr_interval_ms: jint,
+        psi_interval_ms: jint,
+        buffer_packets: jint,
+        av1_carriage: jint,
+        stream_pids: JIntArray<'local>,
+        stream_kinds: JIntArray<'local>,
+        stream_codecs: JIntArray<'local>,
+        stream_type_codes: JIntArray<'local>,
+        stream_carries_pts: JBooleanArray<'local>,
+        data_desc_bytes: JByteArray<'local>,
+        data_desc_lens: JIntArray<'local>,
+    ) -> jlong = 0 => {
         // Config FIRST: a rejected config returns before the take, so the
         // publisher stays usable (the Java side now also reads the handle
         // live and claims it only after this call succeeds — see
@@ -126,38 +126,36 @@ pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nWithConfigHls<'local>(
                 0
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nSendVideo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    nal: JByteArray<'local>,
-    pts: jlong,
-    key_frame: jboolean,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    fn Java_org_tstrans_hls_MuxPublisher_nSendVideo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        key_frame: jboolean,
+    ) = () => {
         let Some(buf) = read_bytes(env, &nal) else {
             return;
         };
         with_shell(env, handle, |s| {
             s.push_video(&buf, Pts90khz::new(pts), key_frame != 0)
         });
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nSendKlv<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    klv: JByteArray<'local>,
-    pts: jlong,
-    stream_index: jint,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    fn Java_org_tstrans_hls_MuxPublisher_nSendKlv<'local>(
+        env,
+        _class,
+        handle: jlong,
+        klv: JByteArray<'local>,
+        pts: jlong,
+        stream_index: jint,
+    ) = () => {
         let Ok(idx) = checked_u8(env, i64::from(stream_index), "streamIndex") else {
             return;
         };
@@ -165,61 +163,53 @@ pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nSendKlv<'local>(
             return;
         };
         with_shell(env, handle, |s| s.push_klv(&buf, Pts90khz::new(pts), idx));
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nSendAudio<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    frames: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    fn Java_org_tstrans_hls_MuxPublisher_nSendAudio<'local>(
+        env,
+        _class,
+        handle: jlong,
+        frames: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(buf) = read_bytes(env, &frames) else {
             return;
         };
         with_shell(env, handle, |s| s.push_audio(&buf, Pts90khz::new(pts)));
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nSendSubtitle<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    payload: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    fn Java_org_tstrans_hls_MuxPublisher_nSendSubtitle<'local>(
+        env,
+        _class,
+        handle: jlong,
+        payload: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(buf) = read_bytes(env, &payload) else {
             return;
         };
         with_shell(env, handle, |s| s.push_subtitle(&buf, Pts90khz::new(pts)));
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nCutSegment<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    fn Java_org_tstrans_hls_MuxPublisher_nCutSegment<'local>(env, _class, handle: jlong) = () => {
         with_shell(env, handle, |s| s.cut_segment());
-    })
+    }
 }
 
-/// `nFinishIntoPublisher(handle)` — consume the shell; the inner publisher
-/// becomes a fresh `HlsPublisher` handle (its key is returned).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nFinishIntoPublisher<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| match REGISTRY.close(handle as u64) {
+jni_native! {
+    /// `nFinishIntoPublisher(handle)` — consume the shell; the inner publisher
+    /// becomes a fresh `HlsPublisher` handle (its key is returned).
+    fn Java_org_tstrans_hls_MuxPublisher_nFinishIntoPublisher<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => { match REGISTRY.close(handle as u64) {
         Some(shell) => match shell.finish() {
             Ok(publisher) => register_hls(publisher),
             Err(e) => {
@@ -231,16 +221,15 @@ pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nFinishIntoPublisher<'l
             throw_closed(env, "MuxPublisher");
             0
         }
-    })
+    } }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_hls_MuxPublisher_nStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         match REGISTRY.with(handle as u64, |s| s.stats()) {
             Some(st) => build_mux_publisher_stats(env, &st)
                 .map(|o| o.into_raw())
@@ -250,16 +239,15 @@ pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nStats<'local>(
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nPublisherStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_hls_MuxPublisher_nPublisherStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         match REGISTRY.with(handle as u64, |s| s.publisher_stats()) {
             Some(st) => build_publisher_stats(env, &st)
                 .map(|o| o.into_raw())
@@ -269,22 +257,17 @@ pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nPublisherStats<'local>
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-/// `nClose(handle)` — quiet: finish the shell AND the inner publisher, errors
-/// dropped, idempotent.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nClose<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// `nClose(handle)` — quiet: finish the shell AND the inner publisher, errors
+    /// dropped, idempotent.
+    fn Java_org_tstrans_hls_MuxPublisher_nClose<'local>(_env, _class, handle: jlong) = () => {
         if let Some(shell) = REGISTRY.close(handle as u64) {
             if let Ok(publisher) = shell.finish() {
                 let _ = tst_core::publisher::Publisher::finish(publisher);
             }
         }
-    })
+    }
 }

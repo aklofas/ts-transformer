@@ -32,9 +32,8 @@ mod srt;
 #[cfg(feature = "jni-test-hooks")]
 mod test_hooks;
 
-use jni::JNIEnv;
+use crate::panic::jni_native;
 use jni::JavaVM;
-use jni::objects::JClass;
 use jni::sys::{JNI_VERSION_1_8, jint, jstring};
 use std::os::raw::c_void;
 
@@ -77,37 +76,31 @@ pub extern "system" fn JNI_OnLoad(_vm: JavaVM, _reserved: *mut c_void) -> jint {
     JNI_VERSION_1_8
 }
 
-/// `org.tstrans.NativeLoader.nVerifyKinds()` — see
-/// `crate::error::verify_kind_tables`. Resolves every error kind this
-/// library can raise against the `*Exception.Kind` enums of the JAR that
-/// just loaded it, so a JAR/native mismatch fails at `System.load` naming
-/// both sides instead of at the first failing call.
-///
-/// Not done in `JNI_OnLoad`: an exception pending when `JNI_OnLoad` returns
-/// reaches Java as `UnsatisfiedLinkError("exception occurred in JNI_OnLoad")`
-/// with the detail dropped; a native called right after `System.load`
-/// surfaces the exact mismatch.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_NativeLoader_nVerifyKinds(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| crate::error::verify_kind_tables(env));
+jni_native! {
+    /// `org.tstrans.NativeLoader.nVerifyKinds()` — see
+    /// `crate::error::verify_kind_tables`. Resolves every error kind this
+    /// library can raise against the `*Exception.Kind` enums of the JAR that
+    /// just loaded it, so a JAR/native mismatch fails at `System.load` naming
+    /// both sides instead of at the first failing call.
+    ///
+    /// Not done in `JNI_OnLoad`: an exception pending when `JNI_OnLoad` returns
+    /// reaches Java as `UnsatisfiedLinkError("exception occurred in JNI_OnLoad")`
+    /// with the detail dropped; a native called right after `System.load`
+    /// surfaces the exact mismatch.
+    fn Java_org_tstrans_NativeLoader_nVerifyKinds(env, _class) = () => { crate::error::verify_kind_tables(env) }
 }
 
-/// `org.tstrans.Version.versionString()` — returns the Rust workspace crate
-/// version (e.g. "0.2.0") as a Java string, proving a value crosses the JNI
-/// boundary from Rust to the JVM.
-///
-/// `#[unsafe(no_mangle)]` (edition 2024 spelling) keeps the symbol name exactly
-/// `Java_org_tstrans_Version_versionString` so the JVM's native-method linker
-/// resolves it.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_Version_versionString<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-) -> jstring {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.Version.versionString()` — returns the Rust workspace crate
+    /// version (e.g. "0.2.0") as a Java string, proving a value crosses the JNI
+    /// boundary from Rust to the JVM.
+    ///
+    /// `Java_org_tstrans_Version_versionString` so the JVM's native-method linker
+    /// resolves it.
+    fn Java_org_tstrans_Version_versionString<'local>(
+        env,
+        _class,
+    ) -> jstring = std::ptr::null_mut() => {
         // A failed JNI allocation has already left an OutOfMemoryError pending
         // on this thread; returning null lets the JVM raise it instead of
         // aborting the process from Rust.
@@ -115,7 +108,7 @@ pub extern "system" fn Java_org_tstrans_Version_versionString<'local>(
             Ok(js) => js.into_raw(),
             Err(_) => std::ptr::null_mut(),
         }
-    })
+    }
 }
 
 #[cfg(test)]

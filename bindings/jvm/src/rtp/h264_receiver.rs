@@ -24,13 +24,14 @@
 //! - other `TransportError`           → `RtpException(IO)`
 //! - `ConnectError`                   → `RtpException(IO)`
 
+use crate::panic::jni_native;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 use tst_pipeline::binding::view::BlockingReason;
 
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JObjectArray, JString, JValue};
+use jni::objects::{JByteArray, JObject, JObjectArray, JString, JValue};
 use jni::sys::{jboolean, jint, jlong, jobject};
 
 use tst_rtp::rtsp::client::RtspClient as RustRtspClient;
@@ -113,16 +114,15 @@ fn insert_receiver(receiver: H264Receiver, rtsp: Option<JniRtspControl>) -> jlon
 // `H264Receiver.nListen(url)` — default H264DepayConfig
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `H264Receiver.nListen(url)` — parse an `rtp://host:port?pt=N` URL, bind a
-/// UDP socket, and return a handle. Mirrors tst-py `PyH264Receiver::listen` with
-/// `config=None`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nListen<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    url: JString<'local>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `H264Receiver.nListen(url)` — parse an `rtp://host:port?pt=N` URL, bind a
+    /// UDP socket, and return a handle. Mirrors tst-py `PyH264Receiver::listen` with
+    /// `config=None`.
+    fn Java_org_tstrans_rtp_H264Receiver_nListen<'local>(
+        env,
+        _class,
+        url: JString<'local>,
+    ) -> jlong = 0 => {
         let url_str: String = match env.get_string(&url) {
             Ok(s) => s.into(),
             Err(e) => {
@@ -137,32 +137,31 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nListen<'local>(
                 0
             }
         }
-    })
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // `H264Receiver.nListenWithConfig(...)` — explicit H264DepayConfig
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `H264Receiver.nListenWithConfig(url, payloadType, parameterSetInjection,
-/// initialParameterSets, maxAuBytes)` — parse the URL, build the config from
-/// caller-supplied fields, bind, and return a handle. Mirrors tst-py
-/// `PyH264Receiver::listen` with an explicit config.
-///
-/// `initialParameterSets` is a `byte[][]` (Java `JObjectArray`); may be null
-/// (treated as empty). Each element is a raw NALU byte array.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nListenWithConfig<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    url: JString<'local>,
-    payload_type: jint,
-    parameter_set_injection: jint,
-    initial_parameter_sets: JObjectArray<'local>,
-    max_au_bytes: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `H264Receiver.nListenWithConfig(url, payloadType, parameterSetInjection,
+    /// initialParameterSets, maxAuBytes)` — parse the URL, build the config from
+    /// caller-supplied fields, bind, and return a handle. Mirrors tst-py
+    /// `PyH264Receiver::listen` with an explicit config.
+    ///
+    /// `initialParameterSets` is a `byte[][]` (Java `JObjectArray`); may be null
+    /// (treated as empty). Each element is a raw NALU byte array.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_rtp_H264Receiver_nListenWithConfig<'local>(
+        env,
+        _class,
+        url: JString<'local>,
+        payload_type: jint,
+        parameter_set_injection: jint,
+        initial_parameter_sets: JObjectArray<'local>,
+        max_au_bytes: jlong,
+    ) -> jlong = 0 => {
         let url_str: String = match env.get_string(&url) {
             Ok(s) => s.into(),
             Err(e) => {
@@ -228,28 +227,27 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nListenWithConfig<'loca
                 0
             }
         }
-    })
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // `H264Receiver.nRecvAu(handle)` — blocking recv
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `H264Receiver.nRecvAu(handle)` — block until the next H.264 Access Unit is
-/// reassembled. Returns an `H264AccessUnit` Java object on success, `null` at EOS,
-/// or throws on error. Mirrors tst-py `PyH264Receiver::recv_au`.
-///
-/// The registry lease holds the slot's resource lock for the duration of the
-/// (possibly parked) `recv_au` call. A concurrent `close()` fires the cancel hook
-/// (waking the parked recv) BEFORE it takes the resource; so `close()` is a safe
-/// cross-thread stop.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAu<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `H264Receiver.nRecvAu(handle)` — block until the next H.264 Access Unit is
+    /// reassembled. Returns an `H264AccessUnit` Java object on success, `null` at EOS,
+    /// or throws on error. Mirrors tst-py `PyH264Receiver::recv_au`.
+    ///
+    /// The registry lease holds the slot's resource lock for the duration of the
+    /// (possibly parked) `recv_au` call. A concurrent `close()` fires the cancel hook
+    /// (waking the parked recv) BEFORE it takes the resource; so `close()` is a safe
+    /// cross-thread stop.
+    fn Java_org_tstrans_rtp_H264Receiver_nRecvAu<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         // `with_mut` holds the slot while recv_au runs (which may park the
         // calling thread). A concurrent `close()` cancels first, so this call
         // returns promptly and the slot is then taken.
@@ -276,33 +274,32 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAu<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // `H264Receiver.nRecvAuTimeout(handle, timeoutMs)` — per-call-deadline recv
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `H264Receiver.nRecvAuTimeout(handle, timeoutMs)` — block for at most
-/// `timeoutMs` ms for the next H.264 Access Unit. `timeoutMs < 0` blocks
-/// indefinitely via the plain `recv_au` path — byte-identical to `nRecvAu`, so
-/// any persistent deadline armed by the `?recv_timeout=` URL knob still
-/// applies. `timeoutMs >= 0` takes a one-shot `H264Receiver::recv_au_timeout`
-/// override for this call only. Mirrors tst-py
-/// `PyH264Receiver.recv_au(timeout_ms=...)`.
-///
-/// Unlike `RtpRecvTransport::recv_timeout`, `recv_au_timeout` reports deadline
-/// expiry as `Err(TransportError::Backpressure)`, not `Ok(None)` — so no
-/// hand-mapping is needed here: `transport_error` already maps
-/// `Backpressure` to `RtpException(BACKPRESSURE)`, and `Ok(None)` stays EOS-only.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAuTimeout<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    timeout_ms: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `H264Receiver.nRecvAuTimeout(handle, timeoutMs)` — block for at most
+    /// `timeoutMs` ms for the next H.264 Access Unit. `timeoutMs < 0` blocks
+    /// indefinitely via the plain `recv_au` path — byte-identical to `nRecvAu`, so
+    /// any persistent deadline armed by the `?recv_timeout=` URL knob still
+    /// applies. `timeoutMs >= 0` takes a one-shot `H264Receiver::recv_au_timeout`
+    /// override for this call only. Mirrors tst-py
+    /// `PyH264Receiver.recv_au(timeout_ms=...)`.
+    ///
+    /// Unlike `RtpRecvTransport::recv_timeout`, `recv_au_timeout` reports deadline
+    /// expiry as `Err(TransportError::Backpressure)`, not `Ok(None)` — so no
+    /// hand-mapping is needed here: `transport_error` already maps
+    /// `Backpressure` to `RtpException(BACKPRESSURE)`, and `Ok(None)` stays EOS-only.
+    fn Java_org_tstrans_rtp_H264Receiver_nRecvAuTimeout<'local>(
+        env,
+        _class,
+        handle: jlong,
+        timeout_ms: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         let result = match REGISTRY.with_mut(handle as u64, |jdr| {
             if timeout_ms < 0 {
                 jdr.inner.recv_au()
@@ -334,7 +331,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAuTimeout<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
 /// Build a `org.tstrans.rtp.H264AccessUnit` Java object from a Rust
@@ -382,16 +379,15 @@ fn build_h264_access_unit(env: &mut JNIEnv, au: &H264Au) -> jobject {
 // Stats natives
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `H264Receiver.nDepayStats(handle)` — snapshot the depacketizer counters.
-/// Returns an `H264DepayStats` Java record. Throws `IllegalStateException` on
-/// a closed handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nDepayStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `H264Receiver.nDepayStats(handle)` — snapshot the depacketizer counters.
+    /// Returns an `H264DepayStats` Java record. Throws `IllegalStateException` on
+    /// a closed handle.
+    fn Java_org_tstrans_rtp_H264Receiver_nDepayStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let s = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -428,19 +424,18 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nDepayStats<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-/// `H264Receiver.nRtpStats(handle)` — RTP protocol-level counters (malformed
-/// packets, source-pin rejections).
-/// Returns an `RtpStats` Java record.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRtpStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `H264Receiver.nRtpStats(handle)` — RTP protocol-level counters (malformed
+    /// packets, source-pin rejections).
+    /// Returns an `RtpStats` Java record.
+    fn Java_org_tstrans_rtp_H264Receiver_nRtpStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let s = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -469,20 +464,19 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRtpStats<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-/// `H264Receiver.nSocketStats(handle)` — wire-level throughput statistics.
-/// Returns an `org.tstrans.shells.SocketStats` record (direct, NOT wrapped in
-/// `TransportStats` — mirrors the Rust/Python asymmetry documented in the Java
-/// class's Javadoc).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nSocketStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `H264Receiver.nSocketStats(handle)` — wire-level throughput statistics.
+    /// Returns an `org.tstrans.shells.SocketStats` record (direct, NOT wrapped in
+    /// `TransportStats` — mirrors the Rust/Python asymmetry documented in the Java
+    /// class's Javadoc).
+    fn Java_org_tstrans_rtp_H264Receiver_nSocketStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let s = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -504,22 +498,21 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nSocketStats<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Misc natives
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `H264Receiver.nLocalAddr(handle)` — local UDP socket address as
-/// `"host:port"` string, or `null` for the TCP-interleaved (RTSP) path.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nLocalAddr<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `H264Receiver.nLocalAddr(handle)` — local UDP socket address as
+    /// `"host:port"` string, or `null` for the TCP-interleaved (RTSP) path.
+    fn Java_org_tstrans_rtp_H264Receiver_nLocalAddr<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         // Lock-free: the bound address is a construction constant, snapshotted
         // at `insert_receiver`, so this answers while `recvAu` is parked.
         let Some(addr) = REGISTRY.snapshot(handle as u64, |a| *a) else {
@@ -539,19 +532,14 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nLocalAddr<'local>(
                 }
             }
         }
-    })
+    }
 }
 
-/// `H264Receiver.nCancelHandle(handle)` — clone the cancel handle into a
-/// `org.tstrans.shells.CancelHandle` registry slot and return the slot id as
-/// `jlong`. Returns 0 on a closed receiver.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `H264Receiver.nCancelHandle(handle)` — clone the cancel handle into a
+    /// `org.tstrans.shells.CancelHandle` registry slot and return the slot id as
+    /// `jlong`. Returns 0 on a closed receiver.
+    fn Java_org_tstrans_rtp_H264Receiver_nCancelHandle(env, _class, handle: jlong) -> jlong = 0 => {
         // Lock-free: the view is the `Owned` entry itself, so this returns
         // while `recvAu` is parked on the slot.
         match REGISTRY.cancel_view(handle as u64) {
@@ -561,25 +549,20 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nCancelHandle(
                 0
             }
         }
-    })
+    }
 }
 
-/// `H264Receiver.nEndReason(handle)` — why the receive session ended, as the
-/// wire-pinned ordinal (see `end_reason`'s module doc); `-1` if it hasn't
-/// ended yet, or on a closed/absent handle (the closed case never reaches
-/// this native — `H264Receiver.endReason()` reads the Java-side snapshot
-/// once `peekHandle()` is 0). Unlike `Receiver`/`DemuxReceiver`,
-/// `H264Receiver` has no `end_reason_handle()` — this reads the live
-/// receiver's own `&self` getter, without waiting for the slot: while a
-/// `recvAu` is in flight on another thread the reason is not final, and the
-/// answer is `-1` (tst-py's `end_reason()` answers `None` the same way).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nEndReason(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jint {
-    crate::panic::jni_catch(&mut env, -1, |_env| {
+jni_native! {
+    /// `H264Receiver.nEndReason(handle)` — why the receive session ended, as the
+    /// wire-pinned ordinal (see `end_reason`'s module doc); `-1` if it hasn't
+    /// ended yet, or on a closed/absent handle (the closed case never reaches
+    /// this native — `H264Receiver.endReason()` reads the Java-side snapshot
+    /// once `peekHandle()` is 0). Unlike `Receiver`/`DemuxReceiver`,
+    /// `H264Receiver` has no `end_reason_handle()` — this reads the live
+    /// receiver's own `&self` getter, without waiting for the slot: while a
+    /// `recvAu` is in flight on another thread the reason is not final, and the
+    /// answer is `-1` (tst-py's `end_reason()` answers `None` the same way).
+    fn Java_org_tstrans_rtp_H264Receiver_nEndReason(_env, _class, handle: jlong) -> jint = -1 => {
         REGISTRY
             .try_with_ref(handle as u64, |jdr| {
                 crate::shells::end_reason::wire_value(jdr.inner.end_reason().as_ref())
@@ -587,20 +570,19 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nEndReason(
             .ok()
             .flatten()
             .unwrap_or(-1)
-    })
+    }
 }
 
-/// `H264Receiver.nEndDetail(handle)` — free-text detail for `nEndReason`;
-/// `null` for a detail-less reason, "hasn't ended yet" (which includes a
-/// `recvAu` in flight on another thread — see `nEndReason`), or a
-/// closed/absent handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nEndDetail<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// `H264Receiver.nEndDetail(handle)` — free-text detail for `nEndReason`;
+    /// `null` for a detail-less reason, "hasn't ended yet" (which includes a
+    /// `recvAu` in flight on another thread — see `nEndReason`), or a
+    /// closed/absent handle.
+    fn Java_org_tstrans_rtp_H264Receiver_nEndDetail<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         let detail = REGISTRY
             .try_with_ref(handle as u64, |jdr| {
                 jdr.inner
@@ -617,30 +599,29 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nEndDetail<'local>(
             },
             None => JObject::null(),
         }
-    })
+    }
 }
 
-/// `H264Receiver.nClose(handle)` — cancel-first (wakes a parked recv), then take
-/// + close the inner receiver and free the box. Atomic + idempotent.
-///
-/// For RTSP-created receivers the slot also owns the session control plane
-/// (see [`JniRtspControl`]): best-effort TEARDOWN fires first (so the server
-/// stops streaming), then the data plane closes — mirroring
-/// `RtspSession.nClose`'s teardown contract.
-///
-/// Returns the close-time `EndReasonSnapshot` (see `end_reason`'s module
-/// doc) — read here, right after `slot.inner.close()` records `Cancelled`
-/// (first-writer-wins) and before `slot` drops, because the registry entry
-/// (and any further `nEndReason`/`nEndDetail` call on this handle) is gone
-/// once this function returns. `null` only on a JNI allocation failure
-/// building the snapshot (`nativeClose` null-checks before touching it).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `H264Receiver.nClose(handle)` — cancel-first (wakes a parked recv), then take
+    /// + close the inner receiver and free the box. Atomic + idempotent.
+    ///
+    /// For RTSP-created receivers the slot also owns the session control plane
+    /// (see [`JniRtspControl`]): best-effort TEARDOWN fires first (so the server
+    /// stops streaming), then the data plane closes — mirroring
+    /// `RtspSession.nClose`'s teardown contract.
+    ///
+    /// Returns the close-time `EndReasonSnapshot` (see `end_reason`'s module
+    /// doc) — read here, right after `slot.inner.close()` records `Cancelled`
+    /// (first-writer-wins) and before `slot` drops, because the registry entry
+    /// (and any further `nEndReason`/`nEndDetail` call on this handle) is gone
+    /// once this function returns. `null` only on a JNI allocation failure
+    /// building the snapshot (`nativeClose` null-checks before touching it).
+    fn Java_org_tstrans_rtp_H264Receiver_nClose(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         // `REGISTRY.close` fires the cancel hook FIRST (waking any parked recv_au
         // WITHOUT taking the resource lock), THEN takes + drops the slot under the
         // lock (blocking briefly until the woken recv releases it). Atomic +
@@ -664,5 +645,5 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nClose(
         crate::shells::end_reason::build_close_snapshot(env, reason)
             .map(|obj| obj.into_raw())
             .unwrap_or(std::ptr::null_mut())
-    })
+    }
 }

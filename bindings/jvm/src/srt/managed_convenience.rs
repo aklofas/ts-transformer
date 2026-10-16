@@ -40,13 +40,14 @@
 //! the SAME value as `socketStats`, return type `SocketStats`, no throw) +
 //! `reconnectAttempts()` — NO combined `stats()`.
 
+use crate::panic::jni_native;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::Ordering;
 use tst_pipeline::binding::view::BlockingReason;
 
 use jni::JNIEnv;
-use jni::objects::{JBooleanArray, JByteArray, JClass, JIntArray, JObject, JString};
+use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JString};
 use jni::sys::{jboolean, jint, jlong, jobject};
 
 use tst_core::mpegts::common::Pts90khz;
@@ -153,40 +154,39 @@ fn mux_first_handle(
     })
 }
 
-/// `ManagedMuxSender.nFromUrl(url, ...programConfig..., ...policyArgs...)` —
-/// build the muxer config, parse the caller-mode URL, do the initial connect,
-/// wrap it in a `ManagedTransport`, and hand it to `MuxSender`. Returns the
-/// boxed handle as `jlong`, or `0` with a pending exception on any failure.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nFromUrl<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    url: JString<'local>,
-    program_number: jint,
-    pmt_pid: jint,
-    pcr_pid: jint,
-    pcr_interval_ms: jint,
-    psi_interval_ms: jint,
-    buffer_packets: jint,
-    av1_carriage: jint,
-    stream_pids: JIntArray<'local>,
-    stream_kinds: JIntArray<'local>,
-    stream_codecs: JIntArray<'local>,
-    stream_type_codes: JIntArray<'local>,
-    stream_carries_pts: JBooleanArray<'local>,
-    data_desc_bytes: JByteArray<'local>,
-    data_desc_lens: JIntArray<'local>,
-    max_attempts_present: jboolean,
-    max_attempts: jint,
-    backoff_kind: jint,
-    backoff_base_ms: jlong,
-    backoff_max_ms: jlong,
-    gap_buffer_capacity: jint,
-    overflow_policy: jint,
-    mode: jint,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `ManagedMuxSender.nFromUrl(url, ...programConfig..., ...policyArgs...)` —
+    /// build the muxer config, parse the caller-mode URL, do the initial connect,
+    /// wrap it in a `ManagedTransport`, and hand it to `MuxSender`. Returns the
+    /// boxed handle as `jlong`, or `0` with a pending exception on any failure.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_srt_ManagedMuxSender_nFromUrl<'local>(
+        env,
+        _class,
+        url: JString<'local>,
+        program_number: jint,
+        pmt_pid: jint,
+        pcr_pid: jint,
+        pcr_interval_ms: jint,
+        psi_interval_ms: jint,
+        buffer_packets: jint,
+        av1_carriage: jint,
+        stream_pids: JIntArray<'local>,
+        stream_kinds: JIntArray<'local>,
+        stream_codecs: JIntArray<'local>,
+        stream_type_codes: JIntArray<'local>,
+        stream_carries_pts: JBooleanArray<'local>,
+        data_desc_bytes: JByteArray<'local>,
+        data_desc_lens: JIntArray<'local>,
+        max_attempts_present: jboolean,
+        max_attempts: jint,
+        backoff_kind: jint,
+        backoff_base_ms: jlong,
+        backoff_max_ms: jlong,
+        gap_buffer_capacity: jint,
+        overflow_policy: jint,
+        mode: jint,
+    ) -> jlong = 0 => {
         // Build the MuxerConfig FIRST — a pending MuxException is thrown on Err(()).
         let muxer_cfg = match build_muxer_config_from_arrays(
             env,
@@ -274,42 +274,40 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nFromUrl<'local>(
                 streams,
             },
         )) as jlong
-    })
+    }
 }
 
 // ── Send family — single-stream variants ───────────────────────────────────
 
-/// `nSendVideo(handle, nal, pts, keyFrame)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendVideo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    nal: JByteArray<'local>,
-    pts: jlong,
-    key_frame: jboolean,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendVideo(handle, nal, pts, keyFrame)`.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nSendVideo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        key_frame: jboolean,
+    ) = () => {
         let Some(buf) = read_bytes(env, &nal) else {
             return;
         };
         with_mux_push(env, handle, |inner| {
             inner.send_video(&buf, Pts90khz::new(pts), key_frame != 0)
         });
-    })
+    }
 }
 
-/// `nSendKlv(handle, klv, pts, metadataServiceId)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendKlv<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    klv: JByteArray<'local>,
-    pts: jlong,
-    metadata_service_id: jint,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendKlv(handle, klv, pts, metadataServiceId)`.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nSendKlv<'local>(
+        env,
+        _class,
+        handle: jlong,
+        klv: JByteArray<'local>,
+        pts: jlong,
+        metadata_service_id: jint,
+    ) = () => {
         let Ok(service_id) = checked_u8(env, i64::from(metadata_service_id), "metadataServiceId")
         else {
             return; // IllegalArgumentException pending
@@ -320,80 +318,76 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendKlv<'local>(
         with_mux_push(env, handle, |inner| {
             inner.send_klv(&buf, Pts90khz::new(pts), service_id)
         });
-    })
+    }
 }
 
-/// `nSendAudio(handle, frames, pts)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendAudio<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    frames: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendAudio(handle, frames, pts)`.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nSendAudio<'local>(
+        env,
+        _class,
+        handle: jlong,
+        frames: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(buf) = read_bytes(env, &frames) else {
             return;
         };
         with_mux_push(env, handle, |inner| {
             inner.send_audio(&buf, Pts90khz::new(pts))
         });
-    })
+    }
 }
 
-/// `nSendSubtitle(handle, pts, payload)` — note the swapped arg order.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendSubtitle<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    pts: jlong,
-    payload: JByteArray<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendSubtitle(handle, pts, payload)` — note the swapped arg order.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nSendSubtitle<'local>(
+        env,
+        _class,
+        handle: jlong,
+        pts: jlong,
+        payload: JByteArray<'local>,
+    ) = () => {
         let Some(buf) = read_bytes(env, &payload) else {
             return;
         };
         with_mux_push(env, handle, |inner| {
             inner.send_subtitle(&buf, Pts90khz::new(pts))
         });
-    })
+    }
 }
 
-/// `nSendData(handle, data, pts)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendData<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    data: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendData(handle, data, pts)`.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nSendData<'local>(
+        env,
+        _class,
+        handle: jlong,
+        data: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(buf) = read_bytes(env, &data) else {
             return;
         };
         with_mux_push(env, handle, |inner| {
             inner.send_data(&buf, Pts90khz::new(pts))
         });
-    })
+    }
 }
 
 // ── Send family — handle-targeted variants ─────────────────────────────────
 
-/// `nSendVideoTo(handle, streamHandleRaw, nal, pts, keyFrame)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendVideoTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    nal: JByteArray<'local>,
-    pts: jlong,
-    key_frame: jboolean,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendVideoTo(handle, streamHandleRaw, nal, pts, keyFrame)`.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nSendVideoTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        key_frame: jboolean,
+    ) = () => {
         let Some(h) = u32::try_from(stream_handle_raw)
             .ok()
             .and_then(|r| VideoStreamHandle::try_from_raw(r).ok())
@@ -411,21 +405,20 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendVideoTo<'local
         with_mux_push(env, handle, |inner| {
             inner.send_video_to(h, &buf, Pts90khz::new(pts), key_frame != 0)
         });
-    })
+    }
 }
 
-/// `nSendKlvTo(handle, streamHandleRaw, klv, pts, metadataServiceId)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendKlvTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    klv: JByteArray<'local>,
-    pts: jlong,
-    metadata_service_id: jint,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendKlvTo(handle, streamHandleRaw, klv, pts, metadataServiceId)`.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nSendKlvTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        klv: JByteArray<'local>,
+        pts: jlong,
+        metadata_service_id: jint,
+    ) = () => {
         let Some(h) = u32::try_from(stream_handle_raw)
             .ok()
             .and_then(|r| KlvStreamHandle::try_from_raw(r).ok())
@@ -447,20 +440,19 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendKlvTo<'local>(
         with_mux_push(env, handle, |inner| {
             inner.send_klv_to(h, &buf, Pts90khz::new(pts), service_id)
         });
-    })
+    }
 }
 
-/// `nSendAudioTo(handle, streamHandleRaw, frames, pts)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendAudioTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    frames: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendAudioTo(handle, streamHandleRaw, frames, pts)`.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nSendAudioTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        frames: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(h) = u32::try_from(stream_handle_raw)
             .ok()
             .and_then(|r| AudioStreamHandle::try_from_raw(r).ok())
@@ -478,20 +470,19 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendAudioTo<'local
         with_mux_push(env, handle, |inner| {
             inner.send_audio_to(h, &buf, Pts90khz::new(pts))
         });
-    })
+    }
 }
 
-/// `nSendSubtitleTo(handle, streamHandleRaw, pts, payload)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendSubtitleTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    pts: jlong,
-    payload: JByteArray<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendSubtitleTo(handle, streamHandleRaw, pts, payload)`.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nSendSubtitleTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        pts: jlong,
+        payload: JByteArray<'local>,
+    ) = () => {
         let Some(h) = u32::try_from(stream_handle_raw)
             .ok()
             .and_then(|r| SubtitleStreamHandle::try_from_raw(r).ok())
@@ -509,23 +500,22 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendSubtitleTo<'lo
         with_mux_push(env, handle, |inner| {
             inner.send_subtitle_to(h, &buf, Pts90khz::new(pts))
         });
-    })
+    }
 }
 
-/// `nSendDataTo(handle, streamHandleRaw, data, pts)`. The raw handle is
-/// validated via the strict `u32::try_from` + `DataStreamHandle::try_from_raw`
-/// chain (rejecting negative / out-of-u32 values up front rather than
-/// truncating, mirroring `MuxSender::nSendDataTo`).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendDataTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    data: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nSendDataTo(handle, streamHandleRaw, data, pts)`. The raw handle is
+    /// validated via the strict `u32::try_from` + `DataStreamHandle::try_from_raw`
+    /// chain (rejecting negative / out-of-u32 values up front rather than
+    /// truncating, mirroring `MuxSender::nSendDataTo`).
+    fn Java_org_tstrans_srt_ManagedMuxSender_nSendDataTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        data: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(h) = u32::try_from(stream_handle_raw)
             .ok()
             .and_then(|r| DataStreamHandle::try_from_raw(r).ok())
@@ -543,83 +533,77 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendDataTo<'local>
         with_mux_push(env, handle, |inner| {
             inner.send_data_to(h, &buf, Pts90khz::new(pts))
         });
-    })
+    }
 }
 
 // ── Handle getters ─────────────────────────────────────────────────────────
 
-/// `nVideoHandle(handle)` — first configured video stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nVideoHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nVideoHandle(handle)` — first configured video stream handle, or `-1`.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nVideoHandle(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         mux_first_handle(env, handle, |s| s.video.map(|h| h.raw()))
-    })
+    }
 }
 
-/// `nKlvHandle(handle)` — first configured KLV stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nKlvHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nKlvHandle(handle)` — first configured KLV stream handle, or `-1`.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nKlvHandle(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         mux_first_handle(env, handle, |s| s.klv.map(|h| h.raw()))
-    })
+    }
 }
 
-/// `nAudioHandle(handle)` — first configured audio stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nAudioHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nAudioHandle(handle)` — first configured audio stream handle, or `-1`.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nAudioHandle(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         mux_first_handle(env, handle, |s| s.audio.map(|h| h.raw()))
-    })
+    }
 }
 
-/// `nSubtitleHandle(handle)` — first configured subtitle stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSubtitleHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nSubtitleHandle(handle)` — first configured subtitle stream handle, or `-1`.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nSubtitleHandle(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         mux_first_handle(env, handle, |s| s.subtitle.map(|h| h.raw()))
-    })
+    }
 }
 
-/// `nDataHandle(handle)` — first configured data stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nDataHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nDataHandle(handle)` — first configured data stream handle, or `-1`.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nDataHandle(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         mux_first_handle(env, handle, |s| s.data.map(|h| h.raw()))
-    })
+    }
 }
 
 // ── Stats + lifecycle ──────────────────────────────────────────────────────
 
-/// `nStats(handle)` — `TransportStats` projecting the SRT socket counters + the
-/// muxer's program/packet totals. Identical to `mux_sender.rs::nStats`. Returns
-/// null on a JNI builder error (non-fatal).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// `nStats(handle)` — `TransportStats` projecting the SRT socket counters + the
+    /// muxer's program/packet totals. Identical to `mux_sender.rs::nStats`. Returns
+    /// null on a JNI builder error (non-fatal).
+    fn Java_org_tstrans_srt_ManagedMuxSender_nStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let (sock, pipe) = match REGISTRY_MUX.with_ref_blocking(
             handle as u64,
@@ -655,17 +639,16 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nStats<'local>(
             Ok(o) => o,
             Err(_) => JObject::null(),
         }
-    })
+    }
 }
 
-/// `nReconnectAttempts(handle)` — total factory invocations since construction.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nReconnectAttempts(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nReconnectAttempts(handle)` — total factory invocations since construction.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nReconnectAttempts(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         // The send side counts attempts in the reconnect stats (the recv side
         // keeps its own `ManagedHandles.attempts`); both live in the
         // snapshot, so this is lock-free. A poisoned gap lock reads as 0 here —
@@ -681,20 +664,19 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nReconnectAttempts(
                 crate::error::throw_closed(env, "ManagedMuxSender");
                 0
             })
-    })
+    }
 }
 
-/// `nReconnectStats(handle)` — reconnect/gap telemetry: attempts, successes,
-/// current gap-buffer depth, and drop counters. Throws `SrtException(IO)` if the
-/// internal gap-buffer lock is poisoned — a read-only telemetry path must not
-/// panic.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nReconnectStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// `nReconnectStats(handle)` — reconnect/gap telemetry: attempts, successes,
+    /// current gap-buffer depth, and drop counters. Throws `SrtException(IO)` if the
+    /// internal gap-buffer lock is poisoned — a read-only telemetry path must not
+    /// panic.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nReconnectStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // Lock-free: the stats handle lives in the snapshot, not the slot.
         let Some(maybe_stats) = REGISTRY_MUX.snapshot(handle as u64, |s| s.managed.stats.stats())
         else {
@@ -713,22 +695,21 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nReconnectStats<'lo
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }
-    })
+    }
 }
 
-/// `nCancelHandle(handle)` — return a shareable cancel handle that wakes a
-/// thread parked in any `nSend*`: a live send, the Blocking reconnect's
-/// backoff wait, or a re-dial. Lock-free: the target was captured at open, so
-/// this returns promptly even while another thread is parked in a send on the
-/// same handle and regardless of reconnect state (the `ManagedCancel` follows
-/// reconnects). Throws `IllegalStateException` on a closed handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nCancelHandle(handle)` — return a shareable cancel handle that wakes a
+    /// thread parked in any `nSend*`: a live send, the Blocking reconnect's
+    /// backoff wait, or a re-dial. Lock-free: the target was captured at open, so
+    /// this returns promptly even while another thread is parked in a send on the
+    /// same handle and regardless of reconnect state (the `ManagedCancel` follows
+    /// reconnects). Throws `IllegalStateException` on a closed handle.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nCancelHandle(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         match REGISTRY_MUX.cancel_view(handle as u64) {
             Some(view) => crate::shells::cancel::cancel_view_handle(view),
             None => {
@@ -736,40 +717,30 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nCancelHandle(
                 0
             }
         }
-    })
+    }
 }
 
-/// `nClose(handle)` — drop the boxed sender (best-effort drain + close). No-op on
-/// a zero handle so a double `close()` is safe.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// `nClose(handle)` — drop the boxed sender (best-effort drain + close). No-op on
+    /// a zero handle so a double `close()` is safe.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nClose(_env, _class, handle: jlong) = () => {
         // Atomic + idempotent: the winning close gets the shell back for teardown.
         if let Some(jstruct) = REGISTRY_MUX.close(handle as u64) {
             jstruct.inner.close();
         }
-    })
+    }
 }
 
-/// `nFinish(handle)` — drain the muxer's pending bytes to the live transport,
-/// report the first drain error, then close the transport
-/// (`MuxSender::finish`). Unlike `nClose` this does NOT cancel first and does
-/// NOT free the registry entry: the Java side still calls `close()`.
-/// A send parked in the reconnect backoff keeps the slot: `nFinish`
-/// waits behind it (unlike `nClose`, which cancels first).
-/// A zero / already-closed handle is quiet — the same answer a second
-/// `finish()` gets from the shell itself.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nFinish(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nFinish(handle)` — drain the muxer's pending bytes to the live transport,
+    /// report the first drain error, then close the transport
+    /// (`MuxSender::finish`). Unlike `nClose` this does NOT cancel first and does
+    /// NOT free the registry entry: the Java side still calls `close()`.
+    /// A send parked in the reconnect backoff keeps the slot: `nFinish`
+    /// waits behind it (unlike `nClose`, which cancels first).
+    /// A zero / already-closed handle is quiet — the same answer a second
+    /// `finish()` gets from the shell itself.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nFinish(env, _class, handle: jlong) = () => {
         // lossless shutdown: drains the muxer through the transport, documented to wait behind a send in flight
         match REGISTRY_MUX.with_ref_blocking(
             handle as u64,
@@ -783,20 +754,19 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nFinish(
             Err(HandleState::Closed) => {}
             Err(state) => throw_handle_state(env, "ManagedMuxSender", &state),
         }
-    })
+    }
 }
 
-/// `nIsAlive(handle)` — whether the sender owns a live transport. Non-blocking:
-/// a `send*` parked on another thread holds the slot, and reads as alive.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nIsAlive(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jboolean {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// `nIsAlive(handle)` — whether the sender owns a live transport. Non-blocking:
+    /// a `send*` parked on another thread holds the slot, and reads as alive.
+    fn Java_org_tstrans_srt_ManagedMuxSender_nIsAlive(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jboolean = 0 => {
         u8::from(REGISTRY_MUX.is_alive(handle as u64, |jstruct| jstruct.inner.is_alive()))
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -902,23 +872,22 @@ fn build_demux_from_url(
     ) as jlong
 }
 
-/// `ManagedDemuxReceiver.nFromUrl(url, ...policyArgs...)` — default demux options.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nFromUrl<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    url: JString<'local>,
-    max_attempts_present: jboolean,
-    max_attempts: jint,
-    backoff_kind: jint,
-    backoff_base_ms: jlong,
-    backoff_max_ms: jlong,
-    gap_buffer_capacity: jint,
-    overflow_policy: jint,
-    mode: jint,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `ManagedDemuxReceiver.nFromUrl(url, ...policyArgs...)` — default demux options.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nFromUrl<'local>(
+        env,
+        _class,
+        url: JString<'local>,
+        max_attempts_present: jboolean,
+        max_attempts: jint,
+        backoff_kind: jint,
+        backoff_base_ms: jlong,
+        backoff_max_ms: jlong,
+        gap_buffer_capacity: jint,
+        overflow_policy: jint,
+        mode: jint,
+    ) -> jlong = 0 => {
         build_demux_from_url(
             env,
             &url,
@@ -932,35 +901,34 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nFromUrl<'local
             overflow_policy,
             mode,
         )
-    })
+    }
 }
 
-/// `ManagedDemuxReceiver.nFromUrlWithConfig(url, ...policyArgs..., ...demuxArgs...)`.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nFromUrlWithConfig<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    url: JString<'local>,
-    max_attempts_present: jboolean,
-    max_attempts: jint,
-    backoff_kind: jint,
-    backoff_base_ms: jlong,
-    backoff_max_ms: jlong,
-    gap_buffer_capacity: jint,
-    overflow_policy: jint,
-    mode: jint,
-    strict: jint,
-    pes_cap_per_pid: jlong,
-    pes_cap_total: jlong,
-    cfi: jboolean,
-    av1: jint,
-    au_cell_cap: jlong,
-    lenient_psi: jboolean,
-    sync_buf_cap: jlong,
-    unwrap_timestamps: jboolean,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `ManagedDemuxReceiver.nFromUrlWithConfig(url, ...policyArgs..., ...demuxArgs...)`.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nFromUrlWithConfig<'local>(
+        env,
+        _class,
+        url: JString<'local>,
+        max_attempts_present: jboolean,
+        max_attempts: jint,
+        backoff_kind: jint,
+        backoff_base_ms: jlong,
+        backoff_max_ms: jlong,
+        gap_buffer_capacity: jint,
+        overflow_policy: jint,
+        mode: jint,
+        strict: jint,
+        pes_cap_per_pid: jlong,
+        pes_cap_total: jlong,
+        cfi: jboolean,
+        av1: jint,
+        au_cell_cap: jlong,
+        lenient_psi: jboolean,
+        sync_buf_cap: jlong,
+        unwrap_timestamps: jboolean,
+    ) -> jlong = 0 => {
         let Some(opts) = build_demux_config_from_args(
             env,
             strict,
@@ -988,21 +956,20 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nFromUrlWithCon
             overflow_policy,
             mode,
         )
-    })
+    }
 }
 
-/// `nNext(handle)` — block until the next `DemuxEvent`, returning it as a Java
-/// object; Java `null` on clean EOF. Throws `SrtException` / `DemuxException` on
-/// a recv-side error. Emits `DemuxEvent.ReconnectDiscontinuity` once after each
-/// transport reconnect. No byte sink, so no captured-exception
-/// drain.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nNext<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `nNext(handle)` — block until the next `DemuxEvent`, returning it as a Java
+    /// object; Java `null` on clean EOF. Throws `SrtException` / `DemuxException` on
+    /// a recv-side error. Emits `DemuxEvent.ReconnectDiscontinuity` once after each
+    /// transport reconnect. No byte sink, so no captured-exception
+    /// drain.
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nNext<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         // recv_event runs INSIDE the registry lease (under the resource lock,
         // single-threaded per the Receiver model).
         let res = match REGISTRY_DEMUX.with_mut(handle as u64, |jstruct| jstruct.inner.recv_event())
@@ -1037,21 +1004,20 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nNext<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-/// `nCancelHandle(handle)` — return a shareable cancel handle that wakes a thread
-/// parked in `nNext`. Lock-free: the target was captured at open, so this returns
-/// promptly even while another thread is parked in `nNext` (a blocked receive or
-/// a listener-mode re-accept) and regardless of reconnect state. Throws
-/// `IllegalStateException` on a closed handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nCancelHandle(handle)` — return a shareable cancel handle that wakes a thread
+    /// parked in `nNext`. Lock-free: the target was captured at open, so this returns
+    /// promptly even while another thread is parked in `nNext` (a blocked receive or
+    /// a listener-mode re-accept) and regardless of reconnect state. Throws
+    /// `IllegalStateException` on a closed handle.
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nCancelHandle(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         match REGISTRY_DEMUX.cancel_view(handle as u64) {
             Some(view) => crate::shells::cancel::cancel_view_handle(view),
             None => {
@@ -1059,19 +1025,18 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nCancelHandle(
                 0
             }
         }
-    })
+    }
 }
 
-/// `nSocketStats(handle)` — scheme-neutral 16-field wire stats. Uses
-/// `unwrap_or_default` so a mid-reconnect receiver yields a zeroed snapshot.
-/// Returns null on a JNI builder error (non-fatal).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nSocketStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// `nSocketStats(handle)` — scheme-neutral 16-field wire stats. Uses
+    /// `unwrap_or_default` so a mid-reconnect receiver yields a zeroed snapshot.
+    /// Returns null on a JNI builder error (non-fatal).
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nSocketStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY_DEMUX.with_ref_blocking(
             handle as u64,
@@ -1088,19 +1053,18 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nSocketStats<'l
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }
-    })
+    }
 }
 
-/// `nSrtStats(handle)` — returns the SAME
-/// `SocketStats` view as `nSocketStats` and does NOT throw. Mirrors tst-py's
-/// `PyManagedDemuxReceiver::srt_stats`, which delegates to `socket_stats`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nSrtStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// `nSrtStats(handle)` — returns the SAME
+    /// `SocketStats` view as `nSocketStats` and does NOT throw. Mirrors tst-py's
+    /// `PyManagedDemuxReceiver::srt_stats`, which delegates to `socket_stats`.
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nSrtStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY_DEMUX.with_ref_blocking(
             handle as u64,
@@ -1117,24 +1081,23 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nSrtStats<'loca
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }
-    })
+    }
 }
 
-/// `nLastSeenMicros(handle, pid)` — Unix-epoch microsecond timestamp the
-/// stream identified by `pid` last carried a demuxed item through this
-/// receiver (last emitted event); `-1` if `pid` was never seen — including
-/// an unrecognized PID (no range check beyond the native `u16` truncating
-/// cast, same as `pmtPid`/`pcrPid` elsewhere in this binding) — or a
-/// timestamp predating the Unix epoch. Boxed to `Long` (`null` for `-1`) at
-/// the Java layer. Same registry-lock discipline as `nSocketStats`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nLastSeenMicros(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    pid: jint,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, -1, |env| {
+jni_native! {
+    /// `nLastSeenMicros(handle, pid)` — Unix-epoch microsecond timestamp the
+    /// stream identified by `pid` last carried a demuxed item through this
+    /// receiver (last emitted event); `-1` if `pid` was never seen — including
+    /// an unrecognized PID (no range check beyond the native `u16` truncating
+    /// cast, same as `pmtPid`/`pcrPid` elsewhere in this binding) — or a
+    /// timestamp predating the Unix epoch. Boxed to `Long` (`null` for `-1`) at
+    /// the Java layer. Same registry-lock discipline as `nSocketStats`.
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nLastSeenMicros(
+        env,
+        _class,
+        handle: jlong,
+        pid: jint,
+    ) -> jlong = -1 => {
         // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
         let last_seen = match REGISTRY_DEMUX.with_ref_blocking(
             handle as u64,
@@ -1158,19 +1121,18 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nLastSeenMicros
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_micros() as i64)
             .unwrap_or(-1)
-    })
+    }
 }
 
-/// `nReconnectAttempts(handle)` — total factory invocations since construction
-/// (`ManagedHandles.attempts`). Lock-free: read off the `Owned` snapshot, so it
-/// answers while `nNext` is parked in a re-accept that has not completed.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nReconnectAttempts(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nReconnectAttempts(handle)` — total factory invocations since construction
+    /// (`ManagedHandles.attempts`). Lock-free: read off the `Owned` snapshot, so it
+    /// answers while `nNext` is parked in a re-accept that has not completed.
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nReconnectAttempts(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         REGISTRY_DEMUX
             .snapshot(handle as u64, |h| {
                 h.attempts.load(Ordering::Acquire) as jlong
@@ -1179,47 +1141,45 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nReconnectAttem
                 crate::error::throw_closed(env, "ManagedDemuxReceiver");
                 0
             })
-    })
+    }
 }
 
-/// `nEndReason(handle)` — why the receive stream ended, as the wire ordinal (see
-/// `super::recv_end_reason`); `-1` if it has not ended yet, or on a
-/// closed/absent handle (the closed case never reaches this native —
-/// `ManagedDemuxReceiver.endReason()` reads the Java-side snapshot once
-/// `peekHandle()` is 0).
-///
-/// Reads the registry's lock-free end-reason slot, NOT `REGISTRY_DEMUX.with` —
-/// `nNext` holds the resource lease for the whole duration of a native receive,
-/// and during a listener-mode re-accept that receive can park indefinitely. Same
-/// reasoning, and the same slot mechanism, as `nCancelHandle` above.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nEndReason(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jint {
-    crate::panic::jni_catch(&mut env, -1, |_env| {
+jni_native! {
+    /// `nEndReason(handle)` — why the receive stream ended, as the wire ordinal (see
+    /// `super::recv_end_reason`); `-1` if it has not ended yet, or on a
+    /// closed/absent handle (the closed case never reaches this native —
+    /// `ManagedDemuxReceiver.endReason()` reads the Java-side snapshot once
+    /// `peekHandle()` is 0).
+    ///
+    /// Reads the registry's lock-free end-reason slot, NOT `REGISTRY_DEMUX.with` —
+    /// `nNext` holds the resource lease for the whole duration of a native receive,
+    /// and during a listener-mode re-accept that receive can park indefinitely. Same
+    /// reasoning, and the same slot mechanism, as `nCancelHandle` above.
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nEndReason(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jint = -1 => {
         crate::shells::end_reason::wire_value(REGISTRY_DEMUX.end_reason(handle as u64).as_ref())
-    })
+    }
 }
 
-/// `nClose(handle)` — close the underlying transport and drop the box. No-op on a
-/// zero handle so a double `close()` is safe.
-///
-/// Returns the close-time end-reason ordinal, computed here from the shell this
-/// call already exclusively owns: `NativeHandle.close()` zeroes the Java handle
-/// before `nativeClose` runs, and the registry entry (with its end-reason slot)
-/// is permanently removed by `REGISTRY_DEMUX.close`, so there is no handle left
-/// for a follow-up `nEndReason`. `-1` when nothing was recorded, including the
-/// double-close no-op — which `NativeHandle.close()`'s `getAndSet(0)` already
-/// makes unreachable from Java: `nativeClose` runs at most once per receiver.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jint {
-    crate::panic::jni_catch(&mut env, -1, |_env| {
+jni_native! {
+    /// `nClose(handle)` — close the underlying transport and drop the box. No-op on a
+    /// zero handle so a double `close()` is safe.
+    ///
+    /// Returns the close-time end-reason ordinal, computed here from the shell this
+    /// call already exclusively owns: `NativeHandle.close()` zeroes the Java handle
+    /// before `nativeClose` runs, and the registry entry (with its end-reason slot)
+    /// is permanently removed by `REGISTRY_DEMUX.close`, so there is no handle left
+    /// for a follow-up `nEndReason`. `-1` when nothing was recorded, including the
+    /// double-close no-op — which `NativeHandle.close()`'s `getAndSet(0)` already
+    /// makes unreachable from Java: `nativeClose` runs at most once per receiver.
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nClose(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jint = -1 => {
         // Atomic + idempotent: the winning close gets the shell back for teardown.
         // Read the reason AFTER `inner.close()` so a reason recorded by the
         // teardown itself is included.
@@ -1230,19 +1190,18 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nClose(
             None
         };
         crate::shells::end_reason::wire_value(reason.as_ref())
-    })
+    }
 }
 
-/// `nIsAlive(handle)` — whether the receiver owns a live transport.
-/// Non-blocking: a `next()` parked on another thread holds the slot, and reads
-/// as alive.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nIsAlive(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jboolean {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// `nIsAlive(handle)` — whether the receiver owns a live transport.
+    /// Non-blocking: a `next()` parked on another thread holds the slot, and reads
+    /// as alive.
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nIsAlive(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jboolean = 0 => {
         u8::from(REGISTRY_DEMUX.is_alive(handle as u64, |jstruct| jstruct.inner.is_alive()))
-    })
+    }
 }

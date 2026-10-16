@@ -11,25 +11,25 @@
 //! calls `tst_core::klv::st0605::encode` (infallible), and returns the 26
 //! output bytes as a Java `byte[]`.
 
+use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JValue};
+use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::jobject;
 use tst_core::klv::st0605::{PrecisionTimeStampPack, TimeStatus, decode, encode};
 
 use crate::error::map_klv_decode_error;
 
-/// `org.tstrans.klv.Klv.nDecodePrecisionTimestamp(byte[]) -> PrecisionTimeStampPack`
-///
-/// Decodes a full 26-byte wire-format ST 0605 pack. On success, constructs
-/// and returns a `PrecisionTimeStampPack` record. On failure, throws a
-/// `KlvDecodeException` and returns null.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nDecodePrecisionTimestamp<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    buf: JByteArray<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nDecodePrecisionTimestamp(byte[]) -> PrecisionTimeStampPack`
+    ///
+    /// Decodes a full 26-byte wire-format ST 0605 pack. On success, constructs
+    /// and returns a `PrecisionTimeStampPack` record. On failure, throws a
+    /// `KlvDecodeException` and returns null.
+    fn Java_org_tstrans_klv_Klv_nDecodePrecisionTimestamp<'local>(
+        env,
+        _c,
+        buf: JByteArray<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&buf) {
             Ok(b) => b,
             Err(e) => {
@@ -47,7 +47,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nDecodePrecisionTimestamp<'local
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
 /// Build a `org.tstrans.klv.PrecisionTimeStampPack` Java record from a Rust
@@ -69,18 +69,17 @@ fn build_pack(env: &mut JNIEnv<'_>, p: &PrecisionTimeStampPack) -> jni::errors::
     Ok(pack.into_raw())
 }
 
-/// `org.tstrans.klv.Klv.nEncodePrecisionTimestamp(PrecisionTimeStampPack) -> byte[]`
-///
-/// Reads `timeStatus().raw()` (int) and `timestampUs()` (long) from the Java
-/// record via accessor calls, then calls `tst_core::klv::st0605::encode`
-/// (infallible, always 26 bytes). Returns the output as a Java `byte[]`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodePrecisionTimestamp<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    pack: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nEncodePrecisionTimestamp(PrecisionTimeStampPack) -> byte[]`
+    ///
+    /// Reads `timeStatus().raw()` (int) and `timestampUs()` (long) from the Java
+    /// record via accessor calls, then calls `tst_core::klv::st0605::encode`
+    /// (infallible, always 26 bytes). Returns the output as a Java `byte[]`.
+    fn Java_org_tstrans_klv_Klv_nEncodePrecisionTimestamp<'local>(
+        env,
+        _c,
+        pack: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         // Read timeStatus() accessor → TimeStatus record
         let ts_obj = match env
             .call_method(&pack, "timeStatus", "()Lorg/tstrans/klv/TimeStatus;", &[])
@@ -137,5 +136,5 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodePrecisionTimestamp<'local
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }

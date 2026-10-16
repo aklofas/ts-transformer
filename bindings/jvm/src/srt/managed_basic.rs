@@ -26,13 +26,13 @@
 //! `ManagedTransport` / `ManagedRecvTransport` do not expose the SRT-rich
 //! 17-field shape (no accessor in tst-pipeline). Callers use `nSocketStats`.
 
+use crate::panic::jni_native;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::Ordering;
 use tst_pipeline::binding::view::BlockingReason;
 
-use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JString};
+use jni::objects::{JByteArray, JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong};
 use tst_pipeline::binding::{BindingErrorKind, ManagedHandles, Owned};
 use tst_pipeline::{
@@ -65,25 +65,24 @@ struct JniManagedSender {
 static REGISTRY_SENDER: LazyLock<OwnedRegistry<JniManagedSender, ManagedSenderSnapshot>> =
     LazyLock::new(OwnedRegistry::new);
 
-/// Allocate a `ManagedSender` from an SRT caller-mode URL + the 8 flattened
-/// reconnect-policy args. Returns a `jlong` handle on success; throws
-/// `SrtException` and returns 0 on any error.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nFromUrl(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    url: JString<'_>,
-    max_attempts_present: jboolean,
-    max_attempts: jint,
-    backoff_kind: jint,
-    backoff_base_ms: jlong,
-    backoff_max_ms: jlong,
-    gap_buffer_capacity: jint,
-    overflow_policy: jint,
-    mode: jint,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// Allocate a `ManagedSender` from an SRT caller-mode URL + the 8 flattened
+    /// reconnect-policy args. Returns a `jlong` handle on success; throws
+    /// `SrtException` and returns 0 on any error.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_srt_ManagedSender_nFromUrl(
+        env,
+        _class,
+        url: JString<'_>,
+        max_attempts_present: jboolean,
+        max_attempts: jint,
+        backoff_kind: jint,
+        backoff_base_ms: jlong,
+        backoff_max_ms: jlong,
+        gap_buffer_capacity: jint,
+        overflow_policy: jint,
+        mode: jint,
+    ) -> jlong = 0 => {
         let url_str: String = match env.get_string(&url) {
             Ok(s) => s.into(),
             Err(e) => {
@@ -149,19 +148,18 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nFromUrl(
             cancel,
             ManagedSenderSnapshot { handles, stats },
         )) as jlong
-    })
+    }
 }
 
-/// Send pre-muxed TS bytes through the managed sender. Throws `SrtException` on
-/// transport/framing failure.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nSendBytes(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    data: JByteArray<'_>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// Send pre-muxed TS bytes through the managed sender. Throws `SrtException` on
+    /// transport/framing failure.
+    fn Java_org_tstrans_srt_ManagedSender_nSendBytes(
+        env,
+        _class,
+        handle: jlong,
+        data: JByteArray<'_>,
+    ) = () => {
         let bytes: Vec<u8> = match env.convert_byte_array(&data) {
             Ok(b) => b,
             Err(e) => {
@@ -175,53 +173,46 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nSendBytes(
             Ok(Err(e)) => throw_sender_error(env, &e),
             Err(state) => throw_handle_state(env, "ManagedSender", &state),
         }
-    })
+    }
 }
 
-/// Flush any buffered partial TS bundle. Throws `SrtException` on failure.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nFlush(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// Flush any buffered partial TS bundle. Throws `SrtException` on failure.
+    fn Java_org_tstrans_srt_ManagedSender_nFlush(env, _class, handle: jlong) = () => {
         match REGISTRY_SENDER.with_mut(handle as u64, |jstruct| jstruct.inner.flush()) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => throw_sender_error(env, &e),
             Err(state) => throw_handle_state(env, "ManagedSender", &state),
         }
-    })
+    }
 }
 
-/// Obtain a cancel handle for this managed sender. Returns a `jlong` handle on
-/// success; throws `IllegalStateException` and returns 0 if absent.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// Obtain a cancel handle for this managed sender. Returns a `jlong` handle on
+    /// success; throws `IllegalStateException` and returns 0 if absent.
+    fn Java_org_tstrans_srt_ManagedSender_nCancelHandle(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         // Lock-free: the view is the `Owned` entry itself, so this returns
         // even while `send` is parked on the slot. Closed handle → 0
         // (no throw, matching the original contract).
         REGISTRY_SENDER
             .cancel_view(handle as u64)
             .map_or(0, crate::shells::cancel::cancel_view_handle)
-    })
+    }
 }
 
-/// Return a `SocketStats` record from the current inner transport. Returns null
-/// on JNI builder error (non-fatal; no throw). Uses `unwrap_or_default` so a
-/// mid-reconnect sender yields a zeroed snapshot.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nSocketStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// Return a `SocketStats` record from the current inner transport. Returns null
+    /// on JNI builder error (non-fatal; no throw). Uses `unwrap_or_default` so a
+    /// mid-reconnect sender yields a zeroed snapshot.
+    fn Java_org_tstrans_srt_ManagedSender_nSocketStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let Ok(stats) = REGISTRY_SENDER.with_ref_blocking(
             handle as u64,
@@ -234,18 +225,17 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nSocketStats<'local>(
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }
-    })
+    }
 }
 
-/// SRT-rich stats are NOT available on a managed sender — this ALWAYS throws
-/// `SrtException(IO)`, mirroring tst-py's `PyManagedSender::srt_stats`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nSrtStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    _handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// SRT-rich stats are NOT available on a managed sender — this ALWAYS throws
+    /// `SrtException(IO)`, mirroring tst-py's `PyManagedSender::srt_stats`.
+    fn Java_org_tstrans_srt_ManagedSender_nSrtStats<'local>(
+        env,
+        _class,
+        _handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         throw_srt(
             env,
             BindingErrorKind::SrtIo,
@@ -253,20 +243,19 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nSrtStats<'local>(
              tst-pipeline accessor will expose the SRT-rich shape",
         );
         JObject::null()
-    })
+    }
 }
 
-/// Reconnect/gap telemetry: attempts, successes, current gap-buffer depth, and
-/// drop counters. Throws `SrtException(IO)` if the internal gap-buffer lock is
-/// poisoned — a read-only telemetry path must not panic. Throws
-/// `IllegalStateException` (via `throw_closed`) on a closed handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nReconnectStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// Reconnect/gap telemetry: attempts, successes, current gap-buffer depth, and
+    /// drop counters. Throws `SrtException(IO)` if the internal gap-buffer lock is
+    /// poisoned — a read-only telemetry path must not panic. Throws
+    /// `IllegalStateException` (via `throw_closed`) on a closed handle.
+    fn Java_org_tstrans_srt_ManagedSender_nReconnectStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // Lock-free: `ManagedStatsHandle` lives in the snapshot, not the slot,
         // so this answers while a `sendBytes()` is parked in a reconnect.
         let Some(maybe_stats) = REGISTRY_SENDER.snapshot(handle as u64, |s| s.stats.stats()) else {
@@ -285,36 +274,26 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nReconnectStats<'local
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }
-    })
+    }
 }
 
-/// Close the managed sender, deallocating the native box. `close()` latches the
-/// cancel flag (so any in-flight reconnect loop exits) and tears down the inner.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// Close the managed sender, deallocating the native box. `close()` latches the
+    /// cancel flag (so any in-flight reconnect loop exits) and tears down the inner.
+    fn Java_org_tstrans_srt_ManagedSender_nClose(_env, _class, handle: jlong) = () => {
         // Atomic + idempotent: the winning close gets the shell back for teardown.
         if let Some(mut jstruct) = REGISTRY_SENDER.close(handle as u64) {
             jstruct.inner.close();
         }
-    })
+    }
 }
 
-/// Return whether the managed sender holds a live transport. Non-blocking: a
-/// `sendBytes` parked on another thread holds the slot, and reads as alive.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nIsAlive(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jboolean {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// Return whether the managed sender holds a live transport. Non-blocking: a
+    /// `sendBytes` parked on another thread holds the slot, and reads as alive.
+    fn Java_org_tstrans_srt_ManagedSender_nIsAlive(_env, _class, handle: jlong) -> jboolean = 0 => {
         u8::from(REGISTRY_SENDER.is_alive(handle as u64, |jstruct| jstruct.inner.is_alive()))
-    })
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -335,25 +314,24 @@ struct JniManagedReceiver {
 static REGISTRY_RECEIVER: LazyLock<OwnedRegistry<JniManagedReceiver, ManagedHandles>> =
     LazyLock::new(OwnedRegistry::new);
 
-/// Allocate a `ManagedReceiver` from an SRT listener-mode URL + the 8 flattened
-/// reconnect-policy args. Returns a `jlong` handle on success; throws
-/// `SrtException` and returns 0 on any error.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nFromUrl(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    url: JString<'_>,
-    max_attempts_present: jboolean,
-    max_attempts: jint,
-    backoff_kind: jint,
-    backoff_base_ms: jlong,
-    backoff_max_ms: jlong,
-    gap_buffer_capacity: jint,
-    overflow_policy: jint,
-    mode: jint,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// Allocate a `ManagedReceiver` from an SRT listener-mode URL + the 8 flattened
+    /// reconnect-policy args. Returns a `jlong` handle on success; throws
+    /// `SrtException` and returns 0 on any error.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_srt_ManagedReceiver_nFromUrl(
+        env,
+        _class,
+        url: JString<'_>,
+        max_attempts_present: jboolean,
+        max_attempts: jint,
+        backoff_kind: jint,
+        backoff_base_ms: jlong,
+        backoff_max_ms: jlong,
+        gap_buffer_capacity: jint,
+        overflow_policy: jint,
+        mode: jint,
+    ) -> jlong = 0 => {
         let url_str: String = match env.get_string(&url) {
             Ok(s) => s.into(),
             Err(e) => {
@@ -413,20 +391,19 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nFromUrl(
         // capability that does not exist.
         let cancel = Arc::clone(&handles.cancel);
         REGISTRY_RECEIVER.insert(Owned::new(JniManagedReceiver { inner }, cancel, handles)) as jlong
-    })
+    }
 }
 
-/// Receive one TS packet (188 bytes). Returns the packet as a `jbyteArray` on
-/// success; throws `SrtException` and returns null on failure. `maxLen` is
-/// accepted for API symmetry but a single `next_packet` quantum is returned.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nRecvBytes(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    _max_len: jint,
-) -> jbyteArray {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// Receive one TS packet (188 bytes). Returns the packet as a `jbyteArray` on
+    /// success; throws `SrtException` and returns null on failure. `maxLen` is
+    /// accepted for API symmetry but a single `next_packet` quantum is returned.
+    fn Java_org_tstrans_srt_ManagedReceiver_nRecvBytes(
+        env,
+        _class,
+        handle: jlong,
+        _max_len: jint,
+    ) -> jbyteArray = std::ptr::null_mut() => {
         let res = match REGISTRY_RECEIVER
             .with_mut(handle as u64, |jstruct| jstruct.inner.next_packet())
         {
@@ -446,52 +423,49 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nRecvBytes(
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-/// Total factory invocations since construction (was the success
-/// counter). Lock-free: read off the `Owned` snapshot, so it answers while
-/// `recvBytes()` is parked in a re-accept that has not completed.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nReconnectAttempts(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// Total factory invocations since construction (was the success
+    /// counter). Lock-free: read off the `Owned` snapshot, so it answers while
+    /// `recvBytes()` is parked in a re-accept that has not completed.
+    fn Java_org_tstrans_srt_ManagedReceiver_nReconnectAttempts(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         REGISTRY_RECEIVER
             .snapshot(handle as u64, |h| {
                 h.attempts.load(Ordering::Acquire) as jlong
             })
             .unwrap_or(0)
-    })
+    }
 }
 
-/// Obtain a cancel handle for this managed receiver.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// Obtain a cancel handle for this managed receiver.
+    fn Java_org_tstrans_srt_ManagedReceiver_nCancelHandle(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         // Lock-free: the view is the `Owned` entry itself, so this returns
         // even while `recvBytes` is parked on the slot. Closed handle → 0
         // (no throw, matching the original contract).
         REGISTRY_RECEIVER
             .cancel_view(handle as u64)
             .map_or(0, crate::shells::cancel::cancel_view_handle)
-    })
+    }
 }
 
-/// Return a `SocketStats` record from the current inner transport.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nSocketStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// Return a `SocketStats` record from the current inner transport.
+    fn Java_org_tstrans_srt_ManagedReceiver_nSocketStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let Ok(stats) = REGISTRY_RECEIVER.with_ref_blocking(
             handle as u64,
@@ -504,18 +478,17 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nSocketStats<'local>
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }
-    })
+    }
 }
 
-/// SRT-rich stats are NOT available on a managed receiver — this ALWAYS throws
-/// `SrtException(IO)`, mirroring tst-py's `PyManagedReceiver::srt_stats`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nSrtStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    _handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// SRT-rich stats are NOT available on a managed receiver — this ALWAYS throws
+    /// `SrtException(IO)`, mirroring tst-py's `PyManagedReceiver::srt_stats`.
+    fn Java_org_tstrans_srt_ManagedReceiver_nSrtStats<'local>(
+        env,
+        _class,
+        _handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         throw_srt(
             env,
             BindingErrorKind::SrtIo,
@@ -523,33 +496,27 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nSrtStats<'local>(
              tst-pipeline accessor will expose the SRT-rich shape",
         );
         JObject::null()
-    })
+    }
 }
 
-/// Close the managed receiver, deallocating the native box.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// Close the managed receiver, deallocating the native box.
+    fn Java_org_tstrans_srt_ManagedReceiver_nClose(_env, _class, handle: jlong) = () => {
         // Atomic + idempotent: the winning close gets the shell back for teardown.
         if let Some(mut jstruct) = REGISTRY_RECEIVER.close(handle as u64) {
             jstruct.inner.close();
         }
-    })
+    }
 }
 
-/// Return whether the managed receiver holds a live shell. Non-blocking: a
-/// `recvBytes` parked on another thread holds the slot, and reads as alive.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nIsAlive(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jboolean {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// Return whether the managed receiver holds a live shell. Non-blocking: a
+    /// `recvBytes` parked on another thread holds the slot, and reads as alive.
+    fn Java_org_tstrans_srt_ManagedReceiver_nIsAlive(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jboolean = 0 => {
         u8::from(REGISTRY_RECEIVER.is_alive(handle as u64, |jstruct| jstruct.inner.is_alive()))
-    })
+    }
 }

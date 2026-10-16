@@ -17,8 +17,9 @@
 //! `mpegts/muxer.rs` — ordinals outside 0–3 surface as `CodecParseException`
 //! (an invalid codec is a caller bug, surfaced as a parse error).
 
+use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JValue};
+use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::{jint, jobject};
 use tst_core::codec::misp_time::{MispTimeKind, MispTimestamp, extract};
 use tst_core::mpegts::mux::VideoCodec;
@@ -98,20 +99,19 @@ fn build_misp_timestamp<'local>(
     .map_err(|_| ())
 }
 
-/// `Codec.nExtractMispTimestamp(byte[] au, int codecOrdinal) -> MispTimestamp`
-///
-/// Scans an Annex-B AU for the first MISP timestamp SEI.
-/// Returns null when absent; constructs a `MispTimestamp` record on
-/// success; throws `CodecParseException(ENGINE_ERROR)` on a malformed SEI.
-/// Called via `MispTimestamp.extract` which delegates to `Codec.extractMispTimestamp`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nExtractMispTimestamp<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    au: JByteArray<'local>,
-    codec_ordinal: jint,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `Codec.nExtractMispTimestamp(byte[] au, int codecOrdinal) -> MispTimestamp`
+    ///
+    /// Scans an Annex-B AU for the first MISP timestamp SEI.
+    /// Returns null when absent; constructs a `MispTimestamp` record on
+    /// success; throws `CodecParseException(ENGINE_ERROR)` on a malformed SEI.
+    /// Called via `MispTimestamp.extract` which delegates to `Codec.extractMispTimestamp`.
+    fn Java_org_tstrans_codec_Codec_nExtractMispTimestamp<'local>(
+        env,
+        _class,
+        au: JByteArray<'local>,
+        codec_ordinal: jint,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&au) {
             Ok(b) => b,
             Err(_) => return JObject::null().into_raw(),
@@ -137,5 +137,5 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nExtractMispTimestamp<'local
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }

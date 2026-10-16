@@ -3,12 +3,13 @@
 //! Ports tst-py's `bindings/python/src/rtp/client.rs`, including
 //! `nConnectH264` (RtspClient) + `nIntoH264Receiver` (RtspSession).
 
+use crate::panic::jni_native;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JString};
+use jni::objects::{JByteArray, JString};
 use jni::sys::{jboolean, jint, jlong};
 
 use secrecy::SecretString;
@@ -90,32 +91,26 @@ impl JniRtspCancel {
     }
 }
 
-/// Flip the cancel flag. Wakes a parked connect/pause/play/teardown at the next
-/// ~100 ms poll. Guards a closed (zero) handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspCancelHandle_nCancel(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// Flip the cancel flag. Wakes a parked connect/pause/play/teardown at the next
+    /// ~100 ms poll. Guards a closed (zero) handle.
+    fn Java_org_tstrans_rtp_RtspCancelHandle_nCancel(env, _class, handle: jlong) = () => {
         if REGISTRY_CANCEL
             .with(handle as u64, |c| c.inner.cancel())
             .is_none()
         {
             crate::error::throw_closed(env, "RtspCancelHandle");
         }
-    })
+    }
 }
 
-/// Report whether the backing flag has been flipped. Guards a closed handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspCancelHandle_nIsCancelled(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jboolean {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// Report whether the backing flag has been flipped. Guards a closed handle.
+    fn Java_org_tstrans_rtp_RtspCancelHandle_nIsCancelled(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jboolean = 0 => {
         match REGISTRY_CANCEL.try_with(handle as u64, |c| u8::from(c.inner.is_cancelled())) {
             TryWith::Ran(v) => v,
             _ => {
@@ -123,20 +118,15 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspCancelHandle_nIsCancelled(
                 0
             }
         }
-    })
+    }
 }
 
-/// Free the boxed cancel handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspCancelHandle_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// Free the boxed cancel handle.
+    fn Java_org_tstrans_rtp_RtspCancelHandle_nClose(_env, _class, handle: jlong) = () => {
         // Atomic + idempotent drop.
         let _ = REGISTRY_CANCEL.close(handle as u64);
-    })
+    }
 }
 
 /// Native backing for `org.tstrans.rtp.RtspSession`. Faithful port of tst-py's
@@ -158,20 +148,19 @@ struct JniRtspSession {
     h264_depay_config: Arc<Mutex<Option<H264DepayConfig>>>,
 }
 
-/// `RtspClient.nConnect(url, authUser, authPassword, keepalive, tlsRootCertsPem)`
-/// — run OPTIONS/DESCRIBE/SETUP/PLAY, return a `Box<JniRtspSession>` handle, or 0
-/// with a pending `RtspException` on failure. Ports `PyRtspClient::connect`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspClient_nConnect(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    url: JString<'_>,
-    auth_user: JString<'_>,
-    auth_password: JString<'_>,
-    keepalive: jboolean,
-    tls_root_certs_pem: JByteArray<'_>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `RtspClient.nConnect(url, authUser, authPassword, keepalive, tlsRootCertsPem)`
+    /// — run OPTIONS/DESCRIBE/SETUP/PLAY, return a `Box<JniRtspSession>` handle, or 0
+    /// with a pending `RtspException` on failure. Ports `PyRtspClient::connect`.
+    fn Java_org_tstrans_rtp_RtspClient_nConnect(
+        env,
+        _class,
+        url: JString<'_>,
+        auth_user: JString<'_>,
+        auth_password: JString<'_>,
+        keepalive: jboolean,
+        tls_root_certs_pem: JByteArray<'_>,
+    ) -> jlong = 0 => {
         let url_str: String = match env.get_string(&url) {
             Ok(s) => s.into(),
             Err(e) => {
@@ -251,24 +240,23 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspClient_nConnect(
             torn_down: Arc::new(AtomicBool::new(false)),
             h264_depay_config: Arc::new(Mutex::new(None)), // MP2T path — no H.264 config
         }) as jlong
-    })
+    }
 }
 
-/// `RtspClient.nConnectH264(url, authUser, authPassword, keepalive, tlsRootCertsPem)`
-/// — run OPTIONS/DESCRIBE/SETUP for H.264 media/PLAY; return a `JniRtspSession`
-/// handle with the session slot holding an `H264DepayConfig`. Ports
-/// `PyRtspClient::connect_h264`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspClient_nConnectH264(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    url: JString<'_>,
-    auth_user: JString<'_>,
-    auth_password: JString<'_>,
-    keepalive: jboolean,
-    tls_root_certs_pem: JByteArray<'_>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `RtspClient.nConnectH264(url, authUser, authPassword, keepalive, tlsRootCertsPem)`
+    /// — run OPTIONS/DESCRIBE/SETUP for H.264 media/PLAY; return a `JniRtspSession`
+    /// handle with the session slot holding an `H264DepayConfig`. Ports
+    /// `PyRtspClient::connect_h264`.
+    fn Java_org_tstrans_rtp_RtspClient_nConnectH264(
+        env,
+        _class,
+        url: JString<'_>,
+        auth_user: JString<'_>,
+        auth_password: JString<'_>,
+        keepalive: jboolean,
+        tls_root_certs_pem: JByteArray<'_>,
+    ) -> jlong = 0 => {
         let url_str: String = match env.get_string(&url) {
             Ok(s) => s.into(),
             Err(e) => {
@@ -344,43 +332,28 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspClient_nConnectH264(
             torn_down: Arc::new(AtomicBool::new(false)),
             h264_depay_config: Arc::new(Mutex::new(Some(depay_config))),
         }) as jlong
-    })
+    }
 }
 
-/// `RtspSession.nPause` — clone the client Arc, lock, `pause()`. Ports
-/// `PyRtspSession::pause`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nPause(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `RtspSession.nPause` — clone the client Arc, lock, `pause()`. Ports
+    /// `PyRtspSession::pause`.
+    fn Java_org_tstrans_rtp_RtspSession_nPause(env, _class, handle: jlong) = () => {
         session_control(env, handle, |c| c.pause());
-    })
+    }
 }
 
-/// `RtspSession.nPlay`. Ports `PyRtspSession::play`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nPlay(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `RtspSession.nPlay`. Ports `PyRtspSession::play`.
+    fn Java_org_tstrans_rtp_RtspSession_nPlay(env, _class, handle: jlong) = () => {
         session_control(env, handle, |c| c.play().map(|_info| ()));
-    })
+    }
 }
 
-/// `RtspSession.nTeardown` — no-op if already torn down, else `teardown()` and set
-/// the flag. Ports `PyRtspSession::teardown`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nTeardown(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `RtspSession.nTeardown` — no-op if already torn down, else `teardown()` and set
+    /// the flag. Ports `PyRtspSession::teardown`.
+    fn Java_org_tstrans_rtp_RtspSession_nTeardown(env, _class, handle: jlong) = () => {
         // Lease the session and clone the `client`/`torn_down` Arcs out. The registry
         // lease replaces the round-1 `&*ptr` deref (which raced `nClose`'s free);
         // `close` now atomically takes the resource so a fresh entry here either sees
@@ -406,7 +379,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nTeardown(
         if let Err(e) = res {
             rtsp_error_to_jvm(env, e);
         }
-    })
+    }
 }
 
 /// Shared control-call helper for pause/play. Clones the client Arc, locks, and
@@ -432,16 +405,11 @@ fn session_control(
     }
 }
 
-/// `RtspSession.nCancelHandle` — clone a self-contained cancel handle out of the
-/// client. Returns 0 (no throw) when torn down (the Java side converts that to
-/// IllegalStateException). Ports `PyRtspSession::cancel_handle`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// `RtspSession.nCancelHandle` — clone a self-contained cancel handle out of the
+    /// client. Returns 0 (no throw) when torn down (the Java side converts that to
+    /// IllegalStateException). Ports `PyRtspSession::cancel_handle`.
+    fn Java_org_tstrans_rtp_RtspSession_nCancelHandle(_env, _class, handle: jlong) -> jlong = 0 => {
         // Lease the session and clone the `client` Arc out. `None` (absent/closed) →
         // 0 (the Java side converts that to IllegalStateException), matching the
         // torn-down → 0 contract.
@@ -459,30 +427,29 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nCancelHandle(
             .into_handle(),
             None => 0,
         }
-    })
+    }
 }
 
-/// `RtspSession.nIntoDemuxReceiver` — take the SETUP-time RtspSession, convert to
-/// an RtpRecvTransport, build a DemuxReceiver handle. Double-consume →
-/// RtspException(CLOSED) + 0. Ports `PyRtspSession::into_demux_receiver`.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoDemuxReceiver(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    with_config: jboolean,
-    strict: jint,
-    pes_cap_per_pid: jlong,
-    pes_cap_total: jlong,
-    cfi: jboolean,
-    av1: jint,
-    au_cell_cap: jlong,
-    lenient_psi: jboolean,
-    sync_buf_cap: jlong,
-    unwrap_timestamps: jboolean,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `RtspSession.nIntoDemuxReceiver` — take the SETUP-time RtspSession, convert to
+    /// an RtpRecvTransport, build a DemuxReceiver handle. Double-consume →
+    /// RtspException(CLOSED) + 0. Ports `PyRtspSession::into_demux_receiver`.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_rtp_RtspSession_nIntoDemuxReceiver(
+        env,
+        _class,
+        handle: jlong,
+        with_config: jboolean,
+        strict: jint,
+        pes_cap_per_pid: jlong,
+        pes_cap_total: jlong,
+        cfi: jboolean,
+        av1: jint,
+        au_cell_cap: jlong,
+        lenient_psi: jboolean,
+        sync_buf_cap: jlong,
+        unwrap_timestamps: jboolean,
+    ) -> jlong = 0 => {
         // Lease the session and clone the data-plane `session` Arc out. `None`
         // (absent/closed) → IllegalStateException.
         let Some(session_slot) = REGISTRY_SESSION.with(handle as u64, |s| s.session.clone()) else {
@@ -541,7 +508,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoDemuxReceiver(
                 0
             }
         }
-    })
+    }
 }
 
 /// Best-effort TEARDOWN + `torn_down` latch for a session slot already taken
@@ -559,32 +526,31 @@ fn teardown_best_effort(slot: &JniRtspSession) {
     }
 }
 
-/// `RtspSession.nIntoH264Receiver` — CONSUMING native (the Java caller zeroed
-/// its handle via `consumeHandle()` BEFORE this call — NativeHandle contract
-/// item 3, same shape as srt `Socket.nIntoSender`). Takes the whole
-/// `JniRtspSession` slot out of the registry (the Java wrapper will never call
-/// `nClose` again, so a leased lookup here would leak the slot forever):
-///
-/// - success: converts the data plane into an `H264Receiver` and moves the
-///   control plane (`RtspClient` + `torn_down` flag) into the receiver's slot
-///   so the RTSP control connection + keepalive stay alive while AUs flow;
-///   `H264Receiver.nClose` then performs the best-effort TEARDOWN.
-/// - failure → the session tears down best-effort and is consumed either way
-///   (mirrors `Socket`'s "consumed even if the config is rejected"
-///   semantics): a data plane already consumed by `nIntoDemuxReceiver` is
-///   `RtspException(CLOSED)` — checked FIRST, so it is CLOSED on both session
-///   types — and a fresh plain-`nConnect` session is
-///   `RtspException(PROTOCOL)`.
-///
-/// Ports `PyRtspSession::into_h264_receiver` (Python keeps its session object
-/// alive instead; the consumption asymmetry is a deliberate JVM adjudication).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoH264Receiver(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `RtspSession.nIntoH264Receiver` — CONSUMING native (the Java caller zeroed
+    /// its handle via `consumeHandle()` BEFORE this call — NativeHandle contract
+    /// item 3, same shape as srt `Socket.nIntoSender`). Takes the whole
+    /// `JniRtspSession` slot out of the registry (the Java wrapper will never call
+    /// `nClose` again, so a leased lookup here would leak the slot forever):
+    ///
+    /// - success: converts the data plane into an `H264Receiver` and moves the
+    ///   control plane (`RtspClient` + `torn_down` flag) into the receiver's slot
+    ///   so the RTSP control connection + keepalive stay alive while AUs flow;
+    ///   `H264Receiver.nClose` then performs the best-effort TEARDOWN.
+    /// - failure → the session tears down best-effort and is consumed either way
+    ///   (mirrors `Socket`'s "consumed even if the config is rejected"
+    ///   semantics): a data plane already consumed by `nIntoDemuxReceiver` is
+    ///   `RtspException(CLOSED)` — checked FIRST, so it is CLOSED on both session
+    ///   types — and a fresh plain-`nConnect` session is
+    ///   `RtspException(PROTOCOL)`.
+    ///
+    /// Ports `PyRtspSession::into_h264_receiver` (Python keeps its session object
+    /// alive instead; the consumption asymmetry is a deliberate JVM adjudication).
+    fn Java_org_tstrans_rtp_RtspSession_nIntoH264Receiver(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         // Step 1: take the session out of its registry (atomic; idempotent).
         // `None` = already closed/consumed → the Java caller zeroed its field,
         // so this is a stale call racing a concurrent close/consume.
@@ -667,35 +633,29 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoH264Receiver(
                 torn_down: slot.torn_down,
             },
         )
-    })
+    }
 }
 
-/// `RtspSession.nIsTornDown`. Ports `PyRtspSession::is_torn_down`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIsTornDown(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jboolean {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// `RtspSession.nIsTornDown`. Ports `PyRtspSession::is_torn_down`.
+    fn Java_org_tstrans_rtp_RtspSession_nIsTornDown(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jboolean = 0 => {
         // Absent/closed reads as torn down (1). A live session reads its atomic flag.
         REGISTRY_SESSION
             .with(handle as u64, |s| {
                 u8::from(s.torn_down.load(Ordering::Relaxed))
             })
             .unwrap_or(1)
-    })
+    }
 }
 
-/// `RtspSession.nClose` — best-effort teardown (swallow errors, like tst-py's
-/// `__exit__`), then free the box.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// `RtspSession.nClose` — best-effort teardown (swallow errors, like tst-py's
+    /// `__exit__`), then free the box.
+    fn Java_org_tstrans_rtp_RtspSession_nClose(_env, _class, handle: jlong) = () => {
         // Atomic + idempotent: only the winning close gets the session back for
         // best-effort teardown (errors swallowed, like tst-py's `__exit__`). A second
         // close finds the id gone → no-op. No registry cancel hook (the cross-thread
@@ -711,5 +671,5 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nClose(
             }
             drop(b);
         }
-    })
+    }
 }

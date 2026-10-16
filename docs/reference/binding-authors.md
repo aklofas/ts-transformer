@@ -42,7 +42,11 @@ The native side keeps the shell in a process-wide `HandleRegistry<T>`
 the entry, so a use-after-close is a lookup miss (an
 `IllegalStateException`) rather than a dangling dereference, and `close()`
 cancels first (a receive parked in native code unparks) before it removes
-the entry. The sketch below is illustrative; the shipped classes live under
+the entry. Every JNI entry point is a `jni_native!` block
+(`bindings/jvm/src/panic.rs`), which runs the body under `jni_catch` so a
+Rust panic becomes a `RuntimeException` instead of unwinding into the JVM;
+the rail `jni-catch-coverage.sh` refuses a bare `extern "system"` function.
+The sketch below is illustrative; the shipped classes live under
 `org.tstrans.*`.
 
 ```kotlin

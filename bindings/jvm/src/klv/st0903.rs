@@ -32,8 +32,9 @@
 //! 64-slot per-target frame. On the encode path, `read_vmti` likewise runs each
 //! `read_vtarget` inside its own 64-slot `with_local_frame`.
 
+use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JValue};
+use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::jobject;
 use tst_core::klv::st0903::{
     VTargetPack as RustVTargetPack, VmtiLs as RustVmtiLs, decode as decode_lenient, decode_strict,
@@ -85,20 +86,19 @@ fn is_st0903_vtarget_typed_tag(tag: u32) -> bool {
 // Decode entry point
 // -----------------------------------------------------------------------
 
-/// `org.tstrans.klv.Klv.nDecodeVmti(byte[], boolean strict) -> VmtiLs`
-///
-/// Decodes a ST 0903 body (no UL / outer BER wrapper). Lenient when
-/// `strict = false`; strict when `strict = true`. On success, builds and
-/// returns a Java `VmtiLs` record. On failure, throws a
-/// `KlvDecodeException` and returns null.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nDecodeVmti<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    buf: JByteArray<'local>,
-    strict: jni::sys::jboolean,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nDecodeVmti(byte[], boolean strict) -> VmtiLs`
+    ///
+    /// Decodes a ST 0903 body (no UL / outer BER wrapper). Lenient when
+    /// `strict = false`; strict when `strict = true`. On success, builds and
+    /// returns a Java `VmtiLs` record. On failure, throws a
+    /// `KlvDecodeException` and returns null.
+    fn Java_org_tstrans_klv_Klv_nDecodeVmti<'local>(
+        env,
+        _c,
+        buf: JByteArray<'local>,
+        strict: jni::sys::jboolean,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&buf) {
             Ok(b) => b,
             Err(e) => {
@@ -124,25 +124,24 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nDecodeVmti<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
 // -----------------------------------------------------------------------
 // Encode entry points
 // -----------------------------------------------------------------------
 
-/// `org.tstrans.klv.Klv.nEncodeVmti(VmtiLs) -> byte[]`
-///
-/// Reads all fields from the Java `VmtiLs` record, builds a Rust `VmtiLs`,
-/// calls `encode_to_vec` (embedded body — no UL, no Tag 1 checksum per
-/// ST 0903.6-120). Mirrors tst-py's `encode_vmti`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeVmti<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    record: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nEncodeVmti(VmtiLs) -> byte[]`
+    ///
+    /// Reads all fields from the Java `VmtiLs` record, builds a Rust `VmtiLs`,
+    /// calls `encode_to_vec` (embedded body — no UL, no Tag 1 checksum per
+    /// ST 0903.6-120). Mirrors tst-py's `encode_vmti`.
+    fn Java_org_tstrans_klv_Klv_nEncodeVmti<'local>(
+        env,
+        _c,
+        record: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         match read_vmti(env, &record) {
             Ok(rust_rec) => match encode_to_vec(&rust_rec) {
                 Ok(bytes) => match env.byte_array_from_slice(&bytes) {
@@ -170,22 +169,21 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeVmti<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-/// `org.tstrans.klv.Klv.nEncodeVmtiStandalone(VmtiLs) -> byte[]`
-///
-/// Reads all fields from the Java `VmtiLs` record, builds a Rust `VmtiLs`,
-/// calls `encode_to_vec_standalone` (full `[UL][BER][body][Tag1 checksum]`
-/// per ST 0903.4-17 / ST 0903.6-119). Mirrors tst-py's
-/// `encode_vmti_standalone`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeVmtiStandalone<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    record: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nEncodeVmtiStandalone(VmtiLs) -> byte[]`
+    ///
+    /// Reads all fields from the Java `VmtiLs` record, builds a Rust `VmtiLs`,
+    /// calls `encode_to_vec_standalone` (full `[UL][BER][body][Tag1 checksum]`
+    /// per ST 0903.4-17 / ST 0903.6-119). Mirrors tst-py's
+    /// `encode_vmti_standalone`.
+    fn Java_org_tstrans_klv_Klv_nEncodeVmtiStandalone<'local>(
+        env,
+        _c,
+        record: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         match read_vmti(env, &record) {
             Ok(rust_rec) => match encode_to_vec_standalone(&rust_rec) {
                 Ok(bytes) => match env.byte_array_from_slice(&bytes) {
@@ -213,22 +211,21 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeVmtiStandalone<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-/// `org.tstrans.klv.Klv.nEncodeVmtiStrictCompliance(VmtiLs) -> byte[]`
-///
-/// Reads all fields from the Java `VmtiLs` record, builds a Rust `VmtiLs`,
-/// calls `encode_strict_compliance` (embedded form). Enforces mandatory items
-/// (Tags 4/6 + non-empty VTargetPacks + unique target IDs) before encoding.
-/// Mirrors tst-py's `encode_vmti_strict_compliance`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeVmtiStrictCompliance<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    record: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nEncodeVmtiStrictCompliance(VmtiLs) -> byte[]`
+    ///
+    /// Reads all fields from the Java `VmtiLs` record, builds a Rust `VmtiLs`,
+    /// calls `encode_strict_compliance` (embedded form). Enforces mandatory items
+    /// (Tags 4/6 + non-empty VTargetPacks + unique target IDs) before encoding.
+    /// Mirrors tst-py's `encode_vmti_strict_compliance`.
+    fn Java_org_tstrans_klv_Klv_nEncodeVmtiStrictCompliance<'local>(
+        env,
+        _c,
+        record: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         match read_vmti(env, &record) {
             Ok(rust_rec) => match encode_strict_compliance(&rust_rec) {
                 Ok(bytes) => match env.byte_array_from_slice(&bytes) {
@@ -258,22 +255,21 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeVmtiStrictCompliance<'loc
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-/// `org.tstrans.klv.Klv.nEncodeVmtiStandaloneStrictCompliance(VmtiLs) -> byte[]`
-///
-/// Reads all fields from the Java `VmtiLs` record, builds a Rust `VmtiLs`,
-/// calls `encode_standalone_strict_compliance` (full `[UL][BER][body][Tag1 checksum]`
-/// with additional standalone mandatory checks for Tags 2/11/12/13 and
-/// forbidden offset tags). Mirrors tst-py's `encode_vmti_standalone_strict_compliance`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeVmtiStandaloneStrictCompliance<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    record: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nEncodeVmtiStandaloneStrictCompliance(VmtiLs) -> byte[]`
+    ///
+    /// Reads all fields from the Java `VmtiLs` record, builds a Rust `VmtiLs`,
+    /// calls `encode_standalone_strict_compliance` (full `[UL][BER][body][Tag1 checksum]`
+    /// with additional standalone mandatory checks for Tags 2/11/12/13 and
+    /// forbidden offset tags). Mirrors tst-py's `encode_vmti_standalone_strict_compliance`.
+    fn Java_org_tstrans_klv_Klv_nEncodeVmtiStandaloneStrictCompliance<'local>(
+        env,
+        _c,
+        record: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         match read_vmti(env, &record) {
             Ok(rust_rec) => match encode_standalone_strict_compliance(&rust_rec) {
                 Ok(bytes) => match env.byte_array_from_slice(&bytes) {
@@ -303,7 +299,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeVmtiStandaloneStrictCompl
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
 // -----------------------------------------------------------------------

@@ -7,13 +7,12 @@
 //! an `Arc`, in a per-type leased [`HandleRegistry`] (not a raw box), and there
 //! is no JNI-side async handling.
 
+use crate::panic::jni_native;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use jni::JNIEnv;
-use jni::objects::{
-    JBooleanArray, JByteArray, JClass, JIntArray, JLongArray, JObject, JString, JValue,
-};
+use jni::objects::{JBooleanArray, JByteArray, JIntArray, JLongArray, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jlong};
 use secrecy::SecretString;
 
@@ -53,33 +52,27 @@ impl JniRtspServerCancel {
     }
 }
 
-/// Fire the HARD cancel. Guards a closed (zero) handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServerCancelHandle_nCancel(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// Fire the HARD cancel. Guards a closed (zero) handle.
+    fn Java_org_tstrans_rtp_RtspServerCancelHandle_nCancel(env, _class, handle: jlong) = () => {
         if REGISTRY_CANCEL
             .with(handle as u64, |c| c.inner.cancel())
             .is_none()
         {
             crate::error::throw_closed(env, "RtspServerCancelHandle");
         }
-    })
+    }
 }
 
-/// Report whether the flag was flipped. Guards a closed handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServerCancelHandle_nIsCancelled(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jboolean {
-    // A cancel target is never "parked", so `try_with` never reports `Locked`;
-    // treat `Locked`/`Taken` as closed.
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// Report whether the flag was flipped. Guards a closed handle.
+    fn Java_org_tstrans_rtp_RtspServerCancelHandle_nIsCancelled(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jboolean = 0 => {
+        // A cancel target is never "parked", so `try_with` never reports `Locked`;
+        // treat `Locked`/`Taken` as closed.
         match REGISTRY_CANCEL.try_with(handle as u64, |c| u8::from(c.inner.is_cancelled())) {
             crate::handle::TryWith::Ran(v) => v,
             _ => {
@@ -87,20 +80,15 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServerCancelHandle_nIsCancelled(
                 0
             }
         }
-    })
+    }
 }
 
-/// Free the boxed cancel handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServerCancelHandle_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    // Atomic + idempotent drop.
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// Free the boxed cancel handle.
+    fn Java_org_tstrans_rtp_RtspServerCancelHandle_nClose(_env, _class, handle: jlong) = () => {
+        // Atomic + idempotent drop.
         let _ = REGISTRY_CANCEL.close(handle as u64);
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -168,28 +156,27 @@ fn jstring_opt(env: &mut JNIEnv, s: &JString) -> Result<Option<String>, ()> {
     }
 }
 
-/// `RtspServer.nStart(...)` — build the RtspServerBuilder from config primitives,
-/// build()+start(). Returns a `Box<RtspServer>` handle, or 0 with a pending exception.
-/// `authScheme`: -1 none / 0 basic / 1 digest-md5 / 2 digest-sha256.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nStart<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    bind_addr: JString<'local>,
-    max_sessions: jlong,
-    session_timeout_secs: jlong,
-    fanout_capacity: jlong,
-    graceful_shutdown_drain_ms: jlong,
-    auth_scheme: jint,
-    auth_realm: JString<'local>,
-    auth_user: JString<'local>,
-    auth_password: JString<'local>,
-    tls_cert: JString<'local>,
-    tls_key: JString<'local>,
-    accept_unregistered_publishers: jboolean,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `RtspServer.nStart(...)` — build the RtspServerBuilder from config primitives,
+    /// build()+start(). Returns a `Box<RtspServer>` handle, or 0 with a pending exception.
+    /// `authScheme`: -1 none / 0 basic / 1 digest-md5 / 2 digest-sha256.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_rtp_RtspServer_nStart<'local>(
+        env,
+        _class,
+        bind_addr: JString<'local>,
+        max_sessions: jlong,
+        session_timeout_secs: jlong,
+        fanout_capacity: jlong,
+        graceful_shutdown_drain_ms: jlong,
+        auth_scheme: jint,
+        auth_realm: JString<'local>,
+        auth_user: JString<'local>,
+        auth_password: JString<'local>,
+        tls_cert: JString<'local>,
+        tls_key: JString<'local>,
+        accept_unregistered_publishers: jboolean,
+    ) -> jlong = 0 => {
         let bind: String = match env.get_string(&bind_addr) {
             Ok(s) => s.into(),
             Err(e) => {
@@ -302,7 +289,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nStart<'local>(
         REGISTRY_SERVER
             .insert_with_cancel(Arc::new(server), Some(Box::new(move || cancel.cancel())))
             as jlong
-    })
+    }
 }
 
 /// Lease the server for `handle` and run `f` on it under the entry's resource
@@ -357,29 +344,27 @@ fn with_server_poisoning<R>(
     }
 }
 
-/// `RtspServer.nStats(handle)` → ServerStats record, or null on a JNI builder error.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// `RtspServer.nStats(handle)` → ServerStats record, or null on a JNI builder error.
+    fn Java_org_tstrans_rtp_RtspServer_nStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         let Some(s) = with_server(env, handle, |server| server.stats()) else {
             return JObject::null();
         };
         build_server_stats(env, &s).unwrap_or_else(|_| JObject::null())
-    })
+    }
 }
 
-/// `RtspServer.nLocalAddr(handle)` → "ip:port" or null.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nLocalAddr<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JString<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `RtspServer.nLocalAddr(handle)` → "ip:port" or null.
+    fn Java_org_tstrans_rtp_RtspServer_nLocalAddr<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JString<'local> = JObject::null().into() => {
         let Some(addr) = with_server(env, handle, |server| server.local_addr()) else {
             return JObject::null().into();
         };
@@ -389,39 +374,28 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nLocalAddr<'local>(
                 .unwrap_or_else(|_| JObject::null().into()),
             None => JObject::null().into(),
         }
-    })
+    }
 }
 
-/// `RtspServer.nStop(handle, drainMs)` — graceful shutdown. `drainMs` is accepted
-/// for API stability but ignored (the builder's graceful_shutdown_drain governs the
-/// real window), mirroring tst-py.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nStop(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    _drain_ms: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `RtspServer.nStop(handle, drainMs)` — graceful shutdown. `drainMs` is accepted
+    /// for API stability but ignored (the builder's graceful_shutdown_drain governs the
+    /// real window), mirroring tst-py.
+    fn Java_org_tstrans_rtp_RtspServer_nStop(env, _class, handle: jlong, _drain_ms: jlong) = () => {
         let Some(res) = with_server_poisoning(env, handle, |server| server.stop()) else {
             return;
         };
         if let Err(e) = res {
             server_error_to_jvm(env, e);
         }
-    })
+    }
 }
 
-/// `RtspServer.nCancelHandle(handle)` → Box<JniRtspServerCancel> handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    // cancel_handle() takes &self and hands back an independent Clone (own
-    // Arc<AtomicBool>), so the returned handle survives the server's lifetime.
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `RtspServer.nCancelHandle(handle)` → Box<JniRtspServerCancel> handle.
+    fn Java_org_tstrans_rtp_RtspServer_nCancelHandle(env, _class, handle: jlong) -> jlong = 0 => {
+        // cancel_handle() takes &self and hands back an independent Clone (own
+        // Arc<AtomicBool>), so the returned handle survives the server's lifetime.
         with_server(env, handle, |server| {
             JniRtspServerCancel {
                 inner: server.cancel_handle(),
@@ -429,31 +403,26 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nCancelHandle(
             .into_handle()
         })
         .unwrap_or(0)
-    })
+    }
 }
 
-/// `RtspServer.nClose(handle)` — best-effort graceful stop (swallow NotStarted),
-/// then drop the registry's `Arc` (the last one runs `Drop`: hard-cancel +
-/// runtime shutdown). Mirrors tst-py `__exit__`. The `stop()` is load-bearing
-/// for the publisher role: it ends every publish mount's application transport
-/// (a bound `DemuxReceiver` reads end of stream) and wakes a parked
-/// `nextPublisher` with `SERVER`, which the hard cancel alone does not.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    // Atomic + idempotent: the cancel hook fires a HARD cancel first (waking any
-    // racing server op), then only the winning close gets the server back for a
-    // best-effort graceful stop (NotStarted/Shutdown swallowed). Dropping it fires
-    // its Drop (runtime shutdown). A second close finds the id gone → no-op.
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// `RtspServer.nClose(handle)` — best-effort graceful stop (swallow NotStarted),
+    /// then drop the registry's `Arc` (the last one runs `Drop`: hard-cancel +
+    /// runtime shutdown). Mirrors tst-py `__exit__`. The `stop()` is load-bearing
+    /// for the publisher role: it ends every publish mount's application transport
+    /// (a bound `DemuxReceiver` reads end of stream) and wakes a parked
+    /// `nextPublisher` with `SERVER`, which the hard cancel alone does not.
+    fn Java_org_tstrans_rtp_RtspServer_nClose(_env, _class, handle: jlong) = () => {
+        // Atomic + idempotent: the cancel hook fires a HARD cancel first (waking any
+        // racing server op), then only the winning close gets the server back for a
+        // best-effort graceful stop (NotStarted/Shutdown swallowed). Dropping it fires
+        // its Drop (runtime shutdown). A second close finds the id gone → no-op.
         if let Some(server) = REGISTRY_SERVER.close(handle as u64) {
             let _ = server.stop(); // best-effort
             drop(server);
         }
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -505,31 +474,30 @@ fn with_mount_poisoning<R>(
     }
 }
 
-/// `RtspServer.nAddUnicastMount(serverHandle, path, ...muxerConfig arrays...)` →
-/// Box<MountHandle> handle, or 0 with a pending RtspException.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nAddUnicastMount<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    server_handle: jlong,
-    path: JString<'local>,
-    program_number: jint,
-    pmt_pid: jint,
-    pcr_pid: jint,
-    pcr_interval_ms: jint,
-    psi_interval_ms: jint,
-    buffer_packets: jint,
-    av1_carriage: jint,
-    stream_pids: JIntArray<'local>,
-    stream_kinds: JIntArray<'local>,
-    stream_codecs: JIntArray<'local>,
-    stream_type_codes: JIntArray<'local>,
-    stream_carries_pts: JBooleanArray<'local>,
-    data_desc_bytes: JByteArray<'local>,
-    data_desc_lens: JIntArray<'local>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `RtspServer.nAddUnicastMount(serverHandle, path, ...muxerConfig arrays...)` →
+    /// Box<MountHandle> handle, or 0 with a pending RtspException.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_rtp_RtspServer_nAddUnicastMount<'local>(
+        env,
+        _class,
+        server_handle: jlong,
+        path: JString<'local>,
+        program_number: jint,
+        pmt_pid: jint,
+        pcr_pid: jint,
+        pcr_interval_ms: jint,
+        psi_interval_ms: jint,
+        buffer_packets: jint,
+        av1_carriage: jint,
+        stream_pids: JIntArray<'local>,
+        stream_kinds: JIntArray<'local>,
+        stream_codecs: JIntArray<'local>,
+        stream_type_codes: JIntArray<'local>,
+        stream_carries_pts: JBooleanArray<'local>,
+        data_desc_bytes: JByteArray<'local>,
+        data_desc_lens: JIntArray<'local>,
+    ) -> jlong = 0 => {
         // Validate the server handle up front (throws if closed); the cfg/path build
         // touches `env`, so the actual `add_mount` is leased separately below.
         if with_server(env, server_handle, |_| ()).is_none() {
@@ -576,40 +544,39 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nAddUnicastMount<'local>(
                 0
             }
         }
-    })
+    }
 }
 
-/// `RtspServer.nAddMulticastMount(serverHandle, path, group, port, ttl, iface,
-/// ...muxerConfig arrays...)` → Box<MountHandle> handle, or 0 with a pending
-/// RtspException. Builds the `rtp://group:port?ttl=N[&iface=...]` URL the Rust
-/// `add_multicast_mount` expects (mirror `PyRtspServer::add_multicast_mount`).
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nAddMulticastMount<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    server_handle: jlong,
-    path: JString<'local>,
-    group: JString<'local>,
-    port: jint,
-    ttl: jint,
-    iface: JString<'local>,
-    program_number: jint,
-    pmt_pid: jint,
-    pcr_pid: jint,
-    pcr_interval_ms: jint,
-    psi_interval_ms: jint,
-    buffer_packets: jint,
-    av1_carriage: jint,
-    stream_pids: JIntArray<'local>,
-    stream_kinds: JIntArray<'local>,
-    stream_codecs: JIntArray<'local>,
-    stream_type_codes: JIntArray<'local>,
-    stream_carries_pts: JBooleanArray<'local>,
-    data_desc_bytes: JByteArray<'local>,
-    data_desc_lens: JIntArray<'local>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `RtspServer.nAddMulticastMount(serverHandle, path, group, port, ttl, iface,
+    /// ...muxerConfig arrays...)` → Box<MountHandle> handle, or 0 with a pending
+    /// RtspException. Builds the `rtp://group:port?ttl=N[&iface=...]` URL the Rust
+    /// `add_multicast_mount` expects (mirror `PyRtspServer::add_multicast_mount`).
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_rtp_RtspServer_nAddMulticastMount<'local>(
+        env,
+        _class,
+        server_handle: jlong,
+        path: JString<'local>,
+        group: JString<'local>,
+        port: jint,
+        ttl: jint,
+        iface: JString<'local>,
+        program_number: jint,
+        pmt_pid: jint,
+        pcr_pid: jint,
+        pcr_interval_ms: jint,
+        psi_interval_ms: jint,
+        buffer_packets: jint,
+        av1_carriage: jint,
+        stream_pids: JIntArray<'local>,
+        stream_kinds: JIntArray<'local>,
+        stream_codecs: JIntArray<'local>,
+        stream_type_codes: JIntArray<'local>,
+        stream_carries_pts: JBooleanArray<'local>,
+        data_desc_bytes: JByteArray<'local>,
+        data_desc_lens: JIntArray<'local>,
+    ) -> jlong = 0 => {
         // Validate the server handle up front (throws if closed); the URL/cfg build
         // touches `env`, so the actual `add_multicast_mount` is leased separately.
         if with_server(env, server_handle, |_| ()).is_none() {
@@ -672,7 +639,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nAddMulticastMount<'local
                 0
             }
         }
-    })
+    }
 }
 
 // ── Publisher role: addPublishMount / nextPublisher / removeMount ───────────
@@ -688,17 +655,16 @@ fn read_path(env: &mut JNIEnv, path: &JString) -> Option<String> {
     }
 }
 
-/// `RtspServer.nAddPublishMount(serverHandle, path)` → `PublishMount` handle, or
-/// 0 with a pending `RtspException` (`MOUNT` for an invalid or duplicate path,
-/// `SERVER` once stopped).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nAddPublishMount<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    server_handle: jlong,
-    path: JString<'local>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `RtspServer.nAddPublishMount(serverHandle, path)` → `PublishMount` handle, or
+    /// 0 with a pending `RtspException` (`MOUNT` for an invalid or duplicate path,
+    /// `SERVER` once stopped).
+    fn Java_org_tstrans_rtp_RtspServer_nAddPublishMount<'local>(
+        env,
+        _class,
+        server_handle: jlong,
+        path: JString<'local>,
+    ) -> jlong = 0 => {
         let Some(path_str) = read_path(env, &path) else {
             return 0;
         };
@@ -714,37 +680,36 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nAddPublishMount<'local>(
                 0
             }
         }
-    })
+    }
 }
 
 /// Longest single wait inside `nNextPublisher`; the server is re-leased
 /// between slices.
 const NEXT_PUBLISHER_SLICE: Duration = Duration::from_secs(1);
 
-/// `RtspServer.nNextPublisher(serverHandle, timeoutMs)` → the next on-demand
-/// `PublishMount` handle, `0` on a timeout, or 0 with a pending
-/// `RtspException(SERVER)` once the server stops (including while it waited).
-///
-/// The wait runs WITHOUT the registry lease: the server's `Arc` is cloned out
-/// under a short lease and the lease is released before `next_publisher`
-/// parks. Holding it would block `close()` (which must take the resource) and
-/// every other server native for the whole wait, and `close()` could then
-/// never run the `stop()` that wakes this call.
-///
-/// The wait runs in slices of at most [`NEXT_PUBLISHER_SLICE`], dropping the
-/// clone and re-leasing the server between slices. A registry entry that went
-/// away without a `stop()` (a poisoned mutator drops only the registry's
-/// `Arc`) therefore ends the call with `RtspException(SERVER)` within one
-/// slice, instead of the clone keeping the server alive for the whole
-/// timeout.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nNextPublisher(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    server_handle: jlong,
-    timeout_ms: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `RtspServer.nNextPublisher(serverHandle, timeoutMs)` → the next on-demand
+    /// `PublishMount` handle, `0` on a timeout, or 0 with a pending
+    /// `RtspException(SERVER)` once the server stops (including while it waited).
+    ///
+    /// The wait runs WITHOUT the registry lease: the server's `Arc` is cloned out
+    /// under a short lease and the lease is released before `next_publisher`
+    /// parks. Holding it would block `close()` (which must take the resource) and
+    /// every other server native for the whole wait, and `close()` could then
+    /// never run the `stop()` that wakes this call.
+    ///
+    /// The wait runs in slices of at most [`NEXT_PUBLISHER_SLICE`], dropping the
+    /// clone and re-leasing the server between slices. A registry entry that went
+    /// away without a `stop()` (a poisoned mutator drops only the registry's
+    /// `Arc`) therefore ends the call with `RtspException(SERVER)` within one
+    /// slice, instead of the clone keeping the server alive for the whole
+    /// timeout.
+    fn Java_org_tstrans_rtp_RtspServer_nNextPublisher(
+        env,
+        _class,
+        server_handle: jlong,
+        timeout_ms: jlong,
+    ) -> jlong = 0 => {
         let Some(mut server) = with_server(env, server_handle, Arc::clone) else {
             return 0;
         };
@@ -781,21 +746,20 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nNextPublisher(
                 }
             }
         }
-    })
+    }
 }
 
-/// `RtspServer.nRemoveMount(serverHandle, path)` — remove a mount of any kind.
-/// `RtspException(MOUNT)` when no mount is registered at `path`, `SERVER` once
-/// stopped. Blocks for the Notice 5402 writes to the mount's sessions (bounded
-/// at 1 s per session).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nRemoveMount<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    server_handle: jlong,
-    path: JString<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `RtspServer.nRemoveMount(serverHandle, path)` — remove a mount of any kind.
+    /// `RtspException(MOUNT)` when no mount is registered at `path`, `SERVER` once
+    /// stopped. Blocks for the Notice 5402 writes to the mount's sessions (bounded
+    /// at 1 s per session).
+    fn Java_org_tstrans_rtp_RtspServer_nRemoveMount<'local>(
+        env,
+        _class,
+        server_handle: jlong,
+        path: JString<'local>,
+    ) = () => {
         let Some(path_str) = read_path(env, &path) else {
             return;
         };
@@ -807,47 +771,40 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nRemoveMount<'local>(
         if let Err(e) = res {
             server_error_to_jvm(env, e);
         }
-    })
+    }
 }
 
 // ── MountHandle: identity / introspection ──────────────────────────────────
 
-/// `MountHandle.nMountPath(handle)` → registered mount path string.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nMountPath<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JString<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `MountHandle.nMountPath(handle)` → registered mount path string.
+    fn Java_org_tstrans_rtp_MountHandle_nMountPath<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JString<'local> = JObject::null().into() => {
         let Some(path) = with_mount(env, handle, |inner| inner.mount_path().to_owned()) else {
             return JObject::null().into();
         };
         env.new_string(path)
             .unwrap_or_else(|_| JObject::null().into())
-    })
+    }
 }
 
-/// `MountHandle.nPeerCount(handle)` → live subscriber count.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPeerCount(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `MountHandle.nPeerCount(handle)` → live subscriber count.
+    fn Java_org_tstrans_rtp_MountHandle_nPeerCount(env, _class, handle: jlong) -> jlong = 0 => {
         with_mount(env, handle, |inner| inner.peer_count() as jlong).unwrap_or(0)
-    })
+    }
 }
 
-/// `MountHandle.nMountKind(handle)` → "unicast" / "multicast" / "unknown".
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nMountKind<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JString<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `MountHandle.nMountKind(handle)` → "unicast" / "multicast" / "unknown".
+    fn Java_org_tstrans_rtp_MountHandle_nMountKind<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JString<'local> = JObject::null().into() => {
         let Some(kind) = with_mount(env, handle, |inner| match inner.mount_kind() {
             MountKind::Unicast => "unicast",
             MountKind::Multicast { .. } => "multicast",
@@ -857,7 +814,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nMountKind<'local>(
         };
         env.new_string(kind)
             .unwrap_or_else(|_| JObject::null().into())
-    })
+    }
 }
 
 /// Build the Java `org.tstrans.rtp.MountStats` record. Ctor `(JJJJ)V`.
@@ -878,34 +835,32 @@ fn build_mount_stats<'local>(
     )
 }
 
-/// `MountHandle.nStats(handle)` → MountStats record, or null on a JNI builder error.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// `MountHandle.nStats(handle)` → MountStats record, or null on a JNI builder error.
+    fn Java_org_tstrans_rtp_MountHandle_nStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         let Some(s) = with_mount(env, handle, |inner| inner.stats()) else {
             return JObject::null();
         };
         build_mount_stats(env, &s).unwrap_or_else(|_| JObject::null())
-    })
+    }
 }
 
 // ── MountHandle: push family — single-stream variants ───────────────────────
 
-/// `MountHandle.nPushVideo(handle, nal, pts, keyFrame)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushVideo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    nal: JByteArray<'local>,
-    pts: jlong,
-    key_frame: jboolean,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `MountHandle.nPushVideo(handle, nal, pts, keyFrame)`.
+    fn Java_org_tstrans_rtp_MountHandle_nPushVideo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        key_frame: jboolean,
+    ) = () => {
         let Some(buf) = read_bytes(env, &nal) else {
             return;
         };
@@ -917,20 +872,19 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushVideo<'local>(
         if let Err(e) = res {
             mount_error_to_jvm(env, e);
         }
-    })
+    }
 }
 
-/// `MountHandle.nPushKlv(handle, klv, pts, metadataServiceId)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushKlv<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    klv: JByteArray<'local>,
-    pts: jlong,
-    metadata_service_id: jint,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `MountHandle.nPushKlv(handle, klv, pts, metadataServiceId)`.
+    fn Java_org_tstrans_rtp_MountHandle_nPushKlv<'local>(
+        env,
+        _class,
+        handle: jlong,
+        klv: JByteArray<'local>,
+        pts: jlong,
+        metadata_service_id: jint,
+    ) = () => {
         let Ok(service_id) = checked_u8(env, i64::from(metadata_service_id), "metadataServiceId")
         else {
             return; // IllegalArgumentException pending
@@ -946,19 +900,18 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushKlv<'local>(
         if let Err(e) = res {
             mount_error_to_jvm(env, e);
         }
-    })
+    }
 }
 
-/// `MountHandle.nPushAudio(handle, frames, pts)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushAudio<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    frames: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `MountHandle.nPushAudio(handle, frames, pts)`.
+    fn Java_org_tstrans_rtp_MountHandle_nPushAudio<'local>(
+        env,
+        _class,
+        handle: jlong,
+        frames: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(buf) = read_bytes(env, &frames) else {
             return;
         };
@@ -970,19 +923,18 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushAudio<'local>(
         if let Err(e) = res {
             mount_error_to_jvm(env, e);
         }
-    })
+    }
 }
 
-/// `MountHandle.nPushSubtitle(handle, pts, payload)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushSubtitle<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    pts: jlong,
-    payload: JByteArray<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `MountHandle.nPushSubtitle(handle, pts, payload)`.
+    fn Java_org_tstrans_rtp_MountHandle_nPushSubtitle<'local>(
+        env,
+        _class,
+        handle: jlong,
+        pts: jlong,
+        payload: JByteArray<'local>,
+    ) = () => {
         let Some(buf) = read_bytes(env, &payload) else {
             return;
         };
@@ -994,19 +946,18 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushSubtitle<'local>(
         if let Err(e) = res {
             mount_error_to_jvm(env, e);
         }
-    })
+    }
 }
 
-/// `MountHandle.nPushData(handle, data, pts)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushData<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    data: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `MountHandle.nPushData(handle, data, pts)`.
+    fn Java_org_tstrans_rtp_MountHandle_nPushData<'local>(
+        env,
+        _class,
+        handle: jlong,
+        data: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(buf) = read_bytes(env, &data) else {
             return;
         };
@@ -1018,23 +969,22 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushData<'local>(
         if let Err(e) = res {
             mount_error_to_jvm(env, e);
         }
-    })
+    }
 }
 
 // ── MountHandle: push family — handle-targeted variants ─────────────────────
 
-/// `MountHandle.nPushVideoTo(handle, streamHandleRaw, nal, pts, keyFrame)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushVideoTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    nal: JByteArray<'local>,
-    pts: jlong,
-    key_frame: jboolean,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `MountHandle.nPushVideoTo(handle, streamHandleRaw, nal, pts, keyFrame)`.
+    fn Java_org_tstrans_rtp_MountHandle_nPushVideoTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        key_frame: jboolean,
+    ) = () => {
         // MountHandle has no transport concept — a forged handle is a MOUNT error
         // (DIFFERS from MuxSender, which maps forged handles to RtpException(TRANSPORT)).
         let Some(h) = u32::try_from(stream_handle_raw)
@@ -1055,21 +1005,20 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushVideoTo<'local>(
         if let Err(e) = res {
             mount_error_to_jvm(env, e);
         }
-    })
+    }
 }
 
-/// `MountHandle.nPushKlvTo(handle, streamHandleRaw, klv, pts, metadataServiceId)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushKlvTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    klv: JByteArray<'local>,
-    pts: jlong,
-    metadata_service_id: jint,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `MountHandle.nPushKlvTo(handle, streamHandleRaw, klv, pts, metadataServiceId)`.
+    fn Java_org_tstrans_rtp_MountHandle_nPushKlvTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        klv: JByteArray<'local>,
+        pts: jlong,
+        metadata_service_id: jint,
+    ) = () => {
         let Some(h) = u32::try_from(stream_handle_raw)
             .ok()
             .and_then(|r| KlvStreamHandle::try_from_raw(r).ok())
@@ -1092,20 +1041,19 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushKlvTo<'local>(
         if let Err(e) = res {
             mount_error_to_jvm(env, e);
         }
-    })
+    }
 }
 
-/// `MountHandle.nPushAudioTo(handle, streamHandleRaw, frames, pts)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushAudioTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    frames: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `MountHandle.nPushAudioTo(handle, streamHandleRaw, frames, pts)`.
+    fn Java_org_tstrans_rtp_MountHandle_nPushAudioTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        frames: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(h) = u32::try_from(stream_handle_raw)
             .ok()
             .and_then(|r| AudioStreamHandle::try_from_raw(r).ok())
@@ -1124,20 +1072,19 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushAudioTo<'local>(
         if let Err(e) = res {
             mount_error_to_jvm(env, e);
         }
-    })
+    }
 }
 
-/// `MountHandle.nPushSubtitleTo(handle, streamHandleRaw, pts, payload)`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushSubtitleTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    pts: jlong,
-    payload: JByteArray<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `MountHandle.nPushSubtitleTo(handle, streamHandleRaw, pts, payload)`.
+    fn Java_org_tstrans_rtp_MountHandle_nPushSubtitleTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        pts: jlong,
+        payload: JByteArray<'local>,
+    ) = () => {
         let Some(h) = u32::try_from(stream_handle_raw)
             .ok()
             .and_then(|r| SubtitleStreamHandle::try_from_raw(r).ok())
@@ -1156,24 +1103,23 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushSubtitleTo<'local>(
         if let Err(e) = res {
             mount_error_to_jvm(env, e);
         }
-    })
+    }
 }
 
-/// `MountHandle.nPushDataTo(handle, streamHandleRaw, data, pts)`. The raw handle
-/// is validated via the strict `u32::try_from` + `DataStreamHandle::try_from_raw`
-/// chain (rejecting negative / out-of-u32 values up front rather than
-/// truncating). A forged handle is a `MOUNT` error (DIFFERS from MuxSender, which
-/// maps forged handles to RtpException(TRANSPORT)).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushDataTo<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    stream_handle_raw: jlong,
-    data: JByteArray<'local>,
-    pts: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `MountHandle.nPushDataTo(handle, streamHandleRaw, data, pts)`. The raw handle
+    /// is validated via the strict `u32::try_from` + `DataStreamHandle::try_from_raw`
+    /// chain (rejecting negative / out-of-u32 values up front rather than
+    /// truncating). A forged handle is a `MOUNT` error (DIFFERS from MuxSender, which
+    /// maps forged handles to RtpException(TRANSPORT)).
+    fn Java_org_tstrans_rtp_MountHandle_nPushDataTo<'local>(
+        env,
+        _class,
+        handle: jlong,
+        stream_handle_raw: jlong,
+        data: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
         let Some(h) = u32::try_from(stream_handle_raw)
             .ok()
             .and_then(|r| DataStreamHandle::try_from_raw(r).ok())
@@ -1192,19 +1138,14 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushDataTo<'local>(
         if let Err(e) = res {
             mount_error_to_jvm(env, e);
         }
-    })
+    }
 }
 
 // ── MountHandle: stream-handle accessors (first-of-kind; -1 = none) ──────────
 
-/// `MountHandle.nVideoHandle(handle)` — first configured video stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nVideoHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `MountHandle.nVideoHandle(handle)` — first configured video stream handle, or `-1`.
+    fn Java_org_tstrans_rtp_MountHandle_nVideoHandle(env, _class, handle: jlong) -> jlong = 0 => {
         with_mount(env, handle, |inner| {
             inner
                 .video_handles()
@@ -1214,17 +1155,12 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nVideoHandle(
                 .unwrap_or(-1)
         })
         .unwrap_or(-1)
-    })
+    }
 }
 
-/// `MountHandle.nKlvHandle(handle)` — first configured KLV stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nKlvHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `MountHandle.nKlvHandle(handle)` — first configured KLV stream handle, or `-1`.
+    fn Java_org_tstrans_rtp_MountHandle_nKlvHandle(env, _class, handle: jlong) -> jlong = 0 => {
         with_mount(env, handle, |inner| {
             inner
                 .klv_handles()
@@ -1234,17 +1170,12 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nKlvHandle(
                 .unwrap_or(-1)
         })
         .unwrap_or(-1)
-    })
+    }
 }
 
-/// `MountHandle.nAudioHandle(handle)` — first configured audio stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nAudioHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `MountHandle.nAudioHandle(handle)` — first configured audio stream handle, or `-1`.
+    fn Java_org_tstrans_rtp_MountHandle_nAudioHandle(env, _class, handle: jlong) -> jlong = 0 => {
         with_mount(env, handle, |inner| {
             inner
                 .audio_handles()
@@ -1254,17 +1185,16 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nAudioHandle(
                 .unwrap_or(-1)
         })
         .unwrap_or(-1)
-    })
+    }
 }
 
-/// `MountHandle.nSubtitleHandle(handle)` — first configured subtitle stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nSubtitleHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `MountHandle.nSubtitleHandle(handle)` — first configured subtitle stream handle, or `-1`.
+    fn Java_org_tstrans_rtp_MountHandle_nSubtitleHandle(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         with_mount(env, handle, |inner| {
             inner
                 .subtitle_handles()
@@ -1274,17 +1204,12 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nSubtitleHandle(
                 .unwrap_or(-1)
         })
         .unwrap_or(-1)
-    })
+    }
 }
 
-/// `MountHandle.nDataHandle(handle)` — first configured data stream handle, or `-1`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nDataHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `MountHandle.nDataHandle(handle)` — first configured data stream handle, or `-1`.
+    fn Java_org_tstrans_rtp_MountHandle_nDataHandle(env, _class, handle: jlong) -> jlong = 0 => {
         with_mount(env, handle, |inner| {
             inner
                 .data_handles()
@@ -1294,19 +1219,18 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nDataHandle(
                 .unwrap_or(-1)
         })
         .unwrap_or(-1)
-    })
+    }
 }
 
 // ── MountHandle: stream-handle accessors (all-of-kind; long[]) ──────────────
 
-/// `MountHandle.nVideoHandles(handle)` → `long[]` of all video stream handles.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nVideoHandles<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JLongArray<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `MountHandle.nVideoHandles(handle)` → `long[]` of all video stream handles.
+    fn Java_org_tstrans_rtp_MountHandle_nVideoHandles<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JLongArray<'local> = JObject::null().into() => {
         let Some(raws) = with_mount(env, handle, |inner| {
             inner
                 .video_handles()
@@ -1322,17 +1246,16 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nVideoHandles<'local>(
         };
         let _ = env.set_long_array_region(&arr, 0, &raws);
         arr
-    })
+    }
 }
 
-/// `MountHandle.nKlvHandles(handle)` → `long[]` of all KLV stream handles.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nKlvHandles<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JLongArray<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `MountHandle.nKlvHandles(handle)` → `long[]` of all KLV stream handles.
+    fn Java_org_tstrans_rtp_MountHandle_nKlvHandles<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JLongArray<'local> = JObject::null().into() => {
         let Some(raws) = with_mount(env, handle, |inner| {
             inner
                 .klv_handles()
@@ -1348,17 +1271,16 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nKlvHandles<'local>(
         };
         let _ = env.set_long_array_region(&arr, 0, &raws);
         arr
-    })
+    }
 }
 
-/// `MountHandle.nAudioHandles(handle)` → `long[]` of all audio stream handles.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nAudioHandles<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JLongArray<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `MountHandle.nAudioHandles(handle)` → `long[]` of all audio stream handles.
+    fn Java_org_tstrans_rtp_MountHandle_nAudioHandles<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JLongArray<'local> = JObject::null().into() => {
         let Some(raws) = with_mount(env, handle, |inner| {
             inner
                 .audio_handles()
@@ -1374,17 +1296,16 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nAudioHandles<'local>(
         };
         let _ = env.set_long_array_region(&arr, 0, &raws);
         arr
-    })
+    }
 }
 
-/// `MountHandle.nSubtitleHandles(handle)` → `long[]` of all subtitle stream handles.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nSubtitleHandles<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JLongArray<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `MountHandle.nSubtitleHandles(handle)` → `long[]` of all subtitle stream handles.
+    fn Java_org_tstrans_rtp_MountHandle_nSubtitleHandles<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JLongArray<'local> = JObject::null().into() => {
         let Some(raws) = with_mount(env, handle, |inner| {
             inner
                 .subtitle_handles()
@@ -1400,17 +1321,16 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nSubtitleHandles<'local>
         };
         let _ = env.set_long_array_region(&arr, 0, &raws);
         arr
-    })
+    }
 }
 
-/// `MountHandle.nDataHandles(handle)` → `long[]` of all data stream handles.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nDataHandles<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JLongArray<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null().into(), |env| {
+jni_native! {
+    /// `MountHandle.nDataHandles(handle)` → `long[]` of all data stream handles.
+    fn Java_org_tstrans_rtp_MountHandle_nDataHandles<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JLongArray<'local> = JObject::null().into() => {
         let Some(raws) = with_mount(env, handle, |inner| {
             inner
                 .data_handles()
@@ -1426,48 +1346,33 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nDataHandles<'local>(
         };
         let _ = env.set_long_array_region(&arr, 0, &raws);
         arr
-    })
+    }
 }
 
 // ── MountHandle: lifecycle ──────────────────────────────────────────────────
 
-/// `MountHandle.nFlush(handle)` — drain + broadcast buffered TS.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nFlush(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `MountHandle.nFlush(handle)` — drain + broadcast buffered TS.
+    fn Java_org_tstrans_rtp_MountHandle_nFlush(env, _class, handle: jlong) = () => {
         with_mount_poisoning(env, handle, |inner| inner.flush());
-    })
+    }
 }
 
-/// `MountHandle.nResetStats(handle)` — zero all flow counters.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nResetStats(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `MountHandle.nResetStats(handle)` — zero all flow counters.
+    fn Java_org_tstrans_rtp_MountHandle_nResetStats(env, _class, handle: jlong) = () => {
         with_mount_poisoning(env, handle, |inner| inner.reset_stats());
-    })
+    }
 }
 
-/// `MountHandle.nClose(handle)` — free the handle-wrapper box (the mount itself
-/// persists in the server until stop()/close()). No-op on a zero handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    // Atomic + idempotent: only the winning close gets the handle wrapper back to
-    // drop. No cancel hook — the mount persists in the server until stop()/close().
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// `MountHandle.nClose(handle)` — free the handle-wrapper box (the mount itself
+    /// persists in the server until stop()/close()). No-op on a zero handle.
+    fn Java_org_tstrans_rtp_MountHandle_nClose(_env, _class, handle: jlong) = () => {
+        // Atomic + idempotent: only the winning close gets the handle wrapper back to
+        // drop. No cancel hook — the mount persists in the server until stop()/close().
         let _ = REGISTRY_MOUNT.close(handle as u64);
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1481,39 +1386,37 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nClose(
 // into the shipped JAR.
 // ---------------------------------------------------------------------------
 
-/// `org.tstrans.internal.PanicProbe.nForcePanicThroughMount(long)` — force a
-/// panic through the production `with_mount_poisoning` helper (the one the
-/// `nPush*`/`nFlush` family routes through) on the leased `MountHandle`. The
-/// outer `jni_catch` surfaces the panic as a `RuntimeException`; the entry is
-/// poisoned, so a subsequent real mount op leases `None` → `IllegalStateException`.
-#[cfg(feature = "jni-test-hooks")]
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_internal_PanicProbe_nForcePanicThroughMount(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `org.tstrans.internal.PanicProbe.nForcePanicThroughMount(long)` — force a
+    /// panic through the production `with_mount_poisoning` helper (the one the
+    /// `nPush*`/`nFlush` family routes through) on the leased `MountHandle`. The
+    /// outer `jni_catch` surfaces the panic as a `RuntimeException`; the entry is
+    /// poisoned, so a subsequent real mount op leases `None` → `IllegalStateException`.
+    #[cfg(feature = "jni-test-hooks")]
+    fn Java_org_tstrans_internal_PanicProbe_nForcePanicThroughMount(
+        env,
+        _class,
+        handle: jlong,
+    ) = () => {
         with_mount_poisoning(env, handle, |_inner| {
             panic!("probe: torn mount mutation (jni-test-hooks)");
         });
-    })
+    }
 }
 
-/// `org.tstrans.internal.PanicProbe.nForcePanicThroughServer(long)` — force a
-/// panic through the production `with_server_poisoning` helper (the one
-/// `nStop`/`nAdd*Mount` route through) on the leased `RtspServer`. Poisons the
-/// server entry; a later real server op then throws `IllegalStateException`.
-#[cfg(feature = "jni-test-hooks")]
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_internal_PanicProbe_nForcePanicThroughServer(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `org.tstrans.internal.PanicProbe.nForcePanicThroughServer(long)` — force a
+    /// panic through the production `with_server_poisoning` helper (the one
+    /// `nStop`/`nAdd*Mount` route through) on the leased `RtspServer`. Poisons the
+    /// server entry; a later real server op then throws `IllegalStateException`.
+    #[cfg(feature = "jni-test-hooks")]
+    fn Java_org_tstrans_internal_PanicProbe_nForcePanicThroughServer(
+        env,
+        _class,
+        handle: jlong,
+    ) = () => {
         with_server_poisoning(env, handle, |_server| {
             panic!("probe: torn server mutation (jni-test-hooks)");
         });
-    })
+    }
 }

@@ -11,12 +11,13 @@
 //! `Transport`/`RecvTransport` trait methods — exactly as tst-py's
 //! `bindings/python/src/rtp/transport.rs` does.
 
+use crate::panic::jni_native;
 use std::sync::LazyLock;
 use std::time::Duration;
 use tst_pipeline::binding::view::BlockingReason;
 
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JString};
+use jni::objects::{JByteArray, JObject, JString};
 use jni::sys::{jbyteArray, jint, jlong, jobject};
 use tst_core::transport::EndReasonHandle;
 use tst_core::transport::{RecvTransport, Transport};
@@ -78,18 +79,17 @@ fn unbox_ssrc(env: &mut JNIEnv, obj: &JObject) -> Result<Option<u32>, ()> {
 
 // ── Sender (org.tstrans.rtp.Transport) ────────────────────────────────────────
 
-/// Allocate a `Sender` from an `rtp://host:port` URL. Returns a `jlong` handle;
-/// throws `RtpException` and returns 0 on error. `pktSize` is the UDP datagram
-/// size; `ssrcBoxed` is a nullable `java.lang.Long` SSRC (random when null).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Transport_nFromUrl(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    url: JString<'_>,
-    pkt_size: jint,
-    ssrc_boxed: JObject<'_>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// Allocate a `Sender` from an `rtp://host:port` URL. Returns a `jlong` handle;
+    /// throws `RtpException` and returns 0 on error. `pktSize` is the UDP datagram
+    /// size; `ssrcBoxed` is a nullable `java.lang.Long` SSRC (random when null).
+    fn Java_org_tstrans_rtp_Transport_nFromUrl(
+        env,
+        _class,
+        url: JString<'_>,
+        pkt_size: jint,
+        ssrc_boxed: JObject<'_>,
+    ) -> jlong = 0 => {
         let url_str: String = match env.get_string(&url) {
             Ok(s) => s.into(),
             Err(e) => {
@@ -134,18 +134,17 @@ pub extern "system" fn Java_org_tstrans_rtp_Transport_nFromUrl(
             }
         };
         REGISTRY_SENDER.insert(Owned::new(SendHalf(inner), cancel, ())) as jlong
-    })
+    }
 }
 
-/// Send one MPEG-TS payload chunk over RTP. Throws `RtpException` on failure.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Transport_nSend(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    data: JByteArray<'_>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// Send one MPEG-TS payload chunk over RTP. Throws `RtpException` on failure.
+    fn Java_org_tstrans_rtp_Transport_nSend(
+        env,
+        _class,
+        handle: jlong,
+        data: JByteArray<'_>,
+    ) = () => {
         let bytes: Vec<u8> = match env.convert_byte_array(&data) {
             Ok(b) => b,
             Err(e) => {
@@ -158,17 +157,16 @@ pub extern "system" fn Java_org_tstrans_rtp_Transport_nSend(
             Ok(Err(e)) => transport_error(env, &e),
             Err(state) => throw_handle_state(env, "Sender", &state),
         }
-    })
+    }
 }
 
-/// Return a `SocketStats` record. Returns null on JNI builder error (non-fatal).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Transport_nSocketStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// Return a `SocketStats` record. Returns null on JNI builder error (non-fatal).
+    fn Java_org_tstrans_rtp_Transport_nSocketStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         let Ok(stats) =
             // counters live inside the shell and have no value to report while a parked call holds it
             REGISTRY_SENDER.with_ref_blocking(handle as u64, BlockingReason::NoAnswerWithoutSlot, |w| w.0.socket_stats().unwrap_or_default())
@@ -177,51 +175,36 @@ pub extern "system" fn Java_org_tstrans_rtp_Transport_nSocketStats<'local>(
         };
         build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats)
             .unwrap_or_else(|_| JObject::null())
-    })
+    }
 }
 
-/// Return a cancel-handle `jlong` (a `CancelView` over the `Owned` entry).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Transport_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// Return a cancel-handle `jlong` (a `CancelView` over the `Owned` entry).
+    fn Java_org_tstrans_rtp_Transport_nCancelHandle(_env, _class, handle: jlong) -> jlong = 0 => {
         // Lock-free (see the registration comment); closed handle → 0.
         REGISTRY_SENDER
             .cancel_view(handle as u64)
             .map_or(0, crate::shells::cancel::cancel_view_handle)
-    })
+    }
 }
 
-/// Close the Sender, freeing the native box. The cancel hook fires first (waking
-/// a parked `send`) before the resource is taken.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_Transport_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) {
-    // Atomic + idempotent: cancel hook wakes a parked send, then take + teardown.
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// Close the Sender, freeing the native box. The cancel hook fires first (waking
+    /// a parked `send`) before the resource is taken.
+    fn Java_org_tstrans_rtp_Transport_nClose(_env, _class, handle: jlong) = () => {
+        // Atomic + idempotent: cancel hook wakes a parked send, then take + teardown.
         if let Some(mut w) = REGISTRY_SENDER.close(handle as u64) {
             w.0.close();
         }
-    })
+    }
 }
 
 // ── Receiver (org.tstrans.rtp.RecvTransport) ────────────────────────────────────
 
-/// Allocate a `Receiver` bound to an `rtp://host:port` URL. Returns a `jlong`
-/// handle; throws `RtpException` and returns 0 on error.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nFromUrl(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    url: JString<'_>,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// Allocate a `Receiver` bound to an `rtp://host:port` URL. Returns a `jlong`
+    /// handle; throws `RtpException` and returns 0 on error.
+    fn Java_org_tstrans_rtp_RecvTransport_nFromUrl(env, _class, url: JString<'_>) -> jlong = 0 => {
         let url_str: String = match env.get_string(&url) {
             Ok(s) => s.into(),
             Err(e) => {
@@ -268,18 +251,17 @@ pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nFromUrl(
             cancel,
             end_reason,
         )) as jlong
-    })
+    }
 }
 
-/// Receive one MPEG-TS payload chunk (RTP header already stripped). Returns the
-/// bytes as a `jbyteArray`; throws `RtpException` and returns null on failure.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nRecv(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jbyteArray {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// Receive one MPEG-TS payload chunk (RTP header already stripped). Returns the
+    /// bytes as a `jbyteArray`; throws `RtpException` and returns null on failure.
+    fn Java_org_tstrans_rtp_RecvTransport_nRecv(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jbyteArray = std::ptr::null_mut() => {
         // `recv_bytes` may park; the closure holds the resource lock for its
         // duration. A concurrent `close()` fires the cancel hook (waking the recv)
         // before taking the lock. We copy the received bytes OUT of `scratch` inside
@@ -315,27 +297,26 @@ pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nRecv(
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-/// Receive one MPEG-TS payload chunk (RTP header already stripped), bounded by
-/// a per-call deadline. `timeout_ms < 0` blocks indefinitely via the plain
-/// `recv_bytes` path — byte-identical to `nRecv`, so any persistent deadline
-/// armed by the `?recv_timeout=` URL knob still applies. `timeout_ms >= 0`
-/// takes a one-shot `RtpRecvTransport::recv_timeout` override for this call
-/// only. Mirrors tst-py `PyReceiver.recv(timeout_ms=...)`.
-///
-/// `recv_timeout`'s `Ok(None)` return means the deadline elapsed (the
-/// below, since that outcome never reaches `transport_error` (which
-/// only sees `Err`).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nRecvTimeout(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    timeout_ms: jlong,
-) -> jbyteArray {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// Receive one MPEG-TS payload chunk (RTP header already stripped), bounded by
+    /// a per-call deadline. `timeout_ms < 0` blocks indefinitely via the plain
+    /// `recv_bytes` path — byte-identical to `nRecv`, so any persistent deadline
+    /// armed by the `?recv_timeout=` URL knob still applies. `timeout_ms >= 0`
+    /// takes a one-shot `RtpRecvTransport::recv_timeout` override for this call
+    /// only. Mirrors tst-py `PyReceiver.recv(timeout_ms=...)`.
+    ///
+    /// `recv_timeout`'s `Ok(None)` return means the deadline elapsed (the
+    /// below, since that outcome never reaches `transport_error` (which
+    /// only sees `Err`).
+    fn Java_org_tstrans_rtp_RecvTransport_nRecvTimeout(
+        env,
+        _class,
+        handle: jlong,
+        timeout_ms: jlong,
+    ) -> jbyteArray = std::ptr::null_mut() => {
         let res = match REGISTRY_RECEIVER.with_mut(handle as u64, |w| {
             if timeout_ms < 0 {
                 let n = w.inner.recv_bytes(w.scratch.as_mut_slice())?;
@@ -380,17 +361,16 @@ pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nRecvTimeout(
                 std::ptr::null_mut()
             }
         }
-    })
+    }
 }
 
-/// Return a `SocketStats` record. Returns null on JNI builder error (non-fatal).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nSocketStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// Return a `SocketStats` record. Returns null on JNI builder error (non-fatal).
+    fn Java_org_tstrans_rtp_RecvTransport_nSocketStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
         let Ok(stats) = REGISTRY_RECEIVER.with_ref_blocking(
             handle as u64,
@@ -401,38 +381,32 @@ pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nSocketStats<'local>(
         };
         build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats)
             .unwrap_or_else(|_| JObject::null())
-    })
+    }
 }
 
-/// Return a cancel-handle `jlong` (a `CancelView` over the `Owned` entry).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nCancelHandle(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// Return a cancel-handle `jlong` (a `CancelView` over the `Owned` entry).
+    fn Java_org_tstrans_rtp_RecvTransport_nCancelHandle(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jlong = 0 => {
         // Lock-free (see the registration comment); closed handle → 0.
         REGISTRY_RECEIVER
             .cancel_view(handle as u64)
             .map_or(0, crate::shells::cancel::cancel_view_handle)
-    })
+    }
 }
 
-/// Why the receive session ended, or `-1` if it hasn't ended yet (or ended
-/// through a path this type doesn't instrument). See `end_reason`'s module
-/// doc for the wire-ordinal convention. Returns `-1` on a closed/absent
-/// handle rather than throwing (matches `endReason()`'s post-close-snapshot
-/// contract — the closed case never reaches this native at all, since
-/// `Receiver.endReason()` reads the Java-side snapshot once `peekHandle()`
-/// is 0).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nEndReason(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jint {
-    crate::panic::jni_catch(&mut env, -1, |_env| {
+jni_native! {
+    /// Why the receive session ended, or `-1` if it hasn't ended yet (or ended
+    /// through a path this type doesn't instrument). See `end_reason`'s module
+    /// doc for the wire-ordinal convention. Returns `-1` on a closed/absent
+    /// handle rather than throwing (matches `endReason()`'s post-close-snapshot
+    /// contract — the closed case never reaches this native at all, since
+    /// `Receiver.endReason()` reads the Java-side snapshot once `peekHandle()`
+    /// is 0).
+    fn Java_org_tstrans_rtp_RecvTransport_nEndReason(_env, _class, handle: jlong) -> jint = -1 => {
         // Lock-free: the cell is the entry's `Owned` snapshot, so this answers
         // while a `recv` is parked on the slot — a getter must never block
         // behind a parked call.
@@ -441,20 +415,19 @@ pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nEndReason(
                 crate::shells::end_reason::wire_value(h.get().as_ref())
             })
             .unwrap_or(-1)
-    })
+    }
 }
 
-/// Free-text detail for `nEndReason` — the `msg` carried by
-/// `KEEPALIVE_FAILED` / `TRANSPORT_FAILED` / `PROTOCOL_ERROR`; `null` for
-/// every other reason (including "hasn't ended yet" and a closed/absent
-/// handle).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nEndDetail<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> JObject<'local> {
-    crate::panic::jni_catch(&mut env, JObject::null(), |env| {
+jni_native! {
+    /// Free-text detail for `nEndReason` — the `msg` carried by
+    /// `KEEPALIVE_FAILED` / `TRANSPORT_FAILED` / `PROTOCOL_ERROR`; `null` for
+    /// every other reason (including "hasn't ended yet" and a closed/absent
+    /// handle).
+    fn Java_org_tstrans_rtp_RecvTransport_nEndDetail<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
         let detail = REGISTRY_RECEIVER
             .snapshot(handle as u64, |h| {
                 h.get()
@@ -468,27 +441,26 @@ pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nEndDetail<'local>(
             },
             None => JObject::null(),
         }
-    })
+    }
 }
 
-/// Close the Receiver, freeing the native box. The cancel hook fires first
-/// (waking a parked `recv`) before the resource is taken — mirrors tst-py
-/// `PyReceiver.close`.
-///
-/// Returns the close-time `EndReasonSnapshot` (see `end_reason`'s module
-/// doc) — computed here, from the resource this call already exclusively
-/// owns, because the registry entry (and with it any further
-/// `nEndReason`/`nEndDetail` calls on this handle) is gone once this
-/// function returns. `null` only on a JNI allocation failure building the
-/// snapshot (`nativeClose` null-checks before touching it).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nClose(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-) -> jobject {
-    // Atomic + idempotent: cancel hook wakes a parked recv, then take + teardown.
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// Close the Receiver, freeing the native box. The cancel hook fires first
+    /// (waking a parked `recv`) before the resource is taken — mirrors tst-py
+    /// `PyReceiver.close`.
+    ///
+    /// Returns the close-time `EndReasonSnapshot` (see `end_reason`'s module
+    /// doc) — computed here, from the resource this call already exclusively
+    /// owns, because the registry entry (and with it any further
+    /// `nEndReason`/`nEndDetail` calls on this handle) is gone once this
+    /// function returns. `null` only on a JNI allocation failure building the
+    /// snapshot (`nativeClose` null-checks before touching it).
+    fn Java_org_tstrans_rtp_RecvTransport_nClose(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
+        // Atomic + idempotent: cancel hook wakes a parked recv, then take + teardown.
         let reason = if let Some(mut w) = REGISTRY_RECEIVER.close(handle as u64) {
             w.inner.close();
             w.end_reason.get()
@@ -498,5 +470,5 @@ pub extern "system" fn Java_org_tstrans_rtp_RecvTransport_nClose(
         crate::shells::end_reason::build_close_snapshot(env, reason)
             .map(|obj| obj.into_raw())
             .unwrap_or(std::ptr::null_mut())
-    })
+    }
 }

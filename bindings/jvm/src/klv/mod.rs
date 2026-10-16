@@ -12,35 +12,33 @@ pub mod st0806;
 pub mod st0903;
 pub mod st1204;
 
-use jni::JNIEnv;
-use jni::objects::{JClass, JString};
+use crate::panic::jni_native;
+use jni::objects::JString;
 
-/// Test-only: `org.tstrans.klv.Klv.nRaiseDecodeForTest(kind)`.
-/// Throws a `KlvDecodeException` with the given Kind name, allowing
-/// `KlvErrorModelTest` to verify the full error-mapping path.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nRaiseDecodeForTest<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    kind: JString<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// Test-only: `org.tstrans.klv.Klv.nRaiseDecodeForTest(kind)`.
+    /// Throws a `KlvDecodeException` with the given Kind name, allowing
+    /// `KlvErrorModelTest` to verify the full error-mapping path.
+    fn Java_org_tstrans_klv_Klv_nRaiseDecodeForTest<'local>(
+        env,
+        _class,
+        kind: JString<'local>,
+    ) = () => {
         let k: String = env.get_string(&kind).map(Into::into).unwrap_or_default();
         crate::error::throw_klv_decode_raw(env, &k, "forced decode error for test");
-    })
+    }
 }
 
-/// Test-only: `org.tstrans.klv.Klv.nRaiseEncodeForTest(kind)`.
-/// Throws a `KlvEncodeException` with the given Kind name (no tag), allowing
-/// `KlvErrorModelTest` to verify the full error-mapping path.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nRaiseEncodeForTest<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    kind: JString<'local>,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// Test-only: `org.tstrans.klv.Klv.nRaiseEncodeForTest(kind)`.
+    /// Throws a `KlvEncodeException` with the given Kind name (no tag), allowing
+    /// `KlvErrorModelTest` to verify the full error-mapping path.
+    fn Java_org_tstrans_klv_Klv_nRaiseEncodeForTest<'local>(
+        env,
+        _class,
+        kind: JString<'local>,
+    ) = () => {
         let k: String = env.get_string(&kind).map(Into::into).unwrap_or_default();
         crate::error::throw_klv_encode_raw(env, &k, None, "forced encode error for test");
-    })
+    }
 }

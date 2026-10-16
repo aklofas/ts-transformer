@@ -32,8 +32,9 @@
 //! consults the SPS for the POC bit width on the (deferred) non-IDR path; IDR
 //! POC stays implicit 0.
 
+use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JValue};
+use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::{jint, jobject};
 use tst_core::codec::NalUnit;
 use tst_core::codec::h266::{
@@ -249,13 +250,12 @@ fn build_slice<'local>(
     .map_err(|_| ())
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH266Sps<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    rbsp: JByteArray<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseH266Sps<'local>(
+        env,
+        _class,
+        rbsp: JByteArray<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&rbsp) {
             Ok(b) => b,
             Err(_) => return JObject::null().into_raw(),
@@ -270,16 +270,15 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH266Sps<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH266Pps<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    rbsp: JByteArray<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseH266Pps<'local>(
+        env,
+        _class,
+        rbsp: JByteArray<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&rbsp) {
             Ok(b) => b,
             Err(_) => return JObject::null().into_raw(),
@@ -294,16 +293,15 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH266Pps<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH266Vps<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    rbsp: JByteArray<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseH266Vps<'local>(
+        env,
+        _class,
+        rbsp: JByteArray<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&rbsp) {
             Ok(b) => b,
             Err(_) => return JObject::null().into_raw(),
@@ -318,18 +316,17 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH266Vps<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH266SliceHeaderLight<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    rbsp: JByteArray<'local>,
-    sps: JObject<'local>,
-    nal_unit_type: jint,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseH266SliceHeaderLight<'local>(
+        env,
+        _class,
+        rbsp: JByteArray<'local>,
+        sps: JObject<'local>,
+        nal_unit_type: jint,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&rbsp) {
             Ok(b) => b,
             Err(_) => return JObject::null().into_raw(),
@@ -371,16 +368,15 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH266SliceHeaderLight<'
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH266ParameterSets<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    nals: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseH266ParameterSets<'local>(
+        env,
+        _class,
+        nals: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         // Read each Java NalUnit, filtering to the H266 variant (mirrors tst-py's
         // `parse_h266_parameter_sets_py`: non-H266 entries are dropped before
         // handing to the Rust parser).
@@ -459,7 +455,7 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH266ParameterSets<'loc
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
 /// Build a Java

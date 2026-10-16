@@ -23,8 +23,9 @@
 //! Rust SPS context. This matches what tst-py effectively passes (its stored
 //! inner SPS, originally produced from the same RBSP bytes).
 
+use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JValue};
+use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::{jint, jobject};
 use tst_core::codec::NalUnit;
 use tst_core::codec::h264::{
@@ -247,13 +248,12 @@ fn build_slice<'local>(
     .map_err(|_| ())
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH264Sps<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    rbsp: JByteArray<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseH264Sps<'local>(
+        env,
+        _class,
+        rbsp: JByteArray<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&rbsp) {
             Ok(b) => b,
             Err(_) => return JObject::null().into_raw(),
@@ -268,16 +268,15 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH264Sps<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH264Pps<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    rbsp: JByteArray<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseH264Pps<'local>(
+        env,
+        _class,
+        rbsp: JByteArray<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&rbsp) {
             Ok(b) => b,
             Err(_) => return JObject::null().into_raw(),
@@ -292,18 +291,17 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH264Pps<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH264SliceHeaderLight<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    rbsp: JByteArray<'local>,
-    sps: JObject<'local>,
-    nal_unit_type: jint,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseH264SliceHeaderLight<'local>(
+        env,
+        _class,
+        rbsp: JByteArray<'local>,
+        sps: JObject<'local>,
+        nal_unit_type: jint,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&rbsp) {
             Ok(b) => b,
             Err(_) => return JObject::null().into_raw(),
@@ -346,16 +344,15 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH264SliceHeaderLight<'
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH264ParameterSets<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    nals: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    fn Java_org_tstrans_codec_Codec_nParseH264ParameterSets<'local>(
+        env,
+        _class,
+        nals: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         // Read each Java NalUnit, filtering to the H264 variant (mirrors tst-py's
         // `parse_h264_parameter_sets_py`: non-H264 / H265 / H266 entries are
         // dropped before handing to the Rust parser).
@@ -423,7 +420,7 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nParseH264ParameterSets<'loc
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
 /// Build a Java `H264ParameterSets(Map<Integer,H264Sps>, Map<Integer,H264Pps>)`.

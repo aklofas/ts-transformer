@@ -17,8 +17,9 @@
 //! `IllegalStateException`); `nClose` takes + drops via `REGISTRY.close` (atomic
 //! + idempotent, so a double `close()` is UAF/double-free-safe).
 
+use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JValue};
+use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::{jboolean, jint, jlong, jobject};
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -42,53 +43,51 @@ use crate::mpegts::{
 /// Per-type leased-handle registry for `org.tstrans.pipeline.Pairer`.
 static REGISTRY: LazyLock<HandleRegistry<PairingDemuxer>> = LazyLock::new(HandleRegistry::new);
 
-/// `nOpen(videoPid, klvPid)` — allocate a default-config [`PairingDemuxer`]
-/// and hand the JVM its raw pointer as a `jlong` handle.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nOpen<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    video_pid: jint,
-    klv_pid: jint,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |_env| {
+jni_native! {
+    /// `nOpen(videoPid, klvPid)` — allocate a default-config [`PairingDemuxer`]
+    /// and hand the JVM its raw pointer as a `jlong` handle.
+    fn Java_org_tstrans_pipeline_Pairer_nOpen<'local>(
+        _env,
+        _class,
+        video_pid: jint,
+        klv_pid: jint,
+    ) -> jlong = 0 => {
         REGISTRY.insert(PairingDemuxer::new(video_pid as u16, klv_pid as u16)) as jlong
-    })
+    }
 }
 
-/// `nOpenWithConfig(...)` — build a configured [`PairingDemuxer`]. The
-/// `strict`/`av1` ints are the Java enum ORDINALS (same contract as the
-/// `mpegts.Demuxer.nOpenWithConfig` path — see
-/// [`build_demux_config_from_args`]). When `has_demuxer_config` is false
-/// the demuxer half keeps its `DemuxerConfig::default()`.
-///
-/// `PairingDemuxerConfig` / `PairerConfig` are non-exhaustive in the
-/// external `tst-pipeline` crate, so they cannot be struct-literal'd here
-/// — they are assembled via `Default::default()` + field assignment,
-/// mirroring tst-py's `build_pairing_demuxer`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nOpenWithConfig<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    video_pid: jint,
-    klv_pid: jint,
-    buffered: jboolean,
-    max_lag_nanos: jlong,
-    tolerance_nanos: jlong,
-    max_buffered_klv: jlong,
-    max_buffered_video: jlong,
-    has_demuxer_config: jboolean,
-    strict: jint,
-    pes_cap_per_pid: jlong,
-    pes_cap_total: jlong,
-    cfi: jboolean,
-    av1: jint,
-    au_cell_cap: jlong,
-    lenient_psi: jboolean,
-    sync_buf_cap: jlong,
-    unwrap_timestamps: jboolean,
-) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
+jni_native! {
+    /// `nOpenWithConfig(...)` — build a configured [`PairingDemuxer`]. The
+    /// `strict`/`av1` ints are the Java enum ORDINALS (same contract as the
+    /// `mpegts.Demuxer.nOpenWithConfig` path — see
+    /// [`build_demux_config_from_args`]). When `has_demuxer_config` is false
+    /// the demuxer half keeps its `DemuxerConfig::default()`.
+    ///
+    /// `PairingDemuxerConfig` / `PairerConfig` are non-exhaustive in the
+    /// external `tst-pipeline` crate, so they cannot be struct-literal'd here
+    /// — they are assembled via `Default::default()` + field assignment,
+    /// mirroring tst-py's `build_pairing_demuxer`.
+    fn Java_org_tstrans_pipeline_Pairer_nOpenWithConfig<'local>(
+        env,
+        _class,
+        video_pid: jint,
+        klv_pid: jint,
+        buffered: jboolean,
+        max_lag_nanos: jlong,
+        tolerance_nanos: jlong,
+        max_buffered_klv: jlong,
+        max_buffered_video: jlong,
+        has_demuxer_config: jboolean,
+        strict: jint,
+        pes_cap_per_pid: jlong,
+        pes_cap_total: jlong,
+        cfi: jboolean,
+        av1: jint,
+        au_cell_cap: jlong,
+        lenient_psi: jboolean,
+        sync_buf_cap: jlong,
+        unwrap_timestamps: jboolean,
+    ) -> jlong = 0 => {
         let mode = if buffered != 0 {
             PairerMode::Buffered {
                 max_lag: Duration::from_nanos(max_lag_nanos as u64),
@@ -132,21 +131,20 @@ pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nOpenWithConfig<'local>(
             klv_pid as u16,
             cfg,
         )) as jlong
-    })
+    }
 }
 
-/// `nFeed(handle, bytes)` — read the Java byte array, feed it, and return
-/// the produced `PairerOutput`s as a `java.util.ArrayList`. A `DemuxError`
-/// is mapped to a thrown `org.tstrans.DemuxException` via
-/// [`throw_demux_error`].
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nFeed<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    bytes: JByteArray<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `nFeed(handle, bytes)` — read the Java byte array, feed it, and return
+    /// the produced `PairerOutput`s as a `java.util.ArrayList`. A `DemuxError`
+    /// is mapped to a thrown `org.tstrans.DemuxException` via
+    /// [`throw_demux_error`].
+    fn Java_org_tstrans_pipeline_Pairer_nFeed<'local>(
+        env,
+        _class,
+        handle: jlong,
+        bytes: JByteArray<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         let buf = match env.convert_byte_array(&bytes) {
             Ok(b) => b,
             Err(_) => {
@@ -177,19 +175,18 @@ pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nFeed<'local>(
             Ok(list) => list.into_raw(),
             Err(()) => JObject::null().into_raw(),
         }
-    })
+    }
 }
 
-/// `nFlush(handle)` — drain end-of-stream state and return the trailing
-/// `PairerOutput`s: any unused KLV history as `UnpairedKlv` (in both modes),
-/// plus the buffered video AUs in `Buffered` mode.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nFlush<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `nFlush(handle)` — drain end-of-stream state and return the trailing
+    /// `PairerOutput`s: any unused KLV history as `UnpairedKlv` (in both modes),
+    /// plus the buffered video AUs in `Buffered` mode.
+    fn Java_org_tstrans_pipeline_Pairer_nFlush<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         let Some(outputs) = REGISTRY.with_poisoning(handle as u64, |pd| pd.flush()) else {
             closed(env);
             return JObject::null().into_raw();
@@ -198,7 +195,7 @@ pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nFlush<'local>(
             Ok(list) => list.into_raw(),
             Err(()) => JObject::null().into_raw(),
         }
-    })
+    }
 }
 
 /// Build a `java.util.ArrayList<PairerOutput>` from a slice of outputs.
@@ -344,15 +341,14 @@ fn convert_klv_sample<'local>(
     .map_err(|_| ())
 }
 
-/// `nStats(handle)` — snapshot the pairing counters as a
-/// `org.tstrans.pipeline.PairerStats` record.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `nStats(handle)` — snapshot the pairing counters as a
+    /// `org.tstrans.pipeline.PairerStats` record.
+    fn Java_org_tstrans_pipeline_Pairer_nStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         let Some(s) = REGISTRY.with(handle as u64, |pd| pd.stats()) else {
             closed(env);
             return JObject::null().into_raw();
@@ -370,20 +366,19 @@ pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nStats<'local>(
             Ok(o) => o.into_raw(),
             Err(_) => JObject::null().into_raw(),
         }
-    })
+    }
 }
 
-/// `nDemuxerStats(handle)` — snapshot the underlying demuxer counters as a
-/// `org.tstrans.mpegts.DemuxerStats` record. The two `u32` fields
-/// (`programs_seen`, `subtitle_streams_seen`) widen to `long`, matching
-/// the Java record's all-`long` shape.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nDemuxerStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `nDemuxerStats(handle)` — snapshot the underlying demuxer counters as a
+    /// `org.tstrans.mpegts.DemuxerStats` record. The two `u32` fields
+    /// (`programs_seen`, `subtitle_streams_seen`) widen to `long`, matching
+    /// the Java record's all-`long` shape.
+    fn Java_org_tstrans_pipeline_Pairer_nDemuxerStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jobject = std::ptr::null_mut() => {
         let Some(s) = REGISTRY.with(handle as u64, |pd| pd.demuxer_stats()) else {
             closed(env);
             return JObject::null().into_raw();
@@ -403,41 +398,31 @@ pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nDemuxerStats<'local>(
             Ok(o) => o.into_raw(),
             Err(_) => JObject::null().into_raw(),
         }
-    })
+    }
 }
 
-/// `nResetStats(handle)` — zero the pairing counters (not demuxer stats).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nResetStats<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |env| {
+jni_native! {
+    /// `nResetStats(handle)` — zero the pairing counters (not demuxer stats).
+    fn Java_org_tstrans_pipeline_Pairer_nResetStats<'local>(env, _class, handle: jlong) = () => {
         if REGISTRY
             .with_poisoning(handle as u64, |pd| pd.reset_stats())
             .is_none()
         {
             closed(env);
         }
-    })
+    }
 }
 
-/// `nClose(handle)` — take + drop the registered [`PairingDemuxer`]. Atomic +
-/// idempotent via `REGISTRY.close`, so a double `close()` is
-/// UAF/double-free-safe. The pairing demuxer's teardown is a plain drop (no
-/// flush/finalize).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nClose<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+jni_native! {
+    /// `nClose(handle)` — take + drop the registered [`PairingDemuxer`]. Atomic +
+    /// idempotent via `REGISTRY.close`, so a double `close()` is
+    /// UAF/double-free-safe. The pairing demuxer's teardown is a plain drop (no
+    /// flush/finalize).
+    fn Java_org_tstrans_pipeline_Pairer_nClose<'local>(_env, _class, handle: jlong) = () => {
         // The winning close gets the pairing demuxer back; it has no extra teardown,
         // so just let it drop here.
         let _ = REGISTRY.close(handle as u64);
-    })
+    }
 }
 
 /// Throw `IllegalStateException` for a leased call that found a closed/absent

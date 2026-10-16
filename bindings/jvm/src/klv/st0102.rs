@@ -50,8 +50,9 @@
 //!   without bound (mirrors the per-entry `with_local_frame` already used in
 //!   `jutil::build_field_errors` / `build_unknown_list`).
 
+use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JObject, JValue};
+use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::jobject;
 use tst_core::klv::st0102::{
     ClassifyingCountryCodingMethod, ObjectCountryCodingMethod, SecurityClassification, SecurityLs,
@@ -76,20 +77,19 @@ fn is_st0102_typed_tag(tag: u32) -> bool {
     matches!(tag, 1..=14 | 22 | 23 | 24)
 }
 
-/// `org.tstrans.klv.Klv.nDecodeSecurity(byte[], boolean strict) -> SecurityLs`
-///
-/// Decodes a ST 0102 body (no UL / outer BER wrapper). Uses lenient decode
-/// when `strict = false`, strict decode when `strict = true`. On success,
-/// builds and returns a Java `SecurityLs` record. On failure, throws a
-/// `KlvDecodeException` and returns null.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nDecodeSecurity<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    buf: JByteArray<'local>,
-    strict: jni::sys::jboolean,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nDecodeSecurity(byte[], boolean strict) -> SecurityLs`
+    ///
+    /// Decodes a ST 0102 body (no UL / outer BER wrapper). Uses lenient decode
+    /// when `strict = false`, strict decode when `strict = true`. On success,
+    /// builds and returns a Java `SecurityLs` record. On failure, throws a
+    /// `KlvDecodeException` and returns null.
+    fn Java_org_tstrans_klv_Klv_nDecodeSecurity<'local>(
+        env,
+        _c,
+        buf: JByteArray<'local>,
+        strict: jni::sys::jboolean,
+    ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&buf) {
             Ok(b) => b,
             Err(e) => {
@@ -120,7 +120,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nDecodeSecurity<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
 /// Build a `org.tstrans.klv.SecurityLs` Java record from a Rust `SecurityLs`
@@ -324,23 +324,22 @@ fn build_security(env: &mut JNIEnv<'_>, s: &SecurityLs) -> jni::errors::Result<j
     Ok(built.into_raw())
 }
 
-/// `org.tstrans.klv.Klv.nEncodeSecurity(SecurityLs) -> byte[]`
-///
-/// Reads all fields from the Java `SecurityLs` record via accessor calls,
-/// builds a Rust `SecurityLs`, calls `encode_to_vec`, and returns the body
-/// bytes (no UL / outer BER wrapper). On error, throws a `KlvEncodeException`
-/// and returns null.
-///
-/// The 3 enum-typed fields are read as raw `Integer ...Code()` accessors
-/// (nullable boxed int); null → `None` in Rust, non-null → `from_wire`.
-/// Mirrors tst-py's `enum_field_to_u8` + `py_to_security_ls` pattern.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeSecurity<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    record: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nEncodeSecurity(SecurityLs) -> byte[]`
+    ///
+    /// Reads all fields from the Java `SecurityLs` record via accessor calls,
+    /// builds a Rust `SecurityLs`, calls `encode_to_vec`, and returns the body
+    /// bytes (no UL / outer BER wrapper). On error, throws a `KlvEncodeException`
+    /// and returns null.
+    ///
+    /// The 3 enum-typed fields are read as raw `Integer ...Code()` accessors
+    /// (nullable boxed int); null → `None` in Rust, non-null → `from_wire`.
+    /// Mirrors tst-py's `enum_field_to_u8` + `py_to_security_ls` pattern.
+    fn Java_org_tstrans_klv_Klv_nEncodeSecurity<'local>(
+        env,
+        _c,
+        record: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         match read_security(env, &record) {
             Ok(rust_rec) => match encode_to_vec(&rust_rec) {
                 Ok(bytes) => match env.byte_array_from_slice(&bytes) {
@@ -368,22 +367,21 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeSecurity<'local>(
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
-/// `org.tstrans.klv.Klv.nEncodeSecurityStrictCompliance(SecurityLs) -> byte[]`
-///
-/// Reads all fields from the Java `SecurityLs` record, builds a Rust `SecurityLs`,
-/// calls `encode_strict_compliance`. Enforces all 6 mandatory-tag presence
-/// (Tags 1, 2, 3, 12, 13, 22) before encoding. Mirrors tst-py's
-/// `encode_security_strict_compliance`.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeSecurityStrictCompliance<'local>(
-    mut env: JNIEnv<'local>,
-    _c: JClass<'local>,
-    record: JObject<'local>,
-) -> jobject {
-    crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
+jni_native! {
+    /// `org.tstrans.klv.Klv.nEncodeSecurityStrictCompliance(SecurityLs) -> byte[]`
+    ///
+    /// Reads all fields from the Java `SecurityLs` record, builds a Rust `SecurityLs`,
+    /// calls `encode_strict_compliance`. Enforces all 6 mandatory-tag presence
+    /// (Tags 1, 2, 3, 12, 13, 22) before encoding. Mirrors tst-py's
+    /// `encode_security_strict_compliance`.
+    fn Java_org_tstrans_klv_Klv_nEncodeSecurityStrictCompliance<'local>(
+        env,
+        _c,
+        record: JObject<'local>,
+    ) -> jobject = std::ptr::null_mut() => {
         match read_security(env, &record) {
             Ok(rust_rec) => match encode_strict_compliance(&rust_rec) {
                 Ok(bytes) => match env.byte_array_from_slice(&bytes) {
@@ -413,7 +411,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeSecurityStrictCompliance<
                 JObject::null().into_raw()
             }
         }
-    })
+    }
 }
 
 /// Read all fields from a Java `SecurityLs` record into a Rust `SecurityLs`.
