@@ -98,10 +98,10 @@ use tst_core::klv::universal_label::UniversalLabel;
 
 use crate::error::{map_klv_decode_error, map_klv_encode_error, throw_klv_decode};
 use crate::jutil::{
-    build_field_errors, build_long_list, build_unknown_list, checked_u8, checked_u16, checked_u32,
-    checked_u64, read_byte_buffer, read_long_list, read_nullable_byte_buffer, read_nullable_double,
-    read_nullable_int, read_nullable_long, read_nullable_string, read_unknown_list,
-    wrap_heap_byte_buffer,
+    build_field_errors, build_long_list, build_unknown_list, checked_i8, checked_i16, checked_u8,
+    checked_u16, checked_u32, checked_u64, read_byte_buffer, read_long_list,
+    read_nullable_byte_buffer, read_nullable_double, read_nullable_int, read_nullable_long,
+    read_nullable_string, read_unknown_list, wrap_heap_byte_buffer,
 };
 use tst_pipeline::binding::BindingErrorKind;
 
@@ -271,35 +271,6 @@ fn imapb_special_from_code(
             return Err(jni::errors::Error::JavaException);
         }
     })
-}
-
-/// Range-check a Java `int` value against the i8 range, then narrow. Throws
-/// `IllegalArgumentException` and returns `Err(JavaException)` on overflow —
-/// local to this module (mirrors `jutil::checked_u8`'s idiom) since ST 0601 has
-/// exactly one i8-typed field (Tag 39, `outside_air_temp_c`).
-fn checked_i8(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Result<i8> {
-    if !(-128..=127).contains(&value) {
-        let _ = env.throw_new(
-            "java/lang/IllegalArgumentException",
-            format!("{field} must be -128..=127, got {value}"),
-        );
-        return Err(jni::errors::Error::JavaException);
-    }
-    Ok(value as i8)
-}
-
-/// Range-check a Java `int` value against the i16 range, then narrow. Local
-/// to this module (same rationale as `checked_i8` above) since ST 0601 has
-/// exactly one i16-typed field (Tag 141's `Waypoint.prosecution_order`).
-fn checked_i16(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Result<i16> {
-    if !(-32768..=32767).contains(&value) {
-        let _ = env.throw_new(
-            "java/lang/IllegalArgumentException",
-            format!("{field} must be -32768..=32767, got {value}"),
-        );
-        return Err(jni::errors::Error::JavaException);
-    }
-    Ok(value as i16)
 }
 
 // ---------------------------------------------------------------------------

@@ -21,19 +21,110 @@ pub enum Sc {
 
 /// A host-side type for a `@[custom]` field: the generator never converts
 /// it, it only names the host type in the annotation and the signature.
+/// `rust` is the field type with every path prefix and the `Option<…>`
+/// wrapper removed (`Vec<OwnedRawField>`, `UniversalLabel`).
 struct CustomRow {
     rust: &'static str,
+    /// The Python annotation, without `| None`.
     py: &'static str,
     java: &'static str,
     sig: &'static str,
+    /// The dataclass default of a required field of this type, when it has one.
+    py_default: Option<&'static str>,
+    /// The Builder's initial value, when the Java default is not `null`/zero.
+    java_default: Option<&'static str>,
 }
 
-const CUSTOM: &[CustomRow] = &[CustomRow {
-    rust: "UniversalLabel",
-    py: "bytes",
-    java: "ByteBuffer",
-    sig: "Ljava/nio/ByteBuffer;",
-}];
+const EMPTY_LIST: &str = "java.util.Collections.emptyList()";
+
+const CUSTOM: &[CustomRow] = &[
+    CustomRow {
+        rust: "UniversalLabel",
+        py: "bytes",
+        java: "ByteBuffer",
+        sig: "Ljava/nio/ByteBuffer;",
+        py_default: Some("b\"\\x00\" * 16"),
+        java_default: None,
+    },
+    // A byte string the Java record carries as `byte[]` rather than as the
+    // `ByteBuffer` a plain `Vec<u8>` field gets (the hand ST 0601 record's
+    // MIIS Core Identifier).
+    CustomRow {
+        rust: "Vec<u8>",
+        py: "bytes",
+        java: "byte[]",
+        sig: "[B",
+        py_default: None,
+        java_default: None,
+    },
+    // Coded enums cross as their raw code point.
+    CustomRow {
+        rust: "IcingDetected",
+        py: "IcingDetected | int",
+        java: "Integer",
+        sig: "Ljava/lang/Integer;",
+        py_default: None,
+        java_default: None,
+    },
+    CustomRow {
+        rust: "OperationalMode",
+        py: "OperationalMode | int",
+        java: "Integer",
+        sig: "Ljava/lang/Integer;",
+        py_default: None,
+        java_default: None,
+    },
+    CustomRow {
+        rust: "PlatformStatus",
+        py: "PlatformStatus | int",
+        java: "Integer",
+        sig: "Ljava/lang/Integer;",
+        py_default: None,
+        java_default: None,
+    },
+    CustomRow {
+        rust: "SensorControlMode",
+        py: "SensorControlMode | int",
+        java: "Integer",
+        sig: "Ljava/lang/Integer;",
+        py_default: None,
+        java_default: None,
+    },
+    CustomRow {
+        rust: "SensorFovName",
+        py: "SensorFovName | int",
+        java: "Integer",
+        sig: "Ljava/lang/Integer;",
+        py_default: None,
+        java_default: None,
+    },
+    // The ST 0601 pass-through lists, whose host item types are not the
+    // Rust ones.
+    CustomRow {
+        rust: "Vec<OwnedRawField>",
+        py: "tuple[tuple[int, bytes], ...]",
+        java: "List<KlvUnknownField>",
+        sig: "Ljava/util/List;",
+        py_default: Some("()"),
+        java_default: Some(EMPTY_LIST),
+    },
+    CustomRow {
+        rust: "Vec<KlvFieldError>",
+        py: "tuple[KlvFieldError, ...]",
+        java: "List<KlvFieldError>",
+        sig: "Ljava/util/List;",
+        py_default: Some("()"),
+        java_default: Some(EMPTY_LIST),
+    },
+    CustomRow {
+        rust: "Vec<(u32,ImapbSpecial)>",
+        py: "tuple[tuple[int, str, int], ...]",
+        java: "List<ImapbSpecialEntry>",
+        sig: "Ljava/util/List;",
+        py_default: Some("()"),
+        java_default: Some(EMPTY_LIST),
+    },
+];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Ty {
@@ -73,16 +164,19 @@ impl Sc {
             ),
             Sc::U32 => ("u32", "int", "long", "Long", 'J', "Long", 'j', "longValue"),
             Sc::U64 => ("u64", "int", "long", "Long", 'J', "Long", 'j', "longValue"),
-            Sc::I8 => ("i8", "int", "byte", "Byte", 'B', "Byte", 'b', "byteValue"),
-            Sc::I16 => (
-                "i16",
+            // Narrow signed integers cross as Java `int`, range-checked on the
+            // way in: the hand-written ST 0601 record carries its `i8` and
+            // `i16` items so, and a `byte`/`short` component would break
+            // every caller.
+            Sc::I8 | Sc::I16 => (
+                if self == Sc::I8 { "i8" } else { "i16" },
                 "int",
-                "short",
-                "Short",
-                'S',
-                "Short",
-                's',
-                "shortValue",
+                "int",
+                "Integer",
+                'I',
+                "Int",
+                'i',
+                "intValue",
             ),
             Sc::I32 => ("i32", "int", "int", "Integer", 'I', "Int", 'i', "intValue"),
             Sc::I64 => ("i64", "int", "long", "Long", 'J', "Long", 'j', "longValue"),
@@ -128,13 +222,15 @@ impl Sc {
         }
     }
 
-    /// The unsigned narrowing helper in `crate::jutil`, when the Java value is wider.
+    /// The narrowing helper in `crate::jutil`, when the Java value is wider.
     pub fn narrow(self) -> Option<&'static str> {
         match self {
             Sc::U8 => Some("checked_u8"),
             Sc::U16 => Some("checked_u16"),
             Sc::U32 => Some("checked_u32"),
             Sc::U64 => Some("checked_u64"),
+            Sc::I8 => Some("checked_i8"),
+            Sc::I16 => Some("checked_i16"),
             _ => None,
         }
     }
@@ -208,18 +304,45 @@ fn map_norm(s: &str, names: &[&str]) -> Result<Ty, String> {
     Err(format!("unmapped type `{s}`"))
 }
 
+/// `crate::klv::imapb::ImapbSpecial` to `ImapbSpecial`, everywhere in `s`.
+fn strip_paths(s: &str) -> String {
+    let cs: Vec<char> = s.chars().collect();
+    let (mut out, mut ident, mut i) = (String::new(), String::new(), 0);
+    while i < cs.len() {
+        let c = cs[i];
+        if c.is_alphanumeric() || c == '_' {
+            ident.push(c);
+            i += 1;
+        } else if c == ':' && cs.get(i + 1) == Some(&':') {
+            ident.clear();
+            i += 2;
+        } else {
+            out.push_str(&ident);
+            ident.clear();
+            out.push(c);
+            i += 1;
+        }
+    }
+    out.push_str(&ident);
+    out
+}
+
 /// Resolves a `@[custom]` field's host type from the custom table.
 fn map_custom(spelling: &str) -> Result<Ty, String> {
-    let mut s: String = spelling.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut s = strip_paths(
+        &spelling
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>(),
+    );
     let mut opt = false;
     if let Some(inner) = s.strip_prefix("Option<").and_then(|r| r.strip_suffix('>')) {
         opt = true;
         s = inner.to_string();
     }
-    let last = s.rsplit("::").next().unwrap_or(&s).to_string();
     let row = CUSTOM
         .iter()
-        .find(|r| r.rust == last)
+        .find(|r| r.rust == s)
         .ok_or_else(|| format!("no host type for custom type `{spelling}`; add a CUSTOM row"))?;
     let t = Ty::Custom(row.rust);
     Ok(if opt { Ty::Opt(Box::new(t)) } else { t })
@@ -269,6 +392,24 @@ impl Ty {
         }
     }
 
+    /// The Java type a Builder setter takes: an optional scalar is set by its
+    /// primitive (an absent one is simply not set), anything else as the
+    /// component is typed.
+    pub fn setter_java(&self) -> String {
+        match self {
+            Ty::Opt(t) if matches!(**t, Ty::Scalar(_)) => t.java(),
+            _ => self.java(),
+        }
+    }
+
+    /// The JNI signature of [`Ty::setter_java`].
+    pub fn setter_sig(&self, reg: &[Entry]) -> String {
+        match self {
+            Ty::Opt(t) if matches!(**t, Ty::Scalar(_)) => t.sig(reg),
+            _ => self.sig(reg),
+        }
+    }
+
     /// The JNI signature of the Java type of a component.
     pub fn sig(&self, reg: &[Entry]) -> String {
         match self {
@@ -302,13 +443,36 @@ pub struct Fld<'a> {
     /// The Java accessor name.
     pub java: String,
     pub custom: bool,
+    /// The dataclass default: `None` for an absent optional, the type's zero
+    /// for a required field that follows a defaulted one (a dataclass cannot
+    /// take a required field after a default), the CUSTOM row's default for
+    /// a custom field. `None` when the field is plain required.
+    pub py_default: Option<String>,
+    /// The Builder's initial value when it is not Java's own default.
+    pub java_default: Option<String>,
+}
+
+/// The host zero of a required field that must be defaulted.
+fn type_default(ty: &Ty) -> Option<(String, Option<String>)> {
+    Some(match ty {
+        Ty::Scalar(Sc::F32 | Sc::F64) => ("0.0".into(), None),
+        Ty::Scalar(Sc::Bool) => ("False".into(), None),
+        Ty::Scalar(_) => ("0".into(), None),
+        Ty::Str => ("\"\"".into(), Some("\"\"".into())),
+        Ty::Bytes => (
+            "b\"\"".into(),
+            Some("java.nio.ByteBuffer.allocate(0)".into()),
+        ),
+        Ty::List(_) => ("()".into(), Some(EMPTY_LIST.into())),
+        Ty::Opt(_) | Ty::Record(_) | Ty::Custom(_) => return None,
+    })
 }
 
 /// Resolves every field of a record against the registry.
 pub fn resolve<'a>(reg: &[Entry], schema: &'a RecordSchema) -> Result<Vec<Fld<'a>>, String> {
     let names: Vec<&str> = reg.iter().map(|e| e.schema.name).collect();
     let mut out = Vec::new();
-    let mut seen_opt: Option<&str> = None;
+    let mut defaulted: Option<&str> = None;
     for f in schema.fields {
         let ctx = |e: String| format!("{}.{}: {e}", schema.name, f.name);
         let (ty, custom) = match f.mark {
@@ -316,14 +480,30 @@ pub fn resolve<'a>(reg: &[Entry], schema: &'a RecordSchema) -> Result<Vec<Fld<'a
             FieldMark::Custom => (Some(map_custom(f.ty).map_err(ctx)?), true),
             _ => (Some(map(f.ty, &names).map_err(ctx)?), false),
         };
+        let mut py_default = None;
+        let mut java_default = None;
         if let Some(t) = &ty {
             if t.is_opt() {
-                seen_opt = Some(f.name);
-            } else if let Some(o) = seen_opt {
-                return Err(format!(
-                    "{}.{}: a required field follows the optional `{o}`; declare optional fields last",
-                    schema.name, f.name
-                ));
+                py_default = Some("None".to_string());
+            } else if let Ty::Custom(n) = t {
+                let row = custom_row(n);
+                py_default = row.py_default.map(str::to_string);
+                java_default = row.java_default.map(str::to_string);
+            } else if defaulted.is_none() {
+                // Nothing before it has a default: required, no default.
+            } else if let Some((p, j)) = type_default(t) {
+                py_default = Some(p);
+                java_default = j;
+            }
+            if py_default.is_none() {
+                if let Some(d) = defaulted {
+                    return Err(ctx(format!(
+                        "a required field follows the defaulted `{d}` but has no host default; \
+                         give its CUSTOM row a default or declare it before the optional fields"
+                    )));
+                }
+            } else if defaulted.is_none() {
+                defaulted = Some(f.name);
             }
         }
         let java = if ty.is_some() {
@@ -336,6 +516,8 @@ pub fn resolve<'a>(reg: &[Entry], schema: &'a RecordSchema) -> Result<Vec<Fld<'a
             ty,
             java,
             custom,
+            py_default,
+            java_default,
         });
     }
     debug_assert_eq!(

@@ -331,6 +331,32 @@ pub fn checked_u16(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Re
     Ok(value as u16)
 }
 
+/// Range-check a Java `int` value against the i8 range, then narrow.
+/// Throws `IllegalArgumentException` and returns `Err(JavaException)` on overflow.
+pub fn checked_i8(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Result<i8> {
+    if !(-128..=127).contains(&value) {
+        let _ = env.throw_new(
+            "java/lang/IllegalArgumentException",
+            format!("{field} must be -128..=127, got {value}"),
+        );
+        return Err(jni::errors::Error::JavaException);
+    }
+    Ok(value as i8)
+}
+
+/// Range-check a Java `int` value against the i16 range, then narrow.
+/// Throws `IllegalArgumentException` and returns `Err(JavaException)` on overflow.
+pub fn checked_i16(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Result<i16> {
+    if !(-32768..=32767).contains(&value) {
+        let _ = env.throw_new(
+            "java/lang/IllegalArgumentException",
+            format!("{field} must be -32768..=32767, got {value}"),
+        );
+        return Err(jni::errors::Error::JavaException);
+    }
+    Ok(value as i16)
+}
+
 /// Range-check a Java `long` value against the u32 range, then narrow.
 /// Throws `IllegalArgumentException` and returns `Err(JavaException)` on overflow.
 pub fn checked_u32(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Result<u32> {

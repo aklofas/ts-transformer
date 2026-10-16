@@ -1,8 +1,12 @@
-//! The Java record: a whole file under `bindings/jvm/src/main/java`.
+//! The Java record: the block between two marker lines of a hand-owned file
+//! under `bindings/jvm/src/main/java`. The block is the Javadoc, the record
+//! header with its components and the `Builder`; it ends inside the record
+//! body, so the hand-written package, imports, compact constructor, methods
+//! and closing brace follow the end marker.
 
 use crate::emit_jvm_rs::CTOR_MAX;
-use crate::schema::{Entry, lookup, para};
-use crate::typemap::{Fld, Ty, resolve};
+use crate::schema::{Entry, paras, unlink};
+use crate::typemap::{Fld, resolve};
 
 /// Javadoc text from a Rust doc paragraph. The text cannot close the
 /// comment, start a unicode escape, open an HTML tag or entity, or start a
@@ -41,66 +45,28 @@ fn html(text: &str) -> String {
         .replace('@', "&#64;")
 }
 
-/// `` [`X`] `` to `` `X` ``: Javadoc has no target for a rustdoc link.
-fn unlink(doc: &str) -> String {
-    let mut out = String::new();
-    let mut rest = doc;
-    while let Some(i) = rest.find("[`") {
-        let after = &rest[i + 2..];
-        match after.find("`]") {
-            Some(j) if !after[..j].contains('`') => {
-                out.push_str(&rest[..i]);
-                out.push('`');
-                out.push_str(&after[..j]);
-                out.push('`');
-                rest = &after[j + 2..];
-            }
-            _ => {
-                out.push_str(&rest[..i + 2]);
-                rest = after;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
+/// The longest line a generated Javadoc writes.
+const DOC_WIDTH: usize = 100;
 
-fn imports(reg: &[Entry], e: &Entry, flds: &[Fld]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for f in flds.iter().filter_map(|f| f.ty.as_ref()) {
-        let mut t = f;
-        loop {
-            match t {
-                Ty::Opt(i) => t = i,
-                Ty::List(i) => {
-                    out.push("java.util.List".into());
-                    t = i;
-                }
-                Ty::Bytes => {
-                    out.push("java.nio.ByteBuffer".into());
-                    break;
-                }
-                Ty::Custom(_) => {
-                    if t.java_boxed() == "ByteBuffer" {
-                        out.push("java.nio.ByteBuffer".into());
-                    }
-                    break;
-                }
-                Ty::Record(n) => {
-                    if let Some(o) = lookup(reg, n) {
-                        if o.java_pkg != e.java_pkg {
-                            out.push(format!("{}.{n}", o.java_pkg.replace('/', ".")));
-                        }
-                    }
-                    break;
-                }
-                _ => break,
-            }
+/// `text` wrapped at word boundaries to [`DOC_WIDTH`]; the first line starts
+/// with `first`, the others with `rest`.
+fn wrap(first: &str, rest: &str, text: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut cur = first.to_string();
+    let mut empty = true;
+    for w in text.split_whitespace() {
+        if !empty && cur.chars().count() + 1 + w.chars().count() > DOC_WIDTH {
+            lines.push(std::mem::replace(&mut cur, rest.to_string()));
+            empty = true;
         }
+        if !empty {
+            cur.push(' ');
+        }
+        cur.push_str(w);
+        empty = false;
     }
-    out.sort();
-    out.dedup();
-    out
+    lines.push(cur);
+    lines
 }
 
 fn javadoc(e: &Entry, flds: &[&Fld]) -> String {
@@ -108,58 +74,64 @@ fn javadoc(e: &Entry, flds: &[&Fld]) -> String {
         .iter()
         .map(|f| (f.spec.name, f.java.as_str()))
         .collect();
-    let mut o = String::from("/**\n");
-    let doc = para(e.schema.doc);
-    if !doc.is_empty() {
-        o.push_str(&format!(" * {}\n", escape_javadoc(&doc, &rename)));
+    let mut lines: Vec<String> = Vec::new();
+    let doc = paras(e.schema.doc);
+    for (i, p) in doc.iter().enumerate() {
+        if i > 0 {
+            lines.push(" *".into());
+        }
+        lines.extend(wrap(" * ", " * ", &escape_javadoc(p, &rename)));
     }
-    let documented: Vec<&&Fld> = flds
+    let documented: Vec<(&&Fld, Vec<String>)> = flds
         .iter()
-        .filter(|f| !para(f.spec.doc).is_empty())
+        .map(|f| (f, paras(f.spec.doc)))
+        .filter(|(_, p)| !p.is_empty())
         .collect();
-    if !documented.is_empty() {
-        if !doc.is_empty() {
-            o.push_str(" *\n");
+    if !documented.is_empty() && !doc.is_empty() {
+        lines.push(" *".into());
+    }
+    for (f, ps) in documented {
+        for (i, p) in ps.iter().enumerate() {
+            let text = escape_javadoc(p, &rename);
+            if i == 0 {
+                lines.extend(wrap(&format!(" * @param {} ", f.java), " *     ", &text));
+            } else {
+                lines.push(" *".into());
+                lines.extend(wrap(" *     ", " *     ", &text));
+            }
         }
-        let w = documented.iter().map(|f| f.java.len()).max().unwrap_or(0);
-        for f in documented {
-            o.push_str(&format!(
-                " * @param {:<w$} {}\n",
-                f.java,
-                escape_javadoc(&para(f.spec.doc), &rename),
-                w = w
-            ));
-        }
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    let mut o = String::from("/**\n");
+    for l in lines {
+        o.push_str(&l);
+        o.push('\n');
     }
     o.push_str(" */\n");
     o
 }
 
-/// The whole `<Name>.java` file.
-pub fn file(reg: &[Entry], e: &Entry) -> Result<String, String> {
+/// The generated block of `<Name>.java`: Javadoc, the record header with its
+/// components, and (past [`CTOR_MAX`] components) the `Builder`.
+pub fn block(reg: &[Entry], e: &Entry) -> Result<String, String> {
     let flds = resolve(reg, &e.schema)?;
     let cross: Vec<&Fld> = flds.iter().filter(|f| f.ty.is_some()).collect();
     let name = e.schema.name;
-    let mut o = String::from(
-        "// GENERATED by print-records from tst-core binding_record! declarations; do not edit.\n\
-         // Regenerate: cargo run -p tst-pipeline --bin print-records -- --write\n",
-    );
-    o.push_str(&format!("package {};\n\n", e.java_pkg.replace('/', ".")));
-    let imps = imports(reg, e, &flds);
-    for i in &imps {
-        o.push_str(&format!("import {i};\n"));
-    }
-    if !imps.is_empty() {
-        o.push('\n');
-    }
-    o.push_str(&javadoc(e, &cross));
+    let implements = if e.java_implements.is_empty() {
+        String::new()
+    } else {
+        format!(" implements {}", e.java_implements)
+    };
+    let mut o = javadoc(e, &cross);
     let comps: Vec<String> = cross
         .iter()
         .map(|f| format!("{} {}", f.ty.as_ref().expect("crossing").java(), f.java))
         .collect();
     if cross.len() <= CTOR_MAX {
         o.push_str(&format!(
-            "public record {name}({}) {{}}\n",
+            "public record {name}({}){implements} {{\n",
             comps.join(", ")
         ));
     } else {
@@ -168,15 +140,17 @@ pub fn file(reg: &[Entry], e: &Entry) -> Result<String, String> {
             let sep = if i + 1 == comps.len() { "" } else { "," };
             o.push_str(&format!("        {c}{sep}\n"));
         }
-        o.push_str(") {\n");
+        o.push_str(&format!("){implements} {{\n"));
         o.push_str("    /** Collects the components one named setter at a time. */\n");
         o.push_str("    public static final class Builder {\n");
         for (f, c) in cross.iter().zip(&comps) {
-            let _ = f;
-            o.push_str(&format!("        private {c};\n"));
+            match &f.java_default {
+                Some(d) => o.push_str(&format!("        private {c} = {d};\n")),
+                None => o.push_str(&format!("        private {c};\n")),
+            }
         }
         for f in &cross {
-            let ty = f.ty.as_ref().expect("crossing").java();
+            let ty = f.ty.as_ref().expect("crossing").setter_java();
             o.push_str(&format!(
                 "\n        /** Sets {n}. */\n        public Builder {n}({ty} v) {{\n            this.{n} = v;\n            return this;\n        }}\n",
                 n = f.java
@@ -184,7 +158,7 @@ pub fn file(reg: &[Entry], e: &Entry) -> Result<String, String> {
         }
         let names: Vec<&str> = cross.iter().map(|f| f.java.as_str()).collect();
         o.push_str(&format!(
-            "\n        /** Builds the record. */\n        public {name} build() {{\n            return new {name}({});\n        }}\n    }}\n}}\n",
+            "\n        /** Builds the record. */\n        public {name} build() {{\n            return new {name}({});\n        }}\n    }}\n",
             names.join(", ")
         ));
     }
