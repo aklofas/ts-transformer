@@ -20,10 +20,16 @@ use super::packs::{
 /// raises [`crate::error::KlvEncodeError::OutOfRange`]; see
 /// [`OutOfRangePolicy`] for the tags that can carry the spec's Out-of-Range
 /// indicator instead.
+///
+/// The composite views (sensor position, platform and sensor attitude, field
+/// of view, frame center and corners) are accessors that return nothing when
+/// any of the fields they combine is absent.
 #[must_use]
 #[derive(Debug, Clone, PartialEq)]
 pub struct UasDatalinkLs {
+    /// The 16-byte SMPTE universal label that opens the local set.
     pub universal_label: UniversalLabel,
+    /// The version byte the label declares.
     pub declared_version: u8,
 
     // Identity
@@ -419,6 +425,9 @@ pub struct UasDatalinkLs {
     /// (set = black hot), bit 3 icing detected, bit 4 slant range
     /// measured (vs. calculated), bit 5 image invalid, bits 6-7 reserved.
     pub generic_flag_data: Option<u8>,
+    /// Tag 48: the ST 0102 Security Local Set body bytes (no universal-label
+    /// prefix). Pass-through bytes; consumers needing typed access call
+    /// `klv::st0102::decode` on `security_local_set.as_deref()?`.
     pub security_local_set: Option<Vec<u8>>,
     /// Item 73: MISB ST 0806 Remote Video Terminal LS bytes.
     /// Pass-through bytes; consumers needing typed access call
@@ -517,7 +526,13 @@ pub struct UasDatalinkLs {
     pub sdcc_flps: Vec<SdccFlpField>,
 
     // Pass-through
+    /// Every tag the typed set does not model, preserved as raw bytes per the
+    /// ST 0107.5 §6 future-proof skip rule. An entry whose tag a typed field
+    /// owns is dropped on encode: the typed field wins.
     pub unknown: Vec<OwnedRawField>,
+    /// Per-field decode failures collected by a lenient decode; a strict
+    /// decode returns an error instead. A parser diagnostic: it is not
+    /// re-encoded.
     pub field_errors: Vec<KlvFieldError>,
 
     /// Tags whose wire value was the INT_MIN sentinel for their signed linear
