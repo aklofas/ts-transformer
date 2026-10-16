@@ -1208,6 +1208,8 @@ pub tst_core::codec::CodecParseError::UnsupportedFreeFormat
 pub tst_core::codec::CodecParseError::UnsupportedFreeFormat::layer: u8
 pub tst_core::codec::CodecParseError::UnsupportedProfile
 pub tst_core::codec::CodecParseError::UnsupportedProfile::profile_idc: u8
+impl tst_core::codec::CodecParseError
+pub fn tst_core::codec::CodecParseError::kind(&self) -> tst_core::codec::CodecParseErrorKind
 impl core::clone::Clone for tst_core::codec::CodecParseError
 pub fn tst_core::codec::CodecParseError::clone(&self) -> tst_core::codec::CodecParseError
 impl core::cmp::Eq for tst_core::codec::CodecParseError
@@ -1226,6 +1228,38 @@ impl core::marker::Unpin for tst_core::codec::CodecParseError
 impl core::marker::UnsafeUnpin for tst_core::codec::CodecParseError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::CodecParseError
 impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::CodecParseError
+pub enum tst_core::codec::CodecParseErrorKind
+pub tst_core::codec::CodecParseErrorKind::BadSyncWord
+pub tst_core::codec::CodecParseErrorKind::BufferTooSmall
+pub tst_core::codec::CodecParseErrorKind::EngineError
+pub tst_core::codec::CodecParseErrorKind::Forbidden
+pub tst_core::codec::CodecParseErrorKind::InvalidGolomb
+pub tst_core::codec::CodecParseErrorKind::InvalidLeb128
+pub tst_core::codec::CodecParseErrorKind::InvalidLengthSize
+pub tst_core::codec::CodecParseErrorKind::NalLengthOverflow
+pub tst_core::codec::CodecParseErrorKind::ReservedValue
+pub tst_core::codec::CodecParseErrorKind::Truncated
+pub tst_core::codec::CodecParseErrorKind::TruncatedRbsp
+pub tst_core::codec::CodecParseErrorKind::UnsupportedFreeFormat
+pub tst_core::codec::CodecParseErrorKind::UnsupportedProfile
+impl core::clone::Clone for tst_core::codec::CodecParseErrorKind
+pub fn tst_core::codec::CodecParseErrorKind::clone(&self) -> tst_core::codec::CodecParseErrorKind
+impl core::cmp::Eq for tst_core::codec::CodecParseErrorKind
+impl core::cmp::PartialEq for tst_core::codec::CodecParseErrorKind
+pub fn tst_core::codec::CodecParseErrorKind::eq(&self, &tst_core::codec::CodecParseErrorKind) -> bool
+impl core::fmt::Debug for tst_core::codec::CodecParseErrorKind
+pub fn tst_core::codec::CodecParseErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::codec::CodecParseErrorKind
+pub fn tst_core::codec::CodecParseErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::codec::CodecParseErrorKind
+impl core::marker::StructuralPartialEq for tst_core::codec::CodecParseErrorKind
+impl core::marker::Freeze for tst_core::codec::CodecParseErrorKind
+impl core::marker::Send for tst_core::codec::CodecParseErrorKind
+impl core::marker::Sync for tst_core::codec::CodecParseErrorKind
+impl core::marker::Unpin for tst_core::codec::CodecParseErrorKind
+impl core::marker::UnsafeUnpin for tst_core::codec::CodecParseErrorKind
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::CodecParseErrorKind
+impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::CodecParseErrorKind
 pub enum tst_core::codec::ColourPrimaries
 pub tst_core::codec::ColourPrimaries::Bt2020
 pub tst_core::codec::ColourPrimaries::Bt470Bg
@@ -1499,6 +1533,8 @@ pub tst_core::error::DemuxError::SyncBufExhausted::max: usize
 pub tst_core::error::DemuxError::SyncBufExhausted::observed: usize
 pub tst_core::error::DemuxError::Unrecoverable
 pub tst_core::error::DemuxError::Unrecoverable::after_bytes: usize
+impl tst_core::error::DemuxError
+pub fn tst_core::error::DemuxError::kind(&self) -> tst_core::error::DemuxErrorKind
 impl core::clone::Clone for tst_core::error::DemuxError
 pub fn tst_core::error::DemuxError::clone(&self) -> tst_core::error::DemuxError
 impl core::cmp::Eq for tst_core::error::DemuxError
@@ -1517,6 +1553,29 @@ impl core::marker::Unpin for tst_core::error::DemuxError
 impl core::marker::UnsafeUnpin for tst_core::error::DemuxError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::error::DemuxError
 impl core::panic::unwind_safe::UnwindSafe for tst_core::error::DemuxError
+pub enum tst_core::error::DemuxErrorKind
+pub tst_core::error::DemuxErrorKind::MalformedPes
+pub tst_core::error::DemuxErrorKind::StrictRejection
+pub tst_core::error::DemuxErrorKind::SyncBufExhausted
+pub tst_core::error::DemuxErrorKind::Unrecoverable
+impl core::clone::Clone for tst_core::error::DemuxErrorKind
+pub fn tst_core::error::DemuxErrorKind::clone(&self) -> tst_core::error::DemuxErrorKind
+impl core::cmp::Eq for tst_core::error::DemuxErrorKind
+impl core::cmp::PartialEq for tst_core::error::DemuxErrorKind
+pub fn tst_core::error::DemuxErrorKind::eq(&self, &tst_core::error::DemuxErrorKind) -> bool
+impl core::fmt::Debug for tst_core::error::DemuxErrorKind
+pub fn tst_core::error::DemuxErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::error::DemuxErrorKind
+pub fn tst_core::error::DemuxErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::error::DemuxErrorKind
+impl core::marker::StructuralPartialEq for tst_core::error::DemuxErrorKind
+impl core::marker::Freeze for tst_core::error::DemuxErrorKind
+impl core::marker::Send for tst_core::error::DemuxErrorKind
+impl core::marker::Sync for tst_core::error::DemuxErrorKind
+impl core::marker::Unpin for tst_core::error::DemuxErrorKind
+impl core::marker::UnsafeUnpin for tst_core::error::DemuxErrorKind
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::error::DemuxErrorKind
+impl core::panic::unwind_safe::UnwindSafe for tst_core::error::DemuxErrorKind
 #[non_exhaustive] pub enum tst_core::error::KlvDecodeError
 pub tst_core::error::KlvDecodeError::BadTimeStampPackLength
 pub tst_core::error::KlvDecodeError::BadTimeStampPackLength::got: usize
@@ -1561,6 +1620,8 @@ pub tst_core::error::KlvDecodeError::Truncated::offset: usize
 pub tst_core::error::KlvDecodeError::UnexpectedUniversalLabel
 pub tst_core::error::KlvDecodeError::UnexpectedUniversalLabel::expected: tst_core::klv::universal_label::UniversalLabel
 pub tst_core::error::KlvDecodeError::UnexpectedUniversalLabel::found: tst_core::klv::universal_label::UniversalLabel
+impl tst_core::error::KlvDecodeError
+pub fn tst_core::error::KlvDecodeError::kind(&self) -> tst_core::error::KlvDecodeErrorKind
 impl core::convert::From<tst_core::error::KlvDecodeError> for tst_core::error::KlvPatchError
 pub fn tst_core::error::KlvPatchError::from(tst_core::error::KlvDecodeError) -> Self
 impl core::convert::From<tst_core::error::KlvFieldError> for tst_core::error::KlvDecodeError
@@ -1578,6 +1639,31 @@ impl core::marker::Unpin for tst_core::error::KlvDecodeError
 impl core::marker::UnsafeUnpin for tst_core::error::KlvDecodeError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::error::KlvDecodeError
 impl core::panic::unwind_safe::UnwindSafe for tst_core::error::KlvDecodeError
+pub enum tst_core::error::KlvDecodeErrorKind
+pub tst_core::error::KlvDecodeErrorKind::BadUniversalLabel
+pub tst_core::error::KlvDecodeErrorKind::ChecksumMismatch
+pub tst_core::error::KlvDecodeErrorKind::DuplicateTag
+pub tst_core::error::KlvDecodeErrorKind::Malformed
+pub tst_core::error::KlvDecodeErrorKind::MissingRequiredTag
+pub tst_core::error::KlvDecodeErrorKind::Truncated
+impl core::clone::Clone for tst_core::error::KlvDecodeErrorKind
+pub fn tst_core::error::KlvDecodeErrorKind::clone(&self) -> tst_core::error::KlvDecodeErrorKind
+impl core::cmp::Eq for tst_core::error::KlvDecodeErrorKind
+impl core::cmp::PartialEq for tst_core::error::KlvDecodeErrorKind
+pub fn tst_core::error::KlvDecodeErrorKind::eq(&self, &tst_core::error::KlvDecodeErrorKind) -> bool
+impl core::fmt::Debug for tst_core::error::KlvDecodeErrorKind
+pub fn tst_core::error::KlvDecodeErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::error::KlvDecodeErrorKind
+pub fn tst_core::error::KlvDecodeErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::error::KlvDecodeErrorKind
+impl core::marker::StructuralPartialEq for tst_core::error::KlvDecodeErrorKind
+impl core::marker::Freeze for tst_core::error::KlvDecodeErrorKind
+impl core::marker::Send for tst_core::error::KlvDecodeErrorKind
+impl core::marker::Sync for tst_core::error::KlvDecodeErrorKind
+impl core::marker::Unpin for tst_core::error::KlvDecodeErrorKind
+impl core::marker::UnsafeUnpin for tst_core::error::KlvDecodeErrorKind
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::error::KlvDecodeErrorKind
+impl core::panic::unwind_safe::UnwindSafe for tst_core::error::KlvDecodeErrorKind
 #[non_exhaustive] pub enum tst_core::error::KlvEncodeError
 pub tst_core::error::KlvEncodeError::BufferTooSmall
 pub tst_core::error::KlvEncodeError::BufferTooSmall::got: usize
@@ -1609,6 +1695,8 @@ pub tst_core::error::KlvEncodeError::UnsupportedImapbLength
 pub tst_core::error::KlvEncodeError::UnsupportedImapbLength::length: usize
 pub tst_core::error::KlvEncodeError::VTargetPackEmpty
 pub tst_core::error::KlvEncodeError::VTargetPackEmpty::target_id: u64
+impl tst_core::error::KlvEncodeError
+pub fn tst_core::error::KlvEncodeError::kind(&self) -> tst_core::error::KlvEncodeErrorKind
 impl core::convert::From<tst_core::error::KlvEncodeError> for tst_core::error::KlvPatchError
 pub fn tst_core::error::KlvPatchError::from(tst_core::error::KlvEncodeError) -> Self
 impl core::error::Error for tst_core::error::KlvEncodeError
@@ -1623,6 +1711,36 @@ impl core::marker::Unpin for tst_core::error::KlvEncodeError
 impl core::marker::UnsafeUnpin for tst_core::error::KlvEncodeError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::error::KlvEncodeError
 impl core::panic::unwind_safe::UnwindSafe for tst_core::error::KlvEncodeError
+pub enum tst_core::error::KlvEncodeErrorKind
+pub tst_core::error::KlvEncodeErrorKind::BufferTooSmall
+pub tst_core::error::KlvEncodeErrorKind::DuplicateTargetId
+pub tst_core::error::KlvEncodeErrorKind::ForbiddenStandaloneOffset
+pub tst_core::error::KlvEncodeErrorKind::InvalidImapbParams
+pub tst_core::error::KlvEncodeErrorKind::MissingMandatoryItem
+pub tst_core::error::KlvEncodeErrorKind::OutOfRange
+pub tst_core::error::KlvEncodeErrorKind::RecordTooLarge
+pub tst_core::error::KlvEncodeErrorKind::ReservedTagInUnknown
+pub tst_core::error::KlvEncodeErrorKind::StringTooLong
+pub tst_core::error::KlvEncodeErrorKind::UnsupportedImapbLength
+pub tst_core::error::KlvEncodeErrorKind::VTargetPackEmpty
+impl core::clone::Clone for tst_core::error::KlvEncodeErrorKind
+pub fn tst_core::error::KlvEncodeErrorKind::clone(&self) -> tst_core::error::KlvEncodeErrorKind
+impl core::cmp::Eq for tst_core::error::KlvEncodeErrorKind
+impl core::cmp::PartialEq for tst_core::error::KlvEncodeErrorKind
+pub fn tst_core::error::KlvEncodeErrorKind::eq(&self, &tst_core::error::KlvEncodeErrorKind) -> bool
+impl core::fmt::Debug for tst_core::error::KlvEncodeErrorKind
+pub fn tst_core::error::KlvEncodeErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::error::KlvEncodeErrorKind
+pub fn tst_core::error::KlvEncodeErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::error::KlvEncodeErrorKind
+impl core::marker::StructuralPartialEq for tst_core::error::KlvEncodeErrorKind
+impl core::marker::Freeze for tst_core::error::KlvEncodeErrorKind
+impl core::marker::Send for tst_core::error::KlvEncodeErrorKind
+impl core::marker::Sync for tst_core::error::KlvEncodeErrorKind
+impl core::marker::Unpin for tst_core::error::KlvEncodeErrorKind
+impl core::marker::UnsafeUnpin for tst_core::error::KlvEncodeErrorKind
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::error::KlvEncodeErrorKind
+impl core::panic::unwind_safe::UnwindSafe for tst_core::error::KlvEncodeErrorKind
 #[non_exhaustive] pub enum tst_core::error::KlvFieldError
 pub tst_core::error::KlvFieldError::InvalidCodepoint
 pub tst_core::error::KlvFieldError::InvalidCodepoint::tag: u32
@@ -1648,6 +1766,8 @@ pub tst_core::error::KlvFieldError::TruncatedField
 pub tst_core::error::KlvFieldError::TruncatedField::tag: u32
 pub tst_core::error::KlvFieldError::UnsupportedImapbLength
 pub tst_core::error::KlvFieldError::UnsupportedImapbLength::length: usize
+impl tst_core::error::KlvFieldError
+pub fn tst_core::error::KlvFieldError::kind(&self) -> tst_core::error::KlvFieldErrorKind
 impl core::clone::Clone for tst_core::error::KlvFieldError
 pub fn tst_core::error::KlvFieldError::clone(&self) -> tst_core::error::KlvFieldError
 impl core::cmp::PartialEq for tst_core::error::KlvFieldError
@@ -1667,6 +1787,27 @@ impl core::marker::Unpin for tst_core::error::KlvFieldError
 impl core::marker::UnsafeUnpin for tst_core::error::KlvFieldError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::error::KlvFieldError
 impl core::panic::unwind_safe::UnwindSafe for tst_core::error::KlvFieldError
+pub enum tst_core::error::KlvFieldErrorKind
+pub tst_core::error::KlvFieldErrorKind::Malformed
+pub tst_core::error::KlvFieldErrorKind::Truncated
+impl core::clone::Clone for tst_core::error::KlvFieldErrorKind
+pub fn tst_core::error::KlvFieldErrorKind::clone(&self) -> tst_core::error::KlvFieldErrorKind
+impl core::cmp::Eq for tst_core::error::KlvFieldErrorKind
+impl core::cmp::PartialEq for tst_core::error::KlvFieldErrorKind
+pub fn tst_core::error::KlvFieldErrorKind::eq(&self, &tst_core::error::KlvFieldErrorKind) -> bool
+impl core::fmt::Debug for tst_core::error::KlvFieldErrorKind
+pub fn tst_core::error::KlvFieldErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::error::KlvFieldErrorKind
+pub fn tst_core::error::KlvFieldErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::error::KlvFieldErrorKind
+impl core::marker::StructuralPartialEq for tst_core::error::KlvFieldErrorKind
+impl core::marker::Freeze for tst_core::error::KlvFieldErrorKind
+impl core::marker::Send for tst_core::error::KlvFieldErrorKind
+impl core::marker::Sync for tst_core::error::KlvFieldErrorKind
+impl core::marker::Unpin for tst_core::error::KlvFieldErrorKind
+impl core::marker::UnsafeUnpin for tst_core::error::KlvFieldErrorKind
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::error::KlvFieldErrorKind
+impl core::panic::unwind_safe::UnwindSafe for tst_core::error::KlvFieldErrorKind
 #[non_exhaustive] pub enum tst_core::error::KlvPatchError
 pub tst_core::error::KlvPatchError::Decode(tst_core::error::KlvDecodeError)
 pub tst_core::error::KlvPatchError::Encode(tst_core::error::KlvEncodeError)
@@ -1803,7 +1944,7 @@ impl core::marker::Unpin for tst_core::error::MuxError
 impl core::marker::UnsafeUnpin for tst_core::error::MuxError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::error::MuxError
 impl core::panic::unwind_safe::UnwindSafe for tst_core::error::MuxError
-#[non_exhaustive] pub enum tst_core::error::MuxErrorKind
+pub enum tst_core::error::MuxErrorKind
 pub tst_core::error::MuxErrorKind::Backpressure
 pub tst_core::error::MuxErrorKind::ConfigInvalid
 pub tst_core::error::MuxErrorKind::InputMalformed
@@ -7023,6 +7164,8 @@ pub tst_core::transport::TransportError::ExplicitClose
 pub tst_core::transport::TransportError::TooLarge
 pub tst_core::transport::TransportError::TooLarge::len: usize
 pub tst_core::transport::TransportError::TooLarge::max: usize
+impl tst_core::transport::TransportError
+pub fn tst_core::transport::TransportError::kind(&self) -> tst_core::transport::TransportErrorKind
 impl core::clone::Clone for tst_core::transport::TransportError
 pub fn tst_core::transport::TransportError::clone(&self) -> tst_core::transport::TransportError
 impl core::cmp::Eq for tst_core::transport::TransportError
@@ -7041,6 +7184,30 @@ impl core::marker::Unpin for tst_core::transport::TransportError
 impl core::marker::UnsafeUnpin for tst_core::transport::TransportError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::TransportError
 impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::TransportError
+pub enum tst_core::transport::TransportErrorKind
+pub tst_core::transport::TransportErrorKind::Backpressure
+pub tst_core::transport::TransportErrorKind::Broken
+pub tst_core::transport::TransportErrorKind::Closed
+pub tst_core::transport::TransportErrorKind::ExplicitClose
+pub tst_core::transport::TransportErrorKind::TooLarge
+impl core::clone::Clone for tst_core::transport::TransportErrorKind
+pub fn tst_core::transport::TransportErrorKind::clone(&self) -> tst_core::transport::TransportErrorKind
+impl core::cmp::Eq for tst_core::transport::TransportErrorKind
+impl core::cmp::PartialEq for tst_core::transport::TransportErrorKind
+pub fn tst_core::transport::TransportErrorKind::eq(&self, &tst_core::transport::TransportErrorKind) -> bool
+impl core::fmt::Debug for tst_core::transport::TransportErrorKind
+pub fn tst_core::transport::TransportErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::transport::TransportErrorKind
+pub fn tst_core::transport::TransportErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::transport::TransportErrorKind
+impl core::marker::StructuralPartialEq for tst_core::transport::TransportErrorKind
+impl core::marker::Freeze for tst_core::transport::TransportErrorKind
+impl core::marker::Send for tst_core::transport::TransportErrorKind
+impl core::marker::Sync for tst_core::transport::TransportErrorKind
+impl core::marker::Unpin for tst_core::transport::TransportErrorKind
+impl core::marker::UnsafeUnpin for tst_core::transport::TransportErrorKind
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::TransportErrorKind
+impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::TransportErrorKind
 pub struct tst_core::transport::EndReasonHandle(_)
 impl tst_core::transport::EndReasonHandle
 pub fn tst_core::transport::EndReasonHandle::get(&self) -> core::option::Option<tst_core::transport::EndReason>
@@ -7308,6 +7475,8 @@ pub tst_core::DemuxError::SyncBufExhausted::max: usize
 pub tst_core::DemuxError::SyncBufExhausted::observed: usize
 pub tst_core::DemuxError::Unrecoverable
 pub tst_core::DemuxError::Unrecoverable::after_bytes: usize
+impl tst_core::error::DemuxError
+pub fn tst_core::error::DemuxError::kind(&self) -> tst_core::error::DemuxErrorKind
 impl core::clone::Clone for tst_core::error::DemuxError
 pub fn tst_core::error::DemuxError::clone(&self) -> tst_core::error::DemuxError
 impl core::cmp::Eq for tst_core::error::DemuxError
@@ -7370,6 +7539,8 @@ pub tst_core::KlvDecodeError::Truncated::offset: usize
 pub tst_core::KlvDecodeError::UnexpectedUniversalLabel
 pub tst_core::KlvDecodeError::UnexpectedUniversalLabel::expected: tst_core::klv::universal_label::UniversalLabel
 pub tst_core::KlvDecodeError::UnexpectedUniversalLabel::found: tst_core::klv::universal_label::UniversalLabel
+impl tst_core::error::KlvDecodeError
+pub fn tst_core::error::KlvDecodeError::kind(&self) -> tst_core::error::KlvDecodeErrorKind
 impl core::convert::From<tst_core::error::KlvDecodeError> for tst_core::error::KlvPatchError
 pub fn tst_core::error::KlvPatchError::from(tst_core::error::KlvDecodeError) -> Self
 impl core::convert::From<tst_core::error::KlvFieldError> for tst_core::error::KlvDecodeError
@@ -7418,6 +7589,8 @@ pub tst_core::KlvEncodeError::UnsupportedImapbLength
 pub tst_core::KlvEncodeError::UnsupportedImapbLength::length: usize
 pub tst_core::KlvEncodeError::VTargetPackEmpty
 pub tst_core::KlvEncodeError::VTargetPackEmpty::target_id: u64
+impl tst_core::error::KlvEncodeError
+pub fn tst_core::error::KlvEncodeError::kind(&self) -> tst_core::error::KlvEncodeErrorKind
 impl core::convert::From<tst_core::error::KlvEncodeError> for tst_core::error::KlvPatchError
 pub fn tst_core::error::KlvPatchError::from(tst_core::error::KlvEncodeError) -> Self
 impl core::error::Error for tst_core::error::KlvEncodeError
@@ -7457,6 +7630,8 @@ pub tst_core::KlvFieldError::TruncatedField
 pub tst_core::KlvFieldError::TruncatedField::tag: u32
 pub tst_core::KlvFieldError::UnsupportedImapbLength
 pub tst_core::KlvFieldError::UnsupportedImapbLength::length: usize
+impl tst_core::error::KlvFieldError
+pub fn tst_core::error::KlvFieldError::kind(&self) -> tst_core::error::KlvFieldErrorKind
 impl core::clone::Clone for tst_core::error::KlvFieldError
 pub fn tst_core::error::KlvFieldError::clone(&self) -> tst_core::error::KlvFieldError
 impl core::cmp::PartialEq for tst_core::error::KlvFieldError
@@ -7625,6 +7800,8 @@ pub tst_core::TransportError::ExplicitClose
 pub tst_core::TransportError::TooLarge
 pub tst_core::TransportError::TooLarge::len: usize
 pub tst_core::TransportError::TooLarge::max: usize
+impl tst_core::transport::TransportError
+pub fn tst_core::transport::TransportError::kind(&self) -> tst_core::transport::TransportErrorKind
 impl core::clone::Clone for tst_core::transport::TransportError
 pub fn tst_core::transport::TransportError::clone(&self) -> tst_core::transport::TransportError
 impl core::cmp::Eq for tst_core::transport::TransportError

@@ -157,6 +157,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tst-pipeline and tst-srt roots.
 - `CANCEL_POLL_INTERVAL` and `ACCEPT_POLL_INTERVAL` move from
   `net::udp_socket` to `cancel`.
+- `error::MuxErrorKind` is no longer `#[non_exhaustive]`: a match over it
+  need not (and, without an unreachable-pattern warning, should not) carry a
+  wildcard arm. Kind enums are deliberately exhaustive so that a new kind is
+  a compile error in every exhaustive match.
 
 ### Changed — tst-pipeline (BREAKING)
 
@@ -261,6 +265,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `net::tls` (feature `tls`): `load_server_config`, `server_config_from_pem`,
   `load_root_store` and `TlsLoadError` — the one PEM loader behind
   `tcps://`, `hlss://`, `rtsps://` and the Python/JVM trust bundles.
+- `kind()` on `error::{DemuxError, KlvDecodeError, KlvFieldError,
+  KlvEncodeError}`, `codec::CodecParseError` and `transport::TransportError`,
+  returning the new exhaustive `DemuxErrorKind`, `KlvDecodeErrorKind`
+  (truncated, bad universal label, checksum mismatch, duplicate tag, missing
+  required tag, malformed), `KlvFieldErrorKind` (truncated, malformed),
+  `KlvEncodeErrorKind`, `CodecParseErrorKind` and `TransportErrorKind`.
 
 ### Added — tst-pipeline
 

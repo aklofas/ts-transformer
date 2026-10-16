@@ -411,6 +411,19 @@ a libsrt option this library does not expose with an error that carries the
 
 ---
 
+## Exhaustive kind enums
+
+Public enums are `#[non_exhaustive]` so a variant can be added in a minor
+release. The one exception is a **kind enum**: the fieldless `*ErrorKind`
+returned by an error's `kind()` (`MuxErrorKind`, `DemuxErrorKind`,
+`KlvDecodeErrorKind`, `KlvFieldErrorKind`, `KlvEncodeErrorKind`,
+`CodecParseErrorKind`, `TransportErrorKind`). A kind enum exists to be
+matched exhaustively — the binding error-kind table matches all seven with
+no wildcard — so a new kind is meant to be a compile error for every such
+match. The error enums themselves stay `#[non_exhaustive]`, and `kind()` is
+written in the defining crate with no wildcard, so a new error variant is a
+compile error until it is classified.
+
 ## See also
 
 - `docs/reference/binding-authors.md` § "Builder shape" — the
