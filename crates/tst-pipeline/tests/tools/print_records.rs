@@ -48,13 +48,15 @@ fn main() {
     }
     let reg = schema::records();
     if mode == "--write" {
-        let result = write::targets(&root, &reg).and_then(|t| write::write_all(&t));
+        let result = write::targets(&root, &reg)
+            .and_then(|t| write::formatted(t, &root))
+            .and_then(|t| write::write_all(&t));
         if let Err(e) = result {
             eprintln!("print-records: {e}");
             std::process::exit(2);
         }
     } else if mode == "--check" {
-        let targets = match write::targets(&root, &reg) {
+        let targets = match write::targets(&root, &reg).and_then(|t| write::formatted(t, &root)) {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("print-records: {e}");

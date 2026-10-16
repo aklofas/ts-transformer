@@ -27,6 +27,10 @@ pub enum Gap {
     NoMarkers(String),
 }
 
+/// What the tool prints when rustfmt cannot format the generated Rust.
+const NEEDS_RUSTFMT: &str = "rustfmt is needed to format the generated Rust files \
+     (`rustup component add rustfmt`)";
+
 /// Runs `text` through the workspace's rustfmt so the committed file is
 /// what `cargo fmt --check` accepts.
 pub fn rustfmt(text: &str, root: &Path) -> Result<String, String> {
@@ -37,7 +41,7 @@ pub fn rustfmt(text: &str, root: &Path) -> Result<String, String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("cannot run rustfmt: {e}"))?;
+        .map_err(|e| format!("{NEEDS_RUSTFMT}: cannot run rustfmt: {e}"))?;
     child
         .stdin
         .take()
@@ -49,7 +53,7 @@ pub fn rustfmt(text: &str, root: &Path) -> Result<String, String> {
         .map_err(|e| format!("rustfmt: {e}"))?;
     if !out.status.success() {
         return Err(format!(
-            "rustfmt rejected the generated text:\n{}",
+            "{NEEDS_RUSTFMT}: rustfmt failed:\n{}",
             String::from_utf8_lossy(&out.stderr)
         ));
     }
@@ -63,7 +67,8 @@ fn py_markers(name: &str) -> (String, String) {
     )
 }
 
-/// Every target of the registry, in a stable order.
+/// Every target of the registry, in a stable order, as the emitters produce
+/// it: the generated Rust files are not yet formatted (see [`formatted`]).
 pub fn targets(root: &Path, reg: &[Entry]) -> Result<Vec<Target>, String> {
     let mut out = Vec::new();
     let mut families: Vec<&str> = Vec::new();
@@ -75,12 +80,12 @@ pub fn targets(root: &Path, reg: &[Entry]) -> Result<Vec<Target>, String> {
     for f in &families {
         out.push(Target {
             path: root.join(format!("bindings/python/src/generated/{f}.rs")),
-            body: rustfmt(&emit_py::file(reg, f)?, root)?,
+            body: emit_py::file(reg, f)?,
             kind: Kind::Whole,
         });
         out.push(Target {
             path: root.join(format!("bindings/jvm/src/generated/{f}.rs")),
-            body: rustfmt(&emit_jvm_rs::file(reg, f)?, root)?,
+            body: emit_jvm_rs::file(reg, f)?,
             kind: Kind::Whole,
         });
     }
@@ -111,6 +116,18 @@ pub fn targets(root: &Path, reg: &[Entry]) -> Result<Vec<Target>, String> {
         });
     }
     Ok(out)
+}
+
+/// The targets with every generated Rust file run through rustfmt, which is
+/// the text `--write` commits and `--check` compares. Only the tool calls
+/// this; the emitter tests compare the unformatted text.
+pub fn formatted(mut targets: Vec<Target>, root: &Path) -> Result<Vec<Target>, String> {
+    for t in &mut targets {
+        if t.path.extension().is_some_and(|x| x == "rs") {
+            t.body = rustfmt(&t.body, root)?;
+        }
+    }
+    Ok(targets)
 }
 
 /// The file content the target should have, or why that cannot be said.
