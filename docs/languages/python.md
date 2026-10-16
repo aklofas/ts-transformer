@@ -1882,6 +1882,11 @@ emits a `DeprecationWarning`.
 | `Class.from_url(url, ...)`, `MuxSender(url, ...)`, `DemuxReceiver(url, ...)` on a shell | `Class.open(url, ...)` |
 | the rtp `pkt_size=` keyword | the `?pkt_size=` URL key |
 
+A star import no longer brings the old shell names in: they left the
+modules' `__all__`, so after `from tstrans.srt import *` (or
+`from tstrans.rtp import *`) a bare `Sender` is a `NameError`, not a
+`DeprecationWarning`. Import them from `tstrans.shells`.
+
 `ManagedSender` / `ManagedReceiver` / `ManagedMuxSender` /
 `ManagedDemuxReceiver` keep `from_url`: they are SRT-specific.
 

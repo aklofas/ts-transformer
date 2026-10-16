@@ -264,8 +264,9 @@ opaque config builders. Read both before exposing tst-c objects as
 thread-safe in your binding.
 
 **Runtime handles** (the shells produced by `tst_*_open` /
-`tst_*_open_listener`) are guarded by `Handle<T> = Mutex<...>` inside
-`tst-c`. Data-path entry points (`_send_*`, `_recv_*`, `_pull`,
+`tst_*_open_listener`) are guarded by `CHandle<T>` inside `tst-c`, a
+newtype over `tst_pipeline::binding::Owned` whose slot is a mutex (a spin
+lock on a `no_std` build, which carries only the offline handles). Data-path entry points (`_send_*`, `_recv_*`, `_pull`,
 `_get_stats`, `_push_*`, etc.) acquire that lock internally. Bindings
 may safely call data-path functions on the same handle from any
 thread — concurrent calls serialize through the inner mutex. Cancel
@@ -698,7 +699,7 @@ cell is either shipped, or deferred with the trigger that reopens it in
 | RTSP publisher role (`add_publish_mount`, `next_publisher`, `remove_mount`, publish-mount transport, stats and publisher info, `accept_unregistered_publishers`) | ✅ | ✅ `tst_rtsp_server_*` + `tst_rtsp_publish_mount_*` (ABI 0.23) | ✅ `RtspServer.add_publish_mount` / `next_publisher` / `remove_mount` + `PublishMount` (`into_demux_receiver`, `stats()`, `publisher()`) + `RtspServerConfig.accept_unregistered_publishers` | ✅ `RtspServer.addPublishMount` / `nextPublisher` / `removeMount` + `PublishMount` (`intoDemuxReceiver`, `stats()`, `publisher()`) + `RtspServerConfig.Builder.acceptUnregisteredPublishers` |
 
 **Rule for new cells.** A ship-now cell must be under a day per binding
-(a `with_ref`/`with_mut` body plus one error projection, with a red-first
+(a `with_ref_blocking`/`with_mut` body plus one error projection, with a red-first
 test); anything larger is deferred WITH a trigger, never silently absent.
 The surface manifest's five-column rule (`tests/coverage/README.md`) keeps
 the Swift/Kotlin columns from repeating this drift.

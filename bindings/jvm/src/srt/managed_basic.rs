@@ -14,7 +14,7 @@
 //!   tst-srt, once, for every binding. The returned `ManagedHandles` (plus the
 //!   sender's `ManagedStatsHandle`) become the entry's `Owned` SNAPSHOT, so
 //!   every counter/stats/cancel read is lock-free.
-//! - Per-call methods go through `with_mut` / `with_ref`; a `HandleState`
+//! - Per-call methods go through `with_mut` / `with_ref_blocking`; a `HandleState`
 //!   becomes the one Java mapping in `error::throw_handle_state`.
 //! - `nClose` cancels first, then takes + tears down, via `OwnedRegistry::close`:
 //!   a parked `send`/`recv` ends with `SrtException(CLOSED)` instead of holding

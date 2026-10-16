@@ -50,7 +50,10 @@ The JVM binding is published to Maven Central as
 </dependency>
 ```
 
-To build from source instead:
+To build from source instead. Besides the Rust toolchain and a JDK, the
+build needs `meson`, `ninja` and `pkg-config` (`apt install meson
+ninja-build pkg-config`): the native library links the vendored librist,
+which builds with meson.
 
 ```bash
 # From the workspace, build the binding and run its JUnit5 tests:
@@ -2190,7 +2193,16 @@ Python binding's gaps.
 
 Deprecated in 0.9.0, removed in 0.10.0. Each old shell class is a
 `@Deprecated(forRemoval = true)` subclass of its replacement and keeps its
-0.8 `fromUrl` factories.
+0.8 `fromUrl` factories, which still accept only their own scheme
+(`srt://` or `rtp://`; another scheme throws `CONFIG_INVALID`).
+
+The instance methods the subclasses inherit (`sendBytes`, `sendVideo`,
+`recvBytes`, `recvEvent`, ...) declare `throws BindingException` (plus
+`MuxException` on `MuxSender`, `DemuxException` on `recvEvent`), not
+`SrtException` / `RtpException`. A 0.8 call site that
+catches only `SrtException` or `RtpException` around them no longer
+compiles: catch `BindingException`, which every transport exception
+extends.
 
 | 0.8 | 0.9 |
 |---|---|

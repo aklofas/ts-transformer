@@ -21,7 +21,7 @@
 //!
 //! `H264Receiver` holds `tst_rtp::H264Receiver` in a
 //! `tst_pipeline::binding::Owned`, which takes the slot only inside
-//! `with_mut` / `with_ref` under `py.allow_threads`, so a parked
+//! `with_mut` / `with_ref_blocking` under `py.allow_threads`, so a parked
 //! `recv_au` on one thread never blocks a `close()` or a getter on
 //! another (a `&mut self` receive made PyO3 raise `RuntimeError: Already
 //! borrowed` there). Methods raise `RtpError(CLOSED)` once the slot is

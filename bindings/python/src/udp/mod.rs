@@ -19,7 +19,7 @@
 //! latch between slices, so a parked `recv()` ends with
 //! `UdpError(CLOSED)` ("cancelled from another thread") within about one
 //! slice. Every wrapper holds a `tst_pipeline::binding::Owned`, which
-//! takes the slot only inside `with_mut` / `with_ref` and makes `close()`
+//! takes the slot only inside `with_mut` / `with_ref_blocking` and makes `close()`
 //! cancel-first. A cancel is NOT a close: the object stays open until
 //! `close()`, which is quiet afterwards.
 //!

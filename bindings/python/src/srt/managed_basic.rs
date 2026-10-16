@@ -39,7 +39,7 @@
 //!
 //! Concurrency: both wrappers hold their pipeline shell in a
 //! `tst_pipeline::binding::Owned`, which takes the slot only inside
-//! `with_mut` / `with_ref` (GIL released) and makes `close()` cancel-first
+//! `with_mut` / `with_ref_blocking` (GIL released) and makes `close()` cancel-first
 //! — the cross-thread close contract, which a `&mut self`
 //! send/recv could not meet (PyO3 would raise `RuntimeError: Already
 //! borrowed` on the closer).
