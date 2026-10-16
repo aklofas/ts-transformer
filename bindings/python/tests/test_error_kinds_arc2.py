@@ -37,6 +37,8 @@ EXPECTED = {
         "IO": 9,
         "IFACE_UNSUPPORTED": 10,
         "END_OF_STREAM": 11,
+        "INPUT_MALFORMED": 12,
+        "CONFIG_INVALID": 13,
     },
     exc.UdpErrorKind: {
         "URL": 0,
