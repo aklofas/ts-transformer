@@ -124,7 +124,9 @@ pub fn load_root_store(pem: &[u8]) -> Result<rustls::RootCertStore, TlsLoadError
     Ok(roots)
 }
 
-#[cfg(test)]
+// rcgen (self-signed certificates) is a dev-dependency only off musl; see
+// Cargo.toml.
+#[cfg(all(test, not(target_env = "musl")))]
 mod tests {
     use super::*;
 

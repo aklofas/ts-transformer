@@ -61,7 +61,6 @@ rustls-pemfile = { version = "2", optional = true }
 proptest         = { workspace = true }
 tracing-test     = { version = "0.2", features = ["no-env-filter"] }
 tempfile         = "3"
-rcgen            = "0.13"
 criterion        = { workspace = true }
 tst-test-helpers = { path = "../tst-test-helpers" }
 
@@ -149,3 +148,9 @@ features = ["conformance"]
 
 [lints]
 workspace = true
+
+# Self-signed certificates for the `net::tls` unit tests. rcgen builds `ring`,
+# which needs a C compiler for the target; the musl CI leg builds tst-core as
+# a C-free crate, so the dev-dependency (and those tests) stay off there.
+[target.'cfg(not(target_env = "musl"))'.dev-dependencies]
+rcgen = "0.13"
