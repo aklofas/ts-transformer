@@ -355,6 +355,68 @@ pub enum CodecParseError {
     BufferTooSmall { needed: usize, have: usize },
 }
 
+/// The category of a [`CodecParseError`], for exhaustive matching.
+///
+/// [`CodecParseError::kind`] classifies every variant inside this crate with no
+/// wildcard, and this enum is deliberately **not** `#[non_exhaustive]`: a
+/// new category is meant to be a compile error in every exhaustive match
+/// downstream (the binding kind table is one). See `conventions.md`
+/// §"Exhaustive kind enums".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CodecParseErrorKind {
+    /// [`CodecParseError::TruncatedRbsp`].
+    TruncatedRbsp,
+    /// [`CodecParseError::InvalidGolomb`].
+    InvalidGolomb,
+    /// [`CodecParseError::ReservedValue`].
+    ReservedValue,
+    /// [`CodecParseError::UnsupportedProfile`].
+    UnsupportedProfile,
+    /// [`CodecParseError::EngineError`].
+    EngineError,
+    /// [`CodecParseError::InvalidLeb128`].
+    InvalidLeb128,
+    /// [`CodecParseError::BadSyncWord`].
+    BadSyncWord,
+    /// [`CodecParseError::Truncated`].
+    Truncated,
+    /// [`CodecParseError::Forbidden`].
+    Forbidden,
+    /// [`CodecParseError::UnsupportedFreeFormat`].
+    UnsupportedFreeFormat,
+    /// [`CodecParseError::InvalidLengthSize`].
+    InvalidLengthSize,
+    /// [`CodecParseError::NalLengthOverflow`].
+    NalLengthOverflow,
+    /// [`CodecParseError::BufferTooSmall`].
+    BufferTooSmall,
+}
+
+impl CodecParseError {
+    /// This error's [`CodecParseErrorKind`]. Exhaustive (no wildcard: the match is in
+    /// the defining crate).
+    #[must_use]
+    pub fn kind(&self) -> CodecParseErrorKind {
+        match self {
+            CodecParseError::TruncatedRbsp { .. } => CodecParseErrorKind::TruncatedRbsp,
+            CodecParseError::InvalidGolomb { .. } => CodecParseErrorKind::InvalidGolomb,
+            CodecParseError::ReservedValue { .. } => CodecParseErrorKind::ReservedValue,
+            CodecParseError::UnsupportedProfile { .. } => CodecParseErrorKind::UnsupportedProfile,
+            CodecParseError::EngineError(_) => CodecParseErrorKind::EngineError,
+            CodecParseError::InvalidLeb128 { .. } => CodecParseErrorKind::InvalidLeb128,
+            CodecParseError::BadSyncWord { .. } => CodecParseErrorKind::BadSyncWord,
+            CodecParseError::Truncated { .. } => CodecParseErrorKind::Truncated,
+            CodecParseError::Forbidden { .. } => CodecParseErrorKind::Forbidden,
+            CodecParseError::UnsupportedFreeFormat { .. } => {
+                CodecParseErrorKind::UnsupportedFreeFormat
+            }
+            CodecParseError::InvalidLengthSize { .. } => CodecParseErrorKind::InvalidLengthSize,
+            CodecParseError::NalLengthOverflow { .. } => CodecParseErrorKind::NalLengthOverflow,
+            CodecParseError::BufferTooSmall { .. } => CodecParseErrorKind::BufferTooSmall,
+        }
+    }
+}
+
 /// Apply one conformance-window / frame-crop pair to a raw luma dimension.
 /// `a` and `b` are the two crop amounts already scaled to luma samples
 /// (saturating, so a hostile offset arrives as `u32::MAX`). The standards
@@ -416,6 +478,26 @@ pub(crate) fn validate_bit_depth_minus8(
 mod tests {
     use super::*;
     use crate::test_prelude::*;
+
+    #[test]
+    fn codec_parse_error_kind_is_exhaustive() {
+        assert_eq!(
+            CodecParseError::TruncatedRbsp {
+                offset_bits: 1,
+                needed_bits: 2
+            }
+            .kind(),
+            CodecParseErrorKind::TruncatedRbsp
+        );
+        assert_eq!(
+            CodecParseError::EngineError("x".into()).kind(),
+            CodecParseErrorKind::EngineError
+        );
+        assert_eq!(
+            CodecParseError::BufferTooSmall { needed: 2, have: 1 }.kind(),
+            CodecParseErrorKind::BufferTooSmall
+        );
+    }
 
     #[test]
     fn chroma_format_is_copy_eq() {

@@ -767,7 +767,6 @@ fn map_mux_kind(k: MuxErrorKind) -> BindingErrorKind {
         MuxErrorKind::InvalidUsage => BindingErrorKind::InvalidUsage,
         MuxErrorKind::Backpressure => BindingErrorKind::Backpressure,
         MuxErrorKind::Internal => BindingErrorKind::Internal,
-        _ => BindingErrorKind::Internal,
     }
 }
 

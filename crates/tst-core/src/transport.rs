@@ -249,6 +249,42 @@ pub enum TransportError {
     ExplicitClose,
 }
 
+/// The category of a [`TransportError`], for exhaustive matching.
+///
+/// [`TransportError::kind`] classifies every variant inside this crate with no
+/// wildcard, and this enum is deliberately **not** `#[non_exhaustive]`: a
+/// new category is meant to be a compile error in every exhaustive match
+/// downstream (the binding kind table is one). See `conventions.md`
+/// §"Exhaustive kind enums".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TransportErrorKind {
+    /// [`TransportError::Backpressure`].
+    Backpressure,
+    /// [`TransportError::Broken`].
+    Broken,
+    /// [`TransportError::Closed`].
+    Closed,
+    /// [`TransportError::TooLarge`].
+    TooLarge,
+    /// [`TransportError::ExplicitClose`].
+    ExplicitClose,
+}
+
+impl TransportError {
+    /// This error's [`TransportErrorKind`]. Exhaustive (no wildcard: the match is in
+    /// the defining crate).
+    #[must_use]
+    pub fn kind(&self) -> TransportErrorKind {
+        match self {
+            TransportError::Backpressure { .. } => TransportErrorKind::Backpressure,
+            TransportError::Broken { .. } => TransportErrorKind::Broken,
+            TransportError::Closed => TransportErrorKind::Closed,
+            TransportError::TooLarge { .. } => TransportErrorKind::TooLarge,
+            TransportError::ExplicitClose => TransportErrorKind::ExplicitClose,
+        }
+    }
+}
+
 /// Why a [`TransportError::Broken`] was raised.
 ///
 /// Lets a caller act differently on a clean end of stream than on a wire
@@ -734,5 +770,23 @@ mod end_reason_tests {
         assert!(Silent.end_reason_handle().is_none());
         let boxed: std::boxed::Box<dyn RecvTransport> = std::boxed::Box::new(Silent);
         assert!(boxed.end_reason_handle().is_none());
+    }
+}
+
+#[cfg(test)]
+mod kind_tests {
+    use super::*;
+
+    #[test]
+    fn transport_error_kind_is_exhaustive() {
+        assert_eq!(TransportError::Closed.kind(), TransportErrorKind::Closed);
+        assert_eq!(
+            TransportError::ExplicitClose.kind(),
+            TransportErrorKind::ExplicitClose
+        );
+        assert_eq!(
+            TransportError::TooLarge { len: 2, max: 1 }.kind(),
+            TransportErrorKind::TooLarge
+        );
     }
 }

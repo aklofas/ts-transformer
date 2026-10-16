@@ -118,6 +118,64 @@ pub enum KlvDecodeError {
     FieldError(#[from] KlvFieldError),
 }
 
+/// The category of a [`KlvDecodeError`], for exhaustive matching.
+///
+/// [`KlvDecodeError::kind`] classifies every variant inside this crate with no
+/// wildcard, and this enum is deliberately **not** `#[non_exhaustive]`: a
+/// new category is meant to be a compile error in every exhaustive match
+/// downstream (the binding kind table is one). See `conventions.md`
+/// §"Exhaustive kind enums".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KlvDecodeErrorKind {
+    /// The buffer ended inside a key, length or value.
+    Truncated,
+    /// The 16-byte key is not the expected Universal Label.
+    BadUniversalLabel,
+    /// The Tag 1 checksum or the CRC-32 did not match.
+    ChecksumMismatch,
+    /// A tag appeared twice where the standard forbids it.
+    DuplicateTag,
+    /// A mandatory tag is absent or out of its required position.
+    MissingRequiredTag,
+    /// Any other structural violation, a field-level error included.
+    Malformed,
+}
+
+impl KlvDecodeError {
+    /// This error's [`KlvDecodeErrorKind`]. Exhaustive (no wildcard: the
+    /// match is in the defining crate).
+    #[must_use]
+    pub fn kind(&self) -> KlvDecodeErrorKind {
+        match self {
+            KlvDecodeError::Truncated { .. }
+            | KlvDecodeError::MalformedLength { .. }
+            | KlvDecodeError::LengthOverflow { .. } => KlvDecodeErrorKind::Truncated,
+            KlvDecodeError::UnexpectedUniversalLabel { .. } => {
+                KlvDecodeErrorKind::BadUniversalLabel
+            }
+            KlvDecodeError::ChecksumMismatch { .. } | KlvDecodeError::Crc32Mismatch { .. } => {
+                KlvDecodeErrorKind::ChecksumMismatch
+            }
+            KlvDecodeError::DuplicateTag { .. } => KlvDecodeErrorKind::DuplicateTag,
+            KlvDecodeError::Tag2NotFirst
+            | KlvDecodeError::Tag1NotLast
+            | KlvDecodeError::MissingTag65
+            | KlvDecodeError::St0102MissingRequiredTag { .. }
+            | KlvDecodeError::St0903MissingRequiredTag { .. } => {
+                KlvDecodeErrorKind::MissingRequiredTag
+            }
+            KlvDecodeError::MalformedTag { .. }
+            | KlvDecodeError::NonCanonicalLength { .. }
+            | KlvDecodeError::NonCanonicalTag { .. }
+            | KlvDecodeError::TrailingBytes { .. }
+            | KlvDecodeError::BadTimeStampPackLength { .. }
+            | KlvDecodeError::ReservedBitsInvalid { .. }
+            | KlvDecodeError::St0903InvalidVTargetPack { .. }
+            | KlvDecodeError::FieldError(_) => KlvDecodeErrorKind::Malformed,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum KlvEncodeError {
@@ -215,6 +273,64 @@ pub enum KlvEncodeError {
     ReservedTagInUnknown { tag: u32 },
 }
 
+/// The category of a [`KlvEncodeError`], for exhaustive matching.
+///
+/// [`KlvEncodeError::kind`] classifies every variant inside this crate with no
+/// wildcard, and this enum is deliberately **not** `#[non_exhaustive]`: a
+/// new category is meant to be a compile error in every exhaustive match
+/// downstream (the binding kind table is one). See `conventions.md`
+/// §"Exhaustive kind enums".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KlvEncodeErrorKind {
+    /// [`KlvEncodeError::BufferTooSmall`].
+    BufferTooSmall,
+    /// [`KlvEncodeError::RecordTooLarge`].
+    RecordTooLarge,
+    /// [`KlvEncodeError::OutOfRange`].
+    OutOfRange,
+    /// [`KlvEncodeError::StringTooLong`].
+    StringTooLong,
+    /// [`KlvEncodeError::UnsupportedImapbLength`].
+    UnsupportedImapbLength,
+    /// [`KlvEncodeError::InvalidImapbParams`].
+    InvalidImapbParams,
+    /// [`KlvEncodeError::MissingMandatoryItem`].
+    MissingMandatoryItem,
+    /// [`KlvEncodeError::ReservedTagInUnknown`].
+    ReservedTagInUnknown,
+    /// [`KlvEncodeError::VTargetPackEmpty`].
+    VTargetPackEmpty,
+    /// [`KlvEncodeError::DuplicateTargetId`].
+    DuplicateTargetId,
+    /// [`KlvEncodeError::ForbiddenStandaloneOffset`].
+    ForbiddenStandaloneOffset,
+}
+
+impl KlvEncodeError {
+    /// This error's [`KlvEncodeErrorKind`]. Exhaustive (no wildcard: the match is in
+    /// the defining crate).
+    #[must_use]
+    pub fn kind(&self) -> KlvEncodeErrorKind {
+        match self {
+            KlvEncodeError::BufferTooSmall { .. } => KlvEncodeErrorKind::BufferTooSmall,
+            KlvEncodeError::RecordTooLarge => KlvEncodeErrorKind::RecordTooLarge,
+            KlvEncodeError::OutOfRange { .. } => KlvEncodeErrorKind::OutOfRange,
+            KlvEncodeError::StringTooLong { .. } => KlvEncodeErrorKind::StringTooLong,
+            KlvEncodeError::UnsupportedImapbLength { .. } => {
+                KlvEncodeErrorKind::UnsupportedImapbLength
+            }
+            KlvEncodeError::InvalidImapbParams { .. } => KlvEncodeErrorKind::InvalidImapbParams,
+            KlvEncodeError::MissingMandatoryItem { .. } => KlvEncodeErrorKind::MissingMandatoryItem,
+            KlvEncodeError::ReservedTagInUnknown { .. } => KlvEncodeErrorKind::ReservedTagInUnknown,
+            KlvEncodeError::VTargetPackEmpty { .. } => KlvEncodeErrorKind::VTargetPackEmpty,
+            KlvEncodeError::DuplicateTargetId { .. } => KlvEncodeErrorKind::DuplicateTargetId,
+            KlvEncodeError::ForbiddenStandaloneOffset { .. } => {
+                KlvEncodeErrorKind::ForbiddenStandaloneOffset
+            }
+        }
+    }
+}
+
 /// Error from [`crate::klv::st0805`]: a KLV tag required by MISB ST 0805.1's
 /// field mapping for the requested CoT event is missing from the input
 /// record.
@@ -303,6 +419,39 @@ pub enum KlvFieldError {
         "IMAPB params violate ST 1201.5 §6 preconditions: min={min}, max={max}, length={length} (require min < max and length in 1..=8)"
     )]
     InvalidImapbParams { min: f64, max: f64, length: u8 },
+}
+
+/// The category of a [`KlvFieldError`], for exhaustive matching.
+///
+/// [`KlvFieldError::kind`] classifies every variant inside this crate with no
+/// wildcard, and this enum is deliberately **not** `#[non_exhaustive]`: a
+/// new category is meant to be a compile error in every exhaustive match
+/// downstream (the binding kind table is one). See `conventions.md`
+/// §"Exhaustive kind enums".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KlvFieldErrorKind {
+    /// The field's value is shorter than its type needs.
+    Truncated,
+    /// The value is out of range or not valid for its type.
+    Malformed,
+}
+
+impl KlvFieldError {
+    /// This error's [`KlvFieldErrorKind`]. Exhaustive (no wildcard: the
+    /// match is in the defining crate).
+    #[must_use]
+    pub fn kind(&self) -> KlvFieldErrorKind {
+        match self {
+            KlvFieldError::TruncatedField { .. } => KlvFieldErrorKind::Truncated,
+            KlvFieldError::OutOfRange { .. }
+            | KlvFieldError::InvalidUtf8 { .. }
+            | KlvFieldError::InvalidLength { .. }
+            | KlvFieldError::InvalidUtf16 { .. }
+            | KlvFieldError::InvalidCodepoint { .. }
+            | KlvFieldError::UnsupportedImapbLength { .. }
+            | KlvFieldError::InvalidImapbParams { .. } => KlvFieldErrorKind::Malformed,
+        }
+    }
 }
 
 // ============================================================================
@@ -589,6 +738,12 @@ pub enum MuxError {
 /// Categorical reason for a [`MuxError`], suitable for action-discriminating
 /// dispatch in binding-author code.
 ///
+/// [`MuxError::kind`] classifies every variant inside this crate with no
+/// wildcard, and this enum is deliberately **not** `#[non_exhaustive]`: a
+/// new category is meant to be a compile error in every exhaustive match
+/// downstream (the binding kind table is one). See `conventions.md`
+/// §"Exhaustive kind enums".
+///
 /// The 5-variant set is the **inner-tier** coarse classification of muxer
 /// failures: a JNI/UniFFI/pure-C binding author pattern-matches on this enum
 /// to map muxer failures into a language-native exception hierarchy without
@@ -631,12 +786,8 @@ pub enum MuxError {
 ///     MuxErrorKind::Internal => {
 ///         eprintln!("muxer hit a bug-path invariant: {err}");
 ///     }
-///     _ => {
-///         eprintln!("muxer-side failure (new category): {err}");
-///     }
 /// }
 /// ```
-#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MuxErrorKind {
     /// Caller pushed input bytes that don't conform to the expected
@@ -818,6 +969,54 @@ mod tests {
         assert!(s.contains("3 streams"));
         assert!(s.contains("program 1"));
     }
+
+    #[test]
+    fn every_classified_error_has_an_exhaustive_kind() {
+        // One value per bucket, matched exhaustively: a new kind variant is a
+        // compile error here, which is the point of the kind enums.
+        let k = |k: KlvDecodeErrorKind| match k {
+            KlvDecodeErrorKind::Truncated
+            | KlvDecodeErrorKind::BadUniversalLabel
+            | KlvDecodeErrorKind::ChecksumMismatch
+            | KlvDecodeErrorKind::DuplicateTag
+            | KlvDecodeErrorKind::MissingRequiredTag
+            | KlvDecodeErrorKind::Malformed => (),
+        };
+        k(KlvDecodeError::Tag2NotFirst.kind());
+        assert_eq!(
+            KlvDecodeError::Tag2NotFirst.kind(),
+            KlvDecodeErrorKind::MissingRequiredTag
+        );
+        assert_eq!(
+            KlvDecodeError::MalformedLength { offset: 3 }.kind(),
+            KlvDecodeErrorKind::Truncated
+        );
+        assert_eq!(
+            KlvDecodeError::FieldError(KlvFieldError::TruncatedField { tag: 2 }).kind(),
+            KlvDecodeErrorKind::Malformed,
+            "a field error inside a decode is malformed bytes, as the bindings raise it"
+        );
+        assert_eq!(
+            KlvFieldError::TruncatedField { tag: 2 }.kind(),
+            KlvFieldErrorKind::Truncated
+        );
+        assert_eq!(
+            KlvFieldError::InvalidUtf8 { tag: 2 }.kind(),
+            KlvFieldErrorKind::Malformed
+        );
+        assert_eq!(
+            KlvEncodeError::RecordTooLarge.kind(),
+            KlvEncodeErrorKind::RecordTooLarge
+        );
+        assert_eq!(
+            DemuxError::SyncBufExhausted {
+                observed: 2,
+                max: 1
+            }
+            .kind(),
+            DemuxErrorKind::SyncBufExhausted
+        );
+    }
 }
 
 // ============================================================================
@@ -873,4 +1072,37 @@ pub enum DemuxError {
              DemuxerConfig::sync_buf_cap (this ceiling is NOT pes_cap_per_pid/pes_cap_total)"
     )]
     SyncBufExhausted { observed: usize, max: usize },
+}
+
+/// The category of a [`DemuxError`], for exhaustive matching.
+///
+/// [`DemuxError::kind`] classifies every variant inside this crate with no
+/// wildcard, and this enum is deliberately **not** `#[non_exhaustive]`: a
+/// new category is meant to be a compile error in every exhaustive match
+/// downstream (the binding kind table is one). See `conventions.md`
+/// §"Exhaustive kind enums".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DemuxErrorKind {
+    /// [`DemuxError::Unrecoverable`].
+    Unrecoverable,
+    /// [`DemuxError::StrictRejection`].
+    StrictRejection,
+    /// [`DemuxError::MalformedPes`].
+    MalformedPes,
+    /// [`DemuxError::SyncBufExhausted`].
+    SyncBufExhausted,
+}
+
+impl DemuxError {
+    /// This error's [`DemuxErrorKind`]. Exhaustive (no wildcard: the match is in
+    /// the defining crate).
+    #[must_use]
+    pub fn kind(&self) -> DemuxErrorKind {
+        match self {
+            DemuxError::Unrecoverable { .. } => DemuxErrorKind::Unrecoverable,
+            DemuxError::StrictRejection(_) => DemuxErrorKind::StrictRejection,
+            DemuxError::MalformedPes { .. } => DemuxErrorKind::MalformedPes,
+            DemuxError::SyncBufExhausted { .. } => DemuxErrorKind::SyncBufExhausted,
+        }
+    }
 }

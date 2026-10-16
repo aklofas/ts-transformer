@@ -88,6 +88,9 @@ Submodules that are `mod` are private; if anything inside them needs to
 be public, surface it via an explicit `pub use` from `mod.rs`. This
 keeps the public surface visible at the top of each `mod.rs`.
 
+The `*ErrorKind` enums returned by `kind()` are not `#[non_exhaustive]` — see
+`conventions.md` §"Exhaustive kind enums".
+
 ## Binding crates: no `cargo public-api` baseline (by design)
 
 Ten Rust library crates carry a committed `public-api.txt` baseline that
