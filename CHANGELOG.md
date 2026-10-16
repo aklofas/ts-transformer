@@ -248,7 +248,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CancelHandle` and `SocketStats` returned by every srt and rtp class
   (listeners, managed shells, `H264Receiver`, the raw RTP transports) are
   `tstrans.shells.CancelHandle` / `SocketStats`.
-- `Class.open(url)` (and the deprecated `tstrans.srt`/`tstrans.rtp` aliases) raise `ValueError` for a URL whose scheme no shell supports; previously the srt/rtp class raised its transport's `CONFIG_INVALID`. A supported scheme with a bad URL still raises that transport's error.
+- `Class.open(url)` (and the deprecated `tstrans.srt`/`tstrans.rtp` aliases) raise `ValueError` for a URL whose scheme no shell supports; previously the srt/rtp class raised its transport's `CONFIG_INVALID`. A supported scheme with a bad URL still raises that transport's error. Because an alias is the unified class, a deprecated alias given another supported scheme opens that transport: `tstrans.srt.MuxSender.from_url("udp://…", cfg)` returns a UDP shell.
+- `tstrans.rtp.MuxSender(url, cfg)` (0.8 and the deprecated 0.9 spelling)
+  forced `pkt_size=1316` over a `?pkt_size=` key in the URL; in 0.9 the URL
+  key wins, so the RTP datagram size of such a URL changes.
 
 ### Changed — tst-jni (BREAKING)
 
@@ -279,6 +282,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `fromUrl` factories keep the 0.8 scheme check: a URL that is not `srt://`
   (or `rtp://`) throws `SrtException` (or `RtpException`) with kind
   `CONFIG_INVALID` and opens nothing.
+- `org.tstrans.rtp.MuxSender.fromUrl(url, cfg)` forced `pktSize` 1316 over
+  a `?pkt_size=` key in the URL; in 0.9 the URL key wins, so the RTP
+  datagram size of such a URL changes.
   A raw stream handle that no stream of the muxer owns throws the
   transport's `CONFIG_INVALID` from every `MuxSender` `send*To` (it was
   `IO` on an `rtp://` sender).
@@ -289,7 +295,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   share the handle state machine of every other C handle. A panic inside a
   read-only accessor (an internal bug path) records `TST_E_PANIC_CAUGHT` and
   leaves the handle usable; before, it closed the handle. A panic inside a
-  mutating call still closes it. No symbol, code or non-comment header line
+  mutating call still closes it. A `TstDemuxer` call that returns
+  `TST_E_PANIC_CAUGHT` also invalidates the event pointers of the last
+  batch, as the header now says. No symbol, code or non-comment header line
   changes.
 - The live shells (`tst_*_sender_*`, `tst_*_mux_sender_*`, `tst_*_receiver_*`,
   `tst_*_demux_receiver_*`, plain and managed) now classify their errors
@@ -426,8 +434,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and RIST gain these shells; every shell has `cancel_handle()`; failures
   raise the transport's exception class. `srt_stats()` raises `TypeError`
   on a non-SRT shell.
-- `tstrans.RtpErrorKind` gains `INPUT_MALFORMED` and `CONFIG_INVALID`: the
-  kinds a TS shell over `rtp://` raises for a framing or configuration
+- `tstrans.RtpErrorKind` gains `INPUT_MALFORMED` (12) and `CONFIG_INVALID`
+  (13): the kinds a TS shell over `rtp://` raises for a framing or configuration
   error, as every other transport's kind enum already does.
 
 ### Added — tst-jni
