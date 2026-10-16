@@ -2537,8 +2537,9 @@ scenario_ids = []
 tier = "A"
 
 # tst_pipeline::DemuxReceiver graduated to [[surface]] once the JVM SRT
-# binding covered it; the rtp convenience binding
-# (org.tstrans.rtp.DemuxReceiver) followed once the JVM RTP binding did too.
+# binding covered it; one org.tstrans.shells.DemuxReceiver now serves every
+# transport (the per-transport org.tstrans.rtp.DemuxReceiver is a deprecated
+# subclass of it).
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -2611,8 +2612,8 @@ scenario_ids = []
 tier = "A"
 
 # tst_pipeline::MuxSender graduated to [[surface]] once the JVM SRT binding
-# covered it; the rtp convenience binding (org.tstrans.rtp.MuxSender)
-# followed once the JVM RTP binding did too.
+# covered it; one org.tstrans.shells.MuxSender now serves every transport
+# (the per-transport org.tstrans.rtp.MuxSender is a deprecated subclass of it).
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -2740,7 +2741,7 @@ reason = "derive(Default); exercised through CancelSlot::new in crates/tst-core/
 
 # MuxPublisher<P> is generic, so cargo public-api's bracket truncation
 # collapses the struct line AND every one of its methods (with_config,
-# send_video, send_klv, send_audio, send_subtitle, send_data, send_video_misp,
+# push_video, push_klv, push_audio, push_subtitle, push_data, push_video_misp,
 # cut_segment, finish, stats, publisher_stats) onto this one item key — there
 # is no per-method row to graduate separately. send_data and send_video_misp
 # have no binding twin in Python or JVM today and are deliberately absent from
