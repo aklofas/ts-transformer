@@ -921,7 +921,6 @@ mod tests {
 
     #[cfg(feature = "std")]
     const PARK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
-    #[cfg(feature = "std")]
     /// Bound on how long a call that must NOT wait on the slot may take.
     ///
     /// Deliberately loose. It never asserts that an operation was *fast* —
@@ -931,10 +930,11 @@ mod tests {
     /// generous bound is how long a genuine regression takes to report, while
     /// a tight one would flake: these tests also run under ASan/TSan in the
     /// nightly sanitizers job, where thread scheduling is 5–15x slower.
+    #[cfg(feature = "std")]
     const PROMPT: std::time::Duration = std::time::Duration::from_secs(10);
 
-    #[cfg(feature = "std")]
     /// Latch-and-poll with a bounded watchdog — never a wall-clock assert.
+    #[cfg(feature = "std")]
     fn wait_for(deadline: std::time::Duration, f: impl Fn() -> bool) -> bool {
         let start = std::time::Instant::now();
         while start.elapsed() < deadline {
@@ -946,10 +946,10 @@ mod tests {
         f()
     }
 
-    #[cfg(feature = "std")]
     /// Park a thread inside `with_mut` until the shared cancel flag flips
     /// (the shape of a receive parked in libsrt that only the cancel handle
     /// can return). Returns the thread + an `entered` latch.
+    #[cfg(feature = "std")]
     fn park_in_with_mut(
         f: &Fixture,
     ) -> (
