@@ -1,12 +1,26 @@
 //! The Java record: a whole file under `bindings/jvm/src/main/java`.
 
 use crate::emit_jvm_rs::CTOR_MAX;
-use crate::schema::{Entry, lookup};
+use crate::schema::{Entry, lookup, para};
 use crate::typemap::{Fld, Ty, resolve};
 
-/// Javadoc text that cannot close the comment or start a unicode escape.
+/// Javadoc text that cannot close the comment or start a unicode escape;
+/// a backtick pair becomes `{@code …}`.
 pub fn escape_javadoc(doc: &str) -> String {
-    doc.replace("*/", "*&#47;").replace("\\u", "&#92;u")
+    let safe = doc.replace("*/", "*&#47;").replace("\\u", "&#92;u");
+    let parts: Vec<&str> = safe.split('`').collect();
+    if parts.len() % 2 == 0 {
+        return safe; // an unpaired backtick stays as written
+    }
+    let mut out = String::new();
+    for (i, p) in parts.iter().enumerate() {
+        if i % 2 == 1 {
+            out.push_str(&format!("{{@code {p}}}"));
+        } else {
+            out.push_str(p);
+        }
+    }
+    out
 }
 
 fn imports(reg: &[Entry], e: &Entry, flds: &[Fld]) -> Vec<String> {
@@ -49,12 +63,16 @@ fn imports(reg: &[Entry], e: &Entry, flds: &[Fld]) -> Vec<String> {
 
 fn javadoc(e: &Entry, flds: &[&Fld]) -> String {
     let mut o = String::from("/**\n");
-    if !e.schema.doc.is_empty() {
-        o.push_str(&format!(" * {}\n", escape_javadoc(e.schema.doc)));
+    let doc = para(e.schema.doc);
+    if !doc.is_empty() {
+        o.push_str(&format!(" * {}\n", escape_javadoc(&doc)));
     }
-    let documented: Vec<&&Fld> = flds.iter().filter(|f| !f.spec.doc.is_empty()).collect();
+    let documented: Vec<&&Fld> = flds
+        .iter()
+        .filter(|f| !para(f.spec.doc).is_empty())
+        .collect();
     if !documented.is_empty() {
-        if !e.schema.doc.is_empty() {
+        if !doc.is_empty() {
             o.push_str(" *\n");
         }
         let w = documented.iter().map(|f| f.java.len()).max().unwrap_or(0);
@@ -62,7 +80,7 @@ fn javadoc(e: &Entry, flds: &[&Fld]) -> String {
             o.push_str(&format!(
                 " * @param {:<w$} {}\n",
                 f.java,
-                escape_javadoc(f.spec.doc),
+                escape_javadoc(&para(f.spec.doc)),
                 w = w
             ));
         }

@@ -186,7 +186,9 @@ with `tst_core::binding_record!` (marks and naming are in
    fills the two marker blocks.
 3. Review the diff in those five places. A field type outside the type table
    (`typemap.rs`) is a generator error naming the record and field, never a
-   silent skip. Optional fields come after the required ones.
+   silent skip. Optional fields come after the required ones. The doc
+   comments of the record and of each field become the docstring and the
+   Javadoc: the first paragraph of each, so write it as complete sentences.
 4. Write the converters for each `@[custom]` field by the names in
    `conventions.md`, in `crate::custom` of each binding.
 

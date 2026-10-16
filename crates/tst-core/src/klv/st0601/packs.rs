@@ -855,9 +855,13 @@ crate::binding_record! {
     /// X-ray-to-VHF spectrum span the spec cites.
     #[derive(Debug, Clone, PartialEq)]
     pub struct WavelengthRecord {
+        /// BER-OID wavelength band id.
         pub id: u64,
+        /// Band minimum wavelength, nanometres.
         pub min_nm: f64,
+        /// Band maximum wavelength, nanometres.
         pub max_nm: f64,
+        /// Band name.
         pub name: String,
     }
 }

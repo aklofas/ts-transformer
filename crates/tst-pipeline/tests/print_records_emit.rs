@@ -178,7 +178,14 @@ fn a_vec_of_records_is_built_and_read_inside_local_frames() {
         "{raw}"
     );
     assert!(raw.contains("\"(JLjava/util/List;)V\""), "{raw}");
-    fmt(&raw); // valid Rust
+    let rs = fmt(&raw);
+    // The item is built inside its own frame, inside the list's frame.
+    let want = concat!(
+        "        for item in r.bands.iter() {\n",
+        "            env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {\n",
+        "                let o1 = crate::generated::st0601::build_wavelength_record(env, item)?;\n",
+    );
+    assert!(rs.contains(want), "{rs}");
 }
 
 #[test]
@@ -217,9 +224,23 @@ fn a_wide_record_is_built_through_its_builder() {
         "a skipped field never crosses\n{raw}"
     );
     let rs = fmt(&raw);
+    // An absent optional leaves its setter uncalled.
+    let want = concat!(
+        "    if let Some(v) = &r.opt_text {\n",
+        "        let o2 = env.new_string(v)?;\n",
+        "        env.call_method(\n",
+        "            &b,\n",
+        "            \"optText\",\n",
+    );
+    assert!(rs.contains(want), "{rs}");
+    let (build, read) = rs
+        .split_once("pub(crate) fn read_")
+        .expect("both functions");
+    assert!(!build.contains("JObject::null()"), "{build}");
+    // A non_exhaustive record is read by default-and-assign.
     assert!(
-        rs.contains("let mut r = ") || rs.contains("RichFixture::default()"),
-        "{rs}"
+        read.contains("let mut r = print_records_emit::RichFixture::default();\n    r.a = a;\n"),
+        "{read}"
     );
     let java = emit_java::file(&reg, e).unwrap();
     assert!(java.contains("public static final class Builder"), "{java}");
@@ -312,6 +333,10 @@ fn doc_text_cannot_close_a_comment_or_a_docstring() {
     let doc = "Ends */ here, has a \\u0041 escape, a \"\"\" and a back\\slash \"";
     let java = emit_java::escape_javadoc(doc);
     assert!(!java.contains("*/") && !java.contains("\\u"), "{java}");
+    assert_eq!(
+        emit_java::escape_javadoc("a `min_nm` b"),
+        "a {@code min_nm} b"
+    );
     let py = emit_pyi::escape_docstring(doc);
     assert!(!py.contains("\"\"\""), "{py}");
     assert!(py.contains("back\\\\slash"), "{py}");
@@ -477,4 +502,33 @@ fn check_lists_absent_targets_and_write_fills_them() {
         "{py}"
     );
     std::fs::remove_dir_all(&d).unwrap();
+}
+
+#[test]
+fn a_list_of_optionals_is_refused_naming_record_and_field() {
+    tst_core::binding_record! {
+        pub struct Holes {
+            pub marks: Vec<Option<u8>>,
+        }
+    }
+    let reg = vec![entry(Holes::BINDING_SCHEMA, Direction::Both)];
+    let err = emit_py::record_pair(&reg, &reg[0]).unwrap_err();
+    assert!(
+        err.contains("Holes.marks") && err.contains("Vec<Option<T>>"),
+        "{err}"
+    );
+}
+
+#[test]
+fn the_command_line_refuses_a_missing_root_and_an_unknown_flag() {
+    let bin = env!("CARGO_BIN_EXE_print-records");
+    for args in [&["--root"][..], &["--wirte"][..]] {
+        let out = std::process::Command::new(bin).args(args).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("usage: print-records"), "{args:?}: {err}");
+    }
+    let out = std::process::Command::new(bin).output().unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("WavelengthRecord"));
 }

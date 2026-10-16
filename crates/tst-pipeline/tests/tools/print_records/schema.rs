@@ -64,6 +64,16 @@ pub fn public_path(schema: &RecordSchema) -> String {
         .join("::")
 }
 
+/// The first paragraph of a joined doc text: the lines up to the first empty
+/// one, each without the space a `///` comment leaves, joined by one space.
+pub fn para(doc: &str) -> String {
+    doc.lines()
+        .map(|l| l.strip_prefix(' ').unwrap_or(l))
+        .take_while(|l| !l.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// `WavelengthRecord` to `wavelength_record`.
 pub fn snake(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
