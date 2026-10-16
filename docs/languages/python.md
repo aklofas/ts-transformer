@@ -381,10 +381,10 @@ Caller mode is the default when `?mode=` is omitted. URL query parameters
 through the SRT URL overlay:
 
 ```python
-from tstrans.srt import Sender
+from tstrans.shells import Sender
 
 # mode=caller is the default when ?mode= is omitted.
-with Sender.from_url("srt://host:9000?mode=caller&passphrase=secret") as tx:
+with Sender.open("srt://host:9000?mode=caller&passphrase=secret") as tx:
     tx.send_bytes(ts_bytes)   # pre-muxed TS bytes, any length
     tx.flush()                # emit any buffered partial bundle
 ```
@@ -398,14 +398,14 @@ split).
 
 ### Receiver hello
 
-`Receiver.from_url` does a one-shot bind + accept (listener mode). Each
+`Receiver.open` does a one-shot bind + accept (listener mode). Each
 `recv_bytes()` returns one 188-byte TS packet:
 
 ```python
-from tstrans.srt import Receiver
+from tstrans.shells import Receiver
 from tstrans.exceptions import SrtError, SrtErrorKind
 
-with Receiver.from_url("srt://:9000?mode=listener") as rx:
+with Receiver.open("srt://:9000?mode=listener") as rx:
     try:
         while True:
             pkt = rx.recv_bytes()   # one 188-byte TS packet per call
@@ -569,15 +569,15 @@ the server out before it stops it.
 
 ### SRT convenience (`MuxSender` / `DemuxReceiver`)
 
-`MuxSender` bundles a `Muxer` + an SRT `Sender`: send encoded elementary
-streams and it muxes + sends in one call. `DemuxReceiver` bundles a
+`tstrans.shells.MuxSender` bundles a `Muxer` + a `Sender`: send encoded elementary
+streams and it muxes + sends in one call. `tstrans.shells.DemuxReceiver` bundles a
 `Receiver` + a `Demuxer`: iterate to get the same
 `tstrans.mpegts.DemuxEvent` subclass instances the offline `Demuxer`
 produces. Both release the GIL around the muxer / transport work, and both
 are context managers.
 
 ```python
-from tstrans.srt import MuxSender
+from tstrans.shells import MuxSender
 from tstrans.mpegts import MuxerProgramConfigBuilder, Pts90khz, VideoCodec
 
 program = (
@@ -586,7 +586,7 @@ program = (
     .build()
 )
 
-with MuxSender.from_url(
+with MuxSender.open(
     "srt://host:9000?mode=caller&latency=120", program
 ) as s:
     pts = 0
@@ -611,15 +611,15 @@ use it when you need to know the tail reached the wire. `finish()` does
 not cancel a parked send first, so it waits behind one; a second
 `finish()` (or a `finish()` after `close()`) is a no-op, and the handle
 still takes a `close()` afterwards. `ManagedMuxSender` and
-`rtp.MuxSender` have the same method.
+the `rtp://` shells have the same method.
 
 Receiving:
 
 ```python
-from tstrans.srt import DemuxReceiver
+from tstrans.shells import DemuxReceiver
 from tstrans.mpegts import DemuxEvent
 
-with DemuxReceiver.from_url("srt://:9000?mode=listener") as rx:
+with DemuxReceiver.open("srt://:9000?mode=listener") as rx:
     for event in rx:
         match event:
             case DemuxEvent.Video(pts=p, raw=b):
@@ -732,17 +732,18 @@ as the plain `DemuxReceiver` above.
 
 **Why did the managed stream end?** `ManagedDemuxReceiver.end_reason()`
 (only this shell exposes it — not `ManagedReceiver`, `ManagedSender`, or
-`ManagedMuxSender`) returns a `tstrans.srt.RecvEndReason` once the receive
+`ManagedMuxSender`) returns a `tstrans.shells.EndReason` once the receive
 session has ended, or `None` while it is still live — including mid-reconnect,
 which is not itself an ending:
 
 ```python
-from tstrans.srt import ManagedDemuxReceiver, RecvEndReason
+from tstrans.shells import EndReason
+from tstrans.srt import ManagedDemuxReceiver
 
 with ManagedDemuxReceiver.from_url("srt://:7000?mode=listener") as rx:
     for event in rx:
         ...
-    if rx.end_reason() is RecvEndReason.RECONNECT_EXHAUSTED:
+    if rx.end_reason() is EndReason.RECONNECT_EXHAUSTED:
         print("peer never came back within the policy budget")
 ```
 
@@ -757,8 +758,8 @@ transport that can signal a clean end-of-stream distinct from budget
 exhaustion. The value is recorded first-writer-wins and read from a
 lock-free cell captured at construction, so `end_reason()` still answers
 after `close()` and is safe to poll from a watchdog thread while another
-thread iterates. This is a dedicated enum, not `tstrans.rtp.StreamEndReason`
-— the RTP and SRT reasons are different types with different members.
+thread iterates. It is the same `tstrans.shells.EndReason` the RTP receivers
+return, one enum for every transport.
 
 **Background reconnect** (`ReconnectMode`): pass `mode=ReconnectMode.BACKGROUND`
 on the `ReconnectPolicy` handed to `ManagedSender` / `ManagedMuxSender` to
@@ -793,27 +794,28 @@ the caller's thread anyway.
 ## RTP transport (`tstrans.rtp`)
 
 `tstrans.rtp` wraps `tst_rtp` for two RTP receive shapes: **MPEG-TS-over-RTP
-(RFC 2250, PT=33)** via the `Sender` / `Receiver` / `MuxSender` /
-`DemuxReceiver` shells and the RTSP client/server, and **H.264-over-RTP
+(RFC 2250, PT=33)** via the raw `Transport` / `RecvTransport`
+classes, the `tstrans.shells` `Sender` / `Receiver` / `MuxSender` /
+`DemuxReceiver` (opened from an `rtp://` URL) and the RTSP client/server, and **H.264-over-RTP
 (RFC 6184)** via `H264Receiver` and `RtspClient.connect_h264` (see the
 dedicated sub-section below). For the MPEG-TS path: each `send` produces one
 RTP datagram (12-byte header + TS payload); each `recv` returns one
-datagram's TS payload with the header stripped. Unlike SRT, the raw `Sender`
-/ `Receiver` are constructed with `__init__`, not `from_url`. RTP ships in
+datagram's TS payload with the header stripped. The raw `Transport` /
+`RecvTransport` are constructed with `__init__`, like `tstrans.udp` RTP ships in
 published wheels (default-on). `RtpError` / `RtpErrorKind` and `RtspError` /
 `RtspErrorKind` live in `tstrans.exceptions`.
 
-### Sender / Receiver hello
+### Transport / RecvTransport hello
 
 ```python
-from tstrans.rtp import Sender, Receiver
+from tstrans.rtp import Transport, RecvTransport
 
 # pkt_size caps the datagram (RTP header + TS payload); ssrc pins the SSRC.
-with Sender("rtp://239.0.0.1:5004", pkt_size=1316) as tx:
+with Transport("rtp://239.0.0.1:5004", pkt_size=1316) as tx:
     tx.send(ts_bytes)        # one UDP datagram per call
 
 # Multicast bind URLs auto-join the group.
-with Receiver("rtp://239.0.0.1:5004") as rx:
+with RecvTransport("rtp://239.0.0.1:5004") as rx:
     payload = rx.recv()      # one datagram's TS payload (RTP header stripped)
 ```
 
@@ -822,7 +824,7 @@ with Receiver("rtp://239.0.0.1:5004") as rx:
 cancel fires. RTP/UDP is connectionless — a remote sender closing does NOT
 end a `recv()` loop; stop on a sentinel or via `cancel_handle().cancel()`,
 which wakes a parked `send` / `recv` with `RtpError(CLOSED)` within
-~100 ms. The RTP `CancelHandle` has `cancel()` and
+~100 ms. The `tstrans.shells.CancelHandle` has `cancel()` and
 `is_cancelled()` (shared per shell). A literal `rtp://host:0` receiver binds (the kernel
 picks an ephemeral port; no RTCP port is bound), but it
 is impractical: the raw receiver exposes no local-address getter, so
@@ -832,15 +834,15 @@ differs: `H264Receiver.local_addr()` reports its bound address.)
 
 ### RTP convenience (`MuxSender` / `DemuxReceiver`)
 
-`MuxSender` takes the same elementary-stream send surface as the SRT
-shell, constructed with `MuxSender(url, program_config, *,
-pkt_size=1316)`; `DemuxReceiver` iterates `DemuxEvent`s and is constructed
-with `DemuxReceiver(url, *, demux_config=None)`. Both expose **no
-`cancel_handle()` and no `socket_stats()`** — only `stats()` (a
-`(SocketStats, MuxerStats)` tuple) and `close()`:
+`tstrans.shells.MuxSender` takes the same elementary-stream send surface
+over an `rtp://` URL, opened with `MuxSender.open(url, program_config)`
+(the datagram size is the `?pkt_size=` URL key); `DemuxReceiver` iterates
+`DemuxEvent`s and is opened with `DemuxReceiver.open(url, *,
+demux_config=None)`. Both also expose `stats()` (a `(SocketStats,
+MuxerStats)` tuple), `cancel_handle()` and `close()`:
 
 ```python
-from tstrans.rtp import MuxSender, DemuxReceiver
+from tstrans.shells import MuxSender, DemuxReceiver
 from tstrans.mpegts import (
     DemuxEvent,
     MuxerProgramConfigBuilder,
@@ -853,10 +855,10 @@ program = (
     .add_video(0x1011, VideoCodec.H264)
     .build()
 )
-with MuxSender("rtp://127.0.0.1:5004", program) as s:
+with MuxSender.open("rtp://127.0.0.1:5004", program) as s:
     s.send_video(nal, pts=Pts90khz.from_raw(0), key_frame=True)
 
-with DemuxReceiver("rtp://0.0.0.0:5004") as rx:
+with DemuxReceiver.open("rtp://0.0.0.0:5004") as rx:
     rx.add_byte_sink(lambda pkt: record(pkt))   # each raw 188-byte TS packet
     for event in rx:
         if isinstance(event, DemuxEvent.Video):
@@ -899,12 +901,12 @@ are lock-free and safe to poll from a watchdog at any time — see
 [What answers while another thread is parked](#what-answers-while-another-thread-is-parked)
 for the full split.
 
-The same method exists on `tstrans.srt.DemuxReceiver` and
+The same method exists on every `tstrans.shells.DemuxReceiver` and
 `tstrans.srt.ManagedDemuxReceiver`.
 
 ### Recv deadlines (`?recv_timeout=` / `timeout_ms`)
 
-Both `Receiver.recv()` and `DemuxReceiver` iteration block indefinitely
+Both `RecvTransport.recv()` and `DemuxReceiver` iteration block indefinitely
 by default — fine for a live camera, less fine for a quiet socket you
 want to notice going quiet. `?recv_timeout=<ms>` on a `rtp://` (or
 `rtsp(s)://`) URL arms a persistent receive deadline: a `recv()` /
@@ -914,9 +916,9 @@ receiver stays open — call again to keep waiting:
 
 ```python
 from tstrans.exceptions import RtpError, RtpErrorKind
-from tstrans.rtp import DemuxReceiver
+from tstrans.shells import DemuxReceiver
 
-with DemuxReceiver("rtp://0.0.0.0:5004?recv_timeout=5000") as rx:
+with DemuxReceiver.open("rtp://0.0.0.0:5004?recv_timeout=5000") as rx:
     it = iter(rx)
     while True:
         try:
@@ -929,7 +931,7 @@ with DemuxReceiver("rtp://0.0.0.0:5004?recv_timeout=5000") as rx:
         ...  # process event
 ```
 
-`Receiver.recv(timeout_ms=...)` and `H264Receiver.recv_au(timeout_ms=...)`
+`RecvTransport.recv(timeout_ms=...)` and `H264Receiver.recv_au(timeout_ms=...)`
 take a per-call override instead (or in addition — the explicit argument
 always wins over a configured URL deadline for that one call). `RtspClientConfig`'s
 URL accepts the same `?recv_timeout=` key; it carries through
@@ -985,7 +987,7 @@ with RtspClient.connect(cfg) as session:
   raises `RtspError(CLOSED)`.
 - **Why did the stream end?** When `for event in rx` exits or a call
   raises, `rx.end_reason()` (on `DemuxReceiver`, `Receiver`, and
-  `H264Receiver` alike) answers with a `StreamEndReason` member —
+  `H264Receiver` alike) answers with a `tstrans.shells.EndReason` member —
   `CLEAN_TEARDOWN`, `SESSION_EXPIRED`, `KEEPALIVE_FAILED`,
   `TRANSPORT_FAILED`, `PROTOCOL_ERROR`, or `CANCELLED` — or `None` if
   the session hasn't ended yet (or ended through a path that records
@@ -1041,7 +1043,7 @@ for an immediate hard teardown that bypasses the drain window.
 
 The server's publisher role lets an encoder push into it with ANNOUNCE /
 SETUP `mode=record` / RECORD. Each pushed stream reaches the application as
-MPEG-TS through an ordinary `tstrans.rtp.DemuxReceiver`, and the same mount
+MPEG-TS through an ordinary `tstrans.shells.DemuxReceiver`, and the same mount
 keeps serving PLAY readers from the published bytes. A publish mount accepts
 one publisher at a time, in one of two shapes (`PublishShape`):
 
@@ -1819,10 +1821,13 @@ output directly when absolute byte offsets matter.
   read-only accessor leaves it usable.
 - **Pipeline-shell naming follows the C-ABI convention, not the Rust
   crate's.** The TS-bytes-through-transport shells are `Sender` /
-  `Receiver` (e.g. `tstrans.srt.Sender`) and the raw transports are
-  `Transport` / `RecvTransport` (e.g. `tstrans.udp.Transport`) — there is
+  `Receiver` (e.g. `tstrans.shells.Sender`) and the raw transports are
+  `Transport` / `RecvTransport` (e.g. `tstrans.udp.Transport`,
+  `tstrans.rtp.Transport`) — there is
   no `RawSender` / `RawReceiver`. The composite shells keep the qualified
-  `MuxSender` / `DemuxReceiver` names.
+  `MuxSender` / `DemuxReceiver` names. All four live in `tstrans.shells`;
+  the old `tstrans.srt.*` / `tstrans.rtp.*` names are deprecated aliases
+  (removed in 0.10.0).
 - **HLS ships in the wheels.** `tstrans.hls` imports out of the box from a
   published wheel (the `hls` feature is default-on); it raises
   `ImportError` only in a `--no-default-features` source build that omits

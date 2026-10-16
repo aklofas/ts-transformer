@@ -124,18 +124,18 @@ Hello world — caller-side send + listener-side receive:
 
 ```python
 import threading
-import tstrans.srt
+from tstrans.shells import Receiver, Sender
 
 # Listener side (run on one host / thread):
 def listen_side() -> None:
-    with tstrans.srt.Receiver.from_url("srt://0.0.0.0:9000?mode=listener") as rx:
+    with Receiver.open("srt://0.0.0.0:9000?mode=listener") as rx:
         chunk = rx.recv_bytes(max_len=1500)
         print(f"received {len(chunk)} bytes; sync byte = {chunk[0]:#04x}")
 
 threading.Thread(target=listen_side, daemon=True).start()
 
 # Caller side (the other host / thread):
-with tstrans.srt.Sender.from_url("srt://127.0.0.1:9000?mode=caller") as tx:
+with Sender.open("srt://127.0.0.1:9000?mode=caller") as tx:
     payload = (b"\x47" + b"\x00" * 187) * 7  # one 1316-byte TS bundle
     tx.send_bytes(payload)
 ```
@@ -145,7 +145,7 @@ iterate `DemuxEvent`s on the listener:
 
 ```python
 import threading
-import tstrans.srt
+from tstrans.shells import DemuxReceiver, MuxSender
 from tstrans.mpegts import (
     DemuxEvent, KlvStreamType, MuxerProgramConfigBuilder, Pts90khz, VideoCodec,
 )
@@ -158,7 +158,7 @@ program = (
 )
 
 def consumer() -> None:
-    with tstrans.srt.DemuxReceiver.from_url("srt://:9001?mode=listener") as rx:
+    with DemuxReceiver.open("srt://:9001?mode=listener") as rx:
         for event in rx:
             if isinstance(event, DemuxEvent.Video):
                 print(f"video pts={event.pts.ms}ms nals={len(event.parse())}")
@@ -167,7 +167,7 @@ def consumer() -> None:
 
 threading.Thread(target=consumer, daemon=True).start()
 
-with tstrans.srt.MuxSender.from_url(
+with MuxSender.open(
     "srt://127.0.0.1:9001?mode=caller", program
 ) as tx:
     # tx.send_video / tx.send_klv handle bundling, PSI emission, and

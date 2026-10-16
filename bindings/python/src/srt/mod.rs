@@ -4,25 +4,19 @@
 //! same bytes-like extraction, same error mapping shape.
 //!
 //! Submodules:
-//! - `transport`:      Sender, Receiver, SocketStats, SrtStats, CancelHandle
+//! - `transport`:      SrtStats (the shell classes live in `tstrans.shells`)
 //! - `lowlevel`:       Socket, Listener, Builder
-//! - `mux_sender`:     MuxSender convenience wrapper
-//! - `demux_receiver`: DemuxReceiver convenience wrapper
 //! - `policy`:         ReconnectPolicy, BackoffStrategy, OverflowPolicy
 //! - `managed`:        ManagedSender, ManagedReceiver, ManagedMuxSender, ManagedDemuxReceiver
-//! - `end_reason`:     EndReason conversion for ManagedDemuxReceiver.end_reason()
 //!
 //! Error mapping goes through `crate::raise`: every Rust error
 //! type in this surface has a `From<…> for tst_pipeline::binding::BindingError`
 //! next to its own definition, and `raise` resolves the kind's `name()` on
 //! `tstrans.exceptions.SrtErrorKind` — checked at `import tstrans`.
 
-pub(crate) mod demux_receiver;
-pub(crate) mod end_reason;
 mod lowlevel;
 pub(crate) mod managed_basic;
 pub(crate) mod managed_convenience;
-pub(crate) mod mux_sender;
 pub(crate) mod policy;
 pub(crate) mod transport;
 
@@ -32,8 +26,6 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(parent.py(), "srt")?;
     transport::register(&m)?;
     lowlevel::register(&m)?;
-    mux_sender::register(&m)?;
-    demux_receiver::register(&m)?;
     policy::register(&m)?;
     managed_basic::register(&m)?;
     managed_convenience::register(&m)?;

@@ -631,7 +631,7 @@ follow-up:
 | Capability | Rust core | C (`tst-c`) | Python (`tst-py`) | JVM (`tst-jni`) |
 |---|---|---|---|---|
 | Continuous-timestamp unwrap across the 33-bit rollover (`DemuxerConfig::unwrap_timestamps`) | ✅ | ✅ `tst_demux_config_set_unwrap_timestamps` | ✅ `DemuxerConfig.unwrap_timestamps` | ✅ `DemuxerConfig.Builder.unwrapTimestamps(boolean)` |
-| Managed-receiver end reason (`ManagedDemuxReceiver::end_reason_handle()` → `EndReasonHandle` → `EndReason`) | ✅ | ✅ `tst_managed_demux_receiver_end_reason` | ✅ `ManagedDemuxReceiver.end_reason() -> Optional[RecvEndReason]` | ✅ `ManagedDemuxReceiver.endReason()` → `RecvEndReason` or `null` |
+| Managed-receiver end reason (`ManagedDemuxReceiver::end_reason_handle()` → `EndReasonHandle` → `EndReason`) | ✅ | ✅ `tst_managed_demux_receiver_end_reason` | ✅ `ManagedDemuxReceiver.end_reason() -> Optional[tstrans.shells.EndReason]` | ✅ `ManagedDemuxReceiver.endReason()` → `RecvEndReason` or `null` |
 | Pre-sync ingress ceiling (`DemuxerConfig::sync_buf_cap`) | ✅ | ✅ `tst_demux_config_set_sync_buf_cap` (ABI 0.22; 0 = default) | ✅ `DemuxerConfig.sync_buf_cap` | ✅ `DemuxerConfig.Builder.syncBufCap(long)` (0 = default) |
 
 **Notes on specific cells.**
@@ -641,10 +641,11 @@ follow-up:
   `ReconnectExhausted` / `Cancelled`) onto the shared `TstStreamEndReason`
   enum the RTP surface already uses, to avoid adding a second wire enum
   (see the ABI 21 history entry's "Managed-receiver lifecycle" bullet).
-  Python's `tstrans.srt.RecvEndReason` and JVM's `org.tstrans.srt.RecvEndReason`
-  are each a standalone three-member enum (`END_OF_STREAM` /
-  `RECONNECT_EXHAUSTED` / `CANCELLED`) rather than a reuse of
-  `StreamEndReason` — the two concepts (RTP session-death reasons vs.
+  Python's `tstrans.shells.EndReason` is one enum for every transport
+  (`RECONNECT_EXHAUSTED` and `END_OF_STREAM` sit beside the RTP members),
+  and JVM's `org.tstrans.srt.RecvEndReason` is a standalone three-member
+  enum (`END_OF_STREAM` / `RECONNECT_EXHAUSTED` / `CANCELLED`) rather than
+  a reuse of `StreamEndReason` — the two concepts (RTP session-death reasons vs.
   SRT managed-receiver-lifecycle reasons) have different member sets and
   no binding shares one type between them.
 
@@ -660,7 +661,7 @@ cell is either shipped, or deferred with the trigger that reopens it in
 |---|---|---|---|---|
 | `ext::pairing::Pairer` (KLV↔video alignment) | ✅ | Deferred — "`pipeline::ext::pairing` C ABI exposure" | ✅ `tstrans.pipeline.Pairer` | ✅ `org.tstrans.pipeline.Pairer` |
 | `MuxSender` DTS / MISP video variants on LIVE shells | ✅ | Deferred — "`MuxSender` DTS / MISP video variants at the C ABI" (offline `tst_muxer_push_video_to_with_dts` / `_misp_to` exist) | Deferred — "Binding-side `MuxSender` MISP timestamp mirrors" | Deferred — same entry |
-| `MuxSender::finish()` (drain, report, close) | ✅ | ✅ `tst_mux_sender_finish`, `tst_managed_mux_sender_finish`, `tst_{udp,tcp,rtp,rist}_mux_sender_finish` (ABI 0.22) | ✅ `MuxSender.finish()`, `ManagedMuxSender.finish()`, `rtp.MuxSender.finish()` | ✅ `MuxSender.finish()`, `ManagedMuxSender.finish()`, `rtp.MuxSender.finish()` |
+| `MuxSender::finish()` (drain, report, close) | ✅ | ✅ `tst_mux_sender_finish`, `tst_managed_mux_sender_finish`, `tst_{udp,tcp,rtp,rist}_mux_sender_finish` (ABI 0.22) | ✅ `MuxSender.finish()`, `ManagedMuxSender.finish()` | ✅ `MuxSender.finish()`, `ManagedMuxSender.finish()`, `rtp.MuxSender.finish()` |
 | `FileTransport::finish()` | ✅ | n/a — `FileTransport` is a Rust-only capture transport; no binding exposes it | n/a | n/a |
 | `DemuxerConfig::sync_buf_cap` | ✅ | ✅ `tst_demux_config_set_sync_buf_cap` (ABI 0.22) | ✅ `DemuxerConfig.sync_buf_cap` | ✅ `DemuxerConfig.Builder.syncBufCap(long)` |
 | Cross-thread cancel entry point | ✅ every transport (`cancel_handle()` is `Some` everywhere since 0.7.0) | ✅ `tst_<transport>_<shell>_cancel` for srt/rtp (since 0.6–0.21) and tcp/udp/rist (ABI 0.22) | ✅ srt shells, rtp Sender/Receiver/H264Receiver, udp/tcp/rist Transport/RecvTransport/Listener; ⚠️ rtp MuxSender and DemuxReceiver expose none (planned) | ✅ srt shells, rtp Sender/Receiver/H264Receiver; ⚠️ rtp MuxSender and DemuxReceiver expose none (planned) |

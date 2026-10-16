@@ -4,12 +4,14 @@ Mirrors the public surface exported from
 `bindings/python/python/tstrans/srt.py`. Continues `py.typed` discipline.
 mypy --strict clean.
 
-The PyClass-backed types (Sender, Receiver, Socket, Listener, Builder,
-MuxSender, DemuxReceiver, ReconnectPolicy, BackoffStrategy,
-OverflowPolicy, ManagedSender, ManagedReceiver, ManagedMuxSender,
-ManagedDemuxReceiver, SocketStats, SrtStats, CancelHandle) live in
+The PyClass-backed types (Socket, Listener, Builder, ReconnectPolicy,
+BackoffStrategy, OverflowPolicy, ManagedSender, ManagedReceiver,
+ManagedMuxSender, ManagedDemuxReceiver, SrtStats) live in
 `_native.srt` (Rust source under `bindings/python/src/srt/`). The
 `SrtError` + `SrtErrorKind` re-exports come from `tstrans.exceptions`.
+The shell classes, `CancelHandle`, `SocketStats` and the end-reason enum
+are `tstrans.shells` classes, re-exported here under their old names as
+deprecated aliases (removed in 0.10.0).
 """
 
 from __future__ import annotations
@@ -28,6 +30,15 @@ from typing import (
 
 # Cross-module types are imported from the `tstrans.mpegts` stub, which
 # now ships a sibling `.pyi` declaring these as real classes.
+from tstrans.shells import (
+    CancelHandle as CancelHandle,
+    DemuxReceiver as DemuxReceiver,
+    MuxSender as MuxSender,
+    Receiver as Receiver,
+    Sender as Sender,
+    SocketStats as SocketStats,
+)
+from tstrans.shells import EndReason as RecvEndReason
 from tstrans.mpegts import (
     AudioStreamHandle,
     DataStreamHandle,
@@ -47,17 +58,10 @@ from tstrans.mpegts import (
 _BytesLike = Union[bytes, bytearray, memoryview, Any]
 
 __all__: list[str] = [
-    "RecvEndReason",
-    "Sender",
-    "Receiver",
-    "SocketStats",
     "SrtStats",
-    "CancelHandle",
     "Builder",
     "Socket",
     "Listener",
-    "MuxSender",
-    "DemuxReceiver",
     "BackoffStrategy",
     "OverflowPolicy",
     "ReconnectPolicy",
@@ -70,64 +74,8 @@ __all__: list[str] = [
 ]
 
 # ---------------------------------------------------------------------------
-# Managed receive-session end reason
+# SRT statistics
 # ---------------------------------------------------------------------------
-
-
-class RecvEndReason(enum.IntEnum):
-    """Why a managed SRT receive session ended. Mirrors
-    the managed-SRT subset of `tst_core::transport::EndReason` 1:1, in Rust declaration order.
-
-    Returned by `ManagedDemuxReceiver.end_reason()`; `None` means the
-    stream hasn't ended yet (or ended through a path this type doesn't
-    instrument). A dedicated type, not `tstrans.rtp.StreamEndReason` —
-    the two are different types in Rust.
-
-    Only `RECONNECT_EXHAUSTED` and `CANCELLED` are reachable on the
-    managed-SRT path; `END_OF_STREAM` is reserved for a transport able to
-    signal a clean EOS distinct from reconnect-budget exhaustion.
-    """
-
-    END_OF_STREAM = 1
-    RECONNECT_EXHAUSTED = 2
-    CANCELLED = 3
-
-
-# ---------------------------------------------------------------------------
-# Transport types (Sender / Receiver / SocketStats / SrtStats /
-# CancelHandle)
-# ---------------------------------------------------------------------------
-
-
-@final
-class SocketStats:
-    """Frozen wire-level statistics snapshot. Mirror of
-    `tst_core::transport::SocketStats`. All fields are integer-valued.
-
-    Field names match `tstrans.rtp.SocketStats` 1:1 so cross-transport
-    code can read the same dataclass-shape from both. For SRT-specific
-    extras (`mbps_estimated_bandwidth`, the symmetric send/recv-side
-    byte-loss split), use `SrtStats`.
-    """
-
-    rtt_us: int
-    send_bandwidth_bps: int
-    recv_bandwidth_bps: int
-    link_bandwidth_bps: int
-    bytes_sent: int
-    packets_sent: int
-    bytes_received: int
-    packets_received: int
-    bytes_lost_recv: int
-    packets_lost_recv: int
-    packets_lost_send: int
-    packets_retransmitted: int
-    packets_dropped_send: int
-    packets_dropped_recv: int
-    send_buffer_packets: int
-    recv_buffer_packets: int
-
-    def __repr__(self) -> str: ...
 
 
 @final
@@ -165,94 +113,6 @@ class SrtStats:
     send_buffer_packets: int
     recv_buffer_packets: int
 
-    def __repr__(self) -> str: ...
-
-
-@final
-class CancelHandle:
-    """Transport-side cancel handle for `Sender` / `Receiver` /
-    `Listener` / `MuxSender` / `DemuxReceiver` and the four `Managed*`
-    shells. Calling `.cancel()` from any thread wakes a thread parked in
-    `.send_bytes()` / `.recv_bytes()` / `.accept()` / `.__next__()` within
-    ~3-10 ms; that call raises `SrtError(kind=CLOSED)` (detail
-    "cancelled from another thread") on every shell, plain or managed:
-    the plain shells close the underlying libsrt socket and report the
-    cancel they observed, not the connection error it provoked.
-
-    `is_cancelled()` is SHARED per shell (0.7.0): every handle obtained
-    from the same shell — and the shell's own `close()` — flips the same
-    state, so a watchdog can observe a cancel issued elsewhere.
-    """
-
-    def cancel(self) -> None: ...
-    def is_cancelled(self) -> bool: ...
-    def __repr__(self) -> str: ...
-
-
-@final
-class Sender:
-    """Python SRT sender wrapping `tst_pipeline::Sender<SrtTransport>`.
-
-    Construct via `Sender.from_url("srt://host:port?...")` — URL must
-    use `mode=caller` (default when omitted). Query parameters apply
-    through `UrlOverlay::apply_to_socket`: passphrase, latency,
-    streamid, mss, payloadsize, etc.
-    """
-
-    @staticmethod
-    def from_url(url: str) -> Sender: ...
-    def send_bytes(self, data: _BytesLike) -> None: ...
-    def flush(self) -> None: ...
-    def cancel_handle(self) -> CancelHandle: ...
-    def socket_stats(self) -> SocketStats: ...
-    def srt_stats(self) -> SrtStats: ...
-    def close(self) -> None: ...
-    def is_alive(self) -> bool: ...
-    def __enter__(self) -> Sender: ...
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_value: Optional[BaseException],
-        traceback: Optional[Any],
-    ) -> bool: ...
-    def __repr__(self) -> str: ...
-
-
-@final
-class Receiver:
-    """Python SRT receiver wrapping `tst_pipeline::Receiver<SrtTransport>`.
-
-    Construct via `Receiver.from_url("srt://...?mode=listener")` — URL
-    must use `mode=listener`. Binds the socket, listens, blocks on the
-    first incoming SRT handshake. The accepted socket becomes the
-    receive transport; this is a one-shot accept (subsequent peers
-    must use a fresh `from_url` call or the lower-level `Listener`).
-
-    Raises:
-        SrtError(kind=CONFIG_INVALID): Bad URL, or a non-listener mode.
-        SrtError(kind=BROKEN): Any bind or accept fault; the message is
-            prefixed `bind: ` or `accept: `. Before 0.7.0 bind failures
-            raised `CONNECT_FAILED` / `CONFIG_INVALID` and accept failures
-            `ACCEPT_FAILED` / `TIMEOUT`; the open now shares
-            `SrtUrl::accept_one` with the C ABI, which classifies both as
-            transport faults.
-    """
-
-    @staticmethod
-    def from_url(url: str) -> Receiver: ...
-    def recv_bytes(self, max_len: int = ...) -> bytes: ...
-    def cancel_handle(self) -> CancelHandle: ...
-    def socket_stats(self) -> SocketStats: ...
-    def srt_stats(self) -> SrtStats: ...
-    def close(self) -> None: ...
-    def is_alive(self) -> bool: ...
-    def __enter__(self) -> Receiver: ...
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_value: Optional[BaseException],
-        traceback: Optional[Any],
-    ) -> bool: ...
     def __repr__(self) -> str: ...
 
 
@@ -377,164 +237,6 @@ class Listener:
     def __iter__(self) -> Listener: ...
     def __next__(self) -> Socket: ...
     def __enter__(self) -> Listener: ...
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_value: Optional[BaseException],
-        traceback: Optional[Any],
-    ) -> bool: ...
-    def __repr__(self) -> str: ...
-
-
-# ---------------------------------------------------------------------------
-# MuxSender + DemuxReceiver convenience wrappers
-# ---------------------------------------------------------------------------
-
-
-@final
-class MuxSender:
-    """Convenience wrapper — `Sender` + `Muxer` constructed together.
-
-    Construct via `MuxSender.from_url(url, program_config)`. URL must
-    specify `?mode=caller` (the SrtUrl default). Send methods accept any
-    bytes-like input (`bytes`, `bytearray`, `memoryview`, NumPy `uint8`).
-    `pts` is keyword-only on every send method. The GIL is released
-    around the muxer + transport work via `py.allow_threads()`.
-    """
-
-    @staticmethod
-    def from_url(
-        url: str,
-        program_config: MuxerProgramConfig,
-    ) -> MuxSender: ...
-
-    # Send surface — single stream.
-    def send_video(
-        self,
-        nal: _BytesLike,
-        *,
-        pts: Pts90khz,
-        key_frame: bool = ...,
-    ) -> None: ...
-    def send_klv(
-        self,
-        klv: _BytesLike,
-        *,
-        pts: Pts90khz,
-        metadata_service_id: int = ...,
-    ) -> None: ...
-    def send_audio(self, adts: _BytesLike, *, pts: Pts90khz) -> None: ...
-    def send_subtitle(self, payload: _BytesLike, *, pts: Pts90khz) -> None: ...
-    def send_data(self, data: _BytesLike, *, pts: Pts90khz) -> None: ...
-
-    # Send surface — multi-stream variants (explicit handle).
-    def send_video_to(
-        self,
-        handle: VideoStreamHandle,
-        nal: _BytesLike,
-        *,
-        pts: Pts90khz,
-        key_frame: bool = ...,
-    ) -> None: ...
-    def send_klv_to(
-        self,
-        handle: KlvStreamHandle,
-        klv: _BytesLike,
-        *,
-        pts: Pts90khz,
-        metadata_service_id: int = ...,
-    ) -> None: ...
-    def send_audio_to(
-        self,
-        handle: AudioStreamHandle,
-        adts: _BytesLike,
-        *,
-        pts: Pts90khz,
-    ) -> None: ...
-    def send_subtitle_to(
-        self,
-        handle: SubtitleStreamHandle,
-        payload: _BytesLike,
-        *,
-        pts: Pts90khz,
-    ) -> None: ...
-    def send_data_to(
-        self,
-        handle: DataStreamHandle,
-        data: _BytesLike,
-        *,
-        pts: Pts90khz,
-    ) -> None: ...
-
-    # Stream handle accessors (first-of-kind).
-    def video_handle(self) -> Optional[VideoStreamHandle]: ...
-    def klv_handle(self) -> Optional[KlvStreamHandle]: ...
-    def audio_handle(self) -> Optional[AudioStreamHandle]: ...
-    def subtitle_handle(self) -> Optional[SubtitleStreamHandle]: ...
-    def data_handle(self) -> Optional[DataStreamHandle]: ...
-
-    def stats(self) -> Tuple[SocketStats, MuxerStats]: ...
-    def cancel_handle(self) -> CancelHandle: ...
-    def close(self) -> None: ...
-    def finish(self) -> None:
-        """Drain pending bytes to the transport, raise the first drain error
-        (``SrtError`` with the transport's kind), then close.
-        The sender is closed either way; a second ``finish()`` is a no-op,
-        and so is a ``finish()`` after ``close()``. It does NOT free the
-        handle — call ``close()`` (or use the ``with`` block) to release it.
-        Unlike ``close()`` this does not cancel a parked send first."""
-    def is_alive(self) -> bool: ...
-    def __enter__(self) -> MuxSender: ...
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_value: Optional[BaseException],
-        traceback: Optional[Any],
-    ) -> bool: ...
-    def __repr__(self) -> str: ...
-
-
-@final
-class DemuxReceiver:
-    """Convenience wrapper — `Receiver` + `Demuxer` constructed together.
-
-    Construct via `DemuxReceiver.from_url(url, *, demux_config=None)`.
-    URL must specify `?mode=listener`. Iterating yields
-    `tstrans.mpegts.DemuxEvent` subclass instances — no duplicated
-    event type hierarchy. `__next__` blocks (releases the GIL) on the
-    underlying transport read.
-
-    `stats()` returns a tuple `(SocketStats, MuxerStats)` — same shape
-    as `MuxSender.stats()` so cross-direction code can read both
-    accessors identically.
-
-    Bind / accept faults (0.7.0) raise `SrtError(kind=BROKEN)` with the
-    message prefixed `bind: ` or `accept: ` — this open shares
-    `SrtUrl::accept_one` with the C ABI, which classifies both as
-    transport faults. Before 0.7.0 bind failures raised `CONNECT_FAILED` /
-    `CONFIG_INVALID` and accept failures `ACCEPT_FAILED` / `TIMEOUT`.
-    """
-
-    @staticmethod
-    def from_url(
-        url: str,
-        *,
-        demux_config: Optional[DemuxerConfig] = ...,
-    ) -> DemuxReceiver: ...
-    def __iter__(self) -> Iterator[DemuxEvent]: ...
-    def __next__(self) -> DemuxEvent: ...
-    # Register a fan-out callback invoked with every 188-byte TS packet
-    # (as `bytes`) BEFORE demuxing, in registration order. If the
-    # callback raises, the exception is re-raised fail-loud from the next
-    # `__next__` and iteration stops. Append-only for the receiver's life.
-    def add_byte_sink(self, callback: Callable[[bytes], None]) -> None: ...
-    def cancel_handle(self) -> CancelHandle: ...
-    def socket_stats(self) -> SocketStats: ...
-    def stats(self) -> Tuple[SocketStats, MuxerStats]: ...
-    def last_seen_micros(self, pid: int) -> Optional[int]: ...
-    def close(self) -> None: ...
-    def is_alive(self) -> bool: ...
-    def __enter__(self) -> DemuxReceiver: ...
     def __exit__(
         self,
         exc_type: Optional[Type[BaseException]],

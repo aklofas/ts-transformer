@@ -1,4 +1,6 @@
-//! `Sender`, `Receiver`, `SocketStats`, `CancelHandle` for RTP.
+//! The raw RTP transport classes (`Transport` / `RecvTransport`, the same
+//! grammar as `tstrans.udp`). `CancelHandle` and `SocketStats` are the
+//! `tstrans.shells` classes.
 //!
 //! PyO3 wrappers for `tst_rtp::RtpTransport` (send) and
 //! `tst_rtp::RtpRecvTransport` (recv).  Each PyClass wraps a single
@@ -28,12 +30,13 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use tst_core::transport::EndReasonHandle;
-use tst_core::transport::{RecvTransport, SocketStats, Transport, TransportCancel, TransportError};
+use tst_core::transport::{RecvTransport, Transport, TransportCancel, TransportError};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Owned, SendHalf};
 use tst_rtp::builder::RtpRecvSocketBuilder;
 use tst_rtp::{RtpRecvTransport, RtpSocketBuilder, RtpTransport};
 
 use crate::raise::{RTP, pyok, pyres, raise};
+use crate::shells::cancel::{PyCancelHandle, PySocketStats};
 use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
@@ -63,120 +66,26 @@ pub(crate) fn rtp_cancel_source(
     Ok(CancelSource::new(handle))
 }
 
-// ---------------------------------------------------------------------------
-// PySocketStats — frozen mirror of tst_core::transport::SocketStats
-// ---------------------------------------------------------------------------
-
-/// Mirror of `tst_core::transport::SocketStats` exposed to Python as
-/// a frozen, get_all-decorated PyClass. Fields match the Rust struct
-/// 1:1 — `RtpTransport` populates `bytes_sent` / `packets_sent` only;
-/// `RtpRecvTransport` populates the receive-side counters.
-/// The RTCP-derived fields (`rtt_us`, `packets_lost_*`) stay zero
-/// until RTCP RR/SR ingest is wired.
-#[pyclass(frozen, get_all, name = "SocketStats", module = "tstrans.rtp")]
-pub(crate) struct PySocketStats {
-    pub rtt_us: u32,
-    pub send_bandwidth_bps: u64,
-    pub recv_bandwidth_bps: u64,
-    pub link_bandwidth_bps: u64,
-    pub bytes_sent: u64,
-    pub packets_sent: u64,
-    pub bytes_received: u64,
-    pub packets_received: u64,
-    pub bytes_lost_recv: u64,
-    pub packets_lost_recv: u64,
-    pub packets_lost_send: u64,
-    pub packets_retransmitted: u64,
-    pub packets_dropped_send: u64,
-    pub packets_dropped_recv: u64,
-    pub send_buffer_packets: u32,
-    pub recv_buffer_packets: u32,
-}
-
-impl PySocketStats {
-    pub(crate) fn from_core(s: SocketStats) -> Self {
-        Self {
-            rtt_us: s.rtt_us,
-            send_bandwidth_bps: s.send_bandwidth_bps,
-            recv_bandwidth_bps: s.recv_bandwidth_bps,
-            link_bandwidth_bps: s.link_bandwidth_bps,
-            bytes_sent: s.bytes_sent,
-            packets_sent: s.packets_sent,
-            bytes_received: s.bytes_received,
-            packets_received: s.packets_received,
-            bytes_lost_recv: s.bytes_lost_recv,
-            packets_lost_recv: s.packets_lost_recv,
-            packets_lost_send: s.packets_lost_send,
-            packets_retransmitted: s.packets_retransmitted,
-            packets_dropped_send: s.packets_dropped_send,
-            packets_dropped_recv: s.packets_dropped_recv,
-            send_buffer_packets: s.send_buffer_packets,
-            recv_buffer_packets: s.recv_buffer_packets,
-        }
-    }
-}
-
-#[pymethods]
-impl PySocketStats {
-    fn __repr__(&self) -> String {
-        format!(
-            "SocketStats(bytes_sent={}, packets_sent={}, bytes_received={}, packets_received={}, rtt_us={})",
-            self.bytes_sent,
-            self.packets_sent,
-            self.bytes_received,
-            self.packets_received,
-            self.rtt_us,
-        )
-    }
+/// The RTP receive transport of an RTSP session or publisher mount as an
+/// opened shell transport; its own cancel handle is taken before it is
+/// boxed (`FlagCancel` when it has none), the way `tst_rtp::opener` does.
+pub(crate) fn opened_recv(
+    transport: tst_rtp::RtpRecvTransport,
+) -> tst_pipeline::binding::Opened<Box<dyn tst_core::transport::RecvTransport>> {
+    let cancel: std::sync::Arc<dyn tst_core::transport::TransportCancel> =
+        match tst_core::transport::RecvTransport::cancel_handle(&transport) {
+            Some(c) => c,
+            None => std::sync::Arc::new(tst_core::cancel::FlagCancel::new()),
+        };
+    tst_pipeline::binding::Opened::new(
+        Box::new(transport),
+        cancel,
+        tst_pipeline::binding::Domain::Rtp,
+    )
 }
 
 // ---------------------------------------------------------------------------
-// PyCancelHandle — Arc-shared so multiple Python refs share one target
-// ---------------------------------------------------------------------------
-
-/// Python-side cancel handle. Wraps the shell's shared
-/// [`crate::util::CancelSource`]: every clone obtained from the same
-/// shell — and the shell's own `close()` — forwards into one
-/// `Arc<dyn TransportCancel>` and flips one flag, so `is_cancelled()`
-/// reports the shell's state, not this wrapper's history.
-#[pyclass(frozen, name = "CancelHandle", module = "tstrans.rtp")]
-pub(crate) struct PyCancelHandle {
-    src: Arc<crate::util::CancelSource>,
-}
-
-#[pymethods]
-impl PyCancelHandle {
-    /// Signal cancellation. Idempotent — repeated calls are a no-op.
-    /// Wakes a thread parked in `Sender.send` / `Receiver.recv` /
-    /// `H264Receiver.recv_au` at the next 100 ms cancel-poll tick; that
-    /// call raises `RtpError(CLOSED)` (detail "cancelled from another
-    /// thread").
-    fn cancel(&self) {
-        tst_core::transport::TransportCancel::cancel(&*self.src);
-    }
-
-    /// `True` once the shell was cancelled or closed through ANY handle
-    /// or its own `close()` (shared state).
-    fn is_cancelled(&self) -> bool {
-        self.src.is_cancelled()
-    }
-
-    fn __repr__(&self) -> String {
-        format!("CancelHandle(cancelled={})", self.is_cancelled())
-    }
-}
-
-impl PyCancelHandle {
-    /// The single constructor every rtp class uses.
-    pub(crate) fn from_source(src: &Arc<crate::util::CancelSource>) -> Self {
-        Self {
-            src: Arc::clone(src),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PySender — wraps tst_rtp::RtpTransport
+// PyRtpTransport — wraps tst_rtp::RtpTransport
 // ---------------------------------------------------------------------------
 
 /// Python RTP sender — wraps `tst_rtp::RtpTransport`.
@@ -185,8 +94,8 @@ impl PyCancelHandle {
 /// (188-multiple, default 1316) and `ssrc` (random when omitted)
 /// keyword arguments. Other URL query parameters (`ttl=`, `iface=`)
 /// can be embedded in the URL itself.
-#[pyclass(name = "Sender", module = "tstrans.rtp")]
-pub(crate) struct PySender {
+#[pyclass(name = "Transport", module = "tstrans.rtp")]
+pub(crate) struct PyRtpTransport {
     /// The binding layer's handle state machine: a `send` in flight
     /// on another thread holds the slot only inside `with_mut`, under
     /// `py.allow_threads`; `close()` (cancel-first) ends it instead of
@@ -197,7 +106,7 @@ pub(crate) struct PySender {
 }
 
 #[pymethods]
-impl PySender {
+impl PyRtpTransport {
     /// Construct a sender connected to `url` (e.g.
     /// `"rtp://127.0.0.1:5004"`).
     ///
@@ -297,15 +206,15 @@ impl PySender {
 
     fn __repr__(&self) -> String {
         if self.owned.is_closed() {
-            "Sender(closed)".to_string()
+            "Transport(closed)".to_string()
         } else {
-            "Sender(open)".to_string()
+            "Transport(open)".to_string()
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// PyReceiver — wraps tst_rtp::RtpRecvTransport
+// PyRtpRecvTransport — wraps tst_rtp::RtpRecvTransport
 // ---------------------------------------------------------------------------
 
 /// Transport + reusable scratch buffer, kept under one lock so a `&self`
@@ -333,8 +242,8 @@ impl tst_pipeline::binding::Close for RtpRecvInner {
 /// transport's deliverable ceiling; `?pkt_size=` on a receiver URL is
 /// rejected. The 12-byte RTP header is stripped internally so `.recv()`
 /// returns just the TS payload bytes.
-#[pyclass(name = "Receiver", module = "tstrans.rtp")]
-pub(crate) struct PyReceiver {
+#[pyclass(name = "RecvTransport", module = "tstrans.rtp")]
+pub(crate) struct PyRtpRecvTransport {
     /// The binding layer's handle state machine: a parked `recv`
     /// holds the slot only inside `with_mut`, under `py.allow_threads`;
     /// `close()` (cancel-first) ends it instead of waiting behind it.
@@ -351,7 +260,7 @@ pub(crate) struct PyReceiver {
 }
 
 #[pymethods]
-impl PyReceiver {
+impl PyRtpRecvTransport {
     /// Bind a receiver to `url` (e.g. `"rtp://127.0.0.1:5004"` for
     /// unicast or `"rtp://239.0.0.1:5004"` for multicast).
     ///
@@ -483,7 +392,7 @@ impl PyReceiver {
     /// though this touches Rust-owned shared state.
     fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
         match self.end_reason.get() {
-            Some(r) => crate::rtp::end_reason::end_reason_to_py(py, &r),
+            Some(r) => crate::shells::end_reason::end_reason_to_py(py, &r),
             None => Ok(None),
         }
     }
@@ -493,7 +402,7 @@ impl PyReceiver {
     /// for every other reason (including "hasn't ended yet").
     fn end_detail(&self) -> Option<String> {
         let reason = self.end_reason.get()?;
-        crate::rtp::end_reason::end_reason_detail(&reason).map(str::to_owned)
+        crate::shells::end_reason::end_detail(&reason).map(str::to_owned)
     }
 
     /// Close the receiver. Fires the cancel handle BEFORE taking the slot
@@ -521,9 +430,9 @@ impl PyReceiver {
 
     fn __repr__(&self) -> String {
         if !self.owned.is_closed() {
-            "Receiver(open)".to_string()
+            "RecvTransport(open)".to_string()
         } else {
-            "Receiver(closed)".to_string()
+            "RecvTransport(closed)".to_string()
         }
     }
 }
@@ -533,9 +442,7 @@ impl PyReceiver {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PySocketStats>()?;
-    m.add_class::<PyCancelHandle>()?;
-    m.add_class::<PySender>()?;
-    m.add_class::<PyReceiver>()?;
+    m.add_class::<PyRtpTransport>()?;
+    m.add_class::<PyRtpRecvTransport>()?;
     Ok(())
 }

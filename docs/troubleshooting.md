@@ -447,14 +447,15 @@ end-of-stream is observed: dropping the client races the
 classification, since its `Drop` cancels the pump, which may record
 `Cancelled` before the server's EOF is read.
 
-**Python** (`tstrans.rtp`) mirrors this: `Receiver`, `DemuxReceiver`,
-and `H264Receiver` each expose `end_reason()` (a `StreamEndReason`
-member, or `None`) and `end_detail()` (the free-text message for
+**Python** mirrors this: `tstrans.rtp.RecvTransport`, `tstrans.rtp.H264Receiver`
+and the `tstrans.shells` `Receiver` / `DemuxReceiver` each expose
+`end_reason()` (a `tstrans.shells.EndReason` member, or `None`) and `end_detail()` (the free-text message for
 `KEEPALIVE_FAILED` / `TRANSPORT_FAILED` / `PROTOCOL_ERROR`, `None`
 otherwise) — both stay readable after `close()`:
 
 ```python
-from tstrans.rtp import RtspClient, RtspClientConfig, StreamEndReason
+from tstrans.rtp import RtspClient, RtspClientConfig
+from tstrans.shells import EndReason
 
 with RtspClient.connect_h264(RtspClientConfig("rtsp://cam.local/h264")) as session:
     with session.into_h264_receiver() as rx:
@@ -462,9 +463,9 @@ with RtspClient.connect_h264(RtspClientConfig("rtsp://cam.local/h264")) as sessi
             ...
         # loop exited (EOS or a caught error) — ask why
         reason = rx.end_reason()
-        if reason == StreamEndReason.SESSION_EXPIRED:
+        if reason == EndReason.SESSION_EXPIRED:
             pass  # re-DESCRIBE + SETUP
-        elif reason in (StreamEndReason.KEEPALIVE_FAILED, StreamEndReason.TRANSPORT_FAILED):
+        elif reason in (EndReason.KEEPALIVE_FAILED, EndReason.TRANSPORT_FAILED):
             print(f"stream died: {rx.end_detail()}")
 ```
 
@@ -490,7 +491,7 @@ try (RtspSession session = RtspClient.connectH264(cfg);
     }
     // loop exited (EOS or a caught error) — ask why
     StreamEndReason reason = rx.endReason();
-    if (reason == StreamEndReason.SESSION_EXPIRED) {
+    if (reason == EndReason.SESSION_EXPIRED) {
         // re-DESCRIBE + SETUP
     } else if (reason == StreamEndReason.KEEPALIVE_FAILED || reason == StreamEndReason.TRANSPORT_FAILED) {
         System.out.println("stream died: " + rx.endDetail());
