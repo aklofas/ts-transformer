@@ -79,7 +79,8 @@ pub(crate) fn register(opened: Opened<Box<dyn RecvTransport>>) -> jlong {
 
 /// One 188-byte TS packet per call. `maxLen` is accepted for API symmetry
 /// and ignored. Throws the transport's exception on failure, including
-/// `END_OF_STREAM` when the peer closed cleanly.
+/// `END_OF_STREAM` when the peer closed cleanly (an `srt://` shell reads
+/// `BROKEN` first: libsrt reports a broken link, never a clean EOF).
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_shells_Receiver_nRecvBytes(
     mut env: JNIEnv<'_>,

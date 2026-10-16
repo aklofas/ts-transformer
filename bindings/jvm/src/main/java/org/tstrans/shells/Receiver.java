@@ -79,8 +79,9 @@ public class Receiver extends NativeHandle {
      * @return a 188-byte TS packet
      * @throws IllegalStateException if the receiver is closed
      * @throws BindingException the transport's exception: {@code END_OF_STREAM}
-     *     when the peer closed cleanly, {@code BROKEN} if the transport is dead,
-     *     {@code CLOSED} if cancelled
+     *     when the peer closed cleanly ({@code srt://} reads {@code BROKEN} first,
+     *     because libsrt reports a broken link rather than a clean EOF),
+     *     {@code BROKEN} if the transport is dead, {@code CLOSED} if cancelled
      */
     public byte[] recvBytes() throws BindingException {
         return recvBytes(1500);
