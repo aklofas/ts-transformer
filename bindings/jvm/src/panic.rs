@@ -72,6 +72,11 @@ where
 /// parameter is optional; without it the parameters use `'_`. A native that
 /// returns nothing writes `= ()`. The rail `jni-catch-coverage.sh` refuses a
 /// bare `extern "system"` entry point.
+///
+/// The environment parameter is always bound `mut`, because [`jni_catch`]
+/// borrows it mutably; a native that does not use it still names it `_env`
+/// and gets a `mut _env` binding, which is harmless. Inside the body the
+/// same name is the closure's `&mut JNIEnv`.
 macro_rules! jni_native {
     () => {};
     (
