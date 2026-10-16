@@ -253,6 +253,12 @@ jobs:
           SRT_FORCE_VENDORED: "1"
           RIST_FORCE_VENDORED: "1"
         run: bash scripts/check/repo/kind-equivalence.sh
+      - name: binding records (generated == committed)
+        if: matrix.name == 'linux-x86_64'
+        env:
+          SRT_FORCE_VENDORED: "1"
+          RIST_FORCE_VENDORED: "1"
+        run: bash scripts/check/repo/binding-records.sh
       - name: Check C header section uniqueness
         run: bash scripts/check/c/header-section-uniqueness.sh
 

@@ -43,8 +43,7 @@ use tst_core::klv::st0601::{
     PlatformStatus as RustPlatformStatus, SdccFlpField as RustSdccFlpField,
     SensorControlMode as RustSensorControlMode, SensorFovName as RustSensorFovName,
     SensorFrameRate as RustSensorFrameRate, St0601SentinelMeaning, UasDatalinkLs,
-    ViewDomain as RustViewDomain, ViewDomainPair as RustViewDomainPair,
-    WavelengthRecord as RustWavelengthRecord, Waypoint as RustWaypoint,
+    ViewDomain as RustViewDomain, ViewDomainPair as RustViewDomainPair, Waypoint as RustWaypoint,
     WeaponsStore as RustWeaponsStore, decode as decode_st0601_lenient,
     decode_strict as decode_st0601_strict,
     decode_strict_compliance as decode_st0601_strict_compliance,
@@ -1440,25 +1439,6 @@ fn py_to_country_codes(p: &Bound<'_, PyAny>) -> PyResult<RustCountryCodes> {
     })
 }
 
-/// One record of Item 128, Wavelengths List.
-fn convert_wavelength_record(py: Python<'_>, w: &RustWavelengthRecord) -> PyResult<PyObject> {
-    let klv_mod = py.import_bound("tstrans.klv")?;
-    let cls = klv_mod.getattr(intern!(py, "WavelengthRecord"))?;
-    Ok(cls
-        .call1((w.id, w.min_nm, w.max_nm, w.name.as_str()))?
-        .unbind())
-}
-
-fn py_to_wavelength_record(p: &Bound<'_, PyAny>) -> PyResult<RustWavelengthRecord> {
-    let py = p.py();
-    Ok(RustWavelengthRecord {
-        id: p.getattr(intern!(py, "id"))?.extract()?,
-        min_nm: p.getattr(intern!(py, "min_nm"))?.extract()?,
-        max_nm: p.getattr(intern!(py, "max_nm"))?.extract()?,
-        name: p.getattr(intern!(py, "name"))?.extract()?,
-    })
-}
-
 /// Shared by Item 130 (Airbase Locations) and Item 141 (Waypoint List).
 fn convert_location(py: Python<'_>, loc: &RustLocation) -> PyResult<PyObject> {
     let klv_mod = py.import_bound("tstrans.klv")?;
@@ -2076,7 +2056,7 @@ fn convert_uas_datalink_ls(py: Python<'_>, r: &UasDatalinkLs) -> PyResult<PyObje
     if let Some(list) = &r.wavelengths_list {
         let items: Vec<PyObject> = list
             .iter()
-            .map(|w| convert_wavelength_record(py, w))
+            .map(|w| crate::generated::st0601::wavelength_record_to_py(py, w))
             .collect::<PyResult<Vec<_>>>()?;
         kwargs.set_item(
             "wavelengths_list",
@@ -2452,7 +2432,7 @@ fn py_to_uas_datalink_ls(p: &Bound<'_, PyAny>) -> PyResult<UasDatalinkLs> {
     if !wavelengths_list_obj.is_none() {
         let mut list = Vec::new();
         for w in wavelengths_list_obj.iter()? {
-            list.push(py_to_wavelength_record(&w?)?);
+            list.push(crate::generated::st0601::wavelength_record_from_py(&w?)?);
         }
         r.wavelengths_list = Some(list);
     }

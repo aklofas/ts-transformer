@@ -463,6 +463,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tstrans.RtpErrorKind` gains `INPUT_MALFORMED` (12) and `CONFIG_INVALID`
   (13): the kinds a TS shell over `rtp://` raises for a framing or configuration
   error, as every other transport's kind enum already does.
+- `tstrans.klv.WavelengthRecord` is generated from its Rust declaration
+  (`print-records`); the class, its fields and behaviour are unchanged.
 
 ### Added — tst-jni
 
@@ -491,6 +493,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `org.tstrans.shells.DemuxReceiver.recvEvent()`: the next event, or `null`
   at the end of the stream, with the checked exceptions the iterator wraps.
+- `org.tstrans.klv.WavelengthRecord` is generated from its Rust declaration
+  (`print-records`); the record, its components and behaviour are unchanged.
 
 ### Deprecated — tst-py
 
