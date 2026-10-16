@@ -17,6 +17,7 @@ public final class Sender extends org.tstrans.shells.Sender {
      */
     @Deprecated(since = "0.9.0", forRemoval = true)
     public static Sender fromUrl(String url) throws SrtException {
+        ShellAdapters.requireSrt(url, "Sender");
         try {
             return new Sender(openHandle(url));
         } catch (BindingException e) {

@@ -18,6 +18,7 @@ public final class DemuxReceiver extends org.tstrans.shells.DemuxReceiver {
      */
     @Deprecated(since = "0.9.0", forRemoval = true)
     public static DemuxReceiver fromUrl(String url) throws SrtException {
+        ShellAdapters.requireSrt(url, "DemuxReceiver");
         try {
             return new DemuxReceiver(openHandle(url));
         } catch (BindingException e) {
@@ -30,6 +31,7 @@ public final class DemuxReceiver extends org.tstrans.shells.DemuxReceiver {
      */
     @Deprecated(since = "0.9.0", forRemoval = true)
     public static DemuxReceiver fromUrl(String url, DemuxerConfig demuxConfig) throws SrtException {
+        ShellAdapters.requireSrt(url, "DemuxReceiver");
         try {
             return new DemuxReceiver(openHandle(url, demuxConfig));
         } catch (BindingException e) {

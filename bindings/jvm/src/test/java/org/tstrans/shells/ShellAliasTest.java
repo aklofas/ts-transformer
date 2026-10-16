@@ -2,12 +2,15 @@ package org.tstrans.shells;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.tstrans.RtpException;
+import org.tstrans.SrtException;
 import org.tstrans.TestSupport;
 import org.tstrans.mpegts.DemuxerConfig;
 import org.tstrans.shells.ShellPeers.Cleanup;
@@ -163,6 +166,25 @@ class ShellAliasTest {
             assertTrue((Object) d instanceof DemuxReceiver);
             assertTrue((Object) d instanceof org.tstrans.rtp.DemuxReceiver);
         }
+    }
+
+    // ---- the 0.8 scheme check ---------------------------------------------------------------
+
+    @Test
+    void srtFactoryRejectsAnotherScheme() {
+        SrtException e = assertThrows(SrtException.class,
+            () -> org.tstrans.srt.Sender.fromUrl("tcp://127.0.0.1:1"));
+        assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
+        assertTrue(e.getMessage().contains("requires an srt:// URL"), e.getMessage());
+    }
+
+    @Test
+    void rtpFactoryRejectsAnotherScheme() {
+        RtpException e = assertThrows(RtpException.class,
+            () -> org.tstrans.rtp.MuxSender.fromUrl(
+                "udp://127.0.0.1:" + TestSupport.freeUdpPort(), TestSupport.roundtripConfig()));
+        assertEquals(RtpException.Kind.CONFIG_INVALID, e.kind());
+        assertTrue(e.getMessage().contains("requires an rtp:// URL"), e.getMessage());
     }
 
     // ---- the markers -------------------------------------------------------------------------

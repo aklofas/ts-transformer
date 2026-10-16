@@ -273,10 +273,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `org.tstrans.shells.Sender` / `Receiver`.
 - `EndReason` (one enum for every receiver) replaces `srt.RecvEndReason` and
   `rtp.StreamEndReason`; constant names are unchanged.
-- `Class.open(url)` and the deprecated `fromUrl` factories throw
-  `IllegalArgumentException` for a URL whose scheme no shell supports;
-  previously the srt or rtp class threw its transport's `CONFIG_INVALID`. A
-  supported scheme with a bad URL still throws that transport's exception.
+- `Class.open(url)` throws `IllegalArgumentException` for a URL whose scheme
+  no shell supports. A supported scheme with a bad URL throws that
+  transport's exception. The deprecated `org.tstrans.srt` / `org.tstrans.rtp`
+  `fromUrl` factories keep the 0.8 scheme check: a URL that is not `srt://`
+  (or `rtp://`) throws `SrtException` (or `RtpException`) with kind
+  `CONFIG_INVALID` and opens nothing.
   A raw stream handle that no stream of the muxer owns throws the
   transport's `CONFIG_INVALID` from every `MuxSender` `send*To` (it was
   `IO` on an `rtp://` sender).
