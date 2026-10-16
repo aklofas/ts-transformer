@@ -32,13 +32,26 @@
 //! - **Snapshot getters never take the slot**; **`cancel()` never takes the
 //!   slot** — the cancel handle is an `Arc` read lock-free, so a cancel
 //!   never waits behind the parked call it must wake.
+//!
+//! # `no_std` targets
+//!
+//! Without `std` the slot lock is a spin lock (`crate::mutex::ShellMutex`):
+//! it cannot be poisoned and has no priority inheritance, and
+//! [`panic::catch`] cannot catch (the target aborts on panic), so the
+//! `Poisoned` and `Panicked` arms are unreachable there. Drive each
+//! handle from one task: sharing an `Owned` across preemptive tasks can
+//! livelock a higher-priority task against a preempted lock holder — the
+//! same contract `MuxSender` documents. The end-reason cell is `std`-only.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, TryLockError};
+use alloc::string::String;
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicBool, Ordering};
 
+use crate::mutex::{ShellMutex, TryLockError};
 use tst_core::transport::TransportCancel;
 
 use super::panic;
+#[cfg(feature = "std")]
 use tst_core::transport::{EndReason, EndReasonHandle};
 
 /// Explicit, fallible shutdown of the value an [`Owned`] holds.
@@ -99,12 +112,13 @@ pub enum CloseFailure<E> {
 /// See the module docs for the rules. `S` defaults to `()` for shells
 /// with no construction-constant getters.
 pub struct Owned<T, S = ()> {
-    inner: Mutex<Option<T>>,
+    inner: ShellMutex<Option<T>>,
     /// The latch + the value's transport-side handle, as ONE shareable
     /// `TransportCancel` — what [`Self::cancel_arc`] hands out, so a
     /// cancel fired through a handed-out handle is visible to
     /// [`Self::is_cancelled`] exactly like [`Self::cancel`].
     cancel: Arc<OwnedCancel>,
+    #[cfg(feature = "std")]
     end_reason: Option<EndReasonHandle>,
     snapshot: S,
 }
@@ -143,11 +157,12 @@ impl<T, S> Owned<T, S> {
     /// without the slot.
     pub fn new(inner: T, cancel: Arc<dyn TransportCancel>, snapshot: S) -> Self {
         Self {
-            inner: Mutex::new(Some(inner)),
+            inner: ShellMutex::new(Some(inner)),
             cancel: Arc::new(OwnedCancel {
                 transport: cancel,
                 cancelled: AtomicBool::new(false),
             }),
+            #[cfg(feature = "std")]
             end_reason: None,
             snapshot,
         }
@@ -168,6 +183,7 @@ impl<T, S> Owned<T, S> {
     /// receiver moved into `inner`), so [`Self::end_reason`] answers after
     /// the value is gone. Senders never call this.
     #[must_use]
+    #[cfg(feature = "std")]
     pub fn with_end_reason(mut self, h: EndReasonHandle) -> Self {
         self.end_reason = Some(h);
         self
@@ -201,6 +217,7 @@ impl<T, S> Owned<T, S> {
 
     /// The recorded end reason, or `None` when no handle was attached or
     /// the stream has not ended. Lock-free (the handle is a `OnceLock`).
+    #[cfg(feature = "std")]
     pub fn end_reason(&self) -> Option<EndReason> {
         self.end_reason.as_ref().and_then(EndReasonHandle::get)
     }
@@ -360,6 +377,7 @@ impl<T: Close, S> Owned<T, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
     use std::sync::atomic::AtomicU32;
 
     /// Cancel handle that counts calls and flips a flag `Parked` polls.
@@ -381,6 +399,8 @@ mod tests {
     /// `MockCancel`, and a `Close` impl that logs + counts.
     struct Mock {
         n: u32,
+        // read only by the thread-parking helper, which is `std`-plane
+        #[cfg_attr(not(feature = "std"), allow(dead_code))]
         flag: Arc<AtomicBool>,
         closes: Arc<AtomicU32>,
         log: Arc<std::sync::Mutex<Vec<&'static str>>>,
@@ -414,12 +434,14 @@ mod tests {
         log: Arc<std::sync::Mutex<Vec<&'static str>>>,
         /// Attached to `owned`, so tests can drive `end_reason()`'s `Some`
         /// branch and not just its `None` short-circuit.
+        #[cfg(feature = "std")]
         end_reason: EndReasonHandle,
     }
     fn fixture() -> Fixture {
         let flag = Arc::new(AtomicBool::new(false));
         let closes = Arc::new(AtomicU32::new(0));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        #[cfg(feature = "std")]
         let end_reason = EndReasonHandle::default();
         let cancel = Arc::new(MockCancel {
             calls: AtomicU32::new(0),
@@ -432,14 +454,18 @@ mod tests {
             log: Arc::clone(&log),
         };
         let cancel_dyn: Arc<dyn TransportCancel> = Arc::clone(&cancel) as Arc<dyn TransportCancel>;
+        #[cfg(feature = "std")]
         let owned =
             Arc::new(Owned::new(mock, cancel_dyn, "snap").with_end_reason(end_reason.clone()));
+        #[cfg(not(feature = "std"))]
+        let owned = Arc::new(Owned::new(mock, cancel_dyn, "snap"));
         Fixture {
             owned,
             cancel,
             flag,
             closes,
             log,
+            #[cfg(feature = "std")]
             end_reason,
         }
     }
@@ -451,6 +477,7 @@ mod tests {
         let f = fixture();
         assert!(!f.owned.is_cancelled());
         assert_eq!(*f.owned.snapshot(), "snap");
+        #[cfg(feature = "std")]
         assert_eq!(
             f.owned.end_reason(),
             None,
@@ -488,6 +515,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn end_reason_reads_the_attached_handle() {
         let f = fixture();
         let h = EndReasonHandle::default();
@@ -524,6 +552,7 @@ mod tests {
     /// Poison the fixture's mutex the only way std allows: unwind while a
     /// guard is held, on another thread (the test's own `with_mut` cannot,
     /// by design — see `with_mut_panic_does_not_poison`).
+    #[cfg(feature = "std")]
     fn poison(f: &Fixture) {
         let o = Arc::clone(&f.owned);
         let r = std::thread::spawn(move || {
@@ -560,6 +589,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn with_mut_panic_is_reported_once_and_drops_the_slot() {
         let f = fixture();
         let r = f.owned.with_mut(|_| -> u32 { panic!("mutator boom") });
@@ -591,6 +621,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn with_mut_panic_with_a_panicking_drop_still_reports_closed_next() {
         // Dropping the value after a mutator panic happens under the guard,
         // so it must be inside its own panic boundary: an escaping `Drop`
@@ -634,6 +665,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn with_ref_panic_is_reported_and_keeps_the_slot() {
         let f = fixture();
         let r = f.owned.with_ref(|_| -> u32 { panic!("reader boom {}", 2) });
@@ -648,6 +680,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn poisoned_mutex_refuses_the_mutator_and_recovers_for_readers() {
         let f = fixture();
         poison(&f);
@@ -666,20 +699,24 @@ mod tests {
     fn try_with_ref_uncontended_paths() {
         let f = fixture();
         assert_eq!(f.owned.try_with_ref(|m| m.n), Some(Ok(0)));
-        let r = f.owned.try_with_ref(|_| -> u32 { panic!("probe boom") });
-        assert_eq!(
-            r,
-            Some(Err(HandleState::Panicked {
-                detail: String::from("probe boom")
-            }))
-        );
-        assert!(!f.owned.inner.is_poisoned());
-        poison(&f);
-        assert_eq!(
-            f.owned.try_with_ref(|m| m.n),
-            Some(Ok(0)),
-            "poison recovered, like with_ref"
-        );
+        // Panics and poison exist only where `std` can unwind.
+        #[cfg(feature = "std")]
+        {
+            let r = f.owned.try_with_ref(|_| -> u32 { panic!("probe boom") });
+            assert_eq!(
+                r,
+                Some(Err(HandleState::Panicked {
+                    detail: String::from("probe boom")
+                }))
+            );
+            assert!(!f.owned.inner.is_poisoned());
+            poison(&f);
+            assert_eq!(
+                f.owned.try_with_ref(|m| m.n),
+                Some(Ok(0)),
+                "poison recovered, like with_ref"
+            );
+        }
         assert!(f.owned.take().is_some());
         assert_eq!(
             f.owned.try_with_ref(|m| m.n),
@@ -766,6 +803,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn close_reports_a_panicking_close_and_still_empties_the_slot() {
         struct Explodes;
         impl Close for Explodes {
@@ -792,6 +830,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn close_recovers_a_poisoned_mutex() {
         let f = fixture();
         poison(&f);
@@ -803,6 +842,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn close_catches_a_panicking_drop_of_the_taken_value() {
         // `close()` promises never to panic, because bindings call it from
         // their own `Drop`, where an escaping panic during unwind aborts the
@@ -839,6 +879,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn close_drop_panic_takes_precedence_over_an_inner_close_error() {
         // Ruled precedence: when `Close::close` returns an error AND the drop
         // then panics, the panic wins — it is the more severe signal and the
@@ -878,7 +919,9 @@ mod tests {
     // ---- concurrency: nothing but with_mut/with_ref/take/is_closed/close
     // waits on the slot ----
 
+    #[cfg(feature = "std")]
     const PARK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+    #[cfg(feature = "std")]
     /// Bound on how long a call that must NOT wait on the slot may take.
     ///
     /// Deliberately loose. It never asserts that an operation was *fast* —
@@ -890,6 +933,7 @@ mod tests {
     /// nightly sanitizers job, where thread scheduling is 5–15x slower.
     const PROMPT: std::time::Duration = std::time::Duration::from_secs(10);
 
+    #[cfg(feature = "std")]
     /// Latch-and-poll with a bounded watchdog — never a wall-clock assert.
     fn wait_for(deadline: std::time::Duration, f: impl Fn() -> bool) -> bool {
         let start = std::time::Instant::now();
@@ -902,6 +946,7 @@ mod tests {
         f()
     }
 
+    #[cfg(feature = "std")]
     /// Park a thread inside `with_mut` until the shared cancel flag flips
     /// (the shape of a receive parked in libsrt that only the cancel handle
     /// can return). Returns the thread + an `entered` latch.
@@ -937,6 +982,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn cancel_returns_promptly_while_another_thread_is_parked_in_with_mut() {
         let f = fixture();
         let (parked, _) = park_in_with_mut(&f);
@@ -956,6 +1002,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn snapshot_and_end_reason_and_is_cancelled_never_take_the_slot() {
         let f = fixture();
         // Record BEFORE parking so the reader exercises `end_reason()`'s
@@ -985,6 +1032,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn close_from_another_thread_returns_the_parked_call_first() {
         let f = fixture();
         let (parked, _) = park_in_with_mut(&f);
@@ -1007,6 +1055,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn is_closed_and_try_with_ref_never_wait_on_a_parked_slot() {
         let f = fixture();
         let (parked, _) = park_in_with_mut(&f);
@@ -1104,6 +1153,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn close_runs_the_inner_close_outside_the_lock() {
         // `close()` takes the value OUT of the slot and only then runs
         // `Close::close`. So while the inner close is parked, the slot is

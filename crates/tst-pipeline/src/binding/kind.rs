@@ -19,10 +19,11 @@
 //! strips it, because the per-domain binding enums spell the unprefixed member
 //! (`UdpErrorKind.IO`).
 
-use std::string::String;
+use alloc::string::{String, ToString};
 
 use crate::binding::owned::{CloseFailure, HandleState};
 use crate::demux_receiver::{DemuxReceiverError, DemuxReceiverErrorSource};
+#[cfg(feature = "std")]
 use crate::mux_publisher::MuxPublisherError;
 use crate::mux_sender::{MuxSenderError, MuxSenderErrorSource};
 use crate::raw_receiver::{RawReceiverError, RawReceiverErrorSource};
@@ -732,7 +733,7 @@ impl core::fmt::Display for BindingError {
     }
 }
 
-impl std::error::Error for BindingError {}
+impl core::error::Error for BindingError {}
 
 /// The error a wildcard arm produces: a variant of a `#[non_exhaustive]`
 /// upstream enum that this table does not map yet. Loud on purpose — the
@@ -1184,9 +1185,10 @@ impl From<RawReceiverError> for BindingError {
 /// rejection is the mux kind (not `HlsErrorKind.INVALID_CONFIG`), the
 /// sink's error is its own kind, `Closed` (shell consumed via `finish`) is
 /// `Closed` (not `FINISHED`), `LockPoisoned` is `Internal`. In-crate enum → exhaustive.
+#[cfg(feature = "std")]
 impl<E> From<MuxPublisherError<E>> for BindingError
 where
-    E: Into<BindingError> + std::error::Error + Send + Sync + 'static,
+    E: Into<BindingError> + core::error::Error + Send + Sync + 'static,
 {
     fn from(e: MuxPublisherError<E>) -> Self {
         match e {
@@ -1208,6 +1210,7 @@ mod tests {
 
     use crate::binding::owned::HandleState;
     use crate::shell_error::ShellErrorKind;
+    use alloc::vec::Vec;
     use tst_core::transport::{BrokenCause, TransportError};
 
     #[test]
@@ -1406,6 +1409,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn mux_publisher_error_is_generic_over_the_sink_error() {
         use crate::mux_publisher::MuxPublisherError;
         use tst_core::error::MuxError;

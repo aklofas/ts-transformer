@@ -165,6 +165,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `push_data`): `send` names an operation that hands bytes to a
   `Transport`, and a publisher has none. Signatures are unchanged. The C
   functions keep their names (`tst_mux_publisher_send_*`).
+- `binding` builds without `std` (`no_std` + `alloc`): the kind table,
+  `BindingError`, `Owned`, `Close`, `HandleState` and `panic::catch` are
+  available on bare-metal targets. `binding::handles::ManagedHandles` and
+  `Owned::{with_end_reason, end_reason}` still need `std`. Without `std`,
+  `panic::catch` runs the closure directly (the target aborts on panic) and
+  the slot lock is a spin lock: drive each handle from one task.
+  `BindingError` implements `core::error::Error` (the same trait as
+  `std::error::Error`).
 
 ### Changed — tst-rtp (BREAKING)
 
