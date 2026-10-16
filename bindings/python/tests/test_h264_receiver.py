@@ -331,7 +331,7 @@ def test_h264_receiver_stats_shape() -> None:
     assert rs.source_rejected == 0
 
     ss = rx.socket_stats()
-    assert isinstance(ss, tstrans.rtp.SocketStats)
+    assert isinstance(ss, tstrans.shells.SocketStats)
     rx.close()
 
 

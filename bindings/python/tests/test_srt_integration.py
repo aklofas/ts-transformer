@@ -44,6 +44,7 @@ Test inventory:
 
 from __future__ import annotations
 
+from tstrans import shells
 import threading
 import time
 from typing import List, Optional, Tuple
@@ -99,7 +100,7 @@ def test_full_pipeline_via_builder_socket_promotion() -> None:
         .listen()
     )
 
-    rx_box: list[tstrans.srt.DemuxReceiver] = []
+    rx_box: list[tstrans.shells.DemuxReceiver] = []
     rx_err: list[BaseException] = []
 
     def accept_then_into_demux() -> None:
@@ -214,12 +215,12 @@ def test_from_url_shortcut_equivalent_to_builder_path() -> None:
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
 
-    rx_box: list[tstrans.srt.DemuxReceiver] = []
+    rx_box: list[tstrans.shells.DemuxReceiver] = []
     rx_err: list[BaseException] = []
 
     def accept_worker() -> None:
         try:
-            r = tstrans.srt.DemuxReceiver.from_url(listener_url)
+            r = shells.DemuxReceiver.open(listener_url)
             rx_box.append(r)
         except BaseException as exc:  # noqa: BLE001
             rx_err.append(exc)
@@ -227,7 +228,7 @@ def test_from_url_shortcut_equivalent_to_builder_path() -> None:
     t = threading.Thread(target=accept_worker, daemon=True)
     t.start()
     time.sleep(0.1)
-    mux_sender = tstrans.srt.MuxSender.from_url(caller_url, _video_klv_program())
+    mux_sender = shells.MuxSender.open(caller_url, _video_klv_program())
     t.join(timeout=5.0)
     if rx_err:
         mux_sender.close()

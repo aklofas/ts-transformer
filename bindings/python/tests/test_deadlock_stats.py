@@ -17,6 +17,7 @@ asserts no single stats call takes longer than 5 seconds.
 
 from __future__ import annotations
 
+from tstrans import shells
 import threading
 import time
 
@@ -57,19 +58,19 @@ def test_srt_demux_receiver_stats_no_deadlock_with_byte_sink() -> None:
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
 
-    rx_box: list[tstrans.srt.DemuxReceiver] = []
+    rx_box: list[tstrans.shells.DemuxReceiver] = []
     rx_err: list[BaseException] = []
 
     def accept_worker() -> None:
         try:
-            rx_box.append(tstrans.srt.DemuxReceiver.from_url(listener_url))
+            rx_box.append(shells.DemuxReceiver.open(listener_url))
         except BaseException as exc:  # noqa: BLE001
             rx_err.append(exc)
 
     accept_t = threading.Thread(target=accept_worker, daemon=True)
     accept_t.start()
     time.sleep(0.1)
-    sender = tstrans.srt.MuxSender.from_url(caller_url, _video_only_program())
+    sender = shells.MuxSender.open(caller_url, _video_only_program())
     accept_t.join(timeout=5.0)
     if rx_err:
         sender.close()

@@ -1,4 +1,4 @@
-"""Tests for `tstrans.srt.Sender` / `Receiver` / `SocketStats` /
+"""Tests for `tstrans.shells.Sender` / `Receiver` / `SocketStats` /
 `SrtStats` / `CancelHandle`.
 
 Uses real libsrt loopback sockets — no external network. A listener-mode
@@ -9,6 +9,7 @@ another thread wakes a parked recv within a few seconds.
 
 from __future__ import annotations
 
+from tstrans import shells
 import threading
 import time
 from typing import Optional, Tuple
@@ -20,11 +21,12 @@ import tstrans.srt
 from tstrans.exceptions import SrtError, SrtErrorKind
 
 from _builders.ports import free_tcp_port as _free_tcp_port
+from _builders.ports import free_udp_port
 
 
 def _make_loopback_pair(
     port: int, payload_size: Optional[int] = None
-) -> Tuple[tstrans.srt.Sender, tstrans.srt.Receiver]:
+) -> Tuple[tstrans.shells.Sender, tstrans.shells.Receiver]:
     """Spawn a listener-mode Receiver on a background thread; once it's
     accepting, connect a caller-mode Sender from the main thread.
     Returns (sender, receiver). Callers must `.close()` both."""
@@ -32,12 +34,12 @@ def _make_loopback_pair(
     listener_url = f"srt://:{port}?mode=listener{extra}"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller{extra}"
 
-    receiver_box: list[tstrans.srt.Receiver] = []
+    receiver_box: list[tstrans.shells.Receiver] = []
     receiver_err: list[BaseException] = []
 
     def accept_worker() -> None:
         try:
-            r = tstrans.srt.Receiver.from_url(listener_url)
+            r = shells.Receiver.open(listener_url)
             receiver_box.append(r)
         except BaseException as exc:  # noqa: BLE001
             receiver_err.append(exc)
@@ -50,7 +52,7 @@ def _make_loopback_pair(
     # racing the listener startup.
     time.sleep(0.1)
 
-    sender = tstrans.srt.Sender.from_url(caller_url)
+    sender = shells.Sender.open(caller_url)
     t.join(timeout=5.0)
     if receiver_err:
         sender.close()
@@ -67,14 +69,14 @@ def _make_loopback_pair(
 
 
 def test_module_re_exports() -> None:
-    """`tstrans.srt` must expose the 5 transport classes."""
-    assert tstrans.srt.Sender is not None
-    assert tstrans.srt.Receiver is not None
-    assert tstrans.srt.SocketStats is not None
+    """`tstrans.srt` exposes `SrtStats`; the shells live in `tstrans.shells`."""
+    assert tstrans.shells.Sender is not None
+    assert tstrans.shells.Receiver is not None
+    assert tstrans.shells.SocketStats is not None
     assert tstrans.srt.SrtStats is not None
-    assert tstrans.srt.CancelHandle is not None
-    assert "Sender" in tstrans.srt.__all__
-    assert "Receiver" in tstrans.srt.__all__
+    assert tstrans.shells.CancelHandle is not None
+    assert "Sender" in dir(shells)
+    assert "Receiver" in dir(shells)
     assert "SrtStats" in tstrans.srt.__all__
 
 
@@ -91,7 +93,7 @@ def test_sender_construct_and_close() -> None:
     # No listener on this port. With a short conntimeo, the SRT
     # handshake fails fast.
     with pytest.raises(SrtError) as exc_info:
-        tstrans.srt.Sender.from_url(
+        shells.Sender.open(
             f"srt://127.0.0.1:{port}?mode=caller&conntimeo=500"
         )
     # Either TIMEOUT (handshake didn't complete) or CONNECT_FAILED
@@ -100,10 +102,15 @@ def test_sender_construct_and_close() -> None:
 
 
 def test_sender_bad_url_raises_config_invalid() -> None:
-    """Malformed URL → SrtError(CONFIG_INVALID) before any socket op."""
+    """Malformed `srt://` URL → SrtError(CONFIG_INVALID) before any socket op."""
     with pytest.raises(SrtError) as exc_info:
-        tstrans.srt.Sender.from_url("not-a-valid-url")
+        shells.Sender.open("srt://127.0.0.1:notaport?mode=caller")
     assert exc_info.value.kind == SrtErrorKind.CONFIG_INVALID
+
+
+def test_sender_unsupported_scheme_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="unsupported URL scheme"):
+        shells.Sender.open("not-a-valid-url")
 
 
 def test_sender_wrong_mode_raises_config_invalid() -> None:
@@ -111,7 +118,7 @@ def test_sender_wrong_mode_raises_config_invalid() -> None:
     listener → SrtError(CONFIG_INVALID)."""
     port = _free_tcp_port()
     with pytest.raises(SrtError) as exc_info:
-        tstrans.srt.Sender.from_url(f"srt://127.0.0.1:{port}?mode=listener")
+        shells.Sender.open(f"srt://127.0.0.1:{port}?mode=listener")
     assert exc_info.value.kind == SrtErrorKind.CONFIG_INVALID
 
 
@@ -120,7 +127,7 @@ def test_receiver_wrong_mode_raises_config_invalid() -> None:
     SrtError(CONFIG_INVALID)."""
     port = _free_tcp_port()
     with pytest.raises(SrtError) as exc_info:
-        tstrans.srt.Receiver.from_url(f"srt://127.0.0.1:{port}?mode=caller")
+        shells.Receiver.open(f"srt://127.0.0.1:{port}?mode=caller")
     assert exc_info.value.kind == SrtErrorKind.CONFIG_INVALID
 
 
@@ -304,7 +311,7 @@ def test_context_manager() -> None:
     t = threading.Thread(target=accept_worker, daemon=True)
     t.start()
     try:
-        with tstrans.srt.Sender.from_url(f"srt://127.0.0.1:{port}?mode=caller") as s:
+        with shells.Sender.open(f"srt://127.0.0.1:{port}?mode=caller") as s:
             assert "open" in repr(s)
             assert s.is_alive()
         # After the with-block, send_bytes must raise CLOSED.
@@ -459,23 +466,17 @@ def test_cancel_handle_state_is_shared_per_shell() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_socket_stats_class_shape_matches_rtp() -> None:
-    """`tstrans.srt.SocketStats` and `tstrans.rtp.SocketStats` must
-    expose the same property set — bindings often need to read the
-    abstract wire stats without knowing which transport they came from.
-    Skip when rtp is unavailable (alternative build feature off)."""
-    rtp = pytest.importorskip("tstrans.rtp")
-
-    srt_props = {
-        name
-        for name in dir(tstrans.srt.SocketStats)
-        if not name.startswith("_")
-    }
-    rtp_props = {name for name in dir(rtp.SocketStats) if not name.startswith("_")}
-    assert srt_props == rtp_props, (
-        f"shape diverged: srt-only={srt_props - rtp_props}, "
-        f"rtp-only={rtp_props - srt_props}"
-    )
+def test_socket_stats_is_one_class_across_transports() -> None:
+    """Every shell over every transport returns the same `SocketStats`
+    class, so bindings read the abstract wire stats without knowing which
+    transport they came from."""
+    port = free_udp_port()
+    with shells.Receiver.open(f"rtp://127.0.0.1:{port}") as rx:
+        assert isinstance(rx.socket_stats(), shells.SocketStats)
+    with shells.Receiver.open(f"udp://127.0.0.1:{free_udp_port()}") as rx:
+        assert isinstance(rx.socket_stats(), shells.SocketStats)
+    srt_props = {n for n in dir(shells.SocketStats) if not n.startswith("_")}
+    assert {"bytes_sent", "bytes_received"} <= srt_props
 
 
 def test_srt_stats_has_advanced_fields_not_in_socket_stats() -> None:
@@ -489,7 +490,7 @@ def test_srt_stats_has_advanced_fields_not_in_socket_stats() -> None:
     }
     socket_stats_props = {
         name
-        for name in dir(tstrans.srt.SocketStats)
+        for name in dir(tstrans.shells.SocketStats)
         if not name.startswith("_")
     }
     extras = srt_stats_props - socket_stats_props
@@ -501,8 +502,8 @@ def test_srt_stats_has_advanced_fields_not_in_socket_stats() -> None:
 @pytest.mark.parametrize(
     "opener",
     [
-        pytest.param(lambda url: tstrans.srt.Receiver.from_url(url), id="Receiver"),
-        pytest.param(lambda url: tstrans.srt.DemuxReceiver.from_url(url), id="DemuxReceiver"),
+        pytest.param(lambda url: shells.Receiver.open(url), id="Receiver"),
+        pytest.param(lambda url: shells.DemuxReceiver.open(url), id="DemuxReceiver"),
         pytest.param(lambda url: tstrans.srt.ManagedReceiver.from_url(url), id="ManagedReceiver"),
         pytest.param(
             lambda url: tstrans.srt.ManagedDemuxReceiver.from_url(url), id="ManagedDemuxReceiver"
@@ -536,8 +537,6 @@ def test_listener_open_bind_fault_is_broken_with_a_bind_prefix(opener) -> None:
 # miss this guard exists to catch. `CONNECT_FAILED` is NOT forbidden: the two
 # dual-mode shells still raise it for the caller half.
 _LISTENER_OPENS = [
-    "Receiver",
-    "DemuxReceiver",
     "ManagedReceiver",
     "ManagedDemuxReceiver",
 ]
@@ -557,6 +556,15 @@ def test_listener_open_docstring_names_broken_not_accept_failed(cls_name: str) -
     assert "ACCEPT_FAILED" not in live, (
         f"srt.{cls_name}.from_url still promises ACCEPT_FAILED as a live kind"
     )
+
+
+@pytest.mark.parametrize("cls_name", ["Receiver", "DemuxReceiver"])
+def test_shell_open_docstring_does_not_promise_accept_failed(cls_name: str) -> None:
+    """The shells' `open` is the one listener open; its docstring must not
+    promise the retired `ACCEPT_FAILED` kind."""
+    doc = getattr(shells, cls_name).open.__doc__ or ""
+    assert doc.strip(), f"shells.{cls_name}.open has no docstring"
+    assert "ACCEPT_FAILED" not in doc.split("Before 0.7.0")[0]
 
 
 def test_no_srt_docstring_names_a_retired_kind() -> None:

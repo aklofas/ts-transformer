@@ -11,7 +11,7 @@ observable halves of that contract on all three Python mux-sender classes:
 * a send after `finish()` raises the transport's `CLOSED` kind.
 
 The loopback fixtures are the ones `test_cross_thread_close.py` already
-uses: a listener-mode `srt.Receiver` that never reads (so libsrt's own send
+uses: a listener-mode `shells.Receiver` that never reads (so libsrt's own send
 buffer absorbs the payload and the drain has nothing to report), and a bound
 UDP sink for RTP (so a connected sender never sees ECONNREFUSED). Nothing
 here parks, so no test needs a watchdog.
@@ -19,6 +19,7 @@ here parks, so no test needs a watchdog.
 
 from __future__ import annotations
 
+from tstrans import shells
 import socket
 import threading
 import time
@@ -32,7 +33,7 @@ NAL_IDR = b"\x00\x00\x00\x01\x65\xBB"
 
 
 def _srt_listener_peer(port: int):
-    """Listener-mode `srt.Receiver` accepted on a side thread.
+    """Listener-mode `shells.Receiver` accepted on a side thread.
 
     Mirrors `test_cross_thread_close._srt_mux_sender_with_silent_peer`, but
     returns the accept box so the caller can build either mux-sender class
@@ -45,7 +46,7 @@ def _srt_listener_peer(port: int):
 
     def accept_worker() -> None:
         try:
-            box.append(srt.Receiver.from_url(f"srt://:{port}?mode=listener"))
+            box.append(shells.Receiver.open(f"srt://:{port}?mode=listener"))
         except BaseException as exc:  # noqa: BLE001
             errs.append(exc)
 
@@ -62,7 +63,7 @@ def test_srt_mux_sender_finish_closes_and_is_idempotent() -> None:
 
     port = _free_tcp_port()
     box, errs, t = _srt_listener_peer(port)
-    tx = srt.MuxSender.from_url(
+    tx = shells.MuxSender.open(
         f"srt://127.0.0.1:{port}?mode=caller", _video_only_program()
     )
     t.join(5.0)
@@ -94,7 +95,7 @@ def test_srt_mux_sender_finish_after_close_is_quiet() -> None:
 
     port = _free_tcp_port()
     box, errs, t = _srt_listener_peer(port)
-    tx = srt.MuxSender.from_url(
+    tx = shells.MuxSender.open(
         f"srt://127.0.0.1:{port}?mode=caller", _video_only_program()
     )
     t.join(5.0)
@@ -146,7 +147,7 @@ def test_rtp_mux_sender_finish_closes() -> None:
     sink.bind(("127.0.0.1", 0))
     port = sink.getsockname()[1]
     try:
-        tx = rtp.MuxSender(f"rtp://127.0.0.1:{port}", _video_only_program())
+        tx = shells.MuxSender.open(f"rtp://127.0.0.1:{port}", _video_only_program())
         try:
             tx.send_video(NAL_IDR, pts=Pts90khz.from_raw(0), key_frame=True)
             assert tx.finish() is None

@@ -240,6 +240,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CancelHandle` and `SocketStats` returned by every srt and rtp class
   (listeners, managed shells, `H264Receiver`, the raw RTP transports) are
   `tstrans.shells.CancelHandle` / `SocketStats`.
+- `Class.open(url)` (and the deprecated `tstrans.srt`/`tstrans.rtp` aliases) raise `ValueError` for a URL whose scheme no shell supports; previously the srt/rtp class raised its transport's `CONFIG_INVALID`. A supported scheme with a bad URL still raises that transport's error.
 
 ### Changed — tst-jni (BREAKING)
 

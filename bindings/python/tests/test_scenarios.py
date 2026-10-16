@@ -77,6 +77,7 @@ Unknown golden event tags
 
 from __future__ import annotations
 
+from tstrans import shells
 import hashlib
 import json
 import sys
@@ -734,14 +735,14 @@ def _run_cancelled_recv_kind(scenario_id: str, rescue_frame: bytes) -> list[dict
 
     def accept_worker() -> None:
         try:
-            box.append(tstrans.srt.Receiver.from_url(listener_url))
+            box.append(shells.Receiver.open(listener_url))
         except BaseException as exc:  # noqa: BLE001
             acc_err.append(exc)
 
     acc = threading.Thread(target=accept_worker, daemon=True, name="accept")
     acc.start()
     time.sleep(0.2)
-    sender = tstrans.srt.Sender.from_url(caller_url)
+    sender = shells.Sender.open(caller_url)
     acc.join(timeout=10.0)
     assert not acc.is_alive() and not acc_err, f"[{scenario_id}] accept failed: {acc_err!r}"
     receiver = box[0]

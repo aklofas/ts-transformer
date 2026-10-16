@@ -1,4 +1,4 @@
-"""Tests for `tstrans.srt.MuxSender` + `tstrans.srt.DemuxReceiver`.
+"""Tests for `tstrans.shells.MuxSender` + `tstrans.shells.DemuxReceiver`.
 
 Loopback-only tests against a libsrt caller<->listener pair on a single
 host. Each test spawns a listener-side worker on a background thread
@@ -8,6 +8,7 @@ the end. No external network is required.
 
 from __future__ import annotations
 
+from tstrans import shells
 import threading
 import time
 from typing import Optional, Tuple
@@ -43,7 +44,7 @@ from _builders.ports import free_tcp_port as _free_tcp_port
 
 def _make_mux_demux_pair(
     port: int, *, program: Optional[object] = None
-) -> Tuple[tstrans.srt.MuxSender, tstrans.srt.DemuxReceiver]:
+) -> Tuple[tstrans.shells.MuxSender, tstrans.shells.DemuxReceiver]:
     """Spawn a listener-mode DemuxReceiver on a background thread; once
     it's accepting, connect a caller-mode MuxSender from the main
     thread. Returns (mux_sender, demux_receiver). Callers must
@@ -52,12 +53,12 @@ def _make_mux_demux_pair(
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
 
-    rx_box: list[tstrans.srt.DemuxReceiver] = []
+    rx_box: list[tstrans.shells.DemuxReceiver] = []
     rx_err: list[BaseException] = []
 
     def accept_worker() -> None:
         try:
-            r = tstrans.srt.DemuxReceiver.from_url(listener_url)
+            r = shells.DemuxReceiver.open(listener_url)
             rx_box.append(r)
         except BaseException as exc:  # noqa: BLE001
             rx_err.append(exc)
@@ -67,7 +68,7 @@ def _make_mux_demux_pair(
     # libsrt's bind+listen is fast but not instant; sleep before
     # connecting from the main thread to avoid racing the listener.
     time.sleep(0.1)
-    sender = tstrans.srt.MuxSender.from_url(caller_url, prog)
+    sender = shells.MuxSender.open(caller_url, prog)
     t.join(timeout=5.0)
     if rx_err:
         sender.close()
@@ -98,11 +99,11 @@ DATA_RECORD = b"\x01\x02\x03\x04private-record"
 
 
 def test_mux_demux_module_re_exports() -> None:
-    """`tstrans.srt.{MuxSender,DemuxReceiver}` must be exposed."""
-    assert tstrans.srt.MuxSender is not None
-    assert tstrans.srt.DemuxReceiver is not None
-    assert "MuxSender" in tstrans.srt.__all__
-    assert "DemuxReceiver" in tstrans.srt.__all__
+    """`tstrans.shells.{MuxSender,DemuxReceiver}` must be exposed."""
+    assert shells.MuxSender is not None
+    assert shells.DemuxReceiver is not None
+    assert "MuxSender" in dir(shells)
+    assert "DemuxReceiver" in dir(shells)
 
 
 # --------------------------------------------------------------------------- #
@@ -115,7 +116,7 @@ def test_mux_sender_wrong_mode_raises_config_invalid() -> None:
     URL → SrtError(CONFIG_INVALID)."""
     port = _free_tcp_port()
     with pytest.raises(SrtError) as exc_info:
-        tstrans.srt.MuxSender.from_url(
+        shells.MuxSender.open(
             f"srt://127.0.0.1:{port}?mode=listener", _video_only_program()
         )
     assert exc_info.value.kind == SrtErrorKind.CONFIG_INVALID
@@ -126,7 +127,7 @@ def test_demux_receiver_wrong_mode_raises_config_invalid() -> None:
     caller URL → SrtError(CONFIG_INVALID)."""
     port = _free_tcp_port()
     with pytest.raises(SrtError) as exc_info:
-        tstrans.srt.DemuxReceiver.from_url(
+        shells.DemuxReceiver.open(
             f"srt://127.0.0.1:{port}?mode=caller"
         )
     assert exc_info.value.kind == SrtErrorKind.CONFIG_INVALID
@@ -134,8 +135,13 @@ def test_demux_receiver_wrong_mode_raises_config_invalid() -> None:
 
 def test_mux_sender_bad_url_raises_config_invalid() -> None:
     with pytest.raises(SrtError) as exc_info:
-        tstrans.srt.MuxSender.from_url("not-a-valid-url", _video_only_program())
+        shells.MuxSender.open("srt://127.0.0.1:notaport?mode=caller", _video_only_program())
     assert exc_info.value.kind == SrtErrorKind.CONFIG_INVALID
+
+
+def test_mux_sender_unsupported_scheme_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="unsupported URL scheme"):
+        shells.MuxSender.open("not-a-valid-url", _video_only_program())
 
 
 # --------------------------------------------------------------------------- #
@@ -360,7 +366,7 @@ def test_mux_sender_stats_tuple_shape() -> None:
         assert isinstance(stats, tuple)
         assert len(stats) == 2
         sock_stats, mux_stats = stats
-        # tstrans.srt.SocketStats class identity.
+        # tstrans.shells.SocketStats class identity.
         assert type(sock_stats).__name__ == "SocketStats"
         # MuxerStats lives in tstrans.mpegts but is re-used by the
         # MuxSender wrapper.
@@ -498,12 +504,12 @@ def test_socket_into_demux_receiver_promotion() -> None:
     bldr = tstrans.srt.Builder(f"srt://:{port}?mode=listener").listener()
     listener = bldr.listen()
 
-    sender_box: list[tstrans.srt.MuxSender] = []
+    sender_box: list[tstrans.shells.MuxSender] = []
 
     def caller_worker() -> None:
         try:
             time.sleep(0.1)
-            s = tstrans.srt.MuxSender.from_url(
+            s = shells.MuxSender.open(
                 f"srt://127.0.0.1:{port}?mode=caller", _video_only_program()
             )
             sender_box.append(s)
@@ -664,12 +670,12 @@ def test_demux_receiver_accepts_demux_config() -> None:
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
     cfg = DemuxerConfig(strict_mode=StrictMode.OFF)
 
-    rx_box: list[tstrans.srt.DemuxReceiver] = []
+    rx_box: list[tstrans.shells.DemuxReceiver] = []
     rx_err: list[BaseException] = []
 
     def accept_worker() -> None:
         try:
-            r = tstrans.srt.DemuxReceiver.from_url(listener_url, demux_config=cfg)
+            r = shells.DemuxReceiver.open(listener_url, demux_config=cfg)
             rx_box.append(r)
         except BaseException as exc:  # noqa: BLE001
             rx_err.append(exc)
@@ -677,7 +683,7 @@ def test_demux_receiver_accepts_demux_config() -> None:
     t = threading.Thread(target=accept_worker, daemon=True)
     t.start()
     time.sleep(0.1)
-    sender = tstrans.srt.MuxSender.from_url(caller_url, _video_only_program())
+    sender = shells.MuxSender.open(caller_url, _video_only_program())
     t.join(timeout=5.0)
     if rx_err:
         sender.close()
@@ -694,7 +700,7 @@ def test_demux_sourced_failure_raises_demux_error_not_srt_error() -> None:
     transport-side failures become `SrtError`. Without the split the whole
     `DemuxReceiverError` would collapse onto the SRT domain.
 
-    The peer is a plain `srt.Sender` (raw TS bytes) so the bytes reach the
+    The peer is a plain `shells.Sender` (raw TS bytes) so the bytes reach the
     demuxer exactly as written — a `MuxSender` would only ever emit
     conformant PSI. The iteration runs on a worker with a bounded join and a
     rescue `close()`, so a regression that stops raising fails the test
@@ -711,13 +717,13 @@ def test_demux_sourced_failure_raises_demux_error_not_srt_error() -> None:
 
     port = _free_tcp_port()
     cfg = DemuxerConfig(strict_mode=StrictMode.FULL)
-    rx_box: list[tstrans.srt.DemuxReceiver] = []
+    rx_box: list[tstrans.shells.DemuxReceiver] = []
     rx_err: list[BaseException] = []
 
     def accept_worker() -> None:
         try:
             rx_box.append(
-                tstrans.srt.DemuxReceiver.from_url(
+                shells.DemuxReceiver.open(
                     f"srt://:{port}?mode=listener", demux_config=cfg
                 )
             )
@@ -727,7 +733,7 @@ def test_demux_sourced_failure_raises_demux_error_not_srt_error() -> None:
     t = threading.Thread(target=accept_worker, daemon=True)
     t.start()
     time.sleep(0.15)
-    tx = tstrans.srt.Sender.from_url(f"srt://127.0.0.1:{port}?mode=caller")
+    tx = shells.Sender.open(f"srt://127.0.0.1:{port}?mode=caller")
     t.join(5.0)
     if rx_err:
         tx.close()

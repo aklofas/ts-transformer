@@ -14,6 +14,7 @@ throughout (de-flake convention).
 
 from __future__ import annotations
 
+from tstrans import shells
 import threading
 import time
 from typing import Optional, Tuple
@@ -57,23 +58,23 @@ def _build_minimal_ts_bytes() -> bytes:
 
 def _make_srt_pair(
     port: int,
-) -> Tuple[tstrans.srt.MuxSender, tstrans.srt.DemuxReceiver]:
+) -> Tuple[tstrans.shells.MuxSender, tstrans.shells.DemuxReceiver]:
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
 
-    rx_box: list[tstrans.srt.DemuxReceiver] = []
+    rx_box: list[tstrans.shells.DemuxReceiver] = []
     rx_err: list[BaseException] = []
 
     def accept_worker() -> None:
         try:
-            rx_box.append(tstrans.srt.DemuxReceiver.from_url(listener_url))
+            rx_box.append(shells.DemuxReceiver.open(listener_url))
         except BaseException as exc:  # noqa: BLE001
             rx_err.append(exc)
 
     t = threading.Thread(target=accept_worker, daemon=True)
     t.start()
     time.sleep(0.1)
-    sender = tstrans.srt.MuxSender.from_url(caller_url, _video_only_program())
+    sender = shells.MuxSender.open(caller_url, _video_only_program())
     t.join(timeout=5.0)
     if rx_err:
         sender.close()
@@ -261,7 +262,7 @@ def test_srt_add_byte_sink_on_closed_raises_closed() -> None:
 
 def test_rtp_byte_sink_fanout_sees_ts_packets() -> None:
     port = _free_udp_port()
-    rx = tstrans.rtp.DemuxReceiver(f"rtp://127.0.0.1:{port}")
+    rx = shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}")
 
     captured: list[bytes] = []
     rx.add_byte_sink(captured.append)
@@ -281,7 +282,7 @@ def test_rtp_byte_sink_fanout_sees_ts_packets() -> None:
     t.start()
     time.sleep(0.2)
     ts_bytes = _build_minimal_ts_bytes()
-    with tstrans.rtp.Sender(f"rtp://127.0.0.1:{port}") as snd:
+    with tstrans.rtp.Transport(f"rtp://127.0.0.1:{port}") as snd:
         for _ in range(3):
             for i in range(0, len(ts_bytes), 188):
                 snd.send(ts_bytes[i : i + 188])
@@ -303,7 +304,7 @@ def test_rtp_byte_sink_fanout_sees_ts_packets() -> None:
 
 def test_rtp_byte_sink_failure_propagates_fail_loud() -> None:
     port = _free_udp_port()
-    rx = tstrans.rtp.DemuxReceiver(f"rtp://127.0.0.1:{port}")
+    rx = shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}")
 
     def boom(_pkt: bytes) -> None:
         raise ValueError("boom")
@@ -326,7 +327,7 @@ def test_rtp_byte_sink_failure_propagates_fail_loud() -> None:
     t.start()
     time.sleep(0.2)
     ts_bytes = _build_minimal_ts_bytes()
-    with tstrans.rtp.Sender(f"rtp://127.0.0.1:{port}") as snd:
+    with tstrans.rtp.Transport(f"rtp://127.0.0.1:{port}") as snd:
         for _ in range(3):
             for i in range(0, len(ts_bytes), 188):
                 snd.send(ts_bytes[i : i + 188])
@@ -347,7 +348,7 @@ def test_rtp_byte_sink_failure_propagates_fail_loud() -> None:
 
 def test_rtp_two_byte_sinks_fire_in_registration_order() -> None:
     port = _free_udp_port()
-    rx = tstrans.rtp.DemuxReceiver(f"rtp://127.0.0.1:{port}")
+    rx = shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}")
 
     log: list[str] = []
     log_lock = threading.Lock()
@@ -376,7 +377,7 @@ def test_rtp_two_byte_sinks_fire_in_registration_order() -> None:
     t.start()
     time.sleep(0.2)
     ts_bytes = _build_minimal_ts_bytes()
-    with tstrans.rtp.Sender(f"rtp://127.0.0.1:{port}") as snd:
+    with tstrans.rtp.Transport(f"rtp://127.0.0.1:{port}") as snd:
         for _ in range(3):
             for i in range(0, len(ts_bytes), 188):
                 snd.send(ts_bytes[i : i + 188])
@@ -399,7 +400,7 @@ def test_rtp_two_byte_sinks_fire_in_registration_order() -> None:
 
 def test_rtp_add_byte_sink_on_closed_raises() -> None:
     port = _free_udp_port()
-    rx = tstrans.rtp.DemuxReceiver(f"rtp://127.0.0.1:{port}")
+    rx = shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}")
     rx.close()
     with pytest.raises(RtpError) as exc_info:
         rx.add_byte_sink(lambda _pkt: None)
