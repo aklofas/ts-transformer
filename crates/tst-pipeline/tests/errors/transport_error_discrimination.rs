@@ -7,7 +7,7 @@
 //! ## Coverage
 //!
 //! 5 `TransportError` → `ShellErrorKind` routings exercised (per
-//! `shell_error.rs` `kind_from_transport`):
+//! `binding::kind::kind_of_transport`):
 //!
 //! | `TransportError` variant | Shell | `ShellErrorKind` | Test |
 //! |--------------------------|-------|------------------|------|
@@ -120,7 +120,7 @@ fn broken_propagates_to_shell_as_transport_broken_kind() {
 /// A `ScriptedRecv` that fails `Closed` at once gives
 /// `ShellErrorKind::EndOfStream` + `ReceiverErrorSource::Transport(Closed)`.
 ///
-/// The `Closed` → `EndOfStream` mapping only applies when `kind_from_transport`
+/// The `Closed` → `EndOfStream` mapping only applies when `kind_of_transport`
 /// receives `Direction::Recv`. The same `Closed` variant on the send side maps
 /// to `Closed` kind (a different route). This test pins the receiver-side
 /// routing to catch any future swap.

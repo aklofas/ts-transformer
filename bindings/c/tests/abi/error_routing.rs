@@ -73,7 +73,7 @@ fn reset() {
 fn mux_sender_config_invalid_returns_invalid_config_code() {
     reset();
     // `MuxError::EmptyProgram` carries kind ConfigInvalid via
-    // `kind_from_mux` in shell_error.rs.
+    // `coarsen(kind_of_mux(..))` in tst-pipeline's `binding::kind`.
     let e = MuxSenderError::from(MuxError::EmptyProgram { program_number: 1 });
     let rc = test_record_shell_error(&e);
     assert_eq!(

@@ -33,9 +33,8 @@ public final class HlsException extends BindingException {
         TLS,
         /**
          * Library-internal failure: an invariant tripped that should not occur in
-         * well-formed use (file an issue with reproduction bytes), a poisoned
-         * handle lock, or an unmapped variant of a `#[non_exhaustive]` upstream
-         * enum.
+         * well-formed use (file an issue with reproduction bytes), or a poisoned
+         * handle lock.
          */
         INTERNAL,
         /**

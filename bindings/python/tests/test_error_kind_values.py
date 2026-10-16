@@ -85,6 +85,10 @@ EXPECTED = {
         ("PEER_CREATE_FAILED", 7),
         ("BACKPRESSURE", 8),
         ("BROKEN", 9),
+        # Members appended for the shell-generic kinds the unified shells raise; every earlier pair is unchanged.
+        ("INPUT_MALFORMED", 10),
+        ("END_OF_STREAM", 11),
+        ("CONFIG_INVALID", 12),
     ],
     "RtpErrorKind": [
         ("BROKEN", 1),
@@ -136,6 +140,10 @@ EXPECTED = {
         ("TLS_DISABLED", 7),
         ("BACKPRESSURE", 8),
         ("BROKEN", 9),
+        # Members appended for the shell-generic kinds the unified shells raise; every earlier pair is unchanged.
+        ("INPUT_MALFORMED", 10),
+        ("END_OF_STREAM", 11),
+        ("CONFIG_INVALID", 12),
     ],
     "UdpErrorKind": [
         ("URL", 0),
@@ -145,6 +153,10 @@ EXPECTED = {
         ("INVALID_CONFIG", 6),
         ("BACKPRESSURE", 7),
         ("BROKEN", 8),
+        # Members appended for the shell-generic kinds the unified shells raise; every earlier pair is unchanged.
+        ("INPUT_MALFORMED", 9),
+        ("END_OF_STREAM", 10),
+        ("CONFIG_INVALID", 11),
     ],
 }
 

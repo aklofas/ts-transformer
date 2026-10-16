@@ -193,8 +193,8 @@ def test_encryption_key_aes192():
 
 
 def test_rist_error_kind_count():
-    """RistErrorKind has exactly 10 variants matching the Rust enum."""
-    assert len(RistErrorKind) == 10
+    """RistErrorKind has exactly 13 variants matching the Rust enum."""
+    assert len(RistErrorKind) == 13
 
 
 def test_rist_error_kind_values():

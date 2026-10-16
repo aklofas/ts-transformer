@@ -177,6 +177,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the slot lock is a spin lock: drive each handle from one task.
   `BindingError` implements `core::error::Error` (the same trait as
   `std::error::Error`).
+- `ShellErrorKind` is computed by coarsening the binding error-kind table
+  (`binding::BindingErrorKind`), so a shell and a binding classify one error
+  through the same table. No `ShellErrorKind` value changes for any error.
+  The table maps every tst-core error through its exhaustive `kind()`; the
+  "unmapped variant" `Internal` fallback is gone.
 
 ### Changed — tst-rtp (BREAKING)
 
@@ -301,6 +306,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in-memory server certificate (`tst_rtsp_server_builder_tls_cert_pem`)
   work in a `tls` build; before, no tst-c build could reach TLS. The header
   defines `TST_HAS_TLS`; ABI minor 24 (additive).
+
+### Added — tst-py
+
+- `tstrans.UdpErrorKind`, `tstrans.TcpErrorKind` and `tstrans.RistErrorKind`
+  gain the shell-generic kinds the unified shells raise: `INPUT_MALFORMED`,
+  `END_OF_STREAM` and `CONFIG_INVALID` (`UdpErrorKind` 9, 10, 11;
+  `TcpErrorKind` and `RistErrorKind` 10, 11, 12). Existing members keep
+  their values.
 
 ### Added — tst-jni
 

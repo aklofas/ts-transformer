@@ -436,7 +436,7 @@ def test_tcp_tls_caller_rejects_untrusted_cert() -> None:
 
 def test_tcp_error_kind_count() -> None:
     """Sentinel: catches drift if Rust adds a new TcpErrorKind variant."""
-    assert len(TcpErrorKind) == 10
+    assert len(TcpErrorKind) == 13
 
 
 def test_tcp_error_url_bad_scheme() -> None:

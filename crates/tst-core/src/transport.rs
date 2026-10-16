@@ -241,7 +241,7 @@ pub enum TransportError {
     /// `ManagedTransport` produce [`Self::Closed`] there instead (sender
     /// shells map both to `ShellErrorKind::Closed`).
     ///
-    /// **Shell-layer mapping (`kind_from_transport`):**
+    /// **Shell-layer mapping (`kind_of_transport`):**
     /// - `ExplicitClose` → `ShellErrorKind::Closed` (caller-initiated)
     /// - `Closed` on a receiver shell → `ShellErrorKind::EndOfStream` (peer-initiated)
     /// - `Closed` on a sender shell → `ShellErrorKind::Closed` (caller-initiated; sender shells expose `close()` and produce this on post-close calls)

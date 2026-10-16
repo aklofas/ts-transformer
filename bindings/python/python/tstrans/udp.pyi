@@ -41,7 +41,9 @@ class UdpErrorKind(IntEnum):
     """Discriminator for ``UdpError.kind``. The ``tstrans.udp`` subset of the
     Rust ``tst_pipeline::binding::BindingErrorKind`` table: ``URL`` / ``IO`` /
     ``INVALID_CONFIG`` from ``tst_udp::UdpError``, ``CLOSED`` / ``BROKEN`` /
-    ``BACKPRESSURE`` / ``TOO_LARGE`` from the transport."""
+    ``BACKPRESSURE`` / ``TOO_LARGE`` from the transport, and
+    ``INPUT_MALFORMED`` / ``END_OF_STREAM`` / ``CONFIG_INVALID`` shared with
+    every pipeline shell."""
 
     URL = 0
     IO = 2
@@ -50,6 +52,9 @@ class UdpErrorKind(IntEnum):
     INVALID_CONFIG = 6
     BACKPRESSURE = 7
     BROKEN = 8
+    INPUT_MALFORMED = 9
+    END_OF_STREAM = 10
+    CONFIG_INVALID = 11
 
 
 class UdpError(Exception):

@@ -51,6 +51,7 @@ impl Default for SenderConfig {
     }
 }
 
+use crate::binding::kind::{coarsen, kind_of_transport};
 use crate::shell_error::ShellErrorKind;
 
 /// Error returned by [`Sender`] methods.
@@ -105,7 +106,11 @@ pub enum SenderErrorSource {
 impl From<TsFramingError> for SenderError {
     fn from(e: TsFramingError) -> Self {
         Self {
-            kind: crate::shell_error::kind_from_framing(&e),
+            kind: match &e {
+                TsFramingError::SyncLost { .. } | TsFramingError::NoSyncAfterLimit { .. } => {
+                    ShellErrorKind::InputMalformed
+                }
+            },
             source: SenderErrorSource::Framing(e),
             input_consumed: None,
         }
@@ -115,7 +120,7 @@ impl From<TsFramingError> for SenderError {
 impl From<tst_core::transport::TransportError> for SenderError {
     fn from(e: tst_core::transport::TransportError) -> Self {
         Self {
-            kind: crate::shell_error::kind_from_transport(&e, crate::shell_error::Direction::Send),
+            kind: coarsen(kind_of_transport(&e, crate::shell_error::Direction::Send)),
             source: SenderErrorSource::Transport(e),
             input_consumed: None,
         }

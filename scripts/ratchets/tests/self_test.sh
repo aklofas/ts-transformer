@@ -15,9 +15,9 @@
 # point `scripts/ratchets/lib/coverage.sh` and
 # `scripts/ratchets/error-mapping.tsv` had no reader at all and went too.
 # What all three were guarding is now one Rust table:
-# `scripts/check/rust/kind-table-coverage.sh` plus
-# `scripts/check/repo/kind-equivalence.sh`, and binding-side
-# `raise.rs::check_error_kinds` at `import tstrans`.
+# the exhaustive `kind()` of each tst-core error and the wildcard-free maps
+# in `kind.rs` (the compiler), `scripts/check/repo/kind-equivalence.sh`, and
+# binding-side `raise.rs::check_error_kinds` at `import tstrans`.
 #
 # The surviving cases are the C-header rail's, the blocking-slot-reader
 # rail's and the duplicate-test-helper rail's.

@@ -48,6 +48,7 @@
 //! truncated — callers already need to tolerate arbitrary payload content
 //! from hostile or interrupted wire data.
 
+use crate::binding::kind::{coarsen, kind_of_demux, kind_of_transport};
 use crate::receiver::{Receiver, ReceiverConfig, ReceiverErrorSource};
 use crate::shell_error::ShellErrorKind;
 use alloc::boxed::Box;
@@ -546,7 +547,7 @@ pub enum DemuxReceiverErrorSource {
 impl From<TransportError> for DemuxReceiverError {
     fn from(e: TransportError) -> Self {
         Self {
-            kind: crate::shell_error::kind_from_transport(&e, crate::shell_error::Direction::Recv),
+            kind: coarsen(kind_of_transport(&e, crate::shell_error::Direction::Recv)),
             source: DemuxReceiverErrorSource::Transport(e),
         }
     }
@@ -555,7 +556,7 @@ impl From<TransportError> for DemuxReceiverError {
 impl From<DemuxError> for DemuxReceiverError {
     fn from(e: DemuxError) -> Self {
         Self {
-            kind: crate::shell_error::kind_from_demux(&e),
+            kind: coarsen(kind_of_demux(&e)),
             source: DemuxReceiverErrorSource::Demux(e),
         }
     }

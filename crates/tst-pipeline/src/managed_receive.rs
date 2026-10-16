@@ -318,7 +318,7 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
 impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         // Caller-initiated paths (close() or cancel_handle().cancel()) return
-        // ExplicitClose. The receive-side shell's kind_from_transport maps this
+        // ExplicitClose. The receive-side shell's kind_of_transport maps this
         // to ShellErrorKind::Closed (→ TST_E_CLOSED -7), distinguishing from
         // peer-EOS which arrives as TransportError::Closed from the inner
         // transport's recv_bytes and maps to ShellErrorKind::EndOfStream
@@ -367,7 +367,7 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
                     );
                     // Peer is unreachable beyond the reconnect budget — semantically
                     // "stream is over from the inner-transport's perspective." Shell's
-                    // kind_from_transport maps Closed → EndOfStream (→ TST_E_END_OF_STREAM)
+                    // kind_of_transport maps Closed → EndOfStream (→ TST_E_END_OF_STREAM)
                     // for the receive side, distinguishing from caller-initiated ExplicitClose
                     // above.
                     self.closed = true;

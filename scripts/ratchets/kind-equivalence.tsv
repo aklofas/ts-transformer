@@ -4,9 +4,9 @@
 #   one row per BindingErrorKind, in BindingErrorKind::ALL order; py / jvm list the
 #   <Enum>.<member> each binding declares ('-' = none: a C-only kind, or a panic
 #   that Python raises as PanicException and the JVM as RuntimeException).
-CONFIG_INVALID	CONFIG_INVALID	-1	-1	SrtErrorKind.CONFIG_INVALID;MuxErrorKind.CONFIG_INVALID	ok	SrtException.Kind.CONFIG_INVALID;MuxException.Kind.CONFIG_INVALID	ok
+CONFIG_INVALID	CONFIG_INVALID	-1	-1	SrtErrorKind.CONFIG_INVALID;UdpErrorKind.CONFIG_INVALID;TcpErrorKind.CONFIG_INVALID;RistErrorKind.CONFIG_INVALID;MuxErrorKind.CONFIG_INVALID	ok	SrtException.Kind.CONFIG_INVALID;MuxException.Kind.CONFIG_INVALID	ok
 INVALID_NAL	INVALID_NAL	-2	-2	MuxErrorKind.INVALID_NAL	ok	MuxException.Kind.INVALID_NAL	ok
-INPUT_MALFORMED	INPUT_MALFORMED	-3	-3	SrtErrorKind.INPUT_MALFORMED;MuxErrorKind.INPUT_MALFORMED	ok	SrtException.Kind.INPUT_MALFORMED;MuxException.Kind.INPUT_MALFORMED	ok
+INPUT_MALFORMED	INPUT_MALFORMED	-3	-3	SrtErrorKind.INPUT_MALFORMED;UdpErrorKind.INPUT_MALFORMED;TcpErrorKind.INPUT_MALFORMED;RistErrorKind.INPUT_MALFORMED;MuxErrorKind.INPUT_MALFORMED	ok	SrtException.Kind.INPUT_MALFORMED;MuxException.Kind.INPUT_MALFORMED	ok
 BACKPRESSURE	BACKPRESSURE	-4	-4	SrtErrorKind.BACKPRESSURE;RtpErrorKind.BACKPRESSURE;UdpErrorKind.BACKPRESSURE;TcpErrorKind.BACKPRESSURE;RistErrorKind.BACKPRESSURE;MuxErrorKind.BACKPRESSURE	ok	SrtException.Kind.BACKPRESSURE;RtpException.Kind.BACKPRESSURE;MuxException.Kind.BACKPRESSURE	ok
 KLV_TOO_LARGE	KLV_TOO_LARGE	-5	-5	MuxErrorKind.KLV_TOO_LARGE	ok	MuxException.Kind.KLV_TOO_LARGE	ok
 TOO_LARGE	TOO_LARGE	-6	-6	SrtErrorKind.TOO_LARGE;RtpErrorKind.TOO_LARGE;UdpErrorKind.TOO_LARGE;TcpErrorKind.TOO_LARGE;RistErrorKind.TOO_LARGE	ok	SrtException.Kind.TOO_LARGE;RtpException.Kind.TOO_LARGE	ok
@@ -15,7 +15,7 @@ BROKEN	BROKEN	-8	-8	SrtErrorKind.BROKEN;RtpErrorKind.BROKEN;UdpErrorKind.BROKEN;
 INVALID_USAGE	INVALID_USAGE	-9	-9	MuxErrorKind.INVALID_USAGE	ok	MuxException.Kind.INVALID_USAGE	ok
 INTERNAL	INTERNAL	-10	-10	HlsErrorKind.INTERNAL;MuxErrorKind.INTERNAL;KlvErrorKind.INTERNAL	ok	HlsException.Kind.INTERNAL;MuxException.Kind.INTERNAL;KlvDecodeException.Kind.INTERNAL	ok
 PANIC_CAUGHT	PANIC_CAUGHT	-11	-11	-	ok	-	ok
-END_OF_STREAM	END_OF_STREAM	-12	-12	SrtErrorKind.END_OF_STREAM;RtpErrorKind.END_OF_STREAM	ok	SrtException.Kind.END_OF_STREAM;RtpException.Kind.END_OF_STREAM	ok
+END_OF_STREAM	END_OF_STREAM	-12	-12	SrtErrorKind.END_OF_STREAM;RtpErrorKind.END_OF_STREAM;UdpErrorKind.END_OF_STREAM;TcpErrorKind.END_OF_STREAM;RistErrorKind.END_OF_STREAM	ok	SrtException.Kind.END_OF_STREAM;RtpException.Kind.END_OF_STREAM	ok
 NOT_AVAILABLE	NOT_AVAILABLE	-13	-13	-	ok	-	ok
 NOT_FOUND	NOT_FOUND	-14	-14	-	ok	-	ok
 INVALID_AV1_OBU	INVALID_AV1_OBU	-44	-44	MuxErrorKind.INVALID_AV1_OBU	ok	MuxException.Kind.INVALID_AV1_OBU	ok

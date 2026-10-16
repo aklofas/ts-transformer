@@ -77,6 +77,9 @@ fn py_values(d: Domain) -> Option<&'static [(BindingErrorKind, i64)]> {
             (K::UdpInvalidConfig, 6),
             (K::Backpressure, 7),
             (K::Broken, 8),
+            (K::InputMalformed, 9),
+            (K::EndOfStream, 10),
+            (K::ConfigInvalid, 11),
         ],
         Domain::Tcp => &[
             (K::TcpUrl, 0),
@@ -89,6 +92,9 @@ fn py_values(d: Domain) -> Option<&'static [(BindingErrorKind, i64)]> {
             (K::TcpTlsDisabled, 7),
             (K::Backpressure, 8),
             (K::Broken, 9),
+            (K::InputMalformed, 10),
+            (K::EndOfStream, 11),
+            (K::ConfigInvalid, 12),
         ],
         Domain::Hls => &[
             (K::HlsUrl, 0),
@@ -113,6 +119,9 @@ fn py_values(d: Domain) -> Option<&'static [(BindingErrorKind, i64)]> {
             (K::RistPeerCreateFailed, 7),
             (K::Backpressure, 8),
             (K::Broken, 9),
+            (K::InputMalformed, 10),
+            (K::EndOfStream, 11),
+            (K::ConfigInvalid, 12),
         ],
         Domain::Mux => &[
             (K::InputMalformed, 0),

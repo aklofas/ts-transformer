@@ -87,7 +87,7 @@ pub(crate) fn make_kinded_error(
 }
 
 // There are no per-kind `make_<name>_error` wrappers: the kind vocabulary
-// is proven Rust-side by scripts/check/rust/kind-table-coverage.sh and
+// is proven Rust-side by the exhaustive kind maps in tst-pipeline and
 // binding-side by `crate::raise::check_error_kinds` at `import tstrans`.
 // The handful of remaining callers name the class and the enum at the call
 // site.
