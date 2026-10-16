@@ -25,6 +25,7 @@ import pytest
 
 from _builders.hang_deadline import call_with_hang_deadline
 from _builders.mux_programs import video_only_program as _video_only_program
+from _builders.rist_ports import bind_even_port_or_skip
 from _builders.mux_programs import video_private_data_program as _video_data_program
 from _builders.ports import free_tcp_port as _free_tcp_port
 from _builders.ports import free_udp_port as _free_udp_port
@@ -731,6 +732,53 @@ def test_rtp_receiver_close_from_other_thread_while_recv_parked() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# rtp.MuxSender                                                               #
+# --------------------------------------------------------------------------- #
+
+
+def test_rtp_mux_sender_close_from_other_thread_during_send_video() -> None:
+    from tstrans.exceptions import RtpError, RtpErrorKind
+    from tstrans.mpegts import Pts90khz
+
+    sink, port = _udp_sink()
+    tx = shells.MuxSender.open(f"rtp://127.0.0.1:{port}", _video_only_program())
+    stop = threading.Event()
+    outcome: dict[str, object] = {}
+    pts = [0]
+
+    def send_one() -> None:
+        tx.send_video(NAL_IDR, pts=Pts90khz.from_raw(pts[0]), key_frame=True)
+        pts[0] += 3000
+
+    def worker() -> None:
+        outcome.update(_spin_sender(send_one, stop))
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    time.sleep(0.1)
+    try:
+        c, errs = _close_on_thread(tx)
+        stop.set()
+        w.join(5.0)
+        _assert_close_ok(c, errs, "rtp.MuxSender")
+        assert not w.is_alive(), "send loop did not end after close()"
+        # See the identical comment in test_rtp_sender_close_from_other_
+        # thread_during_send: whether the worker attempts one more send
+        # before noticing `stop` is a scheduling race, not a guarantee.
+        # `close()` already returned, so the slot is deterministically
+        # empty; call `send_video()` directly to prove a post-close send
+        # is rejected without depending on the worker's own timing.
+        with pytest.raises(RtpError) as ei:
+            send_one()
+        assert ei.value.kind == RtpErrorKind.CLOSED, ei.value.kind
+        assert "closed" in repr(tx)
+    finally:
+        stop.set()
+        tx.close()
+        sink.close()
+
+
+# --------------------------------------------------------------------------- #
 # rtp.H264Receiver                                                            #
 # --------------------------------------------------------------------------- #
 
@@ -907,18 +955,12 @@ def test_udp_recv_transport_timeout_ms_still_raises_backpressure() -> None:
 
 
 def _rist_recv_or_skip():
-    """Open a RIST receiver on a free even loopback port (librist Simple
-    profile needs even ports); skip like test_rist_basic.py when none binds."""
+    """Open a RIST receiver on a free even loopback port; skip when none binds."""
     from tstrans import rist
-    from tstrans.exceptions import RistError
 
-    for port in range(34110, 34150, 2):
-        try:
-            rx = rist.RecvTransport.builder().bind_url(f"rist://@127.0.0.1:{port}").build()
-            return rx, port
-        except RistError:
-            continue
-    pytest.skip("could not bind any even RIST port (librist unavailable)")
+    return bind_even_port_or_skip(
+        lambda port: rist.RecvTransport.builder().bind_url(f"rist://@127.0.0.1:{port}").build()
+    )
 
 
 def test_rist_transport_close_from_other_thread_during_send() -> None:

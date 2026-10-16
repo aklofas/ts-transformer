@@ -466,6 +466,15 @@ def test_cancel_handle_state_is_shared_per_shell() -> None:
 # --------------------------------------------------------------------------- #
 
 
+_SOCKET_STATS_FIELDS = {
+    "bytes_lost_recv", "bytes_received", "bytes_sent", "link_bandwidth_bps",
+    "packets_dropped_recv", "packets_dropped_send", "packets_lost_recv",
+    "packets_lost_send", "packets_received", "packets_retransmitted", "packets_sent",
+    "recv_bandwidth_bps", "recv_buffer_packets", "rtt_us", "send_bandwidth_bps",
+    "send_buffer_packets",
+}
+
+
 def test_socket_stats_is_one_class_across_transports() -> None:
     """Every shell over every transport returns the same `SocketStats`
     class, so bindings read the abstract wire stats without knowing which
@@ -475,8 +484,12 @@ def test_socket_stats_is_one_class_across_transports() -> None:
         assert isinstance(rx.socket_stats(), shells.SocketStats)
     with shells.Receiver.open(f"udp://127.0.0.1:{free_udp_port()}") as rx:
         assert isinstance(rx.socket_stats(), shells.SocketStats)
-    srt_props = {n for n in dir(shells.SocketStats) if not n.startswith("_")}
-    assert {"bytes_sent", "bytes_received"} <= srt_props
+    with shells.Receiver.open(f"udp://127.0.0.1:{free_udp_port()}") as rx:
+        stats = rx.socket_stats()
+        fields = {n for n in dir(shells.SocketStats) if not n.startswith("_")}
+        assert fields == _SOCKET_STATS_FIELDS
+        for name in sorted(fields):
+            assert isinstance(getattr(stats, name), int), name
 
 
 def test_srt_stats_has_advanced_fields_not_in_socket_stats() -> None:
@@ -559,11 +572,12 @@ def test_listener_open_docstring_names_broken_not_accept_failed(cls_name: str) -
 
 
 @pytest.mark.parametrize("cls_name", ["Receiver", "DemuxReceiver"])
-def test_shell_open_docstring_does_not_promise_accept_failed(cls_name: str) -> None:
-    """The shells' `open` is the one listener open; its docstring must not
-    promise the retired `ACCEPT_FAILED` kind."""
+def test_shell_open_docstring_names_broken_not_accept_failed(cls_name: str) -> None:
+    """The shells' `open` is the one listener open; its docstring must name
+    the 0.7.0 kind and not promise the retired `ACCEPT_FAILED`."""
     doc = getattr(shells, cls_name).open.__doc__ or ""
     assert doc.strip(), f"shells.{cls_name}.open has no docstring"
+    assert "BROKEN" in doc, f"shells.{cls_name}.open does not name SrtError(BROKEN)"
     assert "ACCEPT_FAILED" not in doc.split("Before 0.7.0")[0]
 
 

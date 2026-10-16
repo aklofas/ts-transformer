@@ -159,7 +159,9 @@ impl PyDemuxReceiver {
     /// dataclass; when `None`, defaults are used.
     ///
     /// Raises `ValueError` for an unsupported scheme and the transport's
-    /// error class for a bad URL or a bind or accept fault.
+    /// error class for a bad URL. An `srt://` bind or accept fault raises
+    /// `SrtError(kind=BROKEN)` with the message prefixed `bind: ` or
+    /// `accept: `.
     #[classmethod]
     #[pyo3(signature = (url, demux_config = None))]
     fn open(
