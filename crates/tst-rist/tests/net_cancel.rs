@@ -204,11 +204,11 @@ fn recv_empty_buffer_loopback_is_noop() {
 }
 
 /// The binding openers over RIST: both open (a sender needs no listening
-/// peer), report the RIST domain, and the receiver's `Opened::cancel` ends
-/// a recv parked on librist's 100 ms poll. Skips where librist cannot bind,
+/// peer), report the RIST domain, carry one datagram end to end, and the
+/// receiver's `Opened::cancel` ends a recv parked on librist's 100 ms poll. Skips where librist cannot bind,
 /// like the sibling tests.
 #[test]
-fn opener_opens_both_ends_and_its_cancel_ends_a_parked_recv() {
+fn opener_round_trips_one_datagram_and_its_cancel_ends_a_parked_recv() {
     use tst_pipeline::binding::Domain;
 
     let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
@@ -223,12 +223,21 @@ fn opener_opens_both_ends_and_its_cancel_ends_a_parked_recv() {
         return;
     };
     assert_eq!(tx.domain, Domain::Rist);
-    tx.transport
-        .send_bytes(&[0x47u8; 188])
-        .expect("send (no peer needed)");
+    tx.transport.send_bytes(&[0x47u8; 188]).expect("send");
 
     let cancel = rx.cancel.clone();
     let mut rx_t = rx.transport;
+    // The datagram sent above arrives once librist's session is up
+    // (about 0.6 s on loopback); BACKPRESSURE is its 100 ms "nothing yet" tick.
+    let mut buf = vec![0u8; rx_t.max_payload()];
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let n = loop {
+        match rx_t.recv_bytes(&mut buf) {
+            Err(TransportError::Backpressure { .. }) if Instant::now() < deadline => continue,
+            r => break r.expect("the sent datagram arrives"),
+        }
+    };
+    assert_eq!(&buf[..n], &[0x47u8; 188][..]);
     let (done_tx, done_rx) = mpsc::channel();
     let worker = thread::spawn(move || {
         let mut buf = vec![0u8; rx_t.max_payload()];
