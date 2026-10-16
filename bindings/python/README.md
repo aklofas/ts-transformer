@@ -2,7 +2,7 @@
 
 Python bindings (via PyO3) for the [ts-transformer](https://github.com/aklofas/ts-transformer) Rust workspace.
 
-> **Status:** `tstrans` covers file inspection + construction (`Demuxer` / `Muxer` / `MuxerFileSink`), typed KLV decode + encode for ST 0601 / ST 0102 / ST 0605 / ST 0903 (with `VTargetPack`), codec parsers for H.264 / H.265 / H.266 / AV1 / AAC / MPEG-2 audio, optional pandas DataFrame adapters + NumPy snapshot views via `pip install tstrans[pandas]`, and live transports: **SRT** (`tstrans.srt` — Sender / Receiver / Builder / Socket / Listener / MuxSender / DemuxReceiver + Managed* auto-reconnect + ReconnectPolicy), **RTP + RTSP** (`tstrans.rtp` — Sender / Receiver / MuxSender / DemuxReceiver / RtspClient / RtspServer / MountHandle), raw **UDP / TCP / RIST** (`tstrans.udp` / `tstrans.tcp` / `tstrans.rist`), and **HLS** publishing (`tstrans.hls`). Minimum Python 3.10.
+> **Status:** `tstrans` covers file inspection + construction (`Demuxer` / `Muxer` / `MuxerFileSink`), typed KLV decode + encode for ST 0601 / ST 0102 / ST 0605 / ST 0903 (with `VTargetPack`), codec parsers for H.264 / H.265 / H.266 / AV1 / AAC / MPEG-2 audio, optional pandas DataFrame adapters + NumPy snapshot views via `pip install tstrans[pandas]`, and live transports: **the pipeline shells** (`tstrans.shells` — Sender / Receiver / MuxSender / DemuxReceiver, opened from an `srt://`, `rtp://`, `udp://`, `tcp://` or `rist://` URL), **SRT** (`tstrans.srt` — Builder / Socket / Listener + Managed* auto-reconnect + ReconnectPolicy), **RTP + RTSP** (`tstrans.rtp` — Transport / RecvTransport / RtspClient / RtspServer / MountHandle), raw **UDP / TCP / RIST** (`tstrans.udp` / `tstrans.tcp` / `tstrans.rist`), and **HLS** publishing (`tstrans.hls`). Minimum Python 3.10.
 
 ## Install
 
@@ -98,8 +98,8 @@ with RtspServer.start(RtspServerConfig(bind_addr="0.0.0.0:8554")) as server:
     mount.push_video(nal_bytes, pts=Pts90khz.from_raw(0), key_frame=True)
 ```
 
-The full surface — `Sender` / `Receiver` for raw RTP, `MuxSender` /
-`DemuxReceiver` for one-call mux/demux convenience, `RtspClient` /
+The full surface — `Transport` / `RecvTransport` for raw RTP, the
+`tstrans.shells` shells for one-call mux/demux, `RtspClient` /
 `RtspSession` with Basic + Digest auth and TCP-interleaved fallback,
 `RtspServer` + `MountHandle` with five push methods (each with a `_to`
 multi-stream twin) and multicast mounts — is documented in the per-class
@@ -110,8 +110,8 @@ runtime by `mypy.stubtest` in CI).
 
 `tstrans.srt` ships full SRT (Secure Reliable Transport) bindings on top
 of libsrt 1.5.7 — classes spanning low-level `Builder` / `Socket` /
-`Listener` primitives, high-level `Sender` / `Receiver` for raw bytes,
-`MuxSender` / `DemuxReceiver` for one-call mux/demux convenience, and
+`Listener` primitives (the `Sender` / `Receiver` / `MuxSender` /
+`DemuxReceiver` shells live in `tstrans.shells`), and
 `ManagedSender` / `ManagedReceiver` / `ManagedMuxSender` /
 `ManagedDemuxReceiver` for auto-reconnect-with-gap-buffer ergonomics.
 Available by default in published wheels — no extra needed
@@ -223,13 +223,11 @@ with tstrans.srt.ManagedReceiver.from_url(
             break
 ```
 
-The full surface — `Sender` / `Receiver` for raw bytes, `MuxSender` /
-`DemuxReceiver` for one-call mux/demux, `Builder` / `Socket` /
-`Listener` for low-level construction, `ManagedSender` /
+The full surface — `Builder` / `Socket` /
+`Listener` for low-level construction, `tstrans.shells` for the shells, `ManagedSender` /
 `ManagedReceiver` / `ManagedMuxSender` / `ManagedDemuxReceiver` for
 auto-reconnect, plus `ReconnectPolicy` / `BackoffStrategy` /
-`OverflowPolicy` policy types and `SocketStats` / `SrtStats` /
-`CancelHandle` — is documented in the per-class docstrings and the
+`OverflowPolicy` policy types and `SrtStats` — is documented in the per-class docstrings and the
 `python/tstrans/srt.pyi` type stubs (checked against the runtime by
 `mypy.stubtest` in CI).
 

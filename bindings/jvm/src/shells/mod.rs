@@ -11,7 +11,8 @@
 //!
 //! Each class owns one [`OwnedRegistry`]; the Java `long` is the registry
 //! key. A key that is absent (the Java handle was closed) is an
-//! `IllegalStateException`, thrown by [`throw_state`] below.
+//! `IllegalStateException`, thrown by [`domain_or_closed`] below (through
+//! `throw_closed`).
 
 pub(crate) mod cancel;
 pub(crate) mod demux_receiver;

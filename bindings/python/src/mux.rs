@@ -2009,7 +2009,7 @@ pub struct PyMuxerStats {
 }
 
 impl PyMuxerStats {
-    /// Crate-private constructor used by the `tstrans.rtp.MuxSender`
+    /// Crate-private constructor used by the `tstrans.shells.MuxSender`
     /// wrapper (which composes a `tst_pipeline::MuxSenderStats` view
     /// into the same shape Python callers already use for
     /// `Muxer.stats()`).

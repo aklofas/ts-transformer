@@ -32,7 +32,9 @@ jump to:
 - [Pair video with metadata](#pipeline-pairing-orgtstranspipelinepairer).
 
 The JVM binding exposes SRT, RTP/RTSP, and HLS publishing. UDP, TCP,
-and RIST have no JVM binding; see
+and RIST are reached through the `org.tstrans.shells` classes
+(`MuxSender.open("udp://…")`); the raw datagram/stream transports have no
+JVM class. The JAR ships RIST. See
 [binding differences](#where-this-binding-differs-from-the-rust-core).
 
 ## Install
@@ -866,9 +868,7 @@ The shells (`Sender`, `Receiver`, `MuxSender`, `DemuxReceiver`) live in
 `org.tstrans.shells` and open any transport from a URL (`Class.open(url, ...)`);
 the `org.tstrans.srt` package holds the low-level `Builder`/`Socket`/`Listener`,
 the `Managed*` reconnect family and the SRT policy types. SRT is default-on — no
-feature flag is needed. The 0.8 names `org.tstrans.srt.{Sender, Receiver,
-MuxSender, DemuxReceiver}` and `org.tstrans.rtp.{MuxSender, DemuxReceiver}`
-remain as `@Deprecated` subclasses with their `fromUrl` factories until 0.10.0.
+feature flag is needed.
 
 ### Sender hello
 
@@ -1109,9 +1109,19 @@ own a muxer / demuxer and a transport in one object, so you never touch raw TS
 bytes: `MuxSender` (send elementary streams → it muxes + sends) and
 `DemuxReceiver` (it recvs + demuxes → you iterate typed `DemuxEvent`s). Each
 opens the transport its URL names: `srt://`, `rtp://`, `udp://`, `tcp(s)://`
-or `rist://`. A transport failure throws that transport's exception
-(`SrtException`, `RtpException`, `UdpException`, `TcpException`,
-`RistException`), each a `BindingException`.
+or `rist://`. A transport failure throws that transport's exception,
+each a `BindingException`:
+
+| URL scheme | Exception |
+|---|---|
+| `srt://` | `SrtException` |
+| `rtp://` | `RtpException` |
+| `udp://` | `UdpException` |
+| `tcp://`, `tcps://` | `TcpException` |
+| `rist://` | `RistException` |
+
+Every one carries a `Kind` enum; `CLOSED` is the kind a cancelled or closed
+call raises.
 
 ### Send: `MuxSender`
 
@@ -2175,6 +2185,22 @@ treats Rust as the canonical surface; everything here is a subset of it.
 See [`/docs/languages/rust.md`](/docs/languages/rust.md) for the full
 surface and [`/docs/languages/python.md`](/docs/languages/python.md) for the
 Python binding's gaps.
+
+### Moving from 0.8
+
+Deprecated in 0.9.0, removed in 0.10.0. Each old class is a
+`@Deprecated(forRemoval = true)` subclass of its replacement and keeps its
+0.8 `fromUrl` factories.
+
+| 0.8 | 0.9 |
+|---|---|
+| `org.tstrans.srt.{Sender, Receiver, MuxSender, DemuxReceiver}`, `org.tstrans.rtp.{MuxSender, DemuxReceiver}` | `org.tstrans.shells.*`, opened with `Class.open(url, ...)` |
+| `org.tstrans.rtp.Sender` / `Receiver` | `org.tstrans.rtp.Transport` / `RecvTransport` |
+| the `pktSize` argument of the rtp factories | the `?pkt_size=` URL key |
+| `CancelHandle`, `SocketStats`, `TransportStats` per package | the one `org.tstrans.shells.{CancelHandle, SocketStats, TransportStats}` |
+
+`ManagedSender` / `ManagedReceiver` / `ManagedMuxSender` /
+`ManagedDemuxReceiver` keep `fromUrl`: they are SRT-specific.
 
 ## Surface by package
 

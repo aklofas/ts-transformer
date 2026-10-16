@@ -1,4 +1,4 @@
-//! JNI exports for `org.tstrans.rtp.Sender` and `org.tstrans.rtp.Receiver`.
+//! JNI exports for `org.tstrans.rtp.Transport` and `org.tstrans.rtp.RecvTransport`.
 //!
 //! Each Java class is handle-backed by an `OwnedRegistry` entry:
 //! - `Sender`   → `Owned<SendHalf<tst_rtp::RtpTransport>>`.
@@ -76,7 +76,7 @@ fn unbox_ssrc(env: &mut JNIEnv, obj: &JObject) -> Result<Option<u32>, ()> {
     Ok(Some(v as u32))
 }
 
-// ── Sender (org.tstrans.rtp.Sender) ────────────────────────────────────────
+// ── Sender (org.tstrans.rtp.Transport) ────────────────────────────────────────
 
 /// Allocate a `Sender` from an `rtp://host:port` URL. Returns a `jlong` handle;
 /// throws `RtpException` and returns 0 on error. `pktSize` is the UDP datagram
@@ -211,7 +211,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Transport_nClose(
     })
 }
 
-// ── Receiver (org.tstrans.rtp.Receiver) ────────────────────────────────────
+// ── Receiver (org.tstrans.rtp.RecvTransport) ────────────────────────────────────
 
 /// Allocate a `Receiver` bound to an `rtp://host:port` URL. Returns a `jlong`
 /// handle; throws `RtpException` and returns 0 on error.

@@ -1189,7 +1189,8 @@ mean **Deferred**. An entry whose feature has shipped must never read
   code path ever constructs a non-default `RtspStats`. The accessor is
   kept (removing it would be a binding API break for no gain), but its
   docs on both bindings are explicit that it is reserved, not partially
-  wired.
+  wired. The `*_packets_sent` counters were removed in 0.9.0 with the RTCP
+  report emitter.
 - **Why deferred:** Wiring real values here needs the underlying RTCP
   receive-side subsystem described in the entry above (RR report-block
   tracking, jitter/loss accounting, UDP-side RTCP reception) — this
@@ -1564,7 +1565,7 @@ and the two below.
 
 - **Status:** Rust-only. `MuxSenderError`/`SenderError` carry
   `input_consumed`, shipped in v0.4.0. The C ABI, Python, and JVM send
-  errors expose only the error kind.
+  errors expose only the error kind. The Rust binding envelope carries it since 0.9.0 (`BindingError::diagnostics`); exposing it is a host change only.
 - **Why deferred:** the C surface needs an ABI minor bump for a new error
   field; Python/JVM callers are steered to the `Managed*` wrappers, where
   the question does not arise. No binding consumer has asked.
@@ -1827,7 +1828,7 @@ and the two below.
   in Rust only. The C ABI folds `Broken` into `TST_E_TRANSPORT` with the
   message in the last-error string, and the Python / JVM `BROKEN` kinds
   carry only the message, so a binding caller still cannot tell a clean
-  peer close from a read error without parsing that string.
+  peer close from a read error without parsing that string. The Rust binding envelope carries it since 0.9.0 (`BindingError::diagnostics`); exposing it is a host change only.
 - **Why deferred:** the field was added additively so the Rust surface
   could drop its string assertion without changing reconnect or
   end-reason behavior; no binding consumer has asked for the
@@ -1998,3 +1999,24 @@ Shipped 0.8.0: `tst_srt::Socket::close` and `Listener::close` are infallible.
 ### `MaxBandwidth` variant naming vs libsrt sentinels
 
 Shipped 0.8.0: renamed `InputRelative` (0) and `Infinite` (−1); a stale use fails to compile.
+
+## JVM raw UDP / TCP / RIST transports
+
+- **Status:** Not exposed. The JVM reaches UDP, TCP and RIST through the
+  `org.tstrans.shells` classes (`MuxSender.open("udp://…")`, …); the raw
+  datagram/stream transports that Python has as `tstrans.udp.Transport`
+  etc. have no JVM class.
+- **Why deferred:** no JVM consumer has asked for raw (non-TS) transport
+  access; the shells cover the TS paths.
+- **Trigger to revisit:** a JVM consumer needs to send or receive bytes
+  that are not MPEG-TS over one of these transports.
+
+## End-reason handle on the srt / udp / tcp / rist receive transports
+
+- **Status:** Deferred. Only `tst-rtp` (and the managed SRT receivers)
+  record an end reason, so `end_reason()` on a plain srt, udp, tcp or rist
+  receiver answers `None` in Python and `null` in the JVM.
+- **Why deferred:** only `tst-rtp` records an end reason; the other
+  transports have no recorder to read.
+- **Trigger to revisit:** a consumer needs `end_reason()` off a transport
+  other than rtp.

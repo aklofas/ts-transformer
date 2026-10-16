@@ -1127,8 +1127,9 @@ typedef struct tst_demux_receiver_t tst_demux_receiver_t;
  * Allocated by `tst_demuxer_open` / `tst_demuxer_open_with_config`
  * and freed by `tst_demuxer_close`. Pointer fields on a `TstEvent` borrow
  * from the handle's event arena and are valid until the next
- * `tst_demuxer_next_event` or `tst_demuxer_close` call on this handle
- * (§4.5 borrowed-buffer policy).
+ * `tst_demuxer_next_event` or `tst_demuxer_close` call on this handle,
+ * or a call on it that returns `TST_E_PANIC_CAUGHT` (§4.5 borrowed-buffer
+ * policy).
  */
 typedef struct TstDemuxer TstDemuxer;
 

@@ -78,7 +78,9 @@ depend on `tst-core` and on `tst-pipeline` — not for the shells (a shell
 and a transport still meet through the `Transport` / `RecvTransport`
 traits, not through a crate dependency) but for `tst_pipeline::binding`,
 the one error-kind vocabulary and handle model every language binding
-is built from; `tst-rtp` additionally wraps the shells for its RTSP
+is built from. Each transport crate's `opener` module opens its URL scheme
+into `tst_pipeline::binding::Opened`, which the Python and JVM bindings wrap
+in one shell class per shell; `tst-rtp` additionally wraps the shells for its RTSP
 mount surface. Binding crates (`tst-c` via `tst-c-core`, `tst-py`, `tst-jni`,
 the planned `tst-uniffi`) depend on `tst-core` + `tst-pipeline` + the
 transport crates they expose — never on a `*-sys` crate directly. This

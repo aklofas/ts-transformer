@@ -198,6 +198,7 @@ impl PyDemuxReceiver {
         )?;
         Self::open_with(py, url, demux_config)
     }
+
     /// Iterator protocol: `iter(rx)` returns `self`.
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf

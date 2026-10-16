@@ -377,7 +377,7 @@ impl PyPublishMount {
         py.allow_threads(|| self.inner.cancel());
     }
 
-    /// Take the mount's received MPEG-TS as a `tstrans.rtp.DemuxReceiver`.
+    /// Take the mount's received MPEG-TS as a `tstrans.shells.DemuxReceiver`.
     ///
     /// Take-once across every handle to the mount (including the one
     /// `next_publisher()` returned for the same mount): a second call raises
