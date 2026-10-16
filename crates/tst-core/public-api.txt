@@ -1,4 +1,69 @@
 pub mod tst_core
+pub mod tst_core::binding_schema
+#[non_exhaustive] pub enum tst_core::binding_schema::FieldMark
+pub tst_core::binding_schema::FieldMark::Custom
+pub tst_core::binding_schema::FieldMark::Plain
+pub tst_core::binding_schema::FieldMark::Skip
+impl core::clone::Clone for tst_core::binding_schema::FieldMark
+pub fn tst_core::binding_schema::FieldMark::clone(&self) -> tst_core::binding_schema::FieldMark
+impl core::cmp::Eq for tst_core::binding_schema::FieldMark
+impl core::cmp::PartialEq for tst_core::binding_schema::FieldMark
+pub fn tst_core::binding_schema::FieldMark::eq(&self, &tst_core::binding_schema::FieldMark) -> bool
+impl core::fmt::Debug for tst_core::binding_schema::FieldMark
+pub fn tst_core::binding_schema::FieldMark::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::binding_schema::FieldMark
+impl core::marker::StructuralPartialEq for tst_core::binding_schema::FieldMark
+impl core::marker::Freeze for tst_core::binding_schema::FieldMark
+impl core::marker::Send for tst_core::binding_schema::FieldMark
+impl core::marker::Sync for tst_core::binding_schema::FieldMark
+impl core::marker::Unpin for tst_core::binding_schema::FieldMark
+impl core::marker::UnsafeUnpin for tst_core::binding_schema::FieldMark
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::binding_schema::FieldMark
+impl core::panic::unwind_safe::UnwindSafe for tst_core::binding_schema::FieldMark
+pub struct tst_core::binding_schema::FieldSpec
+pub tst_core::binding_schema::FieldSpec::doc: &'static str
+pub tst_core::binding_schema::FieldSpec::java: core::option::Option<&'static str>
+pub tst_core::binding_schema::FieldSpec::mark: tst_core::binding_schema::FieldMark
+pub tst_core::binding_schema::FieldSpec::name: &'static str
+pub tst_core::binding_schema::FieldSpec::ty: &'static str
+impl core::clone::Clone for tst_core::binding_schema::FieldSpec
+pub fn tst_core::binding_schema::FieldSpec::clone(&self) -> tst_core::binding_schema::FieldSpec
+impl core::cmp::Eq for tst_core::binding_schema::FieldSpec
+impl core::cmp::PartialEq for tst_core::binding_schema::FieldSpec
+pub fn tst_core::binding_schema::FieldSpec::eq(&self, &tst_core::binding_schema::FieldSpec) -> bool
+impl core::fmt::Debug for tst_core::binding_schema::FieldSpec
+pub fn tst_core::binding_schema::FieldSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::binding_schema::FieldSpec
+impl core::marker::StructuralPartialEq for tst_core::binding_schema::FieldSpec
+impl core::marker::Freeze for tst_core::binding_schema::FieldSpec
+impl core::marker::Send for tst_core::binding_schema::FieldSpec
+impl core::marker::Sync for tst_core::binding_schema::FieldSpec
+impl core::marker::Unpin for tst_core::binding_schema::FieldSpec
+impl core::marker::UnsafeUnpin for tst_core::binding_schema::FieldSpec
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::binding_schema::FieldSpec
+impl core::panic::unwind_safe::UnwindSafe for tst_core::binding_schema::FieldSpec
+pub struct tst_core::binding_schema::RecordSchema
+pub tst_core::binding_schema::RecordSchema::doc: &'static str
+pub tst_core::binding_schema::RecordSchema::fields: &'static [tst_core::binding_schema::FieldSpec]
+pub tst_core::binding_schema::RecordSchema::name: &'static str
+pub tst_core::binding_schema::RecordSchema::non_exhaustive: bool
+pub tst_core::binding_schema::RecordSchema::rust_path: &'static str
+impl core::clone::Clone for tst_core::binding_schema::RecordSchema
+pub fn tst_core::binding_schema::RecordSchema::clone(&self) -> tst_core::binding_schema::RecordSchema
+impl core::cmp::Eq for tst_core::binding_schema::RecordSchema
+impl core::cmp::PartialEq for tst_core::binding_schema::RecordSchema
+pub fn tst_core::binding_schema::RecordSchema::eq(&self, &tst_core::binding_schema::RecordSchema) -> bool
+impl core::fmt::Debug for tst_core::binding_schema::RecordSchema
+pub fn tst_core::binding_schema::RecordSchema::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::binding_schema::RecordSchema
+impl core::marker::StructuralPartialEq for tst_core::binding_schema::RecordSchema
+impl core::marker::Freeze for tst_core::binding_schema::RecordSchema
+impl core::marker::Send for tst_core::binding_schema::RecordSchema
+impl core::marker::Sync for tst_core::binding_schema::RecordSchema
+impl core::marker::Unpin for tst_core::binding_schema::RecordSchema
+impl core::marker::UnsafeUnpin for tst_core::binding_schema::RecordSchema
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::binding_schema::RecordSchema
+impl core::panic::unwind_safe::UnwindSafe for tst_core::binding_schema::RecordSchema
 pub mod tst_core::cancel
 pub struct tst_core::cancel::CancelSlot
 impl tst_core::cancel::CancelSlot
@@ -7426,6 +7491,7 @@ pub fn tst_core::url::is_multicast_v4(core::net::ip_addr::Ipv4Addr) -> bool
 pub fn tst_core::url::is_multicast_v6(core::net::ip_addr::Ipv6Addr) -> bool
 pub fn tst_core::url::parse_host_port(&str) -> core::result::Result<(core::net::ip_addr::IpAddr, u16), tst_core::url::common::UrlError>
 pub fn tst_core::url::parse_url(&str) -> core::result::Result<tst_core::url::common::ParsedUrl<'_>, tst_core::url::common::UrlError>
+pub macro tst_core::binding_record!
 #[non_exhaustive] pub enum tst_core::BrokenCause
 pub tst_core::BrokenCause::CleanEof
 pub tst_core::BrokenCause::Unspecified

@@ -51,6 +51,7 @@ its `rtsp` row), the more specific row wins for that path.
 |---|---|---|---|
 | tst-core | mpegts | Stable | core mux/demux engine |
 | tst-core | mpegts::demux::low_level | Internal | extension surface, binding-canonical workflow |
+| tst-core | binding_schema | Internal | the crossing-record schema the binding generator reads; `binding_record!` and `BINDING_SCHEMA` exist for the generator, not for consumers |
 | tst-core | klv | Stable | KLV substrate (encode/decode machinery) |
 | tst-core | klv::checksum | Stable | KLV substrate machinery, same tier as `klv` itself |
 | tst-core | klv::imapb | Stable | KLV substrate machinery, same tier as `klv` itself |
