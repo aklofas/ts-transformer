@@ -9,18 +9,12 @@
 
 use std::sync::Arc;
 
-use tst_core::cancel::{CancelSlot, FlagCancel};
-use tst_core::transport::{RecvTransport, Transport, TransportCancel};
+use tst_core::cancel::CancelSlot;
+use tst_core::transport::{RecvTransport, Transport};
+use tst_pipeline::binding::opened::{cancel_of, recv_cancel_of};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened};
 
 use crate::url::{Mode, SrtUrl};
-
-fn cancel_of(c: Option<Arc<dyn TransportCancel + Send + Sync>>) -> Arc<dyn TransportCancel> {
-    match c {
-        Some(c) => c,
-        None => Arc::new(FlagCancel::new()),
-    }
-}
 
 /// Open an `srt://` sender: `?mode=caller` (the default) connects.
 ///
@@ -41,7 +35,7 @@ pub fn open_sender(url: &str) -> Result<Opened<Box<dyn Transport>>, BindingError
         ));
     }
     let t = parsed.connect_recv()?;
-    let cancel = cancel_of(Transport::cancel_handle(&t));
+    let cancel = cancel_of(&t);
     Ok(Opened::new(Box::new(t), cancel, Domain::Srt))
 }
 
@@ -66,6 +60,6 @@ pub fn open_recv(
         ));
     }
     let t = parsed.accept_one(accept)?;
-    let cancel = cancel_of(RecvTransport::cancel_handle(&t));
+    let cancel = recv_cancel_of(&t);
     Ok(Opened::new(Box::new(t), cancel, Domain::Srt))
 }

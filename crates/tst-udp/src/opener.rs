@@ -7,20 +7,11 @@
 //! **Stability: Provisional** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 
-use std::sync::Arc;
-
-use tst_core::cancel::FlagCancel;
-use tst_core::transport::{RecvTransport, Transport, TransportCancel};
+use tst_core::transport::{RecvTransport, Transport};
+use tst_pipeline::binding::opened::{cancel_of, recv_cancel_of};
 use tst_pipeline::binding::{BindingError, Domain, Opened};
 
 use crate::{UdpRecvTransportBuilder, UdpTransportBuilder};
-
-fn cancel_of(c: Option<Arc<dyn TransportCancel + Send + Sync>>) -> Arc<dyn TransportCancel> {
-    match c {
-        Some(c) => c,
-        None => Arc::new(FlagCancel::new()),
-    }
-}
 
 /// Open a `udp://` sender.
 ///
@@ -28,7 +19,7 @@ fn cancel_of(c: Option<Arc<dyn TransportCancel + Send + Sync>>) -> Arc<dyn Trans
 /// The URL and socket errors' kinds.
 pub fn open_sender(url: &str) -> Result<Opened<Box<dyn Transport>>, BindingError> {
     let t = UdpTransportBuilder::from_url(url)?.build()?;
-    let cancel = cancel_of(Transport::cancel_handle(&t));
+    let cancel = cancel_of(&t);
     Ok(Opened::new(Box::new(t), cancel, Domain::Udp))
 }
 
@@ -38,6 +29,6 @@ pub fn open_sender(url: &str) -> Result<Opened<Box<dyn Transport>>, BindingError
 /// The URL and socket errors' kinds.
 pub fn open_recv(url: &str) -> Result<Opened<Box<dyn RecvTransport>>, BindingError> {
     let t = UdpRecvTransportBuilder::from_url(url)?.build()?;
-    let cancel = cancel_of(RecvTransport::cancel_handle(&t));
+    let cancel = recv_cancel_of(&t);
     Ok(Opened::new(Box::new(t), cancel, Domain::Udp))
 }

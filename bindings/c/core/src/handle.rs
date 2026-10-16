@@ -135,25 +135,11 @@ impl<T> CHandle<T, ()> {
     }
 }
 
-/// The shells' `cancel_handle()` returns an `Option`; this is the ONE
-/// place it is resolved. `None` → `FlagCancel` (a plain
-/// latch that records the request and wakes nothing).
-///
-/// Every transport this binding opens returns `Some`, so the `None` arm
-/// is a defensive fallback rather than a live path. The function stays
-/// because the shell-level `cancel_handle()` is `Option`-typed, so all
-/// ~22 call sites across every family need the resolution, and
-/// replacing it with `.expect()` would trade a safe fallback for a
-/// panic path.
-#[allow(dead_code)] // consumed by the udp/rist `_open` paths
-pub(crate) fn cancel_or_latch(
-    c: Option<Arc<dyn TransportCancel + Send + Sync>>,
-) -> Arc<dyn TransportCancel> {
-    match c {
-        Some(c) => c,
-        None => Arc::new(FlagCancel::new()),
-    }
-}
+/// The shells' `cancel_handle()` returns an `Option`; every C open path
+/// resolves it through the bindings' shared resolver (`None` → a plain
+/// `FlagCancel` latch that records the request and wakes nothing).
+#[allow(unused_imports)] // consumed by the per-feature `_open` paths
+pub(crate) use tst_pipeline::binding::opened::cancel_or_latch;
 
 // ---------------------------------------------------------------------------
 // RTSP client builder opaque handle (rtp feature)
