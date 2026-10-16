@@ -28,7 +28,8 @@ pub fn catch<R>(f: impl FnOnce() -> R) -> Result<R, String> {
     std::panic::catch_unwind(core::panic::AssertUnwindSafe(f)).map_err(|p| payload_message(&*p))
 }
 
-/// See the `std` variant.
+/// Without `std` nothing unwinds (a panic aborts the target), so this runs
+/// `f` directly and always returns `Ok`.
 #[cfg(not(feature = "std"))]
 pub fn catch<R>(f: impl FnOnce() -> R) -> Result<R, String> {
     Ok(f())
