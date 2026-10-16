@@ -207,65 +207,95 @@ pub enum TstError {
     KlvDecode = -48,
 }
 
+/// `TST_E_BY_CODE[i]` is the `TstError` whose code is `-i` (index 0 is
+/// `Success`). The initializer checks, at compile time, that every entry
+/// sits at its own code and that every row of the binding kind table
+/// projects onto a code in `-48..=-1` — onto its own discriminant when the
+/// row is C-frozen. `TstError` above stays the one declaration of the
+/// numbers (it is what cbindgen renders as `TST_E_*`); this table is its
+/// inverse, and the kind table cannot drift from it without a build error.
+pub(crate) const TST_E_BY_CODE: [TstError; 49] = {
+    use TstError::*;
+    let t = [
+        Success,
+        InvalidConfig,
+        InvalidNal,
+        InvalidTs,
+        BufferFull,
+        KlvTooLarge,
+        TooLarge,
+        Closed,
+        Transport,
+        InvalidUsage,
+        Internal,
+        PanicCaught,
+        EndOfStream,
+        NotAvailable,
+        NotFound,
+        RtpTransport,
+        RtspProtocol,
+        RtspAuthFailed,
+        RtspAuthRequired,
+        RtspNotFound,
+        RtspUnsupported,
+        RtspTls,
+        RtspIo,
+        RtspTimeout,
+        RtspServer,
+        RtspMount,
+        UdpIo,
+        UdpConfig,
+        UdpPayloadTooLarge,
+        UdpIfaceUnsupported,
+        TcpIo,
+        TcpConfig,
+        TcpConnectTimeout,
+        TcpTls,
+        HlsIo,
+        HlsConfig,
+        HlsFinished,
+        HlsTls,
+        RistFfi,
+        RistConfig,
+        RistPayloadTooLarge,
+        RistEncryptionDisabled,
+        RistRecvTimeout,
+        RistIo,
+        InvalidAv1Obu,
+        MispTime,
+        MispTimeMalformed,
+        WrongType,
+        KlvDecode,
+    ];
+    let mut i = 0;
+    while i < t.len() {
+        assert!(t[i] as i32 == -(i as i32), "TST_E table: index != -code");
+        i += 1;
+    }
+    let kinds = tst_pipeline::binding::BindingErrorKind::ALL;
+    let mut j = 0;
+    while j < kinds.len() {
+        let p = kinds[j].c_projection();
+        assert!(
+            p >= -48 && p <= -1,
+            "a binding kind projects outside -48..=-1"
+        );
+        assert!(
+            !kinds[j].is_c_frozen() || kinds[j].c_code() == p,
+            "a C-frozen kind folds"
+        );
+        j += 1;
+    }
+    t
+};
+
 impl TstError {
-    /// Exhaustive inverse of the `#[repr(i32)]` discriminants — every
-    /// variant listed, no wildcard on the variant side, so adding a
-    /// `TstError` variant without a row here is caught by
-    /// `from_c_code_round_trips_every_tst_error_variant`.
+    /// The inverse of the `#[repr(i32)]` discriminants: a lookup in
+    /// [`TST_E_BY_CODE`], whose initializer proves every entry sits at its
+    /// own code.
     pub(crate) fn from_c_code(code: i32) -> Option<TstError> {
-        use TstError::*;
-        Some(match code {
-            0 => Success,
-            -1 => InvalidConfig,
-            -2 => InvalidNal,
-            -3 => InvalidTs,
-            -4 => BufferFull,
-            -5 => KlvTooLarge,
-            -6 => TooLarge,
-            -7 => Closed,
-            -8 => Transport,
-            -9 => InvalidUsage,
-            -10 => Internal,
-            -11 => PanicCaught,
-            -12 => EndOfStream,
-            -13 => NotAvailable,
-            -14 => NotFound,
-            -15 => RtpTransport,
-            -16 => RtspProtocol,
-            -17 => RtspAuthFailed,
-            -18 => RtspAuthRequired,
-            -19 => RtspNotFound,
-            -20 => RtspUnsupported,
-            -21 => RtspTls,
-            -22 => RtspIo,
-            -23 => RtspTimeout,
-            -24 => RtspServer,
-            -25 => RtspMount,
-            -26 => UdpIo,
-            -27 => UdpConfig,
-            -28 => UdpPayloadTooLarge,
-            -29 => UdpIfaceUnsupported,
-            -30 => TcpIo,
-            -31 => TcpConfig,
-            -32 => TcpConnectTimeout,
-            -33 => TcpTls,
-            -34 => HlsIo,
-            -35 => HlsConfig,
-            -36 => HlsFinished,
-            -37 => HlsTls,
-            -38 => RistFfi,
-            -39 => RistConfig,
-            -40 => RistPayloadTooLarge,
-            -41 => RistEncryptionDisabled,
-            -42 => RistRecvTimeout,
-            -43 => RistIo,
-            -44 => InvalidAv1Obu,
-            -45 => MispTime,
-            -46 => MispTimeMalformed,
-            -47 => WrongType,
-            -48 => KlvDecode,
-            _ => return None,
-        })
+        let idx = usize::try_from(code.checked_neg()?).ok()?;
+        TST_E_BY_CODE.get(idx).copied()
     }
 
     /// THE C projection of the binding-shared kind table:
@@ -274,8 +304,8 @@ impl TstError {
     /// code for the 57 new ones — the fold table lives in tst-pipeline, not
     /// here). NOT a `match`: `BindingErrorKind` is a foreign
     /// `#[non_exhaustive]` enum, so a match would need a wildcard. The
-    /// `unwrap_or` is unreachable for every table entry — pinned by
-    /// `from_kind_is_total_over_the_kind_table`.
+    /// `unwrap_or` is unreachable for every table entry — the
+    /// `TST_E_BY_CODE` initializer proves it at compile time.
     pub(crate) fn from_kind(k: tst_pipeline::binding::BindingErrorKind) -> TstError {
         Self::from_c_code(k.c_projection()).unwrap_or(TstError::Internal)
     }
@@ -1021,19 +1051,6 @@ mod tests {
                 )
             });
             assert_eq!(TstError::from_kind(*k), v);
-            assert!(
-                (-48..=-1).contains(&k.c_projection()),
-                "{} projects outside the C range",
-                k.name()
-            );
-            if k.is_c_frozen() {
-                assert_eq!(
-                    k.c_projection(),
-                    k.c_code(),
-                    "{} is C-frozen but folds",
-                    k.name()
-                );
-            }
         }
     }
 
