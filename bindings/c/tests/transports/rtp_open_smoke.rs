@@ -277,12 +277,12 @@ fn rtp_mux_sender_push_video_reflects_in_stats() {
     //   0            — buffered without error
     //   Transport    — UDP ENOBUFS / ECONNREFUSED (no peer listening)
     //   Closed       — send socket closed early
-    //   InvalidTs    — muxer rejected the mini NAL as too-small (also fine)
+    //   InvalidNal   — muxer rejected the mini NAL as not Annex-B framed (also fine)
     assert!(
         rc == 0
             || rc == TstError::Transport as i32
             || rc == TstError::Closed as i32
-            || rc == TstError::InvalidTs as i32,
+            || rc == TstError::InvalidNal as i32,
         "unexpected push_video return code {rc}"
     );
 

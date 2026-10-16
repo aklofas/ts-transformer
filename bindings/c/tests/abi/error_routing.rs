@@ -17,9 +17,9 @@
 //!
 //! 1. Constructs a shell error using the shell's `From<SourceError>` impl
 //!    (which is `pub` and requires no SRT connection).
-//! 2. Calls `test_record_shell_error` to feed it through the kind→code
-//!    projection and record the last-error, exactly as the live C entry points
-//!    do on their error paths.
+//! 2. Calls `test_record_shell_error` to feed it through the binding kind
+//!    table (`BindingError::from`, then `TstError::from_kind`) and record the
+//!    last-error, exactly as the live C entry points do on their error paths.
 //! 3. Asserts `test_last_error_code() == expected TST_E_* code`.
 //! 4. Asserts `test_last_error_msg()` contains a meaningful substring from
 //!    the inner error's `Display`.
@@ -29,11 +29,10 @@
 //!
 //! Rationale for white-box: all C shell open functions require a live SRT
 //! connection. Constructing a shell error via `From` + feeding it to
-//! `test_record_shell_error` tests the same kind→code projection that the
-//! live data paths use — the projection logic is in `tst_error_from_kind`,
-//! which `record_shell_error` calls unconditionally. The white-box tests are
-//! therefore equivalent in coverage to black-box tests that would require
-//! a loopback SRT connection per kind.
+//! `test_record_shell_error` tests the same kind-table projection that the
+//! live data paths use — `record_shell_error` calls it unconditionally. The
+//! white-box tests are therefore equivalent in coverage to black-box tests
+//! that would require a loopback SRT connection per kind.
 
 use tst_core::error::{DemuxError, MuxError};
 use tst_core::transport::{BrokenCause, TransportError};
@@ -75,7 +74,7 @@ fn mux_sender_config_invalid_returns_invalid_config_code() {
     // `MuxError::EmptyProgram` carries kind ConfigInvalid via
     // `coarsen(kind_of_mux(..))` in tst-pipeline's `binding::kind`.
     let e = MuxSenderError::from(MuxError::EmptyProgram { program_number: 1 });
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(
         rc, TST_E_INVALID_CONFIG,
         "MuxSender ConfigInvalid: wrong code"
@@ -93,14 +92,20 @@ fn mux_sender_config_invalid_returns_invalid_config_code() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn mux_sender_input_malformed_returns_invalid_ts_code() {
+fn mux_sender_invalid_nal_returns_invalid_nal_code() {
     reset();
-    // `MuxError::InvalidNal` carries kind InputMalformed.
-    let e = MuxSenderError::from(MuxError::InvalidNal);
-    let rc = test_record_shell_error(&e);
+    // `MuxError::AudioTooLarge` carries kind InputMalformed: TST_E_INVALID_TS.
+    let e = MuxSenderError::from(MuxError::AudioTooLarge { size: 2, max: 1 });
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_INVALID_TS, "MuxSender InputMalformed: wrong code");
     assert_eq!(test_last_error_code(), TST_E_INVALID_TS);
     assert!(!test_last_error_msg().is_empty());
+    // `InvalidNal` keeps its own precise code, as on the offline muxer.
+    reset();
+    assert_eq!(
+        test_record_shell_error(MuxSenderError::from(MuxError::InvalidNal)),
+        TstError::InvalidNal as i32
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +121,7 @@ fn mux_sender_backpressure_returns_buffer_full_code() {
     let e = MuxSenderError::from(MuxError::BufferFull {
         capacity_packets: 32,
     });
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_BUFFER_FULL, "MuxSender Backpressure: wrong code");
     assert_eq!(test_last_error_code(), TST_E_BUFFER_FULL);
 }
@@ -134,7 +139,7 @@ fn mux_sender_transport_broken_returns_transport_code() {
         errno_code: None,
         cause: BrokenCause::Unspecified,
     });
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_TRANSPORT, "MuxSender TransportBroken: wrong code");
     assert_eq!(test_last_error_code(), TST_E_TRANSPORT);
     let msg = test_last_error_msg();
@@ -155,7 +160,7 @@ fn mux_sender_closed_returns_closed_code() {
     // This is the caller-initiated-close path (as opposed to peer-FIN
     // which becomes EndOfStream on receiver shells).
     let e = MuxSenderError::from(TransportError::ExplicitClose);
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_CLOSED, "MuxSender Closed: wrong code");
     assert_eq!(test_last_error_code(), TST_E_CLOSED);
 }
@@ -170,7 +175,7 @@ fn sender_input_malformed_returns_invalid_ts_code() {
     // `TsFramingError::SyncLost` → kind InputMalformed on Sender shell.
     let framing_err = TsFramingError::SyncLost { offset: 42 };
     let e = SenderError::from(framing_err);
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_INVALID_TS, "Sender InputMalformed: wrong code");
     assert_eq!(test_last_error_code(), TST_E_INVALID_TS);
     assert!(!test_last_error_msg().is_empty());
@@ -188,7 +193,7 @@ fn sender_backpressure_returns_buffer_full_code() {
         msg: "tx queue full".into(),
         errno_code: None,
     });
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_BUFFER_FULL, "Sender Backpressure: wrong code");
     assert_eq!(test_last_error_code(), TST_E_BUFFER_FULL);
 }
@@ -205,7 +210,7 @@ fn sender_transport_broken_returns_transport_code() {
         errno_code: None,
         cause: BrokenCause::Unspecified,
     });
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_TRANSPORT, "Sender TransportBroken: wrong code");
     assert_eq!(test_last_error_code(), TST_E_TRANSPORT);
     let msg = test_last_error_msg();
@@ -223,7 +228,7 @@ fn sender_transport_broken_returns_transport_code() {
 fn sender_closed_returns_closed_code() {
     reset();
     let e = SenderError::from(TransportError::ExplicitClose);
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_CLOSED, "Sender Closed: wrong code");
     assert_eq!(test_last_error_code(), TST_E_CLOSED);
 }
@@ -239,7 +244,7 @@ fn raw_sender_backpressure_returns_buffer_full_code() {
         msg: "raw send queue full".into(),
         errno_code: None,
     });
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_BUFFER_FULL, "RawSender Backpressure: wrong code");
     assert_eq!(test_last_error_code(), TST_E_BUFFER_FULL);
 }
@@ -256,7 +261,7 @@ fn raw_sender_transport_broken_returns_transport_code() {
         errno_code: None,
         cause: BrokenCause::Unspecified,
     });
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_TRANSPORT, "RawSender TransportBroken: wrong code");
     assert_eq!(test_last_error_code(), TST_E_TRANSPORT);
     let msg = test_last_error_msg();
@@ -274,7 +279,7 @@ fn raw_sender_transport_broken_returns_transport_code() {
 fn raw_sender_closed_returns_closed_code() {
     reset();
     let e = RawSenderError::from(TransportError::ExplicitClose);
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_CLOSED, "RawSender Closed: wrong code");
     assert_eq!(test_last_error_code(), TST_E_CLOSED);
 }
@@ -292,7 +297,7 @@ fn demux_receiver_input_malformed_returns_invalid_ts_code() {
         reason: "PES header too short for its flags",
     };
     let e = DemuxReceiverError::from(demux_err);
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(
         rc, TST_E_INVALID_TS,
         "DemuxReceiver InputMalformed: wrong code"
@@ -318,7 +323,7 @@ fn demux_receiver_transport_broken_returns_transport_code() {
         errno_code: None,
         cause: BrokenCause::Unspecified,
     });
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(
         rc, TST_E_TRANSPORT,
         "DemuxReceiver TransportBroken: wrong code"
@@ -335,7 +340,7 @@ fn demux_receiver_closed_returns_closed_code() {
     reset();
     // `TransportError::ExplicitClose` → kind Closed on DemuxReceiver.
     let e = DemuxReceiverError::from(TransportError::ExplicitClose);
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_CLOSED, "DemuxReceiver Closed: wrong code");
     assert_eq!(test_last_error_code(), TST_E_CLOSED);
 }
@@ -352,7 +357,7 @@ fn demux_receiver_end_of_stream_returns_eos_code() {
     // maps to Closed (caller-initiated); Direction::Recv switches it to
     // EndOfStream here.
     let e = DemuxReceiverError::from(TransportError::Closed);
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(
         rc, TST_E_END_OF_STREAM,
         "DemuxReceiver EndOfStream: wrong code"
@@ -372,7 +377,7 @@ fn receiver_transport_broken_returns_transport_code() {
         errno_code: None,
         cause: BrokenCause::Unspecified,
     });
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_TRANSPORT, "Receiver TransportBroken: wrong code");
     assert_eq!(test_last_error_code(), TST_E_TRANSPORT);
 }
@@ -385,7 +390,7 @@ fn receiver_transport_broken_returns_transport_code() {
 fn receiver_closed_returns_closed_code() {
     reset();
     let e = ReceiverError::from(TransportError::ExplicitClose);
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_CLOSED, "Receiver Closed: wrong code");
     assert_eq!(test_last_error_code(), TST_E_CLOSED);
 }
@@ -399,7 +404,7 @@ fn receiver_end_of_stream_returns_eos_code() {
     reset();
     // `TransportError::Closed` on the receiver shell → kind EndOfStream.
     let e = ReceiverError::from(TransportError::Closed);
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_END_OF_STREAM, "Receiver EndOfStream: wrong code");
     assert_eq!(test_last_error_code(), TST_E_END_OF_STREAM);
 }
@@ -416,7 +421,7 @@ fn raw_receiver_transport_broken_returns_transport_code() {
         errno_code: None,
         cause: BrokenCause::Unspecified,
     });
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(
         rc, TST_E_TRANSPORT,
         "RawReceiver TransportBroken: wrong code"
@@ -432,7 +437,7 @@ fn raw_receiver_transport_broken_returns_transport_code() {
 fn raw_receiver_closed_returns_closed_code() {
     reset();
     let e = RawReceiverError::from(TransportError::ExplicitClose);
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(rc, TST_E_CLOSED, "RawReceiver Closed: wrong code");
     assert_eq!(test_last_error_code(), TST_E_CLOSED);
 }
@@ -446,7 +451,7 @@ fn raw_receiver_end_of_stream_returns_eos_code() {
     reset();
     // `TransportError::Closed` on a receiver → kind EndOfStream.
     let e = RawReceiverError::from(TransportError::Closed);
-    let rc = test_record_shell_error(&e);
+    let rc = test_record_shell_error(e);
     assert_eq!(
         rc, TST_E_END_OF_STREAM,
         "RawReceiver EndOfStream: wrong code"
@@ -538,4 +543,76 @@ fn tst_e_code_values_match_documented_discriminants() {
     assert_eq!(TST_E_CLOSED, -7);
     assert_eq!(TST_E_TRANSPORT, -8);
     assert_eq!(TST_E_END_OF_STREAM, -12);
+}
+
+// ---------------------------------------------------------------------------
+// One code per error, whichever path reports it
+// ---------------------------------------------------------------------------
+
+/// A live MuxSender reports every MuxError with the code the offline muxer
+/// (`tst_muxer_*`) reports for it. Prints each disagreement before failing,
+/// which is the list the CHANGELOG's observed-code table is written from.
+#[test]
+fn live_mux_sender_and_offline_muxer_agree_on_every_mux_error() {
+    let all = tst_test_helpers::errors::every_mux_error();
+    assert_eq!(all.len(), 38);
+    let mut diffs = Vec::new();
+    for m in all {
+        reset();
+        let offline = tstrans::error::test_record_mux_error(&m);
+        reset();
+        let live = test_record_shell_error(MuxSenderError::from(m.clone()));
+        if live != offline {
+            diffs.push(format!("{m:?}: live {live} offline {offline}"));
+        }
+    }
+    for d in &diffs {
+        eprintln!("DIFF {d}");
+    }
+    assert!(diffs.is_empty(), "{} MuxError variants differ", diffs.len());
+}
+
+/// Transport failures project through the kind table on both directions.
+#[test]
+fn shells_project_transport_errors_through_the_table() {
+    let send = [-4, -8, -7, -6, -7]; // Backpressure, Broken, Closed, TooLarge, ExplicitClose
+    let recv = [-4, -8, -12, -6, -7]; // receive: Closed is the peer ending the stream
+    for (t, (s, r)) in tst_test_helpers::errors::every_transport_error()
+        .into_iter()
+        .zip(send.into_iter().zip(recv))
+    {
+        reset();
+        assert_eq!(
+            test_record_shell_error(MuxSenderError::from(t.clone())),
+            s,
+            "send {t:?}"
+        );
+        reset();
+        assert_eq!(
+            tstrans::error::test_record_recv_error(ReceiverError::from(t.clone()), false, false),
+            r,
+            "recv {t:?}"
+        );
+    }
+}
+
+/// Demux failures on a live DemuxReceiver use the offline demuxer's codes.
+#[test]
+fn demux_receiver_projects_demux_errors_through_the_table() {
+    let want = [-3, -3, -3, -6]; // Unrecoverable, StrictRejection, MalformedPes, SyncBufExhausted
+    for (d, w) in tst_test_helpers::errors::every_demux_error()
+        .into_iter()
+        .zip(want)
+    {
+        reset();
+        assert_eq!(
+            tstrans::error::test_record_recv_error(
+                DemuxReceiverError::from(d.clone()),
+                false,
+                false
+            ),
+            w,
+            "{d:?}"
+        );
+    }
 }

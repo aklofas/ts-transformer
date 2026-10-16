@@ -5043,8 +5043,9 @@ struct tst_demux_receiver_t *tst_demux_receiver_open_with_config(const char *srt
  * - `TST_E_CLOSED` (-7) if the handle was `_close`'d, or on the call that
  *   observes a cross-thread `_cancel` and every one after it
  * - `TST_E_TRANSPORT` (-8) on transport failure
- * - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection
- *   or unrecoverable packet malformation)
+ * - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
+ *   unrecoverable packet malformation, or a malformed PES)
+ * - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
  * On any non-zero return the contents of `*out_event` are unspecified.
@@ -8030,7 +8031,9 @@ int tst_rist_demux_receiver_get_stream_stats(struct TstRistDemuxReceiver *p,
  * - `TST_E_END_OF_STREAM` (-12) on graceful peer close / EOF
  * - `TST_E_CLOSED` (-7) if the handle was `_close`'d
  * - `TST_E_TRANSPORT` (-8) on transport failure
- * - `TST_E_INVALID_TS` (-3) on a demuxer error
+ * - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
+ *   unrecoverable packet malformation, or a malformed PES)
+ * - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
  * # Safety
@@ -8805,7 +8808,9 @@ int tst_rtp_demux_receiver_get_stream_stats(struct TstRtpDemuxReceiver *p,
  *   `?recv_timeout=<ms>` and no event arrived before the configured
  *   deadline — retryable, the session stays alive (the same code SRT's
  *   recv-deadline expiry already returns to C consumers)
- * - `TST_E_INVALID_TS` (-3) on a demuxer error
+ * - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
+ *   unrecoverable packet malformation, or a malformed PES)
+ * - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
  * # Safety
@@ -10971,7 +10976,9 @@ int tst_tcp_demux_receiver_get_stream_stats(struct TstTcpDemuxReceiver *p,
  * - `TST_E_END_OF_STREAM` (-12) on graceful peer close / EOF
  * - `TST_E_CLOSED` (-7) if the handle was `_close`'d
  * - `TST_E_TRANSPORT` (-8) on transport failure
- * - `TST_E_INVALID_TS` (-3) on a demuxer error
+ * - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
+ *   unrecoverable packet malformation, or a malformed PES)
+ * - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
  * # Safety
@@ -11766,7 +11773,9 @@ int tst_udp_demux_receiver_get_stream_stats(struct TstUdpDemuxReceiver *p,
  * - `TST_E_END_OF_STREAM` (-12) on graceful peer close / EOF
  * - `TST_E_CLOSED` (-7) if the handle was `_close`'d
  * - `TST_E_TRANSPORT` (-8) on transport failure
- * - `TST_E_INVALID_TS` (-3) on a demuxer error
+ * - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
+ *   unrecoverable packet malformation, or a malformed PES)
+ * - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
  * # Safety

@@ -111,9 +111,9 @@ a shell handle (`tst_mux_sender_*`, `tst_sender_*`,
 `tst_raw_receiver_*`) routes errors through one generic helper:
 
 ```rust
-record_shell_error<E: ShellError>(e: &E) -> i32
-// 1. e.kind() -> ShellErrorKind
-// 2. tst_error_from_kind(kind) -> TstError
+record_shell_error<E>(e: E) -> i32 where BindingError: From<E>
+// 1. BindingError::from(e) -> BindingErrorKind
+// 2. TstError::from_kind(kind) -> TstError
 // 3. set_last_error(code, &e.to_string())
 // 4. return negative code
 ```

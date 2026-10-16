@@ -86,7 +86,7 @@ pub unsafe extern "C" fn tst_sender_send_ts(
     };
     handle.inner.with_inner_mut(|s| match s.send_ts(slice) {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 
@@ -98,7 +98,7 @@ pub unsafe extern "C" fn tst_sender_flush(p: *mut TstSender) -> libc::c_int {
     };
     handle.inner.with_inner_mut(|s| match s.flush() {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 
@@ -268,7 +268,7 @@ pub unsafe extern "C" fn tst_managed_sender_send_ts(
     };
     handle.inner.with_inner_mut(|s| match s.send_ts(slice) {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 
@@ -280,7 +280,7 @@ pub unsafe extern "C" fn tst_managed_sender_flush(p: *mut TstManagedSender) -> l
     };
     handle.inner.with_inner_mut(|s| match s.flush() {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 

@@ -6,7 +6,7 @@
 //!
 //! Data-path bodies are thin forwarders to generic impls in
 //! `crate::transport_impls`. The `EventArena` borrowed-buffer lifetime
-//! (design §4.5), `ShellErrorKind` → error-code mapping, and the
+//! (design §4.5), error-to-code mapping through the binding kind table, and the
 //! per-PID stats borrowed buffer are all handled generically.
 //!
 //! **Cancel:** the RIST transport exposes a real cancel handle and
@@ -180,7 +180,9 @@ pub unsafe extern "C" fn tst_rist_demux_receiver_cancel(
 /// - `TST_E_END_OF_STREAM` (-12) on graceful peer close / EOF
 /// - `TST_E_CLOSED` (-7) if the handle was `_close`'d
 /// - `TST_E_TRANSPORT` (-8) on transport failure
-/// - `TST_E_INVALID_TS` (-3) on a demuxer error
+/// - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
+///   unrecoverable packet malformation, or a malformed PES)
+/// - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
 ///
 /// # Safety

@@ -187,7 +187,7 @@ pub(crate) unsafe fn mux_sender_push_video<T: Transport, S>(
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_video(slice, pts, key_frame) {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 
@@ -208,7 +208,7 @@ pub(crate) unsafe fn mux_sender_push_klv<T: Transport, S>(
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_klv(slice, pts, 0x00) {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 
@@ -229,7 +229,7 @@ pub(crate) unsafe fn mux_sender_push_audio<T: Transport, S>(
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_audio(slice, pts) {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 
@@ -250,7 +250,7 @@ pub(crate) unsafe fn mux_sender_push_subtitle<T: Transport, S>(
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_subtitle(slice, pts) {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 
@@ -282,7 +282,7 @@ pub(crate) unsafe fn mux_sender_push_video_to<T: Transport, S>(
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_video_to(stream, slice, pts, key_frame) {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 
@@ -310,7 +310,7 @@ pub(crate) unsafe fn mux_sender_push_klv_to<T: Transport, S>(
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_klv_to(stream, slice, pts, 0x00) {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 
@@ -338,7 +338,7 @@ pub(crate) unsafe fn mux_sender_push_audio_to<T: Transport, S>(
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_audio_to(stream, slice, pts) {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 
@@ -366,7 +366,7 @@ pub(crate) unsafe fn mux_sender_push_subtitle_to<T: Transport, S>(
     let pts = Pts90khz::new(pts_90khz);
     h.with_inner_ref(|s| match s.send_subtitle_to(stream, slice, pts) {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 
@@ -522,7 +522,7 @@ pub(crate) unsafe fn sender_send_ts<T: Transport, S>(
     };
     h.with_inner_mut(|s| match s.send_ts(slice) {
         Ok(()) => 0,
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_shell_error(e),
     })
 }
 
@@ -685,7 +685,7 @@ pub(crate) unsafe fn receiver_recv_ts<R: RecvTransport, S>(
             }
             0
         }
-        Err(e) => record_recv_error(&e, cancelled || h.is_cancelled(), true),
+        Err(e) => record_recv_error(e, cancelled || h.is_cancelled(), true),
     })
 }
 
@@ -838,7 +838,7 @@ pub(crate) unsafe fn demux_receiver_next_event<R: RecvTransport, S>(
             0
         }
         Ok(None) => record_recv_closed(cancelled || inner.is_cancelled()),
-        Err(e) => record_recv_error(&e, cancelled || inner.is_cancelled(), true),
+        Err(e) => record_recv_error(e, cancelled || inner.is_cancelled(), true),
     })
 }
 

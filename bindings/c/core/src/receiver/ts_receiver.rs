@@ -157,7 +157,7 @@ pub unsafe extern "C" fn tst_receiver_recv_packet(
             unsafe { std::ptr::copy_nonoverlapping(pkt.as_ptr(), out_packet, TS_PACKET_SIZE) };
             0
         }
-        Err(e) => record_recv_error(&e, cancelled || handle.inner.is_cancelled(), true),
+        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), true),
     })
 }
 
@@ -383,7 +383,7 @@ pub unsafe extern "C" fn tst_managed_receiver_recv_packet(
             unsafe { std::ptr::copy_nonoverlapping(pkt.as_ptr(), out_packet, TS_PACKET_SIZE) };
             0
         }
-        Err(e) => record_recv_error(&e, cancelled || handle.inner.is_cancelled(), false),
+        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
     })
 }
 
