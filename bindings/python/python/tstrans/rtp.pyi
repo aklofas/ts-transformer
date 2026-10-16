@@ -4,7 +4,7 @@ Mirrors the public surface exported from
 `bindings/python/python/tstrans/rtp.py`. Continues `py.typed` discipline.
 mypy --strict clean.
 
-The PyClass-backed types (Sender, Receiver, RtspClient, RtspSession,
+The PyClass-backed types (Transport, RecvTransport, RtspClient, RtspSession,
 RtspServer, MountHandle, etc.) live in `_native.rtp` (Rust source under
 `bindings/python/src/rtp/`). The pure-Python dataclass `RtspServerConfig`
 lives in `rtp.py`.
@@ -29,6 +29,14 @@ from typing import (
 
 # Cross-module types are imported from the `tstrans.mpegts` stub, which
 # now ships a sibling `.pyi` declaring these as real classes.
+from tstrans.shells import (
+    CancelHandle as CancelHandle,
+    DemuxReceiver as DemuxReceiver,
+    EndReason as EndReason,
+    MuxSender as MuxSender,
+    SocketStats as SocketStats,
+)
+from tstrans.shells import EndReason as StreamEndReason
 from tstrans.mpegts import (
     AudioStreamHandle,
     DataStreamHandle,
@@ -48,13 +56,8 @@ from tstrans.mpegts import (
 _BytesLike = Union[bytes, bytearray, memoryview, Any]
 
 __all__: list[str] = [
-    "StreamEndReason",
-    "Sender",
-    "Receiver",
-    "SocketStats",
-    "CancelHandle",
-    "MuxSender",
-    "DemuxReceiver",
+    "Transport",
+    "RecvTransport",
     "RtspClient",
     "RtspSession",
     "RtspClientConfig",
@@ -85,74 +88,14 @@ __all__: list[str] = [
 ]
 
 # ---------------------------------------------------------------------------
-# RTP transport (Sender / Receiver / SocketStats / CancelHandle)
+# Raw RTP transport (Transport / RecvTransport)
 # ---------------------------------------------------------------------------
 
 
-class StreamEndReason(enum.IntEnum):
-    """Why an RTP receive session ended. Mirrors the RTP subset of `tst_core::transport::EndReason`.
-
-    Returned by `.end_reason()` on `Receiver` / `DemuxReceiver` /
-    `H264Receiver`; `None` means the session hasn't ended yet (or ended
-    through a path this type doesn't instrument).
-    """
-
-    CLEAN_TEARDOWN = 1
-    SESSION_EXPIRED = 2
-    KEEPALIVE_FAILED = 3
-    TRANSPORT_FAILED = 4
-    PROTOCOL_ERROR = 5
-    CANCELLED = 6
-
-
 @final
-class SocketStats:
-    """Frozen wire-level statistics snapshot. Mirror of
-    `tst_core::transport::SocketStats`. All fields are integer-valued.
-
-    `RtpTransport` populates `bytes_sent` / `packets_sent` only;
-    `RtpRecvTransport` populates the receive-side counters.
-    RTCP-derived fields (`rtt_us`, `packets_lost_*`) stay zero until
-    RTCP RR/SR ingest is wired through the receiver.
-    """
-
-    rtt_us: int
-    send_bandwidth_bps: int
-    recv_bandwidth_bps: int
-    link_bandwidth_bps: int
-    bytes_sent: int
-    packets_sent: int
-    bytes_received: int
-    packets_received: int
-    bytes_lost_recv: int
-    packets_lost_recv: int
-    packets_lost_send: int
-    packets_retransmitted: int
-    packets_dropped_send: int
-    packets_dropped_recv: int
-    send_buffer_packets: int
-    recv_buffer_packets: int
-
-    def __repr__(self) -> str: ...
-
-
-@final
-class CancelHandle:
-    """Transport-side cancel handle for `Sender` / `Receiver` /
-    `H264Receiver`. Calling `.cancel()` wakes a thread parked in
-    `.send()` / `.recv()` / `.recv_au()` within ~100 ms; that call raises
-    `RtpError(kind=CLOSED)` (detail "cancelled from another thread";
-    `recv_au()` returns `None`). `is_cancelled()` is shared per shell.
-    """
-
-    def cancel(self) -> None: ...
-    def is_cancelled(self) -> bool: ...
-    def __repr__(self) -> str: ...
-
-
-@final
-class Sender:
-    """Python RTP sender wrapping `tst_rtp::RtpTransport`.
+class Transport:
+    """Raw RTP sender (the TS shells over `rtp://` are in `tstrans.shells`),
+    wrapping `tst_rtp::RtpTransport`.
 
     `pkt_size` overrides the UDP datagram size (RTP header + TS payload).
     `ssrc` pins the RTP synchronization source identifier; when omitted
@@ -164,12 +107,12 @@ class Sender:
         *,
         pkt_size: int = ...,
         ssrc: Optional[int] = ...,
-    ) -> Sender: ...
+    ) -> Transport: ...
     def send(self, ts_bytes: _BytesLike) -> None: ...
     def stats(self) -> SocketStats: ...
     def cancel_handle(self) -> CancelHandle: ...
     def close(self) -> None: ...
-    def __enter__(self) -> Sender: ...
+    def __enter__(self) -> Transport: ...
     def __exit__(
         self,
         exc_type: Optional[Type[BaseException]],
@@ -180,8 +123,8 @@ class Sender:
 
 
 @final
-class Receiver:
-    """Python RTP receiver wrapping `tst_rtp::RtpRecvTransport`.
+class RecvTransport:
+    """Raw RTP receiver wrapping `tst_rtp::RtpRecvTransport`.
 
     Binds to `url` (literal IP:port). For multicast URLs, joins the
     group automatically. The receive buffer sizes itself to the
@@ -189,18 +132,18 @@ class Receiver:
     is rejected.
 
     `end_reason()` / `end_detail()` report why the receive session
-    ended (`StreamEndReason` / free-text detail), or `None` for both
+    ended (`EndReason` / free-text detail), or `None` for both
     while the session is still live. Readable after `close()`.
     """
 
-    def __new__(cls, url: str) -> Receiver: ...
+    def __new__(cls, url: str) -> RecvTransport: ...
     def recv(self, timeout_ms: Optional[int] = ...) -> bytes: ...
     def stats(self) -> SocketStats: ...
     def cancel_handle(self) -> CancelHandle: ...
-    def end_reason(self) -> Optional[StreamEndReason]: ...
+    def end_reason(self) -> Optional[EndReason]: ...
     def end_detail(self) -> Optional[str]: ...
     def close(self) -> None: ...
-    def __enter__(self) -> Receiver: ...
+    def __enter__(self) -> RecvTransport: ...
     def __exit__(
         self,
         exc_type: Optional[Type[BaseException]],
@@ -208,6 +151,12 @@ class Receiver:
         traceback: Optional[Any],
     ) -> bool: ...
     def __repr__(self) -> str: ...
+
+
+# Deprecated alias (removed in 0.10.0)
+Sender = Transport
+# Deprecated alias (removed in 0.10.0)
+Receiver = RecvTransport
 
 
 # ---------------------------------------------------------------------------
@@ -348,10 +297,6 @@ class RtspStats:
     def rr_packets_received(self) -> int: ...
     @property
     def sr_packets_received(self) -> int: ...
-    @property
-    def rr_packets_sent(self) -> int: ...
-    @property
-    def sr_packets_sent(self) -> int: ...
     @property
     def interarrival_jitter_us(self) -> int: ...
     @property
@@ -746,156 +691,6 @@ class RtspServer:
 
 
 # ---------------------------------------------------------------------------
-# MuxSender + DemuxReceiver convenience wrappers
-# ---------------------------------------------------------------------------
-
-
-@final
-class MuxSender:
-    """Convenience wrapper — `Sender` + `Muxer` constructed together.
-
-    Single-call constructor; send methods accept any bytes-like input
-    (`bytes`, `bytearray`, `memoryview`, NumPy `uint8`). `pts` is
-    keyword-only on every send method. The GIL is released around the
-    muxer + transport work via `py.allow_threads()`.
-    """
-
-    def __new__(cls,
-        url: str,
-        program_config: MuxerProgramConfig,
-        *,
-        pkt_size: int = ...,
-    ) -> MuxSender: ...
-
-    # Send surface — single stream.
-    def send_video(
-        self,
-        nal: _BytesLike,
-        *,
-        pts: Pts90khz,
-        key_frame: bool = ...,
-    ) -> None: ...
-    def send_klv(
-        self,
-        klv: _BytesLike,
-        *,
-        pts: Pts90khz,
-        metadata_service_id: int = ...,
-    ) -> None: ...
-    def send_audio(self, adts: _BytesLike, *, pts: Pts90khz) -> None: ...
-    def send_subtitle(self, payload: _BytesLike, *, pts: Pts90khz) -> None: ...
-    def send_data(self, data: _BytesLike, *, pts: Pts90khz) -> None: ...
-
-    # Send surface — multi-stream variants.
-    def send_video_to(
-        self,
-        handle: VideoStreamHandle,
-        nal: _BytesLike,
-        *,
-        pts: Pts90khz,
-        key_frame: bool = ...,
-    ) -> None: ...
-    def send_klv_to(
-        self,
-        handle: KlvStreamHandle,
-        klv: _BytesLike,
-        *,
-        pts: Pts90khz,
-        metadata_service_id: int = ...,
-    ) -> None: ...
-    def send_audio_to(
-        self,
-        handle: AudioStreamHandle,
-        adts: _BytesLike,
-        *,
-        pts: Pts90khz,
-    ) -> None: ...
-    def send_subtitle_to(
-        self,
-        handle: SubtitleStreamHandle,
-        payload: _BytesLike,
-        *,
-        pts: Pts90khz,
-    ) -> None: ...
-    def send_data_to(
-        self,
-        handle: DataStreamHandle,
-        data: _BytesLike,
-        *,
-        pts: Pts90khz,
-    ) -> None: ...
-
-    # Stream handle accessors.
-    def video_handle(self) -> Optional[VideoStreamHandle]: ...
-    def klv_handle(self) -> Optional[KlvStreamHandle]: ...
-    def audio_handle(self) -> Optional[AudioStreamHandle]: ...
-    def subtitle_handle(self) -> Optional[SubtitleStreamHandle]: ...
-    def data_handle(self) -> Optional[DataStreamHandle]: ...
-
-    def stats(self) -> Tuple[SocketStats, MuxerStats]: ...
-    def close(self) -> None: ...
-    def finish(self) -> None:
-        """Drain pending bytes to the transport, raise the first drain error
-        (``RtpError`` with the transport's kind), then close.
-        The sender is closed either way; a second ``finish()`` is a no-op,
-        and so is a ``finish()`` after ``close()``. It does NOT free the
-        handle — call ``close()`` (or use the ``with`` block) to release it.
-        Unlike ``close()`` this does not cancel a parked send first."""
-    def __enter__(self) -> MuxSender: ...
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_value: Optional[BaseException],
-        traceback: Optional[Any],
-    ) -> bool: ...
-    def __repr__(self) -> str: ...
-
-
-@final
-class DemuxReceiver:
-    """Convenience wrapper — `Receiver` + `Demuxer` constructed together.
-
-    Iterating yields `tstrans.mpegts.DemuxEvent` subclass instances —
-    no duplicated event type hierarchy. `__next__` blocks (releases the
-    GIL) on the underlying transport read.
-
-    `stats()` returns a tuple `(SocketStats, Any)` — the second
-    element is a `MuxerStats` projection of the demuxer-side counters
-    (no `DemuxerStats` PyClass exists in `tstrans.mpegts`).
-
-    `end_reason()` / `end_detail()` report why the receive session
-    ended (`StreamEndReason` / free-text detail), or `None` for both
-    while the session is still live. Readable after `close()`.
-    """
-
-    def __new__(cls,
-        url: str,
-        *,
-        demux_config: Optional[DemuxerConfig] = ...,
-    ) -> DemuxReceiver: ...
-    def __iter__(self) -> Iterator[DemuxEvent]: ...
-    def __next__(self) -> DemuxEvent: ...
-    # Register a fan-out callback invoked with every 188-byte TS packet
-    # (as `bytes`) BEFORE demuxing, in registration order. If the
-    # callback raises, the exception is re-raised fail-loud from the next
-    # `__next__` and iteration stops. Append-only for the receiver's life.
-    def add_byte_sink(self, callback: Callable[[bytes], None]) -> None: ...
-    def stats(self) -> Tuple[SocketStats, Any]: ...
-    def last_seen_micros(self, pid: int) -> Optional[int]: ...
-    def end_reason(self) -> Optional[StreamEndReason]: ...
-    def end_detail(self) -> Optional[str]: ...
-    def close(self) -> None: ...
-    def __enter__(self) -> DemuxReceiver: ...
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_value: Optional[BaseException],
-        traceback: Optional[Any],
-    ) -> bool: ...
-    def __repr__(self) -> str: ...
-
-
-# ---------------------------------------------------------------------------
 # RFC 6184 — H.264 depacketizer types + H264Receiver
 # ---------------------------------------------------------------------------
 
@@ -1017,7 +812,7 @@ class H264Receiver:
     raises `RtpError(CLOSED)` if the receiver is closed.
     `cancel_handle()` — returns a `CancelHandle` for cross-thread cancellation.
     `end_reason()` / `end_detail()` — why the session ended
-    (`StreamEndReason` / free-text detail), or `None` for both while the
+    (`EndReason` / free-text detail), or `None` for both while the
     session is still live. Readable after `close()`.
     `close()` — idempotent; fires cancel + drops the socket.
     """
@@ -1035,7 +830,7 @@ class H264Receiver:
     def socket_stats(self) -> SocketStats: ...
     def local_addr(self) -> Optional[str]: ...
     def cancel_handle(self) -> CancelHandle: ...
-    def end_reason(self) -> Optional[StreamEndReason]: ...
+    def end_reason(self) -> Optional[EndReason]: ...
     def end_detail(self) -> Optional[str]: ...
     def close(self) -> None: ...
     def __enter__(self) -> H264Receiver: ...

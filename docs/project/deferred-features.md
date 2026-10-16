@@ -1244,8 +1244,8 @@ mean **Deferred**. An entry whose feature has shipped must never read
     PTS-only video, so B-frame (DTS ≠ PTS) and ST 0604 MISP-stamped video
     cannot be sent through a C shell. The rustdoc on the three methods
     says "open an issue"; this entry is that record.
-  - **Python / JVM:** the `MuxSender` shells (`tstrans.srt.MuxSender` /
-    `ManagedMuxSender`, `tstrans.rtp.MuxSender`,
+  - **Python / JVM:** the `MuxSender` shells (`tstrans.shells.MuxSender` /
+    `ManagedMuxSender`,
     `org.tstrans.srt.MuxSender`, …) expose no `send_video_misp_to` /
     `sendVideoMispTo`; `Muxer` is the only binding path to an ST 0604
     MISP splice.

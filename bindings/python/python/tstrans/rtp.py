@@ -5,8 +5,8 @@ Available when tstrans was built with the `rtp` cargo feature
 will fail to import this submodule with a friendly ImportError.
 
 Submodule contents are populated by `tstrans._native.rtp`:
-- `Sender`, `Receiver`, `SocketStats`, `CancelHandle`
-- `MuxSender`, `DemuxReceiver`
+- `Transport`, `RecvTransport` (raw RTP; the TS shells are in
+  `tstrans.shells`)
 - `RtspClient`, `RtspSession`, `BasicAuth`, `DigestAuth`,
   `RtspClientConfig`, `RtspStats`, `RtspCancelHandle`,
   `DigestAlgorithm`, `TransportPref`, `RtspVersion`
@@ -14,11 +14,18 @@ Submodule contents are populated by `tstrans._native.rtp`:
   `ServerStats`, `MountStats`, `RtspServerCancelHandle`
 - `PublishMount`, `PublishMountStats`, `PublisherInfo`, `PublishShape`,
   `ClockAlignment` (the RTSP publisher role)
+
+`MuxSender`, `DemuxReceiver`, `CancelHandle`, `SocketStats` and
+`StreamEndReason` moved to `tstrans.shells` (`StreamEndReason` is
+`tstrans.shells.EndReason`), and the raw `Sender` / `Receiver` are now
+`Transport` / `RecvTransport`. The old names remain as deprecated aliases
+that emit `DeprecationWarning` and are removed in 0.10.0.
 """
 
 from __future__ import annotations
 
 import enum
+import warnings as _warnings
 from dataclasses import dataclass
 from typing import Optional, Union
 
@@ -32,36 +39,33 @@ except (ImportError, AttributeError) as exc:  # pragma: no cover
         "`rtp` cargo feature is enabled (it is on by default)."
     ) from exc
 
+from . import shells as _shells
 
-class StreamEndReason(enum.IntEnum):
-    """Why an RTP receive session ended. Mirrors the RTP subset of `tst_core::transport::EndReason`.
+_DEPRECATED = {
+    "MuxSender": "tstrans.shells.MuxSender",
+    "DemuxReceiver": "tstrans.shells.DemuxReceiver",
+    "CancelHandle": "tstrans.shells.CancelHandle",
+    "SocketStats": "tstrans.shells.SocketStats",
+    "StreamEndReason": "tstrans.shells.EndReason",
+    "Sender": "tstrans.rtp.Transport",
+    "Receiver": "tstrans.rtp.RecvTransport",
+}
 
-    Returned by `.end_reason()` on `Receiver` / `DemuxReceiver` /
-    `H264Receiver`; `None` means the session either hasn't ended yet or
-    ended through a path this type doesn't instrument (e.g. a plain
-    `rtp://` receiver that was never closed or cancelled).
 
-    Numeric values are pinned across the C, Python, and JVM bindings
-    (the C `TstStreamEndReason` enum additionally has `NONE = 0`; Python
-    uses `None` for that case instead of a member). Pure Python — unlike
-    the RTSP/transport config enums in this module (`RtspVersion`,
-    `TransportPref`, ...), which are Rust-backed `#[pyclass(eq, eq_int)]`
-    types because they cross the Python→Rust boundary as constructor
-    arguments, `StreamEndReason` only ever flows Rust→Python as a return
-    value, so it follows the same pure-Python-enum convention as
-    `tstrans.mpegts.NonConformantKind` / `StreamKindTag`.
-
-    `.end_detail()` carries the free-text `msg` for `KEEPALIVE_FAILED` /
-    `TRANSPORT_FAILED` / `PROTOCOL_ERROR`; `None` for the other three
-    variants.
-    """
-
-    CLEAN_TEARDOWN = 1
-    SESSION_EXPIRED = 2
-    KEEPALIVE_FAILED = 3
-    TRANSPORT_FAILED = 4
-    PROTOCOL_ERROR = 5
-    CANCELLED = 6
+def __getattr__(name: str) -> object:
+    """Deprecated aliases (removed in 0.10.0): the shell classes moved to
+    `tstrans.shells`, `StreamEndReason` is `tstrans.shells.EndReason`, and
+    the raw `Sender` / `Receiver` are `Transport` / `RecvTransport`."""
+    target = _DEPRECATED.get(name)
+    if target is None:
+        raise AttributeError(f"module 'tstrans.rtp' has no attribute {name!r}")
+    _warnings.warn(
+        f"tstrans.rtp.{name} is deprecated; use {target} (removed in 0.10.0)",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    owner = _rtp if target.startswith("tstrans.rtp.") else _shells
+    return getattr(owner, target.rsplit(".", 1)[1])
 
 
 class PublishShape(enum.IntEnum):
@@ -72,8 +76,7 @@ class PublishShape(enum.IntEnum):
     track (RFC 2250); `ELEMENTARY` is one H.264 (RFC 6184) video track,
     optionally with one KLV (RFC 6597) track — `PublisherInfo.klv` says
     which. Numeric values are pinned across the C, Python, and JVM
-    bindings. Pure Python for the same reason as `StreamEndReason`: it
-    only ever flows Rust→Python as a return value.
+    bindings. Pure Python: it only ever flows Rust→Python as a return value.
     """
 
     MP2T = 0
@@ -100,15 +103,9 @@ class ClockAlignment(enum.IntEnum):
     SENDER_REPORT = 3
 
 
-# RTP transport types.
-Sender = _rtp.Sender
-Receiver = _rtp.Receiver
-SocketStats = _rtp.SocketStats
-CancelHandle = _rtp.CancelHandle
-
-# MuxSender + DemuxReceiver convenience wrappers.
-MuxSender = _rtp.MuxSender
-DemuxReceiver = _rtp.DemuxReceiver
+# Raw RTP transports (the TS shells over `rtp://` are in `tstrans.shells`).
+Transport = _rtp.Transport
+RecvTransport = _rtp.RecvTransport
 
 # RtspClient, RtspSession, auth, config, stats.
 # BasicAuth + DigestAuth are PyClass-backed dataclass-equivalents living
@@ -237,15 +234,9 @@ class RtspServerConfig:
 
 
 __all__: list[str] = [
-    # transport
-    "StreamEndReason",
-    "Sender",
-    "Receiver",
-    "SocketStats",
-    "CancelHandle",
-    # mux/demux convenience wrappers
-    "MuxSender",
-    "DemuxReceiver",
+    # raw transports
+    "Transport",
+    "RecvTransport",
     # RTSP client
     "RtspClient",
     "RtspSession",

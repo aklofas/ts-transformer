@@ -72,6 +72,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `vps_id` keyword arguments and attributes — never raised.
 - `tstrans.rtp.RtspClientConfig` no longer takes `rtcp=` and has no `rtcp`
   property; the flag was accepted and ignored.
+- `tstrans.rtp.RtspStats.rr_packets_sent` and `sr_packets_sent`: the RTCP
+  report emitter they counted was removed; the class's other fields remain
+  reserved zeros.
 
 ### Removed — tst-jni (BREAKING)
 
@@ -219,6 +222,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tstrans.hls.MuxPublisher.send_video` / `send_klv` / `send_audio` /
   `send_subtitle` are renamed `push_video` / `push_klv` / `push_audio` /
   `push_subtitle`.
+- The shell classes live in `tstrans.shells` (one class per shell for every
+  transport; see Added). `tstrans.srt.MuxSender` and `tstrans.rtp.MuxSender`
+  are the same class, so `isinstance` checks against the old module's name
+  still pass through the deprecated alias; a failure raises the transport's
+  exception class, chosen when the shell is opened.
+- `tstrans.rtp.Sender` / `tstrans.rtp.Receiver` were raw RTP transports, not
+  TS shells; they are now named `tstrans.rtp.Transport` /
+  `tstrans.rtp.RecvTransport` (the `tstrans.udp` grammar), with the same
+  constructor and methods. The TS shells over `rtp://` are
+  `tstrans.shells.Sender` / `Receiver`.
+- `tstrans.srt.RecvEndReason` and `tstrans.rtp.StreamEndReason` are one enum,
+  `tstrans.shells.EndReason`. Names are unchanged; the former
+  `RecvEndReason` members change value (`END_OF_STREAM` 1 → 7,
+  `RECONNECT_EXHAUSTED` 2 → 8, `CANCELLED` 3 → 6). Compare by member, not by
+  integer.
+- `CancelHandle` and `SocketStats` returned by every srt and rtp class
+  (listeners, managed shells, `H264Receiver`, the raw RTP transports) are
+  `tstrans.shells.CancelHandle` / `SocketStats`.
 
 ### Changed — tst-jni (BREAKING)
 
@@ -373,6 +394,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `RtpException.Kind.END_OF_STREAM`, which the Python binding's
   `RtpErrorKind` already had.
+
+### Deprecated — tst-py
+
+- Module aliases, each emitting `DeprecationWarning` on access and removed in
+  0.10.0: `tstrans.srt.{Sender, Receiver, MuxSender, DemuxReceiver,
+  CancelHandle, SocketStats}` and `tstrans.rtp.{MuxSender, DemuxReceiver,
+  CancelHandle, SocketStats}` (use `tstrans.shells.*`);
+  `tstrans.srt.RecvEndReason` and `tstrans.rtp.StreamEndReason` (use
+  `tstrans.shells.EndReason`); `tstrans.rtp.Sender` / `Receiver` (use
+  `tstrans.rtp.Transport` / `RecvTransport`).
+- The `from_url(...)` static methods and the `MuxSender(url, ...)` /
+  `DemuxReceiver(url, ...)` constructors of the shell classes: use
+  `Class.open(url, ...)`. The rtp `pkt_size=` keyword is the `?pkt_size=` URL
+  key. Each emits `DeprecationWarning`; removed in 0.10.0.
 
 ### Fixed — tst-py
 

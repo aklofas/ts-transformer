@@ -60,7 +60,7 @@ use tst_rtp::transport::RtpStats;
 use tst_rtp::{H264Au, H264DepayConfig, H264DepayStats, H264Receiver, ParameterSetInjection};
 
 use crate::raise::{RTP, pyok, pyres, raise};
-use crate::rtp::transport::{PyCancelHandle, PySocketStats};
+use crate::shells::cancel::{PyCancelHandle, PySocketStats};
 use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
@@ -651,7 +651,7 @@ impl PyH264Receiver {
     /// `current_end_reason`). Still readable after `close()`.
     fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
         match self.current_end_reason() {
-            Some(r) => crate::rtp::end_reason::end_reason_to_py(py, &r),
+            Some(r) => crate::shells::end_reason::end_reason_to_py(py, &r),
             None => Ok(None),
         }
     }
@@ -661,7 +661,7 @@ impl PyH264Receiver {
     /// for every other reason (including "hasn't ended yet").
     fn end_detail(&self) -> Option<String> {
         self.current_end_reason()
-            .and_then(|r| crate::rtp::end_reason::end_reason_detail(&r).map(str::to_owned))
+            .and_then(|r| crate::shells::end_reason::end_detail(&r).map(str::to_owned))
     }
 
     /// Close the receiver. Idempotent. Fires the cancel handle BEFORE

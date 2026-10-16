@@ -65,8 +65,9 @@ use tst_pipeline::{
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
 use crate::raise::{SRT, pyok, pyres, raise};
+use crate::shells::cancel::{PyCancelHandle, PySocketStats};
 use crate::srt::policy::{PyManagedTransportStats, PyReconnectPolicy};
-use crate::srt::transport::{PyCancelHandle, PySocketStats, PySrtStats};
+use crate::srt::transport::PySrtStats;
 use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------

@@ -47,10 +47,10 @@ use crate::mux::{
     PySubtitleStreamHandle, PyVideoStreamHandle, py_pts90khz,
 };
 use crate::raise::{SRT, pyok, raise};
-use crate::srt::demux_receiver::demux_recv_err;
-use crate::srt::mux_sender::mux_sender_err;
+use crate::shells::cancel::{PyCancelHandle, PySocketStats};
+use crate::shells::demux_receiver::demux_recv_err;
+use crate::shells::mux_sender::mux_sender_err;
 use crate::srt::policy::{PyManagedTransportStats, PyReconnectPolicy};
-use crate::srt::transport::{PyCancelHandle, PySocketStats};
 use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
@@ -190,7 +190,7 @@ impl PyManagedMuxSender {
                 .with_mut(|s| s.send_video(slice, rust_pts, key_frame))
         });
         match res {
-            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
         }
     }
@@ -212,7 +212,7 @@ impl PyManagedMuxSender {
                 .with_mut(|s| s.send_klv(slice, rust_pts, metadata_service_id))
         });
         match res {
-            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
         }
     }
@@ -232,7 +232,7 @@ impl PyManagedMuxSender {
             self.owned.with_mut(|s| s.send_audio(slice, rust_pts))
         });
         match res {
-            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
         }
     }
@@ -252,7 +252,7 @@ impl PyManagedMuxSender {
             self.owned.with_mut(|s| s.send_subtitle(slice, rust_pts))
         });
         match res {
-            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
         }
     }
@@ -273,7 +273,7 @@ impl PyManagedMuxSender {
             self.owned.with_mut(|s| s.send_data(slice, rust_pts))
         });
         match res {
-            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
         }
     }
@@ -298,7 +298,7 @@ impl PyManagedMuxSender {
                 .with_mut(|s| s.send_video_to(handle_inner, slice, rust_pts, key_frame))
         });
         match res {
-            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
         }
     }
@@ -321,7 +321,7 @@ impl PyManagedMuxSender {
                 .with_mut(|s| s.send_klv_to(handle_inner, slice, rust_pts, metadata_service_id))
         });
         match res {
-            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
         }
     }
@@ -343,7 +343,7 @@ impl PyManagedMuxSender {
                 .with_mut(|s| s.send_audio_to(handle_inner, slice, rust_pts))
         });
         match res {
-            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
         }
     }
@@ -365,7 +365,7 @@ impl PyManagedMuxSender {
                 .with_mut(|s| s.send_subtitle_to(handle_inner, slice, rust_pts))
         });
         match res {
-            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
         }
     }
@@ -387,7 +387,7 @@ impl PyManagedMuxSender {
                 .with_mut(|s| s.send_data_to(handle_inner, slice, rust_pts))
         });
         match res {
-            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
         }
     }
@@ -538,7 +538,7 @@ impl PyManagedMuxSender {
                 .with_ref_blocking(BlockingReason::IsItselfBlocking, |s| s.finish())
         }) {
             Ok(Ok(())) => Ok(()),
-            Ok(Err(e)) => Err(mux_sender_err(py, e)),
+            Ok(Err(e)) => Err(mux_sender_err(py, &SRT, e)),
             // Already closed: the slot is empty, which is the same answer
             // a second `finish()` gets from the shell itself — stay quiet.
             Err(HandleState::Closed) => Ok(()),
@@ -603,7 +603,7 @@ impl PyManagedMuxSender {
 /// (i.e. it behaves as `ReconnectMode.BLOCKING`).
 ///
 /// `end_reason()` reports why the receive session ended
-/// (`tstrans.srt.RecvEndReason`), or `None` while it is still live.
+/// (`tstrans.shells.EndReason`), or `None` while it is still live.
 ///
 /// Use as a context manager for guaranteed cleanup:
 /// ```python
@@ -715,7 +715,7 @@ impl PyManagedDemuxReceiver {
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
             Ok(Ok(None)) => Err(pyo3::exceptions::PyStopIteration::new_err(())),
             Ok(Ok(Some(ev))) => crate::mpegts::convert_event(py, &ev),
-            Ok(Err(e)) => Err(demux_recv_err(py, e)),
+            Ok(Err(e)) => Err(demux_recv_err(py, &SRT, e)),
         }
     }
 
@@ -799,7 +799,7 @@ impl PyManagedDemuxReceiver {
             .map(|d| d.as_micros() as u64))
     }
 
-    /// Why this receive session ended — a `tstrans.srt.RecvEndReason`
+    /// Why this receive session ended — a `tstrans.shells.EndReason`
     /// member, or `None` while the stream is still live (or if it ended
     /// through a path this type doesn't instrument).
     ///
@@ -820,7 +820,7 @@ impl PyManagedDemuxReceiver {
     /// distinct from budget exhaustion.
     fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
         match self.owned.end_reason() {
-            Some(r) => crate::srt::end_reason::recv_end_reason_to_py(py, &r),
+            Some(r) => crate::shells::end_reason::end_reason_to_py(py, &r),
             None => Ok(None),
         }
     }

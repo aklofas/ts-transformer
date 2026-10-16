@@ -44,8 +44,8 @@ use tst_rtp::rtsp::client::{
 use tst_rtp::{H264DepayConfig, RtspClientBuilder, RtspTransportPref, RtspVersion};
 
 use crate::raise::{RTSP, raise};
-use crate::rtp::demux_receiver::PyDemuxReceiver;
 use crate::rtp::h264_receiver::PyH264Receiver;
+use crate::shells::demux_receiver::PyDemuxReceiver;
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
 
 // ---------------------------------------------------------------------------
@@ -375,8 +375,6 @@ impl PyRtspClientConfig {
 pub struct PyRtspStats {
     rr_packets_received: u64,
     sr_packets_received: u64,
-    rr_packets_sent: u64,
-    sr_packets_sent: u64,
     interarrival_jitter_us: u32,
     fraction_lost_q8: u8,
 }
@@ -392,14 +390,6 @@ impl PyRtspStats {
         self.sr_packets_received
     }
     #[getter]
-    fn rr_packets_sent(&self) -> u64 {
-        self.rr_packets_sent
-    }
-    #[getter]
-    fn sr_packets_sent(&self) -> u64 {
-        self.sr_packets_sent
-    }
-    #[getter]
     fn interarrival_jitter_us(&self) -> u32 {
         self.interarrival_jitter_us
     }
@@ -411,12 +401,9 @@ impl PyRtspStats {
     fn __repr__(&self) -> String {
         format!(
             "RtspStats(rr_packets_received={}, sr_packets_received={}, \
-             rr_packets_sent={}, sr_packets_sent={}, interarrival_jitter_us={}, \
-             fraction_lost_q8={})",
+             interarrival_jitter_us={}, fraction_lost_q8={})",
             self.rr_packets_received,
             self.sr_packets_received,
-            self.rr_packets_sent,
-            self.sr_packets_sent,
             self.interarrival_jitter_us,
             self.fraction_lost_q8,
         )
@@ -901,7 +888,7 @@ impl PyRtspSession {
             None => None,
             Some(cfg) => Some(crate::mpegts::build_demuxer_config(py, cfg)?),
         };
-        PyDemuxReceiver::from_recv_transport(py, transport, opts)
+        PyDemuxReceiver::from_opened(py, crate::rtp::transport::opened_recv(transport), opts)
     }
 
     /// Consume the session's data plane and wrap it in an `H264Receiver`

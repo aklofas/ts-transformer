@@ -31,7 +31,7 @@ use tst_rtp::rtsp::server::publish::{
 };
 
 use crate::raise::{RTSP, raise};
-use crate::rtp::demux_receiver::PyDemuxReceiver;
+use crate::shells::demux_receiver::PyDemuxReceiver;
 use tst_pipeline::binding::BindingError;
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -391,7 +391,7 @@ impl PyPublishMount {
     /// `Demuxer(config=...)` constructor takes; `None` uses the defaults.
     #[pyo3(signature = (demux_config = None))]
     #[allow(clippy::wrong_self_convention)]
-    pub fn into_demux_receiver(
+    pub(crate) fn into_demux_receiver(
         &self,
         py: Python<'_>,
         demux_config: Option<&Bound<'_, PyAny>>,
@@ -406,7 +406,7 @@ impl PyPublishMount {
         let transport =
             crate::util::allow_threads_parking(py, move || handle.into_recv_transport())
                 .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
-        PyDemuxReceiver::from_recv_transport(py, transport, opts)
+        PyDemuxReceiver::from_opened(py, crate::rtp::transport::opened_recv(transport), opts)
     }
 
     fn __repr__(&self) -> String {

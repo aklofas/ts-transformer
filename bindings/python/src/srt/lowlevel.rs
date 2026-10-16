@@ -7,9 +7,9 @@
 //!   `UrlOverlay::apply_to_{socket,listener}` AFTER so the overlay's
 //!   unconditional overwrites give the URL final say.
 //! - `Socket` is a handle that promotes via `into_sender` /
-//!   `into_receiver` into PySender / PyReceiver, and via
-//!   `into_mux_sender` / `into_demux_receiver` into PyMuxSender /
-//!   PyDemuxReceiver. Each consumes the socket handle.
+//!   `into_receiver` into the `tstrans.shells` Sender / Receiver, and via
+//!   `into_mux_sender` / `into_demux_receiver` into the shells' MuxSender /
+//!   DemuxReceiver. Each consumes the socket handle.
 //! - `Listener` exposes both blocking `accept(timeout_ms=...)` and a
 //!   Python iterator (`for sock in listener: ...`). The iterator
 //!   converts `AcceptError::ListenerClosed` to `StopIteration` so a
@@ -47,12 +47,31 @@ use tst_srt::{
     SrtUrl, url::Mode,
 };
 
-use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned};
+use tst_core::transport::{RecvTransport, Transport, TransportCancel};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, HandleState, Opened, Owned};
 
 use crate::errors::make_kinded_error;
 use crate::raise::{SRT, pyres, raise};
-use crate::srt::transport::{PyCancelHandle, PyReceiver, PySender};
+use crate::shells::cancel::PyCancelHandle;
+use crate::shells::demux_receiver::PyDemuxReceiver as PyShellDemuxReceiver;
+use crate::shells::mux_sender::PyMuxSender as PyShellMuxSender;
+use crate::shells::receiver::PyReceiver as PyShellReceiver;
+use crate::shells::sender::PySender as PyShellSender;
 use crate::util::close_owned;
+
+/// A connected socket as an opened shell transport. The transport's own
+/// cancel handle is taken before it is boxed, the way `tst_srt::opener`
+/// does.
+fn opened_send(t: SrtTransport) -> Opened<Box<dyn Transport>> {
+    let cancel: Arc<dyn TransportCancel> = Arc::new(t.srt_cancel_handle());
+    Opened::new(Box::new(t), cancel, Domain::Srt)
+}
+
+/// [`opened_send`] for a receive shell.
+fn opened_recv(t: SrtTransport) -> Opened<Box<dyn RecvTransport>> {
+    let cancel: Arc<dyn TransportCancel> = Arc::new(t.srt_cancel_handle());
+    Opened::new(Box::new(t), cancel, Domain::Srt)
+}
 
 /// `SrtError(CONFIG_INVALID)` for this module's builder / URL pre-checks,
 /// through the one raise path (`crate::raise`).
@@ -478,18 +497,16 @@ impl PySocket {
     /// Consume this socket and produce a `Sender`. The socket handle
     /// moves into the new Sender — subsequent calls on `self` raise
     /// `SrtError(kind=CLOSED)`.
-    fn into_sender(&self, py: Python<'_>) -> PyResult<PySender> {
-        Ok(PySender::from_transport(SrtTransport::new(
-            self.take_socket(py)?,
-        )))
+    fn into_sender(&self, py: Python<'_>) -> PyResult<PyShellSender> {
+        let t = SrtTransport::new(self.take_socket(py)?);
+        PyShellSender::from_opened(py, opened_send(t))
     }
 
     /// Consume this socket and produce a `Receiver`. Same consumption
     /// semantics as `into_sender`.
-    fn into_receiver(&self, py: Python<'_>) -> PyResult<PyReceiver> {
-        Ok(PyReceiver::from_transport(SrtTransport::new(
-            self.take_socket(py)?,
-        )))
+    fn into_receiver(&self, py: Python<'_>) -> PyResult<PyShellReceiver> {
+        let t = SrtTransport::new(self.take_socket(py)?);
+        PyShellReceiver::from_opened(py, opened_recv(t))
     }
 
     /// Consume this socket and produce a `MuxSender` for the given
@@ -503,13 +520,9 @@ impl PySocket {
         &self,
         py: Python<'_>,
         program_config: PyRef<'_, crate::mux::PyMuxerProgramConfig>,
-    ) -> PyResult<crate::srt::mux_sender::PyMuxSender> {
-        let socket = self.take_socket(py)?;
-        crate::srt::mux_sender::PyMuxSender::from_pipeline_mux(
-            py,
-            SrtTransport::new(socket),
-            &program_config,
-        )
+    ) -> PyResult<PyShellMuxSender> {
+        let t = SrtTransport::new(self.take_socket(py)?);
+        PyShellMuxSender::from_opened(py, opened_send(t), &program_config)
     }
 
     /// Consume this socket and produce a `DemuxReceiver`. Optional
@@ -521,16 +534,13 @@ impl PySocket {
         &self,
         py: Python<'_>,
         demux_config: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<crate::srt::demux_receiver::PyDemuxReceiver> {
-        let socket = self.take_socket(py)?;
+    ) -> PyResult<PyShellDemuxReceiver> {
+        let t = SrtTransport::new(self.take_socket(py)?);
         let opts = match demux_config {
             None => None,
             Some(cfg) => Some(crate::mpegts::build_demuxer_config(py, cfg)?),
         };
-        Ok(crate::srt::demux_receiver::PyDemuxReceiver::from_transport(
-            SrtTransport::new(socket),
-            opts,
-        ))
+        PyShellDemuxReceiver::from_opened(py, opened_recv(t), opts)
     }
 
     /// Local bound address as `(host, port)`. Useful when the URL
