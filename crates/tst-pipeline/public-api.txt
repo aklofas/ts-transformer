@@ -124,13 +124,13 @@ pub tst_pipeline::binding::kind::BindingErrorKind::UdpUrl = -53
 pub tst_pipeline::binding::kind::BindingErrorKind::WrongType = -47
 impl tst_pipeline::binding::kind::BindingErrorKind
 pub const tst_pipeline::binding::kind::BindingErrorKind::ALL: &'static [tst_pipeline::binding::kind::BindingErrorKind]
-pub fn tst_pipeline::binding::kind::BindingErrorKind::c_projection(&self) -> i32
+pub const fn tst_pipeline::binding::kind::BindingErrorKind::c_projection(&self) -> i32
 pub fn tst_pipeline::binding::kind::BindingErrorKind::doc(&self) -> &'static str
 pub fn tst_pipeline::binding::kind::BindingErrorKind::name(&self) -> &'static str
 pub fn tst_pipeline::binding::kind::BindingErrorKind::variant_name(&self) -> &'static str
 impl tst_pipeline::binding::kind::BindingErrorKind
-pub fn tst_pipeline::binding::kind::BindingErrorKind::c_code(&self) -> i32
-pub fn tst_pipeline::binding::kind::BindingErrorKind::is_c_frozen(&self) -> bool
+pub const fn tst_pipeline::binding::kind::BindingErrorKind::c_code(&self) -> i32
+pub const fn tst_pipeline::binding::kind::BindingErrorKind::is_c_frozen(&self) -> bool
 impl core::clone::Clone for tst_pipeline::binding::kind::BindingErrorKind
 pub fn tst_pipeline::binding::kind::BindingErrorKind::clone(&self) -> tst_pipeline::binding::kind::BindingErrorKind
 impl core::cmp::Eq for tst_pipeline::binding::kind::BindingErrorKind
@@ -466,13 +466,13 @@ pub tst_pipeline::binding::BindingErrorKind::UdpUrl = -53
 pub tst_pipeline::binding::BindingErrorKind::WrongType = -47
 impl tst_pipeline::binding::kind::BindingErrorKind
 pub const tst_pipeline::binding::kind::BindingErrorKind::ALL: &'static [tst_pipeline::binding::kind::BindingErrorKind]
-pub fn tst_pipeline::binding::kind::BindingErrorKind::c_projection(&self) -> i32
+pub const fn tst_pipeline::binding::kind::BindingErrorKind::c_projection(&self) -> i32
 pub fn tst_pipeline::binding::kind::BindingErrorKind::doc(&self) -> &'static str
 pub fn tst_pipeline::binding::kind::BindingErrorKind::name(&self) -> &'static str
 pub fn tst_pipeline::binding::kind::BindingErrorKind::variant_name(&self) -> &'static str
 impl tst_pipeline::binding::kind::BindingErrorKind
-pub fn tst_pipeline::binding::kind::BindingErrorKind::c_code(&self) -> i32
-pub fn tst_pipeline::binding::kind::BindingErrorKind::is_c_frozen(&self) -> bool
+pub const fn tst_pipeline::binding::kind::BindingErrorKind::c_code(&self) -> i32
+pub const fn tst_pipeline::binding::kind::BindingErrorKind::is_c_frozen(&self) -> bool
 impl core::clone::Clone for tst_pipeline::binding::kind::BindingErrorKind
 pub fn tst_pipeline::binding::kind::BindingErrorKind::clone(&self) -> tst_pipeline::binding::kind::BindingErrorKind
 impl core::cmp::Eq for tst_pipeline::binding::kind::BindingErrorKind

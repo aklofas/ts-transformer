@@ -90,7 +90,7 @@ macro_rules! kinds {
             /// the C-numbered kinds, the frozen code this kind was folded into
             /// before the table existed for the ≤ −49 kinds (e.g. `TcpTlsDisabled`
             /// → −33 `TST_E_TCP_TLS`). Always in `-48..=-1`.
-            pub fn c_projection(&self) -> i32 {
+            pub const fn c_projection(&self) -> i32 {
                 match self { $( Self::$variant => $proj, )+ }
             }
 
@@ -441,12 +441,12 @@ kinds! {
 impl BindingErrorKind {
     /// The discriminant (`*self as i32`); the frozen `TST_E_*` number for the
     /// C-numbered kinds, ≤ −49 otherwise.
-    pub fn c_code(&self) -> i32 {
+    pub const fn c_code(&self) -> i32 {
         *self as i32
     }
 
     /// `true` when the discriminant is a frozen C code (`-48..=-1`).
-    pub fn is_c_frozen(&self) -> bool {
+    pub const fn is_c_frozen(&self) -> bool {
         self.c_code() >= -48
     }
 }
