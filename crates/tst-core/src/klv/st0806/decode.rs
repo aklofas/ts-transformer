@@ -181,7 +181,7 @@ pub fn decode_standalone(bytes: &[u8]) -> Result<RvtLs, KlvDecodeError> {
 }
 
 /// Apply one top-level RVT LS tag (Table 8-1) to `record`. Mirrors
-/// `st0601::decode::apply_typed_tag`'s shape but is local to this
+/// `st0601::decode::apply_tag`'s rules but is local to this
 /// 21-tag schema: unknown tags are preserved verbatim, per-field
 /// validation failures are returned (the caller pushes them onto
 /// [`RvtLs::field_errors`]), and a malformed nested Local Set under
@@ -189,7 +189,7 @@ pub fn decode_standalone(bytes: &[u8]) -> Result<RvtLs, KlvDecodeError> {
 /// than aborting the whole record.
 fn apply_rvt_tag(record: &mut RvtLs, f: &RawField<'_>) -> Result<(), KlvFieldError> {
     let tag = f.tag;
-    // Same u8-narrowing gate as st0601::apply_typed_tag: reject tags
+    // Same u8-narrowing gate as st0601::decode::apply_tag: reject tags
     // outside the typed table's u8 universe before narrowing, so a
     // future multi-byte BER-OID tag can never `as u8`-collide with a
     // defined single-byte tag.

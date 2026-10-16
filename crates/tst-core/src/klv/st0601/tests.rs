@@ -712,14 +712,18 @@ fn vmti_tag_74_round_trips_verbatim() {
 }
 
 /// Whether `got` is the value `want` survived encode and decode as: exact
-/// for everything but the ranged floats, which come back within the row's
-/// quantisation step.
+/// for everything but the ranged floats, which come back within one
+/// quantisation step of the row's encoding.
 fn survives(spec: &TagSpec, got: &FieldValue, want: &FieldValue) -> bool {
     let (FieldValue::F64(g), FieldValue::F64(w)) = (got, want) else {
         return got == want;
     };
-    let (span, len) = match (spec.range, spec.encoding) {
-        (Some(r), _) => (r.max - r.min, r.byte_length),
+    let step = match (spec.range, spec.encoding) {
+        // A linear mapping spreads the span over 2^(8L) - 1 (unsigned) or
+        // 2^(8L) - 2 (signed) steps; the smaller count bounds both.
+        (Some(r), _) => (r.max - r.min) / (libm::pow(2.0, (8 * r.byte_length) as f64) - 2.0),
+        // ST 1201 IMAPB: a step of 2^(bPow - dPow), bPow = ceil(log2(span)),
+        // dPow = 8L - 1.
         (
             None,
             Encoding::Imapb {
@@ -728,10 +732,13 @@ fn survives(spec: &TagSpec, got: &FieldValue, want: &FieldValue) -> bool {
                 default_len,
                 ..
             },
-        ) => (max - min, default_len),
+        ) => {
+            let b_pow = libm::ceil(libm::log2(max - min));
+            libm::pow(2.0, b_pow - (8 * default_len - 1) as f64)
+        }
         (None, _) => return got == want,
     };
-    (g - w).abs() <= span / 2f64.powi(8 * len as i32 - 1)
+    libm::fabs(g - w) <= step
 }
 
 /// Every `TAGS` row with a scalar field survives encode and decode with a
@@ -771,8 +778,9 @@ fn every_typed_tag_round_trips() {
 }
 
 /// The pack rows and the two multi-instance tags: one record carries all
-/// of them, and each comes back (the lossy-float packs by presence). The list of pack tags is pinned so
-/// a new pack row cannot be added without extending this test.
+/// of them, and each comes back (the lossy-float packs by presence). The
+/// list of pack tags is pinned so a new pack row cannot be added without
+/// extending this test.
 #[test]
 fn every_pack_tag_round_trips() {
     let pack_tags: Vec<u8> = TAGS
