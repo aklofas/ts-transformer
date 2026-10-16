@@ -187,6 +187,7 @@ impl tst_pipeline::binding::kind::Domain
 pub const tst_pipeline::binding::kind::Domain::ALL: &'static [tst_pipeline::binding::kind::Domain]
 pub fn tst_pipeline::binding::kind::Domain::java_exception_class(self) -> core::option::Option<&'static str>
 pub fn tst_pipeline::binding::kind::Domain::kinds(self) -> &'static [tst_pipeline::binding::kind::BindingErrorKind]
+pub fn tst_pipeline::binding::kind::Domain::of_scheme(&str) -> core::option::Option<tst_pipeline::binding::kind::Domain>
 pub fn tst_pipeline::binding::kind::Domain::python_error_class(self) -> &'static str
 pub fn tst_pipeline::binding::kind::Domain::python_kind_enum(self) -> &'static str
 impl core::clone::Clone for tst_pipeline::binding::kind::Domain
@@ -311,6 +312,9 @@ impl<T> core::marker::Unpin for tst_pipeline::binding::opened::Opened<T> where T
 impl<T> core::marker::UnsafeUnpin for tst_pipeline::binding::opened::Opened<T> where T: core::marker::UnsafeUnpin
 impl<T> !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::opened::Opened<T>
 impl<T> !core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::opened::Opened<T>
+pub fn tst_pipeline::binding::opened::cancel_of<T: tst_core::transport::Transport + ?core::marker::Sized>(&T) -> alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
+pub fn tst_pipeline::binding::opened::cancel_or_latch(core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>) -> alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
+pub fn tst_pipeline::binding::opened::recv_cancel_of<T: tst_core::transport::RecvTransport + ?core::marker::Sized>(&T) -> alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
 pub mod tst_pipeline::binding::owned
 pub enum tst_pipeline::binding::owned::CloseFailure<E>
 pub tst_pipeline::binding::owned::CloseFailure::Inner(E)
@@ -675,6 +679,7 @@ impl tst_pipeline::binding::kind::Domain
 pub const tst_pipeline::binding::kind::Domain::ALL: &'static [tst_pipeline::binding::kind::Domain]
 pub fn tst_pipeline::binding::kind::Domain::java_exception_class(self) -> core::option::Option<&'static str>
 pub fn tst_pipeline::binding::kind::Domain::kinds(self) -> &'static [tst_pipeline::binding::kind::BindingErrorKind]
+pub fn tst_pipeline::binding::kind::Domain::of_scheme(&str) -> core::option::Option<tst_pipeline::binding::kind::Domain>
 pub fn tst_pipeline::binding::kind::Domain::python_error_class(self) -> &'static str
 pub fn tst_pipeline::binding::kind::Domain::python_kind_enum(self) -> &'static str
 impl core::clone::Clone for tst_pipeline::binding::kind::Domain

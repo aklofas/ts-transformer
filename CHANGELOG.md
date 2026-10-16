@@ -370,10 +370,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `MuxSender`), `CancelLatch` (a cancel handle with its own latch around a
   transport's) and `BlockingReason`; `Owned::alive` (non-blocking liveness)
   and `Owned::open_snapshot`.
-
 - `binding::Opened<T>`: a transport opened from a URL, with its cancel
   handle and error domain, as the transport crates' openers return it.
-
+  `binding::opened::{cancel_of, recv_cancel_of}` read a send or receive
+  transport's cancel handle, and `binding::opened::cancel_or_latch` resolves
+  an optional one; each falls back to a `FlagCancel` latch when there is
+  none. `binding::kind::Domain::of_scheme` maps a shell URL scheme (`srt`,
+  `rtp`, `udp`, `tcp`/`tcps`, `rist`) to its domain.
 - `binding::kind::Domain::java_exception_class` returns the class for `Udp`,
   `Tcp` and `Rist` (`org/tstrans/{Udp,Tcp,Rist}Exception`).
 

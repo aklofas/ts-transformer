@@ -8,24 +8,23 @@ use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened};
 
 use crate::raise::raise;
 
-fn scheme(url: &str) -> &str {
-    url.split_once("://").map_or("", |(s, _)| s)
-}
+/// The transports this build includes.
+const BUILT: &[Domain] = &[
+    #[cfg(feature = "srt")]
+    Domain::Srt,
+    #[cfg(feature = "rtp")]
+    Domain::Rtp,
+    #[cfg(feature = "udp")]
+    Domain::Udp,
+    #[cfg(feature = "tcp")]
+    Domain::Tcp,
+    #[cfg(feature = "rist")]
+    Domain::Rist,
+];
 
-fn domain_of(scheme: &str) -> Option<Domain> {
-    match scheme {
-        #[cfg(feature = "srt")]
-        "srt" => Some(Domain::Srt),
-        #[cfg(feature = "rtp")]
-        "rtp" => Some(Domain::Rtp),
-        #[cfg(feature = "udp")]
-        "udp" => Some(Domain::Udp),
-        #[cfg(feature = "tcp")]
-        "tcp" | "tcps" => Some(Domain::Tcp),
-        #[cfg(feature = "rist")]
-        "rist" => Some(Domain::Rist),
-        _ => None,
-    }
+/// The domain of `url`'s scheme, when this build includes its transport.
+fn domain_of(url: &str) -> Option<Domain> {
+    Domain::of_scheme(url.split_once("://")?.0).filter(|d| BUILT.contains(d))
 }
 
 fn unsupported(url: &str) -> PyErr {
@@ -34,7 +33,7 @@ fn unsupported(url: &str) -> PyErr {
     ))
 }
 
-/// `domain_of` already matched the scheme, so this is never reached.
+/// `domain_of` already matched a built transport, so this is never reached.
 fn unreachable_scheme<T>() -> Result<T, BindingError> {
     Err(BindingError::new(
         BindingErrorKind::Internal,
@@ -44,19 +43,18 @@ fn unreachable_scheme<T>() -> Result<T, BindingError> {
 
 /// Open a send transport for a shell, with the GIL released.
 pub(crate) fn open_send(py: Python<'_>, url: &str) -> PyResult<Opened<Box<dyn Transport>>> {
-    let s = scheme(url);
-    let d = domain_of(s).ok_or_else(|| unsupported(url))?;
-    let r = crate::util::allow_threads_parking(py, || match s {
+    let d = domain_of(url).ok_or_else(|| unsupported(url))?;
+    let r = crate::util::allow_threads_parking(py, || match d {
         #[cfg(feature = "srt")]
-        "srt" => tst_srt::opener::open_sender(url),
+        Domain::Srt => tst_srt::opener::open_sender(url),
         #[cfg(feature = "rtp")]
-        "rtp" => tst_rtp::opener::open_sender(url),
+        Domain::Rtp => tst_rtp::opener::open_sender(url),
         #[cfg(feature = "udp")]
-        "udp" => tst_udp::opener::open_sender(url),
+        Domain::Udp => tst_udp::opener::open_sender(url),
         #[cfg(feature = "tcp")]
-        "tcp" | "tcps" => tst_tcp::opener::open_sender(url),
+        Domain::Tcp => tst_tcp::opener::open_sender(url),
         #[cfg(feature = "rist")]
-        "rist" => tst_rist::opener::open_sender(url),
+        Domain::Rist => tst_rist::opener::open_sender(url),
         _ => unreachable_scheme(),
     });
     r.map_err(|e| raise(py, &d, e))
@@ -66,23 +64,22 @@ pub(crate) fn open_send(py: Python<'_>, url: &str) -> PyResult<Opened<Box<dyn Tr
 /// open registers its accept slot so the interpreter-exit hook can unpark a
 /// first accept that no caller holds a handle to yet.
 pub(crate) fn open_recv(py: Python<'_>, url: &str) -> PyResult<Opened<Box<dyn RecvTransport>>> {
-    let s = scheme(url);
-    let d = domain_of(s).ok_or_else(|| unsupported(url))?;
-    let r = crate::util::allow_threads_parking(py, || match s {
+    let d = domain_of(url).ok_or_else(|| unsupported(url))?;
+    let r = crate::util::allow_threads_parking(py, || match d {
         #[cfg(feature = "srt")]
-        "srt" => {
+        Domain::Srt => {
             let slot = std::sync::Arc::new(tst_core::cancel::CancelSlot::new());
             let _accept_guard = crate::util::register_accept_slot(&slot);
             tst_srt::opener::open_recv(url, &slot)
         }
         #[cfg(feature = "rtp")]
-        "rtp" => tst_rtp::opener::open_recv(url),
+        Domain::Rtp => tst_rtp::opener::open_recv(url),
         #[cfg(feature = "udp")]
-        "udp" => tst_udp::opener::open_recv(url),
+        Domain::Udp => tst_udp::opener::open_recv(url),
         #[cfg(feature = "tcp")]
-        "tcp" | "tcps" => tst_tcp::opener::open_recv(url),
+        Domain::Tcp => tst_tcp::opener::open_recv(url),
         #[cfg(feature = "rist")]
-        "rist" => tst_rist::opener::open_recv(url),
+        Domain::Rist => tst_rist::opener::open_recv(url),
         _ => unreachable_scheme(),
     });
     r.map_err(|e| raise(py, &d, e))

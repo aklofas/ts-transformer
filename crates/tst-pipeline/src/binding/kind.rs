@@ -508,6 +508,21 @@ impl Domain {
         Domain::Codec,
     ];
 
+    /// The domain of the transport a URL scheme opens: `srt`, `rtp`, `udp`,
+    /// `tcp` / `tcps` and `rist`. `None` for any other scheme; those six
+    /// are the schemes the bindings' shells open.
+    #[must_use]
+    pub fn of_scheme(scheme: &str) -> Option<Domain> {
+        match scheme {
+            "srt" => Some(Domain::Srt),
+            "rtp" => Some(Domain::Rtp),
+            "udp" => Some(Domain::Udp),
+            "tcp" | "tcps" => Some(Domain::Tcp),
+            "rist" => Some(Domain::Rist),
+            _ => None,
+        }
+    }
+
     /// The kinds this domain's host enums carry, in host member order.
     pub fn kinds(self) -> &'static [BindingErrorKind] {
         use BindingErrorKind as K;
@@ -1437,6 +1452,23 @@ mod tests {
     use crate::binding::owned::HandleState;
     use crate::shell_error::ShellErrorKind;
     use tst_core::transport::{BrokenCause, TransportError};
+
+    #[test]
+    fn of_scheme_names_the_six_shell_schemes() {
+        for (scheme, d) in [
+            ("srt", Domain::Srt),
+            ("rtp", Domain::Rtp),
+            ("udp", Domain::Udp),
+            ("tcp", Domain::Tcp),
+            ("tcps", Domain::Tcp),
+            ("rist", Domain::Rist),
+        ] {
+            assert_eq!(Domain::of_scheme(scheme), Some(d), "{scheme}");
+        }
+        for other in ["", "http", "rtsp", "hls", "SRT", "srt://"] {
+            assert_eq!(Domain::of_scheme(other), None, "{other:?}");
+        }
+    }
 
     #[test]
     fn every_domain_lists_each_kind_once_and_every_table_kind_belongs_somewhere_or_is_hostless() {
