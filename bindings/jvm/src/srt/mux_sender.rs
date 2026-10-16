@@ -26,6 +26,7 @@
 //! variant, forward-compat catch-all → `SrtException(IO)`.
 
 use std::sync::{Arc, LazyLock};
+use tst_pipeline::binding::view::BlockingReason;
 
 use jni::JNIEnv;
 use jni::objects::{JBooleanArray, JByteArray, JClass, JIntArray, JObject, JString, JValue};
@@ -40,10 +41,11 @@ use tst_pipeline::binding::{BindingErrorKind, HandleState, Owned};
 use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource};
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
-use crate::handle::{OwnedRegistry, StreamHandles};
+use crate::handle::OwnedRegistry;
 use crate::jutil::{build_socket_stats, checked_u8, decode_stream_handle, read_bytes};
 use crate::mpegts::build_muxer_stats;
 use crate::mpegts::muxer::{build_muxer_config_from_arrays, throw_mux_error};
+use tst_pipeline::binding::view::StreamHandles;
 
 use super::errors::{srt_error, throw_srt, transport_error};
 
@@ -494,7 +496,9 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nVideoHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| first_handle(env, handle, |s| s.video))
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        first_handle(env, handle, |s| s.video.map(|h| h.raw()))
+    })
 }
 
 /// `nKlvHandle(handle)` — first configured KLV stream handle, or `-1`.
@@ -504,7 +508,9 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nKlvHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| first_handle(env, handle, |s| s.klv))
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        first_handle(env, handle, |s| s.klv.map(|h| h.raw()))
+    })
 }
 
 /// `nAudioHandle(handle)` — first configured audio stream handle, or `-1`.
@@ -514,7 +520,9 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nAudioHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| first_handle(env, handle, |s| s.audio))
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        first_handle(env, handle, |s| s.audio.map(|h| h.raw()))
+    })
 }
 
 /// `nSubtitleHandle(handle)` — first configured subtitle stream handle, or `-1`.
@@ -524,7 +532,9 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nSubtitleHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| first_handle(env, handle, |s| s.subtitle))
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        first_handle(env, handle, |s| s.subtitle.map(|h| h.raw()))
+    })
 }
 
 /// `nDataHandle(handle)` — first configured data stream handle, or `-1`.
@@ -534,7 +544,9 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nDataHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| first_handle(env, handle, |s| s.data))
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        first_handle(env, handle, |s| s.data.map(|h| h.raw()))
+    })
 }
 
 // ── Stats ──────────────────────────────────────────────────────────────────
@@ -564,9 +576,12 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let (sock, pipe) = match REGISTRY.with_ref(handle as u64, |inner| {
-            (inner.socket_stats().unwrap_or_default(), inner.stats())
-        }) {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let (sock, pipe) = match REGISTRY.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |inner| (inner.socket_stats().unwrap_or_default(), inner.stats()),
+        ) {
             Ok(v) => v,
             Err(state) => {
                 crate::error::throw_handle_state(env, "MuxSender", &state);
@@ -649,7 +664,10 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nFinish(
     handle: jlong,
 ) {
     crate::panic::jni_catch(&mut env, (), |env| {
-        match REGISTRY.with_ref(handle as u64, |inner| inner.finish()) {
+        // lossless shutdown: drains the muxer through the transport, documented to wait behind a send in flight
+        match REGISTRY.with_ref_blocking(handle as u64, BlockingReason::IsItselfBlocking, |inner| {
+            inner.finish()
+        }) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => throw_mux_sender_error(env, &e),
             // Closed between the Java-side `peekHandle()` and here, or closed

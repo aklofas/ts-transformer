@@ -18,6 +18,7 @@ use tst_core::cancel::FlagCancel;
 use tst_core::transport::TransportCancel;
 #[cfg(feature = "std")]
 use tst_core::transport::{EndReason, EndReasonHandle};
+use tst_pipeline::binding::view::BlockingReason;
 use tst_pipeline::binding::{BindingError, Close, Owned};
 
 use crate::error::record_binding_error;
@@ -57,7 +58,11 @@ impl<T, S> CHandle<T, S> {
     /// and a caught panic leaves the inner in place).
     #[allow(dead_code)] // consumed by the stats/is_alive getters
     pub(crate) fn with_inner_ref(&self, f: impl FnOnce(&T) -> i32) -> i32 {
-        match self.0.with_ref(f) {
+        // Every C reader is a stats / `is_alive` getter: no answer without the slot.
+        match self
+            .0
+            .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, f)
+        {
             Ok(rc) => rc,
             Err(state) => record_binding_error(BindingError::from(state)),
         }
@@ -69,7 +74,10 @@ impl<T, S> CHandle<T, S> {
     /// pending last-error (`tst_st0601_state`). A caught panic keeps the
     /// value, as every reader does.
     pub(crate) fn with_inner_ref_silent<R>(&self, default: R, f: impl FnOnce(&T) -> R) -> R {
-        self.0.with_ref(f).unwrap_or(default)
+        // A side-channel getter: no answer without the slot.
+        self.0
+            .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, f)
+            .unwrap_or(default)
     }
 
     /// Lock-free: never touches the slot a parked call holds, so the

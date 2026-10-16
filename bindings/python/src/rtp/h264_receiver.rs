@@ -49,6 +49,7 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tst_pipeline::binding::view::BlockingReason;
 
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -583,7 +584,11 @@ impl PyH264Receiver {
         let s = pyok(
             py,
             &RTP,
-            crate::util::allow_threads_parking(py, || self.owned.with_ref(|h| h.rx.depay_stats())),
+            // counters live inside the shell and have no value to report while a parked call holds it
+            crate::util::allow_threads_parking(py, || {
+                self.owned
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |h| h.rx.depay_stats())
+            }),
         )?;
         Py::new(py, PyH264DepayStats::from_rust(s))
     }
@@ -593,7 +598,11 @@ impl PyH264Receiver {
         let s = pyok(
             py,
             &RTP,
-            crate::util::allow_threads_parking(py, || self.owned.with_ref(|h| h.rx.rtp_stats())),
+            // counters live inside the shell and have no value to report while a parked call holds it
+            crate::util::allow_threads_parking(py, || {
+                self.owned
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |h| h.rx.rtp_stats())
+            }),
         )?;
         Py::new(py, PyRtpStats::from_rust(s))
     }
@@ -603,7 +612,11 @@ impl PyH264Receiver {
         let s = pyok(
             py,
             &RTP,
-            crate::util::allow_threads_parking(py, || self.owned.with_ref(|h| h.rx.socket_stats())),
+            // counters live inside the shell and have no value to report while a parked call holds it
+            crate::util::allow_threads_parking(py, || {
+                self.owned
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |h| h.rx.socket_stats())
+            }),
         )?;
         Py::new(py, PySocketStats::from_core(s))
     }

@@ -52,7 +52,7 @@ use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned};
 use crate::errors::make_kinded_error;
 use crate::raise::{SRT, pyres, raise};
 use crate::srt::transport::{PyCancelHandle, PyReceiver, PySender};
-use crate::util::{alive_probe, close_owned};
+use crate::util::close_owned;
 
 /// `SrtError(CONFIG_INVALID)` for this module's builder / URL pre-checks,
 /// through the one raise path (`crate::raise`).
@@ -743,7 +743,7 @@ impl PyListener {
     /// `True` while this listener still owns the libsrt handle (an accept
     /// parked on another thread counts as alive; the probe never waits).
     fn is_alive(&self) -> bool {
-        alive_probe(&self.owned, |_| true)
+        self.owned.alive(|_| true)
     }
 
     /// `__iter__` returns self — the listener IS its own iterator. Each

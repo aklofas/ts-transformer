@@ -30,6 +30,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tst_pipeline::binding::view::{BlockingReason, StreamHandles};
 
 use pyo3::Py;
 use pyo3::prelude::*;
@@ -50,7 +51,7 @@ use crate::srt::demux_receiver::demux_recv_err;
 use crate::srt::mux_sender::mux_sender_err;
 use crate::srt::policy::{PyManagedTransportStats, PyReconnectPolicy};
 use crate::srt::transport::{PyCancelHandle, PySocketStats};
-use crate::util::{CancelSource, StreamHandles, alive_probe, close_owned, open_snapshot};
+use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
 // PyManagedMuxSender — wraps MuxSender<ManagedTransport<SrtTransport>>.
@@ -399,31 +400,36 @@ impl PyManagedMuxSender {
     // answers `None`.
 
     fn video_handle(&self) -> Option<PyVideoStreamHandle> {
-        open_snapshot(&self.owned)
+        self.owned
+            .open_snapshot()
             .and_then(|s| s.video)
             .map(PyVideoStreamHandle)
     }
 
     fn klv_handle(&self) -> Option<PyKlvStreamHandle> {
-        open_snapshot(&self.owned)
+        self.owned
+            .open_snapshot()
             .and_then(|s| s.klv)
             .map(PyKlvStreamHandle)
     }
 
     fn audio_handle(&self) -> Option<PyAudioStreamHandle> {
-        open_snapshot(&self.owned)
+        self.owned
+            .open_snapshot()
             .and_then(|s| s.audio)
             .map(PyAudioStreamHandle)
     }
 
     fn subtitle_handle(&self) -> Option<PySubtitleStreamHandle> {
-        open_snapshot(&self.owned)
+        self.owned
+            .open_snapshot()
             .and_then(|s| s.subtitle)
             .map(PySubtitleStreamHandle)
     }
 
     fn data_handle(&self) -> Option<PyDataStreamHandle> {
-        open_snapshot(&self.owned)
+        self.owned
+            .open_snapshot()
             .and_then(|s| s.data)
             .map(PyDataStreamHandle)
     }
@@ -443,7 +449,10 @@ impl PyManagedMuxSender {
             &SRT,
             crate::util::allow_threads_parking(py, || {
                 self.owned
-                    .with_ref(|s| (s.socket_stats().unwrap_or_default(), s.stats()))
+                    // counters live inside the shell and have no value to report while a parked call holds it
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |s| {
+                        (s.socket_stats().unwrap_or_default(), s.stats())
+                    })
             }),
         )?;
         let mux_stats = tst_core::mpegts::mux::MuxerStats {
@@ -523,7 +532,11 @@ impl PyManagedMuxSender {
     /// `cancel_handle().cancel()` (or `close()`) first if that is not
     /// wanted.
     fn finish(&self, py: Python<'_>) -> PyResult<()> {
-        match crate::util::allow_threads_parking(py, || self.owned.with_ref(|s| s.finish())) {
+        // lossless shutdown: drains the muxer through the transport, documented to wait behind a send in flight
+        match crate::util::allow_threads_parking(py, || {
+            self.owned
+                .with_ref_blocking(BlockingReason::IsItselfBlocking, |s| s.finish())
+        }) {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(mux_sender_err(py, e)),
             // Already closed: the slot is empty, which is the same answer
@@ -536,7 +549,7 @@ impl PyManagedMuxSender {
     /// `True` while the sender holds a live transport (a push in flight on
     /// another thread counts as live).
     fn is_alive(&self) -> bool {
-        alive_probe(&self.owned, |s| s.is_alive())
+        self.owned.alive(|s| s.is_alive())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -727,7 +740,10 @@ impl PyManagedDemuxReceiver {
             &SRT,
             crate::util::allow_threads_parking(py, || {
                 self.owned
-                    .with_ref(|rx| rx.socket_stats().unwrap_or_default())
+                    // counters live inside the shell and have no value to report while a parked call holds it
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |rx| {
+                        rx.socket_stats().unwrap_or_default()
+                    })
             }),
         )?;
         Py::new(py, PySocketStats::from_core(core))
@@ -772,7 +788,10 @@ impl PyManagedDemuxReceiver {
             &SRT,
             crate::util::allow_threads_parking(py, || {
                 self.owned
-                    .with_ref(|rx| rx.stats().per_stream.get(&pid).and_then(|s| s.last_seen))
+                    // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |rx| {
+                        rx.stats().per_stream.get(&pid).and_then(|s| s.last_seen)
+                    })
             }),
         )?;
         Ok(last_seen
@@ -816,7 +835,7 @@ impl PyManagedDemuxReceiver {
     /// `True` while the receiver holds a live shell (a `__next__` parked on
     /// another thread counts as live; the probe never waits).
     fn is_alive(&self) -> bool {
-        alive_probe(&self.owned, |r| r.is_alive())
+        self.owned.alive(|r| r.is_alive())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {

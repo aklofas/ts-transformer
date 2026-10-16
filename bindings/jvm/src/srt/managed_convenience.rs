@@ -43,6 +43,7 @@
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::Ordering;
+use tst_pipeline::binding::view::BlockingReason;
 
 use jni::JNIEnv;
 use jni::objects::{JBooleanArray, JByteArray, JClass, JIntArray, JObject, JString};
@@ -61,10 +62,11 @@ use tst_pipeline::{
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
 use crate::error::throw_handle_state;
-use crate::handle::{OwnedRegistry, StreamHandles};
+use crate::handle::OwnedRegistry;
 use crate::jutil::{build_socket_stats, checked_u8, read_bytes};
 use crate::mpegts::muxer::{build_muxer_config_from_arrays, throw_mux_error};
 use crate::mpegts::{build_demux_config_from_args, build_muxer_stats, convert_event};
+use tst_pipeline::binding::view::StreamHandles;
 
 use super::ManagedSenderSnapshot;
 use super::errors::{srt_error, throw_srt, transport_error};
@@ -540,7 +542,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nVideoHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        mux_first_handle(env, handle, |s| s.video)
+        mux_first_handle(env, handle, |s| s.video.map(|h| h.raw()))
     })
 }
 
@@ -551,7 +553,9 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nKlvHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| mux_first_handle(env, handle, |s| s.klv))
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        mux_first_handle(env, handle, |s| s.klv.map(|h| h.raw()))
+    })
 }
 
 /// `nAudioHandle(handle)` — first configured audio stream handle, or `-1`.
@@ -562,7 +566,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nAudioHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        mux_first_handle(env, handle, |s| s.audio)
+        mux_first_handle(env, handle, |s| s.audio.map(|h| h.raw()))
     })
 }
 
@@ -574,7 +578,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSubtitleHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        mux_first_handle(env, handle, |s| s.subtitle)
+        mux_first_handle(env, handle, |s| s.subtitle.map(|h| h.raw()))
     })
 }
 
@@ -585,7 +589,9 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nDataHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| mux_first_handle(env, handle, |s| s.data))
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        mux_first_handle(env, handle, |s| s.data.map(|h| h.raw()))
+    })
 }
 
 // ── Stats + lifecycle ──────────────────────────────────────────────────────
@@ -600,12 +606,17 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let (sock, pipe) = match REGISTRY_MUX.with_ref(handle as u64, |jstruct| {
-            (
-                jstruct.inner.socket_stats().unwrap_or_default(),
-                jstruct.inner.stats(),
-            )
-        }) {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let (sock, pipe) = match REGISTRY_MUX.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |jstruct| {
+                (
+                    jstruct.inner.socket_stats().unwrap_or_default(),
+                    jstruct.inner.stats(),
+                )
+            },
+        ) {
             Ok(v) => v,
             Err(state) => {
                 throw_handle_state(env, "ManagedMuxSender", &state);
@@ -745,7 +756,12 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nFinish(
     handle: jlong,
 ) {
     crate::panic::jni_catch(&mut env, (), |env| {
-        match REGISTRY_MUX.with_ref(handle as u64, |jstruct| jstruct.inner.finish()) {
+        // lossless shutdown: drains the muxer through the transport, documented to wait behind a send in flight
+        match REGISTRY_MUX.with_ref_blocking(
+            handle as u64,
+            BlockingReason::IsItselfBlocking,
+            |jstruct| jstruct.inner.finish(),
+        ) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => throw_managed_mux_sender_error(env, &e),
             // Closed between the Java-side `peekHandle()` and here, or closed
@@ -1042,9 +1058,12 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nSocketStats<'l
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let stats = match REGISTRY_DEMUX.with_ref(handle as u64, |jstruct| {
-            jstruct.inner.socket_stats().unwrap_or_default()
-        }) {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let stats = match REGISTRY_DEMUX.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |jstruct| jstruct.inner.socket_stats().unwrap_or_default(),
+        ) {
             Ok(v) => v,
             Err(state) => {
                 throw_handle_state(env, "ManagedDemuxReceiver", &state);
@@ -1068,9 +1087,12 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nSrtStats<'loca
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let stats = match REGISTRY_DEMUX.with_ref(handle as u64, |jstruct| {
-            jstruct.inner.socket_stats().unwrap_or_default()
-        }) {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let stats = match REGISTRY_DEMUX.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |jstruct| jstruct.inner.socket_stats().unwrap_or_default(),
+        ) {
             Ok(v) => v,
             Err(state) => {
                 throw_handle_state(env, "ManagedDemuxReceiver", &state);
@@ -1099,14 +1121,19 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nLastSeenMicros
     pid: jint,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, -1, |env| {
-        let last_seen = match REGISTRY_DEMUX.with_ref(handle as u64, |jstruct| {
-            jstruct
-                .inner
-                .stats()
-                .per_stream
-                .get(&(pid as u16))
-                .and_then(|s| s.last_seen)
-        }) {
+        // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
+        let last_seen = match REGISTRY_DEMUX.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |jstruct| {
+                jstruct
+                    .inner
+                    .stats()
+                    .per_stream
+                    .get(&(pid as u16))
+                    .and_then(|s| s.last_seen)
+            },
+        ) {
             Ok(v) => v,
             Err(state) => {
                 throw_handle_state(env, "ManagedDemuxReceiver", &state);

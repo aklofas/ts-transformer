@@ -44,6 +44,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tst_pipeline::binding::view::BlockingReason;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::intern;
@@ -56,7 +57,7 @@ use tst_tcp::error::TcpError;
 use tst_tcp::{TcpListener, TcpStats, TcpTransport};
 
 use crate::raise::{TCP, pyok, pyres, raise};
-use crate::util::{CancelSource, close_owned, open_snapshot};
+use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
 // PyTcpCancelHandle — the shell's shared cancel state, exposed to Python
@@ -300,7 +301,8 @@ impl PyTcpTransport {
     /// Answered from the connect-time snapshot, never the slot, so it does
     /// not wait behind a `recv()` parked on another thread.
     fn peer_addr(&self) -> String {
-        open_snapshot(&self.owned)
+        self.owned
+            .open_snapshot()
             .map(ToString::to_string)
             .unwrap_or_default()
     }
@@ -324,7 +326,11 @@ impl PyTcpTransport {
         let s = pyok(
             py,
             &TCP,
-            crate::util::allow_threads_parking(py, || self.owned.with_ref(|t| t.0.stats())),
+            // counters live inside the shell and have no value to report while a parked call holds it
+            crate::util::allow_threads_parking(py, || {
+                self.owned
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |t| t.0.stats())
+            }),
         )?;
         Py::new(py, PyTcpStats::from(s))
     }
@@ -345,7 +351,7 @@ impl PyTcpTransport {
     }
 
     fn __repr__(&self) -> String {
-        match open_snapshot(&self.owned) {
+        match self.owned.open_snapshot() {
             Some(peer) => format!("Transport(peer={peer})"),
             None => "Transport(closed)".to_string(),
         }
@@ -567,7 +573,9 @@ impl PyTcpListener {
         // Two-step: accept inside allow_threads (returns Result<TcpTransport, TcpError>
         // where TcpError is Send), then map to PyErr after re-acquiring the GIL.
         let res = crate::util::allow_threads_parking(py, || {
-            self.owned.with_ref(|l| l.0.accept_blocking())
+            // the accept itself; Listener methods take &self so it holds the slot through with_ref
+            self.owned
+                .with_ref_blocking(BlockingReason::IsItselfBlocking, |l| l.0.accept_blocking())
         });
         Ok(make_py_tcp_transport(pyres(py, &TCP, res)?))
     }

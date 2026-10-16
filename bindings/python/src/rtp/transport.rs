@@ -21,6 +21,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use tst_pipeline::binding::view::BlockingReason;
 
 use pyo3::Py;
 use pyo3::prelude::*;
@@ -255,7 +256,10 @@ impl PySender {
             &RTP,
             crate::util::allow_threads_parking(py, || {
                 self.owned
-                    .with_ref(|t| t.0.socket_stats().unwrap_or_default())
+                    // counters live inside the shell and have no value to report while a parked call holds it
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |t| {
+                        t.0.socket_stats().unwrap_or_default()
+                    })
             }),
         )?;
         Py::new(py, PySocketStats::from_core(core_stats))
@@ -452,7 +456,10 @@ impl PyReceiver {
             &RTP,
             crate::util::allow_threads_parking(py, || {
                 self.owned
-                    .with_ref(|s| s.transport.socket_stats().unwrap_or_default())
+                    // counters live inside the shell and have no value to report while a parked call holds it
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |s| {
+                        s.transport.socket_stats().unwrap_or_default()
+                    })
             }),
         )?;
         Py::new(py, PySocketStats::from_core(core_stats))

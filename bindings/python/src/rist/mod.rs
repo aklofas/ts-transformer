@@ -34,6 +34,7 @@
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
 use std::sync::Arc;
+use tst_pipeline::binding::view::BlockingReason;
 
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -326,7 +327,11 @@ impl PyRistTransport {
         let s = pyok(
             py,
             &RIST,
-            crate::util::allow_threads_parking(py, || self.owned.with_ref(|t| t.0.stats())),
+            // counters live inside the shell and have no value to report while a parked call holds it
+            crate::util::allow_threads_parking(py, || {
+                self.owned
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |t| t.0.stats())
+            }),
         )?;
         Py::new(py, PyRistStats::from(s))
     }
@@ -618,7 +623,11 @@ impl PyRistRecvTransport {
         let s = pyok(
             py,
             &RIST,
-            crate::util::allow_threads_parking(py, || self.owned.with_ref(|s| s.transport.stats())),
+            // counters live inside the shell and have no value to report while a parked call holds it
+            crate::util::allow_threads_parking(py, || {
+                self.owned
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |s| s.transport.stats())
+            }),
         )?;
         Py::new(py, PyRistStats::from(s))
     }

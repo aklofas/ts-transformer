@@ -2,7 +2,7 @@
 //! object.
 //!
 //! A binding wraps a pipeline shell `T` in an `Owned` and reaches it only
-//! through [`Owned::with_mut`] / [`Owned::with_ref`]. Cross-thread cancel
+//! through [`Owned::with_mut`] / [`Owned::with_ref_blocking`]. Cross-thread cancel
 //! goes through [`Owned::cancel`], which never touches the slot at all, so
 //! it is prompt however long the parked operation runs. [`Owned::close`]
 //! fires that same cancel FIRST and only then takes the slot: it does wait
@@ -15,12 +15,12 @@
 //! # Rules (each pinned by a unit test below)
 //!
 //! - **Lock inside**: `with_mut` is the only site that holds the lock
-//!   ACROSS CALLER CODE. `with_ref`, `take` and `close` take it too, but
+//!   ACROSS CALLER CODE. `with_ref_blocking`, `take` and `close` take it too, but
 //!   only for the moment they need it, and `is_closed` / `try_with_ref`
 //!   never wait for it at all. The binding holds no mutex of its own around
 //!   `with_mut`, and takes the lock with the GIL released / outside the JNI
 //!   critical region.
-//! - **Poison policy**: readers (`with_ref`, `take`, `is_closed`, `close`)
+//! - **Poison policy**: readers (`with_ref_blocking`, `take`, `is_closed`, `close`)
 //!   RECOVER a poisoned mutex; the mutator `with_mut` REFUSES with
 //!   [`HandleState::Poisoned`]: a reader only observes, while a mutator
 //!   would build on a value a panic may have left half-updated.
@@ -51,6 +51,7 @@ use crate::mutex::{ShellMutex, TryLockError};
 use tst_core::transport::TransportCancel;
 
 use super::panic;
+use super::view::BlockingReason;
 #[cfg(feature = "std")]
 use tst_core::transport::{EndReason, EndReasonHandle};
 
@@ -67,7 +68,7 @@ pub trait Close {
     fn close(&mut self) -> Result<(), Self::Error>;
 }
 
-/// Why [`Owned::with_mut`] / [`Owned::with_ref`] could not run the closure.
+/// Why [`Owned::with_mut`] / [`Owned::with_ref_blocking`] could not run the closure.
 ///
 /// The only three failure modes of the state machine; each has exactly one
 /// mapping per binding, implemented once in `binding::kind`: `Closed` →
@@ -239,7 +240,7 @@ impl<T, S> Owned<T, S> {
     /// inside its own panic boundary, so a panicking `T::Drop` cannot
     /// poison the mutex and turn the promised `Closed` into `Poisoned` —
     /// the drop panic is swallowed and the closure's original panic is what
-    /// is reported. Readers ([`Self::with_ref`]) keep the slot: a `&T`
+    /// is reported. Readers ([`Self::with_ref_blocking`]) keep the slot: a `&T`
     /// closure can only mutate through interior mutability, and every such
     /// interior (transport mutex, atomics) carries its own poison/latch
     /// rule, which contains a reader panic.
@@ -265,12 +266,18 @@ impl<T, S> Owned<T, S> {
     }
 
     /// Run `f` on `&T` (stats, `is_alive`, `repr`). Recovers a poisoned
-    /// mutex; otherwise the same contract as [`Self::with_mut`].
+    /// mutex; otherwise the same contract as [`Self::with_mut`]. BLOCKING:
+    /// it waits behind a call parked in the slot, and `why` names, at the
+    /// call site, why this reader may wait behind a parked call.
     ///
     /// # Errors
     ///
     /// [`HandleState::Closed`], [`HandleState::Panicked`] — never `Poisoned`.
-    pub fn with_ref<R>(&self, f: impl FnOnce(&T) -> R) -> Result<R, HandleState> {
+    pub fn with_ref_blocking<R>(
+        &self,
+        _why: BlockingReason,
+        f: impl FnOnce(&T) -> R,
+    ) -> Result<R, HandleState> {
         let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let t = guard.as_ref().ok_or(HandleState::Closed)?;
         panic::catch(|| f(t)).map_err(|detail| HandleState::Panicked { detail })
@@ -296,10 +303,10 @@ impl<T, S> Owned<T, S> {
         }
     }
 
-    /// Non-blocking [`Self::with_ref`]. `None` when another thread holds
+    /// Non-blocking [`Self::with_ref_blocking`]. `None` when another thread holds
     /// the slot — the caller decides what "busy" means (Python's
     /// `is_alive()` reports `True`, a `repr()` prints "busy"); otherwise
-    /// exactly `Some(with_ref(f))`: `Err(Closed)` on an empty slot,
+    /// exactly `Some(with_ref_blocking(_, f))`: `Err(Closed)` on an empty slot,
     /// `Err(Panicked)` if `f` panics, poison recovered.
     pub fn try_with_ref<R>(&self, f: impl FnOnce(&T) -> R) -> Option<Result<R, HandleState>> {
         let guard = match self.inner.try_lock() {
@@ -311,6 +318,24 @@ impl<T, S> Owned<T, S> {
             return Some(Err(HandleState::Closed));
         };
         Some(panic::catch(|| f(t)).map_err(|detail| HandleState::Panicked { detail }))
+    }
+
+    /// Non-blocking liveness: `alive(&T)` when the slot can be inspected
+    /// now, `true` while another thread holds it (a parked call means
+    /// open), `false` once it is empty. Never waits behind a parked call.
+    pub fn alive(&self, alive: impl FnOnce(&T) -> bool) -> bool {
+        match self.try_with_ref(alive) {
+            None => true,
+            Some(Ok(b)) => b,
+            Some(Err(_)) => false,
+        }
+    }
+
+    /// The construction-time snapshot while the shell is open, `None` once
+    /// it is closed. Never takes the slot: [`Self::is_closed`] answers
+    /// "open" without waiting when a parked call holds it.
+    pub fn open_snapshot(&self) -> Option<&S> {
+        (!self.is_closed()).then(|| self.snapshot())
     }
 }
 
@@ -574,7 +599,11 @@ mod tests {
             }),
             Ok(5)
         );
-        assert_eq!(f.owned.with_ref(|m| m.n), Ok(5));
+        assert_eq!(
+            f.owned
+                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |m| m.n),
+            Ok(5)
+        );
     }
 
     #[test]
@@ -585,7 +614,11 @@ mod tests {
         assert!(f.owned.take().is_none(), "second take: slot already empty");
         assert!(f.owned.is_closed());
         assert_eq!(f.owned.with_mut(|m| m.n), Err(HandleState::Closed));
-        assert_eq!(f.owned.with_ref(|m| m.n), Err(HandleState::Closed));
+        assert_eq!(
+            f.owned
+                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |m| m.n),
+            Err(HandleState::Closed)
+        );
     }
 
     #[test]
@@ -668,7 +701,11 @@ mod tests {
     #[cfg(feature = "std")]
     fn with_ref_panic_is_reported_and_keeps_the_slot() {
         let f = fixture();
-        let r = f.owned.with_ref(|_| -> u32 { panic!("reader boom {}", 2) });
+        let r = f
+            .owned
+            .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |_| -> u32 {
+                panic!("reader boom {}", 2)
+            });
         assert_eq!(
             r,
             Err(HandleState::Panicked {
@@ -676,7 +713,11 @@ mod tests {
             })
         );
         assert!(!f.owned.inner.is_poisoned());
-        assert_eq!(f.owned.with_ref(|m| m.n), Ok(0));
+        assert_eq!(
+            f.owned
+                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |m| m.n),
+            Ok(0)
+        );
     }
 
     #[test]
@@ -689,7 +730,12 @@ mod tests {
             Err(HandleState::Poisoned),
             "mutator: refuse"
         );
-        assert_eq!(f.owned.with_ref(|m| m.n), Ok(0), "reader: recover");
+        assert_eq!(
+            f.owned
+                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |m| m.n),
+            Ok(0),
+            "reader: recover"
+        );
         assert!(!f.owned.is_closed(), "is_closed: recover (slot still Some)");
         assert!(f.owned.take().is_some(), "take: recover");
         assert!(f.owned.is_closed());
@@ -714,7 +760,7 @@ mod tests {
             assert_eq!(
                 f.owned.try_with_ref(|m| m.n),
                 Some(Ok(0)),
-                "poison recovered, like with_ref"
+                "poison recovered, like with_ref_blocking"
             );
         }
         assert!(f.owned.take().is_some());
@@ -916,7 +962,7 @@ mod tests {
         assert!(owned.is_closed());
     }
 
-    // ---- concurrency: nothing but with_mut/with_ref/take/is_closed/close
+    // ---- concurrency: nothing but with_mut/with_ref_blocking/take/is_closed/close
     // waits on the slot ----
 
     #[cfg(feature = "std")]
@@ -1157,7 +1203,7 @@ mod tests {
     fn close_runs_the_inner_close_outside_the_lock() {
         // `close()` takes the value OUT of the slot and only then runs
         // `Close::close`. So while the inner close is parked, the slot is
-        // empty AND unlocked: a BLOCKING `with_ref` from another thread must
+        // empty AND unlocked: a BLOCKING `with_ref_blocking` from another thread must
         // answer `Err(Closed)` immediately instead of queueing behind it.
         struct GatedClose {
             gate: Arc<AtomicBool>,
@@ -1205,11 +1251,13 @@ mod tests {
 
         let reader = {
             let o = Arc::clone(&owned);
-            std::thread::spawn(move || o.with_ref(|_| ()))
+            std::thread::spawn(move || {
+                o.with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |_| ())
+            })
         };
         assert!(
             wait_for(PROMPT, || reader.is_finished()),
-            "with_ref queued behind Close::close — the inner close is running under the lock"
+            "with_ref_blocking queued behind Close::close — the inner close is running under the lock"
         );
         assert_eq!(
             reader.join().unwrap(),

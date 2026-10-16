@@ -19,8 +19,8 @@
 # in `kind.rs` (the compiler), `scripts/check/repo/kind-equivalence.sh`, and
 # binding-side `raise.rs::check_error_kinds` at `import tstrans`.
 #
-# The surviving cases are the C-header rail's, the blocking-slot-reader
-# rail's and the duplicate-test-helper rail's.
+# The surviving cases are the C-header rail's and the duplicate-test-helper
+# rail's.
 set -uo pipefail
 DIR="$(cd "$(dirname "$0")/.." && pwd)"          # scripts/ratchets
 
@@ -63,50 +63,9 @@ expect "header rail: failing cbindgen shim on PATH fails closed"  1 env PATH="$t
 expect "header rail: cbindgen absent under CI fails closed"        1 env CI=1 HCS_CBINDGEN="$tmp/nonexistent-cbindgen" HCS_HEADER="$tmp/fixture.h" bash "$HDR"
 expect "header rail: cbindgen absent locally is SKIP (rc 0)"       0 env CI= HCS_CBINDGEN="$tmp/nonexistent-cbindgen" HCS_HEADER="$tmp/fixture.h" bash "$HDR"
 
-# ---- blocking slot readers (scripts/check/c/snapshot-getters.sh) -----------
-# A getter that takes the slot with the blocking `with_ref()` must be caught
-# unless it is allowlisted with a reason; `try_with_ref()` and a snapshot read
-# must not be; a stale allowlist row and a scan that matches nothing both fail.
 SG="$DIR/../check/c/snapshot-getters.sh"
-mkdir -p "$tmp/sg/blocking" "$tmp/sg/clean"
-cat > "$tmp/sg/blocking/shell.rs" <<'EOF'
-impl Shell {
-    // a comment that mentions with_ref( must not count
-    fn peer_addr(&self) -> String {
-        self.owned
-            .with_ref(|t| t.peer().to_string())
-            .unwrap_or_default()
-    }
-    fn is_alive(&self) -> bool {
-        alive_probe(&self.owned, |s| s.is_alive())
-    }
-}
-#[cfg(test)]
-mod tests {
-    fn in_a_test() { reg.with_ref(1, |v| *v); }
-}
-EOF
-cat > "$tmp/sg/clean/shell.rs" <<'EOF'
-impl Shell {
-    fn peer_addr(&self) -> String { self.owned.snapshot().to_string() }
-    fn is_alive(&self) -> bool {
-        matches!(self.owned.try_with_ref(|s| s.is_alive()), None | Some(Ok(true)))
-    }
-}
-EOF
-printf '# none\n' > "$tmp/sg/empty.tsv"
-printf '%s\t%s\t%s\t%s\n' "$tmp/sg/blocking/shell.rs" peer_addr needs-slot "fixture" > "$tmp/sg/listed.tsv"
-printf '%s\t%s\t%s\t%s\n' "$tmp/sg/blocking/shell.rs" peer_addr needs-slot "fixture" \
-                           "$tmp/sg/blocking/shell.rs" is_alive  needs-slot "fixture" > "$tmp/sg/stale.tsv"
-printf '%s\t%s\t%s\n' "$tmp/sg/blocking/shell.rs" peer_addr needs-slot > "$tmp/sg/noreason.tsv"
 
-expect "slot readers: a getter calling with_ref() is caught"    1 env SG_ONLY_READERS=1 SG_ROOTS="$tmp/sg/blocking" SG_ALLOWLIST="$tmp/sg/empty.tsv"    bash "$SG"
-expect "slot readers: the same getter, allowlisted, passes"     0 env SG_ONLY_READERS=1 SG_ROOTS="$tmp/sg/blocking" SG_ALLOWLIST="$tmp/sg/listed.tsv"   bash "$SG"
-expect "slot readers: a stale allowlist row fails"              1 env SG_ONLY_READERS=1 SG_ROOTS="$tmp/sg/blocking" SG_ALLOWLIST="$tmp/sg/stale.tsv"    bash "$SG"
-expect "slot readers: an allowlist row without a reason fails"  1 env SG_ONLY_READERS=1 SG_ROOTS="$tmp/sg/blocking" SG_ALLOWLIST="$tmp/sg/noreason.tsv" bash "$SG"
-expect "slot readers: a scan that matches nothing fails closed" 1 env SG_ONLY_READERS=1 SG_ROOTS="$tmp/sg/clean"    SG_ALLOWLIST="$tmp/sg/empty.tsv"    bash "$SG"
-
-# ---- locks taken with the GIL held (same script, check 3) ------------------
+# ---- locks taken with the GIL held (same script, check 2) ------------------
 # A `.lock()` outside `allow_threads(` must be caught unless its function is
 # allowlisted with a reason — per TYPE, so allowlisting one class's getter
 # does not excuse another's of the same name. A lock taken inside
@@ -810,6 +769,7 @@ expect "kind-equivalence: a hand-edited Python value fails" 1 env KIND_EQUIV_ROO
 # dependency-lattice: a false row fails, the committed table passes.
 printf 'tst-core\t(default)\t-\tserde_json\n' > "$tmp/lattice.tsv"
 expect "dependency-lattice: a plane holding a forbidden crate fails" 1 env LATTICE_TSV="$tmp/lattice.tsv" bash scripts/check/repo/dependency-lattice.sh
+grep -q 'contains serde_json' "$tmp/out" || { echo "FAIL: dependency-lattice: the forbidden-crate row failed for another reason"; sed 's/^/    /' "$tmp/out"; fail=1; }
 expect "dependency-lattice: the committed table passes"              0 bash scripts/check/repo/dependency-lattice.sh
 
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi

@@ -91,8 +91,8 @@ use std::sync::{Arc, Mutex};
 use jni::JNIEnv;
 use jni::sys::jlong;
 use tst_core::transport::EndReason;
-use tst_core::transport::Transport;
-use tst_pipeline::MuxSender;
+use tst_core::transport::TransportCancel;
+use tst_pipeline::binding::view::BlockingReason;
 use tst_pipeline::binding::{HandleState, Owned};
 
 /// An optional cross-thread cancel hook fired by [`HandleRegistry::close`] *before*
@@ -387,35 +387,19 @@ impl<T> HandleRegistry<T> {
     }
 }
 
-/// Trait-erased cancel surface of an [`OwnedEntry`]: what a Java
-/// `CancelHandle` holds. `cancel()` never takes the slot and
+/// What a Java `CancelHandle` holds: the shell's own cancel handle
+/// ([`Owned::cancel_arc`]). `cancel()` never takes the slot and
 /// `is_cancelled()` reads the shell's ONE flag, so two handles on one
-/// shell — and a handle that outlives `close()` — always agree.
-///
-pub(crate) trait CancelSurface: Send + Sync {
-    fn cancel(&self);
-    fn is_cancelled(&self) -> bool;
-}
-
+/// shell, and a handle that outlives `close()`, always agree.
 /// Boxed behind `org.tstrans.srt.CancelHandle` and `org.tstrans.rtp.CancelHandle`
 /// (each in its own plain `HandleRegistry<CancelView>`, so their ids stay per-type).
-pub(crate) struct CancelView(pub(crate) Arc<dyn CancelSurface>);
+pub(crate) struct CancelView(pub(crate) Arc<dyn TransportCancel>);
 
 /// An [`OwnedRegistry`] entry. Nothing here but the `Owned` — the slot,
 /// the cancel target, the cancelled latch, the end-reason cell and the
 /// construction-time snapshot all live inside it.
 pub(crate) struct OwnedEntry<T, S> {
     owned: Owned<T, S>,
-}
-
-impl<T: Send + 'static, S: Send + Sync + 'static> CancelSurface for OwnedEntry<T, S> {
-    fn cancel(&self) {
-        self.owned.cancel();
-    }
-
-    fn is_cancelled(&self) -> bool {
-        self.owned.is_cancelled()
-    }
 }
 
 /// A process-global, per-type registry whose entries are
@@ -483,7 +467,7 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
         result
     }
 
-    /// Reader path (stats): [`Owned::with_ref`] — recovers a poisoned slot.
+    /// Reader path (stats): [`Owned::with_ref_blocking`] — recovers a poisoned slot.
     /// BLOCKING: it waits behind a parked op, so it is only for reads that
     /// have no answer without the slot. Liveness goes through
     /// [`Self::is_alive`], construction-constant getters through
@@ -492,9 +476,14 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
     /// # Errors
     ///
     /// As [`Self::with_mut`], minus `Poisoned`.
-    pub(crate) fn with_ref<R>(&self, id: u64, f: impl FnOnce(&T) -> R) -> Result<R, HandleState> {
+    pub(crate) fn with_ref_blocking<R>(
+        &self,
+        id: u64,
+        why: BlockingReason,
+        f: impl FnOnce(&T) -> R,
+    ) -> Result<R, HandleState> {
         match self.lease(id) {
-            Some(e) => e.owned.with_ref(f),
+            Some(e) => e.owned.with_ref_blocking(why, f),
             None => Err(HandleState::Closed),
         }
     }
@@ -506,7 +495,7 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
     ///
     /// # Errors
     ///
-    /// As [`Self::with_ref`].
+    /// As [`Self::with_ref_blocking`].
     pub(crate) fn try_with_ref<R>(
         &self,
         id: u64,
@@ -543,8 +532,7 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
     /// so `cancel()`/`is_cancelled()` keep working after `close()` removed
     /// the id from the table (the `Arc` outlives the table's strong ref).
     pub(crate) fn cancel_view(&self, id: u64) -> Option<CancelView> {
-        self.lease(id)
-            .map(|e| CancelView(e as Arc<dyn CancelSurface>))
+        self.lease(id).map(|e| CancelView(e.owned.cancel_arc()))
     }
 
     /// The recorded end reason, read off the cell [`Owned`] holds outside the
@@ -584,40 +572,6 @@ pub(crate) fn with_push<T: Send + 'static, S: Send + Sync + 'static, E>(
         Ok(Ok(())) => {}
         Ok(Err(e)) => throw_err(env, &e),
         Err(state) => crate::error::throw_handle_state(env, what, &state),
-    }
-}
-
-/// The first configured stream handle of each kind, as raw `u32`s — the
-/// `Owned` snapshot (or part of it) of every `MuxSender`-shaped shell.
-///
-/// The stream set is fixed by the `MuxerConfig` the sender is built from (the
-/// muxer has no way to add a stream afterwards), so the handles are read once,
-/// before the sender moves into its slot. The `n*Handle` natives then never
-/// wait behind a `send*` parked on a full send buffer or in a Blocking
-/// reconnect.
-#[derive(Clone, Copy)]
-pub(crate) struct StreamHandles {
-    pub video: Option<u32>,
-    pub klv: Option<u32>,
-    pub audio: Option<u32>,
-    pub subtitle: Option<u32>,
-    pub data: Option<u32>,
-}
-
-impl StreamHandles {
-    /// Read the handles off a freshly built sender.
-    pub(crate) fn of<T: Transport>(sender: &MuxSender<T>) -> Self {
-        Self {
-            video: sender.video_handles().into_iter().next().map(|h| h.raw()),
-            klv: sender.klv_handles().into_iter().next().map(|h| h.raw()),
-            audio: sender.audio_handles().into_iter().next().map(|h| h.raw()),
-            subtitle: sender
-                .subtitle_handles()
-                .into_iter()
-                .next()
-                .map(|h| h.raw()),
-            data: sender.data_handles().into_iter().next().map(|h| h.raw()),
-        }
     }
 }
 
@@ -1181,7 +1135,10 @@ mod tests {
     fn owned_registry_absent_ids_are_closed() {
         let reg: OwnedRegistry<u64> = OwnedRegistry::new();
         assert_eq!(reg.with_mut(0, |v| *v), Err(HandleState::Closed));
-        assert_eq!(reg.with_ref(999, |v| *v), Err(HandleState::Closed));
+        assert_eq!(
+            reg.with_ref_blocking(999, BlockingReason::NoAnswerWithoutSlot, |v| *v),
+            Err(HandleState::Closed)
+        );
         let (_rec, cancel) = recording();
         let id = reg.insert(Owned::new(3, cancel, ()));
         reg.close(id);

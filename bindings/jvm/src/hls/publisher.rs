@@ -11,7 +11,7 @@
 //!
 //! `nLocalAddr` is called ONCE by the Java constructor and cached: the bound
 //! address cannot change, and a cached value answers while another thread is
-//! inside a push (the blocking-slot-readers rule, without an `OwnedRegistry`).
+//! inside a push (the snapshot-read rule, without an `OwnedRegistry`).
 
 use std::net::SocketAddr;
 use std::sync::LazyLock;

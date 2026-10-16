@@ -28,6 +28,7 @@
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
 use std::sync::{Arc, Mutex};
+use tst_pipeline::binding::view::BlockingReason;
 
 use pyo3::Py;
 use pyo3::prelude::*;
@@ -269,30 +270,32 @@ impl PyDemuxReceiver {
         // build Python objects after the guard is dropped and the GIL is
         // reacquired.
         let raw = crate::util::allow_threads_parking(py, || {
-            self.owned.with_ref(|rx| {
-                let combined = rx.stats();
-                // The underlying RTP transport's full SocketStats live behind a
-                // separate accessor that the pipeline shell doesn't expose
-                // directly; we synthesise a SocketStats with the
-                // bytes_received / packets_received fields populated from the
-                // pipeline projection. RTCP-derived fields stay zero: this
-                // projection does not carry them.
-                // `SocketStats` is `#[non_exhaustive]`; populate via mut spread.
-                let mut sock_stats = tst_core::transport::SocketStats::default();
-                sock_stats.bytes_received = combined.bytes_received;
-                sock_stats.packets_received = combined.packets_received;
-                // Re-shape the demux side as a MuxerStats projection so callers
-                // get the same `(SocketStats, MuxerStats)` tuple shape on both
-                // MuxSender + DemuxReceiver.
-                let mux_stats = tst_core::mpegts::mux::MuxerStats {
-                    ts_packets_emitted: combined.packets_received,
-                    ts_bytes_emitted: combined.bytes_received,
-                    programs_configured: combined.program_maps_seen as u32,
-                    subtitle_streams_configured: 0,
-                    per_stream: combined.per_stream,
-                };
-                (sock_stats, mux_stats)
-            })
+            // counters live inside the shell and have no value to report while a parked call holds it
+            self.owned
+                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |rx| {
+                    let combined = rx.stats();
+                    // The underlying RTP transport's full SocketStats live behind a
+                    // separate accessor that the pipeline shell doesn't expose
+                    // directly; we synthesise a SocketStats with the
+                    // bytes_received / packets_received fields populated from the
+                    // pipeline projection. RTCP-derived fields stay zero: this
+                    // projection does not carry them.
+                    // `SocketStats` is `#[non_exhaustive]`; populate via mut spread.
+                    let mut sock_stats = tst_core::transport::SocketStats::default();
+                    sock_stats.bytes_received = combined.bytes_received;
+                    sock_stats.packets_received = combined.packets_received;
+                    // Re-shape the demux side as a MuxerStats projection so callers
+                    // get the same `(SocketStats, MuxerStats)` tuple shape on both
+                    // MuxSender + DemuxReceiver.
+                    let mux_stats = tst_core::mpegts::mux::MuxerStats {
+                        ts_packets_emitted: combined.packets_received,
+                        ts_bytes_emitted: combined.bytes_received,
+                        programs_configured: combined.program_maps_seen as u32,
+                        subtitle_streams_configured: 0,
+                        per_stream: combined.per_stream,
+                    };
+                    (sock_stats, mux_stats)
+                })
         });
         let (sock_stats, mux_stats) = pyok(py, &RTP, raw)?;
         let sock_py = Py::new(py, PySocketStats::from_core(sock_stats))?;
@@ -323,7 +326,10 @@ impl PyDemuxReceiver {
             &RTP,
             crate::util::allow_threads_parking(py, || {
                 self.owned
-                    .with_ref(|rx| rx.stats().per_stream.get(&pid).and_then(|s| s.last_seen))
+                    // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |rx| {
+                        rx.stats().per_stream.get(&pid).and_then(|s| s.last_seen)
+                    })
             }),
         )?;
         Ok(last_seen

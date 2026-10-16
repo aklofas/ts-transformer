@@ -34,6 +34,7 @@ pub mod kind;
 pub mod owned;
 pub mod panic;
 pub mod shells;
+pub mod view;
 
 #[cfg(feature = "std")]
 pub use handles::ManagedHandles;

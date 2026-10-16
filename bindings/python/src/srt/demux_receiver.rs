@@ -39,6 +39,7 @@
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
 use std::sync::{Arc, Mutex};
+use tst_pipeline::binding::view::BlockingReason;
 
 use pyo3::Py;
 use pyo3::prelude::*;
@@ -54,7 +55,7 @@ use crate::mpegts::demux_error_to_pyerr;
 use crate::mux::PyMuxerStats;
 use crate::raise::{SRT, pyok, raise};
 use crate::srt::transport::{PySocketStats, srt_cancel_source};
-use crate::util::{CancelSource, alive_probe, close_owned};
+use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -316,7 +317,10 @@ impl PyDemuxReceiver {
             &SRT,
             crate::util::allow_threads_parking(py, || {
                 self.owned
-                    .with_ref(|rx| rx.socket_stats().unwrap_or_default())
+                    // counters live inside the shell and have no value to report while a parked call holds it
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |rx| {
+                        rx.socket_stats().unwrap_or_default()
+                    })
             }),
         )?;
         Py::new(py, PySocketStats::from_core(core))
@@ -335,26 +339,28 @@ impl PyDemuxReceiver {
         // Python objects after the guard is dropped and the GIL is
         // reacquired.
         let raw = crate::util::allow_threads_parking(py, || {
-            self.owned.with_ref(|rx| {
-                let combined = rx.stats();
-                // SocketStats from the wire counters tracked at the pipeline
-                // layer (full SocketStats via the transport accessor isn't
-                // surfaced through the pipeline shell).
-                let mut sock_stats = tst_core::transport::SocketStats::default();
-                sock_stats.bytes_received = combined.bytes_received;
-                sock_stats.packets_received = combined.packets_received;
-                // Re-shape the demux side as a MuxerStats projection so callers
-                // get the same `(SocketStats, MuxerStats)` tuple shape on both
-                // MuxSender + DemuxReceiver.
-                let mux_stats = tst_core::mpegts::mux::MuxerStats {
-                    ts_packets_emitted: combined.packets_received,
-                    ts_bytes_emitted: combined.bytes_received,
-                    programs_configured: combined.program_maps_seen as u32,
-                    subtitle_streams_configured: 0,
-                    per_stream: combined.per_stream,
-                };
-                (sock_stats, mux_stats)
-            })
+            // counters live inside the shell and have no value to report while a parked call holds it
+            self.owned
+                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |rx| {
+                    let combined = rx.stats();
+                    // SocketStats from the wire counters tracked at the pipeline
+                    // layer (full SocketStats via the transport accessor isn't
+                    // surfaced through the pipeline shell).
+                    let mut sock_stats = tst_core::transport::SocketStats::default();
+                    sock_stats.bytes_received = combined.bytes_received;
+                    sock_stats.packets_received = combined.packets_received;
+                    // Re-shape the demux side as a MuxerStats projection so callers
+                    // get the same `(SocketStats, MuxerStats)` tuple shape on both
+                    // MuxSender + DemuxReceiver.
+                    let mux_stats = tst_core::mpegts::mux::MuxerStats {
+                        ts_packets_emitted: combined.packets_received,
+                        ts_bytes_emitted: combined.bytes_received,
+                        programs_configured: combined.program_maps_seen as u32,
+                        subtitle_streams_configured: 0,
+                        per_stream: combined.per_stream,
+                    };
+                    (sock_stats, mux_stats)
+                })
         });
         let (sock_stats, mux_stats) = pyok(py, &SRT, raw)?;
         let sock_py = Py::new(py, PySocketStats::from_core(sock_stats))?;
@@ -379,7 +385,10 @@ impl PyDemuxReceiver {
         // Same GIL-released lock-then-extract shape as `stats()` above.
         let raw = crate::util::allow_threads_parking(py, || {
             self.owned
-                .with_ref(|rx| rx.stats().per_stream.get(&pid).and_then(|s| s.last_seen))
+                // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
+                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |rx| {
+                    rx.stats().per_stream.get(&pid).and_then(|s| s.last_seen)
+                })
         });
         let last_seen = pyok(py, &SRT, raw)?;
         Ok(last_seen
@@ -397,7 +406,7 @@ impl PyDemuxReceiver {
     /// `True` while the receiver owns a live transport (a `__next__`
     /// parked on another thread counts as live; the probe never waits).
     fn is_alive(&self) -> bool {
-        alive_probe(&self.owned, |r| r.is_alive())
+        self.owned.alive(|r| r.is_alive())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {

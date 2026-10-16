@@ -13,6 +13,7 @@
 
 use std::sync::LazyLock;
 use std::time::Duration;
+use tst_pipeline::binding::view::BlockingReason;
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString};
@@ -169,7 +170,8 @@ pub extern "system" fn Java_org_tstrans_rtp_Sender_nSocketStats<'local>(
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
         let Ok(stats) =
-            REGISTRY_SENDER.with_ref(handle as u64, |w| w.0.socket_stats().unwrap_or_default())
+            // counters live inside the shell and have no value to report while a parked call holds it
+            REGISTRY_SENDER.with_ref_blocking(handle as u64, BlockingReason::NoAnswerWithoutSlot, |w| w.0.socket_stats().unwrap_or_default())
         else {
             return JObject::null();
         };
@@ -389,9 +391,12 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nSocketStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Ok(stats) = REGISTRY_RECEIVER.with_ref(handle as u64, |w| {
-            w.inner.socket_stats().unwrap_or_default()
-        }) else {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let Ok(stats) = REGISTRY_RECEIVER.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |w| w.inner.socket_stats().unwrap_or_default(),
+        ) else {
             return JObject::null();
         };
         build_socket_stats(env, "org/tstrans/rtp/SocketStats", &stats)
