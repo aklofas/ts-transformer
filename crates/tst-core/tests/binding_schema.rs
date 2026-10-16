@@ -15,9 +15,8 @@ fn wavelength_record_schema_names_its_four_fields_in_order() {
     assert!(!s.non_exhaustive);
     let names: Vec<_> = s.fields.iter().map(|f| f.name).collect();
     assert_eq!(names, ["id", "min_nm", "max_nm", "name"]);
-    assert_eq!(s.fields[0].ty, "u64");
-    assert_eq!(s.fields[1].ty, "f64");
-    assert!(s.fields[3].ty.ends_with("String"), "{}", s.fields[3].ty);
+    let tys: Vec<_> = s.fields.iter().map(|f| f.ty).collect();
+    assert_eq!(tys, ["u64", "f64", "f64", "String"]);
     assert!(s.fields.iter().all(|f| f.mark == FieldMark::Plain));
 }
 
@@ -48,6 +47,9 @@ tst_core::binding_record! {
         /// Second line.
         pub e: u32,
         pub f: u8,
+        @[custom]
+        @[java("eCode")]
+        pub e2: Option<u8>,
     }
 }
 
@@ -64,6 +66,8 @@ fn marks_and_java_override_are_reported() {
     assert_eq!(by["a"].doc, "Plain field.");
     assert_eq!(by["e"].doc, "First line of two.");
     assert_eq!(by["f"].doc, "");
+    assert_eq!(by["e2"].mark, FieldMark::Custom);
+    assert_eq!(by["e2"].java, Some("eCode"));
     assert_eq!(s.doc, "A fixture record for the schema tests.");
     assert!(s.non_exhaustive);
 }

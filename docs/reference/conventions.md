@@ -431,7 +431,8 @@ through `tst_core::binding_record!`. The macro emits the struct exactly as
 written (derives, docs, visibility) plus a hidden `BINDING_SCHEMA` constant
 that the binding generator reads, so the struct is the schema.
 
-A field takes at most one prefix:
+A field takes `@[…]` prefixes; they may repeat, e.g.
+`@[custom] @[java("…Code")]`. `custom` and `skip` exclude each other:
 
 - `@[custom]` — the field crosses through a hand-written converter per host,
   named `<record>_<field>_to_py` / `<record>_<field>_from_py` (Python) and

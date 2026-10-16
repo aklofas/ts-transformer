@@ -687,7 +687,8 @@ jobs:
           # 191->193 (2026-10-16): +binding::Diagnostics, +binding::view::BlockingReason,
           # +binding::Opened; -MuxErrorKind (now exhaustive, matched by the bindings).
           # 193->195 (2026-10-16): +binding_schema::FieldMark and the
-          # #[non_exhaustive] record in tst-core's binding_schema test.
+          # #[non_exhaustive] record in crates/tst-core/tests/binding_schema.rs
+          # (a deliberate fixture that tests the non_exhaustive flag).
           BASELINE=195
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then

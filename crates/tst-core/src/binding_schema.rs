@@ -8,6 +8,10 @@
 //!
 //! Internal tier: the shape exists for the generator, not for consumers.
 //!
+//! A field's `ty` is the type's spelling as written in the declaration
+//! (`stringify!`). The binding generator maps spellings, so a type alias is
+//! not resolved and is reported by the generator.
+//!
 //! ```ignore
 //! tst_core::binding_record! {
 //!     /// A band definition.
@@ -98,40 +102,43 @@ macro_rules! __has_non_exhaustive {
     (#[$($x:tt)*] $($rest:tt)*) => { $crate::__has_non_exhaustive!($($rest)*) };
 }
 
-/// The [`FieldMark`] for a field's `@[...]` prefix. `@[java("…")]` carries no
-/// mark of its own and is `Plain`.
+/// The [`FieldMark`] named by a field's `@[...]` groups, scanned as one flat
+/// token list: none is `Plain`, `custom` or `skip` selects its mark (both is
+/// an error), `java("…")` and commas are skipped, anything else is an error.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __mark {
-    () => {
-        $crate::binding_schema::FieldMark::Plain
+    (@go $cur:ident;) => { $crate::binding_schema::FieldMark::$cur };
+    (@go Plain; custom $($r:tt)*) => { $crate::__mark!(@go Custom; $($r)*) };
+    (@go Plain; skip $($r:tt)*) => { $crate::__mark!(@go Skip; $($r)*) };
+    (@go $cur:ident; custom $($r:tt)*) => {
+        compile_error!("binding_record!: a field takes one of `@[custom]` or `@[skip]`, once")
     };
-    (java($j:literal)) => {
-        $crate::binding_schema::FieldMark::Plain
+    (@go $cur:ident; skip $($r:tt)*) => {
+        compile_error!("binding_record!: a field takes one of `@[custom]` or `@[skip]`, once")
     };
-    (custom) => {
-        $crate::binding_schema::FieldMark::Custom
+    (@go $cur:ident; java($j:literal) $($r:tt)*) => { $crate::__mark!(@go $cur; $($r)*) };
+    (@go $cur:ident; , $($r:tt)*) => { $crate::__mark!(@go $cur; $($r)*) };
+    (@go $cur:ident; $x:tt $($r:tt)*) => {
+        compile_error!(concat!(
+            "binding_record!: unknown field mark `",
+            stringify!($x),
+            "`; a mark is `custom`, `skip` or `java(\"name\")`"
+        ))
     };
-    (skip) => {
-        $crate::binding_schema::FieldMark::Skip
-    };
-    ($($other:tt)+) => {
-        compile_error!(
-            "binding_record!: a field mark is `@[custom]`, `@[skip]` or `@[java(\"name\")]`"
-        )
-    };
+    ($($t:tt)*) => { $crate::__mark!(@go Plain; $($t)*) };
 }
 
-/// The host-name override carried by `@[java("…")]`.
+/// The host-name override carried by a `java("…")` among the `@[...]` groups.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __java {
-    (java($j:literal)) => {
-        ::core::option::Option::Some($j)
+    (@go $acc:expr;) => { $acc };
+    (@go $acc:expr; java($j:literal) $($r:tt)*) => {
+        $crate::__java!(@go ::core::option::Option::Some($j); $($r)*)
     };
-    ($($other:tt)*) => {
-        ::core::option::Option::None
-    };
+    (@go $acc:expr; $x:tt $($r:tt)*) => { $crate::__java!(@go $acc; $($r)*) };
+    ($($t:tt)*) => { $crate::__java!(@go ::core::option::Option::None; $($t)*) };
 }
 
 /// Declares a record that crosses to a host language.
@@ -139,7 +146,18 @@ macro_rules! __java {
 /// Emits the struct exactly as written (attributes, docs, visibility) and
 /// an associated `BINDING_SCHEMA: RecordSchema`. A field may carry one
 /// prefix: `@[custom]` (hand-written converter), `@[skip]` (does not cross) or
-/// `@[java("name")]` (host name override).
+/// `@[java("name")]` (host name override). Groups may repeat on one field:
+/// `@[custom] @[java("eCode")] pub e: Option<u8>`.
+///
+/// An unknown mark does not compile:
+///
+/// ```compile_fail
+/// tst_core::binding_record! {
+///     pub struct X {
+///         @[nonsense] pub a: u8,
+///     }
+/// }
+/// ```
 #[macro_export]
 macro_rules! binding_record {
     (
@@ -147,7 +165,7 @@ macro_rules! binding_record {
         $vis:vis struct $name:ident {
             $(
                 $(#[$($fmeta:tt)*])*
-                $( @ [ $($mark:tt)* ] )?
+                $( @ [ $($mark:tt)* ] )*
                 $fvis:vis $field:ident : $fty:ty
             ),* $(,)?
         }
@@ -164,8 +182,8 @@ macro_rules! binding_record {
                     fields: &[ $( $crate::binding_schema::FieldSpec {
                         name: stringify!($field),
                         ty: stringify!($fty),
-                        mark: $crate::__mark!($($($mark)*)?),
-                        java: $crate::__java!($($($mark)*)?),
+                        mark: $crate::__mark!($($($mark)*)*),
+                        java: $crate::__java!($($($mark)*)*),
                         doc: $crate::__first_doc!($(#[$($fmeta)*])*),
                     } ),* ],
                     doc: $crate::__first_doc!($(#[$($meta)*])*),
