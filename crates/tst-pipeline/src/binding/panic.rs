@@ -4,7 +4,7 @@
 //! shape, defined once: `tst-c`'s `ffi_catch` and `tst-jni`'s `jni_catch`
 //! both delegate here.
 
-use std::panic::AssertUnwindSafe;
+use alloc::string::String;
 
 /// Run `f` inside a panic boundary: `Ok(f())`, or `Err(detail)` where
 /// `detail` is [`payload_message`] of the panic payload.
@@ -20,8 +20,18 @@ use std::panic::AssertUnwindSafe;
 /// that lives OUTSIDE this boundary, so the mutex is not poisoned; what
 /// happens to the slot is `Owned`'s decision (a mutator panic drops `T`, a
 /// reader panic keeps it).
+///
+/// Without `std` there is no unwinding (the target aborts on panic), so
+/// this is `Ok(f())`.
+#[cfg(feature = "std")]
 pub fn catch<R>(f: impl FnOnce() -> R) -> Result<R, String> {
-    std::panic::catch_unwind(AssertUnwindSafe(f)).map_err(|p| payload_message(&*p))
+    std::panic::catch_unwind(core::panic::AssertUnwindSafe(f)).map_err(|p| payload_message(&*p))
+}
+
+/// See the `std` variant.
+#[cfg(not(feature = "std"))]
+pub fn catch<R>(f: impl FnOnce() -> R) -> Result<R, String> {
+    Ok(f())
 }
 
 /// Best-effort detail string from a `catch_unwind` payload: the `&'static
@@ -41,6 +51,7 @@ pub fn payload_message(payload: &(dyn core::any::Any + Send)) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::boxed::Box;
 
     #[test]
     fn catch_returns_the_closure_value() {
@@ -48,6 +59,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn catch_reports_a_static_str_payload() {
         // `panic!("literal")` with no format args carries a `&'static str`.
         assert_eq!(
@@ -57,6 +69,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn catch_reports_a_formatted_string_payload() {
         // A formatted panic carries an owned `String`.
         let n = 7;
@@ -67,6 +80,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn payload_message_falls_back_for_non_string_payloads() {
         // `std::panic::panic_any` lets a test raise an arbitrary payload.
         // The closure diverges; pin `R = ()` so never-type fallback is not

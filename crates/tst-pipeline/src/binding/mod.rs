@@ -5,10 +5,11 @@
 //! **Stability: Provisional** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 //!
-//! `std`-only: it exists to sit between a foreign runtime (C caller, the
-//! Python GIL, a JNI critical region) and a pipeline shell, and every one
-//! of those has a standard library. Nothing here is reachable from the
-//! `no_std` sender/receiver shells.
+//! `no_std` + `alloc`, except [`handles`] (its end-reason cell is a
+//! `std::sync::OnceLock`): the C binding's bare-metal plane drives its
+//! offline handles through the same [`Owned`] and kind table as every
+//! other handle. On a `no_std` target the slot lock is a spin lock and
+//! panics abort — see [`Owned`]'s "`no_std` targets" section.
 //!
 //! - [`handles`] — [`ManagedHandles`], the five lock-free observers a
 //!   binding collects at open time: cancel, stream-end reason,
@@ -27,12 +28,14 @@
 //!   [`SendHalf`] / [`RecvHalf`] for raw transports. These live here
 //!   because the orphan rule forbids the binding crates from writing them.
 
+#[cfg(feature = "std")]
 pub mod handles;
 pub mod kind;
 pub mod owned;
 pub mod panic;
 pub mod shells;
 
+#[cfg(feature = "std")]
 pub use handles::ManagedHandles;
 pub use kind::{BindingError, BindingErrorKind, Domain};
 pub use owned::{Close, CloseFailure, HandleState, Owned};

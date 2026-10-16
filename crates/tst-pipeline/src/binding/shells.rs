@@ -12,9 +12,9 @@ use core::convert::Infallible;
 use tst_core::transport::{RecvTransport, Transport};
 
 use super::owned::Close;
-use crate::{
-    DemuxReceiver, ManagedDemuxReceiver, MuxSender, RawReceiver, RawSender, Receiver, Sender,
-};
+#[cfg(feature = "std")]
+use crate::ManagedDemuxReceiver;
+use crate::{DemuxReceiver, MuxSender, RawReceiver, RawSender, Receiver, Sender};
 
 impl<T: Transport> Close for Sender<T> {
     type Error = Infallible;
@@ -66,6 +66,7 @@ impl<R: RecvTransport> Close for DemuxReceiver<R> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<R: RecvTransport> Close for ManagedDemuxReceiver<R> {
     type Error = Infallible;
     fn close(&mut self) -> Result<(), Infallible> {
@@ -119,11 +120,10 @@ mod tests {
 
     use tst_core::transport::{TransportCancel, TransportError};
 
+    #[cfg(feature = "std")]
+    use crate::ManagedDemuxReceiver;
     use crate::binding::Owned;
-    use crate::{
-        DemuxReceiver, ManagedDemuxReceiver, MuxSender, RawReceiver, RawSender, ReceiverConfig,
-        SenderConfig,
-    };
+    use crate::{DemuxReceiver, MuxSender, RawReceiver, RawSender, ReceiverConfig, SenderConfig};
     use tst_core::cancel::FlagCancel;
 
     /// Send-side mock that records its close.
@@ -277,6 +277,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn owned_close_reaches_the_managed_demux_receiver_shell_and_its_transport() {
         use crate::ManagedDemuxReceiverConfig;
         use crate::managed_receive::ManagedRecvTransport;

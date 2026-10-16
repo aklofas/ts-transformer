@@ -73,7 +73,6 @@ extern crate std;
 
 mod mutex;
 
-#[cfg(feature = "std")]
 pub mod binding;
 pub mod demux_receiver;
 #[cfg(feature = "std")]
