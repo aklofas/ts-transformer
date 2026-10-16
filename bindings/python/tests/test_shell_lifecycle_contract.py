@@ -51,6 +51,7 @@ from tstrans.mpegts import Pts90khz
 from _builders.hang_deadline import call_with_hang_deadline
 from _builders.mux_programs import video_only_program
 from _builders.ports import free_tcp_port, free_udp_port
+from _builders.rist_ports import bind_even_port_or_skip
 
 SCHEMES = ("srt", "rtp", "udp", "tcp", "rist")
 ERRORS = {
@@ -115,17 +116,6 @@ def _retry_open(open_fn: Callable[[], object], err: type[BaseException]) -> obje
             time.sleep(0.05)
 
 
-def _rist_bind(open_fn: Callable[[int], object]) -> tuple[object, int]:
-    """Bind on a free even loopback port (librist Simple profile needs even
-    ports); skip when none binds, like the raw RIST tests."""
-    for port in range(34210, 34250, 2):
-        try:
-            return open_fn(port), port
-        except RistError:
-            continue
-    pytest.skip("could not bind any even RIST port (librist unavailable)")
-
-
 @contextlib.contextmanager
 def _receiver_with_peer(shell: str, scheme: str) -> Iterator[object]:
     """Yield an open receiver shell with a live, silent peer attached."""
@@ -166,7 +156,7 @@ def _receiver_with_peer(shell: str, scheme: str) -> Iterator[object]:
             rx = _open_receiver(shell, f"tcp://127.0.0.1:{listener.local_port()}")
             cleanup.append(lambda: [h.close() for h in held])
         else:
-            rx, _ = _rist_bind(lambda p: _open_receiver(shell, f"rist://@127.0.0.1:{p}"))
+            rx, _ = bind_even_port_or_skip(lambda p: _open_receiver(shell, f"rist://@127.0.0.1:{p}"))
         cleanup.append(rx.close)
         yield rx
     finally:
@@ -233,7 +223,7 @@ def _sender_with_peer(shell: str, scheme: str) -> Iterator[tuple[object, Callabl
                 server.close()
 
         else:
-            peer, port = _rist_bind(lambda p: shells.Receiver.open(f"rist://@127.0.0.1:{p}"))
+            peer, port = bind_even_port_or_skip(lambda p: shells.Receiver.open(f"rist://@127.0.0.1:{p}"))
             cleanup.append(peer.close)
             tx = _open_sender(shell, f"rist://127.0.0.1:{port}")
             drop = peer.close

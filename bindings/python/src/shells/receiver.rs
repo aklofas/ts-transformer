@@ -74,7 +74,9 @@ impl PyReceiver {
 impl PyReceiver {
     /// Open a receiver from `url` (GIL released). For `srt://` the URL
     /// must carry `?mode=listener`; the first accept is not cancellable,
-    /// since no handle exists until this returns.
+    /// since no handle exists until this returns. An `srt://` bind or accept
+    /// fault raises `SrtError(kind=BROKEN)` with the message prefixed
+    /// `bind: ` or `accept: `.
     #[classmethod]
     fn open(_cls: &Bound<'_, PyType>, py: Python<'_>, url: &str) -> PyResult<Self> {
         Self::from_opened(py, crate::shells::open::open_recv(py, url)?)
