@@ -134,14 +134,45 @@ mod tests {
         assert!(!latch.is_cancelled());
         TransportCancel::cancel(&latch);
         assert!(latch.is_cancelled() && inner.is_cancelled());
-        let other = CancelLatch::new(Arc::new(FlagCancel::new()));
         let inner2 = Arc::new(FlagCancel::new());
         inner2.cancel();
         assert!(
             !CancelLatch::new(inner2).is_cancelled(),
             "the inner handle's latch is not this latch"
         );
-        drop(other);
+    }
+
+    /// An inner handle that records whether its latch was already set when
+    /// the forwarded cancel reached it.
+    struct SeesLatch {
+        latch: alloc::sync::Weak<CancelLatch>,
+        saw_latch_set: Arc<AtomicBool>,
+    }
+
+    impl TransportCancel for SeesLatch {
+        fn cancel(&self) {
+            let set = self.latch.upgrade().is_some_and(|l| l.is_cancelled());
+            self.saw_latch_set.store(set, Ordering::Release);
+        }
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn cancel_latch_sets_its_latch_before_it_fires_the_inner_handle() {
+        let saw = Arc::new(AtomicBool::new(false));
+        let latch = Arc::new_cyclic(|weak| {
+            CancelLatch::new(Arc::new(SeesLatch {
+                latch: weak.clone(),
+                saw_latch_set: saw.clone(),
+            }))
+        });
+        TransportCancel::cancel(&*latch);
+        assert!(
+            saw.load(Ordering::Acquire),
+            "a poll loop woken by the inner cancel must already see the latch"
+        );
     }
 
     #[test]
