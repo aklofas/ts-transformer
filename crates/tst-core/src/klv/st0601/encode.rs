@@ -215,10 +215,7 @@ fn sentinel_field_len(record: &UasDatalinkLs, tag: u32) -> usize {
         return 0;
     }
     // Value wins: if the typed field is populated, it is already counted.
-    if super::decode::ranged_entry(tag_u8)
-        .and_then(|e| (e.get)(record))
-        .is_some()
-    {
+    if spec.get_f64(record).is_some() {
         return 0;
     }
     let vlen = range.byte_length;
@@ -239,10 +236,7 @@ fn imapb_special_field_len(record: &UasDatalinkLs, tag: u32) -> usize {
     let Encoding::Imapb { default_len, .. } = spec.encoding else {
         return 0;
     };
-    if super::decode::ranged_entry(tag_u8)
-        .and_then(|e| (e.get)(record))
-        .is_some()
-    {
+    if spec.get_f64(record).is_some() {
         return 0;
     }
     ber_oid_len(tag) + ber_len(default_len) + default_len
@@ -394,10 +388,11 @@ pub(super) fn each_typed_field<F: FnMut(u8, usize)>(
             143 => record
                 .metadata_substream_id
                 .map(|ms| packs::metadata_substream_id_len(&ms)),
-            // All 69 LinearRange Option<f64> fields — driven from RANGED_FIELDS
+            // All 69 LinearRange Option<f64> fields — driven from the `TAGS` row accessors
             // so that `byte_length` comes from the single `tags::TAGS` source.
-            _ if spec.range.is_some() => super::decode::ranged_entry(spec.id)
-                .and_then(|e| (e.get)(record).map(|_| spec.range.as_ref().unwrap().byte_length)),
+            _ if spec.range.is_some() => spec
+                .get_f64(record)
+                .map(|_| spec.range.as_ref().unwrap().byte_length),
             // The 14 IMAPB extended-range fields — always sized at
             // default_len whether the eventual bytes are a normal-range
             // encode or (under OutOfRangePolicy::Indicator) a special;
@@ -405,12 +400,10 @@ pub(super) fn each_typed_field<F: FnMut(u8, usize)>(
             // value still sizes here — `encode_tag_value` is what surfaces
             // the actual OutOfRange error during emission.
             _ if matches!(spec.encoding, Encoding::Imapb { .. }) => {
-                super::decode::ranged_entry(spec.id).and_then(|e| {
-                    let Encoding::Imapb { default_len, .. } = spec.encoding else {
-                        unreachable!()
-                    };
-                    (e.get)(record).map(|_| default_len)
-                })
+                let Encoding::Imapb { default_len, .. } = spec.encoding else {
+                    unreachable!()
+                };
+                spec.get_f64(record).map(|_| default_len)
             }
             _ => None,
         };
@@ -657,17 +650,13 @@ pub(super) fn encode_tag_value(
                 packs::emit_metadata_substream_id(&ms, &mut buf).map(|_| buf)
             })
             .transpose()?,
-        // All 69 LinearRange Option<f64> fields — driven from RANGED_FIELDS so
+        // All 69 LinearRange Option<f64> fields — driven from the `TAGS` row accessors so
         // the tag→field mapping is the single source of truth across decode + encode.
         _ if spec.range.is_some() => {
-            if let Some(entry) = super::decode::ranged_entry(spec.id) {
-                encode_ranged((entry.get)(record), spec, &mut scratch, policy)?
-            } else {
-                None
-            }
+            encode_ranged(spec.get_f64(record), spec, &mut scratch, policy)?
         }
         // The 14 IMAPB extended-range fields — share the
-        // RANGED_FIELDS accessor table with the LinearRange fields above;
+        // row accessors with the LinearRange fields above;
         // the wire format is what differs (encode_imapb_field vs encode_ranged).
         _ if matches!(spec.encoding, Encoding::Imapb { .. }) => {
             let Encoding::Imapb {
@@ -679,17 +668,14 @@ pub(super) fn encode_tag_value(
             else {
                 unreachable!()
             };
-            match super::decode::ranged_entry(spec.id) {
-                Some(entry) => encode_imapb_field(
-                    (entry.get)(record),
-                    spec.id as u32,
-                    min,
-                    max,
-                    default_len,
-                    policy,
-                )?,
-                None => None,
-            }
+            encode_imapb_field(
+                spec.get_f64(record),
+                spec.id as u32,
+                min,
+                max,
+                default_len,
+                policy,
+            )?
         }
         _ => None,
     })
@@ -756,10 +742,7 @@ fn write_sentinel_tags(record: &UasDatalinkLs, body: &mut Vec<u8>) -> Result<(),
             continue;
         }
         // Value wins: only re-emit the sentinel when the typed field is absent.
-        if super::decode::ranged_entry(tag_u8)
-            .and_then(|e| (e.get)(record))
-            .is_some()
-        {
+        if spec.get_f64(record).is_some() {
             continue;
         }
         // INT_MIN for this field width: 2-byte → 0x8000, 4-byte → 0x80000000.
@@ -792,10 +775,7 @@ fn write_imapb_specials(record: &UasDatalinkLs, body: &mut Vec<u8>) -> Result<()
             continue;
         };
         // Value wins: only re-emit the special when the typed field is absent.
-        if super::decode::ranged_entry(tag_u8)
-            .and_then(|e| (e.get)(record))
-            .is_some()
-        {
+        if spec.get_f64(record).is_some() {
             continue;
         }
         let mut buf = vec![0u8; default_len];

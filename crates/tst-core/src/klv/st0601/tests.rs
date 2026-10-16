@@ -1,6 +1,4 @@
-use super::decode::{
-    assign_ranged, decode, decode_strict, decode_strict_compliance, decode_unchecked,
-};
+use super::decode::{decode, decode_strict, decode_strict_compliance, decode_unchecked};
 use super::encode::{
     encode, encode_strict_compliance, encode_to_vec, encode_to_vec_with, encode_with, encoded_len,
     encoded_len_with,
@@ -19,6 +17,16 @@ use crate::klv::checksum::checksum_running_sum_16;
 use crate::klv::pack::OwnedRawField;
 use crate::klv::universal_label::UniversalLabel;
 use crate::test_prelude::*;
+
+/// Store `v` into the ranged field of `tag` (the `Option<f64>` view of its row).
+fn assign_ranged(record: &mut UasDatalinkLs, tag: u32, v: f64) {
+    if let Some(spec) = u8::try_from(tag)
+        .ok()
+        .and_then(crate::klv::st0601::tags::lookup)
+    {
+        spec.set_f64(record, v);
+    }
+}
 
 #[test]
 fn default_uses_st0601_ul() {
@@ -2302,9 +2310,8 @@ fn wpa_ranged_spec_vectors() {
     for &(tag, value, bytes) in vectors {
         // Decode direction: build a raw LS carrying just this TLV.
         let ls = decode_with_single_tlv(tag, bytes);
-        let entry = crate::klv::st0601::decode::ranged_entry(tag).expect("ranged entry");
-        let got = (entry.get)(&ls).expect("field populated");
-        let spec = crate::klv::st0601::tags::lookup(tag).unwrap();
+        let spec = crate::klv::st0601::tags::lookup(tag).expect("ranged row");
+        let got = spec.get_f64(&ls).expect("field populated");
         let r = spec.range.unwrap();
         // Signed mappings span -(2^(n-1)-1)..(2^(n-1)-1) = 2^n - 2 steps
         // (INT_MIN is the reserved sentinel); unsigned span 2^n - 1 steps.
@@ -2317,7 +2324,7 @@ fn wpa_ranged_spec_vectors() {
         assert!((got - value).abs() <= lsb, "tag {tag}: {got} vs {value}");
         // Encode direction: exact spec bytes.
         let mut rec = UasDatalinkLs::default();
-        (entry.set)(&mut rec, value);
+        spec.set_f64(&mut rec, value);
         let encoded = crate::klv::st0601::encode_to_vec(&rec).unwrap();
         assert!(
             tlv_value(&encoded, tag) == Some(bytes.to_vec()),
@@ -2366,8 +2373,10 @@ fn wpb_imapb_spec_vectors() {
     ];
     for &(tag, value, bytes) in vectors {
         let ls = decode_with_single_tlv_ber_oid(tag as u32, bytes);
-        let entry = crate::klv::st0601::decode::ranged_entry(tag).expect("ranged entry");
-        let got = (entry.get)(&ls).expect("value decoded");
+        let got = crate::klv::st0601::tags::lookup(tag)
+            .expect("ranged row")
+            .get_f64(&ls)
+            .expect("value decoded");
         let Encoding::Imapb { min, max, .. } =
             crate::klv::st0601::tags::lookup(tag).unwrap().encoding
         else {
@@ -2382,7 +2391,9 @@ fn wpb_imapb_spec_vectors() {
         // Encode at default_len must reproduce the spec bytes exactly
         // (default_len == the example length for these tags).
         let mut rec = UasDatalinkLs::default();
-        (entry.set)(&mut rec, value);
+        crate::klv::st0601::tags::lookup(tag)
+            .expect("ranged row")
+            .set_f64(&mut rec, value);
         let out = crate::klv::st0601::encode_to_vec(&rec).unwrap();
         assert_eq!(tlv_value(&out, tag), Some(bytes.to_vec()), "tag {tag}");
     }
