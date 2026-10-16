@@ -684,7 +684,9 @@ jobs:
           # 189->191 (2026-10-15): +EndReason, +TlsLoadError, +packet::Chunk,
           # +binding::Domain; -RecvEndReason, -StreamEndReason (merged into
           # EndReason). The depay types and Av1CarriageMode moved with theirs.
-          BASELINE=191
+          # 191->193 (2026-10-16): +binding::Diagnostics, +binding::view::BlockingReason,
+          # +binding::Opened; -MuxErrorKind (now exhaustive, matched by the bindings).
+          BASELINE=193
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
             echo "non_exhaustive count regressed: expected >= $BASELINE, observed $OBSERVED" >&2
