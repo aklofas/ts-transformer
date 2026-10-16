@@ -3,7 +3,7 @@
 //!
 //!   print-kinds                 the kind-equivalence TSV, to stdout
 //!   print-kinds --write         rewrite scripts/ratchets/kind-equivalence.tsv and the
-//!                               generated blocks in exceptions.py and the nine
+//!                               generated blocks in exceptions.py and the twelve
 //!                               bindings/jvm/…/*Exception.java
 //!   print-kinds --check         exit 1 (with a diff summary) if any committed copy
 //!                               differs from a fresh render

@@ -699,7 +699,7 @@ impl Domain {
     }
 
     /// The JNI class name of the JVM exception, or `None` for a domain the
-    /// JVM binding does not expose (UDP, TCP and RIST).
+    /// JVM binding does not expose.
     pub fn java_exception_class(self) -> Option<&'static str> {
         match self {
             Domain::Srt => Some("org/tstrans/SrtException"),
@@ -711,7 +711,9 @@ impl Domain {
             Domain::KlvDecode => Some("org/tstrans/KlvDecodeException"),
             Domain::KlvEncode => Some("org/tstrans/KlvEncodeException"),
             Domain::Codec => Some("org/tstrans/CodecParseException"),
-            Domain::Udp | Domain::Tcp | Domain::Rist => None,
+            Domain::Udp => Some("org/tstrans/UdpException"),
+            Domain::Tcp => Some("org/tstrans/TcpException"),
+            Domain::Rist => Some("org/tstrans/RistException"),
         }
     }
 }
@@ -1476,7 +1478,18 @@ mod tests {
                     .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
             );
         }
-        assert_eq!(Domain::Udp.java_exception_class(), None);
+        assert_eq!(
+            Domain::Udp.java_exception_class(),
+            Some("org/tstrans/UdpException")
+        );
+        assert_eq!(
+            Domain::Tcp.java_exception_class(),
+            Some("org/tstrans/TcpException")
+        );
+        assert_eq!(
+            Domain::Rist.java_exception_class(),
+            Some("org/tstrans/RistException")
+        );
         assert_eq!(
             Domain::Codec.java_exception_class(),
             Some("org/tstrans/CodecParseException")

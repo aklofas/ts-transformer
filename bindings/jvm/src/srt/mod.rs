@@ -7,7 +7,7 @@ mod managed_basic;
 mod managed_convenience;
 mod mux_sender;
 mod recv_end_reason;
-mod stats;
+pub(crate) mod stats;
 mod transport;
 
 use std::sync::Arc;

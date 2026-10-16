@@ -51,13 +51,43 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
 
-      # cmake is pre-installed on all GitHub runners; tst-jni pulls no
-      # librist/udp/tcp/hls deps, so no meson/ninja/pkg-config is needed.
+      # librist (tst-rist, behind org.tstrans.shells' rist:// dispatch) builds with
+      # meson + ninja and needs pkg-config; cmake is pre-installed.
+      - name: Install build prerequisites (Linux)
+        if: matrix.runner == 'ubuntu-latest' || matrix.runner == 'ubuntu-24.04-arm'
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y pkg-config meson ninja-build
+
+      - name: Install build prerequisites (macOS)
+        if: matrix.runner == 'macos-15'
+        run: |
+          for pkg in meson ninja pkg-config; do
+            brew list --formula "$pkg" >/dev/null 2>&1 || brew install "$pkg"
+          done
+
+      - name: Install build prerequisites (Windows)
+        if: matrix.runner == 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # pip drops meson, ninja and pkg-config into the Python Scripts dir;
+          # a runner's already-running job does not re-read a registry PATH, so
+          # export that dir for the later steps.
+          python -m pip install --upgrade meson pkgconf ninja
+          scripts_dir=$(python -c 'import sysconfig; print(sysconfig.get_path("scripts"))')
+          echo "$scripts_dir" >> "$GITHUB_PATH"
+          export PATH="$scripts_dir:$PATH"
+          for tool in ninja meson pkg-config; do
+            command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: '$tool' not on PATH after prereq install"; exit 1; }
+          done
+
       - name: Build + test JVM binding
         working-directory: bindings/jvm
         shell: bash
         env:
           SRT_FORCE_VENDORED: "1"
+          RIST_FORCE_VENDORED: "1"
         # -PjniTestHooks=true builds the test-only panic probe and runs
         # PanicIsolationTest, proving a Rust panic is isolated as a thrown
         # RuntimeException instead of aborting the JVM.
@@ -68,6 +98,7 @@ jobs:
         shell: bash
         env:
           SRT_FORCE_VENDORED: "1"
+          RIST_FORCE_VENDORED: "1"
         # cargoBuild without -PjniTestHooks omits the jni-test-hooks feature;
         # cargo rebuilds (feature set changed) and copyNative re-stages the
         # probe-free lib into resources/ before the upload step copies it.

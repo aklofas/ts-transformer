@@ -344,6 +344,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `binding::Opened<T>`: a transport opened from a URL, with its cancel
   handle and error domain, as the transport crates' openers return it.
 
+- `binding::kind::Domain::java_exception_class` returns the class for `Udp`,
+  `Tcp` and `Rist` (`org/tstrans/{Udp,Tcp,Rist}Exception`).
+
 ### Added — tst-srt, tst-udp, tst-tcp, tst-rist
 
 - `opener::{open_sender, open_recv}` in each crate: open the crate's URL
@@ -395,6 +398,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `RtpException.Kind.END_OF_STREAM`, which the Python binding's
   `RtpErrorKind` already had.
+
+- `org.tstrans.shells`: one `Sender`, `Receiver`, `MuxSender` and
+  `DemuxReceiver` class for every transport, opened with
+  `Class.open(url, ...)` (`srt://`, `rtp://`, `udp://`, `tcp://`, `tcps://`,
+  `rist://`), plus `CancelHandle` (with `isCancelled()`), `SocketStats`,
+  `TransportStats` and `EndReason`. UDP, TCP and RIST reach the JVM through
+  these shells; every shell has `cancelHandle()`. `srtStats()` throws
+  `UnsupportedOperationException` on a non-SRT shell.
+
+- `UdpException`, `TcpException`, `RistException`: the exceptions a shell
+  over those transports throws, with `Kind` enums generated from the same
+  table as Python's `UdpErrorKind`, `TcpErrorKind` and `RistErrorKind`
+  (`INPUT_MALFORMED`, `END_OF_STREAM` and `CONFIG_INVALID` among their
+  members).
+
+- The JAR's native library includes librist (RIST) on every platform.
 
 ### Deprecated — tst-py
 

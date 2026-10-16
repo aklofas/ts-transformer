@@ -61,6 +61,15 @@ tst-rtp = { path = "../../crates/tst-rtp", default-features = false, features = 
 # like srt/rtp: one cdylib, every platform.
 tst-hls = { path = "../../crates/tst-hls", default-features = false, features = ["serve", "tls"] }
 
+# tst-udp / tst-tcp / tst-rist back the URL dispatch of org.tstrans.shells:
+# MuxSender.open("udp://…") etc. tst-tcp's `tls` gives tcps:// (rustls ring,
+# already linked for RTSPS); tst-rist's `mbedtls` makes a `?secret=` URL
+# encrypt (librist, built from source by meson + ninja — jvm-jar.yml
+# installs them on every leg).
+tst-udp  = { path = "../../crates/tst-udp" }
+tst-tcp  = { path = "../../crates/tst-tcp", default-features = false, features = ["tls"] }
+tst-rist = { path = "../../crates/tst-rist", features = ["mbedtls"] }
+
 # secrecy wraps RTSP auth passwords at the RtspClientBuilder::auth boundary
 # (mirrors tst-py's rtp feature: dep:secrecy). Workspace-pinned (0.10).
 secrecy = { workspace = true }
