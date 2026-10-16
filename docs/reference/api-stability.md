@@ -78,8 +78,8 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-core | codec::ac3 | Provisional | audio parser |
 | tst-core | codec::mpegaudio | Provisional | audio parser |
 | tst-core | codec::nal_framing | Provisional | new module, Annex B ↔ length-prefixed NAL conversion for VideoToolbox-style consumers |
-| tst-core | transport | Stable | trait contract all transports implement; the executable form (`transport::conformance`) sits behind the non-default `conformance` feature; `EndReason` and `EndReasonHandle` are Provisional (new; surfaces will add variants). |
-| tst-core | error | Stable | error taxonomy |
+| tst-core | transport | Stable | trait contract all transports implement; the executable form (`transport::conformance`) sits behind the non-default `conformance` feature; `EndReason` and `EndReasonHandle` are Provisional (new; surfaces will add variants); the `*ErrorKind` enums are exhaustive (`conventions.md`). |
+| tst-core | error | Stable | error taxonomy; the `*ErrorKind` enums are exhaustive (`conventions.md`) |
 | tst-core | cancel | Stable | cancellation plumbing shared across transports; spec-silent, defaults to tst-core's tier. `FlagCancel` and `ResourceCancel` (formerly `SrtCancelHandle`, kept as a deprecated alias for one minor) are Stable. `CancelSlot` (re-exported by `tst-pipeline` as the `FactoryCancel` alias) is Provisional — same divergence shape as `tst-rtp`'s `h264` row below |
 | tst-core | io_file | Stable | file I/O convenience layer over mux/demux (`file` feature); spec-silent, defaults to tst-core's tier |
 | tst-core | net | Stable | shared socket-setup plumbing consumed by transport crates; spec-silent, defaults to tst-core's tier |
@@ -98,11 +98,14 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-pipeline | shell_error | Stable | shell error taxonomy |
 | tst-pipeline | mux_publisher | Provisional | HLS-adjacent, newer |
 | tst-pipeline | ext | Provisional | extensions (pairing, file transport) — newer surface |
-| tst-pipeline | binding | Provisional | binding-shared handle layer (`Owned`, `HandleState`, panic helpers, `BindingErrorKind`, `ManagedHandles`); `no_std` + `alloc` except `ManagedHandles` (`std`); shape may still move before 1.0; kept a module of tst-pipeline, not a crate (see `architecture.md`) |
+| tst-pipeline | binding | Provisional | binding-shared handle layer (`Owned`, `HandleState`, panic helpers, `BindingErrorKind`, `view`, `opened`, `ManagedHandles`); `no_std` + `alloc` except `ManagedHandles` (`std`); shape may still move before 1.0; kept a module of tst-pipeline, not a crate (see `architecture.md`) |
 | tst-srt | (crate) | Stable | primary transport of the project scope |
+| tst-srt | opener | Provisional | URL → type-erased transport for the language bindings' shells |
 | tst-srt | shells | Provisional | URL → managed-shell open path returning `tst_pipeline::binding::ManagedHandles`; new surface, may still move before 1.0 |
 | tst-udp | (crate) | Stable | small, settled |
+| tst-udp | opener | Provisional | URL → type-erased transport for the language bindings' shells |
 | tst-tcp | (crate) | Stable | small, settled |
+| tst-tcp | opener | Provisional | URL → type-erased transport for the language bindings' shells |
 | tst-rtp | builder | Stable | RTP transport builder / URL-connect surface |
 | tst-rtp | cancel | Stable | RTP cancellation handle |
 | tst-rtp | depay | Stable | the access unit, configuration and counters the H.264 and H.265 depacketizers share (formerly `H264Au`/`H264DepayConfig`/`H264DepayStats`, still aliased under those names) |
@@ -118,6 +121,7 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-rtp | rtsp | Provisional | server surface (`RtspServer`) still evolving; the client API (`RtspClient`) is stable in practice, but the module's tier is set by the server surface — the rail is module-granular, not sub-module |
 | tst-hls | (crate) | Provisional | crate split out of `tst-tcp` in 0.3.0 |
 | tst-rist | (crate) | Provisional | profile coverage still evolving |
+| tst-rist | opener | Provisional | URL → type-erased transport for the language bindings' shells |
 | tstrans-srt-sys | (crate) | Internal | raw FFI, no direct-consumer promise; documentation-only row — no `public-api.txt` baseline exists for this crate |
 | tstrans-rist-sys | (crate) | Internal | raw FFI, no direct-consumer promise |
 | tstrans-mbedtls-src | (crate) | Internal | build-time source provider |

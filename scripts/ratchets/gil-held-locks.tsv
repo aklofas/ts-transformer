@@ -1,5 +1,5 @@
 # Functions in the Python binding that call `.lock()` while they hold the GIL.
-# Read by scripts/check/c/snapshot-getters.sh (check 3), which fails on any
+# Read by scripts/check/c/snapshot-getters.sh (check 2), which fails on any
 # such function not listed here AND on any row whose function no longer does.
 #
 # Columns (TAB-separated): path, Type::function (bare name for a free

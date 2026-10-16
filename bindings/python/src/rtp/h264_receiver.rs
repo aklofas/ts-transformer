@@ -493,7 +493,7 @@ impl PyH264Receiver {
     ///
     /// `url` must have the form `rtp://host:port?pt=N` where `N` is the
     /// dynamic payload type (range 1..=127; 33 is rejected — use
-    /// `tstrans.rtp.DemuxReceiver` for MPEG-TS streams).
+    /// `tstrans.shells.DemuxReceiver` for MPEG-TS streams).
     ///
     /// `config` overrides the depacketizer configuration. When `None`,
     /// `H264DepayConfig()` defaults are used (payload type is overridden

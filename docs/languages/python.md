@@ -450,18 +450,18 @@ it.
 
 ### Cancellation and cross-thread close
 
-Every transport shell — `Sender` / `Receiver` / `Listener`, `MuxSender` /
-`DemuxReceiver`, the four `Managed*` shells, and their `tstrans.rtp` /
-`udp` / `tcp` / `rist` siblings — exposes `close()` that is safe to call
-from ANY thread, and (except rtp `MuxSender` / `DemuxReceiver`) a
-`cancel_handle()`. Both go through one Rust state machine
+Every transport shell — the four `tstrans.shells` classes over any
+transport, the SRT `Listener`, the four `Managed*` shells, and the raw
+`udp` / `tcp` / `rist` / `rtp` transports — exposes `close()` that is safe
+to call from ANY thread, and a `cancel_handle()` returning the binding's
+one `tstrans.shells.CancelHandle`. Both go through one Rust state machine
 (`tst_pipeline::binding::Owned`): **cancel first, then free**. A call
 parked on another thread (`send_bytes`, `recv_bytes`, `accept`,
 `__next__`, `recv`, `recv_au`, `accept_blocking`) ends promptly and
 `close()` returns without waiting behind it.
 
 ```python
-tx = Sender.from_url("srt://host:9000?mode=caller")
+tx = Sender.open("srt://host:9000?mode=caller")
 cancel = tx.cancel_handle()
 # On another thread:
 cancel.cancel()   # wakes tx.send_bytes() → SrtError(kind=CLOSED)
@@ -1820,14 +1820,19 @@ output directly when absolute byte offsets matter.
   raise `CLOSED`; before 0.7.0 the object stayed usable); a panic inside a
   read-only accessor leaves it usable.
 - **Pipeline-shell naming follows the C-ABI convention, not the Rust
-  crate's.** The TS-bytes-through-transport shells are `Sender` /
-  `Receiver` (e.g. `tstrans.shells.Sender`) and the raw transports are
-  `Transport` / `RecvTransport` (e.g. `tstrans.udp.Transport`,
-  `tstrans.rtp.Transport`) — there is
-  no `RawSender` / `RawReceiver`. The composite shells keep the qualified
-  `MuxSender` / `DemuxReceiver` names. All four live in `tstrans.shells`;
-  the old `tstrans.srt.*` / `tstrans.rtp.*` names are deprecated aliases
-  (removed in 0.10.0).
+  crate's.** The naming grammar:
+
+  | Concept | Python |
+  |---|---|
+  | open a shell from a URL | `MuxSender.open(url, program)`: the one constructor; per-transport options are URL keys |
+  | a raw transport | `tstrans.<t>.Transport` / `RecvTransport`; there is no `RawSender` / `RawReceiver` |
+  | a TS-through shell | `tstrans.shells.Sender` / `Receiver` |
+  | a builder | `srt.Builder` and the raw transports' `builder()`, only where the Rust side is a builder |
+  | a failure | `<Domain>Error(kind=<Domain>ErrorKind.X)`; the domain is the transport's (or Mux, Demux, Klv, Codec) |
+  | end of a receive session | `tstrans.shells.EndReason` |
+
+  The composite shells keep the qualified `MuxSender` / `DemuxReceiver`
+  names. All four live in `tstrans.shells`.
 - **HLS ships in the wheels.** `tstrans.hls` imports out of the box from a
   published wheel (the `hls` feature is default-on); it raises
   `ImportError` only in a `--no-default-features` source build that omits
@@ -1862,6 +1867,23 @@ output directly when absolute byte offsets matter.
 (For pandas + NumPy specifics, see the
 [Pandas + NumPy adapters](#pandas--numpy-adapters) sub-section under
 "Language-specific gotchas" above.)
+
+### Moving from 0.8
+
+Deprecated in 0.9.0, removed in 0.10.0. Each old spelling still works and
+emits a `DeprecationWarning`.
+
+| 0.8 | 0.9 |
+|---|---|
+| `tstrans.srt.{Sender, Receiver, MuxSender, DemuxReceiver}`, `tstrans.rtp.{MuxSender, DemuxReceiver}` | `tstrans.shells.*` |
+| `tstrans.srt.{CancelHandle, SocketStats}`, `tstrans.rtp.{CancelHandle, SocketStats}` | `tstrans.shells.{CancelHandle, SocketStats}` |
+| `tstrans.srt.RecvEndReason`, `tstrans.rtp.StreamEndReason` | `tstrans.shells.EndReason` |
+| `tstrans.rtp.Sender` / `Receiver` | `tstrans.rtp.Transport` / `RecvTransport` |
+| `Class.from_url(url, ...)`, `MuxSender(url, ...)`, `DemuxReceiver(url, ...)` on a shell | `Class.open(url, ...)` |
+| the rtp `pkt_size=` keyword | the `?pkt_size=` URL key |
+
+`ManagedSender` / `ManagedReceiver` / `ManagedMuxSender` /
+`ManagedDemuxReceiver` keep `from_url`: they are SRT-specific.
 
 ## Known gap
 

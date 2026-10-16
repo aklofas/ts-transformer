@@ -419,7 +419,7 @@ impl PyRtspStats {
 /// the same `AtomicBool` the client polls on its blocking I/O loops.
 ///
 /// Note: this is the *RTSP* cancel — the transport-side data-plane
-/// cancel (post-PLAY RTP data) is exposed by `tstrans.rtp.CancelHandle`
+/// cancel (post-PLAY RTP data) is exposed by `tstrans.shells.CancelHandle`
 /// from `transport.rs`. The two flags are independent in the
 /// underlying Rust API; we expose them under distinct Python class
 /// names to keep the contracts honest.
@@ -692,7 +692,7 @@ fn apply_tls_roots(
 /// `teardown`) and expose RTCP-derived stats.
 ///
 /// `into_demux_receiver` consumes the underlying `RtspSession` and
-/// returns a `tstrans.rtp.DemuxReceiver` over the post-SETUP RTP data
+/// returns a `tstrans.shells.DemuxReceiver` over the post-SETUP RTP data
 /// plane. The control-plane methods (`pause` / `play` / `teardown`)
 /// remain usable AFTER `into_demux_receiver` is called — the
 /// session-id state lives on the `RtspClient`, which `into_demux_receiver`
@@ -818,7 +818,7 @@ impl PyRtspSession {
 
     /// Consume the session's data-plane (UDP socket pair or
     /// TCP-interleaved mpsc receiver) and wrap it in a
-    /// `tstrans.rtp.DemuxReceiver` for iterating `DemuxEvent`s.
+    /// `tstrans.shells.DemuxReceiver` for iterating `DemuxEvent`s.
     ///
     /// The control-plane methods (`pause` / `play` / `teardown` /
     /// `cancel_handle`) remain usable on this `RtspSession` after the

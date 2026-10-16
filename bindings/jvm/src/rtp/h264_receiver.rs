@@ -473,7 +473,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRtpStats<'local>(
 }
 
 /// `H264Receiver.nSocketStats(handle)` — wire-level throughput statistics.
-/// Returns an `org.tstrans.rtp.SocketStats` record (direct, NOT wrapped in
+/// Returns an `org.tstrans.shells.SocketStats` record (direct, NOT wrapped in
 /// `TransportStats` — mirrors the Rust/Python asymmetry documented in the Java
 /// class's Javadoc).
 #[unsafe(no_mangle)]
@@ -543,7 +543,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nLocalAddr<'local>(
 }
 
 /// `H264Receiver.nCancelHandle(handle)` — clone the cancel handle into a
-/// `org.tstrans.rtp.CancelHandle` registry slot and return the slot id as
+/// `org.tstrans.shells.CancelHandle` registry slot and return the slot id as
 /// `jlong`. Returns 0 on a closed receiver.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nCancelHandle(

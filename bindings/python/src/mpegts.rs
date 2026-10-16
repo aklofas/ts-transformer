@@ -185,7 +185,7 @@ fn build_demuxer(py: Python<'_>, config: Option<&Bound<'_, PyAny>>) -> PyResult<
 }
 
 /// Translate a Python `DemuxerConfig` dataclass instance to a Rust
-/// `DemuxerConfig`. Crate-public so `tstrans.rtp.DemuxReceiver` can
+/// `DemuxerConfig`. Crate-public so `tstrans.shells.DemuxReceiver` can
 /// share the same field-extraction logic — both surfaces accept the
 /// same dataclass and must produce identical Rust configurations.
 pub(crate) fn build_demuxer_config(

@@ -7,23 +7,30 @@ This page is the entry point for authors writing language bindings on top of
 
 ## The shape the bindings use
 
-Binding code targets **one binding object per `(shell, transport)` pair**.
-Generic shell bodies are monomorphised per transport rather than erased
-behind a trait object:
+**C** keeps one `extern "C"` family per `(shell, transport)` pair
+(`tst_srt_mux_sender_*`, `tst_udp_mux_sender_*`, …): a C symbol cannot
+dispatch on a runtime type, so the generic shells are monomorphised per
+transport in `transport_impls`.
 
-- **C:** per-family `extern "C"` wrappers over the generics in
-  `transport_impls`.
-- **Python / JVM:** `MuxSender<SrtTransport>`,
-  `MuxSender<ManagedTransport<SrtTransport>>` and
-  `MuxSender<RtpTransport>` are distinct classes.
+**Python and the JVM** (and the planned Swift/Kotlin binding) expose one
+class per shell — `Sender`, `Receiver`, `MuxSender`, `DemuxReceiver` in
+`tstrans.shells` / `org.tstrans.shells` — over a type-erased transport. A
+shell is opened from a URL: the scheme selects a transport crate's opener
+(`tst_srt::opener`, `tst_rtp::opener`, `tst_udp::opener`,
+`tst_tcp::opener`, `tst_rist::opener`), which returns
+`tst_pipeline::binding::Opened<Box<dyn Transport>>` — the transport, its
+cancel handle (taken before boxing) and its error `Domain`. The binding
+wraps it in `MuxSender<Box<dyn Transport>>` etc. inside
+`tst_pipeline::binding::Owned<Shell, view::Snapshot<H>>`; the snapshot's
+`domain` decides which host exception class a cross-domain kind
+(`Closed`, `Broken`, `TooLarge`, …) is raised as. A transport-specific
+accessor (SRT's `srt_stats()`) downcasts through `Transport::as_any`.
 
-Each binding object wraps its shell in
-`tst_pipeline::binding::Owned<Shell<T>, Snapshot>`, which owns the handle
-lifecycle, the shared cancel latch and the stats snapshot.
+`Managed*` (SRT reconnect) stays SRT-specific: its openers are
+`tst_srt::shells::*_from_url`, which return `ManagedHandles`.
 
-`Box<dyn Transport>` (and `Box<dyn RecvTransport>`) still satisfy the shell
-bounds through the blanket impls, so a Rust caller can erase the transport
-by writing the type out: `MuxSender<Box<dyn Transport>>`.
+`Owned` owns the handle lifecycle, the shared cancel latch and the stats
+snapshot in every binding.
 
 ## Per-language patterns
 
@@ -127,8 +134,9 @@ by the compiler:
   enum with no wildcard, so a new error variant or a new kind fails to
   build until it is classified;
 - `ShellErrorKind` is `coarsen(BindingErrorKind)` (an exhaustive match in
-  `kind.rs`); the shells compute their `kind` through it, so a shell and a
-  binding cannot classify one error differently.
+  `kind.rs`): the shells compute their `kind` from the same table the
+  bindings and the C ABI read, coarsened to the shells' smaller vocabulary.
+  The C `record_shell_error` goes through `BindingError::from`.
 
 **Raw-mapper path (standalone muxer + open helpers).** Every raw error
 reaching the C ABI (`MuxError`, `DemuxError`, `KlvDecodeError`, the
@@ -149,7 +157,12 @@ variant and a Python value table in
 `crates/tst-pipeline/tests/tools/print_kinds.rs`), then run
 `cargo run -p tst-pipeline --bin print-kinds -- --write`.
 `scripts/check/repo/kind-equivalence.sh` fails until the generated files
-are committed.
+are committed. If the kind joins a Python enum, add its `(name, value)` row to
+`bindings/python/tests/test_error_kind_values.py` in the same change: that file
+is the independent record of the values Python has shipped, and the generator
+cannot be its own oracle. A new JVM exception class is created with its empty
+`// BEGIN GENERATED` / `// END GENERATED` block before `print-kinds --write`
+fills it (`UdpException.java` is the model).
 
 ### Transient vs persistent error codes
 
@@ -181,7 +194,11 @@ Every long-lived shell exposes `cancel_handle()` returning
 RIST (`RistCancelHandle`). The `Option` survives only for pure in-memory
 test mocks; a binding never has to handle `None` for a real transport —
 `tst_pipeline::binding::Owned` holds the handle as a plain `Arc` and
-fires it first on `close()`.
+fires it first on `close()`. In Python and the JVM every shell's
+`cancel_handle()` returns the binding's one `CancelHandle`
+(`tstrans.shells.CancelHandle`, `org.tstrans.shells.CancelHandle`);
+`RtspCancelHandle` / `RtspServerCancelHandle` stay the RTSP control-plane
+handles.
 A handle is `Send + Sync`; `cancel()` is one-shot and idempotent, and
 `is_cancelled()` (required on the trait since 0.7.0) reads the shared
 latch — every clone, and a handle obtained after the cancel, agrees.
@@ -194,7 +211,7 @@ wrappers — and on the RTSP control plane: a cancelled `RtspClient` call
 — the normative table lives in the `tst_core::transport` rustdoc
 and `tst_core::transport::conformance` pins it in each crate's
 `tests/*conformance.rs`. Bindings therefore project one kind for a cancel:
-`TstError::Closed` (−7) / `SrtError(CLOSED)` / `SrtException(CLOSED)`, via
+`TstError::Closed` (−7) / `<Domain>Error(CLOSED)` / `<Domain>Exception(CLOSED)`, via
 `BindingErrorKind`. The detail is `cancelled from another thread` wherever
 the `BindingError` reaches the caller unchanged — the Rust binding layer,
 Python, the JVM, and the C **send** path. The C **receive** path is the one
@@ -214,6 +231,17 @@ since 0.7.0 they report `Closed` like every other transport. Bindings should exp
 as a language-native shutdown primitive (e.g. Kotlin `Job.cancel()`
 analog, Swift `Task.cancel()` analog, Python `threading.Event`-shaped).
 See `docs/reference/srt-cancel-handle.md` for the full pattern.
+
+## Host naming grammar
+
+| Concept | Python | JVM | Rule |
+|---|---|---|---|
+| open a shell from a URL | `MuxSender.open(url, program)` | `MuxSender.open(url, config)` | the one constructor of a URL-opened class; per-transport options are URL keys |
+| a raw transport | `tstrans.<t>.Transport` / `RecvTransport` | `org.tstrans.rtp.Transport` / `RecvTransport` | no `RawSender`/`RawReceiver` host class |
+| a TS-through shell | `tstrans.shells.Sender` / `Receiver` | `org.tstrans.shells.Sender` / `Receiver` | `Sender`/`Receiver` always mean TS bytes through a transport |
+| a builder | `Transport.builder()…build()`, `srt.Builder` | the same | only where the Rust side is a builder |
+| a failure | `<Domain>Error(kind=<Domain>ErrorKind.X)` | `<Domain>Exception(Kind.X)` | the domain is the transport's (or `Mux`, `Demux`, `Klv…`, `Codec`) |
+| end of a receive session | `tstrans.shells.EndReason` | `org.tstrans.shells.EndReason` | one enum per binding |
 
 ## Builder shape
 
@@ -662,7 +690,11 @@ cell is either shipped, or deferred with the trigger that reopens it in
 | `MuxSender::finish()` (drain, report, close) | ✅ | ✅ `tst_mux_sender_finish`, `tst_managed_mux_sender_finish`, `tst_{udp,tcp,rtp,rist}_mux_sender_finish` (ABI 0.22) | ✅ `MuxSender.finish()`, `ManagedMuxSender.finish()` | ✅ `shells.MuxSender.finish()`, `ManagedMuxSender.finish()` |
 | `FileTransport::finish()` | ✅ | n/a — `FileTransport` is a Rust-only capture transport; no binding exposes it | n/a | n/a |
 | `DemuxerConfig::sync_buf_cap` | ✅ | ✅ `tst_demux_config_set_sync_buf_cap` (ABI 0.22) | ✅ `DemuxerConfig.sync_buf_cap` | ✅ `DemuxerConfig.Builder.syncBufCap(long)` |
-| Cross-thread cancel entry point | ✅ every transport (`cancel_handle()` is `Some` everywhere since 0.7.0) | ✅ `tst_<transport>_<shell>_cancel` for srt/rtp (since 0.6–0.21) and tcp/udp/rist (ABI 0.22) | ✅ srt shells, rtp Sender/Receiver/H264Receiver, udp/tcp/rist Transport/RecvTransport/Listener; ⚠️ rtp MuxSender and DemuxReceiver expose none (planned) | ✅ srt shells, rtp Sender/Receiver/H264Receiver; ⚠️ rtp MuxSender and DemuxReceiver expose none (planned) |
+| Cross-thread cancel entry point | ✅ every transport (`cancel_handle()` is `Some` everywhere since 0.7.0) | ✅ `tst_<transport>_<shell>_cancel` for srt/rtp (since 0.6–0.21) and tcp/udp/rist (ABI 0.22) | ✅ every shell (`tstrans.shells.*`), the SRT listener and managed shells, `H264Receiver`, the raw transports | ✅ every shell (`org.tstrans.shells.*`), the SRT listener and managed shells, `H264Receiver`, the raw transports |
+| Shells over udp / tcp / rist | ✅ | ✅ `tst_{udp,tcp,rist}_{sender,receiver,mux_sender,demux_receiver}_*` | ✅ `tstrans.shells.*.open("udp://…")` | ✅ `org.tstrans.shells.*.open("udp://…")` |
+| `srt_stats()` on a shell | ✅ | n/a — the per-family `tst_*_get_socket_stats` getters | ✅ `srt://` shells only; other transports raise | ✅ `srtStats()`, `srt://` shells only |
+| `recv_event()` on `DemuxReceiver` | ✅ | ✅ `tst_demux_receiver_*` poll | n/a — iterate the receiver | ✅ `DemuxReceiver.recvEvent()` (null at end of stream) |
+| `end_reason()` on a receiver | ✅ recorded by the rtp transport and the managed SRT receivers | ✅ `tst_rtp_{receiver,demux_receiver}_end_reason`, `tst_managed_demux_receiver_end_reason` | ✅ `tstrans.shells.EndReason`; `None` on plain srt/udp/tcp/rist | ✅ `org.tstrans.shells.EndReason`; `null` on plain srt/udp/tcp/rist |
 | RTSP publisher role (`add_publish_mount`, `next_publisher`, `remove_mount`, publish-mount transport, stats and publisher info, `accept_unregistered_publishers`) | ✅ | ✅ `tst_rtsp_server_*` + `tst_rtsp_publish_mount_*` (ABI 0.23) | ✅ `RtspServer.add_publish_mount` / `next_publisher` / `remove_mount` + `PublishMount` (`into_demux_receiver`, `stats()`, `publisher()`) + `RtspServerConfig.accept_unregistered_publishers` | ✅ `RtspServer.addPublishMount` / `nextPublisher` / `removeMount` + `PublishMount` (`intoDemuxReceiver`, `stats()`, `publisher()`) + `RtspServerConfig.Builder.acceptUnregisteredPublishers` |
 
 **Rule for new cells.** A ship-now cell must be under a day per binding
