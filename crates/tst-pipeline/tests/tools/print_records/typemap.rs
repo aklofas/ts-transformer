@@ -190,6 +190,10 @@ fn map_norm(s: &str, names: &[&str]) -> Result<Ty, String> {
         if matches!(t, Ty::Opt(_)) {
             return Err("Vec<Option<T>> is not mapped".into());
         }
+        if t == Ty::Bytes {
+            // The list emitters convert each item as a value, not as bytes.
+            return Err("Vec<Vec<u8>> is not mapped".into());
+        }
         return Ok(Ty::List(Box::new(t)));
     }
     if s == "String" {

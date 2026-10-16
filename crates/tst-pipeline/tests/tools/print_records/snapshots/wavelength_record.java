@@ -3,7 +3,7 @@
 package org.tstrans.klv;
 
 /**
- * One record of Item 128, Wavelengths List (ST 0601.19 §8.128) — a sensor wavelength band definition. {@code min_nm}/{@code max_nm} are ST 1201.5 IMAPB(0,1e9,4)-encoded, giving ~½ nm precision across the full X-ray-to-VHF spectrum span the spec cites.
+ * One record of Item 128, Wavelengths List (ST 0601.19 §8.128) — a sensor wavelength band definition. {@code minNm}/{@code maxNm} are ST 1201.5 IMAPB(0,1e9,4)-encoded on the wire, giving ~½ nm precision across the full X-ray-to-VHF spectrum span the spec cites.
  *
  * @param id    BER-OID wavelength band id.
  * @param minNm Band minimum wavelength, nanometres.
