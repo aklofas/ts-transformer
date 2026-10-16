@@ -121,32 +121,68 @@ macro_rules! __mark {
     ($($t:tt)*) => { $crate::__mark!(@go Plain; $($t)*) };
 }
 
-/// The host-name override carried by a `java("…")` among the `@[...]` groups.
+/// The host-name override carried by a `java("…")` among the `@[...]` groups;
+/// a second `java("…")` on one field is an error.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __java {
-    (@go $acc:expr;) => { $acc };
-    (@go $acc:expr; java($j:literal) $($r:tt)*) => {
-        $crate::__java!(@go ::core::option::Option::Some($j); $($r)*)
+    (@go;) => { ::core::option::Option::None };
+    (@go [$j:literal];) => { ::core::option::Option::Some($j) };
+    (@go; java($j:literal) $($r:tt)*) => { $crate::__java!(@go [$j]; $($r)*) };
+    (@go [$j0:literal]; java($j:literal) $($r:tt)*) => {
+        compile_error!("binding_record!: a field takes `@[java(\"name\")]` once")
     };
-    (@go $acc:expr; $x:tt $($r:tt)*) => { $crate::__java!(@go $acc; $($r)*) };
-    ($($t:tt)*) => { $crate::__java!(@go ::core::option::Option::None; $($t)*) };
+    (@go $([$j0:literal])?; $x:tt $($r:tt)*) => { $crate::__java!(@go $([$j0])?; $($r)*) };
+    ($($t:tt)*) => { $crate::__java!(@go; $($t)*) };
 }
 
 /// Declares a record that crosses to a host language.
 ///
 /// Emits the struct exactly as written (attributes, docs, visibility) and
-/// an associated `BINDING_SCHEMA: RecordSchema`. A field may carry one
-/// prefix: `@[custom]` (hand-written converter), `@[skip]` (does not cross) or
-/// `@[java("name")]` (host name override). Groups may repeat on one field:
-/// `@[custom] @[java("eCode")] pub e: Option<u8>`.
+/// an associated `BINDING_SCHEMA: RecordSchema`. A field's marks sit in
+/// `@[...]` groups before it: `@[custom]` (hand-written converter), `@[skip]`
+/// (does not cross) and `@[java("name")]` (host name override). A field may
+/// carry several groups, each mark at most once, and `custom` excludes `skip`:
 ///
-/// An unknown mark does not compile:
+/// ```
+/// tst_core::binding_record! {
+///     pub struct X {
+///         @[custom] @[java("eCode")] pub e: Option<u8>,
+///     }
+/// }
+/// ```
+///
+/// Each of these does not compile (the control above differs only in the
+/// marks):
 ///
 /// ```compile_fail
 /// tst_core::binding_record! {
 ///     pub struct X {
-///         @[nonsense] pub a: u8,
+///         @[nonsense] pub e: Option<u8>,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// tst_core::binding_record! {
+///     pub struct X {
+///         @[custom] @[skip] pub e: Option<u8>,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// tst_core::binding_record! {
+///     pub struct X {
+///         @[custom] @[custom] pub e: Option<u8>,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// tst_core::binding_record! {
+///     pub struct X {
+///         @[java("a")] @[java("b")] pub e: Option<u8>,
 ///     }
 /// }
 /// ```
