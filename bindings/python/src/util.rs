@@ -6,10 +6,8 @@ use pyo3::types::PyBytes;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-use tst_core::mpegts::mux::{
-    AudioStreamHandle, DataStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
-};
-use tst_core::transport::{Transport, TransportCancel};
+use tst_core::transport::TransportCancel;
+use tst_pipeline::binding::view::CancelLatch;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Close, CloseFailure, Owned};
 
 /// Coerce a Python bytes-like argument (`bytes`, `bytearray`, `memoryview`,
@@ -77,8 +75,7 @@ pub(crate) fn coerce_bytes_like<'py>(
 /// (`self.cancel.cancelled || self.cancel.transport.is_cancelled()`). See the
 /// "Handle aliases vs composing wrappers" section on `TransportCancel`.
 pub(crate) struct CancelSource {
-    inner: Arc<dyn TransportCancel + Send + Sync>,
-    cancelled: AtomicBool,
+    latch: CancelLatch,
 }
 
 /// How long [`fire_cancel_sources_at_exit`] waits for woken threads to
@@ -166,8 +163,7 @@ static LIVE_CANCEL_SOURCES: Mutex<Vec<Weak<CancelSource>>> = Mutex::new(Vec::new
 impl CancelSource {
     pub(crate) fn new(inner: Arc<dyn TransportCancel + Send + Sync>) -> Arc<Self> {
         let me = Arc::new(Self {
-            inner,
-            cancelled: AtomicBool::new(false),
+            latch: CancelLatch::new(inner),
         });
         // Poison is RECOVERED, not skipped: the registry holds only
         // `Weak`s and every critical section below is a single `push` /
@@ -196,7 +192,7 @@ impl CancelSource {
     /// `tstrans.*.CancelHandle.is_cancelled()` answers with no caller asking
     /// for it.
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        self.latch.is_cancelled()
     }
 
     /// The trait-object view `Owned::new` takes. Only the transport
@@ -216,10 +212,8 @@ impl CancelSource {
 
 impl TransportCancel for CancelSource {
     fn cancel(&self) {
-        // Flag first so a poll loop that wakes because of the forwarded
-        // cancel already sees the state.
-        self.cancelled.store(true, Ordering::Release);
-        self.inner.cancel();
+        // Latch first, then the inner cancel: `CancelLatch` orders them.
+        self.latch.cancel();
     }
     fn is_cancelled(&self) -> bool {
         CancelSource::is_cancelled(self)
@@ -256,59 +250,6 @@ where
             BindingError::new(BindingErrorKind::PanicCaught, detail),
         )),
     }
-}
-
-/// Non-blocking liveness: `alive(&T)` when the slot can be inspected now,
-/// `true` while another thread holds it (a parked call means open),
-/// `false` once it is empty. Never waits behind a parked call.
-#[allow(dead_code)] // every transport surface calls this; dead only in a
-// transport-less `--no-default-features` build.
-pub(crate) fn alive_probe<T, S>(owned: &Owned<T, S>, alive: impl FnOnce(&T) -> bool) -> bool {
-    match owned.try_with_ref(alive) {
-        None => true,
-        Some(Ok(b)) => b,
-        Some(Err(_)) => false,
-    }
-}
-
-/// The first configured stream handle of each kind — the `Owned` snapshot
-/// of every `MuxSender`-shaped shell.
-///
-/// The stream set is fixed by the `MuxerProgramConfig` the sender is built
-/// from (the muxer has no way to add a stream afterwards), so the handles
-/// are read once, before the sender moves into its slot. The `*_handle()`
-/// getters then never wait behind a `send_*` parked on a full send buffer
-/// or in a Blocking reconnect.
-#[allow(dead_code)] // dead only in a transport-less `--no-default-features` build.
-#[derive(Clone, Copy)]
-pub(crate) struct StreamHandles {
-    pub video: Option<VideoStreamHandle>,
-    pub klv: Option<KlvStreamHandle>,
-    pub audio: Option<AudioStreamHandle>,
-    pub subtitle: Option<SubtitleStreamHandle>,
-    pub data: Option<DataStreamHandle>,
-}
-
-#[allow(dead_code)] // as `StreamHandles`.
-impl StreamHandles {
-    /// Read the handles off a freshly built sender.
-    pub(crate) fn of<T: Transport>(sender: &tst_pipeline::MuxSender<T>) -> Self {
-        Self {
-            video: sender.video_handles().into_iter().next(),
-            klv: sender.klv_handles().into_iter().next(),
-            audio: sender.audio_handles().into_iter().next(),
-            subtitle: sender.subtitle_handles().into_iter().next(),
-            data: sender.data_handles().into_iter().next(),
-        }
-    }
-}
-
-/// The construction-time snapshot while the shell is open, `None` once it
-/// is closed. Never takes the slot: `is_closed()` answers "open" without
-/// waiting when a parked call holds it.
-#[allow(dead_code)] // as `alive_probe`.
-pub(crate) fn open_snapshot<T, S>(owned: &Owned<T, S>) -> Option<&S> {
-    (!owned.is_closed()).then(|| owned.snapshot())
 }
 
 /// Cancel every still-live shell at interpreter exit.

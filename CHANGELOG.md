@@ -185,6 +185,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `binding::BindingError` has a third public field, `diagnostics`; build one
   with `BindingError::new(kind, detail)` (a struct literal with two fields no
   longer compiles).
+- `binding::Owned::with_ref` is now `with_ref_blocking(reason, f)`: a reader
+  that may wait behind a call parked in the slot names a
+  `binding::view::BlockingReason` at the call.
 
 ### Changed — tst-rtp (BREAKING)
 
@@ -307,6 +310,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `BindingError` carries — the send error's input-consumption flag, the
   transport's native error number and clean-EOF cause, and the PID, KLV tag
   or VTarget id, byte offset and per-field codec values of the source error.
+- `binding::view`: `Snapshot` (a shell's error domain and its constant
+  handles), `StreamHandles` (the first stream handle of each kind of a
+  `MuxSender`), `CancelLatch` (a cancel handle with its own latch around a
+  transport's) and `BlockingReason`; `Owned::alive` (non-blocking liveness)
+  and `Owned::open_snapshot`.
 
 ### Added — tst-rtp
 

@@ -337,18 +337,20 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::H
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::HandleState
 pub struct tst_pipeline::binding::owned::Owned<T, S>
 impl<T, S> tst_pipeline::binding::owned::Owned<T, S>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::alive(&self, impl core::ops::function::FnOnce(&T) -> bool) -> bool
 pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel(&self)
 pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel_arc(&self) -> alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::is_cancelled(&self) -> bool
 pub fn tst_pipeline::binding::owned::Owned<T, S>::is_closed(&self) -> bool
 pub fn tst_pipeline::binding::owned::Owned<T, S>::new(T, alloc::sync::Arc<dyn tst_core::transport::TransportCancel>, S) -> Self
+pub fn tst_pipeline::binding::owned::Owned<T, S>::open_snapshot(&self) -> core::option::Option<&S>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::snapshot(&self) -> &S
 pub fn tst_pipeline::binding::owned::Owned<T, S>::take(&self) -> core::option::Option<T>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::try_with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::option::Option<core::result::Result<R, tst_pipeline::binding::owned::HandleState>>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_end_reason(self, tst_core::transport::EndReasonHandle) -> Self
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_mut<R>(&self, impl core::ops::function::FnOnce(&mut T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
-pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref_blocking<R>(&self, tst_pipeline::binding::view::BlockingReason, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
 impl<T: tst_pipeline::binding::owned::Close, S> tst_pipeline::binding::owned::Owned<T, S>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::close(&self) -> core::result::Result<(), tst_pipeline::binding::owned::CloseFailure<<T as tst_pipeline::binding::owned::Close>::Error>>
 impl<T, S> !core::marker::Freeze for tst_pipeline::binding::owned::Owned<T, S>
@@ -414,6 +416,75 @@ impl<T> core::marker::Unpin for tst_pipeline::binding::shells::SendHalf<T> where
 impl<T> core::marker::UnsafeUnpin for tst_pipeline::binding::shells::SendHalf<T> where T: core::marker::UnsafeUnpin
 impl<T> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::shells::SendHalf<T> where T: core::panic::unwind_safe::RefUnwindSafe
 impl<T> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::shells::SendHalf<T> where T: core::panic::unwind_safe::UnwindSafe
+pub mod tst_pipeline::binding::view
+#[non_exhaustive] pub enum tst_pipeline::binding::view::BlockingReason
+pub tst_pipeline::binding::view::BlockingReason::IsItselfBlocking
+pub tst_pipeline::binding::view::BlockingReason::NoAnswerWithoutSlot
+impl core::clone::Clone for tst_pipeline::binding::view::BlockingReason
+pub fn tst_pipeline::binding::view::BlockingReason::clone(&self) -> tst_pipeline::binding::view::BlockingReason
+impl core::cmp::Eq for tst_pipeline::binding::view::BlockingReason
+impl core::cmp::PartialEq for tst_pipeline::binding::view::BlockingReason
+pub fn tst_pipeline::binding::view::BlockingReason::eq(&self, &tst_pipeline::binding::view::BlockingReason) -> bool
+impl core::fmt::Debug for tst_pipeline::binding::view::BlockingReason
+pub fn tst_pipeline::binding::view::BlockingReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_pipeline::binding::view::BlockingReason
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::view::BlockingReason
+impl core::marker::Freeze for tst_pipeline::binding::view::BlockingReason
+impl core::marker::Send for tst_pipeline::binding::view::BlockingReason
+impl core::marker::Sync for tst_pipeline::binding::view::BlockingReason
+impl core::marker::Unpin for tst_pipeline::binding::view::BlockingReason
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::view::BlockingReason
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::view::BlockingReason
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::view::BlockingReason
+pub struct tst_pipeline::binding::view::CancelLatch
+impl tst_pipeline::binding::view::CancelLatch
+pub fn tst_pipeline::binding::view::CancelLatch::is_cancelled(&self) -> bool
+pub fn tst_pipeline::binding::view::CancelLatch::new(alloc::sync::Arc<dyn tst_core::transport::TransportCancel>) -> Self
+impl tst_core::transport::TransportCancel for tst_pipeline::binding::view::CancelLatch
+pub fn tst_pipeline::binding::view::CancelLatch::cancel(&self)
+pub fn tst_pipeline::binding::view::CancelLatch::is_cancelled(&self) -> bool
+impl !core::marker::Freeze for tst_pipeline::binding::view::CancelLatch
+impl core::marker::Send for tst_pipeline::binding::view::CancelLatch
+impl core::marker::Sync for tst_pipeline::binding::view::CancelLatch
+impl core::marker::Unpin for tst_pipeline::binding::view::CancelLatch
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::view::CancelLatch
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::view::CancelLatch
+impl !core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::view::CancelLatch
+pub struct tst_pipeline::binding::view::Snapshot<H>
+pub tst_pipeline::binding::view::Snapshot::domain: tst_pipeline::binding::kind::Domain
+pub tst_pipeline::binding::view::Snapshot::handles: H
+impl<H: core::clone::Clone> core::clone::Clone for tst_pipeline::binding::view::Snapshot<H>
+pub fn tst_pipeline::binding::view::Snapshot<H>::clone(&self) -> tst_pipeline::binding::view::Snapshot<H>
+impl<H: core::fmt::Debug> core::fmt::Debug for tst_pipeline::binding::view::Snapshot<H>
+pub fn tst_pipeline::binding::view::Snapshot<H>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<H: core::marker::Copy> core::marker::Copy for tst_pipeline::binding::view::Snapshot<H>
+impl<H> core::marker::Freeze for tst_pipeline::binding::view::Snapshot<H> where H: core::marker::Freeze
+impl<H> core::marker::Send for tst_pipeline::binding::view::Snapshot<H> where H: core::marker::Send
+impl<H> core::marker::Sync for tst_pipeline::binding::view::Snapshot<H> where H: core::marker::Sync
+impl<H> core::marker::Unpin for tst_pipeline::binding::view::Snapshot<H> where H: core::marker::Unpin
+impl<H> core::marker::UnsafeUnpin for tst_pipeline::binding::view::Snapshot<H> where H: core::marker::UnsafeUnpin
+impl<H> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::view::Snapshot<H> where H: core::panic::unwind_safe::RefUnwindSafe
+impl<H> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::view::Snapshot<H> where H: core::panic::unwind_safe::UnwindSafe
+pub struct tst_pipeline::binding::view::StreamHandles
+pub tst_pipeline::binding::view::StreamHandles::audio: core::option::Option<tst_core::mpegts::mux::types::AudioStreamHandle>
+pub tst_pipeline::binding::view::StreamHandles::data: core::option::Option<tst_core::mpegts::mux::types::DataStreamHandle>
+pub tst_pipeline::binding::view::StreamHandles::klv: core::option::Option<tst_core::mpegts::mux::types::KlvStreamHandle>
+pub tst_pipeline::binding::view::StreamHandles::subtitle: core::option::Option<tst_core::mpegts::mux::types::SubtitleStreamHandle>
+pub tst_pipeline::binding::view::StreamHandles::video: core::option::Option<tst_core::mpegts::mux::types::VideoStreamHandle>
+impl tst_pipeline::binding::view::StreamHandles
+pub fn tst_pipeline::binding::view::StreamHandles::of<T: tst_core::transport::Transport>(&tst_pipeline::mux_sender::MuxSender<T>) -> Self
+impl core::clone::Clone for tst_pipeline::binding::view::StreamHandles
+pub fn tst_pipeline::binding::view::StreamHandles::clone(&self) -> tst_pipeline::binding::view::StreamHandles
+impl core::fmt::Debug for tst_pipeline::binding::view::StreamHandles
+pub fn tst_pipeline::binding::view::StreamHandles::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_pipeline::binding::view::StreamHandles
+impl core::marker::Freeze for tst_pipeline::binding::view::StreamHandles
+impl core::marker::Send for tst_pipeline::binding::view::StreamHandles
+impl core::marker::Sync for tst_pipeline::binding::view::StreamHandles
+impl core::marker::Unpin for tst_pipeline::binding::view::StreamHandles
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::view::StreamHandles
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::view::StreamHandles
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::view::StreamHandles
 #[non_exhaustive] #[repr(i32)] pub enum tst_pipeline::binding::BindingErrorKind
 pub tst_pipeline::binding::BindingErrorKind::Backpressure = -4
 pub tst_pipeline::binding::BindingErrorKind::Broken = -8
@@ -735,18 +806,20 @@ impl !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::handles
 impl !core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::handles::ManagedHandles
 pub struct tst_pipeline::binding::Owned<T, S>
 impl<T, S> tst_pipeline::binding::owned::Owned<T, S>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::alive(&self, impl core::ops::function::FnOnce(&T) -> bool) -> bool
 pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel(&self)
 pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel_arc(&self) -> alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::is_cancelled(&self) -> bool
 pub fn tst_pipeline::binding::owned::Owned<T, S>::is_closed(&self) -> bool
 pub fn tst_pipeline::binding::owned::Owned<T, S>::new(T, alloc::sync::Arc<dyn tst_core::transport::TransportCancel>, S) -> Self
+pub fn tst_pipeline::binding::owned::Owned<T, S>::open_snapshot(&self) -> core::option::Option<&S>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::snapshot(&self) -> &S
 pub fn tst_pipeline::binding::owned::Owned<T, S>::take(&self) -> core::option::Option<T>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::try_with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::option::Option<core::result::Result<R, tst_pipeline::binding::owned::HandleState>>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_end_reason(self, tst_core::transport::EndReasonHandle) -> Self
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_mut<R>(&self, impl core::ops::function::FnOnce(&mut T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
-pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref_blocking<R>(&self, tst_pipeline::binding::view::BlockingReason, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
 impl<T: tst_pipeline::binding::owned::Close, S> tst_pipeline::binding::owned::Owned<T, S>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::close(&self) -> core::result::Result<(), tst_pipeline::binding::owned::CloseFailure<<T as tst_pipeline::binding::owned::Close>::Error>>
 impl<T, S> !core::marker::Freeze for tst_pipeline::binding::owned::Owned<T, S>

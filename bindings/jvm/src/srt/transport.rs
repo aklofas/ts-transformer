@@ -21,6 +21,7 @@
 //! from another thread; that wakes the libsrt socket within ~3-10 ms.
 
 use std::sync::LazyLock;
+use tst_pipeline::binding::view::BlockingReason;
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString};
@@ -193,9 +194,12 @@ pub extern "system" fn Java_org_tstrans_srt_Sender_nSocketStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Ok(stats) = REGISTRY_SENDER.with_ref(handle as u64, |inner| {
-            inner.socket_stats().unwrap_or_default()
-        }) else {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let Ok(stats) = REGISTRY_SENDER.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |inner| inner.socket_stats().unwrap_or_default(),
+        ) else {
             return JObject::null();
         };
         match build_socket_stats(env, "org/tstrans/srt/SocketStats", &stats) {
@@ -215,8 +219,12 @@ pub extern "system" fn Java_org_tstrans_srt_Sender_nSrtStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Ok(stats) = REGISTRY_SENDER.with_ref(handle as u64, |inner| inner.transport().stats())
-        else {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let Ok(stats) = REGISTRY_SENDER.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |inner| inner.transport().stats(),
+        ) else {
             return JObject::null();
         };
         match stats {
@@ -383,9 +391,12 @@ pub extern "system" fn Java_org_tstrans_srt_Receiver_nSocketStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Ok(stats) = REGISTRY_RECEIVER.with_ref(handle as u64, |inner| {
-            inner.socket_stats().unwrap_or_default()
-        }) else {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let Ok(stats) = REGISTRY_RECEIVER.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |inner| inner.socket_stats().unwrap_or_default(),
+        ) else {
             return JObject::null();
         };
         match build_socket_stats(env, "org/tstrans/srt/SocketStats", &stats) {
@@ -405,7 +416,8 @@ pub extern "system" fn Java_org_tstrans_srt_Receiver_nSrtStats<'local>(
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
         let Ok(stats) =
-            REGISTRY_RECEIVER.with_ref(handle as u64, |inner| inner.transport().stats())
+            // counters live inside the shell and have no value to report while a parked call holds it
+            REGISTRY_RECEIVER.with_ref_blocking(handle as u64, BlockingReason::NoAnswerWithoutSlot, |inner| inner.transport().stats())
         else {
             return JObject::null();
         };

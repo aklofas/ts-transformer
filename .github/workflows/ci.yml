@@ -263,9 +263,9 @@ jobs:
         # A getter that is constant after `_open` must read the handle's
         # snapshot, never the shell slot a parked recv/accept holds, so it
         # never blocks behind a parked call. Covers every binding under
-        # bindings/. In the Python and JVM bindings it also requires every
-        # function that calls the blocking `with_ref()` to be listed, with
-        # a reason, in scripts/ratchets/blocking-slot-readers.tsv.
+        # bindings/. In the Python binding it also checks that no lock is
+        # taken with the GIL held unless allowlisted in
+        # scripts/ratchets/gil-held-locks.tsv.
         run: bash scripts/check/c/snapshot-getters.sh
 
       - name: Check extern C ffi_catch coverage

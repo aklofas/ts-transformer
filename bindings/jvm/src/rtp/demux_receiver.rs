@@ -29,6 +29,7 @@
 
 use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
+use tst_pipeline::binding::view::BlockingReason;
 
 use jni::JNIEnv;
 use jni::objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue};
@@ -364,7 +365,12 @@ pub extern "system" fn Java_org_tstrans_rtp_DemuxReceiver_nStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Ok(combined) = REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.stats()) else {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let Ok(combined) =
+            REGISTRY.with_ref_blocking(handle as u64, BlockingReason::NoAnswerWithoutSlot, |jdr| {
+                jdr.inner.stats()
+            })
+        else {
             crate::error::throw_closed(env, "DemuxReceiver");
             return JObject::null();
         };
@@ -412,13 +418,16 @@ pub extern "system" fn Java_org_tstrans_rtp_DemuxReceiver_nLastSeenMicros(
     pid: jint,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, -1, |env| {
-        let Ok(last_seen) = REGISTRY.with_ref(handle as u64, |jdr| {
-            jdr.inner
-                .stats()
-                .per_stream
-                .get(&(pid as u16))
-                .and_then(|s| s.last_seen)
-        }) else {
+        // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
+        let Ok(last_seen) =
+            REGISTRY.with_ref_blocking(handle as u64, BlockingReason::NoAnswerWithoutSlot, |jdr| {
+                jdr.inner
+                    .stats()
+                    .per_stream
+                    .get(&(pid as u16))
+                    .and_then(|s| s.last_seen)
+            })
+        else {
             crate::error::throw_closed(env, "DemuxReceiver");
             return -1;
         };

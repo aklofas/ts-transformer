@@ -51,6 +51,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use tst_pipeline::binding::view::BlockingReason;
 
 use pyo3::Py;
 use pyo3::prelude::*;
@@ -66,7 +67,7 @@ use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 use crate::raise::{SRT, pyok, pyres, raise};
 use crate::srt::policy::{PyManagedTransportStats, PyReconnectPolicy};
 use crate::srt::transport::{PyCancelHandle, PySocketStats, PySrtStats};
-use crate::util::{CancelSource, alive_probe, close_owned};
+use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
 // PyManagedSender — wraps PlSender<ManagedTransport<SrtTransport>>
@@ -192,7 +193,10 @@ impl PyManagedSender {
             &SRT,
             crate::util::allow_threads_parking(py, || {
                 self.owned
-                    .with_ref(|s| s.socket_stats().unwrap_or_default())
+                    // counters live inside the shell and have no value to report while a parked call holds it
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |s| {
+                        s.socket_stats().unwrap_or_default()
+                    })
             }),
         )?;
         Py::new(py, PySocketStats::from_core(core))
@@ -259,7 +263,7 @@ impl PyManagedSender {
     /// `True` while the managed sender holds a live transport (a send in
     /// flight on another thread counts as live).
     fn is_alive(&self) -> bool {
-        alive_probe(&self.owned, |s| s.is_alive())
+        self.owned.alive(|s| s.is_alive())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -411,7 +415,10 @@ impl PyManagedReceiver {
             &SRT,
             crate::util::allow_threads_parking(py, || {
                 self.owned
-                    .with_ref(|r| r.socket_stats().unwrap_or_default())
+                    // counters live inside the shell and have no value to report while a parked call holds it
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |r| {
+                        r.socket_stats().unwrap_or_default()
+                    })
             }),
         )?;
         Py::new(py, PySocketStats::from_core(core))
@@ -446,7 +453,7 @@ impl PyManagedReceiver {
     /// `True` while the managed receiver holds a live shell (a recv parked
     /// on another thread counts as live).
     fn is_alive(&self) -> bool {
-        !self.cancel.is_cancelled() && alive_probe(&self.owned, |r| r.is_alive())
+        !self.cancel.is_cancelled() && self.owned.alive(|r| r.is_alive())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {

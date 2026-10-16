@@ -37,6 +37,7 @@
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tst_pipeline::binding::view::BlockingReason;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -215,7 +216,11 @@ impl PyUdpTransport {
         let s = pyok(
             py,
             &UDP,
-            crate::util::allow_threads_parking(py, || self.owned.with_ref(|t| t.0.stats())),
+            // counters live inside the shell and have no value to report while a parked call holds it
+            crate::util::allow_threads_parking(py, || {
+                self.owned
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |t| t.0.stats())
+            }),
         )?;
         Py::new(py, PyUdpStats::from(s))
     }
@@ -505,7 +510,11 @@ impl PyUdpRecvTransport {
         let s = pyok(
             py,
             &UDP,
-            crate::util::allow_threads_parking(py, || self.owned.with_ref(|s| s.transport.stats())),
+            // counters live inside the shell and have no value to report while a parked call holds it
+            crate::util::allow_threads_parking(py, || {
+                self.owned
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |s| s.transport.stats())
+            }),
         )?;
         Py::new(py, PyUdpStats::from(s))
     }

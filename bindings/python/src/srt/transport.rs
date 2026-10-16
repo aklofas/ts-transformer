@@ -39,6 +39,7 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 use std::sync::Arc;
+use tst_pipeline::binding::view::BlockingReason;
 
 use pyo3::Py;
 use pyo3::prelude::*;
@@ -50,7 +51,7 @@ use tst_pipeline::{Receiver as PlReceiver, ReceiverConfig, Sender as PlSender, S
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
 use crate::raise::{SRT, pyok, pyres, raise};
-use crate::util::{CancelSource, alive_probe, close_owned};
+use crate::util::{CancelSource, close_owned};
 // ---------------------------------------------------------------------------
 // PySocketStats — frozen mirror of tst_core::transport::SocketStats
 // ---------------------------------------------------------------------------
@@ -333,7 +334,10 @@ impl PySender {
     fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
         let core = crate::util::allow_threads_parking(py, || {
             self.owned
-                .with_ref(|s| s.socket_stats().unwrap_or_default())
+                // counters live inside the shell and have no value to report while a parked call holds it
+                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |s| {
+                    s.socket_stats().unwrap_or_default()
+                })
         });
         Py::new(py, PySocketStats::from_core(pyok(py, &SRT, core)?))
     }
@@ -341,7 +345,11 @@ impl PySender {
     /// SRT-rich 17-field stats. `IoError::SocketClosed` surfaces as `CLOSED`.
     fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<PySrtStats>> {
         let stats = crate::util::allow_threads_parking(py, || {
-            self.owned.with_ref(|s| s.transport().stats())
+            // counters live inside the shell and have no value to report while a parked call holds it
+            self.owned
+                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |s| {
+                    s.transport().stats()
+                })
         });
         let stats = pyres(py, &SRT, stats)?;
         Py::new(py, PySrtStats::from_srt(&stats))
@@ -358,7 +366,7 @@ impl PySender {
     /// `True` while the sender owns a live transport (a send in flight on
     /// another thread counts as live — the probe never waits).
     fn is_alive(&self) -> bool {
-        alive_probe(&self.owned, |s| s.is_alive())
+        self.owned.alive(|s| s.is_alive())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -477,7 +485,10 @@ impl PyReceiver {
     fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
         let core = crate::util::allow_threads_parking(py, || {
             self.owned
-                .with_ref(|r| r.socket_stats().unwrap_or_default())
+                // counters live inside the shell and have no value to report while a parked call holds it
+                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |r| {
+                    r.socket_stats().unwrap_or_default()
+                })
         });
         Py::new(py, PySocketStats::from_core(pyok(py, &SRT, core)?))
     }
@@ -485,7 +496,11 @@ impl PyReceiver {
     /// Snapshot of the SRT-rich 17-field stats.
     fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<PySrtStats>> {
         let stats = crate::util::allow_threads_parking(py, || {
-            self.owned.with_ref(|r| r.transport().stats())
+            // counters live inside the shell and have no value to report while a parked call holds it
+            self.owned
+                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |r| {
+                    r.transport().stats()
+                })
         });
         let stats = pyres(py, &SRT, stats)?;
         Py::new(py, PySrtStats::from_srt(&stats))
@@ -501,7 +516,7 @@ impl PyReceiver {
     /// `True` while the receiver owns a live transport (a parked
     /// `recv_bytes` on another thread counts as live — never waits).
     fn is_alive(&self) -> bool {
-        alive_probe(&self.owned, |r| r.is_alive())
+        self.owned.alive(|r| r.is_alive())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {

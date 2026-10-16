@@ -29,6 +29,7 @@
 //! from the next `nNext` after the lease ends.
 
 use std::sync::{Arc, LazyLock, Mutex};
+use tst_pipeline::binding::view::BlockingReason;
 
 use jni::JNIEnv;
 use jni::objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue};
@@ -391,9 +392,12 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nSocketStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let stats = match REGISTRY.with_ref(handle as u64, |jdr| {
-            jdr.inner.socket_stats().unwrap_or_default()
-        }) {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let stats = match REGISTRY.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |jdr| jdr.inner.socket_stats().unwrap_or_default(),
+        ) {
             Ok(v) => v,
             Err(state) => {
                 crate::error::throw_handle_state(env, "DemuxReceiver", &state);
@@ -419,7 +423,12 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let combined = match REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.stats()) {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let combined = match REGISTRY.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |jdr| jdr.inner.stats(),
+        ) {
             Ok(v) => v,
             Err(state) => {
                 crate::error::throw_handle_state(env, "DemuxReceiver", &state);
@@ -469,13 +478,18 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nLastSeenMicros(
     pid: jint,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, -1, |env| {
-        let last_seen = match REGISTRY.with_ref(handle as u64, |jdr| {
-            jdr.inner
-                .stats()
-                .per_stream
-                .get(&(pid as u16))
-                .and_then(|s| s.last_seen)
-        }) {
+        // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
+        let last_seen = match REGISTRY.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |jdr| {
+                jdr.inner
+                    .stats()
+                    .per_stream
+                    .get(&(pid as u16))
+                    .and_then(|s| s.last_seen)
+            },
+        ) {
             Ok(v) => v,
             Err(state) => {
                 crate::error::throw_handle_state(env, "DemuxReceiver", &state);

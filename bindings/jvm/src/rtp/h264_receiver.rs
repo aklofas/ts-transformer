@@ -27,6 +27,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
+use tst_pipeline::binding::view::BlockingReason;
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JObjectArray, JString, JValue};
@@ -391,7 +392,12 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nDepayStats<'local>(
     handle: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let s = match REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.depay_stats()) {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let s = match REGISTRY.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |jdr| jdr.inner.depay_stats(),
+        ) {
             Ok(s) => s,
             // Closed/absent is IllegalStateException; a panic or a poisoned
             // slot keeps its own mapping rather than being reported as closed.
@@ -435,7 +441,12 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRtpStats<'local>(
     handle: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let s = match REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.rtp_stats()) {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let s = match REGISTRY.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |jdr| jdr.inner.rtp_stats(),
+        ) {
             Ok(s) => s,
             // Closed/absent is IllegalStateException; a panic or a poisoned
             // slot keeps its own mapping rather than being reported as closed.
@@ -472,7 +483,12 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nSocketStats<'local>(
     handle: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let s = match REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.socket_stats()) {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let s = match REGISTRY.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |jdr| jdr.inner.socket_stats(),
+        ) {
             Ok(s) => s,
             // Closed/absent is IllegalStateException; a panic or a poisoned
             // slot keeps its own mapping rather than being reported as closed.
