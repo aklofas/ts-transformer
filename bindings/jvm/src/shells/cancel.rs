@@ -32,7 +32,11 @@ jni_native! {
 }
 
 jni_native! {
-    fn Java_org_tstrans_shells_CancelHandle_nIsCancelled(env, _class, handle: jlong) -> jboolean = 0 => {
+    fn Java_org_tstrans_shells_CancelHandle_nIsCancelled(
+        env,
+        _class,
+        handle: jlong,
+    ) -> jboolean = 0 => {
         match REGISTRY_CANCEL.with(handle as u64, |c| u8::from(c.0.is_cancelled())) {
             Some(v) => v,
             None => {

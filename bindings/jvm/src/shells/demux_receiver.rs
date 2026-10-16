@@ -142,7 +142,9 @@ jni_native! {
         env,
         _class,
         url: JString<'local>,
-    ) -> jlong = 0 => { open_with(env, &url, None) }
+    ) -> jlong = 0 => {
+        open_with(env, &url, None)
+    }
 }
 
 jni_native! {

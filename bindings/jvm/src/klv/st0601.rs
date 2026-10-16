@@ -1091,7 +1091,8 @@ jni_native! {
         env,
         _c,
         record: JObject<'local>,
-    ) -> jobject = std::ptr::null_mut() => { match read_uas_datalink(env, &record) {
+    ) -> jobject = std::ptr::null_mut() => {
+        match read_uas_datalink(env, &record) {
             Ok(rust_rec) => match encode_strict_compliance(&rust_rec) {
                 Ok(bytes) => match env.byte_array_from_slice(&bytes) {
                     Ok(arr) => arr.into_raw(),
@@ -1119,7 +1120,8 @@ jni_native! {
                 }
                 JObject::null().into_raw()
             }
-        } }
+        }
+    }
 }
 
 // -----------------------------------------------------------------------

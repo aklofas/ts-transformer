@@ -283,14 +283,16 @@ jni_native! {
 jni_native! {
     /// `nFinish(handle)` — take + consume. The Java side has zeroed its handle
     /// already; a miss here is the "already consumed" case.
-    fn Java_org_tstrans_hls_HlsPublisher_nFinish<'local>(env, _class, handle: jlong) = () => { match REGISTRY.close(handle as u64) {
-        Some(p) => {
-            if let Err(e) = Publisher::finish(p) {
-                hls_error(env, e);
+    fn Java_org_tstrans_hls_HlsPublisher_nFinish<'local>(env, _class, handle: jlong) = () => {
+        match REGISTRY.close(handle as u64) {
+            Some(p) => {
+                if let Err(e) = Publisher::finish(p) {
+                    hls_error(env, e);
+                }
             }
+            None => throw_closed(env, "HlsPublisher"),
         }
-        None => throw_closed(env, "HlsPublisher"),
-    } }
+    }
 }
 
 jni_native! {
@@ -365,17 +367,19 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> jlong = 0 => { match REGISTRY.close(handle as u64) {
-        Some(p) => match p.finish_serving() {
-            Ok(h) => super::server_handle::register(h),
-            Err(e) => {
-                hls_error(env, e);
+    ) -> jlong = 0 => {
+        match REGISTRY.close(handle as u64) {
+            Some(p) => match p.finish_serving() {
+                Ok(h) => super::server_handle::register(h),
+                Err(e) => {
+                    hls_error(env, e);
+                    0
+                }
+            },
+            None => {
+                throw_closed(env, "HlsPublisher");
                 0
             }
-        },
-        None => {
-            throw_closed(env, "HlsPublisher");
-            0
         }
-    } }
+    }
 }

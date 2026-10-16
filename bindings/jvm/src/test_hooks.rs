@@ -34,7 +34,9 @@ mod handle_probe {
     jni_native! {
         /// `org.tstrans.internal.PanicProbe.nOpenHandle()` — open a registry-backed
         /// probe handle; returns the opaque non-zero key.
-        fn Java_org_tstrans_internal_PanicProbe_nOpenHandle<'local>(_env, _class) -> jlong = 0 => { PROBE_REGISTRY.insert(0) as jlong }
+        fn Java_org_tstrans_internal_PanicProbe_nOpenHandle<'local>(_env, _class) -> jlong = 0 => {
+            PROBE_REGISTRY.insert(0) as jlong
+        }
     }
 
     jni_native! {
