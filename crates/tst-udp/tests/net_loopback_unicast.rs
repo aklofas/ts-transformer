@@ -138,12 +138,20 @@ fn opener_round_trips_one_datagram_and_its_cancel_ends_a_parked_recv() {
     let mut buf = vec![0u8; rx_t.max_payload()];
     assert_eq!(rx_t.recv_bytes(&mut buf).expect("recv"), 188);
 
+    // The join is watched: a recv the cancel failed to end fails the test
+    // within 5 s instead of hanging the binary.
     let cancel = rx.cancel.clone();
-    let h = thread::spawn(move || rx_t.recv_bytes(&mut buf));
+    let (done_tx, done_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = done_tx.send(rx_t.recv_bytes(&mut buf));
+    });
     thread::sleep(Duration::from_millis(50));
     cancel.cancel();
-    assert!(matches!(
-        h.join().expect("join"),
-        Err(tst_core::transport::TransportError::ExplicitClose)
-    ));
+    let r = done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the parked recv ended within 5 s of the cancel");
+    assert!(
+        matches!(r, Err(tst_core::transport::TransportError::ExplicitClose)),
+        "got {r:?}"
+    );
 }
