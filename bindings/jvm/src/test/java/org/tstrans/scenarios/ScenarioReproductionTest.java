@@ -8,13 +8,25 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.tstrans.codec.AdtsFrame;
 import org.tstrans.codec.AudioFrame;
 import org.tstrans.codec.NalUnit;
+import org.tstrans.codec.Obu;
 import org.tstrans.codec.VideoUnit;
 import org.tstrans.io.Io;
 import org.tstrans.klv.Klv;
@@ -377,6 +389,133 @@ class ScenarioReproductionTest {
         byte[] head = new byte[ST0601_UL_PREFIX.length];
         view.get(head);
         return java.util.Arrays.equals(head, ST0601_UL_PREFIX) ? "st0601" : "unknown";
+    }
+
+    // ---- The manifest: every id of scenarios.toml is run or declared --------------------
+
+    /** Every {@code id = "..."} / {@code kind = "..."} pair of the shared scenarios.toml, in order. */
+    static Stream<Arguments> scenarios() throws Exception {
+        Path toml = scenarioDir("scenarios.toml");
+        List<Arguments> out = new ArrayList<>();
+        Pattern line = Pattern.compile("^(id|kind) = \"([^\"]+)\"");
+        String id = null;
+        for (String l : Files.readAllLines(toml, StandardCharsets.UTF_8)) {
+            Matcher m = line.matcher(l);
+            if (!m.find()) continue;
+            if (m.group(1).equals("id")) id = m.group(2);
+            else out.add(Arguments.of(id, m.group(2)));
+        }
+        return out.stream();
+    }
+
+    /** binding_contract ids and the JUnit test that covers each on the JVM, or why none does. */
+    static final Map<String, String> BINDING_CONTRACT = Map.of(
+        "cancelled-recv-kind", "covered: CancelledRecvKindGoldenTest",
+        "strict-rejection", "skip: the fixture is garbage bytes the golden maps to STRICT_REJECTION; "
+            + "no JVM test feeds it, and DemuxerConfigTest notes the JVM raises UNRECOVERABLE for it",
+        "malformed-psi-strict", "covered: DemuxerConfigTest.strictFullRejectsNonConformantInput",
+        "drop-idempotence", "covered: ShellLifecycleContractTest rule 1 (close twice throws nothing)",
+        "forged-handle", "covered: MuxerTargetedPushTest.forgedVideoHandleThrowsInvalidUsage",
+        "exception-kind-stability", "covered: DemuxerConfigTest.strictFullRejectsNonConformantInput "
+            + "(the same corrupted-PMT input) + ErrorModelTest.kindMembersMatchTheDemuxDomain");
+
+    @ParameterizedTest(name = "{0} ({1})")
+    @MethodSource("scenarios")
+    void everyManifestScenarioRunsOrIsDeclared(String id, String kind) throws Exception {
+        switch (kind) {
+            case "demux", "roundtrip" -> assertSubsetMatchesGolden(id, kind);
+            case "binding_contract" -> {
+                String how = BINDING_CONTRACT.get(id);
+                assertNotNull(how, id + " is a binding_contract scenario with no JVM coverage declared");
+                assertTrue(how.startsWith("covered:") || how.startsWith("skip:"), how);
+            }
+            default -> fail("scenario kind " + kind + " (" + id + ") has no JVM adapter");
+        }
+    }
+
+    /**
+     * Demux the scenario's input and require every video, KLV and audio event of the golden
+     * among the JVM's. A golden with none of those events requires the JVM to observe none.
+     * A roundtrip scenario's committed {@code output.ts} must hash to the golden's
+     * {@code output_sha256} and demux without error; its golden core is empty because the
+     * mux recipe, not the demux result, is what it pins.
+     */
+    private static void assertSubsetMatchesGolden(String id, String kind) throws Exception {
+        Path dir = scenarioDir(id);
+        Path input = dir.resolve(kind.equals("roundtrip") ? "output.ts" : "input.ts");
+        String golden = Files.readString(dir.resolve("golden.json"), StandardCharsets.UTF_8);
+        assertTrue(Files.isRegularFile(input), "shared scenario input missing: " + input);
+        byte[] ts = Files.readAllBytes(input);
+
+        Set<String> observed = new TreeSet<>();
+        try (Demuxer d = new Demuxer()) {
+            d.feed(ts);
+            d.flush();
+            for (DemuxEvent e : d) {
+                if (e instanceof DemuxEvent.Video v) {
+                    observed.add("video|" + v.stream().pid() + "|" + v.pts() + "|" + sha256Payloads(v.parse()));
+                } else if (e instanceof DemuxEvent.Audio a) {
+                    observed.add("audio|" + a.stream().pid() + "|" + a.pts() + "|" + sha256Bytes(a.raw()));
+                } else if (e instanceof DemuxEvent.Metadata m) {
+                    observed.add("klv|" + m.stream().pid() + "|" + klvSetFromUl(m.payload()));
+                }
+            }
+        }
+
+        if (kind.equals("roundtrip")) {
+            assertEquals(extractString(golden, "output_sha256"), HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(ts)), id + ": output.ts drifted from the golden");
+            return;
+        }
+
+        Set<String> expected = new TreeSet<>();
+        int core = golden.indexOf("\"core\"");
+        int end = golden.indexOf("\"extensions\"");
+        assertTrue(core >= 0 && end > core, id + ": golden has no core array");
+        Matcher obj = Pattern.compile("\\{[^{}]*\\}").matcher(golden.substring(core, end));
+        while (obj.find()) {
+            String o = obj.group();
+            switch (extractString(o, "event")) {
+                case "video" -> expected.add("video|" + extractNumber(o, "pid") + "|"
+                    + extractNumber(o, "pts") + "|" + extractString(o, "payload_sha256"));
+                case "audio" -> expected.add("audio|" + extractNumber(o, "pid") + "|"
+                    + extractNumber(o, "pts") + "|" + extractString(o, "payload_sha256"));
+                case "klv" -> expected.add("klv|" + extractNumber(o, "pid") + "|" + extractString(o, "set"));
+                default -> { }
+            }
+        }
+        if (expected.isEmpty()) {
+            assertEquals(Set.of(), observed, id + ": the golden has no video, KLV or audio event");
+        } else {
+            assertTrue(observed.containsAll(expected),
+                id + ": golden events missing from the JVM's. missing=" + minus(expected, observed)
+                    + " observed=" + observed);
+        }
+    }
+
+    private static Set<String> minus(Set<String> a, Set<String> b) {
+        Set<String> out = new TreeSet<>(a);
+        out.removeAll(b);
+        return out;
+    }
+
+    /** SHA-256 over the NAL (or OBU) payload bytes of every unit, the golden's video digest. */
+    private static String sha256Payloads(List<VideoUnit> units) throws Exception {
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        for (VideoUnit u : units) {
+            ByteBuffer p = (u instanceof NalUnit n ? n.payload() : ((Obu) u).payload()).duplicate();
+            byte[] b = new byte[p.remaining()];
+            p.get(b);
+            md.update(b);
+        }
+        return HexFormat.of().formatHex(md.digest());
+    }
+
+    private static String sha256Bytes(ByteBuffer buf) throws Exception {
+        ByteBuffer p = buf.duplicate().clear();
+        byte[] b = new byte[p.remaining()];
+        p.get(b);
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(b));
     }
 
     private record VideoSample(int pid, long pts, String payloadSha256) {}
