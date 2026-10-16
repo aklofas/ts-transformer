@@ -299,6 +299,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (truncated, bad universal label, checksum mismatch, duplicate tag, missing
   required tag, malformed), `KlvFieldErrorKind` (truncated, malformed),
   `KlvEncodeErrorKind`, `CodecParseErrorKind` and `TransportErrorKind`.
+- `transport::Transport::as_any` / `RecvTransport::as_any` (provided,
+  `None` by default; `Box<T>` forwards): lets a binding holding a
+  type-erased transport reach a transport-specific accessor.
 
 ### Added — tst-pipeline
 
@@ -316,6 +319,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   transport's) and `BlockingReason`; `Owned::alive` (non-blocking liveness)
   and `Owned::open_snapshot`.
 
+- `binding::Opened<T>`: a transport opened from a URL, with its cancel
+  handle and error domain, as the transport crates' openers return it.
+
+### Added — tst-srt, tst-udp, tst-tcp, tst-rist
+
+- `opener::{open_sender, open_recv}` in each crate: open the crate's URL
+  scheme into a type-erased transport (`tst_pipeline::binding::Opened`) for a
+  language binding's shells. `tst_srt::opener::open_recv` takes the accept's
+  `CancelSlot`. `SrtTransport` implements `as_any`.
+
 ### Added — tst-rtp
 
 - `RtspClientBuilder::rtsp_version` sets the request-line version, overriding
@@ -329,6 +342,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `H264Depacketizer`, with a fuzz target.
 - `RtspServerBuilder::tls_cert_pem` (feature `rtsp-server-tls`): the
   server certificate and key as PEM bytes instead of file paths.
+- `opener::{open_sender, open_recv}`: `rtp://` into a type-erased transport
+  for a language binding's shells.
 
 ### Added — tst-c
 

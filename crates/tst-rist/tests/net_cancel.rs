@@ -28,6 +28,7 @@ const PORT_RECV_CLOSE: u16 = 33042;
 const PORT_SEND_CANCEL: u16 = 33044;
 const PORT_SEND_CLOSE: u16 = 33046;
 const PORT_RECV_EMPTY: u16 = 33048;
+const PORT_OPENER: u16 = 33120;
 
 /// Build a Simple-profile receiver on `port`, or return `None` when librist
 /// cannot bind here (the same skip the sibling suites take).
@@ -200,4 +201,53 @@ fn recv_empty_buffer_loopback_is_noop() {
         recv.is_alive(),
         "an empty read must not latch the transport"
     );
+}
+
+/// The binding openers over RIST: both open (a sender needs no listening
+/// peer), report the RIST domain, and the receiver's `Opened::cancel` ends
+/// a recv parked on librist's 100 ms poll. Skips where librist cannot bind,
+/// like the sibling tests.
+#[test]
+fn opener_opens_both_ends_and_its_cancel_ends_a_parked_recv() {
+    use tst_pipeline::binding::Domain;
+
+    let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+    let Ok(rx) = tst_rist::opener::open_recv(&format!("rist://@127.0.0.1:{PORT_OPENER}")) else {
+        eprintln!("skip: librist receiver unavailable on {PORT_OPENER}");
+        return;
+    };
+    assert_eq!(rx.domain, Domain::Rist);
+    let Ok(mut tx) = tst_rist::opener::open_sender(&format!("rist://127.0.0.1:{PORT_OPENER}"))
+    else {
+        eprintln!("skip: librist sender unavailable");
+        return;
+    };
+    assert_eq!(tx.domain, Domain::Rist);
+    tx.transport
+        .send_bytes(&[0x47u8; 188])
+        .expect("send (no peer needed)");
+
+    let cancel = rx.cancel.clone();
+    let mut rx_t = rx.transport;
+    let (done_tx, done_rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let mut buf = vec![0u8; rx_t.max_payload()];
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match rx_t.recv_bytes(&mut buf) {
+                Err(TransportError::Backpressure { .. }) if Instant::now() < deadline => continue,
+                r => {
+                    let _ = done_tx.send(r.map(|_| ()));
+                    return;
+                }
+            }
+        }
+    });
+    thread::sleep(Duration::from_millis(300));
+    cancel.cancel();
+    let r = done_rx
+        .recv_timeout(Duration::from_secs(12))
+        .expect("the worker reports within its own deadline");
+    let _ = worker.join();
+    assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
 }

@@ -297,6 +297,20 @@ pub fn tst_pipeline::binding::kind::kind_of_klv_decode(&tst_core::error::KlvDeco
 pub fn tst_pipeline::binding::kind::kind_of_klv_encode(&tst_core::error::KlvEncodeError) -> tst_pipeline::binding::kind::BindingErrorKind
 pub fn tst_pipeline::binding::kind::kind_of_klv_field(&tst_core::error::KlvFieldError) -> tst_pipeline::binding::kind::BindingErrorKind
 pub fn tst_pipeline::binding::kind::kind_of_mux(&tst_core::error::MuxError) -> tst_pipeline::binding::kind::BindingErrorKind
+pub mod tst_pipeline::binding::opened
+#[non_exhaustive] pub struct tst_pipeline::binding::opened::Opened<T>
+pub tst_pipeline::binding::opened::Opened::cancel: alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
+pub tst_pipeline::binding::opened::Opened::domain: tst_pipeline::binding::kind::Domain
+pub tst_pipeline::binding::opened::Opened::transport: T
+impl<T> tst_pipeline::binding::opened::Opened<T>
+pub fn tst_pipeline::binding::opened::Opened<T>::new(T, alloc::sync::Arc<dyn tst_core::transport::TransportCancel>, tst_pipeline::binding::kind::Domain) -> Self
+impl<T> core::marker::Freeze for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Freeze
+impl<T> core::marker::Send for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Send
+impl<T> core::marker::Sync for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Sync
+impl<T> core::marker::Unpin for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Unpin
+impl<T> core::marker::UnsafeUnpin for tst_pipeline::binding::opened::Opened<T> where T: core::marker::UnsafeUnpin
+impl<T> !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::opened::Opened<T>
+impl<T> !core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::opened::Opened<T>
 pub mod tst_pipeline::binding::owned
 pub enum tst_pipeline::binding::owned::CloseFailure<E>
 pub tst_pipeline::binding::owned::CloseFailure::Inner(E)
@@ -804,6 +818,19 @@ impl core::marker::Unpin for tst_pipeline::binding::handles::ManagedHandles
 impl core::marker::UnsafeUnpin for tst_pipeline::binding::handles::ManagedHandles
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::handles::ManagedHandles
 impl !core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::handles::ManagedHandles
+#[non_exhaustive] pub struct tst_pipeline::binding::Opened<T>
+pub tst_pipeline::binding::Opened::cancel: alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
+pub tst_pipeline::binding::Opened::domain: tst_pipeline::binding::kind::Domain
+pub tst_pipeline::binding::Opened::transport: T
+impl<T> tst_pipeline::binding::opened::Opened<T>
+pub fn tst_pipeline::binding::opened::Opened<T>::new(T, alloc::sync::Arc<dyn tst_core::transport::TransportCancel>, tst_pipeline::binding::kind::Domain) -> Self
+impl<T> core::marker::Freeze for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Freeze
+impl<T> core::marker::Send for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Send
+impl<T> core::marker::Sync for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Sync
+impl<T> core::marker::Unpin for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Unpin
+impl<T> core::marker::UnsafeUnpin for tst_pipeline::binding::opened::Opened<T> where T: core::marker::UnsafeUnpin
+impl<T> !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::opened::Opened<T>
+impl<T> !core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::opened::Opened<T>
 pub struct tst_pipeline::binding::Owned<T, S>
 impl<T, S> tst_pipeline::binding::owned::Owned<T, S>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::alive(&self, impl core::ops::function::FnOnce(&T) -> bool) -> bool

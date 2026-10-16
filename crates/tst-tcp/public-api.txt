@@ -112,6 +112,9 @@ impl core::marker::Unpin for tst_tcp::listener::TcpListener
 impl core::marker::UnsafeUnpin for tst_tcp::listener::TcpListener
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_tcp::listener::TcpListener
 impl !core::panic::unwind_safe::UnwindSafe for tst_tcp::listener::TcpListener
+pub mod tst_tcp::opener
+pub fn tst_tcp::opener::open_recv(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>, tst_pipeline::binding::kind::BindingError>
+pub fn tst_tcp::opener::open_sender(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::Transport>>, tst_pipeline::binding::kind::BindingError>
 pub mod tst_tcp::stats
 #[non_exhaustive] pub struct tst_tcp::stats::TcpStats
 pub tst_tcp::stats::TcpStats::bytes_received: u64

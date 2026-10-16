@@ -342,3 +342,75 @@ fn srt_cancel_handle_wakes_a_parked_recv_and_survives_close() {
     let _ = release_tx.send(());
     accept.join();
 }
+
+/// The binding openers: a listener-mode `open_recv` (on a thread, accepting
+/// on a `CancelSlot`) paired with a caller-mode `open_sender` round-trips
+/// one chunk; each side's `Opened::cancel` ends a parked call; and a
+/// wrong-mode URL is `ConfigInvalid` on both openers.
+#[test]
+fn opener_pairs_a_listener_recv_with_a_caller_sender_and_cancels() {
+    use tst_core::transport::RecvTransport;
+    use tst_pipeline::binding::{BindingErrorKind, Domain};
+
+    require_loopback!();
+    let port = reserve_port();
+    let slot = Arc::new(CancelSlot::new());
+    let acceptor = {
+        let slot = Arc::clone(&slot);
+        std::thread::spawn(move || {
+            tst_srt::opener::open_recv(&format!("srt://127.0.0.1:{port}?mode=listener"), &slot)
+        })
+    };
+
+    // Dial until the listener has bound; give up (and unpark the accept)
+    // at the watchdog.
+    let deadline = Instant::now() + WATCHDOG;
+    let mut tx = loop {
+        match tst_srt::opener::open_sender(&format!("srt://127.0.0.1:{port}?mode=caller")) {
+            Ok(o) => break o,
+            Err(e) => {
+                if Instant::now() >= deadline {
+                    slot.cancel();
+                    panic!("open_sender never connected: {e}");
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
+    assert_eq!(tx.domain, Domain::Srt);
+    let mut rx = acceptor
+        .join()
+        .expect("acceptor thread")
+        .expect("open_recv");
+    assert_eq!(rx.domain, Domain::Srt);
+
+    tx.transport.send_bytes(&[0x47; 188]).expect("send");
+    let mut buf = vec![0u8; rx.transport.max_payload()];
+    assert_eq!(rx.transport.recv_bytes(&mut buf).expect("recv"), 188);
+
+    // A cancel from another thread ends a parked recv.
+    let cancel = Arc::clone(&rx.cancel);
+    let mut rx_t = rx.transport;
+    let parked = std::thread::spawn(move || rx_t.recv_bytes(&mut buf));
+    std::thread::sleep(Duration::from_millis(100));
+    cancel.cancel();
+    let deadline = Instant::now() + WATCHDOG;
+    while !parked.is_finished() {
+        assert!(Instant::now() < deadline, "recv still parked after cancel");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(matches!(
+        parked.join().expect("recv thread"),
+        Err(TransportError::ExplicitClose)
+    ));
+
+    // Wrong mode on either opener.
+    let e = tst_srt::opener::open_sender("srt://127.0.0.1:1?mode=listener")
+        .err()
+        .expect("listener-mode sender");
+    assert_eq!(e.kind, BindingErrorKind::ConfigInvalid);
+    let e = tst_srt::opener::open_recv("srt://127.0.0.1:1?mode=caller", &slot)
+        .err()
+        .expect("caller-mode receiver");
+    assert_eq!(e.kind, BindingErrorKind::ConfigInvalid);
+}

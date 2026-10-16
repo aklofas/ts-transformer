@@ -118,3 +118,32 @@ fn unicast_loopback_recvs_payload_from_std_send() {
     assert_eq!(n, 188);
     assert!(buf[..n].iter().all(|&b| b == 0x47));
 }
+
+#[test]
+fn opener_round_trips_one_datagram_and_its_cancel_ends_a_parked_recv() {
+    use tst_pipeline::binding::Domain;
+
+    let probe = UdpSocket::bind("127.0.0.1:0").expect("reserve port");
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+
+    let rx = tst_udp::opener::open_recv(&format!("udp://127.0.0.1:{port}")).expect("open_recv");
+    assert_eq!(rx.domain, Domain::Udp);
+    let mut tx =
+        tst_udp::opener::open_sender(&format!("udp://127.0.0.1:{port}")).expect("open_sender");
+    assert_eq!(tx.domain, Domain::Udp);
+    tx.transport.send_bytes(&[0x47; 188]).expect("send");
+
+    let mut rx_t = rx.transport;
+    let mut buf = vec![0u8; rx_t.max_payload()];
+    assert_eq!(rx_t.recv_bytes(&mut buf).expect("recv"), 188);
+
+    let cancel = rx.cancel.clone();
+    let h = thread::spawn(move || rx_t.recv_bytes(&mut buf));
+    thread::sleep(Duration::from_millis(50));
+    cancel.cancel();
+    assert!(matches!(
+        h.join().expect("join"),
+        Err(tst_core::transport::TransportError::ExplicitClose)
+    ));
+}

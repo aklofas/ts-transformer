@@ -309,6 +309,10 @@ impl Transport for SrtTransport {
         Some(Arc::new(self.cancel.clone()) as Arc<dyn TransportCancel + Send + Sync>)
     }
 
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        Some(self)
+    }
+
     fn socket_stats(&self) -> Option<SocketStats> {
         let socket = self.socket.as_ref()?;
         let s = socket.stats().ok()?;
@@ -407,6 +411,10 @@ impl tst_core::transport::RecvTransport for SrtTransport {
 
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
         <Self as tst_core::transport::Transport>::cancel_handle(self)
+    }
+
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        Some(self)
     }
 
     fn socket_stats(&self) -> Option<SocketStats> {

@@ -621,6 +621,9 @@ impl core::marker::Unpin for tst_srt::listener::Listener
 impl core::marker::UnsafeUnpin for tst_srt::listener::Listener
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::listener::Listener
 impl !core::panic::unwind_safe::UnwindSafe for tst_srt::listener::Listener
+pub mod tst_srt::opener
+pub fn tst_srt::opener::open_recv(&str, &alloc::sync::Arc<tst_core::cancel::CancelSlot>) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>, tst_pipeline::binding::kind::BindingError>
+pub fn tst_srt::opener::open_sender(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::Transport>>, tst_pipeline::binding::kind::BindingError>
 pub mod tst_srt::options
 pub enum tst_srt::options::Congestion
 pub tst_srt::options::Congestion::File
@@ -837,6 +840,7 @@ pub fn tst_srt::transport::SrtTransport::stats(&self) -> core::result::Result<ts
 impl core::ops::drop::Drop for tst_srt::transport::SrtTransport
 pub fn tst_srt::transport::SrtTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_srt::transport::SrtTransport
+pub fn tst_srt::transport::SrtTransport::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn tst_srt::transport::SrtTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_srt::transport::SrtTransport::close(&mut self)
 pub fn tst_srt::transport::SrtTransport::is_alive(&self) -> bool
@@ -844,6 +848,7 @@ pub fn tst_srt::transport::SrtTransport::max_payload(&self) -> usize
 pub fn tst_srt::transport::SrtTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn tst_srt::transport::SrtTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl tst_core::transport::Transport for tst_srt::transport::SrtTransport
+pub fn tst_srt::transport::SrtTransport::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn tst_srt::transport::SrtTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_srt::transport::SrtTransport::close(&mut self)
 pub fn tst_srt::transport::SrtTransport::is_alive(&self) -> bool
@@ -1564,6 +1569,7 @@ pub fn tst_srt::transport::SrtTransport::stats(&self) -> core::result::Result<ts
 impl core::ops::drop::Drop for tst_srt::transport::SrtTransport
 pub fn tst_srt::transport::SrtTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_srt::transport::SrtTransport
+pub fn tst_srt::transport::SrtTransport::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn tst_srt::transport::SrtTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_srt::transport::SrtTransport::close(&mut self)
 pub fn tst_srt::transport::SrtTransport::is_alive(&self) -> bool
@@ -1571,6 +1577,7 @@ pub fn tst_srt::transport::SrtTransport::max_payload(&self) -> usize
 pub fn tst_srt::transport::SrtTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn tst_srt::transport::SrtTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl tst_core::transport::Transport for tst_srt::transport::SrtTransport
+pub fn tst_srt::transport::SrtTransport::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn tst_srt::transport::SrtTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_srt::transport::SrtTransport::close(&mut self)
 pub fn tst_srt::transport::SrtTransport::is_alive(&self) -> bool

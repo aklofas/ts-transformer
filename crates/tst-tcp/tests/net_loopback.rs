@@ -471,3 +471,37 @@ fn listener_accept_resumes_after_wouldblock_polls() {
     assert_eq!(n, 188);
     assert!(buf[..n].iter().all(|&b| b == 0x47));
 }
+
+#[test]
+fn opener_round_trips_one_chunk_and_its_cancel_ends_a_parked_recv() {
+    use tst_pipeline::binding::Domain;
+
+    let peer = StdTcpListener::bind("127.0.0.1:0").expect("bind peer");
+    let url = format!("tcp://127.0.0.1:{}", peer.local_addr().unwrap().port());
+
+    // Sender: the peer reads what the opener's transport wrote.
+    let mut tx = tst_tcp::opener::open_sender(&url).expect("open_sender");
+    assert_eq!(tx.domain, Domain::Tcp);
+    let (mut tx_peer, _) = peer.accept().expect("accept sender");
+    tx.transport.send_bytes(&[0x47; 188]).expect("send");
+    let mut got = [0u8; 188];
+    tx_peer.read_exact(&mut got).expect("peer read");
+    assert_eq!(got, [0x47; 188]);
+
+    // Receiver: the opener's transport reads what the peer writes.
+    let rx = tst_tcp::opener::open_recv(&url).expect("open_recv");
+    assert_eq!(rx.domain, Domain::Tcp);
+    let (mut rx_peer, _) = peer.accept().expect("accept receiver");
+    rx_peer.write_all(&[0x47; 188]).expect("peer write");
+    let mut rx_t = rx.transport;
+    let mut buf = vec![0u8; rx_t.max_payload()];
+    assert_eq!(rx_t.recv_bytes(&mut buf).expect("recv"), 188);
+
+    // The peer stays silent now: only the cancel can end the parked read.
+    let cancel = rx.cancel.clone();
+    let h = thread::spawn(move || rx_t.recv_bytes(&mut buf));
+    thread::sleep(Duration::from_millis(50));
+    cancel.cancel();
+    let r = h.join().expect("join");
+    assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
+}

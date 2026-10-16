@@ -428,6 +428,9 @@ impl core::marker::Unpin for tst_rtp::h265::depacketizer::H265Depacketizer
 impl core::marker::UnsafeUnpin for tst_rtp::h265::depacketizer::H265Depacketizer
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::h265::depacketizer::H265Depacketizer
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::h265::depacketizer::H265Depacketizer
+pub mod tst_rtp::opener
+pub fn tst_rtp::opener::open_recv(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>, tst_pipeline::binding::kind::BindingError>
+pub fn tst_rtp::opener::open_sender(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::Transport>>, tst_pipeline::binding::kind::BindingError>
 pub mod tst_rtp::packet
 #[non_exhaustive] pub enum tst_rtp::packet::RtpParseError
 pub tst_rtp::packet::RtpParseError::Truncated
