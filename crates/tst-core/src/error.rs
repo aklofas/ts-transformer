@@ -747,7 +747,7 @@ pub enum MuxError {
 /// The 5-variant set is the **inner-tier** coarse classification of muxer
 /// failures: a JNI/UniFFI/pure-C binding author pattern-matches on this enum
 /// to map muxer failures into a language-native exception hierarchy without
-/// enumerating the 36 underlying [`MuxError`] variants. For spec-aware
+/// enumerating the 38 underlying [`MuxError`] variants. For spec-aware
 /// diagnostic code (KLV-handling, DVB-subtitling, descriptor validation),
 /// match on the full [`MuxError`] variant set directly.
 ///

@@ -16,7 +16,7 @@
 //!   fast read-only / atomic operations; no GIL release.
 //! - Concurrency:
 //!   Every wrapper holds a `tst_pipeline::binding::Owned`, which takes
-//!   the slot only inside `with_mut` / `with_ref` (GIL released) and
+//!   the slot only inside `with_mut` / `with_ref_blocking` (GIL released) and
 //!   makes `close()` cancel-first.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]

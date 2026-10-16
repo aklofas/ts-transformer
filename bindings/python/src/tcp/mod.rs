@@ -573,7 +573,7 @@ impl PyTcpListener {
         // Two-step: accept inside allow_threads (returns Result<TcpTransport, TcpError>
         // where TcpError is Send), then map to PyErr after re-acquiring the GIL.
         let res = crate::util::allow_threads_parking(py, || {
-            // the accept itself; Listener methods take &self so it holds the slot through with_ref
+            // the accept itself; Listener methods take &self so it holds the slot through with_ref_blocking
             self.owned
                 .with_ref_blocking(BlockingReason::IsItselfBlocking, |l| l.0.accept_blocking())
         });
