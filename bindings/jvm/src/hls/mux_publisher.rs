@@ -209,19 +209,21 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> jlong = 0 => { match REGISTRY.close(handle as u64) {
-        Some(shell) => match shell.finish() {
-            Ok(publisher) => register_hls(publisher),
-            Err(e) => {
-                mux_publisher_error(env, e);
+    ) -> jlong = 0 => {
+        match REGISTRY.close(handle as u64) {
+            Some(shell) => match shell.finish() {
+                Ok(publisher) => register_hls(publisher),
+                Err(e) => {
+                    mux_publisher_error(env, e);
+                    0
+                }
+            },
+            None => {
+                throw_closed(env, "MuxPublisher");
                 0
             }
-        },
-        None => {
-            throw_closed(env, "MuxPublisher");
-            0
         }
-    } }
+    }
 }
 
 jni_native! {

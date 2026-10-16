@@ -87,7 +87,9 @@ jni_native! {
     /// reaches Java as `UnsatisfiedLinkError("exception occurred in JNI_OnLoad")`
     /// with the detail dropped; a native called right after `System.load`
     /// surfaces the exact mismatch.
-    fn Java_org_tstrans_NativeLoader_nVerifyKinds(env, _class) = () => { crate::error::verify_kind_tables(env) }
+    fn Java_org_tstrans_NativeLoader_nVerifyKinds(env, _class) = () => {
+        crate::error::verify_kind_tables(env)
+    }
 }
 
 jni_native! {
