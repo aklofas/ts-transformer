@@ -755,6 +755,7 @@ jobs:
         uses: ./.github/actions/rust-setup
         with:
           nextest: 'true'
+          components: clippy
           cache-key: cargo-rtp-client-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           cache-restore-key: cargo-rtp-client-${{ runner.os }}-
 
