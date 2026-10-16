@@ -1,4 +1,4 @@
-//! `tst_rtp::EndReason` → Python `tstrans.rtp.StreamEndReason`
+//! `tst_core::transport::EndReason` → Python `tstrans.rtp.StreamEndReason`
 //! conversion, shared by `transport::PyReceiver`, `demux_receiver::PyDemuxReceiver`,
 //! and `h264_receiver::PyH264Receiver`.
 //!

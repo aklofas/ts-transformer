@@ -104,7 +104,7 @@ pub struct PyDemuxReceiver {
     /// moves into `DemuxReceiver::new`/`with_demux_options` — the
     /// pipeline shell (generic over `RecvTransport`) has no
     /// `end_reason_handle()` delegate of its own, so this must be pulled
-    /// pre-move. It is a `tst_rtp::EndReasonHandle` — a different
+    /// pre-move. It is a `tst_core::transport::EndReasonHandle` — a different
     /// type and enum from the `EndReasonHandle` that
     /// `Owned::with_end_reason` takes, which is why it stays a field.
     /// Independent of the slot's lifetime, so `end_reason()` /
@@ -334,7 +334,7 @@ impl PyDemuxReceiver {
     /// Why the receive session ended, or `None` if it hasn't ended yet
     /// (or ended through a path this type doesn't instrument). Still
     /// readable after `close()` — `end_reason` is a
-    /// [`tst_rtp::EndReasonHandle`] captured from the underlying
+    /// `tst_core::transport::EndReasonHandle` captured from the underlying
     /// transport at construction, independent of `inner`'s lifetime.
     ///
     /// `EndReasonHandle::get` is a lock-free `Arc<OnceLock<_>>`
