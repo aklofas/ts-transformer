@@ -161,13 +161,13 @@ impl PyMuxSender {
             return Err(raise(
                 py,
                 &SRT,
-                BindingError {
-                    kind: BindingErrorKind::ConfigInvalid,
-                    detail: format!(
+                BindingError::new(
+                    BindingErrorKind::ConfigInvalid,
+                    format!(
                         "MuxSender.from_url requires ?mode=caller (default); got mode={:?}",
                         parsed.mode
                     ),
-                },
+                ),
             ));
         }
         // `connect_recv`, not `connect`: this open composed

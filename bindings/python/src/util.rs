@@ -253,10 +253,7 @@ where
         Err(CloseFailure::Panicked { detail }) => Err(crate::raise::raise(
             py,
             d,
-            BindingError {
-                kind: BindingErrorKind::PanicCaught,
-                detail,
-            },
+            BindingError::new(BindingErrorKind::PanicCaught, detail),
         )),
     }
 }

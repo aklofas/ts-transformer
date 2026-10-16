@@ -182,6 +182,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   through the same table. No `ShellErrorKind` value changes for any error.
   The table maps every tst-core error through its exhaustive `kind()`; the
   "unmapped variant" `Internal` fallback is gone.
+- `binding::BindingError` has a third public field, `diagnostics`; build one
+  with `BindingError::new(kind, detail)` (a struct literal with two fields no
+  longer compiles).
 
 ### Changed — tst-rtp (BREAKING)
 
@@ -300,6 +303,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   host enums carry — the one table the Python and JVM bindings and their
   generated kind enums read. `BindingErrorKind::doc` returns a kind's
   description.
+- `binding::Diagnostics` and `binding::DiagValue`: the structured detail a
+  `BindingError` carries — the send error's input-consumption flag, the
+  transport's native error number and clean-EOF cause, and the PID, KLV tag
+  or VTarget id, byte offset and per-field codec values of the source error.
 
 ### Added — tst-rtp
 

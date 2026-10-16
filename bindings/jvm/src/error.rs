@@ -9,12 +9,11 @@ use jni::objects::{JObject, JThrowable, JValue};
 use tst_core::codec::CodecParseError;
 use tst_core::error::{KlvDecodeError, KlvEncodeError};
 use tst_pipeline::binding::kind::{kind_of_klv_decode, kind_of_klv_field};
-use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, DiagValue, Diagnostics, HandleState};
 
 /// Variant-specific diagnostic fields forwarded to `CodecParseException`.
 /// Every field is `None` except those the producing `CodecParseError` variant
-/// carries — mirrors the per-variant kwarg set in tst-py's
-/// `codec_parse_error_to_pyerr`.
+/// carries; [`codec_fields`] fills it from the error's diagnostics.
 #[derive(Default)]
 pub struct CodecErrFields {
     pub offset_bits: Option<i32>,
@@ -321,81 +320,12 @@ pub fn map_klv_decode_error(env: &mut JNIEnv, e: &KlvDecodeError) {
     throw_klv_decode(env, kind, &e.to_string());
 }
 
-/// Map + throw a Rust `KlvEncodeError`. All 11 Kind literals appear inline
-/// (satisfies the error-mapping ratchet). Used by the per-set JNI fns.
-/// The forward-compat wildcard arm aliases to `BUFFER_TOO_SMALL` (matching
-/// tst-py's `klv_encode_error_to_pyerr`), not `INTERNAL`.
-pub fn map_klv_encode_error(env: &mut JNIEnv, e: &KlvEncodeError) {
-    let msg = e.to_string();
-    match e {
-        KlvEncodeError::BufferTooSmall { .. } => {
-            throw_klv_encode(env, BindingErrorKind::KlvEncodeBufferTooSmall, None, &msg)
-        }
-        KlvEncodeError::RecordTooLarge => {
-            throw_klv_encode(env, BindingErrorKind::KlvEncodeRecordTooLarge, None, &msg)
-        }
-        KlvEncodeError::OutOfRange { tag, .. } => throw_klv_encode(
-            env,
-            BindingErrorKind::KlvEncodeOutOfRange,
-            Some(u64::from(*tag)),
-            &msg,
-        ),
-        KlvEncodeError::StringTooLong { tag, .. } => throw_klv_encode(
-            env,
-            BindingErrorKind::KlvEncodeStringTooLong,
-            Some(u64::from(*tag)),
-            &msg,
-        ),
-        KlvEncodeError::UnsupportedImapbLength { .. } => throw_klv_encode(
-            env,
-            BindingErrorKind::KlvEncodeUnsupportedImapbLength,
-            None,
-            &msg,
-        ),
-        KlvEncodeError::InvalidImapbParams { .. } => throw_klv_encode(
-            env,
-            BindingErrorKind::KlvEncodeInvalidImapbParams,
-            None,
-            &msg,
-        ),
-        KlvEncodeError::MissingMandatoryItem { tag, .. } => throw_klv_encode(
-            env,
-            BindingErrorKind::KlvEncodeMissingMandatoryItem,
-            Some(u64::from(*tag)),
-            &msg,
-        ),
-        KlvEncodeError::ReservedTagInUnknown { tag } => throw_klv_encode(
-            env,
-            BindingErrorKind::KlvEncodeReservedTagInUnknown,
-            Some(u64::from(*tag)),
-            &msg,
-        ),
-        KlvEncodeError::VTargetPackEmpty { target_id } => throw_klv_encode(
-            env,
-            BindingErrorKind::KlvEncodeVTargetPackEmpty,
-            Some(*target_id),
-            &msg,
-        ),
-        KlvEncodeError::DuplicateTargetId { target_id } => {
-            // Hoist the boxed tag so the `throw_klv_encode(env, <Kind>, ...)`
-            // call stays on one line — required by both rustfmt's width and the
-            // error-mapping ratchet's per-constant grep (a brace-less arm with
-            // this longer CONST would otherwise split the call across lines and
-            // hide the constant from the grep).
-            let t = Some(*target_id);
-            throw_klv_encode(env, BindingErrorKind::KlvEncodeDuplicateTargetId, t, &msg)
-        }
-        KlvEncodeError::ForbiddenStandaloneOffset { tag } => {
-            let t = Some(u64::from(*tag));
-            throw_klv_encode(
-                env,
-                BindingErrorKind::KlvEncodeForbiddenStandaloneOffset,
-                t,
-                &msg,
-            )
-        }
-        _ => throw_klv_encode(env, BindingErrorKind::KlvEncodeBufferTooSmall, None, &msg),
-    }
+/// Map + throw a Rust `KlvEncodeError`. The kind and the exception's `tag`
+/// (a KLV tag, or a VTarget id) come from the binding envelope the error
+/// converts to. Used by the per-set JNI fns.
+pub fn map_klv_encode_error(env: &mut JNIEnv, e: KlvEncodeError) {
+    let b = BindingError::from(e);
+    throw_klv_encode(env, b.kind, b.diagnostics.tag, &b.detail);
 }
 
 /// Construct + throw `org.tstrans.CodecParseException`.
@@ -505,149 +435,45 @@ Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)V";
     env.throw(JThrowable::from(exc))
 }
 
-/// Map + throw a Rust `CodecParseError`. All Kind literals appear inline as
-/// the 2nd argument to `throw_codec` (satisfies the error-mapping ratchet).
-/// `codec` is a short lowercase codec name (e.g. `"h264"`). Mirrors tst-py's
-/// `codec_parse_error_to_pyerr` variant-for-variant; the wildcard arm routes
-/// any future marked-non-exhaustive variant to `ENGINE_ERROR`.
-pub fn map_codec_parse_error(env: &mut JNIEnv, e: &CodecParseError, codec: &str) {
-    // The exception message is the Rust `Display` string (mirrors tst-py's
-    // `format!("{err}")`); forwarded to every `throw_codec` call below.
-    let msg = e.to_string();
-    // NOTE: each arm binds the per-variant fields to `f` first, then makes the
-    // `throw_codec(env, <Kind>, codec, &f, &msg)` call on ONE line so the
-    // error-mapping ratchet (a line-oriented grep for
-    // `throw_codec\s*\(\s*[^,]*,\s*"<KIND>"`) sees `env, "<KIND>"` together.
-    match e {
-        CodecParseError::TruncatedRbsp {
-            offset_bits,
-            needed_bits,
-        } => {
-            let f = CodecErrFields {
-                offset_bits: Some(*offset_bits as i32),
-                needed_bits: Some(*needed_bits as i32),
-                ..Default::default()
-            };
-            throw_codec(env, BindingErrorKind::CodecTruncatedRbsp, codec, &f, &msg)
+/// The exception's integer and string fields from a codec failure's
+/// per-field values. A name that is not one of the eleven fields is skipped.
+/// The exception spells two of the source names differently: `got` is
+/// `value` and `have` is `had`.
+fn codec_fields(d: &Diagnostics) -> CodecErrFields {
+    let mut f = CodecErrFields::default();
+    for (name, v) in &d.attrs {
+        let int = match v {
+            DiagValue::Int(i) => Some(i32::try_from(*i).unwrap_or(i32::MAX)),
+            DiagValue::Str(_) => None,
+        };
+        match *name {
+            "offset_bits" => f.offset_bits = int,
+            "needed_bits" => f.needed_bits = int,
+            "field" => {
+                if let DiagValue::Str(s) = v {
+                    f.field = Some((*s).to_string());
+                }
+            }
+            "value" | "got" => f.value = int,
+            "profile_idc" => f.profile_idc = int,
+            "offset_bytes" => f.offset_bytes = int,
+            "expected" => f.expected = int,
+            "found" => f.found = int,
+            "needed" => f.needed = int,
+            "had" | "have" => f.had = int,
+            "layer" => f.layer = int,
+            _ => {}
         }
-        CodecParseError::InvalidGolomb { offset_bits } => {
-            let f = CodecErrFields {
-                offset_bits: Some(*offset_bits as i32),
-                ..Default::default()
-            };
-            throw_codec(env, BindingErrorKind::CodecInvalidGolomb, codec, &f, &msg)
-        }
-        CodecParseError::ReservedValue { field, value } => {
-            let f = CodecErrFields {
-                field: Some((*field).to_string()),
-                value: Some(*value as i32),
-                ..Default::default()
-            };
-            throw_codec(env, BindingErrorKind::CodecReservedValue, codec, &f, &msg)
-        }
-        CodecParseError::UnsupportedProfile { profile_idc } => {
-            let f = CodecErrFields {
-                profile_idc: Some(i32::from(*profile_idc)),
-                ..Default::default()
-            };
-            throw_codec(
-                env,
-                BindingErrorKind::CodecUnsupportedProfile,
-                codec,
-                &f,
-                &msg,
-            )
-        }
-        CodecParseError::EngineError(_) => throw_codec(
-            env,
-            BindingErrorKind::CodecEngineError,
-            codec,
-            &CodecErrFields::default(),
-            &msg,
-        ),
-        CodecParseError::InvalidLeb128 { offset_bytes } => {
-            let f = CodecErrFields {
-                offset_bytes: Some(*offset_bytes as i32),
-                ..Default::default()
-            };
-            throw_codec(env, BindingErrorKind::CodecInvalidLeb128, codec, &f, &msg)
-        }
-        CodecParseError::BadSyncWord { expected, found } => {
-            let f = CodecErrFields {
-                expected: Some(i32::from(*expected)),
-                found: Some(i32::from(*found)),
-                ..Default::default()
-            };
-            throw_codec(env, BindingErrorKind::CodecBadSyncWord, codec, &f, &msg)
-        }
-        CodecParseError::Truncated { needed, had } => {
-            let f = CodecErrFields {
-                needed: Some(*needed as i32),
-                had: Some(*had as i32),
-                ..Default::default()
-            };
-            throw_codec(env, BindingErrorKind::CodecTruncated, codec, &f, &msg)
-        }
-        CodecParseError::Forbidden { field } => {
-            let f = CodecErrFields {
-                field: Some((*field).to_string()),
-                ..Default::default()
-            };
-            throw_codec(env, BindingErrorKind::CodecForbidden, codec, &f, &msg)
-        }
-        CodecParseError::UnsupportedFreeFormat { layer } => {
-            let f = CodecErrFields {
-                layer: Some(i32::from(*layer)),
-                ..Default::default()
-            };
-            throw_codec(
-                env,
-                BindingErrorKind::CodecUnsupportedFreeFormat,
-                codec,
-                &f,
-                &msg,
-            )
-        }
-        // The three nal-framing converter errors, each with its own member
-        // since 0.7.0 (all three were folded into the ENGINE_ERROR wildcard).
-        CodecParseError::InvalidLengthSize { got } => {
-            let f = CodecErrFields {
-                value: Some(i32::from(*got)),
-                ..Default::default()
-            };
-            throw_codec(
-                env,
-                BindingErrorKind::CodecInvalidLengthSize,
-                codec,
-                &f,
-                &msg,
-            )
-        }
-        CodecParseError::NalLengthOverflow { .. } => throw_codec(
-            env,
-            BindingErrorKind::CodecNalLengthOverflow,
-            codec,
-            &CodecErrFields::default(),
-            &msg,
-        ),
-        CodecParseError::BufferTooSmall { needed, have } => {
-            let f = CodecErrFields {
-                needed: Some(*needed as i32),
-                had: Some(*have as i32),
-                ..Default::default()
-            };
-            throw_codec(env, BindingErrorKind::CodecBufferTooSmall, codec, &f, &msg)
-        }
-        // CodecParseError is #[non_exhaustive]: a future variant is
-        // ENGINE_ERROR with its Display text.
-        _ => throw_codec(
-            env,
-            BindingErrorKind::CodecEngineError,
-            codec,
-            &CodecErrFields::default(),
-            &msg,
-        ),
     }
+    f
+}
+
+/// Map + throw a Rust `CodecParseError`. The kind and the exception's fields
+/// come from the binding envelope the error converts to. `codec` is a short
+/// lowercase codec name (e.g. `"h264"`).
+pub fn map_codec_parse_error(env: &mut JNIEnv, e: &CodecParseError, codec: &str) {
+    let b = BindingError::from(e.clone());
+    throw_codec(env, b.kind, codec, &codec_fields(&b.diagnostics), &b.detail);
 }
 
 /// Shared builder: looks up `Kind.<kind>` static field, calls the

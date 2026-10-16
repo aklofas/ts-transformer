@@ -289,13 +289,13 @@ impl PySender {
             return Err(raise(
                 py,
                 &SRT,
-                BindingError {
-                    kind: BindingErrorKind::ConfigInvalid,
-                    detail: format!(
+                BindingError::new(
+                    BindingErrorKind::ConfigInvalid,
+                    format!(
                         "Sender.from_url requires ?mode=caller (default); got mode={:?}",
                         parsed.mode
                     ),
-                },
+                ),
             ));
         }
         let transport = crate::util::allow_threads_parking(py, || parsed.connect_recv())
@@ -432,13 +432,13 @@ impl PyReceiver {
             return Err(raise(
                 py,
                 &SRT,
-                BindingError {
-                    kind: BindingErrorKind::ConfigInvalid,
-                    detail: format!(
+                BindingError::new(
+                    BindingErrorKind::ConfigInvalid,
+                    format!(
                         "Receiver.from_url requires ?mode=listener; got mode={:?}",
                         parsed.mode
                     ),
-                },
+                ),
             ));
         }
         // Registered for the duration of the accept so the interpreter-exit

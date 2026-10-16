@@ -20,6 +20,7 @@
 //! (`UdpErrorKind.IO`).
 
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use crate::binding::owned::{CloseFailure, HandleState};
 use crate::demux_receiver::{DemuxReceiverError, DemuxReceiverErrorSource};
@@ -35,7 +36,7 @@ use tst_core::codec::CodecParseError;
 use tst_core::error::{
     DemuxError, KlvDecodeError, KlvEncodeError, KlvFieldError, MuxError, MuxErrorKind,
 };
-use tst_core::transport::TransportError;
+use tst_core::transport::{BrokenCause, TransportError};
 
 /// One row per kind: `Variant = discriminant => "VARIANT_NAME", "NAME", c_projection;`
 ///
@@ -724,15 +725,214 @@ impl Domain {
 pub struct BindingError {
     pub kind: BindingErrorKind,
     pub detail: String,
+    /// Structured detail; see [`Diagnostics`].
+    pub diagnostics: Diagnostics,
 }
 
 impl BindingError {
-    /// A kind with its detail message.
+    /// A kind with its detail message and no diagnostics.
     pub fn new(kind: BindingErrorKind, detail: impl Into<String>) -> Self {
         Self {
             kind,
             detail: detail.into(),
+            diagnostics: Diagnostics::default(),
         }
+    }
+
+    /// Replace the diagnostics.
+    #[must_use]
+    pub fn with_diagnostics(self, diagnostics: Diagnostics) -> Self {
+        Self {
+            diagnostics,
+            ..self
+        }
+    }
+}
+
+/// What a failure carried besides its kind and message, for a binding that
+/// wants more than the message: the input-consumption flag a send error
+/// carries, the transport's native error number, the clean-EOF cause, and
+/// the PID / tag / offset / per-field values of mux, demux, KLV and codec
+/// errors. Every field is optional; [`Default`] is "nothing known".
+///
+/// **Stability: Provisional** — see the
+/// [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
+#[non_exhaustive]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Diagnostics {
+    /// Whether the failed send consumed its input (`MuxSenderError` / `SenderError`).
+    pub input_consumed: Option<bool>,
+    /// The transport's native error number (`TransportError::{Backpressure, Broken}`).
+    pub native_code: Option<i32>,
+    /// Why a broken transport broke (`TransportError::Broken`).
+    pub broken_cause: Option<BrokenCause>,
+    /// The PID of a mux or demux failure that names one.
+    pub pid: Option<u16>,
+    /// The KLV tag, or the VTarget id, of a KLV decode or encode failure.
+    pub tag: Option<u64>,
+    /// The byte offset of a KLV decode failure.
+    pub offset: Option<u64>,
+    /// A codec parse failure's per-variant fields, by their host attribute name.
+    pub attrs: Vec<(&'static str, DiagValue)>,
+}
+
+/// A per-field value of a codec error (`attrs`): an integer, or a static name
+/// (a syntax-element name such as `"profile_idc"`).
+///
+/// **Stability: Provisional** — see the
+/// [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagValue {
+    /// An integer field.
+    Int(i64),
+    /// A static name.
+    Str(&'static str),
+}
+
+/// A `usize` as a diagnostic integer, saturating.
+fn int_usize(x: usize) -> u64 {
+    u64::try_from(x).unwrap_or(u64::MAX)
+}
+
+/// The PID a mux error names, if its variant has a `pid` field.
+fn mux_diagnostics(e: &MuxError) -> Diagnostics {
+    let pid = match e {
+        MuxError::SubtitlePidUsedAsPcrPid { pid }
+        | MuxError::KlvPidUsedAsPcrPid { pid }
+        | MuxError::DuplicatePmtPid { pid, .. }
+        | MuxError::DuplicatePidAcrossPrograms { pid, .. }
+        | MuxError::DataPidUsedAsPcrPid { pid } => Some(*pid),
+        _ => None,
+    };
+    Diagnostics {
+        pid,
+        ..Diagnostics::default()
+    }
+}
+
+fn demux_diagnostics(e: &DemuxError) -> Diagnostics {
+    let pid = match e {
+        DemuxError::MalformedPes { pid, .. } => Some(*pid),
+        _ => None,
+    };
+    Diagnostics {
+        pid,
+        ..Diagnostics::default()
+    }
+}
+
+fn klv_decode_diagnostics(e: &KlvDecodeError) -> Diagnostics {
+    let (tag, offset) = match e {
+        KlvDecodeError::DuplicateTag { tag, offset } => {
+            (Some(u64::from(*tag)), Some(int_usize(*offset)))
+        }
+        KlvDecodeError::St0102MissingRequiredTag { tag }
+        | KlvDecodeError::St0903MissingRequiredTag { tag } => (Some(u64::from(*tag)), None),
+        KlvDecodeError::Truncated { offset, .. }
+        | KlvDecodeError::MalformedLength { offset }
+        | KlvDecodeError::MalformedTag { offset }
+        | KlvDecodeError::NonCanonicalLength { offset }
+        | KlvDecodeError::NonCanonicalTag { offset }
+        | KlvDecodeError::St0903InvalidVTargetPack { offset, .. } => {
+            (None, Some(int_usize(*offset)))
+        }
+        _ => (None, None),
+    };
+    Diagnostics {
+        tag,
+        offset,
+        ..Diagnostics::default()
+    }
+}
+
+/// The tag a KLV encode failure names: the KLV tag, or the VTarget id.
+fn klv_encode_diagnostics(e: &KlvEncodeError) -> Diagnostics {
+    let tag = match e {
+        KlvEncodeError::OutOfRange { tag, .. }
+        | KlvEncodeError::StringTooLong { tag, .. }
+        | KlvEncodeError::ReservedTagInUnknown { tag }
+        | KlvEncodeError::ForbiddenStandaloneOffset { tag } => Some(u64::from(*tag)),
+        KlvEncodeError::MissingMandatoryItem { tag, .. } => Some(u64::from(*tag)),
+        KlvEncodeError::VTargetPackEmpty { target_id }
+        | KlvEncodeError::DuplicateTargetId { target_id } => Some(*target_id),
+        _ => None,
+    };
+    Diagnostics {
+        tag,
+        ..Diagnostics::default()
+    }
+}
+
+/// A codec failure's fields under the names the hosts expose them by.
+fn codec_diagnostics(e: &CodecParseError) -> Diagnostics {
+    use DiagValue::{Int, Str};
+    let attrs: Vec<(&'static str, DiagValue)> = match e {
+        CodecParseError::TruncatedRbsp {
+            offset_bits,
+            needed_bits,
+        } => vec![
+            ("offset_bits", Int(i64::from(*offset_bits))),
+            ("needed_bits", Int(i64::from(*needed_bits))),
+        ],
+        CodecParseError::InvalidGolomb { offset_bits } => {
+            vec![("offset_bits", Int(i64::from(*offset_bits)))]
+        }
+        CodecParseError::ReservedValue { field, value } => {
+            vec![("field", Str(field)), ("value", Int(i64::from(*value)))]
+        }
+        CodecParseError::UnsupportedProfile { profile_idc } => {
+            vec![("profile_idc", Int(i64::from(*profile_idc)))]
+        }
+        CodecParseError::InvalidLeb128 { offset_bytes } => {
+            vec![("offset_bytes", Int(i64::from(*offset_bytes)))]
+        }
+        CodecParseError::BadSyncWord { expected, found } => vec![
+            ("expected", Int(i64::from(*expected))),
+            ("found", Int(i64::from(*found))),
+        ],
+        CodecParseError::Truncated { needed, had } => vec![
+            ("needed", Int(i64::from(*needed))),
+            ("had", Int(i64::from(*had))),
+        ],
+        CodecParseError::Forbidden { field } => vec![("field", Str(field))],
+        CodecParseError::UnsupportedFreeFormat { layer } => {
+            vec![("layer", Int(i64::from(*layer)))]
+        }
+        CodecParseError::InvalidLengthSize { got } => vec![("got", Int(i64::from(*got)))],
+        CodecParseError::NalLengthOverflow {
+            nal_len,
+            length_size,
+        } => vec![
+            ("nal_len", Int(i64::from(*nal_len))),
+            ("length_size", Int(i64::from(*length_size))),
+        ],
+        CodecParseError::BufferTooSmall { needed, have } => vec![
+            ("needed", Int(i64::try_from(*needed).unwrap_or(i64::MAX))),
+            ("have", Int(i64::try_from(*have).unwrap_or(i64::MAX))),
+        ],
+        _ => Vec::new(),
+    };
+    Diagnostics {
+        attrs,
+        ..Diagnostics::default()
+    }
+}
+
+/// A transport failure's native error number and clean-EOF cause.
+fn transport_diagnostics(e: &TransportError) -> Diagnostics {
+    match e {
+        TransportError::Backpressure { errno_code, .. } => Diagnostics {
+            native_code: *errno_code,
+            ..Diagnostics::default()
+        },
+        TransportError::Broken {
+            errno_code, cause, ..
+        } => Diagnostics {
+            native_code: *errno_code,
+            broken_cause: Some(*cause),
+            ..Diagnostics::default()
+        },
+        _ => Diagnostics::default(),
     }
 }
 
@@ -773,7 +973,7 @@ pub fn kind_of_mux(e: &MuxError) -> BindingErrorKind {
 
 impl From<MuxError> for BindingError {
     fn from(e: MuxError) -> Self {
-        BindingError::new(kind_of_mux(&e), e.to_string())
+        BindingError::new(kind_of_mux(&e), e.to_string()).with_diagnostics(mux_diagnostics(&e))
     }
 }
 
@@ -796,7 +996,7 @@ pub fn kind_of_demux(e: &DemuxError) -> BindingErrorKind {
 
 impl From<DemuxError> for BindingError {
     fn from(e: DemuxError) -> Self {
-        BindingError::new(map_demux(&e), e.to_string())
+        BindingError::new(map_demux(&e), e.to_string()).with_diagnostics(demux_diagnostics(&e))
     }
 }
 
@@ -823,6 +1023,7 @@ pub fn kind_of_klv_decode(e: &KlvDecodeError) -> BindingErrorKind {
 impl From<KlvDecodeError> for BindingError {
     fn from(e: KlvDecodeError) -> Self {
         BindingError::new(map_klv_decode(&e), e.to_string())
+            .with_diagnostics(klv_decode_diagnostics(&e))
     }
 }
 
@@ -877,6 +1078,7 @@ pub fn kind_of_klv_encode(e: &KlvEncodeError) -> BindingErrorKind {
 impl From<KlvEncodeError> for BindingError {
     fn from(e: KlvEncodeError) -> Self {
         BindingError::new(map_klv_encode(&e), e.to_string())
+            .with_diagnostics(klv_encode_diagnostics(&e))
     }
 }
 
@@ -908,7 +1110,7 @@ pub fn kind_of_codec(e: &CodecParseError) -> BindingErrorKind {
 
 impl From<CodecParseError> for BindingError {
     fn from(e: CodecParseError) -> Self {
-        BindingError::new(map_codec(&e), e.to_string())
+        BindingError::new(map_codec(&e), e.to_string()).with_diagnostics(codec_diagnostics(&e))
     }
 }
 
@@ -992,7 +1194,7 @@ fn map_transport(e: &TransportError) -> (BindingErrorKind, String) {
 impl From<TransportError> for BindingError {
     fn from(e: TransportError) -> Self {
         let (kind, detail) = map_transport(&e);
-        BindingError::new(kind, detail)
+        BindingError::new(kind, detail).with_diagnostics(transport_diagnostics(&e))
     }
 }
 
@@ -1132,19 +1334,25 @@ impl From<TsFramingError> for BindingError {
 
 impl From<MuxSenderError> for BindingError {
     fn from(e: MuxSenderError) -> Self {
-        match e.source {
+        let input_consumed = e.input_consumed;
+        let mut b: BindingError = match e.source {
             MuxSenderErrorSource::Mux(m) => m.into(),
             MuxSenderErrorSource::Transport(t) => t.into(),
-        }
+        };
+        b.diagnostics.input_consumed = input_consumed;
+        b
     }
 }
 
 impl From<SenderError> for BindingError {
     fn from(e: SenderError) -> Self {
-        match e.source {
+        let input_consumed = e.input_consumed;
+        let mut b: BindingError = match e.source {
             SenderErrorSource::Framing(f) => f.into(),
             SenderErrorSource::Transport(t) => t.into(),
-        }
+        };
+        b.diagnostics.input_consumed = input_consumed;
+        b
     }
 }
 
@@ -1224,7 +1432,6 @@ mod tests {
 
     use crate::binding::owned::HandleState;
     use crate::shell_error::ShellErrorKind;
-    use alloc::vec::Vec;
     use tst_core::transport::{BrokenCause, TransportError};
 
     #[test]
@@ -1275,6 +1482,47 @@ mod tests {
             Some("org/tstrans/CodecParseException")
         );
         assert_eq!(Domain::KlvDecode.python_kind_enum(), "KlvErrorKind");
+    }
+
+    #[test]
+    fn diagnostics_carry_what_the_source_error_knew() {
+        use tst_core::codec::CodecParseError;
+        let b = BindingError::from(CodecParseError::TruncatedRbsp {
+            offset_bits: 12,
+            needed_bits: 4,
+        });
+        assert_eq!(b.kind, BindingErrorKind::CodecTruncatedRbsp);
+        assert_eq!(
+            b.diagnostics.attrs,
+            vec![
+                ("offset_bits", DiagValue::Int(12)),
+                ("needed_bits", DiagValue::Int(4))
+            ]
+        );
+        let t = BindingError::from(TransportError::Broken {
+            msg: "reset".into(),
+            errno_code: Some(104),
+            cause: BrokenCause::CleanEof,
+        });
+        assert_eq!(t.diagnostics.native_code, Some(104));
+        assert_eq!(t.diagnostics.broken_cause, Some(BrokenCause::CleanEof));
+        let k = BindingError::from(KlvDecodeError::DuplicateTag { tag: 5, offset: 30 });
+        assert_eq!(
+            (k.diagnostics.tag, k.diagnostics.offset),
+            (Some(5), Some(30))
+        );
+    }
+
+    #[test]
+    fn send_errors_carry_input_consumed_and_the_source_detail() {
+        let e = MuxSenderError::from(broken()).with_input_consumed(true);
+        let b = BindingError::from(e);
+        assert_eq!(b.diagnostics.input_consumed, Some(true));
+        assert_eq!(b.diagnostics.native_code, Some(2));
+        let e = SenderError::from(broken());
+        let b = BindingError::from(e);
+        assert_eq!(b.diagnostics.input_consumed, None);
+        assert_eq!(b.diagnostics.native_code, Some(2));
     }
 
     fn broken() -> TransportError {

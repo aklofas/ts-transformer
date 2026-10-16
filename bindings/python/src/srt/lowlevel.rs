@@ -60,10 +60,7 @@ fn cfg_invalid(py: Python<'_>, detail: impl Into<String>) -> PyErr {
     raise(
         py,
         &SRT,
-        BindingError {
-            kind: BindingErrorKind::ConfigInvalid,
-            detail: detail.into(),
-        },
+        BindingError::new(BindingErrorKind::ConfigInvalid, detail.into()),
     )
 }
 

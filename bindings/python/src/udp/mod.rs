@@ -469,10 +469,7 @@ impl PyUdpRecvTransport {
                 return Err(raise(
                     py,
                     &UDP,
-                    BindingError {
-                        kind: BindingErrorKind::Backpressure,
-                        detail: "recv timed out".into(),
-                    },
+                    BindingError::new(BindingErrorKind::Backpressure, "recv timed out"),
                 ));
             }
             UdpRecvOutcome::Failed(e) => return Err(raise(py, &UDP, BindingError::from(e))),

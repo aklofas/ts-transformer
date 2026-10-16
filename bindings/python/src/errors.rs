@@ -31,6 +31,7 @@
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use tst_pipeline::binding::{BindingError, DiagValue};
 
 // ---------------------------------------------------------------------------
 // Shared constructor + macro-generated thin wrappers
@@ -192,13 +193,7 @@ pub fn raise_rist_error_for_test(py: Python<'_>, kind: &str, message: &str) -> P
 /// the muxer's `kind()` accessor is the source of truth
 /// for which Python `MuxErrorKind` variant to use.
 ///
-/// The `MuxErrorKind` enum is `#[non_exhaustive]`; the wildcard
-/// arm routes unknown future variants to `INTERNAL` so this fn never
-/// panics on a Rust-side enum addition (the test suite will surface
-/// the omission when the new variant gets a tagged-test fixture).
-///
 /// Called from Muxer wrappers.
-#[allow(dead_code)]
 pub(crate) fn mux_error_to_pyerr(py: Python<'_>, e: tst_core::MuxError) -> PyErr {
     // `INVALID_NAL` / `KLV_TOO_LARGE` / `INVALID_AV1_OBU` / `MISP_TIME` are
     // precise kinds — the five coarse buckets of `MuxErrorKind` do not
@@ -228,19 +223,16 @@ pub(crate) fn mux_error_to_pyerr(py: Python<'_>, e: tst_core::MuxError) -> PyErr
 /// fields as keyword arguments to `CodecError.__init__` so the Python
 /// side can read `.offset_bits`, `.field`, `.expected`, etc.
 ///
-/// The member comes from `tst_pipeline::binding::kind_of_codec`, so a
-/// Rust-side enum addition cannot silently fall through here; only the
-/// per-variant ATTRIBUTE forwarding below is hand-written, and its
-/// wildcard arm simply forwards no extras.
+/// The member and the attributes both come from the
+/// `tst_pipeline::binding::BindingError` the error converts to, so a
+/// Rust-side addition cannot silently fall through here.
 ///
 /// Called from codec-parser wrappers.
-#[allow(dead_code)]
 pub(crate) fn codec_parse_error_to_pyerr(
     py: Python<'_>,
     err: &tst_core::codec::CodecParseError,
     codec: &str,
 ) -> PyErr {
-    use tst_core::codec::CodecParseError;
     let exceptions = match py.import_bound("tstrans.exceptions") {
         Ok(m) => m,
         Err(e) => return e,
@@ -253,59 +245,9 @@ pub(crate) fn codec_parse_error_to_pyerr(
         Ok(c) => c,
         Err(e) => return e,
     };
-    // The KIND comes from the one kind table (`kind_of_codec`); this match only
-    // harvests the per-variant ATTRIBUTES the `CodecError` class carries.
-    // `BufferTooSmall` has its own `BUFFER_TOO_SMALL` member and carries
-    // `needed` / `have` — unreachable from Python, since the write-into-a-caller
-    // -buffer entry points have no binding.
-    let kind_name = tst_pipeline::binding::kind::kind_of_codec(err).name();
-    let extra_attrs: Vec<(&str, PyObject)> = match err {
-        CodecParseError::TruncatedRbsp {
-            offset_bits,
-            needed_bits,
-        } => vec![
-            ("offset_bits", offset_bits.into_py(py)),
-            ("needed_bits", needed_bits.into_py(py)),
-        ],
-        CodecParseError::InvalidGolomb { offset_bits } => {
-            vec![("offset_bits", offset_bits.into_py(py))]
-        }
-        CodecParseError::ReservedValue { field, value } => vec![
-            ("field", (*field).into_py(py)),
-            ("value", value.into_py(py)),
-        ],
-        CodecParseError::UnsupportedProfile { profile_idc } => {
-            vec![("profile_idc", profile_idc.into_py(py))]
-        }
-        CodecParseError::EngineError(_) => vec![],
-        CodecParseError::InvalidLeb128 { offset_bytes } => {
-            vec![("offset_bytes", offset_bytes.into_py(py))]
-        }
-        CodecParseError::BadSyncWord { expected, found } => vec![
-            ("expected", expected.into_py(py)),
-            ("found", found.into_py(py)),
-        ],
-        CodecParseError::Truncated { needed, had } => {
-            vec![("needed", needed.into_py(py)), ("had", had.into_py(py))]
-        }
-        CodecParseError::Forbidden { field } => vec![("field", (*field).into_py(py))],
-        CodecParseError::UnsupportedFreeFormat { layer } => {
-            vec![("layer", layer.into_py(py))]
-        }
-        CodecParseError::InvalidLengthSize { got } => vec![("got", got.into_py(py))],
-        CodecParseError::NalLengthOverflow {
-            nal_len,
-            length_size,
-        } => vec![
-            ("nal_len", nal_len.into_py(py)),
-            ("length_size", length_size.into_py(py)),
-        ],
-        CodecParseError::BufferTooSmall { needed, have } => {
-            vec![("needed", needed.into_py(py)), ("have", have.into_py(py))]
-        }
-        // Catch-all for #[non_exhaustive] additions not yet mapped.
-        _ => vec![],
-    };
+    // Kind and per-variant attributes both come from the one binding envelope.
+    let envelope = BindingError::from(err.clone());
+    let kind_name = envelope.kind.name();
     let kind = match kind_class.getattr(kind_name) {
         Ok(k) => k,
         Err(e) => return e,
@@ -321,8 +263,12 @@ pub(crate) fn codec_parse_error_to_pyerr(
     if let Err(e) = kwargs.set_item("message", &message) {
         return e;
     }
-    for (k, v) in extra_attrs {
-        if let Err(e) = kwargs.set_item(k, v) {
+    for (k, v) in &envelope.diagnostics.attrs {
+        let item = match v {
+            DiagValue::Int(i) => kwargs.set_item(*k, *i),
+            DiagValue::Str(t) => kwargs.set_item(*k, *t),
+        };
+        if let Err(e) = item {
             return e;
         }
     }
@@ -334,10 +280,6 @@ pub(crate) fn codec_parse_error_to_pyerr(
 }
 
 /// Map a Rust `KlvEncodeError` to a Python `KlvEncodeError` instance.
-/// Covers all 8 variants; the wildcard arm routes to `BUFFER_TOO_SMALL`
-/// (a benign "encode failed; widen output buffer" fallback) for any
-/// future Rust variants introduced through the `#[non_exhaustive]`
-/// hatch — explicit arms get added as new variants surface.
 ///
 /// Where the Rust variant carries a numeric identifier it is forwarded to
 /// the Python `KlvEncodeError.tag` attribute: a KLV tag for `OutOfRange`,
@@ -348,31 +290,14 @@ pub(crate) fn codec_parse_error_to_pyerr(
 /// `InvalidImapbParams`) leave `.tag = None`.
 ///
 /// Called from KLV `encode_*` wrappers.
-#[allow(dead_code)]
 pub(crate) fn klv_encode_error_to_pyerr(py: Python<'_>, e: tst_core::KlvEncodeError) -> PyErr {
-    use tst_core::error::KlvEncodeError as RustE;
-    // `tag` is `Option<u64>` so the VTarget Pack `target_id` (a u64)
-    // reaches `.tag` losslessly; the KLV-tag-number variants
-    // widen their u16/u32 tag values to u64 (lossless). PyO3 maps `u64` →
-    // Python `int` (unbounded), matching the `.tag: Optional[int]` stub.
-    // The KIND comes from the one kind table; this match only harvests `.tag`
-    // (a KLV tag for most variants, a VTarget Pack `target_id` for two).
-    let kind_str = tst_pipeline::binding::kind::kind_of_klv_encode(&e).name();
-    let tag: Option<u64> = match &e {
-        RustE::BufferTooSmall { .. } => None,
-        RustE::RecordTooLarge => None,
-        RustE::OutOfRange { tag, .. } => Some(u64::from(*tag)),
-        RustE::StringTooLong { tag, .. } => Some(u64::from(*tag)),
-        RustE::UnsupportedImapbLength { .. } => None,
-        RustE::InvalidImapbParams { .. } => None,
-        RustE::MissingMandatoryItem { tag, .. } => Some(u64::from(*tag)),
-        RustE::ReservedTagInUnknown { tag } => Some(u64::from(*tag)),
-        RustE::VTargetPackEmpty { target_id } => Some(*target_id),
-        RustE::DuplicateTargetId { target_id } => Some(*target_id),
-        RustE::ForbiddenStandaloneOffset { tag } => Some(u64::from(*tag)),
-        _ => None,
-    };
-    let msg = e.to_string();
+    // Kind and `.tag` (a KLV tag for most variants, a VTarget Pack `target_id`
+    // for two; `None` for the rest) come from the one binding envelope. PyO3
+    // maps `u64` to an unbounded Python `int`, matching the `.tag: Optional[int]` stub.
+    let envelope = BindingError::from(e);
+    let kind_str = envelope.kind.name();
+    let tag: Option<u64> = envelope.diagnostics.tag;
+    let msg = envelope.detail.clone();
     let exceptions = match py.import_bound("tstrans.exceptions") {
         Ok(m) => m,
         Err(err) => return err,

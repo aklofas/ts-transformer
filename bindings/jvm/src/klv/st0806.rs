@@ -235,7 +235,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeRvt<'local>(
                     }
                 },
                 Err(e) => {
-                    map_klv_encode_error(env, &e);
+                    map_klv_encode_error(env, e);
                     JObject::null().into_raw()
                 }
             },
@@ -278,7 +278,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nEncodeRvtStandalone<'local>(
                     }
                 },
                 Err(e) => {
-                    map_klv_encode_error(env, &e);
+                    map_klv_encode_error(env, e);
                     JObject::null().into_raw()
                 }
             },

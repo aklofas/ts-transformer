@@ -151,6 +151,25 @@ impl core::marker::Unpin for tst_pipeline::binding::kind::BindingErrorKind
 impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::BindingErrorKind
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::BindingErrorKind
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::BindingErrorKind
+pub enum tst_pipeline::binding::kind::DiagValue
+pub tst_pipeline::binding::kind::DiagValue::Int(i64)
+pub tst_pipeline::binding::kind::DiagValue::Str(&'static str)
+impl core::clone::Clone for tst_pipeline::binding::kind::DiagValue
+pub fn tst_pipeline::binding::kind::DiagValue::clone(&self) -> tst_pipeline::binding::kind::DiagValue
+impl core::cmp::Eq for tst_pipeline::binding::kind::DiagValue
+impl core::cmp::PartialEq for tst_pipeline::binding::kind::DiagValue
+pub fn tst_pipeline::binding::kind::DiagValue::eq(&self, &tst_pipeline::binding::kind::DiagValue) -> bool
+impl core::fmt::Debug for tst_pipeline::binding::kind::DiagValue
+pub fn tst_pipeline::binding::kind::DiagValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_pipeline::binding::kind::DiagValue
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::kind::DiagValue
+impl core::marker::Freeze for tst_pipeline::binding::kind::DiagValue
+impl core::marker::Send for tst_pipeline::binding::kind::DiagValue
+impl core::marker::Sync for tst_pipeline::binding::kind::DiagValue
+impl core::marker::Unpin for tst_pipeline::binding::kind::DiagValue
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::DiagValue
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::DiagValue
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::DiagValue
 #[non_exhaustive] pub enum tst_pipeline::binding::kind::Domain
 pub tst_pipeline::binding::kind::Domain::Codec
 pub tst_pipeline::binding::kind::Domain::Demux
@@ -190,9 +209,11 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::Do
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::Domain
 pub struct tst_pipeline::binding::kind::BindingError
 pub tst_pipeline::binding::kind::BindingError::detail: alloc::string::String
+pub tst_pipeline::binding::kind::BindingError::diagnostics: tst_pipeline::binding::kind::Diagnostics
 pub tst_pipeline::binding::kind::BindingError::kind: tst_pipeline::binding::kind::BindingErrorKind
 impl tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::new(tst_pipeline::binding::kind::BindingErrorKind, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn tst_pipeline::binding::kind::BindingError::with_diagnostics(self, tst_pipeline::binding::kind::Diagnostics) -> Self
 impl core::clone::Clone for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::clone(&self) -> tst_pipeline::binding::kind::BindingError
 impl core::cmp::Eq for tst_pipeline::binding::kind::BindingError
@@ -245,6 +266,31 @@ impl core::marker::Unpin for tst_pipeline::binding::kind::BindingError
 impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::BindingError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::BindingError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::BindingError
+#[non_exhaustive] pub struct tst_pipeline::binding::kind::Diagnostics
+pub tst_pipeline::binding::kind::Diagnostics::attrs: alloc::vec::Vec<(&'static str, tst_pipeline::binding::kind::DiagValue)>
+pub tst_pipeline::binding::kind::Diagnostics::broken_cause: core::option::Option<tst_core::transport::BrokenCause>
+pub tst_pipeline::binding::kind::Diagnostics::input_consumed: core::option::Option<bool>
+pub tst_pipeline::binding::kind::Diagnostics::native_code: core::option::Option<i32>
+pub tst_pipeline::binding::kind::Diagnostics::offset: core::option::Option<u64>
+pub tst_pipeline::binding::kind::Diagnostics::pid: core::option::Option<u16>
+pub tst_pipeline::binding::kind::Diagnostics::tag: core::option::Option<u64>
+impl core::clone::Clone for tst_pipeline::binding::kind::Diagnostics
+pub fn tst_pipeline::binding::kind::Diagnostics::clone(&self) -> tst_pipeline::binding::kind::Diagnostics
+impl core::cmp::Eq for tst_pipeline::binding::kind::Diagnostics
+impl core::cmp::PartialEq for tst_pipeline::binding::kind::Diagnostics
+pub fn tst_pipeline::binding::kind::Diagnostics::eq(&self, &tst_pipeline::binding::kind::Diagnostics) -> bool
+impl core::default::Default for tst_pipeline::binding::kind::Diagnostics
+pub fn tst_pipeline::binding::kind::Diagnostics::default() -> tst_pipeline::binding::kind::Diagnostics
+impl core::fmt::Debug for tst_pipeline::binding::kind::Diagnostics
+pub fn tst_pipeline::binding::kind::Diagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::kind::Diagnostics
+impl core::marker::Freeze for tst_pipeline::binding::kind::Diagnostics
+impl core::marker::Send for tst_pipeline::binding::kind::Diagnostics
+impl core::marker::Sync for tst_pipeline::binding::kind::Diagnostics
+impl core::marker::Unpin for tst_pipeline::binding::kind::Diagnostics
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::Diagnostics
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::Diagnostics
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::Diagnostics
 pub fn tst_pipeline::binding::kind::kind_of_codec(&tst_core::codec::CodecParseError) -> tst_pipeline::binding::kind::BindingErrorKind
 pub fn tst_pipeline::binding::kind::kind_of_demux(&tst_core::error::DemuxError) -> tst_pipeline::binding::kind::BindingErrorKind
 pub fn tst_pipeline::binding::kind::kind_of_klv_decode(&tst_core::error::KlvDecodeError) -> tst_pipeline::binding::kind::BindingErrorKind
@@ -508,6 +554,25 @@ impl<E> core::marker::Unpin for tst_pipeline::binding::owned::CloseFailure<E> wh
 impl<E> core::marker::UnsafeUnpin for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::UnsafeUnpin
 impl<E> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::CloseFailure<E> where E: core::panic::unwind_safe::RefUnwindSafe
 impl<E> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::CloseFailure<E> where E: core::panic::unwind_safe::UnwindSafe
+pub enum tst_pipeline::binding::DiagValue
+pub tst_pipeline::binding::DiagValue::Int(i64)
+pub tst_pipeline::binding::DiagValue::Str(&'static str)
+impl core::clone::Clone for tst_pipeline::binding::kind::DiagValue
+pub fn tst_pipeline::binding::kind::DiagValue::clone(&self) -> tst_pipeline::binding::kind::DiagValue
+impl core::cmp::Eq for tst_pipeline::binding::kind::DiagValue
+impl core::cmp::PartialEq for tst_pipeline::binding::kind::DiagValue
+pub fn tst_pipeline::binding::kind::DiagValue::eq(&self, &tst_pipeline::binding::kind::DiagValue) -> bool
+impl core::fmt::Debug for tst_pipeline::binding::kind::DiagValue
+pub fn tst_pipeline::binding::kind::DiagValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_pipeline::binding::kind::DiagValue
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::kind::DiagValue
+impl core::marker::Freeze for tst_pipeline::binding::kind::DiagValue
+impl core::marker::Send for tst_pipeline::binding::kind::DiagValue
+impl core::marker::Sync for tst_pipeline::binding::kind::DiagValue
+impl core::marker::Unpin for tst_pipeline::binding::kind::DiagValue
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::DiagValue
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::DiagValue
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::DiagValue
 #[non_exhaustive] pub enum tst_pipeline::binding::Domain
 pub tst_pipeline::binding::Domain::Codec
 pub tst_pipeline::binding::Domain::Demux
@@ -569,9 +634,11 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::H
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::HandleState
 pub struct tst_pipeline::binding::BindingError
 pub tst_pipeline::binding::BindingError::detail: alloc::string::String
+pub tst_pipeline::binding::BindingError::diagnostics: tst_pipeline::binding::kind::Diagnostics
 pub tst_pipeline::binding::BindingError::kind: tst_pipeline::binding::kind::BindingErrorKind
 impl tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::new(tst_pipeline::binding::kind::BindingErrorKind, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn tst_pipeline::binding::kind::BindingError::with_diagnostics(self, tst_pipeline::binding::kind::Diagnostics) -> Self
 impl core::clone::Clone for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::clone(&self) -> tst_pipeline::binding::kind::BindingError
 impl core::cmp::Eq for tst_pipeline::binding::kind::BindingError
@@ -624,6 +691,31 @@ impl core::marker::Unpin for tst_pipeline::binding::kind::BindingError
 impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::BindingError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::BindingError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::BindingError
+#[non_exhaustive] pub struct tst_pipeline::binding::Diagnostics
+pub tst_pipeline::binding::Diagnostics::attrs: alloc::vec::Vec<(&'static str, tst_pipeline::binding::kind::DiagValue)>
+pub tst_pipeline::binding::Diagnostics::broken_cause: core::option::Option<tst_core::transport::BrokenCause>
+pub tst_pipeline::binding::Diagnostics::input_consumed: core::option::Option<bool>
+pub tst_pipeline::binding::Diagnostics::native_code: core::option::Option<i32>
+pub tst_pipeline::binding::Diagnostics::offset: core::option::Option<u64>
+pub tst_pipeline::binding::Diagnostics::pid: core::option::Option<u16>
+pub tst_pipeline::binding::Diagnostics::tag: core::option::Option<u64>
+impl core::clone::Clone for tst_pipeline::binding::kind::Diagnostics
+pub fn tst_pipeline::binding::kind::Diagnostics::clone(&self) -> tst_pipeline::binding::kind::Diagnostics
+impl core::cmp::Eq for tst_pipeline::binding::kind::Diagnostics
+impl core::cmp::PartialEq for tst_pipeline::binding::kind::Diagnostics
+pub fn tst_pipeline::binding::kind::Diagnostics::eq(&self, &tst_pipeline::binding::kind::Diagnostics) -> bool
+impl core::default::Default for tst_pipeline::binding::kind::Diagnostics
+pub fn tst_pipeline::binding::kind::Diagnostics::default() -> tst_pipeline::binding::kind::Diagnostics
+impl core::fmt::Debug for tst_pipeline::binding::kind::Diagnostics
+pub fn tst_pipeline::binding::kind::Diagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::kind::Diagnostics
+impl core::marker::Freeze for tst_pipeline::binding::kind::Diagnostics
+impl core::marker::Send for tst_pipeline::binding::kind::Diagnostics
+impl core::marker::Sync for tst_pipeline::binding::kind::Diagnostics
+impl core::marker::Unpin for tst_pipeline::binding::kind::Diagnostics
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::Diagnostics
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::Diagnostics
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::Diagnostics
 pub struct tst_pipeline::binding::ManagedHandles
 pub tst_pipeline::binding::ManagedHandles::attempts: alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub tst_pipeline::binding::ManagedHandles::cancel: alloc::sync::Arc<dyn tst_core::transport::TransportCancel>

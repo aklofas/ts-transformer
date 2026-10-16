@@ -14,10 +14,7 @@ pub(crate) fn throw_hls(env: &mut JNIEnv, kind: BindingErrorKind, message: &str)
     throw_binding(
         env,
         Domain::Hls,
-        &BindingError {
-            kind,
-            detail: message.to_owned(),
-        },
+        &BindingError::new(kind, message.to_owned()),
     );
 }
 
