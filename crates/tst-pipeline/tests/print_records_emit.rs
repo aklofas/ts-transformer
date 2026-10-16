@@ -97,6 +97,8 @@ fn entry(schema: tst_core::binding_schema::RecordSchema, direction: Direction) -
         py_module: "tstrans.klv",
         java_pkg: "org/tstrans/klv",
         direction,
+        rust_path: schema.rust_path,
+        java_implements: "",
         schema,
     }
 }
@@ -156,7 +158,7 @@ fn dataclass_stub_and_java_record_match_snapshots() {
         include_str!("tools/print_records/snapshots/wavelength_record.pyi")
     );
     assert_eq!(
-        emit_java::file(&reg, e).unwrap(),
+        emit_java::block(&reg, e).unwrap(),
         include_str!("tools/print_records/snapshots/wavelength_record.java")
     );
 }
@@ -195,7 +197,8 @@ fn a_vec_of_records_is_built_and_read_inside_local_frames() {
     let want = concat!(
         "for item in r.bands.iter() { ",
         "env.with_local_frame::<_, (), jni::errors::Error>(16, |env| { ",
-        "let o1 = crate::generated::st0601::build_wavelength_record(env, item)?;",
+        "let o1 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| ",
+        "crate::generated::st0601::build_wavelength_record(env, item))?;",
     );
     assert!(raw.contains(want), "{raw}");
 }
@@ -252,10 +255,9 @@ fn a_wide_record_is_built_through_its_builder() {
         read.contains("let mut r = print_records_emit::RichFixture::default();\n    r.a = a;\n"),
         "{read}"
     );
-    let java = emit_java::file(&reg, e).unwrap();
+    let java = emit_java::block(&reg, e).unwrap();
     assert!(java.contains("public static final class Builder"), "{java}");
     assert!(java.contains("int typeCode"), "{java}");
-    assert!(java.contains("import java.util.List;"), "{java}");
     let py = emit_py::record_pair(&reg, e).unwrap();
     assert!(
         py.contains("crate::custom::rich_fixture_label_to_py"),
@@ -327,17 +329,59 @@ fn an_unmapped_field_names_its_record_and_field() {
 }
 
 #[test]
-fn a_required_field_after_an_optional_one_is_refused() {
+fn a_required_field_after_an_optional_one_takes_a_host_default() {
     tst_core::binding_record! {
         pub struct Misordered {
             pub a: Option<u8>,
             pub b: u8,
+            pub c: f64,
+            pub d: bool,
+            pub e: String,
+            pub f: Vec<u8>,
+            pub g: Vec<u64>,
+            pub h: u8,
+            pub i: u8,
         }
     }
     let reg = vec![entry(Misordered::BINDING_SCHEMA, Direction::Both)];
+    let py = emit_pyi::py_block(&reg, &reg[0]).unwrap();
+    for want in [
+        "    a: int | None = None\n",
+        "    b: int = 0\n",
+        "    c: float = 0.0\n",
+        "    d: bool = False\n",
+        "    e: str = \"\"\n",
+        "    f: bytes = b\"\"\n",
+        "    g: tuple[int, ...] = ()\n",
+    ] {
+        assert!(py.contains(want), "{want}\n{py}");
+    }
+    let pyi = emit_pyi::pyi_block(&reg, &reg[0]).unwrap();
+    assert!(pyi.contains("    b: int = ...\n"), "{pyi}");
+    // The Builder starts the non-primitive ones at their host default.
+    let java = emit_java::block(&reg, &reg[0]).unwrap();
+    for want in [
+        "private String e = \"\";",
+        "private ByteBuffer f = java.nio.ByteBuffer.allocate(0);",
+        "private List<Long> g = java.util.Collections.emptyList();",
+        "private int b;",
+    ] {
+        assert!(java.contains(want), "{want}\n{java}");
+    }
+    // A required record has no host default to give.
+    tst_core::binding_record! {
+        pub struct NoDefault {
+            pub a: Option<u8>,
+            pub band: WavelengthRecord,
+        }
+    }
+    let reg = vec![
+        entry(NoDefault::BINDING_SCHEMA, Direction::Both),
+        entry(WavelengthRecord::BINDING_SCHEMA, Direction::Both),
+    ];
     let err = emit_pyi::py_block(&reg, &reg[0]).unwrap_err();
     assert!(
-        err.contains("Misordered.b") && err.contains("optional"),
+        err.contains("NoDefault.band") && err.contains("no host default"),
         "{err}"
     );
 }
@@ -385,9 +429,10 @@ fn javadoc_prose_is_html_safe_and_names_java_fields() {
 fn docstrings_use_rst_code_and_wrap_at_79_columns() {
     assert_eq!(emit_pyi::rst_code("a `min_nm` b"), "a ``min_nm`` b");
     assert_eq!(emit_pyi::rst_code("odd ` one"), "odd ` one");
-    assert_eq!(emit_pyi::docstring("Short."), "    \"\"\"Short.\"\"\"\n");
+    let one = |s: &str| emit_pyi::docstring_paras(&[s.to_string()]);
+    assert_eq!(one("Short."), "    \"\"\"Short.\"\"\"\n");
     let long = "word ".repeat(40);
-    let doc = emit_pyi::docstring(long.trim());
+    let doc = one(long.trim());
     let lines: Vec<&str> = doc.lines().collect();
     assert!(lines.len() > 1, "{doc}");
     assert!(lines.iter().all(|l| l.chars().count() <= 79), "{doc}");
@@ -405,15 +450,15 @@ fn docstrings_use_rst_code_and_wrap_at_79_columns() {
 }
 
 #[test]
-fn a_paragraph_ends_at_the_first_blank_line() {
+fn paragraphs_split_at_blank_lines() {
     assert_eq!(
-        schema::para(" First line\n second line.\n\n Next paragraph."),
-        "First line second line."
+        schema::paras(" First line\n second line.\n\n Next paragraph."),
+        vec!["First line second line.", "Next paragraph."]
     );
-    assert_eq!(schema::para(" Only one."), "Only one.");
-    assert_eq!(schema::para(""), "");
-    // A line of spaces is blank too.
-    assert_eq!(schema::para(" a\n   \n b"), "a");
+    assert_eq!(schema::paras(" Only one."), vec!["Only one."]);
+    assert!(schema::paras("").is_empty());
+    // A line of spaces is blank too, and runs of blank lines are one break.
+    assert_eq!(schema::paras(" a\n   \n\n b"), vec!["a", "b"]);
 }
 
 #[test]
@@ -424,7 +469,7 @@ fn a_java_keyword_field_needs_an_override() {
         }
     }
     let reg = vec![entry(Kw::BINDING_SCHEMA, Direction::Both)];
-    let err = emit_java::file(&reg, &reg[0]).unwrap_err();
+    let err = emit_java::block(&reg, &reg[0]).unwrap_err();
     assert!(err.contains("keyword"), "{err}");
 }
 
@@ -434,7 +479,7 @@ fn naming_helpers() {
     assert_eq!(schema::snake("UasDatalinkLs"), "uas_datalink_ls");
     assert_eq!(schema::camel("min_nm"), "minNm");
     assert_eq!(
-        schema::public_path(&WavelengthRecord::BINDING_SCHEMA),
+        schema::records()[0].rust_path,
         "tst_core::klv::st0601::WavelengthRecord"
     );
 }
@@ -566,8 +611,24 @@ fn check_lists_absent_targets_and_write_fills_them() {
         "# BEGIN GENERATED by print-records (WavelengthRecord); do not edit\n# END GENERATED by print-records (WavelengthRecord)\n",
     )
     .unwrap();
+    // The Java record is a block of a hand-owned file; its tail closes the body.
+    let java_dir = d.join("bindings/jvm/src/main/java/org/tstrans/klv");
+    std::fs::create_dir_all(&java_dir).unwrap();
+    std::fs::write(
+        java_dir.join("WavelengthRecord.java"),
+        "package org.tstrans.klv;\n\n// BEGIN GENERATED by print-records (WavelengthRecord); do not edit\n\
+         old\n// END GENERATED by print-records (WavelengthRecord)\n}\n",
+    )
+    .unwrap();
     write::write_all(&write::targets(&d, &reg).unwrap()).unwrap();
     assert_eq!(write::stale(&write::targets(&d, &reg).unwrap()), Vec::new());
+    let java = std::fs::read_to_string(java_dir.join("WavelengthRecord.java")).unwrap();
+    assert!(
+        java.starts_with("package org.tstrans.klv;\n\n// BEGIN")
+            && java.contains("public record WavelengthRecord(")
+            && java.ends_with("// END GENERATED by print-records (WavelengthRecord)\n}\n"),
+        "{java}"
+    );
     let py = std::fs::read_to_string(py_dir.join("klv.py")).unwrap();
     assert!(
         py.starts_with("x = 1\n# BEGIN") && py.ends_with("y = 2\n") && !py.contains("old\n"),
@@ -584,7 +645,12 @@ fn check_lists_generated_text_no_record_renders() {
         "// GENERATED by print-records from tst-core binding_record! declarations; do not edit.\n";
     let java = d.join("bindings/jvm/src/main/java/org/tstrans/klv");
     std::fs::create_dir_all(&java).unwrap();
-    std::fs::write(java.join("Gone.java"), header).unwrap();
+    std::fs::write(
+        java.join("Gone.java"),
+        "// BEGIN GENERATED by print-records (Gone); do not edit\n\
+         // END GENERATED by print-records (Gone)\n",
+    )
+    .unwrap();
     std::fs::write(java.join("Hand.java"), "package x;\n").unwrap();
     let gen_dir = d.join("bindings/python/src/generated");
     std::fs::create_dir_all(&gen_dir).unwrap();
@@ -607,7 +673,12 @@ fn check_lists_generated_text_no_record_renders() {
         .map(|(p, why)| format!("{} {why}", p.display()))
         .collect();
     assert_eq!(found.len(), 3, "{found:#?}");
-    assert!(found.iter().any(|s| s.contains("Gone.java")), "{found:#?}");
+    assert!(
+        found
+            .iter()
+            .any(|s| s.contains("Gone.java") && s.contains("(Gone)")),
+        "{found:#?}"
+    );
     assert!(
         found.iter().any(|s| s.contains("old_family.rs")),
         "{found:#?}"
@@ -660,4 +731,616 @@ fn the_command_line_refuses_a_missing_root_and_an_unknown_flag() {
         stdout.ends_with(&format!("1 records → {n} targets\n")),
         "{stdout}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The ST 0601 record: a scratch twin of what the family declares, rendered and
+// compared with the hand-written Java record and Python dataclass it replaces.
+// ---------------------------------------------------------------------------
+
+use tst_core::binding_schema::{FieldMark, FieldSpec, RecordSchema};
+
+/// Fields the hand record converts itself.
+const UAS_CUSTOM: &[&str] = &[
+    "universal_label",
+    "miis_core_id",
+    "platform_status",
+    "sensor_control_mode",
+    "icing_detected",
+    "sensor_fov_name",
+    "operational_mode",
+    "unknown",
+    "field_errors",
+    "imapb_specials",
+];
+
+/// Fields whose Java name is not the camelCase of the Rust name.
+const UAS_JAVA: &[(&str, &str)] = &[
+    ("platform_status", "platformStatusCode"),
+    ("sensor_control_mode", "sensorControlModeCode"),
+    ("icing_detected", "icingDetectedCode"),
+    ("sensor_fov_name", "sensorFovNameCode"),
+    ("operational_mode", "operationalModeCode"),
+];
+
+/// The pack records the struct carries, plus the SDCC-FLP list item.
+const UAS_PACKS: &[&str] = &[
+    "ImageHorizonPixels",
+    "ControlCommand",
+    "SensorFrameRate",
+    "MetadataSubstreamId",
+    "CountryCodes",
+    "AirbaseLocations",
+    "PayloadList",
+    "WeaponsStore",
+    "Waypoint",
+    "ViewDomain",
+    "SdccFlpField",
+];
+
+fn leak(s: &str) -> &'static str {
+    Box::leak(s.to_string().into_boxed_str())
+}
+
+/// `UasDatalinkLs` as the family will declare it: every field of the real
+/// struct (read from `model.rs`, so the twin cannot drift from it), marked as
+/// above. The Java record lists the fields in an order of its own, which
+/// differs from the struct's (and from the Python dataclass's, which follows
+/// the struct); `java_order` reorders the twin to the Java record's.
+fn uas_schema(java_order: bool) -> RecordSchema {
+    let src = std::fs::read_to_string(root().join("crates/tst-core/src/klv/st0601/model.rs"))
+        .expect("model.rs");
+    let start = src.find("pub struct UasDatalinkLs {").expect("struct");
+    let body = &src[start..start + src[start..].find("\n}\n").expect("end")];
+    let mut fields = Vec::new();
+    for l in body.lines().skip(1) {
+        let l = l.trim();
+        let Some(rest) = l.strip_prefix("pub ") else {
+            continue;
+        };
+        let (name, ty) = rest.split_once(": ").expect("field");
+        let ty = ty.trim_end_matches(',');
+        fields.push(FieldSpec {
+            name: leak(name),
+            ty: leak(ty),
+            mark: if UAS_CUSTOM.contains(&name) {
+                FieldMark::Custom
+            } else {
+                FieldMark::Plain
+            },
+            java: UAS_JAVA.iter().find(|(r, _)| *r == name).map(|(_, j)| *j),
+            doc: "",
+        });
+    }
+    let hand = std::fs::read_to_string(
+        root().join("bindings/jvm/src/main/java/org/tstrans/klv/UasDatalinkLs.java"),
+    )
+    .expect("UasDatalinkLs.java");
+    let order: Vec<String> = java_components(&hand, "UasDatalinkLs")
+        .into_iter()
+        .map(|(_, n)| n)
+        .collect();
+    let java_of = |f: &FieldSpec| f.java.map_or_else(|| schema::camel(f.name), str::to_string);
+    let mut sorted = Vec::new();
+    for n in order.iter().filter(|_| java_order) {
+        let at = fields
+            .iter()
+            .position(|f| java_of(f) == *n)
+            .unwrap_or_else(|| panic!("hand component `{n}` has no Rust field"));
+        sorted.push(fields.remove(at));
+    }
+    let fields = if java_order {
+        assert!(
+            fields.is_empty(),
+            "Rust fields the Java record lacks: {fields:?}"
+        );
+        sorted
+    } else {
+        fields
+    };
+    RecordSchema {
+        rust_path: "tst_core::klv::st0601::model::UasDatalinkLs",
+        name: "UasDatalinkLs",
+        non_exhaustive: false,
+        fields: Box::leak(fields.into_boxed_slice()),
+        doc: "",
+    }
+}
+
+fn uas_reg(java_order: bool) -> Vec<Entry> {
+    let mut r = schema::records();
+    for p in UAS_PACKS {
+        r.push(Entry {
+            family: "st0601",
+            py_module: "tstrans.klv",
+            java_pkg: "org/tstrans/klv",
+            direction: Direction::Both,
+            rust_path: leak(&format!("tst_core::klv::st0601::{p}")),
+            java_implements: "",
+            schema: RecordSchema {
+                rust_path: "",
+                name: leak(p),
+                non_exhaustive: false,
+                fields: &[],
+                doc: "",
+            },
+        });
+    }
+    r.push(Entry {
+        family: "st0601",
+        py_module: "tstrans.klv",
+        java_pkg: "org/tstrans/klv",
+        direction: Direction::Both,
+        rust_path: "tst_core::klv::st0601::UasDatalinkLs",
+        java_implements: "KlvSet",
+        schema: uas_schema(java_order),
+    });
+    r
+}
+
+/// Java source text without its block and line comments.
+fn no_java_comments(s: &str) -> String {
+    let mut text = s.to_string();
+    while let Some(i) = text.find("/*") {
+        let j = text[i..].find("*/").expect("closed comment") + i + 2;
+        text.replace_range(i..j, "");
+    }
+    text.lines()
+        .map(|l| l.split("//").next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `(type, name)` of each component of the record header in `java`.
+fn java_components(java: &str, record: &str) -> Vec<(String, String)> {
+    let text = no_java_comments(java);
+    let head = format!("public record {record}(");
+    let i = text.find(&head).expect("record header") + head.len();
+    let j = i + text[i..].find(") implements").expect("end of header");
+    text[i..j]
+        .split(',')
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(|c| {
+            let (t, n) = c.rsplit_once(char::is_whitespace).expect("type and name");
+            (t.trim().to_string(), n.to_string())
+        })
+        .collect()
+}
+
+/// `(setter, parameter type)` of each `Builder` setter in `java`.
+fn java_setters(java: &str) -> Vec<(String, String)> {
+    no_java_comments(java)
+        .lines()
+        .filter_map(|l| {
+            let rest = l.trim().strip_prefix("public Builder ")?;
+            let (name, params) = rest.split_once('(')?;
+            let ty = params.split_once(" v)")?.0;
+            Some((name.to_string(), ty.to_string()))
+        })
+        .collect()
+}
+
+#[test]
+fn the_st0601_twin_renders_the_hand_written_java_record_component_for_component() {
+    let reg = uas_reg(true);
+    let e = named(&reg, "UasDatalinkLs");
+    assert_eq!(e.schema.fields.len(), 147);
+    let block = emit_java::block(&reg, e).unwrap();
+    let hand = std::fs::read_to_string(
+        root().join("bindings/jvm/src/main/java/org/tstrans/klv/UasDatalinkLs.java"),
+    )
+    .unwrap();
+
+    let got = java_components(&block, "UasDatalinkLs");
+    let want = java_components(&hand, "UasDatalinkLs");
+    assert_eq!(got.len(), 147);
+    if std::env::var_os("PRINT_RECORDS_TABLE").is_some() {
+        for (f, (t, n)) in e.schema.fields.iter().zip(&want) {
+            let mapped = got.iter().find(|(_, gn)| gn == n);
+            println!(
+                "| {} | `{}` | `{t} {n}` | `{}` |",
+                f.name,
+                f.ty,
+                mapped.map_or("MISSING".to_string(), |(t, n)| format!("{t} {n}"))
+            );
+        }
+    }
+    let diff: Vec<String> = got
+        .iter()
+        .zip(&want)
+        .filter(|(g, w)| g != w)
+        .map(|(g, w)| format!("generated `{} {}` vs hand `{} {}`", g.0, g.1, w.0, w.1))
+        .collect();
+    assert!(diff.is_empty(), "{diff:#?}");
+    assert_eq!(got, want, "component lists differ in length or order");
+
+    // The Builder names the JNI side calls, with the types a caller passes.
+    // The five coded enums are the one difference: their converter hands the
+    // setter a boxed `Integer` (null when absent), so the setter takes an
+    // `Integer` where the hand one takes an `int`; an `int` argument still
+    // compiles.
+    let (got, want) = (java_setters(&block), java_setters(&hand));
+    assert_eq!(got.len(), want.len());
+    let differ: Vec<_> = got
+        .iter()
+        .zip(&want)
+        .filter(|(g, w)| g != w)
+        .map(|(g, w)| (g.0.as_str(), g.1.as_str(), w.1.as_str()))
+        .collect();
+    let enums: Vec<_> = UAS_JAVA
+        .iter()
+        .map(|(_, j)| (*j, "Integer", "int"))
+        .collect();
+    assert_eq!(differ, enums);
+    assert!(block.contains(") implements KlvSet {\n"), "{block}");
+}
+
+#[test]
+fn the_st0601_twin_renders_the_hand_written_dataclass_field_for_field() {
+    let reg = uas_reg(false);
+    let e = named(&reg, "UasDatalinkLs");
+    let block = emit_pyi::py_block(&reg, e).unwrap();
+    let hand =
+        std::fs::read_to_string(root().join("bindings/python/python/tstrans/klv.py")).unwrap();
+    let fields = |text: &str| -> Vec<(String, String, Option<String>)> {
+        text.lines()
+            .filter(|l| {
+                l.starts_with("    ") && !l.starts_with("     ") && !l.trim_start().starts_with('#')
+            })
+            .filter_map(|l| {
+                let l = l.split("  #").next().unwrap().trim();
+                let (name, rest) = l.split_once(": ")?;
+                // A docstring line is not a field.
+                if !name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                {
+                    return None;
+                }
+                Some(match rest.split_once(" = ") {
+                    Some((a, d)) => (name.to_string(), a.to_string(), Some(d.to_string())),
+                    None => (name.to_string(), rest.to_string(), None),
+                })
+            })
+            .collect()
+    };
+    let start = hand.find("class UasDatalinkLs:").unwrap();
+    // The hand `__post_init__` sits among the fields; the methods that follow
+    // them start at `with_`.
+    let end = start + hand[start..].find("\n    def with_(").unwrap();
+    // The dataclass lists the fields in an order of its own, neither the
+    // struct's nor the Java record's, so the two are compared as sets.
+    let (mut want, mut got) = (fields(&hand[start..end]), fields(&block));
+    want.sort();
+    got.sort();
+    let diff: Vec<String> = got
+        .iter()
+        .zip(&want)
+        .filter(|(g, w)| g != w)
+        .map(|(g, w)| format!("generated {g:?} vs hand {w:?}"))
+        .collect();
+    assert!(diff.is_empty(), "{diff:#?}");
+    assert_eq!((got.len(), want.len()), (147, 147));
+}
+
+// ---------------------------------------------------------------------------
+// Readiness for the ST 0601 record: public paths, host residue, type map,
+// coded enums, whole docs, nested frames, boxing.
+// ---------------------------------------------------------------------------
+
+mod hidden {
+    tst_core::binding_record! {
+        /// Declared in a private module and re-exported by the registry path.
+        #[derive(Debug, Clone, PartialEq)]
+        pub struct Hidden {
+            pub a: u8,
+        }
+    }
+}
+
+#[test]
+fn generated_code_names_the_registry_path_not_the_declaring_module() {
+    let mut e = entry(hidden::Hidden::BINDING_SCHEMA, Direction::Both);
+    assert!(
+        e.schema.rust_path.contains("hidden"),
+        "{}",
+        e.schema.rust_path
+    );
+    e.rust_path = "print_records_emit::Hidden";
+    let reg = vec![e];
+    for text in [
+        emit_py::record_pair(&reg, &reg[0]).unwrap(),
+        emit_jvm_rs::record_pair(&reg, &reg[0]).unwrap(),
+    ] {
+        assert!(text.contains("&print_records_emit::Hidden"), "{text}");
+        assert!(!text.contains("hidden::"), "{text}");
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct IcingFixture;
+
+tst_core::binding_record! {
+    /// Coded enums cross as their code.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct EnumFixture {
+        pub id: u8,
+        @[custom] @[java("icingCode")] pub icing: Option<IcingFixture>,
+    }
+}
+
+#[test]
+fn a_custom_enum_row_names_its_host_types_and_an_unknown_custom_type_is_refused() {
+    // The row is keyed by the type's name; rows exist for the five coded enums.
+    let mut s = EnumFixture::BINDING_SCHEMA;
+    let fields: Vec<_> = s
+        .fields
+        .iter()
+        .map(|f| {
+            let mut f = *f;
+            if f.name == "icing" {
+                f.ty = "Option<crate::klv::st0601::IcingDetected>";
+            }
+            f
+        })
+        .collect();
+    s.fields = Box::leak(fields.into_boxed_slice());
+    let reg = vec![entry(s, Direction::Both)];
+    let py = emit_pyi::py_block(&reg, &reg[0]).unwrap();
+    assert!(
+        py.contains("    icing: IcingDetected | int | None = None\n"),
+        "{py}"
+    );
+    let pyi = emit_pyi::pyi_block(&reg, &reg[0]).unwrap();
+    assert!(
+        pyi.contains("    icing: Optional[IcingDetected | int] = ...\n"),
+        "{pyi}"
+    );
+    let java = emit_java::block(&reg, &reg[0]).unwrap();
+    assert!(java.contains("Integer icingCode"), "{java}");
+    let rs = emit_jvm_rs::record_pair(&reg, &reg[0]).unwrap();
+    assert!(
+        rs.contains("crate::custom::build_enum_fixture_icing(env, &r.icing)"),
+        "{rs}"
+    );
+    for named in [
+        "IcingDetected",
+        "OperationalMode",
+        "PlatformStatus",
+        "SensorControlMode",
+        "SensorFovName",
+    ] {
+        let mut s = EnumFixture::BINDING_SCHEMA;
+        let ty: &'static str = leak(&format!("Option<{named}>"));
+        let fields: Vec<_> = s
+            .fields
+            .iter()
+            .map(|f| FieldSpec { ty, ..*f })
+            .map(|f| {
+                if f.name == "id" {
+                    FieldSpec { ty: "u8", ..f }
+                } else {
+                    f
+                }
+            })
+            .collect();
+        s.fields = Box::leak(fields.into_boxed_slice());
+        let reg = vec![entry(s, Direction::Both)];
+        emit_pyi::py_block(&reg, &reg[0]).unwrap_or_else(|e| panic!("{named}: {e}"));
+    }
+    // Without a row the generator cannot name the host type.
+    let reg = vec![entry(EnumFixture::BINDING_SCHEMA, Direction::Both)];
+    let err = emit_pyi::py_block(&reg, &reg[0]).unwrap_err();
+    assert!(
+        err.contains("EnumFixture.icing") && err.contains("CUSTOM row"),
+        "{err}"
+    );
+}
+
+tst_core::binding_record! {
+    /// First paragraph, with a `code` span.
+    ///
+    /// Second paragraph: a < b & c > d, an @param word and a [`Link`].
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct DocFixture {
+        /// Field text, first paragraph.
+        ///
+        /// Field text, second paragraph.
+        pub id: u8,
+    }
+}
+
+#[test]
+fn the_whole_doc_is_emitted_escaped_and_wrapped() {
+    let reg = vec![entry(DocFixture::BINDING_SCHEMA, Direction::Both)];
+    let java = emit_java::block(&reg, &reg[0]).unwrap();
+    for want in [
+        " * First paragraph, with a {@code code} span.\n *\n",
+        " * Second paragraph: a &lt; b &amp; c &gt; d, an &#64;param word and a {@code Link}.\n",
+        " * @param id Field text, first paragraph.\n *\n *     Field text, second paragraph.\n",
+    ] {
+        assert!(java.contains(want), "{want}\n{java}");
+    }
+    let py = emit_pyi::py_block(&reg, &reg[0]).unwrap();
+    assert!(
+        py.contains("\"\"\"First paragraph, with a ``code`` span.\n\n    Second paragraph:"),
+        "{py}"
+    );
+    assert!(py.contains("a ``Link``."), "{py}");
+    // Long text wraps: Javadoc at 100 columns, docstrings at 79.
+    let long = "word ".repeat(60);
+    let wrapped = emit_pyi::docstring_paras(&[long.trim().to_string(), long.trim().to_string()]);
+    assert!(
+        wrapped.lines().all(|l| l.chars().count() <= 79),
+        "{wrapped}"
+    );
+    assert_eq!(
+        wrapped.lines().filter(|l| l.is_empty()).count(),
+        1,
+        "{wrapped}"
+    );
+    let whole = reg_with_doc(&long);
+    let java = emit_java::block(&whole, &whole[0]).unwrap();
+    assert!(java.lines().all(|l| l.chars().count() <= 100), "{java}");
+    assert!(
+        java.lines().filter(|l| l.starts_with(" * word")).count() > 1,
+        "{java}"
+    );
+}
+
+/// A record whose doc is `long`.
+fn reg_with_doc(long: &str) -> Vec<Entry> {
+    let mut s = DocFixture::BINDING_SCHEMA;
+    s.doc = leak(long);
+    vec![entry(s, Direction::Both)]
+}
+
+#[test]
+fn nested_records_are_built_in_frames_and_scalars_are_boxed_with_value_of() {
+    let reg = reg();
+    // A record field and an optional record field, past the constructor limit.
+    let rich = emit_jvm_rs::record_pair(&reg, named(&reg, "RichFixture")).unwrap();
+    let frame = "env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| ";
+    assert!(
+        rich.contains(&format!(
+            "let g = {frame}crate::generated::st0601::build_wavelength_record(env, &r.g))?;"
+        )),
+        "{rich}"
+    );
+    assert!(
+        rich.contains(&format!(
+            "if let Some(v) = &r.opt_band {{ let o1 = {frame}crate::generated::st0601::build_wavelength_record(env, v))?;"
+        )) || rich.contains(&format!("{frame}crate::generated::st0601::build_wavelength_record(env, v))?;")),
+        "{rich}"
+    );
+    // An optional scalar on the constructor path is boxed through `valueOf`.
+    let opt = emit_jvm_rs::record_pair(&reg, named(&reg, "OptFixture")).unwrap();
+    assert!(
+        opt.contains(
+            "env.call_static_method(\"java/lang/Long\", \"valueOf\", \"(J)Ljava/lang/Long;\", &["
+        ),
+        "{opt}"
+    );
+    assert!(!opt.contains("new_object(\"java/lang/Long\""), "{opt}");
+    // A Builder sets an optional scalar by its primitive, unboxed.
+    assert!(
+        rich.contains("\"optCount\", \"(J)Lorg/tstrans/klv/RichFixture$Builder;\""),
+        "{rich}"
+    );
+    let java = emit_java::block(&reg, named(&reg, "RichFixture")).unwrap();
+    assert!(java.contains("public Builder optCount(long v)"), "{java}");
+    assert!(java.contains("private Long optCount;"), "{java}");
+}
+
+#[test]
+fn narrow_signed_integers_and_lists_follow_the_hand_written_record() {
+    let names = ["WavelengthRecord"];
+    // i8 and i16 cross as Java int, range-checked on the way in.
+    for (rust, narrow) in [("i8", "checked_i8"), ("i16", "checked_i16")] {
+        let ty = typemap::map(rust, &names).unwrap();
+        assert_eq!(ty.java(), "int");
+        assert_eq!(ty.sig(&[]), "I");
+        assert_eq!(
+            typemap::map(&format!("Option<{rust}>"), &names)
+                .unwrap()
+                .java(),
+            "Integer"
+        );
+        let typemap::Ty::Scalar(sc) = ty else {
+            panic!()
+        };
+        assert_eq!(sc.narrow(), Some(narrow));
+    }
+    assert_eq!(
+        typemap::map("Vec<u8>", &names).unwrap().java(),
+        "ByteBuffer"
+    );
+    assert_eq!(
+        typemap::map("Option<Vec<u64>>", &names).unwrap().java(),
+        "List<Long>"
+    );
+    assert_eq!(
+        typemap::map("Vec<u32>", &names).unwrap().java(),
+        "List<Long>"
+    );
+}
+
+tst_core::binding_record! {
+    /// A class with a hand-written tail.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct TailFixture {
+        pub a: u8,
+        pub b: Option<u8>,
+    }
+}
+
+#[test]
+fn hand_written_text_after_the_end_marker_survives_write_and_check() {
+    let reg = vec![entry(TailFixture::BINDING_SCHEMA, Direction::Both)];
+    let d = scratch("tail");
+    let py_dir = d.join("bindings/python/python/tstrans");
+    let java_dir = d.join("bindings/jvm/src/main/java/org/tstrans/klv");
+    std::fs::create_dir_all(&py_dir).unwrap();
+    std::fs::create_dir_all(&java_dir).unwrap();
+    let py_marked = |c: &str| {
+        format!(
+            "import x\n\n# BEGIN GENERATED by print-records (TailFixture); do not edit\nold\n\
+             # END GENERATED by print-records (TailFixture)\n\n    def __post_init__(self) -> None:\n\
+             \x20       {c}\n\ny = 2\n"
+        )
+    };
+    std::fs::write(py_dir.join("klv.py"), py_marked("check()")).unwrap();
+    std::fs::write(py_dir.join("klv.pyi"), py_marked("...")).unwrap();
+    let java_text = "package org.tstrans.klv;\n\nimport java.util.List;\n\n\
+        // BEGIN GENERATED by print-records (TailFixture); do not edit\nold\n\
+        // END GENERATED by print-records (TailFixture)\n\n    public TailFixture {\n        \
+        if (a < 0) throw new IllegalArgumentException();\n    }\n}\n";
+    std::fs::write(java_dir.join("TailFixture.java"), java_text).unwrap();
+
+    write::write_all(&write::targets(&d, &reg).unwrap()).unwrap();
+    let py = std::fs::read_to_string(py_dir.join("klv.py")).unwrap();
+    assert!(
+        py.starts_with("import x\n\n# BEGIN") && !py.contains("old\n"),
+        "{py}"
+    );
+    assert!(
+        py.contains("    b: int | None = None\n# END GENERATED")
+            && py.ends_with("# END GENERATED by print-records (TailFixture)\n\n    def __post_init__(self) -> None:\n        check()\n\ny = 2\n"),
+        "{py}"
+    );
+    let java = std::fs::read_to_string(java_dir.join("TailFixture.java")).unwrap();
+    assert!(
+        java.contains("public record TailFixture(int a, Integer b) {\n// END GENERATED")
+            && java.ends_with(
+                "\n    public TailFixture {\n        if (a < 0) throw new IllegalArgumentException();\n    }\n}\n"
+            ),
+        "{java}"
+    );
+    // Check compares the block only: an edited tail is not stale, an edited block is.
+    assert!(write::stale(&write::targets(&d, &reg).unwrap()).is_empty());
+    std::fs::write(py_dir.join("klv.py"), py.replace("check()", "other()")).unwrap();
+    std::fs::write(
+        java_dir.join("TailFixture.java"),
+        java.replace("a < 0", "a < 1"),
+    )
+    .unwrap();
+    let stale = write::stale(&write::targets(&d, &reg).unwrap());
+    assert!(
+        stale
+            .iter()
+            .all(|(p, _)| p.extension().is_some_and(|x| x == "rs")),
+        "{stale:?}"
+    );
+    std::fs::write(
+        py_dir.join("klv.py"),
+        py.replace("b: int | None", "b: str | None"),
+    )
+    .unwrap();
+    assert!(
+        write::stale(&write::targets(&d, &reg).unwrap())
+            .iter()
+            .any(|(p, _)| p.ends_with("klv.py"))
+    );
+    std::fs::remove_dir_all(&d).unwrap();
 }

@@ -2,14 +2,16 @@
 //! for `bindings/jvm/src/generated/<family>.rs`.
 
 use crate::emit_py::HEADER;
-use crate::schema::{Entry, lookup, public_path, snake};
+use crate::schema::{Entry, lookup, snake};
 use crate::typemap::{Fld, Sc, Ty, resolve};
 
 /// A record with more crossing fields than this is built through its `Builder`.
 pub const CTOR_MAX: usize = 8;
 
 /// Local references reserved up front: two per crossing field plus headroom
-/// for the temporaries a conversion mints.
+/// for the temporaries a conversion mints. A nested record is built inside
+/// its own local frame and hands back one reference, so it counts as one
+/// slot like any other object field.
 pub fn capacity(fields: usize) -> usize {
     2 * fields + 32
 }
@@ -18,7 +20,7 @@ pub fn capacity(fields: usize) -> usize {
 fn scalar_jvalue(sc: Sc, val: &str) -> String {
     let i = sc.info();
     let arg = match sc {
-        Sc::U8 | Sc::U16 => format!("{val} as i32"),
+        Sc::U8 | Sc::U16 | Sc::I8 | Sc::I16 => format!("{val} as i32"),
         Sc::U32 | Sc::U64 => format!("{val} as i64"),
         Sc::Bool => format!("u8::from({val})"),
         _ => val.to_string(),
@@ -74,17 +76,19 @@ impl Gen<'_> {
             Ty::Bytes => pre.push(format!(
                 "let {var} = crate::jutil::wrap_heap_byte_buffer(env, {src}).map_err(|()| jni::errors::Error::JavaException)?;"
             )),
+            // The nested record mints its own temporaries; the frame frees them
+            // and keeps one reference.
             Ty::Record(n) => pre.push(format!(
-                "let {var} = {}(env, {src})?;",
+                "let {var} = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {}(env, {src}))?;",
                 conv_fn(self.reg, self.e, n, "build")
             )),
             Ty::Scalar(sc) => {
                 let i = sc.info();
                 pre.push(format!(
-                    "let {var} = env.new_object(\"java/lang/{}\", \"({})V\", &[{}])?;",
-                    i.boxed,
+                    "let {var} = env.call_static_method(\"java/lang/{b}\", \"valueOf\", \"({})Ljava/lang/{b};\", &[{}])?.l()?;",
                     i.sig,
-                    scalar_jvalue(*sc, &deref(src))
+                    scalar_jvalue(*sc, &deref(src)),
+                    b = i.boxed
                 ));
             }
             Ty::Opt(inner) => {
@@ -172,7 +176,7 @@ impl Gen<'_> {
             None => raw.to_string(),
             Some(f) => {
                 let wide = match sc {
-                    Sc::U8 | Sc::U16 => "i64::from(n)",
+                    Sc::U8 | Sc::U16 | Sc::I8 | Sc::I16 => "i64::from(n)",
                     _ => "n",
                 };
                 format!("{{ let n = {raw}; crate::jutil::{f}(env, {wide}, \"{path}\")? }}")
@@ -195,7 +199,7 @@ fn var_of(name: &str) -> String {
 
 fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
     let s = &e.schema;
-    let path = public_path(s);
+    let path = e.rust_path;
     let class = format!("{}/{}", e.java_pkg, s.name);
     let crossing: Vec<&Fld> = flds.iter().filter(|f| f.ty.is_some()).collect();
     let mut g = Gen { reg, e, n: 0 };
@@ -229,8 +233,13 @@ fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
             scalar_jvalue(*sc, &format!("r.{name}"))
         } else if skip_absent {
             let Ty::Opt(inner) = ty else { unreachable!() };
-            let x = g.build_obj(inner, "v", None, &mut pre);
-            format!("JValue::Object(&{x})")
+            if let Ty::Scalar(sc) = inner.as_ref() {
+                // A setter takes the primitive; there is nothing to box.
+                scalar_jvalue(*sc, "*v")
+            } else {
+                let x = g.build_obj(inner, "v", None, &mut pre);
+                format!("JValue::Object(&{x})")
+            }
         } else {
             let x = g.build_obj(ty, &format!("&r.{name}"), Some(&var), &mut pre);
             format!("JValue::Object(&{x})")
@@ -239,7 +248,7 @@ fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
             let call = format!(
                 "env.call_method(&b, \"{}\", \"({})L{bclass};\", &[{val}])?;",
                 f.java,
-                ty.sig(reg)
+                ty.setter_sig(reg)
             );
             if skip_absent {
                 setters.push_str(&format!(
@@ -281,7 +290,7 @@ fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
 
 fn read(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
     let s = &e.schema;
-    let path = public_path(s);
+    let path = e.rust_path;
     let mut g = Gen { reg, e, n: 0 };
     let mut o = format!(
         "pub(crate) fn read_{}(env: &mut JNIEnv<'_>, obj: &JObject<'_>) -> jni::errors::Result<{path}> {{\n",
@@ -306,7 +315,7 @@ fn read(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
             o.push_str(&format!("    let {var} = {raw};\n"));
             if let Some(f) = sc.narrow() {
                 let wide = match sc {
-                    Sc::U8 | Sc::U16 => format!("i64::from({var})"),
+                    Sc::U8 | Sc::U16 | Sc::I8 | Sc::I16 => format!("i64::from({var})"),
                     _ => var.clone(),
                 };
                 o.push_str(&format!(

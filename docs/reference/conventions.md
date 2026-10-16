@@ -441,6 +441,47 @@ A field takes `@[…]` prefixes; they may repeat, e.g.
 - `@[java("name")]` — the JVM name, where it is not the camelCase of the Rust
   field.
 
+Where the generated text goes:
+
+- The Python and JVM converters are whole generated files under
+  `bindings/{python,jvm}/src/generated/<family>.rs`.
+- The dataclass, its stub entry and the Java record are blocks between
+  `BEGIN GENERATED` and `END GENERATED` marker lines (`#` in Python, `//` in
+  Java) of a hand-owned file. A block ends inside the class or record body, so
+  everything after the end marker (`__post_init__`, helper methods, a Java
+  compact constructor, the closing brace) is hand-written and survives
+  regeneration; `--check` compares the block only. The Java block carries the
+  Javadoc, the record header with its components and, past eight components,
+  the `Builder`; the package, imports and the closing brace stay hand-written.
+- The registry names each record's public path (`tst_core::klv::st0601::X`),
+  which the converters use, so the declaring module may be private.
+
+Field types and defaults:
+
+- Rust `i8`/`i16` cross as Java `int` (range-checked on the way in), `u8`/`u16`
+  as `int`, `u32`/`u64` as `long`, `Vec<u8>` as `ByteBuffer`, `Vec<T>` as
+  `List<T>`; an `Option<T>` is the boxed type, and a Builder sets an optional
+  scalar by its primitive.
+- A required field that follows an optional one takes a host default: the
+  dataclass writes `= 0` / `= 0.0` / `= False` / `= ""` / `= b""` / `= ()`, and
+  the Builder starts it at the same value. A required record has no such
+  default and is refused. A `@[custom]` field takes the default of its row in
+  the type table; its converter owns the rest.
+
+A custom field names its host types in a row of the generator's type table
+(`CUSTOM` in `typemap.rs`, keyed by the Rust type with paths and `Option<…>`
+removed). The converters are hand-written functions with these signatures:
+
+| Host | Function | Signature |
+|---|---|---|
+| Python | `<record>_<field>_to_py` | `(py: Python<'_>, &Rust) -> PyResult<PyObject>` |
+| Python | `<record>_<field>_from_py` | `(obj: &Bound<'_, PyAny>) -> PyResult<Rust>`; receives the record object and reads the field itself |
+| JVM | `build_<record>_<field>` | `(env: &mut JNIEnv<'l>, &Rust) -> jni::errors::Result<JObject<'l>>`; `null` for an absent value |
+| JVM | `read_<record>_<field>` | `(env: &mut JNIEnv<'_>, obj: &JObject<'_>) -> jni::errors::Result<Rust>`; receives the record object and reads the field itself |
+
+The Python annotation of a custom enum field is `<Enum> | int | None`: the
+enum when the code point is known, the raw `int` when it is not.
+
 The generator is never its own oracle: byte-level expectations come from the
 hand-built spec bytes and the hash-pinned fixtures, not from generated text.
 

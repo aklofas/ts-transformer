@@ -34,6 +34,12 @@ pub struct Entry {
     /// The Java package directory, e.g. `org/tstrans/klv`.
     pub java_pkg: &'static str,
     pub direction: Direction,
+    /// The path a binding crate names the record by, e.g.
+    /// `tst_core::klv::st0601::WavelengthRecord`. Explicit because the
+    /// declaring module is often private and re-exported higher up.
+    pub rust_path: &'static str,
+    /// The interface the Java record implements, `""` for none.
+    pub java_implements: &'static str,
     pub schema: RecordSchema,
 }
 
@@ -46,32 +52,55 @@ pub fn records() -> Vec<Entry> {
         py_module: "tstrans.klv",
         java_pkg: "org/tstrans/klv",
         direction: Direction::Both,
+        rust_path: "tst_core::klv::st0601::WavelengthRecord",
+        java_implements: "",
         schema: WavelengthRecord::BINDING_SCHEMA,
     }]
 }
 
-/// Module segments that are private in the declaring crate; the record is
-/// re-exported one level up.
-const PRIVATE_SEGMENTS: &[&str] = &["packs"];
-
-/// The path a binding crate can name the record by.
-pub fn public_path(schema: &RecordSchema) -> String {
-    schema
-        .rust_path
-        .split("::")
-        .filter(|s| !PRIVATE_SEGMENTS.contains(s))
-        .collect::<Vec<_>>()
-        .join("::")
+/// The paragraphs of a joined doc text: runs of lines between empty ones,
+/// each line without the space a `///` comment leaves, joined by one space.
+pub fn paras(doc: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur: Vec<&str> = Vec::new();
+    for l in doc.lines().map(|l| l.strip_prefix(' ').unwrap_or(l)) {
+        if l.trim().is_empty() {
+            if !cur.is_empty() {
+                out.push(cur.join(" "));
+                cur.clear();
+            }
+        } else {
+            cur.push(l);
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur.join(" "));
+    }
+    out
 }
 
-/// The first paragraph of a joined doc text: the lines up to the first empty
-/// one, each without the space a `///` comment leaves, joined by one space.
-pub fn para(doc: &str) -> String {
-    doc.lines()
-        .map(|l| l.strip_prefix(' ').unwrap_or(l))
-        .take_while(|l| !l.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+/// `` [`X`] `` to `` `X` ``: Javadoc has no target for a rustdoc link.
+pub fn unlink(doc: &str) -> String {
+    let mut out = String::new();
+    let mut rest = doc;
+    while let Some(i) = rest.find("[`") {
+        let after = &rest[i + 2..];
+        match after.find("`]") {
+            Some(j) if !after[..j].contains('`') => {
+                out.push_str(&rest[..i]);
+                out.push('`');
+                out.push_str(&after[..j]);
+                out.push('`');
+                rest = &after[j + 2..];
+            }
+            _ => {
+                out.push_str(&rest[..i + 2]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `WavelengthRecord` to `wavelength_record`.

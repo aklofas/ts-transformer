@@ -1,6 +1,6 @@
 //! The dataclass text: the `.py` definition and its `.pyi` stub.
 
-use crate::schema::{Entry, para};
+use crate::schema::{Entry, paras, unlink};
 use crate::typemap::resolve;
 
 /// A docstring body: backslashes and triple quotes cannot end the string early.
@@ -28,23 +28,31 @@ const DOC_WIDTH: usize = 79;
 
 /// A class docstring at four spaces: one line when it fits in
 /// [`DOC_WIDTH`], else wrapped at word boundaries with the closing quotes
-/// on the last text line, as the hand-written docstrings are.
-pub fn docstring(text: &str) -> String {
+/// on the last text line, as the hand-written docstrings are. Paragraphs are
+/// separated by one empty line.
+pub fn docstring_paras(paras: &[String]) -> String {
     // Every line leaves room for the closing quotes.
     let width = DOC_WIDTH - 3;
     let mut lines: Vec<String> = Vec::new();
     let mut cur = String::from("    \"\"\"");
     let mut empty = true;
-    for w in text.split_whitespace() {
-        if !empty && cur.chars().count() + 1 + w.chars().count() > width {
+    for (i, text) in paras.iter().enumerate() {
+        if i > 0 {
             lines.push(std::mem::replace(&mut cur, String::from("    ")));
+            lines.push(String::new());
             empty = true;
         }
-        if !empty {
-            cur.push(' ');
+        for w in text.split_whitespace() {
+            if !empty && cur.chars().count() + 1 + w.chars().count() > width {
+                lines.push(std::mem::replace(&mut cur, String::from("    ")));
+                empty = true;
+            }
+            if !empty {
+                cur.push(' ');
+            }
+            cur.push_str(w);
+            empty = false;
         }
-        cur.push_str(w);
-        empty = false;
     }
     cur.push_str("\"\"\"");
     lines.push(cur);
@@ -57,10 +65,13 @@ fn fields(reg: &[Entry], e: &Entry, stub: bool) -> Result<String, String> {
         let ty = f.ty.as_ref().expect("crossing");
         let ann = ty.py_ann();
         let name = f.spec.name;
-        match (ty.is_opt(), stub) {
-            (true, true) => o.push_str(&format!("    {name}: Optional[{ann}] = ...\n")),
-            (true, false) => o.push_str(&format!("    {name}: {ann} | None = None\n")),
-            (false, _) => o.push_str(&format!("    {name}: {ann}\n")),
+        let opt = ty.is_opt();
+        match (&f.py_default, stub) {
+            (Some(_), true) if opt => o.push_str(&format!("    {name}: Optional[{ann}] = ...\n")),
+            (Some(_), true) => o.push_str(&format!("    {name}: {ann} = ...\n")),
+            (Some(d), false) if opt => o.push_str(&format!("    {name}: {ann} | None = {d}\n")),
+            (Some(d), false) => o.push_str(&format!("    {name}: {ann} = {d}\n")),
+            (None, _) => o.push_str(&format!("    {name}: {ann}\n")),
         }
     }
     Ok(o)
@@ -71,9 +82,12 @@ pub fn py_block(reg: &[Entry], e: &Entry) -> Result<String, String> {
     let s = &e.schema;
     let mut o = String::from("@dataclass(frozen=True, slots=True)\n");
     o.push_str(&format!("class {}:\n", s.name));
-    let doc = para(s.doc);
+    let doc: Vec<String> = paras(s.doc)
+        .iter()
+        .map(|p| escape_docstring(&rst_code(&unlink(p))))
+        .collect();
     if !doc.is_empty() {
-        o.push_str(&docstring(&escape_docstring(&rst_code(&doc))));
+        o.push_str(&docstring_paras(&doc));
         o.push('\n');
     }
     let body = fields(reg, e, false)?;
