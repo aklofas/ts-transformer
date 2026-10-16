@@ -7,9 +7,9 @@
 //! frame, which is undefined behavior under `panic="unwind"` and an
 //! abort (with no last-error visibility) under `panic="abort"`.
 //!
-//! The inner `Handle::with_inner_{mut,ref}` helpers in `handle.rs`
+//! The inner `CHandle::with_inner_{mut,ref}` helpers in `handle.rs`
 //! already wrap data-path closures; `ffi_catch` covers the open path
-//! and config-builder setters where no `Handle` exists yet.
+//! and config-builder setters where no `CHandle` exists yet.
 //!
 //! # Default-value conventions
 //!
@@ -32,17 +32,16 @@
 //! `TstError::* as i32` directly; the default is only observed on
 //! actual panic, where `PanicCaught` is in last-error.
 
-#[cfg(feature = "std")]
 use crate::error::record_panic_caught;
 
 /// Run `f` inside a panic boundary. On panic, record `PanicCaught` to
-/// the thread-local last-error (with a best-effort detail extracted
-/// from the panic payload) and return `default`. On success, return
-/// `f()`'s value unchanged.
+/// the last-error slot (with the payload rendered by
+/// `tst_pipeline::binding::panic::payload_message`) and return `default`.
+/// On success, return `f()`'s value unchanged.
 ///
-/// Under `std` this uses `std::panic::catch_unwind`. Under `no_std`
-/// (bare-metal targets where panic = abort) the closure is run directly —
-/// no unwinding is possible, so no wrapper is needed.
+/// One body for both planes: `tst_pipeline::binding::panic::catch` is
+/// `catch_unwind` under `std` and runs the closure directly under `no_std`
+/// (panic = abort; `default` is then never returned).
 ///
 /// `AssertUnwindSafe` is sound here because every caller in `tst-c`
 /// satisfies one of:
@@ -58,38 +57,17 @@ use crate::error::record_panic_caught;
 ///     that the caller now owns; a panic before `Box::into_raw` simply
 ///     drops the in-progress `Box` (Rust unwinding semantics) and
 ///     leaks nothing.
-#[cfg(feature = "std")]
 pub(crate) fn ffi_catch<R, F>(default: R, f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    use core::panic::AssertUnwindSafe;
-    match std::panic::catch_unwind(AssertUnwindSafe(f)) {
+    match tst_pipeline::binding::panic::catch(f) {
         Ok(value) => value,
-        Err(payload) => {
-            let detail = panic_payload_message(&*payload);
+        Err(detail) => {
             record_panic_caught(&detail);
             default
         }
     }
-}
-
-/// Under no_std (panic = abort), there is no unwinding. Run the closure
-/// directly; the `default` value is never used but is kept in the signature
-/// so call sites are identical in both modes.
-#[cfg(not(feature = "std"))]
-pub(crate) fn ffi_catch<R, F>(_default: R, f: F) -> R
-where
-    F: FnOnce() -> R,
-{
-    f()
-}
-
-/// Best-effort detail string from a `catch_unwind` payload — one
-/// renderer for every binding (`tst_pipeline::binding::panic`).
-#[cfg(feature = "std")]
-pub(crate) fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> alloc::string::String {
-    tst_pipeline::binding::panic::payload_message(payload)
 }
 
 #[cfg(test)]

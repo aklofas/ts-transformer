@@ -1125,11 +1125,10 @@ typedef struct tst_demux_receiver_t tst_demux_receiver_t;
  * Opaque handle wrapping a `tst_core::mpegts::demux::Demuxer`.
  *
  * Allocated by `tst_demuxer_open` / `tst_demuxer_open_with_config`
- * and freed by `tst_demuxer_close`. The `arena` is shared between
- * the data-path lock and the caller's `TstEvent` lifetime contract
- * (§4.5 borrowed-buffer policy: pointer fields on `TstEvent` are
- * valid until the next `tst_demuxer_next_event` or `tst_demuxer_close`
- * call on this handle).
+ * and freed by `tst_demuxer_close`. Pointer fields on a `TstEvent` borrow
+ * from the handle's event arena and are valid until the next
+ * `tst_demuxer_next_event` or `tst_demuxer_close` call on this handle
+ * (§4.5 borrowed-buffer policy).
  */
 typedef struct TstDemuxer TstDemuxer;
 
@@ -1221,9 +1220,9 @@ typedef struct tst_muxer_t tst_muxer_t;
  * [`tst_param_sets_free`].
  *
  * Deliberately a bare `Box<ParameterSets>`, *not* the crate's
- * mutex-backed `Handle<T>` that [`crate::klv_st0601::TstSt0601`] uses —
+ * mutex-backed `CHandle<T, S>` that [`crate::klv_st0601::TstSt0601`] uses —
  * `ParameterSets` has no mutation surface and no `_close`, so there is
- * nothing for a `Handle`'s lock to protect; a plain `Box` is the
+ * nothing for a `CHandle`'s lock to protect; a plain `Box` is the
  * simpler choice, equally sound for a handle that is only ever read
  * then freed.
  */
@@ -6092,11 +6091,10 @@ void tst_st0601_free(struct tst_st0601_t *p);
 /**
  * Fill `*out` with the curated geometry/attitude summary — see
  * [`TstSt0601Geometry`]. Returns 0 on success, or a negative `TST_E_*`
- * code if `p` or `out` is null, or `TST_E_CLOSED` if an earlier call on
- * this same live handle triggered the caught-panic latch (see
- * `Handle::with_inner_ref` in `crate::handle` — a caught panic drops
- * the inner state, so later calls on the same pointer report `Closed`
- * rather than reusing possibly-corrupted state). This type has no
+ * code if `p` or `out` is null, or `TST_E_PANIC_CAUGHT` if the read
+ * panicked (see `CHandle::with_inner_ref` in `crate::handle` — a caught
+ * panic in a read-only accessor keeps the decoded state, so later calls
+ * on the same pointer still work). This type has no
  * separate `_close` — only
  * [`tst_st0601_free`] — so freeing invalidates the pointer itself;
  * calling this (or any `tst_st0601_*` function) with an already-freed

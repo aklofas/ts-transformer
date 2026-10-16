@@ -66,59 +66,13 @@ pub(crate) mod c_types {
 // the glue crate links its own.
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// no_std Mutex seam
-//
-// Under std: callers import `std::sync::Mutex` directly.
-// Under no_std (bare-metal): a spin::Mutex newtype that surfaces the same
-// `new() + lock() -> Result<Guard, _>` interface so call sites compile
-// verbatim in both modes.
-// (The `critical-section` impl a glue crate registers serves the no_std
-// last-error slot in error.rs — NOT this seam, which is plain spin.)
-//
-// No priority inheritance / interrupt masking: the documented embedding
-// contract is one-handle-per-task (see handle.rs module docs) — the lock
-// exists to satisfy Sync, not to arbitrate cross-task sharing.
-// ---------------------------------------------------------------------------
-// `spin` (this seam) and `critical-section` (the no_std last-error slot in
-// error.rs) are referenced only under no_std, and Cargo cannot express
-// "dependency only when a feature is OFF" — so on std builds they look unused
-// to cargo's (nightly) `unused_dependencies` lint. The conventional
-// `use … as _` marks them as deliberately present.
+// `critical-section` (the no_std last-error slot in error.rs) is referenced
+// only under no_std, and Cargo cannot express "dependency only when a feature
+// is OFF" — so on std builds it looks unused to cargo's (nightly)
+// `unused_dependencies` lint. The conventional `use … as _` marks it as
+// deliberately present.
 #[cfg(feature = "std")]
 use critical_section as _;
-#[cfg(feature = "std")]
-use spin as _;
-#[cfg(not(feature = "std"))]
-pub(crate) mod nostd_mutex {
-    //! Single-core no_std lock seam mirroring `std::sync::Mutex`'s surface
-    //! (`new` + `lock() -> Result<Guard, Poisoned<Guard>>`, and
-    //! `Poisoned::into_inner`) so call sites compile verbatim — including the
-    //! poison-recover sites, which spell recovery `.unwrap_or_else(|e|
-    //! e.into_inner())` in both feature planes.
-    pub(crate) struct Mutex<T>(spin::Mutex<T>);
-
-    /// Stand-in for `std::sync::PoisonError`. A spin lock cannot be poisoned,
-    /// so this is never constructed; it exists so the `Err` arm has the same
-    /// shape (and the same `into_inner`) as under `std`.
-    pub(crate) struct Poisoned<T>(T);
-    impl<T> Poisoned<T> {
-        pub(crate) fn into_inner(self) -> T {
-            self.0
-        }
-    }
-
-    impl<T> Mutex<T> {
-        pub(crate) const fn new(v: T) -> Self {
-            Self(spin::Mutex::new(v))
-        }
-        pub(crate) fn lock(
-            &self,
-        ) -> Result<spin::MutexGuard<'_, T>, Poisoned<spin::MutexGuard<'_, T>>> {
-            Ok(self.0.lock())
-        }
-    }
-}
 
 // Cross-cutting (shared by both sender and receiver):
 pub mod codec_framing;

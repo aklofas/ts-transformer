@@ -1,7 +1,7 @@
 //! `tst_st0601_*` — C-callable MISB ST 0601 KLV decode surface.
 //!
 //! Wraps `tst_core::klv::st0601::decode` (lenient decode) behind an
-//! opaque `Handle<UasDatalinkLs>`. Before this module, the C ABI only
+//! opaque `CHandle<UasDatalinkLs>`. Before this module, the C ABI only
 //! delivered raw KLV bytes (via `tst_demuxer_*` / `tst_muxer_push_klv*`)
 //! — Python and JVM already had typed ST 0601 decode, so this closes the
 //! gap for C/Apple-PoC consumers that want geolocation/attitude fields
@@ -47,7 +47,7 @@ use tst_core::UasDatalinkLs;
 use crate::error::{
     TstError, record_klv_decode_error, record_not_found, record_wrong_type, set_last_error,
 };
-use crate::handle::Handle;
+use crate::handle::CHandle;
 
 // ---------------------------------------------------------------------------
 // Field-state enum (three-way `None` preserved)
@@ -408,7 +408,7 @@ fn build_geometry(ls: &UasDatalinkLs) -> TstSt0601Geometry {
 /// Opaque handle wrapping a decoded [`UasDatalinkLs`]. Obtained from
 /// [`tst_st0601_decode`]; freed via [`tst_st0601_free`].
 pub struct TstSt0601 {
-    inner: Handle<UasDatalinkLs>,
+    inner: CHandle<UasDatalinkLs>,
 }
 
 /// Decode `bytes[0..len)` as a MISB ST 0601 UAS Datalink Local Set
@@ -440,7 +440,7 @@ pub unsafe extern "C" fn tst_st0601_decode(bytes: *const u8, len: usize) -> *mut
         };
         match tst_core::klv::st0601::decode(slice) {
             Ok(ls) => Box::into_raw(Box::new(TstSt0601 {
-                inner: Handle::new(ls),
+                inner: CHandle::offline(ls),
             })),
             Err(e) => {
                 record_klv_decode_error(&e);
@@ -452,11 +452,10 @@ pub unsafe extern "C" fn tst_st0601_decode(bytes: *const u8, len: usize) -> *mut
 
 /// Fill `*out` with the curated geometry/attitude summary — see
 /// [`TstSt0601Geometry`]. Returns 0 on success, or a negative `TST_E_*`
-/// code if `p` or `out` is null, or `TST_E_CLOSED` if an earlier call on
-/// this same live handle triggered the caught-panic latch (see
-/// `Handle::with_inner_ref` in `crate::handle` — a caught panic drops
-/// the inner state, so later calls on the same pointer report `Closed`
-/// rather than reusing possibly-corrupted state). This type has no
+/// code if `p` or `out` is null, or `TST_E_PANIC_CAUGHT` if the read
+/// panicked (see `CHandle::with_inner_ref` in `crate::handle` — a caught
+/// panic in a read-only accessor keeps the decoded state, so later calls
+/// on the same pointer still work). This type has no
 /// separate `_close` — only
 /// [`tst_st0601_free`] — so freeing invalidates the pointer itself;
 /// calling this (or any `tst_st0601_*` function) with an already-freed
@@ -631,9 +630,8 @@ pub unsafe extern "C" fn tst_st0601_state(p: *const TstSt0601, tag: u32) -> TstS
         // `with_inner_ref_silent` (unlike `with_inner_ref`) never calls
         // `set_last_error`/`record_panic_caught` on its closed/panic
         // paths — required for this function's "never touches the
-        // last-error channel" contract above to actually hold on a
-        // closed handle (only reachable after a prior caught panic, see
-        // this type's doc — it has no separate `_close`).
+        // last-error channel" contract above to hold even if the reader
+        // panics.
         handle
             .inner
             .with_inner_ref_silent(TstSt0601FieldState::Absent, |ls| compute_state(ls, tag))
@@ -659,7 +657,7 @@ pub unsafe extern "C" fn tst_st0601_free(p: *mut TstSt0601) {
             return;
         }
         let boxed = unsafe { Box::from_raw(p) };
-        boxed.inner.close();
+        boxed.inner.release();
         drop(boxed);
     });
 }

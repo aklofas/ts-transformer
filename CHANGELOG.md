@@ -216,6 +216,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `sendSubtitle` are renamed `pushVideo` / `pushKlv` / `pushAudio` /
   `pushSubtitle`.
 
+### Changed — tst-c
+
+- The offline handles (`tst_muxer_*`, `tst_demuxer_*`, `tst_st0601_*`) now
+  share the handle state machine of every other C handle. A panic inside a
+  read-only accessor (an internal bug path) records `TST_E_PANIC_CAUGHT` and
+  leaves the handle usable; before, it closed the handle. A panic inside a
+  mutating call still closes it. No symbol, code or non-comment header line
+  changes.
+
 ### Changed — C header
 
 - `tstrans.h`: enum blocks are now emitted in a deterministic sorted order; no
