@@ -2020,3 +2020,13 @@ Shipped 0.8.0: renamed `InputRelative` (0) and `Infinite` (−1); a stale use fa
   transports have no recorder to read.
 - **Trigger to revisit:** a consumer needs `end_reason()` off a transport
   other than rtp.
+
+## srt clean-close end reason
+
+- **Status:** Deferred. An `srt://` shell reads `BROKEN` on the first
+  receive after the peer closes, then `END_OF_STREAM`; a `tcp://` shell
+  reads `END_OF_STREAM` at once.
+- **Why deferred:** libsrt reports a peer's close as a broken link and has
+  no clean-EOF signal, so the shell cannot tell it from a failure.
+- **Trigger to revisit:** libsrt exposing the close reason, or a consumer
+  needing `END_OF_STREAM` on srt.

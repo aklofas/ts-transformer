@@ -199,6 +199,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `binding::Owned::with_ref` is now `with_ref_blocking(reason, f)`: a reader
   that may wait behind a call parked in the slot names a
   `binding::view::BlockingReason` at the call.
+- `binding`: a receive-side `TransportError::Broken` whose cause is
+  `BrokenCause::CleanEof` classifies as `BindingErrorKind::EndOfStream`
+  (was `Broken`): a clean peer close on a TS shell reads `END_OF_STREAM`
+  on the first receive on every host, as the C receivers already reported
+  it. The send direction and every other `Broken` cause are unchanged, and
+  `Diagnostics.broken_cause` still carries `CleanEof`.
 
 ### Changed — tst-rtp (BREAKING)
 
@@ -252,6 +258,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tstrans.rtp.MuxSender(url, cfg)` (0.8 and the deprecated 0.9 spelling)
   forced `pkt_size=1316` over a `?pkt_size=` key in the URL; in 0.9 the URL
   key wins, so the RTP datagram size of such a URL changes.
+- `tstrans.shells.Receiver` and `tstrans.shells.DemuxReceiver` over
+  `tcp://` raise kind `END_OF_STREAM` on the first receive after the
+  peer's clean close (was `BROKEN` once, then `END_OF_STREAM`). Raw
+  `tstrans.tcp.RecvTransport` and `srt://` shells are unchanged.
 
 ### Changed — tst-jni (BREAKING)
 
@@ -288,6 +298,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A raw stream handle that no stream of the muxer owns throws the
   transport's `CONFIG_INVALID` from every `MuxSender` `send*To` (it was
   `IO` on an `rtp://` sender).
+- `org.tstrans.shells.Receiver` and `org.tstrans.shells.DemuxReceiver` over
+  `tcp://` throw kind `END_OF_STREAM` on the first receive after the
+  peer's clean close (was `BROKEN` once, then `END_OF_STREAM`). Raw
+  `org.tstrans.tcp` transports and `srt://` shells are unchanged.
 
 ### Changed — tst-c
 

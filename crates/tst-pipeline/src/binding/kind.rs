@@ -1217,9 +1217,21 @@ impl From<TransportError> for BindingError {
     }
 }
 
+/// A transport that saw its peer close cleanly (a TCP FIN with no error).
+fn is_clean_eof(e: &TransportError) -> bool {
+    matches!(
+        e,
+        TransportError::Broken {
+            cause: BrokenCause::CleanEof,
+            ..
+        }
+    )
+}
+
 /// The binding kind of a transport failure seen by a shell: on the
-/// receive direction `TransportError::Closed` is the PEER closing
-/// (`EndOfStream`); a caller's cancel arrives as `ExplicitClose` (`Closed`).
+/// receive direction `TransportError::Closed` and a `Broken` whose cause is
+/// `CleanEof` are the PEER closing (`EndOfStream`); a caller's cancel
+/// arrives as `ExplicitClose` (`Closed`). The send direction keeps `Broken`.
 pub(crate) fn kind_of_transport(
     e: &TransportError,
     d: crate::shell_error::Direction,
@@ -1227,6 +1239,9 @@ pub(crate) fn kind_of_transport(
     use tst_core::transport::TransportErrorKind as T;
     match (e.kind(), d) {
         (T::Closed, crate::shell_error::Direction::Recv) => BindingErrorKind::EndOfStream,
+        (T::Broken, crate::shell_error::Direction::Recv) if is_clean_eof(e) => {
+            BindingErrorKind::EndOfStream
+        }
         _ => map_transport(e).0,
     }
 }
@@ -1383,13 +1398,18 @@ impl From<RawSenderError> for BindingError {
     }
 }
 
-/// Receiver shells: `TransportError::Closed` means the PEER closed
-/// (`shell_error::Direction::Recv`), which is `EndOfStream`; a caller's
-/// cancel arrives as `ExplicitClose` and stays `Closed`.
+/// Receiver shells: `TransportError::Closed` and a `Broken` with cause
+/// `CleanEof` mean the PEER closed (`shell_error::Direction::Recv`), which is
+/// `EndOfStream`; a caller's cancel arrives as `ExplicitClose` and stays
+/// `Closed`. The diagnostics still carry the `CleanEof` cause.
 fn recv_transport(t: TransportError) -> BindingError {
     match t {
         TransportError::Closed => {
             BindingError::new(BindingErrorKind::EndOfStream, "peer closed the stream")
+        }
+        ref b if is_clean_eof(b) => {
+            BindingError::new(BindingErrorKind::EndOfStream, "peer closed the stream")
+                .with_diagnostics(transport_diagnostics(b))
         }
         other => other.into(),
     }
@@ -1553,6 +1573,31 @@ mod tests {
         });
         assert_eq!(t.diagnostics.native_code, Some(104));
         assert_eq!(t.diagnostics.broken_cause, Some(BrokenCause::CleanEof));
+        // Receive direction: a clean peer close is the end of the stream.
+        let clean = || TransportError::Broken {
+            msg: "eof".into(),
+            errno_code: None,
+            cause: BrokenCause::CleanEof,
+        };
+        let other = TransportError::Broken {
+            msg: "reset".into(),
+            errno_code: Some(104),
+            cause: BrokenCause::Unspecified,
+        };
+        use crate::shell_error::Direction as D;
+        assert_eq!(
+            kind_of_transport(&clean(), D::Recv),
+            BindingErrorKind::EndOfStream
+        );
+        assert_eq!(
+            kind_of_transport(&clean(), D::Send),
+            BindingErrorKind::Broken
+        );
+        assert_eq!(kind_of_transport(&other, D::Recv), BindingErrorKind::Broken);
+        let r = recv_transport(clean());
+        assert_eq!(r.kind, BindingErrorKind::EndOfStream);
+        assert_eq!(r.diagnostics.broken_cause, Some(BrokenCause::CleanEof));
+        assert_eq!(recv_transport(other).kind, BindingErrorKind::Broken);
         let k = BindingError::from(KlvDecodeError::DuplicateTag { tag: 5, offset: 30 });
         assert_eq!(
             (k.diagnostics.tag, k.diagnostics.offset),

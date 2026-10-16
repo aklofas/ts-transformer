@@ -49,10 +49,11 @@ import org.tstrans.shells.ShellPeers.Tx;
  *   <li>A {@code Sender} fed bytes that hold no TS sync for more than the framing limit throws the
  *       transport's own exception class (exactly) with kind {@code INPUT_MALFORMED}, on every
  *       transport.
- *   <li>{@code srt} and {@code tcp} receivers: once the peer closes cleanly, the first
- *       {@code recvBytes()} throws the transport's class with kind {@code BROKEN} and every later
- *       one throws it with kind {@code END_OF_STREAM}; {@code endReason()} stays {@code null}. A
- *       datagram transport ({@code rtp}, {@code udp}, {@code rist}) cannot see a peer close, so it
+ *   <li>{@code srt} and {@code tcp} receivers: once the peer closes, {@code recvBytes()} throws the
+ *       transport's class. A {@code tcp} peer's clean close reads {@code END_OF_STREAM} on the
+ *       first receive and every later one. An {@code srt} peer's close reads {@code BROKEN}
+ *       first (libsrt reports a broken link, never a clean EOF) and {@code END_OF_STREAM} after.
+ *       {@code endReason()} stays {@code null}. A datagram transport ({@code rtp}, {@code udp}, {@code rist}) cannot see a peer close, so it
  *       has no rule 8 case.
  * </ol>
  *
@@ -213,7 +214,7 @@ class ShellLifecycleContractTest {
 
     @ParameterizedTest(name = "{0}-{1}-r8")
     @MethodSource("plainReceiversThatSeeAPeerClose")
-    void aCleanPeerCloseEndsInBrokenThenEndOfStream(String shell, String scheme) throws Exception {
+    void aPeerCloseEndsInEndOfStream(String shell, String scheme) throws Exception {
         try (Cleanup c = new Cleanup()) {
             ShellPeers.ReceiverPeer rp = ShellPeers.receiverAndPeer(shell, scheme, c);
             Rx rx = rp.rx();
@@ -242,7 +243,9 @@ class ShellLifecycleContractTest {
             }
             assertNotNull(err, "the receiver kept delivering for 15 s after the peer closed");
             assertEquals(ShellPeers.errorClass(scheme), err.getClass(), String.valueOf(err));
-            assertEquals("BROKEN", ShellPeers.kindName(err));
+            // tcp reports the clean EOF itself; libsrt only ever reports a broken link, so an
+            // srt shell reads BROKEN once before the stream is over.
+            assertEquals(scheme.equals("srt") ? "BROKEN" : "END_OF_STREAM", ShellPeers.kindName(err));
             for (int i = 0; i < 2; i++) {
                 Throwable later = assertThrows(ShellPeers.errorClass(scheme), rx::recvOnce);
                 assertEquals(ShellPeers.errorClass(scheme), later.getClass(), String.valueOf(later));
