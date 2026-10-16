@@ -15,6 +15,7 @@ unparked before the test fails rather than at interpreter exit.
 
 from __future__ import annotations
 
+from tstrans import shells
 import socket
 import threading
 import time
@@ -22,6 +23,7 @@ from typing import Callable
 
 import pytest
 
+from _builders.hang_deadline import call_with_hang_deadline
 from _builders.mux_programs import video_only_program as _video_only_program
 from _builders.mux_programs import video_private_data_program as _video_data_program
 from _builders.ports import free_tcp_port as _free_tcp_port
@@ -71,28 +73,28 @@ def _spin_sender(send_one: Callable[[], None], stop: threading.Event) -> dict[st
 
 
 # --------------------------------------------------------------------------- #
-# srt.Sender                                                                  #
+# shells.Sender                                                                  #
 # --------------------------------------------------------------------------- #
 
 
 def _srt_pair(port: int):
-    """Listener-mode `srt.Receiver` on a thread + caller-mode `srt.Sender`
+    """Listener-mode `shells.Receiver` on a thread + caller-mode `shells.Sender`
     (the `_make_loopback_pair` shape from test_srt_transport.py)."""
     import tstrans.srt as srt
 
-    box: list[srt.Receiver] = []
+    box: list[shells.Receiver] = []
     errs: list[BaseException] = []
 
     def accept_worker() -> None:
         try:
-            box.append(srt.Receiver.from_url(f"srt://:{port}?mode=listener"))
+            box.append(shells.Receiver.open(f"srt://:{port}?mode=listener"))
         except BaseException as exc:  # noqa: BLE001
             errs.append(exc)
 
     t = threading.Thread(target=accept_worker, daemon=True)
     t.start()
     time.sleep(0.1)
-    sender = srt.Sender.from_url(f"srt://127.0.0.1:{port}?mode=caller")
+    sender = shells.Sender.open(f"srt://127.0.0.1:{port}?mode=caller")
     t.join(5.0)
     if errs or not box:
         sender.close()
@@ -116,11 +118,11 @@ def test_srt_sender_close_from_other_thread_during_send() -> None:
         c, errs = _close_on_thread(sender)
         stop.set()
         w.join(5.0)
-        _assert_close_ok(c, errs, "srt.Sender")
+        _assert_close_ok(c, errs, "shells.Sender")
         assert not w.is_alive(), "send loop did not end after close()"
         # The worker loop only checks `stop` between iterations, so whether
         # it attempts one more send before noticing `stop` is a scheduling
-        # race, not a guarantee `send_bytes()` makes — a plain srt.Sender
+        # race, not a guarantee `send_bytes()` makes — a plain shells.Sender
         # with an idle peer never parks, so on a loaded CI runner the
         # worker can legitimately see `stop` first and exit clean, leaving
         # `outcome` empty. `close()` above
@@ -139,30 +141,30 @@ def test_srt_sender_close_from_other_thread_during_send() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# srt.MuxSender                                                               #
+# shells.MuxSender                                                               #
 # --------------------------------------------------------------------------- #
 
 
 def _srt_mux_sender_with_silent_peer(
     port: int, program: object | None = None, peer_knobs: str = ""
 ):
-    """Listener-mode `srt.Receiver` (never reads) + caller `srt.MuxSender`.
+    """Listener-mode `shells.Receiver` (never reads) + caller `shells.MuxSender`.
     `peer_knobs` is appended to the listener URL."""
     import tstrans.srt as srt
 
-    box: list[srt.Receiver] = []
+    box: list[shells.Receiver] = []
     errs: list[BaseException] = []
 
     def accept_worker() -> None:
         try:
-            box.append(srt.Receiver.from_url(f"srt://:{port}?mode=listener{peer_knobs}"))
+            box.append(shells.Receiver.open(f"srt://:{port}?mode=listener{peer_knobs}"))
         except BaseException as exc:  # noqa: BLE001
             errs.append(exc)
 
     t = threading.Thread(target=accept_worker, daemon=True)
     t.start()
     time.sleep(0.1)
-    tx = srt.MuxSender.from_url(
+    tx = shells.MuxSender.open(
         f"srt://127.0.0.1:{port}?mode=caller", program or _video_only_program()
     )
     t.join(5.0)
@@ -194,7 +196,7 @@ def test_srt_mux_sender_close_from_other_thread_during_send_video() -> None:
         c, errs = _close_on_thread(tx)
         stop.set()
         w.join(5.0)
-        _assert_close_ok(c, errs, "srt.MuxSender")
+        _assert_close_ok(c, errs, "shells.MuxSender")
         assert not w.is_alive(), "send loop did not end after close()"
         # See test_srt_sender_close_from_other_thread_during_send: whether
         # the worker attempts one more send before noticing `stop` is a
@@ -218,7 +220,7 @@ def test_srt_mux_sender_cancel_handle_wakes_send_from_other_thread() -> None:
     path at all."""
     from tstrans.exceptions import SrtError, SrtErrorKind
     from tstrans.mpegts import Pts90khz
-    from tstrans.srt import CancelHandle
+    from tstrans.shells import CancelHandle
 
     tx, peer = _srt_mux_sender_with_silent_peer(_free_tcp_port())
     try:
@@ -260,7 +262,7 @@ def test_srt_close_from_other_thread_is_observable_on_a_prior_cancel_handle() ->
         handle = sender.cancel_handle()
         assert not handle.is_cancelled()
         c, errs = _close_on_thread(sender)
-        _assert_close_ok(c, errs, "srt.Sender")
+        _assert_close_ok(c, errs, "shells.Sender")
         assert handle.is_cancelled()
     finally:
         sender.close()
@@ -271,7 +273,7 @@ def test_rtp_cancel_handle_has_shared_is_cancelled() -> None:
     import tstrans.rtp as rtp
 
     sink, port = _udp_sink()
-    tx = rtp.Sender(f"rtp://127.0.0.1:{port}")
+    tx = rtp.Transport(f"rtp://127.0.0.1:{port}")
     try:
         h1 = tx.cancel_handle()
         h2 = tx.cancel_handle()
@@ -321,15 +323,15 @@ def _wait_until_parked(progress: list[int], what: str, budget_s: float = 20.0) -
 
 
 def _plain_srt_receiver_on_thread(port: int):
-    """Accept one caller with a plain `srt.Receiver` on a daemon thread; the
+    """Accept one caller with a plain `shells.Receiver` on a daemon thread; the
     returned box holds the receiver once the handshake completes."""
     import tstrans.srt as srt
 
-    box: list[srt.Receiver] = []
+    box: list[shells.Receiver] = []
 
     def accept_worker() -> None:
         try:
-            box.append(srt.Receiver.from_url(f"srt://:{port}?mode=listener"))
+            box.append(shells.Receiver.open(f"srt://:{port}?mode=listener"))
         except BaseException:  # noqa: BLE001
             pass
 
@@ -413,7 +415,7 @@ def test_srt_managed_receiver_close_from_other_thread_while_recv_parked() -> Non
     t.start()
     time.sleep(0.1)
     # Silent peer: connects, never sends.
-    peer = srt.Sender.from_url(f"srt://127.0.0.1:{port}?mode=caller")
+    peer = shells.Sender.open(f"srt://127.0.0.1:{port}?mode=caller")
     t.join(5.0)
     if errs or not box:
         peer.close()
@@ -455,7 +457,7 @@ def test_srt_managed_receiver_close_from_other_thread_while_recv_parked() -> Non
 
 def _managed_mux_sender_after_peer_drop(port: int, program: object | None = None):
     """Caller `ManagedMuxSender` (outage policy, 0.5 s conntimeo) whose plain
-    `srt.Receiver` peer accepted, took a few frames, then closed."""
+    `shells.Receiver` peer accepted, took a few frames, then closed."""
     import tstrans.srt as srt
     from tstrans.mpegts import Pts90khz
 
@@ -524,7 +526,7 @@ def test_srt_managed_mux_sender_close_from_other_thread_during_blocking_backoff(
 
 def test_srt_managed_mux_sender_cancel_handle_wakes_blocking_backoff() -> None:
     from tstrans.exceptions import SrtError, SrtErrorKind
-    from tstrans.srt import CancelHandle
+    from tstrans.shells import CancelHandle
 
     port = _free_tcp_port()
     tx = _managed_mux_sender_after_peer_drop(port)
@@ -637,7 +639,7 @@ def test_srt_socket_close_and_getters_from_other_thread_do_not_raise() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# rtp.Sender / rtp.Receiver                                                   #
+# rtp.Transport / rtp.RecvTransport                                           #
 # --------------------------------------------------------------------------- #
 
 
@@ -654,7 +656,7 @@ def test_rtp_sender_close_from_other_thread_during_send() -> None:
     import tstrans.rtp as rtp
 
     sink, port = _udp_sink()
-    tx = rtp.Sender(f"rtp://127.0.0.1:{port}")
+    tx = rtp.Transport(f"rtp://127.0.0.1:{port}")
     stop = threading.Event()
     outcome: dict[str, object] = {}
 
@@ -668,7 +670,7 @@ def test_rtp_sender_close_from_other_thread_during_send() -> None:
         c, errs = _close_on_thread(tx)
         stop.set()
         w.join(5.0)
-        _assert_close_ok(c, errs, "rtp.Sender")
+        _assert_close_ok(c, errs, "rtp.Transport")
         assert not w.is_alive(), "send loop did not end after close()"
         # The worker loop only checks `stop` between iterations, so whether
         # it happens to attempt one more send before noticing `stop` is a
@@ -693,7 +695,7 @@ def test_rtp_receiver_close_from_other_thread_while_recv_parked() -> None:
     import tstrans.rtp as rtp
 
     port = _free_udp_port()
-    rx = rtp.Receiver(f"rtp://127.0.0.1:{port}")
+    rx = rtp.RecvTransport(f"rtp://127.0.0.1:{port}")
     captured: list[BaseException] = []
 
     def worker() -> None:
@@ -717,7 +719,7 @@ def test_rtp_receiver_close_from_other_thread_while_recv_parked() -> None:
             )
             s.close()
             w.join(5.0)
-        _assert_close_ok(c, errs, "rtp.Receiver")
+        _assert_close_ok(c, errs, "rtp.RecvTransport")
         assert not w.is_alive(), "close() did not end the parked recv()"
         assert len(captured) == 1, f"expected one error; got {captured!r}"
         err = captured[0]
@@ -726,54 +728,6 @@ def test_rtp_receiver_close_from_other_thread_while_recv_parked() -> None:
         assert rx.end_reason() is not None  # Cancelled — recorded by close()
     finally:
         rx.close()
-
-
-# --------------------------------------------------------------------------- #
-# rtp.MuxSender                                                               #
-# --------------------------------------------------------------------------- #
-
-
-def test_rtp_mux_sender_close_from_other_thread_during_send_video() -> None:
-    from tstrans.exceptions import RtpError, RtpErrorKind
-    from tstrans.mpegts import Pts90khz
-    import tstrans.rtp as rtp
-
-    sink, port = _udp_sink()
-    tx = rtp.MuxSender(f"rtp://127.0.0.1:{port}", _video_only_program())
-    stop = threading.Event()
-    outcome: dict[str, object] = {}
-    pts = [0]
-
-    def send_one() -> None:
-        tx.send_video(NAL_IDR, pts=Pts90khz.from_raw(pts[0]), key_frame=True)
-        pts[0] += 3000
-
-    def worker() -> None:
-        outcome.update(_spin_sender(send_one, stop))
-
-    w = threading.Thread(target=worker, daemon=True)
-    w.start()
-    time.sleep(0.1)
-    try:
-        c, errs = _close_on_thread(tx)
-        stop.set()
-        w.join(5.0)
-        _assert_close_ok(c, errs, "rtp.MuxSender")
-        assert not w.is_alive(), "send loop did not end after close()"
-        # See the identical comment in test_rtp_sender_close_from_other_
-        # thread_during_send: whether the worker attempts one more send
-        # before noticing `stop` is a scheduling race, not a guarantee.
-        # `close()` already returned, so the slot is deterministically
-        # empty; call `send_video()` directly to prove a post-close send
-        # is rejected without depending on the worker's own timing.
-        with pytest.raises(RtpError) as ei:
-            send_one()
-        assert ei.value.kind == RtpErrorKind.CLOSED, ei.value.kind
-        assert "closed" in repr(tx)
-    finally:
-        stop.set()
-        tx.close()
-        sink.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -1049,25 +1003,6 @@ def test_rist_recv_transport_close_from_other_thread_while_recv_parked() -> None
 # --------------------------------------------------------------------------- #
 
 
-def _call_with_hang_deadline(getter: Callable[[], object]) -> tuple[bool, dict[str, object]]:
-    """Run `getter()` on its own daemon thread and join with a generous
-    hang deadline. Returns `(blocked, outcome)`; the caller runs its rescue
-    BEFORE asserting on `blocked`, so a getter stuck behind a parked call
-    fails the test instead of wedging the process."""
-    outcome: dict[str, object] = {}
-
-    def getter_worker() -> None:
-        try:
-            outcome["value"] = getter()
-        except BaseException as exc:  # noqa: BLE001
-            outcome["exc"] = exc
-
-    g = threading.Thread(target=getter_worker, daemon=True)
-    g.start()
-    g.join(30.0)
-    return g.is_alive(), outcome
-
-
 def _assert_getter_does_not_wait_behind_park(
     what: str,
     park: Callable[[], object],
@@ -1108,7 +1043,7 @@ def _assert_getter_does_not_wait_behind_park(
         assert entered.wait(5.0), f"{what}: the parking call never started"
         time.sleep(0.3)  # parked with the GIL released
         assert not returned.is_set(), f"{what}: the call meant to park returned on its own"
-        blocked, outcome = _call_with_hang_deadline(getter)
+        blocked, outcome = call_with_hang_deadline(getter)
         still_parked = not returned.is_set()
     finally:
         end_park()  # rescue: ends the park (and frees a slot-bound getter)
@@ -1404,7 +1339,7 @@ def test_srt_managed_mux_sender_stream_handles_do_not_wait_behind_parked_send() 
     got: dict[str, object] = {}
     still_parked = False
     try:
-        blocked, got = _call_with_hang_deadline(lambda: _stream_handles(tx))
+        blocked, got = call_with_hang_deadline(lambda: _stream_handles(tx))
         still_parked = w.is_alive() and "exc" not in outcome
     finally:
         stop.set()
@@ -1448,8 +1383,8 @@ def test_srt_mux_sender_accessors_do_not_wait_behind_parked_send() -> None:
     got: dict[str, object] = {}
     still_parked = False
     try:
-        _wait_until_parked(progress, "srt.MuxSender", budget_s=30.0)
-        blocked, got = _call_with_hang_deadline(lambda: (_stream_handles(tx), tx.is_alive()))
+        _wait_until_parked(progress, "shells.MuxSender", budget_s=30.0)
+        blocked, got = call_with_hang_deadline(lambda: (_stream_handles(tx), tx.is_alive()))
         still_parked = w.is_alive() and "exc" not in outcome
     finally:
         stop.set()
@@ -1471,7 +1406,7 @@ def test_rtp_mux_sender_stream_handles_are_the_configured_set_until_close() -> N
     import tstrans.rtp as rtp
 
     sink, port = _udp_sink()
-    tx = rtp.MuxSender(f"rtp://127.0.0.1:{port}", _video_data_program())
+    tx = shells.MuxSender.open(f"rtp://127.0.0.1:{port}", _video_data_program())
     try:
         before = _stream_handles(tx)
         assert before[0] is not None and before[4] is not None

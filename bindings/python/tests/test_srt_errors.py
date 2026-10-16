@@ -17,7 +17,7 @@ import pytest
 import tstrans
 from tstrans._native import _raise_srt_error_for_test
 from tstrans.exceptions import SrtError, SrtErrorKind
-from tstrans.srt import Receiver, Sender
+from tstrans.shells import Receiver, Sender
 
 
 # --------------------------------------------------------------------------- #
@@ -26,31 +26,34 @@ from tstrans.srt import Receiver, Sender
 
 
 def test_config_invalid_from_bad_url() -> None:
-    """A URL that doesn't even parse → CONFIG_INVALID (UrlError catchall)."""
+    """An `srt://` URL that doesn't parse → CONFIG_INVALID (UrlError catchall)."""
     with pytest.raises(SrtError) as ei:
-        Sender.from_url("not-an-srt-url")
+        Sender.open("srt://127.0.0.1:notaport?mode=caller")
     assert ei.value.kind == SrtErrorKind.CONFIG_INVALID
 
 
-def test_config_invalid_wrong_scheme() -> None:
-    """`http://...` is not `srt://...` — UrlError::WrongScheme."""
-    with pytest.raises(SrtError) as ei:
-        Sender.from_url("http://127.0.0.1:9000")
-    assert ei.value.kind == SrtErrorKind.CONFIG_INVALID
+def test_unsupported_scheme_is_a_value_error() -> None:
+    """A scheme-less or foreign-scheme URL is not any transport's URL, so the
+    shell opener rejects it with ValueError before a transport is chosen."""
+    for url in ("not-an-srt-url", "http://127.0.0.1:9000"):
+        with pytest.raises(ValueError, match="unsupported URL scheme"):
+            Sender.open(url)
+        with pytest.raises(ValueError, match="unsupported URL scheme"):
+            Receiver.open(url)
 
 
 def test_config_invalid_listener_url_to_sender() -> None:
-    """`Sender.from_url` rejects `?mode=listener` URLs — explicit
+    """`Sender.open` rejects `?mode=listener` URLs — explicit
     CONFIG_INVALID before any socket touches the network."""
     with pytest.raises(SrtError) as ei:
-        Sender.from_url("srt://127.0.0.1:9000?mode=listener")
+        Sender.open("srt://127.0.0.1:9000?mode=listener")
     assert ei.value.kind == SrtErrorKind.CONFIG_INVALID
 
 
 def test_config_invalid_caller_url_to_receiver() -> None:
     """Mirror of above — Receiver rejects `?mode=caller` URLs."""
     with pytest.raises(SrtError) as ei:
-        Receiver.from_url("srt://127.0.0.1:9000?mode=caller")
+        Receiver.open("srt://127.0.0.1:9000?mode=caller")
     assert ei.value.kind == SrtErrorKind.CONFIG_INVALID
 
 
@@ -64,7 +67,7 @@ def test_connect_failed_or_timeout_on_unreachable_port() -> None:
     as either CONNECT_FAILED (RST-like) or TIMEOUT depending on the
     platform and timing. Both are acceptable."""
     with pytest.raises(SrtError) as ei:
-        Sender.from_url(
+        Sender.open(
             "srt://127.0.0.1:1?mode=caller&connect_timeout=300&latency=20"
         )
     assert ei.value.kind in (SrtErrorKind.CONNECT_FAILED, SrtErrorKind.TIMEOUT)
@@ -76,7 +79,7 @@ def test_timeout_via_test_net_1() -> None:
     (or, more rarely, a system CONNECT_FAILED from a host-unreachable
     ICMP)."""
     with pytest.raises(SrtError) as ei:
-        Sender.from_url(
+        Sender.open(
             "srt://192.0.2.1:9000?mode=caller&connect_timeout=500&latency=20"
         )
     assert ei.value.kind in (SrtErrorKind.TIMEOUT, SrtErrorKind.CONNECT_FAILED)

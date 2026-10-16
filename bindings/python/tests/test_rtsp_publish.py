@@ -47,15 +47,14 @@ from tstrans.mpegts import (
 )
 from tstrans.rtp import (
     ClockAlignment,
-    DemuxReceiver,
     PublisherInfo,
     PublishMount,
     PublishMountStats,
     PublishShape,
     RtspServer,
     RtspServerConfig,
-    StreamEndReason,
 )
+from tstrans.shells import DemuxReceiver, EndReason
 
 SDP_MP2T = (
     "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=publish\r\nc=IN IP4 127.0.0.1\r\n"
@@ -319,7 +318,7 @@ def test_cancel_closes_the_receiver_with_closed_kind():
             with pytest.raises(RtpError) as ei:
                 next(rx)
             assert ei.value.kind == RtpErrorKind.CLOSED
-            assert rx.end_reason() == StreamEndReason.CANCELLED
+            assert rx.end_reason() == EndReason.CANCELLED
         finally:
             rx.close()
 
@@ -338,7 +337,7 @@ def test_remove_mount_ends_a_parked_receiver_with_end_of_stream():
                 pytest.fail("remove_mount did not wake the parked receiver")
             # END_OF_STREAM reaches an iterator as StopIteration.
             assert isinstance(out.get("exc"), StopIteration), out
-            assert rx.end_reason() == StreamEndReason.CLEAN_TEARDOWN
+            assert rx.end_reason() == EndReason.CLEAN_TEARDOWN
         finally:
             rx.close()
 

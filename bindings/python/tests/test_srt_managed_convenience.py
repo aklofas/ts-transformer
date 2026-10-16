@@ -17,6 +17,7 @@ tests against a scripted RecvTransport.
 
 from __future__ import annotations
 
+from tstrans import shells
 import threading
 import time
 from typing import Optional, Tuple
@@ -352,8 +353,8 @@ def test_managed_demux_receiver_last_seen_micros_none_paths() -> None:
     matching `_video_only_program()`) and a bogus one (0x1FFF) report
     None. The int-after-traffic path + the epoch-microsecond conversion
     are exercised once by the shared `StreamStats.last_seen` ->
-    `last_seen_micros` conversion covered on `tstrans.rtp.DemuxReceiver`
-    and `tstrans.srt.DemuxReceiver` — this class wires the identical
+    `last_seen_micros` conversion covered on `tstrans.shells.DemuxReceiver`
+    and `tstrans.shells.DemuxReceiver` — this class wires the identical
     conversion, just against `ManagedDemuxReceiver::stats().per_stream`."""
     port = _free_tcp_port()
     sender, receiver = _make_managed_pair(port)
@@ -602,21 +603,14 @@ def _zero_retry_policy() -> ReconnectPolicy:
 
 
 def test_recv_end_reason_enum_mirrors_rust() -> None:
-    """`tstrans.srt.RecvEndReason` mirrors the managed-SRT subset of
-    `tst_core::transport::EndReason`
-    1:1 in declaration order, and is exported from the module."""
-    assert "RecvEndReason" in tstrans.srt.__all__
-    assert [m.name for m in tstrans.srt.RecvEndReason] == [
-        "END_OF_STREAM",
-        "RECONNECT_EXHAUSTED",
-        "CANCELLED",
-    ]
-    # Distinct from the RTP-side enum — a dedicated type, because
-    # the two are different types in Rust.
-    assert tstrans.srt.RecvEndReason is not tstrans.rtp.StreamEndReason
+    """`tstrans.shells.EndReason` carries the managed-SRT end reasons
+    (`tst_core::transport::EndReason`) beside the RTP ones, in one enum."""
+    names = [m.name for m in tstrans.shells.EndReason]
+    for managed in ("END_OF_STREAM", "RECONNECT_EXHAUSTED", "CANCELLED"):
+        assert managed in names
     # No member is falsy: `None` already means "hasn't ended", so a
     # zero-valued member would make `if rx.end_reason():` ambiguous.
-    assert all(int(m) > 0 for m in tstrans.srt.RecvEndReason)
+    assert all(int(m) > 0 for m in tstrans.shells.EndReason)
 
 
 def test_recv_end_reason_none_on_fresh_receiver() -> None:
@@ -670,14 +664,14 @@ def test_recv_end_reason_cancelled_after_cancel_while_parked() -> None:
     assert outcome.get("kind") == SrtErrorKind.CLOSED, f"unexpected kind: {outcome}"
     # Asserted BEFORE close() so the recorded reason is unambiguously the
     # one the cancelled recv observed, not something teardown wrote.
-    assert receiver.end_reason() == tstrans.srt.RecvEndReason.CANCELLED, (
+    assert receiver.end_reason() == tstrans.shells.EndReason.CANCELLED, (
         f"expected CANCELLED, got {receiver.end_reason()!r}"
     )
     sender.close()
     receiver.close()
     # Survives close(): the handle was captured before the receiver moved
     # into the wrapper, so it outlives the receiver itself.
-    assert receiver.end_reason() == tstrans.srt.RecvEndReason.CANCELLED
+    assert receiver.end_reason() == tstrans.shells.EndReason.CANCELLED
 
 
 def test_recv_end_reason_cancelled_after_close_while_parked() -> None:
@@ -722,7 +716,7 @@ def test_recv_end_reason_cancelled_after_close_while_parked() -> None:
 
         assert outcome.get("end") == "SrtError", f"iteration ended via {outcome}"
         assert outcome.get("kind") == SrtErrorKind.CLOSED, f"unexpected kind: {outcome}"
-        assert receiver.end_reason() == tstrans.srt.RecvEndReason.CANCELLED, (
+        assert receiver.end_reason() == tstrans.shells.EndReason.CANCELLED, (
             f"expected CANCELLED, got {receiver.end_reason()!r}"
         )
     finally:
@@ -786,13 +780,13 @@ def test_recv_end_reason_reconnect_exhausted_on_peer_close() -> None:
     )
     # Asserted BEFORE close(), which would itself be a Cancelled-shaped
     # signal — first-writer-wins means this must already read EXHAUSTED.
-    assert receiver.end_reason() == tstrans.srt.RecvEndReason.RECONNECT_EXHAUSTED, (
+    assert receiver.end_reason() == tstrans.shells.EndReason.RECONNECT_EXHAUSTED, (
         f"expected RECONNECT_EXHAUSTED, got {receiver.end_reason()!r}"
     )
     receiver.close()
     # First-writer-wins: a later close() must not clobber the recorded
     # reason with CANCELLED.
-    assert receiver.end_reason() == tstrans.srt.RecvEndReason.RECONNECT_EXHAUSTED
+    assert receiver.end_reason() == tstrans.shells.EndReason.RECONNECT_EXHAUSTED
 
 
 def test_reconnect_attempts_counts_factory_invocations_from_the_core_counter() -> None:
@@ -814,7 +808,7 @@ def test_reconnect_attempts_counts_factory_invocations_from_the_core_counter() -
 
     def accept_worker() -> None:
         try:
-            peer_box.append(tstrans.srt.Receiver.from_url(f"srt://:{port}?mode=listener"))
+            peer_box.append(shells.Receiver.open(f"srt://:{port}?mode=listener"))
         except BaseException as exc:  # noqa: BLE001
             peer_err.append(exc)
 

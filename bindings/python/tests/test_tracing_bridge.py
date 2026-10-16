@@ -25,8 +25,8 @@ from _builders.ports import free_udp_port as _free_udp_port
 # construction — no packets need to flow. Binding to a locally-freed
 # ephemeral UDP port keeps this deterministic and network-free.
 _TRACED_OP = """
-import tstrans.rtp
-rx = tstrans.rtp.DemuxReceiver("rtp://127.0.0.1:{port}")
+from tstrans import shells
+rx = shells.DemuxReceiver.open("rtp://127.0.0.1:{port}")
 rx.close()
 """
 

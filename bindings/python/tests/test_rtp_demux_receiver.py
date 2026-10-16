@@ -1,9 +1,9 @@
-"""Tests for `tstrans.rtp.DemuxReceiver`.
+"""Tests for `tstrans.shells.DemuxReceiver`.
 
 Loopback tests:
 - Build a small TS stream with `tstrans.mpegts.Muxer`; send the bytes
-  via `tstrans.rtp.Sender`; iterate the demuxer; assert events arrive.
-- Round-trip: `tstrans.rtp.MuxSender` → `tstrans.rtp.DemuxReceiver` over
+  via `tstrans.rtp.Transport`; iterate the demuxer; assert events arrive.
+- Round-trip: `tstrans.shells.MuxSender` → `tstrans.shells.DemuxReceiver` over
   the same loopback port. Push a video NAL; assert the receiver emits
   at least one ProgramMap + one Sample/Video event.
 - `RtspSession.into_demux_receiver` — skipped (no RTSP server in this
@@ -12,6 +12,7 @@ Loopback tests:
 
 from __future__ import annotations
 
+from tstrans import shells
 import threading
 import time
 
@@ -52,8 +53,8 @@ def _build_minimal_ts_bytes() -> bytes:
 
 
 def test_demux_receiver_module_re_exports() -> None:
-    assert tstrans.rtp.DemuxReceiver is not None
-    assert "DemuxReceiver" in tstrans.rtp.__all__
+    assert shells.DemuxReceiver is not None
+    assert "DemuxReceiver" in dir(shells)
 
 
 # --------------------------------------------------------------------------- #
@@ -63,19 +64,24 @@ def test_demux_receiver_module_re_exports() -> None:
 
 def test_demux_receiver_bind_and_close() -> None:
     port = _free_udp_port()
-    with tstrans.rtp.DemuxReceiver(f"rtp://127.0.0.1:{port}") as rx:
+    with shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}") as rx:
         assert "open" in repr(rx)
     # After context exit, repr reports closed.
     # (re-constructing to verify shape)
-    rx2 = tstrans.rtp.DemuxReceiver(f"rtp://127.0.0.1:{port}")
+    rx2 = shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}")
     rx2.close()
     assert "closed" in repr(rx2)
 
 
 def test_demux_receiver_bad_url_raises_rtp_error() -> None:
     with pytest.raises(RtpError) as exc_info:
-        tstrans.rtp.DemuxReceiver("not-a-valid-url://")
+        shells.DemuxReceiver.open("rtp://127.0.0.1:notaport")
     assert exc_info.value.kind == RtpErrorKind.URL
+
+
+def test_demux_receiver_unsupported_scheme_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="unsupported URL scheme"):
+        shells.DemuxReceiver.open("not-a-valid-url://")
 
 
 def test_demux_receiver_with_demux_config() -> None:
@@ -84,7 +90,7 @@ def test_demux_receiver_with_demux_config() -> None:
 
     port = _free_udp_port()
     cfg = DemuxerConfig(strict_mode=StrictMode.OFF)
-    with tstrans.rtp.DemuxReceiver(
+    with shells.DemuxReceiver.open(
         f"rtp://127.0.0.1:{port}", demux_config=cfg
     ) as rx:
         assert "open" in repr(rx)
@@ -97,13 +103,13 @@ def test_demux_receiver_with_demux_config() -> None:
 
 def test_demux_receiver_iter_returns_self() -> None:
     port = _free_udp_port()
-    rx = tstrans.rtp.DemuxReceiver(f"rtp://127.0.0.1:{port}")
+    rx = shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}")
     assert iter(rx) is rx
     rx.close()
 
 
 def test_demux_receiver_emits_events_from_loopback_send() -> None:
-    """Build TS bytes locally; send them via `tstrans.rtp.Sender`; the
+    """Build TS bytes locally; send them via `tstrans.rtp.Transport`; the
     DemuxReceiver should yield at least one event before we stop.
 
     Sends one TS packet per RTP datagram (the most deterministic path)
@@ -111,7 +117,7 @@ def test_demux_receiver_emits_events_from_loopback_send() -> None:
     UDP loopback path.
     """
     port = _free_udp_port()
-    rx = tstrans.rtp.DemuxReceiver(f"rtp://127.0.0.1:{port}")
+    rx = shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}")
     events: list[object] = []
     err: list[BaseException] = []
 
@@ -129,7 +135,7 @@ def test_demux_receiver_emits_events_from_loopback_send() -> None:
     # Give the consumer time to enter recv.
     time.sleep(0.2)
     ts_bytes = _build_minimal_ts_bytes()
-    with tstrans.rtp.Sender(f"rtp://127.0.0.1:{port}") as snd:
+    with tstrans.rtp.Transport(f"rtp://127.0.0.1:{port}") as snd:
         # Repeat the burst a few times in case the consumer thread
         # hasn't entered the kernel recv yet on the first pass. Each
         # send is one TS packet (the natural framing the receiver also
@@ -156,14 +162,14 @@ def test_demux_receiver_emits_events_from_loopback_send() -> None:
 
 def test_demux_receiver_url_knob_iteration_resumes_after_timeout() -> None:
     """`?recv_timeout=<ms>` on the URL arms a persistent recv deadline on
-    `tstrans.rtp.DemuxReceiver` too (same knob as `tstrans.rtp.Receiver`
+    `tstrans.shells.DemuxReceiver` too (same knob as `tstrans.rtp.RecvTransport`
     — `RtpRecvSocketBuilder::from_url`, no new API). A quiet socket's
     `next(it)` raises `RtpError(BACKPRESSURE)` rather than blocking forever;
     the receiver + demuxer state survive the expiry, so once a real
     sender delivers muxed TS bytes, the SAME iterator resumes and
     yields a `DemuxEvent` instead of raising again."""
     port = _free_udp_port()
-    with tstrans.rtp.DemuxReceiver(
+    with shells.DemuxReceiver.open(
         f"rtp://127.0.0.1:{port}?recv_timeout=200"
     ) as rx:
         it = iter(rx)
@@ -185,7 +191,7 @@ def test_demux_receiver_url_knob_iteration_resumes_after_timeout() -> None:
         # build-and-burst pattern as
         # `test_demux_receiver_emits_events_from_loopback_send`.
         ts_bytes = _build_minimal_ts_bytes()
-        with tstrans.rtp.Sender(f"rtp://127.0.0.1:{port}") as snd:
+        with tstrans.rtp.Transport(f"rtp://127.0.0.1:{port}") as snd:
             for _ in range(3):
                 for i in range(0, len(ts_bytes), 188):
                     snd.send(ts_bytes[i : i + 188])
@@ -208,7 +214,7 @@ def test_mux_sender_to_demux_receiver_round_trip() -> None:
     port. Push a video NAL via MuxSender; assert the receiver emits
     a ProgramMap + Sample event."""
     port = _free_udp_port()
-    rx = tstrans.rtp.DemuxReceiver(f"rtp://127.0.0.1:{port}")
+    rx = shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}")
     events: list[object] = []
     err: list[BaseException] = []
     saw_program_map = threading.Event()
@@ -231,7 +237,7 @@ def test_mux_sender_to_demux_receiver_round_trip() -> None:
     time.sleep(0.2)
     # Push several key NALs to cover PSI emission + a video sample.
     program = _video_only_program()
-    with tstrans.rtp.MuxSender(f"rtp://127.0.0.1:{port}", program) as snd:
+    with shells.MuxSender.open(f"rtp://127.0.0.1:{port}", program) as snd:
         nal_idr = b"\x00\x00\x00\x01\x65\xBB"
         for i in range(8):
             snd.send_video(
@@ -255,7 +261,7 @@ def test_mux_sender_to_demux_receiver_round_trip() -> None:
 
 def test_stats_tuple_shape() -> None:
     port = _free_udp_port()
-    with tstrans.rtp.DemuxReceiver(f"rtp://127.0.0.1:{port}") as rx:
+    with shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}") as rx:
         stats = rx.stats()
         assert isinstance(stats, tuple)
         assert len(stats) == 2
@@ -273,13 +279,13 @@ def test_last_seen_micros_none_before_any_data() -> None:
     """A freshly-bound receiver has seen nothing yet — any pid, including
     a configured-looking one, reports None."""
     port = _free_udp_port()
-    with tstrans.rtp.DemuxReceiver(f"rtp://127.0.0.1:{port}") as rx:
+    with shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}") as rx:
         assert rx.last_seen_micros(0x101) is None
 
 
 def test_last_seen_micros_bogus_pid_returns_none() -> None:
     port = _free_udp_port()
-    with tstrans.rtp.DemuxReceiver(f"rtp://127.0.0.1:{port}") as rx:
+    with shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}") as rx:
         assert rx.last_seen_micros(0x1FFF) is None
 
 
@@ -289,7 +295,7 @@ def test_last_seen_micros_reports_int_after_video_event() -> None:
     that never carried traffic (0x1FFF, outside the configured program)
     stays None."""
     port = _free_udp_port()
-    rx = tstrans.rtp.DemuxReceiver(f"rtp://127.0.0.1:{port}")
+    rx = shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}")
     events: list[object] = []
     err: list[BaseException] = []
 
@@ -307,7 +313,7 @@ def test_last_seen_micros_reports_int_after_video_event() -> None:
     # Give the consumer time to bind.
     time.sleep(0.2)
     program = _video_only_program()
-    with tstrans.rtp.MuxSender(f"rtp://127.0.0.1:{port}", program) as snd:
+    with shells.MuxSender.open(f"rtp://127.0.0.1:{port}", program) as snd:
         nal_idr = b"\x00\x00\x00\x01\x65\xBB"
         for i in range(8):
             snd.send_video(

@@ -107,10 +107,10 @@ PARKED_LISTENER = (
 PARKED_IN_FROM_URL = (
     _PARK_LATCH
     + """
-    import tstrans.srt as srt
+    from tstrans import shells
 
     threading.Thread(
-        target=_park(lambda: srt.Receiver.from_url("srt://127.0.0.1:0?mode=listener")),
+        target=_park(lambda: shells.Receiver.open("srt://127.0.0.1:0?mode=listener")),
         daemon=True,
     ).start()
     assert_parked()

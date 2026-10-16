@@ -35,13 +35,12 @@ from tstrans.mpegts import (
     VideoCodec,
 )
 from tstrans.rtp import (
-    DemuxReceiver,
-    MuxSender,
     RtspClient,
     RtspClientConfig,
     RtspServer,
     RtspServerConfig,
 )
+from tstrans.shells import DemuxReceiver, MuxSender
 
 from _builders.ports import free_udp_port as _free_udp_port
 
@@ -86,7 +85,7 @@ def test_rtp_loopback_round_trip_mux_sender_to_demux_receiver() -> None:
     bounds the test even when CI hardware is slow.
     """
     port = _free_udp_port()
-    rx = DemuxReceiver(f"rtp://127.0.0.1:{port}")
+    rx = DemuxReceiver.open(f"rtp://127.0.0.1:{port}")
     events: list[object] = []
     err: list[BaseException] = []
     saw_video = threading.Event()
@@ -111,7 +110,7 @@ def test_rtp_loopback_round_trip_mux_sender_to_demux_receiver() -> None:
     time.sleep(0.2)
 
     program = _build_test_program()
-    with MuxSender(f"rtp://127.0.0.1:{port}", program) as snd:
+    with MuxSender.open(f"rtp://127.0.0.1:{port}", program) as snd:
         # Push several IDRs so PSI tables emit on the first one and the
         # subsequent NALs ride downstream as Sample events. Eight is a
         # comfortable margin without slowing the test.
