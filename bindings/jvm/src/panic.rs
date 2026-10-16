@@ -54,6 +54,63 @@ where
     }
 }
 
+/// Declares JNI entry points. Each block emits the `#[unsafe(no_mangle)] pub
+/// extern "system"` function with its `JNIEnv`/`JClass` parameters and runs
+/// the body under [`jni_catch`] with the given default, so a Rust panic becomes
+/// a Java `RuntimeException` and never unwinds into the JVM.
+///
+/// ```ignore
+/// jni_native! {
+///     fn Java_org_tstrans_X_nY<'local>(env, _class, handle: jlong) -> jboolean = 0 => {
+///         /* body, with `env: &mut JNIEnv` */
+///     }
+/// }
+/// ```
+///
+/// The author still writes the mangled name: the link against the Java
+/// `native` declaration is the check that it is right. The lifetime
+/// parameter is optional; without it the parameters use `'_`. A native that
+/// returns nothing writes `= ()`. The rail `jni-catch-coverage.sh` refuses a
+/// bare `extern "system"` entry point.
+macro_rules! jni_native {
+    () => {};
+    (
+        $(#[$meta:meta])*
+        fn $name:ident <$lt:lifetime> ( $env:ident, $class:ident $(, $arg:ident : $aty:ty)* $(,)? )
+            $(-> $ret:ty)? = $default:expr => $body:block
+        $($rest:tt)*
+    ) => {
+        $(#[$meta])*
+        #[unsafe(no_mangle)]
+        pub extern "system" fn $name<$lt>(
+            mut $env: ::jni::JNIEnv<$lt>,
+            $class: ::jni::objects::JClass<$lt>,
+            $( $arg: $aty ),*
+        ) $(-> $ret)? {
+            $crate::panic::jni_catch(&mut $env, $default, |$env| $body)
+        }
+        $crate::panic::jni_native! { $($rest)* }
+    };
+    (
+        $(#[$meta:meta])*
+        fn $name:ident ( $env:ident, $class:ident $(, $arg:ident : $aty:ty)* $(,)? )
+            $(-> $ret:ty)? = $default:expr => $body:block
+        $($rest:tt)*
+    ) => {
+        $(#[$meta])*
+        #[unsafe(no_mangle)]
+        pub extern "system" fn $name(
+            mut $env: ::jni::JNIEnv<'_>,
+            $class: ::jni::objects::JClass<'_>,
+            $( $arg: $aty ),*
+        ) $(-> $ret)? {
+            $crate::panic::jni_catch(&mut $env, $default, |$env| $body)
+        }
+        $crate::panic::jni_native! { $($rest)* }
+    };
+}
+pub(crate) use jni_native;
+
 /// Best-effort detail string from a `catch_unwind` payload. Mirrors
 /// `tst-c`'s `panic_payload_message`.
 fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
