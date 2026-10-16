@@ -10,12 +10,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::mapping::decode_fixed_range;
-use super::model::{
-    IcingDetected, OperationalMode, PlatformStatus, SdccFlpField, SensorControlMode, SensorFovName,
-    UasDatalinkLs,
-};
+use super::model::{SdccFlpField, UasDatalinkLs};
 use super::packs;
-use super::tags::{Encoding, lookup};
+use super::tags::{Encoding, FieldValue, TagSpec, lookup};
 
 /// Decode a UAS Datalink Local Set per MISB ST 0601.
 ///
@@ -225,7 +222,7 @@ fn strict_body_walk(body: &[u8], body_offset_in_buf: usize) -> Result<Vec<u32>, 
         // them is conformant, not a violation of the once-per-packet
         // rule. (Tag 102 is typed via `UasDatalinkLs::sdcc_flps` —
         // see `decode_inner`'s running tag-list capture in
-        // `apply_typed_tag`.)
+        // `apply_tag`.)
         if let Ok(tag_u8) = u8::try_from(tag) {
             if lookup(tag_u8).is_some() && tag_u8 != 115 && tag_u8 != 102 {
                 if seen[tag_u8 as usize] {
@@ -293,10 +290,10 @@ fn decode_inner(
 
     // Wire-order item tags seen so far (Tag 102's "Refined Source List"
     // positional capture needs to know which items immediately precede
-    // each occurrence — see `apply_typed_tag`'s `102` arm). Tag 1
+    // each occurrence — see `apply_multi_instance`). Tag 1
     // (checksum) is excluded below since it is handled separately and
-    // never reaches `apply_typed_tag`; Tag 102 itself is excluded inside
-    // `apply_typed_tag` (it is not one of the "sources" a later
+    // never reaches `apply_tag`; Tag 102 itself is excluded inside
+    // `apply_tag` (it is not one of the "sources" a later
     // occurrence could refine).
     let mut tags_seen: Vec<u32> = Vec::new();
 
@@ -325,7 +322,7 @@ fn decode_inner(
             declared_checksum = Some((cksum, value_offset_in_buf));
             continue;
         }
-        if let Err(field_err) = apply_typed_tag(&mut record, &f, &mut tags_seen) {
+        if let Err(field_err) = apply_tag(&mut record, &f, &mut tags_seen) {
             record.field_errors.push(field_err);
         }
     }
@@ -353,7 +350,11 @@ fn decode_inner(
     Ok(record)
 }
 
-fn apply_typed_tag(
+/// Decode one raw field into `record` through its `TAGS` row. The pack
+/// rows and the two multi-instance tags (102, 115) keep their own
+/// handlers; every other row decodes by its encoding and stores through
+/// the row's `set` accessor.
+fn apply_tag(
     record: &mut UasDatalinkLs,
     f: &crate::klv::pack::RawField<'_>,
     tags_seen: &mut Vec<u32>,
@@ -386,7 +387,41 @@ fn apply_typed_tag(
         record.unknown.push(OwnedRawField::from(f.clone()));
         return Ok(());
     };
-    match spec.encoding {
+    match (spec.encoding, tag) {
+        (Encoding::Pack, 102 | 115) => return apply_multi_instance(record, f, tags_seen),
+        (Encoding::Pack, _) => return apply_pack(record, f),
+        _ => {}
+    }
+    let Some(value) = decode_scalar(spec, f, record)? else {
+        return Ok(());
+    };
+    let set = spec.set.ok_or(KlvFieldError::TruncatedField { tag })?;
+    set(record, value).map_err(|e| match (spec.encoding, e) {
+        // A varint wider than the field's Rust type: report the row's
+        // declared byte cap against the wire length.
+        (
+            Encoding::VarUint { max_len } | Encoding::VarInt { max_len },
+            KlvFieldError::InvalidLength { tag, .. },
+        ) => KlvFieldError::InvalidLength {
+            tag,
+            expected: max_len,
+            got: f.value.len(),
+        },
+        (_, e) => e,
+    })
+}
+
+/// Decode a scalar row's wire value by its encoding. `None` means the
+/// field stays unset: an absent string, an INT_MIN sentinel (recorded in
+/// `sentinel_tags`) or an IMAPB special value (recorded in
+/// `imapb_specials`).
+fn decode_scalar(
+    spec: &TagSpec,
+    f: &crate::klv::pack::RawField<'_>,
+    record: &mut UasDatalinkLs,
+) -> Result<Option<FieldValue>, KlvFieldError> {
+    let tag = f.tag;
+    let value = match spec.encoding {
         Encoding::U8 => {
             if f.value.len() != 1 {
                 return Err(KlvFieldError::InvalidLength {
@@ -395,15 +430,11 @@ fn apply_typed_tag(
                     got: f.value.len(),
                 });
             }
-            let v = f.value[0];
-            match tag {
-                34 => record.icing_detected = Some(IcingDetected::from_wire(v)),
-                47 => record.generic_flag_data = Some(v),
-                61 => record.weapon_fired = Some(v),
-                63 => record.sensor_fov_name = Some(SensorFovName::from_wire(v)),
-                65 => record.uas_ls_version = Some(v),
-                77 => record.operational_mode = Some(OperationalMode::from_wire(v)),
-                _ => unreachable!(),
+            // The coded enums (34, 63, 77) travel as their wire code.
+            if matches!(tag, 34 | 63 | 77) {
+                FieldValue::Code(f.value[0])
+            } else {
+                FieldValue::U64(u64::from(f.value[0]))
             }
         }
         Encoding::I8 => {
@@ -414,11 +445,7 @@ fn apply_typed_tag(
                     got: f.value.len(),
                 });
             }
-            let v = f.value[0] as i8;
-            match tag {
-                39 => record.outside_air_temp_c = Some(v),
-                _ => unreachable!(),
-            }
+            FieldValue::I64(i64::from(f.value[0] as i8))
         }
         Encoding::U16 => {
             if f.value.len() != 2 {
@@ -428,12 +455,7 @@ fn apply_typed_tag(
                     got: f.value.len(),
                 });
             }
-            let v = u16::from_be_bytes([f.value[0], f.value[1]]);
-            match tag {
-                60 => record.weapon_load = Some(v),
-                62 => record.laser_prf_code = Some(v),
-                _ => unreachable!(),
-            }
+            FieldValue::U64(u64::from(u16::from_be_bytes([f.value[0], f.value[1]])))
         }
         Encoding::U64 => {
             if f.value.len() != 8 {
@@ -445,18 +467,13 @@ fn apply_typed_tag(
             }
             let mut a = [0u8; 8];
             a.copy_from_slice(f.value);
-            let v = u64::from_be_bytes(a);
-            match tag {
-                2 => record.timestamp_us = Some(v),
-                72 => record.event_start_time_us = Some(v),
-                _ => unreachable!(),
-            }
+            FieldValue::U64(u64::from_be_bytes(a))
         }
         Encoding::Utf8 { max_bytes } => {
             // ST 0107.5 §6.3.3.2: length-0 value = "Unknown" (field absent);
             // single NUL byte = empty string "". Anything else is UTF-8 text.
             if f.value.is_empty() {
-                return Ok(()); // absent; leave field as None
+                return Ok(None); // absent; leave field as None
             }
             if f.value.len() > max_bytes {
                 return Err(KlvFieldError::InvalidLength {
@@ -465,43 +482,15 @@ fn apply_typed_tag(
                     got: f.value.len(),
                 });
             }
-            let s = if f.value == [0x00] {
+            FieldValue::Str(if f.value == [0x00] {
                 String::new() // empty string signal
             } else {
                 core::str::from_utf8(f.value)
                     .map_err(|_| KlvFieldError::InvalidUtf8 { tag })?
                     .to_owned()
-            };
-            match tag {
-                3 => record.mission_id = Some(s),
-                4 => record.platform_tail_number = Some(s),
-                10 => record.platform_designation = Some(s),
-                11 => record.image_source_sensor = Some(s),
-                12 => record.image_coordinate_system = Some(s),
-                59 => record.platform_call_sign = Some(s),
-                70 => record.alternate_platform_name = Some(s),
-                106 => record.stream_designator = Some(s),
-                107 => record.operational_base = Some(s),
-                108 => record.broadcast_source = Some(s),
-                129 => record.target_id = Some(s),
-                135 => record.communications_method = Some(s),
-                _ => unreachable!(),
-            }
+            })
         }
-        Encoding::RawBytes => match tag {
-            48 => record.security_local_set = Some(f.value.to_vec()),
-            73 => record.rvt = Some(f.value.to_vec()),
-            74 => record.vmti = Some(f.value.to_vec()),
-            94 => record.miis_core_id = Some(f.value.to_vec()),
-            95 => record.sar_mi_local_set = Some(f.value.to_vec()),
-            97 => record.range_image_local_set = Some(f.value.to_vec()),
-            98 => record.geo_registration_local_set = Some(f.value.to_vec()),
-            99 => record.composite_imaging_local_set = Some(f.value.to_vec()),
-            100 => record.segment_local_set = Some(f.value.to_vec()),
-            101 => record.amend_local_set = Some(f.value.to_vec()),
-            139 => record.active_payloads = Some(f.value.to_vec()),
-            _ => unreachable!(),
-        },
+        Encoding::RawBytes => FieldValue::Bytes(f.value.to_vec()),
         Encoding::U8Range
         | Encoding::U16Range
         | Encoding::I16Range
@@ -509,10 +498,13 @@ fn apply_typed_tag(
         | Encoding::I32Range => {
             let r = spec.range.as_ref().expect("ranged tag has range");
             match decode_fixed_range(r, tag, f.value)? {
-                Some(v) => assign_ranged(record, tag, v),
+                Some(v) => FieldValue::F64(v),
                 // INT_MIN sentinel: spec-defined signal, not an error.
                 // Field stays None; tag is recorded for encode round-trip.
-                None => record.sentinel_tags.push(tag),
+                None => {
+                    record.sentinel_tags.push(tag);
+                    return Ok(None);
+                }
             }
         }
         Encoding::Imapb {
@@ -536,9 +528,10 @@ fn apply_typed_tag(
                 length: f.value.len(),
             };
             match crate::klv::imapb::decode_imapb(&params, f.value)? {
-                crate::klv::imapb::DecodedImapb::Value(v) => assign_ranged(record, tag, v),
+                crate::klv::imapb::DecodedImapb::Value(v) => FieldValue::F64(v),
                 crate::klv::imapb::DecodedImapb::Special(s) => {
                     record.imapb_specials.push((tag, s));
+                    return Ok(None);
                 }
                 // Both non-conformant outcomes below are producer errors
                 // from this typed consumer's view (see the
@@ -564,559 +557,82 @@ fn apply_typed_tag(
         }
         Encoding::VarUint { max_len } => {
             let raw = read_var_uint(f.value, max_len, tag)?;
-            // The Err arm below is unreachable by construction for every
-            // tag in this match: `max_len` is always set (in tags.rs) to
-            // the target type's byte width (4 for the u32 tags, 1 for the
-            // u8 tags), and `read_var_uint` already rejected any wire
-            // value longer than `max_len` — so `raw` is guaranteed to fit.
-            // Kept as a defensive `try_from` rather than an `as` cast in
-            // case a future tag pairs a narrower Rust type with a wider
-            // `max_len`.
-            let narrow_u32 = |v: u64| {
-                u32::try_from(v).map_err(|_| KlvFieldError::InvalidLength {
+            // The coded enums (125, 126) travel as their wire code. A
+            // value wider than the field's Rust type is refused by the
+            // row's `set`; that is unreachable by construction, since
+            // `max_len` is the target type's byte width and
+            // `read_var_uint` already rejected any longer wire value.
+            if matches!(tag, 125 | 126) {
+                FieldValue::Code(u8::try_from(raw).map_err(|_| KlvFieldError::InvalidLength {
                     tag,
                     expected: max_len,
                     got: f.value.len(),
-                })
-            };
-            let narrow_u8 = |v: u64| {
-                u8::try_from(v).map_err(|_| KlvFieldError::InvalidLength {
-                    tag,
-                    expected: max_len,
-                    got: f.value.len(),
-                })
-            };
-            match tag {
-                110 => record.time_airborne_s = Some(narrow_u32(raw)?),
-                111 => record.propulsion_unit_speed_rpm = Some(narrow_u32(raw)?),
-                123 => record.navsats_in_view = Some(narrow_u8(raw)?),
-                124 => record.positioning_method_source = Some(narrow_u8(raw)?),
-                125 => record.platform_status = Some(PlatformStatus::from_wire(narrow_u8(raw)?)),
-                126 => {
-                    record.sensor_control_mode = Some(SensorControlMode::from_wire(narrow_u8(raw)?))
-                }
-                131 => record.take_off_time_us = Some(raw),
-                133 => record.mi_storage_capacity_gb = Some(narrow_u32(raw)?),
-                _ => unreachable!(),
+                })?)
+            } else {
+                FieldValue::U64(raw)
             }
         }
-        Encoding::VarInt { max_len } => {
-            let raw = read_var_int(f.value, max_len, tag)?;
-            match tag {
-                136 => {
-                    record.leap_seconds =
-                        Some(
-                            i32::try_from(raw).map_err(|_| KlvFieldError::InvalidLength {
-                                tag,
-                                expected: max_len,
-                                got: f.value.len(),
-                            })?,
-                        )
-                }
-                137 => record.correction_offset_us = Some(raw),
-                _ => unreachable!(),
-            }
+        Encoding::VarInt { max_len } => FieldValue::I64(read_var_int(f.value, max_len, tag)?),
+        Encoding::Pack => return Ok(None),
+    };
+    Ok(Some(value))
+}
+
+/// Tags 102 and 115 — MULTI-INSTANCE (ST 0601.19 Table 1 "Multiples
+/// Allowed" = Yes): every occurrence appends, it never overwrites.
+fn apply_multi_instance(
+    record: &mut UasDatalinkLs,
+    f: &crate::klv::pack::RawField<'_>,
+    tags_seen: &[u32],
+) -> Result<(), KlvFieldError> {
+    let tag = f.tag;
+    match tag {
+        // Positional capture, not a full `st1010::decode_sdcc_flp`
+        // parse: `peek_matrix_size` reads the Matrix Size (Element 1)
+        // and the Parse Control (Element 2) and applies
+        // `check_matrix_size_fits`, so `N` — how many of `tags_seen`'s
+        // most-recent entries this occurrence refines — is bounded by
+        // what the pack's own bytes can hold. An occurrence whose
+        // matrix cannot fit is rejected as `TruncatedField` and not
+        // captured. Elements 3–5 are not
+        // validated: the raw bytes of an accepted pack are kept
+        // verbatim, and callers decode the pack itself on demand.
+        102 => {
+            let n = crate::klv::st1010::peek_matrix_size(f.value)
+                .ok_or(KlvFieldError::TruncatedField { tag })?;
+            let start = tags_seen.len().saturating_sub(n);
+            record.sdcc_flps.push(SdccFlpField {
+                preceding_tags: tags_seen[start..].to_vec(),
+                bytes: f.value.to_vec(),
+            });
         }
-        Encoding::Pack => match tag {
-            81 => record.image_horizon = Some(packs::parse_image_horizon(f.value)?),
-            // MULTI-INSTANCE (ST 0601.19 Table 1 "Multiples Allowed" =
-            // Yes) — every occurrence appends, it never overwrites.
-            // Positional capture, not a full `st1010::decode_sdcc_flp`
-            // parse: `peek_matrix_size` reads the Matrix Size (Element 1)
-            // and the Parse Control (Element 2) and applies
-            // `check_matrix_size_fits`, so `N` — how many of `tags_seen`'s
-            // most-recent entries this occurrence refines — is bounded by
-            // what the pack's own bytes can hold. An occurrence whose
-            // matrix cannot fit is rejected as `TruncatedField` and not
-            // captured. Elements 3–5 are not
-            // validated: the raw bytes of an accepted pack are kept
-            // verbatim, and callers decode the pack itself on demand.
-            102 => {
-                let n = crate::klv::st1010::peek_matrix_size(f.value)
-                    .ok_or(KlvFieldError::TruncatedField { tag })?;
-                let start = tags_seen.len().saturating_sub(n);
-                record.sdcc_flps.push(SdccFlpField {
-                    preceding_tags: tags_seen[start..].to_vec(),
-                    bytes: f.value.to_vec(),
-                });
-            }
-            115 => record
-                .control_commands
-                .push(packs::parse_control_command(f.value)?),
-            116 => record.control_command_verification = Some(packs::parse_id_list(f.value, 116)?),
-            121 => record.active_wavelengths = Some(packs::parse_id_list(f.value, 121)?),
-            122 => record.country_codes = Some(packs::parse_country_codes(f.value)?),
-            127 => record.sensor_frame_rate = Some(packs::parse_sensor_frame_rate(f.value)?),
-            128 => record.wavelengths_list = Some(packs::parse_wavelengths_list(f.value)?),
-            130 => record.airbase_locations = Some(packs::parse_airbase_locations(f.value)?),
-            138 => record.payload_list = Some(packs::parse_payload_list(f.value)?),
-            140 => record.weapons_stores = Some(packs::parse_weapons_stores(f.value)?),
-            141 => record.waypoint_list = Some(packs::parse_waypoints(f.value)?),
-            142 => record.view_domain = Some(packs::parse_view_domain(f.value)?),
-            143 => {
-                record.metadata_substream_id = Some(packs::parse_metadata_substream_id(f.value)?)
-            }
-            _ => unreachable!(),
-        },
+        _ => record
+            .control_commands
+            .push(packs::parse_control_command(f.value)?),
     }
     Ok(())
 }
 
-/// Per-tag accessor for the 83 uniform `Option<f64>` ranged fields — the
-/// 69 fixed-width LinearRange fields plus the 14 ST 1201.5 IMAPB
-/// extended-range items.
-///
-/// Drives `assign_ranged` (decode) and the ranged arms of
-/// `encode_tag_value` / `each_typed_field` (encode) from one place,
-/// eliminating parallel per-field dispatch tables. `fn` pointers are
-/// `const`-safe and work in `no_std` context; field names remain greppable.
-pub(super) struct RangedEntry {
-    pub(super) id: u8,
-    pub(super) get: fn(&UasDatalinkLs) -> Option<f64>,
-    pub(super) set: fn(&mut UasDatalinkLs, f64),
-}
-
-/// All 83 ST 0601 ranged `Option<f64>` fields in tag-ascending order —
-/// 69 fixed-width LinearRange fields (tags 5-93) plus 14 ST 1201.5 IMAPB
-/// extended-range fields (tags 96-134). The encode path
-/// derives value_len from `tags::TAGS[id].range.byte_length` for the
-/// LinearRange rows, or `Encoding::Imapb.default_len` for the IMAPB rows;
-/// the decode path calls `set`; the encode path calls `get`.
-pub(super) static RANGED_FIELDS: &[RangedEntry] = &[
-    RangedEntry {
-        id: 5,
-        get: |r| r.platform_heading_deg,
-        set: |r, v| r.platform_heading_deg = Some(v),
-    },
-    RangedEntry {
-        id: 6,
-        get: |r| r.platform_pitch_deg,
-        set: |r, v| r.platform_pitch_deg = Some(v),
-    },
-    RangedEntry {
-        id: 7,
-        get: |r| r.platform_roll_deg,
-        set: |r, v| r.platform_roll_deg = Some(v),
-    },
-    RangedEntry {
-        id: 8,
-        get: |r| r.platform_true_airspeed,
-        set: |r, v| r.platform_true_airspeed = Some(v),
-    },
-    RangedEntry {
-        id: 9,
-        get: |r| r.platform_indicated_airspeed,
-        set: |r, v| r.platform_indicated_airspeed = Some(v),
-    },
-    RangedEntry {
-        id: 13,
-        get: |r| r.sensor_lat_deg,
-        set: |r, v| r.sensor_lat_deg = Some(v),
-    },
-    RangedEntry {
-        id: 14,
-        get: |r| r.sensor_lon_deg,
-        set: |r, v| r.sensor_lon_deg = Some(v),
-    },
-    RangedEntry {
-        id: 15,
-        get: |r| r.sensor_alt_m,
-        set: |r, v| r.sensor_alt_m = Some(v),
-    },
-    RangedEntry {
-        id: 16,
-        get: |r| r.sensor_hfov_deg,
-        set: |r, v| r.sensor_hfov_deg = Some(v),
-    },
-    RangedEntry {
-        id: 17,
-        get: |r| r.sensor_vfov_deg,
-        set: |r, v| r.sensor_vfov_deg = Some(v),
-    },
-    RangedEntry {
-        id: 18,
-        get: |r| r.sensor_rel_az_deg,
-        set: |r, v| r.sensor_rel_az_deg = Some(v),
-    },
-    RangedEntry {
-        id: 19,
-        get: |r| r.sensor_rel_el_deg,
-        set: |r, v| r.sensor_rel_el_deg = Some(v),
-    },
-    RangedEntry {
-        id: 20,
-        get: |r| r.sensor_rel_roll_deg,
-        set: |r, v| r.sensor_rel_roll_deg = Some(v),
-    },
-    RangedEntry {
-        id: 21,
-        get: |r| r.slant_range_m,
-        set: |r, v| r.slant_range_m = Some(v),
-    },
-    RangedEntry {
-        id: 22,
-        get: |r| r.target_width_m,
-        set: |r, v| r.target_width_m = Some(v),
-    },
-    RangedEntry {
-        id: 23,
-        get: |r| r.frame_center_lat_deg,
-        set: |r, v| r.frame_center_lat_deg = Some(v),
-    },
-    RangedEntry {
-        id: 24,
-        get: |r| r.frame_center_lon_deg,
-        set: |r, v| r.frame_center_lon_deg = Some(v),
-    },
-    RangedEntry {
-        id: 25,
-        get: |r| r.frame_center_elev_m,
-        set: |r, v| r.frame_center_elev_m = Some(v),
-    },
-    RangedEntry {
-        id: 26,
-        get: |r| r.corner_lat_offset_p1_deg,
-        set: |r, v| r.corner_lat_offset_p1_deg = Some(v),
-    },
-    RangedEntry {
-        id: 27,
-        get: |r| r.corner_lon_offset_p1_deg,
-        set: |r, v| r.corner_lon_offset_p1_deg = Some(v),
-    },
-    RangedEntry {
-        id: 28,
-        get: |r| r.corner_lat_offset_p2_deg,
-        set: |r, v| r.corner_lat_offset_p2_deg = Some(v),
-    },
-    RangedEntry {
-        id: 29,
-        get: |r| r.corner_lon_offset_p2_deg,
-        set: |r, v| r.corner_lon_offset_p2_deg = Some(v),
-    },
-    RangedEntry {
-        id: 30,
-        get: |r| r.corner_lat_offset_p3_deg,
-        set: |r, v| r.corner_lat_offset_p3_deg = Some(v),
-    },
-    RangedEntry {
-        id: 31,
-        get: |r| r.corner_lon_offset_p3_deg,
-        set: |r, v| r.corner_lon_offset_p3_deg = Some(v),
-    },
-    RangedEntry {
-        id: 32,
-        get: |r| r.corner_lat_offset_p4_deg,
-        set: |r, v| r.corner_lat_offset_p4_deg = Some(v),
-    },
-    RangedEntry {
-        id: 33,
-        get: |r| r.corner_lon_offset_p4_deg,
-        set: |r, v| r.corner_lon_offset_p4_deg = Some(v),
-    },
-    RangedEntry {
-        id: 35,
-        get: |r| r.wind_direction_deg,
-        set: |r, v| r.wind_direction_deg = Some(v),
-    },
-    RangedEntry {
-        id: 36,
-        get: |r| r.wind_speed,
-        set: |r, v| r.wind_speed = Some(v),
-    },
-    RangedEntry {
-        id: 37,
-        get: |r| r.static_pressure_mbar,
-        set: |r, v| r.static_pressure_mbar = Some(v),
-    },
-    RangedEntry {
-        id: 38,
-        get: |r| r.density_altitude_m,
-        set: |r, v| r.density_altitude_m = Some(v),
-    },
-    RangedEntry {
-        id: 40,
-        get: |r| r.target_location_lat_deg,
-        set: |r, v| r.target_location_lat_deg = Some(v),
-    },
-    RangedEntry {
-        id: 41,
-        get: |r| r.target_location_lon_deg,
-        set: |r, v| r.target_location_lon_deg = Some(v),
-    },
-    RangedEntry {
-        id: 42,
-        get: |r| r.target_location_elev_m,
-        set: |r, v| r.target_location_elev_m = Some(v),
-    },
-    RangedEntry {
-        id: 43,
-        get: |r| r.target_track_gate_width_px,
-        set: |r, v| r.target_track_gate_width_px = Some(v),
-    },
-    RangedEntry {
-        id: 44,
-        get: |r| r.target_track_gate_height_px,
-        set: |r, v| r.target_track_gate_height_px = Some(v),
-    },
-    RangedEntry {
-        id: 45,
-        get: |r| r.target_error_ce90_m,
-        set: |r, v| r.target_error_ce90_m = Some(v),
-    },
-    RangedEntry {
-        id: 46,
-        get: |r| r.target_error_le90_m,
-        set: |r, v| r.target_error_le90_m = Some(v),
-    },
-    RangedEntry {
-        id: 49,
-        get: |r| r.differential_pressure_mbar,
-        set: |r, v| r.differential_pressure_mbar = Some(v),
-    },
-    RangedEntry {
-        id: 50,
-        get: |r| r.platform_angle_of_attack_deg,
-        set: |r, v| r.platform_angle_of_attack_deg = Some(v),
-    },
-    RangedEntry {
-        id: 51,
-        get: |r| r.platform_vertical_speed,
-        set: |r, v| r.platform_vertical_speed = Some(v),
-    },
-    RangedEntry {
-        id: 52,
-        get: |r| r.platform_sideslip_deg,
-        set: |r, v| r.platform_sideslip_deg = Some(v),
-    },
-    RangedEntry {
-        id: 53,
-        get: |r| r.airfield_barometric_pressure_mbar,
-        set: |r, v| r.airfield_barometric_pressure_mbar = Some(v),
-    },
-    RangedEntry {
-        id: 54,
-        get: |r| r.airfield_elevation_m,
-        set: |r, v| r.airfield_elevation_m = Some(v),
-    },
-    RangedEntry {
-        id: 55,
-        get: |r| r.relative_humidity_pct,
-        set: |r, v| r.relative_humidity_pct = Some(v),
-    },
-    RangedEntry {
-        id: 56,
-        get: |r| r.platform_ground_speed,
-        set: |r, v| r.platform_ground_speed = Some(v),
-    },
-    RangedEntry {
-        id: 57,
-        get: |r| r.ground_range_m,
-        set: |r, v| r.ground_range_m = Some(v),
-    },
-    RangedEntry {
-        id: 58,
-        get: |r| r.platform_fuel_remaining_kg,
-        set: |r, v| r.platform_fuel_remaining_kg = Some(v),
-    },
-    RangedEntry {
-        id: 64,
-        get: |r| r.platform_magnetic_heading_deg,
-        set: |r, v| r.platform_magnetic_heading_deg = Some(v),
-    },
-    RangedEntry {
-        id: 67,
-        get: |r| r.alternate_platform_lat_deg,
-        set: |r, v| r.alternate_platform_lat_deg = Some(v),
-    },
-    RangedEntry {
-        id: 68,
-        get: |r| r.alternate_platform_lon_deg,
-        set: |r, v| r.alternate_platform_lon_deg = Some(v),
-    },
-    RangedEntry {
-        id: 69,
-        get: |r| r.alternate_platform_alt_m,
-        set: |r, v| r.alternate_platform_alt_m = Some(v),
-    },
-    RangedEntry {
-        id: 71,
-        get: |r| r.alternate_platform_heading_deg,
-        set: |r, v| r.alternate_platform_heading_deg = Some(v),
-    },
-    RangedEntry {
-        id: 75,
-        get: |r| r.sensor_ellipsoid_height_m,
-        set: |r, v| r.sensor_ellipsoid_height_m = Some(v),
-    },
-    RangedEntry {
-        id: 76,
-        get: |r| r.alternate_platform_ellipsoid_height_m,
-        set: |r, v| r.alternate_platform_ellipsoid_height_m = Some(v),
-    },
-    RangedEntry {
-        id: 78,
-        get: |r| r.frame_center_ellipsoid_height_m,
-        set: |r, v| r.frame_center_ellipsoid_height_m = Some(v),
-    },
-    RangedEntry {
-        id: 79,
-        get: |r| r.sensor_north_velocity,
-        set: |r, v| r.sensor_north_velocity = Some(v),
-    },
-    RangedEntry {
-        id: 80,
-        get: |r| r.sensor_east_velocity,
-        set: |r, v| r.sensor_east_velocity = Some(v),
-    },
-    RangedEntry {
-        id: 82,
-        get: |r| r.corner_lat_p1_deg,
-        set: |r, v| r.corner_lat_p1_deg = Some(v),
-    },
-    RangedEntry {
-        id: 83,
-        get: |r| r.corner_lon_p1_deg,
-        set: |r, v| r.corner_lon_p1_deg = Some(v),
-    },
-    RangedEntry {
-        id: 84,
-        get: |r| r.corner_lat_p2_deg,
-        set: |r, v| r.corner_lat_p2_deg = Some(v),
-    },
-    RangedEntry {
-        id: 85,
-        get: |r| r.corner_lon_p2_deg,
-        set: |r, v| r.corner_lon_p2_deg = Some(v),
-    },
-    RangedEntry {
-        id: 86,
-        get: |r| r.corner_lat_p3_deg,
-        set: |r, v| r.corner_lat_p3_deg = Some(v),
-    },
-    RangedEntry {
-        id: 87,
-        get: |r| r.corner_lon_p3_deg,
-        set: |r, v| r.corner_lon_p3_deg = Some(v),
-    },
-    RangedEntry {
-        id: 88,
-        get: |r| r.corner_lat_p4_deg,
-        set: |r, v| r.corner_lat_p4_deg = Some(v),
-    },
-    RangedEntry {
-        id: 89,
-        get: |r| r.corner_lon_p4_deg,
-        set: |r, v| r.corner_lon_p4_deg = Some(v),
-    },
-    RangedEntry {
-        id: 90,
-        get: |r| r.platform_pitch_full_deg,
-        set: |r, v| r.platform_pitch_full_deg = Some(v),
-    },
-    RangedEntry {
-        id: 91,
-        get: |r| r.platform_roll_full_deg,
-        set: |r, v| r.platform_roll_full_deg = Some(v),
-    },
-    RangedEntry {
-        id: 92,
-        get: |r| r.platform_angle_of_attack_full_deg,
-        set: |r, v| r.platform_angle_of_attack_full_deg = Some(v),
-    },
-    RangedEntry {
-        id: 93,
-        get: |r| r.platform_sideslip_full_deg,
-        set: |r, v| r.platform_sideslip_full_deg = Some(v),
-    },
-    // ST 1201.5 IMAPB extended-range items. `spec.range`
-    // is `None` for these (encoding dispatch happens on `Encoding::Imapb`
-    // instead), but they share this same `Option<f64>` accessor table.
-    RangedEntry {
-        id: 96,
-        get: |r| r.target_width_extended_m,
-        set: |r, v| r.target_width_extended_m = Some(v),
-    },
-    RangedEntry {
-        id: 103,
-        get: |r| r.density_altitude_extended_m,
-        set: |r, v| r.density_altitude_extended_m = Some(v),
-    },
-    RangedEntry {
-        id: 104,
-        get: |r| r.sensor_ellipsoid_height_extended_m,
-        set: |r, v| r.sensor_ellipsoid_height_extended_m = Some(v),
-    },
-    RangedEntry {
-        id: 105,
-        get: |r| r.alternate_platform_ellipsoid_height_extended_m,
-        set: |r, v| r.alternate_platform_ellipsoid_height_extended_m = Some(v),
-    },
-    RangedEntry {
-        id: 109,
-        get: |r| r.range_to_recovery_km,
-        set: |r, v| r.range_to_recovery_km = Some(v),
-    },
-    RangedEntry {
-        id: 112,
-        get: |r| r.platform_course_angle_deg,
-        set: |r, v| r.platform_course_angle_deg = Some(v),
-    },
-    RangedEntry {
-        id: 113,
-        get: |r| r.altitude_agl_m,
-        set: |r, v| r.altitude_agl_m = Some(v),
-    },
-    RangedEntry {
-        id: 114,
-        get: |r| r.radar_altimeter_m,
-        set: |r, v| r.radar_altimeter_m = Some(v),
-    },
-    RangedEntry {
-        id: 117,
-        get: |r| r.sensor_azimuth_rate_dps,
-        set: |r, v| r.sensor_azimuth_rate_dps = Some(v),
-    },
-    RangedEntry {
-        id: 118,
-        get: |r| r.sensor_elevation_rate_dps,
-        set: |r, v| r.sensor_elevation_rate_dps = Some(v),
-    },
-    RangedEntry {
-        id: 119,
-        get: |r| r.sensor_roll_rate_dps,
-        set: |r, v| r.sensor_roll_rate_dps = Some(v),
-    },
-    RangedEntry {
-        id: 120,
-        get: |r| r.mi_storage_percent_full,
-        set: |r, v| r.mi_storage_percent_full = Some(v),
-    },
-    RangedEntry {
-        id: 132,
-        get: |r| r.transmission_frequency_mhz,
-        set: |r, v| r.transmission_frequency_mhz = Some(v),
-    },
-    RangedEntry {
-        id: 134,
-        get: |r| r.zoom_percentage,
-        set: |r, v| r.zoom_percentage = Some(v),
-    },
-];
-
-/// Look up a ranged-field entry by tag. `RANGED_FIELDS` is tag-ascending
-/// (pinned by `ranged_fields_table_complete_and_injective`), so this is a
-/// binary search rather than a per-call linear scan.
-pub(super) fn ranged_entry(tag: u8) -> Option<&'static RangedEntry> {
-    RANGED_FIELDS
-        .binary_search_by_key(&tag, |e| e.id)
-        .ok()
-        .map(|i| &RANGED_FIELDS[i])
-}
-
-/// Write a decoded ranged-float value to the matching field in `record`.
-/// Replaces a 69-arm match — the table is the single source of the tag→field mapping.
-pub(super) fn assign_ranged(record: &mut UasDatalinkLs, tag: u32, v: f64) {
-    if let Some(entry) = u8::try_from(tag).ok().and_then(ranged_entry) {
-        (entry.set)(record, v);
+/// The single-instance pack rows: each parses with its own function in
+/// `packs.rs` and stores into its own field.
+fn apply_pack(
+    record: &mut UasDatalinkLs,
+    f: &crate::klv::pack::RawField<'_>,
+) -> Result<(), KlvFieldError> {
+    match f.tag {
+        81 => record.image_horizon = Some(packs::parse_image_horizon(f.value)?),
+        116 => record.control_command_verification = Some(packs::parse_id_list(f.value, 116)?),
+        121 => record.active_wavelengths = Some(packs::parse_id_list(f.value, 121)?),
+        122 => record.country_codes = Some(packs::parse_country_codes(f.value)?),
+        127 => record.sensor_frame_rate = Some(packs::parse_sensor_frame_rate(f.value)?),
+        128 => record.wavelengths_list = Some(packs::parse_wavelengths_list(f.value)?),
+        130 => record.airbase_locations = Some(packs::parse_airbase_locations(f.value)?),
+        138 => record.payload_list = Some(packs::parse_payload_list(f.value)?),
+        140 => record.weapons_stores = Some(packs::parse_weapons_stores(f.value)?),
+        141 => record.waypoint_list = Some(packs::parse_waypoints(f.value)?),
+        142 => record.view_domain = Some(packs::parse_view_domain(f.value)?),
+        143 => record.metadata_substream_id = Some(packs::parse_metadata_substream_id(f.value)?),
+        _ => unreachable!(),
     }
+    Ok(())
 }
