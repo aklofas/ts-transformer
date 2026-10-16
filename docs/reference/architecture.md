@@ -86,6 +86,13 @@ keeps every binding's surface area defined by the same safe Rust API and
 means a fix in `tst-core` reaches every binding without per-binding
 patches.
 
+`tst_pipeline::binding` stays a module of `tst-pipeline` rather than a crate
+below it. It builds `no_std` + `alloc`, so the bare-metal C plane already
+uses it; a separate crate would move the same lines, take `MuxSender`'s
+lock seam with it, and add a published crate. The four small transports'
+dependency on `tst-pipeline` is that module's error-kind table
+(`binding_kind.rs` in each crate), not the shells.
+
 `srt-sys` (published as `tstrans-srt-sys`) is the raw FFI layer — bindgen-generated against libsrt 1.5.7,
 exposing roughly 72 `srt_*` functions and the full `SRT_*` constant
 surface, with `mbedtls` wired in as the encryption backend by default.
@@ -274,7 +281,7 @@ recv loop on a fresh transport when the inner returns `Closed` or
 `ManagedTransport` / `ManagedRecvTransport`; `ManagedDemuxReceiver` resets
 its per-stream demux state (sync alignment, PES reassembly) on reconnect
 while aggregate counters and configuration survive, as
-[`binding-authors.md`](./binding-authors.md) §"Receiver-side reconnect"
+[`binding-authors.md`](/docs/reference/binding-authors.md) §"Receiver-side reconnect"
 describes.
 
 **Decoupled pairing.** The demuxer surfaces every video AU and every
@@ -439,4 +446,4 @@ canonical list and the rationale for each entry.
 ## See also
 
 - [Resource policy](/docs/reference/resource-policy.md) — the bounds, reservations and full-queue policies of the RTSP server.
-- [Binding-author starter](./binding-authors.md) — entry point for `tst-jni` and `tst-uniffi` authors (plus the existing `tst-c` ABI).
+- [Binding-author starter](/docs/reference/binding-authors.md) — entry point for `tst-jni` and `tst-uniffi` authors (plus the existing `tst-c` ABI).
