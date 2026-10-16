@@ -25,6 +25,7 @@ pub mod builder;
 pub mod config;
 pub mod error;
 pub mod listener;
+pub mod opener;
 pub mod stats;
 pub mod transport;
 pub mod url;

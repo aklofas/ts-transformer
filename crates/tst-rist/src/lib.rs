@@ -29,6 +29,7 @@ pub mod builder;
 pub mod config;
 pub mod error;
 pub mod init;
+pub mod opener;
 pub mod recv;
 pub mod stats;
 pub mod transport;

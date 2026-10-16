@@ -393,6 +393,13 @@ pub trait Transport: Send {
     fn socket_stats(&self) -> Option<SocketStats> {
         None
     }
+
+    /// The concrete transport, for a binding that must reach a
+    /// transport-specific accessor through a type-erased shell (e.g. SRT's
+    /// libsrt statistics). `None` unless the transport opts in.
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        None
+    }
 }
 
 /// Type-erased cancel-handle accessor returned by
@@ -622,6 +629,13 @@ pub trait RecvTransport: Send {
         None
     }
 
+    /// The concrete transport, for a binding that must reach a
+    /// transport-specific accessor through a type-erased shell (e.g. SRT's
+    /// libsrt statistics). `None` unless the transport opts in.
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        None
+    }
+
     /// A handle reporting why this stream ended, for transports that
     /// record one ([`EndReason`]'s table lists them). Obtain it before
     /// moving the transport into a shell or a binding handle. Defaults to
@@ -663,6 +677,9 @@ impl<T: Transport + ?Sized> Transport for Box<T> {
     fn socket_stats(&self) -> Option<SocketStats> {
         (**self).socket_stats()
     }
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        (**self).as_any()
+    }
 }
 
 impl<T: RecvTransport + ?Sized> RecvTransport for Box<T> {
@@ -683,6 +700,9 @@ impl<T: RecvTransport + ?Sized> RecvTransport for Box<T> {
     }
     fn socket_stats(&self) -> Option<SocketStats> {
         (**self).socket_stats()
+    }
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        (**self).as_any()
     }
     #[cfg(feature = "std")]
     fn end_reason_handle(&self) -> Option<EndReasonHandle> {

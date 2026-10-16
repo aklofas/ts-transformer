@@ -470,3 +470,39 @@ fn no_source_pin_accepts_any_peer() {
     assert_eq!(&buf[..n], &expected[..]);
     assert_eq!(recv.rtp_stats().source_rejected, 0);
 }
+
+#[test]
+fn opener_round_trips_one_datagram_and_its_cancel_ends_a_parked_recv() {
+    use tst_core::transport::TransportError;
+    use tst_pipeline::binding::Domain;
+
+    let base = free_rtp_port_base();
+    let url = format!("rtp://127.0.0.1:{base}");
+    let rx = tst_rtp::opener::open_recv(&url).expect("open_recv");
+    assert_eq!(rx.domain, Domain::Rtp);
+    let mut tx = tst_rtp::opener::open_sender(&url).expect("open_sender");
+    assert_eq!(tx.domain, Domain::Rtp);
+    tx.transport
+        .send_bytes(&synthetic_ts_packet(0x01))
+        .expect("send");
+
+    let mut rx_t = rx.transport;
+    let mut buf = vec![0u8; rx_t.max_payload() + 64];
+    assert_eq!(rx_t.recv_bytes(&mut buf).expect("recv"), 188);
+    assert_eq!(&buf[..188], &synthetic_ts_packet(0x01)[..]);
+
+    let cancel = rx.cancel.clone();
+    let h = thread::spawn(move || rx_t.recv_bytes(&mut buf));
+    thread::sleep(Duration::from_millis(50));
+    cancel.cancel();
+    assert!(matches!(
+        h.join().unwrap(),
+        Err(TransportError::ExplicitClose)
+    ));
+
+    // A bad URL is the RtpUrl kind.
+    let e = tst_rtp::opener::open_sender("udp://127.0.0.1:1")
+        .err()
+        .expect("wrong scheme");
+    assert_eq!(e.kind, tst_pipeline::binding::BindingErrorKind::RtpUrl);
+}

@@ -41,6 +41,7 @@ pub mod depay;
 pub mod error;
 pub mod h264;
 pub mod h265;
+pub mod opener;
 pub mod packet;
 pub mod rtcp;
 pub mod rtsp;

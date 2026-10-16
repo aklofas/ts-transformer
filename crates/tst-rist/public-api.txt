@@ -149,6 +149,9 @@ impl core::marker::UnsafeUnpin for tst_rist::error::RistError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::error::RistError
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::error::RistError
 pub mod tst_rist::init
+pub mod tst_rist::opener
+pub fn tst_rist::opener::open_recv(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>, tst_pipeline::binding::kind::BindingError>
+pub fn tst_rist::opener::open_sender(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::Transport>>, tst_pipeline::binding::kind::BindingError>
 pub mod tst_rist::recv
 pub struct tst_rist::recv::RistRecvTransport
 impl tst_rist::recv::RistRecvTransport

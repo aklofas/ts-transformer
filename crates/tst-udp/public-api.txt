@@ -88,6 +88,9 @@ impl core::marker::Unpin for tst_udp::error::UdpError
 impl core::marker::UnsafeUnpin for tst_udp::error::UdpError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_udp::error::UdpError
 impl !core::panic::unwind_safe::UnwindSafe for tst_udp::error::UdpError
+pub mod tst_udp::opener
+pub fn tst_udp::opener::open_recv(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>, tst_pipeline::binding::kind::BindingError>
+pub fn tst_udp::opener::open_sender(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::Transport>>, tst_pipeline::binding::kind::BindingError>
 pub mod tst_udp::recv
 pub struct tst_udp::recv::UdpRecvTransport
 impl tst_udp::recv::UdpRecvTransport

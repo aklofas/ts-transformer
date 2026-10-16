@@ -29,6 +29,7 @@ pub mod config;
 pub mod error;
 pub mod init;
 pub mod listener;
+pub mod opener;
 pub mod options;
 pub mod shells;
 pub mod socket;

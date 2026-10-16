@@ -7261,6 +7261,7 @@ impl core::marker::UnsafeUnpin for tst_core::transport::SocketStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::SocketStats
 impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::SocketStats
 pub trait tst_core::transport::RecvTransport: core::marker::Send
+pub fn tst_core::transport::RecvTransport::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn tst_core::transport::RecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_core::transport::RecvTransport::close(&mut self)
 pub fn tst_core::transport::RecvTransport::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
@@ -7269,6 +7270,7 @@ pub fn tst_core::transport::RecvTransport::max_payload(&self) -> usize
 pub fn tst_core::transport::RecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn tst_core::transport::RecvTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl<T: tst_core::transport::RecvTransport + ?core::marker::Sized> tst_core::transport::RecvTransport for alloc::boxed::Box<T>
+pub fn alloc::boxed::Box<T>::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn alloc::boxed::Box<T>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn alloc::boxed::Box<T>::close(&mut self)
 pub fn alloc::boxed::Box<T>::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
@@ -7277,6 +7279,7 @@ pub fn alloc::boxed::Box<T>::max_payload(&self) -> usize
 pub fn alloc::boxed::Box<T>::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn alloc::boxed::Box<T>::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 pub trait tst_core::transport::Transport: core::marker::Send
+pub fn tst_core::transport::Transport::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn tst_core::transport::Transport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_core::transport::Transport::close(&mut self)
 pub fn tst_core::transport::Transport::is_alive(&self) -> bool
@@ -7284,6 +7287,7 @@ pub fn tst_core::transport::Transport::max_payload(&self) -> usize
 pub fn tst_core::transport::Transport::send_bytes(&mut self, &[u8]) -> core::result::Result<(), tst_core::transport::TransportError>
 pub fn tst_core::transport::Transport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl<T: tst_core::transport::Transport + ?core::marker::Sized> tst_core::transport::Transport for alloc::boxed::Box<T>
+pub fn alloc::boxed::Box<T>::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn alloc::boxed::Box<T>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn alloc::boxed::Box<T>::close(&mut self)
 pub fn alloc::boxed::Box<T>::is_alive(&self) -> bool
@@ -8117,6 +8121,7 @@ impl core::marker::UnsafeUnpin for tst_core::UasDatalinkLs
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::UasDatalinkLs
 impl core::panic::unwind_safe::UnwindSafe for tst_core::UasDatalinkLs
 pub trait tst_core::RecvTransport: core::marker::Send
+pub fn tst_core::RecvTransport::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn tst_core::RecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_core::RecvTransport::close(&mut self)
 pub fn tst_core::RecvTransport::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
@@ -8125,6 +8130,7 @@ pub fn tst_core::RecvTransport::max_payload(&self) -> usize
 pub fn tst_core::RecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn tst_core::RecvTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl<T: tst_core::transport::RecvTransport + ?core::marker::Sized> tst_core::transport::RecvTransport for alloc::boxed::Box<T>
+pub fn alloc::boxed::Box<T>::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn alloc::boxed::Box<T>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn alloc::boxed::Box<T>::close(&mut self)
 pub fn alloc::boxed::Box<T>::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
@@ -8133,6 +8139,7 @@ pub fn alloc::boxed::Box<T>::max_payload(&self) -> usize
 pub fn alloc::boxed::Box<T>::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn alloc::boxed::Box<T>::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 pub trait tst_core::Transport: core::marker::Send
+pub fn tst_core::Transport::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn tst_core::Transport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_core::Transport::close(&mut self)
 pub fn tst_core::Transport::is_alive(&self) -> bool
@@ -8140,6 +8147,7 @@ pub fn tst_core::Transport::max_payload(&self) -> usize
 pub fn tst_core::Transport::send_bytes(&mut self, &[u8]) -> core::result::Result<(), tst_core::transport::TransportError>
 pub fn tst_core::Transport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl<T: tst_core::transport::Transport + ?core::marker::Sized> tst_core::transport::Transport for alloc::boxed::Box<T>
+pub fn alloc::boxed::Box<T>::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn alloc::boxed::Box<T>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn alloc::boxed::Box<T>::close(&mut self)
 pub fn alloc::boxed::Box<T>::is_alive(&self) -> bool

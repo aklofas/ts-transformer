@@ -31,6 +31,7 @@
 #[cfg(feature = "std")]
 pub mod handles;
 pub mod kind;
+pub mod opened;
 pub mod owned;
 pub mod panic;
 pub mod shells;
@@ -39,5 +40,6 @@ pub mod view;
 #[cfg(feature = "std")]
 pub use handles::ManagedHandles;
 pub use kind::{BindingError, BindingErrorKind, DiagValue, Diagnostics, Domain};
+pub use opened::Opened;
 pub use owned::{Close, CloseFailure, HandleState, Owned};
 pub use shells::{RecvHalf, SendHalf};
