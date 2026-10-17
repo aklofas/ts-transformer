@@ -14,6 +14,11 @@ use tst_core::publisher::Publisher;
 use tst_hls::{HlsMode, HlsPublisherBuilder};
 use tst_pipeline::MuxPublisher;
 
+/// Every test here owns an HTTP server for its whole body; holding this lock
+/// keeps the thread probe's before/after snapshots free of sibling servers
+/// under plain `cargo test`, where tests share one process.
+static SERVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn ffmpeg_available() -> bool {
     Command::new("ffmpeg").arg("-version").output().is_ok()
 }
@@ -40,6 +45,7 @@ fn synthetic_h264_au() -> Vec<u8> {
 
 #[test]
 fn hls_pipeline_event_mode_writes_three_segments_locally() {
+    let _serial = SERVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tmpdir("event-3");
     let publisher = HlsPublisherBuilder::new()
         .bind("127.0.0.1:0".parse().unwrap())
@@ -77,6 +83,7 @@ fn hls_pipeline_event_mode_writes_three_segments_locally() {
 
 #[test]
 fn hls_extinf_is_media_derived_and_target_is_immutable() {
+    let _serial = SERVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tmpdir("media-extinf");
     let publisher = HlsPublisherBuilder::new()
         .bind("127.0.0.1:0".parse().unwrap())
@@ -147,6 +154,7 @@ fn hls_extinf_is_media_derived_and_target_is_immutable() {
 
 #[test]
 fn hls_pipeline_via_ffmpeg_validates_playlist() {
+    let _serial = SERVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if !ffmpeg_available() {
         eprintln!("ffmpeg not on PATH — skipping HLS e2e validation");
         return;
@@ -207,37 +215,53 @@ fn hls_pipeline_via_ffmpeg_validates_playlist() {
     server.shutdown();
 }
 
-/// The HTTP server runs on exactly one OS thread named `tst-hls`. The probe
-/// reads `/proc`, so it only checks where `/proc/self/task` exists; nextest
-/// runs each test in its own process, which keeps the count exact.
+/// The HTTP server adds exactly one OS thread, named `tst-hls`, and removes
+/// it on `shutdown()`. The probe reads `/proc`, so it only runs where
+/// `/proc/self/task` exists.
 #[test]
 fn http_server_runs_on_one_thread_named_tst_hls() {
+    let _serial = SERVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if !std::path::Path::new("/proc/self/task").is_dir() {
+        eprintln!("skipped: /proc/self/task is not available on this platform");
         return;
     }
+    fn thread_names() -> Vec<String> {
+        std::fs::read_dir("/proc/self/task")
+            .unwrap()
+            .filter_map(|t| std::fs::read_to_string(t.unwrap().path().join("comm")).ok())
+            .map(|c| c.trim_end().to_owned())
+            .collect()
+    }
+    fn count(names: &[String], name: &str) -> usize {
+        names.iter().filter(|n| *n == name).count()
+    }
+    let before = thread_names();
+
     let dir = tmpdir("thread-name");
-    let publisher = HlsPublisherBuilder::new()
+    let mut publisher = HlsPublisherBuilder::new()
         .bind("127.0.0.1:0".parse().unwrap())
         .output_dir(&dir)
-        .mode(HlsMode::Event)
+        .mode(HlsMode::Vod)
         .build()
         .unwrap();
     let addr = publisher.local_addr().unwrap();
     // A connection exercises the accept loop before the threads are counted.
     drop(std::net::TcpStream::connect(addr).unwrap());
-
-    let names: Vec<String> = std::fs::read_dir("/proc/self/task")
-        .unwrap()
-        .filter_map(|t| std::fs::read_to_string(t.unwrap().path().join("comm")).ok())
-        .map(|c| c.trim_end().to_owned())
-        .collect();
+    let during = thread_names();
     assert_eq!(
-        names.iter().filter(|n| *n == "tst-hls").count(),
-        1,
-        "threads: {names:?}"
+        count(&during, "tst-hls"),
+        count(&before, "tst-hls") + 1,
+        "before: {before:?} during: {during:?}"
     );
-    assert!(
-        !names.iter().any(|n| n.starts_with("tst-hls-rt")),
-        "threads: {names:?}"
+    assert_eq!(count(&during, "tst-hls-rt"), count(&before, "tst-hls-rt"));
+
+    publisher.push_ts(&[0x47u8; 376]).unwrap();
+    publisher.cut_segment().unwrap();
+    publisher.finish_serving().unwrap().shutdown();
+    let after = thread_names();
+    assert_eq!(
+        count(&after, "tst-hls"),
+        count(&before, "tst-hls"),
+        "after: {after:?}"
     );
 }

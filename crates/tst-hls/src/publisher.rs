@@ -217,7 +217,9 @@ impl HlsServerHandle {
         self.server.local_addr()
     }
 
-    /// Stop serving and drain the runtime. Also happens automatically on drop.
+    /// Stop serving: cancel, then wait up to 2 s for the `tst-hls` thread to
+    /// finish. A plain drop cancels and detaches instead; the listener closes a
+    /// moment later.
     pub fn shutdown(self) {
         self.server.shutdown();
     }

@@ -31,7 +31,7 @@ public final class HlsServerHandle extends NativeHandle {
         return Integer.parseInt(localAddr.substring(localAddr.lastIndexOf(':') + 1));
     }
 
-    /** Stop serving and drain the runtime. Idempotent. */
+    /** Stop serving and wait up to 2 s for the {@code tst-hls} thread. Idempotent. */
     public void shutdown() { super.close(); }
 
     @Override public void close() { super.close(); }

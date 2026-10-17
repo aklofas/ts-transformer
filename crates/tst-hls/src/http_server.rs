@@ -1,7 +1,9 @@
 //! Internal hyper 1.x HTTP server (serves /playlist.m3u8 + /segment_*.ts).
 //!
 //! The server runs on one thread named `tst-hls` that owns a current-thread
-//! tokio runtime, owned by [`HlsPublisher`].
+//! tokio runtime, owned by [`HlsPublisher`]. Serving is single-threaded: a
+//! segment read or a segment cut delays the other connections for its
+//! duration.
 //! Callers see only the sync `Publisher` API.
 
 use std::convert::Infallible;

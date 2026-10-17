@@ -283,7 +283,7 @@ class HlsServerHandle:
         ...
 
     def shutdown(self) -> None:
-        """Stop serving and drain the runtime. Idempotent."""
+        """Stop serving and wait up to 2 s for the ``tst-hls`` thread. Idempotent."""
         ...
 
     def close(self) -> None:
