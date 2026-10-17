@@ -55,7 +55,9 @@ use crate::cancel::RtpCancelHandle;
 use crate::h264::depacketizer::{H264Au, H264Depacketizer, H264DepayConfig, H264DepayStats};
 use crate::packet::RtpHeader;
 use crate::transport::record_end;
-use crate::transport::{ConnectError, MPSC_PUMP_DISCONNECTED, RECV_SCRATCH_LEN, RtpStats, Source};
+use crate::transport::{
+    MPSC_PUMP_DISCONNECTED, RECV_SCRATCH_LEN, RtpConnectError, RtpStats, Source,
+};
 use crate::url::RtpUrl;
 use tst_core::transport::{EndReason, EndReasonHandle};
 
@@ -162,14 +164,14 @@ impl H264Receiver {
     ///
     /// # Errors
     ///
-    /// Returns [`ConnectError::MissingPayloadTypeParam`] when `?pt=` is
-    /// absent, [`ConnectError::Url`] on parse failure (including a `?pt=`
+    /// Returns [`RtpConnectError::MissingPayloadTypeParam`] when `?pt=` is
+    /// absent, [`RtpConnectError::Url`] on parse failure (including a `?pt=`
     /// outside 1..=127 or equal to 33, and a receive-side `?pkt_size=` or
     /// `?sndbuf=`),
-    /// [`ConnectError::HostNotLiteral`] when the host is not a literal IP,
-    /// or [`ConnectError::Io`] on bind failure.
-    pub fn listen(url: &str) -> Result<Self, ConnectError> {
-        let parsed = RtpUrl::parse(url).map_err(ConnectError::Url)?;
+    /// [`RtpConnectError::HostNotLiteral`] when the host is not a literal IP,
+    /// or [`RtpConnectError::Io`] on bind failure.
+    pub fn listen(url: &str) -> Result<Self, RtpConnectError> {
+        let parsed = RtpUrl::parse(url).map_err(RtpConnectError::Url)?;
         Self::listen_with(&parsed, H264DepayConfig::default())
     }
 
@@ -178,32 +180,32 @@ impl H264Receiver {
     ///
     /// # Errors
     ///
-    /// Returns [`ConnectError::MissingPayloadTypeParam`] when `url.pt` is
-    /// `None`, [`ConnectError::Url`] when `url.pkt_size` or `url.sndbuf` is
-    /// set (send-side knobs), [`ConnectError::HostNotLiteral`] when the host
-    /// is not a literal IP, or [`ConnectError::Io`] on bind failure.
+    /// Returns [`RtpConnectError::MissingPayloadTypeParam`] when `url.pt` is
+    /// `None`, [`RtpConnectError::Url`] when `url.pkt_size` or `url.sndbuf` is
+    /// set (send-side knobs), [`RtpConnectError::HostNotLiteral`] when the host
+    /// is not a literal IP, or [`RtpConnectError::Io`] on bind failure.
     ///
     /// `url.rcvbuf` sizes the socket's `SO_RCVBUF`; `url.source` pins the
     /// accepted peer IP (mismatches are counted in
     /// [`RtpStats::source_rejected`]).
-    pub fn listen_with(url: &RtpUrl, mut config: H264DepayConfig) -> Result<Self, ConnectError> {
+    pub fn listen_with(url: &RtpUrl, mut config: H264DepayConfig) -> Result<Self, RtpConnectError> {
         if url.pkt_size.is_some() {
-            return Err(ConnectError::Url(crate::url::UrlError::RecvPktSize));
+            return Err(RtpConnectError::Url(crate::url::RtpUrlError::RecvPktSize));
         }
         if url.sndbuf.is_some() {
-            return Err(ConnectError::Url(crate::url::UrlError::RecvSndbuf));
+            return Err(RtpConnectError::Url(crate::url::RtpUrlError::RecvSndbuf));
         }
-        let pt = url.pt.ok_or(ConnectError::MissingPayloadTypeParam)?;
+        let pt = url.pt.ok_or(RtpConnectError::MissingPayloadTypeParam)?;
         config.payload_type = pt;
         let ip: std::net::IpAddr = url.host.parse().map_err(|e: std::net::AddrParseError| {
-            ConnectError::HostNotLiteral {
+            RtpConnectError::HostNotLiteral {
                 host: url.host.clone(),
                 detail: e.to_string(),
             }
         })?;
         let local = SocketAddr::new(ip, url.port);
-        let sock = UdpSocket::bind(local).map_err(ConnectError::Io)?;
-        set_socket_buffers(&sock, url.rcvbuf, None).map_err(ConnectError::Io)?;
+        let sock = UdpSocket::bind(local).map_err(RtpConnectError::Io)?;
+        set_socket_buffers(&sock, url.rcvbuf, None).map_err(RtpConnectError::Io)?;
         let mut receiver = Self::from_udp_socket_with(sock, config)?;
         receiver.set_recv_timeout(url.recv_timeout);
         receiver.source_pin = url.source.map(|ip| ip.to_canonical());
@@ -217,9 +219,9 @@ impl H264Receiver {
     pub(crate) fn from_udp_socket_with(
         sock: UdpSocket,
         config: H264DepayConfig,
-    ) -> Result<Self, ConnectError> {
+    ) -> Result<Self, RtpConnectError> {
         sock.set_read_timeout(Some(CANCEL_POLL_INTERVAL))
-            .map_err(ConnectError::Io)?;
+            .map_err(RtpConnectError::Io)?;
         let local_addr = sock.local_addr().ok();
         let pt = config.payload_type;
         Ok(Self {
@@ -632,12 +634,12 @@ mod tests {
         let result = H264Receiver::listen("rtp://127.0.0.1:0").map(|_| ());
         let err = result.expect_err("listen without ?pt= must fail");
         assert!(
-            matches!(err, ConnectError::MissingPayloadTypeParam),
+            matches!(err, RtpConnectError::MissingPayloadTypeParam),
             "expected MissingPayloadTypeParam, got {err:?}"
         );
     }
 
-    /// `?pt=33` is rejected at the URL-parse level (`BadPayloadType`),
+    /// `?pt=33` is rejected at the URL-parse level (`BadQuery`),
     /// BEFORE the missing-pt check ever runs — distinct from
     /// `MissingPayloadTypeParam` (absent `?pt=`, previous test).
     #[test]
@@ -648,9 +650,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                ConnectError::Url(crate::url::UrlError::BadPayloadType { .. })
+                RtpConnectError::Url(crate::url::RtpUrlError::BadQuery { ref key, .. })
+                    if key == "pt"
             ),
-            "expected Url(BadPayloadType), got {err:?}"
+            "expected Url(BadQuery), got {err:?}"
         );
     }
 

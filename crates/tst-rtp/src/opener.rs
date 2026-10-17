@@ -11,7 +11,7 @@ use tst_core::transport::{RecvTransport, Transport};
 use tst_pipeline::binding::opened::{cancel_of, recv_cancel_of};
 use tst_pipeline::binding::{BindingError, Domain, Opened};
 
-use crate::{ConnectError, RtpRecvSocketBuilder, RtpSocketBuilder};
+use crate::{RtpRecvTransport, RtpTransport};
 
 /// Open an `rtp://` sender (unicast or multicast). `?pkt_size=` and
 /// `?ssrc=` set the datagram size and the synchronization source.
@@ -19,9 +19,7 @@ use crate::{ConnectError, RtpRecvSocketBuilder, RtpSocketBuilder};
 /// # Errors
 /// `RtpUrl` for a bad URL; the socket errors' kinds otherwise.
 pub fn open_sender(url: &str) -> Result<Opened<Box<dyn Transport>>, BindingError> {
-    let t = RtpSocketBuilder::from_url(url)
-        .map_err(|e| BindingError::from(ConnectError::from(e)))?
-        .build()?;
+    let t = RtpTransport::connect(url)?;
     let cancel = cancel_of(&t);
     Ok(Opened::new(Box::new(t), cancel, Domain::Rtp))
 }
@@ -33,9 +31,7 @@ pub fn open_sender(url: &str) -> Result<Opened<Box<dyn Transport>>, BindingError
 /// # Errors
 /// `RtpUrl` for a bad URL; the socket errors' kinds otherwise.
 pub fn open_recv(url: &str) -> Result<Opened<Box<dyn RecvTransport>>, BindingError> {
-    let t = RtpRecvSocketBuilder::from_url(url)
-        .map_err(|e| BindingError::from(ConnectError::from(e)))?
-        .build()?;
+    let t = RtpRecvTransport::listen(url)?;
     let cancel = recv_cancel_of(&t);
     Ok(Opened::new(Box::new(t), cancel, Domain::Rtp))
 }

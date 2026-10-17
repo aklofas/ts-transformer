@@ -22,7 +22,7 @@
 //! - `TransportError::Backpressure`   → `RtpException(BACKPRESSURE)` (recv deadline
 //!   expired; retryable — the transport/session is still alive)
 //! - other `TransportError`           → `RtpException(IO)`
-//! - `ConnectError`                   → `RtpException(IO)`
+//! - `RtpConnectError`                   → `RtpException(IO)`
 
 use crate::panic::jni_native;
 use std::sync::atomic::{AtomicBool, Ordering};

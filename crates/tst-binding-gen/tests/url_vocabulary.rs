@@ -1550,15 +1550,15 @@ const RTP_PARSE: &[Row] = &[
     ("rtp://192.0.2.10:5004?ttl=255", A(&[("ttl", "255")])),
     (
         "rtp://192.0.2.10:5004?ttl=0",
-        R("invalid ttl '0': must be in 1..=255"),
+        R("bad value for query parameter ttl: 0 (must be in 1..=255)"),
     ),
     (
         "rtp://192.0.2.10:5004?ttl=256",
-        R("invalid ttl '256': must be in 1..=255"),
+        R("bad value for query parameter ttl: 256 (must be in 1..=255)"),
     ),
     (
         "rtp://192.0.2.10:5004?ttl=x",
-        R("invalid ttl 'x': invalid digit found in string"),
+        R("bad value for query parameter ttl: x (invalid digit found in string)"),
     ),
     ("rtp://192.0.2.10:5004?ttl=2&ttl=3", A(&[("ttl", "3")])),
     ("rtp://192.0.2.10:5004?iface=eth0", A(&[("iface", "eth0")])),
@@ -1566,10 +1566,13 @@ const RTP_PARSE: &[Row] = &[
         "rtp://192.0.2.10:5004?iface=192.0.2.50",
         A(&[("iface", "192.0.2.50")]),
     ),
-    ("rtp://192.0.2.10:5004?iface=", R("invalid iface ''")),
+    (
+        "rtp://192.0.2.10:5004?iface=",
+        R("bad value for query parameter iface: "),
+    ),
     (
         "rtp://192.0.2.10:5004?iface=a%20b",
-        R("invalid iface 'a b'"),
+        R("bad value for query parameter iface: a b"),
     ),
     (
         "rtp://192.0.2.10:5004?pkt_size=1316",
@@ -1581,15 +1584,15 @@ const RTP_PARSE: &[Row] = &[
     ),
     (
         "rtp://192.0.2.10:5004?pkt_size=0",
-        R("invalid pkt_size '0': must be a positive multiple of 188"),
+        R("bad value for query parameter pkt_size: 0 (must be a positive multiple of 188)"),
     ),
     (
         "rtp://192.0.2.10:5004?pkt_size=1000",
-        R("invalid pkt_size '1000': must be a positive multiple of 188"),
+        R("bad value for query parameter pkt_size: 1000 (must be a positive multiple of 188)"),
     ),
     (
         "rtp://192.0.2.10:5004?pkt_size=1K",
-        R("invalid pkt_size '1K': invalid digit found in string"),
+        R("bad value for query parameter pkt_size: 1K (invalid digit found in string)"),
     ),
     ("rtp://192.0.2.10:5004?ssrc=12345", A(&[("ssrc", "12345")])),
     (
@@ -1599,29 +1602,37 @@ const RTP_PARSE: &[Row] = &[
     ("rtp://192.0.2.10:5004?ssrc=0XFF", A(&[("ssrc", "255")])),
     (
         "rtp://192.0.2.10:5004?ssrc=4294967296",
-        R("invalid ssrc '4294967296': number too large to fit in target type"),
+        R(
+            "bad value for query parameter ssrc: 4294967296 (number too large to fit in target type)",
+        ),
     ),
     (
         "rtp://192.0.2.10:5004?ssrc=zz",
-        R("invalid ssrc 'zz': invalid digit found in string"),
+        R("bad value for query parameter ssrc: zz (invalid digit found in string)"),
     ),
     ("rtp://192.0.2.10:5004?pt=96", A(&[("pt", "96")])),
     ("rtp://192.0.2.10:5004?pt=127", A(&[("pt", "127")])),
     (
         "rtp://192.0.2.10:5004?pt=33",
-        R("invalid pt '33': payload type 33 is MPEG-TS — use the MP2T receiver (no ?pt=)"),
+        R(
+            "bad value for query parameter pt: 33 (payload type 33 is MPEG-TS — use the MP2T receiver (no ?pt=))",
+        ),
     ),
     (
         "rtp://192.0.2.10:5004?pt=0",
-        R("invalid pt '0': must be in 1..=127 (excluding 33, which is MPEG-TS)"),
+        R(
+            "bad value for query parameter pt: 0 (must be in 1..=127 (excluding 33, which is MPEG-TS))",
+        ),
     ),
     (
         "rtp://192.0.2.10:5004?pt=128",
-        R("invalid pt '128': must be in 1..=127 (excluding 33, which is MPEG-TS)"),
+        R(
+            "bad value for query parameter pt: 128 (must be in 1..=127 (excluding 33, which is MPEG-TS))",
+        ),
     ),
     (
         "rtp://192.0.2.10:5004?pt=x",
-        R("invalid pt 'x': invalid digit found in string"),
+        R("bad value for query parameter pt: x (invalid digit found in string)"),
     ),
     (
         "rtp://192.0.2.10:5004?recv_timeout=500",
@@ -1629,11 +1640,11 @@ const RTP_PARSE: &[Row] = &[
     ),
     (
         "rtp://192.0.2.10:5004?recv_timeout=0",
-        R("invalid recv_timeout '0': must be nonzero"),
+        R("bad value for query parameter recv_timeout: 0 (must be nonzero)"),
     ),
     (
         "rtp://192.0.2.10:5004?recv_timeout=soon",
-        R("invalid recv_timeout 'soon': invalid digit found in string"),
+        R("bad value for query parameter recv_timeout: soon (invalid digit found in string)"),
     ),
     (
         "rtp://192.0.2.10:5004?rcvbuf=8M",
@@ -1673,21 +1684,15 @@ const RTP_PARSE: &[Row] = &[
     ),
     (
         "rtp://192.0.2.10:5004?bogus=1",
-        R("unknown rtp:// URL query key 'bogus'"),
+        R("unknown query parameter: bogus"),
     ),
     (
         "rtp://192.0.2.10:5004?localaddr=192.0.2.1",
-        R("unknown rtp:// URL query key 'localaddr'"),
+        R("unknown query parameter: localaddr"),
     ),
     ("rtp://192.0.2.10", R("rtp:// URL requires :port")),
-    (
-        "rtsp://192.0.2.10:5004",
-        R("expected 'rtp' scheme, got 'rtsp'"),
-    ),
-    (
-        "udp://192.0.2.10:5004",
-        R("expected 'rtp' scheme, got 'udp'"),
-    ),
+    ("rtsp://192.0.2.10:5004", R("unsupported scheme: rtsp")),
+    ("udp://192.0.2.10:5004", R("unsupported scheme: udp")),
 ];
 
 /// Send-side rules, refused before the socket is bound.

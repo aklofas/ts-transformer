@@ -41,7 +41,11 @@ use std::time::Duration;
 
 use secrecy::SecretString;
 use thiserror::Error;
-use tst_core::url::common::{ParsedUrl, UrlError as CoreUrlError, parse_url, percent_decode};
+use tst_core::url::common::{
+    ParsedUrl, UrlError as CoreUrlError, parse_byte_size, parse_int_query, parse_url,
+    percent_decode,
+};
+use tst_core::url::query::{QueryKey, lookup};
 
 /// Default UDP payload size: 7 MPEG-TS packets per RTP packet = 1316 B
 /// (RFC 2250 §2 mandates an integral multiple of 188; 7×188 matches
@@ -60,12 +64,15 @@ const TS_PACKET_SIZE: usize = 188;
 /// but does NOT touch the network — interface names, host resolvability,
 /// and bind permissions are checked by the `transport` layer at
 /// `connect` / `listen` time.
+///
+/// Build one with [`RtpUrl::parse`], or with [`RtpUrl::new`] plus field
+/// assignment (the fields are public and every key is optional).
 #[must_use]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RtpUrl {
     /// A literal IPv4/IPv6 address. Hostnames parse here but are rejected
     /// by `RtpTransport::connect_with` / `listen_with`
-    /// (`ConnectError::HostNotLiteral`); resolve names yourself and pass
+    /// (`RtpConnectError::HostNotLiteral`); resolve names yourself and pass
     /// the literal.
     pub host: String,
     /// Port.
@@ -77,7 +84,7 @@ pub struct RtpUrl {
     /// `?pkt_size=N` — bytes per UDP datagram (188-multiple). `None` when
     /// the query key is absent; the send path resolves
     /// [`DEFAULT_PKT_SIZE`] at build time. Receive-side entry points
-    /// reject `Some` with [`UrlError::RecvPktSize`] — the knob is
+    /// reject `Some` with [`RtpUrlError::RecvPktSize`] — the knob is
     /// send-side only since the recv-ceiling change.
     pub pkt_size: Option<usize>,
     /// `?ssrc=N` — explicit SSRC; `None` means "randomize at construct".
@@ -96,31 +103,26 @@ pub struct RtpUrl {
     pub recv_timeout: Option<Duration>,
     /// `?rcvbuf=N` — `SO_RCVBUF` for the RTP receive socket, in bytes
     /// (`K`/`M` suffixes accepted). `None` keeps the OS default. Send-side
-    /// entry points reject `Some` with [`UrlError::SendRcvbuf`].
+    /// entry points reject `Some` with [`RtpUrlError::SendRcvbuf`].
     pub rcvbuf: Option<usize>,
     /// `?sndbuf=N` — `SO_SNDBUF` for the RTP send socket, in bytes
     /// (`K`/`M` suffixes accepted). `None` keeps the OS default.
-    /// Receive-side entry points reject `Some` with [`UrlError::RecvSndbuf`].
+    /// Receive-side entry points reject `Some` with [`RtpUrlError::RecvSndbuf`].
     pub sndbuf: Option<usize>,
     /// `?source=<ip>` — accept RTP datagrams only from this peer IP (the
     /// source port is not checked). Others are dropped and counted in
     /// `RtpStats::source_rejected`. `None` accepts any peer. Send-side
-    /// entry points reject `Some` with [`UrlError::SendSource`].
+    /// entry points reject `Some` with [`RtpUrlError::SendSource`].
     pub source: Option<IpAddr>,
 }
 
-/// Errors specific to parsing the `rtp://` URL form.
+/// Errors specific to parsing the `rtp://` and `rtsp[s]://` URL forms.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
-pub enum UrlError {
+pub enum RtpUrlError {
     /// Structural URL parse failure (delegated to `tst_core::url`).
     #[error(transparent)]
     Syntax(#[from] CoreUrlError),
-    /// Scheme was not `rtp` (e.g., user passed an `srt://` URL by
-    /// mistake). `rtsp://` / `rtsps://` rejected here too — they are
-    /// parsed by [`RtspUrl`].
-    #[error("expected 'rtp' scheme, got '{got}'")]
-    WrongScheme { got: String },
     /// `rtp://` requires a port. We do not pick a default.
     #[error("rtp:// URL requires :port")]
     MissingPort,
@@ -129,12 +131,6 @@ pub enum UrlError {
     /// non-multicast address for a multicast group).
     #[error("bad host: {detail}")]
     BadHost { detail: String },
-    /// `?ttl=` failed validation (out of `1..=255` range or non-numeric).
-    #[error("invalid ttl '{got}': {detail}")]
-    BadTtl { got: String, detail: String },
-    /// `?pkt_size=` not a positive multiple of 188.
-    #[error("invalid pkt_size '{got}': {detail}")]
-    BadPktSize { got: String, detail: String },
     /// `?pkt_size=` supplied to a receive-side entry point. The knob is
     /// send-side only: receive buffers size to the transport's
     /// deliverable ceiling automatically.
@@ -153,48 +149,84 @@ pub enum UrlError {
         "source is a receive-side filter (accept datagrams only from that IP) — remove ?source= from sender URLs"
     )]
     SendSource,
-    /// `?ssrc=` couldn't be parsed as decimal or `0x`-prefixed hex.
-    #[error("invalid ssrc '{got}': {detail}")]
-    BadSsrc { got: String, detail: String },
-    /// `?iface=` value couldn't be interpreted as either a non-empty
-    /// interface name or a literal IPv4 address.
-    #[error("invalid iface '{got}'")]
-    BadIface { got: String },
-    /// `?pt=` value is out of range or is the reserved MPEG-TS type (33).
-    #[error("invalid pt '{got}': {detail}")]
-    BadPayloadType { got: String, detail: String },
-    /// `?recv_timeout=` failed validation (non-numeric or zero).
-    #[error("invalid recv_timeout '{got}': {detail}")]
-    BadRecvTimeout { got: String, detail: String },
-    /// Query key wasn't recognized. (The full set is documented in the
-    /// module rustdoc table.) We reject unknown keys hard so typos don't
-    /// silently get ignored.
-    #[error("unknown rtp:// URL query key '{got}'")]
-    UnknownKey { got: String },
-    /// URL scheme is not one of the supported set for the parser invoked.
-    /// Distinct from [`UrlError::WrongScheme`] which is reserved for the
-    /// `rtp://`-only [`RtpUrl`] parser; [`RtspUrl`] uses this variant
-    /// when given anything other than `rtsp://` / `rtsps://`.
+    /// URL scheme is not the one the parser invoked accepts: anything but
+    /// `rtp` for [`RtpUrl`], anything but `rtsp` / `rtsps` for [`RtspUrl`].
     #[error("unsupported scheme: {scheme}")]
     BadScheme { scheme: String },
     /// Query parameter key is recognized but its value is invalid
-    /// (e.g., `?transport=quic` on an `rtsp://` URL).
+    /// (e.g., `?transport=quic` on an `rtsp://` URL, `?ttl=0` on an
+    /// `rtp://` URL). `value` is the text as written; when the key has a
+    /// range or syntax rule it is followed by the reason in parentheses.
     #[error("bad value for query parameter {key}: {value}")]
     BadQuery { key: String, value: String },
-    /// Query parameter key is not recognized. Mirrors
-    /// [`UrlError::UnknownKey`] but uses RFC-3986 terminology and is the
-    /// variant emitted by [`RtspUrl::parse`].
+    /// Query parameter key is not recognized. (The full set is documented
+    /// in the module rustdoc tables.) Unknown keys are rejected hard so
+    /// typos don't silently get ignored.
     #[error("unknown query parameter: {key}")]
     UnknownQueryKey { key: String },
 }
 
+/// The name this type had before it was renamed.
+#[deprecated(since = "0.9.0", note = "renamed to `RtpUrlError`")]
+pub type UrlError = RtpUrlError;
+
+type Applied = Result<(), RtpUrlError>;
+
+/// `BadQuery` for `key` given as `value`; a non-empty `detail` is appended
+/// in parentheses.
+fn bad_query(key: &str, value: &str, detail: &str) -> RtpUrlError {
+    let value = if detail.is_empty() {
+        value.to_string()
+    } else {
+        format!("{value} ({detail})")
+    };
+    RtpUrlError::BadQuery {
+        key: key.to_string(),
+        value,
+    }
+}
+
+/// Walks `pairs` through `table` in URL order (a later duplicate wins);
+/// a key the table lacks is `UnknownQueryKey`.
+fn apply_pairs<C>(
+    table: &[QueryKey<C, RtpUrlError>],
+    cfg: &mut C,
+    pairs: &[(impl AsRef<str>, impl AsRef<str>)],
+) -> Applied {
+    for (k, v) in pairs {
+        let (k, v) = (k.as_ref(), v.as_ref());
+        match lookup(table, k) {
+            Some(row) => (row.apply)(cfg, k, v)?,
+            None => return Err(RtpUrlError::UnknownQueryKey { key: k.to_string() }),
+        }
+    }
+    Ok(())
+}
+
 impl RtpUrl {
-    /// Parse `rtp://host:port?key=value&...`.
+    /// A URL for `host:port` with no query keys set, for building one in
+    /// code instead of parsing a string. `host` must be a literal IP
+    /// (multicast group or unicast destination) to be opened.
+    pub fn new(host: impl Into<String>, port: u16) -> Self {
+        Self {
+            host: host.into(),
+            port,
+            ..Self::default()
+        }
+    }
+
+    /// Parse `rtp://host:port[?key=value&...]`.
     ///
     /// On success, all fields are validated independently — the
     /// transport layer doesn't need to re-check ranges. The `host`
     /// field is preserved as-written (no DNS resolution at this stage).
-    pub fn parse(s: &str) -> Result<Self, UrlError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RtpUrlError`] when structural parsing fails, the scheme is
+    /// not `rtp`, the port is missing, a query value is invalid, or a
+    /// query key is not one of the table above.
+    pub fn parse(s: &str) -> Result<Self, RtpUrlError> {
         let ParsedUrl {
             scheme,
             host,
@@ -203,165 +235,196 @@ impl RtpUrl {
             ..
         } = parse_url(s)?;
         if !scheme.eq_ignore_ascii_case("rtp") {
-            return Err(UrlError::WrongScheme {
-                got: scheme.to_string(),
+            return Err(RtpUrlError::BadScheme {
+                scheme: scheme.to_string(),
             });
         }
-        let port = port.ok_or(UrlError::MissingPort)?;
-        let mut ttl = None;
-        let mut iface = None;
-        let mut pkt_size = None;
-        let mut ssrc = None;
-        let mut pt = None;
-        let mut recv_timeout = None;
-        let mut rcvbuf = None;
-        let mut sndbuf = None;
-        let mut source = None;
-        for (k, v) in query.iter() {
-            match k.as_ref() {
-                "ttl" => ttl = Some(parse_ttl(v.as_ref())?),
-                "iface" => iface = Some(parse_iface(v.as_ref())?),
-                "pkt_size" => pkt_size = Some(parse_pkt_size(v.as_ref())?),
-                "ssrc" => ssrc = Some(parse_ssrc(v.as_ref())?),
-                "pt" => pt = Some(parse_pt(v.as_ref())?),
-                "recv_timeout" => recv_timeout = Some(parse_recv_timeout(v.as_ref())?),
-                "rcvbuf" => rcvbuf = Some(parse_byte_size("rcvbuf", v.as_ref())?),
-                "sndbuf" => sndbuf = Some(parse_byte_size("sndbuf", v.as_ref())?),
-                "source" => source = Some(parse_source(v.as_ref())?),
-                other => {
-                    return Err(UrlError::UnknownKey {
-                        got: other.to_string(),
-                    });
-                }
-            }
-        }
-        Ok(Self {
-            host: host.to_string(),
-            port,
-            ttl,
-            iface,
-            pkt_size,
-            ssrc,
-            pt,
-            recv_timeout,
-            rcvbuf,
-            sndbuf,
-            source,
-        })
+        let port = port.ok_or(RtpUrlError::MissingPort)?;
+        let mut url = Self::new(host, port);
+        apply_pairs(URL_KEYS_RTP, &mut url, &query)?;
+        Ok(url)
     }
 }
 
-fn parse_ttl(v: &str) -> Result<u8, UrlError> {
+fn parse_ttl(v: &str) -> Result<u8, String> {
     let n: u32 = v
         .parse()
-        .map_err(|e: std::num::ParseIntError| UrlError::BadTtl {
-            got: v.to_string(),
-            detail: e.to_string(),
-        })?;
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
     if !(1..=MAX_TTL).contains(&n) {
-        return Err(UrlError::BadTtl {
-            got: v.to_string(),
-            detail: format!("must be in 1..={MAX_TTL}"),
-        });
+        return Err(format!("must be in 1..={MAX_TTL}"));
     }
     Ok(n as u8)
 }
 
-fn parse_pkt_size(v: &str) -> Result<usize, UrlError> {
+fn parse_pkt_size(v: &str) -> Result<usize, String> {
     let n: usize = v
         .parse()
-        .map_err(|e: std::num::ParseIntError| UrlError::BadPktSize {
-            got: v.to_string(),
-            detail: e.to_string(),
-        })?;
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
     if n == 0 || n % TS_PACKET_SIZE != 0 {
-        return Err(UrlError::BadPktSize {
-            got: v.to_string(),
-            detail: format!("must be a positive multiple of {TS_PACKET_SIZE}"),
-        });
+        return Err(format!("must be a positive multiple of {TS_PACKET_SIZE}"));
     }
     Ok(n)
 }
 
-fn parse_byte_size(key: &str, v: &str) -> Result<usize, UrlError> {
-    tst_core::url::common::parse_byte_size(v).map_err(|_| UrlError::BadQuery {
-        key: key.to_string(),
-        value: v.to_string(),
-    })
-}
-
-/// `?source=` takes a literal IP only: the filter compares peer addresses,
-/// and a hostname would need a resolution policy this parser does not have.
-fn parse_source(v: &str) -> Result<IpAddr, UrlError> {
-    v.parse::<IpAddr>().map_err(|_| UrlError::BadQuery {
-        key: "source".to_string(),
-        value: v.to_string(),
-    })
-}
-
-fn parse_ssrc(v: &str) -> Result<u32, UrlError> {
+fn parse_ssrc(v: &str) -> Result<u32, String> {
     let (radix, body) = if let Some(rest) = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
         (16, rest)
     } else {
         (10, v)
     };
-    u32::from_str_radix(body, radix).map_err(|e| UrlError::BadSsrc {
-        got: v.to_string(),
-        detail: e.to_string(),
-    })
+    u32::from_str_radix(body, radix).map_err(|e| e.to_string())
 }
 
-fn parse_iface(v: &str) -> Result<String, UrlError> {
-    if v.is_empty() {
-        return Err(UrlError::BadIface { got: v.to_string() });
-    }
-    // Interface name OR literal IPv4 (libsrt-style: `?iface=192.168.1.50`).
-    // We don't restrict ASCII here; OS interface names can be Unicode on
-    // some platforms.
-    if v.parse::<IpAddr>().is_ok() || !v.chars().any(|c| c.is_whitespace()) {
-        Ok(v.to_string())
-    } else {
-        Err(UrlError::BadIface { got: v.to_string() })
-    }
-}
-
-fn parse_pt(v: &str) -> Result<u8, UrlError> {
+fn parse_pt(v: &str) -> Result<u8, String> {
     let n: u32 = v
         .parse()
-        .map_err(|e: std::num::ParseIntError| UrlError::BadPayloadType {
-            got: v.to_string(),
-            detail: e.to_string(),
-        })?;
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
     if n == 33 {
-        return Err(UrlError::BadPayloadType {
-            got: v.to_string(),
-            detail: "payload type 33 is MPEG-TS — use the MP2T receiver (no ?pt=)".to_string(),
-        });
+        return Err("payload type 33 is MPEG-TS — use the MP2T receiver (no ?pt=)".to_string());
     }
     if !(1..=127).contains(&n) {
-        return Err(UrlError::BadPayloadType {
-            got: v.to_string(),
-            detail: "must be in 1..=127 (excluding 33, which is MPEG-TS)".to_string(),
-        });
+        return Err("must be in 1..=127 (excluding 33, which is MPEG-TS)".to_string());
     }
     Ok(n as u8)
 }
 
-fn parse_recv_timeout(v: &str) -> Result<Duration, UrlError> {
+fn parse_recv_timeout(v: &str) -> Result<Duration, String> {
     let ms: u64 = v
         .parse()
-        .map_err(|e: std::num::ParseIntError| UrlError::BadRecvTimeout {
-            got: v.to_string(),
-            detail: e.to_string(),
-        })?;
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
     if ms == 0 {
-        return Err(UrlError::BadRecvTimeout {
-            got: v.to_string(),
-            detail: "must be nonzero".to_string(),
-        });
+        return Err("must be nonzero".to_string());
     }
     Ok(Duration::from_millis(ms))
 }
+
+fn set_ttl(c: &mut RtpUrl, _key: &str, v: &str) -> Applied {
+    c.ttl = Some(parse_ttl(v).map_err(|d| bad_query("ttl", v, &d))?);
+    Ok(())
+}
+
+fn set_iface(c: &mut RtpUrl, _key: &str, v: &str) -> Applied {
+    // Interface name OR literal IPv4 (libsrt-style: `?iface=192.168.1.50`).
+    // We don't restrict ASCII here; OS interface names can be Unicode on
+    // some platforms.
+    let has_space = v.chars().any(|c| c.is_whitespace());
+    if v.is_empty() || (has_space && v.parse::<IpAddr>().is_err()) {
+        return Err(bad_query("iface", v, ""));
+    }
+    c.iface = Some(v.to_string());
+    Ok(())
+}
+
+fn set_pkt_size(c: &mut RtpUrl, _key: &str, v: &str) -> Applied {
+    c.pkt_size = Some(parse_pkt_size(v).map_err(|d| bad_query("pkt_size", v, &d))?);
+    Ok(())
+}
+
+fn set_ssrc(c: &mut RtpUrl, _key: &str, v: &str) -> Applied {
+    c.ssrc = Some(parse_ssrc(v).map_err(|d| bad_query("ssrc", v, &d))?);
+    Ok(())
+}
+
+fn set_pt(c: &mut RtpUrl, _key: &str, v: &str) -> Applied {
+    c.pt = Some(parse_pt(v).map_err(|d| bad_query("pt", v, &d))?);
+    Ok(())
+}
+
+fn set_recv_timeout(c: &mut RtpUrl, _key: &str, v: &str) -> Applied {
+    c.recv_timeout = Some(parse_recv_timeout(v).map_err(|d| bad_query("recv_timeout", v, &d))?);
+    Ok(())
+}
+
+fn set_rcvbuf(c: &mut RtpUrl, _key: &str, v: &str) -> Applied {
+    c.rcvbuf = Some(parse_byte_size(v).map_err(|_| bad_query("rcvbuf", v, ""))?);
+    Ok(())
+}
+
+fn set_sndbuf(c: &mut RtpUrl, _key: &str, v: &str) -> Applied {
+    c.sndbuf = Some(parse_byte_size(v).map_err(|_| bad_query("sndbuf", v, ""))?);
+    Ok(())
+}
+
+/// `?source=` takes a literal IP only: the filter compares peer addresses,
+/// and a hostname would need a resolution policy this parser does not have.
+fn set_source(c: &mut RtpUrl, _key: &str, v: &str) -> Applied {
+    c.source = Some(
+        v.parse::<IpAddr>()
+            .map_err(|_| bad_query("source", v, ""))?,
+    );
+    Ok(())
+}
+
+/// The query keys an `rtp://` URL applies to an [`RtpUrl`]; the parser and
+/// the generated key documentation both read this table. Unknown keys are
+/// rejected. The send-only and receive-only rules are checked by the
+/// transport entry points, after parsing.
+#[doc(hidden)]
+pub const URL_KEYS_RTP: &[QueryKey<RtpUrl, RtpUrlError>] = &[
+    QueryKey::new(
+        "ttl",
+        &[],
+        "Multicast TTL / hop limit (send)",
+        "1..=255; default 1 (unicast), 8 (multicast)",
+        set_ttl,
+    ),
+    QueryKey::new(
+        "iface",
+        &[],
+        "Multicast interface",
+        "interface name or IPv4 literal",
+        set_iface,
+    ),
+    QueryKey::new(
+        "pkt_size",
+        &[],
+        "Bytes per datagram (send URLs only)",
+        "positive multiple of 188; default 1316",
+        set_pkt_size,
+    ),
+    QueryKey::new(
+        "ssrc",
+        &[],
+        "Synchronization source",
+        "u32 decimal or `0x` hex; default random",
+        set_ssrc,
+    ),
+    QueryKey::new(
+        "pt",
+        &[],
+        "Payload type for elementary-stream ingest",
+        "1..=127 except 33",
+        set_pt,
+    ),
+    QueryKey::new(
+        "recv_timeout",
+        &[],
+        "Receive deadline",
+        "milliseconds, nonzero",
+        set_recv_timeout,
+    ),
+    QueryKey::new(
+        "rcvbuf",
+        &[],
+        "`SO_RCVBUF` (receive URLs only)",
+        "bytes, `K`/`M` suffixes",
+        set_rcvbuf,
+    ),
+    QueryKey::new(
+        "sndbuf",
+        &[],
+        "`SO_SNDBUF` (send URLs only)",
+        "bytes, `K`/`M` suffixes",
+        set_sndbuf,
+    ),
+    QueryKey::new(
+        "source",
+        &[],
+        "Accept datagrams only from this peer (receive URLs only)",
+        "IPv4 or IPv6 literal",
+        set_source,
+    ),
+];
 
 /// RTSP URL scheme — distinguishes plain RTSP from RTSP-over-TLS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -471,22 +534,22 @@ impl RtspUrl {
     /// - `recv_timeout=N` — configured receive deadline in milliseconds
     ///   (must be nonzero); absent == no deadline.
     ///
-    /// Unknown query keys cause [`UrlError::UnknownQueryKey`]; recognized
-    /// keys with invalid values cause [`UrlError::BadQuery`]; non-rtsp
-    /// schemes cause [`UrlError::BadScheme`].
+    /// Unknown query keys cause [`RtpUrlError::UnknownQueryKey`]; recognized
+    /// keys with invalid values cause [`RtpUrlError::BadQuery`]; non-rtsp
+    /// schemes cause [`RtpUrlError::BadScheme`].
     ///
     /// # Errors
     ///
-    /// Returns [`UrlError`] when structural URL parsing fails, when the
+    /// Returns [`RtpUrlError`] when structural URL parsing fails, when the
     /// scheme is not `rtsp` / `rtsps`, when a query value is invalid, or
     /// when an unknown query key is present.
-    pub fn parse(s: &str) -> Result<Self, UrlError> {
-        let parsed = parse_url(s).map_err(UrlError::Syntax)?;
+    pub fn parse(s: &str) -> Result<Self, RtpUrlError> {
+        let parsed = parse_url(s).map_err(RtpUrlError::Syntax)?;
         let scheme = match parsed.scheme {
             "rtsp" => RtspScheme::Rtsp,
             "rtsps" => RtspScheme::Rtsps,
             other => {
-                return Err(UrlError::BadScheme {
+                return Err(RtpUrlError::BadScheme {
                     scheme: other.to_string(),
                 });
             }
@@ -497,91 +560,36 @@ impl RtspUrl {
         };
         let port = parsed.port.unwrap_or(default_port);
 
-        let mut transport_preference = RtspTransportPref::PreferUdp;
-        let mut rtsp_version = RtspVersion::V1_0;
-        let mut tcp_keepalive = None;
-        let mut recv_timeout = None;
-        for (k, v) in &parsed.query {
-            match k.as_ref() {
-                "transport" => {
-                    transport_preference = match v.as_ref() {
-                        "tcp" => RtspTransportPref::ForceTcp,
-                        "udp" => RtspTransportPref::ForceUdp,
-                        other => {
-                            return Err(UrlError::BadQuery {
-                                key: "transport".to_string(),
-                                value: other.to_string(),
-                            });
-                        }
-                    };
-                }
-                "rtsp_version" => {
-                    rtsp_version = match v.as_ref() {
-                        "1.0" => RtspVersion::V1_0,
-                        "2.0" => RtspVersion::V2_0,
-                        other => {
-                            return Err(UrlError::BadQuery {
-                                key: "rtsp_version".to_string(),
-                                value: other.to_string(),
-                            });
-                        }
-                    };
-                }
-                "tcp_keepalive" => {
-                    let secs: u64 =
-                        tst_core::url::common::parse_int_query(v.as_ref()).map_err(|_| {
-                            UrlError::BadQuery {
-                                key: "tcp_keepalive".to_string(),
-                                value: v.to_string(),
-                            }
-                        })?;
-                    tcp_keepalive = Some(Duration::from_secs(secs));
-                }
-                "recv_timeout" => {
-                    recv_timeout = Some(parse_recv_timeout(v.as_ref()).map_err(|e| {
-                        let detail = match &e {
-                            UrlError::BadRecvTimeout { detail, .. } => detail.clone(),
-                            _ => e.to_string(),
-                        };
-                        UrlError::BadQuery {
-                            key: "recv_timeout".to_string(),
-                            value: format!("{v} ({detail})"),
-                        }
-                    })?);
-                }
-                other => {
-                    return Err(UrlError::UnknownQueryKey {
-                        key: other.to_string(),
-                    });
-                }
-            }
-        }
-
-        Ok(RtspUrl {
+        let mut url = RtspUrl {
             scheme,
             host: parsed.host.to_string(),
             port,
             path: parsed.path.to_string(),
-            // Userinfo is percent-decoded: `parse_url` hands it
-            // over verbatim; the encoded form is the only way to put
-            // `@ : / ? #` in a credential and every other RTSP client decodes.
-            username: parsed
-                .username
-                .map(percent_decode)
-                .transpose()
-                .map_err(UrlError::Syntax)?
-                .map(|u| u.into_owned()),
-            password: parsed
-                .password
-                .map(percent_decode)
-                .transpose()
-                .map_err(UrlError::Syntax)?
-                .map(|p| SecretString::new(p.into_owned().into())),
-            transport_preference,
-            rtsp_version,
-            tcp_keepalive,
-            recv_timeout,
-        })
+            username: None,
+            password: None,
+            transport_preference: RtspTransportPref::PreferUdp,
+            rtsp_version: RtspVersion::V1_0,
+            tcp_keepalive: None,
+            recv_timeout: None,
+        };
+        apply_pairs(URL_KEYS_RTSP, &mut url, &parsed.query)?;
+
+        // Userinfo is percent-decoded: `parse_url` hands it
+        // over verbatim; the encoded form is the only way to put
+        // `@ : / ? #` in a credential and every other RTSP client decodes.
+        url.username = parsed
+            .username
+            .map(percent_decode)
+            .transpose()
+            .map_err(RtpUrlError::Syntax)?
+            .map(|u| u.into_owned());
+        url.password = parsed
+            .password
+            .map(percent_decode)
+            .transpose()
+            .map_err(RtpUrlError::Syntax)?
+            .map(|p| SecretString::new(p.into_owned().into()));
+        Ok(url)
     }
 
     /// The URL scheme (`rtsp` or `rtsps`).
@@ -618,17 +626,81 @@ impl RtspUrl {
     ///
     /// # Errors
     ///
-    /// Returns [`UrlError::BadHost`] when the URL's host is not an IP
+    /// Returns [`RtpUrlError::BadHost`] when the URL's host is not an IP
     /// literal (e.g., a DNS name like `example.com`).
-    pub fn validate_for_server_bind(&self) -> Result<(), UrlError> {
+    pub fn validate_for_server_bind(&self) -> Result<(), RtpUrlError> {
         if self.host.parse::<std::net::IpAddr>().is_err() {
-            return Err(UrlError::BadHost {
+            return Err(RtpUrlError::BadHost {
                 detail: format!("server bind requires an IP literal; got '{}'", self.host),
             });
         }
         Ok(())
     }
 }
+
+fn set_transport(c: &mut RtspUrl, _key: &str, v: &str) -> Applied {
+    c.transport_preference = match v {
+        "tcp" => RtspTransportPref::ForceTcp,
+        "udp" => RtspTransportPref::ForceUdp,
+        other => return Err(bad_query("transport", other, "")),
+    };
+    Ok(())
+}
+
+fn set_rtsp_version(c: &mut RtspUrl, _key: &str, v: &str) -> Applied {
+    c.rtsp_version = match v {
+        "1.0" => RtspVersion::V1_0,
+        "2.0" => RtspVersion::V2_0,
+        other => return Err(bad_query("rtsp_version", other, "")),
+    };
+    Ok(())
+}
+
+fn set_tcp_keepalive(c: &mut RtspUrl, _key: &str, v: &str) -> Applied {
+    let secs: u64 = parse_int_query(v).map_err(|_| bad_query("tcp_keepalive", v, ""))?;
+    c.tcp_keepalive = Some(Duration::from_secs(secs));
+    Ok(())
+}
+
+fn set_rtsp_recv_timeout(c: &mut RtspUrl, _key: &str, v: &str) -> Applied {
+    c.recv_timeout = Some(parse_recv_timeout(v).map_err(|d| bad_query("recv_timeout", v, &d))?);
+    Ok(())
+}
+
+/// The query keys an `rtsp://` or `rtsps://` URL applies to an
+/// [`RtspUrl`]; the parser and the generated key documentation both read
+/// this table. Unknown keys are rejected.
+#[doc(hidden)]
+pub const URL_KEYS_RTSP: &[QueryKey<RtspUrl, RtpUrlError>] = &[
+    QueryKey::new(
+        "transport",
+        &[],
+        "SETUP transport preference",
+        "`tcp` or `udp`; default prefer UDP with TCP fallback",
+        set_transport,
+    ),
+    QueryKey::new(
+        "rtsp_version",
+        &[],
+        "Version written on request lines",
+        "`1.0` or `2.0`; default `1.0`",
+        set_rtsp_version,
+    ),
+    QueryKey::new(
+        "tcp_keepalive",
+        &[],
+        "`SO_KEEPALIVE` idle time for the control socket",
+        "seconds; default OS keepalive off",
+        set_tcp_keepalive,
+    ),
+    QueryKey::new(
+        "recv_timeout",
+        &[],
+        "Receive deadline",
+        "milliseconds, nonzero",
+        set_rtsp_recv_timeout,
+    ),
+];
 
 /// Parsed multicast group URL used by
 /// `crate::rtsp::server::RtspServer::add_multicast_mount`.
@@ -655,15 +727,15 @@ impl MulticastGroup {
     ///
     /// # Errors
     ///
-    /// Returns [`UrlError`] propagated from [`RtpUrl::parse`] for
-    /// structural errors, [`UrlError::BadHost`] when the host is not a
+    /// Returns [`RtpUrlError`] propagated from [`RtpUrl::parse`] for
+    /// structural errors, [`RtpUrlError::BadHost`] when the host is not a
     /// valid IP literal or is not in a multicast range.
-    pub fn parse(url: &str) -> Result<Self, UrlError> {
+    pub fn parse(url: &str) -> Result<Self, RtpUrlError> {
         let rtp = RtpUrl::parse(url)?;
         let ip: std::net::IpAddr =
             rtp.host
                 .parse()
-                .map_err(|e: std::net::AddrParseError| UrlError::BadHost {
+                .map_err(|e: std::net::AddrParseError| RtpUrlError::BadHost {
                     detail: e.to_string(),
                 })?;
         let is_mcast = match ip {
@@ -671,7 +743,7 @@ impl MulticastGroup {
             std::net::IpAddr::V6(v) => v.is_multicast(),
         };
         if !is_mcast {
-            return Err(UrlError::BadHost {
+            return Err(RtpUrlError::BadHost {
                 detail: format!("address '{}' is not multicast", rtp.host),
             });
         }
@@ -722,57 +794,57 @@ mod tests {
     #[test]
     fn rejects_non_rtp_scheme() {
         let err = RtpUrl::parse("srt://h:9000").unwrap_err();
-        assert!(matches!(err, UrlError::WrongScheme { .. }));
+        assert!(matches!(err, RtpUrlError::BadScheme { .. }));
     }
 
     #[test]
     fn rejects_rtsp_scheme() {
         // RTSP is a separate surface, not parsed by RtpUrl.
         let err = RtpUrl::parse("rtsp://camera.lan/path").unwrap_err();
-        assert!(matches!(err, UrlError::WrongScheme { .. }));
+        assert!(matches!(err, RtpUrlError::BadScheme { .. }));
     }
 
     #[test]
     fn rejects_missing_port() {
         let err = RtpUrl::parse("rtp://239.10.10.1").unwrap_err();
-        assert!(matches!(err, UrlError::MissingPort));
+        assert!(matches!(err, RtpUrlError::MissingPort));
     }
 
     #[test]
     fn rejects_zero_ttl() {
         let err = RtpUrl::parse("rtp://h:5004?ttl=0").unwrap_err();
-        assert!(matches!(err, UrlError::BadTtl { .. }));
+        assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "ttl"));
     }
 
     #[test]
     fn rejects_oob_ttl() {
         let err = RtpUrl::parse("rtp://h:5004?ttl=256").unwrap_err();
-        assert!(matches!(err, UrlError::BadTtl { .. }));
+        assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "ttl"));
     }
 
     #[test]
     fn rejects_pkt_size_not_188_multiple() {
         let err = RtpUrl::parse("rtp://h:5004?pkt_size=1500").unwrap_err();
-        assert!(matches!(err, UrlError::BadPktSize { .. }));
+        assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "pkt_size"));
     }
 
     #[test]
     fn rejects_pkt_size_zero() {
         let err = RtpUrl::parse("rtp://h:5004?pkt_size=0").unwrap_err();
-        assert!(matches!(err, UrlError::BadPktSize { .. }));
+        assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "pkt_size"));
     }
 
     #[test]
     fn rejects_unknown_query_key() {
         // `latency` makes sense for srt://; for rtp:// it's a typo.
         let err = RtpUrl::parse("rtp://h:5004?latency=200").unwrap_err();
-        assert!(matches!(err, UrlError::UnknownKey { .. }));
+        assert!(matches!(err, RtpUrlError::UnknownQueryKey { .. }));
     }
 
     #[test]
     fn rejects_bad_ssrc() {
         let err = RtpUrl::parse("rtp://h:5004?ssrc=notanint").unwrap_err();
-        assert!(matches!(err, UrlError::BadSsrc { .. }));
+        assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "ssrc"));
     }
 
     // ── ?pt= query key tests ──────────────────────────────────────────────
@@ -805,12 +877,12 @@ mod tests {
     fn pt_33_rejected_as_mp2t() {
         let err = RtpUrl::parse("rtp://h:5004?pt=33").unwrap_err();
         assert!(
-            matches!(err, UrlError::BadPayloadType { .. }),
-            "expected BadPayloadType for pt=33, got {err:?}"
+            matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "pt"),
+            "expected BadQuery for pt=33, got {err:?}"
         );
-        if let UrlError::BadPayloadType { detail, .. } = err {
+        if let RtpUrlError::BadQuery { value, .. } = err {
             assert!(
-                detail.contains("MPEG-TS"),
+                value.contains("MPEG-TS"),
                 "error detail must mention MPEG-TS"
             );
         }
@@ -819,19 +891,19 @@ mod tests {
     #[test]
     fn pt_200_rejected_out_of_range() {
         let err = RtpUrl::parse("rtp://h:5004?pt=200").unwrap_err();
-        assert!(matches!(err, UrlError::BadPayloadType { .. }));
+        assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "pt"));
     }
 
     #[test]
     fn pt_0_rejected_out_of_range() {
         let err = RtpUrl::parse("rtp://h:5004?pt=0").unwrap_err();
-        assert!(matches!(err, UrlError::BadPayloadType { .. }));
+        assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "pt"));
     }
 
     #[test]
     fn pt_non_numeric_rejected() {
         let err = RtpUrl::parse("rtp://h:5004?pt=h264").unwrap_err();
-        assert!(matches!(err, UrlError::BadPayloadType { .. }));
+        assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "pt"));
     }
 
     // ── ?recv_timeout= query key tests ──────────────────────────────────────
@@ -854,13 +926,13 @@ mod tests {
     #[test]
     fn rtp_url_recv_timeout_zero_rejected() {
         let err = RtpUrl::parse("rtp://127.0.0.1:5004?recv_timeout=0").unwrap_err();
-        assert!(matches!(err, UrlError::BadRecvTimeout { .. }));
+        assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "recv_timeout"));
     }
 
     #[test]
     fn rtp_url_recv_timeout_bad_value_rejected() {
         let err = RtpUrl::parse("rtp://127.0.0.1:5004?recv_timeout=forever").unwrap_err();
-        assert!(matches!(err, UrlError::BadRecvTimeout { .. }));
+        assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "recv_timeout"));
     }
 
     // ── ?rcvbuf= / ?sndbuf= / ?source= query key tests ──────────────────────
@@ -881,7 +953,7 @@ mod tests {
     fn rtp_url_rcvbuf_bad_value_names_the_key() {
         let err = RtpUrl::parse("rtp://0.0.0.0:7656?rcvbuf=lots").unwrap_err();
         match err {
-            UrlError::BadQuery { key, value } => {
+            RtpUrlError::BadQuery { key, value } => {
                 assert_eq!(key, "rcvbuf");
                 assert_eq!(value, "lots");
             }
@@ -903,7 +975,7 @@ mod tests {
     fn rtp_url_source_hostname_rejected_naming_the_key() {
         let err = RtpUrl::parse("rtp://0.0.0.0:7656?source=sensor.local").unwrap_err();
         match err {
-            UrlError::BadQuery { key, value } => {
+            RtpUrlError::BadQuery { key, value } => {
                 assert_eq!(key, "source");
                 assert_eq!(value, "sensor.local");
             }
@@ -915,7 +987,7 @@ mod tests {
     fn rtp_url_unknown_key_still_rejected_next_to_new_keys() {
         let err = RtpUrl::parse("rtp://0.0.0.0:7656?rcvbuf=8M&rcvbuff=8M").unwrap_err();
         assert!(
-            matches!(err, UrlError::UnknownKey { ref got } if got == "rcvbuff"),
+            matches!(err, RtpUrlError::UnknownQueryKey { ref key } if key == "rcvbuff"),
             "got {err:?}"
         );
     }
@@ -923,9 +995,9 @@ mod tests {
     #[test]
     fn rtp_url_side_rule_errors_name_key_and_side() {
         for (err, key, side) in [
-            (UrlError::RecvSndbuf, "sndbuf", "send"),
-            (UrlError::SendRcvbuf, "rcvbuf", "receive"),
-            (UrlError::SendSource, "source", "receive"),
+            (RtpUrlError::RecvSndbuf, "sndbuf", "send"),
+            (RtpUrlError::SendRcvbuf, "rcvbuf", "receive"),
+            (RtpUrlError::SendSource, "source", "receive"),
         ] {
             let msg = err.to_string();
             assert!(msg.contains(key), "{msg}");
@@ -979,7 +1051,7 @@ mod rtsp_tests {
     #[test]
     fn rtsp_url_transport_bad_value_rejected() {
         let e = RtspUrl::parse("rtsp://cam.lan/h264?transport=quic").unwrap_err();
-        assert!(matches!(e, UrlError::BadQuery { .. }));
+        assert!(matches!(e, RtpUrlError::BadQuery { .. }));
     }
 
     #[test]
@@ -1027,13 +1099,13 @@ mod rtsp_tests {
     #[test]
     fn rtsp_url_bad_percent_escape_in_password_is_rejected() {
         let e = RtspUrl::parse("rtsp://u:p%zz@h/x").unwrap_err();
-        assert!(matches!(e, UrlError::Syntax(_)), "got {e:?}");
+        assert!(matches!(e, RtpUrlError::Syntax(_)), "got {e:?}");
     }
 
     #[test]
     fn rtsp_url_unknown_query_key_rejected() {
         let e = RtspUrl::parse("rtsp://cam.lan/h264?bogus=1").unwrap_err();
-        assert!(matches!(e, UrlError::UnknownQueryKey { .. }));
+        assert!(matches!(e, RtpUrlError::UnknownQueryKey { .. }));
     }
 
     #[test]
@@ -1051,7 +1123,7 @@ mod rtsp_tests {
     #[test]
     fn rtsp_url_tcp_keepalive_bad_value_rejected() {
         let e = RtspUrl::parse("rtsp://cam.lan/h264?tcp_keepalive=forever").unwrap_err();
-        assert!(matches!(e, UrlError::BadQuery { .. }));
+        assert!(matches!(e, RtpUrlError::BadQuery { .. }));
     }
 
     #[test]
@@ -1131,7 +1203,7 @@ mod phase3_url_tests {
     #[test]
     fn multicast_group_ipv4_unicast_rejected() {
         let e = MulticastGroup::parse("rtp://10.0.0.1:5004").unwrap_err();
-        assert!(matches!(e, UrlError::BadHost { .. }));
+        assert!(matches!(e, RtpUrlError::BadHost { .. }));
     }
 
     #[cfg(feature = "rtsp-server")]

@@ -312,7 +312,7 @@ fn recv_url_pkt_size_rejected_with_teaching_error() {
     assert!(
         matches!(
             err,
-            tst_rtp::ConnectError::Url(tst_rtp::RtpUrlError::RecvPktSize)
+            tst_rtp::RtpConnectError::Url(tst_rtp::RtpUrlError::RecvPktSize)
         ),
         "wrong error variant: {err:?}"
     );
@@ -330,17 +330,17 @@ fn recv_url_pkt_size_rejected_with_teaching_error() {
 fn send_url_pkt_size_still_drives_send_budget() {
     use tst_core::transport::Transport;
     // RTP header is 12 bytes; max_payload() returns pkt_size - 12.
-    let b = tst_rtp::RtpSocketBuilder::from_url("rtp://127.0.0.1:5004?pkt_size=376")
+    let url = tst_rtp::RtpUrl::parse("rtp://127.0.0.1:5004?pkt_size=376")
         .expect("send URL with ?pkt_size= must still parse");
-    let t = b.build().expect("unicast connect");
+    let t = tst_rtp::RtpTransport::connect_with(&url).expect("unicast connect");
     assert_eq!(
         t.max_payload(),
         376 - 12,
         "explicit pkt_size drives send budget"
     );
 
-    let b = tst_rtp::RtpSocketBuilder::from_url("rtp://127.0.0.1:5004").expect("bare send URL");
-    let t = b.build().expect("unicast connect");
+    let url = tst_rtp::RtpUrl::parse("rtp://127.0.0.1:5004").expect("bare send URL");
+    let t = tst_rtp::RtpTransport::connect_with(&url).expect("unicast connect");
     assert_eq!(
         t.max_payload(),
         1316 - 12,
@@ -361,7 +361,7 @@ fn recv_url_sndbuf_rejected() {
     assert!(
         matches!(
             err,
-            tst_rtp::ConnectError::Url(tst_rtp::RtpUrlError::RecvSndbuf)
+            tst_rtp::RtpConnectError::Url(tst_rtp::RtpUrlError::RecvSndbuf)
         ),
         "wrong error variant: {err:?}"
     );
@@ -377,7 +377,7 @@ fn send_url_rcvbuf_rejected() {
     assert!(
         matches!(
             err,
-            tst_rtp::ConnectError::Url(tst_rtp::RtpUrlError::SendRcvbuf)
+            tst_rtp::RtpConnectError::Url(tst_rtp::RtpUrlError::SendRcvbuf)
         ),
         "wrong error variant: {err:?}"
     );
@@ -394,7 +394,7 @@ fn send_url_source_rejected() {
     assert!(
         matches!(
             err,
-            tst_rtp::ConnectError::Url(tst_rtp::RtpUrlError::SendSource)
+            tst_rtp::RtpConnectError::Url(tst_rtp::RtpUrlError::SendSource)
         ),
         "wrong error variant: {err:?}"
     );

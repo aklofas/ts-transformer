@@ -28,18 +28,18 @@ pub(crate) fn transport_error(env: &mut JNIEnv, e: &TransportError) {
     throw_binding(env, Domain::Rtp, &BindingError::from(e.clone()));
 }
 
-/// `RtpSocketBuilder::from_url` / `RtpRecvSocketBuilder::from_url` failures
+/// `RtpUrl::parse` failures
 /// (`RtpUrlError`) — there is no bare `From<RtpUrlError>` (the type is shared with
 /// `rtsp://` parsing), so the bucket is fixed here: `URL` (was `TRANSPORT`).
 pub(crate) fn rtp_url_error(env: &mut JNIEnv, e: &tst_rtp::RtpUrlError) {
     throw_rtp(env, BindingErrorKind::RtpUrl, &e.to_string());
 }
 
-/// `RtpSocketBuilder::build` / `RtpRecvSocketBuilder::build` / `H264Receiver::listen`
-/// failures — the shared `From<tst_rtp::ConnectError>`: one member per variant
+/// `RtpTransport::connect_with` / `RtpRecvTransport::listen_with` / `H264Receiver::listen`
+/// failures — the shared `From<tst_rtp::RtpConnectError>`: one member per variant
 /// (`PAYLOAD_TYPE_PARAM` / `MISSING_PAYLOAD_TYPE_PARAM` / `URL` /
 /// `HOST_NOT_LITERAL` / `IO` / `IFACE_UNSUPPORTED`; all were `TRANSPORT`).
-pub(crate) fn connect_error(env: &mut JNIEnv, e: tst_rtp::ConnectError) {
+pub(crate) fn connect_error(env: &mut JNIEnv, e: tst_rtp::RtpConnectError) {
     throw_binding(env, Domain::Rtp, &BindingError::from(e));
 }
 

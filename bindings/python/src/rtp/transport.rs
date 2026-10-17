@@ -32,8 +32,7 @@ use pyo3::types::PyBytes;
 use tst_core::transport::EndReasonHandle;
 use tst_core::transport::{RecvTransport, Transport, TransportCancel, TransportError};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Owned, SendHalf};
-use tst_rtp::builder::RtpRecvSocketBuilder;
-use tst_rtp::{RtpRecvTransport, RtpSocketBuilder, RtpTransport};
+use tst_rtp::{RtpRecvTransport, RtpTransport, RtpUrl};
 
 use crate::generated::stats_shells::SocketStats;
 use crate::raise::{RTP, pyok, pyres, raise};
@@ -117,14 +116,18 @@ impl PyRtpTransport {
     #[new]
     #[pyo3(signature = (url, *, pkt_size = 1316, ssrc = None))]
     fn new(py: Python<'_>, url: &str, pkt_size: usize, ssrc: Option<u32>) -> PyResult<Self> {
-        let mut builder = RtpSocketBuilder::from_url(url)
-            .map_err(|e| raise(py, &RTP, BindingError::from(tst_rtp::ConnectError::from(e))))?;
-        builder.pkt_size(pkt_size);
+        let mut parsed = RtpUrl::parse(url).map_err(|e| {
+            raise(
+                py,
+                &RTP,
+                BindingError::from(tst_rtp::RtpConnectError::from(e)),
+            )
+        })?;
+        parsed.pkt_size = Some(pkt_size);
         if let Some(s) = ssrc {
-            builder.ssrc(s);
+            parsed.ssrc = Some(s);
         }
-        let inner = builder
-            .build()
+        let inner = RtpTransport::connect_with(&parsed)
             .map_err(|e| raise(py, &RTP, BindingError::from(e)))?;
         // The Arc returned is the same one the transport's send-loop
         // holds — flipping it here wakes a parked send on the next
@@ -269,10 +272,14 @@ impl PyRtpRecvTransport {
     /// ceiling; `?pkt_size=` on a receiver URL is rejected.
     #[new]
     fn new(py: Python<'_>, url: &str) -> PyResult<Self> {
-        let builder = RtpRecvSocketBuilder::from_url(url)
-            .map_err(|e| raise(py, &RTP, BindingError::from(tst_rtp::ConnectError::from(e))))?;
-        let transport = builder
-            .build()
+        let parsed = RtpUrl::parse(url).map_err(|e| {
+            raise(
+                py,
+                &RTP,
+                BindingError::from(tst_rtp::RtpConnectError::from(e)),
+            )
+        })?;
+        let transport = RtpRecvTransport::listen_with(&parsed)
             .map_err(|e| raise(py, &RTP, BindingError::from(e)))?;
         let scratch_len = transport.max_payload();
         // Both pulled BEFORE the transport moves into the slot.

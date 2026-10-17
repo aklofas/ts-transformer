@@ -21,8 +21,7 @@ use jni::objects::{JByteArray, JObject, JString};
 use jni::sys::{jbyteArray, jint, jlong, jobject};
 use tst_core::transport::EndReasonHandle;
 use tst_core::transport::{RecvTransport, Transport};
-use tst_rtp::builder::RtpRecvSocketBuilder;
-use tst_rtp::{RtpRecvTransport, RtpSocketBuilder, RtpTransport};
+use tst_rtp::{RtpRecvTransport, RtpTransport, RtpUrl};
 
 use tst_pipeline::binding::{BindingErrorKind, Owned, SendHalf};
 
@@ -102,18 +101,18 @@ jni_native! {
             Err(()) => return 0,
         };
 
-        let mut builder = match RtpSocketBuilder::from_url(&url_str) {
-            Ok(b) => b,
+        let mut parsed = match RtpUrl::parse(&url_str) {
+            Ok(u) => u,
             Err(e) => {
                 rtp_url_error(env, &e);
                 return 0;
             }
         };
-        builder.pkt_size(pkt_size.max(0) as usize);
+        parsed.pkt_size = Some(pkt_size.max(0) as usize);
         if let Some(s) = ssrc {
-            builder.ssrc(s);
+            parsed.ssrc = Some(s);
         }
-        let inner = match builder.build() {
+        let inner = match RtpTransport::connect_with(&parsed) {
             Ok(t) => t,
             Err(e) => {
                 connect_error(env, e);
@@ -212,14 +211,14 @@ jni_native! {
                 return 0;
             }
         };
-        let builder = match RtpRecvSocketBuilder::from_url(&url_str) {
-            Ok(b) => b,
+        let parsed = match RtpUrl::parse(&url_str) {
+            Ok(u) => u,
             Err(e) => {
                 rtp_url_error(env, &e);
                 return 0;
             }
         };
-        let inner = match builder.build() {
+        let inner = match RtpRecvTransport::listen_with(&parsed) {
             Ok(t) => t,
             Err(e) => {
                 connect_error(env, e);

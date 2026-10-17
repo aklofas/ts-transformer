@@ -17,7 +17,7 @@ use std::thread;
 use std::time::Duration;
 
 use tst_core::transport::{RecvTransport, Transport};
-use tst_rtp::{ConnectError, RtpRecvTransport, RtpTransport, RtpUrl};
+use tst_rtp::{RtpConnectError, RtpRecvTransport, RtpTransport, RtpUrl};
 
 fn try_listen_multicast_v4(addr: &str) -> Option<RtpRecvTransport> {
     match RtpRecvTransport::listen(addr) {
@@ -96,7 +96,7 @@ fn two_rtp_multicast_receivers_deliver_same_datagram() {
 
     let mut recv2 = match RtpRecvTransport::listen_with(&parsed) {
         Ok(r) => r,
-        Err(ConnectError::Io(ref io_err)) if io_err.kind() == io::ErrorKind::AddrInUse => {
+        Err(RtpConnectError::Io(ref io_err)) if io_err.kind() == io::ErrorKind::AddrInUse => {
             panic!(
                 "r2 got EADDRINUSE on the same group:port — SO_REUSEADDR fix \
                  is not applied to the RTP recv bind path: {io_err:?}"

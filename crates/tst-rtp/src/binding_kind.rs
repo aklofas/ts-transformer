@@ -2,20 +2,20 @@
 //! table; see `tst-srt/src/binding_kind.rs` for the why.
 
 use crate::error::{MountError, RtspError, RtspServerError};
-use crate::transport::ConnectError;
+use crate::transport::RtpConnectError;
 use tst_pipeline::binding::{BindingError, BindingErrorKind as K};
 
-/// Each of the six `ConnectError` variants is its own kind (C keeps −15
+/// Each of the six `RtpConnectError` variants is its own kind (C keeps −15
 /// for all of them).
-impl From<ConnectError> for BindingError {
-    fn from(e: ConnectError) -> Self {
+impl From<RtpConnectError> for BindingError {
+    fn from(e: RtpConnectError) -> Self {
         let kind = match &e {
-            ConnectError::PayloadTypeParam => K::RtpPayloadTypeParam,
-            ConnectError::MissingPayloadTypeParam => K::RtpMissingPayloadTypeParam,
-            ConnectError::Url(_) => K::RtpUrl,
-            ConnectError::HostNotLiteral { .. } => K::RtpHostNotLiteral,
-            ConnectError::Io(_) => K::RtpIo,
-            ConnectError::IfaceUnsupported { .. } => K::RtpIfaceUnsupported,
+            RtpConnectError::PayloadTypeParam => K::RtpPayloadTypeParam,
+            RtpConnectError::MissingPayloadTypeParam => K::RtpMissingPayloadTypeParam,
+            RtpConnectError::Url(_) => K::RtpUrl,
+            RtpConnectError::HostNotLiteral { .. } => K::RtpHostNotLiteral,
+            RtpConnectError::Io(_) => K::RtpIo,
+            RtpConnectError::IfaceUnsupported { .. } => K::RtpIfaceUnsupported,
         };
         BindingError::new(kind, e.to_string())
     }
@@ -92,22 +92,22 @@ impl From<MountError> for BindingError {
 #[cfg(test)]
 mod tests {
     use crate::error::{MountError, RtspError, RtspServerError};
-    use crate::transport::ConnectError;
+    use crate::transport::RtpConnectError;
     use std::io;
     use tst_pipeline::binding::{BindingError, BindingErrorKind as K};
 
     #[test]
     fn rtp_connect_precision() {
         assert_eq!(
-            BindingError::from(ConnectError::PayloadTypeParam).kind,
+            BindingError::from(RtpConnectError::PayloadTypeParam).kind,
             K::RtpPayloadTypeParam
         );
         assert_eq!(
-            BindingError::from(ConnectError::MissingPayloadTypeParam).kind,
+            BindingError::from(RtpConnectError::MissingPayloadTypeParam).kind,
             K::RtpMissingPayloadTypeParam
         );
         assert_eq!(
-            BindingError::from(ConnectError::HostNotLiteral {
+            BindingError::from(RtpConnectError::HostNotLiteral {
                 host: "h".into(),
                 detail: "d".into()
             })
@@ -115,7 +115,7 @@ mod tests {
             K::RtpHostNotLiteral
         );
         assert_eq!(
-            BindingError::from(ConnectError::Io(io::Error::new(
+            BindingError::from(RtpConnectError::Io(io::Error::new(
                 io::ErrorKind::AddrInUse,
                 "x"
             )))
@@ -123,7 +123,7 @@ mod tests {
             K::RtpIo
         );
         assert_eq!(
-            BindingError::from(ConnectError::IfaceUnsupported {
+            BindingError::from(RtpConnectError::IfaceUnsupported {
                 iface: "eth0".into(),
                 detail: "d".into()
             })

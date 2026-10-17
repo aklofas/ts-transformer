@@ -1,16 +1,9 @@
-//! Fluent builders over [`RtpUrl`] for callers who'd rather construct
-//! transports field-by-field than parse a string.
+//! Fluent builders for the RTSP client and server. The RTP transports have
+//! no builder: build an [`RtpUrl`](crate::RtpUrl) and open it with
+//! `RtpTransport::connect_with` / `RtpRecvTransport::listen_with`.
 //!
 //! **Stability: Stable** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
-//!
-//! Mirrors the `SocketBuilder` / `ListenerBuilder` setter shape from
-//! `tst-srt` — `&mut self -> &mut Self` setters, with a terminal `build`
-//! that takes `self` by value.
-//!
-//! `build` delegates to [`RtpTransport::connect_with`] /
-//! [`RtpRecvTransport::listen_with`]; the builder is sugar, not a
-//! parallel implementation.
 
 #[cfg(feature = "rtsp-server-tls")]
 use std::path::PathBuf;
@@ -23,123 +16,7 @@ use crate::error::RtspError;
 use crate::error::RtspServerError;
 use crate::rtsp::client::{ConnectParams, RtspClient};
 use crate::rtsp::message::validate_header_field;
-use crate::transport::{ConnectError, RtpRecvTransport, RtpTransport};
-use crate::url::{RtpUrl, RtspTransportPref, RtspUrl, RtspVersion, UrlError as RtpUrlError};
-
-/// Fluent builder for send-side [`RtpTransport`].
-#[must_use]
-#[derive(Debug, Clone)]
-pub struct RtpSocketBuilder {
-    url: RtpUrl,
-}
-
-impl RtpSocketBuilder {
-    /// New builder targeting `host:port`. `host` must be a literal IP
-    /// (multicast group or unicast destination).
-    pub fn new(host: impl Into<String>, port: u16) -> Self {
-        Self {
-            url: RtpUrl {
-                host: host.into(),
-                port,
-                ttl: None,
-                iface: None,
-                pkt_size: None,
-                ssrc: None,
-                pt: None,
-                recv_timeout: None,
-                rcvbuf: None,
-                sndbuf: None,
-                source: None,
-            },
-        }
-    }
-
-    /// Parse an `rtp://host:port[?...]` URL into a builder.
-    pub fn from_url(url: &str) -> Result<Self, RtpUrlError> {
-        Ok(Self {
-            url: RtpUrl::parse(url)?,
-        })
-    }
-
-    /// Override TTL / hop-limit for multicast send (`IP_MULTICAST_TTL` /
-    /// `IPV6_MULTICAST_HOPS`). Unicast: ignored.
-    pub fn ttl(&mut self, n: u8) -> &mut Self {
-        self.url.ttl = Some(n);
-        self
-    }
-
-    /// Override the multicast interface (`IP_MULTICAST_IF`). IPv4: takes
-    /// a literal IPv4 address (`"192.168.1.50"`).
-    pub fn iface(&mut self, name_or_ip: impl Into<String>) -> &mut Self {
-        self.url.iface = Some(name_or_ip.into());
-        self
-    }
-
-    /// UDP payload size (188-multiple). Default 1316.
-    pub fn pkt_size(&mut self, n: usize) -> &mut Self {
-        self.url.pkt_size = Some(n);
-        self
-    }
-
-    /// Override the RTP SSRC. Default: random.
-    pub fn ssrc(&mut self, n: u32) -> &mut Self {
-        self.url.ssrc = Some(n);
-        self
-    }
-
-    /// Build the transport.
-    pub fn build(self) -> Result<RtpTransport, ConnectError> {
-        RtpTransport::connect_with(&self.url)
-    }
-}
-
-/// Fluent builder for recv-side [`RtpRecvTransport`].
-#[must_use]
-#[derive(Debug, Clone)]
-pub struct RtpRecvSocketBuilder {
-    url: RtpUrl,
-}
-
-impl RtpRecvSocketBuilder {
-    /// New builder bound to `host:port` for listening. For multicast,
-    /// `host` is the group address (the socket binds to ANY:port and
-    /// joins `group`).
-    pub fn new(host: impl Into<String>, port: u16) -> Self {
-        Self {
-            url: RtpUrl {
-                host: host.into(),
-                port,
-                ttl: None,
-                iface: None,
-                pkt_size: None,
-                ssrc: None,
-                pt: None,
-                recv_timeout: None,
-                rcvbuf: None,
-                sndbuf: None,
-                source: None,
-            },
-        }
-    }
-
-    /// Parse an `rtp://host:port[?...]` URL into a builder.
-    pub fn from_url(url: &str) -> Result<Self, RtpUrlError> {
-        Ok(Self {
-            url: RtpUrl::parse(url)?,
-        })
-    }
-
-    /// Override the multicast-recv interface.
-    pub fn iface(&mut self, name_or_ip: impl Into<String>) -> &mut Self {
-        self.url.iface = Some(name_or_ip.into());
-        self
-    }
-
-    /// Build the recv transport.
-    pub fn build(self) -> Result<RtpRecvTransport, ConnectError> {
-        RtpRecvTransport::listen_with(&self.url)
-    }
-}
+use crate::url::{RtspTransportPref, RtspUrl, RtspVersion};
 
 /// Fluent builder for [`RtspClient`] with extended options (auth
 /// credentials, keepalive overrides, TLS roots, timeouts).
@@ -695,16 +572,17 @@ impl RtspServerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{RtpRecvTransport, RtpTransport, RtpUrl};
 
     #[test]
     fn socket_builder_round_trip_via_build() {
         // Use port 1 — likely refused on bind→connect→sendto, but the
-        // builder fields should propagate through connect_with cleanly.
-        let mut b = RtpSocketBuilder::new("127.0.0.1", 1);
-        b.pkt_size(376).ssrc(0xABCDEF01);
-        let t = b
-            .build()
-            .expect("connect to 127.0.0.1:1 should bind locally");
+        // URL fields should propagate through connect_with cleanly.
+        let mut url = RtpUrl::new("127.0.0.1", 1);
+        url.pkt_size = Some(376);
+        url.ssrc = Some(0xABCDEF01);
+        let t =
+            RtpTransport::connect_with(&url).expect("connect to 127.0.0.1:1 should bind locally");
         // The Transport trait's max_payload() returns the application-
         // visible cap (pkt_size minus the 12-byte RTP header).
         use tst_core::transport::Transport;
@@ -713,9 +591,9 @@ mod tests {
 
     #[test]
     fn recv_builder_binds_unicast() {
-        let b = RtpRecvSocketBuilder::new("127.0.0.1", 0);
         // Port 0 -> OS-assigned; doesn't conflict.
-        let _ = b.build().expect("bind 127.0.0.1:0 should succeed");
+        let _ = RtpRecvTransport::listen_with(&RtpUrl::new("127.0.0.1", 0))
+            .expect("bind 127.0.0.1:0 should succeed");
     }
 
     /// Both knob homes land on the same `RtspUrl` field: the builder

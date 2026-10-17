@@ -41,7 +41,7 @@
 //!   `recv_au(timeout_ms=...)` deadline expired — retryable, the
 //!   receiver/session is still alive)
 //! - `TransportError::Broken` → `BROKEN`
-//! - `ConnectError` (URL / bind) → one member per variant: `URL` / `IO` /
+//! - `RtpConnectError` (URL / bind) → one member per variant: `URL` / `IO` /
 //!   `HOST_NOT_LITERAL` / `IFACE_UNSUPPORTED` / `PAYLOAD_TYPE_PARAM` /
 //!   `MISSING_PAYLOAD_TYPE_PARAM`
 
@@ -418,7 +418,11 @@ impl PyH264Receiver {
                 // listen_with parses the URL, picks the pt from the URL
                 // (overriding config.inner.payload_type), and binds the socket.
                 let parsed = tst_rtp::url::RtpUrl::parse(url).map_err(|e| {
-                    raise(py, &RTP, BindingError::from(tst_rtp::ConnectError::from(e)))
+                    raise(
+                        py,
+                        &RTP,
+                        BindingError::from(tst_rtp::RtpConnectError::from(e)),
+                    )
                 })?;
                 H264Receiver::listen_with(&parsed, cfg.inner.clone())
                     .map_err(|e| raise(py, &RTP, BindingError::from(e)))?
