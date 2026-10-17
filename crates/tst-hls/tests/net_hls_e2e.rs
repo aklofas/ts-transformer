@@ -258,7 +258,17 @@ fn http_server_runs_on_one_thread_named_tst_hls() {
     publisher.push_ts(&[0x47u8; 376]).unwrap();
     publisher.cut_segment().unwrap();
     publisher.finish_serving().unwrap().shutdown();
-    let after = thread_names();
+    // `shutdown()` joins the thread, but the kernel wakes the joiner a moment
+    // before it removes the task's `/proc` entry (seen on linux-aarch64), so
+    // the count is allowed a bounded settle, never a fixed sleep.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut after = thread_names();
+    while count(&after, "tst-hls") != count(&before, "tst-hls")
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        after = thread_names();
+    }
     assert_eq!(
         count(&after, "tst-hls"),
         count(&before, "tst-hls"),
