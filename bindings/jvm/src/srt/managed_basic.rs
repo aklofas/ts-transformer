@@ -43,10 +43,10 @@ use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
 use super::ManagedSenderSnapshot;
 use super::errors::{throw_receiver_error, throw_sender_error, throw_srt};
-use super::stats::build_managed_transport_stats;
 use crate::error::throw_handle_state;
+use crate::generated::stats_shells::build_socket_stats;
+use crate::generated::stats_srt::build_managed_transport_stats;
 use crate::handle::OwnedRegistry;
-use crate::jutil::build_socket_stats;
 
 // -----------------------------------------------------------------------
 // ManagedSender  (org.tstrans.srt.ManagedSender)
@@ -221,7 +221,7 @@ jni_native! {
         ) else {
             return JObject::null();
         };
-        match build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats) {
+        match build_socket_stats(env, &stats) {
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }
@@ -474,7 +474,7 @@ jni_native! {
         ) else {
             return JObject::null();
         };
-        match build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats) {
+        match build_socket_stats(env, &stats) {
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }

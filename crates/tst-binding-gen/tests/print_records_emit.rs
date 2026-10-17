@@ -17,6 +17,8 @@ mod emit_pyclass;
 mod emit_pyi;
 #[path = "tools/print_records/schema.rs"]
 mod schema;
+#[path = "tools/print_records/stats.rs"]
+mod stats;
 #[path = "tools/print_records/typemap.rs"]
 mod typemap;
 #[path = "tools/print_records/write.rs"]
@@ -1015,7 +1017,7 @@ fn rust_paths_and_link_definitions_become_plain_names_in_host_docs() {
 #[test]
 fn every_registered_record_renders_every_target() {
     let reg = schema::records();
-    assert_eq!(reg.len(), 53);
+    assert_eq!(reg.len(), 69);
     for e in &reg {
         let n = e.schema.name;
         let py = emit_py::record_pair(&reg, e).unwrap_or_else(|m| panic!("{n}: {m}"));

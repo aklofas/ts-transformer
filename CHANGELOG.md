@@ -277,6 +277,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   default object repr), and `repr()` of `AdtsFrame` and `Mpeg2AudioFrame` prints
   the host enum members by their Rust names (`Ltp`, `Ii`, `Iii`) where it
   printed the Rust variants (`LongTermPrediction`, `II`, `III`).
+- `tstrans.rist.RistStats` has no `packets_missing` or `recovered_packets`.
+  Both were always 0, because the polling path does not track them, and the
+  Rust record has no such field; the class now lists the fields the Rust record
+  carries. `tstrans.rtp.PublishMountStats.alignment` reads `None` for a clock
+  alignment this build does not know, where it raised `RuntimeError`.
+  `tstrans.srt.SrtStats.rtt_us` no longer stops at the 32-bit maximum (about
+  71 minutes); it is the whole round-trip time in microseconds.
 
 ### Changed — tst-jni (BREAKING)
 
@@ -347,6 +354,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   call (an ST 0601 record's, for example) and a negative
   `PrecisionTimeStampPack.timestampUs` throw `IllegalArgumentException` naming
   the component.
+- `org.tstrans.srt.SrtStats.rttUs` no longer stops at the 32-bit maximum (about
+  71 minutes); it is the whole round-trip time in microseconds.
 - The `IllegalArgumentException` for a negative `CotConfig.updateIntervalUs`
   reads `CotConfig.updateIntervalUs must be >= 0 (unsigned long), got N`; it
   still names the component.
@@ -536,6 +545,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   except as listed under Changed; their docstrings are the Rust
   documentation. The dataclass docstrings of the KLV records now list their
   documented fields.
+- The stats classes are generated from the Rust records the same way, as
+  native classes: `tstrans.shells.SocketStats`, `tstrans.udp.SocketStats`,
+  `tstrans.tcp.SocketStats`, `tstrans.srt.SrtStats`, `ManagedTransportStats`,
+  `tstrans.rist.RistStats`, `tstrans.hls.HlsStats`, `MuxPublisherStats`,
+  `tstrans.mpegts.MuxerStats`, and `tstrans.rtp.RtpStats`, `H264DepayStats`,
+  `ServerStats`, `MountStats`, `PublishMountStats`. Attributes, constructors
+  and `repr()` are unchanged except as listed under Changed; their docstrings
+  are the Rust documentation. `tstrans.hls.PublisherStats`, which a custom
+  publisher builds, and `tstrans.rtp.RtspStats` stay hand-written.
 
 ### Added — tst-jni
 
@@ -588,6 +606,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `Mpeg2AudioFrame`. Components are unchanged; their Javadoc is the Rust
   documentation. `H265ProfileTierLevel`, `AdtsFrame` and `Mpeg2AudioFrame`
   gain a `Builder`, as every record of more than eight components has.
+- The stats records are generated the same way: `org.tstrans.shells.SocketStats`,
+  `org.tstrans.srt.SrtStats`, `ManagedTransportStats`,
+  `org.tstrans.mpegts.MuxerStats`, `DemuxerStats`,
+  `org.tstrans.pipeline.PairerStats`, `org.tstrans.hls.MuxPublisherStats`,
+  `HlsStats`, and `org.tstrans.rtp.RtpStats`, `H264DepayStats`, `ServerStats`,
+  `MountStats`, `PublishMountStats`. Components are unchanged; their Javadoc
+  is the Rust documentation. `SocketStats`, `SrtStats`, `H264DepayStats` and
+  `PublishMountStats` gain a `Builder`, as every record of more than eight
+  components has. `org.tstrans.hls.PublisherStats`, which carries its
+  optional durations as `-1`, `org.tstrans.rtp.RtspStats` and
+  `org.tstrans.shells.TransportStats` stay hand-written.
 
 ### Deprecated — tst-py
 

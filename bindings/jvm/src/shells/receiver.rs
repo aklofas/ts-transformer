@@ -22,9 +22,9 @@ use super::end_reason::{build_close_snapshot, detail, wire_value};
 use super::open::{open_recv, read_url};
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
+use crate::generated::stats_shells::build_socket_stats;
+use crate::generated::stats_srt::build_stats as build_srt_stats;
 use crate::handle::OwnedRegistry;
-use crate::jutil::build_socket_stats;
-use crate::srt::stats::build_srt_stats;
 
 type Shell = PlReceiver<Box<dyn RecvTransport>>;
 
@@ -138,7 +138,7 @@ jni_native! {
                 return JObject::null();
             }
         };
-        build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats)
+        build_socket_stats(env, &stats)
             .unwrap_or_else(|_| JObject::null())
     }
 }

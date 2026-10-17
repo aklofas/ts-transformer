@@ -246,6 +246,7 @@ pub fn records() -> Vec<Entry> {
         cot_config,
     ];
     v.extend(codec_records());
+    v.extend(crate::stats::stats_records());
     v
 }
 

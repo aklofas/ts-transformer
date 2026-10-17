@@ -164,21 +164,32 @@ impl MountEntry {
     }
 }
 
-/// Snapshot of [`MountHandle::stats`].
-///
-/// `bytes_pushed` and `packets_pushed` are cumulative since the mount
-/// was added. `peer_count` reflects the live subscriber count on the
-/// broadcast channel. `frames_dropped_total` sums per-peer dropped-frame
-/// counters reported by lagging subscribers.
-#[must_use]
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct MountStats {
-    pub bytes_pushed: u64,
-    pub packets_pushed: u64,
-    pub peer_count: usize,
-    pub frames_dropped_total: u64,
-    pub per_stream: BTreeMap<u16, tst_core::mpegts::stats::StreamStats>,
+tst_core::binding_record! {
+    /// Frozen snapshot of a mount's stats.
+    ///
+    /// `bytes_pushed` and `packets_pushed` are cumulative since the mount
+    /// was added. `peer_count` reflects the live subscriber count on the
+    /// broadcast channel. `frames_dropped_total` sums per-peer dropped-frame
+    /// counters reported by lagging subscribers.
+    ///
+    /// <!-- rust-only -->
+    /// Snapshot of [`MountHandle::stats`].
+    #[must_use]
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct MountStats {
+        /// Cumulative TS bytes pushed through this mount's fan-out.
+        pub bytes_pushed: u64,
+        /// Cumulative RTP-sized chunks broadcast through this mount.
+        pub packets_pushed: u64,
+        /// Live subscriber count on the broadcast channel.
+        pub peer_count: usize,
+        /// Sum of the per-peer dropped-frame counters reported by lagging
+        /// subscribers.
+        pub frames_dropped_total: u64,
+        @[skip]
+        pub per_stream: BTreeMap<u16, tst_core::mpegts::stats::StreamStats>,
+    }
 }
 
 /// Public mount surface. Returned by `RtspServer::add_mount` /

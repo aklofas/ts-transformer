@@ -32,12 +32,14 @@ use tst_pipeline::binding::{BindingError, Domain, HandleState, Opened, Owned};
 use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource};
 
 use crate::errors::mux_error_to_pyerr;
+use crate::generated::stats_mpegts::MuxerStats;
+use crate::generated::stats_shells::SocketStats;
 use crate::mux::{
-    PyAudioStreamHandle, PyDataStreamHandle, PyKlvStreamHandle, PyMuxerProgramConfig, PyMuxerStats,
+    PyAudioStreamHandle, PyDataStreamHandle, PyKlvStreamHandle, PyMuxerProgramConfig,
     PySubtitleStreamHandle, PyVideoStreamHandle, py_pts90khz,
 };
 use crate::raise::{pyok, raise};
-use crate::shells::cancel::{PyCancelHandle, PySocketStats, cancel_source};
+use crate::shells::cancel::{PyCancelHandle, cancel_source};
 use crate::util::{CancelSource, close_owned};
 
 /// Mux-sourced failures keep `mux_error_to_pyerr`; everything else is a
@@ -512,7 +514,7 @@ impl PyMuxSender {
     /// underlying transport's wire-level counters; `MuxerStats`
     /// reflects the inner Rust `Muxer`'s programs / packets-emitted
     /// totals. Raises the transport's `CLOSED` kind if the sender has been closed.
-    fn stats(&self, py: Python<'_>) -> PyResult<(Py<PySocketStats>, Py<PyMuxerStats>)> {
+    fn stats(&self, py: Python<'_>) -> PyResult<(Py<SocketStats>, Py<MuxerStats>)> {
         let (sock, pipe) = pyok(
             py,
             &self.owned.snapshot().domain,
@@ -537,8 +539,8 @@ impl PyMuxSender {
             subtitle_streams_configured: 0,
             per_stream: pipe.per_stream,
         };
-        let sock_py = Py::new(py, PySocketStats::from_core(sock))?;
-        let mux_py = Py::new(py, PyMuxerStats::from_inner(mux_stats))?;
+        let sock_py = Py::new(py, SocketStats::from(&sock))?;
+        let mux_py = Py::new(py, MuxerStats::from(&mux_stats))?;
         Ok((sock_py, mux_py))
     }
 

@@ -24,10 +24,11 @@ use tst_pipeline::binding::view::{BlockingReason, Snapshot};
 use tst_pipeline::binding::{Opened, Owned};
 use tst_pipeline::{Sender as PlSender, SenderConfig};
 
+use crate::generated::stats_shells::SocketStats;
 #[cfg(feature = "srt")]
 use crate::raise::raise;
 use crate::raise::{pyok, pyres};
-use crate::shells::cancel::{PyCancelHandle, PySocketStats, cancel_source};
+use crate::shells::cancel::{PyCancelHandle, cancel_source};
 use crate::util::{CancelSource, close_owned};
 
 /// Python sender over any transport — wraps
@@ -119,7 +120,7 @@ impl PySender {
 
     /// Scheme-neutral 16-field wire stats. Waits (GIL released) for an
     /// in-flight `send_bytes` on another thread to release the slot.
-    fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
+    fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
         let core = crate::util::allow_threads_parking(py, || {
             self.owned
                 // counters live inside the shell and have no value to report while a parked call holds it
@@ -129,14 +130,14 @@ impl PySender {
         });
         Py::new(
             py,
-            PySocketStats::from_core(pyok(py, &self.owned.snapshot().domain, core)?),
+            SocketStats::from(&pyok(py, &self.owned.snapshot().domain, core)?),
         )
     }
 
     /// SRT-rich 17-field stats. Raises `TypeError` unless the shell was
     /// opened from an `srt://` URL.
     #[cfg(feature = "srt")]
-    fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<crate::srt::transport::PySrtStats>> {
+    fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<crate::generated::stats_srt::SrtStats>> {
         let stats = crate::util::allow_threads_parking(py, || {
             self.owned
                 // counters live inside the shell and have no value to report while a parked call holds it
@@ -156,7 +157,7 @@ impl PySender {
                         tst_pipeline::binding::BindingError::from(e),
                     )
                 })?;
-                Py::new(py, crate::srt::transport::PySrtStats::from_srt(&stats))
+                Py::new(py, crate::generated::stats_srt::SrtStats::from(&stats))
             }
             None => Err(pyo3::exceptions::PyTypeError::new_err(
                 "srt_stats() is only available on an srt:// shell",

@@ -28,8 +28,8 @@ use tst_pipeline::binding::{BindingErrorKind, Owned, SendHalf};
 
 use super::errors::{connect_error, rtp_url_error, throw_rtp, transport_error};
 use crate::error::throw_handle_state;
+use crate::generated::stats_shells::build_socket_stats;
 use crate::handle::OwnedRegistry;
-use crate::jutil::build_socket_stats;
 
 struct JniRtpReceiver {
     inner: RtpRecvTransport,
@@ -173,7 +173,7 @@ jni_native! {
         else {
             return JObject::null();
         };
-        build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats)
+        build_socket_stats(env, &stats)
             .unwrap_or_else(|_| JObject::null())
     }
 }
@@ -379,7 +379,7 @@ jni_native! {
         ) else {
             return JObject::null();
         };
-        build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats)
+        build_socket_stats(env, &stats)
             .unwrap_or_else(|_| JObject::null())
     }
 }

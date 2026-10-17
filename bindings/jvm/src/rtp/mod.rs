@@ -3,7 +3,7 @@
 pub(crate) mod errors;
 mod client;
 pub(crate) mod h264_receiver;
-mod publish;
+pub(crate) mod publish;
 mod server;
 mod transport;
 

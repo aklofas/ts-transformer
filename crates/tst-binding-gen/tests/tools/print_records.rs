@@ -24,6 +24,8 @@ mod emit_pyclass;
 mod emit_pyi;
 #[path = "print_records/schema.rs"]
 mod schema;
+#[path = "print_records/stats.rs"]
+mod stats;
 #[path = "print_records/typemap.rs"]
 mod typemap;
 #[path = "print_records/write.rs"]

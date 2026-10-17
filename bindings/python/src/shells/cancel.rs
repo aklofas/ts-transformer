@@ -1,6 +1,5 @@
-//! `CancelHandle` and `SocketStats`, the two value classes every shell hands
-//! out, plus the helper that turns a transport's cancel handle into the
-//! shell's shared [`CancelSource`].
+//! `CancelHandle`, the value class every shell hands out, plus the helper that
+//! turns a transport's cancel handle into the shell's shared [`CancelSource`].
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -8,71 +7,9 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 
-use tst_core::transport::{SocketStats, TransportCancel};
+use tst_core::transport::TransportCancel;
 
 use crate::util::CancelSource;
-
-/// Mirror of `tst_core::transport::SocketStats` exposed to Python as a
-/// frozen, `get_all`-decorated PyClass: the 16 scheme-neutral wire
-/// counters, the same on every transport. For SRT-specific extras
-/// (`mbps_estimated_bandwidth`, the symmetric send/recv-side byte-loss
-/// split) use `srt_stats()` on an `srt://` shell.
-#[pyclass(frozen, get_all, name = "SocketStats", module = "tstrans.shells")]
-pub(crate) struct PySocketStats {
-    pub rtt_us: u32,
-    pub send_bandwidth_bps: u64,
-    pub recv_bandwidth_bps: u64,
-    pub link_bandwidth_bps: u64,
-    pub bytes_sent: u64,
-    pub packets_sent: u64,
-    pub bytes_received: u64,
-    pub packets_received: u64,
-    pub bytes_lost_recv: u64,
-    pub packets_lost_recv: u64,
-    pub packets_lost_send: u64,
-    pub packets_retransmitted: u64,
-    pub packets_dropped_send: u64,
-    pub packets_dropped_recv: u64,
-    pub send_buffer_packets: u32,
-    pub recv_buffer_packets: u32,
-}
-
-impl PySocketStats {
-    pub(crate) fn from_core(s: SocketStats) -> Self {
-        Self {
-            rtt_us: s.rtt_us,
-            send_bandwidth_bps: s.send_bandwidth_bps,
-            recv_bandwidth_bps: s.recv_bandwidth_bps,
-            link_bandwidth_bps: s.link_bandwidth_bps,
-            bytes_sent: s.bytes_sent,
-            packets_sent: s.packets_sent,
-            bytes_received: s.bytes_received,
-            packets_received: s.packets_received,
-            bytes_lost_recv: s.bytes_lost_recv,
-            packets_lost_recv: s.packets_lost_recv,
-            packets_lost_send: s.packets_lost_send,
-            packets_retransmitted: s.packets_retransmitted,
-            packets_dropped_send: s.packets_dropped_send,
-            packets_dropped_recv: s.packets_dropped_recv,
-            send_buffer_packets: s.send_buffer_packets,
-            recv_buffer_packets: s.recv_buffer_packets,
-        }
-    }
-}
-
-#[pymethods]
-impl PySocketStats {
-    fn __repr__(&self) -> String {
-        format!(
-            "SocketStats(bytes_sent={}, packets_sent={}, bytes_received={}, packets_received={}, rtt_us={})",
-            self.bytes_sent,
-            self.packets_sent,
-            self.bytes_received,
-            self.packets_received,
-            self.rtt_us,
-        )
-    }
-}
 
 /// Python-side cancel handle. Wraps the shell's shared
 /// [`CancelSource`]: every clone obtained from the same shell, and the

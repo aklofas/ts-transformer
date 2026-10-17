@@ -12,7 +12,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use jni::JNIEnv;
-use jni::objects::{JBooleanArray, JByteArray, JIntArray, JLongArray, JObject, JString, JValue};
+use jni::objects::{JBooleanArray, JByteArray, JIntArray, JLongArray, JObject, JString};
 use jni::sys::{jboolean, jint, jlong};
 use secrecy::SecretString;
 
@@ -23,7 +23,6 @@ use tst_core::mpegts::mux::{
 use tst_pipeline::binding::BindingErrorKind;
 use tst_rtp::RtspServer as RustRtspServer;
 use tst_rtp::RtspServerCancelHandle as RustServerCancel;
-use tst_rtp::ServerStats as RustServerStats;
 use tst_rtp::builder::RtspServerBuilder;
 use tst_rtp::error::RtspServerError;
 use tst_rtp::rtsp::server::mount::{MountHandle as RustMountHandle, MountKind};
@@ -108,27 +107,6 @@ type ServerInner = Arc<RustRtspServer>;
 /// mounts' application transports nor wakes a parked `next_publisher`; `nClose`
 /// runs `stop()` after it, and that does both.
 static REGISTRY_SERVER: LazyLock<HandleRegistry<ServerInner>> = LazyLock::new(HandleRegistry::new);
-
-/// Build the Java `org.tstrans.rtp.ServerStats` record. Ctor `(JJJJJJJ)V`.
-fn build_server_stats<'local>(
-    env: &mut JNIEnv<'local>,
-    s: &RustServerStats,
-) -> jni::errors::Result<JObject<'local>> {
-    env.ensure_local_capacity(4)?;
-    env.new_object(
-        "org/tstrans/rtp/ServerStats",
-        "(JJJJJJJ)V",
-        &[
-            JValue::Long(s.active_sessions as i64),
-            JValue::Long(s.total_rtp_packets_sent as i64),
-            JValue::Long(s.total_rtp_bytes_sent as i64),
-            JValue::Long(s.mounts as i64),
-            JValue::Long(s.active_publishers as i64),
-            JValue::Long(s.total_rtp_packets_received as i64),
-            JValue::Long(s.total_rtp_bytes_received as i64),
-        ],
-    )
-}
 
 /// Read a JString, returning "" for null/error (auth fields).
 fn jstring_or_empty(env: &mut JNIEnv, s: &JString) -> String {
@@ -354,7 +332,7 @@ jni_native! {
         let Some(s) = with_server(env, handle, |server| server.stats()) else {
             return JObject::null();
         };
-        build_server_stats(env, &s).unwrap_or_else(|_| JObject::null())
+        crate::generated::stats_rtp::build_server_stats(env, &s).unwrap_or_else(|_| JObject::null())
     }
 }
 
@@ -817,24 +795,6 @@ jni_native! {
     }
 }
 
-/// Build the Java `org.tstrans.rtp.MountStats` record. Ctor `(JJJJ)V`.
-fn build_mount_stats<'local>(
-    env: &mut JNIEnv<'local>,
-    s: &tst_rtp::rtsp::server::mount::MountStats,
-) -> jni::errors::Result<JObject<'local>> {
-    env.ensure_local_capacity(4)?;
-    env.new_object(
-        "org/tstrans/rtp/MountStats",
-        "(JJJJ)V",
-        &[
-            JValue::Long(s.bytes_pushed as i64),
-            JValue::Long(s.packets_pushed as i64),
-            JValue::Long(s.peer_count as i64),
-            JValue::Long(s.frames_dropped_total as i64),
-        ],
-    )
-}
-
 jni_native! {
     /// `MountHandle.nStats(handle)` → MountStats record, or null on a JNI builder error.
     fn Java_org_tstrans_rtp_MountHandle_nStats<'local>(
@@ -845,7 +805,7 @@ jni_native! {
         let Some(s) = with_mount(env, handle, |inner| inner.stats()) else {
             return JObject::null();
         };
-        build_mount_stats(env, &s).unwrap_or_else(|_| JObject::null())
+        crate::generated::stats_rtp::build_mount_stats(env, &s).unwrap_or_else(|_| JObject::null())
     }
 }
 

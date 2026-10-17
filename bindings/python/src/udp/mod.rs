@@ -47,6 +47,7 @@ use tst_core::transport::{RecvTransport, Transport, TransportError};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned, SendHalf};
 use tst_udp::{UdpError, UdpRecvTransport, UdpTransport};
 
+use crate::generated::stats_udp::SocketStats;
 use crate::raise::{UDP, pyok, pyres, raise};
 use crate::util::{CancelSource, close_owned};
 
@@ -93,54 +94,6 @@ impl PyUdpCancelHandle {
         Self {
             src: Arc::clone(src),
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PyUdpStats — frozen mirror of UdpStats
-// ---------------------------------------------------------------------------
-
-/// Cumulative stats snapshot for a UDP transport handle.
-///
-/// Returned by `Transport.stats()` and `RecvTransport.stats()`. Send-side
-/// counters are zero on a receive-only handle and vice-versa.
-#[pyclass(frozen, get_all, name = "SocketStats", module = "tstrans.udp")]
-pub(crate) struct PyUdpStats {
-    /// Datagrams successfully sent (sender only).
-    pub datagrams_sent: u64,
-    /// Bytes successfully sent (sender only).
-    pub bytes_sent: u64,
-    /// Datagrams successfully received (receiver only).
-    pub datagrams_received: u64,
-    /// Bytes successfully received (receiver only).
-    pub bytes_received: u64,
-    /// Send-side I/O errors (sender only).
-    pub send_errors: u64,
-    /// Receive-side I/O errors (receiver only).
-    pub recv_errors: u64,
-}
-
-impl From<tst_udp::UdpStats> for PyUdpStats {
-    fn from(s: tst_udp::UdpStats) -> Self {
-        Self {
-            datagrams_sent: s.datagrams_sent,
-            bytes_sent: s.bytes_sent,
-            datagrams_received: s.datagrams_received,
-            bytes_received: s.bytes_received,
-            send_errors: s.send_errors,
-            recv_errors: s.recv_errors,
-        }
-    }
-}
-
-#[pymethods]
-impl PyUdpStats {
-    fn __repr__(&self) -> String {
-        format!(
-            "SocketStats(datagrams_sent={}, bytes_sent={}, \
-             datagrams_received={}, bytes_received={})",
-            self.datagrams_sent, self.bytes_sent, self.datagrams_received, self.bytes_received,
-        )
     }
 }
 
@@ -212,7 +165,7 @@ impl PyUdpTransport {
 
     /// Snapshot of wire-level statistics. `datagrams_sent` / `bytes_sent`
     /// tick on each successful `.send()`.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyUdpStats>> {
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
         let s = pyok(
             py,
             &UDP,
@@ -222,7 +175,7 @@ impl PyUdpTransport {
                     .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |t| t.0.stats())
             }),
         )?;
-        Py::new(py, PyUdpStats::from(s))
+        Py::new(py, SocketStats::from(&s))
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -506,7 +459,7 @@ impl PyUdpRecvTransport {
 
     /// Snapshot of wire-level statistics. `datagrams_received` /
     /// `bytes_received` tick on each successful `.recv()`.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyUdpStats>> {
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
         let s = pyok(
             py,
             &UDP,
@@ -516,7 +469,7 @@ impl PyUdpRecvTransport {
                     .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |s| s.transport.stats())
             }),
         )?;
-        Py::new(py, PyUdpStats::from(s))
+        Py::new(py, SocketStats::from(&s))
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -635,7 +588,7 @@ impl PyUdpRecvTransportBuilder {
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(parent.py(), "udp")?;
     m.add_class::<PyUdpCancelHandle>()?;
-    m.add_class::<PyUdpStats>()?;
+    crate::generated::stats_udp::register(&m)?;
     m.add_class::<PyUdpTransport>()?;
     m.add_class::<PyUdpTransportBuilder>()?;
     m.add_class::<PyUdpRecvTransport>()?;

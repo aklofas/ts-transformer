@@ -16,16 +16,18 @@ use tst_core::publisher::{Publisher, PublisherStats};
 use crate::binding::kind::{coarsen, kind_of_mux};
 use crate::shell_error::ShellErrorKind;
 
-/// Cumulative stats for a single `MuxPublisher`.
-#[derive(Debug, Clone, Copy, Default)]
-#[non_exhaustive]
-pub struct MuxPublisherStats {
-    /// Total TS bytes drained from the muxer and handed to the publisher.
-    pub bytes_pushed: u64,
-    /// Total muxer drain calls that produced ≥1 chunk.
-    pub drain_calls: u64,
-    /// Total explicit `cut_segment()` calls.
-    pub cut_calls: u64,
+tst_core::binding_record! {
+    /// Cumulative stats of a mux-publisher shell.
+    #[derive(Debug, Clone, Copy, Default)]
+    #[non_exhaustive]
+    pub struct MuxPublisherStats {
+        /// Total TS bytes drained from the muxer and handed to the publisher.
+        pub bytes_pushed: u64,
+        /// Total muxer drain calls that produced at least one chunk.
+        pub drain_calls: u64,
+        /// Total explicit segment cuts, plus the automatic cuts on keyframes.
+        pub cut_calls: u64,
+    }
 }
 
 struct Inner<P: Publisher> {

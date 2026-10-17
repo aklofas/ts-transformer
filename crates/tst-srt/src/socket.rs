@@ -85,36 +85,60 @@ impl std::fmt::Debug for Socket {
     }
 }
 
-/// Snapshot of libsrt's per-socket performance counters (subset of `CBytePerfMon`).
-///
-/// Loss/drop counters are split by which side observed the event:
-/// - `*_send_side` — what the sender knows is lost/dropped (receiver NAKs received,
-///   too-late drops on outgoing path). Read these on a sender; they will be
-///   ~0 on a receiver.
-/// - `*_recv_side` — what the receiver detected (sequence-gap discoveries,
-///   too-late drops on incoming path). Read these on a receiver; they will
-///   be ~0 on a sender.
-#[must_use]
-#[derive(Debug, Clone, Copy)]
-#[non_exhaustive]
-pub struct Stats {
-    pub bytes_sent: u64,
-    pub bytes_received: u64,
-    pub bytes_lost_recv_side: u64,
-    pub bytes_lost_send_side: u64,
-    pub packets_sent: u64,
-    pub packets_received: u64,
-    pub packets_lost_recv_side: u64,
-    pub packets_lost_send_side: u64,
-    pub packets_retransmitted: u64,
-    pub packets_dropped_recv_side: u64,
-    pub packets_dropped_send_side: u64,
-    pub rtt: Duration,
-    pub send_bandwidth_bps: u64,
-    pub recv_bandwidth_bps: u64,
-    pub mbps_estimated_bandwidth: f64,
-    pub send_buffer_packets: u32,
-    pub recv_buffer_packets: u32,
+tst_core::binding_record! {
+    /// Snapshot of libsrt's per-socket performance counters (a subset of its
+    /// performance monitor).
+    ///
+    /// Loss and drop counters are split by which side observed the event. The
+    /// send-side counters are what the sender knows is lost or dropped
+    /// (receiver NAKs received, too-late drops on the outgoing path); read
+    /// them on a sender, where the recv-side counters are about zero. The
+    /// recv-side counters are what the receiver detected (sequence-gap
+    /// discoveries, too-late drops on the incoming path); read them on a
+    /// receiver.
+    ///
+    /// For the abstract transport view shared with RTP use the socket stats.
+    #[must_use]
+    #[derive(Debug, Clone, Copy)]
+    #[non_exhaustive]
+    pub struct Stats {
+        /// Bytes sent, cumulative.
+        pub bytes_sent: u64,
+        /// Bytes received, cumulative.
+        pub bytes_received: u64,
+        /// Bytes the receiver detected as lost.
+        pub bytes_lost_recv_side: u64,
+        /// Bytes the sender knows are lost.
+        pub bytes_lost_send_side: u64,
+        /// Packets sent, cumulative.
+        pub packets_sent: u64,
+        /// Packets received, cumulative.
+        pub packets_received: u64,
+        /// Packets the receiver detected as lost.
+        pub packets_lost_recv_side: u64,
+        /// Packets the sender knows are lost.
+        pub packets_lost_send_side: u64,
+        /// Packets retransmitted by the sender.
+        pub packets_retransmitted: u64,
+        /// Packets the receiver dropped as too late.
+        pub packets_dropped_recv_side: u64,
+        /// Packets the sender dropped as too late.
+        pub packets_dropped_send_side: u64,
+        /// Smoothed round-trip time in whole microseconds.
+        @[java("rttUs")]
+        pub rtt: Duration,
+        /// Send-rate estimate in bits per second.
+        pub send_bandwidth_bps: u64,
+        /// Receive-rate estimate in bits per second.
+        pub recv_bandwidth_bps: u64,
+        /// libsrt's estimate of the link bandwidth in megabits per second; the
+        /// bits-per-second view is `link_bandwidth_bps` of the socket stats.
+        pub mbps_estimated_bandwidth: f64,
+        /// Current send-side buffer occupancy in packets.
+        pub send_buffer_packets: u32,
+        /// Current receive-side buffer occupancy in packets.
+        pub recv_buffer_packets: u32,
+    }
 }
 
 // SAFETY: a SRTSOCKET is just an integer handle; libsrt is internally

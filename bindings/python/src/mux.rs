@@ -27,10 +27,9 @@ use tst_core::mpegts::mux::{
     KlvStreamHandle as RustKlvStreamHandle, KlvStreamType as RustKlvStreamType, Muxer as RustMuxer,
     MuxerConfig as RustMuxerConfig, MuxerConfigBuilder as RustMuxerConfigBuilder,
     MuxerProgramConfig as RustMuxerProgramConfig,
-    MuxerProgramConfigBuilder as RustMuxerProgramConfigBuilder, MuxerStats as RustMuxerStats,
-    StreamSpec as RustStreamSpec, SubtitleCodec as RustSubtitleCodec,
-    SubtitleStreamHandle as RustSubtitleStreamHandle, VideoCodec as RustVideoCodec,
-    VideoStreamHandle as RustVideoStreamHandle,
+    MuxerProgramConfigBuilder as RustMuxerProgramConfigBuilder, StreamSpec as RustStreamSpec,
+    SubtitleCodec as RustSubtitleCodec, SubtitleStreamHandle as RustSubtitleStreamHandle,
+    VideoCodec as RustVideoCodec, VideoStreamHandle as RustVideoStreamHandle,
 };
 use tst_core::mpegts::stats::StreamCodecStats as RustStreamCodecStats;
 
@@ -1930,10 +1929,8 @@ impl PyMuxer {
     // data yet) collapses to Python `None` for caller simplicity.
 
     /// Snapshot the current muxer stats counters. Always succeeds.
-    pub fn stats(&self) -> PyMuxerStats {
-        PyMuxerStats {
-            inner: self.inner.stats(),
-        }
+    pub fn stats(&self) -> crate::generated::stats_mpegts::MuxerStats {
+        crate::generated::stats_mpegts::MuxerStats::from(&self.inner.stats())
     }
 
     /// Zero all cumulative flow counters. Per-stream identity (PID,
@@ -1988,70 +1985,5 @@ impl PyMuxer {
         let cls = mpegts_mod.getattr(cls_name)?;
         let obj = cls.call((), Some(&kwargs))?.unbind();
         Ok(Some(obj))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// MuxerStats.
-// ---------------------------------------------------------------------------
-//
-// Frozen view of the Rust `MuxerStats` snapshot returned from
-// `Muxer::stats`. Only the scalar fields are exposed in v1; the
-// `per_stream` BTreeMap of `StreamStats` entries is not yet wrapped
-// (no consumer demand — adding it later is additive).
-
-/// Frozen snapshot of [`Muxer`] cumulative counters. Returned by
-/// [`Muxer.stats`][PyMuxer::stats]. Reset to zero by
-/// [`Muxer.reset_stats`][PyMuxer::reset_stats].
-#[pyclass(name = "MuxerStats", module = "tstrans.mpegts", frozen)]
-pub struct PyMuxerStats {
-    inner: RustMuxerStats,
-}
-
-impl PyMuxerStats {
-    /// Crate-private constructor used by the `tstrans.shells.MuxSender`
-    /// wrapper (which composes a `tst_pipeline::MuxSenderStats` view
-    /// into the same shape Python callers already use for
-    /// `Muxer.stats()`).
-    pub(crate) fn from_inner(inner: RustMuxerStats) -> Self {
-        Self { inner }
-    }
-}
-
-#[pymethods]
-impl PyMuxerStats {
-    /// Total 188-byte TS packets drained via [`Muxer.pull`][PyMuxer::pull].
-    #[getter]
-    pub fn ts_packets_emitted(&self) -> u64 {
-        self.inner.ts_packets_emitted
-    }
-
-    /// Total bytes drained via [`Muxer.pull`][PyMuxer::pull]
-    /// (`ts_packets_emitted * 188`).
-    #[getter]
-    pub fn ts_bytes_emitted(&self) -> u64 {
-        self.inner.ts_bytes_emitted
-    }
-
-    /// Number of programs (PAT entries) in this muxer's configuration.
-    #[getter]
-    pub fn programs_configured(&self) -> u32 {
-        self.inner.programs_configured
-    }
-
-    /// Number of subtitle streams configured across all programs.
-    #[getter]
-    pub fn subtitle_streams_configured(&self) -> u32 {
-        self.inner.subtitle_streams_configured
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "MuxerStats(ts_packets_emitted={}, ts_bytes_emitted={}, programs_configured={}, subtitle_streams_configured={})",
-            self.inner.ts_packets_emitted,
-            self.inner.ts_bytes_emitted,
-            self.inner.programs_configured,
-            self.inner.subtitle_streams_configured,
-        )
     }
 }

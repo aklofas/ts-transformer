@@ -14,33 +14,40 @@ use alloc::collections::BTreeMap;
 
 use super::Muxer;
 
-/// Stats snapshot for [`Muxer`].
-///
-/// Returned by [`Muxer::stats`]. All counters are cumulative since
-/// construction (or the last [`Muxer::reset_stats`] call).
-///
-/// `per_stream` is keyed by PID. Entries are created eagerly at
-/// [`Muxer::new`] for every configured video and KLV stream so callers
-/// can always index by a known PID without first checking for key
-/// presence.
-#[must_use]
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct MuxerStats {
-    /// Total 188-byte TS packets drained via [`Muxer::pull`].
-    pub ts_packets_emitted: u64,
-    /// Total bytes drained via [`Muxer::pull`] (`ts_packets_emitted * 188`).
-    pub ts_bytes_emitted: u64,
-    /// Number of programs (PAT entries) in this muxer's configuration.
-    pub programs_configured: u32,
-    /// Number of subtitle streams configured across all programs in this
-    /// muxer. Counts the `StreamSpec::Subtitle` entries from
-    /// `MuxerConfig::programs`.
-    pub subtitle_streams_configured: u32,
-    /// Per-stream counters, keyed by PID. One entry per configured
-    /// video or KLV stream. `StreamStats::items` = push_video_to /
-    /// push_klv_to call count; `StreamStats::bytes` = raw ES bytes pushed
-    /// (before PES/TS framing overhead).
-    pub per_stream: BTreeMap<u16, crate::mpegts::stats::StreamStats>,
+crate::binding_record! {
+    /// Frozen snapshot of the muxer's cumulative counters.
+    ///
+    /// All counters are cumulative since construction (or the last stats
+    /// reset). The per-stream push counters are not surfaced to the hosts.
+    ///
+    /// <!-- rust-only -->
+    /// Returned by [`Muxer::stats`]. All counters are cumulative since
+    /// construction (or the last [`Muxer::reset_stats`] call).
+    ///
+    /// `per_stream` is keyed by PID. Entries are created eagerly at
+    /// [`Muxer::new`] for every configured video and KLV stream so callers
+    /// can always index by a known PID without first checking for key
+    /// presence.
+    #[must_use]
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    pub struct MuxerStats {
+        /// Total 188-byte TS packets drained via [`Muxer::pull`].
+        pub ts_packets_emitted: u64,
+        /// Total bytes drained via [`Muxer::pull`] (`ts_packets_emitted * 188`).
+        pub ts_bytes_emitted: u64,
+        /// Number of programs (PAT entries) in this muxer's configuration.
+        pub programs_configured: u32,
+        /// Number of subtitle streams configured across all programs in this
+        /// muxer. Counts the `StreamSpec::Subtitle` entries from
+        /// `MuxerConfig::programs`.
+        pub subtitle_streams_configured: u32,
+        /// Per-stream counters, keyed by PID. One entry per configured
+        /// video or KLV stream. `StreamStats::items` = push_video_to /
+        /// push_klv_to call count; `StreamStats::bytes` = raw ES bytes pushed
+        /// (before PES/TS framing overhead).
+        @[skip]
+        pub per_stream: BTreeMap<u16, crate::mpegts::stats::StreamStats>,
+    }
 }
 
 impl Muxer {

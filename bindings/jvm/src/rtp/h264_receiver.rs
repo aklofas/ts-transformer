@@ -39,8 +39,8 @@ use tst_rtp::{H264Au, H264DepayConfig, H264Receiver, ParameterSetInjection};
 
 use tst_pipeline::binding::{HandleState, Owned};
 
+use crate::generated::stats_shells::build_socket_stats;
 use crate::handle::OwnedRegistry;
-use crate::jutil::build_socket_stats;
 
 use super::errors::{connect_error, transport_error};
 
@@ -402,22 +402,7 @@ jni_native! {
                 return JObject::null().into_raw();
             }
         };
-        // Construct `new H264DepayStats(long x9)`.
-        match env.new_object(
-            "org/tstrans/rtp/H264DepayStats",
-            "(JJJJJJJJJ)V",
-            &[
-                JValue::Long(s.aus_emitted as i64),
-                JValue::Long(s.aus_dropped as i64),
-                JValue::Long(s.aus_dropped_oversize as i64),
-                JValue::Long(s.packets_discarded as i64),
-                JValue::Long(s.nalus_discarded as i64),
-                JValue::Long(s.seq_gaps as i64),
-                JValue::Long(s.duplicate_packets as i64),
-                JValue::Long(s.parameter_set_updates as i64),
-                JValue::Long(s.ssrc_changes as i64),
-            ],
-        ) {
+        match crate::generated::stats_rtp::build_depay_stats(env, &s) {
             Ok(o) => o.into_raw(),
             Err(e) => {
                 let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
@@ -450,14 +435,7 @@ jni_native! {
                 return JObject::null().into_raw();
             }
         };
-        match env.new_object(
-            "org/tstrans/rtp/RtpStats",
-            "(JJ)V",
-            &[
-                JValue::Long(s.malformed_packets as i64),
-                JValue::Long(s.source_rejected as i64),
-            ],
-        ) {
+        match crate::generated::stats_rtp::build_rtp_stats(env, &s) {
             Ok(o) => o.into_raw(),
             Err(e) => {
                 let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
@@ -491,7 +469,7 @@ jni_native! {
                 return JObject::null().into_raw();
             }
         };
-        match build_socket_stats(env, "org/tstrans/shells/SocketStats", &s) {
+        match build_socket_stats(env, &s) {
             Ok(o) => o.into_raw(),
             Err(e) => {
                 let _ = env.throw_new("java/lang/RuntimeException", e.to_string());

@@ -64,10 +64,11 @@ use tst_pipeline::{
 };
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
+use crate::generated::stats_shells::SocketStats;
+use crate::generated::stats_srt::{ManagedTransportStats, SrtStats};
 use crate::raise::{SRT, pyok, pyres, raise};
-use crate::shells::cancel::{PyCancelHandle, PySocketStats};
-use crate::srt::policy::{PyManagedTransportStats, PyReconnectPolicy};
-use crate::srt::transport::PySrtStats;
+use crate::shells::cancel::PyCancelHandle;
+use crate::srt::policy::PyReconnectPolicy;
 use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
@@ -188,7 +189,7 @@ impl PyManagedSender {
     /// Returns a fresh zeroed `SocketStats` if the inner is
     /// mid-reconnect (None), matching `ManagedTransport::socket_stats`
     /// semantics. Waits (GIL released) for a send in flight elsewhere.
-    fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
+    fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
         let core = pyok(
             py,
             &SRT,
@@ -200,14 +201,14 @@ impl PyManagedSender {
                     })
             }),
         )?;
-        Py::new(py, PySocketStats::from_core(core))
+        Py::new(py, SocketStats::from(&core))
     }
 
     /// SRT-rich 17-field stats are not reachable through `ManagedTransport`
     /// (no accessor on tst-pipeline — see the module doc's "API drift");
     /// raises `SrtError(IO)` on a live sender and `SrtError(CLOSED)` on a
     /// closed one, as before.
-    fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<PySrtStats>> {
+    fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<SrtStats>> {
         if self.owned.is_closed() {
             return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
         }
@@ -234,7 +235,7 @@ impl PyManagedSender {
     /// Raises `SrtError(IO)` if the internal gap-buffer lock is
     /// poisoned (an unwind inside another thread while holding it) —
     /// a read-only telemetry path must not panic.
-    fn reconnect_stats(&self, py: Python<'_>) -> PyResult<Py<PyManagedTransportStats>> {
+    fn reconnect_stats(&self, py: Python<'_>) -> PyResult<Py<ManagedTransportStats>> {
         if self.owned.is_closed() {
             return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
         }
@@ -249,7 +250,7 @@ impl PyManagedSender {
                     ),
                 )
             })?;
-        Py::new(py, PyManagedTransportStats::from_core(stats))
+        Py::new(py, ManagedTransportStats::from(&stats))
     }
 
     /// Close. Fires the managed cancel FIRST (latches the close flag so any
@@ -410,7 +411,7 @@ impl PyManagedReceiver {
 
     /// Scheme-neutral wire stats from the current inner transport. Waits
     /// (GIL released) for a recv parked on another thread.
-    fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
+    fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
         let core = pyok(
             py,
             &SRT,
@@ -422,13 +423,13 @@ impl PyManagedReceiver {
                     })
             }),
         )?;
-        Py::new(py, PySocketStats::from_core(core))
+        Py::new(py, SocketStats::from(&core))
     }
 
     /// SRT-rich 17-field stats are not directly accessible through
     /// `ManagedRecvTransport` today — same drift as `ManagedSender`.
     /// Use `socket_stats()` for the 16-field scheme-neutral view.
-    fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<PySrtStats>> {
+    fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<SrtStats>> {
         if self.owned.is_closed() {
             return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
         }

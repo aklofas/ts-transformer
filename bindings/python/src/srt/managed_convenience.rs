@@ -42,15 +42,18 @@ use tst_pipeline::{
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
 use crate::errors::mux_error_to_pyerr;
+use crate::generated::stats_mpegts::MuxerStats;
+use crate::generated::stats_shells::SocketStats;
+use crate::generated::stats_srt::ManagedTransportStats;
 use crate::mux::{
-    PyAudioStreamHandle, PyDataStreamHandle, PyKlvStreamHandle, PyMuxerProgramConfig, PyMuxerStats,
+    PyAudioStreamHandle, PyDataStreamHandle, PyKlvStreamHandle, PyMuxerProgramConfig,
     PySubtitleStreamHandle, PyVideoStreamHandle, py_pts90khz,
 };
 use crate::raise::{SRT, pyok, raise};
-use crate::shells::cancel::{PyCancelHandle, PySocketStats};
+use crate::shells::cancel::PyCancelHandle;
 use crate::shells::demux_receiver::demux_recv_err;
 use crate::shells::mux_sender::mux_sender_err;
-use crate::srt::policy::{PyManagedTransportStats, PyReconnectPolicy};
+use crate::srt::policy::PyReconnectPolicy;
 use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
@@ -443,7 +446,7 @@ impl PyManagedMuxSender {
     /// Waits (GIL released) for a push in flight on another thread: the
     /// slot lock is taken inside `allow_threads`, so holding the GIL while
     /// waiting for it can never freeze the interpreter.
-    fn stats(&self, py: Python<'_>) -> PyResult<(Py<PySocketStats>, Py<PyMuxerStats>)> {
+    fn stats(&self, py: Python<'_>) -> PyResult<(Py<SocketStats>, Py<MuxerStats>)> {
         let (sock, pipe) = pyok(
             py,
             &SRT,
@@ -462,8 +465,8 @@ impl PyManagedMuxSender {
             subtitle_streams_configured: 0,
             per_stream: pipe.per_stream,
         };
-        let sock_py = Py::new(py, PySocketStats::from_core(sock))?;
-        let mux_py = Py::new(py, PyMuxerStats::from_inner(mux_stats))?;
+        let sock_py = Py::new(py, SocketStats::from(&sock))?;
+        let mux_py = Py::new(py, MuxerStats::from(&mux_stats))?;
         Ok((sock_py, mux_py))
     }
 
@@ -484,7 +487,7 @@ impl PyManagedMuxSender {
     ///
     /// Raises `SrtError(IO)` if the internal gap-buffer lock is
     /// poisoned.
-    fn reconnect_stats(&self, py: Python<'_>) -> PyResult<Py<PyManagedTransportStats>> {
+    fn reconnect_stats(&self, py: Python<'_>) -> PyResult<Py<ManagedTransportStats>> {
         if self.owned.is_closed() {
             return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
         }
@@ -499,7 +502,7 @@ impl PyManagedMuxSender {
                     ),
                 )
             })?;
-        Py::new(py, PyManagedTransportStats::from_core(stats))
+        Py::new(py, ManagedTransportStats::from(&stats))
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
@@ -731,7 +734,7 @@ impl PyManagedDemuxReceiver {
     /// Releases the GIL while taking the `Owned` slot, so a concurrent
     /// `__next__` parked in `recv_event` (which holds that same slot
     /// inside `allow_threads`) cannot freeze the interpreter.
-    fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
+    fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
         // Two-step: acquire the outer mutex inside allow_threads so the GIL
         // is free while waiting. Without this, a parked __next__ holding the
         // mutex inside allow_threads would freeze all Python threads.
@@ -746,7 +749,7 @@ impl PyManagedDemuxReceiver {
                     })
             }),
         )?;
-        Py::new(py, PySocketStats::from_core(core))
+        Py::new(py, SocketStats::from(&core))
     }
 
     /// SRT-specific stats. Same access pattern as `socket_stats` — peers
@@ -755,7 +758,7 @@ impl PyManagedDemuxReceiver {
     /// view as `socket_stats` because `ManagedRecvTransport` doesn't
     /// expose a separate SRT stats accessor — they're already in the
     /// `SocketStats` shape.
-    fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
+    fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
         // Same as socket_stats today; reserved for future projection.
         self.socket_stats(py)
     }

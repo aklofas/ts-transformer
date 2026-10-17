@@ -46,71 +46,9 @@ use tst_rist::recv::RistRecvTransport;
 use tst_rist::transport::RistTransport;
 use tst_rist::{RistRecvTransportBuilder, RistTransportBuilder};
 
+use crate::generated::stats_rist::RistStats;
 use crate::raise::{RIST, pyok, pyres, raise};
 use crate::util::{CancelSource, close_owned};
-
-// ---------------------------------------------------------------------------
-// PyRistStats — frozen mirror of tst_rist::RistStats
-// ---------------------------------------------------------------------------
-
-/// Cumulative stats snapshot for a RIST transport handle.
-///
-/// Returned by `Transport.stats()` and `RecvTransport.stats()`. Send-side
-/// counters are zero on a receive-only handle and vice-versa.
-///
-/// `rtt_us` is a smoothed RTT in microseconds (0 until the first RTCP
-/// exchange). `packets_missing` and `recovered_packets` reflect sequence-gap
-/// tracking; the current librist polling path populates them as zero pending
-/// the stats-callback integration.
-#[pyclass(frozen, get_all, name = "RistStats", module = "tstrans.rist")]
-#[derive(Clone)]
-pub(crate) struct PyRistStats {
-    /// Payload packets successfully sent (sender only).
-    pub packets_sent: u64,
-    /// Packets retransmitted due to ARQ (sender only).
-    pub packets_retransmitted: u64,
-    /// Packets dropped before transmission (sender only).
-    pub packets_dropped: u64,
-    /// Packets successfully received (receiver only).
-    pub packets_received: u64,
-    /// Sequence-number gaps seen (receiver only; 0 in this release).
-    pub packets_missing: u64,
-    /// Packets recovered via ARQ (receiver only; 0 in this release).
-    pub recovered_packets: u64,
-    /// Smoothed link bandwidth, kbps.
-    pub current_bandwidth_kbps: u64,
-    /// Smoothed RTT, microseconds (0 until first RTCP round-trip).
-    pub rtt_us: u64,
-}
-
-impl From<tst_rist::stats::RistStats> for PyRistStats {
-    fn from(s: tst_rist::stats::RistStats) -> Self {
-        // `packets_missing` and `recovered_packets` are not tracked in the
-        // current tst-rist simple polling path (librist exposes them via the
-        // stats callback, not inline). Map available fields; others stay 0.
-        Self {
-            packets_sent: s.packets_sent,
-            packets_retransmitted: s.packets_retransmitted,
-            packets_dropped: s.packets_dropped,
-            packets_received: s.packets_received,
-            packets_missing: 0,
-            recovered_packets: 0,
-            current_bandwidth_kbps: s.bandwidth_kbps as u64,
-            rtt_us: s.rtt_us as u64,
-        }
-    }
-}
-
-#[pymethods]
-impl PyRistStats {
-    fn __repr__(&self) -> String {
-        format!(
-            "RistStats(packets_sent={}, packets_received={}, \
-             rtt_us={}, current_bandwidth_kbps={})",
-            self.packets_sent, self.packets_received, self.rtt_us, self.current_bandwidth_kbps,
-        )
-    }
-}
 
 // ---------------------------------------------------------------------------
 // PyEncryptionKey — AES PSK with SecretString discipline
@@ -323,7 +261,7 @@ impl PyRistTransport {
     }
 
     /// Snapshot of cumulative wire-level statistics.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyRistStats>> {
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<RistStats>> {
         let s = pyok(
             py,
             &RIST,
@@ -333,7 +271,7 @@ impl PyRistTransport {
                     .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |t| t.0.stats())
             }),
         )?;
-        Py::new(py, PyRistStats::from(s))
+        Py::new(py, RistStats::from(&s))
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -619,7 +557,7 @@ impl PyRistRecvTransport {
     }
 
     /// Snapshot of cumulative wire-level statistics.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyRistStats>> {
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<RistStats>> {
         let s = pyok(
             py,
             &RIST,
@@ -629,7 +567,7 @@ impl PyRistRecvTransport {
                     .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |s| s.transport.stats())
             }),
         )?;
-        Py::new(py, PyRistStats::from(s))
+        Py::new(py, RistStats::from(&s))
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -780,7 +718,7 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(parent.py(), "rist")?;
     m.add_class::<PyRistCancelHandle>()?;
     m.add_class::<PyRistProfile>()?;
-    m.add_class::<PyRistStats>()?;
+    crate::generated::stats_rist::register(&m)?;
     m.add_class::<PyEncryptionKey>()?;
     m.add_class::<PyRistTransport>()?;
     m.add_class::<PyRistTransportBuilder>()?;

@@ -63,15 +63,17 @@ use tst_pipeline::{
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
 use crate::error::throw_handle_state;
+use crate::generated::stats_mpegts::build_muxer_stats;
+use crate::generated::stats_shells::build_socket_stats;
 use crate::handle::OwnedRegistry;
-use crate::jutil::{build_socket_stats, checked_u8, read_bytes};
+use crate::jutil::{checked_u8, read_bytes};
 use crate::mpegts::muxer::{build_muxer_config_from_arrays, throw_mux_error};
-use crate::mpegts::{build_demux_config_from_args, build_muxer_stats, convert_event};
+use crate::mpegts::{build_demux_config_from_args, convert_event, shell_muxer_stats};
 use tst_pipeline::binding::view::StreamHandles;
 
 use super::ManagedSenderSnapshot;
 use super::errors::{srt_error, throw_srt, transport_error};
-use super::stats::build_managed_transport_stats;
+use crate::generated::stats_srt::build_managed_transport_stats;
 use crate::shells::mux_sender::build_transport_stats;
 
 /// Map a `DemuxReceiverError` raised by `recv_event` onto a thrown Java
@@ -622,15 +624,17 @@ jni_native! {
             }
         };
 
-        let sock_obj = match build_socket_stats(env, "org/tstrans/shells/SocketStats", &sock) {
+        let sock_obj = match build_socket_stats(env, &sock) {
             Ok(o) => o,
             Err(_) => return JObject::null(),
         };
         let mux_obj = match build_muxer_stats(
             env,
-            pipe.packets_sent as i64,
-            pipe.bytes_sent as i64,
-            i64::from(pipe.programs_configured),
+            &shell_muxer_stats(
+                pipe.packets_sent,
+                pipe.bytes_sent,
+                u64::from(pipe.programs_configured),
+            ),
         ) {
             Ok(o) => o,
             Err(_) => return JObject::null(),
@@ -1049,7 +1053,7 @@ jni_native! {
                 return JObject::null();
             }
         };
-        match build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats) {
+        match build_socket_stats(env, &stats) {
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }
@@ -1077,7 +1081,7 @@ jni_native! {
                 return JObject::null();
             }
         };
-        match build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats) {
+        match build_socket_stats(env, &stats) {
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }

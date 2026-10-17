@@ -24,9 +24,10 @@ use secrecy::SecretString;
 
 use tst_rtp::builder::RtspServerBuilder;
 use tst_rtp::cancel::RtspServerCancelHandle;
+use tst_rtp::rtsp::server::RtspServer as RustRtspServer;
 use tst_rtp::rtsp::server::mount::{MountHandle as RustMountHandle, MountKind as RustMountKind};
-use tst_rtp::rtsp::server::{RtspServer as RustRtspServer, ServerStats as RustServerStats};
 
+use crate::generated::stats_rtp::{MountStats, ServerStats};
 use crate::mux::{
     PyAudioStreamHandle, PyDataStreamHandle, PyKlvStreamHandle, PyMuxerProgramConfig,
     PySubtitleStreamHandle, PyVideoStreamHandle, py_pts90khz,
@@ -42,8 +43,6 @@ use tst_pipeline::binding::{BindingError, BindingErrorKind};
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRtspServer>()?;
     m.add_class::<PyMountHandle>()?;
-    m.add_class::<PyServerStats>()?;
-    m.add_class::<PyMountStats>()?;
     m.add_class::<PyRtspServerCancelHandle>()?;
     Ok(())
 }
@@ -84,123 +83,6 @@ impl PyRtspServerCancelHandle {
         format!(
             "RtspServerCancelHandle(cancelled={})",
             self.inner.is_cancelled()
-        )
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PyServerStats + PyMountStats.
-// ---------------------------------------------------------------------------
-
-/// Frozen snapshot of aggregate [`RtspServer`][PyRtspServer] stats.
-/// Returned by [`RtspServer.stats()`][PyRtspServer::stats].
-#[pyclass(name = "ServerStats", module = "tstrans.rtp", frozen)]
-#[derive(Clone, Copy)]
-pub struct PyServerStats {
-    inner: RustServerStats,
-}
-
-#[pymethods]
-impl PyServerStats {
-    /// Live count of accepted (and not-yet-closed) client sessions.
-    #[getter]
-    pub fn active_sessions(&self) -> usize {
-        self.inner.active_sessions
-    }
-
-    /// Cumulative RTP packets sent across all peers + all mounts.
-    #[getter]
-    pub fn total_rtp_packets_sent(&self) -> u64 {
-        self.inner.total_rtp_packets_sent
-    }
-
-    /// Cumulative RTP bytes sent across all peers + all mounts.
-    #[getter]
-    pub fn total_rtp_bytes_sent(&self) -> u64 {
-        self.inner.total_rtp_bytes_sent
-    }
-
-    /// Number of registered mounts.
-    #[getter]
-    pub fn mounts(&self) -> usize {
-        self.inner.mounts
-    }
-
-    /// Publish mounts that currently have a publisher.
-    #[getter]
-    pub fn active_publishers(&self) -> usize {
-        self.inner.active_publishers
-    }
-
-    /// Cumulative RTP packets received from publishers across every
-    /// publish mount.
-    #[getter]
-    pub fn total_rtp_packets_received(&self) -> u64 {
-        self.inner.total_rtp_packets_received
-    }
-
-    /// Cumulative bytes of those RTP packets, headers included.
-    #[getter]
-    pub fn total_rtp_bytes_received(&self) -> u64 {
-        self.inner.total_rtp_bytes_received
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "ServerStats(active_sessions={}, mounts={}, total_rtp_packets_sent={}, total_rtp_bytes_sent={}, \
-             active_publishers={}, total_rtp_packets_received={}, total_rtp_bytes_received={})",
-            self.inner.active_sessions,
-            self.inner.mounts,
-            self.inner.total_rtp_packets_sent,
-            self.inner.total_rtp_bytes_sent,
-            self.inner.active_publishers,
-            self.inner.total_rtp_packets_received,
-            self.inner.total_rtp_bytes_received,
-        )
-    }
-}
-
-/// Frozen snapshot of per-mount stats. Returned by
-/// [`MountHandle.stats()`][PyMountHandle::stats].
-#[pyclass(name = "MountStats", module = "tstrans.rtp", frozen)]
-pub struct PyMountStats {
-    bytes_pushed: u64,
-    packets_pushed: u64,
-    peer_count: usize,
-    frames_dropped_total: u64,
-}
-
-#[pymethods]
-impl PyMountStats {
-    /// Cumulative TS bytes pushed through this mount's fanout.
-    #[getter]
-    pub fn bytes_pushed(&self) -> u64 {
-        self.bytes_pushed
-    }
-
-    /// Cumulative RTP-sized chunks broadcast through this mount.
-    #[getter]
-    pub fn packets_pushed(&self) -> u64 {
-        self.packets_pushed
-    }
-
-    /// Live subscriber count on the broadcast channel.
-    #[getter]
-    pub fn peer_count(&self) -> usize {
-        self.peer_count
-    }
-
-    /// Sum of per-peer dropped-frame counters reported by lagging
-    /// subscribers.
-    #[getter]
-    pub fn frames_dropped_total(&self) -> u64 {
-        self.frames_dropped_total
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "MountStats(bytes_pushed={}, packets_pushed={}, peer_count={}, frames_dropped_total={})",
-            self.bytes_pushed, self.packets_pushed, self.peer_count, self.frames_dropped_total,
         )
     }
 }
@@ -247,14 +129,8 @@ impl PyMountHandle {
     }
 
     /// Snapshot of cumulative + live mount stats.
-    pub fn stats(&self) -> PyMountStats {
-        let s = self.inner.stats();
-        PyMountStats {
-            bytes_pushed: s.bytes_pushed,
-            packets_pushed: s.packets_pushed,
-            peer_count: s.peer_count,
-            frames_dropped_total: s.frames_dropped_total,
-        }
+    pub fn stats(&self) -> MountStats {
+        MountStats::from(&self.inner.stats())
     }
 
     // ── Push surface — single stream variants ──────────────────────────────
@@ -889,10 +765,8 @@ impl PyRtspServer {
     }
 
     /// Snapshot of aggregate server stats.
-    pub fn stats(&self) -> PyServerStats {
-        PyServerStats {
-            inner: self.inner.stats(),
-        }
+    pub fn stats(&self) -> ServerStats {
+        ServerStats::from(&self.inner.stats())
     }
 
     /// Listener's bound address as `"ip:port"`, populated after `start()`.

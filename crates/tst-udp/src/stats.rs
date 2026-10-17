@@ -7,22 +7,27 @@
 
 use tst_core::transport::SocketStats;
 
-/// Cumulative stats for a single UDP transport handle.
-#[derive(Debug, Clone, Copy, Default)]
-#[non_exhaustive]
-pub struct UdpStats {
-    /// Datagrams successfully sent.
-    pub datagrams_sent: u64,
-    /// Bytes successfully sent (sum of datagram payload sizes).
-    pub bytes_sent: u64,
-    /// Datagrams successfully received.
-    pub datagrams_received: u64,
-    /// Bytes successfully received.
-    pub bytes_received: u64,
-    /// Send-side I/O errors (e.g., EMSGSIZE, network unreachable).
-    pub send_errors: u64,
-    /// Recv-side I/O errors observed (excludes WouldBlock / TimedOut).
-    pub recv_errors: u64,
+tst_core::binding_record! {
+    /// Cumulative stats snapshot for a UDP transport handle. Send-side counters
+    /// are zero on a receive-only handle and vice-versa.
+    #[derive(Debug, Clone, Copy, Default)]
+    #[non_exhaustive]
+    pub struct UdpStats {
+        /// Datagrams successfully sent (sender only).
+        pub datagrams_sent: u64,
+        /// Bytes successfully sent (sender only): the sum of datagram payload sizes.
+        pub bytes_sent: u64,
+        /// Datagrams successfully received (receiver only).
+        pub datagrams_received: u64,
+        /// Bytes successfully received (receiver only).
+        pub bytes_received: u64,
+        /// Send-side I/O errors (sender only), such as an oversize message or an
+        /// unreachable network.
+        pub send_errors: u64,
+        /// Receive-side I/O errors (receiver only); a would-block or a timeout is
+        /// not an error.
+        pub recv_errors: u64,
+    }
 }
 
 impl UdpStats {

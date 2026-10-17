@@ -533,26 +533,30 @@ pub struct RtpRecvTransport {
     end_reason: EndReasonHandle,
 }
 
-/// RTP-protocol-level stats separate from [`SocketStats`].
-///
-/// Exposes the malformed-packet and source-rejected counters. Future fields
-/// (out-of-order delta, gap counter, etc.) can be added under
-/// `#[non_exhaustive]` without breaking consumers.
-#[must_use]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct RtpStats {
-    /// Number of UDP datagrams received whose RTP header was invalid
-    /// (wrong V, wrong PT, truncated, CSRC overflow). Cumulative since
-    /// `listen()`.
-    /// Also counts datagrams with a valid RTP header (PT=33) whose
-    /// MP2T payload fails RFC 2250 shape checks (not 188-byte aligned,
-    /// missing `0x47` sync byte, or empty).
-    pub malformed_packets: u64,
-    /// Datagrams dropped because their peer IP did not match the
-    /// `?source=` pin; 0 when no pin is set. Rejected datagrams are not
-    /// counted in [`SocketStats`] `bytes_received` / `packets_received`.
-    pub source_rejected: u64,
+tst_core::binding_record! {
+    /// RTP protocol-level statistics snapshot, separate from the socket stats.
+    ///
+    /// Exposes the malformed-packet and source-rejected counters.
+    ///
+    /// <!-- rust-only -->
+    /// Future fields (out-of-order delta, gap counter, etc.) can be added under
+    /// `#[non_exhaustive]` without breaking consumers.
+    #[must_use]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct RtpStats {
+        /// Number of UDP datagrams received whose RTP header was invalid
+        /// (wrong V, wrong PT, truncated, CSRC overflow). Cumulative since
+        /// `listen()`.
+        /// Also counts datagrams with a valid RTP header (PT=33) whose
+        /// MP2T payload fails RFC 2250 shape checks (not 188-byte aligned,
+        /// missing `0x47` sync byte, or empty).
+        pub malformed_packets: u64,
+        /// Datagrams dropped because their peer IP did not match the
+        /// `?source=` pin; 0 when no pin is set. Rejected datagrams are not
+        /// counted in [`SocketStats`] `bytes_received` / `packets_received`.
+        pub source_rejected: u64,
+    }
 }
 
 impl RtpRecvTransport {

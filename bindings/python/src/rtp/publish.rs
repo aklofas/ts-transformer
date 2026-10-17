@@ -26,17 +26,16 @@ use pyo3::prelude::*;
 
 use tst_rtp::rtsp::server::publish::{
     ClockAlignment as RustClockAlignment, PublishMountHandle as RustPublishMountHandle,
-    PublishMountStats as RustPublishMountStats, PublishShape as RustPublishShape,
-    PublisherInfo as RustPublisherInfo,
+    PublishShape as RustPublishShape, PublisherInfo as RustPublisherInfo,
 };
 
+use crate::generated::stats_rtp::PublishMountStats;
 use crate::raise::{RTSP, raise};
 use crate::shells::demux_receiver::PyDemuxReceiver;
 use tst_pipeline::binding::BindingError;
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPublishMount>()?;
-    m.add_class::<PyPublishMountStats>()?;
     m.add_class::<PyPublisherInfo>()?;
     Ok(())
 }
@@ -47,18 +46,35 @@ fn rtp_enum_member(py: Python<'_>, enum_name: &str, member: &str) -> PyResult<Py
     Ok(rtp.getattr(enum_name)?.getattr(member)?.into())
 }
 
-fn alignment_name(a: RustClockAlignment) -> PyResult<&'static str> {
-    Ok(match a {
-        RustClockAlignment::NotApplicable => "NOT_APPLICABLE",
-        RustClockAlignment::Pending => "PENDING",
-        RustClockAlignment::Provisional => "PROVISIONAL",
-        RustClockAlignment::SenderReport => "SENDER_REPORT",
-        _ => {
-            return Err(PyRuntimeError::new_err(
-                "ClockAlignment variant unknown to this build of tstrans",
-            ));
+/// A publish mount's clock alignment as the host reads it: the
+/// `tstrans.rtp.ClockAlignment` member of the same name. A variant this build
+/// does not know, or a missing member, reads as `None`.
+#[derive(Debug, Clone, Copy)]
+pub struct ClockAlignmentPy(RustClockAlignment);
+
+impl From<RustClockAlignment> for ClockAlignmentPy {
+    fn from(a: RustClockAlignment) -> Self {
+        Self(a)
+    }
+}
+
+impl ClockAlignmentPy {
+    /// The member name; `UNKNOWN` for a variant this build does not know.
+    pub fn name(self) -> &'static str {
+        match self.0 {
+            RustClockAlignment::NotApplicable => "NOT_APPLICABLE",
+            RustClockAlignment::Pending => "PENDING",
+            RustClockAlignment::Provisional => "PROVISIONAL",
+            RustClockAlignment::SenderReport => "SENDER_REPORT",
+            _ => "UNKNOWN",
         }
-    })
+    }
+}
+
+impl IntoPy<PyObject> for ClockAlignmentPy {
+    fn into_py(self, py: Python<'_>) -> PyObject {
+        rtp_enum_member(py, "ClockAlignment", self.name()).unwrap_or_else(|_| py.None())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -152,158 +168,6 @@ impl PyPublisherInfo {
 }
 
 // ---------------------------------------------------------------------------
-// PyPublishMountStats.
-// ---------------------------------------------------------------------------
-
-/// Frozen snapshot of a publish mount's stats. Returned by
-/// [`PublishMount.stats()`][PyPublishMount::stats]. Counters are
-/// cumulative over the mount's life, across publishers.
-#[pyclass(name = "PublishMountStats", module = "tstrans.rtp", frozen)]
-pub struct PyPublishMountStats {
-    inner: RustPublishMountStats,
-}
-
-#[pymethods]
-impl PyPublishMountStats {
-    /// RTP packets received from publishers, counted before validation.
-    #[getter]
-    pub fn rtp_packets_received(&self) -> u64 {
-        self.inner.rtp_packets_received
-    }
-
-    /// Bytes of those RTP packets, headers included.
-    #[getter]
-    pub fn bytes_received(&self) -> u64 {
-        self.inner.bytes_received
-    }
-
-    /// Packets dropped as unusable: not RTP, the wrong payload type, an
-    /// invalid MP2T payload, or an interleaved frame on an unknown channel.
-    #[getter]
-    pub fn malformed_packets(&self) -> u64 {
-        self.inner.malformed_packets
-    }
-
-    /// UDP datagrams dropped because they came from an IP other than the
-    /// publisher's control connection.
-    #[getter]
-    pub fn source_rejected(&self) -> u64 {
-        self.inner.source_rejected
-    }
-
-    /// Frames emitted to the mount's sinks (PLAY readers and the
-    /// application transport).
-    #[getter]
-    pub fn frames_emitted(&self) -> u64 {
-        self.inner.frames_emitted
-    }
-
-    /// Frames dropped because the application transport's queue was full
-    /// (the application stopped reading its `DemuxReceiver`).
-    #[getter]
-    pub fn frames_dropped_app(&self) -> u64 {
-        self.inner.frames_dropped_app
-    }
-
-    /// Frames dropped across PLAY readers that lagged behind the fan-out.
-    #[getter]
-    pub fn frames_dropped_readers(&self) -> u64 {
-        self.inner.frames_dropped_readers
-    }
-
-    /// Access units emitted by an elementary-shape adapter.
-    #[getter]
-    pub fn aus_emitted(&self) -> u64 {
-        self.inner.aus_emitted
-    }
-
-    /// Access units an elementary-shape adapter dropped.
-    #[getter]
-    pub fn aus_dropped(&self) -> u64 {
-        self.inner.aus_dropped
-    }
-
-    /// Access units muxed with a PTS below one already muxed: nonzero means
-    /// the publisher sends B-frames.
-    #[getter]
-    pub fn aus_reordered(&self) -> u64 {
-        self.inner.aus_reordered
-    }
-
-    /// KLV units emitted by an elementary-shape adapter.
-    #[getter]
-    pub fn klv_units_emitted(&self) -> u64 {
-        self.inner.klv_units_emitted
-    }
-
-    /// KLV units an elementary-shape adapter dropped.
-    #[getter]
-    pub fn klv_units_dropped(&self) -> u64 {
-        self.inner.klv_units_dropped
-    }
-
-    /// How the current publisher's tracks are aligned to one clock
-    /// (`ClockAlignment`).
-    #[getter]
-    pub fn alignment(&self, py: Python<'_>) -> PyResult<PyObject> {
-        rtp_enum_member(py, "ClockAlignment", alignment_name(self.inner.alignment)?)
-    }
-
-    /// Times a new clock mapping replaced the previous one.
-    #[getter]
-    pub fn alignment_steps(&self) -> u64 {
-        self.inner.alignment_steps
-    }
-
-    /// Source restarts (RTP SSRC changes) on an elementary publisher's
-    /// tracks, counted once per change per track.
-    #[getter]
-    pub fn ssrc_changes(&self) -> u64 {
-        self.inner.ssrc_changes
-    }
-
-    /// Publishers that have ended on this mount.
-    #[getter]
-    pub fn generation(&self) -> u64 {
-        self.inner.generation
-    }
-
-    /// Live PLAY readers subscribed to the mount's fan-out.
-    #[getter]
-    pub fn peer_count(&self) -> usize {
-        self.inner.peer_count
-    }
-
-    fn __repr__(&self) -> PyResult<String> {
-        let s = &self.inner;
-        Ok(format!(
-            "PublishMountStats(rtp_packets_received={}, bytes_received={}, malformed_packets={}, \
-             source_rejected={}, frames_emitted={}, frames_dropped_app={}, \
-             frames_dropped_readers={}, aus_emitted={}, aus_dropped={}, aus_reordered={}, \
-             klv_units_emitted={}, klv_units_dropped={}, alignment={}, alignment_steps={}, \
-             ssrc_changes={}, generation={}, peer_count={})",
-            s.rtp_packets_received,
-            s.bytes_received,
-            s.malformed_packets,
-            s.source_rejected,
-            s.frames_emitted,
-            s.frames_dropped_app,
-            s.frames_dropped_readers,
-            s.aus_emitted,
-            s.aus_dropped,
-            s.aus_reordered,
-            s.klv_units_emitted,
-            s.klv_units_dropped,
-            alignment_name(s.alignment)?,
-            s.alignment_steps,
-            s.ssrc_changes,
-            s.generation,
-            s.peer_count,
-        ))
-    }
-}
-
-// ---------------------------------------------------------------------------
 // PyPublishMount.
 // ---------------------------------------------------------------------------
 
@@ -360,10 +224,8 @@ impl PyPublishMount {
         clippy::disallowed_methods,
         reason = "snapshots counters under a short in-memory mutex"
     )]
-    pub fn stats(&self, py: Python<'_>) -> PyPublishMountStats {
-        PyPublishMountStats {
-            inner: py.allow_threads(|| self.inner.stats()),
-        }
+    pub fn stats(&self, py: Python<'_>) -> PublishMountStats {
+        PublishMountStats::from(&py.allow_threads(|| self.inner.stats()))
     }
 
     /// End the application side only: a `DemuxReceiver` taken from this

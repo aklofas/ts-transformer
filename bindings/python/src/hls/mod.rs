@@ -86,16 +86,16 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     // PublisherStats. The `Publisher` ABC itself is a pure-Python
     // `abc.ABC` defined in `tstrans/hls.py` (see the NOTE below).
     m.add_class::<publisher_abc::PyPublisherStats>()?;
-    // HlsMode + HlsStats.
+    // HlsMode.
     m.add_class::<config::PyHlsMode>()?;
-    m.add_class::<config::PyHlsStats>()?;
     // HlsPublisher + builder + server handle.
     m.add_class::<publisher::PyHlsPublisher>()?;
     m.add_class::<publisher::PyHlsPublisherBuilder>()?;
     m.add_class::<publisher::PyHlsServerHandle>()?;
-    // MuxPublisher + MuxPublisherStats.
+    // MuxPublisher.
     m.add_class::<mux_publisher::PyMuxPublisher>()?;
-    m.add_class::<mux_publisher::PyMuxPublisherStats>()?;
+    // HlsStats + MuxPublisherStats (generated).
+    crate::generated::stats_hls::register(&m)?;
 
     // NOTE: the `Publisher` ABC + `Publisher.register(HlsPublisher)`
     // virtual-subclass wiring lives in the Python layer

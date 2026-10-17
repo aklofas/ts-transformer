@@ -1177,29 +1177,37 @@ impl Drop for RtspServer {
     }
 }
 
-/// Aggregate server stats snapshot, returned from
-/// [`RtspServer::stats`].
-#[must_use]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ServerStats {
-    pub active_sessions: usize,
-    pub total_rtp_packets_sent: u64,
-    pub total_rtp_bytes_sent: u64,
-    pub mounts: usize,
-    /// Publish mounts that currently have a publisher (an ANNOUNCE that
-    /// claimed the mount and has not yet ended by TEARDOWN, a dropped
-    /// connection, `remove_mount` or `stop()`).
-    pub active_publishers: usize,
-    /// RTP packets received from publishers across every publish mount,
-    /// cumulative over the server's life. Counted with relaxed atomics
-    /// beside each mount's own counter, so a snapshot taken while packets
-    /// arrive may differ from the sum of the mounts' `rtp_packets_received`
-    /// by the packets in flight.
-    pub total_rtp_packets_received: u64,
-    /// Bytes of those RTP packets, headers included; same consistency as
-    /// `total_rtp_packets_received`.
-    pub total_rtp_bytes_received: u64,
+tst_core::binding_record! {
+    /// Aggregate server stats snapshot.
+    ///
+    /// <!-- rust-only -->
+    /// Returned from [`RtspServer::stats`].
+    #[must_use]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct ServerStats {
+        /// Live count of accepted, not yet closed client sessions.
+        pub active_sessions: usize,
+        /// Cumulative RTP packets sent across all peers and all mounts.
+        pub total_rtp_packets_sent: u64,
+        /// Cumulative RTP bytes sent across all peers and all mounts.
+        pub total_rtp_bytes_sent: u64,
+        /// Number of registered mounts, of every kind.
+        pub mounts: usize,
+        /// Publish mounts that currently have a publisher (an ANNOUNCE that
+        /// claimed the mount and has not yet ended by TEARDOWN, a dropped
+        /// connection, `remove_mount` or `stop()`).
+        pub active_publishers: usize,
+        /// RTP packets received from publishers across every publish mount,
+        /// cumulative over the server's life. Counted with relaxed atomics
+        /// beside each mount's own counter, so a snapshot taken while packets
+        /// arrive may differ from the sum of the mounts' `rtp_packets_received`
+        /// by the packets in flight.
+        pub total_rtp_packets_received: u64,
+        /// Bytes of those RTP packets, headers included; same consistency as
+        /// `total_rtp_packets_received`.
+        pub total_rtp_bytes_received: u64,
+    }
 }
 
 #[cfg(test)]

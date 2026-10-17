@@ -1170,25 +1170,20 @@ fn av1_carriage_name(mode: Av1CarriageMode) -> &'static str {
     }
 }
 
-/// Build an `org.tstrans.mpegts.MuxerStats` record from the projected pipeline
-/// counters. Ctor sig `(JJJJ)V`. `subtitle_streams_configured` is not tracked by
-/// the pipeline shell — default it to 0 (mirrors tst-py). Shared by both the
-/// srt and rtp `MuxSender`/`DemuxReceiver`/managed-convenience JNI surfaces.
-pub(crate) fn build_muxer_stats<'local>(
-    env: &mut JNIEnv<'local>,
-    ts_packets_emitted: i64,
-    ts_bytes_emitted: i64,
-    programs_configured: i64,
-) -> jni::errors::Result<JObject<'local>> {
-    env.ensure_local_capacity(4)?;
-    env.new_object(
-        "org/tstrans/mpegts/MuxerStats",
-        "(JJJJ)V",
-        &[
-            JValue::Long(ts_packets_emitted),
-            JValue::Long(ts_bytes_emitted),
-            JValue::Long(programs_configured),
-            JValue::Long(0),
-        ],
-    )
+/// The muxer counters a shell reports: packets, bytes and programs. A shell
+/// does not track `subtitle_streams_configured` (only the inner muxer does), so
+/// it reads 0, as in tst-py. Shared by the srt and rtp `MuxSender` /
+/// `DemuxReceiver` / managed-convenience JNI surfaces, which hand it to the
+/// generated `MuxerStats` builder.
+pub(crate) fn shell_muxer_stats(
+    ts_packets_emitted: u64,
+    ts_bytes_emitted: u64,
+    programs_configured: u64,
+) -> tst_core::mpegts::mux::MuxerStats {
+    tst_core::mpegts::mux::MuxerStats {
+        ts_packets_emitted,
+        ts_bytes_emitted,
+        programs_configured: u32::try_from(programs_configured).unwrap_or(u32::MAX),
+        ..Default::default()
+    }
 }

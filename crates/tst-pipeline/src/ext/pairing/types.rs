@@ -144,13 +144,22 @@ pub struct KlvSample {
     pub payload: Vec<u8>,
 }
 
-/// Counter snapshot for telemetry. Symmetric with the rest of
-/// `tst-pipeline`.
-#[must_use]
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PairerStats {
-    pub paired: u64,
-    pub unpaired_video: u64,
-    pub unpaired_klv: u64,
-    pub pass_through: u64,
+tst_core::binding_record! {
+    /// Frozen pairing-counter snapshot.
+    ///
+    /// <!-- rust-only -->
+    /// Counter snapshot for telemetry. Symmetric with the rest of
+    /// `tst-pipeline`.
+    #[must_use]
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    pub struct PairerStats {
+        /// Video units emitted together with their KLV.
+        pub paired: u64,
+        /// Video units emitted with no KLV to pair.
+        pub unpaired_video: u64,
+        /// KLV records emitted with no video to pair.
+        pub unpaired_klv: u64,
+        /// Events that passed through the pairer untouched.
+        pub pass_through: u64,
+    }
 }

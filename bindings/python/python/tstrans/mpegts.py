@@ -1285,9 +1285,9 @@ MuxerConfigBuilder = _native_mod.MuxerConfigBuilder
 # as `tstrans.exceptions.MuxError`.
 Muxer = _native_mod.Muxer
 
-# MuxerStats snapshot type. Rust impl in bindings/python/src/mux.rs as
-# `PyMuxerStats`, exposed on `_native` under the name below via
-# `#[pyclass(name=...)]`. Frozen — returned by `Muxer.stats()`. The
+# MuxerStats snapshot type. Generated from the Rust record into
+# bindings/python/src/generated/stats_mpegts.rs, exposed on `_native` under
+# the name below via `#[pyclass(name=...)]`. Frozen — returned by `Muxer.stats()`. The
 # `per_stream` BTreeMap on the Rust side is not surfaced in v1 (the
 # per-PID `StreamStats` shape exists but isn't yet wrapped); the
 # scalar counters cover the common dashboard case.

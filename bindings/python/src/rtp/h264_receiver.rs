@@ -56,11 +56,12 @@ use pyo3::types::PyBytes;
 
 use tst_core::transport::EndReason;
 use tst_pipeline::binding::{BindingError, HandleState, Owned};
-use tst_rtp::transport::RtpStats;
-use tst_rtp::{H264Au, H264DepayConfig, H264DepayStats, H264Receiver, ParameterSetInjection};
+use tst_rtp::{H264Au, H264DepayConfig, H264Receiver, ParameterSetInjection};
 
+use crate::generated::stats_rtp::{H264DepayStats, RtpStats};
+use crate::generated::stats_shells::SocketStats;
 use crate::raise::{RTP, pyok, pyres, raise};
-use crate::shells::cancel::{PyCancelHandle, PySocketStats};
+use crate::shells::cancel::PyCancelHandle;
 use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
@@ -265,103 +266,6 @@ impl PyH264AccessUnit {
             key_frame: au.key_frame,
             rtp_timestamp: au.rtp_timestamp,
         })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// H264DepayStats — frozen, get_all (9 counters)
-// ---------------------------------------------------------------------------
-
-/// Depacketizer counters. Frozen snapshot returned by
-/// `H264Receiver.depay_stats()`.
-#[pyclass(name = "H264DepayStats", module = "tstrans.rtp", frozen, get_all)]
-pub struct PyH264DepayStats {
-    /// Number of complete, unpoisoned AUs emitted.
-    pub aus_emitted: u64,
-    /// AUs discarded due to poisoning (seq gaps, F-bit, etc.).
-    /// Includes oversize drops (also counted in `aus_dropped_oversize`).
-    pub aus_dropped: u64,
-    /// AUs dropped specifically for exceeding `max_au_bytes`.
-    pub aus_dropped_oversize: u64,
-    /// RTP packets discarded (empty, reserved, interleaved types).
-    pub packets_discarded: u64,
-    /// NALUs discarded (F-bit set, open FU at AU completion, etc.).
-    pub nalus_discarded: u64,
-    /// Sequence-number gaps detected.
-    pub seq_gaps: u64,
-    /// Duplicate sequence numbers detected.
-    pub duplicate_packets: u64,
-    /// Times cached parameter sets were updated (in-band SPS/PPS changed).
-    pub parameter_set_updates: u64,
-    /// SSRC changes (source restarts) detected.
-    pub ssrc_changes: u64,
-}
-
-impl PyH264DepayStats {
-    fn from_rust(s: H264DepayStats) -> Self {
-        Self {
-            aus_emitted: s.aus_emitted,
-            aus_dropped: s.aus_dropped,
-            aus_dropped_oversize: s.aus_dropped_oversize,
-            packets_discarded: s.packets_discarded,
-            nalus_discarded: s.nalus_discarded,
-            seq_gaps: s.seq_gaps,
-            duplicate_packets: s.duplicate_packets,
-            parameter_set_updates: s.parameter_set_updates,
-            ssrc_changes: s.ssrc_changes,
-        }
-    }
-}
-
-#[pymethods]
-impl PyH264DepayStats {
-    fn __repr__(&self) -> String {
-        format!(
-            "H264DepayStats(aus_emitted={}, aus_dropped={}, seq_gaps={}, \
-             ssrc_changes={}, parameter_set_updates={})",
-            self.aus_emitted,
-            self.aus_dropped,
-            self.seq_gaps,
-            self.ssrc_changes,
-            self.parameter_set_updates,
-        )
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PyRtpStats — frozen mirror of tst_rtp::transport::RtpStats
-// ---------------------------------------------------------------------------
-
-/// RTP protocol–level statistics snapshot. Frozen.
-///
-/// `malformed_packets` — number of received datagrams with an invalid RTP
-/// header, wrong payload type, or empty payload. Cumulative since
-/// `listen()`.
-///
-/// `source_rejected` — datagrams dropped because their peer IP did not match
-/// the URL's `?source=` pin; 0 when no pin is set.
-#[pyclass(name = "RtpStats", module = "tstrans.rtp", frozen, get_all)]
-pub struct PyRtpStats {
-    pub malformed_packets: u64,
-    pub source_rejected: u64,
-}
-
-impl PyRtpStats {
-    fn from_rust(s: RtpStats) -> Self {
-        Self {
-            malformed_packets: s.malformed_packets,
-            source_rejected: s.source_rejected,
-        }
-    }
-}
-
-#[pymethods]
-impl PyRtpStats {
-    fn __repr__(&self) -> String {
-        format!(
-            "RtpStats(malformed_packets={}, source_rejected={})",
-            self.malformed_packets, self.source_rejected
-        )
     }
 }
 
@@ -580,7 +484,7 @@ impl PyH264Receiver {
 
     /// RFC 6184 depacketizer counters (AU counts, seq gaps, etc.). Waits
     /// (GIL released) for a `recv_au` parked on another thread.
-    fn depay_stats(&self, py: Python<'_>) -> PyResult<Py<PyH264DepayStats>> {
+    fn depay_stats(&self, py: Python<'_>) -> PyResult<Py<H264DepayStats>> {
         let s = pyok(
             py,
             &RTP,
@@ -590,11 +494,11 @@ impl PyH264Receiver {
                     .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |h| h.rx.depay_stats())
             }),
         )?;
-        Py::new(py, PyH264DepayStats::from_rust(s))
+        Py::new(py, H264DepayStats::from(&s))
     }
 
     /// RTP protocol–level counters (malformed packet counter).
-    fn rtp_stats(&self, py: Python<'_>) -> PyResult<Py<PyRtpStats>> {
+    fn rtp_stats(&self, py: Python<'_>) -> PyResult<Py<RtpStats>> {
         let s = pyok(
             py,
             &RTP,
@@ -604,11 +508,11 @@ impl PyH264Receiver {
                     .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |h| h.rx.rtp_stats())
             }),
         )?;
-        Py::new(py, PyRtpStats::from_rust(s))
+        Py::new(py, RtpStats::from(&s))
     }
 
     /// Throughput wire-level stats (bytes/packets received).
-    fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
+    fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
         let s = pyok(
             py,
             &RTP,
@@ -618,7 +522,7 @@ impl PyH264Receiver {
                     .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |h| h.rx.socket_stats())
             }),
         )?;
-        Py::new(py, PySocketStats::from_core(s))
+        Py::new(py, SocketStats::from(&s))
     }
 
     /// Local address the UDP socket is bound to, as `"host:port"` string.
@@ -709,8 +613,6 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyParameterSetInjection>()?;
     m.add_class::<PyH264DepayConfig>()?;
     m.add_class::<PyH264AccessUnit>()?;
-    m.add_class::<PyH264DepayStats>()?;
-    m.add_class::<PyRtpStats>()?;
     m.add_class::<PyH264Receiver>()?;
     Ok(())
 }
