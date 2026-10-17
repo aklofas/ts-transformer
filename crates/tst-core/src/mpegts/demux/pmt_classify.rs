@@ -368,4 +368,191 @@ mod tests {
             }
         ));
     }
+
+    /// Per-codec dispatch in stats `stream_type` byte. Prior code returned
+    /// 0x0F (ADTS AAC) for every audio kind; MP2/LATM/AC-3 streams misreported
+    /// in StreamStats.
+    #[test]
+    fn stream_type_from_kind_per_audio_codec() {
+        assert_eq!(
+            stream_type_from_kind(&StreamKind::Audio(AudioCodec::Mp2)),
+            0x03
+        );
+        assert_eq!(
+            stream_type_from_kind(&StreamKind::Audio(AudioCodec::Aac)),
+            0x0F
+        );
+        assert_eq!(
+            stream_type_from_kind(&StreamKind::Audio(AudioCodec::AacLatm)),
+            0x11
+        );
+        assert_eq!(
+            stream_type_from_kind(&StreamKind::Audio(AudioCodec::Ac3)),
+            0x81
+        );
+    }
+
+    // -- classify_0x06: PSI cascade for stream_type 0x06 ----------------------
+
+    fn raw_desc(tag: u8, data: Vec<u8>) -> crate::mpegts::descriptors::RawDescriptor {
+        crate::mpegts::descriptors::RawDescriptor { tag, data }
+    }
+
+    #[test]
+    fn classify_0x06_subtitling_descriptor_wins() {
+        // subtitling_descriptor (tag 0x59) — body shape per ETSI EN 300 468:
+        // ISO 639 lang (3) + subtitling_type (1) + composition_page_id (2) +
+        // ancillary_page_id (2). Content irrelevant to classification.
+        let descs = vec![raw_desc(
+            0x59,
+            vec![b'e', b'n', b'g', 0x10, 0x00, 0x01, 0x00, 0x01],
+        )];
+        assert_eq!(
+            classify_0x06(&descs),
+            StreamKind::Subtitle(SubtitleCodec::DvbSubtitling)
+        );
+    }
+
+    #[test]
+    fn classify_0x06_teletext_descriptor_wins() {
+        // teletext_descriptor (tag 0x56) — body: ISO 639 lang (3) +
+        // (teletext_type<<3 | teletext_magazine_number) + teletext_page_number.
+        let descs = vec![raw_desc(
+            0x56,
+            vec![b'e', b'n', b'g', (0x02 << 3) | 1, 0x88],
+        )];
+        assert_eq!(
+            classify_0x06(&descs),
+            StreamKind::Subtitle(SubtitleCodec::DvbTeletext)
+        );
+    }
+
+    #[test]
+    fn classify_0x06_vbi_teletext_descriptor_also_classifies_teletext() {
+        // VBI_teletext_descriptor (tag 0x46) — same outcome as 0x56.
+        let descs = vec![raw_desc(0x46, vec![])];
+        assert_eq!(
+            classify_0x06(&descs),
+            StreamKind::Subtitle(SubtitleCodec::DvbTeletext)
+        );
+    }
+
+    #[test]
+    fn classify_0x06_vttc_format_identifier_classifies_webvtt() {
+        let descs = vec![raw_desc(0x05, b"VTTC".to_vec())];
+        assert_eq!(
+            classify_0x06(&descs),
+            StreamKind::Subtitle(SubtitleCodec::WebVttInTs)
+        );
+    }
+
+    #[test]
+    fn classify_0x06_ga94_format_identifier_classifies_cea708_standalone() {
+        let descs = vec![raw_desc(0x05, b"GA94".to_vec())];
+        assert_eq!(
+            classify_0x06(&descs),
+            StreamKind::Subtitle(SubtitleCodec::Cea708Standalone)
+        );
+    }
+
+    #[test]
+    fn classify_0x06_klva_still_klv_async_regression_guard() {
+        let descs = vec![raw_desc(0x05, b"KLVA".to_vec())];
+        assert_eq!(classify_0x06(&descs), StreamKind::KlvAsync);
+    }
+
+    #[test]
+    fn classify_0x06_av1_registration_takes_priority() {
+        let descs = vec![raw_desc(0x05, b"AV01".to_vec())];
+        assert_eq!(classify_0x06(&descs), StreamKind::Video(VideoCodec::Av1));
+    }
+
+    #[test]
+    fn classify_0x06_av01_wins_over_klva_and_subtitle_arms() {
+        // AV01 registration alongside (hypothetical, spec-violating) KLVA
+        // registration — AV01 wins per descriptor exclusivity (binding §2.1).
+        let descs = vec![
+            raw_desc(0x05, b"AV01".to_vec()),
+            raw_desc(0x05, b"KLVA".to_vec()),
+        ];
+        assert_eq!(classify_0x06(&descs), StreamKind::Video(VideoCodec::Av1));
+    }
+
+    #[test]
+    fn classify_0x06_emits_ambiguous_on_subtitling_plus_vttc() {
+        // PMT entry with both subtitling_descriptor (0x59) AND VTTC
+        // registration — ambiguous which subtitle codec actually rides on
+        // the PID. Classifier still picks subtitling per first-match
+        // priority; ambiguity helper surfaces both markers.
+        let descs = vec![
+            raw_desc(0x59, vec![b'e', b'n', b'g', 0x10, 0x00, 0x01, 0x00, 0x01]),
+            raw_desc(0x05, b"VTTC".to_vec()),
+        ];
+        let (kind, ambiguous_tags) = classify_0x06_with_ambiguity(&descs);
+        assert_eq!(kind, StreamKind::Subtitle(SubtitleCodec::DvbSubtitling));
+        assert_eq!(
+            ambiguous_tags,
+            vec![0x59, 0xF0],
+            "ambiguity reports both 0x59 and synthetic 0xF0 (VTTC)"
+        );
+    }
+
+    #[test]
+    fn classify_0x06_no_ambiguity_when_single_marker() {
+        let descs = vec![raw_desc(0x05, b"VTTC".to_vec())];
+        let (kind, ambiguous_tags) = classify_0x06_with_ambiguity(&descs);
+        assert_eq!(kind, StreamKind::Subtitle(SubtitleCodec::WebVttInTs));
+        assert!(ambiguous_tags.is_empty());
+    }
+
+    #[test]
+    fn classify_0x06_no_ambiguity_when_no_markers() {
+        // No recognized markers — empty tag list, falls through to Unknown.
+        let descs: Vec<crate::mpegts::descriptors::RawDescriptor> = vec![];
+        let (kind, ambiguous_tags) = classify_0x06_with_ambiguity(&descs);
+        assert_eq!(kind, StreamKind::Unknown(0x06));
+        assert!(ambiguous_tags.is_empty());
+    }
+
+    #[test]
+    fn classify_0x06_ambiguous_teletext_synonyms_count_once() {
+        // 0x56 and 0x46 are teletext synonyms — one marker total even when
+        // both are present. Combined with VTTC, that's two markers.
+        let descs = vec![
+            raw_desc(0x56, vec![b'e', b'n', b'g', (0x02 << 3) | 1, 0x88]),
+            raw_desc(0x46, vec![]),
+            raw_desc(0x05, b"VTTC".to_vec()),
+        ];
+        let (kind, ambiguous_tags) = classify_0x06_with_ambiguity(&descs);
+        assert_eq!(kind, StreamKind::Subtitle(SubtitleCodec::DvbTeletext));
+        assert_eq!(ambiguous_tags, vec![0x56, 0xF0]);
+    }
+
+    // -- is_malformed_av1_registration -----------------------------------------
+
+    #[test]
+    fn malformed_av01_registration_truncated_to_three_bytes() {
+        // Tag 0x05, length 3 (well-formed at walk time), contents "AV0".
+        // This is the "tried to be AV01 but truncated" case.
+        let descs = vec![raw_desc(0x05, b"AV0".to_vec())];
+        assert!(is_malformed_av1_registration(&descs));
+    }
+
+    #[test]
+    fn well_formed_av01_registration_not_flagged() {
+        let descs = vec![raw_desc(0x05, b"AV01".to_vec())];
+        assert!(!is_malformed_av1_registration(&descs));
+    }
+
+    #[test]
+    fn other_short_registration_not_flagged() {
+        // KLVA truncated — doesn't start with "AV" so not flagged.
+        let descs = vec![raw_desc(0x05, b"KL".to_vec())];
+        assert!(!is_malformed_av1_registration(&descs));
+    }
+
+    #[test]
+    fn empty_descriptors_not_flagged() {
+        assert!(!is_malformed_av1_registration(&[]));
+    }
 }

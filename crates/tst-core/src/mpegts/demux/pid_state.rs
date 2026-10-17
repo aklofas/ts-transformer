@@ -9,8 +9,8 @@
 //! PSI topology changes are reported as a [`TopologyDiff`]; the coordinator
 //! applies it in one place (`Demuxer::apply_topology_diff`).
 
-use crate::mpegts::demux::demuxer::UnwrapState;
 use crate::mpegts::demux::event::StreamKind;
+use crate::mpegts::demux::timestamp::UnwrapState;
 use crate::mpegts::stats::{CodecKind, StreamCodecCounters, StreamStats};
 use alloc::vec::Vec;
 

@@ -26,6 +26,7 @@ use crate::mpegts::demux::payload::{
 };
 use crate::mpegts::demux::pes::{PesPayload, ReassemblyOutcome};
 use crate::mpegts::demux::pid_state::set_once;
+use crate::mpegts::demux::timestamp::TimestampUnwrapper;
 use crate::mpegts::stats::CodecKind;
 use crate::shared::SharedBytes;
 use alloc::string::ToString;
@@ -203,14 +204,19 @@ impl super::demuxer::Demuxer {
             // bare per-PID offset — the 33-bit boundary can fall between
             // one AU's DTS and PTS (DTS <= PTS always), and applying the
             // just-advanced offset directly would put a pre-wrap DTS a
-            // full epoch too high. See `Self::unwrap_dts_with_pts`. The
+            // full epoch too high. See `TimestampUnwrapper::dts_with_pts`. The
             // DTS-with-no-PTS branch is spec-illegal but tolerated
             // defensively via the older bare-offset fallback.
             let unwrapped_dts = match (pes.pts, pes.dts) {
-                (Some(pts_raw), Some(dts_raw)) => {
-                    Some(Self::unwrap_dts_with_pts(unwrapped_pts, pts_raw, dts_raw))
-                }
-                (None, Some(dts_raw)) => Some(self.unwrap_secondary_ts(pes.pid, dts_raw)),
+                (Some(pts_raw), Some(dts_raw)) => Some(TimestampUnwrapper::dts_with_pts(
+                    unwrapped_pts,
+                    pts_raw,
+                    dts_raw,
+                )),
+                (None, Some(dts_raw)) => Some(TimestampUnwrapper::secondary(
+                    self.pid_state.get(&pes.pid).and_then(|s| s.unwrap),
+                    dts_raw,
+                )),
                 (_, None) => None,
             };
             (unwrapped_pts, unwrapped_dts)
