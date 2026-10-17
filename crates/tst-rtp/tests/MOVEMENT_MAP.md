@@ -3,7 +3,10 @@
 The 27 former top-level `tests/*.rs` integration binaries were consolidated
 into **3 domain harnesses** (`net_rtp`, `net_rtsp_client`, `net_rtsp_server`),
 same `#[path] mod` pattern as the other crates: `tests/<domain>.rs` includes
-its members from `tests/<domain>/`.
+its members from `tests/<domain>/`. A fourth, single-file binary,
+`net_rtsp_server_runtime`, holds the server's thread-count and stop-drain
+probes: a thread-count delta is only reliable with no sibling test building a
+server in the same process, so it keeps its own binary.
 
 ## What changed (and what did not)
 
