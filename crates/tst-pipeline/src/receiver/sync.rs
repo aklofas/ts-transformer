@@ -19,16 +19,19 @@
 
 use alloc::vec::Vec;
 use tst_core::mpegts::common::{SRT_TS_BUNDLE_BYTES, TS_PACKET_SIZE, TS_SYNC_BYTE};
+use tst_core::mpegts::sync::TsSync;
+
+/// The lock rule: the candidate plus three more aligned sync bytes.
+const LOCK: TsSync = TsSync::strict(4);
 
 /// Current state of the sync state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncState {
     /// Looking for the first 0x47 sync byte.
     Hunt,
-    /// Found a candidate 0x47 at `buf[0]`. `count` is the number of confirmations
-    /// seen so far — starts at 1 (the initial 0x47 in HUNT transitions here).
-    /// After 4 total confirmations (`new_count >= 4`) we transition to LOCKED.
-    Verify { count: u8 },
+    /// Found a candidate 0x47 at `buf[0]`; waiting for (or checking) the three
+    /// sync bytes one packet apart that make four confirmations in all.
+    Verify,
     /// Confirmed 0x47 alignment. Emitting 188-byte packets from buf[0..188].
     Locked,
 }
@@ -173,44 +176,38 @@ impl Syncer {
                     self.head += pos;
                     self.len -= pos;
                     // buf[head] is now 0x47. One confirmation seen.
-                    self.state = SyncState::Verify { count: 1 };
+                    self.state = SyncState::Verify;
                     // Fall through to VERIFY on the next loop iteration.
                 }
-                SyncState::Verify { count } => {
-                    // We have a candidate 0x47 at buf[head]. Check whether
-                    // buf[head + 188 * count] is also 0x47.
-                    //
-                    // `need` ensures the index we're about to peek at actually
-                    // exists in the buffer before we read it: the candidate
-                    // plus `count` full strides. Exactly four packets (752
-                    // bytes) therefore lock — no extra look-ahead byte; one
-                    // would strand a four-packet stream and the last packets
+                SyncState::Verify => {
+                    // Candidate 0x47 at buf[head]. Whole packets only: a
+                    // stride counts as present once its full 188-byte
+                    // packet is buffered, so exactly four packets (752
+                    // bytes) lock — no extra look-ahead byte; one would
+                    // strand a four-packet stream and the last packets
                     // before EOF after any resync.
-                    let need = TS_PACKET_SIZE * (count as usize + 1);
-                    if self.len < need {
-                        return None;
-                    }
-                    if self.buf[self.head + TS_PACKET_SIZE * count as usize] == TS_SYNC_BYTE {
-                        let new_count = count + 1;
-                        if new_count >= 4 {
+                    let whole = self.len - self.len % TS_PACKET_SIZE;
+                    let live = &self.buf[self.head..self.head + whole];
+                    match LOCK.verify(live, 0) {
+                        None => return None,
+                        Some(true) => {
                             // Four confirmations — alignment is solid.
                             self.state = SyncState::Locked;
                             // Count each lock acquisition (initial + re-locks
                             // after sync loss) as one resync event, mirroring
                             // the sender-side framing convention.
                             self.resync_events += 1;
-                        } else {
-                            self.state = SyncState::Verify { count: new_count };
                         }
-                        // Loop: either emit from LOCKED or check next confirmation.
-                    } else {
-                        // Candidate failed. Drop one byte and re-hunt.
-                        // We can't just advance 188 bytes because buf[head+1..head+188]
-                        // may contain a real sync byte for a different alignment.
-                        self.bytes_skipped_for_sync += 1;
-                        self.head += 1;
-                        self.len -= 1;
-                        self.state = SyncState::Hunt;
+                        Some(false) => {
+                            // Candidate failed. Drop one byte and re-hunt.
+                            // We can't just advance 188 bytes because
+                            // buf[head+1..head+188] may contain a real sync
+                            // byte for a different alignment.
+                            self.bytes_skipped_for_sync += 1;
+                            self.head += 1;
+                            self.len -= 1;
+                            self.state = SyncState::Hunt;
+                        }
                     }
                 }
                 SyncState::Locked => {
@@ -316,7 +313,7 @@ mod tests {
         let mut s = Syncer::new();
         // Start with a fake 0x47 (only one, no subsequent sync bytes 188 apart).
         // Then 400 bytes of filler followed by 5 real packets.
-        let mut buf = vec![0x47u8]; // triggers Verify { count: 1 }
+        let mut buf = vec![0x47u8]; // triggers Verify
         buf.extend_from_slice(&[0xBBu8; 187]); // not a real packet
         buf.extend_from_slice(&[0xCCu8; 213]); // more garbage (no 0x47 at 188)
         for i in 0..5 {
