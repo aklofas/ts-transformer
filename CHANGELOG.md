@@ -313,8 +313,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The crate-root re-exports of all four are unchanged. Both RTSP roles use the
   negotiation code, and a builder belongs beside the role it builds, so no
   type sits in a module named for what it is rather than where it works.
-  `rtsp::client::tls` (behind the `tls` feature) is no longer public: it held only the stream wrapper
-  that `RtspClient` uses internally.
+  `rtsp::client::tls` (behind the `tls` feature) is no longer public: it
+  held only the stream wrapper that `RtspClient` uses internally.
 
 ### Changed — tst-udp, tst-tcp, tst-rist (BREAKING)
 

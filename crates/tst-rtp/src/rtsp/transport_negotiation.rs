@@ -204,6 +204,18 @@ fn parse_u8_pair_detail(value: &str) -> Result<(u8, u8), &'static str> {
     Ok((lo, hi))
 }
 
+/// The RTP port attempt `attempt` asks for: port 0 (a fresh kernel pick)
+/// every time when `start` is 0, else `start + 2 * attempt`, or `None` once
+/// that would overflow `u16`.
+fn candidate_port(start: u16, attempt: u16) -> Option<u16> {
+    if start == 0 {
+        return Some(0);
+    }
+    attempt
+        .checked_mul(2)
+        .and_then(|off| start.checked_add(off))
+}
+
 /// Bind a UDP RTP+RTCP port pair on `bind_ip`; the RTCP socket sits on
 /// RTP+1 (RFC 3550 §11).
 ///
@@ -229,12 +241,9 @@ pub(crate) fn bind_udp_pair(
     let attempts: u16 = if kernel_picks { 16 } else { 8 };
     let mut bound_overflow = false;
     for attempt in 0..attempts {
-        // start + attempt*2, then companion port+1 — both checked so a
+        // Companion port+1 is checked below, and the candidate here, so a
         // `start` near 65535 returns a typed error instead of wrapping.
-        let Some(want) = attempt
-            .checked_mul(2)
-            .and_then(|off| start.checked_add(off))
-        else {
+        let Some(want) = candidate_port(start, attempt) else {
             bound_overflow = true;
             break;
         };
@@ -348,6 +357,41 @@ mod tests {
         // not wrap to 0 or panic.
         let r = build_transport_request(RtspTransportPref::ForceUdp, 65535);
         assert!(r.is_err(), "65535 companion overflow must be an error");
+    }
+
+    /// A kernel-picked pair asks the kernel afresh on every attempt; it
+    /// never walks fixed low ports. (Walking `0 + 2k` would bind ports 2, 4,
+    /// ... instead of retrying.)
+    #[test]
+    fn a_kernel_picked_pair_retries_with_port_zero() {
+        for attempt in 0..16 {
+            assert_eq!(candidate_port(0, attempt), Some(0), "attempt {attempt}");
+        }
+        let (rtp, rtcp, port) = bind_udp_pair(IpAddr::V4(Ipv4Addr::LOCALHOST), 0).unwrap();
+        assert!(
+            port >= 1024,
+            "a fresh kernel pick, not a fixed low port: {port}"
+        );
+        assert_eq!(rtp.local_addr().unwrap().port(), port);
+        assert_eq!(rtcp.local_addr().unwrap().port(), port + 1);
+    }
+
+    /// A fixed start walks `start + 2k`, skipping a pair whose RTP port is
+    /// taken.
+    #[test]
+    fn a_fixed_start_walks_even_candidates() {
+        assert_eq!(candidate_port(5004, 0), Some(5004));
+        assert_eq!(candidate_port(5004, 3), Some(5010));
+        assert_eq!(candidate_port(65534, 1), None);
+        let any = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let (a, b, first) = bind_udp_pair(any, 40_000).unwrap();
+        // 40 000 is now taken (or was already): the next call moves on by 2k.
+        let (_c, _d, second) = bind_udp_pair(any, first).unwrap();
+        assert!(
+            second >= first + 2 && (second - first) % 2 == 0,
+            "{first} -> {second}"
+        );
+        drop((a, b));
     }
 
     #[test]
