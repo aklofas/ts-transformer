@@ -1074,6 +1074,7 @@ crate::binding_record! {
     #[derive(Debug, Clone, PartialEq)]
     pub struct PayloadList {
         pub count: u64,
+        @[py_default("()")]
         pub records: Vec<PayloadRecord>,
     }
 }
@@ -1383,7 +1384,7 @@ crate::binding_record! {
     /// angular range specifies the limit from the starting point to the
     /// sensor's maximum value; numerically the angular range is always a
     /// positive value". Both fields of a pair always share the same IMAPB
-    /// byte length (whatever the producer chose; this crate encodes at 3
+    /// byte length (whatever the producer chose; the library encodes at 3
     /// bytes).
     #[derive(Debug, Clone, Copy, PartialEq, Default)]
     pub struct ViewDomainPair {

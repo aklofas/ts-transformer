@@ -915,6 +915,7 @@ fn no_rust_only_text_reaches_a_host_doc() {
         "Vec&lt;",
         "Option<",
         "Option&lt;",
+        "this crate",
     ];
     let reg = schema::records();
     let mut leaks = Vec::new();
@@ -1458,6 +1459,11 @@ fn narrow_signed_integers_and_lists_follow_the_hand_written_record() {
         };
         assert_eq!(sc.narrow(), Some(narrow));
     }
+    // u64 has no narrowing helper: the reader takes the bit pattern of the long.
+    let typemap::Ty::Scalar(u64_sc) = typemap::map("u64", &names).unwrap() else {
+        panic!()
+    };
+    assert_eq!(u64_sc.narrow(), None);
     assert_eq!(
         typemap::map("Vec<u8>", &names).unwrap().java(),
         "ByteBuffer"

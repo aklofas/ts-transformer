@@ -85,6 +85,10 @@ fn map_st1204_error(env: &mut JNIEnv, e: &St1204Error) {
     }
 }
 
+// A new Rust field must fail the build until `build_core_id` and `read_core_id`
+// below carry it: they are hand-written (the `(IdType, [u8; 16])` pairs flatten).
+const _: () = assert!(CoreId::BINDING_SCHEMA.fields.len() == 5);
+
 // ── Build CoreId Java record from Rust CoreId ─────────────────────────────────
 
 /// Construct a `org.tstrans.klv.CoreId` Java record from a decoded Rust `CoreId`.

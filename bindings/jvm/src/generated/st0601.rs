@@ -31,7 +31,7 @@ pub(crate) fn read_wavelength_record(
 ) -> jni::errors::Result<tst_core::klv::st0601::WavelengthRecord> {
     env.ensure_local_capacity(40)?;
     let id = env.call_method(obj, "id", "()J", &[])?.j()?;
-    let id = crate::jutil::checked_u64(env, id, "WavelengthRecord.id")?;
+    let id = id as u64;
     let min_nm = env.call_method(obj, "minNm", "()D", &[])?.d()?;
     let max_nm = env.call_method(obj, "maxNm", "()D", &[])?.d()?;
     let o1 = env
@@ -225,7 +225,7 @@ pub(crate) fn read_control_command(
 ) -> jni::errors::Result<tst_core::klv::st0601::ControlCommand> {
     env.ensure_local_capacity(38)?;
     let id = env.call_method(obj, "id", "()J", &[])?.j()?;
-    let id = crate::jutil::checked_u64(env, id, "ControlCommand.id")?;
+    let id = id as u64;
     let o1 = env
         .call_method(obj, "command", "()Ljava/lang/String;", &[])?
         .l()?;
@@ -242,10 +242,7 @@ pub(crate) fn read_control_command(
     let time_us = if o3.is_null() {
         None
     } else {
-        Some({
-            let n = env.call_method(&o3, "longValue", "()J", &[])?.j()?;
-            crate::jutil::checked_u64(env, n, "ControlCommand.timeUs")?
-        })
+        Some((env.call_method(&o3, "longValue", "()J", &[])?.j()?) as u64)
     };
     Ok(tst_core::klv::st0601::ControlCommand {
         id,
@@ -276,9 +273,9 @@ pub(crate) fn read_sensor_frame_rate(
 ) -> jni::errors::Result<tst_core::klv::st0601::SensorFrameRate> {
     env.ensure_local_capacity(36)?;
     let numerator = env.call_method(obj, "numerator", "()J", &[])?.j()?;
-    let numerator = crate::jutil::checked_u64(env, numerator, "SensorFrameRate.numerator")?;
+    let numerator = numerator as u64;
     let denominator = env.call_method(obj, "denominator", "()J", &[])?.j()?;
-    let denominator = crate::jutil::checked_u64(env, denominator, "SensorFrameRate.denominator")?;
+    let denominator = denominator as u64;
     Ok(tst_core::klv::st0601::SensorFrameRate {
         numerator,
         denominator,
@@ -305,7 +302,7 @@ pub(crate) fn read_metadata_substream_id(
 ) -> jni::errors::Result<tst_core::klv::st0601::MetadataSubstreamId> {
     env.ensure_local_capacity(36)?;
     let local_id = env.call_method(obj, "localId", "()J", &[])?.j()?;
-    let local_id = crate::jutil::checked_u64(env, local_id, "MetadataSubstreamId.localId")?;
+    let local_id = local_id as u64;
     let uuid = crate::custom::read_metadata_substream_id_uuid(env, obj)?;
     Ok(tst_core::klv::st0601::MetadataSubstreamId { local_id, uuid })
 }
@@ -355,7 +352,7 @@ pub(crate) fn read_country_codes(
 ) -> jni::errors::Result<tst_core::klv::st0601::CountryCodes> {
     env.ensure_local_capacity(40)?;
     let coding_method = env.call_method(obj, "codingMethod", "()J", &[])?.j()?;
-    let coding_method = crate::jutil::checked_u64(env, coding_method, "CountryCodes.codingMethod")?;
+    let coding_method = coding_method as u64;
     let o1 = env
         .call_method(obj, "overflight", "()Ljava/lang/String;", &[])?
         .l()?;
@@ -572,7 +569,7 @@ pub(crate) fn read_payload_record(
 ) -> jni::errors::Result<tst_core::klv::st0601::PayloadRecord> {
     env.ensure_local_capacity(38)?;
     let id = env.call_method(obj, "id", "()J", &[])?.j()?;
-    let id = crate::jutil::checked_u64(env, id, "PayloadRecord.id")?;
+    let id = id as u64;
     let payload_type = crate::custom::read_payload_record_payload_type(env, obj)?;
     let o1 = env
         .call_method(obj, "name", "()Ljava/lang/String;", &[])?
@@ -629,7 +626,7 @@ pub(crate) fn read_payload_list(
 ) -> jni::errors::Result<tst_core::klv::st0601::PayloadList> {
     env.ensure_local_capacity(36)?;
     let count = env.call_method(obj, "count", "()J", &[])?.j()?;
-    let count = crate::jutil::checked_u64(env, count, "PayloadList.count")?;
+    let count = count as u64;
     let o1 = env
         .call_method(obj, "records", "()Ljava/util/List;", &[])?
         .l()?;
@@ -677,15 +674,15 @@ pub(crate) fn read_weapons_store(
 ) -> jni::errors::Result<tst_core::klv::st0601::WeaponsStore> {
     env.ensure_local_capacity(44)?;
     let station_id = env.call_method(obj, "stationId", "()J", &[])?.j()?;
-    let station_id = crate::jutil::checked_u64(env, station_id, "WeaponsStore.stationId")?;
+    let station_id = station_id as u64;
     let hardpoint_id = env.call_method(obj, "hardpointId", "()J", &[])?.j()?;
-    let hardpoint_id = crate::jutil::checked_u64(env, hardpoint_id, "WeaponsStore.hardpointId")?;
+    let hardpoint_id = hardpoint_id as u64;
     let carriage_id = env.call_method(obj, "carriageId", "()J", &[])?.j()?;
-    let carriage_id = crate::jutil::checked_u64(env, carriage_id, "WeaponsStore.carriageId")?;
+    let carriage_id = carriage_id as u64;
     let store_id = env.call_method(obj, "storeId", "()J", &[])?.j()?;
-    let store_id = crate::jutil::checked_u64(env, store_id, "WeaponsStore.storeId")?;
+    let store_id = store_id as u64;
     let status_raw = env.call_method(obj, "statusRaw", "()J", &[])?.j()?;
-    let status_raw = crate::jutil::checked_u64(env, status_raw, "WeaponsStore.statusRaw")?;
+    let status_raw = status_raw as u64;
     let o1 = env
         .call_method(obj, "weaponType", "()Ljava/lang/String;", &[])?
         .l()?;
@@ -753,7 +750,7 @@ pub(crate) fn read_waypoint(
 ) -> jni::errors::Result<tst_core::klv::st0601::Waypoint> {
     env.ensure_local_capacity(40)?;
     let id = env.call_method(obj, "id", "()J", &[])?.j()?;
-    let id = crate::jutil::checked_u64(env, id, "Waypoint.id")?;
+    let id = id as u64;
     let prosecution_order = env.call_method(obj, "prosecutionOrder", "()I", &[])?.i()?;
     let prosecution_order = crate::jutil::checked_i16(
         env,
@@ -766,10 +763,7 @@ pub(crate) fn read_waypoint(
     let info = if o1.is_null() {
         None
     } else {
-        Some({
-            let n = env.call_method(&o1, "longValue", "()J", &[])?.j()?;
-            crate::jutil::checked_u64(env, n, "Waypoint.info")?
-        })
+        Some((env.call_method(&o1, "longValue", "()J", &[])?.j()?) as u64)
     };
     let o2 = env
         .call_method(obj, "location", "()Lorg/tstrans/klv/Location;", &[])?
@@ -2427,10 +2421,7 @@ pub(crate) fn read_uas_datalink_ls(
     let timestamp_us = if o14.is_null() {
         None
     } else {
-        Some({
-            let n = env.call_method(&o14, "longValue", "()J", &[])?.j()?;
-            crate::jutil::checked_u64(env, n, "UasDatalinkLs.timestampUs")?
-        })
+        Some((env.call_method(&o14, "longValue", "()J", &[])?.j()?) as u64)
     };
     let o15 = env
         .call_method(obj, "platformHeadingDeg", "()Ljava/lang/Double;", &[])?
@@ -3194,10 +3185,7 @@ pub(crate) fn read_uas_datalink_ls(
     let take_off_time_us = if o102.is_null() {
         None
     } else {
-        Some({
-            let n = env.call_method(&o102, "longValue", "()J", &[])?.j()?;
-            crate::jutil::checked_u64(env, n, "UasDatalinkLs.takeOffTimeUs")?
-        })
+        Some((env.call_method(&o102, "longValue", "()J", &[])?.j()?) as u64)
     };
     let o103 = env
         .call_method(obj, "miStorageCapacityGb", "()Ljava/lang/Long;", &[])?
@@ -3388,10 +3376,7 @@ pub(crate) fn read_uas_datalink_ls(
     let event_start_time_us = if o123.is_null() {
         None
     } else {
-        Some({
-            let n = env.call_method(&o123, "longValue", "()J", &[])?.j()?;
-            crate::jutil::checked_u64(env, n, "UasDatalinkLs.eventStartTimeUs")?
-        })
+        Some((env.call_method(&o123, "longValue", "()J", &[])?.j()?) as u64)
     };
     let o124 = env
         .call_method(obj, "streamDesignator", "()Ljava/lang/String;", &[])?
@@ -3495,14 +3480,7 @@ pub(crate) fn read_uas_datalink_ls(
                     let e138 = env
                         .call_method(&o137, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
                         .l()?;
-                    Ok({
-                        let n = env.call_method(&e138, "longValue", "()J", &[])?.j()?;
-                        crate::jutil::checked_u64(
-                            env,
-                            n,
-                            "UasDatalinkLs.controlCommandVerification",
-                        )?
-                    })
+                    Ok((env.call_method(&e138, "longValue", "()J", &[])?.j()?) as u64)
                 })?;
                 items.push(item);
             }
@@ -3523,10 +3501,7 @@ pub(crate) fn read_uas_datalink_ls(
                     let e140 = env
                         .call_method(&o139, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
                         .l()?;
-                    Ok({
-                        let n = env.call_method(&e140, "longValue", "()J", &[])?.j()?;
-                        crate::jutil::checked_u64(env, n, "UasDatalinkLs.activeWavelengths")?
-                    })
+                    Ok((env.call_method(&e140, "longValue", "()J", &[])?.j()?) as u64)
                 })?;
                 items.push(item);
             }

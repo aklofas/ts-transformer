@@ -135,6 +135,13 @@ impl PyPairer {
 
     /// Pairing counter snapshot as a dict (`PairerStats` fields).
     fn stats(&self, py: Python<'_>) -> PyResult<PyObject> {
+        // A new Rust field must fail the build until this dict carries it.
+        const _: () = assert!(
+            tst_pipeline::ext::pairing::PairerStats::BINDING_SCHEMA
+                .fields
+                .len()
+                == 4
+        );
         let s = self.inner.stats();
         let d = PyDict::new_bound(py);
         d.set_item("paired", s.paired)?;
@@ -147,6 +154,14 @@ impl PyPairer {
     /// Underlying demuxer counter snapshot as a dict. Matches the
     /// `tstrans.mpegts.Demuxer.stats()` field set.
     fn demuxer_stats(&self, py: Python<'_>) -> PyResult<PyObject> {
+        // A new Rust field must fail the build until this dict carries it (the
+        // count includes the two skipped fields).
+        const _: () = assert!(
+            tst_core::mpegts::demux::DemuxerStats::BINDING_SCHEMA
+                .fields
+                .len()
+                == 8
+        );
         let s = self.inner.demuxer_stats();
         let d = PyDict::new_bound(py);
         d.set_item("program_maps_seen", s.program_maps_seen)?;

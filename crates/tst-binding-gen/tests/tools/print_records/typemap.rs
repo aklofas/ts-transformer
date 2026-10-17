@@ -670,12 +670,12 @@ impl Sc {
     }
 
     /// The narrowing helper in `crate::jutil`, when the Java value is wider.
+    /// `u64` has none: it reads the bit pattern of the Java `long`.
     pub fn narrow(self) -> Option<&'static str> {
         match self {
             Sc::U8 => Some("checked_u8"),
             Sc::U16 => Some("checked_u16"),
             Sc::U32 => Some("checked_u32"),
-            Sc::U64 => Some("checked_u64"),
             Sc::I8 => Some("checked_i8"),
             Sc::I16 => Some("checked_i16"),
             _ => None,

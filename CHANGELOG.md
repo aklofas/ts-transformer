@@ -267,8 +267,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tstrans.tcp.RecvTransport` and `srt://` shells are unchanged.
 - `tstrans.klv.UasDatalinkLs` lists its fields in the order of the Rust
   declaration, so constructing it with positional arguments changes; construct
-  it with keyword arguments, the documented path, which are unaffected.
-- `tstrans.klv.PayloadList.records` has no default; pass it explicitly.
+  it with keyword arguments, the documented path, which are unaffected. One
+  generated field order serves both hosts and the Rust type.
 - `tstrans.codec.H266Sps.profile_tier_level` is an attribute, not a method, and
   the `general_profile_idc`, `general_tier_flag` and `general_level_idc`
   properties are gone: read `sps.profile_tier_level` and its fields. The record
@@ -281,8 +281,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Both were always 0, because the polling path does not track them, and the
   Rust record has no such field; the class now lists the fields the Rust record
   carries.
-  `tstrans.srt.SrtStats.rtt_us` no longer stops at the 32-bit maximum (about
-  71 minutes); it is the whole round-trip time in microseconds.
+- `tstrans.srt.SrtStats.rtt_us` no longer stops at the 32-bit maximum (about
+  71 minutes); it is the whole round-trip time in microseconds. The old
+  saturation hid long round trips.
 
 ### Changed — tst-jni (BREAKING)
 
@@ -327,37 +328,45 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `org.tstrans.klv.UasDatalinkLs` lists its components in the order of the Rust
   declaration, so the canonical constructor's argument order changes; build it
   with `UasDatalinkLs.Builder`, the documented path, whose setters keep their
-  names.
+  names. One generated component order serves both hosts and the Rust type.
 - `UasDatalinkLs.Builder.icingDetectedCode`, `sensorFovNameCode`,
   `operationalModeCode`, `platformStatusCode` and `sensorControlModeCode` take
-  an `Integer` where they took an `int`. A call with an `int` still compiles;
-  code compiled against 0.8 must be recompiled.
+  an `Integer` where they took an `int`, because a coded-enum component may be
+  absent. A call with an `int` still compiles; code compiled against 0.8 must
+  be recompiled.
 - `VTargetPack.Builder` has no constructor argument; set the id with
-  `targetId(long)`.
+  `targetId(long)`. Every generated Builder has the one no-argument shape.
 - `SecurityLs.Builder.securityClassification`,
   `classifyingCountryCodingMethod` and `objectCountryCodingMethod` (the `int`
   and the enum overloads) are replaced by `securityClassificationCode`,
   `classifyingCountryCodingMethodCode` and `objectCountryCodingMethodCode`,
   named for their components and taking an `Integer`; pass an enum constant's
-  `code()`. The typed accessors of the record are unchanged.
+  `code()`. The old names did not match the record's components, and a
+  coded-enum component may be absent. The typed accessors of the record are
+  unchanged.
 - `RvtPoi.Builder.poiTypeCode` and `RvtAoi.Builder.aoiTypeCode` take an
-  `Integer` where they took an `int`; a call with an `int` still compiles.
+  `Integer` where they took an `int`, because the component may be absent; a
+  call with an `int` still compiles.
 - `org.tstrans.codec.H266Sps` has no `generalProfileIdc()`, `generalTierFlag()`
   or `generalLevelIdc()`: read them from `profileTierLevel()`. The record has
   one shape on both hosts, with no duplicate accessors.
 - `org.tstrans.codec.H264Sps` lists its components in the order of the Rust
   declaration (`frameRate` follows `frameMbsOnly`), so the canonical
   constructor's argument order changes; build it with `H264Sps.Builder`, the
-  documented path, whose setters keep their names.
+  documented path, whose setters keep their names. One generated component
+  order serves both hosts and the Rust type.
 - A `null` required `String` component of a record handed to an encode or CoT
-  call (an ST 0601 record's, for example) and a negative
-  `PrecisionTimeStampPack.timestampUs` throw `IllegalArgumentException` naming
-  the component.
+  call (an ST 0601 record's, for example) throws `IllegalArgumentException`
+  naming the component. A required string has no Rust value to stand in for
+  `null`.
+- An unsigned 64-bit component (a timestamp or an id, such as
+  `PrecisionTimeStampPack.timestampUs`, `UasDatalinkLs.timestampUs` or
+  `CotConfig.updateIntervalUs`) reads a negative `long` as its bit pattern, a
+  value of 2^63 or more, where the id-like ones threw
+  `IllegalArgumentException`. One unsigned contract holds in both directions,
+  so a decoded value with bit 63 set encodes back unchanged.
 - `org.tstrans.srt.SrtStats.rttUs` no longer stops at the 32-bit maximum (about
   71 minutes); it is the whole round-trip time in microseconds.
-- The `IllegalArgumentException` for a negative `CotConfig.updateIntervalUs`
-  reads `CotConfig.updateIntervalUs must be >= 0 (unsigned long), got N`; it
-  still names the component.
 
 ### Changed — tst-c
 

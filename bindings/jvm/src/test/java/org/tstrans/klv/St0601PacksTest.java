@@ -1017,10 +1017,10 @@ class St0601PacksTest {
     @Test
     void tenThousandWavelengthRecordsRoundTripThroughTheNativeLayer()
             throws KlvDecodeException, KlvEncodeException {
-        // Every list item is built and read inside its own local frame, so the
-        // live local-reference count does not grow with the list. A reference
-        // leaked per item would exhaust the table long before 10 000 items;
-        // the Gradle test task runs under -Xcheck:jni.
+        // A completion and equality smoke over a long list. The guard against a
+        // leaked local reference per item is the generator's per-item local
+        // frame, which its emitter test asserts; -Xcheck:jni cannot see
+        // local-reference accumulation.
         int n = 10_000;
         List<WavelengthRecord> bands = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {

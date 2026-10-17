@@ -22,8 +22,7 @@ pub(crate) fn read_cot_config(
         String::from(env.get_string(s2)?)
     };
     let update_interval_us = env.call_method(obj, "updateIntervalUs", "()J", &[])?.j()?;
-    let update_interval_us =
-        crate::jutil::checked_u64(env, update_interval_us, "CotConfig.updateIntervalUs")?;
+    let update_interval_us = update_interval_us as u64;
     let o3 = env
         .call_method(obj, "producer", "()Ljava/lang/String;", &[])?
         .l()?;
