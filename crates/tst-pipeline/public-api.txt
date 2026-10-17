@@ -1692,7 +1692,6 @@ pub enum tst_pipeline::receiver::sync::SyncState
 pub tst_pipeline::receiver::sync::SyncState::Hunt
 pub tst_pipeline::receiver::sync::SyncState::Locked
 pub tst_pipeline::receiver::sync::SyncState::Verify
-pub tst_pipeline::receiver::sync::SyncState::Verify::count: u8
 impl core::clone::Clone for tst_pipeline::receiver::sync::SyncState
 pub fn tst_pipeline::receiver::sync::SyncState::clone(&self) -> tst_pipeline::receiver::sync::SyncState
 impl core::cmp::Eq for tst_pipeline::receiver::sync::SyncState
