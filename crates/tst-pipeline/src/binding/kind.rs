@@ -263,7 +263,7 @@ kinds! {
     TcpTlsDisabled = -55 => "TCP_TLS_DISABLED", "TLS_DISABLED", -33;
     /// `from_url` could not parse the HLS URL.
     ///
-    /// `HlsUrlError` (`HlsPublisherBuilder::from_url`).
+    /// The URL error of `HlsPublisherBuilder::from_url`.
     HlsUrl = -56 => "HLS_URL", "URL", -35;
     /// The built-in HTTP server could not bind.
     ///

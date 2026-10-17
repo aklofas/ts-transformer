@@ -49,7 +49,7 @@ its `rtsp` row), the more specific row wins for that path.
 
 | Package | Module | Tier | Why |
 |---|---|---|---|
-| tst-core | mpegts | Stable | core mux/demux engine |
+| tst-core | mpegts | Stable | core mux/demux engine; `mux::StreamKind` is now `MuxStreamKind` and stays as a deprecated alias, removed in 0.10.0 |
 | tst-core | mpegts::demux::low_level | Internal | extension surface, binding-canonical workflow |
 | tst-core | binding_schema | Internal | the crossing-record schema the binding generator reads; `binding_record!` and `BINDING_SCHEMA` exist for the generator, not for consumers |
 | tst-core | klv | Stable | KLV substrate (encode/decode machinery) |
@@ -89,10 +89,10 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-core | url | Stable | shared URL-parsing plumbing used by every transport crate; spec-silent, defaults to tst-core's tier |
 | tst-pipeline | mux_sender | Stable | canonical send shell |
 | tst-pipeline | sender | Stable | TS-bytes send shell |
-| tst-pipeline | raw_sender | Stable | TS-bytes send shell, raw variant |
+| tst-pipeline | raw_sender | Stable | TS-bytes send shell, raw variant; `RawSendStats` is now `RawSenderStats` and stays as a deprecated alias, removed in 0.10.0 |
 | tst-pipeline | demux_receiver | Stable | canonical receive shell |
 | tst-pipeline | receiver | Stable | TS-bytes receive shell |
-| tst-pipeline | raw_receiver | Stable | TS-bytes receive shell, raw variant |
+| tst-pipeline | raw_receiver | Stable | TS-bytes receive shell, raw variant; `RawRecvStats` is now `RawReceiverStats` and stays as a deprecated alias, removed in 0.10.0 |
 | tst-pipeline | managed_demux_receiver | Stable | `Managed*` reconnect wrapper |
 | tst-pipeline | managed_receive | Stable | `Managed*` reconnect wrapper |
 | tst-pipeline | reconnect | Stable | reconnect config |
@@ -100,12 +100,12 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-pipeline | mux_publisher | Provisional | HLS-adjacent, newer |
 | tst-pipeline | ext | Provisional | extensions (pairing, file transport) — newer surface |
 | tst-pipeline | binding | Provisional | binding-shared handle layer (`Owned`, `HandleState`, panic helpers, `BindingErrorKind`, `view`, `opened`, `ManagedHandles`); `no_std` + `alloc` except `ManagedHandles` (`std`); shape may still move before 1.0; kept a module of tst-pipeline, not a crate (see `architecture.md`) |
-| tst-srt | (crate) | Stable | primary transport of the project scope; the `Srt`-prefixed type names (`SrtSocket`, `SrtListener`, `SrtStats`, ...) replace the unprefixed ones, which stay as deprecated aliases until 0.10.0 |
+| tst-srt | (crate) | Stable | primary transport of the project scope; the `Srt`-prefixed type names (`SrtSocket`, `SrtListener`, `SrtSocketBuilder`, `SrtListenerBuilder`, `SrtSocketConfig`, `SrtListenerConfig`, `SrtStats`, `SrtConnectError`, `SrtUrlError`) replace the unprefixed ones (`Socket`, `Listener`, `SocketBuilder`, `ListenerBuilder`, `SocketConfig`, `ListenerConfig`, `Stats`, `ConnectError`, `url::UrlError`), which stay as deprecated aliases, removed in 0.10.0 |
 | tst-srt | opener | Provisional | URL → type-erased transport for the language bindings' shells |
 | tst-srt | shells | Provisional | URL → managed-shell open path returning `tst_pipeline::binding::ManagedHandles`; new surface, may still move before 1.0 |
-| tst-udp | (crate) | Stable | small, settled |
+| tst-udp | (crate) | Stable | small, settled; `SocketConfig` is now `UdpConfig` and stays as a deprecated alias, removed in 0.10.0 |
 | tst-udp | opener | Provisional | URL → type-erased transport for the language bindings' shells |
-| tst-tcp | (crate) | Stable | small, settled |
+| tst-tcp | (crate) | Stable | small, settled; `SocketConfig` is now `TcpConfig` and stays as a deprecated alias, removed in 0.10.0 |
 | tst-tcp | opener | Provisional | URL → type-erased transport for the language bindings' shells |
 | tst-rtp | builder | Stable | RTSP client and server builders |
 | tst-rtp | cancel | Stable | RTP cancellation handle |
@@ -117,8 +117,8 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-rtp | packet | Stable | RTP packet parse/build |
 | tst-rtp | rtcp | Stable | RTCP SR/RR/SDES packet codecs and `RtcpStats` |
 | tst-rtp | sdp | Stable | SDP parsing (`Sdp`, `SdpMedia`) |
-| tst-rtp | transport | Stable | RTP transports (unicast/multicast, v4/v6); `RtpRecvTransport::{end_reason, end_reason_handle}` are Provisional — they return tst-core's `EndReason`/`EndReasonHandle` |
-| tst-rtp | url | Stable | `rtp(s)://`/`rtsp(s)://` URL parsing |
+| tst-rtp | transport | Stable | RTP transports (unicast/multicast, v4/v6); `ConnectError` is now `RtpConnectError` and stays as a deprecated alias, removed in 0.10.0; `RtpRecvTransport::{end_reason, end_reason_handle}` are Provisional — they return tst-core's `EndReason`/`EndReasonHandle` |
+| tst-rtp | url | Stable | `rtp(s)://`/`rtsp(s)://` URL parsing; `UrlError` is now `RtpUrlError` and stays as a deprecated alias, removed in 0.10.0 |
 | tst-rtp | rtsp | Provisional | server surface (`RtspServer`) still evolving; the client API (`RtspClient`) is stable in practice, but the module's tier is set by the server surface — the rail is module-granular, not sub-module |
 | tst-hls | (crate) | Provisional | crate split out of `tst-tcp` in 0.3.0 |
 | tst-rist | (crate) | Provisional | profile coverage still evolving |

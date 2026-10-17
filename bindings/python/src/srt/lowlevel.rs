@@ -161,7 +161,7 @@ impl PyBuilder {
     fn apply_stream_id(&mut self, py: Python<'_>, s: &str) -> PyResult<()> {
         let id = StreamId::new(s.to_string()).map_err(|e| cfg_invalid(py, e.to_string()))?;
         self.socket_cfg.stream_id = Some(id);
-        // SrtListenerConfig doesn't carry stream_id (set on accepted sockets
+        // A listener does not apply stream_id (set on accepted sockets
         // via post-handshake observation). Caller-side only.
         Ok(())
     }
@@ -319,7 +319,7 @@ impl PyBuilder {
 
     fn peer_latency_ms(mut slf: PyRefMut<'_, Self>, ms: u32) -> PyRefMut<'_, Self> {
         slf.socket_cfg.peer_latency = Some(Duration::from_millis(ms.into()));
-        // SrtListenerConfig has no peer_latency (libsrt sets it on caller side).
+        // A listener does not apply peer_latency (libsrt sets it on caller side).
         slf
     }
 

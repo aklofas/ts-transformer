@@ -607,7 +607,9 @@ fn set_send_timeout(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied
 }
 
 /// The keys an `srt://` URL consumes at the URL level, outside the config
-/// table below, as the generated key documentation lists them.
+/// table below, as the generated key documentation lists them. The
+/// `print-url-keys --check` comparison cannot see a key consumed outside a
+/// table, so a new URL-level key must be added here by hand.
 #[doc(hidden)]
 pub const URL_LEVEL_KEYS: &[KeyDoc] = &[KeyDoc {
     scheme: "srt",
@@ -679,19 +681,25 @@ pub const URL_KEYS: &[QueryKey<SrtSocketConfig, SrtUrlError>] = &[
         "bytes per second; 0 is relative to the input rate",
         set_max_bandwidth,
     ),
-    QueryKey::new("mss", &[], "Maximum segment size", "bytes", set_mss),
+    QueryKey::new(
+        "mss",
+        &[],
+        "Maximum segment size",
+        "bytes, 16 bits",
+        set_mss,
+    ),
     QueryKey::new(
         "oheadbw",
         &[],
         "Recovery bandwidth overhead",
-        "percent",
+        "percent, 5 to 100",
         set_overhead_bandwidth,
     ),
     QueryKey::new(
         "packetfilter",
         &[],
         "Packet filter (forward error correction) configuration",
-        "libsrt filter string",
+        "libsrt spec string, for example `fec,cols:10,rows:5`",
         set_packet_filter,
     ),
     QueryKey::new(

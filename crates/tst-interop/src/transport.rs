@@ -294,12 +294,11 @@ fn srt_socket(url: &str) -> Result<tst_srt::SrtSocket, String> {
         tst_srt::url::Mode::Listener => {
             let mut b = tst_srt::SrtListenerBuilder::new();
             b.recv_timeout(DEFAULT_SRT_RECV_TIMEOUT);
-            // `ListenerConfig`'s `linger` is a libsrt PRE option: set on the
-            // listener, inherited by every socket it accepts
-            // — needed here too
-            // in case the accepted socket ends up on the send side (a
-            // listener-mode SRT cell where the listener pushes and the
-            // caller receives is just as legal as the reverse).
+            // `SrtListenerConfig`'s `linger` is a libsrt PRE option: set on
+            // the listener, inherited by every socket it accepts. It is
+            // needed here too, in case the accepted socket ends up on the
+            // send side (a listener-mode SRT cell where the listener pushes
+            // and the caller receives is just as legal as the reverse).
             b.linger(SRT_LINGER);
             b.latency(SRT_LATENCY);
             let mut cfg = b.config();
