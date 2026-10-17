@@ -1998,6 +1998,18 @@ Shipped 0.8.0: renamed `InputRelative` (0) and `Infinite` (−1); a stale use fa
 - **Trigger to revisit:** a JVM consumer needs to send or receive bytes
   that are not MPEG-TS over one of these transports.
 
+## End reason on the managed byte receivers
+
+- **Status:** Deferred. A reconnecting `Receiver` / `RawReceiver` over
+  `ManagedReceiveTransport` (the C managed byte receivers) answers `None`
+  for `end_reason()`; the managed demux receiver records its own.
+- **Why deferred:** the managed demux receiver owns a recorder with
+  reconnect semantics, where an inner `TransportFailed` triggers a
+  reconnect instead of ending the stream. Forwarding the inner transport's
+  handle would contradict that.
+- **Trigger to revisit:** a consumer of the C managed byte receiver asks
+  for an end reason.
+
 ## srt clean-close end reason
 
 - **Status:** Deferred. An `srt://` shell reads `BROKEN` on the first

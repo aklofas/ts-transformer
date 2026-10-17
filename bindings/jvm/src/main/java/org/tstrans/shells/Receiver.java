@@ -141,8 +141,12 @@ public class Receiver extends NativeHandle {
     }
 
     /**
-     * Why the receive session ended, or {@code null} while it has not ended (or
-     * the transport records no end reason). Lock-free, so it answers while
+     * Why the receive session ended, or {@code null} while it has not ended.
+     * Every plain receive transport ({@code rtp}, {@code srt}, {@code udp},
+     * {@code tcp}, {@code rist}) records one; {@code srt} never records a
+     * clean teardown, because libsrt reports a peer's close as a broken link.
+     * The managed byte receivers (reconnecting {@code Receiver}s) are the
+     * exception and answer {@code null}. Lock-free, so it answers while
      * {@link #recvBytes()} is parked on another thread; once the receiver is
      * closed it returns the reason as it stood after close.
      *

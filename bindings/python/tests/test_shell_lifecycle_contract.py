@@ -457,3 +457,22 @@ def test_a_peer_close_ends_in_end_of_stream(shell: str, scheme: str) -> None:
             shells.EndReason.TRANSPORT_FAILED if scheme == "srt" else shells.EndReason.CLEAN_TEARDOWN
         )
         assert rx.end_reason() == expected_reason
+
+
+def test_managed_srt_demux_receiver_keeps_its_own_end_reason() -> None:
+    """The managed srt demux receiver owns its recorder (a transport break is
+    a reconnect trigger there, not an end); this pins that the plain
+    transports recording an end reason did not change it: it reads `None`
+    until its own iteration records the end."""
+    from test_srt_managed_convenience import _make_managed_pair
+
+    sender, receiver = _make_managed_pair(free_tcp_port())
+    try:
+        assert receiver.end_reason() is None
+        # The managed receiver records the end when its iteration observes
+        # it, not when the handle fires: an idle receiver still reads `None`.
+        receiver.cancel_handle().cancel()
+        assert receiver.end_reason() is None
+    finally:
+        sender.close()
+        receiver.close()
