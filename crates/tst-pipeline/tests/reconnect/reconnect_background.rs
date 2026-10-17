@@ -1019,3 +1019,26 @@ fn stress_pump_vs_flapping_sink_delivery_is_fifo_subsequence() {
         prev = v;
     }
 }
+
+#[test]
+fn background_worker_thread_is_named_tst_reconnect() {
+    let rig = Rig::new();
+    rig.push_outcome(SendStep::Broken); // the first send breaks the inner
+    let (name_tx, name_rx) = mpsc::channel::<Option<String>>();
+    let name_tx = Mutex::new(name_tx);
+    let factory = move || -> Result<ScriptedSend, TransportError> {
+        // Report the thread the dial runs on; keep failing so the worker stays up.
+        let _ = name_tx
+            .lock()
+            .unwrap()
+            .send(std::thread::current().name().map(str::to_owned));
+        Err(broken("factory down"))
+    };
+    let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(20)));
+    let mut managed = ManagedTransport::new(rig.transport(), factory, policy);
+    managed.send_bytes(&[0]).unwrap();
+    let name = name_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the worker dials the factory");
+    assert_eq!(name.as_deref(), Some("tst-reconnect"));
+}

@@ -1010,7 +1010,28 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             policy: self.policy.clone(),
             active: Arc::clone(&self.active),
         };
-        *slot = Some(thread::spawn(move || background::worker_run(ctx)));
+        match thread::Builder::new()
+            .name("tst-reconnect".into())
+            .spawn(move || background::worker_run(ctx))
+        {
+            Ok(handle) => *slot = Some(handle),
+            Err(_) => {
+                drop(slot);
+                // The OS refused a thread: take the same exit a panicking
+                // worker takes, so the next send reports Broken instead of
+                // queuing behind a worker that does not exist. The gap lock
+                // linearizes the clear with the send gate (invariant 2);
+                // the abnormal flag is stored first, as the guard does.
+                let _gap = self
+                    .gap
+                    .lock()
+                    .expect("BUG: gap lock poisoned — gap buffer is invariant-critical");
+                use std::sync::atomic::Ordering;
+                self.shared.gave_up_abnormal.store(true, Ordering::Release);
+                self.shared.gave_up.store(true, Ordering::Release);
+                self.shared.bg_active.store(false, Ordering::Release);
+            }
+        }
     }
 
     /// Latch the cancel an inner reported (see `Latch::inner_cancel`) and

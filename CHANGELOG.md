@@ -230,6 +230,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-pipeline (BREAKING)
 
+- The Background reconnect worker thread is named `tst-reconnect` instead
+  of carrying no name, so a thread dump shows whose thread it is; a refused
+  thread spawn now ends the outage cycle with the abnormal give-up a
+  panicking worker takes, where it used to panic the sending thread. The
+  send-path queue bounds are written down in `resource-policy.md`.
 - `MuxPublisher::send_*` are renamed `push_*` (`push_video`,
   `push_video_misp`, `push_klv`, `push_audio`, `push_subtitle`,
   `push_data`): `send` names an operation that hands bytes to a
@@ -321,6 +326,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the builder rule every other crate follows except `RtspClientBuilder`;
   chained calls on a temporary are unchanged, a builder held in a `let` is
   now mutated in place.
+- An HLS publisher that serves HTTP runs one thread named `tst-hls` (a
+  current-thread runtime) instead of two `tst-hls-rt` workers, the
+  one-thread-per-owner rule `architecture.md` states; dropping the
+  publisher now cancels and detaches the server instead of waiting up to
+  2 s for it, and `shutdown()` keeps the 2 s bound.
 
 ### Changed — tst-py (BREAKING)
 

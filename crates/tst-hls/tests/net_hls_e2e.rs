@@ -206,3 +206,38 @@ fn hls_pipeline_via_ffmpeg_validates_playlist() {
 
     server.shutdown();
 }
+
+/// The HTTP server runs on exactly one OS thread named `tst-hls`. The probe
+/// reads `/proc`, so it only checks where `/proc/self/task` exists; nextest
+/// runs each test in its own process, which keeps the count exact.
+#[test]
+fn http_server_runs_on_one_thread_named_tst_hls() {
+    if !std::path::Path::new("/proc/self/task").is_dir() {
+        return;
+    }
+    let dir = tmpdir("thread-name");
+    let publisher = HlsPublisherBuilder::new()
+        .bind("127.0.0.1:0".parse().unwrap())
+        .output_dir(&dir)
+        .mode(HlsMode::Event)
+        .build()
+        .unwrap();
+    let addr = publisher.local_addr().unwrap();
+    // A connection exercises the accept loop before the threads are counted.
+    drop(std::net::TcpStream::connect(addr).unwrap());
+
+    let names: Vec<String> = std::fs::read_dir("/proc/self/task")
+        .unwrap()
+        .filter_map(|t| std::fs::read_to_string(t.unwrap().path().join("comm")).ok())
+        .map(|c| c.trim_end().to_owned())
+        .collect();
+    assert_eq!(
+        names.iter().filter(|n| *n == "tst-hls").count(),
+        1,
+        "threads: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n.starts_with("tst-hls-rt")),
+        "threads: {names:?}"
+    );
+}

@@ -1,6 +1,7 @@
 //! Internal hyper 1.x HTTP server (serves /playlist.m3u8 + /segment_*.ts).
 //!
-//! The server runs on a private tokio Runtime owned by [`HlsPublisher`].
+//! The server runs on one thread named `tst-hls` that owns a current-thread
+//! tokio runtime, owned by [`HlsPublisher`].
 //! Callers see only the sync `Publisher` API.
 
 use std::convert::Infallible;
@@ -15,7 +16,6 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
-use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
 use crate::auth::check_basic_auth;
@@ -57,11 +57,30 @@ pub(crate) fn route(method: &hyper::Method, path: &str) -> Route {
     }
 }
 
-/// Handle owned by the publisher; cancels + joins the runtime on drop.
+/// Handle owned by the publisher. The server is one OS thread named
+/// `tst-hls` that owns a current-thread runtime; the handle cancels it and
+/// waits a bounded time for it to finish.
 pub(crate) struct ServerHandle {
     pub(crate) cancel: CancellationToken,
-    pub(crate) runtime: Option<Runtime>,
+    // Behind a mutex so the handle keeps the auto traits it had with a runtime.
+    thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    done: Done,
     pub(crate) local_addr: std::net::SocketAddr,
+}
+
+/// Set when the server thread's body ends; `shutdown()` waits on it.
+type Done = Arc<(Mutex<bool>, std::sync::Condvar)>;
+
+/// Sets the completion flag when the server thread's body ends, including
+/// on a panic.
+struct DoneOnDrop(Done);
+
+impl Drop for DoneOnDrop {
+    fn drop(&mut self) {
+        let (flag, cv) = &*self.0;
+        *flag.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        cv.notify_all();
+    }
 }
 
 impl ServerHandle {
@@ -71,13 +90,6 @@ impl ServerHandle {
         basic_auth: Option<(String, String)>,
         #[cfg(feature = "tls")] tls_config: Option<Arc<rustls::ServerConfig>>,
     ) -> Result<Self, HlsError> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name("tst-hls-rt")
-            .enable_all()
-            .build()
-            .map_err(HlsError::Io)?;
-
         let cancel = CancellationToken::new();
         let cancel_for_task = cancel.clone();
         let state_for_task = state.clone();
@@ -85,15 +97,40 @@ impl ServerHandle {
         #[cfg(feature = "tls")]
         let acceptor = tls_config.map(tokio_rustls::TlsAcceptor::from);
 
-        let (listener, local_addr) = runtime
-            .block_on(async {
-                let l = TcpListener::bind(bind).await?;
-                let a = l.local_addr()?;
-                Ok::<_, std::io::Error>((l, a))
-            })
-            .map_err(|e| HlsError::BindFailed(e.to_string()))?;
+        let (ready_tx, ready_rx) =
+            std::sync::mpsc::channel::<Result<std::net::SocketAddr, HlsError>>();
+        let done: Done = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let done_for_thread = Arc::clone(&done);
 
-        runtime.spawn(async move {
+        let thread = std::thread::Builder::new()
+            .name("tst-hls".into())
+            .spawn(move || {
+                let _done = DoneOnDrop(done_for_thread);
+                let runtime = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        let _ = ready_tx.send(Err(HlsError::Io(e)));
+                        return;
+                    }
+                };
+                runtime.block_on(async move {
+                    let (listener, local_addr) = match async {
+                        let l = TcpListener::bind(bind).await?;
+                        let a = l.local_addr()?;
+                        Ok::<_, std::io::Error>((l, a))
+                    }
+                    .await
+                    {
+                        Ok(p) => p,
+                        Err(e) => {
+                            let _ = ready_tx.send(Err(HlsError::BindFailed(e.to_string())));
+                            return;
+                        }
+                    };
+                    let _ = ready_tx.send(Ok(local_addr));
             loop {
                 tokio::select! {
                     _ = cancel_for_task.cancelled() => break,
@@ -144,10 +181,28 @@ impl ServerHandle {
                 }
             }
         });
+                // Dropping the runtime here ends any connection task still open.
+            })
+            .map_err(HlsError::Io)?;
+
+        let local_addr = match ready_rx.recv() {
+            Ok(Ok(a)) => a,
+            Ok(Err(e)) => {
+                let _ = thread.join();
+                return Err(e);
+            }
+            Err(_) => {
+                let _ = thread.join();
+                return Err(HlsError::Io(std::io::Error::other(
+                    "the HLS server thread ended before it bound",
+                )));
+            }
+        };
 
         Ok(Self {
             cancel,
-            runtime: Some(runtime),
+            thread: Mutex::new(Some(thread)),
+            done,
             local_addr,
         })
     }
@@ -156,21 +211,35 @@ impl ServerHandle {
         self.local_addr
     }
 
-    /// Cancel + wait for the runtime to drain.
+    /// Cancel, then wait up to 2 s for the server thread to finish; a thread
+    /// that has not finished by then is detached.
     pub(crate) fn shutdown(mut self) {
+        self.stop();
+    }
+
+    fn stop(&mut self) {
         self.cancel.cancel();
-        if let Some(rt) = self.runtime.take() {
-            rt.shutdown_timeout(std::time::Duration::from_secs(2));
+        let taken = self.thread.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let Some(thread) = taken else {
+            return;
+        };
+        let (flag, cv) = &*self.done;
+        let finished = flag.lock().unwrap_or_else(|e| e.into_inner());
+        let (finished, _) = cv
+            .wait_timeout_while(finished, std::time::Duration::from_secs(2), |f| !*f)
+            .unwrap_or_else(|e| e.into_inner());
+        if *finished {
+            drop(finished);
+            let _ = thread.join();
         }
     }
 }
 
 impl Drop for ServerHandle {
+    /// Cancels and detaches: the thread ends on its own once it sees the
+    /// cancel.
     fn drop(&mut self) {
         self.cancel.cancel();
-        if let Some(rt) = self.runtime.take() {
-            rt.shutdown_timeout(std::time::Duration::from_secs(2));
-        }
     }
 }
 
