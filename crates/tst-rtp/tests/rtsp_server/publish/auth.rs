@@ -18,7 +18,10 @@ fn status(resp: &str) -> u16 {
 }
 fn connect(port: u16) -> TcpStream {
     let t = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    t.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    t.set_read_timeout(Some(crate::fixtures::raw_rtsp::scaled(
+        Duration::from_secs(2),
+    )))
+    .unwrap();
     t
 }
 fn announce(tcp: &mut TcpStream, uri: &str, cseq: u32, auth: &str) -> String {

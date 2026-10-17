@@ -63,7 +63,10 @@ fn stop_sends_notice_5402_announce_to_active_session() {
     // the test's port surface).
     let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
     tcp.set_nodelay(true).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    tcp.set_read_timeout(Some(crate::fixtures::raw_rtsp::scaled(
+        Duration::from_secs(2),
+    )))
+    .unwrap();
 
     let opts = request(
         &mut tcp,
@@ -167,7 +170,10 @@ fn stop_shuts_down_per_session_write_half_so_client_sees_eof_promptly() {
 
     let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
     tcp.set_nodelay(true).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    tcp.set_read_timeout(Some(crate::fixtures::raw_rtsp::scaled(
+        Duration::from_secs(2),
+    )))
+    .unwrap();
     // Drive through SETUP so the server registers an ActiveSession with
     // a populated `tcp_write` — the new shutdown loop only fires on
     // sessions present in the registry at stop() time.

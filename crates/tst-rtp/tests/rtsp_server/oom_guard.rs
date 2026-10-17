@@ -270,7 +270,10 @@ fn pipelined_over_cap_head_gets_413_without_another_read() {
     let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
     tcp.set_nodelay(true).unwrap();
     tcp.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    tcp.set_read_timeout(Some(crate::fixtures::raw_rtsp::scaled(
+        Duration::from_secs(2),
+    )))
+    .unwrap();
 
     // A valid OPTIONS (CSeq 1) immediately followed, in the SAME write, by
     // an OPTIONS whose declared body (1 MiB + 1) is just over
