@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tst_core::cancel::FlagCancel;
 use tst_core::net::{RecvAction, SendClass, classify_recv_error, classify_send_error};
 use tst_core::transport::{
-    BrokenCause, RecvTransport, SocketStats, Transport, TransportCancel, TransportError,
+    BrokenCause, EndReason, EndReasonHandle, RecvTransport, SocketStats, Transport,
+    TransportCancel, TransportError,
 };
 
 use crate::config::TcpConfig;
@@ -168,6 +169,29 @@ pub struct TcpTransport {
     /// Set only by [`TcpCancelHandle::cancel`] — see that field's doc for
     /// why it is not `!alive`.
     pub(crate) cancel: FlagCancel,
+    /// Why the receive side ended, shared with every handle from
+    /// [`RecvTransport::end_reason_handle`]; written first-writer-wins
+    /// through [`record_tcp_end`]. A send-only user never reads it.
+    end_reason: EndReasonHandle,
+}
+
+/// The reasons a TCP receive stream can end with: a cancel or close, the
+/// peer's orderly close (EOF), or a hard read failure. Every recording
+/// site goes through [`record_tcp_end`].
+fn tcp_receiver_can_end_with(r: &EndReason) -> bool {
+    matches!(
+        r,
+        EndReason::Cancelled | EndReason::CleanTeardown | EndReason::TransportFailed { .. }
+    )
+}
+
+/// Record why a TCP receive stream ended (first writer wins).
+fn record_tcp_end(h: &EndReasonHandle, r: EndReason) {
+    debug_assert!(
+        tcp_receiver_can_end_with(&r),
+        "a TCP receiver cannot end with {r:?}"
+    );
+    h.record(r);
 }
 
 /// Resolve `host:port` (IP literal or DNS name) and connect with `timeout`
@@ -244,6 +268,7 @@ impl TcpTransport {
             stats: TcpStats::default(),
             alive: Arc::new(AtomicBool::new(true)),
             cancel: FlagCancel::new(),
+            end_reason: EndReasonHandle::default(),
         })
     }
 
@@ -261,6 +286,7 @@ impl TcpTransport {
             stats: TcpStats::default(),
             alive: Arc::new(AtomicBool::new(true)),
             cancel: FlagCancel::new(),
+            end_reason: EndReasonHandle::default(),
         })
     }
 
@@ -274,6 +300,7 @@ impl TcpTransport {
             stats: TcpStats::default(),
             alive: Arc::new(AtomicBool::new(true)),
             cancel: FlagCancel::new(),
+            end_reason: EndReasonHandle::default(),
         }
     }
 
@@ -438,21 +465,9 @@ impl Transport for TcpTransport {
     }
 }
 
-impl RecvTransport for TcpTransport {
-    /// Receive into `buf`. An **empty** `buf` is a documented no-op: it
-    /// returns `Ok(0)` without touching the socket or the liveness flag.
-    /// `TcpStream::read(&mut [])` returns `Ok(0)` on an open peer, and the
-    /// `Ok(0)` arm below is the peer-EOF discriminator — letting an empty
-    /// read reach it would report a clean EOF (`Broken { cause: CleanEof }`)
-    /// and latch the transport dead while the peer is still connected.
-    /// The guard sits above `InnerStream`, so `tcps://` follows
-    /// the same rule.
-    ///
-    /// A dead transport reports WHICH death at the loop's entry check (the
-    /// private `dead_error` helper): a cancel → `ExplicitClose`, the
-    /// transport's own `close()` → `Closed`. A parked receive observes either
-    /// at its next ~100 ms poll boundary.
-    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+impl TcpTransport {
+    /// The receive loop behind `recv_bytes`; the caller records the end.
+    fn recv_once(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         if buf.is_empty() {
             return Ok(0);
         }
@@ -496,6 +511,40 @@ impl RecvTransport for TcpTransport {
             }
         }
     }
+}
+
+impl RecvTransport for TcpTransport {
+    /// Receive into `buf`. An **empty** `buf` is a documented no-op: it
+    /// returns `Ok(0)` without touching the socket or the liveness flag.
+    /// `TcpStream::read(&mut [])` returns `Ok(0)` on an open peer, and the
+    /// `Ok(0)` arm below is the peer-EOF discriminator — letting an empty
+    /// read reach it would report a clean EOF (`Broken { cause: CleanEof }`)
+    /// and latch the transport dead while the peer is still connected.
+    /// The guard sits above `InnerStream`, so `tcps://` follows
+    /// the same rule.
+    ///
+    /// A dead transport reports WHICH death at the loop's entry check (the
+    /// private `dead_error` helper): a cancel → `ExplicitClose`, the
+    /// transport's own `close()` → `Closed`. A parked receive observes either
+    /// at its next ~100 ms poll boundary.
+    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        let r = self.recv_once(buf);
+        match &r {
+            Err(TransportError::ExplicitClose) => {
+                record_tcp_end(&self.end_reason, EndReason::Cancelled);
+            }
+            Err(TransportError::Broken {
+                cause: BrokenCause::CleanEof,
+                ..
+            }) => record_tcp_end(&self.end_reason, EndReason::CleanTeardown),
+            Err(TransportError::Broken { msg, .. }) => record_tcp_end(
+                &self.end_reason,
+                EndReason::TransportFailed { msg: msg.clone() },
+            ),
+            _ => {}
+        }
+        r
+    }
 
     fn max_payload(&self) -> usize {
         self.pkt_size
@@ -507,6 +556,7 @@ impl RecvTransport for TcpTransport {
 
     fn close(&mut self) {
         self.alive.store(false, Ordering::Release);
+        record_tcp_end(&self.end_reason, EndReason::Cancelled);
         self.inner.shutdown();
     }
 
@@ -516,6 +566,10 @@ impl RecvTransport for TcpTransport {
 
     fn socket_stats(&self) -> Option<SocketStats> {
         Some(self.stats.to_socket_stats())
+    }
+
+    fn end_reason_handle(&self) -> Option<EndReasonHandle> {
+        Some(self.end_reason.clone())
     }
 }
 

@@ -7,7 +7,10 @@
 use crate::SrtSocket;
 use crate::error::{SendError, SrtErrno};
 use std::sync::Arc;
-use tst_core::transport::{BrokenCause, SocketStats, Transport, TransportCancel, TransportError};
+use tst_core::transport::{
+    BrokenCause, EndReason, EndReasonHandle, SocketStats, Transport, TransportCancel,
+    TransportError,
+};
 
 /// SRT live-mode wire ceiling for a single message payload — the
 /// maximum value libsrt accepts for `SRTO_PAYLOADSIZE`. The option is
@@ -82,6 +85,28 @@ pub struct SrtTransport {
     /// thread cancelled it"; this flag is what makes a post-`close()`
     /// operation report `Closed` and a post-cancel one `ExplicitClose`.
     closed: bool,
+    /// Why the receive side ended, shared with every handle from
+    /// [`tst_core::transport::RecvTransport::end_reason_handle`]. Written
+    /// first-writer-wins through [`record_srt_end`]; a send-only user
+    /// never reads it.
+    end_reason: EndReasonHandle,
+}
+
+/// The reasons an SRT receive stream can end with: a cancel or close, or a
+/// libsrt failure. libsrt reports a peer's orderly close as a broken link,
+/// so no `CleanTeardown` is recorded. Every recording site goes through
+/// [`record_srt_end`].
+fn srt_receiver_can_end_with(r: &EndReason) -> bool {
+    matches!(r, EndReason::Cancelled | EndReason::TransportFailed { .. })
+}
+
+/// Record why an SRT receive stream ended (first writer wins).
+fn record_srt_end(h: &EndReasonHandle, r: EndReason) {
+    debug_assert!(
+        srt_receiver_can_end_with(&r),
+        "an SRT receiver cannot end with {r:?}"
+    );
+    h.record(r);
 }
 
 impl SrtTransport {
@@ -115,6 +140,7 @@ impl SrtTransport {
             max_payload,
             cancel,
             closed: false,
+            end_reason: EndReasonHandle::default(),
         }
     }
 
@@ -291,6 +317,7 @@ impl Transport for SrtTransport {
         // cancel handle, so without this flag every later op would read
         // the latch and report `ExplicitClose` for our own close.
         self.closed = true;
+        record_srt_end(&self.end_reason, EndReason::Cancelled);
         if let Some(socket) = self.socket.take() {
             // SrtSocket::close consumes self and is infallible; the cancel handle consumes the srt_close rc.
             socket.close();
@@ -320,8 +347,25 @@ impl Transport for SrtTransport {
     }
 }
 
-impl tst_core::transport::RecvTransport for SrtTransport {
-    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+impl SrtTransport {
+    /// Record the receive-side end a failed `recv_bytes` reports: a cancel
+    /// (including the process-exit guard) is `Cancelled`, a broken link is
+    /// `TransportFailed`. A timeout, a closed transport and the other
+    /// non-terminal answers record nothing.
+    fn record_recv_failure(&self, e: &TransportError) {
+        match e {
+            TransportError::ExplicitClose => {
+                record_srt_end(&self.end_reason, EndReason::Cancelled);
+            }
+            TransportError::Broken { msg, .. } => record_srt_end(
+                &self.end_reason,
+                EndReason::TransportFailed { msg: msg.clone() },
+            ),
+            _ => {}
+        }
+    }
+
+    fn recv_once(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         use crate::error::RecvError;
         // An empty destination is a no-op. libsrt rejects a
         // zero-length receive (`MJ_NOTSUP`, core.cpp `if (len <= 0)`), which
@@ -387,6 +431,16 @@ impl tst_core::transport::RecvTransport for SrtTransport {
         };
         result.map_err(|e| self.cancelled_or(e))
     }
+}
+
+impl tst_core::transport::RecvTransport for SrtTransport {
+    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        let r = self.recv_once(buf);
+        if let Err(e) = &r {
+            self.record_recv_failure(e);
+        }
+        r
+    }
 
     fn max_payload(&self) -> usize {
         // Recv-side deliverable ceiling (see RecvTransport::max_payload
@@ -419,6 +473,10 @@ impl tst_core::transport::RecvTransport for SrtTransport {
 
     fn socket_stats(&self) -> Option<SocketStats> {
         <Self as tst_core::transport::Transport>::socket_stats(self)
+    }
+
+    fn end_reason_handle(&self) -> Option<EndReasonHandle> {
+        Some(self.end_reason.clone())
     }
 }
 

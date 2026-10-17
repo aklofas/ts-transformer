@@ -165,6 +165,7 @@ pub fn tst_rist::recv::RistRecvTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_rist::recv::RistRecvTransport
 pub fn tst_rist::recv::RistRecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_rist::recv::RistRecvTransport::close(&mut self)
+pub fn tst_rist::recv::RistRecvTransport::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
 pub fn tst_rist::recv::RistRecvTransport::is_alive(&self) -> bool
 pub fn tst_rist::recv::RistRecvTransport::max_payload(&self) -> usize
 pub fn tst_rist::recv::RistRecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
@@ -350,6 +351,7 @@ pub fn tst_rist::recv::RistRecvTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_rist::recv::RistRecvTransport
 pub fn tst_rist::recv::RistRecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_rist::recv::RistRecvTransport::close(&mut self)
+pub fn tst_rist::recv::RistRecvTransport::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
 pub fn tst_rist::recv::RistRecvTransport::is_alive(&self) -> bool
 pub fn tst_rist::recv::RistRecvTransport::max_payload(&self) -> usize
 pub fn tst_rist::recv::RistRecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>

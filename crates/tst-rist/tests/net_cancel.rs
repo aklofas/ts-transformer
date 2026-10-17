@@ -18,7 +18,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tst_core::transport::{RecvTransport, Transport, TransportError};
+use tst_core::transport::{EndReason, RecvTransport, Transport, TransportError};
 use tst_rist::{RistProfile, RistRecvTransportBuilder, RistTransportBuilder};
 
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -29,6 +29,7 @@ const PORT_SEND_CANCEL: u16 = 33044;
 const PORT_SEND_CLOSE: u16 = 33046;
 const PORT_RECV_EMPTY: u16 = 33048;
 const PORT_OPENER: u16 = 33120;
+const PORT_RECV_REASON: u16 = 33122;
 
 /// Build a Simple-profile receiver on `port`, or return `None` when librist
 /// cannot bind here (the same skip the sibling suites take).
@@ -259,4 +260,24 @@ fn opener_round_trips_one_datagram_and_its_cancel_ends_a_parked_recv() {
         .expect("the worker reports within its own deadline");
     let _ = worker.join();
     assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
+}
+
+/// A cancelled receiver records `Cancelled` on the handle taken before the
+/// transport moved; a fresh one reads `None`.
+#[test]
+fn recv_cancel_loopback_records_cancelled_end_reason() {
+    let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(mut recv) = listen(PORT_RECV_REASON) else {
+        eprintln!("skip: librist receiver unavailable on {PORT_RECV_REASON}");
+        return;
+    };
+    let reason = recv.end_reason_handle().expect("rist records end reasons");
+    assert_eq!(reason.get(), None, "live receiver has no end reason");
+    RecvTransport::cancel_handle(&recv)
+        .expect("cancel handle")
+        .cancel();
+    let mut buf = vec![0u8; recv.max_payload()];
+    let r = recv.recv_bytes(&mut buf);
+    assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
+    assert_eq!(reason.get(), Some(EndReason::Cancelled));
 }

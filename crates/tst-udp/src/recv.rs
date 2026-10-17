@@ -10,7 +10,8 @@ use tst_core::net::udp_socket::{
 };
 use tst_core::net::{RecvAction, classify_recv_error};
 use tst_core::transport::{
-    BrokenCause, RecvTransport, SocketStats, TransportCancel, TransportError,
+    BrokenCause, EndReason, EndReasonHandle, RecvTransport, SocketStats, TransportCancel,
+    TransportError,
 };
 
 use crate::config::UdpConfig;
@@ -50,6 +51,26 @@ pub struct UdpRecvTransport {
     /// value; `recv_bytes` restores to `CANCEL_POLL_INTERVAL` at entry if a
     /// prior `recv_timeout` left a different value in place.
     applied_timeout: std::time::Duration,
+    /// Why the stream ended, shared with every handle from
+    /// [`RecvTransport::end_reason_handle`]; written first-writer-wins
+    /// through [`record_udp_end`].
+    end_reason: EndReasonHandle,
+}
+
+/// The reasons a UDP receive stream can end with: a cancel or close, or a
+/// socket failure. UDP has no end of stream, so no `CleanTeardown` is
+/// recorded. Every recording site goes through [`record_udp_end`].
+fn udp_receiver_can_end_with(r: &EndReason) -> bool {
+    matches!(r, EndReason::Cancelled | EndReason::TransportFailed { .. })
+}
+
+/// Record why a UDP receive stream ended (first writer wins).
+fn record_udp_end(h: &EndReasonHandle, r: EndReason) {
+    debug_assert!(
+        udp_receiver_can_end_with(&r),
+        "a UDP receiver cannot end with {r:?}"
+    );
+    h.record(r);
 }
 
 impl UdpRecvTransport {
@@ -110,6 +131,7 @@ impl UdpRecvTransport {
             // The bind helper sets SO_RCVTIMEO = CANCEL_POLL_INTERVAL on
             // the socket; cache that so the first recv_bytes entry is a no-op.
             applied_timeout: CANCEL_POLL_INTERVAL,
+            end_reason: EndReasonHandle::default(),
         })
     }
 
@@ -183,8 +205,8 @@ impl UdpRecvTransport {
     }
 }
 
-impl RecvTransport for UdpRecvTransport {
-    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+impl UdpRecvTransport {
+    fn recv_once(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         // An empty destination is a no-op — `Ok(0)` before the
         // socket or either flag is consulted (the kit row `empty_recv_is_noop`;
         // without this an empty read is served by a zero-length `recv` that
@@ -267,6 +289,23 @@ impl RecvTransport for UdpRecvTransport {
             }
         }
     }
+}
+
+impl RecvTransport for UdpRecvTransport {
+    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        let r = self.recv_once(buf);
+        match &r {
+            Err(TransportError::ExplicitClose) => {
+                record_udp_end(&self.end_reason, EndReason::Cancelled);
+            }
+            Err(TransportError::Broken { msg, .. }) => record_udp_end(
+                &self.end_reason,
+                EndReason::TransportFailed { msg: msg.clone() },
+            ),
+            _ => {}
+        }
+        r
+    }
 
     /// Upper bound on the buffer needed to receive any UDP datagram.
     ///
@@ -287,6 +326,7 @@ impl RecvTransport for UdpRecvTransport {
 
     fn close(&mut self) {
         self.alive.store(false, Ordering::Release);
+        record_udp_end(&self.end_reason, EndReason::Cancelled);
     }
 
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
@@ -295,6 +335,10 @@ impl RecvTransport for UdpRecvTransport {
 
     fn socket_stats(&self) -> Option<SocketStats> {
         Some(self.stats.to_socket_stats())
+    }
+
+    fn end_reason_handle(&self) -> Option<EndReasonHandle> {
+        Some(self.end_reason.clone())
     }
 }
 

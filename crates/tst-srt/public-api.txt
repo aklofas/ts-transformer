@@ -835,6 +835,7 @@ impl tst_core::transport::RecvTransport for tst_srt::transport::SrtTransport
 pub fn tst_srt::transport::SrtTransport::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn tst_srt::transport::SrtTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_srt::transport::SrtTransport::close(&mut self)
+pub fn tst_srt::transport::SrtTransport::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
 pub fn tst_srt::transport::SrtTransport::is_alive(&self) -> bool
 pub fn tst_srt::transport::SrtTransport::max_payload(&self) -> usize
 pub fn tst_srt::transport::SrtTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
@@ -1542,6 +1543,7 @@ impl tst_core::transport::RecvTransport for tst_srt::transport::SrtTransport
 pub fn tst_srt::transport::SrtTransport::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn tst_srt::transport::SrtTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_srt::transport::SrtTransport::close(&mut self)
+pub fn tst_srt::transport::SrtTransport::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
 pub fn tst_srt::transport::SrtTransport::is_alive(&self) -> bool
 pub fn tst_srt::transport::SrtTransport::max_payload(&self) -> usize
 pub fn tst_srt::transport::SrtTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>

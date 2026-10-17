@@ -25,7 +25,8 @@ live peer, and must honour the same rules whichever transport it landed on:
    the transport's class. A `tcp` peer's clean close reads `END_OF_STREAM`
    on the first receive and every later one. An `srt` peer's close reads
    `BROKEN` first (libsrt reports a broken link, never a clean EOF) and
-   `END_OF_STREAM` after. `end_reason()` stays `None`. A datagram
+   `END_OF_STREAM` after. `end_reason()` reads `CLEAN_TEARDOWN` for the
+   `tcp` peer close and `TRANSPORT_FAILED` for the `srt` one. A datagram
    transport (`rtp`, `udp`, `rist`) cannot see a peer close, so it has no
    rule 8 case.
 
@@ -357,6 +358,7 @@ def test_cancel_ends_a_parked_recv_with_closed(shell: str, scheme: str) -> None:
         err = outcome[0]
         assert type(err) is error_class, repr(err)
         assert err.kind == kind_enum.CLOSED
+        assert rx.end_reason() == shells.EndReason.CANCELLED
 
 
 @pytest.mark.parametrize(("shell", "scheme"), _cases(RECEIVERS, 4))
@@ -451,4 +453,7 @@ def test_a_peer_close_ends_in_end_of_stream(shell: str, scheme: str) -> None:
                 _recv_once(shell, rx)
             assert type(e.value) is error_class, repr(e.value)
             assert e.value.kind == kind_enum.END_OF_STREAM
-        assert rx.end_reason() is None
+        expected_reason = (
+            shells.EndReason.TRANSPORT_FAILED if scheme == "srt" else shells.EndReason.CLEAN_TEARDOWN
+        )
+        assert rx.end_reason() == expected_reason

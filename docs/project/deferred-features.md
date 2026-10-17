@@ -1998,16 +1998,6 @@ Shipped 0.8.0: renamed `InputRelative` (0) and `Infinite` (−1); a stale use fa
 - **Trigger to revisit:** a JVM consumer needs to send or receive bytes
   that are not MPEG-TS over one of these transports.
 
-## End-reason handle on the srt / udp / tcp / rist receive transports
-
-- **Status:** Deferred. Only `tst-rtp` (and the managed SRT receivers)
-  record an end reason, so `end_reason()` on a plain srt, udp, tcp or rist
-  receiver answers `None` in Python and `null` in the JVM.
-- **Why deferred:** only `tst-rtp` records an end reason; the other
-  transports have no recorder to read.
-- **Trigger to revisit:** a consumer needs `end_reason()` off a transport
-  other than rtp.
-
 ## srt clean-close end reason
 
 - **Status:** Deferred. An `srt://` shell reads `BROKEN` on the first

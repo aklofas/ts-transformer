@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use tst_core::transport::{BrokenCause, RecvTransport, Transport, TransportError};
+use tst_core::transport::{BrokenCause, EndReason, RecvTransport, Transport, TransportError};
 use tst_tcp::TcpListener;
 use tst_tcp::TcpTransport;
 use tst_tcp::error::TcpError;
@@ -511,4 +511,36 @@ fn opener_round_trips_one_chunk_and_its_cancel_ends_a_parked_recv() {
         .recv_timeout(Duration::from_secs(5))
         .expect("the parked recv ended within 5 s of the cancel");
     assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
+}
+
+/// A cancelled receiver records `Cancelled`; a peer's orderly close records
+/// `CleanTeardown`. The handle is taken before the transport is used.
+#[test]
+fn recv_end_reason_loopback_is_cancelled_or_clean_teardown() {
+    let (mut cancelled, _server) = loopback_pair();
+    let reason = cancelled
+        .end_reason_handle()
+        .expect("tcp records end reasons");
+    assert_eq!(reason.get(), None, "live receiver has no end reason");
+    cancelled.cancel_handle().cancel();
+    let mut b = [0u8; 16];
+    let r = cancelled.recv_bytes(&mut b);
+    assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
+    assert_eq!(reason.get(), Some(EndReason::Cancelled));
+
+    let (mut eof, server) = loopback_pair();
+    let reason = eof.end_reason_handle().expect("tcp records end reasons");
+    drop(server);
+    let r = eof.recv_bytes(&mut b);
+    assert!(
+        matches!(
+            r,
+            Err(TransportError::Broken {
+                cause: BrokenCause::CleanEof,
+                ..
+            })
+        ),
+        "got {r:?}"
+    );
+    assert_eq!(reason.get(), Some(EndReason::CleanTeardown));
 }
