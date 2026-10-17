@@ -114,3 +114,69 @@ fn hls_publish_round_trip() {
     // ── Free ───────────────────────────────────────────────────────────
     unsafe { tst_publisher_free(publisher) };
 }
+
+/// A `tst_publisher_push_ts` racing `tst_publisher_finish` from another
+/// thread must be serialized by the handle lock: every push either lands
+/// or reports the handle finished, and the loop always ends on the
+/// finished code. Before the handle took its lock both entry points
+/// aliased a `&mut` to the same slot, which ThreadSanitizer reports as a
+/// data race (`tsan-native` job).
+#[test]
+fn push_ts_racing_finish_is_serialized() {
+    use std::sync::{Arc, Barrier};
+
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let out_c = CString::new(dir.path().to_str().expect("utf8 path")).unwrap();
+    let bind = CString::new("127.0.0.1:0").unwrap();
+    let builder = unsafe { tst_hls_publisher_builder_new() };
+    assert_eq!(
+        unsafe { tst_hls_publisher_builder_bind(builder, bind.as_ptr()) },
+        0
+    );
+    assert_eq!(
+        unsafe { tst_hls_publisher_builder_output_dir(builder, out_c.as_ptr()) },
+        0
+    );
+    let publisher = unsafe { tst_hls_publisher_builder_build(builder) };
+    assert!(!publisher.is_null());
+
+    // Raw pointers are not `Send`; the address crosses the thread boundary.
+    let addr = publisher as usize;
+    let barrier = Arc::new(Barrier::new(2));
+
+    let pusher = {
+        let barrier = Arc::clone(&barrier);
+        std::thread::spawn(move || {
+            let p = addr as *mut _;
+            let pkt = null_ts_packet();
+            barrier.wait();
+            // Push until the handle reports the finish; bounded so a
+            // regression that never reports it fails instead of hanging.
+            for _ in 0..1_000_000 {
+                let rc = unsafe { tst_publisher_push_ts(p, pkt.as_ptr(), pkt.len()) };
+                if rc != 0 {
+                    return rc;
+                }
+            }
+            0
+        })
+    };
+
+    barrier.wait();
+    // Let some pushes land before the finish arrives.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    assert_eq!(unsafe { tst_publisher_finish(publisher) }, 0);
+
+    let last = pusher.join().expect("pusher thread");
+    assert_eq!(
+        last,
+        TstError::HlsFinished as i32,
+        "the push after the finish reports the handle finished"
+    );
+    // A second finish takes nothing out of the empty slot.
+    assert_eq!(
+        unsafe { tst_publisher_finish(publisher) },
+        TstError::HlsFinished as i32
+    );
+    unsafe { tst_publisher_free(publisher) };
+}
