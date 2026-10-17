@@ -20,9 +20,7 @@ mod recv;
 mod rtcp_ingest;
 mod send;
 
-pub(crate) use recv::{
-    MPSC_PUMP_DISCONNECTED, RECV_SCRATCH_LEN, Source, is_valid_mp2t_payload, record_end,
-};
+pub(crate) use recv::{MPSC_PUMP_DISCONNECTED, RECV_SCRATCH_LEN, Source, record_end};
 pub use recv::{RtpRecvTransport, RtpStats};
 pub use send::RtpTransport;
 
@@ -1116,13 +1114,13 @@ mod tests {
     #[test]
     fn is_valid_mp2t_payload_covers_edge_cases() {
         // Empty — invalid.
-        assert!(!is_valid_mp2t_payload(&[]));
+        assert!(!recv::is_valid_mp2t_payload(&[]));
         // 100 bytes, 0x47 start — not 188-aligned, invalid.
         let mut v = vec![0x47u8; 100];
-        assert!(!is_valid_mp2t_payload(&v));
+        assert!(!recv::is_valid_mp2t_payload(&v));
         // 188 bytes, wrong sync — invalid.
         v = vec![0xAAu8; 188];
-        assert!(!is_valid_mp2t_payload(&v));
+        assert!(!recv::is_valid_mp2t_payload(&v));
         // 188 bytes, correct sync — valid.
         v = vec![0u8; 188];
         v[0] = 0x47;
@@ -1133,7 +1131,7 @@ mod tests {
         assert!(is_valid_mp2t_payload(&v));
         // 189 bytes — not 188-aligned, invalid.
         v = vec![0x47u8; 189];
-        assert!(!is_valid_mp2t_payload(&v));
+        assert!(!recv::is_valid_mp2t_payload(&v));
     }
 
     // ── EndReason: plain rtp:// transport (no owning RtspClient) ──
