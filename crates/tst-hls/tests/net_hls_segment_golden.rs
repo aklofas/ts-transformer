@@ -96,8 +96,13 @@ fn hls_segments_match_the_committed_golden() {
     assert!(!names.is_empty(), "no segments were written");
 
     // Segments cut by the wall clock carry a wall-clock `#EXTINF`; every
-    // other playlist line is a function of the feed alone.
+    // other playlist line is a function of the feed alone. The first segment
+    // spans 3 s of PTS (0 -> 270 000), so its duration is pinned exactly.
     let playlist = std::fs::read_to_string(out.join("playlist.m3u8")).unwrap();
+    assert!(
+        playlist.contains("#EXTINF:3.000,\nsegment_00000.ts"),
+        "the first segment's PTS-derived duration drifted:\n{playlist}"
+    );
     let mut stable = String::new();
     for l in playlist.lines().filter(|l| !l.starts_with("#EXTINF:")) {
         stable.push_str(l);
