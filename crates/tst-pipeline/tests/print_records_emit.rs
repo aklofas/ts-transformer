@@ -747,6 +747,101 @@ fn leak(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
 }
 
+/// The code spans of a rendered doc: `{@code …}` in Java, ``…`` in Python.
+fn code_spans(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (open, close) in [("{@code ", "}"), ("``", "``")] {
+        let mut rest = text;
+        while let Some(i) = rest.find(open) {
+            let after = &rest[i + open.len()..];
+            let Some(j) = after.find(close) else { break };
+            out.push(after[..j].to_string());
+            rest = &after[j + close.len()..];
+        }
+    }
+    out
+}
+
+#[test]
+fn no_rust_only_text_reaches_a_host_doc() {
+    // Neither a path nor a Rust expression, in prose or in a code span.
+    let rust_only = [
+        "crate::",
+        "::",
+        "()?",
+        "as_deref",
+        "f64::",
+        "Vec<",
+        "Vec&lt;",
+        "Option<",
+        "Option&lt;",
+    ];
+    let reg = schema::records();
+    let mut leaks = Vec::new();
+    for e in &reg {
+        let n = e.schema.name;
+        let java = emit_java::block(&reg, e).unwrap();
+        let py = emit_pyi::py_block(&reg, e).unwrap();
+        // The Javadoc is the text above the record header; the docstring is
+        // the text between the first two triple quotes.
+        let javadoc: String = java
+            .lines()
+            .take_while(|l| !l.starts_with("public record"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let docstring = py.split("\"\"\"").nth(1).unwrap_or("").to_string();
+        for (host, doc) in [("Java", &javadoc), ("Python", &docstring)] {
+            for bad in rust_only {
+                if doc.contains(bad) {
+                    let at = doc.find(bad).unwrap();
+                    let from = doc[..at].char_indices().rev().nth(30).map_or(0, |(i, _)| i);
+                    let to = (at + bad.len() + 30).min(doc.len());
+                    let to = (to..=doc.len())
+                        .find(|i| doc.is_char_boundary(*i))
+                        .unwrap_or(doc.len());
+                    leaks.push(format!(
+                        "{n} ({host}) `{bad}`: ...{}...",
+                        doc[from..to].replace('\n', " ")
+                    ));
+                }
+            }
+            for span in code_spans(doc) {
+                for bad in rust_only {
+                    if span.contains(bad) {
+                        leaks.push(format!("{n} ({host}) code span `{span}` carries `{bad}`"));
+                    }
+                }
+            }
+        }
+    }
+    leaks.sort();
+    leaks.dedup();
+    assert!(
+        leaks.is_empty(),
+        "Rust-only text in host docs:\n{}",
+        leaks.join("\n")
+    );
+}
+
+#[test]
+fn rust_paths_and_link_definitions_become_plain_names_in_host_docs() {
+    assert_eq!(
+        schema::unlink("call `klv::st0806::decode` or `Self::field()` then [`Name`]"),
+        "call `decode` or `field` then `Name`"
+    );
+    assert_eq!(
+        schema::unlink("keeps `Option<T>` and `a b::c`"),
+        "keeps `Option<T>` and `a b::c`"
+    );
+    // A reference-style link definition says nothing to a host reader.
+    assert_eq!(
+        schema::paras(
+            " See [`decode`].\n\n [`decode`]: crate::klv::st0903::decode\n [`x`]: crate::x"
+        ),
+        vec!["See [`decode`]."]
+    );
+}
+
 #[test]
 fn every_registered_record_renders_every_target() {
     let reg = schema::records();
@@ -762,15 +857,18 @@ fn every_registered_record_renders_every_target() {
         let java = emit_java::block(&reg, e).unwrap_or_else(|m| panic!("{n}: {m}"));
         assert!(java.contains(&format!("public record {n}(")), "{n}: {java}");
         // The reader reserves the same local references as the builder.
+        let ways = usize::from(e.direction.crosses_out()) + usize::from(e.direction.crosses_in());
         assert_eq!(
             jvm.matches("ensure_local_capacity(").count(),
-            2,
+            ways,
             "{n}: {jvm}"
         );
     }
     // Two converter files per family, three host texts per record.
     let targets = write::targets(&root(), &reg).unwrap();
-    assert_eq!(targets.len(), 2 + 3 * reg.len());
+    let mut families: Vec<&str> = reg.iter().map(|e| e.family).collect();
+    families.dedup();
+    assert_eq!(targets.len(), 2 * families.len() + 3 * reg.len());
 }
 
 #[test]

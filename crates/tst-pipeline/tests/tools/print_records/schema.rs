@@ -99,12 +99,24 @@ pub fn records() -> Vec<Entry> {
     ]
 }
 
+/// A reference-style link definition line, `` [`x`]: crate::path::x ``: it
+/// names a Rust item and says nothing to a host reader.
+fn is_link_definition(line: &str) -> bool {
+    let t = line.trim();
+    t.starts_with('[') && t.contains("]: ")
+}
+
 /// The paragraphs of a joined doc text: runs of lines between empty ones,
 /// each line without the space a `///` comment leaves, joined by one space.
+/// Link definition lines are dropped.
 pub fn paras(doc: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut cur: Vec<&str> = Vec::new();
-    for l in doc.lines().map(|l| l.strip_prefix(' ').unwrap_or(l)) {
+    for l in doc
+        .lines()
+        .map(|l| l.strip_prefix(' ').unwrap_or(l))
+        .filter(|l| !is_link_definition(l))
+    {
         if l.trim().is_empty() {
             if !cur.is_empty() {
                 out.push(cur.join(" "));
@@ -120,7 +132,23 @@ pub fn paras(doc: &str) -> Vec<String> {
     out
 }
 
-/// `` [`X`] `` to `` `X` ``: Javadoc has no target for a rustdoc link.
+/// A code span that is a Rust path, `` `klv::st0806::decode` `` or
+/// `` `Self::field` ``, optionally ending in `()`: its final name.
+fn path_tail(span: &str) -> Option<&str> {
+    let body = span.strip_suffix("()").unwrap_or(span);
+    if !body.contains("::") {
+        return None;
+    }
+    let ok = body
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == ':');
+    let tail = body.rsplit("::").next().unwrap_or("");
+    (ok && !tail.is_empty()).then_some(tail)
+}
+
+/// Rust spellings a host reader has no use for, reduced to plain names:
+/// `` [`X`] `` to `` `X` `` (Javadoc and Sphinx have no target for a rustdoc
+/// link), and a code span that is a Rust path to its final name.
 pub fn unlink(doc: &str) -> String {
     let mut out = String::new();
     let mut rest = doc;
@@ -141,6 +169,25 @@ pub fn unlink(doc: &str) -> String {
         }
     }
     out.push_str(rest);
+    plain_paths(&out)
+}
+
+/// Each `` `a::b::Name` `` span of `doc` as `` `Name` ``.
+fn plain_paths(doc: &str) -> String {
+    let parts: Vec<&str> = doc.split('`').collect();
+    if parts.len() % 2 == 0 {
+        return doc.to_string(); // an unpaired backtick stays as written
+    }
+    let mut out = String::new();
+    for (i, p) in parts.iter().enumerate() {
+        if i % 2 == 1 {
+            out.push('`');
+            out.push_str(path_tail(p).unwrap_or(p));
+            out.push('`');
+        } else {
+            out.push_str(p);
+        }
+    }
     out
 }
 
