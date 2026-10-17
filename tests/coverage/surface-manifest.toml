@@ -3894,3 +3894,213 @@ bindings = ["c:tst_rtsp_server_remove_mount", "python:RtspServer.remove_mount", 
 scenario_ids = []
 tier = "A"
 
+
+[[exempt]]
+item = "tst_core::mpegts::mux::StreamKind"
+reason = "deprecated alias of `MuxStreamKind`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_pipeline::RawRecvStats"
+reason = "deprecated alias of `RawReceiverStats`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_pipeline::RawSendStats"
+reason = "deprecated alias of `RawSenderStats`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_pipeline::raw_receiver::RawRecvStats"
+reason = "deprecated alias of `RawReceiverStats`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_pipeline::raw_sender::RawSendStats"
+reason = "deprecated alias of `RawSenderStats`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_rtp::ConnectError"
+reason = "deprecated alias of `RtpConnectError`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_rtp::transport::ConnectError"
+reason = "deprecated alias of `RtpConnectError`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_rtp::url::UrlError"
+reason = "deprecated alias of `RtpUrlError`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::ConnectError"
+reason = "deprecated alias of `SrtConnectError`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::Listener"
+reason = "deprecated alias of `SrtListener`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::ListenerBuilder"
+reason = "deprecated alias of `SrtListenerBuilder`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::ListenerConfig"
+reason = "deprecated alias of `SrtListenerConfig`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::Socket"
+reason = "deprecated alias of `SrtSocket`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::SocketBuilder"
+reason = "deprecated alias of `SrtSocketBuilder`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::SocketConfig"
+reason = "deprecated alias of `SrtSocketConfig`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::Stats"
+reason = "deprecated alias of `SrtStats`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::UrlError"
+reason = "deprecated alias of `SrtUrlError`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::builder::ListenerBuilder"
+reason = "deprecated alias of `SrtListenerBuilder`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::builder::SocketBuilder"
+reason = "deprecated alias of `SrtSocketBuilder`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::config::ListenerConfig"
+reason = "deprecated alias of `SrtListenerConfig`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::config::SocketConfig"
+reason = "deprecated alias of `SrtSocketConfig`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::error::ConnectError"
+reason = "deprecated alias of `SrtConnectError`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::listener::Listener"
+reason = "deprecated alias of `SrtListener`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::socket::Socket"
+reason = "deprecated alias of `SrtSocket`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::socket::Stats"
+reason = "deprecated alias of `SrtStats`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_srt::url::UrlError"
+reason = "deprecated alias of `SrtUrlError`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_tcp::SocketConfig"
+reason = "deprecated alias of `TcpConfig`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_tcp::config::SocketConfig"
+reason = "deprecated alias of `TcpConfig`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_udp::SocketConfig"
+reason = "deprecated alias of `UdpConfig`; removed in 0.10.0"
+
+[[exempt]]
+item = "tst_udp::config::SocketConfig"
+reason = "deprecated alias of `UdpConfig`; removed in 0.10.0"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::url::parse_size"
+owning_tests = ["crates/tst-binding-gen/tests/url_vocabulary.rs", "crates/tst-core/src/url/common.rs"]
+bindings = ["c:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "python:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "java:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::url::common::parse_size"
+owning_tests = ["crates/tst-binding-gen/tests/url_vocabulary.rs", "crates/tst-core/src/url/common.rs"]
+bindings = ["c:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "python:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "java:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::url::parse_bool"
+owning_tests = ["crates/tst-binding-gen/tests/url_vocabulary.rs", "crates/tst-core/src/url/common.rs"]
+bindings = ["c:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "python:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "java:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::url::common::parse_bool"
+owning_tests = ["crates/tst-binding-gen/tests/url_vocabulary.rs", "crates/tst-core/src/url/common.rs"]
+bindings = ["c:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "python:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "java:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::url::parse_int"
+owning_tests = ["crates/tst-binding-gen/tests/url_vocabulary.rs", "crates/tst-core/src/url/common.rs"]
+bindings = ["c:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "python:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "java:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::url::common::parse_int"
+owning_tests = ["crates/tst-binding-gen/tests/url_vocabulary.rs", "crates/tst-core/src/url/common.rs"]
+bindings = ["c:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "python:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "java:n/a(Rust URL-value helper; bindings pass the URL string to the Rust parser)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::url::RtpUrl::new"
+owning_tests = ["crates/tst-binding-gen/tests/url_vocabulary.rs", "crates/tst-rtp/src/url.rs"]
+bindings = ["c:n/a(Rust constructor; bindings open an rtp:// URL string)", "python:n/a(Rust constructor; bindings open an rtp:// URL string)", "java:n/a(Rust constructor; bindings open an rtp:// URL string)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::url::SrtUrl::socket_config"
+owning_tests = ["crates/tst-binding-gen/tests/url_vocabulary.rs", "crates/tst-srt/tests/url.rs"]
+bindings = ["c:n/a(Rust URL-to-config step; bindings pass the URL string to the opener)", "python:n/a(Rust URL-to-config step; bindings pass the URL string to the opener)", "java:n/a(Rust URL-to-config step; bindings pass the URL string to the opener)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::url::SrtUrl::listener_config"
+owning_tests = ["crates/tst-binding-gen/tests/url_vocabulary.rs", "crates/tst-srt/tests/url.rs"]
+bindings = ["c:n/a(Rust URL-to-config step; bindings pass the URL string to the opener)", "python:n/a(Rust URL-to-config step; bindings pass the URL string to the opener)", "java:n/a(Rust URL-to-config step; bindings pass the URL string to the opener)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::config::SrtSocketConfig::merge_from"
+owning_tests = ["crates/tst-binding-gen/tests/url_vocabulary.rs", "crates/tst-srt/tests/url.rs"]
+bindings = ["c:n/a(Rust config merge; bindings apply keyword settings, then the URL, in their own glue)", "python:n/a(Rust config merge; bindings apply keyword settings, then the URL, in their own glue)", "java:n/a(Rust config merge; bindings apply keyword settings, then the URL, in their own glue)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
