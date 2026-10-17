@@ -80,6 +80,15 @@ impl<T, S> CHandle<T, S> {
             .unwrap_or(default)
     }
 
+    /// Move the value out under the slot lock (`finish`-style consuming
+    /// entry points). `None` once taken or released, so a second consuming
+    /// call (or a data-path call after it) reports a closed handle instead
+    /// of touching freed state.
+    #[allow(dead_code)] // consumed by the HLS publisher handles
+    pub(crate) fn take(&self) -> Option<T> {
+        self.0.take()
+    }
+
     /// Lock-free: never touches the slot a parked call holds, so the
     /// cancel always reaches the call it must stop.
     #[allow(dead_code)] // consumed by the `_cancel` entry points

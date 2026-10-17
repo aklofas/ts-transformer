@@ -21,19 +21,22 @@
 //! reach the HLS-specific surface (richer stats, the bound socket address,
 //! the rendered playlist).
 //!
-//! Unlike the `CHandle<T, S>` wrapper used by transport handles,
-//! `TstPublisher` stores `Option<PublisherImpl>` directly:
-//! `Publisher::finish` consumes the inner publisher by value (`self`),
-//! which a `Mutex<Option<T>>` can support but a `CHandle` (built around
-//! `&mut T` / `&T` closures) cannot.
-//! After `_finish` the inner is `None` (terminal) — subsequent push/cut
-//! calls return `HlsFinished`.
+//! `TstPublisher` is a `CHandle<PublisherImpl>` like every other handle:
+//! each entry point takes the handle lock, so a `tst_publisher_push_ts`
+//! racing a `tst_publisher_finish` from another thread is serialized.
+//! `Publisher::finish` consumes the inner publisher by value, so the
+//! consuming entry points (`_finish`, `_finish_serving`) use
+//! `CHandle::take`. After them the slot is empty (terminal) — subsequent
+//! push/cut/stats calls return `HlsFinished` (the accessors that already
+//! answered `HlsConfig` for a finished handle keep doing so).
 
 use std::os::raw::c_char;
 
+use tst_core::cancel::FlagCancel;
 use tst_core::publisher::Publisher;
 
 use crate::error::{TstError, set_last_error};
+use crate::handle::CHandle;
 use crate::stats::{TstHlsStats, TstPublisherStats};
 
 // ---------------------------------------------------------------------------
@@ -67,7 +70,41 @@ pub enum TstPublisherKind {
 /// publisher (terminal state); push/cut/stats on a finished handle return
 /// `TST_E_HLS_FINISHED`.
 pub struct TstPublisher {
-    pub(crate) inner: Option<PublisherImpl>,
+    /// The snapshot is the bound server address, fixed at construction.
+    pub(crate) inner: CHandle<PublisherImpl, Option<std::net::SocketAddr>>,
+}
+
+impl TstPublisher {
+    pub(crate) fn new(inner: PublisherImpl) -> Self {
+        let PublisherImpl::Hls(h) = &inner;
+        let addr = h.local_addr();
+        Self {
+            inner: CHandle::new(inner, std::sync::Arc::new(FlagCancel::new()), addr),
+        }
+    }
+}
+
+/// A closed slot (finished, or dropped by a caught panic) keeps the
+/// documented per-entry code instead of the generic `TST_E_CLOSED` the
+/// handle reports: `code` + `msg` replace it, anything else passes through.
+fn closed_as(rc: i32, code: TstError, msg: &str) -> i32 {
+    if rc == TstError::Closed as i32 {
+        set_last_error(code, msg);
+        return code as i32;
+    }
+    rc
+}
+
+fn finished(rc: i32) -> i32 {
+    closed_as(rc, TstError::HlsFinished, "publisher already finished")
+}
+
+fn not_hls(rc: i32) -> i32 {
+    closed_as(
+        rc,
+        TstError::HlsConfig,
+        "publisher is finished or not an HLS publisher",
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +131,7 @@ pub unsafe extern "C" fn tst_publisher_push_ts(
     len: usize,
 ) -> libc::c_int {
     crate::panic::ffi_catch(TstError::Internal as i32, || {
-        let Some(handle) = (unsafe { p.as_mut() }) else {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
             set_last_error(TstError::InvalidConfig, "null publisher pointer");
             return TstError::InvalidConfig as i32;
         };
@@ -102,16 +139,12 @@ pub unsafe extern "C" fn tst_publisher_push_ts(
             Ok(s) => s,
             Err(code) => return code,
         };
-        match &mut handle.inner {
-            Some(PublisherImpl::Hls(h)) => match h.push_ts(slice) {
+        finished(handle.inner.with_inner_mut(|imp| match imp {
+            PublisherImpl::Hls(h) => match h.push_ts(slice) {
                 Ok(()) => 0,
                 Err(e) => crate::error::record_with_context(e, "hls push_ts"),
             },
-            None => {
-                set_last_error(TstError::HlsFinished, "publisher already finished");
-                TstError::HlsFinished as i32
-            }
-        }
+        }))
     })
 }
 
@@ -129,20 +162,16 @@ pub unsafe extern "C" fn tst_publisher_push_ts(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_publisher_cut_segment(p: *mut TstPublisher) -> libc::c_int {
     crate::panic::ffi_catch(TstError::Internal as i32, || {
-        let Some(handle) = (unsafe { p.as_mut() }) else {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
             set_last_error(TstError::InvalidConfig, "null publisher pointer");
             return TstError::InvalidConfig as i32;
         };
-        match &mut handle.inner {
-            Some(PublisherImpl::Hls(h)) => match h.cut_segment() {
+        finished(handle.inner.with_inner_mut(|imp| match imp {
+            PublisherImpl::Hls(h) => match h.cut_segment() {
                 Ok(()) => 0,
                 Err(e) => crate::error::record_with_context(e, "hls cut_segment"),
             },
-            None => {
-                set_last_error(TstError::HlsFinished, "publisher already finished");
-                TstError::HlsFinished as i32
-            }
-        }
+        }))
     })
 }
 
@@ -164,7 +193,7 @@ pub unsafe extern "C" fn tst_publisher_cut_segment(p: *mut TstPublisher) -> libc
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_publisher_finish(p: *mut TstPublisher) -> libc::c_int {
     crate::panic::ffi_catch(TstError::Internal as i32, || {
-        let Some(handle) = (unsafe { p.as_mut() }) else {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
             set_last_error(TstError::InvalidConfig, "null publisher pointer");
             return TstError::InvalidConfig as i32;
         };
@@ -204,17 +233,13 @@ pub unsafe extern "C" fn tst_publisher_get_stats(
             set_last_error(TstError::InvalidConfig, "null out pointer");
             return TstError::InvalidConfig as i32;
         }
-        match &handle.inner {
-            Some(PublisherImpl::Hls(h)) => {
+        finished(handle.inner.with_inner_ref(|imp| match imp {
+            PublisherImpl::Hls(h) => {
                 let stats = TstPublisherStats::from(&h.stats());
                 unsafe { *out = stats };
                 0
             }
-            None => {
-                set_last_error(TstError::HlsFinished, "publisher already finished");
-                TstError::HlsFinished as i32
-            }
-        }
+        }))
     })
 }
 
@@ -291,20 +316,13 @@ pub unsafe extern "C" fn tst_hls_publisher_get_hls_stats(
             set_last_error(TstError::InvalidConfig, "null out pointer");
             return TstError::InvalidConfig as i32;
         }
-        match &handle.inner {
-            Some(PublisherImpl::Hls(h)) => {
+        not_hls(handle.inner.with_inner_ref(|imp| match imp {
+            PublisherImpl::Hls(h) => {
                 let stats = TstHlsStats::from(&h.hls_stats());
                 unsafe { *out = stats };
                 0
             }
-            None => {
-                set_last_error(
-                    TstError::HlsConfig,
-                    "publisher is finished or not an HLS publisher",
-                );
-                TstError::HlsConfig as i32
-            }
-        }
+        }))
     })
 }
 
@@ -340,9 +358,13 @@ pub unsafe extern "C" fn tst_hls_publisher_local_addr(
             set_last_error(TstError::InvalidConfig, "null buf pointer");
             return TstError::InvalidConfig as i32;
         }
-        let addr = match &handle.inner {
-            Some(PublisherImpl::Hls(h)) => h.local_addr(),
-            None => None,
+        // The address is a construction-time snapshot; the slot is only
+        // consulted to learn whether the publisher was finished.
+        let alive = handle.inner.with_inner_ref(|_| 0);
+        let addr = if alive == 0 {
+            *handle.inner.snapshot()
+        } else {
+            None
         };
         match addr {
             Some(a) => unsafe { write_cstr_to_buf(&a.to_string(), buf, buf_len) },
@@ -390,19 +412,12 @@ pub unsafe extern "C" fn tst_hls_publisher_render_playlist(
             set_last_error(TstError::InvalidConfig, "null buf pointer");
             return TstError::InvalidConfig as i32;
         }
-        match &handle.inner {
-            Some(PublisherImpl::Hls(h)) => {
+        not_hls(handle.inner.with_inner_ref(|imp| match imp {
+            PublisherImpl::Hls(h) => {
                 let playlist = h.render_playlist(is_event);
                 unsafe { write_cstr_to_buf(&playlist, buf, buf_len) }
             }
-            None => {
-                set_last_error(
-                    TstError::HlsConfig,
-                    "publisher is finished or not an HLS publisher",
-                );
-                TstError::HlsConfig as i32
-            }
-        }
+        }))
     })
 }
 
@@ -435,19 +450,12 @@ pub unsafe extern "C" fn tst_hls_publisher_get_forced_cuts(
             set_last_error(TstError::InvalidConfig, "null out pointer");
             return TstError::InvalidConfig as i32;
         }
-        match &handle.inner {
-            Some(PublisherImpl::Hls(h)) => {
+        not_hls(handle.inner.with_inner_ref(|imp| match imp {
+            PublisherImpl::Hls(h) => {
                 unsafe { *out = h.hls_stats().forced_cuts };
                 0
             }
-            None => {
-                set_last_error(
-                    TstError::HlsConfig,
-                    "publisher is finished or not an HLS publisher",
-                );
-                TstError::HlsConfig as i32
-            }
-        }
+        }))
     })
 }
 
@@ -501,7 +509,7 @@ pub unsafe extern "C" fn tst_hls_publisher_finish_serving(
     out: *mut *mut TstHlsServerHandle,
 ) -> libc::c_int {
     crate::panic::ffi_catch(TstError::Internal as i32, || {
-        let Some(handle) = (unsafe { p.as_mut() }) else {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
             set_last_error(TstError::InvalidConfig, "null publisher pointer");
             return TstError::InvalidConfig as i32;
         };

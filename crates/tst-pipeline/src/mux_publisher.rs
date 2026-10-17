@@ -860,4 +860,90 @@ mod tests {
             "status byte mismatch"
         );
     }
+
+    /// A publisher whose first `push_ts` fails; every offered buffer is
+    /// recorded, failed or not.
+    struct FailOncePublisher {
+        offered: Vec<Vec<u8>>,
+        failed: bool,
+    }
+
+    impl Publisher for FailOncePublisher {
+        type Error = MemErr;
+        fn push_ts(&mut self, ts: &[u8]) -> Result<(), MemErr> {
+            self.offered.push(ts.to_vec());
+            if self.failed {
+                Ok(())
+            } else {
+                self.failed = true;
+                Err(MemErr)
+            }
+        }
+        fn cut_segment(&mut self) -> Result<(), MemErr> {
+            Ok(())
+        }
+        fn finish(self) -> Result<(), MemErr> {
+            Ok(())
+        }
+        fn stats(&self) -> PublisherStats {
+            PublisherStats::default()
+        }
+    }
+
+    /// A failed `push_ts` keeps its bytes queued, and the next call offers
+    /// them to the publisher again before anything newer.
+    #[test]
+    fn failed_push_ts_keeps_its_bytes_and_the_next_call_reoffers_them() {
+        let p = FailOncePublisher {
+            offered: vec![],
+            failed: false,
+        };
+        let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
+        let au = h264_au();
+        let err = mp.push_video(&au, Pts90khz::new(0), true).unwrap_err();
+        assert!(matches!(err, MuxPublisherError::Publisher(_)), "{err:?}");
+
+        mp.push_video(&au, Pts90khz::new(3000), false).unwrap();
+        let p = mp.finish().unwrap();
+        assert!(p.offered.len() >= 2, "{} offers", p.offered.len());
+        assert_eq!(
+            p.offered[0], p.offered[1],
+            "the failed buffer is the first thing offered again"
+        );
+    }
+
+    /// `push_video_misp` with other than one video stream errors before the
+    /// keyframe cuts a segment.
+    #[test]
+    fn push_video_misp_with_two_video_streams_errors_before_any_cut() {
+        use tst_core::codec::misp_time::MispTimestamp;
+        use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
+
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, VideoCodec::H264);
+        prog.add_video(0x101, VideoCodec::H264);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        let cfg = b.build().unwrap();
+
+        let mp = MuxPublisher::with_config(RecordingPublisher { cuts: vec![] }, cfg).unwrap();
+        let au = h264_au();
+        let err = mp
+            .push_video_misp(
+                &au,
+                Pts90khz::new(270_000),
+                true,
+                &MispTimestamp::micros(1, 0x1F),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                MuxPublisherError::Mux(MuxError::AmbiguousTarget { count: 2, .. })
+            ),
+            "{err:?}"
+        );
+        assert_eq!(mp.stats().cut_calls, 0);
+        assert!(mp.finish().unwrap().cuts.is_empty());
+    }
 }

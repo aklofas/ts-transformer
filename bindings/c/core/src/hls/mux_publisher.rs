@@ -15,10 +15,10 @@
 //! `TstPublisher` so the caller can `tst_publisher_finish` it for a clean
 //! `#EXT-X-ENDLIST` close.
 //!
-//! `MuxPublisher`'s `send_*` / `cut_segment` methods take `&self` (interior
-//! mutability via an inner `Mutex`), so the C handle stores the publisher
-//! directly behind an `Option` — `Option` only so `finish` can move the
-//! inner out by value.
+//! The C handle is a `CHandle<MuxPublisher<HlsPublisher>>`: every entry
+//! point takes the handle lock, and `finish_into_publisher` moves the
+//! publisher out with `CHandle::take` so a second call (or a send after it)
+//! reports a finished handle instead of touching freed state.
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_hls::HlsPublisher;
@@ -27,6 +27,7 @@ use tst_pipeline::{MuxPublisher, MuxPublisherError};
 
 use crate::config::TstMuxConfig;
 use crate::error::{TstError, record_binding_error, record_mux_error, set_last_error};
+use crate::handle::CHandle;
 use crate::hls::publisher::{PublisherImpl, TstPublisher};
 use crate::stats::{TstMuxPublisherStats, TstPublisherStats};
 
@@ -40,7 +41,17 @@ use crate::stats::{TstMuxPublisherStats, TstPublisherStats};
 /// [`tst_mux_publisher_free`]. The inner is `None` only after
 /// [`tst_mux_publisher_finish_into_publisher`] moves the publisher out.
 pub struct TstMuxPublisher {
-    inner: Option<MuxPublisher<HlsPublisher>>,
+    inner: CHandle<MuxPublisher<HlsPublisher>>,
+}
+
+/// A closed slot keeps the documented `TST_E_HLS_FINISHED` instead of the
+/// generic `TST_E_CLOSED` the handle reports.
+fn finished(rc: i32) -> i32 {
+    if rc == TstError::Closed as i32 {
+        set_last_error(TstError::HlsFinished, "mux publisher already finished");
+        return TstError::HlsFinished as i32;
+    }
+    rc
 }
 
 /// Map a `MuxPublisherError<HlsError>` to a code + recorded last-error.
@@ -103,7 +114,7 @@ pub unsafe extern "C" fn tst_mux_publisher_with_config_hls(
             }
         };
         // Consume the TstPublisher Box and require it currently holds HLS.
-        let mut boxed = unsafe { Box::from_raw(hls) };
+        let boxed = unsafe { Box::from_raw(hls) };
         let hls_pub = match boxed.inner.take() {
             Some(PublisherImpl::Hls(h)) => h,
             None => {
@@ -116,7 +127,9 @@ pub unsafe extern "C" fn tst_mux_publisher_with_config_hls(
         };
         // `boxed` is dropped here (its inner is now None — no double close).
         match MuxPublisher::with_config(hls_pub, muxer_cfg) {
-            Ok(mp) => Box::into_raw(Box::new(TstMuxPublisher { inner: Some(mp) })),
+            Ok(mp) => Box::into_raw(Box::new(TstMuxPublisher {
+                inner: CHandle::offline(mp),
+            })),
             Err(e) => {
                 record_mux_publisher_error(e);
                 std::ptr::null_mut()
@@ -150,8 +163,9 @@ pub unsafe extern "C" fn tst_mux_publisher_free(p: *mut TstMuxPublisher) {
 // Data-path: send_*
 // ---------------------------------------------------------------------------
 
-/// Run `f` against the live inner `MuxPublisher`, mapping the common null /
-/// finished guards. Used by all the `send_*` + `cut_segment` entries.
+/// Run `f` against the live inner `MuxPublisher` under the handle lock,
+/// mapping the common null / finished guards. Used by all the `send_*` +
+/// `cut_segment` entries.
 ///
 /// SAFETY: `p` is dereferenced as `&TstMuxPublisher`; the caller's contract
 /// requires it to be a valid non-freed pointer.
@@ -164,13 +178,7 @@ unsafe fn with_mux_publisher(
             set_last_error(TstError::InvalidConfig, "null mux publisher pointer");
             return TstError::InvalidConfig as i32;
         };
-        match &handle.inner {
-            Some(mp) => f(mp),
-            None => {
-                set_last_error(TstError::HlsFinished, "mux publisher already finished");
-                TstError::HlsFinished as i32
-            }
-        }
+        finished(handle.inner.with_inner_mut(|mp| f(mp)))
     })
 }
 
@@ -349,16 +357,14 @@ pub unsafe extern "C" fn tst_mux_publisher_finish_into_publisher(
             set_last_error(TstError::InvalidConfig, "null mux publisher pointer");
             return std::ptr::null_mut();
         }
-        let mut boxed = unsafe { Box::from_raw(p) };
+        let boxed = unsafe { Box::from_raw(p) };
         let Some(mp) = boxed.inner.take() else {
             set_last_error(TstError::HlsFinished, "mux publisher already finished");
             return std::ptr::null_mut();
         };
         // boxed dropped here (inner now None).
         match mp.finish() {
-            Ok(hls) => Box::into_raw(Box::new(TstPublisher {
-                inner: Some(PublisherImpl::Hls(hls)),
-            })),
+            Ok(hls) => Box::into_raw(Box::new(TstPublisher::new(PublisherImpl::Hls(hls)))),
             Err(e) => {
                 record_mux_publisher_error(e);
                 std::ptr::null_mut()

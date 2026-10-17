@@ -450,9 +450,7 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_build(
             return std::ptr::null_mut();
         };
         match inner.build() {
-            Ok(hls) => Box::into_raw(Box::new(TstPublisher {
-                inner: Some(PublisherImpl::Hls(hls)),
-            })),
+            Ok(hls) => Box::into_raw(Box::new(TstPublisher::new(PublisherImpl::Hls(hls)))),
             Err(e) => {
                 crate::error::record_with_context(e, "hls build");
                 std::ptr::null_mut()

@@ -268,7 +268,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   error kinds are unchanged; it gains `MuxSender`'s back-pressure and
   input-consumption semantics (a failed publisher push keeps its bytes queued
   for the next call, and `finish` offers them once more), and `P` must now be
-  `Send`, because a `Transport` is `Send`.
+  `Send`, because a `Transport` is `Send`. `MuxPublisher` no longer implements
+  `UnwindSafe` / `RefUnwindSafe` (it holds the sender's mutex).
+  `push_video_misp` on a config without exactly one video stream now fails
+  before any segment is cut, and the tracing span is named `mux_sender`.
 
 ### Changed — tst-srt (BREAKING)
 
@@ -814,6 +817,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `RtspClientConfig.transportPref` and `rtspVersion` take effect: a
   non-default value overrides the URL's `?transport=` / `?rtsp_version=`
   (they were carried but ignored).
+
+### Fixed — tst-c
+
+- `TstPublisher` and `TstMuxPublisher` take the handle lock on every call
+  like every other handle. A `tst_publisher_push_ts` racing a
+  `tst_publisher_finish` from another thread was a data race; it now waits
+  for the lock and reports `TST_E_HLS_FINISHED`, the code it always reported
+  after a finish.
 
 ### Fixed — tst-rtp
 
