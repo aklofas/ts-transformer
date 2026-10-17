@@ -39,6 +39,12 @@ tst_core::binding_record! {
 /// to re-emit PAT/PMT, so the new segment opens PAT → PMT → IDR and is
 /// independently decodable (RFC 8216 §3). The stream-head keyframe, with no
 /// open segment yet, opens the first segment without a zero-duration cut.
+///
+/// `last_video_pts` and the open segment's start are recorded when the hook
+/// runs, before the muxer push. A push the muxer then rejects (a full
+/// buffer, a malformed NAL) therefore still advances them, and a following
+/// explicit cut writes an `#EXTINF` that runs to the rejected access unit's
+/// PTS.
 pub struct Segmented<P: Publisher> {
     publisher: P,
     /// PTS of the first AU pushed into the segment currently being built;
@@ -50,8 +56,10 @@ pub struct Segmented<P: Publisher> {
     bytes_pushed: u64,
     drain_calls: u64,
     /// The publisher error behind the last `TransportError::Broken` this
-    /// transport returned, kept typed for [`MuxPublisher`] to hand back.
-    last_error: Option<P::Error>,
+    /// transport returned, kept typed for [`MuxPublisher`] to hand back. It
+    /// is stored under the failing thread's id inside the sender's critical
+    /// section, so concurrent failing callers each get their own error back.
+    last_error: Vec<(std::thread::ThreadId, P::Error)>,
 }
 
 impl<P: Publisher> Segmented<P> {
@@ -64,7 +72,7 @@ impl<P: Publisher> Segmented<P> {
             cut_calls: 0,
             bytes_pushed: 0,
             drain_calls: 0,
-            last_error: None,
+            last_error: Vec::new(),
         }
     }
 
@@ -76,12 +84,21 @@ impl<P: Publisher> Segmented<P> {
     /// Keep the typed error and report it to the sender as a broken transport.
     fn fail(&mut self, e: P::Error) -> TransportError {
         let msg = format!("publisher error: {e}");
-        self.last_error = Some(e);
+        let me = std::thread::current().id();
+        self.last_error.retain(|(t, _)| *t != me);
+        self.last_error.push((me, e));
         TransportError::Broken {
             msg,
             errno_code: None,
             cause: BrokenCause::Unspecified,
         }
+    }
+
+    /// Take the error the current thread's last failed call stored.
+    fn take_error(&mut self) -> Option<P::Error> {
+        let me = std::thread::current().id();
+        let i = self.last_error.iter().position(|(t, _)| *t == me)?;
+        Some(self.last_error.swap_remove(i).1)
     }
 
     /// Cut the open segment with its media duration and start a new one.
@@ -175,7 +192,7 @@ impl<P: Publisher + Send> MuxPublisher<P> {
         }
         match e.source {
             MuxSenderErrorSource::Mux(m) => MuxPublisherError::Mux(m),
-            _ => match self.0.with_transport(|t| t.last_error.take()) {
+            _ => match self.0.with_transport(Segmented::take_error) {
                 Some(pe) => MuxPublisherError::Publisher(pe),
                 None => MuxPublisherError::Closed,
             },
@@ -415,6 +432,62 @@ mod tests {
         b.add_program(prog.build());
         b.psi_interval_ms(10);
         b.build().unwrap()
+    }
+
+    /// A publisher whose every push fails with the id of the failing thread.
+    struct ThreadErrPublisher;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("failed on {0}")]
+    struct ThreadErr(String);
+
+    impl Publisher for ThreadErrPublisher {
+        type Error = ThreadErr;
+        fn push_ts(&mut self, _: &[u8]) -> Result<(), ThreadErr> {
+            Err(ThreadErr(format!("{:?}", std::thread::current().id())))
+        }
+        fn cut_segment(&mut self) -> Result<(), ThreadErr> {
+            Ok(())
+        }
+        fn finish(self) -> Result<(), ThreadErr> {
+            Ok(())
+        }
+        fn stats(&self) -> PublisherStats {
+            PublisherStats::default()
+        }
+    }
+
+    #[test]
+    fn concurrent_failing_pushes_each_get_their_own_publisher_error() {
+        use std::sync::Barrier;
+        let shell = MuxPublisher::with_config(ThreadErrPublisher, test_muxer_config()).unwrap();
+        let rounds = 5_000;
+        let barrier = Barrier::new(4);
+        let wrong = std::sync::atomic::AtomicUsize::new(0);
+        let au = [0u8, 0, 0, 1, 0x65, 1, 2, 3];
+        std::thread::scope(|s| {
+            for _ in 0..4 {
+                s.spawn(|| {
+                    let me = format!("{:?}", std::thread::current().id());
+                    for i in 0..rounds {
+                        barrier.wait();
+                        // Count instead of panicking: a panic here would leave
+                        // the other threads parked at the barrier.
+                        match shell.push_video(&au, Pts90khz::new(i), true) {
+                            Err(MuxPublisherError::Publisher(e)) if e.0 == me => {}
+                            _ => {
+                                wrong.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        };
+                    }
+                });
+            }
+        });
+        assert_eq!(
+            wrong.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a caller got another thread's error or Closed"
+        );
     }
 
     #[test]
