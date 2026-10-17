@@ -303,6 +303,8 @@ jobs:
           # tests spin real reader/writer threads) is the primary
           # race-exposure surface.
           RUSTFLAGS: "-Z sanitizer=thread"
+          # Stretches fixture read timeouts (tst-rtp raw_rtsp) for TSan slowdown.
+          TST_TEST_TIMEOUT_SCALE: "5"
           TSAN_OPTIONS: "suppressions=${{ github.workspace }}/.sanitizer-suppressions/tsan.txt:halt_on_error=0:report_signal_unsafe=0"
         run: |
           cargo +nightly nextest run --profile sanitizer \
