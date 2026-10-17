@@ -315,6 +315,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   type sits in a module named for what it is rather than where it works.
   `rtsp::client::tls` (behind the `tls` feature) is no longer public: it
   held only the stream wrapper that `RtspClient` uses internally.
+- `RtspServer` runs two runtime worker threads instead of one per core,
+  and `stop()` returns as soon as every session task has ended, at most
+  `graceful_shutdown_drain`, instead of always sleeping the drain plus one
+  second. The server is a signalling plane that moves little data, so a
+  thread per core only cost memory on large hosts; the fixed sleep made every
+  `stop()` slow even with no clients. A session still running at the drain
+  bound is left to end on its own cancel, as before.
 
 ### Changed — tst-udp, tst-tcp, tst-rist (BREAKING)
 
