@@ -69,6 +69,23 @@ the slot does not close the application transport; closing the mount does.
 | On-demand publish queue | 64 mounts | refuse: ANNOUNCE answers `503` and no mount is created | none; a debug line is logged |
 | On-demand mounts in the table | 256 | refuse: ANNOUNCE answers `503` until a mount is removed | none; a debug line is logged |
 
+## Send-path ladder
+
+A message sent through `MuxSender` meets three bounds in turn, from the
+muxer outward. There is no `max_pending_bytes` knob: the first and third
+rows already bound what a caller can hold, and the middle row is the bare
+shell's retry buffer, which `api-stability.md` records as unbounded by
+design.
+
+| Queue | Bound | When full | Counter |
+|---|---|---|---|
+| Muxer output, per `push_*` call | `MuxerConfig::buffer_packets`, 10 000 TS packets | the push fails with `BufferFull` and nothing is muxed | none; the error is the report |
+| `MuxSender` pending chunk queue | unbounded by design (`api-stability.md`, "Atomic enqueue" entry) | not applicable; it holds only what the transport has not yet accepted | none |
+| `ManagedTransport` gap buffer | `ReconnectPolicy::gap_buffer_capacity`, 256 messages | `overflow_policy`: `DropOldest` evicts the oldest message, `Reject` refuses the new one | `gap_messages_dropped` and `gap_bytes_dropped` in the transport's stats |
+
+A caller that needs a hard byte ceiling wraps the transport in
+`ManagedTransport` and sizes `gap_buffer_capacity` to it.
+
 ## Adding a queue
 
 State the queue's bound and unit, its full-queue policy and its counter in

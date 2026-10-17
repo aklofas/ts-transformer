@@ -305,3 +305,33 @@ fn basic_auth_required_for_all_routes() {
 
     p.finish().unwrap();
 }
+
+/// `shutdown()` returns within its 2 s bound while a client holds a
+/// half-sent request open.
+#[test]
+fn shutdown_returns_promptly_with_a_slow_client_connected() {
+    let dir = tmpdir("slow-client");
+    let mut p = HlsPublisherBuilder::new()
+        .bind("127.0.0.1:0".parse().unwrap())
+        .output_dir(&dir)
+        .segment_duration(Duration::from_secs(10))
+        .mode(HlsMode::Vod)
+        .build()
+        .unwrap();
+    p.push_ts(&[0x47u8; 376]).unwrap();
+    p.cut_segment().unwrap();
+    let handle = p.finish_serving().unwrap();
+
+    let mut slow = TcpStream::connect(handle.local_addr()).unwrap();
+    slow.write_all(b"GET /playlist.m3u8 HTTP/1.1\r\nHost: x\r\n")
+        .unwrap(); // no blank line
+    std::thread::sleep(Duration::from_millis(100));
+
+    let t0 = std::time::Instant::now();
+    handle.shutdown();
+    assert!(
+        t0.elapsed() < Duration::from_secs(2),
+        "shutdown took {:?}",
+        t0.elapsed()
+    );
+}
