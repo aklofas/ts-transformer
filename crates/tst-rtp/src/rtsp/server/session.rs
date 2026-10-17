@@ -2,12 +2,14 @@
 //! against one client. Reads requests via tokio AsyncRead, dispatches
 //! to handlers, writes responses back.
 //!
-//! Per-connection state lives in [`ServerSessionState`]. `session_id` is
-//! `None` until SETUP returns 200; the mount and the transport choice (a UDP
-//! socket pair or interleaved channels) are set by SETUP. `fanout_handle`
-//! and `peer_cancel` exist only while PLAYing and are re-minted on
-//! PAUSE/PLAY; TEARDOWN or a disconnect clears them. DESCRIBE is stateless.
-//! Invariant: one role per session (reader or publisher).
+//! Per-connection state lives in [`ServerSessionState`], whose [`Role`] is one
+//! of `Idle` (before SETUP/ANNOUNCE and after TEARDOWN), `Reader` (SETUP done;
+//! its `Playback` is `Ready`, `Playing` with the fanout task, or `Paused`) or
+//! `Publisher` (ANNOUNCE claimed a publish mount). The reader's mount, session
+//! id and transport (a UDP socket pair, interleaved channels or multicast)
+//! live in the `Reader` variant; a SETUP while a reader is `Playing` or
+//! `Paused` is refused with 455. TEARDOWN or a disconnect retires the fanout
+//! and ends a publisher. DESCRIBE is stateless. A connection holds one role.
 //!
 //! Plain `rtsp://` and `rtsps://` connections share one request loop:
 //! `handle_tcp_connection` and the `rtsp-server-tls`-gated
@@ -22,6 +24,7 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::error::RtspServerError;
+use crate::rtsp::client::transport_negotiation::TransportResponse;
 use crate::rtsp::message::{RtspFraming, RtspMethod, RtspRequest};
 use crate::rtsp::server::ServerState;
 use crate::rtsp::server::auth::generate_nonce;
@@ -100,15 +103,64 @@ fn post_setup_idle_bound(session_timeout: std::time::Duration) -> std::time::Dur
     session_timeout.saturating_add((session_timeout / 2).max(std::time::Duration::from_secs(2)))
 }
 
+/// How a reader's SETUP-allocated transport reaches the client.
+#[derive(Clone)]
+pub(crate) enum ReaderTransport {
+    /// TCP-interleaved: RTP and RTCP ride the control connection on these
+    /// channel numbers.
+    Interleaved { channels: (u8, u8) },
+    /// Unicast UDP: the server-allocated RTP+RTCP socket pair, plus the
+    /// negotiated transport (it carries the client's ports).
+    Udp {
+        sockets: (Arc<tokio::net::UdpSocket>, Arc<tokio::net::UdpSocket>),
+        negotiated: TransportResponse,
+    },
+    /// Multicast: the mount's own sender drives the group; nothing is
+    /// allocated per session.
+    Multicast,
+}
+
+/// Where a reader is in SETUP / PLAY / PAUSE.
+pub(crate) enum Playback {
+    /// SETUP done, no PLAY yet (also what a multicast PLAY leaves, since no
+    /// per-session fanout exists).
+    Ready,
+    /// PLAY spawned the per-peer fanout task.
+    Playing {
+        fanout: tokio::task::JoinHandle<()>,
+        /// Kept so the counter outlives the task's own clone for as long as
+        /// the session is playing.
+        #[allow(dead_code)]
+        drop_counter: Arc<PeerDropCounter>,
+    },
+    /// PAUSE retired the fanout; a later PLAY spawns a new one.
+    Paused,
+}
+
+/// A reader session: set up against one mount.
+pub(crate) struct ReaderSession {
+    pub(crate) session_id: String,
+    pub(crate) mount_path: String,
+    pub(crate) transport: ReaderTransport,
+    pub(crate) playback: Playback,
+}
+
+/// The one role a connection holds. A connection is a reader or a publisher,
+/// never both; TEARDOWN returns it to `Idle`.
+pub(crate) enum Role {
+    /// Before SETUP / ANNOUNCE, and after TEARDOWN. DESCRIBE is stateless
+    /// and leaves it here.
+    Idle,
+    /// SETUP made this connection a reader of one mount.
+    Reader(ReaderSession),
+    /// ANNOUNCE claimed a publish mount's publisher slot.
+    Publisher(PublishSession),
+}
+
 /// Per-session state. Lives for the duration of one client's TCP
-/// connection. Tracks transport choice and allocated UDP sockets /
-/// interleaved channels.
+/// connection: the connection-scoped auth fields, the writer and peer
+/// address, and the connection's [`Role`].
 pub struct ServerSessionState {
-    /// RTSP session ID — None pre-SETUP, Some after SETUP returns 200.
-    pub session_id: Option<String>,
-    /// Mount path the client SETUP'd against, e.g. "/live". None
-    /// pre-SETUP.
-    pub mount_path: Option<String>,
     /// Nonce for Digest auth — generated per connection and emitted in
     /// every WWW-Authenticate; rotated by `challenge_response` on a
     /// stale re-challenge (which also resets `auth_nc_hwm`).
@@ -127,26 +179,9 @@ pub struct ServerSessionState {
     /// the 3-strike limit by interleaving OPTIONS between bad-auth requests.
     /// After 3 consecutive failures the session closes.
     pub auth_failures: u8,
-    /// Transport negotiation result from SETUP. None pre-SETUP.
-    pub transport: Option<crate::rtsp::client::transport_negotiation::TransportResponse>,
-    /// Server-allocated UDP RTP+RTCP pair (for UDP-transport sessions).
-    /// `None` for TCP-interleaved sessions, multicast SETUPs, or
-    /// pre-SETUP. The PLAY handler hands these to the per-peer
-    /// fan-out task.
-    pub udp_sockets: Option<(
-        std::sync::Arc<tokio::net::UdpSocket>,
-        std::sync::Arc<tokio::net::UdpSocket>,
-    )>,
-    /// Interleaved RTP+RTCP channel pair (for TCP-interleaved sessions).
-    /// `None` for UDP sessions or pre-SETUP.
-    pub interleaved_channels: Option<(u8, u8)>,
-    /// JoinHandle for the per-peer fanout subscriber task (`spawn_peer_fanout`).
-    /// `Some` after PLAY, `None` after PAUSE or TEARDOWN.
-    /// PAUSE may re-spawn on a subsequent PLAY.
-    pub fanout_handle: Option<tokio::task::JoinHandle<()>>,
-    /// CancellationToken for the per-peer task. PAUSE cancels + replaces
+    /// CancellationToken for the per-peer fanout task. PAUSE cancels + replaces
     /// with a fresh token so a subsequent PLAY can re-spawn; TEARDOWN
-    /// cancels + drops the handle without replacement.
+    /// cancels it without replacement.
     pub peer_cancel: tokio_util::sync::CancellationToken,
     /// Fanouts retired by PAUSE, TEARDOWN or a second PLAY (see
     /// [`Self::retire_fanout`]). Their token is cancelled and they exit at
@@ -156,11 +191,6 @@ pub struct ServerSessionState {
     /// is left here so a retired fanout never outlives its session.
     /// Finished entries are pruned on each retire.
     pub(crate) retired_fanouts: Vec<tokio::task::JoinHandle<()>>,
-    /// Drop counter observed by `MountStats::frames_dropped_total`. Held
-    /// here so the session can keep the `Arc` alive for the duration of
-    /// the fanout task even after PAUSE drops the JoinHandle. Field is
-    /// `pub(crate)` because `PeerDropCounter` itself is crate-private.
-    pub(crate) peer_drop_counter: Option<std::sync::Arc<PeerDropCounter>>,
     /// The session's writer; `None` only in unit tests that build a session without a connection.
     pub(crate) writer: Option<SessionWriter>,
     /// The TCP peer address for this session. Set by `serve_connection`
@@ -169,35 +199,129 @@ pub struct ServerSessionState {
     /// Defaults to `0.0.0.0:0` for unit-test sessions that don't go
     /// through `serve_connection`.
     pub(crate) peer_addr: std::net::SocketAddr,
-    /// Publisher session state once this connection's ANNOUNCE has
-    /// claimed a publish mount's publisher slot. `None` pre-ANNOUNCE, or
-    /// after TEARDOWN (`handle_teardown` takes it and calls
-    /// `PublishSession::end` explicitly). Dropping a `Some` value here —
-    /// on any other exit path — runs `PublishSession`'s own `Drop`
-    /// (which also calls `end`), so a publisher session is always ended
-    /// exactly once no matter how the connection goes away.
-    pub(crate) publish: Option<PublishSession>,
+    /// The connection's role. A publisher's `PublishSession` is ended
+    /// exactly once however the connection goes away: TEARDOWN ends it
+    /// explicitly, and any other exit runs the session's own `Drop`
+    /// (which also calls `end`, idempotently).
+    pub(crate) role: Role,
+    /// Set by every change of role or of the ids the registry mirrors;
+    /// `serve_requests` copies the ids onto the `ActiveSession` entry when
+    /// it is set (see [`Self::take_role_change`]).
+    role_changed: bool,
 }
 
 impl ServerSessionState {
     pub(crate) fn new() -> Self {
         Self {
-            session_id: None,
-            mount_path: None,
             auth_nonce: generate_nonce(),
             auth_nc_hwm: 0,
             auth_failures: 0,
-            transport: None,
-            udp_sockets: None,
-            interleaved_channels: None,
-            fanout_handle: None,
             peer_cancel: tokio_util::sync::CancellationToken::new(),
             retired_fanouts: Vec::new(),
-            peer_drop_counter: None,
             writer: None,
             peer_addr: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
-            publish: None,
+            role: Role::Idle,
+            role_changed: false,
         }
+    }
+
+    /// The RTSP session id: a reader's from SETUP, a publisher's from its
+    /// first SETUP. `None` while `Idle` and for an announced publisher that
+    /// has not set a track up.
+    pub(crate) fn session_id(&self) -> Option<&str> {
+        match &self.role {
+            Role::Idle => None,
+            Role::Reader(r) => Some(&r.session_id),
+            Role::Publisher(p) => p.session_id.as_deref(),
+        }
+    }
+
+    /// The mount path the session was set up against (same rule as
+    /// [`Self::session_id`]).
+    pub(crate) fn mount_path(&self) -> Option<&str> {
+        match &self.role {
+            Role::Idle => None,
+            Role::Reader(r) => Some(&r.mount_path),
+            Role::Publisher(p) => p.mount_path.as_deref(),
+        }
+    }
+
+    pub(crate) fn publisher(&self) -> Option<&PublishSession> {
+        match &self.role {
+            Role::Publisher(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn publisher_mut(&mut self) -> Option<&mut PublishSession> {
+        match &mut self.role {
+            Role::Publisher(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// Whether a fanout task is running for this reader.
+    pub(crate) fn is_playing(&self) -> bool {
+        matches!(
+            &self.role,
+            Role::Reader(ReaderSession {
+                playback: Playback::Playing { .. },
+                ..
+            })
+        )
+    }
+
+    /// Enter a role from `Idle` or a reader's SETUP.
+    pub(crate) fn set_role(&mut self, role: Role) {
+        self.role = role;
+        self.role_changed = true;
+    }
+
+    /// A publisher's first track SETUP gives the session its id and mount.
+    pub(crate) fn publisher_set_up(&mut self, session_id: String, mount_path: String) {
+        if let Role::Publisher(p) = &mut self.role {
+            p.session_id = Some(session_id);
+            p.mount_path = Some(mount_path);
+            self.role_changed = true;
+        }
+    }
+
+    /// Leave the current role for `Idle`: retire the reader's fanout, end a
+    /// publisher (once), and drop the transport state with it.
+    pub(crate) fn end_role(&mut self) {
+        self.retire_fanout();
+        if let Role::Publisher(mut p) = std::mem::replace(&mut self.role, Role::Idle) {
+            // Frees the mount's publisher slot (bumping its generation) so a
+            // fresh ANNOUNCE can claim it right away; the `Drop` that follows
+            // finds it ended.
+            p.end();
+        }
+        self.role_changed = true;
+    }
+
+    /// Unit tests: make the reader `Playing` a stand-in fanout task (an
+    /// `Idle` session becomes a bare multicast reader first).
+    #[cfg(test)]
+    pub(crate) fn install_test_fanout(&mut self, fanout: tokio::task::JoinHandle<()>) {
+        if matches!(self.role, Role::Idle) {
+            self.role = Role::Reader(ReaderSession {
+                session_id: String::new(),
+                mount_path: String::new(),
+                transport: ReaderTransport::Multicast,
+                playback: Playback::Ready,
+            });
+        }
+        if let Role::Reader(r) = &mut self.role {
+            r.playback = Playback::Playing {
+                fanout,
+                drop_counter: Arc::new(PeerDropCounter::default()),
+            };
+        }
+    }
+
+    /// True once after a change of role or of the ids the registry mirrors.
+    pub(crate) fn take_role_change(&mut self) -> bool {
+        std::mem::take(&mut self.role_changed)
     }
 
     /// Retire the current fanout: cancel its token so it exits at its next
@@ -207,13 +331,18 @@ impl ServerSessionState {
     /// multi-poll `write_all` under the shared session-writer mutex, and
     /// aborting it there releases the lock with a partial `$` frame on the
     /// wire, which the next RTSP response then completes with RTSP text
-    /// (framing desync). Callers that allow a later PLAY replace
-    /// `peer_cancel` with a fresh token afterwards.
+    /// (framing desync). A reader that was playing becomes `Paused`.
+    /// Callers that allow a later PLAY replace `peer_cancel` with a fresh
+    /// token afterwards.
     pub(crate) fn retire_fanout(&mut self) {
         self.peer_cancel.cancel();
-        if let Some(handle) = self.fanout_handle.take() {
-            self.retired_fanouts.retain(|h| !h.is_finished());
-            self.retired_fanouts.push(handle);
+        if let Role::Reader(r) = &mut self.role {
+            if let Playback::Playing { fanout, .. } =
+                std::mem::replace(&mut r.playback, Playback::Paused)
+            {
+                self.retired_fanouts.retain(|h| !h.is_finished());
+                self.retired_fanouts.push(fanout);
+            }
         }
     }
 }
@@ -226,8 +355,12 @@ impl Drop for ServerSessionState {
     /// TEARDOWN and PAUSE still cancel explicitly; this is the safety net.
     fn drop(&mut self) {
         self.peer_cancel.cancel();
-        if let Some(handle) = self.fanout_handle.take() {
-            handle.abort();
+        if let Role::Reader(ReaderSession {
+            playback: Playback::Playing { fanout, .. },
+            ..
+        }) = &self.role
+        {
+            fanout.abort();
         }
         // Fanouts retired by PAUSE, TEARDOWN or a second PLAY exit at their
         // next frame boundary — which a peer that never reads defers
@@ -361,7 +494,7 @@ where
         // SETUP, `post_setup_idle_bound` (the advertised session timeout
         // plus grace) once a session exists — so a conformant client's
         // keepalives at `timeout / 2` are never raced.
-        let idle_bound = if session.session_id.is_some() {
+        let idle_bound = if session.session_id().is_some() {
             post_setup_idle_bound(state.builder.session_timeout)
         } else {
             READ_IDLE_TIMEOUT
@@ -404,8 +537,7 @@ where
                 // this check such a publisher would be reaped on schedule
                 // despite media flowing.
                 let media_recent = session
-                    .publish
-                    .as_ref()
+                    .publisher()
                     .is_some_and(|p| p.media_within(idle_bound));
                 if media_recent {
                     continue 'serve;
@@ -477,7 +609,7 @@ where
         //   timeout. `NeedMore` loops back to read more (bounded: header
         //   ≤ 64 KiB, body ≤ 1 MiB).
         loop {
-            let drained = match session.publish.as_ref() {
+            let drained = match session.publisher() {
                 Some(publish) => {
                     let mut route = |ch: u8, payload: &[u8]| match publish.track_for_channel(ch) {
                         Some((track, false)) => {
@@ -550,16 +682,18 @@ where
             );
             buf.drain(..consumed);
             let response = dispatch(&req, &state, &mut session);
-            // Mirror the per-session state's `session_id` + `mount_path`
-            // back onto the public `ActiveSession` registry entry. SETUP
-            // populates them on the 200 path; TEARDOWN clears them. The
-            // registry copies are what `RtspServer::stop` reads to build
-            // the Notice 5402 ANNOUNCE on graceful shutdown.
-            if let Ok(mut g) = session_entry.session_id.lock() {
-                g.clone_from(&session.session_id);
-            }
-            if let Ok(mut g) = session_entry.mount_path.lock() {
-                g.clone_from(&session.mount_path);
+            // Mirror the session's `session_id` + `mount_path` onto the
+            // public `ActiveSession` registry entry when a transition
+            // changed them (SETUP on its 200 path, TEARDOWN). The registry
+            // copies are what `RtspServer::stop` reads to build the Notice
+            // 5402 ANNOUNCE on graceful shutdown.
+            if session.take_role_change() {
+                if let Ok(mut g) = session_entry.session_id.lock() {
+                    *g = session.session_id().map(str::to_owned);
+                }
+                if let Ok(mut g) = session_entry.mount_path.lock() {
+                    *g = session.mount_path().map(str::to_owned);
+                }
             }
             let bytes = response.encode();
             // Lock the write half to serialize against the fanout task
@@ -1210,7 +1344,7 @@ mod session_tests {
         let flag = Flag(Arc::clone(&aborted));
         let mut session = ServerSessionState::new();
         let first = session.peer_cancel.clone();
-        session.fanout_handle = Some(tokio::spawn(async move {
+        session.install_test_fanout(tokio::spawn(async move {
             let _flag = flag;
             std::future::pending::<()>().await;
         }));
@@ -1642,10 +1776,11 @@ mod session_tests {
                 Call::SetupReader => {
                     if publisher {
                         (455, model)
-                    } else if matches!(model, Playing { .. }) {
-                        // A second SETUP re-points the session and keeps the
-                        // running fanout.
-                        (200, Playing { mount: at })
+                    } else if matches!(model, Playing { .. } | Paused { .. }) {
+                        // A SETUP cannot re-point a reader that is playing
+                        // or paused: the running fanout would keep serving
+                        // the old mount.
+                        (455, model)
                     } else {
                         (200, ReaderSetup { mount: at })
                     }
@@ -1729,8 +1864,8 @@ mod session_tests {
             match sess {
                 Sess::Absent => {}
                 Sess::Echo => {
-                    if let Some(id) = &session.session_id {
-                        r.headers.insert("session".into(), id.clone());
+                    if let Some(id) = session.session_id() {
+                        r.headers.insert("session".into(), id.to_owned());
                     }
                 }
                 Sess::Wrong => {
@@ -1753,11 +1888,11 @@ mod session_tests {
                 PublisherSetup { mount } => (true, Some(mount.path()), false, true, false),
                 Recording { mount } => (true, Some(mount.path()), false, true, true),
             };
-            prop_assert_eq!(s.session_id.is_some(), id, "session_id in {:?}", model);
-            prop_assert_eq!(s.mount_path.as_deref(), path, "mount_path in {:?}", model);
-            prop_assert_eq!(s.fanout_handle.is_some(), fanout, "fanout in {:?}", model);
-            prop_assert_eq!(s.publish.is_some(), publish, "publish in {:?}", model);
-            if let Some(p) = &s.publish {
+            prop_assert_eq!(s.session_id().is_some(), id, "session_id in {:?}", model);
+            prop_assert_eq!(s.mount_path(), path, "mount_path in {:?}", model);
+            prop_assert_eq!(s.is_playing(), fanout, "fanout in {:?}", model);
+            prop_assert_eq!(s.publisher().is_some(), publish, "publish in {:?}", model);
+            if let Some(p) = s.publisher() {
                 prop_assert_eq!(p.recording, recording, "recording in {:?}", model);
             }
             Ok(())

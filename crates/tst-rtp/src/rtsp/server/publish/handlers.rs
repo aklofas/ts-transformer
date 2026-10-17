@@ -21,7 +21,7 @@ use crate::rtsp::server::handlers::{
     generate_session_id, handle_not_valid_in_state, last_path_segment,
 };
 use crate::rtsp::server::mount::MountEntry;
-use crate::rtsp::server::session::ServerSessionState;
+use crate::rtsp::server::session::{Role, ServerSessionState};
 use crate::rtsp::server::{ServerState, validate_mount_path};
 use crate::sdp::Sdp;
 
@@ -48,7 +48,7 @@ fn ok_response(req: &RtspRequest, session_id: Option<&str>) -> RtspResponse {
 ///
 /// Classifies the SDP body (`classify_announce`), claims the target
 /// mount's publisher slot, builds the shape's `PublishAdapter`, and
-/// installs a fresh `PublishSession` on `session.publish`.
+/// installs a fresh `PublishSession` as the session's role.
 ///
 /// Rejection codes:
 /// - 401 Unauthorized — auth check fails.
@@ -80,7 +80,7 @@ pub(crate) fn handle_announce(
     }
     // One role per connection: no second publisher, and no publisher on
     // a connection that already set up (or is playing) as a reader.
-    if session.publish.is_some() || session.transport.is_some() || session.mount_path.is_some() {
+    if !matches!(session.role, Role::Idle) {
         return handle_not_valid_in_state(req);
     }
     let ct = req
@@ -170,12 +170,12 @@ pub(crate) fn handle_announce(
             }
         }
     };
-    session.publish = Some(PublishSession::new(
+    session.set_role(Role::Publisher(PublishSession::new(
         mount,
         slot_generation,
         announced,
         adapter,
-    ));
+    )));
     ok_response(req, None)
 }
 
@@ -256,7 +256,7 @@ pub(crate) fn handle_setup_record(
     mount_path: &str,
     routed_mount: &Arc<PublishMountState>,
 ) -> RtspResponse {
-    let Some(publish) = session.publish.as_ref() else {
+    let Some(publish) = session.publisher() else {
         return handle_not_valid_in_state(req);
     };
     // The caller (`handle_setup`) resolved `routed_mount` from the
@@ -275,7 +275,7 @@ pub(crate) fn handle_setup_record(
     // on the first SETUP (no id exists yet) but must match once one does.
     // The comparison is on the id token before any `;timeout=` parameter
     // (RFC 2326 §12.37), which a client may echo back.
-    if let Some(sid) = session.session_id.as_deref() {
+    if let Some(sid) = session.session_id() {
         if let Some(hdr) = req.headers.get("session") {
             if hdr.split(';').next().unwrap_or("").trim() != sid {
                 return error_response(req, 454, "Session Not Found");
@@ -295,8 +295,7 @@ pub(crate) fn handle_setup_record(
         .or_else(|| {
             let segment = control_segment(&req.uri);
             session
-                .publish
-                .as_mut()
+                .publisher_mut()
                 .expect("checked Some above")
                 .track_for_control(segment)
         });
@@ -306,7 +305,7 @@ pub(crate) fn handle_setup_record(
     // A track is set up once. A second SETUP would orphan the first
     // transport (and, after RECORD, a UDP track's new sockets would never
     // get an ingest task).
-    if session.publish.as_ref().expect("checked Some above").tracks[idx]
+    if session.publisher().expect("checked Some above").tracks[idx]
         .transport
         .is_some()
     {
@@ -343,8 +342,7 @@ pub(crate) fn handle_setup_record(
         }
         RtspTransportKind::TcpInterleaved => {
             let Some((base, companion)) = session
-                .publish
-                .as_ref()
+                .publisher()
                 .expect("checked Some above")
                 .interleaved_pair_for(parsed.interleaved)
             else {
@@ -359,18 +357,14 @@ pub(crate) fn handle_setup_record(
             )
         }
     };
-    session.publish.as_mut().expect("checked Some above").tracks[idx].transport =
+    session.publisher_mut().expect("checked Some above").tracks[idx].transport =
         Some(track_transport);
 
-    let session_id = match &session.session_id {
-        Some(id) => id.clone(),
-        None => {
-            let id = generate_session_id();
-            session.session_id = Some(id.clone());
-            id
-        }
+    let session_id = match session.session_id() {
+        Some(id) => id.to_owned(),
+        None => generate_session_id(),
     };
-    session.mount_path = Some(mount_path.to_string());
+    session.publisher_set_up(session_id.clone(), mount_path.to_string());
 
     let mut resp = ok_response(req, None);
     resp.headers.insert(
@@ -409,7 +403,8 @@ pub(crate) fn handle_record(
     if let Err(c) = check_auth(req, state, session, "RECORD") {
         return c;
     }
-    let Some(publish) = session.publish.as_mut() else {
+    let peer_ip = session.peer_addr.ip();
+    let Some(publish) = session.publisher_mut() else {
         return handle_not_valid_in_state(req);
     };
     if !publish.all_tracks_set_up() {
@@ -434,7 +429,7 @@ pub(crate) fn handle_record(
             idx,
             rtp.clone(),
             rtcp.clone(),
-            session.peer_addr.ip(),
+            peer_ip,
             track.announced.payload_type,
             publish.adapter.clone(),
             publish.adapter_ended.clone(),
@@ -445,7 +440,7 @@ pub(crate) fn handle_record(
         publish.udp_tasks.push(handle);
         publish.tracks[idx].udp_spawned = true;
     }
-    ok_response(req, session.session_id.as_deref())
+    ok_response(req, session.session_id())
 }
 
 #[cfg(test)]
@@ -491,7 +486,7 @@ mod tests {
         let mut s = ServerSessionState::new();
         let r = handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s);
         assert_eq!(r.status, 200);
-        let p = s.publish.as_ref().unwrap();
+        let p = s.publisher().unwrap();
         let shape = m.publisher.lock().unwrap().info.as_ref().unwrap().shape;
         assert_eq!(shape, PublishShape::Mp2t);
         assert_eq!(p.tracks.len(), 1);
@@ -505,7 +500,7 @@ mod tests {
         let mut s = ServerSessionState::new();
         let r = handle_announce(&announce("rtsp://h/pub", SDP_ES), &st, &mut s);
         assert_eq!(r.status, 200);
-        let p = s.publish.as_ref().unwrap();
+        let p = s.publisher().unwrap();
         let shape = m.publisher.lock().unwrap().info.as_ref().unwrap().shape;
         assert_eq!(shape, PublishShape::Elementary { klv: true });
         assert_eq!(p.tracks.len(), 2);
@@ -572,7 +567,7 @@ mod tests {
             handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s2).status,
             403
         );
-        assert!(s2.publish.is_none());
+        assert!(s2.publisher().is_none());
         drop(s1); // publisher ends → mount idle
         let mut s3 = ServerSessionState::new();
         assert_eq!(
@@ -599,10 +594,10 @@ mod tests {
             r.headers
         );
         assert!(r.headers["session"].contains(";timeout="));
-        assert!(s.session_id.is_some());
+        assert!(s.session_id().is_some());
         // The response header echoes the pair the session stored: an
         // even base and its companion.
-        let (rtp, rtcp) = match s.publish.as_ref().unwrap().tracks[0].transport {
+        let (rtp, rtcp) = match s.publisher().unwrap().tracks[0].transport {
             Some(TrackTransport::Interleaved { rtp, rtcp }) => (rtp, rtcp),
             ref other => panic!("expected an Interleaved transport, got {other:?}"),
         };
@@ -615,10 +610,10 @@ mod tests {
         );
         let mut rec = req(RtspMethod::Record, "rtsp://h/pub");
         rec.headers
-            .insert("session".into(), s.session_id.clone().unwrap());
+            .insert("session".into(), s.session_id().unwrap().to_owned());
         let r = handle_record(&rec, &st, &mut s);
         assert_eq!(r.status, 200);
-        assert!(s.publish.as_ref().unwrap().recording);
+        assert!(s.publisher().unwrap().recording);
     }
 
     #[test]
@@ -644,9 +639,9 @@ mod tests {
         m.close();
         let mut rec = req(RtspMethod::Record, "rtsp://h/pub");
         rec.headers
-            .insert("session".into(), s.session_id.clone().unwrap());
+            .insert("session".into(), s.session_id().unwrap().to_owned());
         assert_eq!(handle_record(&rec, &st, &mut s).status, 455);
-        assert!(!s.publish.as_ref().unwrap().recording);
+        assert!(!s.publisher().unwrap().recording);
     }
 
     #[test]
@@ -679,7 +674,7 @@ mod tests {
         );
         let mut rec = req(RtspMethod::Record, "rtsp://h/pub");
         rec.headers
-            .insert("session".into(), s.session_id.clone().unwrap());
+            .insert("session".into(), s.session_id().unwrap().to_owned());
         let sessions = st.sessions.lock().unwrap();
         std::thread::scope(|scope| {
             let remover = scope.spawn(|| server.remove_mount("/pub"));
@@ -700,7 +695,7 @@ mod tests {
             drop(sessions);
             remover.join().unwrap().unwrap();
             assert_eq!(r.status, 455, "RECORD after the entry left the table");
-            assert!(!s.publish.as_ref().unwrap().recording);
+            assert!(!s.publisher().unwrap().recording);
             assert_eq!(active, 0);
         });
     }
@@ -800,7 +795,7 @@ mod tests {
         );
         let r = crate::rtsp::server::handlers::handle_setup(&setup, &st, &mut s);
         assert_eq!(r.status, 455);
-        assert_eq!(s.mount_path, None);
+        assert_eq!(s.mount_path(), None);
     }
 
     #[test]
@@ -820,9 +815,9 @@ mod tests {
         );
         let r = crate::rtsp::server::handlers::handle_setup(&setup, &st, &mut s);
         assert_eq!(r.status, 200, "{:?}", r.headers);
-        assert_eq!(s.mount_path.as_deref(), Some("/pub"));
+        assert_eq!(s.mount_path(), Some("/pub"));
         assert!(matches!(
-            s.publish.as_ref().unwrap().tracks[0].transport,
+            s.publisher().unwrap().tracks[0].transport,
             Some(TrackTransport::Interleaved { .. })
         ));
     }
@@ -838,7 +833,7 @@ mod tests {
             &mut s,
         );
         assert_eq!(r.status, 200);
-        assert!(s.publish.is_none());
+        assert!(s.publisher().is_none());
         assert!(m.publisher.lock().unwrap().info.is_none());
         assert_eq!(m.generation.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
@@ -861,7 +856,7 @@ mod tests {
             &mut s,
         );
         assert_eq!(r.status, 200);
-        assert!(s.publish.is_some());
+        assert!(s.publisher().is_some());
     }
 
     #[tokio::test]
@@ -885,7 +880,7 @@ mod tests {
             "{t}"
         );
         assert!(matches!(
-            s.publish.as_ref().unwrap().tracks[0].transport,
+            s.publisher().unwrap().tracks[0].transport,
             Some(TrackTransport::Udp { .. })
         ));
     }
@@ -906,16 +901,16 @@ mod tests {
 
         let mut rec = req(RtspMethod::Record, "rtsp://h/pub");
         rec.headers
-            .insert("session".into(), s.session_id.clone().unwrap());
+            .insert("session".into(), s.session_id().unwrap().to_owned());
         let r = handle_record(&rec, &st, &mut s);
         assert_eq!(r.status, 200);
-        assert_eq!(s.publish.as_ref().unwrap().udp_tasks.len(), 1);
+        assert_eq!(s.publisher().unwrap().udp_tasks.len(), 1);
 
         // RFC 2326 §10.11 allows a later RECORD on the same session —
         // it must not spawn a second ingest task for the same track.
         let r2 = handle_record(&rec, &st, &mut s);
         assert_eq!(r2.status, 200);
-        assert_eq!(s.publish.as_ref().unwrap().udp_tasks.len(), 1);
+        assert_eq!(s.publisher().unwrap().udp_tasks.len(), 1);
 
         // Take the handle out before TEARDOWN: `PublishSession::end`
         // cancels `udp_cancel` (which this held task observes through
@@ -923,7 +918,7 @@ mod tests {
         // `udp_tasks` as a backstop — pulling it out first means this
         // assertion is exercising the graceful cancel path, not the
         // abort backstop.
-        let j = s.publish.as_mut().unwrap().udp_tasks.pop().unwrap();
+        let j = s.publisher_mut().unwrap().udp_tasks.pop().unwrap();
 
         let r3 = crate::rtsp::server::handlers::handle_teardown(
             &req(RtspMethod::Teardown, "rtsp://h/pub"),
@@ -931,7 +926,7 @@ mod tests {
             &mut s,
         );
         assert_eq!(r3.status, 200);
-        assert!(s.publish.is_none());
+        assert!(s.publisher().is_none());
         tokio::time::timeout(Duration::from_secs(2), j)
             .await
             .unwrap()
@@ -962,7 +957,7 @@ mod tests {
             &mut s,
         );
         assert_eq!(r.status, 200, "{:?}", r.headers);
-        assert_eq!(s.mount_path.as_deref(), Some("/pub"));
+        assert_eq!(s.mount_path(), Some("/pub"));
     }
 
     #[test]
@@ -979,7 +974,7 @@ mod tests {
             &mut s,
         );
         assert_eq!(r.status, 200, "{:?}", r.headers);
-        assert_eq!(s.mount_path.as_deref(), Some("/pub"));
+        assert_eq!(s.mount_path(), Some("/pub"));
     }
 
     #[test]
@@ -994,8 +989,11 @@ mod tests {
         );
         let r = crate::rtsp::server::handlers::handle_setup(&reader_setup, &st, &mut s);
         assert_eq!(r.status, 455);
-        assert_eq!(s.session_id, None, "no reader session id minted");
-        assert!(s.transport.is_none());
+        assert!(
+            matches!(s.role, Role::Publisher(_)),
+            "still only a publisher"
+        );
+        assert_eq!(s.session_id(), None, "no reader session id minted");
     }
 
     #[test]
@@ -1011,10 +1009,10 @@ mod tests {
         assert_eq!(r.status, 200);
         let mut play = req(RtspMethod::Play, "rtsp://h/pub");
         play.headers
-            .insert("session".into(), s.session_id.clone().unwrap());
+            .insert("session".into(), s.session_id().unwrap().to_owned());
         let r = crate::rtsp::server::handlers::handle_play(&play, &st, &mut s);
         assert_eq!(r.status, 455);
-        assert!(s.fanout_handle.is_none());
+        assert!(!s.is_playing());
     }
 
     #[test]
@@ -1032,7 +1030,7 @@ mod tests {
         );
         let r = handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s);
         assert_eq!(r.status, 455);
-        assert!(s.publish.is_none());
+        assert!(s.publisher().is_none());
         assert!(
             m.publisher.lock().unwrap().info.is_none(),
             "slot not claimed"
@@ -1047,7 +1045,7 @@ mod tests {
         let setup = setup_record("rtsp://h/pub/streamid=0");
         let r = crate::rtsp::server::handlers::handle_setup(&setup, &st, &mut s);
         assert_eq!(r.status, 200);
-        let sid = s.session_id.clone().unwrap();
+        let sid = s.session_id().unwrap().to_owned();
 
         // A Session header echoing `;timeout=60` names this session (not
         // 454); the track is already set up, so the second SETUP is 455.
@@ -1097,7 +1095,7 @@ mod tests {
                 "{uri:?}: table must stay empty"
             );
             assert!(rx.try_recv().is_err(), "{uri:?}: nothing may be queued");
-            assert!(s.publish.is_none());
+            assert!(s.publisher().is_none());
         }
     }
 
@@ -1117,7 +1115,7 @@ mod tests {
         assert!(Arc::ptr_eq(&queued, &in_table));
         assert_eq!(queued.path, "/new");
         assert!(queued.publisher.lock().unwrap().info.is_some());
-        assert!(s.publish.is_some());
+        assert!(s.publisher().is_some());
     }
 
     #[test]
@@ -1135,7 +1133,7 @@ mod tests {
         let mut s = ServerSessionState::new();
         let r = handle_announce(&announce("rtsp://h/overflow", SDP_MP2T), &st, &mut s);
         assert_eq!(r.status, 503);
-        assert!(s.publish.is_none());
+        assert!(s.publisher().is_none());
         let mounts = st.mounts.lock().unwrap();
         assert!(!mounts.contains_key("/overflow"), "no orphan mount");
         assert_eq!(mounts.len(), crate::rtsp::server::PUBLISH_QUEUE_BOUND);
@@ -1171,7 +1169,7 @@ mod tests {
         let mut s = ServerSessionState::new();
         let r = handle_announce(&announce("rtsp://h/over", SDP_MP2T), &st, &mut s);
         assert_eq!(r.status, 503);
-        assert!(s.publish.is_none());
+        assert!(s.publisher().is_none());
         assert!(!st.mounts.lock().unwrap().contains_key("/over"));
         assert!(rx.try_recv().is_err(), "nothing queued for a refused mount");
         // What `RtspServer::remove_mount` does to the table frees a slot.

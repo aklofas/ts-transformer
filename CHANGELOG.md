@@ -863,6 +863,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `461 Unsupported Transport`), and `stop()` sends the Notice 5402 ANNOUNCE
   to TLS sessions and closes them with a TLS close_notify (it skipped them).
   Plain and TLS sessions now share one connection handler.
+- `RtspServer`: a SETUP on a connection whose reader is already playing or
+  paused answers `455 Method Not Valid in This State`. It answered 200 and
+  pointed the session at the new mount while the running fanout kept
+  streaming the old one, which left that fanout orphaned: the session and the
+  shutdown registry named a mount the stream was not serving.
 
 ---
 
