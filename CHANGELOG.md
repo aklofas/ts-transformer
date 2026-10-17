@@ -48,6 +48,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `HlsUrl` is its `config: HlsConfig`; `UdpConfig::merge_from_url` and
   `HlsConfig::merge_from_url` are removed because the parsed URL already is
   the config.
+- `TcpUrlError` and `RistUrlError` are gone too. `TcpUrl::parse`,
+  `RistUrl::parse` and the builders' `from_url` and `new` return
+  `tst_core::url::UrlError` with the same messages, so every small transport
+  reports URL errors through one type. `TcpUrl` keeps `host`, `port`, `tls`
+  and `listen` and holds the rest in `config: TcpConfig`; `RistUrl` keeps its
+  address fields and holds the rest in `config: RistConfig`;
+  `SocketConfig::merge_from_url` and `RistConfig::merge_from_url` are removed
+  because the parsed URL already is the config. A `?ca=` bundle now reaches
+  `TcpTransport::connect_with_config` through the `TcpConfig` it is given, not
+  through the URL, so a caller that passes a default config with a `tcps://`
+  URL must pass `url.config` to keep the bundle.
 - `tst_tcp::tls::load_server_config` is removed; use
   `tst_core::net::tls::load_server_config` (it takes `&Path` and returns
   `TlsLoadError`). A `tcps://…?ca=` bundle with no certificate now fails at
@@ -238,6 +249,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unchanged). `TcpCancelHandle` keeps its type and API.
 - The error text of a tcps CA bundle that cannot be loaded changed; the error
   kinds are unchanged.
+- `RistTransportBuilder` and `RistRecvTransportBuilder` setters take
+  `&mut self`, and `connect` and `listen` take `&self`; so do
+  `TcpTransportBuilder::build` and `TcpListenerBuilder::build`. This is the
+  one builder rule every crate follows. Chained calls on a temporary are
+  unchanged; a chain that reassigns the builder (`b = b.profile(..)`) must
+  call the setters in place.
 
 ### Changed — tst-hls (BREAKING)
 
@@ -505,6 +522,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   scheme into a type-erased transport (`tst_pipeline::binding::Opened`) for a
   language binding's shells. `tst_srt::opener::open_recv` takes the accept's
   `CancelSlot`. `SrtTransport` implements `as_any`.
+- `tcp://` and `rist://` URLs accept `?pkt_size=`, which the builders
+  already had; `TcpConfig` carries `cert`, `key` and `ca` so TLS material is
+  not URL-only.
 
 ### Added — tst-rtp
 
@@ -650,6 +670,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `tst_udp::SocketConfig` → `UdpConfig` (the old name is a deprecated alias
   until 0.10.0; three crates named a type `SocketConfig`).
+- `tst_tcp::SocketConfig` → `TcpConfig` (same alias rule; its `merge_from_url`
+  is gone, see Removed).
 
 ### Deprecated — tst-py
 

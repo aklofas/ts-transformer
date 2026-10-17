@@ -41,7 +41,7 @@ mod ctx;
 pub use config::{EncryptionKey, RistConfig, RistProfile, RistSecret};
 pub use error::RistError;
 pub use stats::RistStats;
-pub use url::{RistUrl, RistUrlError};
+pub use url::RistUrl;
 
 pub use builder::{RistRecvTransportBuilder, RistTransportBuilder};
 pub use recv::RistRecvTransport;

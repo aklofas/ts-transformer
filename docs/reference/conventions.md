@@ -346,7 +346,7 @@ rejected by `srt`, `rtp` and `rtsp(s)` URLs.
 | `ttl` | Multicast hop limit | decimal 0 to 255 for `udp`; 1 to 255 for `rtp` | `udp`, `rtp` |
 | `tos` | IP type of service | decimal, or hex with a `0x` prefix, 0 to 255 | `udp` |
 | `rcvbuf`, `sndbuf` | Kernel socket buffer size | bytes; `K` and `M` suffixes are 1024-based; at most 256 MiB | `udp`, `tcp`, `rtp` |
-| `pkt_size` | Datagram payload size | bytes with the `K`/`M` forms for `udp`; a positive multiple of 188 for `rtp`; at most 1456 for `srt` (also `payloadsize`, `payload_size`) | `udp`, `rtp`, `srt` |
+| `pkt_size` | Datagram payload size (largest payload one send takes for `tcp(s)`) | bytes with the `K`/`M` forms for `udp`, `tcp(s)` and `rist`; a positive multiple of 188 for `rtp`; at most 1456 for `srt` (also `payloadsize`, `payload_size`) | `udp`, `tcp(s)`, `rist`, `rtp`, `srt` |
 | `ssrc` | RTP synchronisation source | decimal or `0x` hex, 32 bits | `rtp` |
 | `pt` | RTP payload type | 1 to 127, not 33 | `rtp` |
 | `source` | Accept datagrams only from this sender | IP address | `rtp` |

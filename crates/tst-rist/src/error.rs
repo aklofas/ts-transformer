@@ -8,7 +8,7 @@ use thiserror::Error;
 #[non_exhaustive]
 pub enum RistError {
     #[error("URL parse failed: {0}")]
-    Url(#[from] crate::url::RistUrlError),
+    Url(#[from] tst_core::url::UrlError),
 
     #[error("librist FFI error: code={code}, fn={function}")]
     Ffi { code: i32, function: &'static str },

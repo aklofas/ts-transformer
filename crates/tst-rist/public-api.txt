@@ -2,14 +2,14 @@ pub mod tst_rist
 pub mod tst_rist::builder
 pub struct tst_rist::builder::RistRecvTransportBuilder
 impl tst_rist::builder::RistRecvTransportBuilder
-pub fn tst_rist::builder::RistRecvTransportBuilder::buffer(self, core::time::Duration) -> Self
-pub fn tst_rist::builder::RistRecvTransportBuilder::cname(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn tst_rist::builder::RistRecvTransportBuilder::buffer(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_rist::builder::RistRecvTransportBuilder::cname(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
 pub fn tst_rist::builder::RistRecvTransportBuilder::config(&self) -> &tst_rist::config::RistConfig
-pub fn tst_rist::builder::RistRecvTransportBuilder::encryption(self, tst_rist::config::EncryptionKey) -> Self
-pub fn tst_rist::builder::RistRecvTransportBuilder::listen(self) -> core::result::Result<tst_rist::recv::RistRecvTransport, tst_rist::error::RistError>
+pub fn tst_rist::builder::RistRecvTransportBuilder::encryption(&mut self, tst_rist::config::EncryptionKey) -> &mut Self
+pub fn tst_rist::builder::RistRecvTransportBuilder::listen(&self) -> core::result::Result<tst_rist::recv::RistRecvTransport, tst_rist::error::RistError>
 pub fn tst_rist::builder::RistRecvTransportBuilder::new(&str) -> core::result::Result<Self, tst_rist::error::RistError>
-pub fn tst_rist::builder::RistRecvTransportBuilder::profile(self, tst_rist::config::RistProfile) -> Self
-pub fn tst_rist::builder::RistRecvTransportBuilder::session_timeout(self, core::time::Duration) -> Self
+pub fn tst_rist::builder::RistRecvTransportBuilder::profile(&mut self, tst_rist::config::RistProfile) -> &mut Self
+pub fn tst_rist::builder::RistRecvTransportBuilder::session_timeout(&mut self, core::time::Duration) -> &mut Self
 impl core::marker::Freeze for tst_rist::builder::RistRecvTransportBuilder
 impl core::marker::Send for tst_rist::builder::RistRecvTransportBuilder
 impl core::marker::Sync for tst_rist::builder::RistRecvTransportBuilder
@@ -19,18 +19,18 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::builder::RistRecvTran
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::builder::RistRecvTransportBuilder
 pub struct tst_rist::builder::RistTransportBuilder
 impl tst_rist::builder::RistTransportBuilder
-pub fn tst_rist::builder::RistTransportBuilder::bandwidth_kbps(self, u32) -> Self
-pub fn tst_rist::builder::RistTransportBuilder::buffer(self, core::time::Duration) -> Self
-pub fn tst_rist::builder::RistTransportBuilder::cname(self, impl core::convert::Into<alloc::string::String>) -> Self
-pub fn tst_rist::builder::RistTransportBuilder::compression(self, bool) -> Self
+pub fn tst_rist::builder::RistTransportBuilder::bandwidth_kbps(&mut self, u32) -> &mut Self
+pub fn tst_rist::builder::RistTransportBuilder::buffer(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_rist::builder::RistTransportBuilder::cname(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
+pub fn tst_rist::builder::RistTransportBuilder::compression(&mut self, bool) -> &mut Self
 pub fn tst_rist::builder::RistTransportBuilder::config(&self) -> &tst_rist::config::RistConfig
-pub fn tst_rist::builder::RistTransportBuilder::connect(self) -> core::result::Result<tst_rist::transport::RistTransport, tst_rist::error::RistError>
-pub fn tst_rist::builder::RistTransportBuilder::encryption(self, tst_rist::config::EncryptionKey) -> Self
+pub fn tst_rist::builder::RistTransportBuilder::connect(&self) -> core::result::Result<tst_rist::transport::RistTransport, tst_rist::error::RistError>
+pub fn tst_rist::builder::RistTransportBuilder::encryption(&mut self, tst_rist::config::EncryptionKey) -> &mut Self
 pub fn tst_rist::builder::RistTransportBuilder::new(&str) -> core::result::Result<Self, tst_rist::error::RistError>
-pub fn tst_rist::builder::RistTransportBuilder::pkt_size(self, usize) -> Self
-pub fn tst_rist::builder::RistTransportBuilder::profile(self, tst_rist::config::RistProfile) -> Self
-pub fn tst_rist::builder::RistTransportBuilder::recovery_maxbitrate_kbps(self, u32) -> Self
-pub fn tst_rist::builder::RistTransportBuilder::session_timeout(self, core::time::Duration) -> Self
+pub fn tst_rist::builder::RistTransportBuilder::pkt_size(&mut self, usize) -> &mut Self
+pub fn tst_rist::builder::RistTransportBuilder::profile(&mut self, tst_rist::config::RistProfile) -> &mut Self
+pub fn tst_rist::builder::RistTransportBuilder::recovery_maxbitrate_kbps(&mut self, u32) -> &mut Self
+pub fn tst_rist::builder::RistTransportBuilder::session_timeout(&mut self, core::time::Duration) -> &mut Self
 impl core::marker::Freeze for tst_rist::builder::RistTransportBuilder
 impl core::marker::Send for tst_rist::builder::RistTransportBuilder
 impl core::marker::Sync for tst_rist::builder::RistTransportBuilder
@@ -92,7 +92,6 @@ pub tst_rist::config::RistConfig::recovery_maxbitrate_kbps: core::option::Option
 pub tst_rist::config::RistConfig::session_timeout: core::option::Option<core::time::Duration>
 impl tst_rist::config::RistConfig
 pub const tst_rist::config::RistConfig::DEFAULT_PKT_SIZE: usize
-pub fn tst_rist::config::RistConfig::merge_from_url(&mut self, &tst_rist::url::RistUrl)
 impl core::clone::Clone for tst_rist::config::RistConfig
 pub fn tst_rist::config::RistConfig::clone(&self) -> tst_rist::config::RistConfig
 impl core::default::Default for tst_rist::config::RistConfig
@@ -130,11 +129,11 @@ pub tst_rist::error::RistError::Ffi::code: i32
 pub tst_rist::error::RistError::Ffi::function: &'static str
 pub tst_rist::error::RistError::InvalidConfig(alloc::string::String)
 pub tst_rist::error::RistError::PeerCreateFailed
-pub tst_rist::error::RistError::Url(tst_rist::url::RistUrlError)
+pub tst_rist::error::RistError::Url(tst_core::url::common::UrlError)
+impl core::convert::From<tst_core::url::common::UrlError> for tst_rist::error::RistError
+pub fn tst_rist::error::RistError::from(tst_core::url::common::UrlError) -> Self
 impl core::convert::From<tst_rist::error::RistError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_rist::error::RistError) -> Self
-impl core::convert::From<tst_rist::url::RistUrlError> for tst_rist::error::RistError
-pub fn tst_rist::error::RistError::from(tst_rist::url::RistUrlError) -> Self
 impl core::error::Error for tst_rist::error::RistError
 pub fn tst_rist::error::RistError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_rist::error::RistError
@@ -228,51 +227,13 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::transport::RistTransp
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::transport::RistTransport
 pub type tst_rist::transport::RistCancelHandle = tst_core::cancel::FlagCancel
 pub mod tst_rist::url
-#[non_exhaustive] pub enum tst_rist::url::RistUrlError
-pub tst_rist::url::RistUrlError::AesTypeWithoutSecret
-pub tst_rist::url::RistUrlError::BadAesType(u32)
-pub tst_rist::url::RistUrlError::BadHost(alloc::string::String)
-pub tst_rist::url::RistUrlError::BadQueryValue
-pub tst_rist::url::RistUrlError::BadQueryValue::detail: alloc::string::String
-pub tst_rist::url::RistUrlError::BadQueryValue::key: alloc::string::String
-pub tst_rist::url::RistUrlError::BadQueryValue::value: alloc::string::String
-pub tst_rist::url::RistUrlError::BadScheme(alloc::string::String)
-pub tst_rist::url::RistUrlError::MissingPort
-pub tst_rist::url::RistUrlError::Parse(tst_core::url::common::UrlError)
-impl core::convert::From<tst_core::url::common::UrlError> for tst_rist::url::RistUrlError
-pub fn tst_rist::url::RistUrlError::from(tst_core::url::common::UrlError) -> Self
-impl core::convert::From<tst_rist::url::RistUrlError> for tst_pipeline::binding::kind::BindingError
-pub fn tst_pipeline::binding::kind::BindingError::from(tst_rist::url::RistUrlError) -> Self
-impl core::convert::From<tst_rist::url::RistUrlError> for tst_rist::error::RistError
-pub fn tst_rist::error::RistError::from(tst_rist::url::RistUrlError) -> Self
-impl core::error::Error for tst_rist::url::RistUrlError
-pub fn tst_rist::url::RistUrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
-impl core::fmt::Debug for tst_rist::url::RistUrlError
-pub fn tst_rist::url::RistUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::fmt::Display for tst_rist::url::RistUrlError
-pub fn tst_rist::url::RistUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_rist::url::RistUrlError
-impl core::marker::Send for tst_rist::url::RistUrlError
-impl core::marker::Sync for tst_rist::url::RistUrlError
-impl core::marker::Unpin for tst_rist::url::RistUrlError
-impl core::marker::UnsafeUnpin for tst_rist::url::RistUrlError
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::url::RistUrlError
-impl core::panic::unwind_safe::UnwindSafe for tst_rist::url::RistUrlError
 #[non_exhaustive] pub struct tst_rist::url::RistUrl
 pub tst_rist::url::RistUrl::addr: core::net::ip_addr::IpAddr
-pub tst_rist::url::RistUrl::aes_type: core::option::Option<u32>
-pub tst_rist::url::RistUrl::bandwidth_kbps: core::option::Option<u32>
-pub tst_rist::url::RistUrl::buffer_ms: core::option::Option<core::time::Duration>
-pub tst_rist::url::RistUrl::cname: core::option::Option<alloc::string::String>
-pub tst_rist::url::RistUrl::compression: core::option::Option<bool>
+pub tst_rist::url::RistUrl::config: tst_rist::config::RistConfig
 pub tst_rist::url::RistUrl::is_recv_bind: bool
 pub tst_rist::url::RistUrl::port: u16
-pub tst_rist::url::RistUrl::profile: core::option::Option<tst_rist::config::RistProfile>
-pub tst_rist::url::RistUrl::recovery_maxbitrate_kbps: core::option::Option<u32>
-pub tst_rist::url::RistUrl::secret: core::option::Option<tst_rist::config::RistSecret>
-pub tst_rist::url::RistUrl::session_timeout_ms: core::option::Option<u32>
 impl tst_rist::url::RistUrl
-pub fn tst_rist::url::RistUrl::parse(&str) -> core::result::Result<Self, tst_rist::url::RistUrlError>
+pub fn tst_rist::url::RistUrl::parse(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 impl core::clone::Clone for tst_rist::url::RistUrl
 pub fn tst_rist::url::RistUrl::clone(&self) -> tst_rist::url::RistUrl
 impl core::fmt::Debug for tst_rist::url::RistUrl
@@ -292,11 +253,11 @@ pub tst_rist::RistError::Ffi::code: i32
 pub tst_rist::RistError::Ffi::function: &'static str
 pub tst_rist::RistError::InvalidConfig(alloc::string::String)
 pub tst_rist::RistError::PeerCreateFailed
-pub tst_rist::RistError::Url(tst_rist::url::RistUrlError)
+pub tst_rist::RistError::Url(tst_core::url::common::UrlError)
+impl core::convert::From<tst_core::url::common::UrlError> for tst_rist::error::RistError
+pub fn tst_rist::error::RistError::from(tst_core::url::common::UrlError) -> Self
 impl core::convert::From<tst_rist::error::RistError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_rist::error::RistError) -> Self
-impl core::convert::From<tst_rist::url::RistUrlError> for tst_rist::error::RistError
-pub fn tst_rist::error::RistError::from(tst_rist::url::RistUrlError) -> Self
 impl core::error::Error for tst_rist::error::RistError
 pub fn tst_rist::error::RistError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_rist::error::RistError
@@ -331,36 +292,6 @@ impl core::marker::Unpin for tst_rist::config::RistProfile
 impl core::marker::UnsafeUnpin for tst_rist::config::RistProfile
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::config::RistProfile
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::config::RistProfile
-#[non_exhaustive] pub enum tst_rist::RistUrlError
-pub tst_rist::RistUrlError::AesTypeWithoutSecret
-pub tst_rist::RistUrlError::BadAesType(u32)
-pub tst_rist::RistUrlError::BadHost(alloc::string::String)
-pub tst_rist::RistUrlError::BadQueryValue
-pub tst_rist::RistUrlError::BadQueryValue::detail: alloc::string::String
-pub tst_rist::RistUrlError::BadQueryValue::key: alloc::string::String
-pub tst_rist::RistUrlError::BadQueryValue::value: alloc::string::String
-pub tst_rist::RistUrlError::BadScheme(alloc::string::String)
-pub tst_rist::RistUrlError::MissingPort
-pub tst_rist::RistUrlError::Parse(tst_core::url::common::UrlError)
-impl core::convert::From<tst_core::url::common::UrlError> for tst_rist::url::RistUrlError
-pub fn tst_rist::url::RistUrlError::from(tst_core::url::common::UrlError) -> Self
-impl core::convert::From<tst_rist::url::RistUrlError> for tst_pipeline::binding::kind::BindingError
-pub fn tst_pipeline::binding::kind::BindingError::from(tst_rist::url::RistUrlError) -> Self
-impl core::convert::From<tst_rist::url::RistUrlError> for tst_rist::error::RistError
-pub fn tst_rist::error::RistError::from(tst_rist::url::RistUrlError) -> Self
-impl core::error::Error for tst_rist::url::RistUrlError
-pub fn tst_rist::url::RistUrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
-impl core::fmt::Debug for tst_rist::url::RistUrlError
-pub fn tst_rist::url::RistUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::fmt::Display for tst_rist::url::RistUrlError
-pub fn tst_rist::url::RistUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_rist::url::RistUrlError
-impl core::marker::Send for tst_rist::url::RistUrlError
-impl core::marker::Sync for tst_rist::url::RistUrlError
-impl core::marker::Unpin for tst_rist::url::RistUrlError
-impl core::marker::UnsafeUnpin for tst_rist::url::RistUrlError
-impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::url::RistUrlError
-impl core::panic::unwind_safe::UnwindSafe for tst_rist::url::RistUrlError
 pub struct tst_rist::EncryptionKey
 pub tst_rist::EncryptionKey::rotation: u32
 pub tst_rist::EncryptionKey::secret: tst_rist::config::RistSecret
@@ -393,7 +324,6 @@ pub tst_rist::RistConfig::recovery_maxbitrate_kbps: core::option::Option<u32>
 pub tst_rist::RistConfig::session_timeout: core::option::Option<core::time::Duration>
 impl tst_rist::config::RistConfig
 pub const tst_rist::config::RistConfig::DEFAULT_PKT_SIZE: usize
-pub fn tst_rist::config::RistConfig::merge_from_url(&mut self, &tst_rist::url::RistUrl)
 impl core::clone::Clone for tst_rist::config::RistConfig
 pub fn tst_rist::config::RistConfig::clone(&self) -> tst_rist::config::RistConfig
 impl core::default::Default for tst_rist::config::RistConfig
@@ -432,14 +362,14 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::recv::RistRecvTranspo
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::recv::RistRecvTransport
 pub struct tst_rist::RistRecvTransportBuilder
 impl tst_rist::builder::RistRecvTransportBuilder
-pub fn tst_rist::builder::RistRecvTransportBuilder::buffer(self, core::time::Duration) -> Self
-pub fn tst_rist::builder::RistRecvTransportBuilder::cname(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn tst_rist::builder::RistRecvTransportBuilder::buffer(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_rist::builder::RistRecvTransportBuilder::cname(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
 pub fn tst_rist::builder::RistRecvTransportBuilder::config(&self) -> &tst_rist::config::RistConfig
-pub fn tst_rist::builder::RistRecvTransportBuilder::encryption(self, tst_rist::config::EncryptionKey) -> Self
-pub fn tst_rist::builder::RistRecvTransportBuilder::listen(self) -> core::result::Result<tst_rist::recv::RistRecvTransport, tst_rist::error::RistError>
+pub fn tst_rist::builder::RistRecvTransportBuilder::encryption(&mut self, tst_rist::config::EncryptionKey) -> &mut Self
+pub fn tst_rist::builder::RistRecvTransportBuilder::listen(&self) -> core::result::Result<tst_rist::recv::RistRecvTransport, tst_rist::error::RistError>
 pub fn tst_rist::builder::RistRecvTransportBuilder::new(&str) -> core::result::Result<Self, tst_rist::error::RistError>
-pub fn tst_rist::builder::RistRecvTransportBuilder::profile(self, tst_rist::config::RistProfile) -> Self
-pub fn tst_rist::builder::RistRecvTransportBuilder::session_timeout(self, core::time::Duration) -> Self
+pub fn tst_rist::builder::RistRecvTransportBuilder::profile(&mut self, tst_rist::config::RistProfile) -> &mut Self
+pub fn tst_rist::builder::RistRecvTransportBuilder::session_timeout(&mut self, core::time::Duration) -> &mut Self
 impl core::marker::Freeze for tst_rist::builder::RistRecvTransportBuilder
 impl core::marker::Send for tst_rist::builder::RistRecvTransportBuilder
 impl core::marker::Sync for tst_rist::builder::RistRecvTransportBuilder
@@ -512,18 +442,18 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::transport::RistTransp
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::transport::RistTransport
 pub struct tst_rist::RistTransportBuilder
 impl tst_rist::builder::RistTransportBuilder
-pub fn tst_rist::builder::RistTransportBuilder::bandwidth_kbps(self, u32) -> Self
-pub fn tst_rist::builder::RistTransportBuilder::buffer(self, core::time::Duration) -> Self
-pub fn tst_rist::builder::RistTransportBuilder::cname(self, impl core::convert::Into<alloc::string::String>) -> Self
-pub fn tst_rist::builder::RistTransportBuilder::compression(self, bool) -> Self
+pub fn tst_rist::builder::RistTransportBuilder::bandwidth_kbps(&mut self, u32) -> &mut Self
+pub fn tst_rist::builder::RistTransportBuilder::buffer(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_rist::builder::RistTransportBuilder::cname(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
+pub fn tst_rist::builder::RistTransportBuilder::compression(&mut self, bool) -> &mut Self
 pub fn tst_rist::builder::RistTransportBuilder::config(&self) -> &tst_rist::config::RistConfig
-pub fn tst_rist::builder::RistTransportBuilder::connect(self) -> core::result::Result<tst_rist::transport::RistTransport, tst_rist::error::RistError>
-pub fn tst_rist::builder::RistTransportBuilder::encryption(self, tst_rist::config::EncryptionKey) -> Self
+pub fn tst_rist::builder::RistTransportBuilder::connect(&self) -> core::result::Result<tst_rist::transport::RistTransport, tst_rist::error::RistError>
+pub fn tst_rist::builder::RistTransportBuilder::encryption(&mut self, tst_rist::config::EncryptionKey) -> &mut Self
 pub fn tst_rist::builder::RistTransportBuilder::new(&str) -> core::result::Result<Self, tst_rist::error::RistError>
-pub fn tst_rist::builder::RistTransportBuilder::pkt_size(self, usize) -> Self
-pub fn tst_rist::builder::RistTransportBuilder::profile(self, tst_rist::config::RistProfile) -> Self
-pub fn tst_rist::builder::RistTransportBuilder::recovery_maxbitrate_kbps(self, u32) -> Self
-pub fn tst_rist::builder::RistTransportBuilder::session_timeout(self, core::time::Duration) -> Self
+pub fn tst_rist::builder::RistTransportBuilder::pkt_size(&mut self, usize) -> &mut Self
+pub fn tst_rist::builder::RistTransportBuilder::profile(&mut self, tst_rist::config::RistProfile) -> &mut Self
+pub fn tst_rist::builder::RistTransportBuilder::recovery_maxbitrate_kbps(&mut self, u32) -> &mut Self
+pub fn tst_rist::builder::RistTransportBuilder::session_timeout(&mut self, core::time::Duration) -> &mut Self
 impl core::marker::Freeze for tst_rist::builder::RistTransportBuilder
 impl core::marker::Send for tst_rist::builder::RistTransportBuilder
 impl core::marker::Sync for tst_rist::builder::RistTransportBuilder
@@ -533,19 +463,11 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::builder::RistTranspor
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::builder::RistTransportBuilder
 #[non_exhaustive] pub struct tst_rist::RistUrl
 pub tst_rist::RistUrl::addr: core::net::ip_addr::IpAddr
-pub tst_rist::RistUrl::aes_type: core::option::Option<u32>
-pub tst_rist::RistUrl::bandwidth_kbps: core::option::Option<u32>
-pub tst_rist::RistUrl::buffer_ms: core::option::Option<core::time::Duration>
-pub tst_rist::RistUrl::cname: core::option::Option<alloc::string::String>
-pub tst_rist::RistUrl::compression: core::option::Option<bool>
+pub tst_rist::RistUrl::config: tst_rist::config::RistConfig
 pub tst_rist::RistUrl::is_recv_bind: bool
 pub tst_rist::RistUrl::port: u16
-pub tst_rist::RistUrl::profile: core::option::Option<tst_rist::config::RistProfile>
-pub tst_rist::RistUrl::recovery_maxbitrate_kbps: core::option::Option<u32>
-pub tst_rist::RistUrl::secret: core::option::Option<tst_rist::config::RistSecret>
-pub tst_rist::RistUrl::session_timeout_ms: core::option::Option<u32>
 impl tst_rist::url::RistUrl
-pub fn tst_rist::url::RistUrl::parse(&str) -> core::result::Result<Self, tst_rist::url::RistUrlError>
+pub fn tst_rist::url::RistUrl::parse(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 impl core::clone::Clone for tst_rist::url::RistUrl
 pub fn tst_rist::url::RistUrl::clone(&self) -> tst_rist::url::RistUrl
 impl core::fmt::Debug for tst_rist::url::RistUrl

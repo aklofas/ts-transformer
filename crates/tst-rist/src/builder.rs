@@ -14,12 +14,13 @@ use crate::url::RistUrl;
 /// use tst_rist::{RistTransportBuilder, RistProfile, EncryptionKey};
 /// use std::time::Duration;
 ///
-/// let sender = RistTransportBuilder::new("rist://1.2.3.4:8000")?
+/// let mut builder = RistTransportBuilder::new("rist://1.2.3.4:8000")?;
+/// builder
 ///     .profile(RistProfile::Main)
 ///     .buffer(Duration::from_millis(500))
 ///     .encryption(EncryptionKey::aes256("psk"))
-///     .cname("uav-12")
-///     .connect()?;
+///     .cname("uav-12");
+/// let sender = builder.connect()?;
 /// # Ok::<(), tst_rist::RistError>(())
 /// ```
 pub struct RistTransportBuilder {
@@ -29,7 +30,7 @@ pub struct RistTransportBuilder {
 
 impl RistTransportBuilder {
     /// Parse a `rist://` URL and start a builder. URL params seed config
-    /// (matching [`RistConfig::merge_from_url`] semantics).
+    /// (the same keys as every `rist://` entry point).
     pub fn new(url: &str) -> Result<Self, RistError> {
         let parsed = RistUrl::parse(url)?;
         if parsed.is_recv_bind {
@@ -37,8 +38,7 @@ impl RistTransportBuilder {
                 "URL has '@' prefix — use RistRecvTransportBuilder".into(),
             ));
         }
-        let mut config = RistConfig::default();
-        config.merge_from_url(&parsed);
+        let config = parsed.config.clone();
         Ok(Self {
             url: parsed,
             config,
@@ -47,57 +47,57 @@ impl RistTransportBuilder {
 
     /// Override profile. [`Self::encryption`] sets [`RistProfile::Main`];
     /// the later of the two calls wins.
-    pub fn profile(mut self, profile: RistProfile) -> Self {
+    pub fn profile(&mut self, profile: RistProfile) -> &mut Self {
         self.config.profile = profile;
         self
     }
 
     /// Recovery buffer duration.
-    pub fn buffer(mut self, buffer: Duration) -> Self {
+    pub fn buffer(&mut self, buffer: Duration) -> &mut Self {
         self.config.buffer = buffer;
         self
     }
 
     /// Alias of [`Self::recovery_maxbitrate_kbps`] (same librist field);
     /// setting both to different values fails at `connect()`.
-    pub fn bandwidth_kbps(mut self, kbps: u32) -> Self {
+    pub fn bandwidth_kbps(&mut self, kbps: u32) -> &mut Self {
         self.config.bandwidth_kbps = Some(kbps);
         self
     }
 
     /// Retransmit bandwidth cap (kbps, librist `recovery_maxbitrate`).
-    pub fn recovery_maxbitrate_kbps(mut self, kbps: u32) -> Self {
+    pub fn recovery_maxbitrate_kbps(&mut self, kbps: u32) -> &mut Self {
         self.config.recovery_maxbitrate_kbps = Some(kbps);
         self
     }
 
     /// Enable AES encryption. Forces profile to [`RistProfile::Main`].
-    pub fn encryption(mut self, key: EncryptionKey) -> Self {
+    pub fn encryption(&mut self, key: EncryptionKey) -> &mut Self {
         self.config.encryption = Some(key);
         self.config.profile = RistProfile::Main;
         self
     }
 
     /// RTCP CNAME.
-    pub fn cname(mut self, cname: impl Into<String>) -> Self {
+    pub fn cname(&mut self, cname: impl Into<String>) -> &mut Self {
         self.config.cname = Some(cname.into());
         self
     }
 
     /// Session timeout (ms).
-    pub fn session_timeout(mut self, timeout: Duration) -> Self {
+    pub fn session_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.config.session_timeout = Some(timeout);
         self
     }
 
     /// Enable NULL-packet deletion / compression.
-    pub fn compression(mut self, enabled: bool) -> Self {
+    pub fn compression(&mut self, enabled: bool) -> &mut Self {
         self.config.compression = enabled;
         self
     }
 
     /// Per-send-call payload cap.
-    pub fn pkt_size(mut self, n: usize) -> Self {
+    pub fn pkt_size(&mut self, n: usize) -> &mut Self {
         self.config.pkt_size = n;
         self
     }
@@ -108,7 +108,7 @@ impl RistTransportBuilder {
     }
 
     /// Construct the transport.
-    pub fn connect(self) -> Result<RistTransport, RistError> {
+    pub fn connect(&self) -> Result<RistTransport, RistError> {
         RistTransport::connect_with_config(&self.url, &self.config)
     }
 }
@@ -121,9 +121,9 @@ impl RistTransportBuilder {
 /// ```no_run
 /// use tst_rist::{RistRecvTransportBuilder, RistProfile};
 ///
-/// let recv = RistRecvTransportBuilder::new("rist://@0.0.0.0:8000")?
-///     .profile(RistProfile::Main)
-///     .listen()?;
+/// let mut builder = RistRecvTransportBuilder::new("rist://@0.0.0.0:8000")?;
+/// builder.profile(RistProfile::Main);
+/// let recv = builder.listen()?;
 /// # Ok::<(), tst_rist::RistError>(())
 /// ```
 pub struct RistRecvTransportBuilder {
@@ -140,8 +140,7 @@ impl RistRecvTransportBuilder {
                 "URL missing '@' prefix — use rist://@host:port for receivers".into(),
             ));
         }
-        let mut config = RistConfig::default();
-        config.merge_from_url(&parsed);
+        let config = parsed.config.clone();
         Ok(Self {
             url: parsed,
             config,
@@ -150,32 +149,32 @@ impl RistRecvTransportBuilder {
 
     /// Override profile. [`Self::encryption`] sets [`RistProfile::Main`];
     /// the later of the two calls wins.
-    pub fn profile(mut self, profile: RistProfile) -> Self {
+    pub fn profile(&mut self, profile: RistProfile) -> &mut Self {
         self.config.profile = profile;
         self
     }
 
     /// Recovery buffer duration.
-    pub fn buffer(mut self, buffer: Duration) -> Self {
+    pub fn buffer(&mut self, buffer: Duration) -> &mut Self {
         self.config.buffer = buffer;
         self
     }
 
     /// Enable AES encryption. Forces profile to [`RistProfile::Main`].
-    pub fn encryption(mut self, key: EncryptionKey) -> Self {
+    pub fn encryption(&mut self, key: EncryptionKey) -> &mut Self {
         self.config.encryption = Some(key);
         self.config.profile = RistProfile::Main;
         self
     }
 
     /// RTCP CNAME.
-    pub fn cname(mut self, cname: impl Into<String>) -> Self {
+    pub fn cname(&mut self, cname: impl Into<String>) -> &mut Self {
         self.config.cname = Some(cname.into());
         self
     }
 
     /// Session timeout.
-    pub fn session_timeout(mut self, timeout: Duration) -> Self {
+    pub fn session_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.config.session_timeout = Some(timeout);
         self
     }
@@ -186,7 +185,7 @@ impl RistRecvTransportBuilder {
     }
 
     /// Construct the receiver.
-    pub fn listen(self) -> Result<RistRecvTransport, RistError> {
+    pub fn listen(&self) -> Result<RistRecvTransport, RistError> {
         RistRecvTransport::listen_with_config(&self.url, &self.config)
     }
 }
@@ -197,9 +196,8 @@ mod tests {
 
     #[test]
     fn sender_builder_chains_config() {
-        let b = RistTransportBuilder::new("rist://1.2.3.4:8000")
-            .unwrap()
-            .profile(RistProfile::Main)
+        let mut b = RistTransportBuilder::new("rist://1.2.3.4:8000").unwrap();
+        b.profile(RistProfile::Main)
             .buffer(Duration::from_millis(500))
             .bandwidth_kbps(10_000)
             .cname("test")
@@ -214,9 +212,8 @@ mod tests {
 
     #[test]
     fn sender_builder_encryption_forces_main_profile() {
-        let b = RistTransportBuilder::new("rist://1.2.3.4:8000")
-            .unwrap()
-            .profile(RistProfile::Simple)
+        let mut b = RistTransportBuilder::new("rist://1.2.3.4:8000").unwrap();
+        b.profile(RistProfile::Simple)
             .encryption(EncryptionKey::aes256("psk"));
         assert_eq!(b.config().profile, RistProfile::Main);
         assert!(b.config().encryption.is_some());
@@ -236,9 +233,8 @@ mod tests {
 
     #[test]
     fn recv_builder_chains_config() {
-        let b = RistRecvTransportBuilder::new("rist://@0.0.0.0:8000")
-            .unwrap()
-            .profile(RistProfile::Main)
+        let mut b = RistRecvTransportBuilder::new("rist://@0.0.0.0:8000").unwrap();
+        b.profile(RistProfile::Main)
             .buffer(Duration::from_millis(300))
             .cname("recv-1");
         assert_eq!(b.config().profile, RistProfile::Main);

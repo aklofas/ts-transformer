@@ -2,14 +2,7 @@
 //! see `tst-srt/src/binding_kind.rs` for the why.
 
 use crate::error::RistError;
-use crate::url::RistUrlError;
 use tst_pipeline::binding::{BindingError, BindingErrorKind as K};
-
-impl From<RistUrlError> for BindingError {
-    fn from(e: RistUrlError) -> Self {
-        BindingError::new(K::RistUrl, e.to_string())
-    }
-}
 
 impl From<RistError> for BindingError {
     fn from(e: RistError) -> Self {
@@ -56,13 +49,8 @@ mod tests {
             BindingError::from(RistError::PeerCreateFailed).kind,
             K::RistPeerCreateFailed
         );
-        // Both ways into RIST_URL: the URL error on its own, and wrapped.
         assert_eq!(
-            BindingError::from(crate::url::RistUrlError::MissingPort).kind,
-            K::RistUrl
-        );
-        assert_eq!(
-            BindingError::from(RistError::Url(crate::url::RistUrlError::MissingPort)).kind,
+            BindingError::from(RistError::Url(tst_core::url::UrlError::MissingPort)).kind,
             K::RistUrl
         );
         assert_eq!(K::RistUrl.c_projection(), -39);

@@ -18,7 +18,7 @@ use std::net::{TcpListener as StdTcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
 use tst_core::transport::conformance::{self as kit, BrokenSource, RecvRow, SendPark, SendRow};
-use tst_tcp::{SocketConfig, TcpTransport};
+use tst_tcp::{TcpConfig, TcpTransport};
 
 struct Pair {
     listener: StdTcpListener,
@@ -115,7 +115,7 @@ fn tcp_recv_max_payload_ge_ceiling() {
     let pair = Pair::bind();
     // A stream has no protocol ceiling; the deliverable ceiling IS the
     // configured pkt_size (default 64 KiB).
-    kit::recv_max_payload_ge_ceiling(&pair.connect(), SocketConfig::DEFAULT_PKT_SIZE);
+    kit::recv_max_payload_ge_ceiling(&pair.connect(), TcpConfig::DEFAULT_PKT_SIZE);
 }
 
 /// The listener asymmetry the `tst_core::transport` table records, which the

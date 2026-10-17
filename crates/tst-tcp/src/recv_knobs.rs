@@ -3,11 +3,11 @@
 use std::io;
 use std::net::TcpStream;
 
-use crate::config::SocketConfig;
+use crate::config::TcpConfig;
 use tst_core::cancel::CANCEL_POLL_INTERVAL;
 use tst_core::net::udp_socket::set_socket_buffers;
 
-pub fn apply_knobs(socket: &TcpStream, cfg: &SocketConfig) -> io::Result<()> {
+pub fn apply_knobs(socket: &TcpStream, cfg: &TcpConfig) -> io::Result<()> {
     socket.set_read_timeout(Some(CANCEL_POLL_INTERVAL))?;
     socket.set_write_timeout(Some(CANCEL_POLL_INTERVAL))?;
 

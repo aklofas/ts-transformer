@@ -1,13 +1,12 @@
 //! Socket configuration knobs for TCP transports.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::url::TcpUrl;
-
-/// Per-transport socket knobs.
+/// Per-transport socket and TLS settings.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct SocketConfig {
+pub struct TcpConfig {
     /// Whether to disable Nagle's algorithm (`TCP_NODELAY`).
     ///
     /// Defaults to `Some(true)` — Nagle is disabled by default because
@@ -29,15 +28,22 @@ pub struct SocketConfig {
     /// fails overall. For `tcps://` the TLS handshake runs inside the connect
     /// too, with its own budget of this value after the TCP connect; a
     /// handshake that does not complete in time is `ConnectTimeout`.
-    /// Default: 10 s (see [`SocketConfig::connect_timeout_or_default`]).
+    /// Default: 10 s (see [`TcpConfig::connect_timeout_or_default`]).
     pub connect_timeout: Option<Duration>,
     /// Send-side payload chunk size; per-call max for `send_bytes`.
     /// Default 64 KiB (matches reasonable TCP send-buffer sizing).
     pub pkt_size: Option<usize>,
+    /// Server certificate, PEM (`tcps://` listener only).
+    pub cert: Option<PathBuf>,
+    /// Server private key, PEM (`tcps://` listener only).
+    pub key: Option<PathBuf>,
+    /// Trust anchors, PEM (`tcps://` caller only). `None` uses the system
+    /// roots.
+    pub ca: Option<PathBuf>,
 }
 
-impl Default for SocketConfig {
-    fn default() -> SocketConfig {
+impl Default for TcpConfig {
+    fn default() -> TcpConfig {
         Self {
             // Default TCP_NODELAY to true: live-video transports are latency-
             // sensitive; Nagle coalescing adds measurable delay on small writes.
@@ -47,11 +53,14 @@ impl Default for SocketConfig {
             sndbuf: None,
             connect_timeout: None,
             pkt_size: None,
+            cert: None,
+            key: None,
+            ca: None,
         }
     }
 }
 
-impl SocketConfig {
+impl TcpConfig {
     /// Default per-call payload limit. TCP is a bytestream, so this is
     /// just an upper bound on how much we accept per `send_bytes` call.
     pub const DEFAULT_PKT_SIZE: usize = 64 * 1024;
@@ -63,34 +72,19 @@ impl SocketConfig {
     pub fn connect_timeout_or_default(&self) -> Duration {
         self.connect_timeout.unwrap_or(Duration::from_secs(10))
     }
-
-    pub fn merge_from_url(&mut self, url: &TcpUrl) {
-        if let Some(v) = url.nodelay {
-            self.nodelay = Some(v);
-        }
-        if let Some(v) = url.keepalive {
-            self.keepalive = Some(v);
-        }
-        if let Some(v) = url.rcvbuf {
-            self.rcvbuf = Some(v);
-        }
-        if let Some(v) = url.sndbuf {
-            self.sndbuf = Some(v);
-        }
-        if let Some(v) = url.connect_timeout {
-            self.connect_timeout = Some(v);
-        }
-    }
 }
+
+/// The name this type had before it was renamed.
+#[deprecated(since = "0.9.0", note = "renamed to `TcpConfig`")]
+pub type SocketConfig = TcpConfig;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::url::TcpUrl;
 
     #[test]
     fn defaults_are_sensible() {
-        let cfg = SocketConfig::default();
+        let cfg = TcpConfig::default();
         assert_eq!(cfg.pkt_size_or_default(), 64 * 1024);
         assert_eq!(cfg.connect_timeout_or_default(), Duration::from_secs(10));
         // TCP_NODELAY is on by default for live-latency paths.
@@ -99,33 +93,5 @@ mod tests {
             Some(true),
             "nodelay must default to Some(true)"
         );
-    }
-
-    /// The URL `nodelay=0` override must still turn Nagle back on even
-    /// though the default is `Some(true)`.
-    #[test]
-    fn nodelay_url_override_disables_nagle() {
-        let mut cfg = SocketConfig::default();
-        assert_eq!(cfg.nodelay, Some(true));
-        let u = TcpUrl::parse("tcp://1.2.3.4:7001?nodelay=0").unwrap();
-        cfg.merge_from_url(&u);
-        assert_eq!(
-            cfg.nodelay,
-            Some(false),
-            "nodelay=0 must override the default to Some(false)"
-        );
-    }
-
-    #[test]
-    fn merge_from_url_applies_set_fields_only() {
-        let mut cfg = SocketConfig {
-            pkt_size: Some(8192),
-            ..Default::default()
-        };
-        let u = TcpUrl::parse("tcp://1.2.3.4:7001?nodelay=1&keepalive=30").unwrap();
-        cfg.merge_from_url(&u);
-        assert_eq!(cfg.nodelay, Some(true));
-        assert_eq!(cfg.keepalive, Some(Duration::from_secs(30)));
-        assert_eq!(cfg.pkt_size, Some(8192));
     }
 }

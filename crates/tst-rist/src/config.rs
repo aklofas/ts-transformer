@@ -4,8 +4,6 @@ use std::time::Duration;
 
 use secrecy::{ExposeSecret, SecretString};
 
-use crate::url::RistUrl;
-
 /// AES pre-shared key. Backed by `secrecy::SecretString` — zeroes the
 /// plaintext on drop and redacts in `Debug`, so it never leaks through a
 /// `format!("{:?}", ..)` / `tracing::debug!(?..)` of an enclosing struct
@@ -136,40 +134,6 @@ impl Default for RistConfig {
 impl RistConfig {
     /// Default per-send-call payload cap (1316 bytes; 7 × 188).
     pub const DEFAULT_PKT_SIZE: usize = 7 * 188;
-
-    /// Overlay URL-derived values on top of an existing config.
-    /// Setting any encryption param promotes profile to Main.
-    pub fn merge_from_url(&mut self, url: &RistUrl) {
-        if let Some(p) = url.profile {
-            self.profile = p;
-        }
-        if let Some(b) = url.bandwidth_kbps {
-            self.bandwidth_kbps = Some(b);
-        }
-        if let Some(d) = url.buffer_ms {
-            self.buffer = d;
-        }
-        if let (Some(bits), Some(secret)) = (url.aes_type, &url.secret) {
-            self.encryption = Some(EncryptionKey {
-                size_bits: bits,
-                secret: secret.clone(),
-                rotation: 0,
-            });
-            self.profile = RistProfile::Main;
-        }
-        if let Some(c) = &url.cname {
-            self.cname = Some(c.clone());
-        }
-        if let Some(b) = url.recovery_maxbitrate_kbps {
-            self.recovery_maxbitrate_kbps = Some(b);
-        }
-        if let Some(ms) = url.session_timeout_ms {
-            self.session_timeout = Some(Duration::from_millis(ms as u64));
-        }
-        if let Some(c) = url.compression {
-            self.compression = c;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -181,34 +145,6 @@ mod tests {
         let cfg = RistConfig::default();
         assert_eq!(cfg.profile, RistProfile::Main);
         assert_eq!(cfg.pkt_size, RistConfig::DEFAULT_PKT_SIZE);
-    }
-
-    #[test]
-    fn merge_from_url_promotes_to_main_on_encryption() {
-        // RistConfig is #[non_exhaustive]; struct expression with
-        // ..RistConfig::default() works because we're INSIDE the defining
-        // crate (Rust RFC 2008).
-        let mut cfg = RistConfig {
-            profile: RistProfile::Simple,
-            ..RistConfig::default()
-        };
-        let u = RistUrl::parse("rist://1.2.3.4:8000?aes-type=256&secret=s").unwrap();
-        cfg.merge_from_url(&u);
-        assert_eq!(cfg.profile, RistProfile::Main);
-        assert!(cfg.encryption.is_some());
-    }
-
-    #[test]
-    fn merge_from_url_secret_alone_yields_aes256_encryption() {
-        let u = RistUrl::parse("rist://1.2.3.4:8000?secret=s").unwrap();
-        let mut cfg = RistConfig::default();
-        cfg.merge_from_url(&u);
-        let k = cfg
-            .encryption
-            .as_ref()
-            .expect("secret alone must configure encryption");
-        assert_eq!(k.size_bits, 256);
-        assert_eq!(cfg.profile, RistProfile::Main);
     }
 
     #[test]

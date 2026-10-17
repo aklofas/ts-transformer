@@ -9,7 +9,7 @@ use thiserror::Error;
 #[non_exhaustive]
 pub enum TcpError {
     #[error("URL parse failed: {0}")]
-    Url(#[from] crate::url::TcpUrlError),
+    Url(#[from] tst_core::url::UrlError),
 
     #[error("TCP I/O error: {0}")]
     Io(#[from] io::Error),

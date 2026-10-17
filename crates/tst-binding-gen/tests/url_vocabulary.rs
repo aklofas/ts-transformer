@@ -402,6 +402,14 @@ const TCP_PARSE: &[Row] = &[
         "tcp://192.0.2.10:9000?unknown=1",
         A(&[("host", "192.0.2.10")]),
     ),
+    (
+        "tcp://192.0.2.10:9000?pkt_size=8K",
+        A(&[("pkt_size", "8192")]),
+    ),
+    (
+        "tcp://192.0.2.10:9000?pkt_size=big",
+        R("query param 'pkt_size' has invalid value 'big': invalid digit found in string"),
+    ),
     ("tcp://192.0.2.10", R("URL must include a port")),
     (
         "udp://192.0.2.10:9000",
@@ -409,21 +417,42 @@ const TCP_PARSE: &[Row] = &[
     ),
 ];
 
+/// Whether the URL's query names `key`; the parsed config alone cannot say
+/// for the keys whose config default is not "none".
+fn query_names(url: &str, key: &str) -> bool {
+    url.split_once('?')
+        .is_some_and(|(_, q)| q.split('&').any(|p| p.split('=').next() == Some(key)))
+}
+
+fn show_path(v: &Option<std::path::PathBuf>) -> String {
+    v.as_ref()
+        .map_or_else(|| "none".into(), |p| p.display().to_string())
+}
+
 fn effective_tcp(url: &str) -> Effective {
     let u = TcpUrl::parse(url).map_err(|e| e.to_string())?;
+    let c = &u.config;
     Ok(vec![
         ("host", u.host.clone()),
         ("port", u.port.to_string()),
         ("tls", u.tls.to_string()),
         ("listen", u.listen.to_string()),
-        ("nodelay", show(&u.nodelay)),
-        ("keepalive", secs(u.keepalive)),
-        ("rcvbuf", show(&u.rcvbuf)),
-        ("sndbuf", show(&u.sndbuf)),
-        ("connect_timeout", secs(u.connect_timeout)),
-        ("cert", show(&u.cert)),
-        ("key", show(&u.key)),
-        ("ca", show(&u.ca)),
+        (
+            "nodelay",
+            if query_names(url, "nodelay") {
+                show(&c.nodelay)
+            } else {
+                "none".into()
+            },
+        ),
+        ("keepalive", secs(c.keepalive)),
+        ("rcvbuf", show(&c.rcvbuf)),
+        ("sndbuf", show(&c.sndbuf)),
+        ("pkt_size", show(&c.pkt_size)),
+        ("connect_timeout", secs(c.connect_timeout)),
+        ("cert", show_path(&c.cert)),
+        ("key", show_path(&c.key)),
+        ("ca", show_path(&c.ca)),
     ])
 }
 
@@ -593,6 +622,14 @@ const RIST_PARSE: &[Row] = &[
         "rist://192.0.2.10:8000?unknown=1",
         A(&[("addr", "192.0.2.10")]),
     ),
+    (
+        "rist://192.0.2.10:8000?pkt_size=1K",
+        A(&[("pkt_size", "1024")]),
+    ),
+    (
+        "rist://192.0.2.10:8000?pkt_size=big",
+        R("query param 'pkt_size' has invalid value 'big': invalid digit found in string"),
+    ),
     ("rist://192.0.2.10", R("URL must include a port")),
     (
         "udp://192.0.2.10:8000",
@@ -627,27 +664,41 @@ const RIST_RECV: &[Row] = &[
 
 fn effective_rist(url: &str) -> Effective {
     let u = RistUrl::parse(url).map_err(|e| e.to_string())?;
+    let c = &u.config;
+    let given = |key: &str, v: String| {
+        if query_names(url, key) {
+            v
+        } else {
+            "none".into()
+        }
+    };
     Ok(vec![
         ("addr", u.addr.to_string()),
         ("port", u.port.to_string()),
         ("recv_bind", u.is_recv_bind.to_string()),
+        ("profile", given("profile", format!("{:?}", c.profile))),
+        ("bandwidth", show(&c.bandwidth_kbps)),
+        ("buffer", given("buffer", c.buffer.as_millis().to_string())),
         (
-            "profile",
-            u.profile.map_or("none".into(), |p| format!("{p:?}")),
+            "aes-type",
+            c.encryption
+                .as_ref()
+                .map_or("none".into(), |k| k.size_bits.to_string()),
         ),
-        ("bandwidth", show(&u.bandwidth_kbps)),
-        ("buffer", ms(u.buffer_ms)),
-        ("aes-type", show(&u.aes_type)),
         (
             "secret",
-            u.secret
+            c.encryption
                 .as_ref()
-                .map_or("none".into(), |s| s.expose().to_string()),
+                .map_or("none".into(), |k| k.secret.expose().to_string()),
         ),
-        ("cname", show(&u.cname)),
-        ("recovery_maxbitrate", show(&u.recovery_maxbitrate_kbps)),
-        ("session_timeout", show(&u.session_timeout_ms)),
-        ("compression", show(&u.compression)),
+        ("cname", show(&c.cname)),
+        ("recovery_maxbitrate", show(&c.recovery_maxbitrate_kbps)),
+        ("session_timeout", ms(c.session_timeout)),
+        (
+            "compression",
+            given("compression", c.compression.to_string()),
+        ),
+        ("pkt_size", given("pkt_size", c.pkt_size.to_string())),
     ])
 }
 fn effective_rist_send(url: &str) -> Effective {

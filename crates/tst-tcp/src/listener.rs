@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tst_core::cancel::{ACCEPT_POLL_INTERVAL, FlagCancel};
 
-use crate::config::SocketConfig;
+use crate::config::TcpConfig;
 use crate::error::TcpError;
 use crate::transport::{TcpCancelHandle, TcpTransport};
 
@@ -27,7 +27,7 @@ use crate::transport::{TcpCancelHandle, TcpTransport};
 /// of all transport receive-entry patterns.
 pub struct TcpListener {
     inner: StdTcpListener,
-    config: SocketConfig,
+    config: TcpConfig,
     /// Dropped by [`Self::close`] / [`TcpCancelHandle::cancel`]; polled by
     /// [`Self::accept_blocking`] every [`ACCEPT_POLL_INTERVAL`] (shorter than
     /// the `CANCEL_POLL_INTERVAL` the recv/send paths use — see that
@@ -51,7 +51,7 @@ impl TcpListener {
         inner.set_nonblocking(true).map_err(TcpError::Io)?;
         Ok(Self {
             inner,
-            config: SocketConfig::default(),
+            config: TcpConfig::default(),
             alive: Arc::new(AtomicBool::new(true)),
             cancel: FlagCancel::new(),
             #[cfg(feature = "tls")]
@@ -76,7 +76,7 @@ impl TcpListener {
         }
 
         // TcpUrl::parse already rejected a non-literal host for a
-        // ?listen=1 URL (TcpUrlError::BadHost), so this can't-happen path
+        // ?listen=1 URL (the listener-host rejection), so this can't-happen path
         // guards a hand-built TcpUrl that skipped that check (TcpUrl's
         // fields are public and the struct isn't marked non-exhaustive)
         // instead of panicking if `from_parsed` is ever promoted to a
@@ -84,24 +84,21 @@ impl TcpListener {
         let ip: IpAddr = parsed
             .host
             .parse()
-            .map_err(|_| TcpError::Url(crate::url::TcpUrlError::BadHost(parsed.host.clone())))?;
+            .map_err(|_| TcpError::Url(crate::url::listener_host_rejection(&parsed.host)))?;
         let bind_addr = SocketAddr::new(ip, parsed.port);
         let mut listener = Self::bind(bind_addr)?;
-        listener.config.merge_from_url(parsed);
+        listener.config = parsed.config.clone();
 
         #[cfg(feature = "tls")]
         if parsed.tls {
-            let cert = parsed.cert.as_deref().ok_or_else(|| {
+            let cert = parsed.config.cert.as_deref().ok_or_else(|| {
                 TcpError::InvalidConfig("tcps:// listener requires ?cert=path".into())
             })?;
-            let key = parsed.key.as_deref().ok_or_else(|| {
+            let key = parsed.config.key.as_deref().ok_or_else(|| {
                 TcpError::InvalidConfig("tcps:// listener requires ?key=path".into())
             })?;
-            let server_cfg = tst_core::net::tls::load_server_config(
-                std::path::Path::new(cert),
-                std::path::Path::new(key),
-            )
-            .map_err(crate::tls::tls_load_error)?;
+            let server_cfg = tst_core::net::tls::load_server_config(cert, key)
+                .map_err(crate::tls::tls_load_error)?;
             listener.tls_config = Some(Arc::new(server_cfg));
         }
         #[cfg(not(feature = "tls"))]
@@ -117,8 +114,8 @@ impl TcpListener {
         self.inner.local_addr()
     }
 
-    /// Set the SocketConfig that will be applied to accepted connections.
-    pub fn config_mut(&mut self) -> &mut SocketConfig {
+    /// Set the TcpConfig that will be applied to accepted connections.
+    pub fn config_mut(&mut self) -> &mut TcpConfig {
         &mut self.config
     }
 
