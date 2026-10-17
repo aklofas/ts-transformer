@@ -915,6 +915,7 @@ mod session_tests {
             let state = std::sync::Arc::new(crate::rtsp::server::ServerState {
                 builder,
                 cancel_token: tokio_util::sync::CancellationToken::new(),
+                sessions_ended: std::sync::Arc::new(tokio::sync::watch::channel(false).0),
                 hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
                 mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
                 active_sessions: std::sync::atomic::AtomicUsize::new(0),
@@ -985,6 +986,7 @@ mod session_tests {
             let state = std::sync::Arc::new(crate::rtsp::server::ServerState {
                 builder,
                 cancel_token: tokio_util::sync::CancellationToken::new(),
+                sessions_ended: std::sync::Arc::new(tokio::sync::watch::channel(false).0),
                 hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
                 mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
                 active_sessions: std::sync::atomic::AtomicUsize::new(0),
@@ -1051,6 +1053,7 @@ mod session_tests {
         Arc::new(ServerState {
             builder,
             cancel_token: tokio_util::sync::CancellationToken::new(),
+            sessions_ended: std::sync::Arc::new(tokio::sync::watch::channel(false).0),
             hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
             mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
             active_sessions: std::sync::atomic::AtomicUsize::new(0),

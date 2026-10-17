@@ -394,6 +394,21 @@ mod tests {
         drop((a, b));
     }
 
+    /// A fixed start whose companion port is taken moves on to the next
+    /// candidate: hold P+1, ask from P, get a pair at P+2k (k >= 1).
+    #[test]
+    fn a_fixed_start_retries_past_a_taken_companion_port() {
+        let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let (held_rtp, held_rtcp, p) = bind_udp_pair(ip, 0).unwrap();
+        // Free P but keep P+1 held, so the pair at P cannot complete.
+        drop(held_rtp);
+        let (rtp, rtcp, port) = bind_udp_pair(ip, p).unwrap();
+        assert!(port >= p + 2 && (port - p) % 2 == 0, "start {p} -> {port}");
+        assert_eq!(rtp.local_addr().unwrap().port(), port);
+        assert_eq!(rtcp.local_addr().unwrap().port(), port + 1);
+        drop(held_rtcp);
+    }
+
     #[test]
     fn bind_udp_pair_rejects_start_at_max_port() {
         // start == 65535 → the very first companion (port+1) overflows.

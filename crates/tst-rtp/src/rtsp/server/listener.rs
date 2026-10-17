@@ -21,6 +21,9 @@ use crate::rtsp::server::ServerState;
 /// until either the hard cancel handle is flipped or the graceful
 /// cancellation token fires.
 pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServerError> {
+    // Reports "every session task has ended" to `RtspServer::stop` on every
+    // way out of this function, the drain below included.
+    let _ended = SessionsEnded(state.sessions_ended.clone());
     // Bind. `state.builder.bind_url` is guaranteed to be IP-literal at
     // builder time (validate_for_server_bind enforced it).
     let bind_addr = format!(
@@ -76,7 +79,11 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
     #[cfg(feature = "rtsp-server-tls")]
     let tls_config = state.tls_config.lock().unwrap().take();
 
+    // Every session task, so a shutdown can wait for them.
+    let mut sessions: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
     loop {
+        // Reap finished sessions so the set stays as small as the live count.
+        while sessions.try_join_next().is_some() {}
         if state.hard_cancel.is_cancelled() {
             tracing::info!(target: "tst_rtp::server", "hard cancel observed; listener exiting");
             // Sessions select on the server token, not on this polled flag:
@@ -84,6 +91,7 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
             // stays a plain atomic so `cancel()` remains async-signal-safe
             // for C callers.
             state.cancel_token.cancel();
+            drain_sessions(&mut sessions, state.builder.graceful_shutdown_drain).await;
             return Ok(());
         }
         tokio::select! {
@@ -143,7 +151,7 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
                             let cfg = tls_config.clone();
                             if let Some(cfg) = cfg {
                                 let handshake_timeout = state.builder.tls_handshake_timeout;
-                                tokio::spawn(async move {
+                                sessions.spawn(async move {
                                     // `slot` moves into the session on success and is
                                     // dropped by this task on the handshake-failure and
                                     // timeout paths, releasing the reserved slot either way.
@@ -187,7 +195,7 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
                             }
                         }
                         // Plain TCP path (always available regardless of `rtsp-server-tls` feature):
-                        tokio::spawn(async move {
+                        sessions.spawn(async move {
                             if let Err(e) = crate::rtsp::server::session::handle_tcp_connection(st, tcp, peer, slot).await {
                                 tracing::warn!(
                                     target: "tst_rtp::server",
@@ -208,6 +216,7 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
             }
             _ = state.cancel_token.cancelled() => {
                 tracing::info!(target: "tst_rtp::server", "graceful cancel observed; listener exiting");
+                drain_sessions(&mut sessions, state.builder.graceful_shutdown_drain).await;
                 return Ok(());
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
@@ -215,4 +224,23 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
             }
         }
     }
+}
+
+/// Flips the shared "sessions ended" flag when the listener task is done,
+/// however it got there.
+struct SessionsEnded(Arc<tokio::sync::watch::Sender<bool>>);
+
+impl Drop for SessionsEnded {
+    fn drop(&mut self) {
+        self.0.send_replace(true);
+    }
+}
+
+/// Wait for every session task to finish, but no longer than `drain`. Tasks
+/// still running at the bound are detached, not aborted: they keep ending on
+/// their own cancel, as they did before the wait was tracked.
+async fn drain_sessions(sessions: &mut tokio::task::JoinSet<()>, drain: std::time::Duration) {
+    let all_ended = async { while sessions.join_next().await.is_some() {} };
+    let _ = tokio::time::timeout(drain, all_ended).await;
+    sessions.detach_all();
 }

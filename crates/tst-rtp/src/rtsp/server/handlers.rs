@@ -949,6 +949,7 @@ mod tests {
         Arc::new(ServerState {
             builder,
             cancel_token: CancellationToken::new(),
+            sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
             hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
             mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
             active_sessions: AtomicUsize::new(0),
@@ -1033,6 +1034,7 @@ mod tests {
         let state = Arc::new(ServerState {
             builder,
             cancel_token: CancellationToken::new(),
+            sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
             hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
             mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
             active_sessions: AtomicUsize::new(0),

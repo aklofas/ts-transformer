@@ -59,6 +59,9 @@ pub(crate) struct ServerState {
     /// Graceful-shutdown signal. `stop()` flips this; per-session tasks
     /// observe via `.cancelled()` await.
     pub(crate) cancel_token: CancellationToken,
+    /// Turns `true` once the listener task has drained every session task
+    /// (bounded by `graceful_shutdown_drain`) and exited. `stop()` waits on it.
+    pub(crate) sessions_ended: Arc<tokio::sync::watch::Sender<bool>>,
     /// Hard-cancel signal (independent from graceful). Exposed publicly
     /// via [`RtspServer::cancel_handle`].
     pub(crate) hard_cancel: RtspServerCancelHandle,
@@ -342,6 +345,7 @@ pub(crate) fn test_state() -> Arc<ServerState> {
     Arc::new(ServerState {
         builder,
         cancel_token: CancellationToken::new(),
+        sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
         hard_cancel: RtspServerCancelHandle::new(),
         mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
         active_sessions: AtomicUsize::new(0),
@@ -401,6 +405,7 @@ impl RtspServer {
     pub(crate) fn from_builder(b: RtspServerBuilder) -> Result<Self, RtspServerError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
+            .worker_threads(2)
             .thread_name("tst-rtp-server")
             .build()
             .map_err(|e| RtspServerError::Io(e.kind()))?;
@@ -409,6 +414,7 @@ impl RtspServer {
         let state = Arc::new(ServerState {
             builder: b,
             cancel_token: CancellationToken::new(),
+            sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
             hard_cancel: RtspServerCancelHandle::new(),
             mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
             active_sessions: AtomicUsize::new(0),
@@ -899,8 +905,8 @@ impl RtspServer {
     /// ("Server-Initiated TEARDOWN") ANNOUNCE over each session's TCP
     /// control channel, then cancels each session's per-session token,
     /// fires the global `cancel_token` so the listener stops accepting
-    /// new connections, and sleeps `graceful_shutdown_drain + 1s` to
-    /// let in-flight RTP drain. Idempotent — a second call after a
+    /// new connections, and waits for every session task to end, at most
+    /// `graceful_shutdown_drain`, to let in-flight RTP drain. Idempotent — a second call after a
     /// completed first call is a no-op.
     ///
     /// The ANNOUNCE write is best-effort: a per-session write failure
@@ -963,10 +969,19 @@ impl RtspServer {
         // Also fire the global cancel so the listener stops accepting
         // new connections and any per-task observers exit promptly.
         self.state.cancel_token.cancel();
-        // Wait for the drain window — sessions should observe their
-        // per-session cancel, flush, and exit within this time.
-        let drain = self.state.builder.graceful_shutdown_drain + Duration::from_secs(1);
-        std::thread::sleep(drain);
+        // Wait for every session task to end, but no longer than the
+        // drain window — sessions observe their per-session cancel, flush,
+        // and exit well inside it. A session that outlives the drain is
+        // left to the write-half shutdown below.
+        if let Some(rt) = self.runtime.as_ref() {
+            let mut ended = self.state.sessions_ended.subscribe();
+            // The listener bounds its own drain by `graceful_shutdown_drain`;
+            // the margin only covers its scheduling.
+            let bound = self.state.builder.graceful_shutdown_drain + Duration::from_millis(500);
+            rt.block_on(async move {
+                let _ = tokio::time::timeout(bound, ended.wait_for(|done| *done)).await;
+            });
+        }
         // Explicitly shutdown each per-session TCP write half so peers
         // see FIN immediately instead of relying on Arc-drop. Without
         // this, lingering `SessionWriter` clones (held
