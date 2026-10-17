@@ -5,6 +5,7 @@ bindings/python/src/generated/** text eol=lf
 bindings/jvm/src/generated/** text eol=lf
 bindings/python/python/tstrans/klv.py text eol=lf
 bindings/python/python/tstrans/klv.pyi text eol=lf
+bindings/python/python/tstrans/*.pyi text eol=lf
 # Java files that hold a generated block, by package (a family adds its package here): LF so the block compare is byte for byte
 bindings/jvm/src/main/java/org/tstrans/klv/*.java text eol=lf
 bindings/jvm/src/main/java/org/tstrans/codec/*.java text eol=lf

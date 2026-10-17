@@ -13,7 +13,7 @@ import java.util.List;
  * SDCC-FLP pack (MISB ST 1010.3, parsed by the ST 1010 SDCC-FLP decoder) refines the accuracy of
  * the Local Set items that immediately precede it on the wire. This struct keeps the raw pack bytes
  * rather than a parsed {@code SdccFlp} so a malformed or foreign-encoder pack still round-trips
- * byte-exact even when this crate cannot parse its interior — provided its declared matrix size
+ * byte-exact even when the library cannot parse its interior — provided its declared matrix size
  * fits the pack's own bytes (Parse Control plus the ST 1010 size bound); otherwise the occurrence
  * is recorded as a {@code TruncatedField} and not captured. The encoder still emits caller-supplied
  * {@code sdcc_flps} bytes verbatim, so a caller who supplies a pack whose matrix cannot fit will

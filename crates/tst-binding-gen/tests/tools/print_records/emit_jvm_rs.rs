@@ -210,6 +210,7 @@ impl Gen<'_> {
     /// twice in one call.
     fn narrow(&mut self, sc: Sc, raw: &str, path: &str) -> String {
         match sc.narrow() {
+            None if sc == Sc::U64 => format!("({raw}) as u64"),
             None => raw.to_string(),
             Some(f) => {
                 let wide = match sc {
@@ -359,7 +360,9 @@ fn read(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
                 f.java, i.sig, i.extract
             );
             o.push_str(&format!("    let {var} = {raw};\n"));
-            if let Some(f) = sc.narrow() {
+            if *sc == Sc::U64 {
+                o.push_str(&format!("    let {var} = {var} as u64;\n"));
+            } else if let Some(f) = sc.narrow() {
                 let wide = match sc {
                     Sc::U8 | Sc::U16 | Sc::I8 | Sc::I16 => format!("i64::from({var})"),
                     _ => var.clone(),

@@ -24,8 +24,8 @@ use tst_core::klv::st0605::TimeStatus;
 use tst_core::klv::st0806::{RvtAoiType, RvtPoiType};
 
 use crate::jutil::{
-    build_field_errors, build_long_list, build_unknown_list, checked_u8, checked_u64,
-    read_byte_buffer, read_long_list, read_nullable_int, read_unknown_list, wrap_heap_byte_buffer,
+    build_field_errors, build_long_list, build_unknown_list, checked_u8, read_byte_buffer,
+    read_long_list, read_nullable_int, read_unknown_list, wrap_heap_byte_buffer,
 };
 
 /// Throws `IllegalArgumentException` and returns the error that carries it.
@@ -185,39 +185,6 @@ pub(crate) fn read_uas_datalink_ls_sensor_control_mode(
     Ok(read_code(env, obj, "sensorControlModeCode")?.map(SensorControlMode::from_wire))
 }
 
-pub(crate) fn build_uas_datalink_ls_unknown<'l>(
-    env: &mut JNIEnv<'l>,
-    v: &[OwnedRawField],
-) -> jni::errors::Result<JObject<'l>> {
-    build_unknown_list(env, v)
-}
-
-/// An entry whose tag a typed field owns is dropped: typed wins.
-pub(crate) fn read_uas_datalink_ls_unknown(
-    env: &mut JNIEnv<'_>,
-    obj: &JObject<'_>,
-) -> jni::errors::Result<Vec<OwnedRawField>> {
-    let list = env
-        .call_method(obj, "unknown", "()Ljava/util/List;", &[])?
-        .l()?;
-    read_unknown_list(env, &list, is_st0601_typed_tag)
-}
-
-pub(crate) fn build_uas_datalink_ls_field_errors<'l>(
-    env: &mut JNIEnv<'l>,
-    v: &[KlvFieldError],
-) -> jni::errors::Result<JObject<'l>> {
-    build_field_errors(env, v)
-}
-
-/// A parser diagnostic: it does not cross back.
-pub(crate) fn read_uas_datalink_ls_field_errors(
-    _env: &mut JNIEnv<'_>,
-    _obj: &JObject<'_>,
-) -> jni::errors::Result<Vec<KlvFieldError>> {
-    Ok(Vec::new())
-}
-
 pub(crate) fn build_uas_datalink_ls_sentinel_tags<'l>(
     env: &mut JNIEnv<'l>,
     v: &[u32],
@@ -229,17 +196,7 @@ pub(crate) fn read_uas_datalink_ls_sentinel_tags(
     env: &mut JNIEnv<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<Vec<u32>> {
-    let list = env
-        .call_method(obj, "sentinelTags", "()Ljava/util/List;", &[])?
-        .l()?;
-    let mut out = Vec::new();
-    for v in read_long_list(env, &list)? {
-        let tag = u32::try_from(v).map_err(|_| {
-            illegal_argument(env, format!("sentinelTags entry out of u32 range: {v}"))
-        })?;
-        out.push(tag);
-    }
-    Ok(out)
+    read_sentinel_tags(env, obj, "UasDatalinkLs")
 }
 
 /// `Vec<(u32, ImapbSpecial)>` crosses as a `List<ImapbSpecialEntry>` of
@@ -431,11 +388,8 @@ pub(crate) fn read_payload_record_payload_type(
     obj: &JObject<'_>,
 ) -> jni::errors::Result<PayloadType> {
     let code = env.call_method(obj, "payloadTypeCode", "()J", &[])?.j()?;
-    Ok(PayloadType::from_wire(checked_u64(
-        env,
-        code,
-        "PayloadRecord.payloadTypeCode",
-    )?))
+    // Unsigned 64-bit values cross as the bit pattern of a `long`.
+    Ok(PayloadType::from_wire(code as u64))
 }
 
 /// ST 0102 typed tags: 1..=14, 22, 23 and 24. An `unknown` entry whose tag a
@@ -502,6 +456,14 @@ macro_rules! unknown_and_field_errors {
         }
     };
 }
+
+unknown_and_field_errors!(
+    build_uas_datalink_ls_unknown,
+    read_uas_datalink_ls_unknown,
+    build_uas_datalink_ls_field_errors,
+    read_uas_datalink_ls_field_errors,
+    is_st0601_typed_tag
+);
 
 /// A coded-enum field: a boxed `Integer` code point, `null` when absent; the
 /// wire-unknown variant keeps its code. `$accessor` is the record component.

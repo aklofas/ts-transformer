@@ -273,17 +273,14 @@ pub(crate) fn read_v_target_pack(
 ) -> jni::errors::Result<tst_core::klv::st0903::VTargetPack> {
     env.ensure_local_capacity(92)?;
     let target_id = env.call_method(obj, "targetId", "()J", &[])?.j()?;
-    let target_id = crate::jutil::checked_u64(env, target_id, "VTargetPack.targetId")?;
+    let target_id = target_id as u64;
     let o1 = env
         .call_method(obj, "centroidPixel", "()Ljava/lang/Long;", &[])?
         .l()?;
     let centroid_pixel = if o1.is_null() {
         None
     } else {
-        Some({
-            let n = env.call_method(&o1, "longValue", "()J", &[])?.j()?;
-            crate::jutil::checked_u64(env, n, "VTargetPack.centroidPixel")?
-        })
+        Some((env.call_method(&o1, "longValue", "()J", &[])?.j()?) as u64)
     };
     let o2 = env
         .call_method(obj, "bboxTopLeftPixel", "()Ljava/lang/Long;", &[])?
@@ -291,10 +288,7 @@ pub(crate) fn read_v_target_pack(
     let bbox_top_left_pixel = if o2.is_null() {
         None
     } else {
-        Some({
-            let n = env.call_method(&o2, "longValue", "()J", &[])?.j()?;
-            crate::jutil::checked_u64(env, n, "VTargetPack.bboxTopLeftPixel")?
-        })
+        Some((env.call_method(&o2, "longValue", "()J", &[])?.j()?) as u64)
     };
     let o3 = env
         .call_method(obj, "bboxBottomRightPixel", "()Ljava/lang/Long;", &[])?
@@ -302,10 +296,7 @@ pub(crate) fn read_v_target_pack(
     let bbox_bottom_right_pixel = if o3.is_null() {
         None
     } else {
-        Some({
-            let n = env.call_method(&o3, "longValue", "()J", &[])?.j()?;
-            crate::jutil::checked_u64(env, n, "VTargetPack.bboxBottomRightPixel")?
-        })
+        Some((env.call_method(&o3, "longValue", "()J", &[])?.j()?) as u64)
     };
     let o4 = env
         .call_method(obj, "priority", "()Ljava/lang/Integer;", &[])?
@@ -451,10 +442,7 @@ pub(crate) fn read_v_target_pack(
     let centroid_pix_row = if o18.is_null() {
         None
     } else {
-        Some({
-            let n = env.call_method(&o18, "longValue", "()J", &[])?.j()?;
-            crate::jutil::checked_u64(env, n, "VTargetPack.centroidPixRow")?
-        })
+        Some((env.call_method(&o18, "longValue", "()J", &[])?.j()?) as u64)
     };
     let o19 = env
         .call_method(obj, "centroidPixCol", "()Ljava/lang/Long;", &[])?
@@ -462,10 +450,7 @@ pub(crate) fn read_v_target_pack(
     let centroid_pix_col = if o19.is_null() {
         None
     } else {
-        Some({
-            let n = env.call_method(&o19, "longValue", "()J", &[])?.j()?;
-            crate::jutil::checked_u64(env, n, "VTargetPack.centroidPixCol")?
-        })
+        Some((env.call_method(&o19, "longValue", "()J", &[])?.j()?) as u64)
     };
     let o20 = env
         .call_method(obj, "algorithmId", "()Ljava/lang/Long;", &[])?
@@ -758,10 +743,7 @@ pub(crate) fn read_vmti_ls(
     let precision_time_stamp = if o2.is_null() {
         None
     } else {
-        Some({
-            let n = env.call_method(&o2, "longValue", "()J", &[])?.j()?;
-            crate::jutil::checked_u64(env, n, "VmtiLs.precisionTimeStamp")?
-        })
+        Some((env.call_method(&o2, "longValue", "()J", &[])?.j()?) as u64)
     };
     let o3 = env
         .call_method(obj, "vmtiSystemName", "()Ljava/lang/String;", &[])?

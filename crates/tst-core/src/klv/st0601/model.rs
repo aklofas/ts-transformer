@@ -596,7 +596,7 @@ crate::binding_record! {
     /// Local Set items that immediately precede it on the wire. This struct
     /// keeps the raw pack bytes rather than a parsed
     /// [`crate::klv::st1010::SdccFlp`] so a malformed or foreign-encoder
-    /// pack still round-trips byte-exact even when this crate cannot parse
+    /// pack still round-trips byte-exact even when the library cannot parse
     /// its interior — provided its declared matrix size fits the pack's own
     /// bytes (Parse Control plus the ST 1010 size bound); otherwise the
     /// occurrence is recorded as a

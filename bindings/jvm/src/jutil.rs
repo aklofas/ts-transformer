@@ -183,7 +183,7 @@ pub fn build_long_list<'local>(
 /// `SdccFlpField.precedingTags` is) exhausts the JNI local-ref table and
 /// aborts the JVM rather than throwing a catchable Java exception — the bug
 /// this helper closes. Callers narrow the raw `i64` values to their target
-/// width (`u32`/`u64`, via `checked_u32`/`checked_u64`) themselves.
+/// width (`u32`, via `checked_u32`; a `u64` takes the bit pattern, `n as u64`) themselves.
 pub fn read_long_list(env: &mut JNIEnv, list: &JObject) -> jni::errors::Result<Vec<i64>> {
     let size = env.call_method(list, "size", "()I", &[])?.i()?;
     let mut out = Vec::with_capacity(size.max(0) as usize);
@@ -377,20 +377,6 @@ pub fn null_field(env: &mut JNIEnv, field: &str) -> jni::errors::Error {
         format!("{field} must not be null"),
     );
     jni::errors::Error::JavaException
-}
-
-/// Convert a Java `long` (carrying an unsigned ST 0903 u64 value) to `u64`,
-/// rejecting only a negative `i64` (which is a caller bug — Java has no
-/// unsigned primitive, so large values arrive as a bit-pattern `long`).
-pub fn checked_u64(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Result<u64> {
-    if value < 0 {
-        let _ = env.throw_new(
-            "java/lang/IllegalArgumentException",
-            format!("{field} must be >= 0 (unsigned long), got {value}"),
-        );
-        return Err(jni::errors::Error::JavaException);
-    }
-    Ok(value as u64)
 }
 
 // -----------------------------------------------------------------------

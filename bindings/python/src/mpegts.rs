@@ -147,6 +147,14 @@ impl PyDemuxer {
     /// Stats snapshot as a dict. Returns a flat `field_name: value`
     /// view of `DemuxerStats`.
     fn stats(&self, py: Python<'_>) -> PyResult<PyObject> {
+        // A new Rust field must fail the build until this dict carries it (the
+        // count includes the two skipped fields).
+        const _: () = assert!(
+            tst_core::mpegts::demux::DemuxerStats::BINDING_SCHEMA
+                .fields
+                .len()
+                == 8
+        );
         let s = self.inner.stats();
         let d = PyDict::new_bound(py);
         d.set_item("program_maps_seen", s.program_maps_seen)?;

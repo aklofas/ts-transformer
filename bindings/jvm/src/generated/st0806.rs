@@ -774,10 +774,7 @@ pub(crate) fn read_rvt_ls(
     let timestamp_us = if o2.is_null() {
         None
     } else {
-        Some({
-            let n = env.call_method(&o2, "longValue", "()J", &[])?.j()?;
-            crate::jutil::checked_u64(env, n, "RvtLs.timestampUs")?
-        })
+        Some((env.call_method(&o2, "longValue", "()J", &[])?.j()?) as u64)
     };
     let o3 = env
         .call_method(obj, "platformTrueAirspeed", "()Ljava/lang/Integer;", &[])?

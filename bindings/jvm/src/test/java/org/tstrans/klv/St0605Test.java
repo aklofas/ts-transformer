@@ -139,15 +139,18 @@ class St0605Test {
     }
 
     @Test
-    void negativeTimestampIsAnIllegalArgument() {
-        // Java has no unsigned long: a negative value is a caller bug, not a
-        // wrapped microsecond count.
-        PrecisionTimeStampPack negative = new PrecisionTimeStampPack(
+    void negativeTimestampIsTheBitPatternOfALargeValue() throws KlvDecodeException {
+        // Java has no unsigned long: a value of 2^63 or more reads as negative,
+        // and handing it back encodes the same eight bytes.
+        PrecisionTimeStampPack high = new PrecisionTimeStampPack(
                 new TimeStatus(0x1F), -1L);
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> Klv.encodePrecisionTimestamp(negative));
-        assertTrue(ex.getMessage().contains("PrecisionTimeStampPack.timestampUs"),
-                "expected message to name the component; got: " + ex.getMessage());
+        PrecisionTimeStampPack back = Klv.decodePrecisionTimestamp(
+                Klv.encodePrecisionTimestamp(high));
+        assertEquals(high, back);
+        assertEquals(-1L, back.timestampUs());
+        PrecisionTimeStampPack top = new PrecisionTimeStampPack(
+                new TimeStatus(0x1F), Long.MIN_VALUE);
+        assertEquals(top, Klv.decodePrecisionTimestamp(Klv.encodePrecisionTimestamp(top)));
     }
 
     @Test

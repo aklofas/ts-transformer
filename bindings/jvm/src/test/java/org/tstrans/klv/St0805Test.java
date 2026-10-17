@@ -231,12 +231,12 @@ class St0805Test {
     }
 
     @Test
-    void negativeUpdateIntervalUsThrows() {
+    void negativeUpdateIntervalUsIsTheBitPatternOfALargeInterval() {
+        // Java has no unsigned long: the interval reads as 2^64 - 5 microseconds,
+        // and the stale time saturates rather than the call throwing.
         CotConfig cfg = CotConfig.builder().updateIntervalUs(-5L).build();
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> Klv.platformPositionXml(fixture(), cfg, GENERATED_US));
-        assertTrue(ex.getMessage().contains("updateIntervalUs"),
-                "expected message to mention updateIntervalUs; got: " + ex.getMessage());
+        String xml = Klv.platformPositionXml(fixture(), cfg, GENERATED_US);
+        assertTrue(xml.contains("stale="), "expected a stale attribute; got: " + xml);
     }
 
     @Test

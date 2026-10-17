@@ -31,8 +31,7 @@ pub(crate) fn read_precision_time_stamp_pack(
     env.ensure_local_capacity(36)?;
     let time_status = crate::custom::read_precision_time_stamp_pack_time_status(env, obj)?;
     let timestamp_us = env.call_method(obj, "timestampUs", "()J", &[])?.j()?;
-    let timestamp_us =
-        crate::jutil::checked_u64(env, timestamp_us, "PrecisionTimeStampPack.timestampUs")?;
+    let timestamp_us = timestamp_us as u64;
     Ok(tst_core::klv::st0605::PrecisionTimeStampPack {
         time_status,
         timestamp_us,
