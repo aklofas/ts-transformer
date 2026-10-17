@@ -162,8 +162,8 @@ impl Listener {
             return Ok(Self {
                 handle,
                 cancel: make_cancel_handle(handle),
-                accepted_send_timeout: config.send_timeout,
-                accepted_recv_timeout: config.recv_timeout,
+                accepted_send_timeout: config.socket.send_timeout,
+                accepted_recv_timeout: config.socket.recv_timeout,
             });
         }
         Err(last_err.expect("non-empty addrs always populates last_err on full-walk failure"))

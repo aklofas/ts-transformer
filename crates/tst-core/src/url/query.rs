@@ -12,10 +12,12 @@ use super::common::UrlError;
 use alloc::string::ToString;
 
 /// One query key of a scheme: its names, its documentation and the
-/// function that applies a value to the scheme's config `C`.
+/// function that applies a value to the scheme's config `C`. A scheme
+/// that reports its own error type names it as `E`; the default is the
+/// shared [`UrlError`].
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct QueryKey<C> {
+pub struct QueryKey<C, E = UrlError> {
     /// The key's canonical spelling.
     pub canonical: &'static str,
     /// Other spellings that mean the same key.
@@ -25,17 +27,17 @@ pub struct QueryKey<C> {
     /// The unit or accepted values for this scheme.
     pub unit: &'static str,
     /// Applies `value` (under the spelling the URL used) to the config.
-    pub apply: fn(&mut C, key: &str, value: &str) -> Result<(), UrlError>,
+    pub apply: fn(&mut C, key: &str, value: &str) -> Result<(), E>,
 }
 
-impl<C> QueryKey<C> {
+impl<C, E> QueryKey<C, E> {
     /// Builds a row; `const` so a table can be a `const` slice.
     pub const fn new(
         canonical: &'static str,
         aliases: &'static [&'static str],
         meaning: &'static str,
         unit: &'static str,
-        apply: fn(&mut C, &str, &str) -> Result<(), UrlError>,
+        apply: fn(&mut C, &str, &str) -> Result<(), E>,
     ) -> Self {
         Self {
             canonical,
@@ -57,7 +59,7 @@ pub enum UnknownKeys {
 }
 
 /// Finds the row whose canonical name or alias is `key`.
-pub fn lookup<'t, C>(table: &'t [QueryKey<C>], key: &str) -> Option<&'t QueryKey<C>> {
+pub fn lookup<'t, C, E>(table: &'t [QueryKey<C, E>], key: &str) -> Option<&'t QueryKey<C, E>> {
     table
         .iter()
         .find(|row| row.canonical == key || row.aliases.contains(&key))
@@ -102,9 +104,9 @@ pub struct KeyDoc {
 }
 
 /// The documentation rows of `table`, in table order, tagged with `scheme`.
-pub fn docs<'t, C>(
+pub fn docs<'t, C, E>(
     scheme: &'static str,
-    table: &'t [QueryKey<C>],
+    table: &'t [QueryKey<C, E>],
 ) -> impl Iterator<Item = KeyDoc> + 't {
     table.iter().map(move |r| KeyDoc {
         scheme,

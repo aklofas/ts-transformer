@@ -60,7 +60,7 @@ impl SocketBuilder {
         self
     }
     pub fn key_length(&mut self, kl: KeyLength) -> &mut Self {
-        self.config.key_length = kl;
+        self.config.key_length = Some(kl);
         self
     }
     pub fn send_timeout(&mut self, t: Duration) -> &mut Self {
@@ -287,43 +287,43 @@ impl ListenerBuilder {
     }
 
     pub fn passphrase(&mut self, p: Passphrase) -> &mut Self {
-        self.config.passphrase = Some(p);
+        self.config.socket.passphrase = Some(p);
         self
     }
     pub fn key_length(&mut self, kl: KeyLength) -> &mut Self {
-        self.config.key_length = kl;
+        self.config.socket.key_length = Some(kl);
         self
     }
     pub fn latency(&mut self, d: Duration) -> &mut Self {
-        self.config.latency = Some(d);
+        self.config.socket.latency = Some(d);
         self
     }
     pub fn latency_ms(&mut self, ms: u64) -> &mut Self {
         self.latency(Duration::from_millis(ms))
     }
     pub fn recv_latency(&mut self, d: Duration) -> &mut Self {
-        self.config.recv_latency = Some(d);
+        self.config.socket.recv_latency = Some(d);
         self
     }
     pub fn mss(&mut self, mss: u16) -> &mut Self {
-        self.config.mss = Some(mss);
+        self.config.socket.mss = Some(mss);
         self
     }
     pub fn payload_size(&mut self, n: u16) -> &mut Self {
-        self.config.payload_size = Some(n);
+        self.config.socket.payload_size = Some(n);
         self
     }
     /// See `SocketBuilder::udp_recv_buffer_bytes`.
     pub fn udp_recv_buffer_bytes(&mut self, n: u32) -> &mut Self {
-        self.config.udp_recv_buffer_bytes = Some(n);
+        self.config.socket.udp_recv_buffer_bytes = Some(n);
         self
     }
     pub fn max_bandwidth(&mut self, bw: MaxBandwidth) -> &mut Self {
-        self.config.max_bandwidth = Some(bw);
+        self.config.socket.max_bandwidth = Some(bw);
         self
     }
     pub fn overhead_bandwidth_pct(&mut self, pct: u8) -> &mut Self {
-        self.config.overhead_bandwidth_pct = Some(pct);
+        self.config.socket.overhead_bandwidth_pct = Some(pct);
         self
     }
     /// Set the SRT receive buffer size in **bytes** (`SRTO_RCVBUF`).
@@ -331,27 +331,27 @@ impl ListenerBuilder {
     /// Passed verbatim to libsrt. See [`SocketBuilder::recv_buf_bytes`] for
     /// sizing guidance.
     pub fn recv_buf_bytes(&mut self, n: u32) -> &mut Self {
-        self.config.recv_buf_bytes = Some(n);
+        self.config.socket.recv_buf_bytes = Some(n);
         self
     }
     pub fn loss_max_ttl(&mut self, n: u32) -> &mut Self {
-        self.config.loss_max_ttl = Some(n);
+        self.config.socket.loss_max_ttl = Some(n);
         self
     }
     pub fn too_late_packet_drop(&mut self, on: bool) -> &mut Self {
-        self.config.too_late_packet_drop = Some(on);
+        self.config.socket.too_late_packet_drop = Some(on);
         self
     }
     pub fn flow_window_packets(&mut self, n: u32) -> &mut Self {
-        self.config.flow_window_packets = Some(n);
+        self.config.socket.flow_window_packets = Some(n);
         self
     }
     pub fn packet_filter(&mut self, pf: PacketFilter) -> &mut Self {
-        self.config.packet_filter = Some(pf);
+        self.config.socket.packet_filter = Some(pf);
         self
     }
     pub fn congestion(&mut self, c: Congestion) -> &mut Self {
-        self.config.congestion = Some(c);
+        self.config.socket.congestion = Some(c);
         self
     }
     pub fn backlog(&mut self, n: u32) -> &mut Self {
@@ -363,18 +363,18 @@ impl ListenerBuilder {
         self
     }
     pub fn recv_timeout(&mut self, t: Duration) -> &mut Self {
-        self.config.recv_timeout = Some(t);
+        self.config.socket.recv_timeout = Some(t);
         self
     }
     pub fn send_timeout(&mut self, t: Duration) -> &mut Self {
-        self.config.send_timeout = Some(t);
+        self.config.socket.send_timeout = Some(t);
         self
     }
     /// Set `SRTO_LINGER` — drop/close grace period for unsent data.
     /// `Duration::ZERO` closes immediately; libsrt's default is linger off
     /// (`l_onoff=0, l_linger=0`). Inherited by accepted sockets.
     pub fn linger(&mut self, d: Duration) -> &mut Self {
-        self.config.linger = Some(d);
+        self.config.socket.linger = Some(d);
         self
     }
 

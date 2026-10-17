@@ -13,12 +13,15 @@
 use crate::config::{ListenerConfig, SocketConfig};
 use crate::error::{OptionError, SrtError};
 use crate::listener::Listener;
-use crate::options::{Congestion, KeyLength, MaxBandwidth, PacketFilter, Passphrase, StreamId};
+use crate::options::{
+    Congestion, KeyLength, MaxBandwidth, PacketFilter, Passphrase, Role, StreamId,
+};
 use crate::socket::Socket;
 use crate::transport::SrtTransport;
 use std::time::Duration;
 use tst_core::cancel::CancelSlot;
 use tst_core::url::common::{UrlError as CoreUrlError, parse_url};
+use tst_core::url::query::{QueryKey, lookup};
 
 /// `?latency=N` is parsed as N milliseconds (libsrt-URL canonical), but
 /// ffmpeg's URL parses it as microseconds. A user copying an ffmpeg URL
@@ -96,55 +99,21 @@ pub enum Mode {
     Listener,
 }
 
-/// Parsed `srt://host:port?...` URL: connection target + a typed overlay
-/// of the recognized query parameters.
+/// Parsed `srt://host:port?...` URL: connection target + the recognized
+/// query parameters as a [`SocketConfig`].
+///
+/// [`config`](Self::config) holds exactly the keys the URL carried (every
+/// other field is unset), so it layers over a config built from other
+/// sources with [`SocketConfig::merge_from`] and the URL wins on conflict.
+/// [`socket_config`](Self::socket_config) and
+/// [`listener_config`](Self::listener_config) are the ready-to-open forms.
 #[must_use]
 #[derive(Debug, Clone)]
 pub struct SrtUrl {
     pub host: String,
     pub port: u16,
-    pub overlay: UrlOverlay,
     pub mode: Mode,
-}
-
-/// Typed overlay of query-parameter values. Apply via `apply_to_socket`
-/// or `apply_to_listener`. URL wins on conflict (Q4-A precedence rule).
-#[derive(Debug, Default, Clone)]
-pub struct UrlOverlay {
-    // Group 1 — libsrt-URL honored keys.
-    pub passphrase: Option<Passphrase>,
-    pub key_length: Option<KeyLength>,
-    pub latency: Option<Duration>,
-    pub recv_latency: Option<Duration>,
-    pub peer_latency: Option<Duration>,
-    pub mss: Option<u16>,
-    pub payload_size: Option<u16>,
-    pub max_bandwidth: Option<MaxBandwidth>,
-    pub input_bandwidth: Option<u64>,
-    pub overhead_bandwidth_pct: Option<u8>,
-    pub stream_id: Option<StreamId>,
-    pub loss_max_ttl: Option<u32>,
-    pub too_late_packet_drop: Option<bool>,
-    pub flow_window_packets: Option<u32>,
-    pub packet_filter: Option<PacketFilter>,
-    pub congestion: Option<Congestion>,
-
-    // Group 2 — `tst-c` extension keys.
-    pub recv_timeout: Option<Duration>,
-    pub send_timeout: Option<Duration>,
-
-    // Group 1 — connect timeout. Honored from libsrt URL vocabulary
-    // (`conntimeo`); also accepts ffmpeg-style alias `connect_timeout`.
-    pub connect_timeout: Option<Duration>,
-
-    // Group 1 — `SRTO_LINGER` close-grace period (seconds, matching ffmpeg).
-    pub linger: Option<Duration>,
-
-    // Group 1 — kernel UDP socket buffer sizes. Honored from libsrt URL
-    // vocabulary (`udprcvbuf`/`udpsndbuf`); also accepts ffmpeg-style
-    // aliases `recv_buffer_size`/`send_buffer_size`.
-    pub udp_recv_buffer_bytes: Option<u32>,
-    pub udp_send_buffer_bytes: Option<u32>,
+    pub config: SocketConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -213,7 +182,7 @@ impl SrtUrl {
     /// ).unwrap();
     /// assert_eq!(u.host, "camera.local");
     /// assert_eq!(u.port, 9000);
-    /// assert_eq!(u.overlay.latency, Some(Duration::from_millis(200)));
+    /// assert_eq!(u.config.latency, Some(Duration::from_millis(200)));
     /// ```
     pub fn parse(s: &str) -> Result<Self, UrlError> {
         // The common parser accepts empty-host URLs (e.g. srt://:7000?mode=listener)
@@ -236,12 +205,12 @@ impl SrtUrl {
         let host = parsed.host.to_string();
         let port = parsed.port.ok_or(UrlError::MissingPort)?;
 
-        let mut overlay = UrlOverlay::default();
+        let mut config = SocketConfig::default();
         let mut mode = Mode::Caller;
         // Last-occurrence wins (Q4-A): we just overwrite as we go.
         for (key, value) in &parsed.query {
-            // mode is consumed at the SrtUrl level (not in overlay) since it
-            // determines which apply_to_* method the caller should use.
+            // mode is consumed at the SrtUrl level (not in the config) since
+            // it decides whether the caller dials or accepts.
             if key.as_ref() == "mode" {
                 mode = match value.as_ref() {
                     "caller" => Mode::Caller,
@@ -254,7 +223,10 @@ impl SrtUrl {
                 };
                 continue;
             }
-            apply_query_pair(&mut overlay, key.as_ref(), value.as_ref())?;
+            match lookup(URL_KEYS, key.as_ref()) {
+                Some(row) => (row.apply)(&mut config, key.as_ref(), value.as_ref())?,
+                None => return Err(unrecognized_key(key.as_ref())),
+            }
         }
 
         // Caller mode requires a non-empty host (need somewhere to connect).
@@ -266,23 +238,33 @@ impl SrtUrl {
         Ok(Self {
             host,
             port,
-            overlay,
             mode,
+            config,
         })
     }
 
-    /// The caller-side [`SocketConfig`] both open methods dial with: a
-    /// default config with the overlay applied, plus — when
-    /// `sender_defaults` — [`SocketConfig::merge_sender_defaults`]. That
-    /// one flag is the entire difference between [`Self::connect`] and
-    /// [`Self::connect_recv`].
-    fn caller_config(&self, sender_defaults: bool) -> SocketConfig {
+    /// The caller-side [`SocketConfig`] to dial with: a default config
+    /// with this URL's keys merged in, plus, for [`Role::Sender`], the
+    /// sender preset ([`SocketConfig::merge_sender_defaults`]). That one
+    /// role is the entire difference between [`Self::connect`] and
+    /// [`Self::connect_recv`]. A receiver gets no preset.
+    pub fn socket_config(&self, role: Role) -> SocketConfig {
         let mut cfg = SocketConfig::default();
-        self.overlay.apply_to_socket(&mut cfg);
-        if sender_defaults {
+        cfg.merge_from(&self.config);
+        if role == Role::Sender {
             cfg.merge_sender_defaults();
         }
         cfg
+    }
+
+    /// The listener-side [`ListenerConfig`]: the defaults with this URL's
+    /// keys as the socket options. The listener applies the subset of
+    /// them that is meaningful on a passive socket.
+    pub fn listener_config(&self) -> ListenerConfig {
+        ListenerConfig {
+            socket: self.config.clone(),
+            ..Default::default()
+        }
     }
 
     /// Shared dial tail: an IPv6-safe `host:port` join
@@ -295,13 +277,13 @@ impl SrtUrl {
     }
 
     /// Open this URL as a **caller** for the SENDER path: dial `host:port`
-    /// with the overlay applied and the sender preset merged underneath
-    /// it, and return the connected transport.
+    /// with the URL's keys applied and the sender preset merged underneath
+    /// them, and return the connected transport.
     ///
-    /// The composition: [`UrlOverlay::apply_to_socket`] on a default [`SocketConfig`] →
-    /// [`SocketConfig::merge_sender_defaults`] (15 s connect timeout, 5 s
-    /// linger, `Role::Sender` — each only where the overlay left it unset, so
-    /// the URL wins) → the shared dial tail.
+    /// The composition: [`SrtUrl::socket_config`] for [`Role::Sender`] (the URL's keys on a
+    /// default [`SocketConfig`], then [`SocketConfig::merge_sender_defaults`]:
+    /// 15 s connect timeout, 5 s linger, `Role::Sender`, each only where the
+    /// URL left it unset, so the URL wins) → the shared dial tail.
     ///
     /// # Which one to call
     ///
@@ -311,7 +293,7 @@ impl SrtUrl {
     ///   three bindings use it, so a managed caller-mode receiver also
     ///   gets the 5 s linger and `Role::Sender`.
     /// - [`connect_recv`](Self::connect_recv) — the plain/receive-side
-    ///   open path: overlay only, no preset. The Python and JVM plain
+    ///   open path: the URL's keys only, no preset. The Python and JVM plain
     ///   caller opens use it — senders included, so a plain Python/JVM
     ///   sender keeps libsrt's linger-off default and no 15 s connect
     ///   timeout.
@@ -327,15 +309,15 @@ impl SrtUrl {
     ///
     /// [`ConnectError`]: crate::ConnectError
     pub fn connect(&self) -> Result<SrtTransport, SrtError> {
-        self.dial(&self.caller_config(true))
+        self.dial(&self.socket_config(Role::Sender))
     }
 
     /// Open this URL as a **caller** for the plain/receive path: exactly
     /// [`connect`](Self::connect) minus
-    /// [`SocketConfig::merge_sender_defaults`] — the overlay is applied to
-    /// a default [`SocketConfig`] and nothing else is, so the socket keeps
+    /// [`SocketConfig::merge_sender_defaults`] — the URL's keys are merged
+    /// into a default [`SocketConfig`] and nothing else is, so the socket keeps
     /// libsrt's own connect timeout and linger and stays
-    /// [`Role::Receiver`](crate::options::Role::Receiver).
+    /// [`Role::Receiver`].
     ///
     /// That is what the Python and JVM plain caller opens compose,
     /// and why the split exists: routing them through
@@ -348,7 +330,7 @@ impl SrtUrl {
     /// Identical to [`connect`](Self::connect): [`SrtError::Connect`]
     /// carrying the typed [`ConnectError`](crate::ConnectError).
     pub fn connect_recv(&self) -> Result<SrtTransport, SrtError> {
-        self.dial(&self.caller_config(false))
+        self.dial(&self.socket_config(Role::Receiver))
     }
 
     /// Open this URL as a **listener**: bind `host:port` (an empty host
@@ -358,8 +340,7 @@ impl SrtUrl {
     ///
     /// The bind → install-into-slot → accept → clear → classify sequence
     /// is [`Listener::accept_one_cancellable`]; this method only builds
-    /// the [`ListenerConfig`] from the overlay
-    /// ([`UrlOverlay::apply_to_listener`]) and renders the bind address
+    /// the [`ListenerConfig`] ([`SrtUrl::listener_config`]) and renders the bind address
     /// (an empty host becomes `0.0.0.0`). Single-accept: the
     /// listener is dropped on return. Share the same `cancel` slot with
     /// a managed transport's `tst_pipeline::FactoryCancel` — a type alias
@@ -377,8 +358,7 @@ impl SrtUrl {
     /// [`TransportError::ExplicitClose`]: tst_core::transport::TransportError::ExplicitClose
     /// [`TransportError::Broken`]: tst_core::transport::TransportError::Broken
     pub fn accept_one(&self, cancel: &CancelSlot) -> Result<SrtTransport, SrtError> {
-        let mut cfg = ListenerConfig::default();
-        self.overlay.apply_to_listener(&mut cfg);
+        let cfg = self.listener_config();
         let bind_host = if self.host.is_empty() {
             "0.0.0.0"
         } else {
@@ -438,76 +418,12 @@ fn parse_bool_strict(key: &str, value: &str) -> Result<bool, UrlError> {
     }
 }
 
-fn apply_query_pair(overlay: &mut UrlOverlay, key: &str, value: &str) -> Result<(), UrlError> {
-    match key {
-        "congestion" | "smoother" => apply_congestion(overlay, value),
-        "conntimeo" | "connect_timeout" => apply_connect_timeout(overlay, value),
-        // libsrt-URL canonical key is `fc` (flow control window); `ffs` is
-        // the ffmpeg-style alias (flight flag size).
-        "fc" | "ffs" => {
-            overlay.flow_window_packets = Some(parse_int_nonneg("fc", value)?);
-            Ok(())
-        }
-        "inputbw" => {
-            overlay.input_bandwidth = Some(parse_int_nonneg("inputbw", value)?);
-            Ok(())
-        }
-        "latency" | "tsbpddelay" => apply_latency(overlay, "latency", value),
-        "linger" => {
-            // SRTO_LINGER value is in seconds (matches ffmpeg's URL).
-            let n = parse_i32_nonneg("linger", value)?;
-            overlay.linger = Some(Duration::from_secs(n as u64));
-            Ok(())
-        }
-        "lossmaxttl" => {
-            overlay.loss_max_ttl = Some(parse_int_nonneg("lossmaxttl", value)?);
-            Ok(())
-        }
-        "maxbw" => apply_maxbw(overlay, value),
-        "mss" => {
-            overlay.mss = Some(parse_int_nonneg::<u16>("mss", value)?);
-            Ok(())
-        }
-        "oheadbw" => apply_oheadbw(overlay, value),
-        "packetfilter" => apply_packetfilter(overlay, value),
-        "passphrase" => apply_passphrase(overlay, value),
-        "payloadsize" | "pkt_size" | "payload_size" => apply_payloadsize(overlay, value),
-        "pbkeylen" => apply_pbkeylen(overlay, value),
-        "peerlatency" => apply_latency(overlay, "peerlatency", value),
-        "rcvlatency" => apply_latency(overlay, "rcvlatency", value),
-        "streamid" | "srt_streamid" => apply_streamid(overlay, value),
-        "tlpktdrop" => apply_tlpktdrop(overlay, value),
-        // libsrt-URL canonical key is `udprcvbuf`; `recv_buffer_size` /
-        // `send_buffer_size` are ffmpeg-style aliases.
-        "udprcvbuf" | "recv_buffer_size" => {
-            overlay.udp_recv_buffer_bytes = Some(parse_int_nonneg("udprcvbuf", value)?);
-            Ok(())
-        }
-        "udpsndbuf" | "send_buffer_size" => {
-            overlay.udp_send_buffer_bytes = Some(parse_int_nonneg("udpsndbuf", value)?);
-            Ok(())
-        }
-        "x-recvtimeout" => {
-            let n = parse_i32_nonneg("x-recvtimeout", value)?;
-            overlay.recv_timeout = Some(Duration::from_millis(n as u64));
-            Ok(())
-        }
-        "x-sendtimeout" => {
-            let n = parse_i32_nonneg("x-sendtimeout", value)?;
-            overlay.send_timeout = Some(Duration::from_millis(n as u64));
-            Ok(())
-        }
-        "timeout" | "listen_timeout" | "tsbpd" => Err(ffmpeg_alias_not_exposed(key)),
-        other => fallback_unknown(other),
-    }
-}
+type Applied = Result<(), UrlError>;
 
-// ── per-parameter-family helpers ─────────────────────────────────────────────
-
-fn apply_congestion(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlError> {
+fn set_congestion(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
     // libsrt-URL canonical key is `congestion` (renamed from `smoother`
     // in libsrt 1.4.1); `smoother` is the pre-rename ffmpeg-style alias.
-    overlay.congestion =
+    c.congestion =
         Some(
             Congestion::from_str_strict(value).map_err(|source| UrlError::OptionValidation {
                 key: "congestion".into(),
@@ -517,47 +433,85 @@ fn apply_congestion(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlErro
     Ok(())
 }
 
-fn apply_connect_timeout(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlError> {
+fn set_connect_timeout(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
     // libsrt-URL canonical key is `conntimeo` (milliseconds);
     // `connect_timeout` is the ffmpeg-style alias.
     let n = parse_i32_nonneg("conntimeo", value)?;
-    overlay.connect_timeout = Some(Duration::from_millis(n as u64));
+    c.connect_timeout = Some(Duration::from_millis(n as u64));
     Ok(())
 }
 
-fn apply_latency(overlay: &mut UrlOverlay, key: &'static str, value: &str) -> Result<(), UrlError> {
-    // libsrt-URL canonical key is `latency`; `tsbpddelay` is the
-    // ffmpeg-style alias (the `SRTO_*` constant for SRT's TSBPD
-    // mechanism is `SRTO_LATENCY`).
-    let n = parse_i32_nonneg(key, value)?;
-    warn_if_suspicious_latency(key, n);
+fn set_flow_window(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    // libsrt-URL canonical key is `fc` (flow control window); `ffs` is
+    // the ffmpeg-style alias (flight flag size).
+    c.flow_window_packets = Some(parse_int_nonneg("fc", value)?);
+    Ok(())
+}
+
+fn set_input_bandwidth(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    c.input_bandwidth = Some(parse_int_nonneg("inputbw", value)?);
+    Ok(())
+}
+
+/// Parses a latency value in milliseconds under the name used in errors
+/// and the high-latency warning.
+fn latency_value(name: &'static str, value: &str) -> Result<Duration, UrlError> {
+    // `latency`'s ffmpeg-style alias is `tsbpddelay` (the `SRTO_*` constant
+    // for SRT's TSBPD mechanism is `SRTO_LATENCY`).
+    let n = parse_i32_nonneg(name, value)?;
+    warn_if_suspicious_latency(name, n);
     // n is a non-negative i32; widening to u64 is lossless.
-    let dur = Duration::from_millis(n as u64);
-    match key {
-        "latency" => overlay.latency = Some(dur),
-        "peerlatency" => overlay.peer_latency = Some(dur),
-        "rcvlatency" => overlay.recv_latency = Some(dur),
-        _ => unreachable!("apply_latency called with non-latency key {key}"),
-    }
+    Ok(Duration::from_millis(n as u64))
+}
+
+fn set_latency(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    c.latency = Some(latency_value("latency", value)?);
     Ok(())
 }
 
-fn apply_maxbw(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlError> {
+fn set_peer_latency(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    c.peer_latency = Some(latency_value("peerlatency", value)?);
+    Ok(())
+}
+
+fn set_recv_latency(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    c.recv_latency = Some(latency_value("rcvlatency", value)?);
+    Ok(())
+}
+
+fn set_linger(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    // SRTO_LINGER value is in seconds (matches ffmpeg's URL).
+    let n = parse_i32_nonneg("linger", value)?;
+    c.linger = Some(Duration::from_secs(n as u64));
+    Ok(())
+}
+
+fn set_loss_max_ttl(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    c.loss_max_ttl = Some(parse_int_nonneg("lossmaxttl", value)?);
+    Ok(())
+}
+
+fn set_max_bandwidth(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
     // SRTO_MAXBW is i64; we expose non-negative as Limited(u64).
     // The `-1` sentinel (`MaxBandwidth::Infinite`, libsrt's infinite) is not
     // URL-settable; `?maxbw=0` sends 0 (relative to the input rate).
     let n = parse_int_nonneg::<u64>("maxbw", value)?;
-    overlay.max_bandwidth = Some(MaxBandwidth::Limited(n));
+    c.max_bandwidth = Some(MaxBandwidth::Limited(n));
     Ok(())
 }
 
-fn apply_oheadbw(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlError> {
-    overlay.overhead_bandwidth_pct = Some(parse_oheadbw(value)?);
+fn set_mss(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    c.mss = Some(parse_int_nonneg::<u16>("mss", value)?);
     Ok(())
 }
 
-fn apply_packetfilter(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlError> {
-    overlay.packet_filter =
+fn set_overhead_bandwidth(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    c.overhead_bandwidth_pct = Some(parse_oheadbw(value)?);
+    Ok(())
+}
+
+fn set_packet_filter(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    c.packet_filter =
         Some(
             PacketFilter::new(value.to_string()).map_err(|e| UrlError::OptionValidation {
                 key: "packetfilter".into(),
@@ -567,8 +521,8 @@ fn apply_packetfilter(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlEr
     Ok(())
 }
 
-fn apply_passphrase(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlError> {
-    overlay.passphrase =
+fn set_passphrase(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    c.passphrase =
         Some(
             Passphrase::new(value.to_string()).map_err(|e| UrlError::OptionValidation {
                 key: "passphrase".into(),
@@ -578,7 +532,7 @@ fn apply_passphrase(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlErro
     Ok(())
 }
 
-fn apply_payloadsize(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlError> {
+fn set_payload_size(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
     // libsrt-URL canonical key is `payloadsize`; `pkt_size` and
     // `payload_size` are ffmpeg-style aliases.
     //
@@ -595,26 +549,25 @@ fn apply_payloadsize(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlErr
             detail: format!("must be <= 1456 (libsrt SRT_LIVE_MAX_PLSIZE, live-mode cap), got {n}"),
         });
     }
-    overlay.payload_size = Some(n);
+    c.payload_size = Some(n);
     Ok(())
 }
 
-fn apply_pbkeylen(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlError> {
+fn set_key_length(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
     let n = parse_i32_nonneg("pbkeylen", value)?;
-    overlay.key_length =
-        Some(
-            KeyLength::from_bytes(n).map_err(|source| UrlError::OptionValidation {
-                key: "pbkeylen".into(),
-                source,
-            })?,
-        );
+    c.key_length = Some(
+        KeyLength::from_bytes(n).map_err(|source| UrlError::OptionValidation {
+            key: "pbkeylen".into(),
+            source,
+        })?,
+    );
     Ok(())
 }
 
-fn apply_streamid(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlError> {
+fn set_stream_id(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
     // libsrt-URL canonical key is `streamid`; `srt_streamid` is the
     // ffmpeg-style alias.
-    overlay.stream_id =
+    c.stream_id =
         Some(
             StreamId::new(value.to_string()).map_err(|e| UrlError::OptionValidation {
                 key: "streamid".into(),
@@ -624,10 +577,192 @@ fn apply_streamid(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlError>
     Ok(())
 }
 
-fn apply_tlpktdrop(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlError> {
-    overlay.too_late_packet_drop = Some(parse_bool_strict("tlpktdrop", value)?);
+fn set_too_late_drop(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    c.too_late_packet_drop = Some(parse_bool_strict("tlpktdrop", value)?);
     Ok(())
 }
+
+fn set_udp_recv_buffer(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    // libsrt-URL canonical key is `udprcvbuf`; `recv_buffer_size` is the
+    // ffmpeg-style alias.
+    c.udp_recv_buffer_bytes = Some(parse_int_nonneg("udprcvbuf", value)?);
+    Ok(())
+}
+
+fn set_udp_send_buffer(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    c.udp_send_buffer_bytes = Some(parse_int_nonneg("udpsndbuf", value)?);
+    Ok(())
+}
+
+fn set_recv_timeout(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    let n = parse_i32_nonneg("x-recvtimeout", value)?;
+    c.recv_timeout = Some(Duration::from_millis(n as u64));
+    Ok(())
+}
+
+fn set_send_timeout(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+    let n = parse_i32_nonneg("x-sendtimeout", value)?;
+    c.send_timeout = Some(Duration::from_millis(n as u64));
+    Ok(())
+}
+
+/// The query keys an `srt://` URL applies to a [`SocketConfig`]; the
+/// parser and the generated key documentation both read this table. The
+/// `mode` key and the recognised-but-unexposed keys are handled around
+/// it, not in it.
+#[doc(hidden)]
+pub const URL_KEYS: &[QueryKey<SocketConfig, UrlError>] = &[
+    QueryKey::new(
+        "congestion",
+        &["smoother"],
+        "Congestion-control algorithm",
+        "`live` or `file`",
+        set_congestion,
+    ),
+    QueryKey::new(
+        "conntimeo",
+        &["connect_timeout"],
+        "Connect deadline",
+        "milliseconds",
+        set_connect_timeout,
+    ),
+    QueryKey::new(
+        "fc",
+        &["ffs"],
+        "Flow-control window",
+        "packets",
+        set_flow_window,
+    ),
+    QueryKey::new(
+        "inputbw",
+        &[],
+        "Input bandwidth estimate for the send budget",
+        "bytes per second",
+        set_input_bandwidth,
+    ),
+    QueryKey::new(
+        "latency",
+        &["tsbpddelay"],
+        "Receiver buffering delay",
+        "milliseconds",
+        set_latency,
+    ),
+    QueryKey::new(
+        "linger",
+        &[],
+        "Close grace period for unsent data",
+        "seconds",
+        set_linger,
+    ),
+    QueryKey::new(
+        "lossmaxttl",
+        &[],
+        "Reorder tolerance before a loss is reported",
+        "packets",
+        set_loss_max_ttl,
+    ),
+    QueryKey::new(
+        "maxbw",
+        &[],
+        "Maximum send bandwidth",
+        "bytes per second; 0 is relative to the input rate",
+        set_max_bandwidth,
+    ),
+    QueryKey::new("mss", &[], "Maximum segment size", "bytes", set_mss),
+    QueryKey::new(
+        "oheadbw",
+        &[],
+        "Recovery bandwidth overhead",
+        "percent",
+        set_overhead_bandwidth,
+    ),
+    QueryKey::new(
+        "packetfilter",
+        &[],
+        "Packet filter (forward error correction) configuration",
+        "libsrt filter string",
+        set_packet_filter,
+    ),
+    QueryKey::new(
+        "passphrase",
+        &[],
+        "Encryption passphrase",
+        "10 to 79 characters",
+        set_passphrase,
+    ),
+    QueryKey::new(
+        "payloadsize",
+        &["pkt_size", "payload_size"],
+        "Payload bytes per packet",
+        "bytes, at most 1456",
+        set_payload_size,
+    ),
+    QueryKey::new(
+        "pbkeylen",
+        &[],
+        "Encryption key length",
+        "16, 24 or 32 bytes",
+        set_key_length,
+    ),
+    QueryKey::new(
+        "peerlatency",
+        &[],
+        "Latency the peer should use when receiving",
+        "milliseconds",
+        set_peer_latency,
+    ),
+    QueryKey::new(
+        "rcvlatency",
+        &[],
+        "Receiver buffering delay of this side",
+        "milliseconds",
+        set_recv_latency,
+    ),
+    QueryKey::new(
+        "streamid",
+        &["srt_streamid"],
+        "Stream identifier sent in the handshake",
+        "text up to 512 bytes",
+        set_stream_id,
+    ),
+    QueryKey::new(
+        "tlpktdrop",
+        &[],
+        "Drop packets that arrive too late",
+        "`0` or `1`",
+        set_too_late_drop,
+    ),
+    QueryKey::new(
+        "udprcvbuf",
+        &["recv_buffer_size"],
+        "Kernel UDP receive buffer",
+        "bytes",
+        set_udp_recv_buffer,
+    ),
+    QueryKey::new(
+        "udpsndbuf",
+        &["send_buffer_size"],
+        "Kernel UDP send buffer",
+        "bytes",
+        set_udp_send_buffer,
+    ),
+    QueryKey::new(
+        "x-recvtimeout",
+        &[],
+        "Receive timeout",
+        "milliseconds",
+        set_recv_timeout,
+    ),
+    QueryKey::new(
+        "x-sendtimeout",
+        &[],
+        "Send timeout",
+        "milliseconds",
+        set_send_timeout,
+    ),
+];
+
+// ── keys the table does not hold ─────────────────────────────────────────────
 
 /// Returns a `UrlError::FfmpegAliasNotExposed` for the three ffmpeg-canonical
 /// option short-aliases that don't share a libsrt URL name. Without these
@@ -655,150 +790,21 @@ fn ffmpeg_alias_not_exposed(key: &str) -> UrlError {
     }
 }
 
-fn fallback_unknown(other: &str) -> Result<(), UrlError> {
-    if let Some(srto) = group3_lookup(other) {
-        return Err(UrlError::UnsupportedKey {
-            key: other.to_string(),
+/// The error for a key the table does not list: an ffmpeg alias this
+/// library does not expose, a libsrt key it recognises but does not expose,
+/// or an unknown key.
+fn unrecognized_key(key: &str) -> UrlError {
+    if matches!(key, "timeout" | "listen_timeout" | "tsbpd") {
+        return ffmpeg_alias_not_exposed(key);
+    }
+    if let Some(srto) = group3_lookup(key) {
+        return UrlError::UnsupportedKey {
+            key: key.to_string(),
             srto,
-        });
+        };
     }
-    Err(UrlError::UnknownKey {
-        key: other.to_string(),
-    })
-}
-
-impl UrlOverlay {
-    /// Write `Some(_)` fields through to `cfg`. URL wins on conflict.
-    pub fn apply_to_socket(&self, cfg: &mut SocketConfig) {
-        if let Some(v) = self.passphrase.as_ref() {
-            cfg.passphrase = Some(v.clone());
-        }
-        if let Some(v) = self.key_length {
-            cfg.key_length = v;
-        }
-        if let Some(v) = self.latency {
-            cfg.latency = Some(v);
-        }
-        if let Some(v) = self.recv_latency {
-            cfg.recv_latency = Some(v);
-        }
-        if let Some(v) = self.peer_latency {
-            cfg.peer_latency = Some(v);
-        }
-        if let Some(v) = self.mss {
-            cfg.mss = Some(v);
-        }
-        if let Some(v) = self.payload_size {
-            cfg.payload_size = Some(v);
-        }
-        if let Some(v) = self.max_bandwidth {
-            cfg.max_bandwidth = Some(v);
-        }
-        if let Some(v) = self.input_bandwidth {
-            cfg.input_bandwidth = Some(v);
-        }
-        if let Some(v) = self.overhead_bandwidth_pct {
-            cfg.overhead_bandwidth_pct = Some(v);
-        }
-        if let Some(v) = self.stream_id.as_ref() {
-            cfg.stream_id = Some(v.clone());
-        }
-        if let Some(v) = self.loss_max_ttl {
-            cfg.loss_max_ttl = Some(v);
-        }
-        if let Some(v) = self.too_late_packet_drop {
-            cfg.too_late_packet_drop = Some(v);
-        }
-        if let Some(v) = self.flow_window_packets {
-            cfg.flow_window_packets = Some(v);
-        }
-        if let Some(v) = self.packet_filter.as_ref() {
-            cfg.packet_filter = Some(v.clone());
-        }
-        if let Some(v) = self.congestion {
-            cfg.congestion = Some(v);
-        }
-        if let Some(v) = self.recv_timeout {
-            cfg.recv_timeout = Some(v);
-        }
-        if let Some(v) = self.send_timeout {
-            cfg.send_timeout = Some(v);
-        }
-        if let Some(v) = self.connect_timeout {
-            cfg.connect_timeout = Some(v);
-        }
-        if let Some(v) = self.linger {
-            cfg.linger = Some(v);
-        }
-        if let Some(v) = self.udp_recv_buffer_bytes {
-            cfg.udp_recv_buffer_bytes = Some(v);
-        }
-        if let Some(v) = self.udp_send_buffer_bytes {
-            cfg.udp_send_buffer_bytes = Some(v);
-        }
-    }
-
-    /// Same shape for `ListenerConfig` (for symmetry with future
-    /// listener-side URL support; v1 has no listener-side _open in tst-c).
-    pub fn apply_to_listener(&self, cfg: &mut ListenerConfig) {
-        if let Some(v) = self.passphrase.as_ref() {
-            cfg.passphrase = Some(v.clone());
-        }
-        if let Some(v) = self.key_length {
-            cfg.key_length = v;
-        }
-        if let Some(v) = self.latency {
-            cfg.latency = Some(v);
-        }
-        if let Some(v) = self.recv_latency {
-            cfg.recv_latency = Some(v);
-        }
-        if let Some(v) = self.mss {
-            cfg.mss = Some(v);
-        }
-        if let Some(v) = self.payload_size {
-            cfg.payload_size = Some(v);
-        }
-        if let Some(v) = self.max_bandwidth {
-            cfg.max_bandwidth = Some(v);
-        }
-        if let Some(v) = self.overhead_bandwidth_pct {
-            cfg.overhead_bandwidth_pct = Some(v);
-        }
-        if let Some(v) = self.loss_max_ttl {
-            cfg.loss_max_ttl = Some(v);
-        }
-        if let Some(v) = self.too_late_packet_drop {
-            cfg.too_late_packet_drop = Some(v);
-        }
-        if let Some(v) = self.flow_window_packets {
-            cfg.flow_window_packets = Some(v);
-        }
-        if let Some(v) = self.packet_filter.as_ref() {
-            cfg.packet_filter = Some(v.clone());
-        }
-        if let Some(v) = self.congestion {
-            cfg.congestion = Some(v);
-        }
-        if let Some(v) = self.recv_timeout {
-            cfg.recv_timeout = Some(v);
-        }
-        if let Some(v) = self.send_timeout {
-            cfg.send_timeout = Some(v);
-        }
-        if let Some(v) = self.linger {
-            cfg.linger = Some(v);
-        }
-        if let Some(v) = self.udp_recv_buffer_bytes {
-            cfg.udp_recv_buffer_bytes = Some(v);
-        }
-        // udp_send_buffer_bytes is sender-only — no listener field.
-        // ListenerConfig has no peer_latency, stream_id, or input_bandwidth.
-        // peer_latency is a caller-side option (libsrt allows it to be set
-        // on listeners but it has no effect there).
-        // stream_id is set by the caller during handshake; the listener
-        // reads it via Socket::stream_id on accepted sockets.
-        // input_bandwidth (SRTO_INPUTBW) is sender-side bandwidth budgeting.
+    UrlError::UnknownKey {
+        key: key.to_string(),
     }
 }
 
@@ -850,63 +856,57 @@ mod tests {
     #[test]
     fn url_conntimeo_parses() {
         let u = SrtUrl::parse("srt://h:9000?conntimeo=10000").unwrap();
-        assert_eq!(
-            u.overlay.connect_timeout,
-            Some(Duration::from_millis(10000))
-        );
+        assert_eq!(u.config.connect_timeout, Some(Duration::from_millis(10000)));
     }
 
     #[test]
     fn url_connect_timeout_alias_parses() {
         let u = SrtUrl::parse("srt://h:9000?connect_timeout=10000").unwrap();
-        assert_eq!(
-            u.overlay.connect_timeout,
-            Some(Duration::from_millis(10000))
-        );
+        assert_eq!(u.config.connect_timeout, Some(Duration::from_millis(10000)));
     }
 
     #[test]
     fn url_linger_parses() {
         let u = SrtUrl::parse("srt://h:9000?linger=5").unwrap();
-        assert_eq!(u.overlay.linger, Some(Duration::from_secs(5)));
+        assert_eq!(u.config.linger, Some(Duration::from_secs(5)));
     }
 
     #[test]
     fn url_udprcvbuf_parses() {
         let u = SrtUrl::parse("srt://h:9000?udprcvbuf=2000000").unwrap();
-        assert_eq!(u.overlay.udp_recv_buffer_bytes, Some(2_000_000));
+        assert_eq!(u.config.udp_recv_buffer_bytes, Some(2_000_000));
     }
 
     #[test]
     fn url_udpsndbuf_parses() {
         let u = SrtUrl::parse("srt://h:9000?udpsndbuf=2000000").unwrap();
-        assert_eq!(u.overlay.udp_send_buffer_bytes, Some(2_000_000));
+        assert_eq!(u.config.udp_send_buffer_bytes, Some(2_000_000));
     }
 
     #[test]
     fn url_recv_buffer_size_alias_parses() {
         let u = SrtUrl::parse("srt://h:9000?recv_buffer_size=2000000").unwrap();
-        assert_eq!(u.overlay.udp_recv_buffer_bytes, Some(2_000_000));
+        assert_eq!(u.config.udp_recv_buffer_bytes, Some(2_000_000));
     }
 
     #[test]
     fn url_send_buffer_size_alias_parses() {
         let u = SrtUrl::parse("srt://h:9000?send_buffer_size=2000000").unwrap();
-        assert_eq!(u.overlay.udp_send_buffer_bytes, Some(2_000_000));
+        assert_eq!(u.config.udp_send_buffer_bytes, Some(2_000_000));
     }
 
     #[test]
     fn url_alias_pkt_size_matches_payloadsize() {
         let canonical = SrtUrl::parse("srt://h:9000?payloadsize=1316").unwrap();
         let alias = SrtUrl::parse("srt://h:9000?pkt_size=1316").unwrap();
-        assert_eq!(canonical.overlay.payload_size, alias.overlay.payload_size);
-        assert_eq!(alias.overlay.payload_size, Some(1316));
+        assert_eq!(canonical.config.payload_size, alias.config.payload_size);
+        assert_eq!(alias.config.payload_size, Some(1316));
     }
 
     #[test]
     fn url_alias_payload_size_matches_payloadsize() {
         let alias = SrtUrl::parse("srt://h:9000?payload_size=1316").unwrap();
-        assert_eq!(alias.overlay.payload_size, Some(1316));
+        assert_eq!(alias.config.payload_size, Some(1316));
     }
 
     #[test]
@@ -914,11 +914,11 @@ mod tests {
         let canonical = SrtUrl::parse("srt://h:9000?streamid=abc").unwrap();
         let alias = SrtUrl::parse("srt://h:9000?srt_streamid=abc").unwrap();
         assert_eq!(
-            canonical.overlay.stream_id.as_ref().map(|s| s.as_str()),
-            alias.overlay.stream_id.as_ref().map(|s| s.as_str()),
+            canonical.config.stream_id.as_ref().map(|s| s.as_str()),
+            alias.config.stream_id.as_ref().map(|s| s.as_str()),
         );
         assert_eq!(
-            alias.overlay.stream_id.as_ref().map(|s| s.as_str()),
+            alias.config.stream_id.as_ref().map(|s| s.as_str()),
             Some("abc")
         );
     }
@@ -926,7 +926,7 @@ mod tests {
     #[test]
     fn url_alias_tsbpddelay_matches_latency() {
         let alias = SrtUrl::parse("srt://h:9000?tsbpddelay=200").unwrap();
-        assert_eq!(alias.overlay.latency, Some(Duration::from_millis(200)));
+        assert_eq!(alias.config.latency, Some(Duration::from_millis(200)));
     }
 
     #[test]
@@ -943,7 +943,7 @@ mod tests {
     fn url_alias_smoother_matches_congestion() {
         let canonical = SrtUrl::parse("srt://h:9000?congestion=live").unwrap();
         let alias = SrtUrl::parse("srt://h:9000?smoother=live").unwrap();
-        assert_eq!(canonical.overlay.congestion, alias.overlay.congestion);
+        assert_eq!(canonical.config.congestion, alias.config.congestion);
     }
 
     #[test]
@@ -951,8 +951,8 @@ mod tests {
         let canonical = SrtUrl::parse("srt://h:9000?fc=25600").unwrap();
         let alias = SrtUrl::parse("srt://h:9000?ffs=25600").unwrap();
         assert_eq!(
-            canonical.overlay.flow_window_packets,
-            alias.overlay.flow_window_packets
+            canonical.config.flow_window_packets,
+            alias.config.flow_window_packets
         );
     }
 
@@ -1054,18 +1054,18 @@ mod tests {
     /// sender open path (15 s connect timeout, 5 s linger, `Role::Sender`
     /// filled in where the URL left them unset); `connect_recv` is the
     /// plain/receive-side open the Python and JVM bindings do today, which
-    /// applies the overlay and nothing else. Asserted on the config both
+    /// applies the URL's keys and nothing else. Asserted on the config both
     /// methods dial with, since a live socket exposes neither value back.
     #[test]
     fn connect_applies_the_sender_preset_and_connect_recv_does_not() {
         let url = SrtUrl::parse("srt://camera.local:9000?latency=120").expect("parse");
 
-        let sender = url.caller_config(true);
+        let sender = url.socket_config(Role::Sender);
         assert_eq!(sender.connect_timeout, Some(Duration::from_secs(15)));
         assert_eq!(sender.linger, Some(Duration::from_secs(5)));
         assert_eq!(sender.role, crate::options::Role::Sender);
 
-        let recv = url.caller_config(false);
+        let recv = url.socket_config(Role::Receiver);
         assert_eq!(recv.connect_timeout, None, "no sender connect-timeout");
         assert_eq!(recv.linger, None, "no sender linger");
         assert_eq!(
@@ -1074,7 +1074,7 @@ mod tests {
             "connect_recv must not promote the socket to Role::Sender"
         );
 
-        // Both apply the overlay identically.
+        // Both apply the URL's keys identically.
         assert_eq!(sender.latency, Some(Duration::from_millis(120)));
         assert_eq!(recv.latency, Some(Duration::from_millis(120)));
     }
@@ -1084,7 +1084,10 @@ mod tests {
     #[test]
     fn the_url_wins_over_the_sender_preset() {
         let url = SrtUrl::parse("srt://camera.local:9000?conntimeo=2000&linger=1").expect("parse");
-        for cfg in [url.caller_config(true), url.caller_config(false)] {
+        for cfg in [
+            url.socket_config(Role::Sender),
+            url.socket_config(Role::Receiver),
+        ] {
             assert_eq!(cfg.connect_timeout, Some(Duration::from_millis(2000)));
             assert_eq!(cfg.linger, Some(Duration::from_secs(1)));
         }

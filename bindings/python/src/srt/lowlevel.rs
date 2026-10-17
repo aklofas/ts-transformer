@@ -4,8 +4,8 @@
 //! - `Builder` is a hybrid fluent + kwargs SRT URL constructor.
 //!   URL-provided values WIN over kwargs — we accumulate kwargs
 //!   into a `SocketConfig` / `ListenerConfig` FIRST, then call
-//!   `UrlOverlay::apply_to_{socket,listener}` AFTER so the overlay's
-//!   unconditional overwrites give the URL final say.
+//!   `SocketConfig::merge_from` with the URL's keys AFTER so the URL's
+//!   overwrites give it final say.
 //! - `Socket` is a handle that promotes via `into_sender` /
 //!   `into_receiver` into the `tstrans.shells` Sender / Receiver, and via
 //!   `into_mux_sender` / `into_demux_receiver` into the shells' MuxSender /
@@ -124,9 +124,9 @@ enum BuilderMode {
 /// At finalize (`connect()` / `listen()`):
 /// 1. Parse the URL.
 /// 2. If mode override is set and disagrees with URL → `CONFIG_INVALID`.
-/// 3. Overlay URL parameters on top of the accumulated config — URL wins
-///    on conflict (per `UrlOverlay::apply_to_*` semantics: unconditional
-///    overwrite).
+/// 3. Merge the URL's parameters over the accumulated config — URL wins
+///    on conflict (per `SocketConfig::merge_from`: every key the URL set
+///    overwrites).
 /// 4. Call `Socket::connect_with` / `Listener::bind_with`.
 ///
 /// All setters mutate-in-place and return `self` so chains work:
@@ -143,7 +143,7 @@ pub(crate) struct PyBuilder {
     /// Plain-text passphrase used only by `__repr__` redaction (so
     /// callers can sanity-check the kwarg landed without leaking the
     /// secret). The real passphrase lives in `socket_cfg.passphrase` /
-    /// `listener_cfg.passphrase` (already `SecretString`-wrapped).
+    /// `listener_cfg.socket.passphrase` (already `SecretString`-wrapped).
     passphrase_set: bool,
 }
 
@@ -154,7 +154,7 @@ impl PyBuilder {
     fn apply_passphrase(&mut self, py: Python<'_>, p: &str) -> PyResult<()> {
         let pp = Passphrase::new(p.to_string()).map_err(|e| cfg_invalid(py, e.to_string()))?;
         self.socket_cfg.passphrase = Some(pp.clone());
-        self.listener_cfg.passphrase = Some(pp);
+        self.listener_cfg.socket.passphrase = Some(pp);
         self.passphrase_set = true;
         Ok(())
     }
@@ -170,7 +170,7 @@ impl PyBuilder {
     fn apply_congestion(&mut self, py: Python<'_>, name: &str) -> PyResult<()> {
         let c = Congestion::from_str_strict(name).map_err(|e| cfg_invalid(py, e.to_string()))?;
         self.socket_cfg.congestion = Some(c);
-        self.listener_cfg.congestion = Some(c);
+        self.listener_cfg.socket.congestion = Some(c);
         Ok(())
     }
 }
@@ -211,7 +211,7 @@ impl PyBuilder {
         if let Some(ms) = latency_ms {
             let d = Duration::from_millis(ms.into());
             b.socket_cfg.latency = Some(d);
-            b.listener_cfg.latency = Some(d);
+            b.listener_cfg.socket.latency = Some(d);
         }
         if let Some(p) = passphrase {
             b.apply_passphrase(py, p)?;
@@ -228,12 +228,12 @@ impl PyBuilder {
         if let Some(ms) = recv_timeout_ms {
             let d = Duration::from_millis(ms.into());
             b.socket_cfg.recv_timeout = Some(d);
-            b.listener_cfg.recv_timeout = Some(d);
+            b.listener_cfg.socket.recv_timeout = Some(d);
         }
         if let Some(ms) = send_timeout_ms {
             let d = Duration::from_millis(ms.into());
             b.socket_cfg.send_timeout = Some(d);
-            b.listener_cfg.send_timeout = Some(d);
+            b.listener_cfg.socket.send_timeout = Some(d);
         }
         Ok(b)
     }
@@ -268,7 +268,7 @@ impl PyBuilder {
     fn latency_ms(mut slf: PyRefMut<'_, Self>, ms: u32) -> PyRefMut<'_, Self> {
         let d = Duration::from_millis(ms.into());
         slf.socket_cfg.latency = Some(d);
-        slf.listener_cfg.latency = Some(d);
+        slf.listener_cfg.socket.latency = Some(d);
         slf
     }
 
@@ -307,14 +307,14 @@ impl PyBuilder {
     fn recv_timeout_ms(mut slf: PyRefMut<'_, Self>, ms: u32) -> PyRefMut<'_, Self> {
         let d = Duration::from_millis(ms.into());
         slf.socket_cfg.recv_timeout = Some(d);
-        slf.listener_cfg.recv_timeout = Some(d);
+        slf.listener_cfg.socket.recv_timeout = Some(d);
         slf
     }
 
     fn send_timeout_ms(mut slf: PyRefMut<'_, Self>, ms: u32) -> PyRefMut<'_, Self> {
         let d = Duration::from_millis(ms.into());
         slf.socket_cfg.send_timeout = Some(d);
-        slf.listener_cfg.send_timeout = Some(d);
+        slf.listener_cfg.socket.send_timeout = Some(d);
         slf
     }
 
@@ -327,26 +327,26 @@ impl PyBuilder {
     fn recv_latency_ms(mut slf: PyRefMut<'_, Self>, ms: u32) -> PyRefMut<'_, Self> {
         let d = Duration::from_millis(ms.into());
         slf.socket_cfg.recv_latency = Some(d);
-        slf.listener_cfg.recv_latency = Some(d);
+        slf.listener_cfg.socket.recv_latency = Some(d);
         slf
     }
 
     fn max_bandwidth_bps(mut slf: PyRefMut<'_, Self>, bps: u64) -> PyRefMut<'_, Self> {
         let mb = MaxBandwidth::Limited(bps);
         slf.socket_cfg.max_bandwidth = Some(mb);
-        slf.listener_cfg.max_bandwidth = Some(mb);
+        slf.listener_cfg.socket.max_bandwidth = Some(mb);
         slf
     }
 
     fn mss(mut slf: PyRefMut<'_, Self>, value: u16) -> PyRefMut<'_, Self> {
         slf.socket_cfg.mss = Some(value);
-        slf.listener_cfg.mss = Some(value);
+        slf.listener_cfg.socket.mss = Some(value);
         slf
     }
 
     fn payload_size(mut slf: PyRefMut<'_, Self>, value: u16) -> PyRefMut<'_, Self> {
         slf.socket_cfg.payload_size = Some(value);
-        slf.listener_cfg.payload_size = Some(value);
+        slf.listener_cfg.socket.payload_size = Some(value);
         slf
     }
 
@@ -379,10 +379,10 @@ impl PyBuilder {
                 ),
             ));
         }
-        // Apply kwargs FIRST then URL overlay AFTER — overlay does
-        // unconditional overwrite, so URL wins on conflict.
+        // Apply kwargs FIRST then the URL's keys AFTER — merge_from
+        // overwrites every key the URL set, so URL wins on conflict.
         let mut cfg = self.socket_cfg.clone();
-        parsed.overlay.apply_to_socket(&mut cfg);
+        cfg.merge_from(&parsed.config);
         let addr = tst_srt::addr::join_host_port(&parsed.host, parsed.port);
         let socket =
             crate::util::allow_threads_parking(py, || SrtSocket::connect_with(&cfg, addr.as_str()))
@@ -418,7 +418,7 @@ impl PyBuilder {
             ));
         }
         let mut cfg = self.listener_cfg.clone();
-        parsed.overlay.apply_to_listener(&mut cfg);
+        cfg.socket.merge_from(&parsed.config);
         let bind_host = if parsed.host.is_empty() {
             "0.0.0.0"
         } else {

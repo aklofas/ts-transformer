@@ -31,6 +31,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `SrtTransport::with_max_payload` is removed. `SrtTransport::new` reads the
   negotiated `SRTO_PAYLOADSIZE`; to send smaller messages set the
   `payloadsize=` URL key or `SocketConfig::payload_size` before connecting.
+- `UrlOverlay` and `SrtUrl::overlay` are gone. `SrtUrl::config` is a
+  `SocketConfig` holding exactly the URL's keys, applied with
+  `SocketConfig::merge_from` or opened with `SrtUrl::socket_config(role)` and
+  `SrtUrl::listener_config()`, so one config type replaces four and the
+  "URL wins" rule has one implementation.
 
 ### Removed — tst-udp, tst-tcp, tst-rist, tst-hls (BREAKING)
 
@@ -224,6 +229,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   on the first receive on every host, as the C receivers already reported
   it. The send direction and every other `Broken` cause are unchanged, and
   `Diagnostics.broken_cause` still carries `CleanEof`.
+
+### Changed — tst-srt (BREAKING)
+
+- `SocketConfig::key_length` is an `Option<KeyLength>`; `None` keeps libsrt's
+  AES-128, as before. A config can now say "not set", which is what lets a
+  URL's `pbkeylen` merge by the same rule as every other key.
+- `ListenerConfig` holds a `SocketConfig` in `socket` plus `backlog` and
+  `reuse_addr`; the 15 socket fields it duplicated are read as
+  `cfg.socket.latency` and so on. The listener applies exactly the options it
+  applied before, and the listener's `ListenerBuilder` setters are unchanged.
 
 ### Changed — tst-rtp (BREAKING)
 

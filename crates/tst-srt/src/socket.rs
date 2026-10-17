@@ -7,7 +7,7 @@ use crate::error::{
     last_error, last_reject,
 };
 use crate::init::ensure_initialized;
-use crate::options::{MaxBandwidth, Passphrase};
+use crate::options::Passphrase;
 use os_socketaddr::OsSocketAddr;
 use std::ffi::{c_char, c_int};
 use std::mem;
@@ -729,89 +729,19 @@ pub(crate) fn set_passphrase(
     Ok(())
 }
 
-/// Option values applied identically by `apply_socket_config` and
-/// `apply_listener_config`. Built via `From` on each config type so the
-/// application logic (`apply_common_options`) lives in exactly one place.
-struct CommonOpts<'a> {
-    passphrase: Option<&'a Passphrase>,
-    key_length: crate::options::KeyLength,
-    latency: Option<Duration>,
-    recv_latency: Option<Duration>,
-    mss: Option<u16>,
-    flow_window_packets: Option<u32>,
-    recv_buf_bytes: Option<u32>,
-    max_bandwidth: Option<MaxBandwidth>,
-    overhead_bandwidth_pct: Option<u8>,
-    payload_size: Option<u16>,
-    udp_recv_buffer_bytes: Option<u32>,
-    loss_max_ttl: Option<u32>,
-    too_late_packet_drop: Option<bool>,
-    packet_filter: Option<&'a crate::options::PacketFilter>,
-    congestion: Option<crate::options::Congestion>,
-    recv_timeout: Option<Duration>,
-    linger: Option<Duration>,
-}
-
-impl<'a> From<&'a SocketConfig> for CommonOpts<'a> {
-    fn from(cfg: &'a SocketConfig) -> Self {
-        Self {
-            passphrase: cfg.passphrase.as_ref(),
-            key_length: cfg.key_length,
-            latency: cfg.latency,
-            recv_latency: cfg.recv_latency,
-            mss: cfg.mss,
-            flow_window_packets: cfg.flow_window_packets,
-            recv_buf_bytes: cfg.recv_buf_bytes,
-            max_bandwidth: cfg.max_bandwidth,
-            overhead_bandwidth_pct: cfg.overhead_bandwidth_pct,
-            payload_size: cfg.payload_size,
-            udp_recv_buffer_bytes: cfg.udp_recv_buffer_bytes,
-            loss_max_ttl: cfg.loss_max_ttl,
-            too_late_packet_drop: cfg.too_late_packet_drop,
-            packet_filter: cfg.packet_filter.as_ref(),
-            congestion: cfg.congestion,
-            recv_timeout: cfg.recv_timeout,
-            linger: cfg.linger,
-        }
-    }
-}
-
-impl<'a> From<&'a crate::config::ListenerConfig> for CommonOpts<'a> {
-    fn from(cfg: &'a crate::config::ListenerConfig) -> Self {
-        Self {
-            passphrase: cfg.passphrase.as_ref(),
-            key_length: cfg.key_length,
-            latency: cfg.latency,
-            recv_latency: cfg.recv_latency,
-            mss: cfg.mss,
-            flow_window_packets: cfg.flow_window_packets,
-            recv_buf_bytes: cfg.recv_buf_bytes,
-            max_bandwidth: cfg.max_bandwidth,
-            overhead_bandwidth_pct: cfg.overhead_bandwidth_pct,
-            payload_size: cfg.payload_size,
-            udp_recv_buffer_bytes: cfg.udp_recv_buffer_bytes,
-            loss_max_ttl: cfg.loss_max_ttl,
-            too_late_packet_drop: cfg.too_late_packet_drop,
-            packet_filter: cfg.packet_filter.as_ref(),
-            congestion: cfg.congestion,
-            recv_timeout: cfg.recv_timeout,
-            linger: cfg.linger,
-        }
-    }
-}
-
 /// Apply the option set shared by `apply_socket_config` and
-/// `apply_listener_config`.
+/// `apply_listener_config`: the fields of a `SocketConfig` that mean
+/// something on both a caller and a passive socket.
 fn apply_common_options(
     handle: srt_sys::SRTSOCKET,
-    opts: &CommonOpts<'_>,
+    opts: &SocketConfig,
 ) -> Result<(), OptionError> {
-    if let Some(p) = opts.passphrase {
+    if let Some(p) = opts.passphrase.as_ref() {
         // Set key length BEFORE passphrase.
         set_int(
             handle,
             srt_sys::SRT_SOCKOPT_SRTO_PBKEYLEN,
-            opts.key_length.as_bytes(),
+            opts.key_length.unwrap_or_default().as_bytes(),
         )?;
         set_passphrase(handle, p)?;
     }
@@ -863,7 +793,7 @@ fn apply_common_options(
     if let Some(on) = opts.too_late_packet_drop {
         set_bool(handle, srt_sys::SRT_SOCKOPT_SRTO_TLPKTDROP, on)?;
     }
-    if let Some(pf) = opts.packet_filter {
+    if let Some(pf) = opts.packet_filter.as_ref() {
         set_string(handle, srt_sys::SRT_SOCKOPT_SRTO_PACKETFILTER, pf.as_str())?;
     }
     if let Some(c) = opts.congestion {
@@ -887,7 +817,7 @@ pub(crate) fn apply_socket_config(
     handle: srt_sys::SRTSOCKET,
     cfg: &SocketConfig,
 ) -> Result<(), OptionError> {
-    apply_common_options(handle, &CommonOpts::from(cfg))?;
+    apply_common_options(handle, cfg)?;
     if let Some(t) = cfg.send_timeout {
         set_int(
             handle,
@@ -935,7 +865,7 @@ pub(crate) fn apply_listener_config(
     handle: srt_sys::SRTSOCKET,
     cfg: &crate::config::ListenerConfig,
 ) -> Result<(), OptionError> {
-    apply_common_options(handle, &CommonOpts::from(cfg))?;
+    apply_common_options(handle, &cfg.socket)?;
     set_bool(handle, srt_sys::SRT_SOCKOPT_SRTO_REUSEADDR, cfg.reuse_addr)?;
     Ok(())
 }
@@ -1068,6 +998,35 @@ pub(crate) fn make_cancel_handle(handle: srt_sys::SRTSOCKET) -> tst_core::Resour
 
 #[cfg(test)]
 mod tests {
+    /// A passphrase with no `key_length` negotiates libsrt's AES-128:
+    /// `None` is applied as 16 bytes, on a caller socket and a listener.
+    #[test]
+    fn passphrase_without_key_length_applies_16_byte_pbkeylen() {
+        super::ensure_initialized();
+        let passphrase = crate::options::Passphrase::new("secretsecretsecret").unwrap();
+        let cfg = super::SocketConfig {
+            passphrase: Some(passphrase),
+            ..Default::default()
+        };
+        assert_eq!(cfg.key_length, None);
+        let h = unsafe { srt_sys::srt_create_socket() };
+        assert_ne!(h, super::SRT_INVALID_SOCK);
+        super::apply_socket_config(h, &cfg).unwrap();
+        let caller = super::get_int(h, srt_sys::SRT_SOCKOPT_SRTO_PBKEYLEN).unwrap();
+        unsafe { srt_sys::srt_close(h) };
+        assert_eq!(caller, 16);
+
+        let lcfg = crate::config::ListenerConfig {
+            socket: cfg,
+            ..Default::default()
+        };
+        let h = unsafe { srt_sys::srt_create_socket() };
+        super::apply_listener_config(h, &lcfg).unwrap();
+        let listener = super::get_int(h, srt_sys::SRT_SOCKOPT_SRTO_PBKEYLEN).unwrap();
+        unsafe { srt_sys::srt_close(h) };
+        assert_eq!(listener, 16);
+    }
+
     /// libsrt silently clamps `SRTO_RCVBUF` to the flow-control window
     /// (default 25600 packets ≈ 37.7 MB at default MSS) — the setter
     /// still returns success. `set_rcvbuf_checked` must surface that as

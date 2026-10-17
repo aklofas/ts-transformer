@@ -18,7 +18,7 @@ use crate::url::{Mode, SrtUrl};
 
 /// Open an `srt://` sender: `?mode=caller` (the default) connects.
 ///
-/// Dials through [`SrtUrl::connect_recv`]: overlay only, no sender preset,
+/// Dials through [`SrtUrl::connect_recv`]: the URL's keys only, no sender preset,
 /// the way the bindings' plain senders always have.
 ///
 /// # Errors

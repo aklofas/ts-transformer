@@ -54,7 +54,7 @@ pub use transport::SrtTransport;
 pub use tst_core::ResourceCancel;
 #[allow(deprecated)]
 pub use tst_core::SrtCancelHandle;
-pub use url::{SrtUrl, UrlError, UrlOverlay};
+pub use url::{SrtUrl, UrlError};
 
 /// Number of `tst-srt` operations that have entered and not yet returned.
 /// **Unstable; exists so the exit tests can observe a parked thread.**

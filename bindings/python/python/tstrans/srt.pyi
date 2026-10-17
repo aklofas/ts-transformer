@@ -129,7 +129,7 @@ class Builder:
 
     Common knobs accepted both as `__init__` kwargs and as chainable
     setters. URL-provided values WIN over kwargs / setters — the
-    overlay's unconditional overwrite applies AFTER the kwarg-built
+    URL merge overwrites AFTER the kwarg-built
     config, so the URL gets final say on any conflict.
 
     Mode is tracked locally via `.caller()` / `.listener()` /

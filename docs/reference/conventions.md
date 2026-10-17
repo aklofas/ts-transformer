@@ -19,6 +19,12 @@ uses. The workspace's construction-parameter types use `Config`
 `SocketConfig`, `ListenerConfig`, `DemuxerConfig`, `PairerConfig`,
 `EncodeConfig`).
 
+A transport has one config type for its socket options, and the URL parses
+into it. An SRT URL is a `SocketConfig` holding exactly the keys the URL
+carried, and `ListenerConfig` holds a `SocketConfig` in `socket` next to
+`backlog` and `reuse_addr`, so there is no separate URL representation
+and no copy of the socket fields for listeners.
+
 **Examples:**
 
 ```rust

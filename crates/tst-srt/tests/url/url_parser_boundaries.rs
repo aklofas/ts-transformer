@@ -9,13 +9,13 @@ use tst_srt::{SrtUrl, UrlError};
 #[test]
 fn int_zero() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?latency=0").unwrap();
-    assert!(u.overlay.latency.is_some());
+    assert!(u.config.latency.is_some());
 }
 
 #[test]
 fn int_i32_max() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?latency=2147483647").unwrap();
-    assert!(u.overlay.latency.is_some());
+    assert!(u.config.latency.is_some());
 }
 
 #[test]
@@ -43,13 +43,13 @@ fn int_empty_value() {
 #[test]
 fn int64_zero() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?maxbw=0").unwrap();
-    assert!(u.overlay.max_bandwidth.is_some());
+    assert!(u.config.max_bandwidth.is_some());
 }
 
 #[test]
 fn int64_u64_max() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?maxbw=18446744073709551615").unwrap();
-    assert!(u.overlay.max_bandwidth.is_some());
+    assert!(u.config.max_bandwidth.is_some());
 }
 
 #[test]
@@ -65,13 +65,13 @@ fn int64_overflow_above_u64() {
 #[test]
 fn bool_zero() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?tlpktdrop=0").unwrap();
-    assert_eq!(u.overlay.too_late_packet_drop, Some(false));
+    assert_eq!(u.config.too_late_packet_drop, Some(false));
 }
 
 #[test]
 fn bool_one() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?tlpktdrop=1").unwrap();
-    assert_eq!(u.overlay.too_late_packet_drop, Some(true));
+    assert_eq!(u.config.too_late_packet_drop, Some(true));
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn bool_empty_rejects() {
 fn enum_lowercase_live() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?congestion=live").unwrap();
     assert!(matches!(
-        u.overlay.congestion,
+        u.config.congestion,
         Some(tst_srt::Congestion::Live)
     ));
 }
@@ -124,7 +124,7 @@ fn enum_unknown_value_rejects() {
 #[test]
 fn passphrase_min_length_10() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?passphrase=ten-chars!").unwrap();
-    assert!(u.overlay.passphrase.is_some());
+    assert!(u.config.passphrase.is_some());
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn passphrase_max_length_79() {
     let p79 = "a".repeat(79);
     let url = format!("srt://1.2.3.4:9000?passphrase={p79}");
     let u = SrtUrl::parse(&url).unwrap();
-    assert!(u.overlay.passphrase.is_some());
+    assert!(u.config.passphrase.is_some());
 }
 
 #[test]
@@ -154,7 +154,7 @@ fn streamid_empty_succeeds() {
     // Empty streamid is technically valid (zero-length is OK per
     // libsrt); but our typed StreamId::new accepts empty.
     let u = SrtUrl::parse("srt://1.2.3.4:9000?streamid=").unwrap();
-    assert_eq!(u.overlay.stream_id.as_ref().unwrap().as_str(), "");
+    assert_eq!(u.config.stream_id.as_ref().unwrap().as_str(), "");
 }
 
 #[test]
@@ -162,7 +162,7 @@ fn streamid_at_512_byte_limit() {
     let s = "a".repeat(512);
     let url = format!("srt://1.2.3.4:9000?streamid={s}");
     let u = SrtUrl::parse(&url).unwrap();
-    assert_eq!(u.overlay.stream_id.as_ref().unwrap().as_str().len(), 512);
+    assert_eq!(u.config.stream_id.as_ref().unwrap().as_str().len(), 512);
 }
 
 #[test]

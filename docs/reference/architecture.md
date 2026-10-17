@@ -133,7 +133,7 @@ sockets), `SocketBuilder` / `ListenerBuilder` (fluent construction over
 `Transport` + `RecvTransport` impl), `ResourceCancel` (one-shot
 pre-emptive close), and `Stats` (live snapshot of libsrt's internal
 counters). The `url::SrtUrl` type parses `srt://host:port?key=value&…`
-into a builder overlay using libsrt's documented option vocabulary,
+into a `SocketConfig` using libsrt's documented option vocabulary,
 and `addr::*` handles IPv4 / IPv6 sockaddr marshalling. See
 [guides/srt.md](/docs/guides/srt.md) for the full surface.
 
