@@ -107,4 +107,24 @@ mod tests {
         assert_eq!(out[0].payload, vec![0x40, 0x01, 0xAA]);
         assert!(out[1].marker);
     }
+
+    /// The PayloadHdr keeps a set F bit: `0xA6 0x01` (F, type 19, TID 1)
+    /// gives `0xE2 0x01`.
+    #[test]
+    fn the_payload_header_keeps_the_forbidden_zero_bit() {
+        let mut nal = vec![0xA6u8, 0x01];
+        nal.extend(std::iter::repeat_n(0xEF, 2500));
+        let out = packetize([nal.as_slice()], 1200);
+        assert_eq!(&out[0].payload[..3], &[0xE2, 0x01, 0x80 | 19]);
+        assert_eq!(&out[2].payload[..3], &[0xE2, 0x01, 0x40 | 19]);
+    }
+
+    #[test]
+    fn exactly_max_payload_is_not_fragmented_and_empty_input_yields_nothing() {
+        let mut nal = vec![0x26u8, 0x01];
+        nal.extend(std::iter::repeat_n(0x41, 1198));
+        assert_eq!(packetize([nal.as_slice()], 1200).len(), 1);
+        assert!(packetize(std::iter::empty::<&[u8]>(), 1200).is_empty());
+        assert!(packetize([&[][..]], 1200).is_empty());
+    }
 }

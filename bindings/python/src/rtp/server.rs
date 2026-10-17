@@ -22,8 +22,8 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use secrecy::SecretString;
 
-use tst_rtp::builder::RtspServerBuilder;
-use tst_rtp::cancel::RtspServerCancelHandle;
+use tst_rtp::RtspServerBuilder;
+use tst_rtp::RtspServerCancelHandle;
 use tst_rtp::rtsp::server::RtspServer as RustRtspServer;
 use tst_rtp::rtsp::server::mount::{MountHandle as RustMountHandle, MountKind as RustMountKind};
 

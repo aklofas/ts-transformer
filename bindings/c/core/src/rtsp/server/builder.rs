@@ -536,7 +536,7 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_free(builder: *mut TstRtspServe
 
 /// Auth scheme tag stored in `TstRtspServerBuilder`.
 ///
-/// Mirrors `tst_rtp::builder::ServerAuthScheme` (which is `pub(crate)`)
+/// Mirrors `tst_rtp::rtsp::server::builder::ServerAuthScheme` (which is `pub(crate)`)
 /// without depending on the private Rust enum across the crate boundary at
 /// field-initialization time.  `tst_rtsp_server_builder_start` maps this tag
 /// back to the corresponding `RtspServerBuilder::auth_basic` /

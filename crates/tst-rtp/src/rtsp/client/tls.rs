@@ -168,3 +168,16 @@ fn default_roots() -> rustls::RootCertStore {
     }
     roots
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The stream wrapper moves to the keepalive and pump threads, so it
+    /// must stay `Send`.
+    #[test]
+    fn tls_stream_is_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<TlsStream>();
+    }
+}

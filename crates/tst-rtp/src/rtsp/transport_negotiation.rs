@@ -7,7 +7,7 @@
 //! `?transport=udp` in the URL skips fallback; `?transport=tcp` skips
 //! the UDP attempt entirely.
 
-use std::net::UdpSocket;
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 
 use crate::error::RtspError;
 use crate::url::RtspTransportPref;
@@ -204,38 +204,57 @@ fn parse_u8_pair_detail(value: &str) -> Result<(u8, u8), &'static str> {
     Ok((lo, hi))
 }
 
-/// Bind a UDP RTP+RTCP port pair on `0.0.0.0`.
+/// Bind a UDP RTP+RTCP port pair on `bind_ip`; the RTCP socket sits on
+/// RTP+1 (RFC 3550 §11).
 ///
-/// Returns `(rtp_socket, rtcp_socket, rtp_port)`. Tries up to 8 candidate
-/// even-port pairs starting from `start` — the first pair where both ports
-/// bind cleanly is returned.
+/// Returns `(rtp_socket, rtcp_socket, rtp_port)`. With `start == 0` the
+/// kernel picks the RTP port and up to 16 fresh picks are tried until the
+/// neighbouring odd port is free (the server's allocation). With a
+/// non-zero `start` up to 8 candidate even-port pairs `start`, `start + 2`,
+/// … are tried and the first pair where both ports bind cleanly is returned
+/// (the client's allocation).
 ///
 /// # Errors
 ///
 /// [`RtspError::UnsupportedTransport`] if `start` is so close to
-/// `u16::MAX` that no candidate even/odd pair fits without overflowing
-/// (the companion RTCP port is always RTP+1).
-/// [`RtspError::Io`] with `AddrInUse` if all candidate pairs fail to bind.
-pub(crate) fn bind_udp_pair(start: u16) -> Result<(UdpSocket, UdpSocket, u16), RtspError> {
+/// `u16::MAX` that no candidate pair fits without overflowing (the
+/// companion RTCP port is always RTP+1).
+/// [`RtspError::Io`] with `AddrInUse` if every candidate pair fails to bind,
+/// or the kernel-picked ports never left room for the companion.
+pub(crate) fn bind_udp_pair(
+    bind_ip: IpAddr,
+    start: u16,
+) -> Result<(UdpSocket, UdpSocket, u16), RtspError> {
+    let kernel_picks = start == 0;
+    let attempts: u16 = if kernel_picks { 16 } else { 8 };
     let mut bound_overflow = false;
-    for attempt in 0..8u16 {
+    for attempt in 0..attempts {
         // start + attempt*2, then companion port+1 — both checked so a
         // `start` near 65535 returns a typed error instead of wrapping.
-        let Some(port) = attempt
+        let Some(want) = attempt
             .checked_mul(2)
             .and_then(|off| start.checked_add(off))
         else {
             bound_overflow = true;
             break;
         };
+        let Ok(rtp) = UdpSocket::bind(SocketAddr::new(bind_ip, want)) else {
+            continue;
+        };
+        let Ok(port) = rtp.local_addr().map(|a| a.port()) else {
+            continue;
+        };
         let Some(rtcp_port) = port.checked_add(1) else {
+            // A kernel pick can land on 65535; the next pick will not.
+            // A fixed start has no further candidate that fits.
+            if kernel_picks {
+                continue;
+            }
             bound_overflow = true;
             break;
         };
-        if let Ok(rtp) = UdpSocket::bind(("0.0.0.0", port)) {
-            if let Ok(rtcp) = UdpSocket::bind(("0.0.0.0", rtcp_port)) {
-                return Ok((rtp, rtcp, port));
-            }
+        if let Ok(rtcp) = UdpSocket::bind(SocketAddr::new(bind_ip, rtcp_port)) {
+            return Ok((rtp, rtcp, port));
         }
     }
     if bound_overflow {
@@ -274,6 +293,8 @@ pub(crate) fn build_transport_request(
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
     use super::*;
 
     #[test]
@@ -333,8 +354,11 @@ mod tests {
     fn bind_udp_pair_rejects_start_at_max_port() {
         // start == 65535 → the very first companion (port+1) overflows.
         // Must Err cleanly instead of wrapping/panicking.
-        let r = bind_udp_pair(65535);
-        assert!(r.is_err(), "bind_udp_pair(65535) must Err, not wrap");
+        let r = bind_udp_pair(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 65535);
+        assert!(
+            r.is_err(),
+            "bind_udp_pair(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 65535) must Err, not wrap"
+        );
     }
 
     #[test]
@@ -344,7 +368,7 @@ mod tests {
         // NOT wrap to 0 — the loop breaks cleanly. So this returns either
         // Ok (bound 65534) or Err (AddrInUse / overflow), NEVER a panic or
         // a wrapped port-0 binding.
-        let r = bind_udp_pair(65534);
+        let r = bind_udp_pair(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 65534);
         if let Ok((_, _, port)) = r {
             assert_eq!(port, 65534, "must bind 65534, never a wrapped 0");
         }

@@ -45,7 +45,6 @@ unchanged (310) and the test leaf-name multiset is byte-identical before/after
 | `rtsp_client_keepalive.rs` | `rtsp_client/keepalive.rs` |
 | `rtsp_client_setup_play.rs` | `rtsp_client/setup_play.rs` |
 | `rtsp_client_teardown.rs` | `rtsp_client/teardown.rs` |
-| `rtsp_client_tls.rs` | `rtsp_client/tls.rs` |
 | `rtsp_client_tls_keepalive.rs` | `rtsp_client/tls_keepalive.rs` |
 
 ### `h264/` — RFC 6184 H.264-over-RTP: UDP loopback round-trips + RTSP session

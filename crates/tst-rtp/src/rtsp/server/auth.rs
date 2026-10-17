@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use secrecy::{ExposeSecret, SecretString};
 
-use crate::builder::{ServerAuthConfig, ServerAuthScheme};
+use crate::rtsp::server::builder::{ServerAuthConfig, ServerAuthScheme};
 
 /// Verification result. `Ok(())` means the request is authorized; any
 /// error means the request handler should reply 401 (typically with a

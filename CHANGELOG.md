@@ -307,6 +307,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `h264::depacketizer::ParameterSetInjection`.
 - The error text of an rtsps server certificate or key that cannot be loaded
   changed; the error kinds are unchanged.
+- `tst_rtp::builder` is gone: `RtspClientBuilder` lives in `rtsp::client`,
+  `RtspServerBuilder` and `RtspServerCancelHandle` in `rtsp::server`, and
+  `rtsp::client::transport_negotiation` is `rtsp::transport_negotiation`.
+  The crate-root re-exports of all four are unchanged. Both RTSP roles use the
+  negotiation code, and a builder belongs beside the role it builds, so no
+  type sits in a module named for what it is rather than where it works.
+  `rtsp::client::tls` (behind the `tls` feature) is no longer public: it held only the stream wrapper
+  that `RtspClient` uses internally.
 
 ### Changed — tst-udp, tst-tcp, tst-rist (BREAKING)
 

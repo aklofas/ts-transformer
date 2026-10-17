@@ -60,9 +60,6 @@
 //! [`feed`]: H264Depacketizer::feed
 //! [`next_au`]: H264Depacketizer::next_au
 
-// Named by this module's docs and tests only.
-#[cfg(any(test, doc))]
-use crate::depay::ParameterSetInjection;
 use crate::packet::RtpHeader;
 
 /// An H.264 access unit (the shared [`crate::depay::AccessUnit`]).
@@ -134,10 +131,10 @@ impl crate::depay::core::Format for H264 {
 /// only when their bytes differ from the cached value; each update ticks
 /// `parameter_set_updates`.
 ///
-/// When [`ParameterSetInjection::BeforeIdr`] is active (the default), every
+/// When [`ParameterSetInjection::BeforeIdr`](crate::depay::ParameterSetInjection::BeforeIdr) is active (the default), every
 /// IDR AU that does not already carry an in-band SPS or PPS receives the
 /// missing cached parameter set(s) prepended — SPS first, then PPS — each
-/// with a 4-byte Annex B start code.  [`ParameterSetInjection::None`] passes
+/// with a 4-byte Annex B start code.  [`ParameterSetInjection::None`](crate::depay::ParameterSetInjection::None) passes
 /// NALUs through unchanged.
 ///
 /// # AU boundary / marker / poisoning contract summary
@@ -191,6 +188,7 @@ impl H264Depacketizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::depay::ParameterSetInjection;
     use tst_core::mpegts::common::Pts90khz;
 
     fn hdr(seq: u16, ts: u32, marker: bool) -> RtpHeader {

@@ -22,8 +22,8 @@ use tst_core::mpegts::mux::{
 };
 use tst_pipeline::binding::BindingErrorKind;
 use tst_rtp::RtspServer as RustRtspServer;
+use tst_rtp::RtspServerBuilder;
 use tst_rtp::RtspServerCancelHandle as RustServerCancel;
-use tst_rtp::builder::RtspServerBuilder;
 use tst_rtp::error::RtspServerError;
 use tst_rtp::rtsp::server::mount::{MountHandle as RustMountHandle, MountKind};
 

@@ -103,7 +103,7 @@ mod tests {
     }
 
     /// Load with a non-existent cert file — surfaces
-    /// [`RtspServerError::Tls`] from the file-open `?`.
+    /// [`RtspServerError::Tls`] (the file cannot be opened).
     #[test]
     fn load_missing_cert_errors() {
         let dir = tempdir().unwrap();
@@ -113,8 +113,8 @@ mod tests {
         assert!(matches!(e, RtspServerError::Tls(_)));
     }
 
-    /// Load with empty cert PEM — surfaces [`RtspServerError::Tls`] via
-    /// the "no certificates found" check.
+    /// Load with empty cert and key files — surfaces
+    /// [`RtspServerError::Tls`] (the PEM holds no certificate).
     #[test]
     fn load_empty_cert_errors() {
         let dir = tempdir().unwrap();
