@@ -598,6 +598,16 @@ const RIST_PARSE: &[Row] = &[
         "udp://192.0.2.10:8000",
         R("URL scheme must be 'rist', got 'udp'"),
     ),
+    (
+        "rist://192.0.2.10:8000?recovery-maxbitrate=-5",
+        R(
+            "query param 'recovery-maxbitrate' has invalid value '-5': invalid digit found in string",
+        ),
+    ),
+    (
+        "rist://192.0.2.10:8000?session-timeout=never",
+        R("query param 'session-timeout' has invalid value 'never': invalid digit found in string"),
+    ),
 ];
 
 const RIST_SEND: &[Row] = &[
@@ -1295,6 +1305,58 @@ const SRT_PARSE: &[Row] = &[
         R("unknown URL key 'bogus'"),
     ),
     ("srt://192.0.2.10:9000?ttl=5", R("unknown URL key 'ttl'")),
+    (
+        "srt://192.0.2.10:9000?smoother=bbr",
+        R(
+            "option validation failed for 'congestion': option value out of range: congestion must be 'live' or 'file' (lowercase), got 'bbr'",
+        ),
+    ),
+    (
+        "srt://192.0.2.10:9000?connect_timeout=soon",
+        R(
+            "invalid value for 'conntimeo': expected i32 decimal, got 'soon': invalid digit found in string",
+        ),
+    ),
+    (
+        "srt://192.0.2.10:9000?ffs=-1",
+        R(
+            "invalid value for 'fc': expected non-negative decimal integer in range, got '-1': invalid digit found in string",
+        ),
+    ),
+    (
+        "srt://192.0.2.10:9000?tsbpddelay=-1",
+        R("invalid value for 'latency': must be non-negative, got -1"),
+    ),
+    (
+        "srt://192.0.2.10:9000?pkt_size=1457",
+        R(
+            "invalid value for 'payloadsize': must be <= 1456 (libsrt SRT_LIVE_MAX_PLSIZE, live-mode cap), got 1457",
+        ),
+    ),
+    (
+        "srt://192.0.2.10:9000?payload_size=1457",
+        R(
+            "invalid value for 'payloadsize': must be <= 1456 (libsrt SRT_LIVE_MAX_PLSIZE, live-mode cap), got 1457",
+        ),
+    ),
+    (
+        "srt://192.0.2.10:9000?srt_streamid=%E2%82%AC",
+        R(
+            "option validation failed for 'streamid': invalid stream id: stream ID contains non-ASCII characters",
+        ),
+    ),
+    (
+        "srt://192.0.2.10:9000?recv_buffer_size=8M",
+        R(
+            "invalid value for 'udprcvbuf': expected non-negative decimal integer in range, got '8M': invalid digit found in string",
+        ),
+    ),
+    (
+        "srt://192.0.2.10:9000?send_buffer_size=-1",
+        R(
+            "invalid value for 'udpsndbuf': expected non-negative decimal integer in range, got '-1': invalid digit found in string",
+        ),
+    ),
 ];
 
 fn effective_srt(url: &str) -> Effective {
