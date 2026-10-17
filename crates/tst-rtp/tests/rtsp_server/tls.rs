@@ -288,8 +288,10 @@ fn stop_sends_notice_5402_to_a_tls_session_and_closes_it_cleanly() {
     let name = rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap();
     let conn = rustls::ClientConnection::new(std::sync::Arc::new(config), name).unwrap();
     let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-    tcp.set_read_timeout(Some(std::time::Duration::from_secs(2)))
-        .unwrap();
+    tcp.set_read_timeout(Some(crate::fixtures::raw_rtsp::scaled(
+        std::time::Duration::from_secs(2),
+    )))
+    .unwrap();
     let mut tls = rustls::StreamOwned::new(conn, tcp);
     let base = format!("rtsps://127.0.0.1:{port}/live");
     assert!(

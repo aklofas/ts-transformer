@@ -97,6 +97,8 @@ jobs:
           # the same instrumentation (otherwise std-level UAFs go
           # undetected).
           RUSTFLAGS: "-Z sanitizer=address"
+          # Stretches tst-rtp test read timeouts for sanitizer slowdown.
+          TST_TEST_TIMEOUT_SCALE: "5"
           # Suppressions are split: LSAN_OPTIONS for leak suppressions
           # (LSan rides inside ASan), ASAN_OPTIONS for ASan-proper
           # tunables. detect_stack_use_after_return=1 catches a real
@@ -175,6 +177,8 @@ jobs:
           CC: clang
           CXX: clang++
           RUSTFLAGS: "-Z sanitizer=address"
+          # Stretches tst-rtp test read timeouts for sanitizer slowdown.
+          TST_TEST_TIMEOUT_SCALE: "5"
           ASAN_OPTIONS: "detect_stack_use_after_return=1:abort_on_error=0:halt_on_error=0"
           LSAN_OPTIONS: "suppressions=${{ github.workspace }}/.sanitizer-suppressions/asan.txt"
         # Scope: the three native-linking crates. tst-c runs with ALL six
@@ -254,6 +258,8 @@ jobs:
           CC: clang
           CXX: clang++
           RUSTFLAGS: "-Z sanitizer=thread"
+          # Stretches tst-rtp test read timeouts for sanitizer slowdown.
+          TST_TEST_TIMEOUT_SCALE: "5"
           TSAN_OPTIONS: "suppressions=${{ github.workspace }}/.sanitizer-suppressions/tsan.txt:halt_on_error=0:report_signal_unsafe=0"
         # Same scope + -E exclusions as asan-native (see that job's
         # comment for the cdylib-path rationale).
@@ -303,7 +309,7 @@ jobs:
           # tests spin real reader/writer threads) is the primary
           # race-exposure surface.
           RUSTFLAGS: "-Z sanitizer=thread"
-          # Stretches fixture read timeouts (tst-rtp raw_rtsp) for TSan slowdown.
+          # Stretches tst-rtp test read timeouts for sanitizer slowdown.
           TST_TEST_TIMEOUT_SCALE: "5"
           TSAN_OPTIONS: "suppressions=${{ github.workspace }}/.sanitizer-suppressions/tsan.txt:halt_on_error=0:report_signal_unsafe=0"
         run: |
