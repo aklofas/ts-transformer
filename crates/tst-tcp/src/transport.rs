@@ -452,6 +452,8 @@ impl Transport for TcpTransport {
     }
 
     fn close(&mut self) {
+        // No end reason is recorded here: the shells call the RecvTransport
+        // close, and the send side has no end reason to report.
         self.alive.store(false, Ordering::Release);
         self.inner.shutdown();
     }
