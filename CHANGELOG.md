@@ -328,6 +328,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `code()`. The typed accessors of the record are unchanged.
 - `RvtPoi.Builder.poiTypeCode` and `RvtAoi.Builder.aoiTypeCode` take an
   `Integer` where they took an `int`; a call with an `int` still compiles.
+- A `null` required `String` component of a record handed to an encode or CoT
+  call (an ST 0601 record's, for example) and a negative
+  `PrecisionTimeStampPack.timestampUs` throw `IllegalArgumentException` naming
+  the component.
+- The `IllegalArgumentException` for a negative `CotConfig.updateIntervalUs`
+  reads `CotConfig.updateIntervalUs must be >= 0 (unsigned long), got N`; it
+  still names the component.
 
 ### Changed — tst-c
 
@@ -543,10 +550,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hand-written: `org.tstrans.klv.VmtiLs`, `VTargetPack`, `RvtLs`, `RvtPoi`,
   `RvtAoi`, `RvtUserData`, `SecurityLs`, `PrecisionTimeStampPack`, `SdccFlp`
   and `CotConfig`. Components and behaviour are unchanged except as listed
-  under Changed; their Javadoc is the Rust documentation. A `null` string
-  component of a record handed to an encode or CoT call, and a negative
-  `PrecisionTimeStampPack.timestampUs`, throw `IllegalArgumentException`
-  naming the component.
+  under Changed; their Javadoc is the Rust documentation.
 
 ### Deprecated — tst-py
 

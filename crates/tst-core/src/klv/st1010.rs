@@ -70,10 +70,8 @@ crate::binding_record! {
     /// (diagonal) + N(N-1)/2 correlations (upper triangle, row-major).
     #[derive(Debug, Clone, PartialEq)]
     pub struct SdccFlp {
-        /// `u64` (not `usize`) per the workspace's public-surface FFI-portability
-        /// convention (`scripts/check/rust/no-public-usize.sh`) — a size/count
-        /// field on a public struct must not vary shape across 32-/64-bit
-        /// targets, even though typed KLV never crosses the C ABI today.
+        /// The matrix side length N. A fixed-width 64-bit count: a size on a
+        /// public struct must not vary shape across 32- and 64-bit targets.
         pub matrix_size: u64,
         /// Diagonal σ values, length == matrix_size (empty when Slen == 0).
         @[custom]

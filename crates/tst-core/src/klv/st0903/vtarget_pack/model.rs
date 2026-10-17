@@ -279,9 +279,10 @@ crate::binding_record! {
     /// per §10.2.2.1 "has no Tag") followed by a Local Set–encoded body
     /// using BER-OID tag + BER short/long length + value tuples.
     ///
-    /// `target_id` is a `u64` decoded from the BER-OID Target ID (≈ 63 bits
-    /// per ST 0903.6 §10.2.2.1; spec allows up to 9 wire bytes, V9 in
-    /// §10.2 Table 10). The pixel-number fields are `u64`: the V6 fields
+    /// `target_id` is an unsigned 64-bit integer decoded from the BER-OID
+    /// Target ID (≈ 63 bits per ST 0903.6 §10.2.2.1; spec allows up to 9 wire
+    /// bytes, V9 in §10.2 Table 10). The pixel-number fields are unsigned
+    /// 64-bit integers too: the V6 fields
     /// (`centroid_pixel`, `bbox_top_left_pixel`, `bbox_bottom_right_pixel`)
     /// carry up to 6 wire bytes; the V4 `centroid_pix_row` /
     /// `centroid_pix_col` are 4 wire bytes (see their per-field notes for the
@@ -289,7 +290,7 @@ crate::binding_record! {
     ///
     /// `detection_status` is the raw §10.2.2.24 / §7.2 Table 5 codepoint:
     /// 0=Inactive, 1=Active-Moving, 2=Dropped, 3=Active-Stopped,
-    /// 4=Active-Coasting. Typed enum deferred — stays as raw `u8`.
+    /// 4=Active-Coasting. Typed enum deferred — stays as a raw byte.
     ///
     /// 7 nested/sibling Local Sets (`target_location`,
     /// `geospatial_contour_series`, `vmask`, `vtracker`, `vchip`,
@@ -299,7 +300,7 @@ crate::binding_record! {
     #[derive(Debug, Clone, Default)]
     pub struct VTargetPack {
         /// BER-OID `targetId` per §10.2.2.1. Up to 9 BER-OID wire bytes
-        /// (≈ 63 bits) per ST 0903.6 §10.2.2.1; widened to `u64`.
+        /// (≈ 63 bits) per ST 0903.6 §10.2.2.1; widened to 64 bits.
         pub target_id: u64,
         /// Tag 1 `targetCentroid` per §10.2.2.2 — pixel number, V6
         /// truncated big-endian (up to 6 wire bytes, max `(1u64 << 48) - 1`).
@@ -355,13 +356,13 @@ crate::binding_record! {
         /// Location pass-through bytes (typed inner deferred).
         pub geospatial_contour_series: Option<Vec<u8>>,
         /// Tag 19 `centroidPixRow` per §10.2.2.20 — V4 (1..=2^32-1);
-        /// widened to `u64` for consistency with other pixel fields. Note:
+        /// widened to 64 bits for consistency with other pixel fields. Note:
         /// the V4 wire format is 4 bytes (max 4294967295); a value above
         /// that would encode but fail to decode — callers must keep
         /// this within the V4 range.
         pub centroid_pix_row: Option<u64>,
         /// Tag 20 `centroidPixCol` per §10.2.2.21 — V4 (1..=2^32-1);
-        /// widened to `u64` for consistency with other pixel fields. Note:
+        /// widened to 64 bits for consistency with other pixel fields. Note:
         /// the V4 wire format is 4 bytes (max 4294967295); a value above
         /// that would encode but fail to decode — callers must keep
         /// this within the V4 range.
@@ -389,7 +390,7 @@ crate::binding_record! {
         /// Tag 107 `vObjectSeries` per §10.2.2.31 — Series of VObject
         /// LS pass-through bytes (typed inner deferred).
         pub vobject_series: Option<Vec<u8>>,
-        /// Tags not in `PACK_TAGS` (deprecated 21/102/103, future
+        /// Tags not in the pack tag table (deprecated 21/102/103, future
         /// additions). Preserved per ST 0107.5 §6 future-proof skip rule.
         @[custom]
         pub unknown: Vec<crate::klv::pack::OwnedRawField>,

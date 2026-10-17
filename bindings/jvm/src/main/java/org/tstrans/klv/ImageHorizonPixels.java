@@ -7,13 +7,13 @@ package org.tstrans.klv;
  *
  * Wire shape (DLP, ST 0107 truncatable-trailing convention): 4 mandatory percentage bytes, then 0-4
  * further int32 linear-mapped fields in strict order ({@code start_lat}, {@code start_lon}, {@code
- * end_lat}, {@code end_lon}) — the pack may end after any of them. A wire int32 exactly at {@code
- * INT_MIN} ({@code 0x80000000}) on any of the four trailing fields is the item's spec-defined
- * "error" indicator (§8.81): that field decodes to {@code None} just like a truncated-away field,
- * but the byte position IS consumed (parsing continues to the next field).
+ * end_lat}, {@code end_lon}) — the pack may end after any of them. A wire int32 exactly at the most
+ * negative int32 value ({@code 0x80000000}) on any of the four trailing fields is the item's
+ * spec-defined "error" indicator (§8.81): that field decodes to {@code None} just like a
+ * truncated-away field, but the byte position IS consumed (parsing continues to the next field).
  *
  * **Encode semantics:** a {@code None} field that lies BEFORE the last {@code Some} field (in wire
- * order) is re-encoded as the {@code INT_MIN} sentinel — the spec's own error indicator, which
+ * order) is re-encoded as the {@code 0x80000000} sentinel — the spec's own error indicator, which
  * decode maps straight back to {@code None} — so a later {@code Some} field is never silently
  * dropped just because an earlier optional field is absent. Only a {@code None} AFTER the last
  * {@code Some} (or all four {@code None}) truncates the pack there, matching decode's own

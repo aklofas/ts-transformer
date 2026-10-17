@@ -22,7 +22,7 @@
 //!         @[custom] pub name: Option<String>, // converted by a hand-written function
 //!         @[skip] pub scratch: Vec<u8>,       // never crosses
 //!         @[java("minCode")] pub min: u8,     // host name override
-//!         @[py_default("0")] pub id: u8,      // Python dataclass default
+//!         @[py_default("0")] pub count: u8,   // Python dataclass default
 //!     }
 //! }
 //! ```

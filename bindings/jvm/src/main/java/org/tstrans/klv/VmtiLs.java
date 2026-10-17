@@ -17,17 +17,14 @@ import java.util.List;
  * (typed inner layers deferred); {@code miisId} is the MISB ST 1204 Minor Item Identification
  * System Core Identifier, also pass-through bytes (typed layer deferred).
  *
- * @param checksum Tag 1 (checkSum) per ST 0903.6 §10.1.1. Populated by {@code decode} for
- *     observability on standalone-VMTI captures.
+ * @param checksum Tag 1 (checkSum) per ST 0903.6 §10.1.1. Populated on decode for observability on
+ *     standalone-VMTI captures.
  *
- *     **Encode-side semantics are asymmetric and load-bearing:** - {@code encode} / {@code
- *     encode_to_vec} (embedded-VMTI body) — this field is **always dropped** per ST 0903.6-120. -
- *     {@code encode_standalone} / {@code encode_to_vec_standalone} (standalone-VMTI) — this field
- *     is **ignored**; the encoder computes the running 16-bit checksum from the UL + body framing
- *     and emits Tag 1 last per ST 0903.4-17 / ST 0903.6-119.
- *
- *     Callers who decode + re-encode a captured standalone-VMTI get a fresh substrate-computed
- *     checksum, not a passthrough of the original.
+ *     Encode-side semantics are asymmetric and load-bearing: the embedded-VMTI body encoders always
+ *     drop this field per ST 0903.6-120, while the standalone-VMTI encoders ignore it, compute the
+ *     running 16-bit checksum from the UL + body framing and emit Tag 1 last per ST 0903.4-17 / ST
+ *     0903.6-119. A captured standalone-VMTI that is decoded and re-encoded therefore gets a fresh
+ *     computed checksum, not a passthrough of the original.
  * @param versionNumber Tag 4 {@code vmtiLsVersionNum} per ST 0903.6 §10.1.4 — V2 (1..=2 wire bytes,
  *     value range 1..=65535) packed BE with leading zeros stripped. Tracks the spec revision the
  *     encoder followed (e.g. 6 for ST 0903.6).

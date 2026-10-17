@@ -71,8 +71,8 @@ crate::binding_record! {
         @[py_default("5_000_000")]
         pub update_interval_us: u64,
         /// XML attribute name stamped in `<detail><_flow-tags_ .../>`. Written
-        /// verbatim as an XML `Name` production (an attribute *name*, not an
-        /// *value*) — it must be a syntactically valid XML Name. It is neither
+        /// verbatim as an XML `Name` production (an attribute name, not a
+        /// value) — it must be a syntactically valid XML Name. It is neither
         /// validated nor escaped; an invalid value produces malformed XML.
         @[py_default("\"ST0601CoT\"")]
         pub producer: String,

@@ -5,10 +5,8 @@ package org.tstrans.klv;
  * One parsed SDCC-FLP (ST 1010.3 §6-§7). N×N symmetric: N std devs (diagonal) + N(N-1)/2
  * correlations (upper triangle, row-major).
  *
- * @param matrixSize {@code u64} (not {@code usize}) per the workspace's public-surface
- *     FFI-portability convention ({@code scripts/check/rust/no-public-usize.sh}) — a size/count
- *     field on a public struct must not vary shape across 32-/64-bit targets, even though typed KLV
- *     never crosses the C ABI today.
+ * @param matrixSize The matrix side length N. A fixed-width 64-bit count: a size on a public struct
+ *     must not vary shape across 32- and 64-bit targets.
  * @param stdDevs Diagonal σ values, length == matrix_size (empty when Slen == 0).
  * @param correlations Upper-triangle correlations, row-major (i&lt;j), ABSENT slots as 0.0
  *     (sparse-mode zeros are reconstituted). Unlike {@code stdDevs}, this is ALWAYS the full {@code

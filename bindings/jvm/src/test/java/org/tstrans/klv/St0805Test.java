@@ -239,6 +239,16 @@ class St0805Test {
                 "expected message to mention updateIntervalUs; got: " + ex.getMessage());
     }
 
+    @Test
+    void nullProducerIsAnIllegalArgumentNamingTheComponent() {
+        // A required String component read by the generated reader: null has no
+        // Rust value to take its place, so the reader throws naming the component.
+        CotConfig cfg = new CotConfig("a-f-A-M-F", 5_000_000L, null, null, "m-p");
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> Klv.platformPositionXml(fixture(), cfg, GENERATED_US));
+        assertEquals("CotConfig.producer must not be null", ex.getMessage());
+    }
+
     // -----------------------------------------------------------------------
     // Null arguments throw NullPointerException (never a silent null return)
     // -----------------------------------------------------------------------

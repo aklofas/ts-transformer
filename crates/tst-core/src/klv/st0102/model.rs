@@ -19,8 +19,8 @@ crate::binding_record! {
     ///
     /// The three enum-typed fields (`security_classification`,
     /// `classifying_country_coding_method` and `object_country_coding_method`)
-    /// cross as the enum member for a known codepoint and as the raw code for an
-    /// unknown one, so a forward-compat codepoint round-trips.
+    /// cross as their code point, so a forward-compat code point round-trips; a
+    /// host with an enum type for the known code points may surface the member.
     #[must_use]
     #[derive(Debug, Clone, Default)]
     pub struct SecurityLs {
@@ -56,7 +56,9 @@ crate::binding_record! {
         pub object_country_coding_method_version_date: Option<String>, // Tag 24 ("YYYY-MM-DD")
 
         /// Forward-compat: tags outside the LS table preserved verbatim.
-        /// Both `decode` and `decode_strict` populate this per ST 0107.5 §6.
+        /// Both the lenient and the strict decode populate this per ST 0107.5 §6.
+        /// A malformed Tag 13 value is not kept here (re-emitting malformed
+        /// UTF-16 would help no consumer); it is recorded in `field_errors`.
         @[custom]
         pub unknown: Vec<OwnedRawField>,
 

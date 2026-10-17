@@ -22,26 +22,16 @@ crate::binding_record! {
     #[must_use]
     #[derive(Debug, Clone, Default)]
     pub struct VmtiLs {
-        /// Tag 1 (checkSum) per ST 0903.6 §10.1.1. Populated by [`decode`]
+        /// Tag 1 (checkSum) per ST 0903.6 §10.1.1. Populated on decode
         /// for observability on standalone-VMTI captures.
         ///
-        /// **Encode-side semantics are asymmetric and load-bearing:**
-        /// - [`encode`] / [`encode_to_vec`] (embedded-VMTI body) — this
-        ///   field is **always dropped** per ST 0903.6-120.
-        /// - [`encode_standalone`] / [`encode_to_vec_standalone`]
-        ///   (standalone-VMTI) — this field is **ignored**; the encoder
-        ///   computes the running 16-bit checksum from the UL + body
-        ///   framing and emits Tag 1 last per ST 0903.4-17 / ST 0903.6-119.
-        ///
-        /// Callers who decode + re-encode a captured standalone-VMTI get
-        /// a fresh substrate-computed checksum, not a passthrough of the
-        /// original.
-        ///
-        /// [`decode`]: crate::klv::st0903::decode
-        /// [`encode`]: crate::klv::st0903::encode
-        /// [`encode_to_vec`]: crate::klv::st0903::encode_to_vec
-        /// [`encode_standalone`]: crate::klv::st0903::encode_standalone
-        /// [`encode_to_vec_standalone`]: crate::klv::st0903::encode_to_vec_standalone
+        /// Encode-side semantics are asymmetric and load-bearing: the
+        /// embedded-VMTI body encoders always drop this field per
+        /// ST 0903.6-120, while the standalone-VMTI encoders ignore it,
+        /// compute the running 16-bit checksum from the UL + body framing and
+        /// emit Tag 1 last per ST 0903.4-17 / ST 0903.6-119. A captured
+        /// standalone-VMTI that is decoded and re-encoded therefore gets a
+        /// fresh computed checksum, not a passthrough of the original.
         pub checksum: Option<u16>,
         pub precision_time_stamp: Option<u64>,
         pub vmti_system_name: Option<String>,

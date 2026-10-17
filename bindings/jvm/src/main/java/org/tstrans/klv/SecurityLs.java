@@ -13,12 +13,13 @@ import java.util.Optional;
  * {@code fieldErrors}); strict decode rejects all of them.
  *
  * The three enum-typed fields ({@code securityClassificationCode}, {@code
- * classifyingCountryCodingMethodCode} and {@code objectCountryCodingMethodCode}) cross as the enum
- * member for a known codepoint and as the raw code for an unknown one, so a forward-compat
- * codepoint round-trips.
+ * classifyingCountryCodingMethodCode} and {@code objectCountryCodingMethodCode}) cross as their
+ * code point, so a forward-compat code point round-trips; a host with an enum type for the known
+ * code points may surface the member.
  *
- * @param unknown Forward-compat: tags outside the LS table preserved verbatim. Both {@code decode}
- *     and {@code decode_strict} populate this per ST 0107.5 §6.
+ * @param unknown Forward-compat: tags outside the LS table preserved verbatim. Both the lenient and
+ *     the strict decode populate this per ST 0107.5 §6. A malformed Tag 13 value is not kept here
+ *     (re-emitting malformed UTF-16 would help no consumer); it is recorded in {@code fieldErrors}.
  * @param fieldErrors Lenient-mode diagnosis: known tags whose value validation failed (e.g. Tag 13
  *     UTF-16 decode failure, Tag 22 wrong length). Strict mode raises these as an error instead of
  *     populating this field. Encode does not consume this field.

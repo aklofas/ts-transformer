@@ -464,6 +464,24 @@ fn docstrings_use_rst_code_and_wrap_at_79_columns() {
 }
 
 #[test]
+fn documented_fields_are_bullets_that_wrap_under_their_text() {
+    let long = "word ".repeat(30);
+    let doc = emit_pyi::docstring_paras(&[
+        "Summary.".to_string(),
+        "- ``a`` \u{2014} first.".to_string(),
+        format!("- ``b`` \u{2014} {}", long.trim()),
+    ]);
+    let lines: Vec<&str> = doc.lines().collect();
+    assert_eq!(lines[0], "    \"\"\"Summary.");
+    assert_eq!(lines[1], "");
+    // Bullets sit on adjacent lines; a wrapped one continues two columns in.
+    assert_eq!(lines[2], "    - ``a`` \u{2014} first.");
+    assert!(lines[3].starts_with("    - ``b`` "), "{doc}");
+    assert!(lines[4].starts_with("      word"), "{doc}");
+    assert!(lines.iter().all(|l| l.chars().count() <= 79), "{doc}");
+}
+
+#[test]
 fn paragraphs_split_at_blank_lines() {
     assert_eq!(
         schema::paras(" First line\n second line.\n\n Next paragraph."),
@@ -776,6 +794,71 @@ fn code_spans(text: &str) -> Vec<String> {
     out
 }
 
+/// Why a token inside a code span is a Rust name a host reader cannot use:
+/// a primitive type, a SCREAMING_CASE constant, or the name of a Rust
+/// function. The record's own field names are the host's too.
+fn rust_name(tok: &str, fields: &[&str]) -> Option<&'static str> {
+    const PRIMITIVES: [&str; 11] = [
+        "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "f32", "f64", "usize",
+    ];
+    const FN_PREFIXES: [&str; 8] = [
+        "decode_", "encode_", "parse_", "from_", "to_", "into_", "as_", "try_",
+    ];
+    if fields.contains(&tok) {
+        return None;
+    }
+    if PRIMITIVES.contains(&tok) {
+        return Some("is a Rust type");
+    }
+    let screaming = tok.contains('_')
+        && tok.chars().any(|c| c.is_ascii_uppercase())
+        && tok
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    if screaming {
+        return Some("is a Rust constant");
+    }
+    if FN_PREFIXES.iter().any(|p| tok.starts_with(p))
+        || tok.ends_with("_strict")
+        || tok.ends_with("_to_vec")
+    {
+        return Some("names a Rust function");
+    }
+    None
+}
+
+/// The `*` characters of `text` that are not part of a `**` pair or of a
+/// comment delimiter: two on one line read as `*emphasis*`.
+fn lone_asterisks(text: &str) -> usize {
+    let cs: Vec<char> = text.chars().collect();
+    (0..cs.len())
+        .filter(|&i| {
+            cs[i] == '*'
+                && (i == 0 || cs[i - 1] != '*')
+                && cs.get(i + 1) != Some(&'*')
+                && cs.get(i + 1) != Some(&'/')
+        })
+        .count()
+}
+
+#[test]
+fn rust_names_in_a_code_span_are_recognised() {
+    let fields = ["decode_mode"];
+    assert!(rust_name("u64", &fields).is_some());
+    assert!(rust_name("usize", &fields).is_some());
+    assert!(rust_name("PACK_TAGS", &fields).is_some());
+    assert!(rust_name("decode_strict", &fields).is_some());
+    assert!(rust_name("encode_to_vec", &fields).is_some());
+    // A field of the record is the host's name too; a spec syntax element
+    // and an upper-case word with no underscore are prose.
+    assert!(rust_name("decode_mode", &fields).is_none());
+    assert!(rust_name("frame_mbs_only_flag", &fields).is_none());
+    assert!(rust_name("CAVLC", &fields).is_none());
+    assert!(rust_name("matrixSize", &fields).is_none());
+    assert_eq!(lone_asterisks("the *used* percentage"), 2);
+    assert_eq!(lone_asterisks("a **strong** word, then */"), 0);
+}
+
 #[test]
 fn no_rust_only_text_reaches_a_host_doc() {
     // Neither a path nor a Rust expression, in prose or in a code span.
@@ -819,10 +902,26 @@ fn no_rust_only_text_reaches_a_host_doc() {
                     ));
                 }
             }
+            let fields: Vec<&str> = e.schema.fields.iter().map(|f| f.name).collect();
             for span in code_spans(doc) {
                 for bad in rust_only {
                     if span.contains(bad) {
                         leaks.push(format!("{n} ({host}) code span `{span}` carries `{bad}`"));
+                    }
+                }
+                for tok in span.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+                    if let Some(why) = rust_name(tok, &fields) {
+                        leaks.push(format!("{n} ({host}) code span `{span}`: `{tok}` {why}"));
+                    }
+                }
+            }
+            // Java has no markdown: `*name*` shows its asterisks.
+            if host == "Java" {
+                for line in doc.lines() {
+                    // The comment's own ` * ` margin is not prose.
+                    let body = line.trim_start().strip_prefix('*').unwrap_or(line);
+                    if lone_asterisks(body) >= 2 {
+                        leaks.push(format!("{n} (Java) markdown emphasis: {}", body.trim()));
                     }
                 }
             }
