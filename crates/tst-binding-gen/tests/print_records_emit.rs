@@ -9,6 +9,8 @@
 mod emit_java;
 #[path = "tools/print_records/emit_jvm_rs.rs"]
 mod emit_jvm_rs;
+#[path = "tools/print_records/emit_manifest.rs"]
+mod emit_manifest;
 #[path = "tools/print_records/emit_py.rs"]
 mod emit_py;
 #[path = "tools/print_records/emit_pyclass.rs"]
@@ -1062,8 +1064,8 @@ fn every_registered_record_renders_every_target() {
     let jvm_records = reg.iter().filter(|e| e.jvm).count();
     // One Python converter file per family that has a Python record, one JVM
     // file per family that has a JVM record, the `.py` and `.pyi` blocks per
-    // dataclass (the `.pyi` block only for a native class) and a Java block
-    // per JVM record.
+    // dataclass (the `.pyi` block only for a native class), a Java block
+    // per JVM record and the surface manifest's cells.
     let py_blocks: usize = reg
         .iter()
         .filter(|e| e.python)
@@ -1071,7 +1073,7 @@ fn every_registered_record_renders_every_target() {
         .sum();
     assert_eq!(
         targets.len(),
-        py_families + jvm_families + py_blocks + jvm_records
+        py_families + jvm_families + py_blocks + jvm_records + 1
     );
 }
 
@@ -2154,4 +2156,94 @@ fn a_host_value_that_can_fail_makes_the_class_construction_fallible() {
         jvm.contains("crate::rtp::publish::build_clock_alignment("),
         "{jvm}"
     );
+}
+
+fn manifest_row(item: &str, python: &str, java: &str) -> String {
+    format!(
+        "[[surface]]\nitem = \"{item}\"\nowning_tests = [\"t.rs\"]\n\
+         bindings = [\"c:unaudited\", \"{python}\", \"{java}\", \"swift:deferred\", \"kotlin:deferred\"]\n\n"
+    )
+}
+
+#[test]
+fn a_record_writes_the_python_and_java_cells_of_its_own_row_only() {
+    let reg = schema::records();
+    let wavelength = reg
+        .iter()
+        .find(|e| e.schema.name == "WavelengthRecord")
+        .expect("registered");
+    let item = wavelength.rust_path;
+    let text = manifest_row(item, "python:unaudited", "java:unaudited")
+        + &manifest_row(
+            &format!("{item}::new"),
+            "python:unaudited",
+            "java:unaudited",
+        );
+    let out = emit_manifest::apply(&text, &emit_manifest::cells(&reg)).expect("applies");
+    let own = manifest_row(
+        item,
+        "python:tstrans.klv.WavelengthRecord",
+        "java:org.tstrans.klv.WavelengthRecord",
+    );
+    assert!(out.starts_with(&own), "{out}");
+    // The row of a method keeps its cells.
+    assert!(out.ends_with(&manifest_row(
+        &format!("{item}::new"),
+        "python:unaudited",
+        "java:unaudited"
+    )));
+}
+
+#[test]
+fn a_record_without_a_row_writes_nothing_and_applying_twice_changes_nothing() {
+    let reg = schema::records();
+    let text = manifest_row(
+        "tst_core::other::Thing",
+        "python:unaudited",
+        "java:unaudited",
+    );
+    let cells = emit_manifest::cells(&reg);
+    let once = emit_manifest::apply(&text, &cells).expect("applies");
+    assert_eq!(once, text);
+    let own = format!(
+        "{}{}",
+        text,
+        manifest_row(reg[0].rust_path, "python:unaudited", "java:unaudited")
+    );
+    let first = emit_manifest::apply(&own, &cells).expect("applies");
+    assert_ne!(first, own);
+    assert_eq!(
+        emit_manifest::apply(&first, &cells).expect("applies"),
+        first
+    );
+}
+
+#[test]
+fn a_record_the_host_builds_by_hand_leaves_its_hand_cell() {
+    let reg = schema::records();
+    let core_id = reg
+        .iter()
+        .find(|e| e.schema.name == "CoreId")
+        .expect("registered");
+    assert!(!core_id.jvm);
+    let cells = emit_manifest::cells(&reg);
+    assert!(cells.iter().any(|c| c.item == core_id.rust_path
+        && c.prefix == "python"
+        && c.text == "python:tstrans.klv.CoreId"));
+    assert!(
+        !cells
+            .iter()
+            .any(|c| c.item == core_id.rust_path && c.prefix == "java")
+    );
+}
+
+#[test]
+fn a_row_without_the_column_is_an_error() {
+    let reg = schema::records();
+    let item = reg[0].rust_path;
+    let text = format!(
+        "[[surface]]\nitem = \"{item}\"\nbindings = [\"c:unaudited\", \"swift:deferred\"]\n"
+    );
+    let err = emit_manifest::apply(&text, &emit_manifest::cells(&reg)).expect_err("no column");
+    assert!(err.contains("column"), "{err}");
 }

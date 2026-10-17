@@ -6,13 +6,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::schema::Entry;
-use crate::{emit_java, emit_jvm_rs, emit_py, emit_pyclass, emit_pyi};
+use crate::{emit_java, emit_jvm_rs, emit_manifest, emit_py, emit_pyclass, emit_pyi};
 
 pub enum Kind {
     /// The file is generated end to end.
     Whole,
     /// The text between two marker lines of a hand-written file.
     Block { begin: String, end: String },
+    /// The binding cells of the surface manifest's rows for the records.
+    Cells(Vec<emit_manifest::Cell>),
 }
 
 pub struct Target {
@@ -25,6 +27,8 @@ pub struct Target {
 pub enum Gap {
     Absent,
     NoMarkers(String),
+    /// A generated cell has no place in its row.
+    NoRow(String),
 }
 
 /// What the tool prints when rustfmt cannot format the generated Rust.
@@ -134,6 +138,14 @@ pub fn targets(root: &Path, reg: &[Entry]) -> Result<Vec<Target>, String> {
             });
         }
     }
+    // A tree without the manifest has no cells to keep in step.
+    if root.join(emit_manifest::PATH).is_file() {
+        out.push(Target {
+            path: root.join(emit_manifest::PATH),
+            body: String::new(),
+            kind: Kind::Cells(emit_manifest::cells(reg)),
+        });
+    }
     Ok(out)
 }
 
@@ -171,6 +183,10 @@ pub fn expected(t: &Target) -> Result<String, Gap> {
             out.push_str(&lines[e..].concat());
             Ok(out)
         }
+        Kind::Cells(cells) => {
+            let text = std::fs::read_to_string(&t.path).map_err(|_| Gap::Absent)?;
+            emit_manifest::apply(&text, cells).map_err(Gap::NoRow)
+        }
     }
 }
 
@@ -188,6 +204,7 @@ pub fn stale(targets: &[Target]) -> Vec<(PathBuf, String)> {
             },
             Err(Gap::Absent) => out.push((t.path.clone(), "is absent".to_string())),
             Err(Gap::NoMarkers(m)) => out.push((t.path.clone(), format!("has no line `{m}`"))),
+            Err(Gap::NoRow(m)) => out.push((t.path.clone(), m)),
         }
     }
     out
@@ -267,6 +284,7 @@ pub fn write_all(targets: &[Target]) -> Result<(), String> {
             Err(Gap::NoMarkers(m)) => {
                 return Err(format!("{}: no line `{m}`", t.path.display()));
             }
+            Err(Gap::NoRow(m)) => return Err(format!("{}: {m}", t.path.display())),
         };
         if let Some(dir) = t.path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;

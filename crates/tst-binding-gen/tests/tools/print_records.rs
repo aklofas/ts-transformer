@@ -16,6 +16,8 @@ use std::path::PathBuf;
 mod emit_java;
 #[path = "print_records/emit_jvm_rs.rs"]
 mod emit_jvm_rs;
+#[path = "print_records/emit_manifest.rs"]
+mod emit_manifest;
 #[path = "print_records/emit_py.rs"]
 mod emit_py;
 #[path = "print_records/emit_pyclass.rs"]

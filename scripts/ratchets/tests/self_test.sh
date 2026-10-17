@@ -466,12 +466,13 @@ printf 'pub fn demo::a()\npub struct demo::B\n' > "$tmp/smf/crates/demo/public-a
 : > "$tmp/smf/h.h"   # empty C header
 # smf_* shell variables are the per-case knobs; the defaults pin an empty
 # un-catalogued set (sha256 of no lines).
-smf_pyi="$tmp/smf"; smf_count=0
+smf_pyi="$tmp/smf"; smf_count=0; smf_umax="999 999 999"
 smf_sha=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 smf() {
     SURFACE_BASELINE_DIR="$tmp/smf/crates" SURFACE_CRATES=demo SURFACE_MANIFEST="$tmp/smf/m.toml" \
     SURFACE_C_HEADER="$tmp/smf/h.h" SURFACE_PYI_DIR="$smf_pyi" SURFACE_BUILT_FEATURES=srt \
-    SURFACE_UNAUDITED_COUNT="$smf_count" SURFACE_UNAUDITED_SHA256="$smf_sha" bash "$R_SMF"
+    SURFACE_UNAUDITED_COUNT="$smf_count" SURFACE_UNAUDITED_SHA256="$smf_sha" \
+    SURFACE_UNAUDITED_CELLS_MAX="$smf_umax" bash "$R_SMF"
 }
 smf_req() { SURFACE_REQUIRED_PREFIXES="c python" smf; }
 smf_row() { # <item> <python cell> <exempt item>
@@ -552,6 +553,33 @@ smf_count=0; smf_sha=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b785
 # An item key followed by an inline comment still names its item.
 printf '[[exempt]]\nitem = "demo::a" # kept\n[[exempt]]\nitem = "demo::B" # kept\n' > "$tmp/smf/m.toml"
 expect "surface manifest: closure: item keys with trailing inline comments" 0 smf
+
+# `unaudited` is frozen per column: SURFACE_UNAUDITED_CELLS_MAX is "c python
+# java", and a column whose count of :unaudited cells rises above its maximum fails.
+smf_row_cells() { # <c cell> <python cell> <java cell>
+    printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:%s", "python:%s", "java:%s", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' \
+        "$1" "$2" "$3" > "$tmp/smf/m.toml"
+}
+smf_pyi="$tmp/smf"
+smf_row_cells deferred deferred unaudited
+smf_umax="0 0 0"
+expect "surface manifest: a java :unaudited cell above its column maximum" 1 smf
+smf_umax="0 0 1"
+expect "surface manifest: a java :unaudited cell at its column maximum" 0 smf
+smf_umax="999 999 999"
+# A reason can follow the sentinel: deferred(reason) and n/a(reason) resolve.
+smf_row_cells "deferred(the C ABI has no twin yet)" "n/a(Python hands the numbers over as a dict)" "deferred(java record is hand-written)"
+expect "surface manifest: sentinel cells that carry a reason" 0 smf
+# A derive leaf without a row passes through an [[exempt_rule]]; one that
+# no rule matches still counts as un-catalogued.
+printf 'pub fn demo::a()\npub fn demo::B::clone(&self) -> demo::B\npub fn demo::B::frob(&self)\n' > "$tmp/smf/crates/demo/public-api.txt"
+printf '[[exempt_rule]]\nitem_regex = %s\nreason = "derived trait method"\n[[exempt]]\nitem = "demo::a"\n' "'::(clone|eq|fmt)\$'" > "$tmp/smf/m.toml"
+smf_count=1; smf_sha=$(printf 'demo::B::frob\n' | sha256sum | cut -d' ' -f1)
+expect "surface manifest: a derive leaf without a row passes through the rule" 0 smf
+printf '[[exempt]]\nitem = "demo::a"\n' > "$tmp/smf/m.toml"
+expect "surface manifest: without the rule the derive leaf is un-catalogued" 1 smf
+smf_count=0; smf_sha=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+printf 'pub fn demo::a()\npub struct demo::B\n' > "$tmp/smf/crates/demo/public-api.txt"
 
 # ---- platform capabilities (scripts/check/repo/platform-capabilities.sh) ----
 R_PC="$DIR/../check/repo/platform-capabilities.sh"

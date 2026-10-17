@@ -587,7 +587,7 @@ baseline (by design)" for the full rationale.
         `tst_{udp,tcp,rtp,rist}_mux_sender_finish` — drain the muxer's
         pending bytes to the live transport, report the first drain error,
         then close. Unlike `_close` they do NOT cancel first and do NOT
-        free. See the shell parity matrix below.
+        free. See the `# capability:` lines of the surface manifest.
     - `23` (2026-10) — additive; no existing symbol, signature, or struct
       layout changed, and no new error codes. The RTSP server's publisher
       role, all `TST_HAS_RTP`:
@@ -669,89 +669,22 @@ The binding (and any downstream consumer) must treat post-reconnect PSI
 and timestamp state as absent and rebuild it from the next PAT/PMT
 cycle on the reconnected stream.
 
-## Muxer push surface parity matrix
+## Binding parity
 
-The table below captures the full muxer push capability surface across all
-four binding layers; parity has been complete since **v0.2.0 / ABI 17**.
+Binding parity is the `bindings` column of
+`tests/coverage/surface-manifest.toml`: each `[[surface]]` row lists the C,
+Python, JVM, Swift and Kotlin twin of one Rust item, or says why there is none
+(`deferred(reason)` for a gap that is real today, `n/a(reason)` for a gap by
+design). A capability that spans several items is a `# capability:` comment
+above its rows. The grammar is in `tests/coverage/README.md`, and the rail
+`scripts/check/repo/surface-manifest.sh` resolves every named symbol against
+the binding sources.
 
-| Capability | Rust core | C (`tst-c`) | Python (`tst-py`) | JVM (`tst-jni`) |
-|---|---|---|---|---|
-| Single-stream push (`push_video` / `push_klv` / `push_audio` / `push_subtitle` / `push_data`) | ✅ | ✅ | ✅ | ✅ |
-| Targeted push (`push_video_to(handle, …)` etc.) | ✅ | ✅ | ✅ | ✅ |
-| PTS + DTS (`push_video_to_with_dts`) | ✅ | ✅ | ✅ | ✅ |
-| On-wire (AV1 carriage-aware) push (`push_video_wire` / `push_video_wire_to`) | ✅ | ✅ | ✅ | ✅ |
-| Per-stream handle accessors (`video_handles()` / `video_stream_handle(i)` etc.) | ✅ | n/a (handles from config-time `add_*_stream`) | ✅ | ✅ |
-
-**Notes on specific cells.**
-
-- **C per-stream handle accessors** — the C ABI does not need runtime
-  `video_handles()` accessors: the config-time `tst_mux_config_add_video_stream`
-  returns the `tst_video_stream_handle_t` directly and the caller retains it.
-  The "n/a" reflects that the accessor pattern is not applicable at the C ABI
-  level, not that the information is unavailable.
-- **AV1 mux carriage and the C targeted `*_to` family** — ABI 14; Python
-  `push_video_to_with_dts` and handle accessors predate ABI 17. ABI 17 added DTS
-  in C, and targeted push + handle accessors + DTS in the JVM, which
-  completed the parity.
-
-No CI rail checks this matrix cell by cell against the compiled bindings
-yet; that waits on a decision on how to express cross-binding coverage
-assertions.
-
-## Demux-config / managed-receiver-lifecycle parity matrix
-
-The two receive-side capabilities added by ABI 0.21's managed-receiver
-lifecycle parity (`tst_managed_demux_receiver_end_reason`) and demuxer-config
-bridge (`tst_demux_config_set_unwrap_timestamps`) — see the ABI 21 history
-entry above — reached full Python/JVM parity in the same-arc bindings
-follow-up:
-
-| Capability | Rust core | C (`tst-c`) | Python (`tst-py`) | JVM (`tst-jni`) |
-|---|---|---|---|---|
-| Continuous-timestamp unwrap across the 33-bit rollover (`DemuxerConfig::unwrap_timestamps`) | ✅ | ✅ `tst_demux_config_set_unwrap_timestamps` | ✅ `DemuxerConfig.unwrap_timestamps` | ✅ `DemuxerConfig.Builder.unwrapTimestamps(boolean)` |
-| Managed-receiver end reason (`ManagedDemuxReceiver::end_reason_handle()` → `EndReasonHandle` → `EndReason`) | ✅ | ✅ `tst_managed_demux_receiver_end_reason` | ✅ `ManagedDemuxReceiver.end_reason() -> Optional[tstrans.shells.EndReason]` | ✅ `ManagedDemuxReceiver.endReason()` → `RecvEndReason` or `null` |
-| Pre-sync ingress ceiling (`DemuxerConfig::sync_buf_cap`) | ✅ | ✅ `tst_demux_config_set_sync_buf_cap` (ABI 0.22; 0 = default) | ✅ `DemuxerConfig.sync_buf_cap` | ✅ `DemuxerConfig.Builder.syncBufCap(long)` (0 = default) |
-
-**Notes on specific cells.**
-
-- **C reuses the ABI 20 enum; Python/JVM define a distinct one.** The C
-  getter maps tst-core's `EndReason` (`EndOfStream` /
-  `ReconnectExhausted` / `Cancelled`) onto the shared `TstStreamEndReason`
-  enum the RTP surface already uses, to avoid adding a second wire enum
-  (see the ABI 21 history entry's "Managed-receiver lifecycle" bullet).
-  Python's `tstrans.shells.EndReason` is one enum for every transport
-  (`RECONNECT_EXHAUSTED` and `END_OF_STREAM` sit beside the RTP members),
-  and JVM's `org.tstrans.shells.EndReason` is likewise one enum for every
-  transport (`END_OF_STREAM` / `RECONNECT_EXHAUSTED` / `CANCELLED` beside the
-  RTP session-death members).
-
-<a id="shell-parity-matrix-debt-14-decided-for-070"></a>
-
-## Shell parity matrix (decided for 0.7.0)
-
-This table is the decided record for the shell surfaces — each
-cell is either shipped, or deferred with the trigger that reopens it in
-`docs/project/deferred-features.md`.
-
-| Capability | Rust core | C (`tst-c`) | Python (`tst-py`) | JVM (`tst-jni`) |
-|---|---|---|---|---|
-| `ext::pairing::Pairer` (KLV↔video alignment) | ✅ | Deferred — "`pipeline::ext::pairing` C ABI exposure" | ✅ `tstrans.pipeline.Pairer` | ✅ `org.tstrans.pipeline.Pairer` |
-| `MuxSender` DTS / MISP video variants on LIVE shells | ✅ | Deferred — "`MuxSender` DTS / MISP video variants at the C ABI" (offline `tst_muxer_push_video_to_with_dts` / `_misp_to` exist) | Deferred — "Binding-side `MuxSender` MISP timestamp mirrors" | Deferred — same entry |
-| `MuxSender::finish()` (drain, report, close) | ✅ | ✅ `tst_mux_sender_finish`, `tst_managed_mux_sender_finish`, `tst_{udp,tcp,rtp,rist}_mux_sender_finish` (ABI 0.22) | ✅ `MuxSender.finish()`, `ManagedMuxSender.finish()` | ✅ `shells.MuxSender.finish()`, `ManagedMuxSender.finish()` |
-| `FileTransport::finish()` | ✅ | n/a — `FileTransport` is a Rust-only capture transport; no binding exposes it | n/a | n/a |
-| `DemuxerConfig::sync_buf_cap` | ✅ | ✅ `tst_demux_config_set_sync_buf_cap` (ABI 0.22) | ✅ `DemuxerConfig.sync_buf_cap` | ✅ `DemuxerConfig.Builder.syncBufCap(long)` |
-| Cross-thread cancel entry point | ✅ every transport (`cancel_handle()` is `Some` everywhere since 0.7.0) | ✅ `tst_<transport>_<shell>_cancel` for srt/rtp (since 0.6–0.21) and tcp/udp/rist (ABI 0.22) | ✅ every shell (`tstrans.shells.*`), the SRT listener and managed shells, `H264Receiver`, the raw transports | ✅ every shell (`org.tstrans.shells.*`), the SRT listener and managed shells, `H264Receiver`, the raw transports |
-| Shells over udp / tcp / rist | ✅ | ✅ `tst_{udp,tcp,rist}_{sender,receiver,mux_sender,demux_receiver}_*` | ✅ `tstrans.shells.*.open("udp://…")` | ✅ `org.tstrans.shells.*.open("udp://…")` |
-| `srt_stats()` on a shell | ✅ | n/a — the per-family `tst_*_get_socket_stats` getters | ✅ `Sender` / `Receiver` over `srt://` only; other transports raise; `MuxSender` / `DemuxReceiver` have none | ✅ `srtStats()` on `Sender` / `Receiver` over `srt://` only; `MuxSender` / `DemuxReceiver` have none |
-| `recv_event()` on `DemuxReceiver` | ✅ | ✅ `tst_demux_receiver_*` poll | n/a — iterate the receiver | ✅ `DemuxReceiver.recvEvent()` (null at end of stream) |
-| `end_reason()` on a receiver | ✅ recorded by the rtp transport and the managed SRT receivers | ✅ `tst_rtp_{receiver,demux_receiver}_end_reason`, `tst_managed_demux_receiver_end_reason` | ✅ `tstrans.shells.EndReason`; `None` on plain srt/udp/tcp/rist | ✅ `org.tstrans.shells.EndReason`; `null` on plain srt/udp/tcp/rist |
-| RTSP publisher role (`add_publish_mount`, `next_publisher`, `remove_mount`, publish-mount transport, stats and publisher info, `accept_unregistered_publishers`) | ✅ | ✅ `tst_rtsp_server_*` + `tst_rtsp_publish_mount_*` (ABI 0.23) | ✅ `RtspServer.add_publish_mount` / `next_publisher` / `remove_mount` + `PublishMount` (`into_demux_receiver`, `stats()`, `publisher()`) + `RtspServerConfig.accept_unregistered_publishers` | ✅ `RtspServer.addPublishMount` / `nextPublisher` / `removeMount` + `PublishMount` (`intoDemuxReceiver`, `stats()`, `publisher()`) + `RtspServerConfig.Builder.acceptUnregisteredPublishers` |
-
-**Rule for new cells.** A ship-now cell must be under a day per binding
+**Rule for new capabilities.** A ship-now cell must be under a day per binding
 (a `with_ref_blocking`/`with_mut` body plus one error projection, with a red-first
-test); anything larger is deferred WITH a trigger, never silently absent.
-The surface manifest's five-column rule (`tests/coverage/README.md`) keeps
-the Swift/Kotlin columns from repeating this drift.
+test); anything larger is deferred WITH a trigger in
+`docs/project/deferred-features.md`, never silently absent. The five-column
+rule keeps the Swift and Kotlin columns from repeating this drift.
 
 ## C stats-getter naming
 
