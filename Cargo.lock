@@ -1928,6 +1928,7 @@ dependencies = [
 name = "tst-binding-gen"
 version = "0.8.0"
 dependencies = [
+ "secrecy",
  "tst-core",
  "tst-hls",
  "tst-pipeline",
