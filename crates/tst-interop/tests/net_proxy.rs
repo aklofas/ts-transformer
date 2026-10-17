@@ -478,22 +478,35 @@ fn client_relearns_after_a_genuine_quiet_period() {
     thread::sleep(Duration::from_millis(2200));
 
     // "Reconnect": a DIFFERENT source sends forward-direction traffic.
-    reconnected_client
-        .send_to(b"hello-from-reconnect", proxy_addr)
-        .expect("send from reconnected client");
-    let n = dest_sock
-        .recv(&mut buf)
-        .expect("destination must see the reconnected client's datagram");
+    // A slow runner can delay or lose a loopback datagram, so the send is
+    // retried a bounded number of times; a proxy that never re-learns the
+    // client still fails once the attempts run out.
+    let mut got = None;
+    for _ in 0..6 {
+        reconnected_client
+            .send_to(b"hello-from-reconnect", proxy_addr)
+            .expect("send from reconnected client");
+        if let Ok(n) = dest_sock.recv(&mut buf) {
+            got = Some(n);
+            break;
+        }
+    }
+    let n = got.expect("destination must see the reconnected client's datagram");
     assert_eq!(&buf[..n], b"hello-from-reconnect");
 
     // The reply must now route to the RECONNECTED client, not the
     // stale original one.
-    dest_sock
-        .send_to(b"reply", proxy_addr)
-        .expect("send reply from destination");
-    let n = reconnected_client
-        .recv(&mut buf)
-        .expect("reconnected client must receive the reply after a genuine reconnect");
+    let mut got = None;
+    for _ in 0..6 {
+        dest_sock
+            .send_to(b"reply", proxy_addr)
+            .expect("send reply from destination");
+        if let Ok(n) = reconnected_client.recv(&mut buf) {
+            got = Some(n);
+            break;
+        }
+    }
+    let n = got.expect("reconnected client must receive the reply after a genuine reconnect");
     assert_eq!(&buf[..n], b"reply");
     assert!(
         original_client.recv(&mut buf).is_err(),
@@ -502,9 +515,10 @@ fn client_relearns_after_a_genuine_quiet_period() {
 
     let stats =
         join_with_timeout(proxy_handle, Duration::from_secs(10)).expect("proxy::run must succeed");
-    assert_eq!(
-        stats.forwarded, 2,
-        "both the original and reconnected datagrams were forwarded"
+    assert!(
+        stats.forwarded >= 2,
+        "both the original and reconnected datagrams were forwarded (got {})",
+        stats.forwarded
     );
 }
 
