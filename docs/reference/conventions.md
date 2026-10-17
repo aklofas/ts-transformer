@@ -335,8 +335,7 @@ Existing exceptions, kept until the next naming change:
 - `DemuxerConfigBuilder`, `RtspClientBuilder`, `RistTransportBuilder` and
   `RistRecvTransportBuilder` take `self` in their setters and return `Self`.
 - `UdpTransportBuilder::build`, `UdpRecvTransportBuilder::build`,
-  `TcpTransportBuilder::build`, `TcpListenerBuilder::build`,
-  `RtpSocketBuilder::build`, `RtpRecvSocketBuilder::build` and
+  `TcpTransportBuilder::build`, `TcpListenerBuilder::build` and
   `HlsPublisherBuilder::build` open their socket or bind their listener.
 
 ## URL query keys

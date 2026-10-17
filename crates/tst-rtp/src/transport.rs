@@ -27,22 +27,22 @@ use crate::packet::{RTP_HEADER_LEN, RTP_PT_MP2T, RtpHeader};
 use crate::rtcp::ingest::{ingest_rr, ingest_sr};
 use crate::rtcp::stats::RtcpStats;
 use crate::rtcp::{ReceiverReport, SenderReport};
-use crate::url::{DEFAULT_PKT_SIZE, RtpUrl, UrlError as RtpUrlError};
+use crate::url::{DEFAULT_PKT_SIZE, RtpUrl, RtpUrlError};
 use tst_core::transport::{EndReason, EndReasonHandle};
 
 /// Convert an `io::Error` from the shared UDP socket helpers into a
-/// `ConnectError`. `io::ErrorKind::Unsupported` (produced by
+/// `RtpConnectError`. `io::ErrorKind::Unsupported` (produced by
 /// `apply_multicast_iface` / `set_multicast_hops_v6` / `set_multicast_if_v4`)
-/// maps to `ConnectError::IfaceUnsupported`; everything else maps to
-/// `ConnectError::Io`.
-fn udp_err_to_connect(e: io::Error) -> ConnectError {
+/// maps to `RtpConnectError::IfaceUnsupported`; everything else maps to
+/// `RtpConnectError::Io`.
+fn udp_err_to_connect(e: io::Error) -> RtpConnectError {
     if e.kind() == io::ErrorKind::Unsupported {
-        ConnectError::IfaceUnsupported {
+        RtpConnectError::IfaceUnsupported {
             iface: String::new(),
             detail: e.to_string(),
         }
     } else {
-        ConnectError::Io(e)
+        RtpConnectError::Io(e)
     }
 }
 
@@ -93,25 +93,25 @@ impl RtpTransport {
     /// return a ready-to-send transport.
     ///
     /// `url` must have scheme `rtp://` and an explicit port.
-    pub fn connect(url: &str) -> Result<Self, ConnectError> {
-        let parsed = RtpUrl::parse(url).map_err(ConnectError::Url)?;
+    pub fn connect(url: &str) -> Result<Self, RtpConnectError> {
+        let parsed = RtpUrl::parse(url).map_err(RtpConnectError::Url)?;
         Self::connect_with(&parsed)
     }
 
     /// Connect using an already-parsed URL — convenient for callers that
     /// hold an `RtpUrl` (e.g., binding crates).
-    pub fn connect_with(url: &RtpUrl) -> Result<Self, ConnectError> {
+    pub fn connect_with(url: &RtpUrl) -> Result<Self, RtpConnectError> {
         if url.pt.is_some() {
-            return Err(ConnectError::PayloadTypeParam);
+            return Err(RtpConnectError::PayloadTypeParam);
         }
         if url.rcvbuf.is_some() {
-            return Err(ConnectError::Url(RtpUrlError::SendRcvbuf));
+            return Err(RtpConnectError::Url(RtpUrlError::SendRcvbuf));
         }
         if url.source.is_some() {
-            return Err(ConnectError::Url(RtpUrlError::SendSource));
+            return Err(RtpConnectError::Url(RtpUrlError::SendSource));
         }
         let ip: IpAddr = url.host.parse().map_err(|e: std::net::AddrParseError| {
-            ConnectError::HostNotLiteral {
+            RtpConnectError::HostNotLiteral {
                 host: url.host.clone(),
                 detail: e.to_string(),
             }
@@ -121,11 +121,11 @@ impl RtpTransport {
             IpAddr::V4(_) => "0.0.0.0:0".parse().unwrap(),
             IpAddr::V6(_) => "[::]:0".parse().unwrap(),
         };
-        let socket = UdpSocket::bind(local).map_err(ConnectError::Io)?;
-        set_socket_buffers(&socket, None, url.sndbuf).map_err(ConnectError::Io)?;
+        let socket = UdpSocket::bind(local).map_err(RtpConnectError::Io)?;
+        set_socket_buffers(&socket, None, url.sndbuf).map_err(RtpConnectError::Io)?;
         socket
             .set_write_timeout(Some(CANCEL_POLL_INTERVAL))
-            .map_err(ConnectError::Io)?;
+            .map_err(RtpConnectError::Io)?;
         // Multicast knobs (no-op for unicast).
         let is_multicast = match ip {
             IpAddr::V4(v4) => v4.is_multicast(),
@@ -135,7 +135,7 @@ impl RtpTransport {
             apply_multicast_send_knobs(&socket, ip, url.ttl, url.iface.as_deref())
                 .map_err(udp_err_to_connect)?;
         }
-        socket.connect(peer).map_err(ConnectError::Io)?;
+        socket.connect(peer).map_err(RtpConnectError::Io)?;
         Ok(Self::from_socket(socket, url))
     }
 
@@ -162,7 +162,7 @@ impl RtpTransport {
 /// Failure shape for [`RtpTransport::connect`] / [`RtpTransport::connect_with`].
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum ConnectError {
+pub enum RtpConnectError {
     #[error("URL has ?pt= (elementary RTP): use H264Receiver, not the MP2T transport")]
     PayloadTypeParam,
     #[error("H264Receiver requires ?pt=<dynamic PT> on the URL")]
@@ -182,6 +182,10 @@ pub enum ConnectError {
     #[error("multicast iface '{iface}' unsupported: {detail}")]
     IfaceUnsupported { iface: String, detail: String },
 }
+
+/// The name this type had before it was renamed.
+#[deprecated(since = "0.9.0", note = "renamed to `RtpConnectError`")]
+pub type ConnectError = RtpConnectError;
 
 impl Transport for RtpTransport {
     fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
@@ -561,25 +565,25 @@ tst_core::binding_record! {
 
 impl RtpRecvTransport {
     /// Bind to `url`'s host:port and (for multicast) join the group.
-    pub fn listen(url: &str) -> Result<Self, ConnectError> {
-        let parsed = RtpUrl::parse(url).map_err(ConnectError::Url)?;
+    pub fn listen(url: &str) -> Result<Self, RtpConnectError> {
+        let parsed = RtpUrl::parse(url).map_err(RtpConnectError::Url)?;
         Self::listen_with(&parsed)
     }
 
     /// Bind using an already-parsed URL — convenient for callers that hold
     /// an `RtpUrl` (e.g., binding crates).
-    pub fn listen_with(url: &RtpUrl) -> Result<Self, ConnectError> {
+    pub fn listen_with(url: &RtpUrl) -> Result<Self, RtpConnectError> {
         if url.pkt_size.is_some() {
-            return Err(ConnectError::Url(RtpUrlError::RecvPktSize));
+            return Err(RtpConnectError::Url(RtpUrlError::RecvPktSize));
         }
         if url.sndbuf.is_some() {
-            return Err(ConnectError::Url(RtpUrlError::RecvSndbuf));
+            return Err(RtpConnectError::Url(RtpUrlError::RecvSndbuf));
         }
         if url.pt.is_some() {
-            return Err(ConnectError::PayloadTypeParam);
+            return Err(RtpConnectError::PayloadTypeParam);
         }
         let ip: IpAddr = url.host.parse().map_err(|e: std::net::AddrParseError| {
-            ConnectError::HostNotLiteral {
+            RtpConnectError::HostNotLiteral {
                 host: url.host.clone(),
                 detail: e.to_string(),
             }
@@ -604,17 +608,17 @@ impl RtpRecvTransport {
             // receiver to bind the same group:port. The helper also sets
             // SO_SNDTIMEO to CANCEL_POLL_INTERVAL; the RTP recv socket
             // never sends, so the write timeout is inert.
-            bind_udp_socket_multicast(local).map_err(ConnectError::Io)?
+            bind_udp_socket_multicast(local).map_err(RtpConnectError::Io)?
         } else {
-            UdpSocket::bind(local).map_err(ConnectError::Io)?
+            UdpSocket::bind(local).map_err(RtpConnectError::Io)?
         };
         // `?rcvbuf=` sizes the receive socket.
-        set_socket_buffers(&socket, url.rcvbuf, None).map_err(ConnectError::Io)?;
+        set_socket_buffers(&socket, url.rcvbuf, None).map_err(RtpConnectError::Io)?;
         // For the multicast path this re-sets SO_RCVTIMEO to the same
         // value the helper already applied — redundant but harmless.
         socket
             .set_read_timeout(Some(CANCEL_POLL_INTERVAL))
-            .map_err(ConnectError::Io)?;
+            .map_err(RtpConnectError::Io)?;
         if is_multicast {
             apply_multicast_recv_join(&socket, ip, url.iface.as_deref())
                 .map_err(udp_err_to_connect)?;
@@ -648,10 +652,10 @@ impl RtpRecvTransport {
     /// (multicast joins, TTL, etc.) before passing the socket in. This
     /// constructor only sets the cancel-poll read timeout to match the
     /// rest of the recv-side machinery.
-    pub(crate) fn from_udp_socket(socket: UdpSocket) -> Result<Self, ConnectError> {
+    pub(crate) fn from_udp_socket(socket: UdpSocket) -> Result<Self, RtpConnectError> {
         socket
             .set_read_timeout(Some(CANCEL_POLL_INTERVAL))
-            .map_err(ConnectError::Io)?;
+            .map_err(RtpConnectError::Io)?;
         let ssrc = random_u32();
         Ok(Self {
             source: Some(Source::Udp(socket)),
@@ -1202,7 +1206,6 @@ fn spawn_rtcp_ingest(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builder::RtpRecvSocketBuilder;
 
     /// Build a minimal valid RTP packet (V=2, P=0, X=0, CC=0, PT=33)
     /// wrapping `payload`. Used by mpsc-path tests that feed whole RTP
@@ -1237,7 +1240,7 @@ mod tests {
     /// shape: `Ok(None)` on expiry, transport still alive.
     #[test]
     fn rtp_recv_timeout_returns_none_on_quiet_socket() {
-        let mut t = RtpRecvSocketBuilder::new("127.0.0.1", 0).build().unwrap();
+        let mut t = RtpRecvTransport::listen_with(&RtpUrl::new("127.0.0.1", 0)).unwrap();
         let mut buf = vec![0u8; 2048];
         let start = std::time::Instant::now();
         let res = t
@@ -1276,9 +1279,7 @@ mod tests {
             drop(std::net::UdpSocket::bind(("127.0.0.1", base + 1)).unwrap());
             base
         };
-        let mut t = RtpRecvSocketBuilder::new("127.0.0.1", port)
-            .build()
-            .unwrap();
+        let mut t = RtpRecvTransport::listen_with(&RtpUrl::new("127.0.0.1", port)).unwrap();
         let mut buf = vec![0u8; 2048];
         let res = t.recv_timeout(&mut buf, std::time::Duration::ZERO).unwrap();
         assert!(res.is_none(), "ZERO must expire promptly");
@@ -1568,7 +1569,9 @@ mod tests {
                 let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
                 let candidate = s.local_addr().unwrap().port();
                 drop(s);
-                if let Ok(built) = RtpRecvSocketBuilder::new("127.0.0.1", candidate).build() {
+                if let Ok(built) =
+                    RtpRecvTransport::listen_with(&RtpUrl::new("127.0.0.1", candidate))
+                {
                     out = Some((built, candidate));
                     break;
                 }
@@ -1865,7 +1868,7 @@ mod tests {
             .map(|_| ())
             .expect_err("connect_with ?pt= must fail");
         assert!(
-            matches!(err, ConnectError::PayloadTypeParam),
+            matches!(err, RtpConnectError::PayloadTypeParam),
             "expected PayloadTypeParam, got {err:?}"
         );
     }
@@ -1878,7 +1881,7 @@ mod tests {
             .map(|_| ())
             .expect_err("listen_with ?pt= must fail");
         assert!(
-            matches!(err, ConnectError::PayloadTypeParam),
+            matches!(err, RtpConnectError::PayloadTypeParam),
             "expected PayloadTypeParam, got {err:?}"
         );
     }

@@ -298,7 +298,7 @@ fn h264_listen_rejects_pkt_size_query() {
     };
     assert!(matches!(
         err,
-        tst_rtp::ConnectError::Url(tst_rtp::RtpUrlError::RecvPktSize)
+        tst_rtp::RtpConnectError::Url(tst_rtp::RtpUrlError::RecvPktSize)
     ));
 }
 
@@ -313,7 +313,7 @@ fn h264_listen_rejects_sndbuf_query() {
     assert!(
         matches!(
             err,
-            tst_rtp::ConnectError::Url(tst_rtp::RtpUrlError::RecvSndbuf)
+            tst_rtp::RtpConnectError::Url(tst_rtp::RtpUrlError::RecvSndbuf)
         ),
         "wrong error variant: {err:?}"
     );

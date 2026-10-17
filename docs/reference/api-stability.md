@@ -107,7 +107,7 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-udp | opener | Provisional | URL → type-erased transport for the language bindings' shells |
 | tst-tcp | (crate) | Stable | small, settled |
 | tst-tcp | opener | Provisional | URL → type-erased transport for the language bindings' shells |
-| tst-rtp | builder | Stable | RTP transport builder / URL-connect surface |
+| tst-rtp | builder | Stable | RTSP client and server builders |
 | tst-rtp | cancel | Stable | RTP cancellation handle |
 | tst-rtp | depay | Stable | the access unit, configuration and counters the H.264 and H.265 depacketizers share (formerly `H264Au`/`H264DepayConfig`/`H264DepayStats`, still aliased under those names) |
 | tst-rtp | error | Stable | RTP error taxonomy |

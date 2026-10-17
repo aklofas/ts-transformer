@@ -14,7 +14,7 @@
 
 use std::io;
 
-use crate::url::UrlError;
+use crate::url::RtpUrlError;
 
 /// Failure shape for the RTSP client state machine.
 ///
@@ -26,7 +26,7 @@ use crate::url::UrlError;
 pub enum RtspError {
     /// Socket-level I/O on the control channel (connect refused,
     /// connection reset, etc.). Mirrors
-    /// [`crate::ConnectError::Io`] but scoped to the RTSP TCP connection.
+    /// [`crate::RtpConnectError::Io`] but scoped to the RTSP TCP connection.
     #[error("RTSP I/O error: {0:?}")]
     Io(io::ErrorKind),
 
@@ -145,7 +145,7 @@ pub enum RtspError {
     /// URL parsing failed before any RTSP exchange. Wraps the
     /// underlying [`crate::RtpUrlError`].
     #[error("RTSP URL parse error: {0}")]
-    Url(#[from] UrlError),
+    Url(#[from] RtpUrlError),
 }
 
 impl From<io::Error> for RtspError {
@@ -172,7 +172,7 @@ pub enum RtspServerError {
 
     /// Bind URL parsing failed before any server lifecycle.
     #[error("RTSP server bind URL parse error: {0}")]
-    UrlParse(#[from] UrlError),
+    UrlParse(#[from] RtpUrlError),
 
     /// The bind URL's host:port pair could not be claimed (another process
     /// holds it, or insufficient privileges for the port).

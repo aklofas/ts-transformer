@@ -163,6 +163,33 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   multicast, tls}` are no longer public; none exported an item of its own
   (`RtspClient::setup` and `teardown` are methods and are unchanged).
 
+- `RtpSocketBuilder` and `RtpRecvSocketBuilder` are gone. Build an `RtpUrl`
+  (`RtpUrl::new(host, port)` or `RtpUrl::parse`, which now also has
+  `Default`) and call `RtpTransport::connect_with` /
+  `RtpRecvTransport::listen_with`. The builders only forwarded to the URL's
+  public fields, and C already bypassed them because a field-by-field rebuild
+  once dropped `pkt_size`.
+- `RtpUrlError`'s eight typed variants (`WrongScheme`, `UnknownKey`,
+  `BadTtl`, `BadPktSize`, `BadSsrc`, `BadIface`, `BadPayloadType`,
+  `BadRecvTimeout`) are folded into `BadScheme`, `UnknownQueryKey` and
+  `BadQuery { key, value }`, which `rtsp://` URLs already used for the same
+  failures, so one failure no longer has two spellings. The error kind is
+  unchanged on every binding (`RtpUrl`, C −15); the message text changes:
+
+  | URL | Before | Now |
+  |---|---|---|
+  | `rtsp://h:5004` given to `RtpUrl::parse` | `expected 'rtp' scheme, got 'rtsp'` | `unsupported scheme: rtsp` |
+  | `?bogus=1` | `unknown rtp:// URL query key 'bogus'` | `unknown query parameter: bogus` |
+  | `?ttl=0` | `invalid ttl '0': must be in 1..=255` | `bad value for query parameter ttl: 0 (must be in 1..=255)` |
+  | `?pkt_size=1000` | `invalid pkt_size '1000': must be a positive multiple of 188` | `bad value for query parameter pkt_size: 1000 (must be a positive multiple of 188)` |
+  | `?ssrc=zz` | `invalid ssrc 'zz': invalid digit found in string` | `bad value for query parameter ssrc: zz (invalid digit found in string)` |
+  | `?iface=a%20b` | `invalid iface 'a b'` | `bad value for query parameter iface: a b` |
+  | `?pt=33` | `invalid pt '33': payload type 33 is MPEG-TS — use the MP2T receiver (no ?pt=)` | `bad value for query parameter pt: 33 (payload type 33 is MPEG-TS — use the MP2T receiver (no ?pt=))` |
+  | `?recv_timeout=0` | `invalid recv_timeout '0': must be nonzero` | `bad value for query parameter recv_timeout: 0 (must be nonzero)` |
+
+  Every other key follows the same pattern: the old `invalid <key> '<value>':
+  <reason>` is now `bad value for query parameter <key>: <value> (<reason>)`.
+
 ### Changed — tst-core (BREAKING)
 
 - `tst_core::transport::conformance` (the transport conformance kit) is now
@@ -449,6 +476,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reports a clean EOF returns `TST_E_CLOSED` (-7); it returned
   `TST_E_TRANSPORT` (-8). An uncancelled clean EOF still returns
   `TST_E_END_OF_STREAM` (-12).
+- `tst_rtp_sender_open` and `tst_rtp_mux_sender_open` now open the parsed
+  URL as a whole. `?sndbuf=` is applied (it was dropped); `?pt=`, `?rcvbuf=`
+  and `?source=` on a sender URL are refused with `TST_E_RTP_TRANSPORT`, as
+  the Rust and Python senders already refuse them.
 
 ### Changed — C header
 
@@ -690,6 +721,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `SrtUrlError`. The old names are deprecated aliases at every path they had
   until 0.10.0. Every other transport's types carry their prefix, and
   `use tst_srt::SocketConfig` collided with `tst_udp::SocketConfig`.
+
+### Deprecated — tst-rtp
+
+- `url::UrlError` → `RtpUrlError` and `transport::ConnectError` →
+  `RtpConnectError`. The old names are deprecated aliases at every path they
+  had until 0.10.0, so the RTP errors carry the prefix every other
+  transport's errors do.
 
 ### Deprecated — tst-udp, tst-tcp
 

@@ -56,21 +56,7 @@ pub use sender::{
 
 /// A parsed `rtp://` URL → an RTP send socket, recording `TST_E_RTP_TRANSPORT`.
 pub(crate) fn connect(url: tst_rtp::RtpUrl) -> Option<tst_rtp::RtpTransport> {
-    let mut builder = tst_rtp::RtpSocketBuilder::new(url.host.clone(), url.port);
-    if let Some(ttl) = url.ttl {
-        builder.ttl(ttl);
-    }
-    if let Some(ref iface) = url.iface {
-        builder.iface(iface.clone());
-    }
-    if let Some(n) = url.pkt_size {
-        builder.pkt_size(n);
-    }
-    if let Some(ssrc) = url.ssrc {
-        builder.ssrc(ssrc);
-    }
-    builder
-        .build()
+    tst_rtp::RtpTransport::connect_with(&url)
         .map_err(|e| {
             crate::error::set_last_error(
                 crate::error::TstError::RtpTransport,

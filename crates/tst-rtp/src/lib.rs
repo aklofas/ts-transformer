@@ -52,11 +52,16 @@ pub mod url;
 mod binding_kind;
 
 // RTP transport.
-pub use builder::{RtpRecvSocketBuilder, RtpSocketBuilder};
 pub use cancel::RtpCancelHandle;
 pub use packet::{Parsed, RTP_HEADER_LEN, RtpHeader, RtpParseError};
-pub use transport::{ConnectError, RtpRecvTransport, RtpStats, RtpTransport};
-pub use url::{DEFAULT_PKT_SIZE, RtpUrl, UrlError as RtpUrlError};
+pub use transport::{RtpConnectError, RtpRecvTransport, RtpStats, RtpTransport};
+pub use url::{DEFAULT_PKT_SIZE, RtpUrl, RtpUrlError};
+
+// The names these types had before the `Rtp` prefix; removed in 0.10.0.
+#[allow(deprecated)]
+pub use transport::ConnectError;
+#[allow(deprecated)]
+pub use url::UrlError;
 
 // RTSP client.
 pub use builder::RtspClientBuilder;

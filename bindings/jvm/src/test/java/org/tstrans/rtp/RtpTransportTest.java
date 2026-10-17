@@ -96,7 +96,7 @@ class RtpTransportTest {
     @Test
     void receiverRecvDeadlineRaisesBackpressureKind() throws Exception {
         // `?recv_timeout=<ms>` arms a persistent recv deadline (wired by
-        // RtpRecvSocketBuilder::from_url). A quiet socket (no sender) must throw
+        // RtpRecvTransport::listen_with). A quiet socket (no sender) must throw
         // RtpException(BACKPRESSURE) once the deadline expires — distinct from
         // TRANSPORT, since the receiver stays open and usable (retry recv() again).
         int port = freeUdpPort();

@@ -241,7 +241,7 @@ def test_receiver_close_idempotent() -> None:
 
 def test_receiver_recv_timeout_raises_timeout_kind() -> None:
     """`?recv_timeout=<ms>` on the URL arms a persistent recv deadline
-    (wired by `RtpRecvSocketBuilder::from_url`). A quiet socket (no
+    (wired by `RtpRecvTransport::listen_with`). A quiet socket (no
     sender) must raise `RtpError(TIMEOUT)` once the deadline expires —
     distinct from `TRANSPORT`, since the receiver stays open and usable
     (retry `.recv()` again) rather than being torn down."""
