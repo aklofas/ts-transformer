@@ -20,6 +20,9 @@ tst-rist     = { path = "../tst-rist" }
 tst-rtp      = { path = "../tst-rtp" }
 tst-hls      = { path = "../tst-hls" }
 
+[dev-dependencies]
+secrecy = { workspace = true }
+
 # Renders the Python and JVM projections of every `binding_record!` for
 # scripts/check/repo/binding-records.sh.
 [[bin]]
