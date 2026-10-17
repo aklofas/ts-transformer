@@ -18,7 +18,7 @@ pub(crate) fn throw_hls(env: &mut JNIEnv, kind: BindingErrorKind, message: &str)
     );
 }
 
-/// Any `tst_hls::HlsError` or `HlsUrlError` through the shared
+/// Any `tst_hls::HlsError` through the shared
 /// `From<…> for BindingError`: the error's own kind.
 pub(crate) fn hls_error(env: &mut JNIEnv, e: impl Into<BindingError>) {
     throw_binding(env, Domain::Hls, &e.into());

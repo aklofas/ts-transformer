@@ -333,12 +333,12 @@ pub fn run_hls_url(
     au_sizes: AuSizeMode,
 ) -> Result<(), String> {
     let parsed = tst_hls::HlsUrl::parse(url).map_err(|e| format!("hls url {url}: {e}"))?;
-    if parsed.tls {
+    if parsed.config.tls {
         return Err(
             "hlss:// (TLS) is not implemented by tst-interop's serve mode; use hls://".to_string(),
         );
     }
-    let bind_addr = SocketAddr::new(parsed.addr, parsed.port);
+    let bind_addr = parsed.config.bind;
     run_hls(p, bind_addr, seconds, klv, klv_seed, au_sizes)
 }
 

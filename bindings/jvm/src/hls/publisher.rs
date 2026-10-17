@@ -24,6 +24,7 @@ use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 
 use tst_core::publisher::{Publisher, PublisherStats};
 use tst_hls::{HlsError, HlsMode, HlsPublisher, HlsPublisherBuilder};
+use tst_pipeline::binding::{BindingError, BindingErrorKind};
 
 use crate::error::throw_closed;
 use crate::handle::HandleRegistry;
@@ -141,7 +142,7 @@ jni_native! {
             Some(u) => match HlsPublisherBuilder::from_url(&u) {
                 Ok(b) => b,
                 Err(e) => {
-                    hls_error(env, e);
+                    hls_error(env, BindingError::new(BindingErrorKind::HlsUrl, e.to_string()));
                     return 0;
                 }
             },
@@ -149,7 +150,9 @@ jni_native! {
         };
         if let Some(addr) = bind {
             match addr.parse::<SocketAddr>() {
-                Ok(a) => b = b.bind(a),
+                Ok(a) => {
+                    b.bind(a);
+                }
                 Err(e) => {
                     let _ = env.throw_new(
                         "java/lang/IllegalArgumentException",
@@ -160,22 +163,28 @@ jni_native! {
             }
         }
         if let Some(d) = output_dir {
-            b = b.output_dir(d);
+            b.output_dir(d);
         }
         if segment_duration_ms > 0 {
-            b = b.segment_duration(Duration::from_millis(segment_duration_ms as u64));
+            b.segment_duration(Duration::from_millis(segment_duration_ms as u64));
         }
         if max_segment_duration_ms > 0 {
-            b = b.max_segment_duration(Duration::from_millis(max_segment_duration_ms as u64));
+            b.max_segment_duration(Duration::from_millis(max_segment_duration_ms as u64));
         }
         if playlist_window >= 0 {
-            b = b.playlist_window(playlist_window as usize);
+            b.playlist_window(playlist_window as usize);
         }
         match mode {
             -1 => {}
-            0 => b = b.mode(HlsMode::Live),
-            1 => b = b.mode(HlsMode::Event),
-            2 => b = b.mode(HlsMode::Vod),
+            0 => {
+                b.mode(HlsMode::Live);
+            }
+            1 => {
+                b.mode(HlsMode::Event);
+            }
+            2 => {
+                b.mode(HlsMode::Vod);
+            }
             other => {
                 let _ = env.throw_new(
                     "java/lang/IllegalArgumentException",
@@ -185,10 +194,10 @@ jni_native! {
             }
         }
         if let (Some(u), Some(p)) = (auth_user, auth_pass) {
-            b = b.basic_auth(u, p);
+            b.basic_auth(u, p);
         }
         if let (Some(c), Some(k)) = (tls_cert, tls_key) {
-            b = b.enable_tls(c, k);
+            b.enable_tls(c, k);
         }
         match b.build() {
             Ok(p) => register(p),

@@ -8,136 +8,181 @@
 //! `output_dir` is optional — see [`crate::config::HlsConfig::output_dir`]
 //! for the default when omitted.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
 use std::time::Duration;
 
-use thiserror::Error;
+use tst_core::url::UrlError;
+use tst_core::url::common::{parse_int, parse_url};
+use tst_core::url::query::{QueryKey, UnknownKeys, apply_query};
 
-use crate::config::HlsMode;
+use crate::config::{HlsConfig, HlsMode};
 
-/// Parsed HLS publisher URL.
+/// Parsed HLS publisher URL: the publisher configuration the URL describes.
 #[derive(Debug, Clone)]
 pub struct HlsUrl {
-    pub addr: IpAddr,
-    pub port: u16,
-    pub tls: bool,
-    pub output_dir: Option<String>,
-    pub segment_duration: Option<Duration>,
-    pub playlist_window: Option<usize>,
-    pub mode: Option<HlsMode>,
-    pub auth_user: Option<String>,
-    pub auth_pass: Option<String>,
-    pub cert: Option<String>,
-    pub key: Option<String>,
+    /// [`HlsConfig::default`] with the URL's bind address, its scheme's
+    /// `tls` flag and its query keys applied.
+    pub config: HlsConfig,
 }
 
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum HlsUrlError {
-    #[error("URL scheme must be 'hls' or 'hlss', got '{0}'")]
-    BadScheme(String),
-    #[error("URL must include a port")]
-    MissingPort,
-    #[error("host '{0}' is not a literal IPv4/IPv6 address")]
-    BadHost(String),
-    #[error("query param '{key}' has invalid value '{value}': {detail}")]
-    BadQueryValue {
-        key: String,
-        value: String,
-        detail: String,
-    },
-    #[error("URL parse failed: {0}")]
-    Parse(#[from] tst_core::url::common::UrlError),
+type Applied = Result<(), UrlError>;
+
+fn set_output_dir(c: &mut HlsConfig, _key: &str, value: &str) -> Applied {
+    c.output_dir = PathBuf::from(value);
+    Ok(())
 }
+
+fn set_segment_duration(c: &mut HlsConfig, key: &str, value: &str) -> Applied {
+    c.segment_duration = Duration::from_secs(parse_int(key, value)?);
+    Ok(())
+}
+
+fn set_playlist_window(c: &mut HlsConfig, key: &str, value: &str) -> Applied {
+    c.playlist_window = parse_int(key, value)?;
+    Ok(())
+}
+
+fn set_mode(c: &mut HlsConfig, key: &str, value: &str) -> Applied {
+    c.mode = match value {
+        "live" => HlsMode::Live,
+        "event" => HlsMode::Event,
+        "vod" => HlsMode::Vod,
+        other => {
+            return Err(UrlError::BadQueryValue {
+                key: key.to_string(),
+                value: other.to_string(),
+                detail: "expected one of: live, event, vod".into(),
+            });
+        }
+    };
+    Ok(())
+}
+
+// The two credentials arrive as separate keys; `parse` keeps the pair only
+// when the URL named both.
+fn set_auth_user(c: &mut HlsConfig, _key: &str, value: &str) -> Applied {
+    let pass = c.basic_auth.take().map(|(_, p)| p).unwrap_or_default();
+    c.basic_auth = Some((value.to_string(), pass));
+    Ok(())
+}
+
+fn set_auth_pass(c: &mut HlsConfig, _key: &str, value: &str) -> Applied {
+    let user = c.basic_auth.take().map(|(u, _)| u).unwrap_or_default();
+    c.basic_auth = Some((user, value.to_string()));
+    Ok(())
+}
+
+fn set_cert(c: &mut HlsConfig, _key: &str, value: &str) -> Applied {
+    c.tls_cert = Some(PathBuf::from(value));
+    Ok(())
+}
+
+fn set_key(c: &mut HlsConfig, _key: &str, value: &str) -> Applied {
+    c.tls_key = Some(PathBuf::from(value));
+    Ok(())
+}
+
+/// The query keys an `hls://` or `hlss://` URL accepts; the parser and the
+/// generated key documentation both read this table.
+#[doc(hidden)]
+pub const URL_KEYS: &[QueryKey<HlsConfig>] = &[
+    QueryKey::new(
+        "output_dir",
+        &[],
+        "Where segments and playlists are written",
+        "directory path",
+        set_output_dir,
+    ),
+    QueryKey::new(
+        "segment_duration",
+        &[],
+        "Target segment length",
+        "seconds",
+        set_segment_duration,
+    ),
+    QueryKey::new(
+        "playlist_window",
+        &[],
+        "Segments kept in a live playlist",
+        "count",
+        set_playlist_window,
+    ),
+    QueryKey::new(
+        "mode",
+        &[],
+        "Playlist mode",
+        "`live`, `event`, `vod`",
+        set_mode,
+    ),
+    QueryKey::new(
+        "auth_user",
+        &[],
+        "HTTP Basic credentials",
+        "text",
+        set_auth_user,
+    ),
+    QueryKey::new(
+        "auth_pass",
+        &[],
+        "HTTP Basic credentials",
+        "text",
+        set_auth_pass,
+    ),
+    QueryKey::new(
+        "cert",
+        &[],
+        "Server certificate",
+        "PEM file path; an `hlss` publisher",
+        set_cert,
+    ),
+    QueryKey::new(
+        "key",
+        &[],
+        "Server private key",
+        "PEM file path; an `hlss` publisher",
+        set_key,
+    ),
+];
 
 impl HlsUrl {
-    pub fn parse(s: &str) -> Result<Self, HlsUrlError> {
-        use tst_core::url::common::parse_url;
-
-        let parsed = parse_url(s)?;
+    /// Parse an `hls://` or `hlss://` URL. The host must be a literal IP
+    /// address; unknown query keys are ignored.
+    pub fn parse(s: &str) -> Result<Self, UrlError> {
+        let parsed =
+            parse_url(s).map_err(|e| UrlError::Rejected(format!("URL parse failed: {e}")))?;
         let tls = match parsed.scheme {
             "hls" => false,
             "hlss" => true,
-            other => return Err(HlsUrlError::BadScheme(other.to_string())),
+            other => {
+                return Err(UrlError::BadScheme {
+                    expected: "'hls' or 'hlss'",
+                    got: other.to_string(),
+                });
+            }
         };
-        let port = parsed.port.ok_or(HlsUrlError::MissingPort)?;
+        let port = parsed.port.ok_or(UrlError::MissingPort)?;
 
         let host_str = parsed.host;
-        let addr: IpAddr = host_str
-            .parse()
-            .map_err(|_| HlsUrlError::BadHost(host_str.to_string()))?;
+        let addr: IpAddr = host_str.parse().map_err(|_| {
+            UrlError::BadHost(format!(
+                "host '{host_str}' is not a literal IPv4/IPv6 address"
+            ))
+        })?;
 
-        let mut output_dir = None;
-        let mut segment_duration = None;
-        let mut playlist_window = None;
-        let mut mode = None;
-        let mut auth_user = None;
-        let mut auth_pass = None;
-        let mut cert = None;
-        let mut key = None;
-
-        for (k, v) in &parsed.query {
-            let key_str = k.as_ref();
-            let value = v.as_ref();
-            match key_str {
-                "output_dir" => output_dir = Some(value.to_string()),
-                "segment_duration" => {
-                    let secs: u64 =
-                        tst_core::url::common::parse_int_query(value).map_err(|detail| {
-                            HlsUrlError::BadQueryValue {
-                                key: key_str.to_string(),
-                                value: value.to_string(),
-                                detail,
-                            }
-                        })?;
-                    segment_duration = Some(Duration::from_secs(secs));
-                }
-                "playlist_window" => {
-                    let n: usize =
-                        tst_core::url::common::parse_int_query(value).map_err(|detail| {
-                            HlsUrlError::BadQueryValue {
-                                key: key_str.to_string(),
-                                value: value.to_string(),
-                                detail,
-                            }
-                        })?;
-                    playlist_window = Some(n);
-                }
-                "mode" => {
-                    mode = Some(match value {
-                        "live" => HlsMode::Live,
-                        "event" => HlsMode::Event,
-                        "vod" => HlsMode::Vod,
-                        other => {
-                            return Err(HlsUrlError::BadQueryValue {
-                                key: key_str.to_string(),
-                                value: other.to_string(),
-                                detail: "expected one of: live, event, vod".into(),
-                            });
-                        }
-                    });
-                }
-                "auth_user" => auth_user = Some(value.to_string()),
-                "auth_pass" => auth_pass = Some(value.to_string()),
-                "cert" => cert = Some(value.to_string()),
-                "key" => key = Some(value.to_string()),
-                _ => {}
-            }
-        }
-
-        Ok(Self {
-            addr,
-            port,
+        let mut config = HlsConfig {
+            bind: SocketAddr::new(addr, port),
             tls,
-            output_dir,
-            segment_duration,
-            playlist_window,
-            mode,
-            auth_user,
-            auth_pass,
-            cert,
-            key,
-        })
+            ..HlsConfig::default()
+        };
+        apply_query(URL_KEYS, &mut config, &parsed.query, UnknownKeys::Ignore)?;
+
+        // A lone `auth_user` or `auth_pass` configures nothing.
+        let named = |key: &str| parsed.query.iter().any(|(k, _)| k == key);
+        if !(named("auth_user") && named("auth_pass")) {
+            config.basic_auth = None;
+        }
+        Ok(Self { config })
     }
 }
 
@@ -148,28 +193,31 @@ mod tests {
     #[test]
     fn plain_hls() {
         let u = HlsUrl::parse("hls://0.0.0.0:8080").unwrap();
-        assert!(!u.tls);
-        assert_eq!(u.port, 8080);
+        assert!(!u.config.tls);
+        assert_eq!(u.config.bind.port(), 8080);
     }
 
     #[test]
     fn https_with_cert_key() {
         let u = HlsUrl::parse("hlss://0.0.0.0:8443?cert=server.crt&key=server.key").unwrap();
-        assert!(u.tls);
-        assert_eq!(u.cert.as_deref(), Some("server.crt"));
+        assert!(u.config.tls);
+        assert_eq!(
+            u.config.tls_cert.as_deref(),
+            Some(std::path::Path::new("server.crt"))
+        );
     }
 
     #[test]
     fn mode_is_parsed() {
         let u = HlsUrl::parse("hls://0.0.0.0:8080?mode=event").unwrap();
-        assert_eq!(u.mode, Some(HlsMode::Event));
+        assert_eq!(u.config.mode, HlsMode::Event);
     }
 
     #[test]
     fn rejects_bad_mode() {
         assert!(matches!(
             HlsUrl::parse("hls://0.0.0.0:8080?mode=garbage"),
-            Err(HlsUrlError::BadQueryValue { .. })
+            Err(UrlError::BadQueryValue { .. })
         ));
     }
 
@@ -177,7 +225,15 @@ mod tests {
     fn rejects_bad_scheme() {
         assert!(matches!(
             HlsUrl::parse("hls2://host:8080"),
-            Err(HlsUrlError::BadScheme(_))
+            Err(UrlError::BadScheme { .. })
         ));
+    }
+
+    #[test]
+    fn a_lone_credential_configures_no_auth() {
+        let u = HlsUrl::parse("hls://0.0.0.0:8080?auth_user=alice").unwrap();
+        assert_eq!(u.config.basic_auth, None);
+        let u = HlsUrl::parse("hls://0.0.0.0:8080?auth_user=alice&auth_pass=pw").unwrap();
+        assert_eq!(u.config.basic_auth, Some(("alice".into(), "pw".into())));
     }
 }

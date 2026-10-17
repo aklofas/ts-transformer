@@ -2,8 +2,8 @@ pub mod tst_udp
 pub mod tst_udp::builder
 pub struct tst_udp::builder::UdpRecvTransportBuilder
 impl tst_udp::builder::UdpRecvTransportBuilder
-pub fn tst_udp::builder::UdpRecvTransportBuilder::build(self) -> core::result::Result<tst_udp::recv::UdpRecvTransport, tst_udp::error::UdpError>
-pub fn tst_udp::builder::UdpRecvTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_udp::url::UdpUrlError>
+pub fn tst_udp::builder::UdpRecvTransportBuilder::build(&self) -> core::result::Result<tst_udp::recv::UdpRecvTransport, tst_udp::error::UdpError>
+pub fn tst_udp::builder::UdpRecvTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 pub fn tst_udp::builder::UdpRecvTransportBuilder::iface(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
 pub fn tst_udp::builder::UdpRecvTransportBuilder::rcvbuf(&mut self, usize) -> &mut Self
 impl core::clone::Clone for tst_udp::builder::UdpRecvTransportBuilder
@@ -19,8 +19,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::builder::UdpRecvTransp
 impl core::panic::unwind_safe::UnwindSafe for tst_udp::builder::UdpRecvTransportBuilder
 pub struct tst_udp::builder::UdpTransportBuilder
 impl tst_udp::builder::UdpTransportBuilder
-pub fn tst_udp::builder::UdpTransportBuilder::build(self) -> core::result::Result<tst_udp::transport::UdpTransport, tst_udp::error::UdpError>
-pub fn tst_udp::builder::UdpTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_udp::url::UdpUrlError>
+pub fn tst_udp::builder::UdpTransportBuilder::build(&self) -> core::result::Result<tst_udp::transport::UdpTransport, tst_udp::error::UdpError>
+pub fn tst_udp::builder::UdpTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 pub fn tst_udp::builder::UdpTransportBuilder::iface(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
 pub fn tst_udp::builder::UdpTransportBuilder::localaddr(&mut self, core::net::ip_addr::IpAddr) -> &mut Self
 pub fn tst_udp::builder::UdpTransportBuilder::pkt_size(&mut self, usize) -> &mut Self
@@ -39,42 +39,42 @@ impl core::marker::UnsafeUnpin for tst_udp::builder::UdpTransportBuilder
 impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::builder::UdpTransportBuilder
 impl core::panic::unwind_safe::UnwindSafe for tst_udp::builder::UdpTransportBuilder
 pub mod tst_udp::config
-#[non_exhaustive] pub struct tst_udp::config::SocketConfig
-pub tst_udp::config::SocketConfig::iface: core::option::Option<alloc::string::String>
-pub tst_udp::config::SocketConfig::localaddr: core::option::Option<core::net::ip_addr::IpAddr>
-pub tst_udp::config::SocketConfig::pkt_size: core::option::Option<usize>
-pub tst_udp::config::SocketConfig::rcvbuf: core::option::Option<usize>
-pub tst_udp::config::SocketConfig::sndbuf: core::option::Option<usize>
-pub tst_udp::config::SocketConfig::tos: core::option::Option<u8>
-pub tst_udp::config::SocketConfig::ttl: core::option::Option<u8>
-impl tst_udp::config::SocketConfig
-pub const tst_udp::config::SocketConfig::DEFAULT_PKT_SIZE: usize
-pub fn tst_udp::config::SocketConfig::merge_from_url(&mut self, &tst_udp::url::UdpUrl)
-pub fn tst_udp::config::SocketConfig::pkt_size_or_default(&self) -> usize
-impl core::clone::Clone for tst_udp::config::SocketConfig
-pub fn tst_udp::config::SocketConfig::clone(&self) -> tst_udp::config::SocketConfig
-impl core::default::Default for tst_udp::config::SocketConfig
-pub fn tst_udp::config::SocketConfig::default() -> tst_udp::config::SocketConfig
-impl core::fmt::Debug for tst_udp::config::SocketConfig
-pub fn tst_udp::config::SocketConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_udp::config::SocketConfig
-impl core::marker::Send for tst_udp::config::SocketConfig
-impl core::marker::Sync for tst_udp::config::SocketConfig
-impl core::marker::Unpin for tst_udp::config::SocketConfig
-impl core::marker::UnsafeUnpin for tst_udp::config::SocketConfig
-impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::config::SocketConfig
-impl core::panic::unwind_safe::UnwindSafe for tst_udp::config::SocketConfig
+#[non_exhaustive] pub struct tst_udp::config::UdpConfig
+pub tst_udp::config::UdpConfig::iface: core::option::Option<alloc::string::String>
+pub tst_udp::config::UdpConfig::localaddr: core::option::Option<core::net::ip_addr::IpAddr>
+pub tst_udp::config::UdpConfig::pkt_size: core::option::Option<usize>
+pub tst_udp::config::UdpConfig::rcvbuf: core::option::Option<usize>
+pub tst_udp::config::UdpConfig::sndbuf: core::option::Option<usize>
+pub tst_udp::config::UdpConfig::tos: core::option::Option<u8>
+pub tst_udp::config::UdpConfig::ttl: core::option::Option<u8>
+impl tst_udp::config::UdpConfig
+pub const tst_udp::config::UdpConfig::DEFAULT_PKT_SIZE: usize
+pub fn tst_udp::config::UdpConfig::pkt_size_or_default(&self) -> usize
+impl core::clone::Clone for tst_udp::config::UdpConfig
+pub fn tst_udp::config::UdpConfig::clone(&self) -> tst_udp::config::UdpConfig
+impl core::default::Default for tst_udp::config::UdpConfig
+pub fn tst_udp::config::UdpConfig::default() -> tst_udp::config::UdpConfig
+impl core::fmt::Debug for tst_udp::config::UdpConfig
+pub fn tst_udp::config::UdpConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_udp::config::UdpConfig
+impl core::marker::Send for tst_udp::config::UdpConfig
+impl core::marker::Sync for tst_udp::config::UdpConfig
+impl core::marker::Unpin for tst_udp::config::UdpConfig
+impl core::marker::UnsafeUnpin for tst_udp::config::UdpConfig
+impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::config::UdpConfig
+impl core::panic::unwind_safe::UnwindSafe for tst_udp::config::UdpConfig
+pub type tst_udp::config::SocketConfig = tst_udp::config::UdpConfig
 pub mod tst_udp::error
 #[non_exhaustive] pub enum tst_udp::error::UdpError
 pub tst_udp::error::UdpError::InvalidConfig(alloc::string::String)
 pub tst_udp::error::UdpError::Io(core::io::error::Error)
-pub tst_udp::error::UdpError::Url(tst_udp::url::UdpUrlError)
+pub tst_udp::error::UdpError::Url(tst_core::url::common::UrlError)
 impl core::convert::From<core::io::error::Error> for tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_core::url::common::UrlError> for tst_udp::error::UdpError
+pub fn tst_udp::error::UdpError::from(tst_core::url::common::UrlError) -> Self
 impl core::convert::From<tst_udp::error::UdpError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_udp::error::UdpError) -> Self
-impl core::convert::From<tst_udp::url::UdpUrlError> for tst_udp::error::UdpError
-pub fn tst_udp::error::UdpError::from(tst_udp::url::UdpUrlError) -> Self
 impl core::error::Error for tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_udp::error::UdpError
@@ -99,7 +99,7 @@ pub fn tst_udp::recv::UdpRecvTransport::listen(&str) -> core::result::Result<Sel
 pub fn tst_udp::recv::UdpRecvTransport::local_addr(&self) -> core::net::socket_addr::SocketAddr
 pub fn tst_udp::recv::UdpRecvTransport::recv_timeout(&mut self, &mut [u8], core::time::Duration) -> core::result::Result<core::option::Option<usize>, tst_udp::error::UdpError>
 pub fn tst_udp::recv::UdpRecvTransport::stats(&self) -> tst_udp::stats::UdpStats
-pub fn tst_udp::recv::UdpRecvTransport::with_config(&tst_udp::url::UdpUrl, &tst_udp::config::SocketConfig) -> core::result::Result<Self, tst_udp::error::UdpError>
+pub fn tst_udp::recv::UdpRecvTransport::with_config(&tst_udp::url::UdpUrl, &tst_udp::config::UdpConfig) -> core::result::Result<Self, tst_udp::error::UdpError>
 impl tst_core::transport::RecvTransport for tst_udp::recv::UdpRecvTransport
 pub fn tst_udp::recv::UdpRecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_udp::recv::UdpRecvTransport::close(&mut self)
@@ -145,7 +145,7 @@ pub fn tst_udp::transport::UdpTransport::cancel_handle(&self) -> tst_udp::transp
 pub fn tst_udp::transport::UdpTransport::connect(&str) -> core::result::Result<Self, tst_udp::error::UdpError>
 pub fn tst_udp::transport::UdpTransport::peer(&self) -> core::net::socket_addr::SocketAddr
 pub fn tst_udp::transport::UdpTransport::stats(&self) -> tst_udp::stats::UdpStats
-pub fn tst_udp::transport::UdpTransport::with_config(&tst_udp::url::UdpUrl, &tst_udp::config::SocketConfig) -> core::result::Result<Self, tst_udp::error::UdpError>
+pub fn tst_udp::transport::UdpTransport::with_config(&tst_udp::url::UdpUrl, &tst_udp::config::UdpConfig) -> core::result::Result<Self, tst_udp::error::UdpError>
 impl tst_core::transport::Transport for tst_udp::transport::UdpTransport
 pub fn tst_udp::transport::UdpTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_udp::transport::UdpTransport::close(&mut self)
@@ -162,55 +162,14 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::transport::UdpTranspor
 impl core::panic::unwind_safe::UnwindSafe for tst_udp::transport::UdpTransport
 pub type tst_udp::transport::UdpCancelHandle = tst_core::cancel::FlagCancel
 pub mod tst_udp::url
-#[non_exhaustive] pub enum tst_udp::url::UdpUrlError
-pub tst_udp::url::UdpUrlError::BadQueryValue
-pub tst_udp::url::UdpUrlError::BadQueryValue::detail: alloc::string::String
-pub tst_udp::url::UdpUrlError::BadQueryValue::key: alloc::string::String
-pub tst_udp::url::UdpUrlError::BadQueryValue::value: alloc::string::String
-pub tst_udp::url::UdpUrlError::BadScheme(alloc::string::String)
-pub tst_udp::url::UdpUrlError::FamilyMismatch
-pub tst_udp::url::UdpUrlError::FamilyMismatch::local: core::net::ip_addr::IpAddr
-pub tst_udp::url::UdpUrlError::FamilyMismatch::peer: core::net::ip_addr::IpAddr
-pub tst_udp::url::UdpUrlError::HostResolve
-pub tst_udp::url::UdpUrlError::HostResolve::detail: alloc::string::String
-pub tst_udp::url::UdpUrlError::HostResolve::host: alloc::string::String
-pub tst_udp::url::UdpUrlError::MissingPort
-pub tst_udp::url::UdpUrlError::Parse(tst_core::url::common::UrlError)
-pub tst_udp::url::UdpUrlError::RecvPktSize
-pub tst_udp::url::UdpUrlError::SendRecvMismatch(alloc::string::String)
-impl core::convert::From<tst_core::url::common::UrlError> for tst_udp::url::UdpUrlError
-pub fn tst_udp::url::UdpUrlError::from(tst_core::url::common::UrlError) -> Self
-impl core::convert::From<tst_udp::url::UdpUrlError> for tst_pipeline::binding::kind::BindingError
-pub fn tst_pipeline::binding::kind::BindingError::from(tst_udp::url::UdpUrlError) -> Self
-impl core::convert::From<tst_udp::url::UdpUrlError> for tst_udp::error::UdpError
-pub fn tst_udp::error::UdpError::from(tst_udp::url::UdpUrlError) -> Self
-impl core::error::Error for tst_udp::url::UdpUrlError
-pub fn tst_udp::url::UdpUrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
-impl core::fmt::Debug for tst_udp::url::UdpUrlError
-pub fn tst_udp::url::UdpUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::fmt::Display for tst_udp::url::UdpUrlError
-pub fn tst_udp::url::UdpUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_udp::url::UdpUrlError
-impl core::marker::Send for tst_udp::url::UdpUrlError
-impl core::marker::Sync for tst_udp::url::UdpUrlError
-impl core::marker::Unpin for tst_udp::url::UdpUrlError
-impl core::marker::UnsafeUnpin for tst_udp::url::UdpUrlError
-impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::url::UdpUrlError
-impl core::panic::unwind_safe::UnwindSafe for tst_udp::url::UdpUrlError
 pub struct tst_udp::url::UdpUrl
 pub tst_udp::url::UdpUrl::addr: core::net::ip_addr::IpAddr
-pub tst_udp::url::UdpUrl::iface: core::option::Option<alloc::string::String>
-pub tst_udp::url::UdpUrl::localaddr: core::option::Option<core::net::ip_addr::IpAddr>
-pub tst_udp::url::UdpUrl::pkt_size: core::option::Option<usize>
+pub tst_udp::url::UdpUrl::config: tst_udp::config::UdpConfig
 pub tst_udp::url::UdpUrl::port: u16
-pub tst_udp::url::UdpUrl::rcvbuf: core::option::Option<usize>
 pub tst_udp::url::UdpUrl::recv_bind: bool
-pub tst_udp::url::UdpUrl::sndbuf: core::option::Option<usize>
-pub tst_udp::url::UdpUrl::tos: core::option::Option<u8>
-pub tst_udp::url::UdpUrl::ttl: core::option::Option<u8>
 impl tst_udp::url::UdpUrl
 pub fn tst_udp::url::UdpUrl::is_multicast(&self) -> bool
-pub fn tst_udp::url::UdpUrl::parse(&str) -> core::result::Result<Self, tst_udp::url::UdpUrlError>
+pub fn tst_udp::url::UdpUrl::parse(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 impl core::clone::Clone for tst_udp::url::UdpUrl
 pub fn tst_udp::url::UdpUrl::clone(&self) -> tst_udp::url::UdpUrl
 impl core::fmt::Debug for tst_udp::url::UdpUrl
@@ -225,13 +184,13 @@ impl core::panic::unwind_safe::UnwindSafe for tst_udp::url::UdpUrl
 #[non_exhaustive] pub enum tst_udp::UdpError
 pub tst_udp::UdpError::InvalidConfig(alloc::string::String)
 pub tst_udp::UdpError::Io(core::io::error::Error)
-pub tst_udp::UdpError::Url(tst_udp::url::UdpUrlError)
+pub tst_udp::UdpError::Url(tst_core::url::common::UrlError)
 impl core::convert::From<core::io::error::Error> for tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_core::url::common::UrlError> for tst_udp::error::UdpError
+pub fn tst_udp::error::UdpError::from(tst_core::url::common::UrlError) -> Self
 impl core::convert::From<tst_udp::error::UdpError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_udp::error::UdpError) -> Self
-impl core::convert::From<tst_udp::url::UdpUrlError> for tst_udp::error::UdpError
-pub fn tst_udp::error::UdpError::from(tst_udp::url::UdpUrlError) -> Self
 impl core::error::Error for tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_udp::error::UdpError
@@ -245,66 +204,30 @@ impl core::marker::Unpin for tst_udp::error::UdpError
 impl core::marker::UnsafeUnpin for tst_udp::error::UdpError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_udp::error::UdpError
 impl !core::panic::unwind_safe::UnwindSafe for tst_udp::error::UdpError
-#[non_exhaustive] pub enum tst_udp::UdpUrlError
-pub tst_udp::UdpUrlError::BadQueryValue
-pub tst_udp::UdpUrlError::BadQueryValue::detail: alloc::string::String
-pub tst_udp::UdpUrlError::BadQueryValue::key: alloc::string::String
-pub tst_udp::UdpUrlError::BadQueryValue::value: alloc::string::String
-pub tst_udp::UdpUrlError::BadScheme(alloc::string::String)
-pub tst_udp::UdpUrlError::FamilyMismatch
-pub tst_udp::UdpUrlError::FamilyMismatch::local: core::net::ip_addr::IpAddr
-pub tst_udp::UdpUrlError::FamilyMismatch::peer: core::net::ip_addr::IpAddr
-pub tst_udp::UdpUrlError::HostResolve
-pub tst_udp::UdpUrlError::HostResolve::detail: alloc::string::String
-pub tst_udp::UdpUrlError::HostResolve::host: alloc::string::String
-pub tst_udp::UdpUrlError::MissingPort
-pub tst_udp::UdpUrlError::Parse(tst_core::url::common::UrlError)
-pub tst_udp::UdpUrlError::RecvPktSize
-pub tst_udp::UdpUrlError::SendRecvMismatch(alloc::string::String)
-impl core::convert::From<tst_core::url::common::UrlError> for tst_udp::url::UdpUrlError
-pub fn tst_udp::url::UdpUrlError::from(tst_core::url::common::UrlError) -> Self
-impl core::convert::From<tst_udp::url::UdpUrlError> for tst_pipeline::binding::kind::BindingError
-pub fn tst_pipeline::binding::kind::BindingError::from(tst_udp::url::UdpUrlError) -> Self
-impl core::convert::From<tst_udp::url::UdpUrlError> for tst_udp::error::UdpError
-pub fn tst_udp::error::UdpError::from(tst_udp::url::UdpUrlError) -> Self
-impl core::error::Error for tst_udp::url::UdpUrlError
-pub fn tst_udp::url::UdpUrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
-impl core::fmt::Debug for tst_udp::url::UdpUrlError
-pub fn tst_udp::url::UdpUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::fmt::Display for tst_udp::url::UdpUrlError
-pub fn tst_udp::url::UdpUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_udp::url::UdpUrlError
-impl core::marker::Send for tst_udp::url::UdpUrlError
-impl core::marker::Sync for tst_udp::url::UdpUrlError
-impl core::marker::Unpin for tst_udp::url::UdpUrlError
-impl core::marker::UnsafeUnpin for tst_udp::url::UdpUrlError
-impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::url::UdpUrlError
-impl core::panic::unwind_safe::UnwindSafe for tst_udp::url::UdpUrlError
-#[non_exhaustive] pub struct tst_udp::SocketConfig
-pub tst_udp::SocketConfig::iface: core::option::Option<alloc::string::String>
-pub tst_udp::SocketConfig::localaddr: core::option::Option<core::net::ip_addr::IpAddr>
-pub tst_udp::SocketConfig::pkt_size: core::option::Option<usize>
-pub tst_udp::SocketConfig::rcvbuf: core::option::Option<usize>
-pub tst_udp::SocketConfig::sndbuf: core::option::Option<usize>
-pub tst_udp::SocketConfig::tos: core::option::Option<u8>
-pub tst_udp::SocketConfig::ttl: core::option::Option<u8>
-impl tst_udp::config::SocketConfig
-pub const tst_udp::config::SocketConfig::DEFAULT_PKT_SIZE: usize
-pub fn tst_udp::config::SocketConfig::merge_from_url(&mut self, &tst_udp::url::UdpUrl)
-pub fn tst_udp::config::SocketConfig::pkt_size_or_default(&self) -> usize
-impl core::clone::Clone for tst_udp::config::SocketConfig
-pub fn tst_udp::config::SocketConfig::clone(&self) -> tst_udp::config::SocketConfig
-impl core::default::Default for tst_udp::config::SocketConfig
-pub fn tst_udp::config::SocketConfig::default() -> tst_udp::config::SocketConfig
-impl core::fmt::Debug for tst_udp::config::SocketConfig
-pub fn tst_udp::config::SocketConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_udp::config::SocketConfig
-impl core::marker::Send for tst_udp::config::SocketConfig
-impl core::marker::Sync for tst_udp::config::SocketConfig
-impl core::marker::Unpin for tst_udp::config::SocketConfig
-impl core::marker::UnsafeUnpin for tst_udp::config::SocketConfig
-impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::config::SocketConfig
-impl core::panic::unwind_safe::UnwindSafe for tst_udp::config::SocketConfig
+#[non_exhaustive] pub struct tst_udp::UdpConfig
+pub tst_udp::UdpConfig::iface: core::option::Option<alloc::string::String>
+pub tst_udp::UdpConfig::localaddr: core::option::Option<core::net::ip_addr::IpAddr>
+pub tst_udp::UdpConfig::pkt_size: core::option::Option<usize>
+pub tst_udp::UdpConfig::rcvbuf: core::option::Option<usize>
+pub tst_udp::UdpConfig::sndbuf: core::option::Option<usize>
+pub tst_udp::UdpConfig::tos: core::option::Option<u8>
+pub tst_udp::UdpConfig::ttl: core::option::Option<u8>
+impl tst_udp::config::UdpConfig
+pub const tst_udp::config::UdpConfig::DEFAULT_PKT_SIZE: usize
+pub fn tst_udp::config::UdpConfig::pkt_size_or_default(&self) -> usize
+impl core::clone::Clone for tst_udp::config::UdpConfig
+pub fn tst_udp::config::UdpConfig::clone(&self) -> tst_udp::config::UdpConfig
+impl core::default::Default for tst_udp::config::UdpConfig
+pub fn tst_udp::config::UdpConfig::default() -> tst_udp::config::UdpConfig
+impl core::fmt::Debug for tst_udp::config::UdpConfig
+pub fn tst_udp::config::UdpConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_udp::config::UdpConfig
+impl core::marker::Send for tst_udp::config::UdpConfig
+impl core::marker::Sync for tst_udp::config::UdpConfig
+impl core::marker::Unpin for tst_udp::config::UdpConfig
+impl core::marker::UnsafeUnpin for tst_udp::config::UdpConfig
+impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::config::UdpConfig
+impl core::panic::unwind_safe::UnwindSafe for tst_udp::config::UdpConfig
 pub struct tst_udp::UdpRecvTransport
 impl tst_udp::recv::UdpRecvTransport
 pub fn tst_udp::recv::UdpRecvTransport::cancel_handle(&self) -> tst_udp::transport::UdpCancelHandle
@@ -312,7 +235,7 @@ pub fn tst_udp::recv::UdpRecvTransport::listen(&str) -> core::result::Result<Sel
 pub fn tst_udp::recv::UdpRecvTransport::local_addr(&self) -> core::net::socket_addr::SocketAddr
 pub fn tst_udp::recv::UdpRecvTransport::recv_timeout(&mut self, &mut [u8], core::time::Duration) -> core::result::Result<core::option::Option<usize>, tst_udp::error::UdpError>
 pub fn tst_udp::recv::UdpRecvTransport::stats(&self) -> tst_udp::stats::UdpStats
-pub fn tst_udp::recv::UdpRecvTransport::with_config(&tst_udp::url::UdpUrl, &tst_udp::config::SocketConfig) -> core::result::Result<Self, tst_udp::error::UdpError>
+pub fn tst_udp::recv::UdpRecvTransport::with_config(&tst_udp::url::UdpUrl, &tst_udp::config::UdpConfig) -> core::result::Result<Self, tst_udp::error::UdpError>
 impl tst_core::transport::RecvTransport for tst_udp::recv::UdpRecvTransport
 pub fn tst_udp::recv::UdpRecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_udp::recv::UdpRecvTransport::close(&mut self)
@@ -329,8 +252,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::recv::UdpRecvTransport
 impl core::panic::unwind_safe::UnwindSafe for tst_udp::recv::UdpRecvTransport
 pub struct tst_udp::UdpRecvTransportBuilder
 impl tst_udp::builder::UdpRecvTransportBuilder
-pub fn tst_udp::builder::UdpRecvTransportBuilder::build(self) -> core::result::Result<tst_udp::recv::UdpRecvTransport, tst_udp::error::UdpError>
-pub fn tst_udp::builder::UdpRecvTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_udp::url::UdpUrlError>
+pub fn tst_udp::builder::UdpRecvTransportBuilder::build(&self) -> core::result::Result<tst_udp::recv::UdpRecvTransport, tst_udp::error::UdpError>
+pub fn tst_udp::builder::UdpRecvTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 pub fn tst_udp::builder::UdpRecvTransportBuilder::iface(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
 pub fn tst_udp::builder::UdpRecvTransportBuilder::rcvbuf(&mut self, usize) -> &mut Self
 impl core::clone::Clone for tst_udp::builder::UdpRecvTransportBuilder
@@ -373,7 +296,7 @@ pub fn tst_udp::transport::UdpTransport::cancel_handle(&self) -> tst_udp::transp
 pub fn tst_udp::transport::UdpTransport::connect(&str) -> core::result::Result<Self, tst_udp::error::UdpError>
 pub fn tst_udp::transport::UdpTransport::peer(&self) -> core::net::socket_addr::SocketAddr
 pub fn tst_udp::transport::UdpTransport::stats(&self) -> tst_udp::stats::UdpStats
-pub fn tst_udp::transport::UdpTransport::with_config(&tst_udp::url::UdpUrl, &tst_udp::config::SocketConfig) -> core::result::Result<Self, tst_udp::error::UdpError>
+pub fn tst_udp::transport::UdpTransport::with_config(&tst_udp::url::UdpUrl, &tst_udp::config::UdpConfig) -> core::result::Result<Self, tst_udp::error::UdpError>
 impl tst_core::transport::Transport for tst_udp::transport::UdpTransport
 pub fn tst_udp::transport::UdpTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_udp::transport::UdpTransport::close(&mut self)
@@ -390,8 +313,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::transport::UdpTranspor
 impl core::panic::unwind_safe::UnwindSafe for tst_udp::transport::UdpTransport
 pub struct tst_udp::UdpTransportBuilder
 impl tst_udp::builder::UdpTransportBuilder
-pub fn tst_udp::builder::UdpTransportBuilder::build(self) -> core::result::Result<tst_udp::transport::UdpTransport, tst_udp::error::UdpError>
-pub fn tst_udp::builder::UdpTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_udp::url::UdpUrlError>
+pub fn tst_udp::builder::UdpTransportBuilder::build(&self) -> core::result::Result<tst_udp::transport::UdpTransport, tst_udp::error::UdpError>
+pub fn tst_udp::builder::UdpTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 pub fn tst_udp::builder::UdpTransportBuilder::iface(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
 pub fn tst_udp::builder::UdpTransportBuilder::localaddr(&mut self, core::net::ip_addr::IpAddr) -> &mut Self
 pub fn tst_udp::builder::UdpTransportBuilder::pkt_size(&mut self, usize) -> &mut Self
@@ -411,18 +334,12 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::builder::UdpTransportB
 impl core::panic::unwind_safe::UnwindSafe for tst_udp::builder::UdpTransportBuilder
 pub struct tst_udp::UdpUrl
 pub tst_udp::UdpUrl::addr: core::net::ip_addr::IpAddr
-pub tst_udp::UdpUrl::iface: core::option::Option<alloc::string::String>
-pub tst_udp::UdpUrl::localaddr: core::option::Option<core::net::ip_addr::IpAddr>
-pub tst_udp::UdpUrl::pkt_size: core::option::Option<usize>
+pub tst_udp::UdpUrl::config: tst_udp::config::UdpConfig
 pub tst_udp::UdpUrl::port: u16
-pub tst_udp::UdpUrl::rcvbuf: core::option::Option<usize>
 pub tst_udp::UdpUrl::recv_bind: bool
-pub tst_udp::UdpUrl::sndbuf: core::option::Option<usize>
-pub tst_udp::UdpUrl::tos: core::option::Option<u8>
-pub tst_udp::UdpUrl::ttl: core::option::Option<u8>
 impl tst_udp::url::UdpUrl
 pub fn tst_udp::url::UdpUrl::is_multicast(&self) -> bool
-pub fn tst_udp::url::UdpUrl::parse(&str) -> core::result::Result<Self, tst_udp::url::UdpUrlError>
+pub fn tst_udp::url::UdpUrl::parse(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 impl core::clone::Clone for tst_udp::url::UdpUrl
 pub fn tst_udp::url::UdpUrl::clone(&self) -> tst_udp::url::UdpUrl
 impl core::fmt::Debug for tst_udp::url::UdpUrl
@@ -434,4 +351,5 @@ impl core::marker::Unpin for tst_udp::url::UdpUrl
 impl core::marker::UnsafeUnpin for tst_udp::url::UdpUrl
 impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::url::UdpUrl
 impl core::panic::unwind_safe::UnwindSafe for tst_udp::url::UdpUrl
+pub type tst_udp::SocketConfig = tst_udp::config::UdpConfig
 pub type tst_udp::UdpCancelHandle = tst_core::cancel::FlagCancel

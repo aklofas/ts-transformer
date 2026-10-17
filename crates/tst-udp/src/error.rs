@@ -10,7 +10,7 @@ use thiserror::Error;
 #[non_exhaustive]
 pub enum UdpError {
     #[error("URL parse failed: {0}")]
-    Url(#[from] crate::url::UdpUrlError),
+    Url(#[from] tst_core::url::UrlError),
 
     #[error("UDP socket I/O error: {0}")]
     Io(#[from] io::Error),

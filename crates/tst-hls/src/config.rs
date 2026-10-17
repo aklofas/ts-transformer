@@ -4,9 +4,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[cfg(feature = "serve")]
-use crate::url::HlsUrl;
-
 /// HLS playlist mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HlsMode {
@@ -88,7 +85,7 @@ pub struct HlsConfig {
     /// [`HlsError::TlsDisabled`](crate::HlsError::TlsDisabled).
     pub tls_key: Option<PathBuf>,
     /// Whether the bind is required to be HTTPS. Set by
-    /// [`Self::merge_from_url`] from an `hlss://` URL's scheme;
+    /// `HlsUrl::parse` from an `hlss://` URL's scheme;
     /// [`Self::validate`] rejects `tls: true` without both
     /// [`Self::tls_cert`] and [`Self::tls_key`] set, instead of silently
     /// falling back to a plaintext bind.
@@ -96,7 +93,7 @@ pub struct HlsConfig {
     /// Unlike [`Self::tls_cert`] / [`Self::tls_key`] / [`Self::basic_auth`]
     /// / [`Self::bind`], this field is read **unconditionally** —
     /// `validate()` is not gated behind the `serve` feature, so setting
-    /// `tls: true` by hand (with `serve` off, where `merge_from_url` isn't
+    /// `tls: true` by hand (with `serve` off, where URL parsing isn't
     /// even compiled) still requires `tls_cert`/`tls_key` to pass
     /// validation.
     pub tls: bool,
@@ -120,34 +117,6 @@ impl Default for HlsConfig {
 }
 
 impl HlsConfig {
-    /// Overlay URL-derived values on top of an existing config.
-    #[cfg(feature = "serve")]
-    pub fn merge_from_url(&mut self, url: &HlsUrl) {
-        self.bind = SocketAddr::new(url.addr, url.port);
-        self.tls = url.tls;
-        if let Some(dir) = &url.output_dir {
-            self.output_dir = PathBuf::from(dir);
-        }
-        if let Some(d) = url.segment_duration {
-            self.segment_duration = d;
-        }
-        if let Some(n) = url.playlist_window {
-            self.playlist_window = n;
-        }
-        if let Some(m) = url.mode {
-            self.mode = m;
-        }
-        if let (Some(u), Some(p)) = (&url.auth_user, &url.auth_pass) {
-            self.basic_auth = Some((u.clone(), p.clone()));
-        }
-        if let Some(c) = &url.cert {
-            self.tls_cert = Some(PathBuf::from(c));
-        }
-        if let Some(k) = &url.key {
-            self.tls_key = Some(PathBuf::from(k));
-        }
-    }
-
     /// Validate the config.  Returns an error message describing the first
     /// problem found (or `None` if valid).
     pub fn validate(&self) -> Option<String> {
@@ -206,6 +175,8 @@ impl HlsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "serve")]
+    use crate::url::HlsUrl;
 
     #[test]
     fn default_bind_is_loopback() {
@@ -297,12 +268,11 @@ mod tests {
 
     #[cfg(feature = "serve")]
     #[test]
-    fn merge_overlay() {
-        let mut cfg = HlsConfig::default();
-        let u =
+    fn url_overlay() {
+        let cfg =
             HlsUrl::parse("hls://127.0.0.1:9000?segment_duration=6&playlist_window=10&mode=vod")
-                .unwrap();
-        cfg.merge_from_url(&u);
+                .unwrap()
+                .config;
         assert_eq!(cfg.segment_duration, Duration::from_secs(6));
         assert_eq!(cfg.playlist_window, 10);
         assert_eq!(cfg.mode, HlsMode::Vod);
@@ -313,9 +283,7 @@ mod tests {
     fn hlss_without_cert_and_key_fails_validation() {
         // hlss:// with neither ?cert= nor ?key= must be rejected, not
         // silently downgraded to a plaintext bind.
-        let mut cfg = HlsConfig::default();
-        let u = HlsUrl::parse("hlss://0.0.0.0:8443").unwrap();
-        cfg.merge_from_url(&u);
+        let cfg = HlsUrl::parse("hlss://0.0.0.0:8443").unwrap().config;
         assert!(cfg.tls);
         assert!(cfg.validate().is_some());
     }
@@ -323,18 +291,16 @@ mod tests {
     #[cfg(feature = "serve")]
     #[test]
     fn hlss_with_cert_and_key_passes_validation() {
-        let mut cfg = HlsConfig::default();
-        let u = HlsUrl::parse("hlss://0.0.0.0:8443?cert=server.crt&key=server.key").unwrap();
-        cfg.merge_from_url(&u);
+        let cfg = HlsUrl::parse("hlss://0.0.0.0:8443?cert=server.crt&key=server.key")
+            .unwrap()
+            .config;
         assert_eq!(cfg.validate(), None);
     }
 
     #[cfg(feature = "serve")]
     #[test]
     fn plain_hls_without_cert_and_key_still_passes_validation() {
-        let mut cfg = HlsConfig::default();
-        let u = HlsUrl::parse("hls://0.0.0.0:8080").unwrap();
-        cfg.merge_from_url(&u);
+        let cfg = HlsUrl::parse("hls://0.0.0.0:8080").unwrap().config;
         assert!(!cfg.tls);
         assert_eq!(cfg.validate(), None);
     }

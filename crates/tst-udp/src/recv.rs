@@ -13,7 +13,7 @@ use tst_core::transport::{
     BrokenCause, RecvTransport, SocketStats, TransportCancel, TransportError,
 };
 
-use crate::config::SocketConfig;
+use crate::config::UdpConfig;
 use crate::error::UdpError;
 use crate::stats::UdpStats;
 use crate::transport::UdpCancelHandle;
@@ -61,16 +61,14 @@ impl UdpRecvTransport {
     /// - For multicast groups, the socket joins the group on bind.
     pub fn listen(url: &str) -> Result<Self, UdpError> {
         let url = UdpUrl::parse(url)?;
-        if url.pkt_size.is_some() {
-            return Err(UdpError::Url(crate::url::UdpUrlError::RecvPktSize));
+        if url.config.pkt_size.is_some() {
+            return Err(UdpError::Url(crate::url::recv_pkt_size_rejection()));
         }
-        let mut cfg = SocketConfig::default();
-        cfg.merge_from_url(&url);
-        Self::with_config(&url, &cfg)
+        Self::with_config(&url, &url.config)
     }
 
     /// Build from already-parsed `UdpUrl` + config.
-    pub fn with_config(url: &UdpUrl, cfg: &SocketConfig) -> Result<Self, UdpError> {
+    pub fn with_config(url: &UdpUrl, cfg: &UdpConfig) -> Result<Self, UdpError> {
         let bind_addr: SocketAddr = if url.is_multicast() {
             match url.addr {
                 IpAddr::V4(_) => {
@@ -436,8 +434,8 @@ mod tests {
             Ok(_) => panic!("direct listen must reject ?pkt_size= like the builder path"),
         };
         assert!(
-            matches!(err, UdpError::Url(crate::url::UdpUrlError::RecvPktSize)),
-            "expected UdpError::Url(RecvPktSize), got: {err:?}"
+            matches!(&err, UdpError::Url(tst_core::url::UrlError::Rejected(_))),
+            "expected UdpError::Url(Rejected), got: {err:?}"
         );
         assert!(
             err.to_string().contains("send-side knob"),

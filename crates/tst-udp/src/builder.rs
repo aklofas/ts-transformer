@@ -2,31 +2,32 @@
 
 use std::net::IpAddr;
 
-use crate::config::SocketConfig;
+use crate::config::UdpConfig;
 use crate::error::UdpError;
 use crate::recv::UdpRecvTransport;
 use crate::transport::UdpTransport;
-use crate::url::{UdpUrl, UdpUrlError};
+use tst_core::url::UrlError;
+
+use crate::url::UdpUrl;
 
 /// Builder for [`UdpTransport`] (sender).
 #[must_use]
 #[derive(Debug, Clone)]
 pub struct UdpTransportBuilder {
     url: UdpUrl,
-    config: SocketConfig,
+    config: UdpConfig,
 }
 
 impl UdpTransportBuilder {
     /// Build from a `udp://` URL. Query-param knobs are applied automatically.
-    pub fn from_url(url: &str) -> Result<Self, UdpUrlError> {
+    pub fn from_url(url: &str) -> Result<Self, UrlError> {
         let url = UdpUrl::parse(url)?;
         if url.recv_bind {
-            return Err(UdpUrlError::SendRecvMismatch(
+            return Err(UrlError::Rejected(
                 "URL has '@' prefix → use UdpRecvTransportBuilder instead".into(),
             ));
         }
-        let mut config = SocketConfig::default();
-        config.merge_from_url(&url);
+        let config = url.config.clone();
         Ok(Self { url, config })
     }
 
@@ -66,8 +67,8 @@ impl UdpTransportBuilder {
         self
     }
 
-    /// Build the transport. Consumes the builder.
-    pub fn build(self) -> Result<UdpTransport, UdpError> {
+    /// Build the transport.
+    pub fn build(&self) -> Result<UdpTransport, UdpError> {
         UdpTransport::with_config(&self.url, &self.config)
     }
 }
@@ -77,17 +78,16 @@ impl UdpTransportBuilder {
 #[derive(Debug, Clone)]
 pub struct UdpRecvTransportBuilder {
     url: UdpUrl,
-    config: SocketConfig,
+    config: UdpConfig,
 }
 
 impl UdpRecvTransportBuilder {
-    pub fn from_url(url: &str) -> Result<Self, UdpUrlError> {
+    pub fn from_url(url: &str) -> Result<Self, UrlError> {
         let url = UdpUrl::parse(url)?;
-        if url.pkt_size.is_some() {
-            return Err(UdpUrlError::RecvPktSize);
+        if url.config.pkt_size.is_some() {
+            return Err(crate::url::recv_pkt_size_rejection());
         }
-        let mut config = SocketConfig::default();
-        config.merge_from_url(&url);
+        let config = url.config.clone();
         Ok(Self { url, config })
     }
 
@@ -101,7 +101,7 @@ impl UdpRecvTransportBuilder {
         self
     }
 
-    pub fn build(self) -> Result<UdpRecvTransport, UdpError> {
+    pub fn build(&self) -> Result<UdpRecvTransport, UdpError> {
         UdpRecvTransport::with_config(&self.url, &self.config)
     }
 }
@@ -136,7 +136,7 @@ mod tests {
     fn recv_from_url_rejects_pkt_size() {
         let err = UdpRecvTransportBuilder::from_url("udp://@127.0.0.1:0?pkt_size=1316")
             .expect_err("recv URL with ?pkt_size= must be rejected");
-        assert!(matches!(err, UdpUrlError::RecvPktSize), "got: {err:?}");
+        assert!(matches!(err, UrlError::Rejected(_)), "got: {err:?}");
         assert!(err.to_string().contains("send-side knob"));
     }
 

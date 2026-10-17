@@ -10,7 +10,11 @@
 
 use std::net::IpAddr;
 
-use thiserror::Error;
+use tst_core::url::UrlError;
+use tst_core::url::common::{parse_int, parse_size, parse_url};
+use tst_core::url::query::{QueryKey, UnknownKeys, apply_query};
+
+use crate::config::UdpConfig;
 
 /// Parsed UDP URL.
 #[derive(Debug, Clone)]
@@ -23,57 +27,129 @@ pub struct UdpUrl {
     pub port: u16,
     /// Whether the URL had an `@` prefix → "this is a receive-side bind".
     pub recv_bind: bool,
-    /// Multicast outgoing interface (literal IPv4/IPv6 addr or interface name).
-    pub iface: Option<String>,
-    /// IPv4 multicast TTL or IPv6 hop limit.
-    pub ttl: Option<u8>,
-    /// IP TOS / DSCP byte.
-    pub tos: Option<u8>,
-    /// SO_RCVBUF size in bytes.
-    pub rcvbuf: Option<usize>,
-    /// SO_SNDBUF size in bytes.
-    pub sndbuf: Option<usize>,
-    /// Send-side datagram size. Rejected on a recv-side URL.
-    pub pkt_size: Option<usize>,
-    /// Local bind address override (for sending from a specific NIC).
-    pub localaddr: Option<IpAddr>,
+    /// The socket knobs the URL's query carried; every other field is
+    /// `None`. `pkt_size` is rejected on a receive-side URL by the
+    /// receiver's entry point.
+    pub config: UdpConfig,
 }
 
-/// Errors from `UdpUrl::parse`.
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum UdpUrlError {
-    #[error("URL scheme must be 'udp', got '{0}'")]
-    BadScheme(String),
-    #[error("URL must include a port")]
-    MissingPort,
-    #[error("could not resolve host '{host}': {detail}")]
-    HostResolve { host: String, detail: String },
-    /// A recv-bind (`@`-prefixed) URL was passed to a send-side entry
-    /// point, or vice versa. The message names the right entry point.
-    #[error("{0}")]
-    SendRecvMismatch(String),
-    /// The peer address and `?localaddr=` are different IP families. A
-    /// socket bound to one family cannot send to the other — the failure
-    /// would otherwise surface only at the first send as an opaque OS
-    /// error, so it is rejected at parse time.
-    #[error("peer address {peer} and ?localaddr={local} are different IP families")]
-    FamilyMismatch { peer: IpAddr, local: IpAddr },
-    #[error("query param '{key}' has invalid value '{value}': {detail}")]
-    BadQueryValue {
-        key: String,
-        value: String,
-        detail: String,
-    },
-    /// `?pkt_size=` supplied on a receive-side URL. Send-side only: the
-    /// receive buffer always accepts any
-    /// legal datagram (65535 ceiling).
-    #[error(
-        "pkt_size is a send-side knob; receive buffers size to the transport's deliverable ceiling automatically — remove ?pkt_size= from receiver URLs"
-    )]
-    RecvPktSize,
-    #[error("URL parse failed: {0}")]
-    Parse(#[from] tst_core::url::common::UrlError),
+type Applied = Result<(), UrlError>;
+
+fn set_iface(c: &mut UdpConfig, _key: &str, value: &str) -> Applied {
+    c.iface = Some(value.to_string());
+    Ok(())
+}
+
+fn set_ttl(c: &mut UdpConfig, key: &str, value: &str) -> Applied {
+    c.ttl = Some(parse_int(key, value)?);
+    Ok(())
+}
+
+fn set_tos(c: &mut UdpConfig, key: &str, value: &str) -> Applied {
+    let parsed = if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        u8::from_str_radix(hex, 16)
+    } else {
+        value.parse::<u8>()
+    };
+    c.tos = Some(parsed.map_err(|e| UrlError::BadQueryValue {
+        key: key.to_string(),
+        value: value.to_string(),
+        detail: e.to_string(),
+    })?);
+    Ok(())
+}
+
+fn set_rcvbuf(c: &mut UdpConfig, key: &str, value: &str) -> Applied {
+    c.rcvbuf = Some(parse_size(key, value)?);
+    Ok(())
+}
+
+fn set_sndbuf(c: &mut UdpConfig, key: &str, value: &str) -> Applied {
+    c.sndbuf = Some(parse_size(key, value)?);
+    Ok(())
+}
+
+fn set_pkt_size(c: &mut UdpConfig, key: &str, value: &str) -> Applied {
+    c.pkt_size = Some(parse_size(key, value)?);
+    Ok(())
+}
+
+fn set_localaddr(c: &mut UdpConfig, key: &str, value: &str) -> Applied {
+    let addr: IpAddr =
+        value
+            .parse()
+            .map_err(|e: std::net::AddrParseError| UrlError::BadQueryValue {
+                key: key.to_string(),
+                value: value.to_string(),
+                detail: e.to_string(),
+            })?;
+    c.localaddr = Some(addr);
+    Ok(())
+}
+
+/// The query keys a `udp://` URL accepts; the parser and the generated
+/// key documentation both read this table.
+#[doc(hidden)]
+pub const URL_KEYS: &[QueryKey<UdpConfig>] = &[
+    QueryKey::new(
+        "iface",
+        &[],
+        "Network interface for multicast and egress",
+        "interface name or literal IP address",
+        set_iface,
+    ),
+    QueryKey::new(
+        "localaddr",
+        &[],
+        "Local address to bind",
+        "IP address",
+        set_localaddr,
+    ),
+    QueryKey::new(
+        "ttl",
+        &[],
+        "Multicast hop limit",
+        "decimal 0 to 255",
+        set_ttl,
+    ),
+    QueryKey::new(
+        "tos",
+        &[],
+        "IP type of service",
+        "decimal, or hex with a `0x` prefix, 0 to 255",
+        set_tos,
+    ),
+    QueryKey::new(
+        "rcvbuf",
+        &[],
+        "Kernel socket buffer size",
+        "bytes; `K` and `M` suffixes are 1024-based; at most 256 MiB",
+        set_rcvbuf,
+    ),
+    QueryKey::new(
+        "sndbuf",
+        &[],
+        "Kernel socket buffer size",
+        "bytes; `K` and `M` suffixes are 1024-based; at most 256 MiB",
+        set_sndbuf,
+    ),
+    QueryKey::new(
+        "pkt_size",
+        &[],
+        "Datagram payload size",
+        "bytes with the `K`/`M` forms",
+        set_pkt_size,
+    ),
+];
+
+/// The refusal for a receive-side URL that names `?pkt_size=`.
+pub(crate) fn recv_pkt_size_rejection() -> UrlError {
+    UrlError::Rejected(
+        "pkt_size is a send-side knob; receive buffers size to the transport's deliverable ceiling automatically — remove ?pkt_size= from receiver URLs".into(),
+    )
 }
 
 impl UdpUrl {
@@ -86,14 +162,16 @@ impl UdpUrl {
     /// `resolve_host` doc comment for the full tiebreak rationale). The
     /// `?localaddr=` and IPv4 `?iface=` values stay literal-only
     /// (resolving a local NIC selector through DNS is meaningless).
-    pub fn parse(s: &str) -> Result<Self, UdpUrlError> {
-        use tst_core::url::common::parse_url;
-
-        let parsed = parse_url(s)?;
+    pub fn parse(s: &str) -> Result<Self, UrlError> {
+        let parsed =
+            parse_url(s).map_err(|e| UrlError::Rejected(format!("URL parse failed: {e}")))?;
         if parsed.scheme != "udp" {
-            return Err(UdpUrlError::BadScheme(parsed.scheme.to_string()));
+            return Err(UrlError::BadScheme {
+                expected: "'udp'",
+                got: parsed.scheme.to_string(),
+            });
         }
-        let port = parsed.port.ok_or(UdpUrlError::MissingPort)?;
+        let port = parsed.port.ok_or(UrlError::MissingPort)?;
 
         // ffmpeg `@` prefix on host means "bind on this address (recv-side)".
         // `parse_url` treats `@` as the userinfo separator, so `udp://@host:port`
@@ -102,37 +180,10 @@ impl UdpUrl {
         let recv_bind = parsed.username.is_some();
         let host_str = parsed.host;
 
-        let mut iface = None;
-        let mut ttl = None;
-        let mut tos = None;
-        let mut rcvbuf = None;
-        let mut sndbuf = None;
-        let mut pkt_size = None;
-        let mut localaddr = None;
-
-        for (k, v) in &parsed.query {
-            let key = k.as_ref();
-            let value = v.as_ref();
-            match key {
-                "iface" => iface = Some(value.to_string()),
-                "ttl" => ttl = Some(parse_u8_dec(key, value)?),
-                "tos" => tos = Some(parse_u8_hex_or_dec(key, value)?),
-                "rcvbuf" => rcvbuf = Some(parse_byte_size(key, value)?),
-                "sndbuf" => sndbuf = Some(parse_byte_size(key, value)?),
-                "pkt_size" => pkt_size = Some(parse_byte_size(key, value)?),
-                "localaddr" => {
-                    let a: IpAddr = value.parse().map_err(|e: std::net::AddrParseError| {
-                        UdpUrlError::BadQueryValue {
-                            key: key.to_string(),
-                            value: value.to_string(),
-                            detail: e.to_string(),
-                        }
-                    })?;
-                    localaddr = Some(a);
-                }
-                _ => { /* unknown params silently ignored — matches ffmpeg behavior */ }
-            }
-        }
+        // Unknown params are silently ignored — matches ffmpeg behavior.
+        let mut config = UdpConfig::default();
+        apply_query(URL_KEYS, &mut config, &parsed.query, UnknownKeys::Ignore)?;
+        let localaddr = config.localaddr;
 
         // IP literals stay a pure parse; anything else is treated as a
         // hostname and resolved via the system resolver — matching
@@ -150,7 +201,9 @@ impl UdpUrl {
             Ok(a) => {
                 if let Some(la) = localaddr {
                     if a.is_ipv4() != la.is_ipv4() {
-                        return Err(UdpUrlError::FamilyMismatch { peer: a, local: la });
+                        return Err(UrlError::Rejected(format!(
+                            "peer address {a} and ?localaddr={la} are different IP families"
+                        )));
                     }
                 }
                 a
@@ -162,13 +215,7 @@ impl UdpUrl {
             addr,
             port,
             recv_bind,
-            iface,
-            ttl,
-            tos,
-            rcvbuf,
-            sndbuf,
-            pkt_size,
-            localaddr,
+            config,
         })
     }
 
@@ -205,12 +252,12 @@ fn resolve_host(
     // only IPv6 — set when `?localaddr=` pins the local family. `None` =
     // unconstrained (the documented IPv4-preference tiebreak applies).
     required_v4: Option<bool>,
-) -> Result<IpAddr, UdpUrlError> {
+) -> Result<IpAddr, UrlError> {
     use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 
     let mut candidates: Vec<SocketAddr> = (host, port)
         .to_socket_addrs()
-        .map_err(|e| UdpUrlError::HostResolve {
+        .map_err(|e| UrlError::HostResolve {
             host: host.to_string(),
             detail: e.to_string(),
         })?
@@ -219,7 +266,7 @@ fn resolve_host(
         let unfiltered = candidates.len();
         candidates.retain(|sa| sa.is_ipv4() == v4);
         if candidates.is_empty() && unfiltered > 0 {
-            return Err(UdpUrlError::HostResolve {
+            return Err(UrlError::HostResolve {
                 host: host.to_string(),
                 detail: format!(
                     "resolved to no {} addresses ({} candidate(s) of the \
@@ -233,7 +280,7 @@ fn resolve_host(
     let first = candidates
         .first()
         .copied()
-        .ok_or_else(|| UdpUrlError::HostResolve {
+        .ok_or_else(|| UrlError::HostResolve {
             host: host.to_string(),
             detail: "resolved to no addresses".to_string(),
         })?;
@@ -260,38 +307,6 @@ fn resolve_host(
     Ok(first.ip())
 }
 
-fn parse_u8_hex_or_dec(key: &str, value: &str) -> Result<u8, UdpUrlError> {
-    let v = if let Some(hex) = value
-        .strip_prefix("0x")
-        .or_else(|| value.strip_prefix("0X"))
-    {
-        u8::from_str_radix(hex, 16)
-    } else {
-        value.parse::<u8>()
-    };
-    v.map_err(|e| UdpUrlError::BadQueryValue {
-        key: key.to_string(),
-        value: value.to_string(),
-        detail: e.to_string(),
-    })
-}
-
-fn parse_u8_dec(key: &str, value: &str) -> Result<u8, UdpUrlError> {
-    tst_core::url::common::parse_int_query(value).map_err(|detail| UdpUrlError::BadQueryValue {
-        key: key.to_string(),
-        value: value.to_string(),
-        detail,
-    })
-}
-
-fn parse_byte_size(key: &str, value: &str) -> Result<usize, UdpUrlError> {
-    tst_core::url::common::parse_byte_size(value).map_err(|detail| UdpUrlError::BadQueryValue {
-        key: key.to_string(),
-        value: value.to_string(),
-        detail,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     /// `?localaddr=` and the peer must agree on IP family. Literal
@@ -302,9 +317,15 @@ mod tests {
     #[test]
     fn localaddr_family_mismatch_literals_rejected() {
         let e = UdpUrl::parse("udp://239.0.0.1:5000?localaddr=::1").unwrap_err();
-        assert!(matches!(e, UdpUrlError::FamilyMismatch { .. }), "got {e:?}");
+        assert!(
+            matches!(&e, UrlError::Rejected(m) if m.contains("different IP families")),
+            "got {e:?}"
+        );
         let e = UdpUrl::parse("udp://[ff02::1]:5000?localaddr=127.0.0.1").unwrap_err();
-        assert!(matches!(e, UdpUrlError::FamilyMismatch { .. }), "got {e:?}");
+        assert!(
+            matches!(&e, UrlError::Rejected(m) if m.contains("different IP families")),
+            "got {e:?}"
+        );
     }
 
     #[test]
@@ -327,7 +348,7 @@ mod tests {
                 "IPv4 peer with IPv6 localaddr: {:?}",
                 u.addr
             ),
-            Err(UdpUrlError::HostResolve { detail, .. }) => {
+            Err(UrlError::HostResolve { detail, .. }) => {
                 assert!(detail.contains("IPv6"), "unexpected detail: {detail}");
             }
             Err(e) => panic!("unexpected error kind: {e:?}"),
@@ -370,18 +391,18 @@ mod tests {
     fn multicast_v6_with_query() {
         let u = UdpUrl::parse("udp://[ff0e::1]:5004?iface=eth0&ttl=8").unwrap();
         assert!(u.is_multicast());
-        assert_eq!(u.iface.as_deref(), Some("eth0"));
-        assert_eq!(u.ttl, Some(8));
+        assert_eq!(u.config.iface.as_deref(), Some("eth0"));
+        assert_eq!(u.config.ttl, Some(8));
     }
 
     #[test]
     fn knobs_pkt_size_tos_bufs_hex_suffix() {
         let u = UdpUrl::parse("udp://239.10.0.1:5004?pkt_size=1316&tos=0xb8&sndbuf=2M&rcvbuf=8M")
             .unwrap();
-        assert_eq!(u.pkt_size, Some(1316));
-        assert_eq!(u.tos, Some(0xb8));
-        assert_eq!(u.sndbuf, Some(2 * 1024 * 1024));
-        assert_eq!(u.rcvbuf, Some(8 * 1024 * 1024));
+        assert_eq!(u.config.pkt_size, Some(1316));
+        assert_eq!(u.config.tos, Some(0xb8));
+        assert_eq!(u.config.sndbuf, Some(2 * 1024 * 1024));
+        assert_eq!(u.config.rcvbuf, Some(8 * 1024 * 1024));
     }
 
     #[test]
@@ -391,7 +412,7 @@ mod tests {
         // ceiling check.
         let err = UdpUrl::parse("udp://239.10.0.1:5004?pkt_size=999999999999999999999M")
             .expect_err("overflowing pkt_size must be rejected");
-        assert!(matches!(err, UdpUrlError::BadQueryValue { .. }));
+        assert!(matches!(err, UrlError::BadQueryValue { .. }));
     }
 
     #[test]
@@ -401,7 +422,7 @@ mod tests {
         let err = UdpUrl::parse("udp://239.10.0.1:5004?pkt_size=999999M")
             .expect_err("absurd pkt_size must exceed the byte-size ceiling");
         match err {
-            UdpUrlError::BadQueryValue { detail, .. } => {
+            UrlError::BadQueryValue { detail, .. } => {
                 assert!(detail.contains("exceeds maximum"), "detail: {detail}");
             }
             other => panic!("unexpected error: {other:?}"),
@@ -411,7 +432,7 @@ mod tests {
     #[test]
     fn byte_size_at_ceiling_is_accepted() {
         let u = UdpUrl::parse("udp://239.10.0.1:5004?rcvbuf=256M").unwrap();
-        assert_eq!(u.rcvbuf, Some(256 * 1024 * 1024));
+        assert_eq!(u.config.rcvbuf, Some(256 * 1024 * 1024));
     }
 
     #[test]
@@ -479,7 +500,7 @@ mod tests {
         // this exercises the resolution-failure path deterministically.
         let err = UdpUrl::parse("udp://gimbal.invalid:5004").expect_err("must not resolve");
         match err {
-            UdpUrlError::HostResolve { host, .. } => assert_eq!(host, "gimbal.invalid"),
+            UrlError::HostResolve { host, .. } => assert_eq!(host, "gimbal.invalid"),
             other => panic!("expected HostResolve, got {other:?}"),
         }
     }
@@ -488,7 +509,7 @@ mod tests {
     fn rejects_bad_scheme() {
         assert!(matches!(
             UdpUrl::parse("https://host:5004"),
-            Err(UdpUrlError::BadScheme(_))
+            Err(UrlError::BadScheme { .. })
         ));
     }
 
@@ -496,7 +517,7 @@ mod tests {
     fn rejects_missing_port() {
         assert!(matches!(
             UdpUrl::parse("udp://239.10.0.1"),
-            Err(UdpUrlError::MissingPort)
+            Err(UrlError::MissingPort)
         ));
     }
 }
