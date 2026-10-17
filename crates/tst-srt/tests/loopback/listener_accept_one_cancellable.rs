@@ -1,4 +1,4 @@
-//! `Listener::accept_one_cancellable` — bind plus a single accept with the
+//! `SrtListener::accept_one_cancellable` — bind plus a single accept with the
 //! accept reachable by a [`CancelSlot`] from another thread. Every managed
 //! listener-mode factory (C ABI, Python, JVM) routes through this helper, so
 //! the cancel contract is pinned here once. Requires libsrt loopback.
@@ -8,8 +8,8 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tst_core::cancel::CancelSlot;
 use tst_core::transport::{Transport, TransportError};
-use tst_srt::config::ListenerConfig;
-use tst_srt::{Listener, SocketBuilder};
+use tst_srt::config::SrtListenerConfig;
+use tst_srt::{SrtListener, SrtSocketBuilder};
 
 /// Reserve an ephemeral UDP port and release it again. Unlike
 /// `127.0.0.1:0`, the resulting port is knowable by a connecting peer
@@ -34,7 +34,7 @@ fn cancelled_before_bind_returns_explicit_close_and_leaves_the_port_free() {
     slot.cancel();
 
     let start = Instant::now();
-    let result = Listener::accept_one_cancellable(&ListenerConfig::default(), &addr, &slot);
+    let result = SrtListener::accept_one_cancellable(&SrtListenerConfig::default(), &addr, &slot);
     let elapsed = start.elapsed();
 
     match result {
@@ -69,7 +69,8 @@ fn cancel_during_accept_returns_explicit_close_promptly() {
     };
 
     let start = Instant::now();
-    let result = Listener::accept_one_cancellable(&ListenerConfig::default(), "127.0.0.1:0", &slot);
+    let result =
+        SrtListener::accept_one_cancellable(&SrtListenerConfig::default(), "127.0.0.1:0", &slot);
     let elapsed = start.elapsed();
     canceller.join().expect("canceller thread");
 
@@ -104,7 +105,7 @@ fn spawn_connector(
     let handle = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let attempt = SocketBuilder::new()
+            let attempt = SrtSocketBuilder::new()
                 .connect_timeout(Duration::from_millis(500))
                 .connect(format!("127.0.0.1:{port}"));
             match attempt {
@@ -137,8 +138,8 @@ fn accepts_a_connecting_peer() {
     let slot = Arc::new(CancelSlot::new());
     let (release_tx, connector) = spawn_connector(port, Arc::clone(&slot));
 
-    let result = Listener::accept_one_cancellable(
-        &ListenerConfig::default(),
+    let result = SrtListener::accept_one_cancellable(
+        &SrtListenerConfig::default(),
         &format!("127.0.0.1:{port}"),
         &slot,
     );

@@ -100,7 +100,7 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-pipeline | mux_publisher | Provisional | HLS-adjacent, newer |
 | tst-pipeline | ext | Provisional | extensions (pairing, file transport) — newer surface |
 | tst-pipeline | binding | Provisional | binding-shared handle layer (`Owned`, `HandleState`, panic helpers, `BindingErrorKind`, `view`, `opened`, `ManagedHandles`); `no_std` + `alloc` except `ManagedHandles` (`std`); shape may still move before 1.0; kept a module of tst-pipeline, not a crate (see `architecture.md`) |
-| tst-srt | (crate) | Stable | primary transport of the project scope |
+| tst-srt | (crate) | Stable | primary transport of the project scope; the `Srt`-prefixed type names (`SrtSocket`, `SrtListener`, `SrtStats`, ...) replace the unprefixed ones, which stay as deprecated aliases until 0.10.0 |
 | tst-srt | opener | Provisional | URL → type-erased transport for the language bindings' shells |
 | tst-srt | shells | Provisional | URL → managed-shell open path returning `tst_pipeline::binding::ManagedHandles`; new surface, may still move before 1.0 |
 | tst-udp | (crate) | Stable | small, settled |

@@ -1,9 +1,9 @@
 //! Connected SRT data socket.
 
 use crate::addr::{from_sockaddr, to_sockaddr};
-use crate::config::SocketConfig;
+use crate::config::SrtSocketConfig;
 use crate::error::{
-    ConnectError, IoError, OptionError, RecvError, SendError, SrtErrno, classify_connect_error,
+    IoError, OptionError, RecvError, SendError, SrtConnectError, SrtErrno, classify_connect_error,
     last_error, last_reject,
 };
 use crate::init::ensure_initialized;
@@ -19,12 +19,12 @@ const SRT_INVALID_SOCK: srt_sys::SRTSOCKET = -1;
 
 /// Connected, bidirectional SRT data socket.
 ///
-/// Constructed via [`SocketBuilder`](crate::SocketBuilder), via
-/// [`Socket::connect_with`], or returned from [`Listener::accept`](crate::Listener::accept).
+/// Constructed via [`SrtSocketBuilder`](crate::SrtSocketBuilder), via
+/// [`SrtSocket::connect_with`], or returned from [`SrtListener::accept`](crate::SrtListener::accept).
 ///
 /// # Closing
 ///
-/// `Socket` is `Send` (libsrt is internally per-handle thread-safe; the
+/// `SrtSocket` is `Send` (libsrt is internally per-handle thread-safe; the
 /// `SRTSOCKET` integer can move across threads). It supports three
 /// shutdown patterns:
 ///
@@ -34,7 +34,7 @@ const SRT_INVALID_SOCK: srt_sys::SRTSOCKET = -1;
 ///    `ResourceCancel::is_cancelled()`: Drop also runs on every transport
 ///    error path that retires a dead socket, and a peer disconnect must not
 ///    read as a caller cancel. Bounded by `SRTO_LINGER` (libsrt default off,
-///    sender preset 5 s, configurable via `SocketBuilder::linger` before construction).
+///    sender preset 5 s, configurable via `SrtSocketBuilder::linger` before construction).
 /// 2. **Explicit close** — call [`Self::close`] (consuming `self`). Same
 ///    `srt_close`, but it DOES latch `is_cancelled()` — a caller asked for
 ///    it. Always returns `Ok(())` (the inner `srt_close` rc is currently
@@ -55,10 +55,10 @@ const SRT_INVALID_SOCK: srt_sys::SRTSOCKET = -1;
 /// | Kotlin | Wrap as `AutoCloseable`; `.use { }` calls drop on exit |
 /// | Swift | `deinit` calls drop; `defer { handle.cancel() }` for explicit cross-thread |
 /// | Python | Wrap as `__enter__`/`__exit__`; `with ... as sock:` calls drop on exit |
-/// | C | (deferred — `Socket` is not directly exposed at the C ABI; senders/receivers wrap it) |
+/// | C | (deferred — `SrtSocket` is not directly exposed at the C ABI; senders/receivers wrap it) |
 ///
 /// See [`docs/reference/srt-cancel-handle.md`](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/srt-cancel-handle.md) for the full cancel-handle pattern.
-pub struct Socket {
+pub struct SrtSocket {
     handle: srt_sys::SRTSOCKET,
     /// Shared close-once primitive. Cloned out via `cancel_handle()` so a
     /// thread parked in `send`/`recv` can be woken from another thread.
@@ -75,9 +75,9 @@ pub struct Socket {
     cached_payload_limit: usize,
 }
 
-impl std::fmt::Debug for Socket {
+impl std::fmt::Debug for SrtSocket {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Socket")
+        f.debug_struct("SrtSocket")
             .field("handle", &self.handle)
             .field("stream_id", &self.cached_stream_id)
             .field("payload_limit", &self.cached_payload_limit)
@@ -101,7 +101,7 @@ tst_core::binding_record! {
     #[must_use]
     #[derive(Debug, Clone, Copy)]
     #[non_exhaustive]
-    pub struct Stats {
+    pub struct SrtStats {
         /// Bytes sent, cumulative.
         pub bytes_sent: u64,
         /// Bytes received, cumulative.
@@ -144,9 +144,9 @@ tst_core::binding_record! {
 // SAFETY: a SRTSOCKET is just an integer handle; libsrt is internally
 // thread-safe per-socket (concurrent operations on the same handle from two
 // threads are still UB, but moving across threads is fine). Mirrors std::net.
-unsafe impl Send for Socket {}
+unsafe impl Send for SrtSocket {}
 
-impl Socket {
+impl SrtSocket {
     /// Raw libsrt socket handle. **Unstable, used for low-level interop tests.**
     #[doc(hidden)]
     pub fn raw_handle(&self) -> srt_sys::SRTSOCKET {
@@ -174,18 +174,18 @@ impl Socket {
     /// signal. Subsequent calls reuse the once-initialized state and do
     /// not re-trigger the startup path.
     pub fn connect_with(
-        config: &SocketConfig,
+        config: &SrtSocketConfig,
         addr: impl ToSocketAddrs,
-    ) -> Result<Self, ConnectError> {
+    ) -> Result<Self, SrtConnectError> {
         // Resolved before the operation starts: a lookup can block for
         // seconds, makes no libsrt call, and nothing can wake it, so it
         // must not be something the process-exit guard waits for.
         let addrs: Vec<SocketAddr> = addr
             .to_socket_addrs()
-            .map_err(|e| ConnectError::InvalidAddress(e.into()))?
+            .map_err(|e| SrtConnectError::InvalidAddress(e.into()))?
             .collect();
         if addrs.is_empty() {
-            return Err(ConnectError::InvalidAddress(
+            return Err(SrtConnectError::InvalidAddress(
                 crate::error::AddrError::Resolve("no addresses resolved".into()),
             ));
         }
@@ -197,7 +197,7 @@ impl Socket {
         };
         ensure_initialized();
 
-        let mut last_err: Option<ConnectError> = None;
+        let mut last_err: Option<SrtConnectError> = None;
         for sa in addrs {
             // Process exit started during the walk (it cancelled the
             // attempt before this one): stop, do not dial the next address.
@@ -215,7 +215,7 @@ impl Socket {
 
             if let Err(e) = apply_socket_config(handle, config) {
                 unsafe { srt_sys::srt_close(handle) };
-                last_err = Some(ConnectError::InvalidOption(e));
+                last_err = Some(SrtConnectError::InvalidOption(e));
                 continue;
             }
 
@@ -252,12 +252,12 @@ impl Socket {
         Err(last_err.expect("non-empty addrs always populates last_err on full-walk failure"))
     }
 
-    /// Internal: wrap an already-accepted handle (called from `Listener::accept`).
+    /// Internal: wrap an already-accepted handle (called from `SrtListener::accept`).
     ///
     /// **Leak safety:** the raw accepted `handle` is wrapped in the owning
-    /// `Socket` (Drop active → `srt_close`) BEFORE any fallible option is
+    /// `SrtSocket` (Drop active → `srt_close`) BEFORE any fallible option is
     /// applied. A failed `set_int` therefore early-returns through `?` and the
-    /// constructed `Socket` is dropped, closing the descriptor — never leaking
+    /// constructed `SrtSocket` is dropped, closing the descriptor — never leaking
     /// the accepted SRT socket. (Previously options were applied to the bare
     /// `handle` before any owner existed, so an early return leaked the fd.)
     pub(crate) fn from_accepted(
@@ -284,7 +284,7 @@ impl Socket {
         // processing thread completes the connection — asynchronously and
         // independently of when the application calls `srt_accept`. A
         // caller that transiently toggles `SRTO_RCVSYN` false on the
-        // listener (`Listener::accept_timeout`'s non-blocking probe,
+        // listener (`SrtListener::accept_timeout`'s non-blocking probe,
         // `try_accept_nonblocking`) can therefore have a real, concurrent
         // handshake complete while that toggle is in effect, and the
         // resulting accepted socket inherits `RCVSYN=false` PERMANENTLY —
@@ -424,7 +424,7 @@ impl Socket {
     }
 
     /// Snapshot of libsrt's per-socket performance counters.
-    pub fn stats(&self) -> Result<Stats, IoError> {
+    pub fn stats(&self) -> Result<SrtStats, IoError> {
         let Some(_op) = crate::exit_guard::enter() else {
             return Err(IoError::SocketClosed);
         };
@@ -469,13 +469,13 @@ impl Socket {
     ///
     /// # Post-cancel fd-reuse note
     ///
-    /// After `cancel()` fires, this `Socket` still holds the integer
+    /// After `cancel()` fires, this `SrtSocket` still holds the integer
     /// libsrt handle. `&self` methods (`stats`, `peer_addr`, `local_addr`)
-    /// called on the still-live `Socket` after cross-thread cancel may
+    /// called on the still-live `SrtSocket` after cross-thread cancel may
     /// operate on a reused fd if libsrt has reassigned that integer to a
     /// new socket in the interim. The transport layer guards against this
     /// by nulling the socket on `Broken`, but callers that retain bare
-    /// `Socket` values past a cancel should treat any post-cancel `&self`
+    /// `SrtSocket` values past a cancel should treat any post-cancel `&self`
     /// results as advisory. No memory unsafety results; libsrt validates
     /// handles internally.
     pub fn cancel_handle(&self) -> tst_core::ResourceCancel {
@@ -483,13 +483,13 @@ impl Socket {
     }
 }
 
-impl Drop for Socket {
+impl Drop for SrtSocket {
     fn drop(&mut self) {
         // No-op if explicit close() / cancel() already fired.
         //
         // `close_without_cancel`, NOT `cancel`: Drop runs on every transport
         // error path that retires a dead socket (`SrtTransport` nulls its
-        // `Option<Socket>` on a peer break), and a peer disconnect must not
+        // `Option<SrtSocket>` on a peer break), and a peer disconnect must not
         // latch the caller-visible `is_cancelled()`. The socket is still
         // closed and any parked call still woken — only the latch differs.
         self.cancel.close_without_cancel();
@@ -730,11 +730,11 @@ pub(crate) fn set_passphrase(
 }
 
 /// Apply the option set shared by `apply_socket_config` and
-/// `apply_listener_config`: the fields of a `SocketConfig` that mean
+/// `apply_listener_config`: the fields of a `SrtSocketConfig` that mean
 /// something on both a caller and a passive socket.
 fn apply_common_options(
     handle: srt_sys::SRTSOCKET,
-    opts: &SocketConfig,
+    opts: &SrtSocketConfig,
 ) -> Result<(), OptionError> {
     if let Some(p) = opts.passphrase.as_ref() {
         // Set key length BEFORE passphrase.
@@ -812,10 +812,10 @@ fn apply_common_options(
     Ok(())
 }
 
-/// Apply every set field of a `SocketConfig` to the handle.
+/// Apply every set field of a `SrtSocketConfig` to the handle.
 pub(crate) fn apply_socket_config(
     handle: srt_sys::SRTSOCKET,
-    cfg: &SocketConfig,
+    cfg: &SrtSocketConfig,
 ) -> Result<(), OptionError> {
     apply_common_options(handle, cfg)?;
     if let Some(t) = cfg.send_timeout {
@@ -863,7 +863,7 @@ pub(crate) fn apply_socket_config(
 
 pub(crate) fn apply_listener_config(
     handle: srt_sys::SRTSOCKET,
-    cfg: &crate::config::ListenerConfig,
+    cfg: &crate::config::SrtListenerConfig,
 ) -> Result<(), OptionError> {
     apply_common_options(handle, &cfg.socket)?;
     set_bool(handle, srt_sys::SRT_SOCKOPT_SRTO_REUSEADDR, cfg.reuse_addr)?;
@@ -910,8 +910,8 @@ pub(crate) fn read_payload_size(handle: srt_sys::SRTSOCKET) -> usize {
     value as usize
 }
 
-pub(crate) fn perf_to_stats(p: &srt_sys::CBytePerfMon) -> Stats {
-    Stats {
+pub(crate) fn perf_to_stats(p: &srt_sys::CBytePerfMon) -> SrtStats {
+    SrtStats {
         bytes_sent: p.byteSentTotal,
         bytes_received: p.byteRecvTotal,
         bytes_lost_recv_side: p.byteRcvLossTotal,
@@ -981,10 +981,10 @@ fn classify_recv_error(raw: crate::error::RawError, buf_len: usize) -> RecvError
 }
 
 /// What `connect_with` answers once process exit has started.
-/// `ConnectError` has no closed variant; `Other` is also what a connect
+/// `SrtConnectError` has no closed variant; `Other` is also what a connect
 /// cancelled by a close reports.
-fn refused_connect() -> ConnectError {
-    ConnectError::Other {
+fn refused_connect() -> SrtConnectError {
+    SrtConnectError::Other {
         kind: SrtErrno::Unknown(0),
         message: crate::exit_guard::REFUSED.into(),
     }
@@ -996,6 +996,14 @@ pub(crate) fn make_cancel_handle(handle: srt_sys::SRTSOCKET) -> tst_core::Resour
     crate::exit_guard::tracked_cancel_handle(handle)
 }
 
+/// The name this type had before it was renamed.
+#[deprecated(since = "0.9.0", note = "renamed to `SrtSocket`")]
+pub type Socket = SrtSocket;
+
+/// The name this type had before it was renamed.
+#[deprecated(since = "0.9.0", note = "renamed to `SrtStats`")]
+pub type Stats = SrtStats;
+
 #[cfg(test)]
 mod tests {
     /// A passphrase with no `key_length` negotiates libsrt's AES-128:
@@ -1004,7 +1012,7 @@ mod tests {
     fn passphrase_without_key_length_applies_16_byte_pbkeylen() {
         super::ensure_initialized();
         let passphrase = crate::options::Passphrase::new("secretsecretsecret").unwrap();
-        let cfg = super::SocketConfig {
+        let cfg = super::SrtSocketConfig {
             passphrase: Some(passphrase),
             ..Default::default()
         };
@@ -1016,7 +1024,7 @@ mod tests {
         unsafe { srt_sys::srt_close(h) };
         assert_eq!(caller, 16);
 
-        let lcfg = crate::config::ListenerConfig {
+        let lcfg = crate::config::SrtListenerConfig {
             socket: cfg,
             ..Default::default()
         };
@@ -1038,7 +1046,7 @@ mod tests {
         super::ensure_initialized();
         let h = unsafe { srt_sys::srt_create_socket() };
         assert_ne!(h, super::SRT_INVALID_SOCK);
-        let cfg = super::SocketConfig {
+        let cfg = super::SrtSocketConfig {
             recv_buf_bytes: Some(60_000_000), // > default ceiling ~37.7 MB
             ..Default::default()
         };
@@ -1064,7 +1072,7 @@ mod tests {
         super::ensure_initialized();
         let h = unsafe { srt_sys::srt_create_socket() };
         assert_ne!(h, super::SRT_INVALID_SOCK);
-        let cfg = super::SocketConfig {
+        let cfg = super::SrtSocketConfig {
             flow_window_packets: Some(51_200), // 2x default → ceiling ~75 MB
             recv_buf_bytes: Some(60_000_000),
             ..Default::default()
@@ -1083,7 +1091,7 @@ mod tests {
     #[test]
     fn stats_struct_has_role_split_loss_fields() {
         // Compile-check that the new public fields exist.
-        let _ = |s: super::Stats| {
+        let _ = |s: super::SrtStats| {
             let _ = s.packets_lost_recv_side;
             let _ = s.packets_lost_send_side;
             let _ = s.bytes_lost_recv_side;
@@ -1097,7 +1105,7 @@ mod tests {
     /// `127.0.0.1:0`, connects a peer from a daemon thread, and blocks until
     /// one connection is accepted. Returns `None` if loopback is unavailable
     /// (caller should SKIP). On `Some`, the caller owns the raw `accepted`
-    /// handle and MUST eventually close it (or hand it to a `Socket` that
+    /// handle and MUST eventually close it (or hand it to a `SrtSocket` that
     /// will); the returned `Cleanup` closes the listener and joins the peer
     /// thread on drop.
     ///
@@ -1202,7 +1210,7 @@ mod tests {
     }
 
     // T2-SRT-LEAK regression (failure path). `from_accepted` now wraps the raw
-    // accepted handle in the owning `Socket` (Drop active) BEFORE applying any
+    // accepted handle in the owning `SrtSocket` (Drop active) BEFORE applying any
     // fallible option, so a `set_int` failure on the `?` path closes the
     // accepted SRT socket instead of leaking it.
     //
@@ -1210,10 +1218,10 @@ mod tests {
     // (`duration_to_ms` clamps to `[0, i32::MAX]`, and SND/RCVTIMEO never
     // reject those), so this test reproduces the EXACT failure structure the
     // fix relies on: take a genuinely-live accepted handle, build the owning
-    // `Socket` from it, then trigger a deterministic post-construction
+    // `SrtSocket` from it, then trigger a deterministic post-construction
     // option failure (a PRE-bind-only option set on a connected socket, which
     // libsrt rejects) — the same `set_int(...)?` shape `from_accepted` runs.
-    // On the early return the `Socket` drops; we assert the handle is closed
+    // On the early return the `SrtSocket` drops; we assert the handle is closed
     // (libsrt's `locateSocket` returns null → `srt_getsockflag` errors).
     //
     // It is paired with `from_accepted_happy_path_yields_usable_socket` below,
@@ -1230,8 +1238,8 @@ mod tests {
         };
 
         // Reproduce `from_accepted`'s post-fix structure: wrap the live handle
-        // in the owning Socket FIRST, then run a fallible option set.
-        let socket = super::Socket {
+        // in the owning SrtSocket FIRST, then run a fallible option set.
+        let socket = super::SrtSocket {
             handle: accepted,
             cancel: super::make_cancel_handle(accepted),
             cached_stream_id: super::read_stream_id(accepted),
@@ -1265,13 +1273,13 @@ mod tests {
         };
         assert!(
             rc < 0,
-            "accepted handle still valid after Socket drop — it was LEAKED"
+            "accepted handle still valid after SrtSocket drop — it was LEAKED"
         );
     }
 
     // T2-SRT-LEAK regression (happy path / drift guard). Calls the REAL
     // `from_accepted` on a genuinely-live accepted handle and asserts it
-    // returns a usable `Socket`. This keeps `from_accepted` referenced by a
+    // returns a usable `SrtSocket`. This keeps `from_accepted` referenced by a
     // test (signature/field drift breaks compilation) and exercises its happy
     // path against live libsrt — so a regression in the FUNCTION (not just the
     // RAII property the failure-path test reconstructs) is caught.
@@ -1285,14 +1293,14 @@ mod tests {
         };
 
         // The real function, both with default (None) and explicit timeouts.
-        let socket = super::Socket::from_accepted(
+        let socket = super::SrtSocket::from_accepted(
             accepted,
             Some(Duration::from_secs(5)),
             Some(Duration::from_secs(5)),
         )
         .expect("from_accepted should succeed on a freshly-accepted live socket");
 
-        // The returned Socket owns the accepted handle and is usable: a
+        // The returned SrtSocket owns the accepted handle and is usable: a
         // local_addr round-trip proves libsrt still recognizes the handle
         // (it was NOT closed by a spurious early return) and that the owner
         // wraps the same descriptor we handed in.
@@ -1306,12 +1314,12 @@ mod tests {
             .expect("local_addr on the accepted socket should succeed");
         assert!(local.ip().is_loopback(), "expected a loopback local addr");
 
-        // Dropping the Socket closes the accepted handle (no leak on the
+        // Dropping the SrtSocket closes the accepted handle (no leak on the
         // success path either).
         drop(socket);
     }
 
-    // Regression for the bug `Listener::accept_timeout`'s non-blocking probe
+    // Regression for the bug `SrtListener::accept_timeout`'s non-blocking probe
     // exposed: libsrt builds a newly-accepted socket as a live copy of the
     // listener's own socket state at the moment its internal
     // handshake-processing thread completes the connection
@@ -1351,7 +1359,7 @@ mod tests {
         super::set_bool(accepted, srt_sys::SRT_SOCKOPT_SRTO_SNDSYN, false)
             .expect("set_bool SNDSYN=false on a live accepted handle");
 
-        let socket = super::Socket::from_accepted(
+        let socket = super::SrtSocket::from_accepted(
             accepted,
             Some(Duration::from_secs(5)),
             Some(Duration::from_secs(5)),
@@ -1373,7 +1381,7 @@ mod tests {
     }
 
     /// Construction-shape test that doesn't need a live socket: building
-    /// a Socket from a fake handle and double-closing it should NOT
+    /// a SrtSocket from a fake handle and double-closing it should NOT
     /// double-call srt_close. Without an integration test running real
     /// libsrt, we verify by checking that explicit close().is_ok() and
     /// drop() coexist safely (drop() must skip srt_close when cancel
@@ -1381,7 +1389,7 @@ mod tests {
     #[test]
     fn double_close_via_cancel_then_drop_is_safe() {
         // We construct a ResourceCancel by hand around a fake handle with a
-        // closer that records the call count, mirroring what Socket holds.
+        // closer that records the call count, mirroring what SrtSocket holds.
         use std::sync::atomic::{AtomicU32, Ordering};
         use tst_core::ResourceCancel;
         let calls = std::sync::Arc::new(AtomicU32::new(0));
@@ -1389,9 +1397,9 @@ mod tests {
         let cancel = ResourceCancel::new(99, move |_| {
             calls_cl.fetch_add(1, Ordering::SeqCst);
         });
-        // Cancel once (simulates Socket::close).
+        // Cancel once (simulates SrtSocket::close).
         cancel.cancel();
-        // Drop the handle (simulates Socket::drop calling cancel.cancel()
+        // Drop the handle (simulates SrtSocket::drop calling cancel.cancel()
         // a second time).
         cancel.cancel();
         drop(cancel);

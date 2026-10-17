@@ -295,7 +295,7 @@ See `docs/reference/srt-cancel-handle.md` for the full pattern.
 ## Builder shape
 
 Every public builder (`MuxerConfigBuilder`, `MuxerProgramConfigBuilder`,
-`SocketBuilder`, `ListenerBuilder`) uses `&mut self -> &mut Self`. This
+`SrtSocketBuilder`, `SrtListenerBuilder`) uses `&mut self -> &mut Self`. This
 shape translates directly to:
 
 | Language | Builder usage |

@@ -20,13 +20,13 @@ use tst_core::mpegts::mux::{KlvStreamType, MuxerConfig, MuxerProgramConfigBuilde
 use tst_core::transport::{RecvTransport, Transport};
 use tst_pipeline::{MuxSender, MuxSenderError, MuxSenderErrorSource, TransportError};
 use tst_srt::SrtTransport;
-use tst_srt::{ListenerBuilder, SocketBuilder};
+use tst_srt::{SrtListenerBuilder, SrtSocketBuilder};
 
 #[test]
 fn close_unblocks_libsrt_parked_send() {
     require_loopback!();
     // Bind a listener with very small recv buffer.
-    let mut builder = ListenerBuilder::new();
+    let mut builder = SrtListenerBuilder::new();
     builder
         .recv_buf_bytes(8 * 1500) // tiny — back-pressure kicks in fast
         .latency(Duration::from_millis(120));
@@ -41,7 +41,7 @@ fn close_unblocks_libsrt_parked_send() {
 
     // Connect the sender side. This drives the SRT handshake, which
     // unblocks `accept()` on the listener side.
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .send_buf_bytes(8 * 1500) // tiny — sender's outgoing queue saturates fast
         // (no send_timeout — defaults to -1 = block forever)
         .latency(Duration::from_millis(120))
@@ -139,7 +139,7 @@ fn cancelled_srt_transport_reports_explicit_close_on_every_later_op_and_closed_a
     let accept = lb.spawn_accept(|sock| sock);
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .recv_timeout(Duration::from_millis(200))
         .send_timeout(Duration::from_secs(5))
         .connect(format!("127.0.0.1:{port}"))

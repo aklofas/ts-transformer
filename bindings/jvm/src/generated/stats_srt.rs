@@ -6,9 +6,9 @@
 use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
 
-pub(crate) fn build_stats<'l>(
+pub(crate) fn build_srt_stats<'l>(
     env: &mut JNIEnv<'l>,
-    r: &tst_srt::Stats,
+    r: &tst_srt::SrtStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(66)?;
     let b = env.new_object("org/tstrans/srt/SrtStats$Builder", "()V", &[])?;

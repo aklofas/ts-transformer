@@ -1,11 +1,12 @@
 //! Passive (listening) SRT socket.
 
 use crate::addr::{from_sockaddr, to_sockaddr};
-use crate::config::ListenerConfig;
+use crate::config::SrtListenerConfig;
 use crate::error::{AcceptError, BindError, IoError, OptionError, last_error};
 use crate::init::ensure_initialized;
 use crate::socket::{
-    Socket, apply_listener_config, duration_to_ms, make_cancel_handle, read_bool, set_bool, set_int,
+    SrtSocket, apply_listener_config, duration_to_ms, make_cancel_handle, read_bool, set_bool,
+    set_int,
 };
 use crate::transport::SrtTransport;
 use os_socketaddr::OsSocketAddr;
@@ -23,12 +24,12 @@ const SRT_INVALID_SOCK: srt_sys::SRTSOCKET = -1;
 // SRT_EPOLL_OPT (c_uint) but srt_epoll_add_usock expects *const c_int.
 const SRT_EPOLL_IN: c_int = 0x1;
 
-/// Passive socket. Created by [`ListenerBuilder`](crate::ListenerBuilder)
-/// or [`Listener::bind_with`].
+/// Passive socket. Created by [`SrtListenerBuilder`](crate::SrtListenerBuilder)
+/// or [`SrtListener::bind_with`].
 ///
 /// # Closing
 ///
-/// `Listener` is `Send` (libsrt is internally per-handle thread-safe).
+/// `SrtListener` is `Send` (libsrt is internally per-handle thread-safe).
 /// It supports three shutdown patterns:
 ///
 /// 1. **Drop** — the [`Drop`] impl calls
@@ -61,7 +62,7 @@ const SRT_EPOLL_IN: c_int = 0x1;
 /// | C | Not exposed — the `tst_*_receiver_open_listener` calls bind, accept and drop it internally |
 ///
 /// See [`docs/reference/srt-cancel-handle.md`](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/srt-cancel-handle.md) for the full cancel-handle pattern.
-pub struct Listener {
+pub struct SrtListener {
     handle: srt_sys::SRTSOCKET,
     /// Shared close-once primitive. Cloned out via `cancel_handle()` so a
     /// thread parked in `accept` can be woken from another thread. Drop
@@ -74,9 +75,9 @@ pub struct Listener {
     accepted_recv_timeout: Option<Duration>,
 }
 
-impl std::fmt::Debug for Listener {
+impl std::fmt::Debug for SrtListener {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Listener")
+        f.debug_struct("SrtListener")
             .field("handle", &self.handle)
             .field("accepted_send_timeout", &self.accepted_send_timeout)
             .field("accepted_recv_timeout", &self.accepted_recv_timeout)
@@ -84,14 +85,14 @@ impl std::fmt::Debug for Listener {
     }
 }
 
-unsafe impl Send for Listener {}
+unsafe impl Send for SrtListener {}
 
-impl Listener {
+impl SrtListener {
     /// Open a passive socket, apply config, bind, and start listening.
     ///
     /// Walks every address resolved from `addr` in iterator order; first
     /// successful bind+listen wins. Same rationale as
-    /// [`Socket::connect_with`]: on dual-stack hosts the iterator may
+    /// [`SrtSocket::connect_with`]: on dual-stack hosts the iterator may
     /// return AAAA before A and the v6 entry may be unbindable (e.g. v6
     /// disabled on the interface), so we fall through to v4. Mirrors
     /// ffmpeg's `ai_next` walk.
@@ -104,8 +105,11 @@ impl Listener {
     /// be used at all from this process — so a panic is the correct
     /// signal. Subsequent calls reuse the once-initialized state and do
     /// not re-trigger the startup path.
-    pub fn bind_with(config: &ListenerConfig, addr: impl ToSocketAddrs) -> Result<Self, BindError> {
-        // Resolved before the operation starts — see `Socket::connect_with`.
+    pub fn bind_with(
+        config: &SrtListenerConfig,
+        addr: impl ToSocketAddrs,
+    ) -> Result<Self, BindError> {
+        // Resolved before the operation starts — see `SrtSocket::connect_with`.
         let addrs: Vec<SocketAddr> = addr
             .to_socket_addrs()
             .map_err(|e| BindError::InvalidAddress(e.into()))?
@@ -170,7 +174,7 @@ impl Listener {
     }
 
     /// Block until an incoming connection completes the SRT handshake.
-    pub fn accept(&mut self) -> Result<(Socket, SocketAddr), AcceptError> {
+    pub fn accept(&mut self) -> Result<(SrtSocket, SocketAddr), AcceptError> {
         // Held to the end of the function: wrapping the accepted socket
         // reads and sets options on it.
         let Some(_op) = crate::exit_guard::enter() else {
@@ -185,7 +189,7 @@ impl Listener {
             return Err(last_error().into());
         }
 
-        let socket = Socket::from_accepted(
+        let socket = SrtSocket::from_accepted(
             accepted,
             self.accepted_send_timeout,
             self.accepted_recv_timeout,
@@ -219,7 +223,7 @@ impl Listener {
     pub fn accept_timeout(
         &mut self,
         timeout: Duration,
-    ) -> Result<(Socket, SocketAddr), AcceptError> {
+    ) -> Result<(SrtSocket, SocketAddr), AcceptError> {
         // Covers the epoll set, the probe with its option restore, the
         // wait and the accept after it.
         let Some(_op) = crate::exit_guard::enter() else {
@@ -315,7 +319,7 @@ impl Listener {
     /// (libsrt `SRT_EASYNCRCV`), or `Err(...)` for any other libsrt
     /// failure. Toggles `SRTO_RCVSYN` to false for the duration of the
     /// `srt_accept` call and restores it before returning.
-    fn try_accept_nonblocking(&mut self) -> Result<Option<(Socket, SocketAddr)>, AcceptError> {
+    fn try_accept_nonblocking(&mut self) -> Result<Option<(SrtSocket, SocketAddr)>, AcceptError> {
         let prev_rcvsyn = read_bool(self.handle, srt_sys::SRT_SOCKOPT_SRTO_RCVSYN).unwrap_or(true);
         if set_bool(self.handle, srt_sys::SRT_SOCKOPT_SRTO_RCVSYN, false).is_err() {
             // Can't flip to non-blocking — skip the probe and let
@@ -351,7 +355,7 @@ impl Listener {
         match probe_outcome {
             Ok(None) => Ok(None),
             Ok(Some(accepted)) => {
-                let socket = Socket::from_accepted(
+                let socket = SrtSocket::from_accepted(
                     accepted,
                     self.accepted_send_timeout,
                     self.accepted_recv_timeout,
@@ -384,7 +388,7 @@ impl Listener {
         from_sockaddr(&os_addr).map_err(|e| IoError::System(std::io::Error::other(e.to_string())))
     }
 
-    /// Set the receive timeout that will be inherited by accepted [`Socket`]s.
+    /// Set the receive timeout that will be inherited by accepted [`SrtSocket`]s.
     ///
     /// **Important:** this does *not* gate the [`accept`](Self::accept) call
     /// itself — libsrt's `srt_accept` does not honor `SRTO_RCVTIMEO`. To
@@ -461,7 +465,7 @@ impl Listener {
     ///   `None`: these are not libsrt `MJ_*` errnos in the typed sense, so
     ///   the message carries the detail.
     pub fn accept_one_cancellable(
-        cfg: &ListenerConfig,
+        cfg: &SrtListenerConfig,
         addr: &str,
         slot: &CancelSlot,
     ) -> Result<SrtTransport, TransportError> {
@@ -521,14 +525,17 @@ fn refused_bind() -> BindError {
     }
 }
 
-impl Drop for Listener {
+impl Drop for SrtListener {
     fn drop(&mut self) {
         // No-op if explicit close() / cancel() already fired.
         //
         // `close_without_cancel`: Drop is the owner retiring the listener,
-        // not a caller cancelling it. See `Socket`'s Drop for the full
+        // not a caller cancelling it. See `SrtSocket`'s Drop for the full
         // reasoning — `is_cancelled()` is the caller's intent, never
         // "this resource is gone".
         self.cancel.close_without_cancel();
     }
 }
+/// The name this type had before it was renamed.
+#[deprecated(since = "0.9.0", note = "renamed to `SrtListener`")]
+pub type Listener = SrtListener;

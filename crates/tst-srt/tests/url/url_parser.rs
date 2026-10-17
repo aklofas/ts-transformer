@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use tst_srt::config::{ListenerConfig, SocketConfig};
-use tst_srt::{SrtUrl, UrlError};
+use tst_srt::config::{SrtListenerConfig, SrtSocketConfig};
+use tst_srt::{SrtUrl, SrtUrlError};
 
 #[test]
 fn ipv4_with_port() {
@@ -34,38 +34,38 @@ fn ipv6_loopback() {
 #[test]
 fn rejects_wrong_scheme() {
     let e = SrtUrl::parse("https://1.2.3.4:9000").unwrap_err();
-    assert!(matches!(e, UrlError::WrongScheme { ref got } if got == "https"));
+    assert!(matches!(e, SrtUrlError::WrongScheme { ref got } if got == "https"));
 }
 
 #[test]
 fn rejects_no_scheme() {
     // Bare "host:port" doesn't have a scheme separator — the common parser rejects.
     let e = SrtUrl::parse("1.2.3.4:9000").unwrap_err();
-    assert!(matches!(e, UrlError::Syntax(_)) || matches!(e, UrlError::WrongScheme { .. }));
+    assert!(matches!(e, SrtUrlError::Syntax(_)) || matches!(e, SrtUrlError::WrongScheme { .. }));
 }
 
 #[test]
 fn rejects_missing_port() {
     let e = SrtUrl::parse("srt://1.2.3.4").unwrap_err();
-    assert!(matches!(e, UrlError::MissingPort));
+    assert!(matches!(e, SrtUrlError::MissingPort));
 }
 
 #[test]
 fn rejects_missing_host() {
     let e = SrtUrl::parse("srt://:9000").unwrap_err();
-    assert!(matches!(e, UrlError::MissingHost));
+    assert!(matches!(e, SrtUrlError::MissingHost));
 }
 
 #[test]
 fn rejects_userinfo() {
     let e = SrtUrl::parse("srt://op:hunter2@1.2.3.4:9000").unwrap_err();
-    assert!(matches!(e, UrlError::UserinfoNotSupported));
+    assert!(matches!(e, SrtUrlError::UserinfoNotSupported));
 }
 
 #[test]
 fn rejects_userinfo_user_only() {
     let e = SrtUrl::parse("srt://op@1.2.3.4:9000").unwrap_err();
-    assert!(matches!(e, UrlError::UserinfoNotSupported));
+    assert!(matches!(e, SrtUrlError::UserinfoNotSupported));
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn passphrase_query() {
 #[test]
 fn passphrase_too_short_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?passphrase=short").unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn streamid_with_embedded_equals() {
 #[test]
 fn streamid_non_ascii_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?streamid=h%C3%A9llo").unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
 
 #[test]
@@ -135,13 +135,13 @@ fn congestion_file() {
 fn congestion_uppercase_rejects() {
     // Strict-A: enums are lowercase-only.
     let e = SrtUrl::parse("srt://1.2.3.4:9000?congestion=Live").unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
 
 #[test]
 fn congestion_unknown_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?congestion=fast").unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn pbkeylen_32() {
 #[test]
 fn pbkeylen_invalid() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?pbkeylen=15").unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
 
 #[test]
@@ -193,20 +193,20 @@ fn latency_query() {
 fn latency_with_suffix_rejects() {
     // Strict-A: no "ms"/"s" suffixes.
     let e = SrtUrl::parse("srt://1.2.3.4:9000?latency=200ms").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { ref key, .. } if key == "latency"));
+    assert!(matches!(e, SrtUrlError::InvalidValue { ref key, .. } if key == "latency"));
 }
 
 #[test]
 fn latency_negative_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?latency=-1").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { .. }));
+    assert!(matches!(e, SrtUrlError::InvalidValue { .. }));
 }
 
 #[test]
 fn latency_overflow_rejects() {
     // 2^31 = 2147483648 — outside i32 range; libsrt SRTO_LATENCY is i32.
     let e = SrtUrl::parse("srt://1.2.3.4:9000?latency=2147483648").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { .. }));
+    assert!(matches!(e, SrtUrlError::InvalidValue { .. }));
 }
 
 #[test]
@@ -259,9 +259,9 @@ fn oheadbw_out_of_range() {
     // Builder enforces 5..=100 in apply_socket_config; URL parser rejects
     // here at value-conversion since we know the bound.
     let e = SrtUrl::parse("srt://1.2.3.4:9000?oheadbw=4").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { .. }));
+    assert!(matches!(e, SrtUrlError::InvalidValue { .. }));
     let e = SrtUrl::parse("srt://1.2.3.4:9000?oheadbw=101").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { .. }));
+    assert!(matches!(e, SrtUrlError::InvalidValue { .. }));
 }
 
 #[test]
@@ -292,13 +292,13 @@ fn tlpktdrop_one() {
 fn tlpktdrop_true_rejects() {
     // Strict-A: BOOL is "0"/"1" only.
     let e = SrtUrl::parse("srt://1.2.3.4:9000?tlpktdrop=true").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { ref key, .. } if key == "tlpktdrop"));
+    assert!(matches!(e, SrtUrlError::InvalidValue { ref key, .. } if key == "tlpktdrop"));
 }
 
 #[test]
 fn tlpktdrop_two_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?tlpktdrop=2").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { .. }));
+    assert!(matches!(e, SrtUrlError::InvalidValue { .. }));
 }
 
 #[test]
@@ -317,7 +317,7 @@ fn x_sendtimeout_query() {
 fn x_unknown_extension_rejects() {
     // x- prefix is reserved but not a free-for-all.
     let e = SrtUrl::parse("srt://1.2.3.4:9000?x-foo=bar").unwrap_err();
-    assert!(matches!(e, UrlError::UnknownKey { ref key } if key == "x-foo"));
+    assert!(matches!(e, SrtUrlError::UnknownKey { ref key } if key == "x-foo"));
 }
 
 #[test]
@@ -329,7 +329,7 @@ fn mode_caller_accepted_noop() {
 #[test]
 fn mode_rendezvous_rejected() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?mode=rendezvous").unwrap_err();
-    assert!(matches!(e, UrlError::UnsupportedMode { ref mode } if mode == "rendezvous"));
+    assert!(matches!(e, SrtUrlError::UnsupportedMode { ref mode } if mode == "rendezvous"));
 }
 
 #[test]
@@ -345,7 +345,7 @@ fn group1_conntimeo_honored() {
 #[test]
 fn group3_transtype_rejected() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?transtype=live").unwrap_err();
-    let UrlError::UnsupportedKey { key, srto } = e else {
+    let SrtUrlError::UnsupportedKey { key, srto } = e else {
         panic!("wrong variant");
     };
     assert_eq!(key, "transtype");
@@ -355,7 +355,7 @@ fn group3_transtype_rejected() {
 #[test]
 fn group3_rcvbuf_rejected() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?rcvbuf=1048576").unwrap_err();
-    let UrlError::UnsupportedKey { key, srto } = e else {
+    let SrtUrlError::UnsupportedKey { key, srto } = e else {
         panic!("wrong variant");
     };
     assert_eq!(key, "rcvbuf");
@@ -365,7 +365,7 @@ fn group3_rcvbuf_rejected() {
 #[test]
 fn group3_sndbuf_rejected() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?sndbuf=1048576").unwrap_err();
-    assert!(matches!(e, UrlError::UnsupportedKey { ref key, .. } if key == "sndbuf"));
+    assert!(matches!(e, SrtUrlError::UnsupportedKey { ref key, .. } if key == "sndbuf"));
 }
 
 #[test]
@@ -373,7 +373,7 @@ fn unknown_typo_rejected() {
     // Distinct from UnsupportedKey: this name is not in the libsrt
     // vocabulary at all (typo of "latency").
     let e = SrtUrl::parse("srt://1.2.3.4:9000?lattency=100").unwrap_err();
-    assert!(matches!(e, UrlError::UnknownKey { ref key } if key == "lattency"));
+    assert!(matches!(e, SrtUrlError::UnknownKey { ref key } if key == "lattency"));
 }
 
 /// Smoke test that all Group 3 keys reject with a non-empty `srto`.
@@ -409,7 +409,7 @@ fn all_group3_keys_reject_with_srto() {
         let url = format!("srt://1.2.3.4:9000?{key}=1");
         let e = SrtUrl::parse(&url).unwrap_err();
         match e {
-            UrlError::UnsupportedKey { key: k, srto } => {
+            SrtUrlError::UnsupportedKey { key: k, srto } => {
                 assert_eq!(k, key, "wrong key in error");
                 assert!(!srto.is_empty(), "{key}: srto must not be empty");
                 assert!(srto.starts_with("SRTO_"), "{key}: srto must be SRTO_*");
@@ -431,7 +431,7 @@ fn adapter_rejected_as_unsupported() {
     // and it has no SocketBuilder counterpart in this library. Reject as
     // UnknownKey.
     let e = SrtUrl::parse("srt://1.2.3.4:9000?adapter=192.168.1.5").unwrap_err();
-    assert!(matches!(e, UrlError::UnknownKey { ref key } if key == "adapter"));
+    assert!(matches!(e, SrtUrlError::UnknownKey { ref key } if key == "adapter"));
 }
 
 #[test]
@@ -455,7 +455,7 @@ fn multi_key_url_combines() {
 fn empty_value_rejected() {
     // Strict-A: empty INT can't parse.
     let e = SrtUrl::parse("srt://1.2.3.4:9000?latency=").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { ref key, .. } if key == "latency"));
+    assert!(matches!(e, SrtUrlError::InvalidValue { ref key, .. } if key == "latency"));
 }
 
 #[test]
@@ -482,7 +482,7 @@ fn passphrase_with_plus_sign_is_literal_plus() {
 #[test]
 fn merge_from_writes_the_urls_keys_through() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?latency=200&streamid=front&pbkeylen=24").unwrap();
-    let mut cfg = SocketConfig::default();
+    let mut cfg = SrtSocketConfig::default();
     cfg.merge_from(&u.config);
     assert_eq!(cfg.latency, Some(Duration::from_millis(200)));
     assert_eq!(cfg.stream_id.as_ref().unwrap().as_str(), "front");
@@ -492,7 +492,7 @@ fn merge_from_writes_the_urls_keys_through() {
 #[test]
 fn merge_from_url_wins_over_existing() {
     // Pre-populate cfg with a builder value; the URL's key should overwrite.
-    let mut cfg = SocketConfig::default();
+    let mut cfg = SrtSocketConfig::default();
     cfg.latency = Some(Duration::from_millis(100));
     let u = SrtUrl::parse("srt://1.2.3.4:9000?latency=200").unwrap();
     cfg.merge_from(&u.config);
@@ -502,7 +502,7 @@ fn merge_from_url_wins_over_existing() {
 #[test]
 fn merge_from_does_not_clear_unset_fields() {
     // The URL has only latency set; other pre-populated fields stay.
-    let mut cfg = SocketConfig::default();
+    let mut cfg = SrtSocketConfig::default();
     cfg.mss = Some(1316);
     let u = SrtUrl::parse("srt://1.2.3.4:9000?latency=100").unwrap();
     cfg.merge_from(&u.config);
@@ -513,7 +513,7 @@ fn merge_from_does_not_clear_unset_fields() {
 #[test]
 fn merge_from_x_recvtimeout_lands() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?x-recvtimeout=5000").unwrap();
-    let mut cfg = SocketConfig::default();
+    let mut cfg = SrtSocketConfig::default();
     cfg.merge_from(&u.config);
     assert_eq!(cfg.recv_timeout, Some(Duration::from_millis(5000)));
 }
@@ -530,9 +530,9 @@ fn url_config_holds_only_the_urls_keys() {
 #[test]
 fn listener_config_carries_the_url_as_its_socket_options() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?latency=100&passphrase=hunter-too-long").unwrap();
-    let cfg: ListenerConfig = u.listener_config();
+    let cfg: SrtListenerConfig = u.listener_config();
     assert_eq!(cfg.socket.latency, Some(Duration::from_millis(100)));
     assert!(cfg.socket.passphrase.is_some());
-    assert_eq!(cfg.backlog, ListenerConfig::default().backlog);
-    assert_eq!(cfg.reuse_addr, ListenerConfig::default().reuse_addr);
+    assert_eq!(cfg.backlog, SrtListenerConfig::default().backlog);
+    assert_eq!(cfg.reuse_addr, SrtListenerConfig::default().reuse_addr);
 }

@@ -8,7 +8,7 @@
 //! handshake against a local listener.
 
 use std::time::Duration;
-use tst_srt::{MaxBandwidth, SocketBuilder};
+use tst_srt::{MaxBandwidth, SrtSocketBuilder};
 
 #[test]
 fn input_relative_max_bandwidth_reaches_libsrt_as_zero() {
@@ -21,7 +21,7 @@ fn input_relative_max_bandwidth_reaches_libsrt_as_zero() {
     });
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .max_bandwidth(MaxBandwidth::InputRelative)
         .recv_timeout(Duration::from_secs(5))
         .send_timeout(Duration::from_secs(5))

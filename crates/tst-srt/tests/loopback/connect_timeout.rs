@@ -1,14 +1,14 @@
 //! Verifies SRTO_CONNTIMEO is honored.
 
 use std::time::{Duration, Instant};
-use tst_srt::SocketBuilder;
+use tst_srt::SrtSocketBuilder;
 
 #[test]
 fn connect_timeout_fires_after_configured_duration() {
     // 198.51.100.0/24 (TEST-NET-2) is reserved per RFC 5737 and must not be routed.
     // Connecting there will hang until the SRT connect timeout fires.
     let started = Instant::now();
-    let result = SocketBuilder::new()
+    let result = SrtSocketBuilder::new()
         .connect_timeout(Duration::from_millis(800))
         .connect("198.51.100.1:9000");
     let elapsed = started.elapsed();

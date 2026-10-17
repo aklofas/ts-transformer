@@ -2,7 +2,7 @@
 
 use std::ffi::c_int;
 use std::time::Duration;
-use tst_srt::{Role, SocketBuilder};
+use tst_srt::{Role, SrtSocketBuilder};
 
 fn read_srto_sender(handle: srt_sys::SRTSOCKET) -> i32 {
     // Initialize to 0 — libsrt's getsockflag for SRTO_SENDER writes a single
@@ -31,7 +31,7 @@ fn role_sender_sets_srto_sender_on_caller() {
     let accept = lb.spawn_accept(|sock| sock);
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .role(Role::Sender)
         .send_timeout(Duration::from_secs(5))
         .connect(("127.0.0.1", port))
@@ -55,7 +55,7 @@ fn role_receiver_leaves_srto_sender_at_default() {
     let accept = lb.spawn_accept(|sock| sock);
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .send_timeout(Duration::from_secs(5))
         .connect(("127.0.0.1", port))
         .expect("connect");

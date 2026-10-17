@@ -13,7 +13,7 @@
 use std::io::Write;
 use std::process::exit;
 use std::time::Duration;
-use tst_srt::{KeyLength, ListenerBuilder, Passphrase, SocketBuilder};
+use tst_srt::{KeyLength, SrtListenerBuilder, Passphrase, SrtSocketBuilder};
 
 include!(concat!(env!("OUT_DIR"), "/golden.rs")); // pub static GOLDEN + GOLDEN_LEN
 
@@ -42,11 +42,11 @@ fn run_send(addr: &str) {
     // crates/tst-srt/src/builder.rs and crates/tst-interop/src/transport.rs's
     // rationale for why a SHARED send/recv builder can't use it (this
     // function is send-only, so nothing here blocks using it directly).
-    // Explicit over SocketBuilder::new()'s raw (receiver-shaped) defaults —
+    // Explicit over SrtSocketBuilder::new()'s raw (receiver-shaped) defaults —
     // the golden's LIVE handshake proved fine either way over lossless SLIRP
     // loopback, but a real radio-link deployment of this driver shape
     // shouldn't be timing-sensitive on the caller-role/connect-timeout knobs.
-    let mut b = SocketBuilder::new();
+    let mut b = SrtSocketBuilder::new();
     b.sender_defaults();
     let mut sock = match b.connect(addr) {
         Ok(s) => s,
@@ -88,7 +88,7 @@ fn run_recv() {
     let aes = std::env::var("FREERTOS_SRT_PASSPHRASE").ok();
     let tag = if aes.is_some() { "s4_host_aes" } else { "s4_host_plain" };
 
-    let mut lb = ListenerBuilder::new();
+    let mut lb = SrtListenerBuilder::new();
     // LIVE mode (tst-srt default) — matches the firmware caller's SRTT_LIVE.
     if let Some(pass) = aes.as_deref() {
         lb.passphrase(Passphrase::new(pass.to_string()).expect("valid passphrase"));

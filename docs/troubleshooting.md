@@ -46,13 +46,13 @@ Fix: if you're consuming `tstrans.h` from another build system, add `-lstdc++` (
 
 Three usual suspects: the listener side isn't actually bound yet, a firewall is dropping UDP (SRT runs over UDP, not TCP), or the peer rejected the handshake but is taking a while to surface that.
 
-Fix: confirm the listener is up with `ss -ulpn | grep <port>`; verify both sides agree on passphrase and key length; if you need a hard upper bound on `connect()`, set `send_timeout(Duration::from_secs(N))` on the `SocketBuilder` (libsrt uses the send timeout during the synchronous handshake path).
+Fix: confirm the listener is up with `ss -ulpn | grep <port>`; verify both sides agree on passphrase and key length; if you need a hard upper bound on `connect()`, set `send_timeout(Duration::from_secs(N))` on the `SrtSocketBuilder` (libsrt uses the send timeout during the synchronous handshake path).
 
-**`Listener::accept` blocks forever**
+**`SrtListener::accept` blocks forever**
 
-`accept()` is blocking by design and has no built-in deadline. Contrary to what you might expect, `ListenerBuilder::recv_timeout` / `Listener::set_recv_timeout` does *not* gate the accept call — libsrt's `srt_accept` ignores `SRTO_RCVTIMEO`. The recv timeout only applies to accepted sockets (it is inherited as their per-socket read deadline).
+`accept()` is blocking by design and has no built-in deadline. Contrary to what you might expect, `SrtListenerBuilder::recv_timeout` / `SrtListener::set_recv_timeout` does *not* gate the accept call — libsrt's `srt_accept` ignores `SRTO_RCVTIMEO`. The recv timeout only applies to accepted sockets (it is inherited as their per-socket read deadline).
 
-Fix: use `Listener::accept_timeout(Duration)` instead of `accept()`. It returns `Err(AcceptError::TimedOut)` when the duration elapses with no incoming connection, and `Ok((socket, peer))` on success:
+Fix: use `SrtListener::accept_timeout(Duration)` instead of `accept()`. It returns `Err(AcceptError::TimedOut)` when the duration elapses with no incoming connection, and `Ok((socket, peer))` on success:
 
 ```rust
 use std::time::Duration;
@@ -68,7 +68,7 @@ loop {
 }
 ```
 
-Alternatively, run `accept()` on a dedicated thread and call `Listener::close` from your shutdown path — that wakes the blocked call with `AcceptError::ListenerClosed`.
+Alternatively, run `accept()` on a dedicated thread and call `SrtListener::close` from your shutdown path — that wakes the blocked call with `AcceptError::ListenerClosed`.
 
 **Connection establishes but no data arrives**
 
@@ -79,29 +79,29 @@ Fix: confirm both sides are using SRT defaults (1316-byte payload), or set expli
 peer with a larger `payload_size` no longer breaks the receiver — the
 matching-sizes advice is about send-path MTU fit, not receiver limits.)
 
-**`ConnectError::BadEncryption`**
+**`SrtConnectError::BadEncryption`**
 
 Encryption configuration was rejected before the handshake even ran. Usually one side has a malformed passphrase (the `Passphrase::new` constructor enforces 10-79 ASCII-printable bytes, but raw FFI users can sometimes bypass that).
 
 Fix: build the `Passphrase` through `Passphrase::new` and let the constructor validate.
 
-**`ConnectError::Rejected { reason: RejectReason::BadSecret, .. }`**
+**`SrtConnectError::Rejected { reason: RejectReason::BadSecret, .. }`**
 
 Passphrase strings don't match between caller and listener. libsrt rejects with `SRT_REJ_BADSECRET` after the handshake confirms the keying material doesn't agree.
 
 Fix: verify both sides pass byte-identical passphrase strings — mind shell quoting, trailing newlines from heredocs, and environment variables that include leading whitespace.
 
-**`ConnectError::Rejected { reason: RejectReason::Unsecure, .. }` or `AcceptError::PeerRejected { reason: RejectReason::Unsecure, .. }`**
+**`SrtConnectError::Rejected { reason: RejectReason::Unsecure, .. }` or `AcceptError::PeerRejected { reason: RejectReason::Unsecure, .. }`**
 
 Caller and listener disagree on whether encryption is in use at all. Most common cause: one side built with `--no-default-features` (no `mbedtls` feature, encryption disabled) and the other built with the default feature set.
 
 Fix: build both sides with the same feature configuration. If you need encryption on the link, neither side may be built `--no-default-features`.
 
-**Sender hangs when dropping a `Socket`**
+**Sender hangs when dropping a `SrtSocket`**
 
-`Socket::Drop` blocks the calling thread for as long as `SocketConfig::linger` is set to. This is not libsrt's out-of-the-box behavior: its own default is `l_onoff=0` (linger off) — `srt_close` returns immediately and the queued backlog drains in the background. (The commonly-cited 180-second linger default belongs to libsrt's *file*-mode `DEF_LINGER_S`, which this library never reaches — every transport here is message/live mode.) A hang happens only if you (or a builder default) set a non-zero linger and the peer never ACKs the pending sends.
+`SrtSocket::Drop` blocks the calling thread for as long as `SrtSocketConfig::linger` is set to. This is not libsrt's out-of-the-box behavior: its own default is `l_onoff=0` (linger off) — `srt_close` returns immediately and the queued backlog drains in the background. (The commonly-cited 180-second linger default belongs to libsrt's *file*-mode `DEF_LINGER_S`, which this library never reaches — every transport here is message/live mode.) A hang happens only if you (or a builder default) set a non-zero linger and the peer never ACKs the pending sends.
 
-Fix: leave `linger` unset (`None`) for libsrt's immediate-return default, or set `SocketConfig::linger = Some(Duration::ZERO)` explicitly, or use the `SocketBuilder::linger(Duration)` setter to bound the wait. The C sender opens (`tst_mux_sender_open`, `tst_sender_open`, `tst_raw_sender_open`) and every managed sender (`tst_srt::shells`, which the C, Python and JVM managed senders use) open through `SrtUrl::connect`, which applies `SocketConfig::merge_sender_defaults`: an unset linger becomes 5 seconds — long enough to drain a small backlog, short enough to never block reconnect noticeably. The plain Python and JVM senders open through `SrtUrl::connect_recv` with no preset, so they keep libsrt's linger-off default.
+Fix: leave `linger` unset (`None`) for libsrt's immediate-return default, or set `SrtSocketConfig::linger = Some(Duration::ZERO)` explicitly, or use the `SrtSocketBuilder::linger(Duration)` setter to bound the wait. The C sender opens (`tst_mux_sender_open`, `tst_sender_open`, `tst_raw_sender_open`) and every managed sender (`tst_srt::shells`, which the C, Python and JVM managed senders use) open through `SrtUrl::connect`, which applies `SrtSocketConfig::merge_sender_defaults`: an unset linger becomes 5 seconds — long enough to drain a small backlog, short enough to never block reconnect noticeably. The plain Python and JVM senders open through `SrtUrl::connect_recv` with no preset, so they keep libsrt's linger-off default.
 
 ## TCP / TLS (`tcps://`)
 
@@ -274,7 +274,7 @@ SRT reports loss / retransmits on a network you know is healthy. Cause: kernel U
 
 Diagnosis: `cat /proc/net/udp` (or `ss -unp`) — non-zero `drops` column on the SRT port confirms.
 
-Fix: set `SocketConfig::udp_recv_buffer_bytes = Some(12_500_000)` (or higher) for the receiver. For 100 ms RTT @ 25 Mbps, ~12.5 MB is the recommended floor. Linux clamps to `net.core.rmem_max` — raise with `sysctl -w net.core.rmem_max=33554432` if needed.
+Fix: set `SrtSocketConfig::udp_recv_buffer_bytes = Some(12_500_000)` (or higher) for the receiver. For 100 ms RTT @ 25 Mbps, ~12.5 MB is the recommended floor. Linux clamps to `net.core.rmem_max` — raise with `sysctl -w net.core.rmem_max=33554432` if needed.
 
 **Kernel drops on a `udp://` or `rtp://` receiver with a slow consumer**
 

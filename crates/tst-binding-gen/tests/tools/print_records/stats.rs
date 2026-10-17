@@ -48,7 +48,7 @@ pub fn stats_records() -> Vec<Entry> {
     use tst_pipeline::{ManagedTransportStats, MuxPublisherStats};
     use tst_rist::RistStats;
     use tst_rtp::{H264DepayStats, MountStats, PublishMountStats, RtpStats, ServerStats};
-    use tst_srt::Stats;
+    use tst_srt::SrtStats;
     use tst_tcp::TcpStats;
     use tst_udp::UdpStats;
 
@@ -99,8 +99,8 @@ pub fn stats_records() -> Vec<Entry> {
         "stats_srt",
         "tstrans.srt",
         "org/tstrans/srt",
-        "tst_srt::Stats",
-        Stats::BINDING_SCHEMA,
+        "tst_srt::SrtStats",
+        SrtStats::BINDING_SCHEMA,
     );
     srt.host_name = "SrtStats";
     srt.py_rename = &[("rtt", "rtt_us")];

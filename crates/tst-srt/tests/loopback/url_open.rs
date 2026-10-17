@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tst_core::cancel::CancelSlot;
 use tst_core::transport::{Transport, TransportError};
-use tst_srt::{ListenerBuilder, SocketBuilder, SrtError, SrtUrl};
+use tst_srt::{SrtError, SrtListenerBuilder, SrtSocketBuilder, SrtUrl};
 
 /// Upper bound on anything that must NOT park forever.
 const WATCHDOG: Duration = Duration::from_secs(10);
@@ -102,7 +102,7 @@ fn connect_ipv6_literal_round_trips() {
         eprintln!("SKIP: IPv6 loopback unavailable on this host");
         return;
     }
-    let mut builder = ListenerBuilder::new();
+    let mut builder = SrtListenerBuilder::new();
     builder.recv_timeout(Duration::from_secs(5));
     let lb = crate::common::Loopback::bind_at(builder, "[::1]:0");
     let port = lb.port;
@@ -190,7 +190,7 @@ fn spawn_connector(
     let handle = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let attempt = SocketBuilder::new()
+            let attempt = SrtSocketBuilder::new()
                 .connect_timeout(Duration::from_millis(500))
                 .connect(format!("127.0.0.1:{port}"));
             match attempt {

@@ -277,22 +277,22 @@ fn tcp_transport(url: &str) -> Result<tst_tcp::TcpTransport, String> {
 /// before the peer's buffered tail packets reach their deadline. Set
 /// explicitly (rather than trusting whatever libsrt's compiled default
 /// is) so [`GracefulSrtClose`]'s drain wait knows it's exceeding it.
-fn srt_socket(url: &str) -> Result<tst_srt::Socket, String> {
+fn srt_socket(url: &str) -> Result<tst_srt::SrtSocket, String> {
     let parsed = tst_srt::SrtUrl::parse(url).map_err(|e| format!("srt url {url}: {e}"))?;
     match parsed.mode {
         tst_srt::url::Mode::Caller => {
-            let mut b = tst_srt::SocketBuilder::new();
+            let mut b = tst_srt::SrtSocketBuilder::new();
             b.recv_timeout(DEFAULT_SRT_RECV_TIMEOUT);
             b.connect_timeout(DEFAULT_SRT_CONNECT_TIMEOUT);
             b.linger(SRT_LINGER);
             b.latency(SRT_LATENCY);
             let mut cfg = b.config();
             cfg.merge_from(&parsed.config);
-            tst_srt::Socket::connect_with(&cfg, (parsed.host.as_str(), parsed.port))
+            tst_srt::SrtSocket::connect_with(&cfg, (parsed.host.as_str(), parsed.port))
                 .map_err(|e| format!("srt connect {url}: {e}"))
         }
         tst_srt::url::Mode::Listener => {
-            let mut b = tst_srt::ListenerBuilder::new();
+            let mut b = tst_srt::SrtListenerBuilder::new();
             b.recv_timeout(DEFAULT_SRT_RECV_TIMEOUT);
             // `ListenerConfig`'s `linger` is a libsrt PRE option: set on the
             // listener, inherited by every socket it accepts
@@ -315,7 +315,7 @@ fn srt_socket(url: &str) -> Result<tst_srt::Socket, String> {
                 parsed.host.as_str()
             };
             let bind_addr = format!("{bind_host}:{}", parsed.port);
-            let mut listener = tst_srt::Listener::bind_with(&cfg, bind_addr.as_str())
+            let mut listener = tst_srt::SrtListener::bind_with(&cfg, bind_addr.as_str())
                 .map_err(|e| format!("srt bind {url}: {e}"))?;
             // `accept_timeout` (not plain `accept`, which blocks
             // forever — see `SRT_ACCEPT_TIMEOUT`'s doc comment) so a

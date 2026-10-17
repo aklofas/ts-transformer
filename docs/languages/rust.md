@@ -97,12 +97,12 @@ use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::MuxerConfig;
 use tst_pipeline::MuxSender;
-use tst_srt::{SocketBuilder, SrtTransport};
+use tst_srt::{SrtSocketBuilder, SrtTransport};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Open an SRT socket to the peer. 120 ms latency is a reasonable
     //    LAN/regional WAN default; bump for transcontinental / cellular paths.
-    let mut sb = SocketBuilder::new();
+    let mut sb = SrtSocketBuilder::new();
     sb.latency_ms(120);
     sb.recv_timeout(Duration::from_secs(5));
     let socket = sb.connect("127.0.0.1:9000")?;
@@ -252,13 +252,13 @@ disables mbedTLS and turns the libsrt build into unencrypted-only.
 `tst-core` with `--no-default-features` and no `file`. The two flag sets
 are independent.
 
-**Builders use bind-then-step, not single-chain.** `SocketBuilder` and
-`ListenerBuilder` mutators take `&mut self` but their terminal methods
+**Builders use bind-then-step, not single-chain.** `SrtSocketBuilder` and
+`SrtListenerBuilder` mutators take `&mut self` but their terminal methods
 (`connect`, `bind`) take `&self`. A single fluent chain off a temporary
 dangles. Always bind the builder to a local first:
 
 ```rust
-let mut sb = SocketBuilder::new();
+let mut sb = SrtSocketBuilder::new();
 sb.latency_ms(120);             // &mut self
 let socket = sb.connect(addr)?; // &self
 ```

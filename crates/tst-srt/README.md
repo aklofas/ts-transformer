@@ -1,6 +1,6 @@
 # tst-srt
 
-Safe Rust wrapper around libsrt — `Socket`/`Listener`/`SocketBuilder`,
+Safe Rust wrapper around libsrt — `SrtSocket`/`SrtListener`/`SrtSocketBuilder`,
 SRT URL parsing, and `Transport`/`RecvTransport` implementations for
 encrypted, congestion-controlled SRT streaming.
 
@@ -13,10 +13,10 @@ for the full guide set.
 ## Quick start
 
 ```rust,no_run
-use tst_srt::SocketBuilder;
+use tst_srt::SrtSocketBuilder;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut b = SocketBuilder::new();
+    let mut b = SrtSocketBuilder::new();
     b.latency_ms(120);
     let mut socket = b.connect("127.0.0.1:1234")?;
 

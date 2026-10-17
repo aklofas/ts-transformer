@@ -10,13 +10,13 @@
 //! See `/docs/guides/srt.md`'s URL keys section for the full user-facing key
 //! reference.
 
-use crate::config::{ListenerConfig, SocketConfig};
+use crate::config::{SrtListenerConfig, SrtSocketConfig};
 use crate::error::{OptionError, SrtError};
-use crate::listener::Listener;
+use crate::listener::SrtListener;
 use crate::options::{
     Congestion, KeyLength, MaxBandwidth, PacketFilter, Passphrase, Role, StreamId,
 };
-use crate::socket::Socket;
+use crate::socket::SrtSocket;
 use crate::transport::SrtTransport;
 use std::time::Duration;
 use tst_core::cancel::CancelSlot;
@@ -100,11 +100,11 @@ pub enum Mode {
 }
 
 /// Parsed `srt://host:port?...` URL: connection target + the recognized
-/// query parameters as a [`SocketConfig`].
+/// query parameters as a [`SrtSocketConfig`].
 ///
 /// [`config`](Self::config) holds exactly the keys the URL carried (every
 /// other field is unset), so it layers over a config built from other
-/// sources with [`SocketConfig::merge_from`] and the URL wins on conflict.
+/// sources with [`SrtSocketConfig::merge_from`] and the URL wins on conflict.
 /// [`socket_config`](Self::socket_config) and
 /// [`listener_config`](Self::listener_config) are the ready-to-open forms.
 #[must_use]
@@ -113,12 +113,12 @@ pub struct SrtUrl {
     pub host: String,
     pub port: u16,
     pub mode: Mode,
-    pub config: SocketConfig,
+    pub config: SrtSocketConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum UrlError {
+pub enum SrtUrlError {
     #[error("URL parse failed: {0}")]
     Syntax(#[from] CoreUrlError),
 
@@ -184,7 +184,7 @@ impl SrtUrl {
     /// assert_eq!(u.port, 9000);
     /// assert_eq!(u.config.latency, Some(Duration::from_millis(200)));
     /// ```
-    pub fn parse(s: &str) -> Result<Self, UrlError> {
+    pub fn parse(s: &str) -> Result<Self, SrtUrlError> {
         // The common parser accepts empty-host URLs (e.g. srt://:7000?mode=listener)
         // directly — it returns Ok with host="" rather than an error. We check
         // mode after parsing query parameters to decide whether an empty host
@@ -192,20 +192,20 @@ impl SrtUrl {
         let parsed = parse_url(s)?;
 
         if parsed.scheme != "srt" {
-            return Err(UrlError::WrongScheme {
+            return Err(SrtUrlError::WrongScheme {
                 got: parsed.scheme.to_string(),
             });
         }
         if parsed.username.is_some() || parsed.password.is_some() {
-            return Err(UrlError::UserinfoNotSupported);
+            return Err(SrtUrlError::UserinfoNotSupported);
         }
 
         // The common parser strips IPv6 brackets, so host is always the
         // raw address string (e.g. "::1" not "[::1]").
         let host = parsed.host.to_string();
-        let port = parsed.port.ok_or(UrlError::MissingPort)?;
+        let port = parsed.port.ok_or(SrtUrlError::MissingPort)?;
 
-        let mut config = SocketConfig::default();
+        let mut config = SrtSocketConfig::default();
         let mut mode = Mode::Caller;
         // Last-occurrence wins (Q4-A): we just overwrite as we go.
         for (key, value) in &parsed.query {
@@ -216,7 +216,7 @@ impl SrtUrl {
                     "caller" => Mode::Caller,
                     "listener" => Mode::Listener,
                     other => {
-                        return Err(UrlError::UnsupportedMode {
+                        return Err(SrtUrlError::UnsupportedMode {
                             mode: other.to_string(),
                         });
                     }
@@ -232,7 +232,7 @@ impl SrtUrl {
         // Caller mode requires a non-empty host (need somewhere to connect).
         // Listener mode allows empty host (bind-to-wildcard).
         if host.is_empty() && mode != Mode::Listener {
-            return Err(UrlError::MissingHost);
+            return Err(SrtUrlError::MissingHost);
         }
 
         Ok(Self {
@@ -243,13 +243,13 @@ impl SrtUrl {
         })
     }
 
-    /// The caller-side [`SocketConfig`] to dial with: a default config
+    /// The caller-side [`SrtSocketConfig`] to dial with: a default config
     /// with this URL's keys merged in, plus, for [`Role::Sender`], the
-    /// sender preset ([`SocketConfig::merge_sender_defaults`]). That one
+    /// sender preset ([`SrtSocketConfig::merge_sender_defaults`]). That one
     /// role is the entire difference between [`Self::connect`] and
     /// [`Self::connect_recv`]. A receiver gets no preset.
-    pub fn socket_config(&self, role: Role) -> SocketConfig {
-        let mut cfg = SocketConfig::default();
+    pub fn socket_config(&self, role: Role) -> SrtSocketConfig {
+        let mut cfg = SrtSocketConfig::default();
         cfg.merge_from(&self.config);
         if role == Role::Sender {
             cfg.merge_sender_defaults();
@@ -257,22 +257,22 @@ impl SrtUrl {
         cfg
     }
 
-    /// The listener-side [`ListenerConfig`]: the defaults with this URL's
+    /// The listener-side [`SrtListenerConfig`]: the defaults with this URL's
     /// keys as the socket options. The listener applies the subset of
     /// them that is meaningful on a passive socket.
-    pub fn listener_config(&self) -> ListenerConfig {
-        ListenerConfig {
+    pub fn listener_config(&self) -> SrtListenerConfig {
+        SrtListenerConfig {
             socket: self.config.clone(),
             ..Default::default()
         }
     }
 
     /// Shared dial tail: an IPv6-safe `host:port` join
-    /// ([`crate::addr::join_host_port`]) → [`Socket::connect_with`], which
+    /// ([`crate::addr::join_host_port`]) → [`SrtSocket::connect_with`], which
     /// walks every resolved address → [`SrtTransport::new`].
-    fn dial(&self, cfg: &SocketConfig) -> Result<SrtTransport, SrtError> {
+    fn dial(&self, cfg: &SrtSocketConfig) -> Result<SrtTransport, SrtError> {
         let addr = crate::addr::join_host_port(&self.host, self.port);
-        let socket = Socket::connect_with(cfg, addr.as_str())?;
+        let socket = SrtSocket::connect_with(cfg, addr.as_str())?;
         Ok(SrtTransport::new(socket))
     }
 
@@ -281,7 +281,7 @@ impl SrtUrl {
     /// them, and return the connected transport.
     ///
     /// The composition: [`SrtUrl::socket_config`] for [`Role::Sender`] (the URL's keys on a
-    /// default [`SocketConfig`], then [`SocketConfig::merge_sender_defaults`]:
+    /// default [`SrtSocketConfig`], then [`SrtSocketConfig::merge_sender_defaults`]:
     /// 15 s connect timeout, 5 s linger, `Role::Sender`, each only where the
     /// URL left it unset, so the URL wins) → the shared dial tail.
     ///
@@ -304,18 +304,18 @@ impl SrtUrl {
     ///
     /// # Errors
     ///
-    /// [`SrtError::Connect`] carrying the typed [`ConnectError`]
+    /// [`SrtError::Connect`] carrying the typed [`SrtConnectError`]
     /// (resolution, handshake reject, timeout, refused, option refused).
     ///
-    /// [`ConnectError`]: crate::ConnectError
+    /// [`SrtConnectError`]: crate::SrtConnectError
     pub fn connect(&self) -> Result<SrtTransport, SrtError> {
         self.dial(&self.socket_config(Role::Sender))
     }
 
     /// Open this URL as a **caller** for the plain/receive path: exactly
     /// [`connect`](Self::connect) minus
-    /// [`SocketConfig::merge_sender_defaults`] — the URL's keys are merged
-    /// into a default [`SocketConfig`] and nothing else is, so the socket keeps
+    /// [`SrtSocketConfig::merge_sender_defaults`] — the URL's keys are merged
+    /// into a default [`SrtSocketConfig`] and nothing else is, so the socket keeps
     /// libsrt's own connect timeout and linger and stays
     /// [`Role::Receiver`].
     ///
@@ -328,7 +328,7 @@ impl SrtUrl {
     /// # Errors
     ///
     /// Identical to [`connect`](Self::connect): [`SrtError::Connect`]
-    /// carrying the typed [`ConnectError`](crate::ConnectError).
+    /// carrying the typed [`SrtConnectError`](crate::SrtConnectError).
     pub fn connect_recv(&self) -> Result<SrtTransport, SrtError> {
         self.dial(&self.socket_config(Role::Receiver))
     }
@@ -339,8 +339,8 @@ impl SrtUrl {
     /// from another thread.
     ///
     /// The bind → install-into-slot → accept → clear → classify sequence
-    /// is [`Listener::accept_one_cancellable`]; this method only builds
-    /// the [`ListenerConfig`] ([`SrtUrl::listener_config`]) and renders the bind address
+    /// is [`SrtListener::accept_one_cancellable`]; this method only builds
+    /// the [`SrtListenerConfig`] ([`SrtUrl::listener_config`]) and renders the bind address
     /// (an empty host becomes `0.0.0.0`). Single-accept: the
     /// listener is dropped on return. Share the same `cancel` slot with
     /// a managed transport's `tst_pipeline::FactoryCancel` — a type alias
@@ -365,30 +365,30 @@ impl SrtUrl {
             self.host.as_str()
         };
         let addr = crate::addr::join_host_port(bind_host, self.port);
-        Ok(Listener::accept_one_cancellable(&cfg, &addr, cancel)?)
+        Ok(SrtListener::accept_one_cancellable(&cfg, &addr, cancel)?)
     }
 }
 
-fn parse_int_nonneg<T>(key: &str, value: &str) -> Result<T, UrlError>
+fn parse_int_nonneg<T>(key: &str, value: &str) -> Result<T, SrtUrlError>
 where
     T: std::str::FromStr<Err = std::num::ParseIntError>,
 {
     // Strict-A: bare decimal, no suffix, non-negative. We rely on T's
     // from_str to enforce range. Use this for unsigned T (u8/u16/u32/u64);
     // signed callers go through parse_i32_nonneg, which adds the sign check.
-    value.parse::<T>().map_err(|e| UrlError::InvalidValue {
+    value.parse::<T>().map_err(|e| SrtUrlError::InvalidValue {
         key: key.to_string(),
         detail: format!("expected non-negative decimal integer in range, got '{value}': {e}"),
     })
 }
 
-fn parse_i32_nonneg(key: &str, value: &str) -> Result<i32, UrlError> {
-    let n: i32 = value.parse().map_err(|e| UrlError::InvalidValue {
+fn parse_i32_nonneg(key: &str, value: &str) -> Result<i32, SrtUrlError> {
+    let n: i32 = value.parse().map_err(|e| SrtUrlError::InvalidValue {
         key: key.to_string(),
         detail: format!("expected i32 decimal, got '{value}': {e}"),
     })?;
     if n < 0 {
-        return Err(UrlError::InvalidValue {
+        return Err(SrtUrlError::InvalidValue {
             key: key.to_string(),
             detail: format!("must be non-negative, got {n}"),
         });
@@ -396,10 +396,10 @@ fn parse_i32_nonneg(key: &str, value: &str) -> Result<i32, UrlError> {
     Ok(n)
 }
 
-fn parse_oheadbw(value: &str) -> Result<u8, UrlError> {
+fn parse_oheadbw(value: &str) -> Result<u8, SrtUrlError> {
     let n: u32 = parse_int_nonneg("oheadbw", value)?;
     crate::options::validate_overhead_bandwidth_pct(n).map_err(|detail| {
-        UrlError::InvalidValue {
+        SrtUrlError::InvalidValue {
             key: "oheadbw".into(),
             detail,
         }
@@ -407,33 +407,32 @@ fn parse_oheadbw(value: &str) -> Result<u8, UrlError> {
     Ok(n as u8)
 }
 
-fn parse_bool_strict(key: &str, value: &str) -> Result<bool, UrlError> {
+fn parse_bool_strict(key: &str, value: &str) -> Result<bool, SrtUrlError> {
     match value {
         "0" => Ok(false),
         "1" => Ok(true),
-        other => Err(UrlError::InvalidValue {
+        other => Err(SrtUrlError::InvalidValue {
             key: key.to_string(),
             detail: format!("expected '0' or '1', got '{other}'"),
         }),
     }
 }
 
-type Applied = Result<(), UrlError>;
+type Applied = Result<(), SrtUrlError>;
 
-fn set_congestion(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_congestion(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     // libsrt-URL canonical key is `congestion` (renamed from `smoother`
     // in libsrt 1.4.1); `smoother` is the pre-rename ffmpeg-style alias.
-    c.congestion =
-        Some(
-            Congestion::from_str_strict(value).map_err(|source| UrlError::OptionValidation {
-                key: "congestion".into(),
-                source,
-            })?,
-        );
+    c.congestion = Some(Congestion::from_str_strict(value).map_err(|source| {
+        SrtUrlError::OptionValidation {
+            key: "congestion".into(),
+            source,
+        }
+    })?);
     Ok(())
 }
 
-fn set_connect_timeout(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_connect_timeout(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     // libsrt-URL canonical key is `conntimeo` (milliseconds);
     // `connect_timeout` is the ffmpeg-style alias.
     let n = parse_i32_nonneg("conntimeo", value)?;
@@ -441,21 +440,21 @@ fn set_connect_timeout(c: &mut SocketConfig, _key: &str, value: &str) -> Applied
     Ok(())
 }
 
-fn set_flow_window(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_flow_window(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     // libsrt-URL canonical key is `fc` (flow control window); `ffs` is
     // the ffmpeg-style alias (flight flag size).
     c.flow_window_packets = Some(parse_int_nonneg("fc", value)?);
     Ok(())
 }
 
-fn set_input_bandwidth(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_input_bandwidth(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     c.input_bandwidth = Some(parse_int_nonneg("inputbw", value)?);
     Ok(())
 }
 
 /// Parses a latency value in milliseconds under the name used in errors
 /// and the high-latency warning.
-fn latency_value(name: &'static str, value: &str) -> Result<Duration, UrlError> {
+fn latency_value(name: &'static str, value: &str) -> Result<Duration, SrtUrlError> {
     // `latency`'s ffmpeg-style alias is `tsbpddelay` (the `SRTO_*` constant
     // for SRT's TSBPD mechanism is `SRTO_LATENCY`).
     let n = parse_i32_nonneg(name, value)?;
@@ -464,34 +463,34 @@ fn latency_value(name: &'static str, value: &str) -> Result<Duration, UrlError> 
     Ok(Duration::from_millis(n as u64))
 }
 
-fn set_latency(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_latency(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     c.latency = Some(latency_value("latency", value)?);
     Ok(())
 }
 
-fn set_peer_latency(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_peer_latency(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     c.peer_latency = Some(latency_value("peerlatency", value)?);
     Ok(())
 }
 
-fn set_recv_latency(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_recv_latency(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     c.recv_latency = Some(latency_value("rcvlatency", value)?);
     Ok(())
 }
 
-fn set_linger(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_linger(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     // SRTO_LINGER value is in seconds (matches ffmpeg's URL).
     let n = parse_i32_nonneg("linger", value)?;
     c.linger = Some(Duration::from_secs(n as u64));
     Ok(())
 }
 
-fn set_loss_max_ttl(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_loss_max_ttl(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     c.loss_max_ttl = Some(parse_int_nonneg("lossmaxttl", value)?);
     Ok(())
 }
 
-fn set_max_bandwidth(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_max_bandwidth(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     // SRTO_MAXBW is i64; we expose non-negative as Limited(u64).
     // The `-1` sentinel (`MaxBandwidth::Infinite`, libsrt's infinite) is not
     // URL-settable; `?maxbw=0` sends 0 (relative to the input rate).
@@ -500,20 +499,20 @@ fn set_max_bandwidth(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
     Ok(())
 }
 
-fn set_mss(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_mss(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     c.mss = Some(parse_int_nonneg::<u16>("mss", value)?);
     Ok(())
 }
 
-fn set_overhead_bandwidth(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_overhead_bandwidth(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     c.overhead_bandwidth_pct = Some(parse_oheadbw(value)?);
     Ok(())
 }
 
-fn set_packet_filter(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_packet_filter(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     c.packet_filter =
         Some(
-            PacketFilter::new(value.to_string()).map_err(|e| UrlError::OptionValidation {
+            PacketFilter::new(value.to_string()).map_err(|e| SrtUrlError::OptionValidation {
                 key: "packetfilter".into(),
                 source: OptionError::from(e),
             })?,
@@ -521,10 +520,10 @@ fn set_packet_filter(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
     Ok(())
 }
 
-fn set_passphrase(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_passphrase(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     c.passphrase =
         Some(
-            Passphrase::new(value.to_string()).map_err(|e| UrlError::OptionValidation {
+            Passphrase::new(value.to_string()).map_err(|e| SrtUrlError::OptionValidation {
                 key: "passphrase".into(),
                 source: OptionError::from(e),
             })?,
@@ -532,7 +531,7 @@ fn set_passphrase(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
     Ok(())
 }
 
-fn set_payload_size(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_payload_size(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     // libsrt-URL canonical key is `payloadsize`; `pkt_size` and
     // `payload_size` are ffmpeg-style aliases.
     //
@@ -544,7 +543,7 @@ fn set_payload_size(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
     // less helpful than a clear "1456 cap" message at parse time.
     let n: u16 = parse_int_nonneg::<u16>("payloadsize", value)?;
     if n > 1456 {
-        return Err(UrlError::InvalidValue {
+        return Err(SrtUrlError::InvalidValue {
             key: "payloadsize".into(),
             detail: format!("must be <= 1456 (libsrt SRT_LIVE_MAX_PLSIZE, live-mode cap), got {n}"),
         });
@@ -553,23 +552,24 @@ fn set_payload_size(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
     Ok(())
 }
 
-fn set_key_length(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_key_length(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     let n = parse_i32_nonneg("pbkeylen", value)?;
-    c.key_length = Some(
-        KeyLength::from_bytes(n).map_err(|source| UrlError::OptionValidation {
-            key: "pbkeylen".into(),
-            source,
-        })?,
-    );
+    c.key_length =
+        Some(
+            KeyLength::from_bytes(n).map_err(|source| SrtUrlError::OptionValidation {
+                key: "pbkeylen".into(),
+                source,
+            })?,
+        );
     Ok(())
 }
 
-fn set_stream_id(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_stream_id(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     // libsrt-URL canonical key is `streamid`; `srt_streamid` is the
     // ffmpeg-style alias.
     c.stream_id =
         Some(
-            StreamId::new(value.to_string()).map_err(|e| UrlError::OptionValidation {
+            StreamId::new(value.to_string()).map_err(|e| SrtUrlError::OptionValidation {
                 key: "streamid".into(),
                 source: OptionError::from(e),
             })?,
@@ -577,41 +577,41 @@ fn set_stream_id(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
     Ok(())
 }
 
-fn set_too_late_drop(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_too_late_drop(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     c.too_late_packet_drop = Some(parse_bool_strict("tlpktdrop", value)?);
     Ok(())
 }
 
-fn set_udp_recv_buffer(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_udp_recv_buffer(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     // libsrt-URL canonical key is `udprcvbuf`; `recv_buffer_size` is the
     // ffmpeg-style alias.
     c.udp_recv_buffer_bytes = Some(parse_int_nonneg("udprcvbuf", value)?);
     Ok(())
 }
 
-fn set_udp_send_buffer(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_udp_send_buffer(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     c.udp_send_buffer_bytes = Some(parse_int_nonneg("udpsndbuf", value)?);
     Ok(())
 }
 
-fn set_recv_timeout(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_recv_timeout(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     let n = parse_i32_nonneg("x-recvtimeout", value)?;
     c.recv_timeout = Some(Duration::from_millis(n as u64));
     Ok(())
 }
 
-fn set_send_timeout(c: &mut SocketConfig, _key: &str, value: &str) -> Applied {
+fn set_send_timeout(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     let n = parse_i32_nonneg("x-sendtimeout", value)?;
     c.send_timeout = Some(Duration::from_millis(n as u64));
     Ok(())
 }
 
-/// The query keys an `srt://` URL applies to a [`SocketConfig`]; the
+/// The query keys an `srt://` URL applies to a [`SrtSocketConfig`]; the
 /// parser and the generated key documentation both read this table. The
 /// `mode` key and the recognised-but-unexposed keys are handled around
 /// it, not in it.
 #[doc(hidden)]
-pub const URL_KEYS: &[QueryKey<SocketConfig, UrlError>] = &[
+pub const URL_KEYS: &[QueryKey<SrtSocketConfig, SrtUrlError>] = &[
     QueryKey::new(
         "congestion",
         &["smoother"],
@@ -764,24 +764,24 @@ pub const URL_KEYS: &[QueryKey<SocketConfig, UrlError>] = &[
 
 // ── keys the table does not hold ─────────────────────────────────────────────
 
-/// Returns a `UrlError::FfmpegAliasNotExposed` for the three ffmpeg-canonical
+/// Returns a `SrtUrlError::FfmpegAliasNotExposed` for the three ffmpeg-canonical
 /// option short-aliases that don't share a libsrt URL name. Without these
 /// arms, users porting ffmpeg URLs hit the generic "unknown URL key"
 /// fallthrough — surface what they're trying to set + what to use instead
 /// (or that we don't expose it). ffmpeg names: libsrt.c:103/104/118/149.
-fn ffmpeg_alias_not_exposed(key: &str) -> UrlError {
+fn ffmpeg_alias_not_exposed(key: &str) -> SrtUrlError {
     match key {
-        "timeout" => UrlError::FfmpegAliasNotExposed {
+        "timeout" => SrtUrlError::FfmpegAliasNotExposed {
             key: key.to_string(),
             canonical: "ffmpeg's read/write timeout, libsrt rw_timeout, microseconds",
             suggestion: "use x-recvtimeout / x-sendtimeout (milliseconds) for the closest equivalent",
         },
-        "listen_timeout" => UrlError::FfmpegAliasNotExposed {
+        "listen_timeout" => SrtUrlError::FfmpegAliasNotExposed {
             key: key.to_string(),
             canonical: "ffmpeg's listen_timeout (connection-awaiting timeout, microseconds)",
             suggestion: "not exposed by this library; see deferred-features.md",
         },
-        "tsbpd" => UrlError::FfmpegAliasNotExposed {
+        "tsbpd" => SrtUrlError::FfmpegAliasNotExposed {
             key: key.to_string(),
             canonical: "ffmpeg short alias for SRTO_TSBPDMODE (also reachable via the longer 'tsbpdmode' libsrt URL key)",
             suggestion: "not exposed by this library; see deferred-features.md",
@@ -793,20 +793,24 @@ fn ffmpeg_alias_not_exposed(key: &str) -> UrlError {
 /// The error for a key the table does not list: an ffmpeg alias this
 /// library does not expose, a libsrt key it recognises but does not expose,
 /// or an unknown key.
-fn unrecognized_key(key: &str) -> UrlError {
+fn unrecognized_key(key: &str) -> SrtUrlError {
     if matches!(key, "timeout" | "listen_timeout" | "tsbpd") {
         return ffmpeg_alias_not_exposed(key);
     }
     if let Some(srto) = group3_lookup(key) {
-        return UrlError::UnsupportedKey {
+        return SrtUrlError::UnsupportedKey {
             key: key.to_string(),
             srto,
         };
     }
-    UrlError::UnknownKey {
+    SrtUrlError::UnknownKey {
         key: key.to_string(),
     }
 }
+
+/// The name this type had before it was renamed.
+#[deprecated(since = "0.9.0", note = "renamed to `SrtUrlError`")]
+pub type UrlError = SrtUrlError;
 
 #[cfg(test)]
 mod tests {
@@ -1040,13 +1044,13 @@ mod tests {
     #[test]
     fn empty_host_without_listener_mode_rejects() {
         let err = SrtUrl::parse("srt://:7000").unwrap_err();
-        assert!(matches!(err, UrlError::MissingHost));
+        assert!(matches!(err, SrtUrlError::MissingHost));
     }
 
     #[test]
     fn mode_rendezvous_unsupported() {
         let err = SrtUrl::parse("srt://peer:9000?mode=rendezvous").unwrap_err();
-        assert!(matches!(err, UrlError::UnsupportedMode { .. }));
+        assert!(matches!(err, SrtUrlError::UnsupportedMode { .. }));
     }
 
     /// The one difference between [`SrtUrl::connect`] and

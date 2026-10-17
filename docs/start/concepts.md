@@ -147,12 +147,12 @@ Compare:
 
 ### Latency budget, encryption, reconnect
 
-**Latency.** SRT trades latency for reliability. You configure how long the receiver waits for missing packets before giving up and playing forward. Default ~120 ms; tune up (seconds) for satellite, tune down (tens of ms) for low-latency local links. ts-transformer's `SocketBuilder` exposes this as `latency_ms`.
+**Latency.** SRT trades latency for reliability. You configure how long the receiver waits for missing packets before giving up and playing forward. Default ~120 ms; tune up (seconds) for satellite, tune down (tens of ms) for low-latency local links. ts-transformer's `SrtSocketBuilder` exposes this as `latency_ms`.
 
 **Encryption.** SRT supports AES-128, AES-192, and AES-256. Encryption
 support is built into `tst-srt` by default, but a connection is encrypted
 only when you configure a passphrase. Set the same passphrase on both peers;
-in Rust, use `SocketBuilder::passphrase(Passphrase::new("…")?)` and the
+in Rust, use `SrtSocketBuilder::passphrase(Passphrase::new("…")?)` and the
 corresponding listener setter. See the
 [encrypted-send recipe](/docs/cookbook/sending/send-encrypted.md).
 

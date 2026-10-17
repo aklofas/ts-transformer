@@ -31,13 +31,13 @@ use tst_pipeline::{
     BackoffStrategy, BrokenCause, ManagedTransport, MuxSender, OverflowPolicy, ReconnectMode,
     ReconnectPolicy, TransportError,
 };
-use tst_srt::{SocketBuilder, SrtTransport};
+use tst_srt::{SrtSocketBuilder, SrtTransport};
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let factory = || -> Result<SrtTransport, TransportError> {
         // Every reconnect opens a new socket with the same configuration.
-        let mut sb = SocketBuilder::new();
+        let mut sb = SrtSocketBuilder::new();
         sb.latency(Duration::from_millis(120));
         let socket = sb
             .connect("127.0.0.1:9000")

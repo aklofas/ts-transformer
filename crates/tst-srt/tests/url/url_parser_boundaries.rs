@@ -1,6 +1,6 @@
 //! Boundary-value tests for the URL parser.
 
-use tst_srt::{SrtUrl, UrlError};
+use tst_srt::{SrtUrl, SrtUrlError};
 
 // ============================================================================
 // INT (i32) boundaries — using `latency` as the representative key.
@@ -21,19 +21,19 @@ fn int_i32_max() {
 #[test]
 fn int_overflow_above_i32() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?latency=2147483648").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { .. }));
+    assert!(matches!(e, SrtUrlError::InvalidValue { .. }));
 }
 
 #[test]
 fn int_negative() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?latency=-1").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { .. }));
+    assert!(matches!(e, SrtUrlError::InvalidValue { .. }));
 }
 
 #[test]
 fn int_empty_value() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?latency=").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { .. }));
+    assert!(matches!(e, SrtUrlError::InvalidValue { .. }));
 }
 
 // ============================================================================
@@ -55,7 +55,7 @@ fn int64_u64_max() {
 #[test]
 fn int64_overflow_above_u64() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?maxbw=18446744073709551616").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { .. }));
+    assert!(matches!(e, SrtUrlError::InvalidValue { .. }));
 }
 
 // ============================================================================
@@ -77,19 +77,19 @@ fn bool_one() {
 #[test]
 fn bool_two_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?tlpktdrop=2").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { .. }));
+    assert!(matches!(e, SrtUrlError::InvalidValue { .. }));
 }
 
 #[test]
 fn bool_true_word_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?tlpktdrop=true").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { .. }));
+    assert!(matches!(e, SrtUrlError::InvalidValue { .. }));
 }
 
 #[test]
 fn bool_empty_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?tlpktdrop=").unwrap_err();
-    assert!(matches!(e, UrlError::InvalidValue { .. }));
+    assert!(matches!(e, SrtUrlError::InvalidValue { .. }));
 }
 
 // ============================================================================
@@ -108,13 +108,13 @@ fn enum_lowercase_live() {
 #[test]
 fn enum_uppercase_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?congestion=Live").unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
 
 #[test]
 fn enum_unknown_value_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?congestion=fast").unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
 
 // ============================================================================
@@ -140,13 +140,13 @@ fn passphrase_too_long_80() {
     let p80 = "a".repeat(80);
     let url = format!("srt://1.2.3.4:9000?passphrase={p80}");
     let e = SrtUrl::parse(&url).unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
 
 #[test]
 fn passphrase_empty_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?passphrase=").unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn streamid_above_512_byte_limit() {
     let s = "a".repeat(513);
     let url = format!("srt://1.2.3.4:9000?streamid={s}");
     let e = SrtUrl::parse(&url).unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
 
 // ============================================================================
@@ -180,23 +180,23 @@ fn streamid_above_512_byte_limit() {
 #[test]
 fn pbkeylen_zero_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?pbkeylen=0").unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
 
 #[test]
 fn pbkeylen_15_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?pbkeylen=15").unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
 
 #[test]
 fn pbkeylen_17_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?pbkeylen=17").unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
 
 #[test]
 fn pbkeylen_25_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?pbkeylen=25").unwrap_err();
-    assert!(matches!(e, UrlError::OptionValidation { .. }));
+    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }

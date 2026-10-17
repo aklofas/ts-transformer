@@ -64,7 +64,7 @@ use std::io::{self, Read};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tst_pipeline::{Sender, SenderConfig, SenderError};
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 use tst_srt::SrtTransport;
 
 /// Read granularity. Must be a multiple of 188 so we hand `Sender`
@@ -151,10 +151,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //  - We don't crank `recv_buf_bytes` here — listener-as-sender
     //    doesn't really receive payloads, just SRT control packets.
     //
-    // Bind-then-step shape (`ListenerBuilder` is `&mut self -> &mut Self`):
+    // Bind-then-step shape (`SrtListenerBuilder` is `&mut self -> &mut Self`):
     // construct, mutate, then call the terminal `bind`. Same pattern as
     // `SocketBuilder` — translates uniformly across language bindings.
-    let mut lb = ListenerBuilder::new();
+    let mut lb = SrtListenerBuilder::new();
     lb.latency(args.latency);
     let mut listener = lb.bind(args.bind.as_str())?;
     let local = listener.local_addr()?;

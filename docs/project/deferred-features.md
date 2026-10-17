@@ -141,9 +141,9 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** libsrt adds a filter type that's hard to
   compose by string.
 
-## Stream-ID filtering on `Listener`
+## Stream-ID filtering on `SrtListener`
 
-- **Status:** Not implemented; `Listener::accept` returns every
+- **Status:** Not implemented; `SrtListener::accept` returns every
   successful handshake.
 - **Why deferred:** Filter shape is application policy (regex? exact
   list? signed token?), not transport policy. The library exposes
@@ -563,7 +563,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
 ## URL parameter coverage (Group 3 — recognized but unsupported)
 
 - **Status:** Parser recognizes the libsrt URL key by name and rejects
-  with `UrlError::UnsupportedKey` carrying its `SRTO_*` name — no silent
+  with `SrtUrlError::UnsupportedKey` carrying its `SRTO_*` name — no silent
   failure; the operator gets a clear "this option exists but isn't yet
   exposed" message. Of the roughly 14 Group 3 keys ffmpeg honors, only
   Category A (5 cheap aliases mapping to existing setters) shipped.
@@ -584,10 +584,10 @@ mean **Deferred**. An entry whose feature has shipped must never read
   `retransmitalgo` (`SRTO_RETRANSMITALGO`), `snddropdelay`
   (`SRTO_SNDDROPDELAY`), `transtype` (`SRTO_TRANSTYPE`), `tsbpdmode`
   (`SRTO_TSBPDMODE`).
-- **Why deferred:** Each key needs a new `SocketBuilder` setter on
+- **Why deferred:** Each key needs a new `SrtSocketBuilder` setter on
   `tst-srt` (the Category C keys `enforcedencryption` / `kmrefreshrate` /
   `kmpreannounce` / `iptos` / `ipttl` / `snddropdelay` / `transtype` /
-  `tsbpdmode` also a new `SocketConfig` field) plus its typed wrapper /
+  `tsbpdmode` also a new `SrtSocketConfig` field) plus its typed wrapper /
   validation and URL parser arm. None has a current consumer ask, and
   landing them together would duplicate work each key's own trigger does
   anyway, so they are unblocked one by one.
@@ -643,7 +643,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
   4. Strict percent-encoding: the parser inherits
      `url::Url::query_pairs()`'s lenient handling, so `%2` or `%XY` in a
      query pass through as literal substrings instead of failing with
-     `UrlError::Syntax`. The fuzz target enforces panic-freedom only.
+     `SrtUrlError::Syntax`. The fuzz target enforces panic-freedom only.
 - **Why deferred:** The shipped parser has a panic-freedom fuzz target
   and a one-shot atomicity test, and its structural invariants (no
   shared mutable state, clone-then-mutate) make 2–3 redundant for now.
@@ -679,7 +679,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## `KeyLength` → `Option<KeyLength>` ergonomics
 
-- **Status:** `SocketConfig::key_length` is `KeyLength` (default
+- **Status:** `SrtSocketConfig::key_length` is `KeyLength` (default
   `Aes128`) and is unconditionally written to `SRTO_PBKEYLEN` whenever
   a passphrase is set. ffmpeg only sets `SRTO_PBKEYLEN` when the user
   explicitly passes `?pbkeylen=`, letting libsrt auto-negotiate.
@@ -912,7 +912,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 - **Status:** Partially resolved. The URL parser at `crates/tst-srt/src/url.rs` accepts
   `mode=caller` (the default) and `mode=listener`; `mode=rendezvous` is
-  rejected with `UrlError::UnsupportedMode`. Listener dispatch is wired
+  rejected with `SrtUrlError::UnsupportedMode`. Listener dispatch is wired
   on every RECEIVER entry point (C, Python, JVM): the C
   `tst_*receiver_open` family routes a `?mode=listener` URL through the
   listener path and the `_open_listener` variants force it regardless of
@@ -925,7 +925,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
   `require_caller_mode`). The refusal is deliberately NOT in
   `SrtUrl::connect`, which is mode-agnostic by design — the caller chooses
   the direction by calling `connect` or `accept_one`. A listener-mode sender
-  remains unimplemented; build a `Listener` and wrap the accepted `Socket`
+  remains unimplemented; build a `SrtListener` and wrap the accepted `SrtSocket`
   in `SrtTransport`, as `examples/sending/srt_serve_ts_file.rs` does.
 - **Why deferred (sender side):** a listener-mode sender is the
   "player dials in" shape (VLC, ffplay and `srt-live-transmit` default
@@ -1789,7 +1789,7 @@ and the two below.
   Python has `TransportBuilder.pkt_size`. The claim was removed from the
   C docs at 0.7.0.
 - **Why deferred:** a parser addition (`TcpUrl.pkt_size` +
-  `SocketConfig::merge_from_url` arm) with its own red-first test, too late
+  `SrtSocketConfig::merge_from_url` arm) with its own red-first test, too late
   for the 0.7.0 tag.
 - **Trigger to revisit:** the first 0.7.x patch release, or a C consumer
   asking for a non-default TCP chunk size.
@@ -1904,13 +1904,13 @@ Shipped 0.1.0: `PROGRAM_MAP` events and `program_number` on `tst_stream_info_t`.
 
 Shipped 0.4.0 in minimal form: every publishable crate ships a README rendered on crates.io and docs.rs; mirroring the `docs/` guides into rustdoc is not planned.
 
-### `Listener::accept_timeout` — bounded blocking accept
+### `SrtListener::accept_timeout` — bounded blocking accept
 
 Shipped 0.1.0; see [`guides/srt.md`](/docs/guides/srt.md) §Blocking semantics.
 
 ### Rust-API-only sender pipeline defaults
 
-Shipped 0.1.0: `SocketConfig::{sender,receiver}_defaults` and the merge methods in `tst-srt`; see `docs/guides/srt.md` "Sender / receiver presets".
+Shipped 0.1.0: `SrtSocketConfig::{sender,receiver}_defaults` and the merge methods in `tst-srt`; see `docs/guides/srt.md` "Sender / receiver presets".
 
 ### Background reconnect — bindings parity (C / Python / JVM) — RESOLVED 2026-08-21
 
@@ -1992,9 +1992,9 @@ Shipped 0.7.0 (C ABI minor 22): non-freeing `tst_{tcp,udp,rist}_*_cancel` on eve
 
 Shipped 0.7.0 (C ABI minor 22): `finish()` on every C, Python and JVM mux sender; `FileTransport::finish` stays Rust-only.
 
-### `Socket::close` Result-type cleanup
+### `SrtSocket::close` Result-type cleanup
 
-Shipped 0.8.0: `tst_srt::Socket::close` and `Listener::close` are infallible.
+Shipped 0.8.0: `tst_srt::SrtSocket::close` and `SrtListener::close` are infallible.
 
 ### `MaxBandwidth` variant naming vs libsrt sentinels
 

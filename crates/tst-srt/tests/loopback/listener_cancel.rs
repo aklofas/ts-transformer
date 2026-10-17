@@ -5,12 +5,12 @@
 //! Requires libsrt loopback.
 
 use std::time::{Duration, Instant};
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 
 #[test]
 fn cancel_handle_wakes_parked_accept_promptly() {
     require_loopback!();
-    let mut listener = ListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
+    let mut listener = SrtListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
     let cancel = listener.cancel_handle();
 
     // Fire the cancel from another thread while accept() is parked.

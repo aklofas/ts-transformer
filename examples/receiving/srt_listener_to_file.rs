@@ -15,7 +15,7 @@ use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::time::Duration;
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
@@ -31,9 +31,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // peers must agree on the latency budget — see `send_pipeline_to_socket`,
     // which uses the same value.
     //
-    // Bind-then-step shape (`ListenerBuilder` is `&mut self -> &mut Self`):
+    // Bind-then-step shape (`SrtListenerBuilder` is `&mut self -> &mut Self`):
     // construct, mutate, then call the terminal `bind`.
-    let mut lb = ListenerBuilder::new();
+    let mut lb = SrtListenerBuilder::new();
     lb.latency(Duration::from_millis(120));
     let mut listener = lb.bind(bind_addr.as_str())?;
 

@@ -49,7 +49,7 @@ use tst_core::error::DemuxError;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, MetadataKind, SamplePayload};
 use tst_pipeline::{DemuxReceiver, DemuxReceiverErrorSource, Sender, SenderConfig, TransportError};
 use tst_srt::SrtTransport;
-use tst_srt::{ListenerBuilder, SocketBuilder};
+use tst_srt::{SrtListenerBuilder, SrtSocketBuilder};
 
 /// Per-file byte cap. 16 MiB on a typical 8 Mbps capture is roughly 16
 /// seconds of content — enough for a comfortably large PMT + many AUs +
@@ -209,7 +209,7 @@ fn run_one(path: &Path) -> RunOutcome {
     // 3. Loopback. Recv pipeline runs in the accept-thread closure; main
     // thread owns the sender so the panic on a wire-side mismatch points
     // at the right file in the test report.
-    let mut builder = ListenerBuilder::new();
+    let mut builder = SrtListenerBuilder::new();
     builder.recv_latency(LATENCY);
     let lb = crate::common::Loopback::bind_with(builder);
     let port = lb.port;
@@ -259,7 +259,7 @@ fn run_one(path: &Path) -> RunOutcome {
     });
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .latency(LATENCY)
         .connect(format!("127.0.0.1:{port}"))
         .expect("connect");

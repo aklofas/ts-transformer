@@ -4,147 +4,151 @@ pub use tst_srt::SrtCancelHandle
 pub mod tst_srt::addr
 pub fn tst_srt::addr::join_host_port(&str, u16) -> alloc::string::String
 pub mod tst_srt::builder
-pub struct tst_srt::builder::ListenerBuilder
-impl tst_srt::builder::ListenerBuilder
-pub fn tst_srt::builder::ListenerBuilder::backlog(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::bind(&self, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<tst_srt::listener::Listener, tst_srt::error::BindError>
-pub fn tst_srt::builder::ListenerBuilder::config(&self) -> tst_srt::config::ListenerConfig
-pub fn tst_srt::builder::ListenerBuilder::congestion(&mut self, tst_srt::options::Congestion) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::flow_window_packets(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::key_length(&mut self, tst_srt::options::KeyLength) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::latency(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::latency_ms(&mut self, u64) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::linger(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::loss_max_ttl(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::max_bandwidth(&mut self, tst_srt::options::MaxBandwidth) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::mss(&mut self, u16) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::new() -> Self
-pub fn tst_srt::builder::ListenerBuilder::overhead_bandwidth_pct(&mut self, u8) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::payload_size(&mut self, u16) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::recv_latency(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::recv_timeout(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::reuse_addr(&mut self, bool) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::send_timeout(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::too_late_packet_drop(&mut self, bool) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::udp_recv_buffer_bytes(&mut self, u32) -> &mut Self
-impl core::default::Default for tst_srt::builder::ListenerBuilder
-pub fn tst_srt::builder::ListenerBuilder::default() -> tst_srt::builder::ListenerBuilder
-impl core::marker::Freeze for tst_srt::builder::ListenerBuilder
-impl core::marker::Send for tst_srt::builder::ListenerBuilder
-impl core::marker::Sync for tst_srt::builder::ListenerBuilder
-impl core::marker::Unpin for tst_srt::builder::ListenerBuilder
-impl core::marker::UnsafeUnpin for tst_srt::builder::ListenerBuilder
-impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::builder::ListenerBuilder
-impl core::panic::unwind_safe::UnwindSafe for tst_srt::builder::ListenerBuilder
-pub struct tst_srt::builder::SocketBuilder
-impl tst_srt::builder::SocketBuilder
-pub fn tst_srt::builder::SocketBuilder::config(&self) -> tst_srt::config::SocketConfig
-pub fn tst_srt::builder::SocketBuilder::congestion(&mut self, tst_srt::options::Congestion) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::connect(&self, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<tst_srt::socket::Socket, tst_srt::error::ConnectError>
-pub fn tst_srt::builder::SocketBuilder::connect_timeout(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::flow_window_packets(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::input_bandwidth(&mut self, u64) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::key_length(&mut self, tst_srt::options::KeyLength) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::latency(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::latency_ms(&mut self, u64) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::linger(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::loss_max_ttl(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::max_bandwidth(&mut self, tst_srt::options::MaxBandwidth) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::mss(&mut self, u16) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::new() -> Self
-pub fn tst_srt::builder::SocketBuilder::overhead_bandwidth_pct(&mut self, u8) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::payload_size(&mut self, u16) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::peer_latency(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::receiver_defaults(&mut self) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::recv_latency(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::recv_timeout(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::role(&mut self, tst_srt::options::Role) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::send_buf_bytes(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::send_timeout(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::sender_defaults(&mut self) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::stream_id(&mut self, tst_srt::options::StreamId) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::too_late_packet_drop(&mut self, bool) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::try_stream_id(&mut self, impl core::convert::TryInto<tst_srt::options::StreamId, Error = tst_srt::error::StreamIdError>) -> core::result::Result<&mut Self, tst_srt::error::OptionError>
-pub fn tst_srt::builder::SocketBuilder::udp_recv_buffer_bytes(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::udp_send_buffer_bytes(&mut self, u32) -> &mut Self
-impl core::default::Default for tst_srt::builder::SocketBuilder
-pub fn tst_srt::builder::SocketBuilder::default() -> tst_srt::builder::SocketBuilder
-impl core::marker::Freeze for tst_srt::builder::SocketBuilder
-impl core::marker::Send for tst_srt::builder::SocketBuilder
-impl core::marker::Sync for tst_srt::builder::SocketBuilder
-impl core::marker::Unpin for tst_srt::builder::SocketBuilder
-impl core::marker::UnsafeUnpin for tst_srt::builder::SocketBuilder
-impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::builder::SocketBuilder
-impl core::panic::unwind_safe::UnwindSafe for tst_srt::builder::SocketBuilder
+pub struct tst_srt::builder::SrtListenerBuilder
+impl tst_srt::builder::SrtListenerBuilder
+pub fn tst_srt::builder::SrtListenerBuilder::backlog(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::bind(&self, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<tst_srt::listener::SrtListener, tst_srt::error::BindError>
+pub fn tst_srt::builder::SrtListenerBuilder::config(&self) -> tst_srt::config::SrtListenerConfig
+pub fn tst_srt::builder::SrtListenerBuilder::congestion(&mut self, tst_srt::options::Congestion) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::flow_window_packets(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::key_length(&mut self, tst_srt::options::KeyLength) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::latency(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::latency_ms(&mut self, u64) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::linger(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::loss_max_ttl(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::max_bandwidth(&mut self, tst_srt::options::MaxBandwidth) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::mss(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::new() -> Self
+pub fn tst_srt::builder::SrtListenerBuilder::overhead_bandwidth_pct(&mut self, u8) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::payload_size(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::recv_latency(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::recv_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::reuse_addr(&mut self, bool) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::send_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::too_late_packet_drop(&mut self, bool) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::udp_recv_buffer_bytes(&mut self, u32) -> &mut Self
+impl core::default::Default for tst_srt::builder::SrtListenerBuilder
+pub fn tst_srt::builder::SrtListenerBuilder::default() -> tst_srt::builder::SrtListenerBuilder
+impl core::marker::Freeze for tst_srt::builder::SrtListenerBuilder
+impl core::marker::Send for tst_srt::builder::SrtListenerBuilder
+impl core::marker::Sync for tst_srt::builder::SrtListenerBuilder
+impl core::marker::Unpin for tst_srt::builder::SrtListenerBuilder
+impl core::marker::UnsafeUnpin for tst_srt::builder::SrtListenerBuilder
+impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::builder::SrtListenerBuilder
+impl core::panic::unwind_safe::UnwindSafe for tst_srt::builder::SrtListenerBuilder
+pub struct tst_srt::builder::SrtSocketBuilder
+impl tst_srt::builder::SrtSocketBuilder
+pub fn tst_srt::builder::SrtSocketBuilder::config(&self) -> tst_srt::config::SrtSocketConfig
+pub fn tst_srt::builder::SrtSocketBuilder::congestion(&mut self, tst_srt::options::Congestion) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::connect(&self, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<tst_srt::socket::SrtSocket, tst_srt::error::SrtConnectError>
+pub fn tst_srt::builder::SrtSocketBuilder::connect_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::flow_window_packets(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::input_bandwidth(&mut self, u64) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::key_length(&mut self, tst_srt::options::KeyLength) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::latency(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::latency_ms(&mut self, u64) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::linger(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::loss_max_ttl(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::max_bandwidth(&mut self, tst_srt::options::MaxBandwidth) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::mss(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::new() -> Self
+pub fn tst_srt::builder::SrtSocketBuilder::overhead_bandwidth_pct(&mut self, u8) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::payload_size(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::peer_latency(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::receiver_defaults(&mut self) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::recv_latency(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::recv_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::role(&mut self, tst_srt::options::Role) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::send_buf_bytes(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::send_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::sender_defaults(&mut self) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::stream_id(&mut self, tst_srt::options::StreamId) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::too_late_packet_drop(&mut self, bool) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::try_stream_id(&mut self, impl core::convert::TryInto<tst_srt::options::StreamId, Error = tst_srt::error::StreamIdError>) -> core::result::Result<&mut Self, tst_srt::error::OptionError>
+pub fn tst_srt::builder::SrtSocketBuilder::udp_recv_buffer_bytes(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::udp_send_buffer_bytes(&mut self, u32) -> &mut Self
+impl core::default::Default for tst_srt::builder::SrtSocketBuilder
+pub fn tst_srt::builder::SrtSocketBuilder::default() -> tst_srt::builder::SrtSocketBuilder
+impl core::marker::Freeze for tst_srt::builder::SrtSocketBuilder
+impl core::marker::Send for tst_srt::builder::SrtSocketBuilder
+impl core::marker::Sync for tst_srt::builder::SrtSocketBuilder
+impl core::marker::Unpin for tst_srt::builder::SrtSocketBuilder
+impl core::marker::UnsafeUnpin for tst_srt::builder::SrtSocketBuilder
+impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::builder::SrtSocketBuilder
+impl core::panic::unwind_safe::UnwindSafe for tst_srt::builder::SrtSocketBuilder
+pub type tst_srt::builder::ListenerBuilder = tst_srt::builder::SrtListenerBuilder
+pub type tst_srt::builder::SocketBuilder = tst_srt::builder::SrtSocketBuilder
 pub mod tst_srt::config
-#[non_exhaustive] pub struct tst_srt::config::ListenerConfig
-pub tst_srt::config::ListenerConfig::backlog: u32
-pub tst_srt::config::ListenerConfig::reuse_addr: bool
-pub tst_srt::config::ListenerConfig::socket: tst_srt::config::SocketConfig
-impl core::clone::Clone for tst_srt::config::ListenerConfig
-pub fn tst_srt::config::ListenerConfig::clone(&self) -> tst_srt::config::ListenerConfig
-impl core::default::Default for tst_srt::config::ListenerConfig
-pub fn tst_srt::config::ListenerConfig::default() -> Self
-impl core::fmt::Debug for tst_srt::config::ListenerConfig
-pub fn tst_srt::config::ListenerConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_srt::config::ListenerConfig
-impl core::marker::Send for tst_srt::config::ListenerConfig
-impl core::marker::Sync for tst_srt::config::ListenerConfig
-impl core::marker::Unpin for tst_srt::config::ListenerConfig
-impl core::marker::UnsafeUnpin for tst_srt::config::ListenerConfig
-impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::config::ListenerConfig
-impl core::panic::unwind_safe::UnwindSafe for tst_srt::config::ListenerConfig
-#[non_exhaustive] pub struct tst_srt::config::SocketConfig
-pub tst_srt::config::SocketConfig::congestion: core::option::Option<tst_srt::options::Congestion>
-pub tst_srt::config::SocketConfig::connect_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::config::SocketConfig::flow_window_packets: core::option::Option<u32>
-pub tst_srt::config::SocketConfig::input_bandwidth: core::option::Option<u64>
-pub tst_srt::config::SocketConfig::key_length: core::option::Option<tst_srt::options::KeyLength>
-pub tst_srt::config::SocketConfig::latency: core::option::Option<core::time::Duration>
-pub tst_srt::config::SocketConfig::linger: core::option::Option<core::time::Duration>
-pub tst_srt::config::SocketConfig::loss_max_ttl: core::option::Option<u32>
-pub tst_srt::config::SocketConfig::max_bandwidth: core::option::Option<tst_srt::options::MaxBandwidth>
-pub tst_srt::config::SocketConfig::mss: core::option::Option<u16>
-pub tst_srt::config::SocketConfig::overhead_bandwidth_pct: core::option::Option<u8>
-pub tst_srt::config::SocketConfig::packet_filter: core::option::Option<tst_srt::options::PacketFilter>
-pub tst_srt::config::SocketConfig::passphrase: core::option::Option<tst_srt::options::Passphrase>
-pub tst_srt::config::SocketConfig::payload_size: core::option::Option<u16>
-pub tst_srt::config::SocketConfig::peer_latency: core::option::Option<core::time::Duration>
-pub tst_srt::config::SocketConfig::recv_buf_bytes: core::option::Option<u32>
-pub tst_srt::config::SocketConfig::recv_latency: core::option::Option<core::time::Duration>
-pub tst_srt::config::SocketConfig::recv_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::config::SocketConfig::role: tst_srt::options::Role
-pub tst_srt::config::SocketConfig::send_buf_bytes: core::option::Option<u32>
-pub tst_srt::config::SocketConfig::send_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::config::SocketConfig::stream_id: core::option::Option<tst_srt::options::StreamId>
-pub tst_srt::config::SocketConfig::too_late_packet_drop: core::option::Option<bool>
-pub tst_srt::config::SocketConfig::udp_recv_buffer_bytes: core::option::Option<u32>
-pub tst_srt::config::SocketConfig::udp_send_buffer_bytes: core::option::Option<u32>
-impl tst_srt::config::SocketConfig
-pub fn tst_srt::config::SocketConfig::merge_from(&mut self, &tst_srt::config::SocketConfig)
-pub fn tst_srt::config::SocketConfig::merge_receiver_defaults(&mut self)
-pub fn tst_srt::config::SocketConfig::merge_sender_defaults(&mut self)
-pub fn tst_srt::config::SocketConfig::receiver_defaults() -> Self
-pub fn tst_srt::config::SocketConfig::sender_defaults() -> Self
-impl core::clone::Clone for tst_srt::config::SocketConfig
-pub fn tst_srt::config::SocketConfig::clone(&self) -> tst_srt::config::SocketConfig
-impl core::default::Default for tst_srt::config::SocketConfig
-pub fn tst_srt::config::SocketConfig::default() -> tst_srt::config::SocketConfig
-impl core::fmt::Debug for tst_srt::config::SocketConfig
-pub fn tst_srt::config::SocketConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_srt::config::SocketConfig
-impl core::marker::Send for tst_srt::config::SocketConfig
-impl core::marker::Sync for tst_srt::config::SocketConfig
-impl core::marker::Unpin for tst_srt::config::SocketConfig
-impl core::marker::UnsafeUnpin for tst_srt::config::SocketConfig
-impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::config::SocketConfig
-impl core::panic::unwind_safe::UnwindSafe for tst_srt::config::SocketConfig
+#[non_exhaustive] pub struct tst_srt::config::SrtListenerConfig
+pub tst_srt::config::SrtListenerConfig::backlog: u32
+pub tst_srt::config::SrtListenerConfig::reuse_addr: bool
+pub tst_srt::config::SrtListenerConfig::socket: tst_srt::config::SrtSocketConfig
+impl core::clone::Clone for tst_srt::config::SrtListenerConfig
+pub fn tst_srt::config::SrtListenerConfig::clone(&self) -> tst_srt::config::SrtListenerConfig
+impl core::default::Default for tst_srt::config::SrtListenerConfig
+pub fn tst_srt::config::SrtListenerConfig::default() -> Self
+impl core::fmt::Debug for tst_srt::config::SrtListenerConfig
+pub fn tst_srt::config::SrtListenerConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_srt::config::SrtListenerConfig
+impl core::marker::Send for tst_srt::config::SrtListenerConfig
+impl core::marker::Sync for tst_srt::config::SrtListenerConfig
+impl core::marker::Unpin for tst_srt::config::SrtListenerConfig
+impl core::marker::UnsafeUnpin for tst_srt::config::SrtListenerConfig
+impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::config::SrtListenerConfig
+impl core::panic::unwind_safe::UnwindSafe for tst_srt::config::SrtListenerConfig
+#[non_exhaustive] pub struct tst_srt::config::SrtSocketConfig
+pub tst_srt::config::SrtSocketConfig::congestion: core::option::Option<tst_srt::options::Congestion>
+pub tst_srt::config::SrtSocketConfig::connect_timeout: core::option::Option<core::time::Duration>
+pub tst_srt::config::SrtSocketConfig::flow_window_packets: core::option::Option<u32>
+pub tst_srt::config::SrtSocketConfig::input_bandwidth: core::option::Option<u64>
+pub tst_srt::config::SrtSocketConfig::key_length: core::option::Option<tst_srt::options::KeyLength>
+pub tst_srt::config::SrtSocketConfig::latency: core::option::Option<core::time::Duration>
+pub tst_srt::config::SrtSocketConfig::linger: core::option::Option<core::time::Duration>
+pub tst_srt::config::SrtSocketConfig::loss_max_ttl: core::option::Option<u32>
+pub tst_srt::config::SrtSocketConfig::max_bandwidth: core::option::Option<tst_srt::options::MaxBandwidth>
+pub tst_srt::config::SrtSocketConfig::mss: core::option::Option<u16>
+pub tst_srt::config::SrtSocketConfig::overhead_bandwidth_pct: core::option::Option<u8>
+pub tst_srt::config::SrtSocketConfig::packet_filter: core::option::Option<tst_srt::options::PacketFilter>
+pub tst_srt::config::SrtSocketConfig::passphrase: core::option::Option<tst_srt::options::Passphrase>
+pub tst_srt::config::SrtSocketConfig::payload_size: core::option::Option<u16>
+pub tst_srt::config::SrtSocketConfig::peer_latency: core::option::Option<core::time::Duration>
+pub tst_srt::config::SrtSocketConfig::recv_buf_bytes: core::option::Option<u32>
+pub tst_srt::config::SrtSocketConfig::recv_latency: core::option::Option<core::time::Duration>
+pub tst_srt::config::SrtSocketConfig::recv_timeout: core::option::Option<core::time::Duration>
+pub tst_srt::config::SrtSocketConfig::role: tst_srt::options::Role
+pub tst_srt::config::SrtSocketConfig::send_buf_bytes: core::option::Option<u32>
+pub tst_srt::config::SrtSocketConfig::send_timeout: core::option::Option<core::time::Duration>
+pub tst_srt::config::SrtSocketConfig::stream_id: core::option::Option<tst_srt::options::StreamId>
+pub tst_srt::config::SrtSocketConfig::too_late_packet_drop: core::option::Option<bool>
+pub tst_srt::config::SrtSocketConfig::udp_recv_buffer_bytes: core::option::Option<u32>
+pub tst_srt::config::SrtSocketConfig::udp_send_buffer_bytes: core::option::Option<u32>
+impl tst_srt::config::SrtSocketConfig
+pub fn tst_srt::config::SrtSocketConfig::merge_from(&mut self, &tst_srt::config::SrtSocketConfig)
+pub fn tst_srt::config::SrtSocketConfig::merge_receiver_defaults(&mut self)
+pub fn tst_srt::config::SrtSocketConfig::merge_sender_defaults(&mut self)
+pub fn tst_srt::config::SrtSocketConfig::receiver_defaults() -> Self
+pub fn tst_srt::config::SrtSocketConfig::sender_defaults() -> Self
+impl core::clone::Clone for tst_srt::config::SrtSocketConfig
+pub fn tst_srt::config::SrtSocketConfig::clone(&self) -> tst_srt::config::SrtSocketConfig
+impl core::default::Default for tst_srt::config::SrtSocketConfig
+pub fn tst_srt::config::SrtSocketConfig::default() -> tst_srt::config::SrtSocketConfig
+impl core::fmt::Debug for tst_srt::config::SrtSocketConfig
+pub fn tst_srt::config::SrtSocketConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_srt::config::SrtSocketConfig
+impl core::marker::Send for tst_srt::config::SrtSocketConfig
+impl core::marker::Sync for tst_srt::config::SrtSocketConfig
+impl core::marker::Unpin for tst_srt::config::SrtSocketConfig
+impl core::marker::UnsafeUnpin for tst_srt::config::SrtSocketConfig
+impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::config::SrtSocketConfig
+impl core::panic::unwind_safe::UnwindSafe for tst_srt::config::SrtSocketConfig
+pub type tst_srt::config::ListenerConfig = tst_srt::config::SrtListenerConfig
+pub type tst_srt::config::SocketConfig = tst_srt::config::SrtSocketConfig
 pub mod tst_srt::error
 #[non_exhaustive] pub enum tst_srt::error::AcceptError
 pub tst_srt::error::AcceptError::ListenerClosed
@@ -182,8 +186,8 @@ impl core::convert::From<core::io::error::Error> for tst_srt::error::AddrError
 pub fn tst_srt::error::AddrError::from(core::io::error::Error) -> Self
 impl core::convert::From<tst_srt::error::AddrError> for tst_srt::error::BindError
 pub fn tst_srt::error::BindError::from(tst_srt::error::AddrError) -> Self
-impl core::convert::From<tst_srt::error::AddrError> for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::from(tst_srt::error::AddrError) -> Self
+impl core::convert::From<tst_srt::error::AddrError> for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::from(tst_srt::error::AddrError) -> Self
 impl core::error::Error for tst_srt::error::AddrError
 pub fn tst_srt::error::AddrError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_srt::error::AddrError
@@ -229,43 +233,6 @@ impl core::marker::Unpin for tst_srt::error::BindError
 impl core::marker::UnsafeUnpin for tst_srt::error::BindError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::error::BindError
 impl !core::panic::unwind_safe::UnwindSafe for tst_srt::error::BindError
-#[non_exhaustive] pub enum tst_srt::error::ConnectError
-pub tst_srt::error::ConnectError::BadEncryption
-pub tst_srt::error::ConnectError::BadEncryption::detail: alloc::string::String
-pub tst_srt::error::ConnectError::InvalidAddress(tst_srt::error::AddrError)
-pub tst_srt::error::ConnectError::InvalidOption(tst_srt::error::OptionError)
-pub tst_srt::error::ConnectError::Other
-pub tst_srt::error::ConnectError::Other::kind: tst_srt::error::SrtErrno
-pub tst_srt::error::ConnectError::Other::message: alloc::string::String
-pub tst_srt::error::ConnectError::Refused
-pub tst_srt::error::ConnectError::Rejected
-pub tst_srt::error::ConnectError::Rejected::detail: alloc::string::String
-pub tst_srt::error::ConnectError::Rejected::reason: tst_srt::error::RejectReason
-pub tst_srt::error::ConnectError::System(core::io::error::Error)
-pub tst_srt::error::ConnectError::TimedOut
-impl core::convert::From<core::io::error::Error> for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::from(core::io::error::Error) -> Self
-impl core::convert::From<tst_srt::error::AddrError> for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::from(tst_srt::error::AddrError) -> Self
-impl core::convert::From<tst_srt::error::ConnectError> for tst_pipeline::binding::kind::BindingError
-pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::ConnectError) -> Self
-impl core::convert::From<tst_srt::error::ConnectError> for tst_srt::error::SrtError
-pub fn tst_srt::error::SrtError::from(tst_srt::error::ConnectError) -> Self
-impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::from(tst_srt::error::OptionError) -> Self
-impl core::error::Error for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
-impl core::fmt::Debug for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::fmt::Display for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_srt::error::ConnectError
-impl core::marker::Send for tst_srt::error::ConnectError
-impl core::marker::Sync for tst_srt::error::ConnectError
-impl core::marker::Unpin for tst_srt::error::ConnectError
-impl core::marker::UnsafeUnpin for tst_srt::error::ConnectError
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::error::ConnectError
-impl !core::panic::unwind_safe::UnwindSafe for tst_srt::error::ConnectError
 #[non_exhaustive] pub enum tst_srt::error::IoError
 pub tst_srt::error::IoError::Other
 pub tst_srt::error::IoError::Other::kind: tst_srt::error::SrtErrno
@@ -304,8 +271,8 @@ impl core::convert::From<tst_srt::error::OptionError> for tst_pipeline::binding:
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::OptionError) -> Self
 impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::BindError
 pub fn tst_srt::error::BindError::from(tst_srt::error::OptionError) -> Self
-impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::from(tst_srt::error::OptionError) -> Self
+impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::from(tst_srt::error::OptionError) -> Self
 impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::OptionError) -> Self
 impl core::convert::From<tst_srt::error::PacketFilterError> for tst_srt::error::OptionError
@@ -482,6 +449,43 @@ impl core::marker::Unpin for tst_srt::error::SendError
 impl core::marker::UnsafeUnpin for tst_srt::error::SendError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::error::SendError
 impl !core::panic::unwind_safe::UnwindSafe for tst_srt::error::SendError
+#[non_exhaustive] pub enum tst_srt::error::SrtConnectError
+pub tst_srt::error::SrtConnectError::BadEncryption
+pub tst_srt::error::SrtConnectError::BadEncryption::detail: alloc::string::String
+pub tst_srt::error::SrtConnectError::InvalidAddress(tst_srt::error::AddrError)
+pub tst_srt::error::SrtConnectError::InvalidOption(tst_srt::error::OptionError)
+pub tst_srt::error::SrtConnectError::Other
+pub tst_srt::error::SrtConnectError::Other::kind: tst_srt::error::SrtErrno
+pub tst_srt::error::SrtConnectError::Other::message: alloc::string::String
+pub tst_srt::error::SrtConnectError::Refused
+pub tst_srt::error::SrtConnectError::Rejected
+pub tst_srt::error::SrtConnectError::Rejected::detail: alloc::string::String
+pub tst_srt::error::SrtConnectError::Rejected::reason: tst_srt::error::RejectReason
+pub tst_srt::error::SrtConnectError::System(core::io::error::Error)
+pub tst_srt::error::SrtConnectError::TimedOut
+impl core::convert::From<core::io::error::Error> for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_srt::error::AddrError> for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::from(tst_srt::error::AddrError) -> Self
+impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::from(tst_srt::error::OptionError) -> Self
+impl core::convert::From<tst_srt::error::SrtConnectError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::SrtConnectError) -> Self
+impl core::convert::From<tst_srt::error::SrtConnectError> for tst_srt::error::SrtError
+pub fn tst_srt::error::SrtError::from(tst_srt::error::SrtConnectError) -> Self
+impl core::error::Error for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_srt::error::SrtConnectError
+impl core::marker::Send for tst_srt::error::SrtConnectError
+impl core::marker::Sync for tst_srt::error::SrtConnectError
+impl core::marker::Unpin for tst_srt::error::SrtConnectError
+impl core::marker::UnsafeUnpin for tst_srt::error::SrtConnectError
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::error::SrtConnectError
+impl !core::panic::unwind_safe::UnwindSafe for tst_srt::error::SrtConnectError
 #[non_exhaustive] pub enum tst_srt::error::SrtErrno
 pub tst_srt::error::SrtErrno::Async
 pub tst_srt::error::SrtErrno::Bad
@@ -513,7 +517,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_srt::error::SrtErrno
 #[non_exhaustive] pub enum tst_srt::error::SrtError
 pub tst_srt::error::SrtError::Accept(tst_srt::error::AcceptError)
 pub tst_srt::error::SrtError::Bind(tst_srt::error::BindError)
-pub tst_srt::error::SrtError::Connect(tst_srt::error::ConnectError)
+pub tst_srt::error::SrtError::Connect(tst_srt::error::SrtConnectError)
 pub tst_srt::error::SrtError::Demux(tst_core::error::DemuxError)
 pub tst_srt::error::SrtError::Io(tst_srt::error::IoError)
 pub tst_srt::error::SrtError::KlvDecode(tst_core::error::KlvDecodeError)
@@ -540,8 +544,6 @@ impl core::convert::From<tst_srt::error::AcceptError> for tst_srt::error::SrtErr
 pub fn tst_srt::error::SrtError::from(tst_srt::error::AcceptError) -> Self
 impl core::convert::From<tst_srt::error::BindError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::BindError) -> Self
-impl core::convert::From<tst_srt::error::ConnectError> for tst_srt::error::SrtError
-pub fn tst_srt::error::SrtError::from(tst_srt::error::ConnectError) -> Self
 impl core::convert::From<tst_srt::error::IoError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::IoError) -> Self
 impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::SrtError
@@ -550,6 +552,8 @@ impl core::convert::From<tst_srt::error::RecvError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::RecvError) -> Self
 impl core::convert::From<tst_srt::error::SendError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::SendError) -> Self
+impl core::convert::From<tst_srt::error::SrtConnectError> for tst_srt::error::SrtError
+pub fn tst_srt::error::SrtError::from(tst_srt::error::SrtConnectError) -> Self
 impl core::convert::From<tst_srt::error::SrtError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::SrtError) -> Self
 impl core::error::Error for tst_srt::error::SrtError
@@ -582,29 +586,31 @@ impl core::marker::Unpin for tst_srt::error::StreamIdError
 impl core::marker::UnsafeUnpin for tst_srt::error::StreamIdError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::error::StreamIdError
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::error::StreamIdError
+pub type tst_srt::error::ConnectError = tst_srt::error::SrtConnectError
 pub mod tst_srt::init
 pub mod tst_srt::listener
-pub struct tst_srt::listener::Listener
-impl tst_srt::listener::Listener
-pub fn tst_srt::listener::Listener::accept(&mut self) -> core::result::Result<(tst_srt::socket::Socket, core::net::socket_addr::SocketAddr), tst_srt::error::AcceptError>
-pub fn tst_srt::listener::Listener::accept_one_cancellable(&tst_srt::config::ListenerConfig, &str, &tst_core::cancel::CancelSlot) -> core::result::Result<tst_srt::transport::SrtTransport, tst_core::transport::TransportError>
-pub fn tst_srt::listener::Listener::accept_timeout(&mut self, core::time::Duration) -> core::result::Result<(tst_srt::socket::Socket, core::net::socket_addr::SocketAddr), tst_srt::error::AcceptError>
-pub fn tst_srt::listener::Listener::bind_with(&tst_srt::config::ListenerConfig, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<Self, tst_srt::error::BindError>
-pub fn tst_srt::listener::Listener::cancel_handle(&self) -> tst_core::cancel::ResourceCancel
-pub fn tst_srt::listener::Listener::close(self)
-pub fn tst_srt::listener::Listener::local_addr(&self) -> core::result::Result<core::net::socket_addr::SocketAddr, tst_srt::error::IoError>
-pub fn tst_srt::listener::Listener::set_recv_timeout(&mut self, core::option::Option<core::time::Duration>) -> core::result::Result<(), tst_srt::error::OptionError>
-impl core::fmt::Debug for tst_srt::listener::Listener
-pub fn tst_srt::listener::Listener::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Send for tst_srt::listener::Listener
-impl core::ops::drop::Drop for tst_srt::listener::Listener
-pub fn tst_srt::listener::Listener::drop(&mut self)
-impl core::marker::Freeze for tst_srt::listener::Listener
-impl core::marker::Sync for tst_srt::listener::Listener
-impl core::marker::Unpin for tst_srt::listener::Listener
-impl core::marker::UnsafeUnpin for tst_srt::listener::Listener
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::listener::Listener
-impl !core::panic::unwind_safe::UnwindSafe for tst_srt::listener::Listener
+pub struct tst_srt::listener::SrtListener
+impl tst_srt::listener::SrtListener
+pub fn tst_srt::listener::SrtListener::accept(&mut self) -> core::result::Result<(tst_srt::socket::SrtSocket, core::net::socket_addr::SocketAddr), tst_srt::error::AcceptError>
+pub fn tst_srt::listener::SrtListener::accept_one_cancellable(&tst_srt::config::SrtListenerConfig, &str, &tst_core::cancel::CancelSlot) -> core::result::Result<tst_srt::transport::SrtTransport, tst_core::transport::TransportError>
+pub fn tst_srt::listener::SrtListener::accept_timeout(&mut self, core::time::Duration) -> core::result::Result<(tst_srt::socket::SrtSocket, core::net::socket_addr::SocketAddr), tst_srt::error::AcceptError>
+pub fn tst_srt::listener::SrtListener::bind_with(&tst_srt::config::SrtListenerConfig, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<Self, tst_srt::error::BindError>
+pub fn tst_srt::listener::SrtListener::cancel_handle(&self) -> tst_core::cancel::ResourceCancel
+pub fn tst_srt::listener::SrtListener::close(self)
+pub fn tst_srt::listener::SrtListener::local_addr(&self) -> core::result::Result<core::net::socket_addr::SocketAddr, tst_srt::error::IoError>
+pub fn tst_srt::listener::SrtListener::set_recv_timeout(&mut self, core::option::Option<core::time::Duration>) -> core::result::Result<(), tst_srt::error::OptionError>
+impl core::fmt::Debug for tst_srt::listener::SrtListener
+pub fn tst_srt::listener::SrtListener::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Send for tst_srt::listener::SrtListener
+impl core::ops::drop::Drop for tst_srt::listener::SrtListener
+pub fn tst_srt::listener::SrtListener::drop(&mut self)
+impl core::marker::Freeze for tst_srt::listener::SrtListener
+impl core::marker::Sync for tst_srt::listener::SrtListener
+impl core::marker::Unpin for tst_srt::listener::SrtListener
+impl core::marker::UnsafeUnpin for tst_srt::listener::SrtListener
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::listener::SrtListener
+impl !core::panic::unwind_safe::UnwindSafe for tst_srt::listener::SrtListener
+pub type tst_srt::listener::Listener = tst_srt::listener::SrtListener
 pub mod tst_srt::opener
 pub fn tst_srt::opener::open_recv(&str, &alloc::sync::Arc<tst_core::cancel::CancelSlot>) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>, tst_pipeline::binding::kind::BindingError>
 pub fn tst_srt::opener::open_sender(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::Transport>>, tst_pipeline::binding::kind::BindingError>
@@ -759,68 +765,70 @@ pub fn tst_srt::shells::managed_receiver_from_url(&tst_srt::url::SrtUrl, tst_pip
 pub fn tst_srt::shells::managed_recv_transport_from_url(&tst_srt::url::SrtUrl, tst_pipeline::reconnect::ReconnectPolicy, alloc::sync::Arc<tst_pipeline::managed_receive::FactoryCancel>) -> core::result::Result<tst_pipeline::managed_receive::ManagedRecvTransport<tst_srt::transport::SrtTransport>, tst_srt::error::SrtError>
 pub fn tst_srt::shells::managed_sender_from_url(&tst_srt::url::SrtUrl, tst_pipeline::reconnect::ReconnectPolicy, tst_pipeline::sender::SenderConfig) -> core::result::Result<(tst_pipeline::sender::Sender<tst_pipeline::reconnect::ManagedTransport<tst_srt::transport::SrtTransport>>, tst_pipeline::binding::handles::ManagedHandles, tst_pipeline::reconnect::ManagedStatsHandle), tst_srt::error::SrtError>
 pub mod tst_srt::socket
-pub struct tst_srt::socket::Socket
-impl tst_srt::socket::Socket
-pub fn tst_srt::socket::Socket::cancel_handle(&self) -> tst_core::cancel::ResourceCancel
-pub fn tst_srt::socket::Socket::close(self)
-pub fn tst_srt::socket::Socket::connect_with(&tst_srt::config::SocketConfig, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<Self, tst_srt::error::ConnectError>
-pub fn tst_srt::socket::Socket::local_addr(&self) -> core::result::Result<core::net::socket_addr::SocketAddr, tst_srt::error::IoError>
-pub fn tst_srt::socket::Socket::payload_limit(&self) -> usize
-pub fn tst_srt::socket::Socket::peer_addr(&self) -> core::result::Result<core::net::socket_addr::SocketAddr, tst_srt::error::IoError>
-pub fn tst_srt::socket::Socket::recv(&mut self, &mut [u8]) -> core::result::Result<usize, tst_srt::error::RecvError>
-pub fn tst_srt::socket::Socket::send(&mut self, &[u8]) -> core::result::Result<usize, tst_srt::error::SendError>
-pub fn tst_srt::socket::Socket::set_recv_timeout(&mut self, core::option::Option<core::time::Duration>) -> core::result::Result<(), tst_srt::error::OptionError>
-pub fn tst_srt::socket::Socket::set_send_timeout(&mut self, core::option::Option<core::time::Duration>) -> core::result::Result<(), tst_srt::error::OptionError>
-pub fn tst_srt::socket::Socket::stats(&self) -> core::result::Result<tst_srt::socket::Stats, tst_srt::error::IoError>
-pub fn tst_srt::socket::Socket::stream_id(&self) -> core::option::Option<&str>
-impl core::fmt::Debug for tst_srt::socket::Socket
-pub fn tst_srt::socket::Socket::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Send for tst_srt::socket::Socket
-impl core::ops::drop::Drop for tst_srt::socket::Socket
-pub fn tst_srt::socket::Socket::drop(&mut self)
-impl core::marker::Freeze for tst_srt::socket::Socket
-impl core::marker::Sync for tst_srt::socket::Socket
-impl core::marker::Unpin for tst_srt::socket::Socket
-impl core::marker::UnsafeUnpin for tst_srt::socket::Socket
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::socket::Socket
-impl !core::panic::unwind_safe::UnwindSafe for tst_srt::socket::Socket
-#[non_exhaustive] pub struct tst_srt::socket::Stats
-pub tst_srt::socket::Stats::bytes_lost_recv_side: u64
-pub tst_srt::socket::Stats::bytes_lost_send_side: u64
-pub tst_srt::socket::Stats::bytes_received: u64
-pub tst_srt::socket::Stats::bytes_sent: u64
-pub tst_srt::socket::Stats::mbps_estimated_bandwidth: f64
-pub tst_srt::socket::Stats::packets_dropped_recv_side: u64
-pub tst_srt::socket::Stats::packets_dropped_send_side: u64
-pub tst_srt::socket::Stats::packets_lost_recv_side: u64
-pub tst_srt::socket::Stats::packets_lost_send_side: u64
-pub tst_srt::socket::Stats::packets_received: u64
-pub tst_srt::socket::Stats::packets_retransmitted: u64
-pub tst_srt::socket::Stats::packets_sent: u64
-pub tst_srt::socket::Stats::recv_bandwidth_bps: u64
-pub tst_srt::socket::Stats::recv_buffer_packets: u32
-pub tst_srt::socket::Stats::rtt: core::time::Duration
-pub tst_srt::socket::Stats::send_bandwidth_bps: u64
-pub tst_srt::socket::Stats::send_buffer_packets: u32
-impl core::clone::Clone for tst_srt::socket::Stats
-pub fn tst_srt::socket::Stats::clone(&self) -> tst_srt::socket::Stats
-impl core::fmt::Debug for tst_srt::socket::Stats
-pub fn tst_srt::socket::Stats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for tst_srt::socket::Stats
-impl core::marker::Freeze for tst_srt::socket::Stats
-impl core::marker::Send for tst_srt::socket::Stats
-impl core::marker::Sync for tst_srt::socket::Stats
-impl core::marker::Unpin for tst_srt::socket::Stats
-impl core::marker::UnsafeUnpin for tst_srt::socket::Stats
-impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::socket::Stats
-impl core::panic::unwind_safe::UnwindSafe for tst_srt::socket::Stats
+pub struct tst_srt::socket::SrtSocket
+impl tst_srt::socket::SrtSocket
+pub fn tst_srt::socket::SrtSocket::cancel_handle(&self) -> tst_core::cancel::ResourceCancel
+pub fn tst_srt::socket::SrtSocket::close(self)
+pub fn tst_srt::socket::SrtSocket::connect_with(&tst_srt::config::SrtSocketConfig, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<Self, tst_srt::error::SrtConnectError>
+pub fn tst_srt::socket::SrtSocket::local_addr(&self) -> core::result::Result<core::net::socket_addr::SocketAddr, tst_srt::error::IoError>
+pub fn tst_srt::socket::SrtSocket::payload_limit(&self) -> usize
+pub fn tst_srt::socket::SrtSocket::peer_addr(&self) -> core::result::Result<core::net::socket_addr::SocketAddr, tst_srt::error::IoError>
+pub fn tst_srt::socket::SrtSocket::recv(&mut self, &mut [u8]) -> core::result::Result<usize, tst_srt::error::RecvError>
+pub fn tst_srt::socket::SrtSocket::send(&mut self, &[u8]) -> core::result::Result<usize, tst_srt::error::SendError>
+pub fn tst_srt::socket::SrtSocket::set_recv_timeout(&mut self, core::option::Option<core::time::Duration>) -> core::result::Result<(), tst_srt::error::OptionError>
+pub fn tst_srt::socket::SrtSocket::set_send_timeout(&mut self, core::option::Option<core::time::Duration>) -> core::result::Result<(), tst_srt::error::OptionError>
+pub fn tst_srt::socket::SrtSocket::stats(&self) -> core::result::Result<tst_srt::socket::SrtStats, tst_srt::error::IoError>
+pub fn tst_srt::socket::SrtSocket::stream_id(&self) -> core::option::Option<&str>
+impl core::fmt::Debug for tst_srt::socket::SrtSocket
+pub fn tst_srt::socket::SrtSocket::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Send for tst_srt::socket::SrtSocket
+impl core::ops::drop::Drop for tst_srt::socket::SrtSocket
+pub fn tst_srt::socket::SrtSocket::drop(&mut self)
+impl core::marker::Freeze for tst_srt::socket::SrtSocket
+impl core::marker::Sync for tst_srt::socket::SrtSocket
+impl core::marker::Unpin for tst_srt::socket::SrtSocket
+impl core::marker::UnsafeUnpin for tst_srt::socket::SrtSocket
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::socket::SrtSocket
+impl !core::panic::unwind_safe::UnwindSafe for tst_srt::socket::SrtSocket
+#[non_exhaustive] pub struct tst_srt::socket::SrtStats
+pub tst_srt::socket::SrtStats::bytes_lost_recv_side: u64
+pub tst_srt::socket::SrtStats::bytes_lost_send_side: u64
+pub tst_srt::socket::SrtStats::bytes_received: u64
+pub tst_srt::socket::SrtStats::bytes_sent: u64
+pub tst_srt::socket::SrtStats::mbps_estimated_bandwidth: f64
+pub tst_srt::socket::SrtStats::packets_dropped_recv_side: u64
+pub tst_srt::socket::SrtStats::packets_dropped_send_side: u64
+pub tst_srt::socket::SrtStats::packets_lost_recv_side: u64
+pub tst_srt::socket::SrtStats::packets_lost_send_side: u64
+pub tst_srt::socket::SrtStats::packets_received: u64
+pub tst_srt::socket::SrtStats::packets_retransmitted: u64
+pub tst_srt::socket::SrtStats::packets_sent: u64
+pub tst_srt::socket::SrtStats::recv_bandwidth_bps: u64
+pub tst_srt::socket::SrtStats::recv_buffer_packets: u32
+pub tst_srt::socket::SrtStats::rtt: core::time::Duration
+pub tst_srt::socket::SrtStats::send_bandwidth_bps: u64
+pub tst_srt::socket::SrtStats::send_buffer_packets: u32
+impl core::clone::Clone for tst_srt::socket::SrtStats
+pub fn tst_srt::socket::SrtStats::clone(&self) -> tst_srt::socket::SrtStats
+impl core::fmt::Debug for tst_srt::socket::SrtStats
+pub fn tst_srt::socket::SrtStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_srt::socket::SrtStats
+impl core::marker::Freeze for tst_srt::socket::SrtStats
+impl core::marker::Send for tst_srt::socket::SrtStats
+impl core::marker::Sync for tst_srt::socket::SrtStats
+impl core::marker::Unpin for tst_srt::socket::SrtStats
+impl core::marker::UnsafeUnpin for tst_srt::socket::SrtStats
+impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::socket::SrtStats
+impl core::panic::unwind_safe::UnwindSafe for tst_srt::socket::SrtStats
+pub type tst_srt::socket::Socket = tst_srt::socket::SrtSocket
+pub type tst_srt::socket::Stats = tst_srt::socket::SrtStats
 pub mod tst_srt::transport
 pub struct tst_srt::transport::SrtTransport
 impl tst_srt::transport::SrtTransport
 pub const tst_srt::transport::SrtTransport::DEFAULT_PAYLOAD: usize
-pub fn tst_srt::transport::SrtTransport::new(tst_srt::socket::Socket) -> Self
+pub fn tst_srt::transport::SrtTransport::new(tst_srt::socket::SrtSocket) -> Self
 pub fn tst_srt::transport::SrtTransport::srt_cancel_handle(&self) -> tst_core::cancel::ResourceCancel
-pub fn tst_srt::transport::SrtTransport::stats(&self) -> core::result::Result<tst_srt::socket::Stats, tst_srt::error::IoError>
+pub fn tst_srt::transport::SrtTransport::stats(&self) -> core::result::Result<tst_srt::socket::SrtStats, tst_srt::error::IoError>
 impl core::ops::drop::Drop for tst_srt::transport::SrtTransport
 pub fn tst_srt::transport::SrtTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_srt::transport::SrtTransport
@@ -868,49 +876,49 @@ impl core::marker::Unpin for tst_srt::url::Mode
 impl core::marker::UnsafeUnpin for tst_srt::url::Mode
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::url::Mode
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::url::Mode
-#[non_exhaustive] pub enum tst_srt::url::UrlError
-pub tst_srt::url::UrlError::FfmpegAliasNotExposed
-pub tst_srt::url::UrlError::FfmpegAliasNotExposed::canonical: &'static str
-pub tst_srt::url::UrlError::FfmpegAliasNotExposed::key: alloc::string::String
-pub tst_srt::url::UrlError::FfmpegAliasNotExposed::suggestion: &'static str
-pub tst_srt::url::UrlError::InvalidValue
-pub tst_srt::url::UrlError::InvalidValue::detail: alloc::string::String
-pub tst_srt::url::UrlError::InvalidValue::key: alloc::string::String
-pub tst_srt::url::UrlError::MissingHost
-pub tst_srt::url::UrlError::MissingPort
-pub tst_srt::url::UrlError::OptionValidation
-pub tst_srt::url::UrlError::OptionValidation::key: alloc::string::String
-pub tst_srt::url::UrlError::OptionValidation::source: tst_srt::error::OptionError
-pub tst_srt::url::UrlError::Syntax(tst_core::url::common::UrlError)
-pub tst_srt::url::UrlError::UnknownKey
-pub tst_srt::url::UrlError::UnknownKey::key: alloc::string::String
-pub tst_srt::url::UrlError::UnsupportedKey
-pub tst_srt::url::UrlError::UnsupportedKey::key: alloc::string::String
-pub tst_srt::url::UrlError::UnsupportedKey::srto: &'static str
-pub tst_srt::url::UrlError::UnsupportedMode
-pub tst_srt::url::UrlError::UnsupportedMode::mode: alloc::string::String
-pub tst_srt::url::UrlError::UserinfoNotSupported
-pub tst_srt::url::UrlError::WrongScheme
-pub tst_srt::url::UrlError::WrongScheme::got: alloc::string::String
-impl core::convert::From<tst_core::url::common::UrlError> for tst_srt::url::UrlError
-pub fn tst_srt::url::UrlError::from(tst_core::url::common::UrlError) -> Self
-impl core::convert::From<tst_srt::url::UrlError> for tst_pipeline::binding::kind::BindingError
-pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::url::UrlError) -> Self
-impl core::error::Error for tst_srt::url::UrlError
-pub fn tst_srt::url::UrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
-impl core::fmt::Debug for tst_srt::url::UrlError
-pub fn tst_srt::url::UrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::fmt::Display for tst_srt::url::UrlError
-pub fn tst_srt::url::UrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_srt::url::UrlError
-impl core::marker::Send for tst_srt::url::UrlError
-impl core::marker::Sync for tst_srt::url::UrlError
-impl core::marker::Unpin for tst_srt::url::UrlError
-impl core::marker::UnsafeUnpin for tst_srt::url::UrlError
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::url::UrlError
-impl !core::panic::unwind_safe::UnwindSafe for tst_srt::url::UrlError
+#[non_exhaustive] pub enum tst_srt::url::SrtUrlError
+pub tst_srt::url::SrtUrlError::FfmpegAliasNotExposed
+pub tst_srt::url::SrtUrlError::FfmpegAliasNotExposed::canonical: &'static str
+pub tst_srt::url::SrtUrlError::FfmpegAliasNotExposed::key: alloc::string::String
+pub tst_srt::url::SrtUrlError::FfmpegAliasNotExposed::suggestion: &'static str
+pub tst_srt::url::SrtUrlError::InvalidValue
+pub tst_srt::url::SrtUrlError::InvalidValue::detail: alloc::string::String
+pub tst_srt::url::SrtUrlError::InvalidValue::key: alloc::string::String
+pub tst_srt::url::SrtUrlError::MissingHost
+pub tst_srt::url::SrtUrlError::MissingPort
+pub tst_srt::url::SrtUrlError::OptionValidation
+pub tst_srt::url::SrtUrlError::OptionValidation::key: alloc::string::String
+pub tst_srt::url::SrtUrlError::OptionValidation::source: tst_srt::error::OptionError
+pub tst_srt::url::SrtUrlError::Syntax(tst_core::url::common::UrlError)
+pub tst_srt::url::SrtUrlError::UnknownKey
+pub tst_srt::url::SrtUrlError::UnknownKey::key: alloc::string::String
+pub tst_srt::url::SrtUrlError::UnsupportedKey
+pub tst_srt::url::SrtUrlError::UnsupportedKey::key: alloc::string::String
+pub tst_srt::url::SrtUrlError::UnsupportedKey::srto: &'static str
+pub tst_srt::url::SrtUrlError::UnsupportedMode
+pub tst_srt::url::SrtUrlError::UnsupportedMode::mode: alloc::string::String
+pub tst_srt::url::SrtUrlError::UserinfoNotSupported
+pub tst_srt::url::SrtUrlError::WrongScheme
+pub tst_srt::url::SrtUrlError::WrongScheme::got: alloc::string::String
+impl core::convert::From<tst_core::url::common::UrlError> for tst_srt::url::SrtUrlError
+pub fn tst_srt::url::SrtUrlError::from(tst_core::url::common::UrlError) -> Self
+impl core::convert::From<tst_srt::url::SrtUrlError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::url::SrtUrlError) -> Self
+impl core::error::Error for tst_srt::url::SrtUrlError
+pub fn tst_srt::url::SrtUrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for tst_srt::url::SrtUrlError
+pub fn tst_srt::url::SrtUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_srt::url::SrtUrlError
+pub fn tst_srt::url::SrtUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_srt::url::SrtUrlError
+impl core::marker::Send for tst_srt::url::SrtUrlError
+impl core::marker::Sync for tst_srt::url::SrtUrlError
+impl core::marker::Unpin for tst_srt::url::SrtUrlError
+impl core::marker::UnsafeUnpin for tst_srt::url::SrtUrlError
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::url::SrtUrlError
+impl !core::panic::unwind_safe::UnwindSafe for tst_srt::url::SrtUrlError
 pub struct tst_srt::url::SrtUrl
-pub tst_srt::url::SrtUrl::config: tst_srt::config::SocketConfig
+pub tst_srt::url::SrtUrl::config: tst_srt::config::SrtSocketConfig
 pub tst_srt::url::SrtUrl::host: alloc::string::String
 pub tst_srt::url::SrtUrl::mode: tst_srt::url::Mode
 pub tst_srt::url::SrtUrl::port: u16
@@ -918,9 +926,9 @@ impl tst_srt::url::SrtUrl
 pub fn tst_srt::url::SrtUrl::accept_one(&self, &tst_core::cancel::CancelSlot) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
 pub fn tst_srt::url::SrtUrl::connect(&self) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
 pub fn tst_srt::url::SrtUrl::connect_recv(&self) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
-pub fn tst_srt::url::SrtUrl::listener_config(&self) -> tst_srt::config::ListenerConfig
-pub fn tst_srt::url::SrtUrl::parse(&str) -> core::result::Result<Self, tst_srt::url::UrlError>
-pub fn tst_srt::url::SrtUrl::socket_config(&self, tst_srt::options::Role) -> tst_srt::config::SocketConfig
+pub fn tst_srt::url::SrtUrl::listener_config(&self) -> tst_srt::config::SrtListenerConfig
+pub fn tst_srt::url::SrtUrl::parse(&str) -> core::result::Result<Self, tst_srt::url::SrtUrlError>
+pub fn tst_srt::url::SrtUrl::socket_config(&self, tst_srt::options::Role) -> tst_srt::config::SrtSocketConfig
 impl core::clone::Clone for tst_srt::url::SrtUrl
 pub fn tst_srt::url::SrtUrl::clone(&self) -> tst_srt::url::SrtUrl
 impl core::fmt::Debug for tst_srt::url::SrtUrl
@@ -932,6 +940,7 @@ impl core::marker::Unpin for tst_srt::url::SrtUrl
 impl core::marker::UnsafeUnpin for tst_srt::url::SrtUrl
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::url::SrtUrl
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::url::SrtUrl
+pub type tst_srt::url::UrlError = tst_srt::url::SrtUrlError
 #[non_exhaustive] pub enum tst_srt::AcceptError
 pub tst_srt::AcceptError::ListenerClosed
 pub tst_srt::AcceptError::Other
@@ -1016,43 +1025,6 @@ impl core::marker::Unpin for tst_srt::options::Congestion
 impl core::marker::UnsafeUnpin for tst_srt::options::Congestion
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::options::Congestion
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::options::Congestion
-#[non_exhaustive] pub enum tst_srt::ConnectError
-pub tst_srt::ConnectError::BadEncryption
-pub tst_srt::ConnectError::BadEncryption::detail: alloc::string::String
-pub tst_srt::ConnectError::InvalidAddress(tst_srt::error::AddrError)
-pub tst_srt::ConnectError::InvalidOption(tst_srt::error::OptionError)
-pub tst_srt::ConnectError::Other
-pub tst_srt::ConnectError::Other::kind: tst_srt::error::SrtErrno
-pub tst_srt::ConnectError::Other::message: alloc::string::String
-pub tst_srt::ConnectError::Refused
-pub tst_srt::ConnectError::Rejected
-pub tst_srt::ConnectError::Rejected::detail: alloc::string::String
-pub tst_srt::ConnectError::Rejected::reason: tst_srt::error::RejectReason
-pub tst_srt::ConnectError::System(core::io::error::Error)
-pub tst_srt::ConnectError::TimedOut
-impl core::convert::From<core::io::error::Error> for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::from(core::io::error::Error) -> Self
-impl core::convert::From<tst_srt::error::AddrError> for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::from(tst_srt::error::AddrError) -> Self
-impl core::convert::From<tst_srt::error::ConnectError> for tst_pipeline::binding::kind::BindingError
-pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::ConnectError) -> Self
-impl core::convert::From<tst_srt::error::ConnectError> for tst_srt::error::SrtError
-pub fn tst_srt::error::SrtError::from(tst_srt::error::ConnectError) -> Self
-impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::from(tst_srt::error::OptionError) -> Self
-impl core::error::Error for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
-impl core::fmt::Debug for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::fmt::Display for tst_srt::error::ConnectError
-pub fn tst_srt::error::ConnectError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_srt::error::ConnectError
-impl core::marker::Send for tst_srt::error::ConnectError
-impl core::marker::Sync for tst_srt::error::ConnectError
-impl core::marker::Unpin for tst_srt::error::ConnectError
-impl core::marker::UnsafeUnpin for tst_srt::error::ConnectError
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::error::ConnectError
-impl !core::panic::unwind_safe::UnwindSafe for tst_srt::error::ConnectError
 pub enum tst_srt::KeyLength
 pub tst_srt::KeyLength::Aes128
 pub tst_srt::KeyLength::Aes192
@@ -1177,10 +1149,47 @@ impl core::marker::Unpin for tst_srt::error::SendError
 impl core::marker::UnsafeUnpin for tst_srt::error::SendError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::error::SendError
 impl !core::panic::unwind_safe::UnwindSafe for tst_srt::error::SendError
+#[non_exhaustive] pub enum tst_srt::SrtConnectError
+pub tst_srt::SrtConnectError::BadEncryption
+pub tst_srt::SrtConnectError::BadEncryption::detail: alloc::string::String
+pub tst_srt::SrtConnectError::InvalidAddress(tst_srt::error::AddrError)
+pub tst_srt::SrtConnectError::InvalidOption(tst_srt::error::OptionError)
+pub tst_srt::SrtConnectError::Other
+pub tst_srt::SrtConnectError::Other::kind: tst_srt::error::SrtErrno
+pub tst_srt::SrtConnectError::Other::message: alloc::string::String
+pub tst_srt::SrtConnectError::Refused
+pub tst_srt::SrtConnectError::Rejected
+pub tst_srt::SrtConnectError::Rejected::detail: alloc::string::String
+pub tst_srt::SrtConnectError::Rejected::reason: tst_srt::error::RejectReason
+pub tst_srt::SrtConnectError::System(core::io::error::Error)
+pub tst_srt::SrtConnectError::TimedOut
+impl core::convert::From<core::io::error::Error> for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_srt::error::AddrError> for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::from(tst_srt::error::AddrError) -> Self
+impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::from(tst_srt::error::OptionError) -> Self
+impl core::convert::From<tst_srt::error::SrtConnectError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::SrtConnectError) -> Self
+impl core::convert::From<tst_srt::error::SrtConnectError> for tst_srt::error::SrtError
+pub fn tst_srt::error::SrtError::from(tst_srt::error::SrtConnectError) -> Self
+impl core::error::Error for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_srt::error::SrtConnectError
+pub fn tst_srt::error::SrtConnectError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_srt::error::SrtConnectError
+impl core::marker::Send for tst_srt::error::SrtConnectError
+impl core::marker::Sync for tst_srt::error::SrtConnectError
+impl core::marker::Unpin for tst_srt::error::SrtConnectError
+impl core::marker::UnsafeUnpin for tst_srt::error::SrtConnectError
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::error::SrtConnectError
+impl !core::panic::unwind_safe::UnwindSafe for tst_srt::error::SrtConnectError
 #[non_exhaustive] pub enum tst_srt::SrtError
 pub tst_srt::SrtError::Accept(tst_srt::error::AcceptError)
 pub tst_srt::SrtError::Bind(tst_srt::error::BindError)
-pub tst_srt::SrtError::Connect(tst_srt::error::ConnectError)
+pub tst_srt::SrtError::Connect(tst_srt::error::SrtConnectError)
 pub tst_srt::SrtError::Demux(tst_core::error::DemuxError)
 pub tst_srt::SrtError::Io(tst_srt::error::IoError)
 pub tst_srt::SrtError::KlvDecode(tst_core::error::KlvDecodeError)
@@ -1207,8 +1216,6 @@ impl core::convert::From<tst_srt::error::AcceptError> for tst_srt::error::SrtErr
 pub fn tst_srt::error::SrtError::from(tst_srt::error::AcceptError) -> Self
 impl core::convert::From<tst_srt::error::BindError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::BindError) -> Self
-impl core::convert::From<tst_srt::error::ConnectError> for tst_srt::error::SrtError
-pub fn tst_srt::error::SrtError::from(tst_srt::error::ConnectError) -> Self
 impl core::convert::From<tst_srt::error::IoError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::IoError) -> Self
 impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::SrtError
@@ -1217,6 +1224,8 @@ impl core::convert::From<tst_srt::error::RecvError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::RecvError) -> Self
 impl core::convert::From<tst_srt::error::SendError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::SendError) -> Self
+impl core::convert::From<tst_srt::error::SrtConnectError> for tst_srt::error::SrtError
+pub fn tst_srt::error::SrtError::from(tst_srt::error::SrtConnectError) -> Self
 impl core::convert::From<tst_srt::error::SrtError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::SrtError) -> Self
 impl core::error::Error for tst_srt::error::SrtError
@@ -1232,120 +1241,47 @@ impl core::marker::Unpin for tst_srt::error::SrtError
 impl core::marker::UnsafeUnpin for tst_srt::error::SrtError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::error::SrtError
 impl !core::panic::unwind_safe::UnwindSafe for tst_srt::error::SrtError
-#[non_exhaustive] pub enum tst_srt::UrlError
-pub tst_srt::UrlError::FfmpegAliasNotExposed
-pub tst_srt::UrlError::FfmpegAliasNotExposed::canonical: &'static str
-pub tst_srt::UrlError::FfmpegAliasNotExposed::key: alloc::string::String
-pub tst_srt::UrlError::FfmpegAliasNotExposed::suggestion: &'static str
-pub tst_srt::UrlError::InvalidValue
-pub tst_srt::UrlError::InvalidValue::detail: alloc::string::String
-pub tst_srt::UrlError::InvalidValue::key: alloc::string::String
-pub tst_srt::UrlError::MissingHost
-pub tst_srt::UrlError::MissingPort
-pub tst_srt::UrlError::OptionValidation
-pub tst_srt::UrlError::OptionValidation::key: alloc::string::String
-pub tst_srt::UrlError::OptionValidation::source: tst_srt::error::OptionError
-pub tst_srt::UrlError::Syntax(tst_core::url::common::UrlError)
-pub tst_srt::UrlError::UnknownKey
-pub tst_srt::UrlError::UnknownKey::key: alloc::string::String
-pub tst_srt::UrlError::UnsupportedKey
-pub tst_srt::UrlError::UnsupportedKey::key: alloc::string::String
-pub tst_srt::UrlError::UnsupportedKey::srto: &'static str
-pub tst_srt::UrlError::UnsupportedMode
-pub tst_srt::UrlError::UnsupportedMode::mode: alloc::string::String
-pub tst_srt::UrlError::UserinfoNotSupported
-pub tst_srt::UrlError::WrongScheme
-pub tst_srt::UrlError::WrongScheme::got: alloc::string::String
-impl core::convert::From<tst_core::url::common::UrlError> for tst_srt::url::UrlError
-pub fn tst_srt::url::UrlError::from(tst_core::url::common::UrlError) -> Self
-impl core::convert::From<tst_srt::url::UrlError> for tst_pipeline::binding::kind::BindingError
-pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::url::UrlError) -> Self
-impl core::error::Error for tst_srt::url::UrlError
-pub fn tst_srt::url::UrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
-impl core::fmt::Debug for tst_srt::url::UrlError
-pub fn tst_srt::url::UrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::fmt::Display for tst_srt::url::UrlError
-pub fn tst_srt::url::UrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_srt::url::UrlError
-impl core::marker::Send for tst_srt::url::UrlError
-impl core::marker::Sync for tst_srt::url::UrlError
-impl core::marker::Unpin for tst_srt::url::UrlError
-impl core::marker::UnsafeUnpin for tst_srt::url::UrlError
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::url::UrlError
-impl !core::panic::unwind_safe::UnwindSafe for tst_srt::url::UrlError
-pub struct tst_srt::Listener
-impl tst_srt::listener::Listener
-pub fn tst_srt::listener::Listener::accept(&mut self) -> core::result::Result<(tst_srt::socket::Socket, core::net::socket_addr::SocketAddr), tst_srt::error::AcceptError>
-pub fn tst_srt::listener::Listener::accept_one_cancellable(&tst_srt::config::ListenerConfig, &str, &tst_core::cancel::CancelSlot) -> core::result::Result<tst_srt::transport::SrtTransport, tst_core::transport::TransportError>
-pub fn tst_srt::listener::Listener::accept_timeout(&mut self, core::time::Duration) -> core::result::Result<(tst_srt::socket::Socket, core::net::socket_addr::SocketAddr), tst_srt::error::AcceptError>
-pub fn tst_srt::listener::Listener::bind_with(&tst_srt::config::ListenerConfig, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<Self, tst_srt::error::BindError>
-pub fn tst_srt::listener::Listener::cancel_handle(&self) -> tst_core::cancel::ResourceCancel
-pub fn tst_srt::listener::Listener::close(self)
-pub fn tst_srt::listener::Listener::local_addr(&self) -> core::result::Result<core::net::socket_addr::SocketAddr, tst_srt::error::IoError>
-pub fn tst_srt::listener::Listener::set_recv_timeout(&mut self, core::option::Option<core::time::Duration>) -> core::result::Result<(), tst_srt::error::OptionError>
-impl core::fmt::Debug for tst_srt::listener::Listener
-pub fn tst_srt::listener::Listener::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Send for tst_srt::listener::Listener
-impl core::ops::drop::Drop for tst_srt::listener::Listener
-pub fn tst_srt::listener::Listener::drop(&mut self)
-impl core::marker::Freeze for tst_srt::listener::Listener
-impl core::marker::Sync for tst_srt::listener::Listener
-impl core::marker::Unpin for tst_srt::listener::Listener
-impl core::marker::UnsafeUnpin for tst_srt::listener::Listener
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::listener::Listener
-impl !core::panic::unwind_safe::UnwindSafe for tst_srt::listener::Listener
-pub struct tst_srt::ListenerBuilder
-impl tst_srt::builder::ListenerBuilder
-pub fn tst_srt::builder::ListenerBuilder::backlog(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::bind(&self, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<tst_srt::listener::Listener, tst_srt::error::BindError>
-pub fn tst_srt::builder::ListenerBuilder::config(&self) -> tst_srt::config::ListenerConfig
-pub fn tst_srt::builder::ListenerBuilder::congestion(&mut self, tst_srt::options::Congestion) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::flow_window_packets(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::key_length(&mut self, tst_srt::options::KeyLength) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::latency(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::latency_ms(&mut self, u64) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::linger(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::loss_max_ttl(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::max_bandwidth(&mut self, tst_srt::options::MaxBandwidth) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::mss(&mut self, u16) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::new() -> Self
-pub fn tst_srt::builder::ListenerBuilder::overhead_bandwidth_pct(&mut self, u8) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::payload_size(&mut self, u16) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::recv_latency(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::recv_timeout(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::reuse_addr(&mut self, bool) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::send_timeout(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::too_late_packet_drop(&mut self, bool) -> &mut Self
-pub fn tst_srt::builder::ListenerBuilder::udp_recv_buffer_bytes(&mut self, u32) -> &mut Self
-impl core::default::Default for tst_srt::builder::ListenerBuilder
-pub fn tst_srt::builder::ListenerBuilder::default() -> tst_srt::builder::ListenerBuilder
-impl core::marker::Freeze for tst_srt::builder::ListenerBuilder
-impl core::marker::Send for tst_srt::builder::ListenerBuilder
-impl core::marker::Sync for tst_srt::builder::ListenerBuilder
-impl core::marker::Unpin for tst_srt::builder::ListenerBuilder
-impl core::marker::UnsafeUnpin for tst_srt::builder::ListenerBuilder
-impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::builder::ListenerBuilder
-impl core::panic::unwind_safe::UnwindSafe for tst_srt::builder::ListenerBuilder
-#[non_exhaustive] pub struct tst_srt::ListenerConfig
-pub tst_srt::ListenerConfig::backlog: u32
-pub tst_srt::ListenerConfig::reuse_addr: bool
-pub tst_srt::ListenerConfig::socket: tst_srt::config::SocketConfig
-impl core::clone::Clone for tst_srt::config::ListenerConfig
-pub fn tst_srt::config::ListenerConfig::clone(&self) -> tst_srt::config::ListenerConfig
-impl core::default::Default for tst_srt::config::ListenerConfig
-pub fn tst_srt::config::ListenerConfig::default() -> Self
-impl core::fmt::Debug for tst_srt::config::ListenerConfig
-pub fn tst_srt::config::ListenerConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_srt::config::ListenerConfig
-impl core::marker::Send for tst_srt::config::ListenerConfig
-impl core::marker::Sync for tst_srt::config::ListenerConfig
-impl core::marker::Unpin for tst_srt::config::ListenerConfig
-impl core::marker::UnsafeUnpin for tst_srt::config::ListenerConfig
-impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::config::ListenerConfig
-impl core::panic::unwind_safe::UnwindSafe for tst_srt::config::ListenerConfig
+#[non_exhaustive] pub enum tst_srt::SrtUrlError
+pub tst_srt::SrtUrlError::FfmpegAliasNotExposed
+pub tst_srt::SrtUrlError::FfmpegAliasNotExposed::canonical: &'static str
+pub tst_srt::SrtUrlError::FfmpegAliasNotExposed::key: alloc::string::String
+pub tst_srt::SrtUrlError::FfmpegAliasNotExposed::suggestion: &'static str
+pub tst_srt::SrtUrlError::InvalidValue
+pub tst_srt::SrtUrlError::InvalidValue::detail: alloc::string::String
+pub tst_srt::SrtUrlError::InvalidValue::key: alloc::string::String
+pub tst_srt::SrtUrlError::MissingHost
+pub tst_srt::SrtUrlError::MissingPort
+pub tst_srt::SrtUrlError::OptionValidation
+pub tst_srt::SrtUrlError::OptionValidation::key: alloc::string::String
+pub tst_srt::SrtUrlError::OptionValidation::source: tst_srt::error::OptionError
+pub tst_srt::SrtUrlError::Syntax(tst_core::url::common::UrlError)
+pub tst_srt::SrtUrlError::UnknownKey
+pub tst_srt::SrtUrlError::UnknownKey::key: alloc::string::String
+pub tst_srt::SrtUrlError::UnsupportedKey
+pub tst_srt::SrtUrlError::UnsupportedKey::key: alloc::string::String
+pub tst_srt::SrtUrlError::UnsupportedKey::srto: &'static str
+pub tst_srt::SrtUrlError::UnsupportedMode
+pub tst_srt::SrtUrlError::UnsupportedMode::mode: alloc::string::String
+pub tst_srt::SrtUrlError::UserinfoNotSupported
+pub tst_srt::SrtUrlError::WrongScheme
+pub tst_srt::SrtUrlError::WrongScheme::got: alloc::string::String
+impl core::convert::From<tst_core::url::common::UrlError> for tst_srt::url::SrtUrlError
+pub fn tst_srt::url::SrtUrlError::from(tst_core::url::common::UrlError) -> Self
+impl core::convert::From<tst_srt::url::SrtUrlError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::url::SrtUrlError) -> Self
+impl core::error::Error for tst_srt::url::SrtUrlError
+pub fn tst_srt::url::SrtUrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for tst_srt::url::SrtUrlError
+pub fn tst_srt::url::SrtUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_srt::url::SrtUrlError
+pub fn tst_srt::url::SrtUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_srt::url::SrtUrlError
+impl core::marker::Send for tst_srt::url::SrtUrlError
+impl core::marker::Sync for tst_srt::url::SrtUrlError
+impl core::marker::Unpin for tst_srt::url::SrtUrlError
+impl core::marker::UnsafeUnpin for tst_srt::url::SrtUrlError
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::url::SrtUrlError
+impl !core::panic::unwind_safe::UnwindSafe for tst_srt::url::SrtUrlError
 pub struct tst_srt::PacketFilter(_)
 impl tst_srt::options::PacketFilter
 pub fn tst_srt::options::PacketFilter::as_str(&self) -> &str
@@ -1378,125 +1314,228 @@ impl core::marker::Unpin for tst_srt::options::Passphrase
 impl core::marker::UnsafeUnpin for tst_srt::options::Passphrase
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::options::Passphrase
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::options::Passphrase
-pub struct tst_srt::Socket
-impl tst_srt::socket::Socket
-pub fn tst_srt::socket::Socket::cancel_handle(&self) -> tst_core::cancel::ResourceCancel
-pub fn tst_srt::socket::Socket::close(self)
-pub fn tst_srt::socket::Socket::connect_with(&tst_srt::config::SocketConfig, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<Self, tst_srt::error::ConnectError>
-pub fn tst_srt::socket::Socket::local_addr(&self) -> core::result::Result<core::net::socket_addr::SocketAddr, tst_srt::error::IoError>
-pub fn tst_srt::socket::Socket::payload_limit(&self) -> usize
-pub fn tst_srt::socket::Socket::peer_addr(&self) -> core::result::Result<core::net::socket_addr::SocketAddr, tst_srt::error::IoError>
-pub fn tst_srt::socket::Socket::recv(&mut self, &mut [u8]) -> core::result::Result<usize, tst_srt::error::RecvError>
-pub fn tst_srt::socket::Socket::send(&mut self, &[u8]) -> core::result::Result<usize, tst_srt::error::SendError>
-pub fn tst_srt::socket::Socket::set_recv_timeout(&mut self, core::option::Option<core::time::Duration>) -> core::result::Result<(), tst_srt::error::OptionError>
-pub fn tst_srt::socket::Socket::set_send_timeout(&mut self, core::option::Option<core::time::Duration>) -> core::result::Result<(), tst_srt::error::OptionError>
-pub fn tst_srt::socket::Socket::stats(&self) -> core::result::Result<tst_srt::socket::Stats, tst_srt::error::IoError>
-pub fn tst_srt::socket::Socket::stream_id(&self) -> core::option::Option<&str>
-impl core::fmt::Debug for tst_srt::socket::Socket
-pub fn tst_srt::socket::Socket::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Send for tst_srt::socket::Socket
-impl core::ops::drop::Drop for tst_srt::socket::Socket
-pub fn tst_srt::socket::Socket::drop(&mut self)
-impl core::marker::Freeze for tst_srt::socket::Socket
-impl core::marker::Sync for tst_srt::socket::Socket
-impl core::marker::Unpin for tst_srt::socket::Socket
-impl core::marker::UnsafeUnpin for tst_srt::socket::Socket
-impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::socket::Socket
-impl !core::panic::unwind_safe::UnwindSafe for tst_srt::socket::Socket
-pub struct tst_srt::SocketBuilder
-impl tst_srt::builder::SocketBuilder
-pub fn tst_srt::builder::SocketBuilder::config(&self) -> tst_srt::config::SocketConfig
-pub fn tst_srt::builder::SocketBuilder::congestion(&mut self, tst_srt::options::Congestion) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::connect(&self, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<tst_srt::socket::Socket, tst_srt::error::ConnectError>
-pub fn tst_srt::builder::SocketBuilder::connect_timeout(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::flow_window_packets(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::input_bandwidth(&mut self, u64) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::key_length(&mut self, tst_srt::options::KeyLength) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::latency(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::latency_ms(&mut self, u64) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::linger(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::loss_max_ttl(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::max_bandwidth(&mut self, tst_srt::options::MaxBandwidth) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::mss(&mut self, u16) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::new() -> Self
-pub fn tst_srt::builder::SocketBuilder::overhead_bandwidth_pct(&mut self, u8) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::payload_size(&mut self, u16) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::peer_latency(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::receiver_defaults(&mut self) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::recv_latency(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::recv_timeout(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::role(&mut self, tst_srt::options::Role) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::send_buf_bytes(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::send_timeout(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::sender_defaults(&mut self) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::stream_id(&mut self, tst_srt::options::StreamId) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::too_late_packet_drop(&mut self, bool) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::try_stream_id(&mut self, impl core::convert::TryInto<tst_srt::options::StreamId, Error = tst_srt::error::StreamIdError>) -> core::result::Result<&mut Self, tst_srt::error::OptionError>
-pub fn tst_srt::builder::SocketBuilder::udp_recv_buffer_bytes(&mut self, u32) -> &mut Self
-pub fn tst_srt::builder::SocketBuilder::udp_send_buffer_bytes(&mut self, u32) -> &mut Self
-impl core::default::Default for tst_srt::builder::SocketBuilder
-pub fn tst_srt::builder::SocketBuilder::default() -> tst_srt::builder::SocketBuilder
-impl core::marker::Freeze for tst_srt::builder::SocketBuilder
-impl core::marker::Send for tst_srt::builder::SocketBuilder
-impl core::marker::Sync for tst_srt::builder::SocketBuilder
-impl core::marker::Unpin for tst_srt::builder::SocketBuilder
-impl core::marker::UnsafeUnpin for tst_srt::builder::SocketBuilder
-impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::builder::SocketBuilder
-impl core::panic::unwind_safe::UnwindSafe for tst_srt::builder::SocketBuilder
-#[non_exhaustive] pub struct tst_srt::SocketConfig
-pub tst_srt::SocketConfig::congestion: core::option::Option<tst_srt::options::Congestion>
-pub tst_srt::SocketConfig::connect_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::SocketConfig::flow_window_packets: core::option::Option<u32>
-pub tst_srt::SocketConfig::input_bandwidth: core::option::Option<u64>
-pub tst_srt::SocketConfig::key_length: core::option::Option<tst_srt::options::KeyLength>
-pub tst_srt::SocketConfig::latency: core::option::Option<core::time::Duration>
-pub tst_srt::SocketConfig::linger: core::option::Option<core::time::Duration>
-pub tst_srt::SocketConfig::loss_max_ttl: core::option::Option<u32>
-pub tst_srt::SocketConfig::max_bandwidth: core::option::Option<tst_srt::options::MaxBandwidth>
-pub tst_srt::SocketConfig::mss: core::option::Option<u16>
-pub tst_srt::SocketConfig::overhead_bandwidth_pct: core::option::Option<u8>
-pub tst_srt::SocketConfig::packet_filter: core::option::Option<tst_srt::options::PacketFilter>
-pub tst_srt::SocketConfig::passphrase: core::option::Option<tst_srt::options::Passphrase>
-pub tst_srt::SocketConfig::payload_size: core::option::Option<u16>
-pub tst_srt::SocketConfig::peer_latency: core::option::Option<core::time::Duration>
-pub tst_srt::SocketConfig::recv_buf_bytes: core::option::Option<u32>
-pub tst_srt::SocketConfig::recv_latency: core::option::Option<core::time::Duration>
-pub tst_srt::SocketConfig::recv_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::SocketConfig::role: tst_srt::options::Role
-pub tst_srt::SocketConfig::send_buf_bytes: core::option::Option<u32>
-pub tst_srt::SocketConfig::send_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::SocketConfig::stream_id: core::option::Option<tst_srt::options::StreamId>
-pub tst_srt::SocketConfig::too_late_packet_drop: core::option::Option<bool>
-pub tst_srt::SocketConfig::udp_recv_buffer_bytes: core::option::Option<u32>
-pub tst_srt::SocketConfig::udp_send_buffer_bytes: core::option::Option<u32>
-impl tst_srt::config::SocketConfig
-pub fn tst_srt::config::SocketConfig::merge_from(&mut self, &tst_srt::config::SocketConfig)
-pub fn tst_srt::config::SocketConfig::merge_receiver_defaults(&mut self)
-pub fn tst_srt::config::SocketConfig::merge_sender_defaults(&mut self)
-pub fn tst_srt::config::SocketConfig::receiver_defaults() -> Self
-pub fn tst_srt::config::SocketConfig::sender_defaults() -> Self
-impl core::clone::Clone for tst_srt::config::SocketConfig
-pub fn tst_srt::config::SocketConfig::clone(&self) -> tst_srt::config::SocketConfig
-impl core::default::Default for tst_srt::config::SocketConfig
-pub fn tst_srt::config::SocketConfig::default() -> tst_srt::config::SocketConfig
-impl core::fmt::Debug for tst_srt::config::SocketConfig
-pub fn tst_srt::config::SocketConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_srt::config::SocketConfig
-impl core::marker::Send for tst_srt::config::SocketConfig
-impl core::marker::Sync for tst_srt::config::SocketConfig
-impl core::marker::Unpin for tst_srt::config::SocketConfig
-impl core::marker::UnsafeUnpin for tst_srt::config::SocketConfig
-impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::config::SocketConfig
-impl core::panic::unwind_safe::UnwindSafe for tst_srt::config::SocketConfig
+pub struct tst_srt::SrtListener
+impl tst_srt::listener::SrtListener
+pub fn tst_srt::listener::SrtListener::accept(&mut self) -> core::result::Result<(tst_srt::socket::SrtSocket, core::net::socket_addr::SocketAddr), tst_srt::error::AcceptError>
+pub fn tst_srt::listener::SrtListener::accept_one_cancellable(&tst_srt::config::SrtListenerConfig, &str, &tst_core::cancel::CancelSlot) -> core::result::Result<tst_srt::transport::SrtTransport, tst_core::transport::TransportError>
+pub fn tst_srt::listener::SrtListener::accept_timeout(&mut self, core::time::Duration) -> core::result::Result<(tst_srt::socket::SrtSocket, core::net::socket_addr::SocketAddr), tst_srt::error::AcceptError>
+pub fn tst_srt::listener::SrtListener::bind_with(&tst_srt::config::SrtListenerConfig, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<Self, tst_srt::error::BindError>
+pub fn tst_srt::listener::SrtListener::cancel_handle(&self) -> tst_core::cancel::ResourceCancel
+pub fn tst_srt::listener::SrtListener::close(self)
+pub fn tst_srt::listener::SrtListener::local_addr(&self) -> core::result::Result<core::net::socket_addr::SocketAddr, tst_srt::error::IoError>
+pub fn tst_srt::listener::SrtListener::set_recv_timeout(&mut self, core::option::Option<core::time::Duration>) -> core::result::Result<(), tst_srt::error::OptionError>
+impl core::fmt::Debug for tst_srt::listener::SrtListener
+pub fn tst_srt::listener::SrtListener::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Send for tst_srt::listener::SrtListener
+impl core::ops::drop::Drop for tst_srt::listener::SrtListener
+pub fn tst_srt::listener::SrtListener::drop(&mut self)
+impl core::marker::Freeze for tst_srt::listener::SrtListener
+impl core::marker::Sync for tst_srt::listener::SrtListener
+impl core::marker::Unpin for tst_srt::listener::SrtListener
+impl core::marker::UnsafeUnpin for tst_srt::listener::SrtListener
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::listener::SrtListener
+impl !core::panic::unwind_safe::UnwindSafe for tst_srt::listener::SrtListener
+pub struct tst_srt::SrtListenerBuilder
+impl tst_srt::builder::SrtListenerBuilder
+pub fn tst_srt::builder::SrtListenerBuilder::backlog(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::bind(&self, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<tst_srt::listener::SrtListener, tst_srt::error::BindError>
+pub fn tst_srt::builder::SrtListenerBuilder::config(&self) -> tst_srt::config::SrtListenerConfig
+pub fn tst_srt::builder::SrtListenerBuilder::congestion(&mut self, tst_srt::options::Congestion) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::flow_window_packets(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::key_length(&mut self, tst_srt::options::KeyLength) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::latency(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::latency_ms(&mut self, u64) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::linger(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::loss_max_ttl(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::max_bandwidth(&mut self, tst_srt::options::MaxBandwidth) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::mss(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::new() -> Self
+pub fn tst_srt::builder::SrtListenerBuilder::overhead_bandwidth_pct(&mut self, u8) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::payload_size(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::recv_latency(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::recv_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::reuse_addr(&mut self, bool) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::send_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::too_late_packet_drop(&mut self, bool) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::udp_recv_buffer_bytes(&mut self, u32) -> &mut Self
+impl core::default::Default for tst_srt::builder::SrtListenerBuilder
+pub fn tst_srt::builder::SrtListenerBuilder::default() -> tst_srt::builder::SrtListenerBuilder
+impl core::marker::Freeze for tst_srt::builder::SrtListenerBuilder
+impl core::marker::Send for tst_srt::builder::SrtListenerBuilder
+impl core::marker::Sync for tst_srt::builder::SrtListenerBuilder
+impl core::marker::Unpin for tst_srt::builder::SrtListenerBuilder
+impl core::marker::UnsafeUnpin for tst_srt::builder::SrtListenerBuilder
+impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::builder::SrtListenerBuilder
+impl core::panic::unwind_safe::UnwindSafe for tst_srt::builder::SrtListenerBuilder
+#[non_exhaustive] pub struct tst_srt::SrtListenerConfig
+pub tst_srt::SrtListenerConfig::backlog: u32
+pub tst_srt::SrtListenerConfig::reuse_addr: bool
+pub tst_srt::SrtListenerConfig::socket: tst_srt::config::SrtSocketConfig
+impl core::clone::Clone for tst_srt::config::SrtListenerConfig
+pub fn tst_srt::config::SrtListenerConfig::clone(&self) -> tst_srt::config::SrtListenerConfig
+impl core::default::Default for tst_srt::config::SrtListenerConfig
+pub fn tst_srt::config::SrtListenerConfig::default() -> Self
+impl core::fmt::Debug for tst_srt::config::SrtListenerConfig
+pub fn tst_srt::config::SrtListenerConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_srt::config::SrtListenerConfig
+impl core::marker::Send for tst_srt::config::SrtListenerConfig
+impl core::marker::Sync for tst_srt::config::SrtListenerConfig
+impl core::marker::Unpin for tst_srt::config::SrtListenerConfig
+impl core::marker::UnsafeUnpin for tst_srt::config::SrtListenerConfig
+impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::config::SrtListenerConfig
+impl core::panic::unwind_safe::UnwindSafe for tst_srt::config::SrtListenerConfig
+pub struct tst_srt::SrtSocket
+impl tst_srt::socket::SrtSocket
+pub fn tst_srt::socket::SrtSocket::cancel_handle(&self) -> tst_core::cancel::ResourceCancel
+pub fn tst_srt::socket::SrtSocket::close(self)
+pub fn tst_srt::socket::SrtSocket::connect_with(&tst_srt::config::SrtSocketConfig, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<Self, tst_srt::error::SrtConnectError>
+pub fn tst_srt::socket::SrtSocket::local_addr(&self) -> core::result::Result<core::net::socket_addr::SocketAddr, tst_srt::error::IoError>
+pub fn tst_srt::socket::SrtSocket::payload_limit(&self) -> usize
+pub fn tst_srt::socket::SrtSocket::peer_addr(&self) -> core::result::Result<core::net::socket_addr::SocketAddr, tst_srt::error::IoError>
+pub fn tst_srt::socket::SrtSocket::recv(&mut self, &mut [u8]) -> core::result::Result<usize, tst_srt::error::RecvError>
+pub fn tst_srt::socket::SrtSocket::send(&mut self, &[u8]) -> core::result::Result<usize, tst_srt::error::SendError>
+pub fn tst_srt::socket::SrtSocket::set_recv_timeout(&mut self, core::option::Option<core::time::Duration>) -> core::result::Result<(), tst_srt::error::OptionError>
+pub fn tst_srt::socket::SrtSocket::set_send_timeout(&mut self, core::option::Option<core::time::Duration>) -> core::result::Result<(), tst_srt::error::OptionError>
+pub fn tst_srt::socket::SrtSocket::stats(&self) -> core::result::Result<tst_srt::socket::SrtStats, tst_srt::error::IoError>
+pub fn tst_srt::socket::SrtSocket::stream_id(&self) -> core::option::Option<&str>
+impl core::fmt::Debug for tst_srt::socket::SrtSocket
+pub fn tst_srt::socket::SrtSocket::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Send for tst_srt::socket::SrtSocket
+impl core::ops::drop::Drop for tst_srt::socket::SrtSocket
+pub fn tst_srt::socket::SrtSocket::drop(&mut self)
+impl core::marker::Freeze for tst_srt::socket::SrtSocket
+impl core::marker::Sync for tst_srt::socket::SrtSocket
+impl core::marker::Unpin for tst_srt::socket::SrtSocket
+impl core::marker::UnsafeUnpin for tst_srt::socket::SrtSocket
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::socket::SrtSocket
+impl !core::panic::unwind_safe::UnwindSafe for tst_srt::socket::SrtSocket
+pub struct tst_srt::SrtSocketBuilder
+impl tst_srt::builder::SrtSocketBuilder
+pub fn tst_srt::builder::SrtSocketBuilder::config(&self) -> tst_srt::config::SrtSocketConfig
+pub fn tst_srt::builder::SrtSocketBuilder::congestion(&mut self, tst_srt::options::Congestion) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::connect(&self, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<tst_srt::socket::SrtSocket, tst_srt::error::SrtConnectError>
+pub fn tst_srt::builder::SrtSocketBuilder::connect_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::flow_window_packets(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::input_bandwidth(&mut self, u64) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::key_length(&mut self, tst_srt::options::KeyLength) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::latency(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::latency_ms(&mut self, u64) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::linger(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::loss_max_ttl(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::max_bandwidth(&mut self, tst_srt::options::MaxBandwidth) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::mss(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::new() -> Self
+pub fn tst_srt::builder::SrtSocketBuilder::overhead_bandwidth_pct(&mut self, u8) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::payload_size(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::peer_latency(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::receiver_defaults(&mut self) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::recv_latency(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::recv_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::role(&mut self, tst_srt::options::Role) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::send_buf_bytes(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::send_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::sender_defaults(&mut self) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::stream_id(&mut self, tst_srt::options::StreamId) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::too_late_packet_drop(&mut self, bool) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::try_stream_id(&mut self, impl core::convert::TryInto<tst_srt::options::StreamId, Error = tst_srt::error::StreamIdError>) -> core::result::Result<&mut Self, tst_srt::error::OptionError>
+pub fn tst_srt::builder::SrtSocketBuilder::udp_recv_buffer_bytes(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::udp_send_buffer_bytes(&mut self, u32) -> &mut Self
+impl core::default::Default for tst_srt::builder::SrtSocketBuilder
+pub fn tst_srt::builder::SrtSocketBuilder::default() -> tst_srt::builder::SrtSocketBuilder
+impl core::marker::Freeze for tst_srt::builder::SrtSocketBuilder
+impl core::marker::Send for tst_srt::builder::SrtSocketBuilder
+impl core::marker::Sync for tst_srt::builder::SrtSocketBuilder
+impl core::marker::Unpin for tst_srt::builder::SrtSocketBuilder
+impl core::marker::UnsafeUnpin for tst_srt::builder::SrtSocketBuilder
+impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::builder::SrtSocketBuilder
+impl core::panic::unwind_safe::UnwindSafe for tst_srt::builder::SrtSocketBuilder
+#[non_exhaustive] pub struct tst_srt::SrtSocketConfig
+pub tst_srt::SrtSocketConfig::congestion: core::option::Option<tst_srt::options::Congestion>
+pub tst_srt::SrtSocketConfig::connect_timeout: core::option::Option<core::time::Duration>
+pub tst_srt::SrtSocketConfig::flow_window_packets: core::option::Option<u32>
+pub tst_srt::SrtSocketConfig::input_bandwidth: core::option::Option<u64>
+pub tst_srt::SrtSocketConfig::key_length: core::option::Option<tst_srt::options::KeyLength>
+pub tst_srt::SrtSocketConfig::latency: core::option::Option<core::time::Duration>
+pub tst_srt::SrtSocketConfig::linger: core::option::Option<core::time::Duration>
+pub tst_srt::SrtSocketConfig::loss_max_ttl: core::option::Option<u32>
+pub tst_srt::SrtSocketConfig::max_bandwidth: core::option::Option<tst_srt::options::MaxBandwidth>
+pub tst_srt::SrtSocketConfig::mss: core::option::Option<u16>
+pub tst_srt::SrtSocketConfig::overhead_bandwidth_pct: core::option::Option<u8>
+pub tst_srt::SrtSocketConfig::packet_filter: core::option::Option<tst_srt::options::PacketFilter>
+pub tst_srt::SrtSocketConfig::passphrase: core::option::Option<tst_srt::options::Passphrase>
+pub tst_srt::SrtSocketConfig::payload_size: core::option::Option<u16>
+pub tst_srt::SrtSocketConfig::peer_latency: core::option::Option<core::time::Duration>
+pub tst_srt::SrtSocketConfig::recv_buf_bytes: core::option::Option<u32>
+pub tst_srt::SrtSocketConfig::recv_latency: core::option::Option<core::time::Duration>
+pub tst_srt::SrtSocketConfig::recv_timeout: core::option::Option<core::time::Duration>
+pub tst_srt::SrtSocketConfig::role: tst_srt::options::Role
+pub tst_srt::SrtSocketConfig::send_buf_bytes: core::option::Option<u32>
+pub tst_srt::SrtSocketConfig::send_timeout: core::option::Option<core::time::Duration>
+pub tst_srt::SrtSocketConfig::stream_id: core::option::Option<tst_srt::options::StreamId>
+pub tst_srt::SrtSocketConfig::too_late_packet_drop: core::option::Option<bool>
+pub tst_srt::SrtSocketConfig::udp_recv_buffer_bytes: core::option::Option<u32>
+pub tst_srt::SrtSocketConfig::udp_send_buffer_bytes: core::option::Option<u32>
+impl tst_srt::config::SrtSocketConfig
+pub fn tst_srt::config::SrtSocketConfig::merge_from(&mut self, &tst_srt::config::SrtSocketConfig)
+pub fn tst_srt::config::SrtSocketConfig::merge_receiver_defaults(&mut self)
+pub fn tst_srt::config::SrtSocketConfig::merge_sender_defaults(&mut self)
+pub fn tst_srt::config::SrtSocketConfig::receiver_defaults() -> Self
+pub fn tst_srt::config::SrtSocketConfig::sender_defaults() -> Self
+impl core::clone::Clone for tst_srt::config::SrtSocketConfig
+pub fn tst_srt::config::SrtSocketConfig::clone(&self) -> tst_srt::config::SrtSocketConfig
+impl core::default::Default for tst_srt::config::SrtSocketConfig
+pub fn tst_srt::config::SrtSocketConfig::default() -> tst_srt::config::SrtSocketConfig
+impl core::fmt::Debug for tst_srt::config::SrtSocketConfig
+pub fn tst_srt::config::SrtSocketConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_srt::config::SrtSocketConfig
+impl core::marker::Send for tst_srt::config::SrtSocketConfig
+impl core::marker::Sync for tst_srt::config::SrtSocketConfig
+impl core::marker::Unpin for tst_srt::config::SrtSocketConfig
+impl core::marker::UnsafeUnpin for tst_srt::config::SrtSocketConfig
+impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::config::SrtSocketConfig
+impl core::panic::unwind_safe::UnwindSafe for tst_srt::config::SrtSocketConfig
+#[non_exhaustive] pub struct tst_srt::SrtStats
+pub tst_srt::SrtStats::bytes_lost_recv_side: u64
+pub tst_srt::SrtStats::bytes_lost_send_side: u64
+pub tst_srt::SrtStats::bytes_received: u64
+pub tst_srt::SrtStats::bytes_sent: u64
+pub tst_srt::SrtStats::mbps_estimated_bandwidth: f64
+pub tst_srt::SrtStats::packets_dropped_recv_side: u64
+pub tst_srt::SrtStats::packets_dropped_send_side: u64
+pub tst_srt::SrtStats::packets_lost_recv_side: u64
+pub tst_srt::SrtStats::packets_lost_send_side: u64
+pub tst_srt::SrtStats::packets_received: u64
+pub tst_srt::SrtStats::packets_retransmitted: u64
+pub tst_srt::SrtStats::packets_sent: u64
+pub tst_srt::SrtStats::recv_bandwidth_bps: u64
+pub tst_srt::SrtStats::recv_buffer_packets: u32
+pub tst_srt::SrtStats::rtt: core::time::Duration
+pub tst_srt::SrtStats::send_bandwidth_bps: u64
+pub tst_srt::SrtStats::send_buffer_packets: u32
+impl core::clone::Clone for tst_srt::socket::SrtStats
+pub fn tst_srt::socket::SrtStats::clone(&self) -> tst_srt::socket::SrtStats
+impl core::fmt::Debug for tst_srt::socket::SrtStats
+pub fn tst_srt::socket::SrtStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_srt::socket::SrtStats
+impl core::marker::Freeze for tst_srt::socket::SrtStats
+impl core::marker::Send for tst_srt::socket::SrtStats
+impl core::marker::Sync for tst_srt::socket::SrtStats
+impl core::marker::Unpin for tst_srt::socket::SrtStats
+impl core::marker::UnsafeUnpin for tst_srt::socket::SrtStats
+impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::socket::SrtStats
+impl core::panic::unwind_safe::UnwindSafe for tst_srt::socket::SrtStats
 pub struct tst_srt::SrtTransport
 impl tst_srt::transport::SrtTransport
 pub const tst_srt::transport::SrtTransport::DEFAULT_PAYLOAD: usize
-pub fn tst_srt::transport::SrtTransport::new(tst_srt::socket::Socket) -> Self
+pub fn tst_srt::transport::SrtTransport::new(tst_srt::socket::SrtSocket) -> Self
 pub fn tst_srt::transport::SrtTransport::srt_cancel_handle(&self) -> tst_core::cancel::ResourceCancel
-pub fn tst_srt::transport::SrtTransport::stats(&self) -> core::result::Result<tst_srt::socket::Stats, tst_srt::error::IoError>
+pub fn tst_srt::transport::SrtTransport::stats(&self) -> core::result::Result<tst_srt::socket::SrtStats, tst_srt::error::IoError>
 impl core::ops::drop::Drop for tst_srt::transport::SrtTransport
 pub fn tst_srt::transport::SrtTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_srt::transport::SrtTransport
@@ -1523,7 +1562,7 @@ impl core::marker::UnsafeUnpin for tst_srt::transport::SrtTransport
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::transport::SrtTransport
 impl !core::panic::unwind_safe::UnwindSafe for tst_srt::transport::SrtTransport
 pub struct tst_srt::SrtUrl
-pub tst_srt::SrtUrl::config: tst_srt::config::SocketConfig
+pub tst_srt::SrtUrl::config: tst_srt::config::SrtSocketConfig
 pub tst_srt::SrtUrl::host: alloc::string::String
 pub tst_srt::SrtUrl::mode: tst_srt::url::Mode
 pub tst_srt::SrtUrl::port: u16
@@ -1531,9 +1570,9 @@ impl tst_srt::url::SrtUrl
 pub fn tst_srt::url::SrtUrl::accept_one(&self, &tst_core::cancel::CancelSlot) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
 pub fn tst_srt::url::SrtUrl::connect(&self) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
 pub fn tst_srt::url::SrtUrl::connect_recv(&self) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
-pub fn tst_srt::url::SrtUrl::listener_config(&self) -> tst_srt::config::ListenerConfig
-pub fn tst_srt::url::SrtUrl::parse(&str) -> core::result::Result<Self, tst_srt::url::UrlError>
-pub fn tst_srt::url::SrtUrl::socket_config(&self, tst_srt::options::Role) -> tst_srt::config::SocketConfig
+pub fn tst_srt::url::SrtUrl::listener_config(&self) -> tst_srt::config::SrtListenerConfig
+pub fn tst_srt::url::SrtUrl::parse(&str) -> core::result::Result<Self, tst_srt::url::SrtUrlError>
+pub fn tst_srt::url::SrtUrl::socket_config(&self, tst_srt::options::Role) -> tst_srt::config::SrtSocketConfig
 impl core::clone::Clone for tst_srt::url::SrtUrl
 pub fn tst_srt::url::SrtUrl::clone(&self) -> tst_srt::url::SrtUrl
 impl core::fmt::Debug for tst_srt::url::SrtUrl
@@ -1545,36 +1584,6 @@ impl core::marker::Unpin for tst_srt::url::SrtUrl
 impl core::marker::UnsafeUnpin for tst_srt::url::SrtUrl
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::url::SrtUrl
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::url::SrtUrl
-#[non_exhaustive] pub struct tst_srt::Stats
-pub tst_srt::Stats::bytes_lost_recv_side: u64
-pub tst_srt::Stats::bytes_lost_send_side: u64
-pub tst_srt::Stats::bytes_received: u64
-pub tst_srt::Stats::bytes_sent: u64
-pub tst_srt::Stats::mbps_estimated_bandwidth: f64
-pub tst_srt::Stats::packets_dropped_recv_side: u64
-pub tst_srt::Stats::packets_dropped_send_side: u64
-pub tst_srt::Stats::packets_lost_recv_side: u64
-pub tst_srt::Stats::packets_lost_send_side: u64
-pub tst_srt::Stats::packets_received: u64
-pub tst_srt::Stats::packets_retransmitted: u64
-pub tst_srt::Stats::packets_sent: u64
-pub tst_srt::Stats::recv_bandwidth_bps: u64
-pub tst_srt::Stats::recv_buffer_packets: u32
-pub tst_srt::Stats::rtt: core::time::Duration
-pub tst_srt::Stats::send_bandwidth_bps: u64
-pub tst_srt::Stats::send_buffer_packets: u32
-impl core::clone::Clone for tst_srt::socket::Stats
-pub fn tst_srt::socket::Stats::clone(&self) -> tst_srt::socket::Stats
-impl core::fmt::Debug for tst_srt::socket::Stats
-pub fn tst_srt::socket::Stats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for tst_srt::socket::Stats
-impl core::marker::Freeze for tst_srt::socket::Stats
-impl core::marker::Send for tst_srt::socket::Stats
-impl core::marker::Sync for tst_srt::socket::Stats
-impl core::marker::Unpin for tst_srt::socket::Stats
-impl core::marker::UnsafeUnpin for tst_srt::socket::Stats
-impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::socket::Stats
-impl core::panic::unwind_safe::UnwindSafe for tst_srt::socket::Stats
 pub struct tst_srt::StreamId(_)
 impl tst_srt::options::StreamId
 pub fn tst_srt::options::StreamId::as_str(&self) -> &str
@@ -1596,3 +1605,12 @@ impl core::marker::Unpin for tst_srt::options::StreamId
 impl core::marker::UnsafeUnpin for tst_srt::options::StreamId
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::options::StreamId
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::options::StreamId
+pub type tst_srt::ConnectError = tst_srt::error::SrtConnectError
+pub type tst_srt::Listener = tst_srt::listener::SrtListener
+pub type tst_srt::ListenerBuilder = tst_srt::builder::SrtListenerBuilder
+pub type tst_srt::ListenerConfig = tst_srt::config::SrtListenerConfig
+pub type tst_srt::Socket = tst_srt::socket::SrtSocket
+pub type tst_srt::SocketBuilder = tst_srt::builder::SrtSocketBuilder
+pub type tst_srt::SocketConfig = tst_srt::config::SrtSocketConfig
+pub type tst_srt::Stats = tst_srt::socket::SrtStats
+pub type tst_srt::UrlError = tst_srt::url::SrtUrlError

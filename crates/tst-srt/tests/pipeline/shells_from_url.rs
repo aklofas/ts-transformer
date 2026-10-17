@@ -31,7 +31,7 @@ use tst_srt::shells::{
     managed_raw_sender_from_url, managed_receiver_from_url, managed_recv_transport_from_url,
     managed_sender_from_url,
 };
-use tst_srt::{ListenerBuilder, SrtError, SrtTransport, SrtUrl};
+use tst_srt::{SrtError, SrtListenerBuilder, SrtTransport, SrtUrl};
 use tst_test_helpers::synthetic_nal;
 
 const WATCHDOG: Duration = Duration::from_secs(10);
@@ -66,7 +66,7 @@ fn video_only_config() -> MuxerConfig {
 /// Peer half for the demux tests: a plain `MuxSender` over the accepted
 /// socket pushes H.264 AUs at 30 fps PTS spacing until `stop` flips. Send
 /// errors are ignored — the receiver under test closes first by design.
-fn push_frames_until(sock: tst_srt::Socket, stop: Arc<AtomicBool>) {
+fn push_frames_until(sock: tst_srt::SrtSocket, stop: Arc<AtomicBool>) {
     let sender = MuxSender::new(SrtTransport::new(sock), video_only_config()).expect("sender");
     let give_up = Instant::now() + PEER_MAX_RUNTIME;
     let mut i: i64 = 0;
@@ -86,7 +86,7 @@ fn push_frames_until(sock: tst_srt::Socket, stop: Arc<AtomicBool>) {
 }
 
 /// Peer half for the byte-level tests: re-send `payload` until `stop`.
-fn send_until(mut sock: tst_srt::Socket, payload: Vec<u8>, stop: Arc<AtomicBool>) {
+fn send_until(mut sock: tst_srt::SrtSocket, payload: Vec<u8>, stop: Arc<AtomicBool>) {
     let give_up = Instant::now() + PEER_MAX_RUNTIME;
     while !stop.load(Ordering::SeqCst) && Instant::now() < give_up {
         if sock.send(&payload).is_err() {
@@ -119,7 +119,7 @@ fn ipv6_loopback_available() -> bool {
 #[test]
 fn managed_demux_receiver_from_url_reads_events() {
     require_loopback!();
-    let mut builder = ListenerBuilder::new();
+    let mut builder = SrtListenerBuilder::new();
     builder.recv_latency(Duration::from_millis(120));
     let lb = crate::common::Loopback::bind_with(builder);
     let port = lb.port;
@@ -248,7 +248,7 @@ fn managed_demux_receiver_from_url_ipv6_literal() {
         eprintln!("SKIP: IPv6 loopback unavailable on this host");
         return;
     }
-    let mut builder = ListenerBuilder::new();
+    let mut builder = SrtListenerBuilder::new();
     builder.recv_latency(Duration::from_millis(120));
     let lb = crate::common::Loopback::bind_at(builder, "[::1]:0");
     let port = lb.port;
@@ -369,7 +369,7 @@ fn managed_receiver_from_url_in_listener_mode_accepts_a_dialling_peer() {
     let peer = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(5);
         let sock = loop {
-            match tst_srt::SocketBuilder::new()
+            match tst_srt::SrtSocketBuilder::new()
                 .connect_timeout(Duration::from_millis(500))
                 .connect(format!("127.0.0.1:{port}"))
             {

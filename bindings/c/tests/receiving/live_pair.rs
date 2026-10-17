@@ -18,7 +18,7 @@ use std::ffi::CString;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 use tstrans::config::{TstKlvStreamType, TstMuxConfig, TstVideoCodec};
 use tstrans::config::{
     tst_mux_config_add_data_stream, tst_mux_config_add_klv_stream, tst_mux_config_add_program,
@@ -40,7 +40,7 @@ fn mux_sender_to_listener_roundtrip() {
     let (recv_tx, recv_rx) = mpsc::channel::<Vec<u8>>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -97,7 +97,7 @@ fn managed_mux_sender_multi_stream_loopback() {
     let (bytes_tx, bytes_rx) = mpsc::channel::<Vec<u8>>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -257,7 +257,7 @@ fn mux_sender_data_stream_loopback() {
     let (bytes_tx, bytes_rx) = mpsc::channel::<Vec<u8>>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -385,7 +385,7 @@ fn managed_mux_sender_data_stream_loopback() {
     let (bytes_tx, bytes_rx) = mpsc::channel::<Vec<u8>>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");

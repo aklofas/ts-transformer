@@ -5,7 +5,7 @@ use std::ffi::CString;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 use tstrans::config::{
     TstKlvStreamType, TstVideoCodec, tst_mux_config_add_klv_stream, tst_mux_config_add_program,
     tst_mux_config_add_video_stream, tst_mux_config_free, tst_mux_config_new,
@@ -27,7 +27,7 @@ fn variant_mux_sender_open_with_url() {
     let (sid_tx, sid_rx) = mpsc::channel::<Option<String>>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -75,7 +75,7 @@ fn variant_managed_mux_sender_open_with_url() {
     let (sid_tx, sid_rx) = mpsc::channel::<Option<String>>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -123,7 +123,7 @@ fn variant_managed_mux_sender_get_reconnect_stats() {
     let (ok_tx, ok_rx) = mpsc::channel::<bool>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -242,7 +242,7 @@ fn hold_loopback_peer(streamid: &str) -> (String, HeldPeer) {
     let (done_tx, done_rx) = mpsc::channel::<()>();
     let (outcome_tx, outcome_rx) = mpsc::channel::<Result<(), String>>();
     let join = thread::spawn(move || {
-        let mut listener = match ListenerBuilder::new().bind("127.0.0.1:0") {
+        let mut listener = match SrtListenerBuilder::new().bind("127.0.0.1:0") {
             Ok(l) => l,
             Err(e) => {
                 let _ = outcome_tx.send(Err(format!("bind: {e}")));

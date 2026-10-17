@@ -3,8 +3,8 @@
 //! Layered atop `transport`:
 //! - `Builder` is a hybrid fluent + kwargs SRT URL constructor.
 //!   URL-provided values WIN over kwargs — we accumulate kwargs
-//!   into a `SocketConfig` / `ListenerConfig` FIRST, then call
-//!   `SocketConfig::merge_from` with the URL's keys AFTER so the URL's
+//!   into a `SrtSocketConfig` / `SrtListenerConfig` FIRST, then call
+//!   `SrtSocketConfig::merge_from` with the URL's keys AFTER so the URL's
 //!   overwrites give it final say.
 //! - `Socket` is a handle that promotes via `into_sender` /
 //!   `into_receiver` into the `tstrans.shells` Sender / Receiver, and via
@@ -43,8 +43,7 @@ use pyo3::prelude::*;
 use tst_srt::error::AcceptError;
 use tst_srt::options::{Congestion, MaxBandwidth, Passphrase, StreamId};
 use tst_srt::{
-    Listener as SrtListener, ListenerConfig, Socket as SrtSocket, SocketConfig, SrtTransport,
-    SrtUrl, url::Mode,
+    SrtListener, SrtListenerConfig, SrtSocket, SrtSocketConfig, SrtTransport, SrtUrl, url::Mode,
 };
 
 use tst_core::transport::{RecvTransport, Transport, TransportCancel};
@@ -116,7 +115,7 @@ enum BuilderMode {
 ///
 /// Holds:
 /// - The original URL string (parsed lazily at finalize).
-/// - An accumulated SocketConfig + ListenerConfig built from kwargs
+/// - An accumulated SrtSocketConfig + SrtListenerConfig built from kwargs
 ///   and chainable setters.
 /// - A mode override (`UrlChoice` by default; `caller()` / `listener()`
 ///   / `rendezvous()` override it).
@@ -125,7 +124,7 @@ enum BuilderMode {
 /// 1. Parse the URL.
 /// 2. If mode override is set and disagrees with URL → `CONFIG_INVALID`.
 /// 3. Merge the URL's parameters over the accumulated config — URL wins
-///    on conflict (per `SocketConfig::merge_from`: every key the URL set
+///    on conflict (per `SrtSocketConfig::merge_from`: every key the URL set
 ///    overwrites).
 /// 4. Call `Socket::connect_with` / `Listener::bind_with`.
 ///
@@ -138,8 +137,8 @@ pub(crate) struct PyBuilder {
     /// Eagerly mutated by each setter. We carry both shapes so
     /// `.connect()` and `.listen()` can pick the right one without
     /// re-running the kwarg accumulation.
-    socket_cfg: SocketConfig,
-    listener_cfg: ListenerConfig,
+    socket_cfg: SrtSocketConfig,
+    listener_cfg: SrtListenerConfig,
     /// Plain-text passphrase used only by `__repr__` redaction (so
     /// callers can sanity-check the kwarg landed without leaking the
     /// secret). The real passphrase lives in `socket_cfg.passphrase` /
@@ -162,7 +161,7 @@ impl PyBuilder {
     fn apply_stream_id(&mut self, py: Python<'_>, s: &str) -> PyResult<()> {
         let id = StreamId::new(s.to_string()).map_err(|e| cfg_invalid(py, e.to_string()))?;
         self.socket_cfg.stream_id = Some(id);
-        // ListenerConfig doesn't carry stream_id (set on accepted sockets
+        // SrtListenerConfig doesn't carry stream_id (set on accepted sockets
         // via post-handshake observation). Caller-side only.
         Ok(())
     }
@@ -204,8 +203,8 @@ impl PyBuilder {
         let mut b = Self {
             url: url.to_string(),
             mode_override: BuilderMode::UrlChoice,
-            socket_cfg: SocketConfig::default(),
-            listener_cfg: ListenerConfig::default(),
+            socket_cfg: SrtSocketConfig::default(),
+            listener_cfg: SrtListenerConfig::default(),
             passphrase_set: false,
         };
         if let Some(ms) = latency_ms {
@@ -320,7 +319,7 @@ impl PyBuilder {
 
     fn peer_latency_ms(mut slf: PyRefMut<'_, Self>, ms: u32) -> PyRefMut<'_, Self> {
         slf.socket_cfg.peer_latency = Some(Duration::from_millis(ms.into()));
-        // ListenerConfig has no peer_latency (libsrt sets it on caller side).
+        // SrtListenerConfig has no peer_latency (libsrt sets it on caller side).
         slf
     }
 
@@ -459,7 +458,7 @@ impl PyBuilder {
 ///
 /// Held by reference until consumed via `into_sender()` /
 /// `into_receiver()` (each consumes the handle; the underlying
-/// `tst_srt::Socket` moves into the new wrapper). `close()` is a manual
+/// `tst_srt::SrtSocket` moves into the new wrapper). `close()` is a manual
 /// teardown; the destructor closes too.
 #[pyclass(name = "Socket", module = "tstrans.srt")]
 pub(crate) struct PySocket {
@@ -630,7 +629,7 @@ impl PySocket {
 // PyListener — bound listening socket, accept loop + iterator
 // ---------------------------------------------------------------------------
 
-/// `tst_srt::Listener` behind the binding layer's `Close`: `close(self)`
+/// `tst_srt::SrtListener` behind the binding layer's `Close`: `close(self)`
 /// consumes the listener, so the slot holds an `Option` it can take.
 pub(crate) struct ListenerHeld(Option<SrtListener>);
 
@@ -745,7 +744,7 @@ impl PyListener {
     /// slot (a parked `accept()` on another thread ends with
     /// `SrtError(CLOSED)`; an iterating `for sock in listener` loop ends
     /// with `StopIteration`), then frees the libsrt listener — the
-    /// ordering `tst_srt::Listener::close` documents. Idempotent.
+    /// ordering `tst_srt::SrtListener::close` documents. Idempotent.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         close_owned(py, &SRT, &self.owned)
     }

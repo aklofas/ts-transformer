@@ -2,7 +2,7 @@
 //! return promptly.
 
 use std::time::{Duration, Instant};
-use tst_srt::SocketBuilder;
+use tst_srt::SrtSocketBuilder;
 
 #[test]
 fn drop_with_zero_linger_does_not_block() {
@@ -17,7 +17,7 @@ fn drop_with_zero_linger_does_not_block() {
     });
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .linger(Duration::from_secs(0))
         .send_timeout(Duration::from_secs(5))
         .connect(("127.0.0.1", port))

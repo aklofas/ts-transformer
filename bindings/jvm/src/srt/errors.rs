@@ -11,7 +11,7 @@ use tst_pipeline::ShellErrorKind;
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
 use tst_pipeline::receiver::{ReceiverError, ReceiverErrorSource};
 use tst_pipeline::sender::{SenderError, SenderErrorSource};
-use tst_srt::{SrtError, UrlError};
+use tst_srt::{SrtError, SrtUrlError};
 
 use crate::error::{Domain, throw_binding};
 
@@ -35,8 +35,8 @@ pub(crate) fn srt_error(env: &mut JNIEnv, e: impl Into<SrtError>) {
 }
 
 /// `SrtUrl::parse` failures are caller misconfiguration by definition;
-/// `UrlError` is not an `SrtError` arm, so it is mapped here, once.
-pub(crate) fn url_error(env: &mut JNIEnv, e: &UrlError) {
+/// `SrtUrlError` is not an `SrtError` arm, so it is mapped here, once.
+pub(crate) fn url_error(env: &mut JNIEnv, e: &SrtUrlError) {
     throw_srt(env, BindingErrorKind::ConfigInvalid, &e.to_string());
 }
 

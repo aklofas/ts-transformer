@@ -3,23 +3,23 @@
 > **When to use this:** Archiving a stream or building a test fixture from a live producer.
 
 > **Related:**
-> - [guides/srt.md](/docs/guides/srt.md) — `ListenerBuilder`, `accept`, and the recv error variants
+> - [guides/srt.md](/docs/guides/srt.md) — `SrtListenerBuilder`, `accept`, and the recv error variants
 > - [Example: `srt_listener_to_file`](/examples/receiving/srt_listener_to_file.rs)
 
-Reach for this when archiving a stream or building a test fixture from a live producer. `Listener::accept` returns a connected `Socket`; the recv loop drains until `ConnectionBroken`.
+Reach for this when archiving a stream or building a test fixture from a live producer. `SrtListener::accept` returns a connected `SrtSocket`; the recv loop drains until `ConnectionBroken`.
 
 A 1500-byte buffer comfortably fits SRT's default 1316-byte payload, so each `recv` returns one whole message. The match handles data, the end of the connection (`ConnectionBroken`), and a defensive timeout.
 
 ```rust,no_run
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 use std::fs::File;
 use std::io::Write;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Same bind-then-step pattern as SocketBuilder: mutators return
+    // Same bind-then-step pattern as SrtSocketBuilder: mutators return
     // `&mut Self`, terminal `bind` takes `&self`.
-    let mut lb = ListenerBuilder::new();
+    let mut lb = SrtListenerBuilder::new();
     lb.latency(Duration::from_millis(120));
     let mut listener = lb.bind("0.0.0.0:9000")?;
     let (mut socket, _peer) = listener.accept()?;

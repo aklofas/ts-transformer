@@ -1,18 +1,18 @@
 //! Listener bind errors.
 
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 use tst_srt::error::BindError;
 
 #[test]
 fn bind_address_in_use() {
     require_loopback!();
-    let _l1 = ListenerBuilder::new()
+    let _l1 = SrtListenerBuilder::new()
         .reuse_addr(false)
         .bind("127.0.0.1:0")
         .expect("first bind");
 
     let port = _l1.local_addr().unwrap().port();
-    let result = ListenerBuilder::new()
+    let result = SrtListenerBuilder::new()
         .reuse_addr(false)
         .bind(format!("127.0.0.1:{port}"));
 

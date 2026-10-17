@@ -3,12 +3,12 @@
 use std::time::Duration;
 use tst_core::transport::Transport;
 use tst_srt::error::SendError;
-use tst_srt::{ListenerBuilder, SocketBuilder, SrtTransport};
+use tst_srt::{SrtListenerBuilder, SrtSocketBuilder, SrtTransport};
 
 #[test]
 fn payload_too_large_reports_configured_limit() {
     require_loopback!();
-    let mut builder = ListenerBuilder::new();
+    let mut builder = SrtListenerBuilder::new();
     builder
         .payload_size(1456)
         .recv_timeout(Duration::from_secs(5));
@@ -18,7 +18,7 @@ fn payload_too_large_reports_configured_limit() {
     let accept = lb.spawn_accept(|sock| sock);
     accept.wait_ready();
 
-    let mut sender = SocketBuilder::new()
+    let mut sender = SrtSocketBuilder::new()
         .payload_size(1456)
         .send_timeout(Duration::from_secs(5))
         .connect(("127.0.0.1", port))
@@ -54,7 +54,7 @@ fn payload_too_large_reports_configured_limit() {
 #[test]
 fn srt_transport_inherits_configured_payload_size() {
     require_loopback!();
-    let mut builder = ListenerBuilder::new();
+    let mut builder = SrtListenerBuilder::new();
     builder
         .payload_size(1456)
         .recv_timeout(Duration::from_secs(5));
@@ -69,7 +69,7 @@ fn srt_transport_inherits_configured_payload_size() {
     });
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .payload_size(1456)
         .send_timeout(Duration::from_secs(5))
         .connect(("127.0.0.1", port))
@@ -107,7 +107,7 @@ fn oversize_foreign_payload_through_raw_receiver_shell() {
     use tst_pipeline::{RawReceiver, RawReceiverConfig};
 
     // Listener side: DEFAULT payloadsize (1316) — the victim receiver.
-    let mut builder = ListenerBuilder::new();
+    let mut builder = SrtListenerBuilder::new();
     builder.recv_timeout(Duration::from_secs(5));
     let lb = crate::common::Loopback::bind_with(builder);
     let port = lb.port;
@@ -116,7 +116,7 @@ fn oversize_foreign_payload_through_raw_receiver_shell() {
     accept.wait_ready();
 
     // Caller side: the "foreign" sender at the live-mode max.
-    let mut sender = SocketBuilder::new()
+    let mut sender = SrtSocketBuilder::new()
         .payload_size(1456)
         .send_timeout(Duration::from_secs(5))
         .connect(("127.0.0.1", port))
@@ -172,7 +172,7 @@ fn srt_transport_default_payload_when_unconfigured() {
     });
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .send_timeout(Duration::from_secs(5))
         .connect(("127.0.0.1", port))
         .expect("connect");

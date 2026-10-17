@@ -6,7 +6,7 @@
 
 use std::net::IpAddr;
 use std::time::Duration;
-use tst_srt::{ListenerBuilder, SocketBuilder};
+use tst_srt::{SrtListenerBuilder, SrtSocketBuilder};
 
 #[test]
 fn ipv6_loopback_round_trip() {
@@ -17,7 +17,7 @@ fn ipv6_loopback_round_trip() {
 
     // The shared fixture (rather than a hand-rolled accept thread) so the
     // peer's `accept()` cannot park forever — see `AcceptHandle`'s docs.
-    let mut builder = ListenerBuilder::new();
+    let mut builder = SrtListenerBuilder::new();
     builder.recv_timeout(Duration::from_secs(5));
     let lb = crate::common::Loopback::bind_at(builder, "[::1]:0");
     let local = lb.listener.local_addr().expect("local_addr");
@@ -34,7 +34,7 @@ fn ipv6_loopback_round_trip() {
     });
     accept.wait_ready();
 
-    let mut sender = SocketBuilder::new()
+    let mut sender = SrtSocketBuilder::new()
         .recv_timeout(Duration::from_secs(5))
         .send_timeout(Duration::from_secs(5))
         .connect(format!("[::1]:{port}"))

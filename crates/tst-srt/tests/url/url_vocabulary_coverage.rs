@@ -10,7 +10,7 @@
 //!   4. The honored-key count matches what's documented in
 //!      `docs/guides/srt.md` (drift between code and docs).
 
-use tst_srt::{SrtUrl, UrlError};
+use tst_srt::{SrtUrl, SrtUrlError};
 
 const GROUP1_KEYS: &[&str] = &[
     "passphrase",
@@ -119,7 +119,7 @@ fn group3_keys_all_reject_with_srto() {
         let url = format!("srt://1.2.3.4:9000?{key}=1");
         let e = SrtUrl::parse(&url).unwrap_err();
         match e {
-            UrlError::UnsupportedKey { key: k, srto } => {
+            SrtUrlError::UnsupportedKey { key: k, srto } => {
                 assert_eq!(&k, key);
                 assert!(!srto.is_empty(), "{key}: srto must not be empty");
                 assert!(
