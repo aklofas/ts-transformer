@@ -299,12 +299,6 @@ jobs:
         # source constants.
         run: bash scripts/check/repo/doc-abi-and-st1910-currency.sh
 
-      - name: Check rust.md feature-table currency
-        # Every `| crate | feature |` row in docs/languages/rust.md must
-        # exist in that crate's [features] (rust.md carried a phantom
-        # tst-srt `log` feature for months).
-        run: bash scripts/check/repo/feature-table-currency.sh
-
       - name: Check docs internal links
         # Docs deep-edit rail (2026-07-12) — every intra-repo markdown link
         # in README.md, docs/, and examples/ must resolve to an existing
@@ -386,6 +380,12 @@ jobs:
         # baselines are platform-independent.
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/surface-manifest.sh
+
+      - name: check-doc-tables (generated doc tables match ci.yml, sanitizers.yml, fuzz-targets.toml, Cargo features)
+        # The build-target, sanitizer, fuzz and feature tables are written by
+        # scripts/gen/doc-tables.sh; this fails when one drifts from its source.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/doc-tables.sh
 
       - name: check-roster-sync (workflow and rail lists agree with cargo metadata)
         if: matrix.name == 'linux-x86_64'

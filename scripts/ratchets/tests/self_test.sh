@@ -343,20 +343,6 @@ cat "$tmp/dth/rs/a/tests/t.rs" >> "$tmp/dth/tr/a/tests/t.rs"
 cp "$tmp/dth/rs/a/tests/t.rs" "$tmp/dth/tr/b/tests/t.rs"
 expect "dup helpers: a bodiless multi-line trait declaration does not hide a duplicate after it" 1 env DTH_ROOTS="$tmp/dth/tr" DTH_ALLOWLIST="$tmp/dth/empty.tsv" bash "$DTH"
 
-# ---- feature-table currency (scripts/check/repo/feature-table-currency.sh) ----
-FTC="$DIR/../check/repo/feature-table-currency.sh"
-mkdir -p "$tmp/ftc/crates/foo"
-printf '[package]\nname = "foo"\n\n[features]\ndefault = ["alpha"]\nalpha = []\nbeta = ["dep:x"]\n\n[dependencies]\nx = "1"\n' > "$tmp/ftc/crates/foo/Cargo.toml"
-ftc() { FTC_RUST_MD="$tmp/ftc/rust.md" FTC_CRATES_DIR="$tmp/ftc/crates" bash "$FTC"; }
-printf '| Crate | Feature | Default | Effect |\n| --- | --- | --- | --- |\n| `foo` | `alpha` | on | a |\n| `foo` (published as `bar-foo`) | `beta` | off | b |\n' > "$tmp/ftc/rust.md"
-expect "feature table: every row exists"          0 ftc
-printf '| `foo` | `alpha` | on | a |\n| `foo` | `zzz` | on | planted |\n' > "$tmp/ftc/rust.md"
-expect "feature table: planted missing feature"   1 ftc
-printf '| `nope` | `alpha` | on | a |\n' > "$tmp/ftc/rust.md"
-expect "feature table: planted missing crate"     1 ftc
-printf '| Crate | Feature |\n| --- | --- |\n' > "$tmp/ftc/rust.md"
-expect "feature table: table with no rows"        1 ftc
-
 # ---- doc ABI currency (scripts/check/repo/doc-abi-and-st1910-currency.sh) ----
 DAC="$DIR/../check/repo/doc-abi-and-st1910-currency.sh"
 d="$tmp/dac"; mkdir -p "$d/bindings/c/core/src" "$d/docs/languages" "$d/docs/reference" "$d/crates"
