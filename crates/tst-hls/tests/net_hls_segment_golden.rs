@@ -134,9 +134,13 @@ fn hls_segments_match_the_committed_golden() {
             "{n} diverged from the committed golden"
         );
     }
+    // A Windows checkout may turn the committed playlist's line endings into
+    // CRLF; the publisher writes LF, so compare on normalised text.
+    let golden_playlist = std::fs::read_to_string(dir.join("playlist.stable.m3u8"))
+        .unwrap()
+        .replace("\r\n", "\n");
     assert_eq!(
-        stable,
-        std::fs::read_to_string(dir.join("playlist.stable.m3u8")).unwrap(),
+        stable, golden_playlist,
         "playlist structure diverged from the committed golden"
     );
     let _ = std::fs::remove_dir_all(&out);
