@@ -2357,27 +2357,9 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::RtpRecvSocketBuilder"
-owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["java:org.tstrans.rtp.RecvTransport", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
-scenario_ids = ["h264-st0601-mp"]
-tier = "A"
-
-[[surface]]
-kind = "rust"
-crate = "tst-rtp"
 item = "tst_rtp::RtpRecvTransport"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
 bindings = ["java:org.tstrans.rtp.RecvTransport", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
-scenario_ids = ["h264-st0601-mp"]
-tier = "A"
-
-[[surface]]
-kind = "rust"
-crate = "tst-rtp"
-item = "tst_rtp::RtpSocketBuilder"
-owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["java:org.tstrans.rtp.Transport", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
