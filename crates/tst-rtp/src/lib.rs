@@ -57,11 +57,9 @@ pub use packet::{Parsed, RTP_HEADER_LEN, RtpHeader, RtpParseError};
 pub use transport::{RtpConnectError, RtpRecvTransport, RtpStats, RtpTransport};
 pub use url::{DEFAULT_PKT_SIZE, RtpUrl, RtpUrlError};
 
-// The names these types had before the `Rtp` prefix; removed in 0.10.0.
+// The name this type had before the `Rtp` prefix; removed in 0.10.0.
 #[allow(deprecated)]
 pub use transport::ConnectError;
-#[allow(deprecated)]
-pub use url::UrlError;
 
 // RTSP client.
 pub use builder::RtspClientBuilder;

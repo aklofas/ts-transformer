@@ -11,6 +11,8 @@ mod error_routing;
 mod feature_matrix_compile;
 #[path = "abi/header_drift.rs"]
 mod header_drift;
+#[path = "abi/rtp_url_refusal.rs"]
+mod rtp_url_refusal;
 #[path = "abi/smoke.rs"]
 mod smoke;
 #[path = "abi/symbol_audit.rs"]

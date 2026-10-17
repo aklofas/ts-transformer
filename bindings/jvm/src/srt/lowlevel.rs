@@ -437,12 +437,12 @@ jni_native! {
         mode: jni::sys::jint,
         latency_ms: JObject<'local>,
         passphrase: JString<'local>,
-        stream_id: JString<'local>, // accepted but ignored for listener (no SrtListenerConfig.stream_id)
+        stream_id: JString<'local>, // accepted but ignored for a listener (a listener does not apply stream_id)
         congestion: JString<'local>,
-        connect_timeout_ms: JObject<'local>, // accepted but ignored (no SrtListenerConfig.connect_timeout)
+        connect_timeout_ms: JObject<'local>, // accepted but ignored (a listener does not apply connect_timeout)
         recv_timeout_ms: JObject<'local>,
         send_timeout_ms: JObject<'local>,
-        peer_latency_ms: JObject<'local>, // accepted but ignored (no SrtListenerConfig.peer_latency)
+        peer_latency_ms: JObject<'local>, // accepted but ignored (a listener does not apply peer_latency)
         recv_latency_ms: JObject<'local>,
         max_bandwidth_bps: JObject<'local>,
         mss: JObject<'local>,
@@ -490,8 +490,8 @@ jni_native! {
             Err(_) => return 0,
         };
 
-        // Silently ignore: stream_id (no SrtListenerConfig field), connect_timeout_ms
-        // (no SrtListenerConfig field), peer_latency_ms (no SrtListenerConfig field).
+        // Silently ignore: stream_id, connect_timeout_ms and peer_latency_ms
+        // (a listener does not apply them).
         // This matches tst-py: apply_stream_id goes to socket_cfg only; peer_latency
         // goes to socket_cfg only; connect_timeout goes to socket_cfg only.
         let _ = (&stream_id, &connect_timeout_ms, &peer_latency_ms); // suppress unused warnings

@@ -30,12 +30,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `SrtTransport::with_max_payload` is removed. `SrtTransport::new` reads the
   negotiated `SRTO_PAYLOADSIZE`; to send smaller messages set the
-  `payloadsize=` URL key or `SocketConfig::payload_size` before connecting.
+  `payloadsize=` URL key or `SrtSocketConfig::payload_size` before connecting.
 - `UrlOverlay` and `SrtUrl::overlay` are gone. `SrtUrl::config` is a
-  `SocketConfig` holding exactly the URL's keys, applied with
-  `SocketConfig::merge_from` or opened with `SrtUrl::socket_config(role)` and
-  `SrtUrl::listener_config()`, so one config type replaces four and the
-  "URL wins" rule has one implementation.
+  `SrtSocketConfig` (formerly `SocketConfig`) holding exactly the URL's keys,
+  applied with `SrtSocketConfig::merge_from` or opened with
+  `SrtUrl::socket_config(role)` and `SrtUrl::listener_config()`, so one
+  config type replaces four and the "URL wins" rule has one implementation.
 
 ### Removed — tst-udp, tst-tcp, tst-rist, tst-hls (BREAKING)
 
@@ -59,7 +59,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reports URL errors through one type. `TcpUrl` keeps `host`, `port`, `tls`
   and `listen` and holds the rest in `config: TcpConfig`; `RistUrl` keeps its
   address fields and holds the rest in `config: RistConfig`;
-  `SocketConfig::merge_from_url` and `RistConfig::merge_from_url` are removed
+  `TcpConfig::merge_from_url` and `RistConfig::merge_from_url` are removed
   because the parsed URL already is the config. A `?ca=` bundle now reaches
   `TcpTransport::connect_with_config` through the `TcpConfig` it is given, not
   through the URL, so a caller that passes a default config with a `tcps://`
@@ -162,7 +162,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   setup, teardown}` and `rtsp::server::{auth, fanout, handlers, listener,
   multicast, tls}` are no longer public; none exported an item of its own
   (`RtspClient::setup` and `teardown` are methods and are unchanged).
-
 - `RtpSocketBuilder` and `RtpRecvSocketBuilder` are gone. Build an `RtpUrl`
   (`RtpUrl::new(host, port)` or `RtpUrl::parse`, which now also has
   `Default`) and call `RtpTransport::connect_with` /
@@ -225,8 +224,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   wildcard arm. Kind enums are deliberately exhaustive so that a new kind is
   a compile error in every exhaustive match.
 - `DemuxerConfigBuilder` setters take `&mut self` and `build` takes `&self`,
-  like `MuxerConfigBuilder`, so every builder in the workspace follows one
-  rule. Chained calls on a temporary are unchanged; a builder held in a `let`
+  like `MuxerConfigBuilder`, so every builder except `RtspClientBuilder`
+  follows one rule. Chained calls on a temporary are unchanged; a builder held in a `let`
   is now mutated in place instead of consumed.
 
 ### Changed — tst-pipeline (BREAKING)
@@ -266,13 +265,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-srt (BREAKING)
 
-- `SocketConfig::key_length` is an `Option<KeyLength>`; `None` keeps libsrt's
+- `SrtSocketConfig::key_length` is an `Option<KeyLength>`; `None` keeps libsrt's
   AES-128, as before. A config can now say "not set", which is what lets a
   URL's `pbkeylen` merge by the same rule as every other key.
-- `ListenerConfig` holds a `SocketConfig` in `socket` plus `backlog` and
-  `reuse_addr`; the 15 socket fields it duplicated are read as
+- `SrtListenerConfig` holds a `SrtSocketConfig` in `socket` plus `backlog`
+  and `reuse_addr`; the 15 socket fields it duplicated are read as
   `cfg.socket.latency` and so on. The listener applies exactly the options it
-  applied before, and the listener's `ListenerBuilder` setters are unchanged.
+  applied before, and the listener's `SrtListenerBuilder` setters are unchanged.
 
 ### Changed — tst-rtp (BREAKING)
 
@@ -300,18 +299,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   kinds are unchanged.
 - `RistTransportBuilder` and `RistRecvTransportBuilder` setters take
   `&mut self`, and `connect` and `listen` take `&self`; so do
-  `TcpTransportBuilder::build` and `TcpListenerBuilder::build`. This is the
-  one builder rule every crate follows. Chained calls on a temporary are
+  `TcpTransportBuilder::build`, `TcpListenerBuilder::build`,
+  `UdpTransportBuilder::build` and `UdpRecvTransportBuilder::build`. This is
+  the one builder rule every crate follows except `RtspClientBuilder`. Chained calls on a temporary are
   unchanged; a chain that reassigns the builder (`b = b.profile(..)`) must
   call the setters in place.
 
 ### Changed — tst-hls (BREAKING)
 
 - `HlsPublisherBuilder` setters take `&mut self` and `build` takes `&self`,
-  the builder rule every other crate follows; chained calls on a temporary
-  are unchanged, a builder held in a `let` is now mutated in place.
-  `UdpTransportBuilder::build` and `UdpRecvTransportBuilder::build` take
-  `&self` for the same reason.
+  the builder rule every other crate follows except `RtspClientBuilder`;
+  chained calls on a temporary are unchanged, a builder held in a `let` is
+  now mutated in place.
 
 ### Changed — tst-py (BREAKING)
 
@@ -509,7 +508,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — tst-core
 
-- `url::UrlError` gains `BadScheme`, `BadHost`, `HostResolve`, `BadQueryValue`, `UnknownQueryKey` and `Rejected`, and `url::common::{parse_size, parse_bool, parse_int}` return it, so every transport's URL errors share one type.
+- `url::UrlError` gains `BadScheme`, `BadHost`, `HostResolve`,
+  `BadQueryValue`, `UnknownQueryKey` and `Rejected`, and
+  `url::common::{parse_size, parse_bool, parse_int}` return it, so every
+  transport's URL errors share one type.
 - `binding_schema::{RecordSchema, FieldSpec, FieldMark}` and the
   `binding_record!` macro (Internal tier): one declaration per crossing record,
   from which the Python and JVM projections are generated. `WavelengthRecord`
@@ -584,8 +586,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   language binding's shells. `tst_srt::opener::open_recv` takes the accept's
   `CancelSlot`. `SrtTransport` implements `as_any`.
 - `tcp://` and `rist://` URLs accept `?pkt_size=`, which the builders
-  already had; `TcpConfig` carries `cert`, `key` and `ca` so TLS material is
-  not URL-only.
+  already had. A `?pkt_size=` value that fails the bound is now an error on
+  these two schemes, where the key was ignored as unknown before.
+  `TcpConfig` carries `cert`, `key` and `ca` so TLS material is not URL-only.
 
 ### Added — tst-rtp
 

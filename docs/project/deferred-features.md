@@ -1781,19 +1781,6 @@ and the two below.
   harness gains a shared TLS-cert-provisioning helper cheap enough to
   extend to these three transports without a bespoke setup per cell.
 
-## `?pkt_size=` URL knob for the C TCP openers
-
-- **Status:** Deferred (0.7.0). The C docs advertised `?pkt_size=N` on
-  `tst_tcp_*_open`, but `TcpUrl::parse` ignores unknown query keys and the
-  C ABI has no other way to set the send chunk size (64 KiB default);
-  Python has `TransportBuilder.pkt_size`. The claim was removed from the
-  C docs at 0.7.0.
-- **Why deferred:** a parser addition (`TcpUrl.pkt_size` +
-  `SrtSocketConfig::merge_from_url` arm) with its own red-first test, too late
-  for the 0.7.0 tag.
-- **Trigger to revisit:** the first 0.7.x patch release, or a C consumer
-  asking for a non-default TCP chunk size.
-
 ## `release-validation.sh` consolidation into the interop matrix
 
 - **Status:** Not done. The maintainer's local pre-release validation
@@ -2030,3 +2017,7 @@ Shipped 0.8.0: renamed `InputRelative` (0) and `Infinite` (−1); a stale use fa
   no clean-EOF signal, so the shell cannot tell it from a failure.
 - **Trigger to revisit:** libsrt exposing the close reason, or a consumer
   needing `END_OF_STREAM` on srt.
+
+### `?pkt_size=` URL knob for the C TCP openers
+
+Shipped 0.9.0: `tcp://` and `tcps://` URLs accept `?pkt_size=N`, and so do `rist://` URLs; a value outside the bound is refused with a URL error.

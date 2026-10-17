@@ -2402,4 +2402,3 @@ pub type tst_rtp::H264DepayConfig = tst_rtp::depay::DepayConfig
 pub type tst_rtp::H264DepayStats = tst_rtp::depay::DepayStats
 pub type tst_rtp::RtspCancelHandle = tst_core::cancel::FlagCancel
 pub type tst_rtp::RtspServerCancelHandle = tst_core::cancel::FlagCancel
-pub type tst_rtp::UrlError = tst_rtp::url::RtpUrlError

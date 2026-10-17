@@ -199,7 +199,7 @@ impl SrtSocketBuilder {
     pub fn new() -> Self { ... }
     pub fn payload_size(&mut self, n: u16) -> &mut Self { ... }
     pub fn passphrase(&mut self, p: Passphrase) -> &mut Self { ... }
-    pub fn connect(&self, addr: ...) -> Result<Socket, ...> { ... }  // build + validate
+    pub fn connect(&self, addr: ...) -> Result<SrtSocket, ...> { ... }  // build + validate
 }
 
 // Plain struct sufficient (empty config, no validation):
@@ -332,8 +332,7 @@ product is connected or listening ends in a call named for the I/O:
 
 Existing exceptions, kept until the next naming change:
 
-- `RtspClientBuilder`, `RistTransportBuilder` and
-  `RistRecvTransportBuilder` take `self` in their setters and return `Self`.
+- `RtspClientBuilder` takes `self` in its setters and returns `Self`.
 - `UdpTransportBuilder::build`, `UdpRecvTransportBuilder::build`,
   `TcpTransportBuilder::build`, `TcpListenerBuilder::build` and
   `HlsPublisherBuilder::build` open their socket or bind their listener.
@@ -402,9 +401,9 @@ rejected by `srt`, `rtp` and `rtsp(s)` URLs.
 | `lossmaxttl` | Reorder tolerance before a loss is reported | packets | `srt` |
 | `maxbw` | Maximum send bandwidth | bytes per second; 0 is relative to the input rate | `srt` |
 | `mode` | Connection role | `caller` or `listener`; default `caller` | `srt` |
-| `mss` | Maximum segment size | bytes | `srt` |
-| `oheadbw` | Recovery bandwidth overhead | percent | `srt` |
-| `packetfilter` | Packet filter (forward error correction) configuration | libsrt filter string | `srt` |
+| `mss` | Maximum segment size | bytes, 16 bits | `srt` |
+| `oheadbw` | Recovery bandwidth overhead | percent, 5 to 100 | `srt` |
+| `packetfilter` | Packet filter (forward error correction) configuration | libsrt spec string, for example `fec,cols:10,rows:5` | `srt` |
 | `passphrase` | Encryption passphrase | 10 to 79 characters | `srt` |
 | `payloadsize` (also `pkt_size`, `payload_size`) | Payload bytes per packet | bytes, at most 1456 | `srt` |
 | `pbkeylen` | Encryption key length | 16, 24 or 32 bytes | `srt` |
