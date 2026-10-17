@@ -649,10 +649,9 @@ crate::binding_record! {
     /// **Encode semantics for an interior-absent field** (e.g. `lat: None`
     /// while `hae: Some(..)`): IMAPB has no INT_MIN-style sentinel of its
     /// own, so this repurposes the ST 1201.5 special-value space —
-    /// specifically `ImapbSpecial::UserDefined { signal: 0 }` — as an
-    /// "absent" filler at that field's wire position, matching decode's
-    /// `decode_imapb_optional`, which maps ANY special/reserved/out-of-range
-    /// pattern back to `None`. This is spec-legal (§7.2.3's special-value
+    /// specifically a user-defined special with signal 0 — as an
+    /// "absent" filler at that field's wire position, matching decode, which
+    /// maps ANY special/reserved/out-of-range pattern back to `None`. This is spec-legal (§7.2.3's special-value
     /// space is defined at the IMAPB layer, independent of the ST 0601 item
     /// using it) even though it is not itself a case ST 0601.19 §8.130
     /// describes — the spec only ever truncates `hae` from the end, never

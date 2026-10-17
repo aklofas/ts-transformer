@@ -638,8 +638,7 @@ class ControlCommand:
     """Item 115: Control Command (ST 0601.19 §8.115) — one command sent to
     the platform. MULTI-INSTANCE per ST 0601.19 Table 1 ("Multiples Allowed"
     = Yes): every wire occurrence of Tag 115 appends one ``ControlCommand``
-    to ``UasDatalinkLs::control_commands`` rather than overwriting a single
-    field."""
+    to ``control_commands`` rather than overwriting a single field."""
 
     id: int
     command: str
@@ -747,15 +746,14 @@ class Location:
     **Encode semantics for an interior-absent field** (e.g. ``lat: None``
     while ``hae: Some(..)``): IMAPB has no INT_MIN-style sentinel of its
     own, so this repurposes the ST 1201.5 special-value space — specifically
-    ``ImapbSpecial::UserDefined { signal: 0 }`` — as an "absent" filler at
-    that field's wire position, matching decode's ``decode_imapb_optional``,
-    which maps ANY special/reserved/out-of-range pattern back to ``None``.
-    This is spec-legal (§7.2.3's special-value space is defined at the IMAPB
-    layer, independent of the ST 0601 item using it) even though it is not
-    itself a case ST 0601.19 §8.130 describes — the spec only ever truncates
-    ``hae`` from the end, never leaves ``lat``/``lon`` absent with ``hae``
-    present. Only a trailing ``None`` (or all three ``None``) truncates the
-    pack."""
+    a user-defined special with signal 0 — as an "absent" filler at that
+    field's wire position, matching decode, which maps ANY
+    special/reserved/out-of-range pattern back to ``None``. This is
+    spec-legal (§7.2.3's special-value space is defined at the IMAPB layer,
+    independent of the ST 0601 item using it) even though it is not itself a
+    case ST 0601.19 §8.130 describes — the spec only ever truncates ``hae``
+    from the end, never leaves ``lat``/``lon`` absent with ``hae`` present.
+    Only a trailing ``None`` (or all three ``None``) truncates the pack."""
 
     lat_deg: float | None = None
     lon_deg: float | None = None
@@ -939,17 +937,15 @@ class SdccFlpField:
 
     Tag 102 is MULTI-INSTANCE (ST 0601.19 Table 1 "Multiples Allowed" =
     Yes): each occurrence's SDCC-FLP pack (MISB ST 1010.3 — parse with
-    ``crate::klv::st1010::decode_sdcc_flp``) refines the accuracy of the
-    Local Set items that immediately precede it on the wire. This struct
-    keeps the raw pack bytes rather than a parsed
-    ``crate::klv::st1010::SdccFlp`` so a malformed or foreign-encoder pack
+    ``decode_sdcc_flp``) refines the accuracy of the Local Set items that
+    immediately precede it on the wire. This struct keeps the raw pack bytes
+    rather than a parsed ``SdccFlp`` so a malformed or foreign-encoder pack
     still round-trips byte-exact even when this crate cannot parse its
     interior — provided its declared matrix size fits the pack's own bytes
     (Parse Control plus the ST 1010 size bound); otherwise the occurrence is
-    recorded as a ``crate::error::KlvFieldError::TruncatedField`` and not
-    captured. The encoder still emits caller-supplied ``sdcc_flps`` bytes
-    verbatim, so a caller who supplies a pack whose matrix cannot fit will
-    see it rejected on decode.
+    recorded as a ``TruncatedField`` and not captured. The encoder still
+    emits caller-supplied ``sdcc_flps`` bytes verbatim, so a caller who
+    supplies a pack whose matrix cannot fit will see it rejected on decode.
 
     **Capture semantics (decode):** ``preceding_tags`` is the ``N``
     wire-order item tags — known or unknown, but never another Tag 102 —

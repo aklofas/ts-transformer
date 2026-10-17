@@ -4,8 +4,7 @@ package org.tstrans.klv;
 /**
  * Item 115: Control Command (ST 0601.19 §8.115) — one command sent to the platform. MULTI-INSTANCE
  * per ST 0601.19 Table 1 ("Multiples Allowed" = Yes): every wire occurrence of Tag 115 appends one
- * {@code ControlCommand} to {@code UasDatalinkLs::control_commands} rather than overwriting a
- * single field.
+ * {@code ControlCommand} to {@code control_commands} rather than overwriting a single field.
  *
  * @param id BER-OID command id.
  * @param command Command text, UTF-8, at most 127 bytes.

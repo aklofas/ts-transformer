@@ -426,19 +426,17 @@ crate::binding_record! {
         /// measured (vs. calculated), bit 5 image invalid, bits 6-7 reserved.
         pub generic_flag_data: Option<u8>,
         /// Tag 48: the ST 0102 Security Local Set body bytes (no universal-label
-        /// prefix). Pass-through bytes; consumers needing typed access call
-        /// `klv::st0102::decode` on `security_local_set.as_deref()?`.
+        /// prefix). Pass-through bytes; consumers needing typed access decode
+        /// them with the ST 0102 decoder.
         pub security_local_set: Option<Vec<u8>>,
         /// Item 73: MISB ST 0806 Remote Video Terminal LS bytes.
-        /// Pass-through bytes; consumers needing typed access call
-        /// `klv::st0806::decode` on `rvt.as_deref()?`. See
-        /// [`crate::klv::st0806`] for the typed layer.
+        /// Pass-through bytes; consumers needing typed access decode them with
+        /// the ST 0806 decoder (see [`crate::klv::st0806`] for the typed layer).
         pub rvt: Option<Vec<u8>>,
         /// Tag 74 — VMTI Local Set (MISB ST 0903). Pass-through bytes;
-        /// consumers needing typed access call `klv::st0903::decode` on
-        /// `vmti.as_deref()?`. See `klv::st0903` for the typed layer.
-        /// Sibling-layer pattern matches `security_local_set` (Tag 48 →
-        /// `klv::st0102`).
+        /// consumers needing typed access decode them with the ST 0903
+        /// decoder (see [`crate::klv::st0903`] for the typed layer).
+        /// Sibling-layer pattern matches `security_local_set` (Tag 48, ST 0102).
         pub vmti: Option<Vec<u8>>,
         /// Item 95: MISB ST 1206 SAR Motion Imagery Local Set bytes.
         /// Pass-through bytes; interior typing deferred.
@@ -558,8 +556,8 @@ crate::binding_record! {
         /// special value (§7.2.3 — `+∞`/`−∞`, NaN families, the
         /// MISB-defined `BelowMin`/`AboveMax` overflow signals, or a
         /// user-defined signal) rather than a normal-range float. The
-        /// corresponding typed `Option<f64>` field is left `None` and the
-        /// tag+special pair is recorded here instead. Use
+        /// corresponding typed field is left absent and the tag+special pair
+        /// is recorded here instead. Use
         /// [`crate::klv::ImapbSpecial`] to inspect which special was
         /// signaled.
         ///
@@ -578,10 +576,9 @@ crate::binding_record! {
         /// non-conformance from this typed consumer's view: they are NOT
         /// pushed here, and the raw wire bytes are NOT preserved. Instead
         /// they are recorded in [`Self::field_errors`] as
-        /// [`crate::error::KlvFieldError::OutOfRange`] — `value: f64::NAN`
-        /// for `ReservedSpecial` (no arithmetic decode exists for a
-        /// non-conformant bit pattern), or the raw arithmetic decode for
-        /// `OutOfRange`. This differs from `unknown`/`patch()`, which
+        /// [`crate::error::KlvFieldError::OutOfRange`] — with a NaN value for
+        /// `ReservedSpecial` (no arithmetic decode exists for a non-conformant
+        /// bit pattern), or the raw arithmetic decode for `OutOfRange`. This differs from `unknown`/`patch()`, which
         /// preserve raw bytes verbatim for genuinely untyped tags — these
         /// tags ARE typed, so a malformed value is a decode error, not a
         /// pass-through.

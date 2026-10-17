@@ -31,7 +31,7 @@ import java.util.Optional;
  * @param platformRollFullDeg Item 91: Platform Roll Angle (Full) — encode range [-90, 90] deg
  *     (int32). Full-range twin of {@code platformRollDeg} (Item 7, ±50°).
  * @param miisCoreId Item 94: MIIS Core Identifier (MISB ST 1204 binary format). Raw bytes —
- *     decode/inspect via {@code crate::klv::st1204}.
+ *     decode/inspect via {@code st1204}.
  * @param platformAngleOfAttackDeg Item 50: Platform Angle of Attack — encode range [-20, 20] deg
  *     (int16).
  * @param sensorLatDeg Item 13: Sensor Latitude — encode range [-90, 90] deg (int32).
@@ -243,15 +243,14 @@ import java.util.Optional;
  *     range on, bit 1 auto-track on, bit 2 IR polarity (set = black hot), bit 3 icing detected, bit
  *     4 slant range measured (vs. calculated), bit 5 image invalid, bits 6-7 reserved.
  * @param securityLocalSet Tag 48: the ST 0102 Security Local Set body bytes (no universal-label
- *     prefix). Pass-through bytes; consumers needing typed access call {@code klv::st0102::decode}
- *     on {@code security_local_set.as_deref()?}.
+ *     prefix). Pass-through bytes; consumers needing typed access decode them with the ST 0102
+ *     decoder.
  * @param rvt Item 73: MISB ST 0806 Remote Video Terminal LS bytes. Pass-through bytes; consumers
- *     needing typed access call {@code klv::st0806::decode} on {@code rvt.as_deref()?}. See {@code
- *     crate::klv::st0806} for the typed layer.
+ *     needing typed access decode them with the ST 0806 decoder (see {@code st0806} for the typed
+ *     layer).
  * @param vmti Tag 74 — VMTI Local Set (MISB ST 0903). Pass-through bytes; consumers needing typed
- *     access call {@code klv::st0903::decode} on {@code vmti.as_deref()?}. See {@code klv::st0903}
- *     for the typed layer. Sibling-layer pattern matches {@code securityLocalSet} (Tag 48 → {@code
- *     klv::st0102}).
+ *     access decode them with the ST 0903 decoder (see {@code st0903} for the typed layer).
+ *     Sibling-layer pattern matches {@code securityLocalSet} (Tag 48, ST 0102).
  * @param sarMiLocalSet Item 95: MISB ST 1206 SAR Motion Imagery Local Set bytes. Pass-through
  *     bytes; interior typing deferred.
  * @param rangeImageLocalSet Item 97: MISB ST 1002 Range Image Local Set bytes. Pass-through bytes;
@@ -304,8 +303,8 @@ import java.util.Optional;
  *     mapping. INT_MIN is a spec-defined signal (not an error), so the corresponding typed field is
  *     left as {@code None} and the tag is recorded here instead of in {@code fieldErrors}.
  *
- *     Use {@code crate::klv::st0601::st0601_sentinel_meaning} to look up the spec-defined meaning
- *     for each tag (Out of Range / Reserved / N/A).
+ *     Use {@code st0601_sentinel_meaning} to look up the spec-defined meaning for each tag (Out of
+ *     Range / Reserved / N/A).
  *
  *     **Encode semantics:** encoding a record that carries sentinel tags re-emits the INT_MIN bytes
  *     for each sentinel tag whose typed field is {@code None}. If the typed field is {@code
@@ -318,9 +317,8 @@ import java.util.Optional;
  * @param imapbSpecials Tags whose ST 1201.5 IMAPB wire value decoded to a spec-defined special
  *     value (§7.2.3 — {@code +∞}/{@code −∞}, NaN families, the MISB-defined {@code BelowMin}/{@code
  *     AboveMax} overflow signals, or a user-defined signal) rather than a normal-range float. The
- *     corresponding typed {@code Option<f64>} field is left {@code None} and the tag+special pair
- *     is recorded here instead. Use {@code crate::klv::ImapbSpecial} to inspect which special was
- *     signaled.
+ *     corresponding typed field is left absent and the tag+special pair is recorded here instead.
+ *     Use {@code ImapbSpecial} to inspect which special was signaled.
  *
  *     **Encode semantics:** mirrors {@code sentinelTags} — encoding a record re-emits the special's
  *     bytes (at the tag's {@code default_len}) for each {@code (tag, special)} entry whose typed
@@ -329,16 +327,15 @@ import java.util.Optional;
  *     silently skipped on encode.
  *
  *     **Decode semantics for the two IMAPB outcomes NOT carried here:** a wire integer in ST
- *     1201.5's reserved-but-unrecognized special-value space ({@code
- *     DecodedImapb::ReservedSpecial}) or one that arithmetic-decodes outside the tag's {@code [min,
- *     max]} ({@code DecodedImapb::OutOfRange}) are both treated as producer non-conformance from
- *     this typed consumer's view: they are NOT pushed here, and the raw wire bytes are NOT
- *     preserved. Instead they are recorded in {@code fieldErrors} as {@code
- *     crate::error::KlvFieldError::OutOfRange} — {@code value: f64::NAN} for {@code
- *     ReservedSpecial} (no arithmetic decode exists for a non-conformant bit pattern), or the raw
- *     arithmetic decode for {@code OutOfRange}. This differs from {@code unknown}/{@code patch()},
- *     which preserve raw bytes verbatim for genuinely untyped tags — these tags ARE typed, so a
- *     malformed value is a decode error, not a pass-through.
+ *     1201.5's reserved-but-unrecognized special-value space ({@code ReservedSpecial}) or one that
+ *     arithmetic-decodes outside the tag's {@code [min, max]} ({@code OutOfRange}) are both treated
+ *     as producer non-conformance from this typed consumer's view: they are NOT pushed here, and
+ *     the raw wire bytes are NOT preserved. Instead they are recorded in {@code fieldErrors} as
+ *     {@code OutOfRange} — with a NaN value for {@code ReservedSpecial} (no arithmetic decode
+ *     exists for a non-conformant bit pattern), or the raw arithmetic decode for {@code
+ *     OutOfRange}. This differs from {@code unknown}/{@code patch()}, which preserve raw bytes
+ *     verbatim for genuinely untyped tags — these tags ARE typed, so a malformed value is a decode
+ *     error, not a pass-through.
  */
 public record UasDatalinkLs(
         ByteBuffer universalLabel,
