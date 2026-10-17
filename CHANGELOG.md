@@ -280,7 +280,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before any segment is cut, so a rejected call leaves the segment unchanged,
   and the tracing span is named `mux_sender` because the shell now runs inside
   the sender's span.
-- `receiver::sync::SyncState::Verify` no longer carries a `count` field: the confirmation count lives in `tst_core::mpegts::sync::TsSync`, the one sync-candidate rule the framer, the receiver and the demuxer now share (one rule instead of three copies).
+- `receiver::sync::SyncState::Verify` no longer carries a `count` field: the
+  confirmation count lives in `tst_core::mpegts::sync::TsSync`, the one
+  sync-candidate rule the framer, the receiver and the demuxer now share (one
+  rule instead of three copies).
 
 ### Changed — tst-srt (BREAKING)
 
@@ -317,8 +320,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `rtsp::client::tls` (behind the `tls` feature) is no longer public: it
   held only the stream wrapper that `RtspClient` uses internally.
 - `RtspServer` runs two runtime worker threads instead of one per core,
-  and `stop()` returns as soon as every session task has ended, at most
-  `graceful_shutdown_drain`, instead of always sleeping the drain plus one
+  and `stop()` returns as soon as every session task has ended, waiting at
+  most `graceful_shutdown_drain` plus 500 ms, instead of always sleeping the
   second. The server is a signalling plane that moves little data, so a
   thread per core only cost memory on large hosts; the fixed sleep made every
   `stop()` slow even with no clients. A session still running at the drain
@@ -846,6 +849,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `org.tstrans.rtp.{Transport, RecvTransport}`. Use `Class.open(url, ...)`
   (the rtp `pktSize` argument is the `?pkt_size=` URL key). Removed in
   0.10.0.
+
+### Fixed — tst-core
+
+- `Demuxer::flush` releases the partial PES it still holds in ascending PID
+  order. It used to release them in the per-process order of a hash map, so
+  two runs over the same bytes could emit the last samples of two streams in
+  different orders (found by a 260-capture corpus comparison).
 
 ### Fixed — tst-py
 

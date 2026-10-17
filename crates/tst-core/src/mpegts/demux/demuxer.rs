@@ -499,6 +499,9 @@ impl Demuxer {
     /// Idempotent: calling twice with no further `feed` between them is safe
     /// and a no-op the second time.
     ///
+    /// The partial PES are released in ascending PID order, so the tail of a
+    /// stream is the same on every run.
+    ///
     /// # C ABI
     ///
     /// `tst_demuxer_flush` — see `bindings/c/include/tstrans.h`.

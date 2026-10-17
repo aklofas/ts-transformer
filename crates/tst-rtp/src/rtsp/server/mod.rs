@@ -908,9 +908,9 @@ impl RtspServer {
     /// ("Server-Initiated TEARDOWN") ANNOUNCE over each session's TCP
     /// control channel, then cancels each session's per-session token,
     /// fires the global `cancel_token` so the listener stops accepting
-    /// new connections, and waits for every session task to end, at most
-    /// `graceful_shutdown_drain`, to let in-flight RTP drain. Idempotent — a second call after a
-    /// completed first call is a no-op.
+    /// new connections, and waits for every session task to end — at most
+    /// `graceful_shutdown_drain` plus 500 ms — to let in-flight RTP drain.
+    /// Idempotent — a second call after a completed first call is a no-op.
     ///
     /// The ANNOUNCE write is best-effort: a per-session write failure
     /// (peer already disconnected, TCP reset, etc.) logs a warning and
