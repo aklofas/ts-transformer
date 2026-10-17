@@ -53,6 +53,18 @@ deferred — see `deferred-features.md` for triggers to revisit.
 | Windows MinGW (gcc)          | Deferred                | —                                 | See `deferred-features.md`                     |
 | macOS x86_64 (Intel)         | Deferred                | —                                 | See `deferred-features.md`                     |
 
+The CI legs behind the Tier 1 rows, from the `build` matrix in
+`.github/workflows/ci.yml`:
+
+<!-- doc-tables:targets:begin -->
+| Target | Runner | CI job |
+|---|---|---|
+| `linux-x86_64` | `ubuntu-latest` | `build (linux-x86_64)` |
+| `linux-aarch64` | `ubuntu-24.04-arm` | `build (linux-aarch64)` |
+| `macos-arm64` | `macos-15` | `build (macos-arm64)` |
+| `windows-msvc` | `windows-latest` | `build (windows-msvc)`, `build (windows-msvc-features)` |
+<!-- doc-tables:targets:end -->
+
 **"Gating" status meaning:** the platform is built + tested in CI on every
 PR and build or test failures DO block merge. All four Tier 1 platforms
 (Linux x86_64 + aarch64, macOS arm64, Windows MSVC) are gating.
@@ -682,8 +694,14 @@ deliberate ergonomic adaptations for each language's idiom.
 ## Sanitizers
 
 Nightly GitHub Actions workflow `.github/workflows/sanitizers.yml`
-(trigger: `schedule: '0 3 * * *'` UTC and on-demand `workflow_dispatch`)
-runs four sanitizer jobs, all hard-gating. Pull requests to `main` that
+(on-demand through `workflow_dispatch` as well) runs its sanitizer jobs,
+all hard-gating:
+
+<!-- doc-tables:sanitizers:begin -->
+Schedule: `0 3 * * *` (UTC). 4 jobs: `asan`, `asan-native`, `tsan-native`, `tsan`.
+<!-- doc-tables:sanitizers:end -->
+
+Pull requests to `main` that
 touch `tst-srt`, `tst-rist`, `tst-tcp`, the reconnect module, the sys
 crates or the suppressions also trigger it, but only the `tsan-native`
 job runs there; the other three are skipped on `pull_request`. The workflow file is the
@@ -705,9 +723,11 @@ source of truth for this section; the current scope is:
 
 ## Fuzzing
 
-36 cargo-fuzz harnesses live in-tree (27 in `tst-core`, 8 in `tst-rtp`,
-1 in `tst-srt`; inventory ground truth is
-`tests/coverage/fuzz-targets.toml`). CI compile-checks the harnesses
+<!-- doc-tables:fuzz:begin -->
+37 cargo-fuzz harnesses live in-tree (27 in `tst-core`, 9 in `tst-rtp`, 1 in `tst-srt`).
+<!-- doc-tables:fuzz:end -->
+
+Inventory ground truth is `tests/coverage/fuzz-targets.toml`. CI compile-checks the harnesses
 nightly; deeper runs are local (`cargo +nightly fuzz run <target>`).
 
 Continuous fuzzing runs in this repository's own CI through

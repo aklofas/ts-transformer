@@ -53,6 +53,10 @@ empty — the C/Python adapters live in their own crates' test/example surfaces)
 
 ## Files here
 
+<!-- doc-tables:manifests:begin -->
+7 manifests live here: `fixture-hashes.toml`, `fixture-manifest.toml`, `fuzz-targets.toml`, `platform-capabilities.toml`, `skip-ledger.toml`, `stream-matrix.toml`, `surface-manifest.toml`.
+<!-- doc-tables:manifests:end -->
+
 - **`fuzz-targets.toml`** — generated inventory of every libFuzzer target;
   `scripts/gen/fuzz-targets.sh --check` fails CI if it drifts from the tree.
 - **`skip-ledger.toml`** — every intentional `#[ignore]`, with a class and (for
