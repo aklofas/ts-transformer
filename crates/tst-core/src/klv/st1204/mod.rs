@@ -73,8 +73,11 @@ crate::binding_record! {
     ///
     /// Contains the raw version byte plus up to four optional UUID components.
     /// The EBNF constraint — `minor` XOR any-of-(sensor/platform/window) — is
-    /// enforced by [`decode`] and should be maintained by callers of
-    /// [`encode_to_vec`].
+    /// enforced by [`decode`] and should be maintained by callers that
+    /// encode the record.
+    ///
+    /// Carriage sites: ST 0601 Tag 94 is the primary path for UAS datalink,
+    /// and ST 0903 VTarget Tag 13 carries the identifier per target.
     #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct CoreId {

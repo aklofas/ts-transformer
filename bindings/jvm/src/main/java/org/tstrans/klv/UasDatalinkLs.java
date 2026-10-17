@@ -224,8 +224,8 @@ import java.util.Optional;
  * @param takeOffTimeUs Item 131: Take-off Time — MISB ST 0603 timestamp of the platform's take-off.
  *     MISB var-length uint, wire length 1..=8 bytes (microseconds).
  * @param miStorageCapacityGb Item 133: On-board MI Storage Capacity — total on-board Motion Imagery
- *     storage capacity (compare {@code miStoragePercentFull}, Item 120, the *used* percentage of
- *     that capacity). MISB var-length uint, wire length 1..=4 bytes (gigabytes).
+ *     storage capacity (compare {@code miStoragePercentFull}, Item 120, the used percentage of that
+ *     capacity). MISB var-length uint, wire length 1..=4 bytes (gigabytes).
  * @param leapSeconds Item 136: Leap Seconds — the TAI-UTC leap-second offset in effect for {@code
  *     timestampUs}. MISB var-length int, wire length 1..=4 bytes (seconds).
  * @param correctionOffsetUs Item 137: Correction Offset — signed correction applied to a platform
@@ -237,8 +237,8 @@ import java.util.Optional;
  *     implementation follows the worked example, not the printed type name.
  * @param activePayloads Item 139: Active Payloads — bitmask of which Payload IDs (Item 138, Payload
  *     List — {@code payloadList}) are currently active. Raw bytes, LSB-first within each byte: bit
- *     *i* of byte 0 is Payload ID *i* (0-7), byte 1 covers IDs 8-15, and so on (multi-byte extends
- *     upward).
+ *     {@code i} of byte 0 is Payload ID {@code i} (0-7), byte 1 covers IDs 8-15, and so on
+ *     (multi-byte extends upward).
  * @param genericFlagData Item 47: Generic Flag Data — bitfield per ST 0601.19 Table 3: bit 0 laser
  *     range on, bit 1 auto-track on, bit 2 IR polarity (set = black hot), bit 3 icing detected, bit
  *     4 slant range measured (vs. calculated), bit 5 image invalid, bits 6-7 reserved.
@@ -264,8 +264,8 @@ import java.util.Optional;
  * @param amendLocalSet Item 101: MISB ST 1607 Amend Local Set bytes. Pass-through bytes; interior
  *     typing deferred.
  * @param weaponLoad Item 60: Weapon Load — bit-packed nibbles (high→low): store station, store
- *     substation, weapon type, weapon variant. Kept as a raw opaque {@code u16}, not a sub-struct —
- *     callers needing individual nibbles shift and mask this value themselves.
+ *     substation, weapon type, weapon variant. Kept as a raw opaque 16-bit integer, not a
+ *     sub-struct — callers needing individual nibbles shift and mask this value themselves.
  * @param icingDetectedCode Item 34: Icing Detected — icing-detector state. See {@code
  *     IcingDetected}.
  * @param sensorFovNameCode Item 63: Sensor Field of View Name — named FOV preset. See {@code
@@ -311,7 +311,7 @@ import java.util.Optional;
  *     Some(v)}, the value {@code v} is encoded instead — a non-None field always wins over a {@code
  *     sentinelTags} entry. The encoder also auto-injects Tag 65 (version) and the trailing
  *     checksum, so the output byte sequence is not guaranteed to match the original wire input
- *     byte-for-byte; the sentinel *value* round-trips, but the emission order is: typed fields in
+ *     byte-for-byte; the sentinel value round-trips, but the emission order is: typed fields in
  *     ascending tag order, then {@code sentinelTags} entries, then {@code unknown} fields in caller
  *     order.
  * @param imapbSpecials Tags whose ST 1201.5 IMAPB wire value decoded to a spec-defined special

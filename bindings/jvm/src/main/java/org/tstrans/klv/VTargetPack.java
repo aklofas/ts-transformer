@@ -11,22 +11,23 @@ import java.util.List;
  * The wire form is a leading BER-OID-encoded {@code targetId} (no Tag — per §10.2.2.1 "has no Tag")
  * followed by a Local Set–encoded body using BER-OID tag + BER short/long length + value tuples.
  *
- * {@code targetId} is a {@code u64} decoded from the BER-OID Target ID (≈ 63 bits per ST 0903.6
- * §10.2.2.1; spec allows up to 9 wire bytes, V9 in §10.2 Table 10). The pixel-number fields are
- * {@code u64}: the V6 fields ({@code centroidPixel}, {@code bboxTopLeftPixel}, {@code
- * bboxBottomRightPixel}) carry up to 6 wire bytes; the V4 {@code centroidPixRow} / {@code
- * centroidPixCol} are 4 wire bytes (see their per-field notes for the 32-bit ceiling).
+ * {@code targetId} is an unsigned 64-bit integer decoded from the BER-OID Target ID (≈ 63 bits per
+ * ST 0903.6 §10.2.2.1; spec allows up to 9 wire bytes, V9 in §10.2 Table 10). The pixel-number
+ * fields are unsigned 64-bit integers too: the V6 fields ({@code centroidPixel}, {@code
+ * bboxTopLeftPixel}, {@code bboxBottomRightPixel}) carry up to 6 wire bytes; the V4 {@code
+ * centroidPixRow} / {@code centroidPixCol} are 4 wire bytes (see their per-field notes for the
+ * 32-bit ceiling).
  *
  * {@code detectionStatus} is the raw §10.2.2.24 / §7.2 Table 5 codepoint: 0=Inactive,
- * 1=Active-Moving, 2=Dropped, 3=Active-Stopped, 4=Active-Coasting. Typed enum deferred — stays as
- * raw {@code u8}.
+ * 1=Active-Moving, 2=Dropped, 3=Active-Stopped, 4=Active-Coasting. Typed enum deferred — stays as a
+ * raw byte.
  *
  * 7 nested/sibling Local Sets ({@code targetLocation}, {@code geospatialContourSeries}, {@code
  * vmask}, {@code vtracker}, {@code vchip}, {@code vchipSeries}, {@code vobjectSeries}) stay as
  * optional pass-through bytes — typed inner layers deferred.
  *
  * @param targetId BER-OID {@code targetId} per §10.2.2.1. Up to 9 BER-OID wire bytes (≈ 63 bits)
- *     per ST 0903.6 §10.2.2.1; widened to {@code u64}.
+ *     per ST 0903.6 §10.2.2.1; widened to 64 bits.
  * @param centroidPixel Tag 1 {@code targetCentroid} per §10.2.2.2 — pixel number, V6 truncated
  *     big-endian (up to 6 wire bytes, max {@code (1u64 << 48) - 1}). A value above {@code (1u64 <<
  *     48) - 1} would encode to 7+ bytes and the decoder rejects — callers must keep this within the
@@ -64,11 +65,11 @@ import java.util.List;
  * @param geospatialContourSeries Tag 18 {@code geospatialContourSeries} per §10.2.2.19 — Series of
  *     Location pass-through bytes (typed inner deferred).
  * @param centroidPixRow Tag 19 {@code centroidPixRow} per §10.2.2.20 — V4 (1..=2^32-1); widened to
- *     {@code u64} for consistency with other pixel fields. Note: the V4 wire format is 4 bytes (max
+ *     64 bits for consistency with other pixel fields. Note: the V4 wire format is 4 bytes (max
  *     4294967295); a value above that would encode but fail to decode — callers must keep this
  *     within the V4 range.
  * @param centroidPixCol Tag 20 {@code centroidPixCol} per §10.2.2.21 — V4 (1..=2^32-1); widened to
- *     {@code u64} for consistency with other pixel fields. Note: the V4 wire format is 4 bytes (max
+ *     64 bits for consistency with other pixel fields. Note: the V4 wire format is 4 bytes (max
  *     4294967295); a value above that would encode but fail to decode — callers must keep this
  *     within the V4 range.
  * @param algorithmId Tag 22 {@code algorithmId} per §10.2.2.23 — V3 reference into the parent VMTI
@@ -86,8 +87,8 @@ import java.util.List;
  *     bytes (typed inner deferred).
  * @param vobjectSeries Tag 107 {@code vObjectSeries} per §10.2.2.31 — Series of VObject LS
  *     pass-through bytes (typed inner deferred).
- * @param unknown Tags not in {@code PACK_TAGS} (deprecated 21/102/103, future additions). Preserved
- *     per ST 0107.5 §6 future-proof skip rule.
+ * @param unknown Tags not in the pack tag table (deprecated 21/102/103, future additions).
+ *     Preserved per ST 0107.5 §6 future-proof skip rule.
  * @param fieldErrors Per-field validation errors (e.g. malformed IMAPB) accumulated during lenient
  *     decode. The other typed sets collect the same diagnostic in their own {@code fieldErrors}.
  */

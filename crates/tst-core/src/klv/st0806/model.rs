@@ -115,7 +115,14 @@ impl RvtAoiType {
 }
 
 crate::binding_record! {
-    /// Point of Interest Local Set (ST 0806.4 Table 8-2), carried in RVT Tag 12.
+    /// Point of Interest Local Set (ST 0806.4 Table 8-2), carried in RVT Tag 12
+    /// (repeatable, ST 0806.4-25).
+    ///
+    /// Number, latitude and longitude are mandatory on encode
+    /// (ST 0806.4-08..-10). A `sentinel_tags` entry for Tag 2 or 3 counts as
+    /// present even when the paired float field is `None`: the wire carried
+    /// the spec's `0x80000000` "error" indicator instead of a value (the same
+    /// convention as the sentinel tag list of the ST 0601 record).
     #[must_use]
     #[derive(Debug, Clone, PartialEq, Default)]
     pub struct RvtPoi {
@@ -161,8 +168,13 @@ crate::binding_record! {
 }
 
 crate::binding_record! {
-    /// Area of Interest Local Set (Table 8-3), carried in RVT Tag 13.
+    /// Area of Interest Local Set (Table 8-3), carried in RVT Tag 13
+    /// (repeatable, ST 0806.4-25).
     /// Corners: Point 1 = NW (upper-left), Point 3 = SE (lower-right).
+    ///
+    /// Number, both corner pairs and the type are mandatory on encode
+    /// (ST 0806.4-13..-18); a sentinel entry counts as present under the same
+    /// rule as the Point of Interest record.
     #[must_use]
     #[derive(Debug, Clone, PartialEq, Default)]
     pub struct RvtAoi {
@@ -234,11 +246,21 @@ impl RvtUserData {
 
 crate::binding_record! {
     /// Remote Video Terminal Local Set (ST 0806.4 Table 8-1).
+    ///
+    /// Standalone-capable: it carries its own 16-byte Universal Label and,
+    /// per ST 0806.4-02/-04, a timestamp-first Tag 2 plus a CRC-last Tag 1
+    /// when transmitted independently. It is also embeddable: ST 0601 Tag 73
+    /// carries the RVT LS body, with no Universal Label and no
+    /// timestamp/CRC-position requirement.
+    ///
+    /// The checksum is CRC-32/MPEG-2 (ISO/IEC 13818-1), a real divergence
+    /// from the ST 0601 16-bit running-sum checksum. It is captured on decode
+    /// but only verified by the standalone decoder.
     #[must_use]
     #[derive(Debug, Clone, PartialEq, Default)]
     pub struct RvtLs {
         /// Tag 1: CRC-32/MPEG-2 checksum (uint32) — verified only by
-        /// `decode_standalone` (embedded RVT need not carry it).
+        /// the standalone decoder (an embedded RVT need not carry it).
         pub crc32: Option<u32>,
         /// Tag 2: User Defined Time Stamp — microseconds (uint64).
         pub timestamp_us: Option<u64>,

@@ -11,9 +11,9 @@ package org.tstrans.klv;
  *     defines {@code stale} as "time of next message" but gives no concrete interval — this default
  *     is an implementation choice, not a spec value.
  * @param producer XML attribute name stamped in {@code <detail><_flow-tags_ .../>}. Written
- *     verbatim as an XML {@code Name} production (an attribute *name*, not an *value*) — it must be
- *     a syntactically valid XML Name. It is neither validated nor escaped; an invalid value
- *     produces malformed XML.
+ *     verbatim as an XML {@code Name} production (an attribute name, not a value) — it must be a
+ *     syntactically valid XML Name. It is neither validated nor escaped; an invalid value produces
+ *     malformed XML.
  * @param geoidUndulationM Geoid undulation (HAE − MSL) applied when only an MSL-referenced altitude
  *     tag is available. Absent emits the MSL value as-is.
  * @param how CoT {@code how} attribute. ST 0805.1 §5 fixes this at {@code m-p} (machine-passed) for

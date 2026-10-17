@@ -29,22 +29,29 @@ const DOC_WIDTH: usize = 79;
 /// A class docstring at four spaces: one line when it fits in
 /// [`DOC_WIDTH`], else wrapped at word boundaries with the closing quotes
 /// on the last text line, as the hand-written docstrings are. Paragraphs are
-/// separated by one empty line.
+/// separated by one empty line, except that consecutive `- ` bullets sit on
+/// adjacent lines and wrap under their text.
 pub fn docstring_paras(paras: &[String]) -> String {
     // Every line leaves room for the closing quotes.
     let width = DOC_WIDTH - 3;
     let mut lines: Vec<String> = Vec::new();
     let mut cur = String::from("    \"\"\"");
     let mut empty = true;
+    let mut prev_bullet = false;
     for (i, text) in paras.iter().enumerate() {
+        let bullet = text.starts_with("- ");
+        let hang = if bullet { "      " } else { "    " };
         if i > 0 {
             lines.push(std::mem::replace(&mut cur, String::from("    ")));
-            lines.push(String::new());
+            if !(bullet && prev_bullet) {
+                lines.push(String::new());
+            }
             empty = true;
         }
+        prev_bullet = bullet;
         for w in text.split_whitespace() {
             if !empty && cur.chars().count() + 1 + w.chars().count() > width {
-                lines.push(std::mem::replace(&mut cur, String::from("    ")));
+                lines.push(std::mem::replace(&mut cur, String::from(hang)));
                 empty = true;
             }
             if !empty {
@@ -57,6 +64,26 @@ pub fn docstring_paras(paras: &[String]) -> String {
     cur.push_str("\"\"\"");
     lines.push(cur);
     lines.join("\n") + "\n"
+}
+
+/// The docstring paragraphs of a record: its own doc, then one bullet per
+/// documented crossing field.
+pub fn doc_paragraphs(reg: &[Entry], e: &Entry) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = paras(e.schema.doc)
+        .iter()
+        .map(|p| escape_docstring(&rst_code(&unlink(p))))
+        .collect();
+    for f in resolve(reg, &e.schema)?.iter().filter(|f| f.ty.is_some()) {
+        let text = paras(f.spec.doc).join(" ");
+        if !text.is_empty() {
+            out.push(format!(
+                "- ``{}`` \u{2014} {}",
+                f.spec.name,
+                escape_docstring(&rst_code(&unlink(&text)))
+            ));
+        }
+    }
+    Ok(out)
 }
 
 fn fields(reg: &[Entry], e: &Entry, stub: bool) -> Result<String, String> {
@@ -82,10 +109,7 @@ pub fn py_block(reg: &[Entry], e: &Entry) -> Result<String, String> {
     let s = &e.schema;
     let mut o = String::from("@dataclass(frozen=True, slots=True)\n");
     o.push_str(&format!("class {}:\n", s.name));
-    let doc: Vec<String> = paras(s.doc)
-        .iter()
-        .map(|p| escape_docstring(&rst_code(&unlink(p))))
-        .collect();
+    let doc = doc_paragraphs(reg, e)?;
     if !doc.is_empty() {
         o.push_str(&docstring_paras(&doc));
         o.push('\n');

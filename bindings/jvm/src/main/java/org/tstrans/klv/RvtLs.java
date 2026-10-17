@@ -7,8 +7,16 @@ import java.util.List;
 /**
  * Remote Video Terminal Local Set (ST 0806.4 Table 8-1).
  *
- * @param crc32 Tag 1: CRC-32/MPEG-2 checksum (uint32) — verified only by {@code decode_standalone}
- *     (embedded RVT need not carry it).
+ * Standalone-capable: it carries its own 16-byte Universal Label and, per ST 0806.4-02/-04, a
+ * timestamp-first Tag 2 plus a CRC-last Tag 1 when transmitted independently. It is also
+ * embeddable: ST 0601 Tag 73 carries the RVT LS body, with no Universal Label and no
+ * timestamp/CRC-position requirement.
+ *
+ * The checksum is CRC-32/MPEG-2 (ISO/IEC 13818-1), a real divergence from the ST 0601 16-bit
+ * running-sum checksum. It is captured on decode but only verified by the standalone decoder.
+ *
+ * @param crc32 Tag 1: CRC-32/MPEG-2 checksum (uint32) — verified only by the standalone decoder (an
+ *     embedded RVT need not carry it).
  * @param timestampUs Tag 2: User Defined Time Stamp — microseconds (uint64).
  * @param platformTrueAirspeed Tag 3: Platform True Airspeed — m/s, 1:1 counts (uint16).
  * @param platformIndicatedAirspeed Tag 4: Platform Indicated Airspeed — m/s, 1:1 counts (uint16).

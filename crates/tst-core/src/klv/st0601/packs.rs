@@ -64,13 +64,13 @@ crate::binding_record! {
     /// mandatory percentage bytes, then 0-4 further int32 linear-mapped
     /// fields in strict order (`start_lat`, `start_lon`, `end_lat`,
     /// `end_lon`) — the pack may end after any of them. A wire int32 exactly
-    /// at `INT_MIN` (`0x80000000`) on any of the four trailing fields is the
+    /// at the most negative int32 value (`0x80000000`) on any of the four trailing fields is the
     /// item's spec-defined "error" indicator (§8.81): that field decodes to
     /// `None` just like a truncated-away field, but the byte position IS
     /// consumed (parsing continues to the next field).
     ///
     /// **Encode semantics:** a `None` field that lies BEFORE the last `Some`
-    /// field (in wire order) is re-encoded as the `INT_MIN` sentinel — the
+    /// field (in wire order) is re-encoded as the `0x80000000` sentinel — the
     /// spec's own error indicator, which decode maps straight back to `None`
     /// — so a later `Some` field is never silently dropped just because an
     /// earlier optional field is absent. Only a `None` AFTER the last `Some`

@@ -160,7 +160,10 @@ class PrecisionTimeStampPack:
     """MISB ST 0605 §7 Precision Time Stamp Pack typed view.
 
     Wire form is 26 bytes: the 16-byte universal label, a 1-byte BER length,
-    the 1-byte time status and the 8-byte big-endian microsecond timestamp."""
+    the 1-byte time status and the 8-byte big-endian microsecond timestamp.
+
+    - ``timestamp_us`` — Microseconds since 1970-01-01T00:00:00Z (POSIX
+      epoch), big-endian."""
 
     time_status: TimeStatus
     timestamp_us: int
@@ -277,9 +280,19 @@ class SecurityLs:
 
     The three enum-typed fields (``security_classification``,
     ``classifying_country_coding_method`` and
-    ``object_country_coding_method``) cross as the enum member for a known
-    codepoint and as the raw code for an unknown one, so a forward-compat
-    codepoint round-trips."""
+    ``object_country_coding_method``) cross as their code point, so a
+    forward-compat code point round-trips; a host with an enum type for the
+    known code points may surface the member.
+
+    - ``unknown`` — Forward-compat: tags outside the LS table preserved
+      verbatim. Both the lenient and the strict decode populate this per ST
+      0107.5 §6. A malformed Tag 13 value is not kept here (re-emitting
+      malformed UTF-16 would help no consumer); it is recorded in
+      ``field_errors``.
+    - ``field_errors`` — Lenient-mode diagnosis: known tags whose value
+      validation failed (e.g. Tag 13 UTF-16 decode failure, Tag 22 wrong
+      length). Strict mode raises these as an error instead of populating
+      this field. Encode does not consume this field."""
 
     security_classification: SecurityClassification | int | None = None
     classifying_country_coding_method: ClassifyingCountryCodingMethod | int | None = None
@@ -335,22 +348,103 @@ class VTargetPack:
     §10.2.2.1 "has no Tag") followed by a Local Set–encoded body using
     BER-OID tag + BER short/long length + value tuples.
 
-    ``target_id`` is a ``u64`` decoded from the BER-OID Target ID (≈ 63 bits
-    per ST 0903.6 §10.2.2.1; spec allows up to 9 wire bytes, V9 in §10.2
-    Table 10). The pixel-number fields are ``u64``: the V6 fields
-    (``centroid_pixel``, ``bbox_top_left_pixel``,
-    ``bbox_bottom_right_pixel``) carry up to 6 wire bytes; the V4
-    ``centroid_pix_row`` / ``centroid_pix_col`` are 4 wire bytes (see their
-    per-field notes for the 32-bit ceiling).
+    ``target_id`` is an unsigned 64-bit integer decoded from the BER-OID
+    Target ID (≈ 63 bits per ST 0903.6 §10.2.2.1; spec allows up to 9 wire
+    bytes, V9 in §10.2 Table 10). The pixel-number fields are unsigned
+    64-bit integers too: the V6 fields (``centroid_pixel``,
+    ``bbox_top_left_pixel``, ``bbox_bottom_right_pixel``) carry up to 6 wire
+    bytes; the V4 ``centroid_pix_row`` / ``centroid_pix_col`` are 4 wire
+    bytes (see their per-field notes for the 32-bit ceiling).
 
     ``detection_status`` is the raw §10.2.2.24 / §7.2 Table 5 codepoint:
     0=Inactive, 1=Active-Moving, 2=Dropped, 3=Active-Stopped,
-    4=Active-Coasting. Typed enum deferred — stays as raw ``u8``.
+    4=Active-Coasting. Typed enum deferred — stays as a raw byte.
 
     7 nested/sibling Local Sets (``target_location``,
     ``geospatial_contour_series``, ``vmask``, ``vtracker``, ``vchip``,
     ``vchip_series``, ``vobject_series``) stay as optional pass-through
-    bytes — typed inner layers deferred."""
+    bytes — typed inner layers deferred.
+
+    - ``target_id`` — BER-OID ``targetId`` per §10.2.2.1. Up to 9 BER-OID
+      wire bytes (≈ 63 bits) per ST 0903.6 §10.2.2.1; widened to 64 bits.
+    - ``centroid_pixel`` — Tag 1 ``targetCentroid`` per §10.2.2.2 — pixel
+      number, V6 truncated big-endian (up to 6 wire bytes, max ``(1u64 <<
+      48) - 1``). A value above ``(1u64 << 48) - 1`` would encode to 7+
+      bytes and the decoder rejects — callers must keep this within the V6
+      range.
+    - ``bbox_top_left_pixel`` — Tag 2 ``boundingBoxTopLeft`` per §10.2.2.3 —
+      pixel number, V6 (up to 6 wire bytes, max ``(1u64 << 48) - 1``). Same
+      V6 cap as Tag 1.
+    - ``bbox_bottom_right_pixel`` — Tag 3 ``boundingBoxBottomRight`` per
+      §10.2.2.4 — pixel number, V6 (up to 6 wire bytes, max ``(1u64 << 48) -
+      1``). Same V6 cap as Tag 1.
+    - ``priority`` — Tag 4 ``targetPriority`` per §10.2.2.5 — fixed-length
+      1, valid 1..=255.
+    - ``confidence_level`` — Tag 5 ``targetConfidenceLevel`` per §10.2.2.6 —
+      fixed-length 1, valid 0..=100 (percent).
+    - ``history`` — Tag 6 ``targetHistory`` per §10.2.2.7 — V2 (frame count,
+      0..=65535).
+    - ``percentage_of_target_pixels`` — Tag 7 ``percentageOfTargetPixels``
+      per §10.2.2.8 — fixed-length 1, valid 1..=100 (percent).
+    - ``target_color`` — Tag 8 ``targetColor`` per §10.2.2.9 — fixed 3 bytes
+      [R, G, B].
+    - ``target_intensity`` — Tag 9 ``targetIntensity`` per §10.2.2.10 — V3
+      (24-bit dynamic range, max ``(1u32 << 24) - 1`` = 16777215). A value
+      above ``(1u32 << 24) - 1`` would encode to 4 bytes but the decoder
+      rejects (V3 max 3 bytes) — callers must keep this within the V3 range.
+    - ``centroid_lat_offset`` — Tag 10 ``targetLocationOffsetLat`` per
+      §10.2.2.11 — IMAPB(-19.2°, 19.2°, 3 bytes).
+    - ``centroid_lon_offset`` — Tag 11 ``targetLocationOffsetLon`` per
+      §10.2.2.12 — IMAPB(-19.2°, 19.2°, 3).
+    - ``centroid_hae`` — Tag 12 ``targetHae`` per §10.2.2.13 — IMAPB(-900 m,
+      19000 m, 2).
+    - ``bbox_top_left_lat_offset`` — Tag 13 ``boundingBoxTopLeftLatOffset``
+      per §10.2.2.14 — IMAPB(-19.2°, 19.2°, 3).
+    - ``bbox_top_left_lon_offset`` — Tag 14 ``boundingBoxTopLeftLonOffset``
+      per §10.2.2.15 — IMAPB(-19.2°, 19.2°, 3).
+    - ``bbox_bottom_right_lat_offset`` — Tag 15
+      ``boundingBoxBottomRightLatOffset`` per §10.2.2.16 — IMAPB(-19.2°,
+      19.2°, 3).
+    - ``bbox_bottom_right_lon_offset`` — Tag 16
+      ``boundingBoxBottomRightLonOffset`` per §10.2.2.17 — IMAPB(-19.2°,
+      19.2°, 3).
+    - ``target_location`` — Tag 17 ``targetLocation`` per §10.2.2.18 —
+      Defined Length Truncation Pack pass-through bytes (typed inner
+      deferred).
+    - ``geospatial_contour_series`` — Tag 18 ``geospatialContourSeries`` per
+      §10.2.2.19 — Series of Location pass-through bytes (typed inner
+      deferred).
+    - ``centroid_pix_row`` — Tag 19 ``centroidPixRow`` per §10.2.2.20 — V4
+      (1..=2^32-1); widened to 64 bits for consistency with other pixel
+      fields. Note: the V4 wire format is 4 bytes (max 4294967295); a value
+      above that would encode but fail to decode — callers must keep this
+      within the V4 range.
+    - ``centroid_pix_col`` — Tag 20 ``centroidPixCol`` per §10.2.2.21 — V4
+      (1..=2^32-1); widened to 64 bits for consistency with other pixel
+      fields. Note: the V4 wire format is 4 bytes (max 4294967295); a value
+      above that would encode but fail to decode — callers must keep this
+      within the V4 range.
+    - ``algorithm_id`` — Tag 22 ``algorithmId`` per §10.2.2.23 — V3
+      reference into the parent VMTI LS Algorithm Series (max ``(1u32 << 24)
+      - 1``). Same V3 cap as Tag 9 — values above 16777215 encode to 4 bytes
+      and the decoder rejects.
+    - ``detection_status`` — Tag 23 ``detectionStatus`` per §10.2.2.24 —
+      fixed-length 1. See struct-level doc for the 5 spec codepoints.
+    - ``vmask`` — Tag 101 ``vMask`` per §10.2.2.25 — VMask LS pass-through
+      bytes (typed inner deferred).
+    - ``vtracker`` — Tag 104 ``vTracker`` per §10.2.2.28 — VTracker LS
+      pass-through bytes (typed inner deferred).
+    - ``vchip`` — Tag 105 ``vChip`` per §10.2.2.29 — VChip LS pass-through
+      bytes (typed inner deferred).
+    - ``vchip_series`` — Tag 106 ``vChipSeries`` per §10.2.2.30 — Series of
+      VChip LS pass-through bytes (typed inner deferred).
+    - ``vobject_series`` — Tag 107 ``vObjectSeries`` per §10.2.2.31 — Series
+      of VObject LS pass-through bytes (typed inner deferred).
+    - ``unknown`` — Tags not in the pack tag table (deprecated 21/102/103,
+      future additions). Preserved per ST 0107.5 §6 future-proof skip rule.
+    - ``field_errors`` — Per-field validation errors (e.g. malformed IMAPB)
+      accumulated during lenient decode. The other typed sets collect the
+      same diagnostic in their own ``field_errors``."""
 
     target_id: int
     centroid_pixel: int | None = None
@@ -423,7 +517,21 @@ class VmtiLs:
     ``algorithm_series`` and ``ontology_series`` are top-level nested LS
     pass-through bytes (typed inner layers deferred); ``miis_id`` is the
     MISB ST 1204 Minor Item Identification System Core Identifier, also
-    pass-through bytes (typed layer deferred)."""
+    pass-through bytes (typed layer deferred).
+
+    - ``checksum`` — Tag 1 (checkSum) per ST 0903.6 §10.1.1. Populated on
+      decode for observability on standalone-VMTI captures. Encode-side
+      semantics are asymmetric and load-bearing: the embedded-VMTI body
+      encoders always drop this field per ST 0903.6-120, while the
+      standalone-VMTI encoders ignore it, compute the running 16-bit
+      checksum from the UL + body framing and emit Tag 1 last per ST
+      0903.4-17 / ST 0903.6-119. A captured standalone-VMTI that is decoded
+      and re-encoded therefore gets a fresh computed checksum, not a
+      passthrough of the original.
+    - ``version_number`` — Tag 4 ``vmtiLsVersionNum`` per ST 0903.6 §10.1.4
+      — V2 (1..=2 wire bytes, value range 1..=65535) packed BE with leading
+      zeros stripped. Tracks the spec revision the encoder followed (e.g. 6
+      for ST 0903.6)."""
 
     checksum: int | None = None
     precision_time_stamp: int | None = None
@@ -615,21 +723,21 @@ class ImageHorizonPixels:
     Wire shape (DLP, ST 0107 truncatable-trailing convention): 4 mandatory
     percentage bytes, then 0-4 further int32 linear-mapped fields in strict
     order (``start_lat``, ``start_lon``, ``end_lat``, ``end_lon``) — the
-    pack may end after any of them. A wire int32 exactly at ``INT_MIN``
-    (``0x80000000``) on any of the four trailing fields is the item's
-    spec-defined "error" indicator (§8.81): that field decodes to ``None``
-    just like a truncated-away field, but the byte position IS consumed
-    (parsing continues to the next field).
+    pack may end after any of them. A wire int32 exactly at the most
+    negative int32 value (``0x80000000``) on any of the four trailing fields
+    is the item's spec-defined "error" indicator (§8.81): that field decodes
+    to ``None`` just like a truncated-away field, but the byte position IS
+    consumed (parsing continues to the next field).
 
     **Encode semantics:** a ``None`` field that lies BEFORE the last
-    ``Some`` field (in wire order) is re-encoded as the ``INT_MIN`` sentinel
-    — the spec's own error indicator, which decode maps straight back to
-    ``None`` — so a later ``Some`` field is never silently dropped just
-    because an earlier optional field is absent. Only a ``None`` AFTER the
-    last ``Some`` (or all four ``None``) truncates the pack there, matching
-    decode's own truncation semantics: there is no wire difference between
-    "never sent" and "sentinel would be redundant here" once the pack has
-    ended."""
+    ``Some`` field (in wire order) is re-encoded as the ``0x80000000``
+    sentinel — the spec's own error indicator, which decode maps straight
+    back to ``None`` — so a later ``Some`` field is never silently dropped
+    just because an earlier optional field is absent. Only a ``None`` AFTER
+    the last ``Some`` (or all four ``None``) truncates the pack there,
+    matching decode's own truncation semantics: there is no wire difference
+    between "never sent" and "sentinel would be redundant here" once the
+    pack has ended."""
 
     x0_pct: int
     y0_pct: int
@@ -648,7 +756,13 @@ class ControlCommand:
     """Item 115: Control Command (ST 0601.19 §8.115) — one command sent to
     the platform. MULTI-INSTANCE per ST 0601.19 Table 1 ("Multiples Allowed"
     = Yes): every wire occurrence of Tag 115 appends one ``ControlCommand``
-    to ``control_commands`` rather than overwriting a single field."""
+    to ``control_commands`` rather than overwriting a single field.
+
+    - ``id`` — BER-OID command id.
+    - ``command`` — Command text, UTF-8, at most 127 bytes.
+    - ``time_us`` — Time the command was issued/executed, microseconds —
+      MISB var-length truncatable trailing field (present iff the wire pack
+      has trailing bytes after ``command``)."""
 
     id: int
     command: str
@@ -661,7 +775,11 @@ class ControlCommand:
 class SensorFrameRate:
     """Item 127: Sensor Frame Rate Pack (ST 0601.19 §8.127) — frame rate as
     a numerator/denominator ratio; ``denominator`` defaults to 1 when the
-    wire pack ends after the numerator."""
+    wire pack ends after the numerator.
+
+    - ``numerator`` — BER-OID numerator.
+    - ``denominator`` — BER-OID denominator; wire-absent means 1
+      (whole-number fps)."""
 
     numerator: int
     denominator: int
@@ -680,7 +798,10 @@ class MetadataSubstreamId:
     which metadata substream this Local Set belongs to. Per §8.143, ``uuid``
     is REQUIRED when ``local_id == 0`` and OMITTED when ``local_id > 0``;
     this decoder is lenient and stores whatever combination the wire
-    carries."""
+    carries.
+
+    - ``local_id`` — BER-OID local substream id.
+    - ``uuid`` — RFC 4122 UUID bytes, present per the §8.143 rule above."""
 
     local_id: int
     uuid: bytes | None = None
@@ -729,7 +850,12 @@ class WavelengthRecord:
     """One record of Item 128, Wavelengths List (ST 0601.19 §8.128) — a
     sensor wavelength band definition. ``min_nm``/``max_nm`` are ST 1201.5
     IMAPB(0,1e9,4)-encoded on the wire, giving ~½ nm precision across the
-    full X-ray-to-VHF spectrum span the spec cites."""
+    full X-ray-to-VHF spectrum span the spec cites.
+
+    - ``id`` — BER-OID wavelength band id.
+    - ``min_nm`` — Band minimum wavelength, nanometres.
+    - ``max_nm`` — Band maximum wavelength, nanometres.
+    - ``name`` — Band name."""
 
     id: int
     min_nm: float
@@ -946,8 +1072,8 @@ class SdccFlpField:
     "Refined Source List" positional context (ST 0601.19 §8.102).
 
     Tag 102 is MULTI-INSTANCE (ST 0601.19 Table 1 "Multiples Allowed" =
-    Yes): each occurrence's SDCC-FLP pack (MISB ST 1010.3 — parse with
-    ``decode_sdcc_flp``) refines the accuracy of the Local Set items that
+    Yes): each occurrence's SDCC-FLP pack (MISB ST 1010.3, parsed by the ST
+    1010 SDCC-FLP decoder) refines the accuracy of the Local Set items that
     immediately precede it on the wire. This struct keeps the raw pack bytes
     rather than a parsed ``SdccFlp`` so a malformed or foreign-encoder pack
     still round-trips byte-exact even when this crate cannot parse its
@@ -964,13 +1090,20 @@ class SdccFlpField:
 
     **Ascending-order emission caveat (encode):** every ``sdcc_flps`` entry
     is re-emitted verbatim from one place in tag-ascending order, grouping
-    all occurrences together. This means the *original* interleaving with
+    all occurrences together. This means the original interleaving with
     ``preceding_tags`` (e.g. tags 13/14/15 followed by one Tag 102
     occurrence, then tags 5/6/7 followed by another) is generally NOT
     reproduced on re-encode — the re-encoded wire carries both occurrences
-    back to back instead. ``preceding_tags`` therefore records what the
-    *original* wire order was, not a guarantee about the re-encoded one; the
-    pack ``bytes`` themselves are still byte-exact."""
+    back to back instead. ``preceding_tags`` therefore records the original
+    wire order, not a guarantee about the re-encoded one; the pack ``bytes``
+    themselves are still byte-exact.
+
+    - ``preceding_tags`` — Wire-order item tags immediately preceding this
+      occurrence (see struct doc for the capture rule). Empty if this
+      occurrence had no preceding items (matrix size 0, or fewer prior items
+      than the matrix size — spec-legal-but-degenerate, not an error).
+    - ``bytes`` — Raw SDCC-FLP pack bytes, exactly as they appeared on the
+      wire — decode with the ST 1010 SDCC-FLP decoder."""
 
     preceding_tags: tuple[int, ...]
     bytes: bytes
@@ -994,7 +1127,421 @@ class UasDatalinkLs:
 
     The composite views (sensor position, platform and sensor attitude,
     field of view, frame center and corners) are accessors that return
-    nothing when any of the fields they combine is absent."""
+    nothing when any of the fields they combine is absent.
+
+    - ``universal_label`` — The 16-byte SMPTE universal label that opens the
+      local set.
+    - ``declared_version`` — The version byte the label declares.
+    - ``platform_heading_deg`` — Item 5: Platform Heading Angle — encode
+      range [0, 360] deg (uint16).
+    - ``platform_pitch_deg`` — Item 6: Platform Pitch Angle — encode range
+      [-20, 20] deg (int16). For the full ±90° range use
+      ``platform_pitch_full_deg`` (Item 90).
+    - ``platform_roll_deg`` — Item 7: Platform Roll Angle — encode range
+      [-50, 50] deg (int16). For the full ±90° range use
+      ``platform_roll_full_deg`` (Item 91).
+    - ``platform_true_airspeed`` — Item 8: Platform True Airspeed — encode
+      range [0, 255] m/s (uint8).
+    - ``platform_indicated_airspeed`` — Item 9: Platform Indicated Airspeed
+      — encode range [0, 255] m/s (uint8).
+    - ``platform_pitch_full_deg`` — Item 90: Platform Pitch Angle (Full) —
+      encode range [-90, 90] deg (int32). Full-range twin of
+      ``platform_pitch_deg`` (Item 6, ±20°).
+    - ``platform_roll_full_deg`` — Item 91: Platform Roll Angle (Full) —
+      encode range [-90, 90] deg (int32). Full-range twin of
+      ``platform_roll_deg`` (Item 7, ±50°).
+    - ``miis_core_id`` — Item 94: MIIS Core Identifier (MISB ST 1204 binary
+      format). Raw bytes — decode/inspect via ``st1204``.
+    - ``platform_angle_of_attack_deg`` — Item 50: Platform Angle of Attack —
+      encode range [-20, 20] deg (int16).
+    - ``sensor_lat_deg`` — Item 13: Sensor Latitude — encode range [-90, 90]
+      deg (int32).
+    - ``sensor_lon_deg`` — Item 14: Sensor Longitude — encode range [-180,
+      180] deg (int32).
+    - ``sensor_alt_m`` — Item 15: Sensor True Altitude — encode range [-900,
+      19000] m (uint16).
+    - ``sensor_ellipsoid_height_m`` — Item 75: Sensor Ellipsoid Height
+      (WGS84) — encode range [-900, 19000] m (uint16). For the extended
+      [-900, 40000] m range use ``sensor_ellipsoid_height_extended_m`` (Item
+      104, IMAPB). Per ST 0601.19 requirements 0601.9-20/-21, a decoder that
+      understands Item 104 shall use it and ignore this restricted twin when
+      both are present; this struct populates both fields on decode — prefer
+      ``sensor_ellipsoid_height_extended_m`` when producing new records.
+    - ``sensor_hfov_deg`` — Item 16: Sensor Horizontal FOV — encode range
+      [0, 180] deg (uint16).
+    - ``sensor_vfov_deg`` — Item 17: Sensor Vertical FOV — encode range [0,
+      180] deg (uint16).
+    - ``sensor_rel_az_deg`` — Item 18: Sensor Relative Azimuth — encode
+      range [0, 360] deg (uint32).
+    - ``sensor_rel_el_deg`` — Item 19: Sensor Relative Elevation — encode
+      range [-180, 180] deg (int32).
+    - ``sensor_rel_roll_deg`` — Item 20: Sensor Relative Roll — encode range
+      [0, 360] deg (uint32).
+    - ``slant_range_m`` — Item 21: Slant Range — encode range [0, 5000000] m
+      (uint32).
+    - ``target_width_m`` — Item 22: Target Width — encode range [0, 10000] m
+      (uint16). For the extended [0, 1500000] m range use
+      ``target_width_extended_m`` (Item 96, IMAPB). Per ST 0601.19
+      requirements 0601.9-20/-21, a decoder that understands Item 96 shall
+      use it and ignore this restricted twin when both are present; this
+      struct populates both fields on decode — prefer
+      ``target_width_extended_m`` when producing new records.
+    - ``frame_center_lat_deg`` — Item 23: Frame Center Latitude — encode
+      range [-90, 90] deg (int32).
+    - ``frame_center_lon_deg`` — Item 24: Frame Center Longitude — encode
+      range [-180, 180] deg (int32).
+    - ``frame_center_elev_m`` — Item 25: Frame Center Elevation — encode
+      range [-900, 19000] m (uint16).
+    - ``frame_center_ellipsoid_height_m`` — Item 78: Frame Center Height
+      Above Ellipsoid (WGS84) — encode range [-900, 19000] m (uint16).
+    - ``corner_lat_offset_p1_deg`` — Item 26: Offset Corner Latitude Point 1
+      — encode range [-0.075, 0.075] deg (int16). For the full latitude
+      range use ``corner_lat_p1_deg`` (Item 82, ±90°).
+    - ``corner_lon_offset_p1_deg`` — Item 27: Offset Corner Longitude Point
+      1 — encode range [-0.075, 0.075] deg (int16). For the full longitude
+      range use ``corner_lon_p1_deg`` (Item 83, ±180°).
+    - ``corner_lat_offset_p2_deg`` — Item 28: Offset Corner Latitude Point 2
+      — encode range [-0.075, 0.075] deg (int16). For the full latitude
+      range use ``corner_lat_p2_deg`` (Item 84, ±90°).
+    - ``corner_lon_offset_p2_deg`` — Item 29: Offset Corner Longitude Point
+      2 — encode range [-0.075, 0.075] deg (int16). For the full longitude
+      range use ``corner_lon_p2_deg`` (Item 85, ±180°).
+    - ``corner_lat_offset_p3_deg`` — Item 30: Offset Corner Latitude Point 3
+      — encode range [-0.075, 0.075] deg (int16). For the full latitude
+      range use ``corner_lat_p3_deg`` (Item 86, ±90°).
+    - ``corner_lon_offset_p3_deg`` — Item 31: Offset Corner Longitude Point
+      3 — encode range [-0.075, 0.075] deg (int16). For the full longitude
+      range use ``corner_lon_p3_deg`` (Item 87, ±180°).
+    - ``corner_lat_offset_p4_deg`` — Item 32: Offset Corner Latitude Point 4
+      — encode range [-0.075, 0.075] deg (int16). For the full latitude
+      range use ``corner_lat_p4_deg`` (Item 88, ±90°).
+    - ``corner_lon_offset_p4_deg`` — Item 33: Offset Corner Longitude Point
+      4 — encode range [-0.075, 0.075] deg (int16). For the full longitude
+      range use ``corner_lon_p4_deg`` (Item 89, ±180°).
+    - ``corner_lat_p1_deg`` — Item 82: Corner Latitude Point 1 (Full) —
+      encode range [-90, 90] deg (int32). Full-range twin of
+      ``corner_lat_offset_p1_deg`` (Item 26, ±0.075°).
+    - ``corner_lon_p1_deg`` — Item 83: Corner Longitude Point 1 (Full) —
+      encode range [-180, 180] deg (int32). Full-range twin of
+      ``corner_lon_offset_p1_deg`` (Item 27, ±0.075°).
+    - ``corner_lat_p2_deg`` — Item 84: Corner Latitude Point 2 (Full) —
+      encode range [-90, 90] deg (int32). Full-range twin of
+      ``corner_lat_offset_p2_deg`` (Item 28, ±0.075°).
+    - ``corner_lon_p2_deg`` — Item 85: Corner Longitude Point 2 (Full) —
+      encode range [-180, 180] deg (int32). Full-range twin of
+      ``corner_lon_offset_p2_deg`` (Item 29, ±0.075°).
+    - ``corner_lat_p3_deg`` — Item 86: Corner Latitude Point 3 (Full) —
+      encode range [-90, 90] deg (int32). Full-range twin of
+      ``corner_lat_offset_p3_deg`` (Item 30, ±0.075°).
+    - ``corner_lon_p3_deg`` — Item 87: Corner Longitude Point 3 (Full) —
+      encode range [-180, 180] deg (int32). Full-range twin of
+      ``corner_lon_offset_p3_deg`` (Item 31, ±0.075°).
+    - ``corner_lat_p4_deg`` — Item 88: Corner Latitude Point 4 (Full) —
+      encode range [-90, 90] deg (int32). Full-range twin of
+      ``corner_lat_offset_p4_deg`` (Item 32, ±0.075°).
+    - ``corner_lon_p4_deg`` — Item 89: Corner Longitude Point 4 (Full) —
+      encode range [-180, 180] deg (int32). Full-range twin of
+      ``corner_lon_offset_p4_deg`` (Item 33, ±0.075°).
+    - ``target_location_lat_deg`` — Item 40: Target Location Latitude —
+      encode range [-90, 90] deg (int32).
+    - ``target_location_lon_deg`` — Item 41: Target Location Longitude —
+      encode range [-180, 180] deg (int32).
+    - ``target_location_elev_m`` — Item 42: Target Location Elevation —
+      encode range [-900, 19000] m (uint16).
+    - ``target_track_gate_width_px`` — Item 43: Target Track Gate Width —
+      encode range [0, 510] px (uint8).
+    - ``target_track_gate_height_px`` — Item 44: Target Track Gate Height —
+      encode range [0, 510] px (uint8).
+    - ``target_error_ce90_m`` — Item 45: Target Error Estimate - CE90 —
+      encode range [0, 4095] m (uint16).
+    - ``target_error_le90_m`` — Item 46: Target Error Estimate - LE90 —
+      encode range [0, 4095] m (uint16).
+    - ``wind_direction_deg`` — Item 35: Wind Direction — encode range [0,
+      360] deg (uint16).
+    - ``wind_speed`` — Item 36: Wind Speed — encode range [0, 100] m/s
+      (uint8).
+    - ``static_pressure_mbar`` — Item 37: Static Pressure — encode range [0,
+      5000] mbar (uint16).
+    - ``density_altitude_m`` — Item 38: Density Altitude — encode range
+      [-900, 19000] m (uint16). For the extended [-900, 40000] m range use
+      ``density_altitude_extended_m`` (Item 103, IMAPB). Per ST 0601.19
+      requirements 0601.9-20/-21, a decoder that understands Item 103 shall
+      use it and ignore this restricted twin when both are present; this
+      struct populates both fields on decode — prefer
+      ``density_altitude_extended_m`` when producing new records.
+    - ``differential_pressure_mbar`` — Item 49: Differential Pressure —
+      encode range [0, 5000] mbar (uint16).
+    - ``airfield_barometric_pressure_mbar`` — Item 53: Airfield Barometric
+      Pressure — encode range [0, 5000] mbar (uint16).
+    - ``airfield_elevation_m`` — Item 54: Airfield Elevation — encode range
+      [-900, 19000] m (uint16).
+    - ``relative_humidity_pct`` — Item 55: Relative Humidity — encode range
+      [0, 100] % (uint8).
+    - ``platform_vertical_speed`` — Item 51: Platform Vertical Speed —
+      encode range [-180, 180] m/s (int16).
+    - ``platform_sideslip_deg`` — Item 52: Platform Sideslip Angle — encode
+      range [-20, 20] deg (int16). For the full ±180° range use
+      ``platform_sideslip_full_deg`` (Item 93).
+    - ``platform_ground_speed`` — Item 56: Platform Ground Speed — encode
+      range [0, 255] m/s (uint8).
+    - ``ground_range_m`` — Item 57: Ground Range — encode range [0, 5000000]
+      m (uint32).
+    - ``platform_fuel_remaining_kg`` — Item 58: Platform Fuel Remaining —
+      encode range [0, 10000] kg (uint16).
+    - ``platform_magnetic_heading_deg`` — Item 64: Platform Magnetic Heading
+      — encode range [0, 360] deg (uint16).
+    - ``platform_angle_of_attack_full_deg`` — Item 92: Platform Angle of
+      Attack (Full) — encode range [-90, 90] deg (int32).
+    - ``platform_sideslip_full_deg`` — Item 93: Platform Sideslip Angle
+      (Full) — encode range [-180, 180] deg (int32). Full-range twin of
+      ``platform_sideslip_deg`` (Item 52, ±20°).
+    - ``alternate_platform_lat_deg`` — Item 67: Alternate Platform Latitude
+      — encode range [-90, 90] deg (int32).
+    - ``alternate_platform_lon_deg`` — Item 68: Alternate Platform Longitude
+      — encode range [-180, 180] deg (int32).
+    - ``alternate_platform_alt_m`` — Item 69: Alternate Platform Altitude —
+      encode range [-900, 19000] m (uint16). Not to be confused with
+      ``alternate_platform_ellipsoid_height_extended_m`` (Item 105) — Item
+      105 extends Item 76 (Alternate Platform Ellipsoid Height, a WGS84
+      ellipsoid-height item), not this plain-altitude item; Item 69 has no
+      IMAPB extended-range twin of its own. Per ST 0601.19 §8.105, legacy
+      systems preferring one representation should favor Item 105 over Item
+      76 over this item — consistent with the requirements 0601.9-20/-21
+      extended-representation precedence rule on the 76/105 pair (see
+      ``alternate_platform_ellipsoid_height_m``).
+    - ``alternate_platform_heading_deg`` — Item 71: Alternate Platform
+      Heading — encode range [0, 360] deg (uint16).
+    - ``alternate_platform_ellipsoid_height_m`` — Item 76: Alternate
+      Platform Ellipsoid Height (WGS84) — encode range [-900, 19000] m
+      (uint16). For the extended [-900, 40000] m range use
+      ``alternate_platform_ellipsoid_height_extended_m`` (Item 105, IMAPB).
+      Per ST 0601.19 requirements 0601.9-20/-21, a decoder that understands
+      Item 105 shall use it and ignore this restricted twin when both are
+      present; this struct populates both fields on decode — prefer
+      ``alternate_platform_ellipsoid_height_extended_m`` when producing new
+      records.
+    - ``sensor_north_velocity`` — Item 79: Sensor North Velocity — encode
+      range [-327, 327] m/s (int16).
+    - ``sensor_east_velocity`` — Item 80: Sensor East Velocity — encode
+      range [-327, 327] m/s (int16).
+    - ``target_width_extended_m`` — Item 96: Target Width Extended — ST
+      1201.5 IMAPB range [0, 1500000] m, wire length 1..=8 bytes (encode
+      emits 3 bytes). Extended-range twin of ``target_width_m`` (Item 22,
+      uint16, [0, 10000] m) — see that field's docs for the ST 0601.19
+      extended-representation precedence rule (prefer this field).
+    - ``density_altitude_extended_m`` — Item 103: Density Altitude Extended
+      — ST 1201.5 IMAPB range [-900, 40000] m, wire length 1..=8 bytes
+      (encode emits 3 bytes). Extended-range twin of ``density_altitude_m``
+      (Item 38, uint16, [-900, 19000] m) — see that field's docs for the ST
+      0601.19 extended-representation precedence rule (prefer this field).
+    - ``sensor_ellipsoid_height_extended_m`` — Item 104: Sensor Ellipsoid
+      Height Extended — ST 1201.5 IMAPB range [-900, 40000] m, wire length
+      1..=8 bytes (encode emits 3 bytes). Extended-range twin of
+      ``sensor_ellipsoid_height_m`` (Item 75, uint16, [-900, 19000] m) — see
+      that field's docs for the ST 0601.19 extended-representation
+      precedence rule (prefer this field).
+    - ``alternate_platform_ellipsoid_height_extended_m`` — Item 105:
+      Alternate Platform Ellipsoid Height Extended — ST 1201.5 IMAPB range
+      [-900, 40000] m, wire length 1..=8 bytes (encode emits 3 bytes).
+      Extended-range twin of ``alternate_platform_ellipsoid_height_m`` (Item
+      76, uint16, [-900, 19000] m) — see that field's docs for the ST
+      0601.19 extended-representation precedence rule (prefer this field);
+      see also ``alternate_platform_alt_m`` (Item 69) for the disambiguation
+      from plain (non-ellipsoid) altitude.
+    - ``range_to_recovery_km`` — Item 109: Range To Recovery Location —
+      distance from current position to airframe recovery position. ST
+      1201.5 IMAPB range [0, 21000] km, wire length 1..=4 bytes (encode
+      emits 3 bytes).
+    - ``platform_course_angle_deg`` — Item 112: Platform Course Angle —
+      direction the aircraft is moving relative to True North. ST 1201.5
+      IMAPB range [0, 360] deg, wire length 1..=8 bytes (encode emits 2
+      bytes).
+    - ``altitude_agl_m`` — Item 113: Altitude AGL — Above Ground Level
+      height above the ground/water. ST 1201.5 IMAPB range [-900, 40000] m,
+      wire length 1..=4 bytes (encode emits 3 bytes).
+    - ``radar_altimeter_m`` — Item 114: Radar Altimeter — height above the
+      ground/water as reported by a RADAR altimeter (AGL, see
+      ``altitude_agl_m``). ST 1201.5 IMAPB range [-900, 40000] m, wire
+      length 1..=4 bytes (encode emits 3 bytes).
+    - ``sensor_azimuth_rate_dps`` — Item 117: Sensor Azimuth Rate — rate the
+      sensor's azimuth angle is changing. ST 1201.5 IMAPB range [-1000,
+      1000] deg/s, wire length 1..=4 bytes (encode emits 2 bytes).
+    - ``sensor_elevation_rate_dps`` — Item 118: Sensor Elevation Rate — rate
+      the sensor's elevation angle is changing. ST 1201.5 IMAPB range
+      [-1000, 1000] deg/s, wire length 1..=4 bytes (encode emits 3 bytes).
+    - ``sensor_roll_rate_dps`` — Item 119: Sensor Roll Rate — rate the
+      sensor's roll angle is changing. ST 1201.5 IMAPB range [-1000, 1000]
+      deg/s, wire length 1..=4 bytes (encode emits 2 bytes).
+    - ``mi_storage_percent_full`` — Item 120: On-board MI Storage Percent
+      Full — amount of on-board Motion Imagery storage used, as a percentage
+      of total storage. ST 1201.5 IMAPB range [0, 100] %, wire length 1..=3
+      bytes (encode emits 2 bytes).
+    - ``transmission_frequency_mhz`` — Item 132: Transmission Frequency —
+      radio frequency used to transmit the Motion Imagery. ST 1201.5 IMAPB
+      range [1, 99999] MHz, wire length 1..=4 bytes (encode emits 3 bytes).
+      First IMAPB item whose own tag number is 2-byte BER-OID encoded (like
+      Items 129/135 in the raw/UTF-8 set).
+    - ``zoom_percentage`` — Item 134: Zoom Percentage — for a variable-zoom
+      system, the percentage of zoom. ST 1201.5 IMAPB range [0, 100] %, wire
+      length 1..=4 bytes (encode emits 2 bytes).
+    - ``time_airborne_s`` — Item 110: Time Airborne — cumulative time the
+      platform has been airborne. MISB var-length uint, wire length 1..=4
+      bytes (seconds).
+    - ``propulsion_unit_speed_rpm`` — Item 111: Propulsion Unit Speed —
+      rotational speed of the platform's propulsion unit. MISB var-length
+      uint, wire length 1..=4 bytes (RPM).
+    - ``navsats_in_view`` — Item 123: Number of NAVSATs in View — count of
+      navigation satellites contributing to the platform's position
+      solution. MISB var-length uint, wire length 1 byte.
+    - ``positioning_method_source`` — Item 124: Positioning Method Source —
+      bitfield naming which satellite positioning system(s) contributed to
+      the platform's position solution. MISB var-length uint, wire length 1
+      byte. | Bit | System | |---:|---| | 0 | INS | | 1 | GPS | | 2 |
+      Galileo | | 3 | QZSS | | 4 | NAVIC | | 5 | GLONASS | | 6 | BeiDou-1 |
+      | 7 | BeiDou-2 | Per ST 0601.19 §8.124 a conformant producer sets at
+      least one bit (an all-zero value is out of the item's declared
+      ``1..255`` range); decode stays lenient and does not reject ``0x00``.
+    - ``platform_status`` — Item 125: Platform Status — operational status
+      of the platform. MISB var-length uint, wire length 1 byte. See
+      ``PlatformStatus``.
+    - ``sensor_control_mode`` — Item 126: Sensor Control Mode — what is
+      currently controlling the sensor. MISB var-length uint, wire length 1
+      byte. See ``SensorControlMode``.
+    - ``take_off_time_us`` — Item 131: Take-off Time — MISB ST 0603
+      timestamp of the platform's take-off. MISB var-length uint, wire
+      length 1..=8 bytes (microseconds).
+    - ``mi_storage_capacity_gb`` — Item 133: On-board MI Storage Capacity —
+      total on-board Motion Imagery storage capacity (compare
+      ``mi_storage_percent_full``, Item 120, the used percentage of that
+      capacity). MISB var-length uint, wire length 1..=4 bytes (gigabytes).
+    - ``leap_seconds`` — Item 136: Leap Seconds — the TAI-UTC leap-second
+      offset in effect for ``timestamp_us``. MISB var-length int, wire
+      length 1..=4 bytes (seconds).
+    - ``correction_offset_us`` — Item 137: Correction Offset — signed
+      correction applied to a platform time source (e.g. GPS-disciplined
+      clock drift). MISB var-length int, wire length 1..=8 bytes
+      (microseconds). **Spec typo:** ST 0601.19 §8.137 prints this item's
+      decode type as "KLVuint" (unsigned), but its own worked example only
+      decodes correctly as SIGNED (MISB var-length int) — this
+      implementation follows the worked example, not the printed type name.
+    - ``active_payloads`` — Item 139: Active Payloads — bitmask of which
+      Payload IDs (Item 138, Payload List — ``payload_list``) are currently
+      active. Raw bytes, LSB-first within each byte: bit ``i`` of byte 0 is
+      Payload ID ``i`` (0-7), byte 1 covers IDs 8-15, and so on (multi-byte
+      extends upward).
+    - ``generic_flag_data`` — Item 47: Generic Flag Data — bitfield per ST
+      0601.19 Table 3: bit 0 laser range on, bit 1 auto-track on, bit 2 IR
+      polarity (set = black hot), bit 3 icing detected, bit 4 slant range
+      measured (vs. calculated), bit 5 image invalid, bits 6-7 reserved.
+    - ``security_local_set`` — Tag 48: the ST 0102 Security Local Set body
+      bytes (no universal-label prefix). Pass-through bytes; consumers
+      needing typed access decode them with the ST 0102 decoder.
+    - ``rvt`` — Item 73: MISB ST 0806 Remote Video Terminal LS bytes.
+      Pass-through bytes; consumers needing typed access decode them with
+      the ST 0806 decoder (see ``st0806`` for the typed layer).
+    - ``vmti`` — Tag 74 — VMTI Local Set (MISB ST 0903). Pass-through bytes;
+      consumers needing typed access decode them with the ST 0903 decoder
+      (see ``st0903`` for the typed layer). Sibling-layer pattern matches
+      ``security_local_set`` (Tag 48, ST 0102).
+    - ``sar_mi_local_set`` — Item 95: MISB ST 1206 SAR Motion Imagery Local
+      Set bytes. Pass-through bytes; interior typing deferred.
+    - ``range_image_local_set`` — Item 97: MISB ST 1002 Range Image Local
+      Set bytes. Pass-through bytes; interior typing deferred.
+    - ``geo_registration_local_set`` — Item 98: MISB ST 1601
+      Geo-Registration Local Set bytes. Pass-through bytes; interior typing
+      deferred.
+    - ``composite_imaging_local_set`` — Item 99: MISB ST 1602 Composite
+      Imaging Local Set bytes. Pass-through bytes; interior typing deferred.
+    - ``segment_local_set`` — Item 100: MISB ST 1607 Segment Local Set
+      bytes. Pass-through bytes; interior typing deferred.
+    - ``amend_local_set`` — Item 101: MISB ST 1607 Amend Local Set bytes.
+      Pass-through bytes; interior typing deferred.
+    - ``weapon_load`` — Item 60: Weapon Load — bit-packed nibbles
+      (high→low): store station, store substation, weapon type, weapon
+      variant. Kept as a raw opaque 16-bit integer, not a sub-struct —
+      callers needing individual nibbles shift and mask this value
+      themselves.
+    - ``icing_detected`` — Item 34: Icing Detected — icing-detector state.
+      See ``IcingDetected``.
+    - ``sensor_fov_name`` — Item 63: Sensor Field of View Name — named FOV
+      preset. See ``SensorFovName``.
+    - ``operational_mode`` — Item 77: Operational Mode — operating mode of
+      the portrayed event. See ``OperationalMode``.
+    - ``image_horizon`` — Item 81: Image Horizon Pixels. See
+      ``ImageHorizonPixels``.
+    - ``control_commands`` — Item 115: Control Command — MULTI-INSTANCE (ST
+      0601.19 Table 1 "Multiples Allowed" = Yes); every wire occurrence
+      appends one ``ControlCommand``. Empty means none were present.
+    - ``control_command_verification`` — Item 116: Control Command
+      Verification List — BER-OID command ids the platform has
+      acknowledged/verified.
+    - ``active_wavelengths`` — Item 121: Active Wavelength List — BER-OID
+      wavelength ids currently active (``0`` = none active, exclusive per ST
+      0601.19 §8.121).
+    - ``sensor_frame_rate`` — Item 127: Sensor Frame Rate Pack. See
+      ``SensorFrameRate``.
+    - ``metadata_substream_id`` — Item 143: Metadata Substream Id. See
+      ``MetadataSubstreamId``.
+    - ``country_codes`` — Item 122: Country Codes. See ``CountryCodes``.
+    - ``wavelengths_list`` — Item 128: Wavelengths List. See
+      ``WavelengthRecord``.
+    - ``airbase_locations`` — Item 130: Airbase Locations. See
+      ``AirbaseLocations``.
+    - ``payload_list`` — Item 138: Payload List. See ``PayloadList``.
+    - ``weapons_stores`` — Item 140: Weapons Stores. See ``WeaponsStore``.
+    - ``waypoint_list`` — Item 141: Waypoint List. See ``Waypoint``.
+    - ``view_domain`` — Item 142: View Domain. See ``ViewDomain``.
+    - ``sdcc_flps`` — Item 102: SDCC-FLP (Standard Deviation and Correlation
+      Coefficient, Floating-Point). MULTI-INSTANCE per ST 0601.19 Table 1
+      ("Multiples Allowed" = Yes) — the "Refined Source List" binding: every
+      wire occurrence appends one ``SdccFlpField``, capturing which
+      preceding items it refines. See ``SdccFlpField`` for the capture rule
+      and the encode-side adjacency caveat.
+    - ``unknown`` — Every tag the typed set does not model, preserved as raw
+      bytes per the ST 0107.5 §6 future-proof skip rule. An entry whose tag
+      a typed field owns is dropped on encode: the typed field wins.
+    - ``field_errors`` — Per-field decode failures collected by a lenient
+      decode; a strict decode returns an error instead. A parser diagnostic:
+      it is not re-encoded.
+    - ``sentinel_tags`` — Tags whose wire value was the INT_MIN sentinel for
+      their signed linear mapping. INT_MIN is a spec-defined signal (not an
+      error), so the corresponding typed field is left as ``None`` and the
+      tag is recorded here instead of in ``field_errors``. Use
+      ``st0601_sentinel_meaning`` to look up the spec-defined meaning for
+      each tag (Out of Range / Reserved / N/A). **Encode semantics:**
+      encoding a record that carries sentinel tags re-emits the INT_MIN
+      bytes for each sentinel tag whose typed field is ``None``. If the
+      typed field is ``Some(v)``, the value ``v`` is encoded instead — a
+      non-None field always wins over a ``sentinel_tags`` entry. The encoder
+      also auto-injects Tag 65 (version) and the trailing checksum, so the
+      output byte sequence is not guaranteed to match the original wire
+      input byte-for-byte; the sentinel value round-trips, but the emission
+      order is: typed fields in ascending tag order, then ``sentinel_tags``
+      entries, then ``unknown`` fields in caller order.
+    - ``imapb_specials`` — Tags whose ST 1201.5 IMAPB wire value decoded to
+      a spec-defined special value (§7.2.3 — ``+∞``/``−∞``, NaN families,
+      the MISB-defined ``BelowMin``/``AboveMax`` overflow signals, or a
+      user-defined signal) rather than a normal-range float. The
+      corresponding typed field is left absent and the tag+special pair is
+      recorded here instead. Use ``ImapbSpecial`` to inspect which special
+      was signaled. **Encode semantics:** mirrors ``sentinel_tags`` —
+      encoding a record re-emits the special's bytes (at the tag's
+      ``default_len``) for each ``(tag, special)`` entry whose typed field
+      is currently ``None``. If the typed field is ``Some(v)``, the value
+      wins and the special entry is not re-emitted. Entries whose tag is not
+      an IMAPB-encoded item are silently skipped on encode. **Decode
+      semantics for the two IMAPB outcomes NOT carried here:** a wire
+      integer in ST 1201.5's reserved-but-unrecognized special-value space
+      (``ReservedSpecial``) or one that arithmetic-decodes outside the tag's
+      ``[min, max]`` (``OutOfRange``) are both treated as producer
+      non-conformance from this typed consumer's view: they are NOT pushed
+      here, and the raw wire bytes are NOT preserved. Instead they are
+      recorded in ``field_errors`` as ``OutOfRange`` — with a NaN value for
+      ``ReservedSpecial`` (no arithmetic decode exists for a non-conformant
+      bit pattern), or the raw arithmetic decode for ``OutOfRange``. This
+      differs from ``unknown``/``patch()``, which preserve raw bytes
+      verbatim for genuinely untyped tags — these tags ARE typed, so a
+      malformed value is a decode error, not a pass-through."""
 
     universal_label: bytes = b"\x00" * 16
     declared_version: int = 0
@@ -1303,8 +1850,21 @@ class CoreId:
 
     Contains the raw version byte plus up to four optional UUID components.
     The EBNF constraint — ``minor`` XOR any-of-(sensor/platform/window) — is
-    enforced by ``decode`` and should be maintained by callers of
-    ``encode_to_vec``."""
+    enforced by ``decode`` and should be maintained by callers that encode
+    the record.
+
+    Carriage sites: ST 0601 Tag 94 is the primary path for UAS datalink, and
+    ST 0903 VTarget Tag 13 carries the identifier per target.
+
+    - ``version`` — Wire version byte. Always ``1`` for decoded values; set
+      to ``1`` when constructing a value to encode.
+    - ``sensor`` — Sensor UUID and its type, if present.
+    - ``platform`` — Platform UUID and its type, if present.
+    - ``window`` — Window UUID, if present. Window has no type bits — its
+      presence is indicated by usage-byte bit b2.
+    - ``minor`` — Minor Core Identifier UUID. When present,
+      sensor/platform/window must all be ``None`` (ST 1204.3 §7.3.1 EBNF
+      rule)."""
 
     version: int
     sensor: tuple[IdType, bytes] | None = None
@@ -1335,7 +1895,22 @@ core_id_text = _native_mod.core_id_text
 @dataclass(frozen=True, slots=True)
 class SdccFlp:
     """One parsed SDCC-FLP (ST 1010.3 §6-§7). N×N symmetric: N std devs
-    (diagonal) + N(N-1)/2 correlations (upper triangle, row-major)."""
+    (diagonal) + N(N-1)/2 correlations (upper triangle, row-major).
+
+    - ``matrix_size`` — The matrix side length N. A fixed-width 64-bit
+      count: a size on a public struct must not vary shape across 32- and
+      64-bit targets.
+    - ``std_devs`` — Diagonal σ values, length == matrix_size (empty when
+      Slen == 0).
+    - ``correlations`` — Upper-triangle correlations, row-major (i<j),
+      ABSENT slots as 0.0 (sparse-mode zeros are reconstituted). Unlike
+      ``std_devs``, this is ALWAYS the full
+      ``matrix_size*(matrix_size-1)/2`` length regardless of ``Clen`` — a
+      ``Clen==0`` pack (no correlation data at all) still gets a zero-filled
+      vector of that length, not an empty one. Only empty when ``matrix_size
+      <= 1`` (no possible correlation slots).
+    - ``correlation_present`` — True where the wire actually carried the
+      slot (all-true in full mode)."""
 
     matrix_size: int
     std_devs: tuple[float, ...] = ()
@@ -1605,7 +2180,11 @@ class RvtUserDataType(enum.Enum):
 class RvtUserData:
     """User Defined Local Set (Table 8-4), carried in RVT Tag 11. Exactly
     two items, fixed order (-21..-24): the numeric-id byte, then the
-    payload."""
+    payload.
+
+    - ``numeric_id_raw`` — Tag 1 raw byte: bits 8-7 = data type, bits 6-1 =
+      numeric id 0-63.
+    - ``data`` — Tag 2 payload; concrete width is conveyed by its length."""
 
     numeric_id_raw: int
     data: bytes = b""
@@ -1624,7 +2203,40 @@ class RvtUserData:
 @dataclass(frozen=True, slots=True)
 class RvtPoi:
     """Point of Interest Local Set (ST 0806.4 Table 8-2), carried in RVT Tag
-    12."""
+    12 (repeatable, ST 0806.4-25).
+
+    Number, latitude and longitude are mandatory on encode (ST
+    0806.4-08..-10). A ``sentinel_tags`` entry for Tag 2 or 3 counts as
+    present even when the paired float field is ``None``: the wire carried
+    the spec's ``0x80000000`` "error" indicator instead of a value (the same
+    convention as the sentinel tag list of the ST 0601 record).
+
+    - ``number`` — Tag 1: POI Number — mandatory on encode; unique
+      identifier (uint16).
+    - ``lat_deg`` — Tag 2: POI Latitude — encode range [-90, 90] deg
+      (int32); ``0x80000000`` is the "error" sentinel (see
+      ``sentinel_tags``).
+    - ``lon_deg`` — Tag 3: POI Longitude — encode range [-180, 180] deg
+      (int32); same sentinel handling as ``lat_deg``.
+    - ``alt_m`` — Tag 4: POI Altitude — encode range [-900, 19000] m MSL
+      (uint16).
+    - ``poi_type`` — Tag 5: POI Type (uint8) — see ``RvtPoiType``.
+    - ``text`` — Tag 6: POI Text Description — ISO 7 string, max 2048 bytes.
+    - ``source_icon`` — Tag 7: POI Source Icon — ISO 7 string, max 127 bytes
+      (MIL-STD-2525B).
+    - ``source_id`` — Tag 8: POI Source ID — ISO 7 string, max 255 bytes.
+    - ``label`` — Tag 9: POI Label — ISO 7 string, max 16 bytes. The spec
+      text for this item gives the bare number "16" rather than the "Max. N"
+      phrasing used by sibling items; treated here as a ≤16-byte cap like
+      the others, but a fixed-width-padded reading remains possible pending
+      a real-capture check (spec ambiguity, not yet resolved).
+    - ``operation_id`` — Tag 10: POI Operation ID — ISO 7 string, max 127
+      bytes.
+    - ``sentinel_tags`` — Tags whose lat/lon carried the ``0x80000000``
+      "error" sentinel on decode (see ``lat_deg`` / ``lon_deg``).
+    - ``unknown`` — Tags not modeled above, passed through byte-for-byte.
+    - ``field_errors`` — Per-field decode errors collected instead of
+      aborting the whole set."""
 
     number: int | None = None
     lat_deg: float | None = None
@@ -1645,8 +2257,36 @@ class RvtPoi:
 # BEGIN GENERATED by print-records (RvtAoi); do not edit
 @dataclass(frozen=True, slots=True)
 class RvtAoi:
-    """Area of Interest Local Set (Table 8-3), carried in RVT Tag 13.
-    Corners: Point 1 = NW (upper-left), Point 3 = SE (lower-right)."""
+    """Area of Interest Local Set (Table 8-3), carried in RVT Tag 13
+    (repeatable, ST 0806.4-25). Corners: Point 1 = NW (upper-left), Point 3
+    = SE (lower-right).
+
+    Number, both corner pairs and the type are mandatory on encode (ST
+    0806.4-13..-18); a sentinel entry counts as present under the same rule
+    as the Point of Interest record.
+
+    - ``number`` — Tag 1: AOI Number — mandatory on encode; unique
+      identifier (uint16).
+    - ``corner_lat_p1_deg`` — Tag 2: AOI Point 1 (NW) Latitude — encode
+      range [-90, 90] deg (int32).
+    - ``corner_lon_p1_deg`` — Tag 3: AOI Point 1 (NW) Longitude — encode
+      range [-180, 180] deg (int32).
+    - ``corner_lat_p3_deg`` — Tag 4: AOI Point 3 (SE) Latitude — encode
+      range [-90, 90] deg (int32).
+    - ``corner_lon_p3_deg`` — Tag 5: AOI Point 3 (SE) Longitude — encode
+      range [-180, 180] deg (int32).
+    - ``aoi_type`` — Tag 6: AOI Type (uint8) — see ``RvtAoiType``.
+    - ``text`` — Tag 7: AOI Text Description — ISO 7 string, max 2048 bytes.
+    - ``source_id`` — Tag 8: AOI Source ID — ISO 7 string, max 255 bytes.
+    - ``label`` — Tag 9: AOI Label — ISO 7 string, max 16 bytes. Same
+      bare-"16" spec-ambiguity caveat as ``label`` applies here.
+    - ``operation_id`` — Tag 10: AOI Operation ID — ISO 7 string, max 127
+      bytes.
+    - ``sentinel_tags`` — Tags whose lat/lon carried the ``0x80000000``
+      "error" sentinel on decode (see the corner lat/lon fields above).
+    - ``unknown`` — Tags not modeled above, passed through byte-for-byte.
+    - ``field_errors`` — Per-field decode errors collected instead of
+      aborting the whole set."""
 
     number: int | None = None
     corner_lat_p1_deg: float | None = None
@@ -1682,7 +2322,62 @@ def _rvt_mgrs_string(
 # BEGIN GENERATED by print-records (RvtLs); do not edit
 @dataclass(frozen=True, slots=True)
 class RvtLs:
-    """Remote Video Terminal Local Set (ST 0806.4 Table 8-1)."""
+    """Remote Video Terminal Local Set (ST 0806.4 Table 8-1).
+
+    Standalone-capable: it carries its own 16-byte Universal Label and, per
+    ST 0806.4-02/-04, a timestamp-first Tag 2 plus a CRC-last Tag 1 when
+    transmitted independently. It is also embeddable: ST 0601 Tag 73 carries
+    the RVT LS body, with no Universal Label and no timestamp/CRC-position
+    requirement.
+
+    The checksum is CRC-32/MPEG-2 (ISO/IEC 13818-1), a real divergence from
+    the ST 0601 16-bit running-sum checksum. It is captured on decode but
+    only verified by the standalone decoder.
+
+    - ``crc32`` — Tag 1: CRC-32/MPEG-2 checksum (uint32) — verified only by
+      the standalone decoder (an embedded RVT need not carry it).
+    - ``timestamp_us`` — Tag 2: User Defined Time Stamp — microseconds
+      (uint64).
+    - ``platform_true_airspeed`` — Tag 3: Platform True Airspeed — m/s, 1:1
+      counts (uint16).
+    - ``platform_indicated_airspeed`` — Tag 4: Platform Indicated Airspeed —
+      m/s, 1:1 counts (uint16).
+    - ``telemetry_accuracy_indicator`` — Tag 5: Telemetry Accuracy Indicator
+      (uint8) — reserved by the spec.
+    - ``frag_circle_radius_m`` — Tag 6: Frag Circle Radius — meters
+      (uint16).
+    - ``frame_code`` — Tag 7: Frame Code — 60 Hz counter (uint32).
+    - ``rvt_ls_version`` — Tag 8: UAS LS Version Number (uint8) —
+      informational; do NOT assert this equals 4 (the document edition), it
+      tracks the wire schema.
+    - ``video_data_rate`` — Tag 9: Video Data Rate — bps / Hz (uint32).
+    - ``digital_video_file_format`` — Tag 10: Digital Video File Format —
+      ISO 7 string, max 127 bytes.
+    - ``user_defined`` — Tag 11: User Defined LS — repeatable (ST
+      0806.4-25).
+    - ``points_of_interest`` — Tag 12: Point of Interest LS — repeatable (ST
+      0806.4-25).
+    - ``areas_of_interest`` — Tag 13: Area of Interest LS — repeatable (ST
+      0806.4-25).
+    - ``aircraft_mgrs_zone`` — Tag 14: Aircraft MGRS Zone — UTM zone 1-60
+      (uint8).
+    - ``aircraft_mgrs_band_grid`` — Tag 15: Aircraft MGRS Latitude Band and
+      Grid Square — 3-char ISO 7 string.
+    - ``aircraft_mgrs_easting_m`` — Tag 16: Aircraft MGRS Easting — meters,
+      0-99999 (uint24).
+    - ``aircraft_mgrs_northing_m`` — Tag 17: Aircraft MGRS Northing —
+      meters, 0-99999 (uint24).
+    - ``frame_center_mgrs_zone`` — Tag 18: Frame Center MGRS Zone — UTM zone
+      1-60 (uint8).
+    - ``frame_center_mgrs_band_grid`` — Tag 19: Frame Center MGRS Latitude
+      Band and Grid Square — 3-char ISO 7 string.
+    - ``frame_center_mgrs_easting_m`` — Tag 20: Frame Center MGRS Easting —
+      meters, 0-99999 (uint24).
+    - ``frame_center_mgrs_northing_m`` — Tag 21: Frame Center MGRS Northing
+      — meters, 0-99999 (uint24).
+    - ``unknown`` — Tags not modeled above, passed through byte-for-byte.
+    - ``field_errors`` — Per-field decode errors collected instead of
+      aborting the whole set."""
 
     crc32: int | None = None
     timestamp_us: int | None = None
@@ -1750,7 +2445,26 @@ encode_rvt_standalone = _native_mod.encode_rvt_standalone
 # BEGIN GENERATED by print-records (CotConfig); do not edit
 @dataclass(frozen=True, slots=True)
 class CotConfig:
-    """Configuration for KLV→CoT conversion (ST 0805.1)."""
+    """Configuration for KLV→CoT conversion (ST 0805.1).
+
+    - ``platform_type`` — CoT type for the Platform Position event. ST
+      0805.1 §5 gives ``a-f-A-M-F`` as the fixed-wing example and explicitly
+      requires it be overridable per platform (rotary-wing, manned pods,
+      ...).
+    - ``update_interval_us`` — The ``stale`` time is the event time plus
+      this interval. ST 0805.1 defines ``stale`` as "time of next message"
+      but gives no concrete interval — this default is an implementation
+      choice, not a spec value.
+    - ``producer`` — XML attribute name stamped in ``<detail><_flow-tags_
+      .../>``. Written verbatim as an XML ``Name`` production (an attribute
+      name, not a value) — it must be a syntactically valid XML Name. It is
+      neither validated nor escaped; an invalid value produces malformed
+      XML.
+    - ``geoid_undulation_m`` — Geoid undulation (HAE − MSL) applied when
+      only an MSL-referenced altitude tag is available. Absent emits the MSL
+      value as-is.
+    - ``how`` — CoT ``how`` attribute. ST 0805.1 §5 fixes this at ``m-p``
+      (machine-passed) for both event types."""
 
     platform_type: str = "a-f-A-M-F"
     update_interval_us: int = 5_000_000

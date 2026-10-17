@@ -395,7 +395,7 @@ crate::binding_record! {
         pub take_off_time_us: Option<u64>,
         /// Item 133: On-board MI Storage Capacity — total on-board Motion
         /// Imagery storage capacity (compare
-        /// [`Self::mi_storage_percent_full`], Item 120, the *used*
+        /// [`Self::mi_storage_percent_full`], Item 120, the used
         /// percentage of that capacity). MISB var-length uint, wire length
         /// 1..=4 bytes (gigabytes).
         pub mi_storage_capacity_gb: Option<u32>,
@@ -414,8 +414,8 @@ crate::binding_record! {
         pub correction_offset_us: Option<i64>,
         /// Item 139: Active Payloads — bitmask of which Payload IDs (Item
         /// 138, Payload List — [`Self::payload_list`]) are currently active.
-        /// Raw bytes, LSB-first within each byte: bit *i* of byte 0 is
-        /// Payload ID *i* (0-7), byte 1 covers IDs 8-15, and so on
+        /// Raw bytes, LSB-first within each byte: bit `i` of byte 0 is
+        /// Payload ID `i` (0-7), byte 1 covers IDs 8-15, and so on
         /// (multi-byte extends upward).
         pub active_payloads: Option<Vec<u8>>,
 
@@ -461,7 +461,7 @@ crate::binding_record! {
         pub outside_air_temp_c: Option<i8>,
         /// Item 60: Weapon Load — bit-packed nibbles (high→low): store
         /// station, store substation, weapon type, weapon variant. Kept as a
-        /// raw opaque `u16`, not a sub-struct — callers needing individual
+        /// raw opaque 16-bit integer, not a sub-struct — callers needing individual
         /// nibbles shift and mask this value themselves.
         pub weapon_load: Option<u16>,
         pub weapon_fired: Option<u8>,
@@ -547,7 +547,7 @@ crate::binding_record! {
         /// instead — a non-None field always wins over a `sentinel_tags` entry.
         /// The encoder also auto-injects Tag 65 (version) and the trailing
         /// checksum, so the output byte sequence is not guaranteed to match the
-        /// original wire input byte-for-byte; the sentinel *value* round-trips,
+        /// original wire input byte-for-byte; the sentinel value round-trips,
         /// but the emission order is: typed fields in ascending tag order, then
         /// `sentinel_tags` entries, then `unknown` fields in caller order.
         @[custom] pub sentinel_tags: Vec<u32>,
@@ -591,8 +591,8 @@ crate::binding_record! {
     /// "Refined Source List" positional context (ST 0601.19 §8.102).
     ///
     /// Tag 102 is MULTI-INSTANCE (ST 0601.19 Table 1 "Multiples Allowed" =
-    /// Yes): each occurrence's SDCC-FLP pack (MISB ST 1010.3 — parse with
-    /// [`crate::klv::st1010::decode_sdcc_flp`]) refines the accuracy of the
+    /// Yes): each occurrence's SDCC-FLP pack (MISB ST 1010.3, parsed by the
+    /// ST 1010 SDCC-FLP decoder) refines the accuracy of the
     /// Local Set items that immediately precede it on the wire. This struct
     /// keeps the raw pack bytes rather than a parsed
     /// [`crate::klv::st1010::SdccFlp`] so a malformed or foreign-encoder
@@ -612,13 +612,13 @@ crate::binding_record! {
     ///
     /// **Ascending-order emission caveat (encode):** every `sdcc_flps` entry
     /// is re-emitted verbatim from one place in tag-ascending order, grouping
-    /// all occurrences together. This means the *original* interleaving with
+    /// all occurrences together. This means the original interleaving with
     /// `preceding_tags` (e.g. tags 13/14/15 followed by one Tag 102
     /// occurrence, then tags 5/6/7 followed by another) is generally NOT
     /// reproduced on re-encode — the re-encoded wire carries both
     /// occurrences back to back instead. `preceding_tags` therefore records
-    /// what the *original* wire order was, not a guarantee about the
-    /// re-encoded one; the pack `bytes` themselves are still byte-exact.
+    /// the original wire order, not a guarantee about the re-encoded one;
+    /// the pack `bytes` themselves are still byte-exact.
     #[derive(Debug, Clone, PartialEq)]
     pub struct SdccFlpField {
         /// Wire-order item tags immediately preceding this occurrence (see
@@ -627,7 +627,7 @@ crate::binding_record! {
         /// matrix size — spec-legal-but-degenerate, not an error).
         pub preceding_tags: Vec<u32>,
         /// Raw SDCC-FLP pack bytes, exactly as they appeared on the wire —
-        /// parse with [`crate::klv::st1010::decode_sdcc_flp`].
+        /// decode with the ST 1010 SDCC-FLP decoder.
         pub bytes: Vec<u8>,
     }
 }
