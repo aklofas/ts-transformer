@@ -510,6 +510,14 @@ pub const HOSTS: &[HostRow] = &[
     ),
 ];
 
+/// Whether the Python conversion of a host row can fail (a variant this
+/// build does not know). The host type is then built with `TryFrom<Rust>`
+/// and the class that holds it with `TryFrom<&Record>`, raising `PyErr` as
+/// the JVM builder throws.
+pub fn host_fallible(name: &str) -> bool {
+    name == "ClockAlignment"
+}
+
 fn host_row(name: &str) -> &'static HostRow {
     HOSTS.iter().find(|h| h.rust == name).expect("host row")
 }
@@ -935,6 +943,9 @@ impl Ty {
             Ty::Str => format!("{recv}.clone()"),
             Ty::Bytes => format!("crate::util::HostBytes({recv}.to_vec())"),
             Ty::Record(n) => format!("{n}::from({e})"),
+            Ty::Host(h) if host_fallible(h) => {
+                format!("{}::try_from({val})?", host_row(h).py_rs)
+            }
             Ty::Host(h) => format!("{}::from({val})", host_row(h).py_rs),
             Ty::List(inner) => match inner.as_ref() {
                 Ty::Record(n) => format!("{recv}.iter().map({n}::from).collect()"),

@@ -5,12 +5,15 @@ package org.tstrans.rtp;
  * RFC 6184 depacketizer counters: a frozen snapshot. All counters are cumulative since the receiver
  * started listening (or since the RTSP session started).
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param ausEmitted Number of complete, unpoisoned AUs emitted.
  * @param ausDropped Number of AUs discarded due to poisoning (seq gaps, F-bit, etc.). Includes AUs
- *     dropped for exceeding {@code max_au_bytes} (those are also counted in {@code
+ *     dropped for exceeding the configured maximum size (those are also counted in {@code
  *     ausDroppedOversize}).
  * @param ausDroppedOversize Number of AUs dropped specifically because their accumulated buffer
- *     size exceeded {@code max_au_bytes}. Every oversize drop is also counted in {@code
+ *     size exceeded the configured maximum. Every oversize drop is also counted in {@code
  *     ausDropped}.
  * @param packetsDiscarded Number of RTP packets discarded (empty, reserved, interleaved types).
  * @param nalusDiscarded Number of NALUs discarded (F-bit set, open FU at AU completion, etc.).

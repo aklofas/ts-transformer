@@ -28,7 +28,7 @@ crate::binding_record! {
         /// Number of `ProgramMap` events emitted (one per PMT version seen).
         pub program_maps_seen: u64,
         /// Number of distinct PMT version_number values seen, including the
-        /// initial sighting. Resets to zero on `reset_stats`, so the next PMT
+        /// initial sighting. Resets to zero when the stats are reset, so the next PMT
         /// always increments this counter.
         pub pmt_versions_seen: u64,
         /// Total discontinuity events emitted across all PIDs.
@@ -41,13 +41,13 @@ crate::binding_record! {
         pub programs_seen: u32,
         /// Number of distinct subtitle PIDs the demuxer has seen at least one
         /// PES sample for. Increments on the first `SamplePayload::Subtitle`
-        /// event per PID; resets to zero on `reset_stats`.
+        /// event per PID; resets to zero when the stats are reset.
         pub subtitle_streams_seen: u32,
         /// Number of times the opt-in PTS/DTS unwrap
         /// ([`DemuxerConfig::unwrap_timestamps`]) re-anchored a dormant PID
         /// onto its program's running clock instead of trusting the PID's
         /// own (ambiguous) 33-bit delta — see the "Dormant PIDs" paragraph on
-        /// that field. Zero while the knob is off. Resets on `reset_stats`.
+        /// that field. Zero while the knob is off. Resets when the stats are reset.
         @[skip]
         pub unwrap_reanchors: u64,
         /// Per-PID counters. Keys are PIDs. Entries are created on first event

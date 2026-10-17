@@ -6,6 +6,9 @@ package org.tstrans.klv;
  * per ST 0601.19 Table 1 ("Multiples Allowed" = Yes): every wire occurrence of Tag 115 appends one
  * {@code ControlCommand} to {@code control_commands} rather than overwriting a single field.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param id BER-OID command id.
  * @param command Command text, UTF-8, at most 127 bytes.
  * @param timeUs Time the command was issued/executed, microseconds — MISB var-length truncatable

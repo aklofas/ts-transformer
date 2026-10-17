@@ -7,6 +7,9 @@ package org.tstrans.klv;
  * when {@code local_id > 0}; this decoder is lenient and stores whatever combination the wire
  * carries.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param localId BER-OID local substream id.
  * @param uuid RFC 4122 UUID bytes, present per the §8.143 rule above.
  */

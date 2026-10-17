@@ -10,6 +10,9 @@ import org.tstrans.CodecParseException;
  * nanosecond constructor {@code nanos(value_ns, time_status)}; direct construction from a kind, a
  * time status and a value is also accepted.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param kind Which time base the value carries: microseconds or nanoseconds since the MISP epoch.
  * @param timeStatus MISB ST 0603 Time Status byte (0x00 = unknown); the same byte as in ST 0605
  *     Class 0 packs.

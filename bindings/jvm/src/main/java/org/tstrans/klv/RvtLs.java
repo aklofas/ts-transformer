@@ -15,6 +15,9 @@ import java.util.List;
  * The checksum is CRC-32/MPEG-2 (ISO/IEC 13818-1), a real divergence from the ST 0601 16-bit
  * running-sum checksum. It is captured on decode but only verified by the standalone decoder.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param crc32 Tag 1: CRC-32/MPEG-2 checksum (uint32) — verified only by the standalone decoder (an
  *     embedded RVT need not carry it).
  * @param timestampUs Tag 2: User Defined Time Stamp — microseconds (uint64).

@@ -4,6 +4,9 @@ package org.tstrans.hls;
 /**
  * Cumulative stats of a mux-publisher shell.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param bytesPushed Total TS bytes drained from the muxer and handed to the publisher.
  * @param drainCalls Total muxer drain calls that produced at least one chunk.
  * @param cutCalls Total explicit segment cuts, plus the automatic cuts on keyframes.

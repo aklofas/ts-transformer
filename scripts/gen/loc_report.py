@@ -90,7 +90,7 @@ VENDORED = {
     "crates/rist-sys/vendor/librist": "librist",
 }
 _SYS = {"srt-sys", "rist-sys", "mbedtls-src"}
-_TEST_INFRA = {"tst-test-helpers", "tst-integration", "tst-interop"}
+_TEST_INFRA = {"tst-test-helpers", "tst-integration", "tst-interop", "tst-binding-gen"}
 
 _TEST_DIR_RE = re.compile(r"(^|/)(tests?|benches|fuzz)/")
 _JAVA_TEST_RE = re.compile(r"(^|/)src/test/")

@@ -11,3 +11,6 @@ bindings/jvm/src/main/java/org/tstrans/codec/*.java text eol=lf
 bindings/jvm/src/main/java/org/tstrans/srt/*.java text eol=lf
 bindings/jvm/src/main/java/org/tstrans/rtp/*.java text eol=lf
 bindings/jvm/src/main/java/org/tstrans/mpegts/*.java text eol=lf
+bindings/jvm/src/main/java/org/tstrans/shells/*.java text eol=lf
+bindings/jvm/src/main/java/org/tstrans/hls/*.java text eol=lf
+bindings/jvm/src/main/java/org/tstrans/pipeline/*.java text eol=lf

@@ -5,8 +5,11 @@ package org.tstrans.hls;
  * Richer HLS-specific stats snapshot. For cross-publisher metrics use the publisher's own stats,
  * which carry the universal counters instead.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param segmentsWritten Total completed segments (history + current run).
- * @param bytesPushedTotal Total bytes accepted by {@code push_ts} across all segments.
+ * @param bytesPushedTotal Total bytes accepted from the muxer across all segments.
  * @param openSegmentBytes Bytes in the currently-open segment (0 between cuts).
  * @param forcedCuts Segments cut by the wall-clock hard-cap fallback because a keyframe was overdue
  *     (keyframe-driven flow only). A persistently non-zero value means the upstream GOP length

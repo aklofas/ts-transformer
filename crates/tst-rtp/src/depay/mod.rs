@@ -129,11 +129,11 @@ tst_core::binding_record! {
         /// Number of complete, unpoisoned AUs emitted.
         pub aus_emitted: u64,
         /// Number of AUs discarded due to poisoning (seq gaps, F-bit, etc.).
-        /// Includes AUs dropped for exceeding `max_au_bytes`
-        /// (those are also counted in `aus_dropped_oversize`).
+        /// Includes AUs dropped for exceeding the configured maximum
+        /// size (those are also counted in `aus_dropped_oversize`).
         pub aus_dropped: u64,
         /// Number of AUs dropped specifically because their accumulated buffer
-        /// size exceeded [`DepayConfig::max_au_bytes`]. Every oversize drop is
+        /// size exceeded the configured maximum. Every oversize drop is
         /// also counted in `aus_dropped`.
         pub aus_dropped_oversize: u64,
         /// Number of RTP packets discarded (empty, reserved, interleaved types).

@@ -12,6 +12,9 @@ package org.tstrans.srt;
  *
  * For the abstract transport view shared with RTP use the socket stats.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param bytesSent Bytes sent, cumulative.
  * @param bytesReceived Bytes received, cumulative.
  * @param bytesLostRecvSide Bytes the receiver detected as lost.
@@ -27,7 +30,7 @@ package org.tstrans.srt;
  * @param sendBandwidthBps Send-rate estimate in bits per second.
  * @param recvBandwidthBps Receive-rate estimate in bits per second.
  * @param mbpsEstimatedBandwidth libsrt's estimate of the link bandwidth in megabits per second; the
- *     bits-per-second view is {@code link_bandwidth_bps} of the socket stats.
+ *     bits-per-second view is the link bandwidth of the socket stats.
  * @param sendBufferPackets Current send-side buffer occupancy in packets.
  * @param recvBufferPackets Current receive-side buffer occupancy in packets.
  */

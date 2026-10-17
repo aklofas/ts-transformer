@@ -5,6 +5,9 @@ package org.tstrans.klv;
  * One parsed SDCC-FLP (ST 1010.3 §6-§7). N×N symmetric: N std devs (diagonal) + N(N-1)/2
  * correlations (upper triangle, row-major).
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param matrixSize The matrix side length N. A fixed-width 64-bit count: a size on a public struct
  *     must not vary shape across 32- and 64-bit targets.
  * @param stdDevs Diagonal σ values, length == matrix_size (empty when Slen == 0).

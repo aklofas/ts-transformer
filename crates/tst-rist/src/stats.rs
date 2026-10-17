@@ -63,7 +63,7 @@ tst_core::binding_record! {
         /// Packets retransmitted due to ARQ (sender only).
         pub packets_retransmitted: u64,
         /// Packets that never reached the application. Aggregates librist's
-        /// wire-loss count (the `lost` counter from the receiver stats callback)
+        /// wire-loss count (the lost counter of librist's receiver statistics)
         /// with packets librist delivered but this transport dropped at the app
         /// boundary (a datagram larger than the caller's buffer, or a malformed
         /// null-payload block). These are disjoint sets, so there is no

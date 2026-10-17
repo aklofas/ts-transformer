@@ -4,17 +4,20 @@ package org.tstrans.rtp;
 /**
  * Aggregate server stats snapshot.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param activeSessions Live count of accepted, not yet closed client sessions.
  * @param totalRtpPacketsSent Cumulative RTP packets sent across all peers and all mounts.
  * @param totalRtpBytesSent Cumulative RTP bytes sent across all peers and all mounts.
  * @param mounts Number of registered mounts, of every kind.
  * @param activePublishers Publish mounts that currently have a publisher (an ANNOUNCE that claimed
- *     the mount and has not yet ended by TEARDOWN, a dropped connection, {@code remove_mount} or
- *     {@code stop()}).
+ *     the mount and has not yet ended by TEARDOWN, a dropped connection, the mount's removal or the
+ *     server's stop).
  * @param totalRtpPacketsReceived RTP packets received from publishers across every publish mount,
  *     cumulative over the server's life. Counted with relaxed atomics beside each mount's own
- *     counter, so a snapshot taken while packets arrive may differ from the sum of the mounts'
- *     {@code rtp_packets_received} by the packets in flight.
+ *     counter, so a snapshot taken while packets arrive may differ from the sum of the mounts' own
+ *     received-packet counters by the packets in flight.
  * @param totalRtpBytesReceived Bytes of those RTP packets, headers included; same consistency as
  *     {@code totalRtpPacketsReceived}.
  */

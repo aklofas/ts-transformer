@@ -16,6 +16,9 @@ import java.util.Optional;
  * The composite views (sensor position, platform and sensor attitude, field of view, frame center
  * and corners) are accessors that return nothing when any of the fields they combine is absent.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param universalLabel The 16-byte SMPTE universal label that opens the local set.
  * @param declaredVersion The version byte the label declares.
  * @param platformHeadingDeg Item 5: Platform Heading Angle — encode range [0, 360] deg (uint16).

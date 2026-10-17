@@ -17,6 +17,9 @@ import java.util.List;
  * (typed inner layers deferred); {@code miisId} is the MISB ST 1204 Minor Item Identification
  * System Core Identifier, also pass-through bytes (typed layer deferred).
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param checksum Tag 1 (checkSum) per ST 0903.6 §10.1.1. Populated on decode for observability on
  *     standalone-VMTI captures.
  *

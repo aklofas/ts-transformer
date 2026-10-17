@@ -5,6 +5,9 @@ package org.tstrans.klv;
  * Item 127: Sensor Frame Rate Pack (ST 0601.19 §8.127) — frame rate as a numerator/denominator
  * ratio; {@code denominator} defaults to 1 when the wire pack ends after the numerator.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param numerator BER-OID numerator.
  * @param denominator BER-OID denominator; wire-absent means 1 (whole-number fps).
  */

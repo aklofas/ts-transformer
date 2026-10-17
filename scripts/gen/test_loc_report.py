@@ -204,6 +204,7 @@ class FileLevelRules(unittest.TestCase):
             "crates/tst-test-helpers/src/lib.rs": "test-infra",
             "crates/tst-integration/tests/x.rs": "test-infra",
             "crates/tst-interop/src/lib.rs": "test-infra",
+            "crates/tst-binding-gen/tests/tools/print_records.rs": "test-infra",
             "bindings/c/core/src/lib.rs": "bindings/c",
             "bindings/python/src/lib.rs": "bindings/python",
             "bindings/jvm/src/main/java/A.java": "bindings/jvm",
