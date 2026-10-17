@@ -121,7 +121,7 @@ fn javadoc(e: &Entry, flds: &[&Fld]) -> String {
 pub fn block(reg: &[Entry], e: &Entry) -> Result<String, String> {
     let flds = resolve(reg, &e.schema)?;
     let cross: Vec<&Fld> = flds.iter().filter(|f| f.ty.is_some()).collect();
-    let name = e.schema.name;
+    let name = e.name();
     let implements = if e.java_implements.is_empty() {
         String::new()
     } else {

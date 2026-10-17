@@ -29,6 +29,12 @@ struct CustomRow {
     py: &'static str,
     java: &'static str,
     sig: &'static str,
+    /// The Rust type of a native class's field of this type (`""` when only
+    /// a dataclass holds it).
+    py_rs: &'static str,
+    /// A native class holds the Rust value as it is (a `Copy` type), so no
+    /// hand-written converter is needed on the Python side.
+    py_copy: bool,
     /// The dataclass default of a required field of this type, when it has one.
     py_default: Option<&'static str>,
     /// The Builder's initial value, when the Java default is not `null`/zero.
@@ -47,6 +53,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "bytes",
         java: "ByteBuffer",
         sig: "Ljava/nio/ByteBuffer;",
+        py_rs: "",
+        py_copy: false,
         py_default: Some("b\"\\x00\" * 16"),
         java_default: None,
         prim: None,
@@ -59,6 +67,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "bytes",
         java: "byte[]",
         sig: "[B",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -69,6 +79,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "bytes",
         java: "byte[]",
         sig: "[B",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -79,6 +91,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "PayloadType | int",
         java: "long",
         sig: "J",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: Some("Long"),
@@ -89,6 +103,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "IcingDetected | int",
         java: "Integer",
         sig: "Ljava/lang/Integer;",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -98,6 +114,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "OperationalMode | int",
         java: "Integer",
         sig: "Ljava/lang/Integer;",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -107,6 +125,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "PlatformStatus | int",
         java: "Integer",
         sig: "Ljava/lang/Integer;",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -116,6 +136,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "SensorControlMode | int",
         java: "Integer",
         sig: "Ljava/lang/Integer;",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -125,6 +147,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "SensorFovName | int",
         java: "Integer",
         sig: "Ljava/lang/Integer;",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -136,6 +160,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "SecurityClassification | int",
         java: "Integer",
         sig: "Ljava/lang/Integer;",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -145,6 +171,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "ClassifyingCountryCodingMethod | int",
         java: "Integer",
         sig: "Ljava/lang/Integer;",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -154,6 +182,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "ObjectCountryCodingMethod | int",
         java: "Integer",
         sig: "Ljava/lang/Integer;",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -163,6 +193,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "RvtPoiType | int",
         java: "Integer",
         sig: "Ljava/lang/Integer;",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -172,6 +204,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "RvtAoiType | int",
         java: "Integer",
         sig: "Ljava/lang/Integer;",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -182,6 +216,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "TimeStatus",
         java: "TimeStatus",
         sig: "Lorg/tstrans/klv/TimeStatus;",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -192,6 +228,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "tuple[int, int, int]",
         java: "TargetColor",
         sig: "Lorg/tstrans/klv/VTargetPack$TargetColor;",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -204,6 +242,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "tuple[IdType, bytes]",
         java: "",
         sig: "",
+        py_rs: "",
+        py_copy: false,
         py_default: None,
         java_default: None,
         prim: None,
@@ -214,6 +254,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "tuple[float, ...]",
         java: "double[]",
         sig: "[D",
+        py_rs: "",
+        py_copy: false,
         py_default: Some("()"),
         java_default: None,
         prim: None,
@@ -223,6 +265,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "tuple[bool, ...]",
         java: "boolean[]",
         sig: "[Z",
+        py_rs: "",
+        py_copy: false,
         py_default: Some("()"),
         java_default: None,
         prim: None,
@@ -234,6 +278,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "tuple[tuple[int, bytes], ...]",
         java: "List<KlvUnknownField>",
         sig: "Ljava/util/List;",
+        py_rs: "",
+        py_copy: false,
         py_default: Some("()"),
         java_default: Some(EMPTY_LIST),
         prim: None,
@@ -243,6 +289,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "tuple[int, ...]",
         java: "List<Long>",
         sig: "Ljava/util/List;",
+        py_rs: "",
+        py_copy: false,
         py_default: Some("()"),
         java_default: Some(EMPTY_LIST),
         prim: None,
@@ -252,6 +300,8 @@ const CUSTOM: &[CustomRow] = &[
         py: "tuple[KlvFieldError, ...]",
         java: "List<KlvFieldError>",
         sig: "Ljava/util/List;",
+        py_rs: "",
+        py_copy: false,
         py_default: Some("()"),
         java_default: Some(EMPTY_LIST),
         prim: None,
@@ -261,11 +311,202 @@ const CUSTOM: &[CustomRow] = &[
         py: "tuple[tuple[int, str, int], ...]",
         java: "List<ImapbSpecialEntry>",
         sig: "Ljava/util/List;",
+        py_rs: "",
+        py_copy: false,
         py_default: Some("()"),
         java_default: Some(EMPTY_LIST),
         prim: None,
     },
+    // Codec fields whose Java type is not the one the Rust type implies.
+    // The frame number of a slice header is a Java `Integer`.
+    CustomRow {
+        rust: "u32",
+        py: "int",
+        py_rs: "u32",
+        py_copy: true,
+        java: "Integer",
+        sig: "Ljava/lang/Integer;",
+        py_default: None,
+        java_default: None,
+        prim: None,
+    },
+    // A frame size is a pair in Python and a nested record in Java.
+    CustomRow {
+        rust: "(u32,u32)",
+        py: "Tuple[int, int]",
+        py_rs: "(u32, u32)",
+        py_copy: true,
+        java: "FrameSize",
+        sig: "Lorg/tstrans/codec/Av1FrameHeaderLight$FrameSize;",
+        py_default: None,
+        java_default: None,
+        prim: None,
+    },
+    // The OBUs an AV1 walk could not parse: `(type, message)` pairs in
+    // Python, a nested record in Java.
+    CustomRow {
+        rust: "Vec<(u8,CodecParseError)>",
+        py: "List[Tuple[int, str]]",
+        py_rs: "Vec<(u8, String)>",
+        py_copy: false,
+        java: "List<UnparseableObu>",
+        sig: "Ljava/util/List;",
+        py_default: None,
+        java_default: None,
+        prim: None,
+    },
 ];
+
+/// A `Copy` Rust enum (or small value) that both bindings already convert
+/// by hand: a native Python class holds the host type, a JVM builder
+/// returns the Java object.
+pub struct HostRow {
+    pub rust: &'static str,
+    /// The Python annotation.
+    pub py: &'static str,
+    /// The Rust type of the host class, built with `From<Rust>`.
+    pub py_rs: &'static str,
+    /// The Java type.
+    pub java: &'static str,
+    /// The JNI signature of the Java type.
+    pub sig: &'static str,
+    /// The JVM builder: `fn(&mut JNIEnv, Rust) -> Result<JObject, ()>`.
+    pub jvm: &'static str,
+}
+
+const fn host(
+    rust: &'static str,
+    py_rs: &'static str,
+    java_pkg_class: &'static str,
+    sig: &'static str,
+    jvm: &'static str,
+) -> HostRow {
+    HostRow {
+        rust,
+        py: rust,
+        py_rs,
+        java: java_pkg_class,
+        sig,
+        jvm,
+    }
+}
+
+pub const HOSTS: &[HostRow] = &[
+    host(
+        "ChromaFormat",
+        "crate::codec::ChromaFormatPy",
+        "ChromaFormat",
+        "Lorg/tstrans/codec/ChromaFormat;",
+        "crate::codec::shared::build_chroma_format",
+    ),
+    host(
+        "ColourPrimaries",
+        "crate::codec::ColourPrimariesPy",
+        "ColourPrimaries",
+        "Lorg/tstrans/codec/ColourPrimaries;",
+        "crate::codec::shared::build_colour_primaries",
+    ),
+    host(
+        "TransferCharacteristics",
+        "crate::codec::TransferCharacteristicsPy",
+        "TransferCharacteristics",
+        "Lorg/tstrans/codec/TransferCharacteristics;",
+        "crate::codec::shared::build_transfer",
+    ),
+    host(
+        "MatrixCoefficients",
+        "crate::codec::MatrixCoefficientsPy",
+        "MatrixCoefficients",
+        "Lorg/tstrans/codec/MatrixCoefficients;",
+        "crate::codec::shared::build_matrix",
+    ),
+    host(
+        "EntropyCodingMode",
+        "crate::codec::EntropyCodingModePy",
+        "EntropyCodingMode",
+        "Lorg/tstrans/codec/EntropyCodingMode;",
+        "crate::codec::h264::build_entropy_mode",
+    ),
+    host(
+        "H264SliceType",
+        "crate::codec::H264SliceTypePy",
+        "H264SliceType",
+        "Lorg/tstrans/codec/H264SliceType;",
+        "crate::codec::h264::build_slice_type",
+    ),
+    host(
+        "H265SliceType",
+        "crate::codec::H265SliceTypePy",
+        "H265SliceType",
+        "Lorg/tstrans/codec/H265SliceType;",
+        "crate::codec::h265::build_slice_type",
+    ),
+    host(
+        "H266SliceType",
+        "crate::codec::H266SliceTypePy",
+        "H266SliceType",
+        "Lorg/tstrans/codec/H266SliceType;",
+        "crate::codec::h266::build_slice_type",
+    ),
+    host(
+        "AacProfile",
+        "crate::codec::AacProfilePy",
+        "AacProfile",
+        "Lorg/tstrans/codec/AacProfile;",
+        "crate::codec::aac::build_profile",
+    ),
+    host(
+        "MpegVersion",
+        "crate::codec::MpegVersionPy",
+        "MpegVersion",
+        "Lorg/tstrans/codec/MpegVersion;",
+        "crate::codec::aac::build_mpeg_version",
+    ),
+    host(
+        "AacChannelLayout",
+        "crate::codec::AacChannelLayoutPy",
+        "AacChannelLayout",
+        "Lorg/tstrans/codec/AacChannelLayout;",
+        "crate::codec::aac::build_channel_layout",
+    ),
+    host(
+        "Layer",
+        "crate::codec::LayerPy",
+        "Layer",
+        "Lorg/tstrans/codec/Layer;",
+        "crate::codec::mpegaudio::build_layer",
+    ),
+    host(
+        "Version",
+        "crate::codec::VersionPy",
+        "Version",
+        "Lorg/tstrans/codec/Version;",
+        "crate::codec::mpegaudio::build_version",
+    ),
+    host(
+        "ChannelMode",
+        "crate::codec::ChannelModePy",
+        "ChannelMode",
+        "Lorg/tstrans/codec/ChannelMode;",
+        "crate::codec::mpegaudio::build_channel_mode",
+    ),
+    host(
+        "MispTimeKind",
+        "crate::codec::MispTimeKindPy",
+        "MispTimeKind",
+        "Lorg/tstrans/codec/MispTimeKind;",
+        "crate::codec::misp_time::build_kind",
+    ),
+];
+
+fn host_row(name: &str) -> &'static HostRow {
+    HOSTS.iter().find(|h| h.rust == name).expect("host row")
+}
+
+/// The path of the JVM builder of a host-typed value.
+pub fn host_jvm(name: &str) -> &'static str {
+    host_row(name).jvm
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Ty {
@@ -274,12 +515,18 @@ pub enum Ty {
     Bytes,
     Opt(Box<Ty>),
     List(Box<Ty>),
+    /// `BTreeMap<u8, T>`: a dict in Python, a `HashMap` in Java. To the host only.
+    Map(Box<Ty>),
     Record(String),
+    /// A type in [`HOSTS`].
+    Host(&'static str),
     Custom(&'static str),
 }
 
 /// What one scalar needs on each side.
 pub struct ScInfo {
+    /// The Rust spelling.
+    pub rs: &'static str,
     pub py: &'static str,
     pub java: &'static str,
     pub boxed: &'static str,
@@ -292,7 +539,7 @@ pub struct ScInfo {
 
 impl Sc {
     pub fn info(self) -> ScInfo {
-        let (_, py, java, boxed, sig, jvalue, extract, unbox) = match self {
+        let (rs, py, java, boxed, sig, jvalue, extract, unbox) = match self {
             Sc::U8 | Sc::U16 => (
                 if self == Sc::U8 { "u8" } else { "u16" },
                 "int",
@@ -353,6 +600,7 @@ impl Sc {
             ),
         };
         ScInfo {
+            rs,
             py,
             java,
             boxed,
@@ -398,6 +646,8 @@ const PATH_PREFIXES: &[&str] = &[
     "alloc::vec::",
     "core::option::",
     "std::option::",
+    "alloc::collections::",
+    "std::collections::",
 ];
 
 /// Maps a type spelling as `stringify!` wrote it. `names` are the registered
@@ -419,8 +669,18 @@ fn map_norm(s: &str, names: &[&str]) -> Result<Ty, String> {
         }
         return Ok(Ty::Opt(Box::new(t)));
     }
-    if s == "Vec<u8>" {
+    if s == "Vec<u8>" || s == "SharedBytes" || is_u8_array(s) {
         return Ok(Ty::Bytes);
+    }
+    if let Some(inner) = s
+        .strip_prefix("BTreeMap<u8,")
+        .and_then(|r| r.strip_suffix('>'))
+    {
+        let t = map_norm(inner, names)?;
+        if !matches!(t, Ty::Record(_)) {
+            return Err("a BTreeMap<u8, _> holds records".into());
+        }
+        return Ok(Ty::Map(Box::new(t)));
     }
     if let Some(inner) = s.strip_prefix("Vec<").and_then(|r| r.strip_suffix('>')) {
         let t = map_norm(inner, names)?;
@@ -439,10 +699,20 @@ fn map_norm(s: &str, names: &[&str]) -> Result<Ty, String> {
     if let Some((_, sc)) = SCALARS.iter().find(|(n, _)| *n == s) {
         return Ok(Ty::Scalar(*sc));
     }
+    if let Some(h) = HOSTS.iter().find(|h| h.rust == s) {
+        return Ok(Ty::Host(h.rust));
+    }
     if names.contains(&s) {
         return Ok(Ty::Record(s.to_string()));
     }
     Err(format!("unmapped type `{s}`"))
+}
+
+/// `[u8;4]`: a fixed byte array crosses as bytes.
+fn is_u8_array(s: &str) -> bool {
+    s.strip_prefix("[u8;")
+        .and_then(|r| r.strip_suffix(']'))
+        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// `crate::klv::imapb::ImapbSpecial` to `ImapbSpecial`, everywhere in `s`.
@@ -506,6 +776,16 @@ impl Ty {
         matches!(self, Ty::Opt(_))
     }
 
+    /// Whether a value of this type has no way back from the host: a map, a
+    /// host-typed enum, or a list or option of them.
+    pub fn is_to_host_only(&self) -> bool {
+        match self {
+            Ty::Map(_) | Ty::Host(_) => true,
+            Ty::Opt(t) | Ty::List(t) => t.is_to_host_only(),
+            _ => false,
+        }
+    }
+
     /// The Python annotation (without the `| None`).
     pub fn py_ann(&self) -> String {
         match self {
@@ -514,8 +794,98 @@ impl Ty {
             Ty::Bytes => "bytes".into(),
             Ty::Opt(t) => t.py_ann(),
             Ty::List(t) => format!("tuple[{}, ...]", t.py_ann()),
+            Ty::Map(t) => format!("Dict[int, {}]", t.py_ann()),
             Ty::Record(n) => n.clone(),
+            Ty::Host(n) => host_row(n).py.into(),
             Ty::Custom(n) => custom_row(n).py.into(),
+        }
+    }
+
+    /// The annotation in a native class's stub, in the `typing` spelling the
+    /// module's stub uses (an optional one is `Optional[…]`).
+    pub fn py_ann_native(&self) -> String {
+        match self {
+            Ty::Opt(t) => format!("Optional[{}]", t.py_ann_native()),
+            Ty::List(t) => format!("List[{}]", t.py_ann_native()),
+            Ty::Map(t) => format!("Dict[int, {}]", t.py_ann_native()),
+            Ty::Custom(n) => custom_row(n).py.into(),
+            other => other.py_ann(),
+        }
+    }
+
+    /// The Rust type of a native class's field.
+    pub fn host_rs(&self) -> String {
+        match self {
+            Ty::Scalar(s) => s.info().rs.into(),
+            Ty::Str => "String".into(),
+            Ty::Bytes => "crate::util::HostBytes".into(),
+            Ty::Opt(t) => format!("Option<{}>", t.host_rs()),
+            Ty::List(t) => format!("Vec<{}>", t.host_rs()),
+            Ty::Map(t) => format!("std::collections::BTreeMap<u8, {}>", t.host_rs()),
+            Ty::Record(n) => n.clone(),
+            Ty::Host(n) => host_row(n).py_rs.into(),
+            Ty::Custom(n) => custom_row(n).py_rs.into(),
+        }
+    }
+
+    /// Whether a native class's field of this type is `Copy`; `rec_copy`
+    /// answers for a nested record.
+    pub fn host_copy(&self, rec_copy: &dyn Fn(&str) -> bool) -> bool {
+        match self {
+            Ty::Scalar(_) | Ty::Host(_) => true,
+            Ty::Opt(t) => t.host_copy(rec_copy),
+            Ty::Record(n) => rec_copy(n),
+            Ty::Custom(n) => custom_row(n).py_copy,
+            Ty::Str | Ty::Bytes | Ty::List(_) | Ty::Map(_) => false,
+        }
+    }
+
+    /// The conversion of `e`, an expression of type `&T` where `T` is the Rust
+    /// field type, to the native class's field type. `custom` is the
+    /// hand-written converter's path for a custom field.
+    pub fn to_host(&self, e: &str, custom: Option<&str>) -> String {
+        // A method receiver needs no `&`; a scalar read needs a `*` unless
+        // the expression is an address.
+        let recv = e.strip_prefix('&').unwrap_or(e);
+        let val = match e.strip_prefix('&') {
+            Some(place) => place.to_string(),
+            None => format!("*{e}"),
+        };
+        if let Ty::Opt(inner) = self {
+            if let Some(c) = custom {
+                return format!("{c}({e})");
+            }
+            return match inner.as_ref() {
+                Ty::Scalar(_) => val,
+                Ty::Host(h) => format!("{val}.map({}::from)", host_row(h).py_rs),
+                Ty::Record(n) => format!("{recv}.as_ref().map({n}::from)"),
+                other => format!("{recv}.as_ref().map(|v| {})", other.to_host("v", None)),
+            };
+        }
+        match self {
+            Ty::Scalar(_) => val,
+            Ty::Str => format!("{recv}.clone()"),
+            Ty::Bytes => format!("crate::util::HostBytes({recv}.to_vec())"),
+            Ty::Record(n) => format!("{n}::from({e})"),
+            Ty::Host(h) => format!("{}::from({val})", host_row(h).py_rs),
+            Ty::List(inner) => match inner.as_ref() {
+                Ty::Record(n) => format!("{recv}.iter().map({n}::from).collect()"),
+                _ => format!("{recv}.clone()"),
+            },
+            Ty::Map(inner) => match inner.as_ref() {
+                Ty::Record(n) => {
+                    format!("{recv}.iter().map(|(k, v)| (*k, {n}::from(v))).collect()")
+                }
+                _ => unreachable!("a map holds records"),
+            },
+            Ty::Custom(n) => match custom {
+                Some(c) => format!("{c}({e})"),
+                None => {
+                    debug_assert!(custom_row(n).py_copy);
+                    val
+                }
+            },
+            Ty::Opt(_) => unreachable!("handled above"),
         }
     }
 
@@ -536,7 +906,9 @@ impl Ty {
             Ty::Bytes => "ByteBuffer".into(),
             Ty::Opt(t) => t.java_boxed(),
             Ty::List(t) => format!("List<{}>", t.java_boxed()),
+            Ty::Map(t) => format!("Map<Integer, {}>", t.java_boxed()),
             Ty::Record(n) => n.clone(),
+            Ty::Host(n) => host_row(n).java.into(),
             Ty::Custom(n) => custom_row(n).java.into(),
         }
     }
@@ -575,10 +947,12 @@ impl Ty {
             Ty::Bytes => "Ljava/nio/ByteBuffer;".into(),
             Ty::Opt(t) => t.sig_boxed(reg),
             Ty::List(_) => "Ljava/util/List;".into(),
+            Ty::Map(_) => "Ljava/util/Map;".into(),
             Ty::Record(n) => {
                 let pkg = lookup(reg, n).map(|e| e.java_pkg).unwrap_or("");
                 format!("L{pkg}/{n};")
             }
+            Ty::Host(n) => host_row(n).sig.into(),
             Ty::Custom(n) => custom_row(n).sig.into(),
         }
     }
@@ -613,13 +987,26 @@ fn type_default(ty: &Ty) -> Option<(String, Option<String>)> {
             Some("java.nio.ByteBuffer.allocate(0)".into()),
         ),
         Ty::List(_) => ("()".into(), Some(EMPTY_LIST.into())),
-        Ty::Opt(_) | Ty::Record(_) | Ty::Custom(_) => return None,
+        Ty::Opt(_) | Ty::Record(_) | Ty::Host(_) | Ty::Map(_) | Ty::Custom(_) => return None,
     })
+}
+
+/// The record a type holds when that record has a host name of its own.
+fn renamed_record<'a>(reg: &'a [Entry], t: &'a Ty) -> Option<&'a str> {
+    match t {
+        Ty::Opt(i) | Ty::List(i) | Ty::Map(i) => renamed_record(reg, i),
+        Ty::Record(n) => lookup(reg, n)
+            .filter(|e| !e.host_name.is_empty())
+            .map(|_| n.as_str()),
+        _ => None,
+    }
 }
 
 /// Resolves every field of a record against the registry.
 pub fn resolve<'a>(reg: &[Entry], schema: &'a RecordSchema) -> Result<Vec<Fld<'a>>, String> {
     let names: Vec<&str> = reg.iter().map(|e| e.schema.name).collect();
+    // A native class has no constructor defaults to derive.
+    let native = lookup(reg, schema.name).is_some_and(Entry::is_native);
     let mut out = Vec::new();
     let mut defaulted: Option<&str> = None;
     for f in schema.fields {
@@ -629,6 +1016,13 @@ pub fn resolve<'a>(reg: &[Entry], schema: &'a RecordSchema) -> Result<Vec<Fld<'a
             FieldMark::Custom => (Some(map_custom(f.ty).map_err(ctx)?), true),
             _ => (Some(map(f.ty, &names).map_err(ctx)?), false),
         };
+        if let Some(t) = &ty {
+            if let Some(n) = renamed_record(reg, t) {
+                return Err(ctx(format!(
+                    "`{n}` has another name in the hosts, so no record can hold it"
+                )));
+            }
+        }
         let mut py_default = None;
         let mut java_default = None;
         if let Some(Ty::Opt(inner)) = &ty {
@@ -639,7 +1033,7 @@ pub fn resolve<'a>(reg: &[Entry], schema: &'a RecordSchema) -> Result<Vec<Fld<'a
                 ));
             }
         }
-        if let Some(t) = &ty {
+        if let Some(t) = ty.as_ref().filter(|_| !native) {
             if t.is_opt() {
                 py_default = Some("None".to_string());
             } else if let Ty::Custom(n) = t {

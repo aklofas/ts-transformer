@@ -60,7 +60,9 @@ fn py_val(
             pre.push(items);
             format!("PyTuple::new_bound(py, {var}_items)")
         }
-        Ty::Opt(_) | Ty::Custom(_) => unreachable!("handled by the caller"),
+        Ty::Opt(_) | Ty::Custom(_) | Ty::Map(_) | Ty::Host(_) => {
+            unreachable!("refused or handled by the caller")
+        }
     }
 }
 
@@ -78,7 +80,7 @@ fn to_py(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
     ));
     o.push_str(&format!(
         "    let cls = module.getattr(intern!(py, \"{}\"))?;\n",
-        s.name
+        e.name()
     ));
     o.push_str("    let kwargs = PyDict::new_bound(py);\n");
     for f in flds.iter().filter(|f| f.ty.is_some()) {
@@ -189,7 +191,19 @@ fn from_py(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
 
 /// The converter text for one record, per its direction.
 pub fn record_pair(reg: &[Entry], e: &Entry) -> Result<String, String> {
+    if e.is_native() {
+        return crate::emit_pyclass::class(reg, e);
+    }
     let flds = resolve(reg, &e.schema)?;
+    if let Some(f) = flds
+        .iter()
+        .find(|f| !f.custom && f.ty.as_ref().is_some_and(Ty::is_to_host_only))
+    {
+        return Err(format!(
+            "{}.{}: a map or a host-typed field is held by a native class only",
+            e.schema.name, f.spec.name
+        ));
+    }
     let mut parts = Vec::new();
     if e.direction.crosses_out() {
         parts.push(to_py(reg, e, &flds));
@@ -203,6 +217,9 @@ pub fn record_pair(reg: &[Entry], e: &Entry) -> Result<String, String> {
 /// The whole `generated/<family>.rs` text.
 pub fn file(reg: &[Entry], family: &str) -> Result<String, String> {
     let mine: Vec<&Entry> = reg.iter().filter(|e| e.family == family).collect();
+    if mine.iter().any(|e| e.is_native()) {
+        return crate::emit_pyclass::file(reg, family);
+    }
     let mut body = Vec::new();
     let mut uses_bytes = false;
     let mut uses_tuple = false;

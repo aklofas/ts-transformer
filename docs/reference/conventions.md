@@ -501,6 +501,45 @@ a required field only: its `build_<record>_<field>` returns that primitive
 The Python annotation of a custom enum field is `<Enum> | int | None`: the
 enum when the code point is known, the raw `int` when it is not.
 
+### Native Python classes
+
+A record that only crosses to the host and that Python holds as a class of
+its own, rather than a dataclass, is registered as a **native class**. The
+generator writes `bindings/python/src/generated/<family>.rs`: a
+`#[pyclass(frozen, get_all)]` struct of host-typed copies, built with
+`From<&Rust>`, with the field docs as the getters' docstrings, and a
+`register` function that adds every class of the family to the module. The
+class keeps no Rust value, so a function that needs the Rust record back (a
+slice-header parser given an SPS) re-parses the raw bytes the class carries.
+A family holds native classes or dataclasses, not both. The stub entry is a
+block between the markers of the `.pyi`; it ends inside the class, so
+properties the module adds at import time follow the end marker. A native
+class has no `.py` block: the module re-exports it from the extension.
+
+A native field holds:
+
+- a scalar, `String` or `Option<…>` as the same Rust type;
+- bytes (`Vec<u8>`, `SharedBytes`, `[u8; N]`) as `crate::util::HostBytes`,
+  which the getter turns into a Python `bytes` (a bare `Vec<u8>` would be a
+  `list`);
+- a nested record by value (a getter returns a fresh object, as the hand
+  getters did), `Vec<Record>` as a list and `BTreeMap<u8, Record>` as a dict
+  (a `HashMap` in Java);
+- an enum the bindings already convert by hand as its host type, through a row
+  of `HOSTS` in `typemap.rs` (the Python class, the Java type and the JVM
+  builder). These cross to the host only;
+- a `@[custom]` field through `<record>_<field>_to_py(&Rust) -> Host` (no `py`
+  argument, no `PyResult`), unless its row says the host takes the Rust value
+  as it is.
+
+What a registry row adds beyond the fields: `host_name` (the Rust
+`AdtsFrameOwned` is `AdtsFrame` to the hosts), `py_ctor` (a constructor taking
+every crossing field, in order, all required), `py_eq` (`==` by field),
+`py_repr` (a `format!` string and its arguments; without it `__repr__` lists
+the fields), `py_skip` (a field Java has and Python does not) and `py_extras`:
+methods and properties the fields do not give, each calling the hand-written
+`crate::custom::<record>_<name>(self, …)` and declared in the stub.
+
 The generator is never its own oracle: byte-level expectations come from the
 hand-built spec bytes and the hash-pinned fixtures, not from generated text.
 

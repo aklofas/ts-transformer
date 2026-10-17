@@ -23,6 +23,47 @@ impl Direction {
     }
 }
 
+/// How the Python host type of a record is built.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PyShape {
+    /// A frozen dataclass in the module's `.py` file, converted through
+    /// `<snake>_to_py` / `<snake>_from_py`.
+    Dataclass,
+    /// A native class: a `#[pyclass(frozen, get_all)]` struct of host-typed
+    /// copies, generated into `bindings/python/src/generated/<family>.rs`.
+    /// Rust to host only.
+    Native,
+}
+
+/// How a hand-written method or property of a native class is called.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)] // the first native family registers its extras
+pub enum ExtraKind {
+    /// A read-only property.
+    Getter,
+    /// An instance method.
+    Method,
+    /// A static method returning the class.
+    Static,
+}
+
+/// A method or property of a native class that the record's fields do not
+/// give: the generated class declares it and calls the hand-written
+/// `crate::custom::<snake>_<name>` for the body. The stub carries the
+/// signature.
+pub struct PyExtra {
+    pub name: &'static str,
+    pub kind: ExtraKind,
+    /// `(name, Rust type, Python annotation)` of each parameter after `self`.
+    pub params: &'static [(&'static str, &'static str, &'static str)],
+    /// The Rust return type (`Self` for a static method).
+    pub ret_rs: &'static str,
+    /// The Python return annotation.
+    pub ret_py: &'static str,
+    /// The doc lines of the method, as written after `///`.
+    pub doc: &'static str,
+}
+
 /// One registered record.
 pub struct Entry {
     /// The generated-file family, e.g. `st0601`.
@@ -42,6 +83,76 @@ pub struct Entry {
     /// The interface the Java record implements, `""` for none.
     pub java_implements: &'static str,
     pub schema: RecordSchema,
+    /// The Python host type.
+    pub shape: PyShape,
+    /// The name of the host classes when it is not the Rust name (the Rust
+    /// `AdtsFrameOwned` is `AdtsFrame` to a host), `""` for the Rust name.
+    /// A renamed record cannot be held by another record.
+    pub host_name: &'static str,
+    /// A native class takes its crossing fields as constructor arguments,
+    /// all required, in declaration order.
+    pub py_ctor: bool,
+    /// A native class compares by field (`==`); the Rust record needs no
+    /// `PartialEq`, the generated struct derives it.
+    pub py_eq: bool,
+    /// Rust fields that cross to Java and not to Python: the native class
+    /// holds none of them (an `extra` property of the same name replaces it).
+    pub py_skip: &'static [&'static str],
+    /// A native class's `__repr__` as a `format!` string and its argument
+    /// expressions (`self` is the class); `None` lists the fields.
+    pub py_repr: Option<(&'static str, &'static [&'static str])>,
+    pub py_extras: &'static [PyExtra],
+}
+
+impl Entry {
+    /// A record with no native-class options: a dataclass crossing in
+    /// `direction`.
+    pub fn new(
+        family: &'static str,
+        py_module: &'static str,
+        java_pkg: &'static str,
+        direction: Direction,
+        rust_path: &'static str,
+        java_implements: &'static str,
+        schema: RecordSchema,
+    ) -> Entry {
+        Entry {
+            family,
+            py_module,
+            java_pkg,
+            direction,
+            jvm: true,
+            rust_path,
+            java_implements,
+            schema,
+            shape: PyShape::Dataclass,
+            host_name: "",
+            py_ctor: false,
+            py_eq: false,
+            py_skip: &[],
+            py_repr: None,
+            py_extras: &[],
+        }
+    }
+
+    /// The name the host classes and files go by.
+    pub fn name(&self) -> &'static str {
+        if self.host_name.is_empty() {
+            self.schema.name
+        } else {
+            self.host_name
+        }
+    }
+
+    pub fn is_native(&self) -> bool {
+        self.shape == PyShape::Native
+    }
+
+    /// The Python name of a Rust field: `None` when it does not cross to
+    /// Python.
+    pub fn py_crosses(&self, f: &FieldSpec) -> bool {
+        f.mark != FieldMark::Skip && !self.py_skip.contains(&f.name)
+    }
 }
 
 /// One record of a family: both directions, the `tstrans.klv` module and the
@@ -52,16 +163,15 @@ fn klv(
     java_implements: &'static str,
     schema: RecordSchema,
 ) -> Entry {
-    Entry {
+    Entry::new(
         family,
-        py_module: "tstrans.klv",
-        java_pkg: "org/tstrans/klv",
-        direction: Direction::Both,
-        jvm: true,
+        "tstrans.klv",
+        "org/tstrans/klv",
+        Direction::Both,
         rust_path,
         java_implements,
         schema,
-    }
+    )
 }
 
 /// Every generated record. A record declared with `binding_record!` and

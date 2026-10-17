@@ -11,6 +11,8 @@ mod emit_java;
 mod emit_jvm_rs;
 #[path = "tools/print_records/emit_py.rs"]
 mod emit_py;
+#[path = "tools/print_records/emit_pyclass.rs"]
+mod emit_pyclass;
 #[path = "tools/print_records/emit_pyi.rs"]
 mod emit_pyi;
 #[path = "tools/print_records/schema.rs"]
@@ -22,7 +24,10 @@ mod write;
 
 use std::path::{Path, PathBuf};
 
+use std::collections::BTreeMap;
+
 use schema::{Direction, Entry};
+use tst_core::codec::ChromaFormat;
 use tst_core::klv::st0601::WavelengthRecord;
 use tst_core::klv::universal_label::UniversalLabel;
 
@@ -86,6 +91,42 @@ tst_core::binding_record! {
     }
 }
 
+tst_core::binding_record! {
+    /// A small value held by a native class.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct LeafFixture {
+        /// The numerator.
+        pub num: u32,
+        /// The denominator.
+        pub den: u32,
+    }
+}
+
+tst_core::binding_record! {
+    /// A parsed header held by a native class.
+    ///
+    /// Every shape of field a native class holds.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct NativeFixture {
+        /// Plain scalar.
+        pub id: u8,
+        pub name: String,
+        pub flag: bool,
+        /// The original bytes.
+        pub raw: Vec<u8>,
+        pub header: [u8; 4],
+        pub chroma: ChromaFormat,
+        pub rate: Option<LeafFixture>,
+        pub count: Option<u32>,
+        pub leaves: Vec<LeafFixture>,
+        pub by_id: BTreeMap<u8, LeafFixture>,
+        @[custom] pub size: Option<(u32, u32)>,
+        @[skip] pub scratch: u8,
+        pub level: u8,
+    }
+}
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -105,16 +146,15 @@ fn parses(text: &str) {
 }
 
 fn entry(schema: tst_core::binding_schema::RecordSchema, direction: Direction) -> Entry {
-    Entry {
-        family: "test",
-        py_module: "tstrans.klv",
-        java_pkg: "org/tstrans/klv",
+    Entry::new(
+        "test",
+        "tstrans.klv",
+        "org/tstrans/klv",
         direction,
-        jvm: true,
-        rust_path: schema.rust_path,
-        java_implements: "",
+        schema.rust_path,
+        "",
         schema,
-    }
+    )
 }
 
 /// The pilot plus the fixtures, as one registry.
@@ -878,15 +918,20 @@ fn no_rust_only_text_reaches_a_host_doc() {
     for e in &reg {
         let n = e.schema.name;
         let java = emit_java::block(&reg, e).unwrap();
-        let py = emit_pyi::py_block(&reg, e).unwrap();
         // The Javadoc is the text above the record header; the docstring is
-        // the text between the first two triple quotes.
+        // the text between the first two triple quotes, or for a native
+        // class the doc comments that become its `__doc__`.
         let javadoc: String = java
             .lines()
             .take_while(|l| !l.starts_with("public record"))
             .collect::<Vec<_>>()
             .join("\n");
-        let docstring = py.split("\"\"\"").nth(1).unwrap_or("").to_string();
+        let docstring = if e.is_native() {
+            emit_pyclass::docs(&reg, e).unwrap()
+        } else {
+            let py = emit_pyi::py_block(&reg, e).unwrap();
+            py.split("\"\"\"").nth(1).unwrap_or("").to_string()
+        };
         for (host, doc) in [("Java", &javadoc), ("Python", &docstring)] {
             for bad in rust_only {
                 if doc.contains(bad) {
@@ -965,10 +1010,18 @@ fn every_registered_record_renders_every_target() {
         let jvm = emit_jvm_rs::record_pair(&reg, e).unwrap_or_else(|m| panic!("{n}: {m}"));
         parses(&py);
         parses(&jvm);
-        emit_pyi::py_block(&reg, e).unwrap_or_else(|m| panic!("{n}: {m}"));
-        emit_pyi::pyi_block(&reg, e).unwrap_or_else(|m| panic!("{n}: {m}"));
+        if e.is_native() {
+            emit_pyclass::pyi_block(&reg, e).unwrap_or_else(|m| panic!("{n}: {m}"));
+        } else {
+            emit_pyi::py_block(&reg, e).unwrap_or_else(|m| panic!("{n}: {m}"));
+            emit_pyi::pyi_block(&reg, e).unwrap_or_else(|m| panic!("{n}: {m}"));
+        }
         let java = emit_java::block(&reg, e).unwrap_or_else(|m| panic!("{n}: {m}"));
-        assert!(java.contains(&format!("public record {n}(")), "{n}: {java}");
+        let host = e.name();
+        assert!(
+            java.contains(&format!("public record {host}(")),
+            "{n}: {java}"
+        );
         // The reader reserves the same local references as the builder.
         let ways = usize::from(e.direction.crosses_out()) + usize::from(e.direction.crosses_in());
         assert_eq!(
@@ -986,11 +1039,12 @@ fn every_registered_record_renders_every_target() {
         .count();
     let jvm_records = reg.iter().filter(|e| e.jvm).count();
     // One Python converter file per family, one JVM file per family that has
-    // a JVM record, the `.py` and `.pyi` blocks per record and a Java block
-    // per JVM record.
+    // a JVM record, the `.py` and `.pyi` blocks per dataclass (the `.pyi`
+    // block only for a native class) and a Java block per JVM record.
+    let py_blocks: usize = reg.iter().map(|e| if e.is_native() { 1 } else { 2 }).sum();
     assert_eq!(
         targets.len(),
-        families.len() + jvm_families + 2 * reg.len() + jvm_records
+        families.len() + jvm_families + py_blocks + jvm_records
     );
 }
 
@@ -1524,4 +1578,344 @@ fn a_python_only_record_has_no_java_or_jvm_target() {
     );
     // Its Python text still renders.
     emit_py::file(&reg, "pyonly").unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Native Python classes
+// ---------------------------------------------------------------------------
+
+use schema::{ExtraKind, PyExtra, PyShape};
+
+fn native(schema: tst_core::binding_schema::RecordSchema) -> Entry {
+    let mut e = Entry::new(
+        "native_test",
+        "tstrans.codec",
+        "org/tstrans/codec",
+        Direction::ToHost,
+        schema.rust_path,
+        "",
+        schema,
+    );
+    e.shape = PyShape::Native;
+    e
+}
+
+const LEAF_EXTRAS: &[PyExtra] = &[
+    PyExtra {
+        name: "as_float",
+        kind: ExtraKind::Method,
+        params: &[],
+        ret_rs: "f64",
+        ret_py: "float",
+        doc: " The ratio as a float.",
+    },
+    PyExtra {
+        name: "zero",
+        kind: ExtraKind::Static,
+        params: &[("den", "u32", "int")],
+        ret_rs: "Self",
+        ret_py: "LeafFixture",
+        doc: "",
+    },
+    PyExtra {
+        name: "ratio",
+        kind: ExtraKind::Getter,
+        params: &[],
+        ret_rs: "u32",
+        ret_py: "int",
+        doc: "",
+    },
+];
+
+fn native_reg() -> Vec<Entry> {
+    let mut r = reg();
+    let mut leaf = native(LeafFixture::BINDING_SCHEMA);
+    leaf.py_ctor = true;
+    leaf.py_eq = true;
+    leaf.py_extras = LEAF_EXTRAS;
+    leaf.py_repr = Some(("Leaf({}/{})", &["self.num", "self.den"]));
+    let mut big = native(NativeFixture::BINDING_SCHEMA);
+    big.host_name = "NativeHost";
+    big.py_skip = &["level"];
+    r.push(leaf);
+    r.push(big);
+    r
+}
+
+#[test]
+fn a_native_class_is_a_frozen_get_all_struct_of_host_copies() {
+    let reg = native_reg();
+    let raw = emit_pyclass::file(&reg, "native_test").unwrap();
+    parses(&raw);
+    // The small value: constructor, comparison, hand-written methods, repr.
+    assert!(
+        raw.contains(
+            r#"#[pyclass(frozen, get_all, eq, name = "LeafFixture", module = "tstrans.codec")]"#
+        ),
+        "{raw}"
+    );
+    assert!(
+        raw.contains("#[derive(Debug, Clone, Copy, PartialEq, Eq)]"),
+        "{raw}"
+    );
+    assert!(raw.contains("#[pyo3(signature = (num, den))]"), "{raw}");
+    assert!(raw.contains("fn new(num: u32, den: u32) -> Self"), "{raw}");
+    assert!(
+        raw.contains(
+            "fn as_float(&self) -> f64 {\n        crate::custom::leaf_fixture_as_float(self)"
+        ),
+        "{raw}"
+    );
+    assert!(
+        raw.contains("#[staticmethod]\n    fn zero(den: u32) -> Self {\n        crate::custom::leaf_fixture_zero(den)"),
+        "{raw}"
+    );
+    assert!(
+        raw.contains("#[getter]\n    fn ratio(&self) -> u32"),
+        "{raw}"
+    );
+    assert!(
+        raw.contains("\"Leaf({}/{})\",\n            self.num,\n            self.den"),
+        "{raw}"
+    );
+    // The big one: the host name, host types, no constructor, no Copy.
+    assert!(
+        raw.contains(
+            r#"#[pyclass(frozen, get_all, name = "NativeHost", module = "tstrans.codec")]"#
+        ),
+        "{raw}"
+    );
+    assert!(
+        raw.contains("#[derive(Debug, Clone)]\npub struct NativeHost {"),
+        "{raw}"
+    );
+    for field in [
+        "pub id: u8,",
+        "pub name: String,",
+        "pub raw: crate::util::HostBytes,",
+        "pub header: crate::util::HostBytes,",
+        "pub chroma: crate::codec::ChromaFormatPy,",
+        "pub rate: Option<LeafFixture>,",
+        "pub count: Option<u32>,",
+        "pub leaves: Vec<LeafFixture>,",
+        "pub by_id: std::collections::BTreeMap<u8, LeafFixture>,",
+        "pub size: (u32, u32),",
+    ] {
+        // `size` is custom: its host type is the CUSTOM row's, optional.
+        if field.starts_with("pub size") {
+            assert!(raw.contains("pub size: Option<(u32, u32)>,"), "{raw}");
+        } else {
+            assert!(raw.contains(field), "{field}\n{raw}");
+        }
+    }
+    assert!(
+        !raw.contains("pub scratch"),
+        "a skipped field is not held\n{raw}"
+    );
+    assert!(
+        !raw.contains("pub level"),
+        "a py_skip field is not held\n{raw}"
+    );
+    assert!(!raw.contains("fn new(id"), "{raw}");
+    assert!(raw.contains("impl From<&"), "{raw}");
+    assert!(raw.contains("m.add_class::<LeafFixture>()?;"), "{raw}");
+    assert!(raw.contains("m.add_class::<NativeHost>()?;"), "{raw}");
+}
+
+#[test]
+fn a_native_class_converts_each_shape_of_field_from_the_rust_record() {
+    let reg = native_reg();
+    let raw = emit_pyclass::file(&reg, "native_test").unwrap();
+    for want in [
+        "id: r.id,",
+        "name: r.name.clone(),",
+        "raw: crate::util::HostBytes(r.raw.to_vec()),",
+        "header: crate::util::HostBytes(r.header.to_vec()),",
+        "chroma: crate::codec::ChromaFormatPy::from(r.chroma),",
+        "rate: r.rate.as_ref().map(LeafFixture::from),",
+        "count: r.count,",
+        "leaves: r.leaves.iter().map(LeafFixture::from).collect(),",
+        "by_id: r.by_id.iter().map(|(k, v)| (*k, LeafFixture::from(v))).collect(),",
+        "size: crate::custom::native_fixture_size_to_py(&r.size),",
+    ] {
+        assert!(raw.contains(want), "{want}\n{raw}");
+    }
+}
+
+#[test]
+fn a_native_class_stub_lists_the_constructor_properties_and_extras() {
+    let reg = native_reg();
+    let leaf = emit_pyclass::pyi_block(&reg, named(&reg, "LeafFixture")).unwrap();
+    assert_eq!(
+        leaf,
+        "@final\nclass LeafFixture:\n\
+         \x20   def __new__(cls, num: int, den: int) -> LeafFixture: ...\n\
+         \x20   @property\n    def num(self) -> int: ...\n\
+         \x20   @property\n    def den(self) -> int: ...\n\
+         \x20   def as_float(self) -> float: ...\n\
+         \x20   @staticmethod\n    def zero(den: int) -> LeafFixture: ...\n\
+         \x20   @property\n    def ratio(self) -> int: ...\n"
+    );
+    let big = emit_pyclass::pyi_block(&reg, named(&reg, "NativeFixture")).unwrap();
+    assert!(big.starts_with("@final\nclass NativeHost:\n"), "{big}");
+    for want in [
+        "def raw(self) -> bytes: ...",
+        "def chroma(self) -> ChromaFormat: ...",
+        "def rate(self) -> Optional[LeafFixture]: ...",
+        "def count(self) -> Optional[int]: ...",
+        "def leaves(self) -> List[LeafFixture]: ...",
+        "def by_id(self) -> Dict[int, LeafFixture]: ...",
+        "def size(self) -> Optional[Tuple[int, int]]: ...",
+    ] {
+        assert!(big.contains(want), "{want}\n{big}");
+    }
+    assert!(!big.contains("scratch") && !big.contains("level"), "{big}");
+    assert!(!big.contains("__new__"), "{big}");
+}
+
+#[test]
+fn a_native_record_has_a_stub_block_and_no_dataclass_block() {
+    let reg = native_reg();
+    let targets = write::targets(&root(), &reg).unwrap();
+    let mine: Vec<String> = targets
+        .iter()
+        .map(|t| t.path.display().to_string())
+        .filter(|p| p.contains("NativeHost") || p.contains("native_test"))
+        .collect();
+    assert!(
+        mine.iter()
+            .any(|p| p.ends_with("bindings/python/src/generated/native_test.rs")),
+        "{mine:?}"
+    );
+    assert!(
+        mine.iter()
+            .any(|p| p.ends_with("org/tstrans/codec/NativeHost.java")),
+        "{mine:?}"
+    );
+    let codec_py: Vec<&write::Target> = targets
+        .iter()
+        .filter(|t| t.path.ends_with("bindings/python/python/tstrans/codec.py"))
+        .collect();
+    assert!(
+        codec_py
+            .iter()
+            .all(|t| !matches!(&t.kind, write::Kind::Block { begin, .. } if begin.contains("NativeHost") || begin.contains("LeafFixture"))),
+        "a native class has no `.py` block"
+    );
+    let stub = targets
+        .iter()
+        .find(|t| {
+            t.path.ends_with("bindings/python/python/tstrans/codec.pyi")
+                && matches!(&t.kind, write::Kind::Block { begin, .. } if begin.contains("(NativeHost)"))
+        })
+        .expect("a stub block named for the host class");
+    assert!(stub.body.starts_with("@final\nclass NativeHost:"));
+}
+
+#[test]
+fn a_map_and_a_host_type_are_built_in_java_and_refused_the_other_way() {
+    let reg = native_reg();
+    let e = named(&reg, "NativeFixture");
+    let jvm = emit_jvm_rs::record_pair(&reg, e).unwrap();
+    parses(&jvm);
+    // Twelve crossing components: built through the host-named Builder.
+    assert!(
+        jvm.contains(r#""org/tstrans/codec/NativeHost$Builder""#),
+        "{jvm}"
+    );
+    assert!(
+        jvm.contains("crate::codec::shared::build_chroma_format(env, r.chroma)"),
+        "{jvm}"
+    );
+    assert!(
+        jvm.contains("map_err(|()| jni::errors::Error::JavaException)?"),
+        "{jvm}"
+    );
+    assert!(jvm.contains(r#""java/util/HashMap""#), "{jvm}");
+    assert!(
+        jvm.contains(r#""(Ljava/util/Map;)Lorg/tstrans/codec/NativeHost$Builder;""#),
+        "{jvm}"
+    );
+    assert!(
+        jvm.contains("crate::custom::build_native_fixture_size(env, &r.size)"),
+        "{jvm}"
+    );
+    assert!(!jvm.contains("read_native_fixture"), "{jvm}");
+    let java = emit_java::block(&reg, e).unwrap();
+    assert!(java.contains("Map<Integer, LeafFixture> byId"), "{java}");
+    assert!(java.contains("ChromaFormat chroma"), "{java}");
+    assert!(java.contains("public record NativeHost("), "{java}");
+    // A record that also crosses in has no way to read a map or an enum.
+    let mut both = native_reg();
+    let i = both
+        .iter()
+        .position(|x| x.schema.name == "NativeFixture")
+        .unwrap();
+    both[i].direction = Direction::Both;
+    let err = emit_jvm_rs::record_pair(&both, &both[i]).unwrap_err();
+    assert!(
+        err.contains("NativeFixture.chroma") && err.contains("only crosses to the host"),
+        "{err}"
+    );
+}
+
+tst_core::binding_record! {
+    /// A record with an enum the hosts hold as a class.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct HostFixture {
+        pub chroma: ChromaFormat,
+        pub n: u8,
+    }
+}
+
+#[test]
+fn a_dataclass_refuses_a_map_or_a_host_typed_field() {
+    let mut reg = reg();
+    reg.push(entry(HostFixture::BINDING_SCHEMA, Direction::ToHost));
+    let e = named(&reg, "HostFixture");
+    let err = emit_py::record_pair(&reg, e).unwrap_err();
+    assert!(
+        err.contains("HostFixture.chroma") && err.contains("native class only"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_native_struct_holds_the_crossing_fields_and_no_others() {
+    let reg = native_reg();
+    let raw = emit_pyclass::file(&reg, "native_test").unwrap();
+    for (name, held) in [("LeafFixture", 2), ("NativeHost", 11)] {
+        // The struct body: between its `pub struct` line and the closing brace.
+        let from = raw.find(&format!("pub struct {name} {{")).unwrap();
+        let body = &raw[from..from + raw[from..].find("\n}\n").unwrap()];
+        assert_eq!(body.matches("\n    pub ").count(), held, "{name}\n{body}");
+    }
+    // Every held field is read in the conversion, one line each.
+    let at = raw
+        .find("impl From<&print_records_emit::NativeFixture> for NativeHost")
+        .unwrap();
+    let conv = raw[at..].split("\n}\n").next().unwrap();
+    let assigned = conv
+        .lines()
+        .filter(|l| l.starts_with("            ") && l.trim_start().contains(": "))
+        .count();
+    assert_eq!(assigned, 11, "{conv}");
+}
+
+#[test]
+fn a_renamed_record_cannot_be_held_and_py_skip_must_name_a_field() {
+    // `NativeHost` is `NativeFixture` to the hosts: no other record holds it.
+    let mut reg = native_reg();
+    let mut holder = native(OptFixture::BINDING_SCHEMA);
+    holder.family = "other";
+    let _ = &mut holder;
+    reg.push(holder);
+    assert!(emit_pyclass::file(&reg, "other").is_ok());
+    let i = reg
+        .iter()
+        .position(|x| x.schema.name == "NativeFixture")
+        .unwrap();
+    reg[i].py_skip = &["nope"];
+    let err = emit_pyclass::file(&reg, "native_test").unwrap_err();
+    assert!(err.contains("py_skip names no field `nope`"), "{err}");
 }

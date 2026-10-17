@@ -18,6 +18,8 @@ mod emit_java;
 mod emit_jvm_rs;
 #[path = "print_records/emit_py.rs"]
 mod emit_py;
+#[path = "print_records/emit_pyclass.rs"]
+mod emit_pyclass;
 #[path = "print_records/emit_pyi.rs"]
 mod emit_pyi;
 #[path = "print_records/schema.rs"]
