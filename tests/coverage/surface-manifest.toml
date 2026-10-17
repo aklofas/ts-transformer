@@ -4086,3 +4086,68 @@ owning_tests = ["crates/tst-binding-gen/tests/url_vocabulary.rs", "crates/tst-sr
 bindings = ["c:n/a(Rust config merge; bindings apply keyword settings, then the URL, in their own glue)", "python:n/a(Rust config merge; bindings apply keyword settings, then the URL, in their own glue)", "java:n/a(Rust config merge; bindings apply keyword settings, then the URL, in their own glue)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
+
+# --- Transport::on_video_au, Segmented and the end-reason recorders ---------
+# capability: per-AU transport hook (Transport::on_video_au): Rust only — a
+# provided method on the Stable Transport trait that MuxSender calls once per
+# video AU before the push; MuxPublisher's Segmented transport answers it with
+# the keyframe cut. No binding exposes a Transport object, so no twin exists.
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::transport::Transport::on_video_au"
+owning_tests = ["crates/tst-pipeline/src/mux_publisher.rs"]
+bindings = ["c:n/a(Rust transport hook; the bindings hold concrete publishers, never a Transport)", "python:n/a(Rust transport hook; the bindings hold concrete publishers, never a Transport)", "java:n/a(Rust transport hook; the bindings hold concrete publishers, never a Transport)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[exempt]]
+item = "tst_core::Transport::on_video_au"
+reason = "top-level re-export of tst_core::transport::Transport::on_video_au; see that entry for coverage"
+
+[[exempt]]
+item = "tst_pipeline::mux_publisher::Segmented"
+reason = "the transport in MuxPublisher's generic position (MuxSender<Segmented<P>>); public only because the newtype's inner type is, constructed by MuxPublisher alone — every binding holds MuxPublisher<HlsPublisher>, whose rows carry the coverage"
+
+# capability: end reason on the plain receive transports (end_reason_handle):
+# Rust, Python tstrans.shells.Receiver.end_reason / DemuxReceiver.end_reason,
+# JVM org.tstrans.shells.Receiver.endReason / DemuxReceiver.endReason — the
+# shells read the recorder; the C plain receivers expose no getter (see
+# docs/project/deferred-features.md, "End reason on the managed byte receivers").
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::transport::SrtTransport::end_reason_handle"
+owning_tests = ["crates/tst-srt/tests/net_loopback.rs"]
+bindings = ["c:n/a(the C plain receivers expose no end-reason getter; deferred-features row)", "python:tstrans.shells.Receiver.end_reason", "java:org.tstrans.shells.Receiver.endReason", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-udp"
+item = "tst_udp::recv::UdpRecvTransport::end_reason_handle"
+owning_tests = ["crates/tst-udp/tests/net_cancel.rs"]
+bindings = ["c:n/a(the C plain receivers expose no end-reason getter; deferred-features row)", "python:tstrans.shells.Receiver.end_reason", "java:org.tstrans.shells.Receiver.endReason", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-tcp"
+item = "tst_tcp::transport::TcpTransport::end_reason_handle"
+owning_tests = ["crates/tst-tcp/tests/net_loopback.rs"]
+bindings = ["c:n/a(the C plain receivers expose no end-reason getter; deferred-features row)", "python:tstrans.shells.Receiver.end_reason", "java:org.tstrans.shells.Receiver.endReason", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rist"
+item = "tst_rist::recv::RistRecvTransport::end_reason_handle"
+owning_tests = ["crates/tst-rist/tests/net_cancel.rs"]
+bindings = ["c:n/a(the C plain receivers expose no end-reason getter; deferred-features row)", "python:tstrans.shells.Receiver.end_reason", "java:org.tstrans.shells.Receiver.endReason", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
