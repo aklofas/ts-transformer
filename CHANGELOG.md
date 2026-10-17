@@ -280,6 +280,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before any segment is cut, so a rejected call leaves the segment unchanged,
   and the tracing span is named `mux_sender` because the shell now runs inside
   the sender's span.
+- `receiver::sync::SyncState::Verify` no longer carries a `count` field: the confirmation count lives in `tst_core::mpegts::sync::TsSync`, the one sync-candidate rule the framer, the receiver and the demuxer now share (one rule instead of three copies).
 
 ### Changed — tst-srt (BREAKING)
 
