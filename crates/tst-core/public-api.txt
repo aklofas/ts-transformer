@@ -7353,6 +7353,7 @@ pub fn tst_core::transport::Transport::cancel_handle(&self) -> core::option::Opt
 pub fn tst_core::transport::Transport::close(&mut self)
 pub fn tst_core::transport::Transport::is_alive(&self) -> bool
 pub fn tst_core::transport::Transport::max_payload(&self) -> usize
+pub fn tst_core::transport::Transport::on_video_au(&mut self, tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<bool, tst_core::transport::TransportError>
 pub fn tst_core::transport::Transport::send_bytes(&mut self, &[u8]) -> core::result::Result<(), tst_core::transport::TransportError>
 pub fn tst_core::transport::Transport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl<T: tst_core::transport::Transport + ?core::marker::Sized> tst_core::transport::Transport for alloc::boxed::Box<T>
@@ -7361,6 +7362,7 @@ pub fn alloc::boxed::Box<T>::cancel_handle(&self) -> core::option::Option<alloc:
 pub fn alloc::boxed::Box<T>::close(&mut self)
 pub fn alloc::boxed::Box<T>::is_alive(&self) -> bool
 pub fn alloc::boxed::Box<T>::max_payload(&self) -> usize
+pub fn alloc::boxed::Box<T>::on_video_au(&mut self, tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<bool, tst_core::transport::TransportError>
 pub fn alloc::boxed::Box<T>::send_bytes(&mut self, &[u8]) -> core::result::Result<(), tst_core::transport::TransportError>
 pub fn alloc::boxed::Box<T>::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 pub trait tst_core::transport::TransportCancel: core::marker::Send + core::marker::Sync
@@ -8262,6 +8264,7 @@ pub fn tst_core::Transport::cancel_handle(&self) -> core::option::Option<alloc::
 pub fn tst_core::Transport::close(&mut self)
 pub fn tst_core::Transport::is_alive(&self) -> bool
 pub fn tst_core::Transport::max_payload(&self) -> usize
+pub fn tst_core::Transport::on_video_au(&mut self, tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<bool, tst_core::transport::TransportError>
 pub fn tst_core::Transport::send_bytes(&mut self, &[u8]) -> core::result::Result<(), tst_core::transport::TransportError>
 pub fn tst_core::Transport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl<T: tst_core::transport::Transport + ?core::marker::Sized> tst_core::transport::Transport for alloc::boxed::Box<T>
@@ -8270,6 +8273,7 @@ pub fn alloc::boxed::Box<T>::cancel_handle(&self) -> core::option::Option<alloc:
 pub fn alloc::boxed::Box<T>::close(&mut self)
 pub fn alloc::boxed::Box<T>::is_alive(&self) -> bool
 pub fn alloc::boxed::Box<T>::max_payload(&self) -> usize
+pub fn alloc::boxed::Box<T>::on_video_au(&mut self, tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<bool, tst_core::transport::TransportError>
 pub fn alloc::boxed::Box<T>::send_bytes(&mut self, &[u8]) -> core::result::Result<(), tst_core::transport::TransportError>
 pub fn alloc::boxed::Box<T>::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 pub trait tst_core::TransportCancel: core::marker::Send + core::marker::Sync

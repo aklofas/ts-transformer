@@ -262,6 +262,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   on the first receive on every host, as the C receivers already reported
   it. The send direction and every other `Broken` cause are unchanged, and
   `Diagnostics.broken_cause` still carries `CleanEof`.
+- `MuxPublisher` is a thin shell over `MuxSender<Segmented<P>>` (one
+  lock-push-drain path instead of two), and `Segmented<P>` is public so the
+  same transport can sit under a `MuxSender` directly. Its methods, stats and
+  error kinds are unchanged; it gains `MuxSender`'s back-pressure and
+  input-consumption semantics (a failed publisher push keeps its bytes queued
+  for the next call, and `finish` offers them once more), and `P` must now be
+  `Send`, because a `Transport` is `Send`.
 
 ### Changed — tst-srt (BREAKING)
 
@@ -553,6 +560,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `transport::Transport::as_any` / `RecvTransport::as_any` (provided,
   `None` by default; `Box<T>` forwards): lets a binding holding a
   type-erased transport reach a transport-specific accessor.
+- `Transport::on_video_au`, a provided hook `MuxSender` calls before each
+  video access unit; a segmenting transport cuts its open segment there and
+  returns `true` to have PAT/PMT re-emitted. Every other transport keeps the
+  default, so a segmenting shell needs no second drain loop.
 
 ### Added — tst-pipeline
 

@@ -1,19 +1,19 @@
-//! [`MuxPublisher`] — pipeline shell that owns a [`Muxer`] and pushes its
+//! [`MuxPublisher`] — pipeline shell that owns a muxer and pushes its
 //! output to a [`Publisher`].
 //!
 //! **Stability: Provisional** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 
-use std::sync::Mutex;
 use std::time::Duration;
 
-use tracing::info_span;
 use tst_core::error::MuxError;
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::mux::{MuxStreamKind, Muxer, MuxerConfig};
+use tst_core::mpegts::mux::{MuxStreamKind, MuxerConfig};
 use tst_core::publisher::{Publisher, PublisherStats};
+use tst_core::transport::{BrokenCause, Transport, TransportError};
 
 use crate::binding::kind::{coarsen, kind_of_mux};
+use crate::mux_sender::{MuxSender, MuxSenderError, MuxSenderErrorSource, PartsError};
 use crate::shell_error::ShellErrorKind;
 
 tst_core::binding_record! {
@@ -30,24 +30,111 @@ tst_core::binding_record! {
     }
 }
 
-struct Inner<P: Publisher> {
-    muxer: Muxer,
+/// A [`Publisher`] seen as a [`Transport`]: the transport half of
+/// [`MuxPublisher`], usable on its own as `MuxSender<Segmented<P>>`.
+///
+/// Muxed bytes go to [`Publisher::push_ts`]. A keyframe BEGINS the next
+/// segment: [`Transport::on_video_au`] cuts the closing segment (EXTINF =
+/// the exact PTS span `segment_start..this keyframe`) and asks the caller
+/// to re-emit PAT/PMT, so the new segment opens PAT → PMT → IDR and is
+/// independently decodable (RFC 8216 §3). The stream-head keyframe, with no
+/// open segment yet, opens the first segment without a zero-duration cut.
+pub struct Segmented<P: Publisher> {
     publisher: P,
-    stats: MuxPublisherStats,
-    closed: bool,
     /// PTS of the first AU pushed into the segment currently being built;
-    /// `None` immediately after a cut (the next push re-baselines it).
+    /// `None` immediately after a cut (the next AU re-baselines it).
     segment_start_pts: Option<Pts90khz>,
-    /// PTS of the most recent video AU (drives the explicit `cut_segment`).
+    /// PTS of the most recent video AU (drives an explicit cut).
     last_video_pts: Option<Pts90khz>,
-    /// Reusable scratch buffer for `drain_locked`. Allocated once on first
-    /// push and reused for every subsequent drain call, avoiding a fresh
-    /// 16 KB zero-init alloc per push.
-    scratch: Vec<u8>,
+    cut_calls: u64,
+    bytes_pushed: u64,
+    drain_calls: u64,
+    /// The publisher error behind the last `TransportError::Broken` this
+    /// transport returned, kept typed for [`MuxPublisher`] to hand back.
+    last_error: Option<P::Error>,
 }
 
-/// Shell that owns a [`Muxer`] and pushes its output to a [`Publisher`].
-/// Mirrors [`crate::MuxSender`].
+impl<P: Publisher> Segmented<P> {
+    /// Wrap a publisher.
+    pub fn new(publisher: P) -> Self {
+        Self {
+            publisher,
+            segment_start_pts: None,
+            last_video_pts: None,
+            cut_calls: 0,
+            bytes_pushed: 0,
+            drain_calls: 0,
+            last_error: None,
+        }
+    }
+
+    /// Return the wrapped publisher.
+    pub fn into_publisher(self) -> P {
+        self.publisher
+    }
+
+    /// Keep the typed error and report it to the sender as a broken transport.
+    fn fail(&mut self, e: P::Error) -> TransportError {
+        let msg = format!("publisher error: {e}");
+        self.last_error = Some(e);
+        TransportError::Broken {
+            msg,
+            errno_code: None,
+            cause: BrokenCause::Unspecified,
+        }
+    }
+
+    /// Cut the open segment with its media duration and start a new one.
+    fn cut(&mut self, media_dur: Duration) -> Result<(), P::Error> {
+        self.publisher.cut_segment_with_duration(media_dur)?;
+        self.cut_calls = self.cut_calls.saturating_add(1);
+        self.segment_start_pts = None;
+        Ok(())
+    }
+}
+
+impl<P: Publisher + Send> Transport for Segmented<P> {
+    fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
+        match self.publisher.push_ts(msg) {
+            Ok(()) => {
+                self.bytes_pushed = self.bytes_pushed.saturating_add(msg.len() as u64);
+                self.drain_calls = self.drain_calls.saturating_add(1);
+                Ok(())
+            }
+            Err(e) => Err(self.fail(e)),
+        }
+    }
+
+    fn max_payload(&self) -> usize {
+        16 * 1024
+    }
+
+    fn is_alive(&self) -> bool {
+        true
+    }
+
+    fn close(&mut self) {}
+
+    fn on_video_au(&mut self, pts: Pts90khz, key_frame: bool) -> Result<bool, TransportError> {
+        let mut cut = false;
+        if let (true, Some(start)) = (key_frame, self.segment_start_pts) {
+            if let Err(e) = self.cut(media_span(start, pts)) {
+                return Err(self.fail(e));
+            }
+            cut = true;
+        }
+        if self.segment_start_pts.is_none() {
+            self.segment_start_pts = Some(pts);
+        }
+        self.last_video_pts = Some(pts);
+        Ok(cut)
+    }
+}
+
+/// Shell that owns a muxer and pushes its output to a [`Publisher`].
+/// Mirrors [`crate::MuxSender`]: it is a [`MuxSender`] over a [`Segmented`]
+/// transport, so it drains, applies back-pressure and reports input
+/// consumption the same way.
 ///
 /// # Poison policy
 ///
@@ -60,59 +147,43 @@ struct Inner<P: Publisher> {
 /// owned publisher — the publisher's state may be partial if the panic
 /// occurred during a push, but the caller receives it for its own
 /// disposal.
-pub struct MuxPublisher<P: Publisher> {
-    inner: Mutex<Inner<P>>,
-    /// Lifetime span, entered only during construction and `Drop` — see
-    /// [`crate::shell_error::ShellSpan`] for the unwind-safety rationale.
-    _span: crate::shell_error::ShellSpan,
-}
+pub struct MuxPublisher<P: Publisher + Send>(MuxSender<Segmented<P>>);
 
-impl<P: Publisher> std::fmt::Debug for MuxPublisher<P> {
+impl<P: Publisher + Send> std::fmt::Debug for MuxPublisher<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.inner.try_lock() {
-            Ok(inner) => f
-                .debug_struct("MuxPublisher")
-                .field("bytes_pushed", &inner.stats.bytes_pushed)
-                .field("drain_calls", &inner.stats.drain_calls)
-                .field("cut_calls", &inner.stats.cut_calls)
-                .field("closed", &inner.closed)
-                .finish(),
-            Err(_) => f
-                .debug_struct("MuxPublisher")
-                .field("locked", &true)
-                .finish(),
-        }
+        f.debug_tuple("MuxPublisher").field(&self.0).finish()
     }
 }
 
-impl<P: Publisher> MuxPublisher<P> {
+impl<P: Publisher + Send> MuxPublisher<P> {
     /// Build a publisher shell from a publisher + muxer config.
     pub fn with_config(
         publisher: P,
         config: MuxerConfig,
     ) -> Result<Self, MuxPublisherError<P::Error>> {
-        let span = info_span!(
-            target: "tst_pipeline::mux_publisher",
-            "mux_publisher",
-            program_count = config.programs.len(),
-            publisher_kind = std::any::type_name::<P>(),
-        );
-        let _enter = span.enter();
-        let muxer = Muxer::new(config).map_err(MuxPublisherError::Mux)?;
-        tracing::info!("MuxPublisher opened");
-        drop(_enter);
-        Ok(Self {
-            inner: Mutex::new(Inner {
-                muxer,
-                publisher,
-                stats: MuxPublisherStats::default(),
-                closed: false,
-                segment_start_pts: None,
-                last_video_pts: None,
-                scratch: Vec::new(),
-            }),
-            _span: std::panic::AssertUnwindSafe(span),
-        })
+        MuxSender::new(Segmented::new(publisher), config)
+            .map(Self)
+            .map_err(MuxPublisherError::Mux)
+    }
+
+    /// Turn a sender error back into this shell's error type: a muxer
+    /// rejection stays one, a poisoned lock is reported as such, and a
+    /// transport failure hands back the publisher's own error.
+    fn map_err(&self, e: MuxSenderError) -> MuxPublisherError<P::Error> {
+        if self.0.is_poisoned() {
+            return MuxPublisherError::LockPoisoned;
+        }
+        match e.source {
+            MuxSenderErrorSource::Mux(m) => MuxPublisherError::Mux(m),
+            _ => match self.0.with_transport(|t| t.last_error.take()) {
+                Some(pe) => MuxPublisherError::Publisher(pe),
+                None => MuxPublisherError::Closed,
+            },
+        }
+    }
+
+    fn done(&self, r: Result<(), MuxSenderError>) -> Result<(), MuxPublisherError<P::Error>> {
+        r.map_err(|e| self.map_err(e))
     }
 
     /// Push one video access unit (Annex-B framing required).
@@ -130,7 +201,7 @@ impl<P: Publisher> MuxPublisher<P> {
         pts: Pts90khz,
         key_frame: bool,
     ) -> Result<(), MuxPublisherError<P::Error>> {
-        self.send_video_inner(nal, pts, key_frame, None)
+        self.done(self.0.send_video(nal, pts, key_frame))
     }
 
     /// [`Self::push_video`] plus an ST 0604 MISP timestamp SEI spliced
@@ -143,66 +214,17 @@ impl<P: Publisher> MuxPublisher<P> {
         key_frame: bool,
         misp: &tst_core::codec::misp_time::MispTimestamp,
     ) -> Result<(), MuxPublisherError<P::Error>> {
-        self.send_video_inner(nal, pts, key_frame, Some(misp))
-    }
-
-    fn send_video_inner(
-        &self,
-        nal: &[u8],
-        pts: Pts90khz,
-        key_frame: bool,
-        misp: Option<&tst_core::codec::misp_time::MispTimestamp>,
-    ) -> Result<(), MuxPublisherError<P::Error>> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| MuxPublisherError::LockPoisoned)?;
-        if inner.closed {
-            return Err(MuxPublisherError::Closed);
-        }
-        // A keyframe BEGINS the next segment. Flush everything already muxed
-        // into the closing segment, cut (EXTINF = exact PTS span
-        // start..this keyframe), then re-emit PSI so the new segment opens
-        // PAT → PMT → IDR (RFC 8216 independent decodability). Pushing first
-        // and cutting after would put the IDR at the TAIL of the closing
-        // segment.
-        if key_frame && inner.segment_start_pts.is_some() {
-            Self::drain_locked(&mut inner)?;
-            let start = inner.segment_start_pts.unwrap_or(pts);
-            let media_dur = media_span(start, pts);
-            inner
-                .publisher
-                .cut_segment_with_duration(media_dur)
-                .map_err(MuxPublisherError::Publisher)?;
-            inner.stats.cut_calls = inner.stats.cut_calls.saturating_add(1);
-            inner.muxer.request_psi();
-            inner.segment_start_pts = None;
-        }
-        if inner.segment_start_pts.is_none() {
-            inner.segment_start_pts = Some(pts);
-        }
-        match misp {
-            None => inner
-                .muxer
-                .push_video(nal, pts, key_frame)
-                .map_err(MuxPublisherError::Mux)?,
-            Some(m) => {
-                let handles = inner.muxer.video_handles();
-                let [handle] = handles.as_slice() else {
-                    return Err(MuxPublisherError::Mux(MuxError::AmbiguousTarget {
-                        kind: MuxStreamKind::Video,
-                        count: handles.len(),
-                    }));
-                };
-                inner
-                    .muxer
-                    .push_video_misp_to(*handle, nal, pts, key_frame, m)
-                    .map_err(MuxPublisherError::Mux)?;
-            }
-        }
-        Self::drain_locked(&mut inner)?;
-        inner.last_video_pts = Some(pts);
-        Ok(())
+        let handles = self.0.video_handles();
+        let [handle] = handles.as_slice() else {
+            return Err(MuxPublisherError::Mux(MuxError::AmbiguousTarget {
+                kind: MuxStreamKind::Video,
+                count: handles.len(),
+            }));
+        };
+        self.done(
+            self.0
+                .send_video_misp_to(*handle, nal, pts, key_frame, misp),
+        )
     }
 
     /// Push one KLV unit.
@@ -215,18 +237,7 @@ impl<P: Publisher> MuxPublisher<P> {
         pts: Pts90khz,
         metadata_service_id: u8,
     ) -> Result<(), MuxPublisherError<P::Error>> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| MuxPublisherError::LockPoisoned)?;
-        if inner.closed {
-            return Err(MuxPublisherError::Closed);
-        }
-        inner
-            .muxer
-            .push_klv(klv, pts, metadata_service_id)
-            .map_err(MuxPublisherError::Mux)?;
-        Self::drain_locked(&mut inner)
+        self.done(self.0.send_klv(klv, pts, metadata_service_id))
     }
 
     /// Push one audio frame.
@@ -235,18 +246,7 @@ impl<P: Publisher> MuxPublisher<P> {
         frames: &[u8],
         pts: Pts90khz,
     ) -> Result<(), MuxPublisherError<P::Error>> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| MuxPublisherError::LockPoisoned)?;
-        if inner.closed {
-            return Err(MuxPublisherError::Closed);
-        }
-        inner
-            .muxer
-            .push_audio(frames, pts)
-            .map_err(MuxPublisherError::Mux)?;
-        Self::drain_locked(&mut inner)
+        self.done(self.0.send_audio(frames, pts))
     }
 
     /// Push one subtitle payload.
@@ -255,19 +255,7 @@ impl<P: Publisher> MuxPublisher<P> {
         payload: &[u8],
         pts: Pts90khz,
     ) -> Result<(), MuxPublisherError<P::Error>> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| MuxPublisherError::LockPoisoned)?;
-        if inner.closed {
-            return Err(MuxPublisherError::Closed);
-        }
-        // Note: Muxer::push_subtitle takes (pts, payload) — pts first.
-        inner
-            .muxer
-            .push_subtitle(pts, payload)
-            .map_err(MuxPublisherError::Mux)?;
-        Self::drain_locked(&mut inner)
+        self.done(self.0.send_subtitle(payload, pts))
     }
 
     /// Push one data payload on the muxer's single data stream.
@@ -275,102 +263,59 @@ impl<P: Publisher> MuxPublisher<P> {
     /// Data streams are a PES pass-through — no AU-cell wrap, no framing;
     /// [`Muxer::push_data_to`] holds the contract (`pts` is written into
     /// the PES header only for `carries_pts: true` streams).
+    ///
+    /// [`Muxer::push_data_to`]: tst_core::mpegts::mux::Muxer::push_data_to
     pub fn push_data(&self, data: &[u8], pts: Pts90khz) -> Result<(), MuxPublisherError<P::Error>> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| MuxPublisherError::LockPoisoned)?;
-        if inner.closed {
-            return Err(MuxPublisherError::Closed);
-        }
-        inner
-            .muxer
-            .push_data(data, pts)
-            .map_err(MuxPublisherError::Mux)?;
-        Self::drain_locked(&mut inner)
+        self.done(self.0.send_data(data, pts))
     }
 
     /// Explicit segment-cut hint.
     pub fn cut_segment(&self) -> Result<(), MuxPublisherError<P::Error>> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| MuxPublisherError::LockPoisoned)?;
-        if inner.closed {
-            return Err(MuxPublisherError::Closed);
+        let cut = self.0.with_parts(|muxer, seg| {
+            let media_dur = match (seg.segment_start_pts, seg.last_video_pts) {
+                (Some(start), Some(end)) => media_span(start, end),
+                _ => Duration::ZERO,
+            };
+            seg.cut(media_dur)?;
+            muxer.request_psi();
+            Ok(())
+        });
+        match cut {
+            Ok(r) => r.map_err(MuxPublisherError::Publisher),
+            Err(PartsError::Poisoned) => Err(MuxPublisherError::LockPoisoned),
+            Err(PartsError::Closed) => Err(MuxPublisherError::Closed),
         }
-        let media_dur = match (inner.segment_start_pts, inner.last_video_pts) {
-            (Some(start), Some(end)) => media_span(start, end),
-            _ => Duration::ZERO,
-        };
-        inner
-            .publisher
-            .cut_segment_with_duration(media_dur)
-            .map_err(MuxPublisherError::Publisher)?;
-        inner.stats.cut_calls = inner.stats.cut_calls.saturating_add(1);
-        inner.muxer.request_psi();
-        inner.segment_start_pts = None;
-        Ok(())
     }
 
     /// Snapshot stats.
     pub fn stats(&self) -> MuxPublisherStats {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).stats
+        self.0.with_transport(|t| MuxPublisherStats {
+            bytes_pushed: t.bytes_pushed,
+            drain_calls: t.drain_calls,
+            cut_calls: t.cut_calls,
+        })
     }
 
     /// Publisher-side stats (universal subset across publisher impls).
     pub fn publisher_stats(&self) -> PublisherStats {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .publisher
-            .stats()
+        self.0.with_transport(|t| t.publisher.stats())
     }
 
     /// Consume the shell and return the owned inner publisher.
     ///
-    /// No flush or drain is performed here: pending muxed bytes are not
-    /// pushed to the publisher, and no end-of-stream marker is written.
-    /// If the caller needs to finalize the publisher (flush the pending
-    /// segment, write an HLS `#EXT-X-ENDLIST` tag, tear down sinks, etc.),
-    /// they should call [`Publisher::finish`] on the returned publisher.
+    /// No end-of-stream marker is written: if the caller needs to finalize
+    /// the publisher (flush the pending segment, write an HLS
+    /// `#EXT-X-ENDLIST` tag, tear down sinks, etc.), they should call
+    /// [`Publisher::finish`] on the returned publisher. Bytes a failed
+    /// earlier push left queued are offered to the publisher once more on
+    /// the way out ([`MuxSender::into_inner`]).
     ///
     /// If the inner lock was poisoned, the publisher is still returned:
     /// `into_inner` recovers the poisoned guard, and the publisher
     /// (possibly in partial state if the panic interrupted a push) is
     /// handed back for caller disposal.
     pub fn finish(self) -> Result<P, MuxPublisherError<P::Error>> {
-        let Inner {
-            muxer: _,
-            publisher,
-            stats: _,
-            closed: _,
-            segment_start_pts: _,
-            last_video_pts: _,
-            scratch: _,
-        } = self.inner.into_inner().unwrap_or_else(|e| e.into_inner());
-        Ok(publisher)
-    }
-
-    fn drain_locked(inner: &mut Inner<P>) -> Result<(), MuxPublisherError<P::Error>> {
-        // Grow the reusable scratch to 16 KB on first use; subsequent calls
-        // reuse the already-allocated buffer (no zero-init per push).
-        const DRAIN_BUF_SIZE: usize = 16 * 1024;
-        if inner.scratch.len() < DRAIN_BUF_SIZE {
-            inner.scratch.resize(DRAIN_BUF_SIZE, 0);
-        }
-        loop {
-            let n = inner.muxer.pull(&mut inner.scratch);
-            if n == 0 {
-                return Ok(());
-            }
-            inner
-                .publisher
-                .push_ts(&inner.scratch[..n])
-                .map_err(MuxPublisherError::Publisher)?;
-            inner.stats.bytes_pushed = inner.stats.bytes_pushed.saturating_add(n as u64);
-            inner.stats.drain_calls = inner.stats.drain_calls.saturating_add(1);
-        }
+        Ok(self.0.into_inner().into_publisher())
     }
 }
 
@@ -775,6 +720,78 @@ mod tests {
             first_cut_dur,
             Duration::from_nanos((k2 - k1) as u64 * 1_000_000_000 / 90_000)
         );
+    }
+
+    /// `MuxSender<Segmented<P>>` records the same pushes and cuts as the
+    /// `MuxPublisher` shell over it, for the same access units.
+    #[test]
+    fn segmented_sender_matches_mux_publisher_ops() {
+        use crate::mux_sender::MuxSender;
+        let au = h264_au();
+        let feed = [(0i64, true), (9000, false), (270_000, true)];
+
+        let mp =
+            MuxPublisher::with_config(OpLogPublisher { ops: vec![] }, test_muxer_config()).unwrap();
+        for (t, key) in feed {
+            mp.push_video(&au, Pts90khz::new(t), key).unwrap();
+        }
+        let expected = mp.finish().unwrap().ops;
+
+        let sender = MuxSender::new(
+            Segmented::new(OpLogPublisher { ops: vec![] }),
+            test_muxer_config(),
+        )
+        .unwrap();
+        for (t, key) in feed {
+            sender.send_video(&au, Pts90khz::new(t), key).unwrap();
+        }
+        let got = sender.into_inner().into_publisher().ops;
+
+        assert_eq!(got, expected);
+        // The vector the shell recorded before it drained through a
+        // `MuxSender`: one cut, 3 s wide, between the first two AUs' bytes
+        // and the keyframe's.
+        assert_eq!(
+            got,
+            [
+                Op::Push(564),
+                Op::Push(564),
+                Op::Cut(Duration::from_secs(3)),
+                Op::Push(564)
+            ]
+        );
+    }
+
+    /// A publisher failure surfaces as `MuxPublisherError::Publisher` with
+    /// the publisher's own error, and the sender keeps the unsent bytes.
+    #[test]
+    fn publisher_error_is_handed_back_typed() {
+        struct FailPush;
+        impl Publisher for FailPush {
+            type Error = MemErr;
+            fn push_ts(&mut self, _: &[u8]) -> Result<(), MemErr> {
+                Err(MemErr)
+            }
+            fn cut_segment(&mut self) -> Result<(), MemErr> {
+                Ok(())
+            }
+            fn finish(self) -> Result<(), MemErr> {
+                Ok(())
+            }
+            fn stats(&self) -> PublisherStats {
+                PublisherStats::default()
+            }
+        }
+        let mp = MuxPublisher::with_config(FailPush, test_muxer_config()).unwrap();
+        let err = mp
+            .push_video(&h264_au(), Pts90khz::new(0), true)
+            .unwrap_err();
+        assert!(matches!(err, MuxPublisherError::Publisher(MemErr)), "{err}");
+        assert_eq!(
+            err.kind(),
+            crate::shell_error::ShellErrorKind::TransportBroken
+        );
+        assert_eq!(err.to_string(), "publisher error: memory");
     }
 
     /// `push_video_misp` splices the ST 0604 SEI; bytes demux to a Video
