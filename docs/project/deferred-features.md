@@ -2001,7 +2001,7 @@ Shipped 0.8.0: renamed `InputRelative` (0) and `Infinite` (−1); a stale use fa
 ## End reason on the managed byte receivers
 
 - **Status:** Deferred. A reconnecting `Receiver` / `RawReceiver` over
-  `ManagedReceiveTransport` (the C managed byte receivers) answers `None`
+  `ManagedRecvTransport` (the C managed byte receivers) answers `None`
   for `end_reason()`; the managed demux receiver records its own.
 - **Why deferred:** the managed demux receiver owns a recorder with
   reconnect semantics, where an inner `TransportFailed` triggers a
