@@ -11,14 +11,16 @@ use tst_core::transport::{RecvTransport, Transport};
 use tst_pipeline::binding::opened::{cancel_of, recv_cancel_of};
 use tst_pipeline::binding::{BindingError, Domain, Opened};
 
-use crate::{UdpRecvTransportBuilder, UdpTransportBuilder};
+use crate::{UdpError, UdpRecvTransportBuilder, UdpTransportBuilder};
 
 /// Open a `udp://` sender.
 ///
 /// # Errors
 /// The URL and socket errors' kinds.
 pub fn open_sender(url: &str) -> Result<Opened<Box<dyn Transport>>, BindingError> {
-    let t = UdpTransportBuilder::from_url(url)?.build()?;
+    let t = UdpTransportBuilder::from_url(url)
+        .map_err(UdpError::Url)?
+        .build()?;
     let cancel = cancel_of(&t);
     Ok(Opened::new(Box::new(t), cancel, Domain::Udp))
 }
@@ -28,7 +30,9 @@ pub fn open_sender(url: &str) -> Result<Opened<Box<dyn Transport>>, BindingError
 /// # Errors
 /// The URL and socket errors' kinds.
 pub fn open_recv(url: &str) -> Result<Opened<Box<dyn RecvTransport>>, BindingError> {
-    let t = UdpRecvTransportBuilder::from_url(url)?.build()?;
+    let t = UdpRecvTransportBuilder::from_url(url)
+        .map_err(UdpError::Url)?
+        .build()?;
     let cancel = recv_cancel_of(&t);
     Ok(Opened::new(Box::new(t), cancel, Domain::Udp))
 }

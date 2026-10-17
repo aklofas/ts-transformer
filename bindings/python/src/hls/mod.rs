@@ -21,7 +21,7 @@
 //! construction constants (`local_addr`, `local_port`, `repr`) take no lock.
 //!
 //! Error mapping goes through `crate::raise`:
-//! `From<HlsError>`/`From<HlsUrlError>` for `BindingError` live next to
+//! `From<HlsError>` for `BindingError` lives next to
 //! the Rust types, and `raise` resolves the kind's `name()` on
 //! `tstrans.exceptions.HlsErrorKind` — checked at `import tstrans`, so
 //! there is no name table and no off-by-one to keep in sync.

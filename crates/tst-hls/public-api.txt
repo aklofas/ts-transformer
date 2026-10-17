@@ -2,17 +2,17 @@ pub mod tst_hls
 pub mod tst_hls::builder
 pub struct tst_hls::builder::HlsPublisherBuilder
 impl tst_hls::builder::HlsPublisherBuilder
-pub fn tst_hls::builder::HlsPublisherBuilder::basic_auth<S: core::convert::Into<alloc::string::String>>(self, S, S) -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::bind(self, core::net::socket_addr::SocketAddr) -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::build(self) -> core::result::Result<tst_hls::publisher::HlsPublisher, tst_hls::error::HlsError>
-pub fn tst_hls::builder::HlsPublisherBuilder::enable_tls<P: core::convert::AsRef<std::path::Path>>(self, P, P) -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::from_url(&str) -> core::result::Result<Self, tst_hls::url::HlsUrlError>
-pub fn tst_hls::builder::HlsPublisherBuilder::max_segment_duration(self, core::time::Duration) -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::mode(self, tst_hls::config::HlsMode) -> Self
+pub fn tst_hls::builder::HlsPublisherBuilder::basic_auth<S: core::convert::Into<alloc::string::String>>(&mut self, S, S) -> &mut Self
+pub fn tst_hls::builder::HlsPublisherBuilder::bind(&mut self, core::net::socket_addr::SocketAddr) -> &mut Self
+pub fn tst_hls::builder::HlsPublisherBuilder::build(&self) -> core::result::Result<tst_hls::publisher::HlsPublisher, tst_hls::error::HlsError>
+pub fn tst_hls::builder::HlsPublisherBuilder::enable_tls<P: core::convert::AsRef<std::path::Path>>(&mut self, P, P) -> &mut Self
+pub fn tst_hls::builder::HlsPublisherBuilder::from_url(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
+pub fn tst_hls::builder::HlsPublisherBuilder::max_segment_duration(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_hls::builder::HlsPublisherBuilder::mode(&mut self, tst_hls::config::HlsMode) -> &mut Self
 pub fn tst_hls::builder::HlsPublisherBuilder::new() -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::output_dir<P: core::convert::AsRef<std::path::Path>>(self, P) -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::playlist_window(self, usize) -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::segment_duration(self, core::time::Duration) -> Self
+pub fn tst_hls::builder::HlsPublisherBuilder::output_dir<P: core::convert::AsRef<std::path::Path>>(&mut self, P) -> &mut Self
+pub fn tst_hls::builder::HlsPublisherBuilder::playlist_window(&mut self, usize) -> &mut Self
+pub fn tst_hls::builder::HlsPublisherBuilder::segment_duration(&mut self, core::time::Duration) -> &mut Self
 impl core::clone::Clone for tst_hls::builder::HlsPublisherBuilder
 pub fn tst_hls::builder::HlsPublisherBuilder::clone(&self) -> tst_hls::builder::HlsPublisherBuilder
 impl core::default::Default for tst_hls::builder::HlsPublisherBuilder
@@ -61,7 +61,6 @@ pub tst_hls::config::HlsConfig::tls: bool
 pub tst_hls::config::HlsConfig::tls_cert: core::option::Option<std::path::PathBuf>
 pub tst_hls::config::HlsConfig::tls_key: core::option::Option<std::path::PathBuf>
 impl tst_hls::config::HlsConfig
-pub fn tst_hls::config::HlsConfig::merge_from_url(&mut self, &tst_hls::url::HlsUrl)
 pub fn tst_hls::config::HlsConfig::validate(&self) -> core::option::Option<alloc::string::String>
 impl core::clone::Clone for tst_hls::config::HlsConfig
 pub fn tst_hls::config::HlsConfig::clone(&self) -> tst_hls::config::HlsConfig
@@ -159,46 +158,10 @@ impl core::marker::UnsafeUnpin for tst_hls::stats::HlsStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_hls::stats::HlsStats
 impl core::panic::unwind_safe::UnwindSafe for tst_hls::stats::HlsStats
 pub mod tst_hls::url
-#[non_exhaustive] pub enum tst_hls::url::HlsUrlError
-pub tst_hls::url::HlsUrlError::BadHost(alloc::string::String)
-pub tst_hls::url::HlsUrlError::BadQueryValue
-pub tst_hls::url::HlsUrlError::BadQueryValue::detail: alloc::string::String
-pub tst_hls::url::HlsUrlError::BadQueryValue::key: alloc::string::String
-pub tst_hls::url::HlsUrlError::BadQueryValue::value: alloc::string::String
-pub tst_hls::url::HlsUrlError::BadScheme(alloc::string::String)
-pub tst_hls::url::HlsUrlError::MissingPort
-pub tst_hls::url::HlsUrlError::Parse(tst_core::url::common::UrlError)
-impl core::convert::From<tst_core::url::common::UrlError> for tst_hls::url::HlsUrlError
-pub fn tst_hls::url::HlsUrlError::from(tst_core::url::common::UrlError) -> Self
-impl core::convert::From<tst_hls::url::HlsUrlError> for tst_pipeline::binding::kind::BindingError
-pub fn tst_pipeline::binding::kind::BindingError::from(tst_hls::url::HlsUrlError) -> Self
-impl core::error::Error for tst_hls::url::HlsUrlError
-pub fn tst_hls::url::HlsUrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
-impl core::fmt::Debug for tst_hls::url::HlsUrlError
-pub fn tst_hls::url::HlsUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::fmt::Display for tst_hls::url::HlsUrlError
-pub fn tst_hls::url::HlsUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_hls::url::HlsUrlError
-impl core::marker::Send for tst_hls::url::HlsUrlError
-impl core::marker::Sync for tst_hls::url::HlsUrlError
-impl core::marker::Unpin for tst_hls::url::HlsUrlError
-impl core::marker::UnsafeUnpin for tst_hls::url::HlsUrlError
-impl core::panic::unwind_safe::RefUnwindSafe for tst_hls::url::HlsUrlError
-impl core::panic::unwind_safe::UnwindSafe for tst_hls::url::HlsUrlError
 pub struct tst_hls::url::HlsUrl
-pub tst_hls::url::HlsUrl::addr: core::net::ip_addr::IpAddr
-pub tst_hls::url::HlsUrl::auth_pass: core::option::Option<alloc::string::String>
-pub tst_hls::url::HlsUrl::auth_user: core::option::Option<alloc::string::String>
-pub tst_hls::url::HlsUrl::cert: core::option::Option<alloc::string::String>
-pub tst_hls::url::HlsUrl::key: core::option::Option<alloc::string::String>
-pub tst_hls::url::HlsUrl::mode: core::option::Option<tst_hls::config::HlsMode>
-pub tst_hls::url::HlsUrl::output_dir: core::option::Option<alloc::string::String>
-pub tst_hls::url::HlsUrl::playlist_window: core::option::Option<usize>
-pub tst_hls::url::HlsUrl::port: u16
-pub tst_hls::url::HlsUrl::segment_duration: core::option::Option<core::time::Duration>
-pub tst_hls::url::HlsUrl::tls: bool
+pub tst_hls::url::HlsUrl::config: tst_hls::config::HlsConfig
 impl tst_hls::url::HlsUrl
-pub fn tst_hls::url::HlsUrl::parse(&str) -> core::result::Result<Self, tst_hls::url::HlsUrlError>
+pub fn tst_hls::url::HlsUrl::parse(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 impl core::clone::Clone for tst_hls::url::HlsUrl
 pub fn tst_hls::url::HlsUrl::clone(&self) -> tst_hls::url::HlsUrl
 impl core::fmt::Debug for tst_hls::url::HlsUrl
@@ -259,32 +222,6 @@ impl core::marker::Unpin for tst_hls::config::HlsMode
 impl core::marker::UnsafeUnpin for tst_hls::config::HlsMode
 impl core::panic::unwind_safe::RefUnwindSafe for tst_hls::config::HlsMode
 impl core::panic::unwind_safe::UnwindSafe for tst_hls::config::HlsMode
-#[non_exhaustive] pub enum tst_hls::HlsUrlError
-pub tst_hls::HlsUrlError::BadHost(alloc::string::String)
-pub tst_hls::HlsUrlError::BadQueryValue
-pub tst_hls::HlsUrlError::BadQueryValue::detail: alloc::string::String
-pub tst_hls::HlsUrlError::BadQueryValue::key: alloc::string::String
-pub tst_hls::HlsUrlError::BadQueryValue::value: alloc::string::String
-pub tst_hls::HlsUrlError::BadScheme(alloc::string::String)
-pub tst_hls::HlsUrlError::MissingPort
-pub tst_hls::HlsUrlError::Parse(tst_core::url::common::UrlError)
-impl core::convert::From<tst_core::url::common::UrlError> for tst_hls::url::HlsUrlError
-pub fn tst_hls::url::HlsUrlError::from(tst_core::url::common::UrlError) -> Self
-impl core::convert::From<tst_hls::url::HlsUrlError> for tst_pipeline::binding::kind::BindingError
-pub fn tst_pipeline::binding::kind::BindingError::from(tst_hls::url::HlsUrlError) -> Self
-impl core::error::Error for tst_hls::url::HlsUrlError
-pub fn tst_hls::url::HlsUrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
-impl core::fmt::Debug for tst_hls::url::HlsUrlError
-pub fn tst_hls::url::HlsUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::fmt::Display for tst_hls::url::HlsUrlError
-pub fn tst_hls::url::HlsUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_hls::url::HlsUrlError
-impl core::marker::Send for tst_hls::url::HlsUrlError
-impl core::marker::Sync for tst_hls::url::HlsUrlError
-impl core::marker::Unpin for tst_hls::url::HlsUrlError
-impl core::marker::UnsafeUnpin for tst_hls::url::HlsUrlError
-impl core::panic::unwind_safe::RefUnwindSafe for tst_hls::url::HlsUrlError
-impl core::panic::unwind_safe::UnwindSafe for tst_hls::url::HlsUrlError
 #[non_exhaustive] pub struct tst_hls::HlsConfig
 pub tst_hls::HlsConfig::basic_auth: core::option::Option<(alloc::string::String, alloc::string::String)>
 pub tst_hls::HlsConfig::bind: core::net::socket_addr::SocketAddr
@@ -297,7 +234,6 @@ pub tst_hls::HlsConfig::tls: bool
 pub tst_hls::HlsConfig::tls_cert: core::option::Option<std::path::PathBuf>
 pub tst_hls::HlsConfig::tls_key: core::option::Option<std::path::PathBuf>
 impl tst_hls::config::HlsConfig
-pub fn tst_hls::config::HlsConfig::merge_from_url(&mut self, &tst_hls::url::HlsUrl)
 pub fn tst_hls::config::HlsConfig::validate(&self) -> core::option::Option<alloc::string::String>
 impl core::clone::Clone for tst_hls::config::HlsConfig
 pub fn tst_hls::config::HlsConfig::clone(&self) -> tst_hls::config::HlsConfig
@@ -336,17 +272,17 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_hls::publisher::HlsPublishe
 impl core::panic::unwind_safe::UnwindSafe for tst_hls::publisher::HlsPublisher
 pub struct tst_hls::HlsPublisherBuilder
 impl tst_hls::builder::HlsPublisherBuilder
-pub fn tst_hls::builder::HlsPublisherBuilder::basic_auth<S: core::convert::Into<alloc::string::String>>(self, S, S) -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::bind(self, core::net::socket_addr::SocketAddr) -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::build(self) -> core::result::Result<tst_hls::publisher::HlsPublisher, tst_hls::error::HlsError>
-pub fn tst_hls::builder::HlsPublisherBuilder::enable_tls<P: core::convert::AsRef<std::path::Path>>(self, P, P) -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::from_url(&str) -> core::result::Result<Self, tst_hls::url::HlsUrlError>
-pub fn tst_hls::builder::HlsPublisherBuilder::max_segment_duration(self, core::time::Duration) -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::mode(self, tst_hls::config::HlsMode) -> Self
+pub fn tst_hls::builder::HlsPublisherBuilder::basic_auth<S: core::convert::Into<alloc::string::String>>(&mut self, S, S) -> &mut Self
+pub fn tst_hls::builder::HlsPublisherBuilder::bind(&mut self, core::net::socket_addr::SocketAddr) -> &mut Self
+pub fn tst_hls::builder::HlsPublisherBuilder::build(&self) -> core::result::Result<tst_hls::publisher::HlsPublisher, tst_hls::error::HlsError>
+pub fn tst_hls::builder::HlsPublisherBuilder::enable_tls<P: core::convert::AsRef<std::path::Path>>(&mut self, P, P) -> &mut Self
+pub fn tst_hls::builder::HlsPublisherBuilder::from_url(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
+pub fn tst_hls::builder::HlsPublisherBuilder::max_segment_duration(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_hls::builder::HlsPublisherBuilder::mode(&mut self, tst_hls::config::HlsMode) -> &mut Self
 pub fn tst_hls::builder::HlsPublisherBuilder::new() -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::output_dir<P: core::convert::AsRef<std::path::Path>>(self, P) -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::playlist_window(self, usize) -> Self
-pub fn tst_hls::builder::HlsPublisherBuilder::segment_duration(self, core::time::Duration) -> Self
+pub fn tst_hls::builder::HlsPublisherBuilder::output_dir<P: core::convert::AsRef<std::path::Path>>(&mut self, P) -> &mut Self
+pub fn tst_hls::builder::HlsPublisherBuilder::playlist_window(&mut self, usize) -> &mut Self
+pub fn tst_hls::builder::HlsPublisherBuilder::segment_duration(&mut self, core::time::Duration) -> &mut Self
 impl core::clone::Clone for tst_hls::builder::HlsPublisherBuilder
 pub fn tst_hls::builder::HlsPublisherBuilder::clone(&self) -> tst_hls::builder::HlsPublisherBuilder
 impl core::default::Default for tst_hls::builder::HlsPublisherBuilder
@@ -391,19 +327,9 @@ impl core::marker::UnsafeUnpin for tst_hls::stats::HlsStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_hls::stats::HlsStats
 impl core::panic::unwind_safe::UnwindSafe for tst_hls::stats::HlsStats
 pub struct tst_hls::HlsUrl
-pub tst_hls::HlsUrl::addr: core::net::ip_addr::IpAddr
-pub tst_hls::HlsUrl::auth_pass: core::option::Option<alloc::string::String>
-pub tst_hls::HlsUrl::auth_user: core::option::Option<alloc::string::String>
-pub tst_hls::HlsUrl::cert: core::option::Option<alloc::string::String>
-pub tst_hls::HlsUrl::key: core::option::Option<alloc::string::String>
-pub tst_hls::HlsUrl::mode: core::option::Option<tst_hls::config::HlsMode>
-pub tst_hls::HlsUrl::output_dir: core::option::Option<alloc::string::String>
-pub tst_hls::HlsUrl::playlist_window: core::option::Option<usize>
-pub tst_hls::HlsUrl::port: u16
-pub tst_hls::HlsUrl::segment_duration: core::option::Option<core::time::Duration>
-pub tst_hls::HlsUrl::tls: bool
+pub tst_hls::HlsUrl::config: tst_hls::config::HlsConfig
 impl tst_hls::url::HlsUrl
-pub fn tst_hls::url::HlsUrl::parse(&str) -> core::result::Result<Self, tst_hls::url::HlsUrlError>
+pub fn tst_hls::url::HlsUrl::parse(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 impl core::clone::Clone for tst_hls::url::HlsUrl
 pub fn tst_hls::url::HlsUrl::clone(&self) -> tst_hls::url::HlsUrl
 impl core::fmt::Debug for tst_hls::url::HlsUrl

@@ -8,7 +8,7 @@ use tst_core::net::udp_socket::{apply_multicast_send_knobs, bind_udp_socket, set
 use tst_core::net::{SendClass, classify_send_error};
 use tst_core::transport::{BrokenCause, SocketStats, Transport, TransportCancel, TransportError};
 
-use crate::config::SocketConfig;
+use crate::config::UdpConfig;
 use crate::error::UdpError;
 use crate::stats::UdpStats;
 use crate::url::UdpUrl;
@@ -78,13 +78,12 @@ impl UdpTransport {
     /// For multicast destinations, applies TTL + iface knobs from the URL.
     pub fn connect(url: &str) -> Result<Self, UdpError> {
         let url = UdpUrl::parse(url)?;
-        let mut cfg = SocketConfig::default();
-        cfg.merge_from_url(&url);
+        let cfg = url.config.clone();
         Self::with_config(&url, &cfg)
     }
 
     /// Build a `UdpTransport` from an already-parsed `UdpUrl` + config.
-    pub fn with_config(url: &UdpUrl, cfg: &SocketConfig) -> Result<Self, UdpError> {
+    pub fn with_config(url: &UdpUrl, cfg: &UdpConfig) -> Result<Self, UdpError> {
         if url.recv_bind {
             return Err(UdpError::InvalidConfig(
                 "URL has '@' prefix indicating recv-bind; use UdpRecvTransport".into(),
@@ -94,7 +93,7 @@ impl UdpTransport {
         let local: SocketAddr = match (cfg.localaddr, url.addr) {
             (Some(a), peer) => {
                 // URL-sourced localaddr already passed the parse-time family
-                // check; this guards direct SocketConfig users the same way —
+                // check; this guards direct UdpConfig users the same way —
                 // a socket bound to one family cannot send to the other, and
                 // failing here beats an opaque OS error at the first send.
                 if a.is_ipv4() != peer.is_ipv4() {
@@ -152,7 +151,7 @@ impl UdpTransport {
     }
 }
 
-fn apply_socket2_knobs(socket: &UdpSocket, cfg: &SocketConfig) -> std::io::Result<()> {
+fn apply_socket2_knobs(socket: &UdpSocket, cfg: &UdpConfig) -> std::io::Result<()> {
     set_socket_buffers(socket, cfg.rcvbuf, cfg.sndbuf)?;
     if let Some(tos) = cfg.tos {
         // socket2 0.5 set_tos for IPv4. IPv6 traffic-class would need IPV6_TCLASS

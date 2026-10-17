@@ -250,13 +250,13 @@ fn effective_udp(url: &str) -> Effective {
         ("addr", u.addr.to_string()),
         ("port", u.port.to_string()),
         ("recv_bind", u.recv_bind.to_string()),
-        ("iface", show(&u.iface)),
-        ("ttl", show(&u.ttl)),
-        ("tos", show(&u.tos)),
-        ("rcvbuf", show(&u.rcvbuf)),
-        ("sndbuf", show(&u.sndbuf)),
-        ("pkt_size", show(&u.pkt_size)),
-        ("localaddr", show(&u.localaddr)),
+        ("iface", show(&u.config.iface)),
+        ("ttl", show(&u.config.ttl)),
+        ("tos", show(&u.config.tos)),
+        ("rcvbuf", show(&u.config.rcvbuf)),
+        ("sndbuf", show(&u.config.sndbuf)),
+        ("pkt_size", show(&u.config.pkt_size)),
+        ("localaddr", show(&u.config.localaddr)),
     ])
 }
 fn effective_udp_send(url: &str) -> Effective {
@@ -753,20 +753,76 @@ const HLS_PARSE: &[Row] = &[
     ),
 ];
 
+/// Whether the URL's query names `key`; the parsed config alone cannot say,
+/// because the HLS config holds a default for every key.
+fn hls_named(url: &str, key: &str) -> bool {
+    url.split_once('?')
+        .is_some_and(|(_, q)| q.split('&').any(|p| p.split('=').next() == Some(key)))
+}
+
 fn effective_hls(url: &str) -> Effective {
     let u = HlsUrl::parse(url).map_err(|e| e.to_string())?;
+    let c = &u.config;
+    let given = |key: &str, v: String| {
+        if hls_named(url, key) {
+            v
+        } else {
+            "none".into()
+        }
+    };
+    // A credential given alone is dropped by the config (no auth is
+    // configured), so a lone one is read back from the query text.
+    let lone = |key: &str| {
+        url.split_once('?')
+            .and_then(|(_, q)| {
+                q.split('&')
+                    .filter_map(|p| p.split_once('='))
+                    .rfind(|(k, _)| *k == key)
+                    .map(|(_, v)| v.to_string())
+            })
+            .unwrap_or_else(|| "none".into())
+    };
+    let (auth_user, auth_pass) = match &c.basic_auth {
+        Some((user, pass)) => (user.clone(), pass.clone()),
+        None => (lone("auth_user"), lone("auth_pass")),
+    };
     Ok(vec![
-        ("addr", u.addr.to_string()),
-        ("port", u.port.to_string()),
-        ("tls", u.tls.to_string()),
-        ("output_dir", show(&u.output_dir)),
-        ("segment_duration", secs(u.segment_duration)),
-        ("playlist_window", show(&u.playlist_window)),
-        ("mode", u.mode.map_or("none".into(), |m| format!("{m:?}"))),
-        ("auth_user", show(&u.auth_user)),
-        ("auth_pass", show(&u.auth_pass)),
-        ("cert", show(&u.cert)),
-        ("key", show(&u.key)),
+        ("addr", c.bind.ip().to_string()),
+        ("port", c.bind.port().to_string()),
+        ("tls", c.tls.to_string()),
+        (
+            "output_dir",
+            given("output_dir", c.output_dir.display().to_string()),
+        ),
+        (
+            "segment_duration",
+            given("segment_duration", c.segment_duration.as_secs().to_string()),
+        ),
+        (
+            "playlist_window",
+            given("playlist_window", c.playlist_window.to_string()),
+        ),
+        ("mode", given("mode", format!("{:?}", c.mode))),
+        ("auth_user", auth_user),
+        ("auth_pass", auth_pass),
+        (
+            "cert",
+            given(
+                "cert",
+                c.tls_cert
+                    .as_ref()
+                    .map_or_else(String::new, |p| p.display().to_string()),
+            ),
+        ),
+        (
+            "key",
+            given(
+                "key",
+                c.tls_key
+                    .as_ref()
+                    .map_or_else(String::new, |p| p.display().to_string()),
+            ),
+        ),
     ])
 }
 

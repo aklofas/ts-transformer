@@ -51,4 +51,4 @@ pub use publisher::HlsPublisher;
 pub use publisher::HlsServerHandle;
 pub use stats::HlsStats;
 #[cfg(feature = "serve")]
-pub use url::{HlsUrl, HlsUrlError};
+pub use url::HlsUrl;

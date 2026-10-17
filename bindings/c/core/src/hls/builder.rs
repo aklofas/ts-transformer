@@ -1,12 +1,10 @@
 //! `TstHlsPublisherBuilder` — opaque builder for the HLS publisher.
 //!
-//! `tst_hls::HlsPublisherBuilder` uses move-style chain setters
-//! (`fn bind(self, ...) -> Self`), which don't map cleanly to in-place C
-//! mutation. The opaque builder here wraps it in an `Option` so each
-//! setter can `take()` the inner builder, apply the move-style method, and
-//! store the result back — leaving the C-visible pointer stable across the
-//! whole chain. A null inner (only reachable after a panic mid-chain or a
-//! double-build) makes setters no-ops and `_build` fail with HlsConfig.
+//! `tst_hls::HlsPublisherBuilder` setters take `&mut self`, which maps
+//! straight onto in-place C mutation. The opaque builder here wraps it in
+//! an `Option` so `_build` can take it out: a null inner (only reachable
+//! after a double-build) makes setters no-ops and `_build` fail with
+//! HlsConfig.
 //!
 //! Build with the chain:
 //!
@@ -38,19 +36,16 @@ use crate::hls::publisher::{PublisherImpl, TstPublisher};
 /// [`tst_hls_publisher_builder_build`] (or freed by
 /// [`tst_hls_publisher_builder_free`]).
 pub struct TstHlsPublisherBuilder {
-    /// `Option` so the move-style chain setters can `take()` + replace.
-    /// `None` only after `build` consumes it or a mid-chain panic.
+    /// `Option` so `build` can take it out.
+    /// `None` only after `build` consumes it.
     inner: Option<HlsPublisherBuilder>,
 }
 
-/// Apply a move-style setter to the inner builder in place. No-op (records
+/// Apply a setter to the inner builder in place. No-op (records
 /// nothing) if the inner has already been consumed.
-fn map_inner(
-    b: &mut TstHlsPublisherBuilder,
-    f: impl FnOnce(HlsPublisherBuilder) -> HlsPublisherBuilder,
-) {
-    if let Some(inner) = b.inner.take() {
-        b.inner = Some(f(inner));
+fn map_inner(b: &mut TstHlsPublisherBuilder, f: impl FnOnce(&mut HlsPublisherBuilder)) {
+    if let Some(inner) = b.inner.as_mut() {
+        f(inner);
     }
 }
 
@@ -133,7 +128,9 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_bind(
                 return TstError::HlsConfig as i32;
             }
         };
-        map_inner(builder, |inner| inner.bind(addr));
+        map_inner(builder, |inner| {
+            inner.bind(addr);
+        });
         0
     })
 }
@@ -163,7 +160,9 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_output_dir(
             return TstError::HlsConfig as i32;
         };
         let owned = s.to_string();
-        map_inner(builder, |inner| inner.output_dir(owned));
+        map_inner(builder, |inner| {
+            inner.output_dir(owned);
+        });
         0
     })
 }
@@ -186,7 +185,7 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_segment_duration_ms(
             return TstError::InvalidConfig as i32;
         };
         map_inner(builder, |inner| {
-            inner.segment_duration(Duration::from_millis(ms as u64))
+            inner.segment_duration(Duration::from_millis(ms as u64));
         });
         0
     })
@@ -226,7 +225,7 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_max_segment_duration_ms(
         // already seeded with the default, so applying nothing is correct.
         if ms != 0 {
             map_inner(builder, |inner| {
-                inner.max_segment_duration(Duration::from_millis(ms))
+                inner.max_segment_duration(Duration::from_millis(ms));
             });
         }
         0
@@ -250,7 +249,9 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_playlist_window(
             set_last_error(TstError::InvalidConfig, "null hls builder pointer");
             return TstError::InvalidConfig as i32;
         };
-        map_inner(builder, |inner| inner.playlist_window(n as usize));
+        map_inner(builder, |inner| {
+            inner.playlist_window(n as usize);
+        });
         0
     })
 }
@@ -286,7 +287,9 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_mode(
                 return TstError::HlsConfig as i32;
             }
         };
-        map_inner(builder, |inner| inner.mode(hls_mode));
+        map_inner(builder, |inner| {
+            inner.mode(hls_mode);
+        });
         0
     })
 }
@@ -320,7 +323,9 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_basic_auth(
             return TstError::HlsConfig as i32;
         };
         let (u, p) = (u.to_string(), p.to_string());
-        map_inner(builder, |inner| inner.basic_auth(u, p));
+        map_inner(builder, |inner| {
+            inner.basic_auth(u, p);
+        });
         0
     })
 }
@@ -360,7 +365,9 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_enable_tls(
             return TstError::HlsConfig as i32;
         };
         let (cert, key) = (cert.to_string(), key.to_string());
-        map_inner(builder, |inner| inner.enable_tls(cert, key));
+        map_inner(builder, |inner| {
+            inner.enable_tls(cert, key);
+        });
         0
     })
 }

@@ -274,13 +274,12 @@ pub(crate) struct PyHlsPublisherBuilder {
 }
 
 impl PyHlsPublisherBuilder {
-    /// Apply a move-style mutation to the inner Rust builder.
+    /// Apply a setter to the inner Rust builder in place.
     fn apply<F>(&mut self, f: F) -> PyResult<()>
     where
-        F: FnOnce(HlsPublisherBuilder) -> HlsPublisherBuilder,
+        F: FnOnce(&mut HlsPublisherBuilder),
     {
-        let b = self.inner.take().unwrap_or_default();
-        self.inner = Some(f(b));
+        f(self.inner.get_or_insert_with(Default::default));
         Ok(())
     }
 }
@@ -300,21 +299,27 @@ impl PyHlsPublisherBuilder {
         let parsed: SocketAddr = addr
             .parse()
             .map_err(|e| PyValueError::new_err(format!("invalid bind address {addr:?}: {e}")))?;
-        slf.apply(|b| b.bind(parsed))?;
+        slf.apply(|b| {
+            b.bind(parsed);
+        })?;
         Ok(slf)
     }
 
     /// Filesystem directory for `.ts` segments + `playlist.m3u8`.
     fn output_dir<'py>(mut slf: PyRefMut<'py, Self>, path: &str) -> PyResult<PyRefMut<'py, Self>> {
         let p = path.to_string();
-        slf.apply(|b| b.output_dir(p))?;
+        slf.apply(|b| {
+            b.output_dir(p);
+        })?;
         Ok(slf)
     }
 
     /// Target segment duration in milliseconds.
     fn segment_duration_ms(mut slf: PyRefMut<'_, Self>, ms: u64) -> PyResult<PyRefMut<'_, Self>> {
         let d = Duration::from_millis(ms);
-        slf.apply(|b| b.segment_duration(d))?;
+        slf.apply(|b| {
+            b.segment_duration(d);
+        })?;
         Ok(slf)
     }
 
@@ -333,21 +338,27 @@ impl PyHlsPublisherBuilder {
     ) -> PyResult<PyRefMut<'_, Self>> {
         if ms != 0 {
             let d = Duration::from_millis(ms);
-            slf.apply(|b| b.max_segment_duration(d))?;
+            slf.apply(|b| {
+                b.max_segment_duration(d);
+            })?;
         }
         Ok(slf)
     }
 
     /// Rolling-window size (number of segments visible in a LIVE playlist).
     fn playlist_window(mut slf: PyRefMut<'_, Self>, n: usize) -> PyResult<PyRefMut<'_, Self>> {
-        slf.apply(|b| b.playlist_window(n))?;
+        slf.apply(|b| {
+            b.playlist_window(n);
+        })?;
         Ok(slf)
     }
 
     /// Playlist mode (LIVE / EVENT / VOD).
     fn mode(mut slf: PyRefMut<'_, Self>, mode: PyHlsMode) -> PyResult<PyRefMut<'_, Self>> {
         let rust_mode: HlsMode = mode.into();
-        slf.apply(|b| b.mode(rust_mode))?;
+        slf.apply(|b| {
+            b.mode(rust_mode);
+        })?;
         Ok(slf)
     }
 
@@ -358,7 +369,9 @@ impl PyHlsPublisherBuilder {
         password: &str,
     ) -> PyResult<PyRefMut<'py, Self>> {
         let (u, p) = (user.to_string(), password.to_string());
-        slf.apply(|b| b.basic_auth(u, p))?;
+        slf.apply(|b| {
+            b.basic_auth(u, p);
+        })?;
         Ok(slf)
     }
 
@@ -371,7 +384,9 @@ impl PyHlsPublisherBuilder {
         key: &str,
     ) -> PyResult<PyRefMut<'py, Self>> {
         let (c, k) = (cert.to_string(), key.to_string());
-        slf.apply(|b| b.enable_tls(c, k))?;
+        slf.apply(|b| {
+            b.enable_tls(c, k);
+        })?;
         Ok(slf)
     }
 
@@ -380,8 +395,13 @@ impl PyHlsPublisherBuilder {
     /// setters overlay on top). Raises `HlsError(URL)` on a bad URL.
     fn from_url<'py>(mut slf: PyRefMut<'py, Self>, url: &str) -> PyResult<PyRefMut<'py, Self>> {
         let py = slf.py();
-        let b = HlsPublisherBuilder::from_url(url)
-            .map_err(|e| raise(py, &HLS, BindingError::from(e)))?;
+        let b = HlsPublisherBuilder::from_url(url).map_err(|e| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::HlsUrl, e.to_string()),
+            )
+        })?;
         slf.inner = Some(b);
         Ok(slf)
     }

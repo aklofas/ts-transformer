@@ -265,7 +265,7 @@ impl PyUdpTransportBuilder {
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("url(...) is required before build()"))?;
         let mut b = tst_udp::UdpTransportBuilder::from_url(url_str)
-            .map_err(|e| raise(py, &UDP, BindingError::from(e)))?;
+            .map_err(|e| raise(py, &UDP, BindingError::from(tst_udp::UdpError::Url(e))))?;
         if let Some(v) = self.pkt_size {
             b.pkt_size(v);
         }
@@ -546,7 +546,7 @@ impl PyUdpRecvTransportBuilder {
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("bind_url(...) is required before build()"))?;
         let mut b = tst_udp::UdpRecvTransportBuilder::from_url(url_str)
-            .map_err(|e| raise(py, &UDP, BindingError::from(e)))?;
+            .map_err(|e| raise(py, &UDP, BindingError::from(tst_udp::UdpError::Url(e))))?;
         if let Some(v) = self.rcvbuf {
             b.rcvbuf(v);
         }

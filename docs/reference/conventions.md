@@ -326,9 +326,8 @@ product is connected or listening ends in a call named for the I/O:
 
 Existing exceptions, kept until the next naming change:
 
-- `DemuxerConfigBuilder`, `HlsPublisherBuilder`, `RtspClientBuilder`,
-  `RistTransportBuilder` and `RistRecvTransportBuilder` take `self` in
-  their setters and return `Self`.
+- `DemuxerConfigBuilder`, `RtspClientBuilder`, `RistTransportBuilder` and
+  `RistRecvTransportBuilder` take `self` in their setters and return `Self`.
 - `UdpTransportBuilder::build`, `UdpRecvTransportBuilder::build`,
   `TcpTransportBuilder::build`, `TcpListenerBuilder::build`,
   `RtpSocketBuilder::build`, `RtpRecvSocketBuilder::build` and

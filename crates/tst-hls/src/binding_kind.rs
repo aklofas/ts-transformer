@@ -4,13 +4,6 @@
 use crate::error::HlsError;
 use tst_pipeline::binding::{BindingError, BindingErrorKind as K};
 
-#[cfg(feature = "serve")]
-impl From<crate::url::HlsUrlError> for BindingError {
-    fn from(e: crate::url::HlsUrlError) -> Self {
-        BindingError::new(K::HlsUrl, e.to_string())
-    }
-}
-
 impl From<HlsError> for BindingError {
     fn from(e: HlsError) -> Self {
         let kind = match &e {
@@ -63,15 +56,7 @@ mod tests {
         assert_eq!(internal.kind, K::Internal);
         assert_eq!(internal.detail, "internal HTTP server error: hyper");
         assert_eq!(K::HlsBindFailed.c_projection(), -34);
-        // The one way into HLS_URL: the builder's `HlsUrlError`.
-        #[cfg(feature = "serve")]
-        {
-            assert_eq!(
-                BindingError::from(crate::url::HlsUrlError::MissingPort).kind,
-                K::HlsUrl
-            );
-            assert_eq!(K::HlsUrl.c_projection(), -35);
-        }
+        assert_eq!(K::HlsUrl.c_projection(), -35);
         #[cfg(feature = "tls")]
         assert_eq!(
             BindingError::from(HlsError::Tls("cert".into())).kind,

@@ -39,9 +39,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   removed. No binding read them. Match on the error itself, e.g.
   `matches!(e, RistError::InvalidConfig(_))`. The Python enums of the same
   names in `tstrans.exceptions` are unchanged.
-- `HlsError::Url` is removed; nothing in the library produced it.
-  `HlsPublisherBuilder::from_url` returns `HlsUrlError`, as before, and
-  `HlsError` no longer implements `From<HlsUrlError>`.
+- `HlsError::Url` is removed; nothing in the library produced it, and
+  `HlsError` no longer implements `From` for a URL error.
+- `UdpUrlError` and `HlsUrlError` are gone. `UdpUrl::parse`, `HlsUrl::parse`
+  and the builders' `from_url` return `tst_core::url::UrlError` with the same
+  messages, so the four small transports report URL errors through one type.
+  `UdpUrl` now holds its socket knobs in a `config: UdpConfig` field and
+  `HlsUrl` is its `config: HlsConfig`; `UdpConfig::merge_from_url` and
+  `HlsConfig::merge_from_url` are removed because the parsed URL already is
+  the config.
 - `tst_tcp::tls::load_server_config` is removed; use
   `tst_core::net::tls::load_server_config` (it takes `&Path` and returns
   `TlsLoadError`). A `tcps://…?ca=` bundle with no certificate now fails at
@@ -232,6 +238,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unchanged). `TcpCancelHandle` keeps its type and API.
 - The error text of a tcps CA bundle that cannot be loaded changed; the error
   kinds are unchanged.
+
+### Changed — tst-hls (BREAKING)
+
+- `HlsPublisherBuilder` setters take `&mut self` and `build` takes `&self`,
+  the builder rule every other crate follows; chained calls on a temporary
+  are unchanged, a builder held in a `let` is now mutated in place.
+  `UdpTransportBuilder::build` and `UdpRecvTransportBuilder::build` take
+  `&self` for the same reason.
 
 ### Changed — tst-py (BREAKING)
 
@@ -631,6 +645,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   components has. `org.tstrans.hls.PublisherStats`, which carries its
   optional durations as `-1`, `org.tstrans.rtp.RtspStats` and
   `org.tstrans.shells.TransportStats` stay hand-written.
+
+### Deprecated — tst-udp, tst-tcp
+
+- `tst_udp::SocketConfig` → `UdpConfig` (the old name is a deprecated alias
+  until 0.10.0; three crates named a type `SocketConfig`).
 
 ### Deprecated — tst-py
 

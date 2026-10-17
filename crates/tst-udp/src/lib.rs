@@ -28,9 +28,11 @@ pub mod url;
 mod binding_kind;
 
 pub use builder::{UdpRecvTransportBuilder, UdpTransportBuilder};
+#[allow(deprecated)]
 pub use config::SocketConfig;
+pub use config::UdpConfig;
 pub use error::UdpError;
 pub use recv::UdpRecvTransport;
 pub use stats::UdpStats;
 pub use transport::{UdpCancelHandle, UdpTransport};
-pub use url::{UdpUrl, UdpUrlError};
+pub use url::UdpUrl;

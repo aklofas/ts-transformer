@@ -4,8 +4,8 @@ use std::io;
 
 use thiserror::Error;
 
-/// All errors returned by the HLS publisher. A URL error is `HlsUrlError`,
-/// returned by `HlsPublisherBuilder::from_url`.
+/// All errors returned by the HLS publisher. A URL error is
+/// `tst_core::url::UrlError`, returned by `HlsPublisherBuilder::from_url`.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum HlsError {

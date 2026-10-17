@@ -8,7 +8,9 @@ use crate::config::{HlsConfig, HlsMode};
 use crate::error::HlsError;
 use crate::publisher::HlsPublisher;
 #[cfg(feature = "serve")]
-use crate::url::{HlsUrl, HlsUrlError};
+use crate::url::HlsUrl;
+#[cfg(feature = "serve")]
+use tst_core::url::UrlError;
 
 /// Builder for [`HlsPublisher`].
 #[must_use]
@@ -27,27 +29,26 @@ impl HlsPublisherBuilder {
 
     /// Parse an `hls://` or `hlss://` URL and seed the config from it.
     #[cfg(feature = "serve")]
-    pub fn from_url(url: &str) -> Result<Self, HlsUrlError> {
-        let parsed = HlsUrl::parse(url)?;
-        let mut config = HlsConfig::default();
-        config.merge_from_url(&parsed);
-        Ok(Self { config })
+    pub fn from_url(url: &str) -> Result<Self, UrlError> {
+        Ok(Self {
+            config: HlsUrl::parse(url)?.config,
+        })
     }
 
     /// HTTP server bind address.
-    pub fn bind(mut self, addr: SocketAddr) -> Self {
+    pub fn bind(&mut self, addr: SocketAddr) -> &mut Self {
         self.config.bind = addr;
         self
     }
 
     /// Filesystem directory for `.ts` segments + `playlist.m3u8`.
-    pub fn output_dir<P: AsRef<Path>>(mut self, dir: P) -> Self {
+    pub fn output_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
         self.config.output_dir = dir.as_ref().to_path_buf();
         self
     }
 
     /// Target segment duration.
-    pub fn segment_duration(mut self, d: Duration) -> Self {
+    pub fn segment_duration(&mut self, d: Duration) -> &mut Self {
         self.config.segment_duration = d;
         self
     }
@@ -55,25 +56,25 @@ impl HlsPublisherBuilder {
     /// Hard upper bound on an open segment's wall-clock age in the
     /// keyframe-driven flow (force-cuts when a keyframe is overdue). Defaults
     /// to `2 × segment_duration`; must be `≥ segment_duration`.
-    pub fn max_segment_duration(mut self, d: Duration) -> Self {
+    pub fn max_segment_duration(&mut self, d: Duration) -> &mut Self {
         self.config.max_segment_duration = Some(d);
         self
     }
 
     /// Rolling window size in LIVE mode.
-    pub fn playlist_window(mut self, n: usize) -> Self {
+    pub fn playlist_window(&mut self, n: usize) -> &mut Self {
         self.config.playlist_window = n;
         self
     }
 
     /// Playlist mode (LIVE / EVENT / VOD).
-    pub fn mode(mut self, mode: HlsMode) -> Self {
+    pub fn mode(&mut self, mode: HlsMode) -> &mut Self {
         self.config.mode = mode;
         self
     }
 
     /// Enable HTTP Basic auth.
-    pub fn basic_auth<S: Into<String>>(mut self, user: S, pass: S) -> Self {
+    pub fn basic_auth<S: Into<String>>(&mut self, user: S, pass: S) -> &mut Self {
         self.config.basic_auth = Some((user.into(), pass.into()));
         self
     }
@@ -81,19 +82,19 @@ impl HlsPublisherBuilder {
     /// Enable HTTPS by supplying cert + key paths (PEM).  Requires the `tls`
     /// cargo feature; without it [`HlsPublisherBuilder::build`] returns
     /// [`HlsError::TlsDisabled`].
-    pub fn enable_tls<P: AsRef<Path>>(mut self, cert: P, key: P) -> Self {
+    pub fn enable_tls<P: AsRef<Path>>(&mut self, cert: P, key: P) -> &mut Self {
         self.config.tls_cert = Some(cert.as_ref().to_path_buf());
         self.config.tls_key = Some(key.as_ref().to_path_buf());
         self
     }
 
     /// Construct the publisher (binds the HTTP server immediately).
-    pub fn build(self) -> Result<HlsPublisher, HlsError> {
+    pub fn build(&self) -> Result<HlsPublisher, HlsError> {
         #[cfg(not(feature = "tls"))]
         if self.config.tls_cert.is_some() || self.config.tls_key.is_some() {
             return Err(HlsError::TlsDisabled);
         }
-        HlsPublisher::with_config(self.config)
+        HlsPublisher::with_config(self.config.clone())
     }
 }
 
