@@ -192,6 +192,22 @@ pub(crate) enum CodecKind {
 }
 
 impl StreamCodecCounters {
+    /// Accumulate video deltas (saturating).
+    pub(crate) fn add_video(&mut self, nals_or_obus_delta: u64, ra_delta: u64) {
+        self.nals_or_obus = self.nals_or_obus.saturating_add(nals_or_obus_delta);
+        self.random_access_aus = self.random_access_aus.saturating_add(ra_delta);
+    }
+
+    /// Accumulate KLV records (saturating).
+    pub(crate) fn add_klv(&mut self, records_delta: u64) {
+        self.records = self.records.saturating_add(records_delta);
+    }
+
+    /// Accumulate audio frames (saturating).
+    pub(crate) fn add_audio(&mut self, frames_delta: u64) {
+        self.frames = self.frames.saturating_add(frames_delta);
+    }
+
     pub(crate) fn new(kind: CodecKind) -> Self {
         Self {
             kind,
@@ -227,11 +243,10 @@ pub(crate) fn bump_video_counters(
     nals_or_obus_delta: u64,
     ra_delta: u64,
 ) {
-    let c = counters
+    counters
         .entry(pid)
-        .or_insert_with(|| StreamCodecCounters::new(CodecKind::Video));
-    c.nals_or_obus = c.nals_or_obus.saturating_add(nals_or_obus_delta);
-    c.random_access_aus = c.random_access_aus.saturating_add(ra_delta);
+        .or_insert_with(|| StreamCodecCounters::new(CodecKind::Video))
+        .add_video(nals_or_obus_delta, ra_delta);
 }
 
 /// Lazily creates a KLV [`StreamCodecCounters`] entry for `pid` and
@@ -241,10 +256,10 @@ pub(crate) fn bump_klv_counters(
     pid: u16,
     records_delta: u64,
 ) {
-    let c = counters
+    counters
         .entry(pid)
-        .or_insert_with(|| StreamCodecCounters::new(CodecKind::Klv));
-    c.records = c.records.saturating_add(records_delta);
+        .or_insert_with(|| StreamCodecCounters::new(CodecKind::Klv))
+        .add_klv(records_delta);
 }
 
 /// Lazily creates an audio [`StreamCodecCounters`] entry for `pid` and
@@ -254,10 +269,10 @@ pub(crate) fn bump_audio_counters(
     pid: u16,
     frames_delta: u64,
 ) {
-    let c = counters
+    counters
         .entry(pid)
-        .or_insert_with(|| StreamCodecCounters::new(CodecKind::Audio));
-    c.frames = c.frames.saturating_add(frames_delta);
+        .or_insert_with(|| StreamCodecCounters::new(CodecKind::Audio))
+        .add_audio(frames_delta);
 }
 
 #[cfg(test)]

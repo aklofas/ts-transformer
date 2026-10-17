@@ -261,8 +261,13 @@ impl Reassembler {
     }
 
     pub fn drain_partial(&mut self) -> Vec<PesPayload> {
+        // PID order: the flush order is part of the observable event order,
+        // so it must not depend on the hash map's per-process seed.
+        let mut partials: Vec<(u16, Partial)> =
+            core::mem::take(&mut self.by_pid).into_iter().collect();
+        partials.sort_unstable_by_key(|(pid, _)| *pid);
         let mut out = Vec::new();
-        for (pid, p) in core::mem::take(&mut self.by_pid) {
+        for (pid, p) in partials {
             if let Ok(Some(pes)) = parse_complete(pid, &p.buf, p.random_access_indicator) {
                 out.push(pes);
             }
@@ -280,6 +285,12 @@ impl Reassembler {
         if let Some(p) = self.by_pid.remove(&pid) {
             self.total_buffered = self.total_buffered.saturating_sub(p.buf.len());
         }
+    }
+
+    /// Test probe: does `pid` hold a partial PES?
+    #[cfg(test)]
+    pub(crate) fn has_pid(&self, pid: u16) -> bool {
+        self.by_pid.contains_key(&pid)
     }
 
     pub fn buffered_bytes(&self) -> usize {

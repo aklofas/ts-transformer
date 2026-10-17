@@ -25,6 +25,8 @@ use crate::mpegts::demux::payload::{
     DvbSubStripResult, KlvShape, classify_klv, iter_au_cells, strip_dvb_sub_envelope,
 };
 use crate::mpegts::demux::pes::{PesPayload, ReassemblyOutcome};
+use crate::mpegts::demux::pid_state::set_once;
+use crate::mpegts::stats::CodecKind;
 use crate::shared::SharedBytes;
 use alloc::string::ToString;
 use alloc::vec::Vec;
@@ -76,16 +78,16 @@ impl super::demuxer::Demuxer {
         // Zero PES_packet_length is legal only for video. Key the
         // decision on the PMT-declared stream type, not the PES stream_id — the
         // PID's kind is always known here (process_packet only routes to
-        // handle_pes_packet when stream_kind_by_pid contains pkt.pid). A PID
+        // handle_pes_packet when a stream kind is declared for pkt.pid). A PID
         // tst-core recognizes as video is `StreamKind::Video(_)`; a video
         // codec it does NOT parse (MPEG-1/2/4) is `StreamKind::Unknown(t)` with
         // a video `stream_type` `t` — both are video elementary streams per
         // H.222.0 §2.4.3.7 and may carry an unbounded PES, so neither is
         // flagged. Everything else (audio/KLV/subtitle/non-video Unknown) is.
-        let is_video = match self.stream_kind_by_pid.get(&pkt.pid) {
+        let is_video = match self.stream_kind(pkt.pid) {
             Some(StreamKind::Video(_)) => true,
             Some(StreamKind::Unknown(stream_type)) => {
-                super::pmt_classify::is_video_stream_type(*stream_type)
+                super::pmt_classify::is_video_stream_type(stream_type)
             }
             _ => false,
         };
@@ -134,7 +136,7 @@ impl super::demuxer::Demuxer {
     }
 
     pub(super) fn handle_complete_pes(&mut self, pes: PesPayload) {
-        let kind = match self.stream_kind_by_pid.get(&pes.pid).copied() {
+        let kind = match self.stream_kind(pes.pid) {
             Some(k) => k,
             None => return,
         };
@@ -171,7 +173,7 @@ impl super::demuxer::Demuxer {
             );
         }
         if let Some(observed_pts) = pes.pts {
-            if let Some(last) = self.last_pts_by_pid.get(&pes.pid).copied() {
+            if let Some(last) = self.pid_state.get(&pes.pid).and_then(|s| s.last_pts) {
                 let delta = pts_diff_33bit(observed_pts.as_ticks() as u64, last as u64);
                 if delta < -90_000 {
                     // PTS anomaly is its own variant (90 kHz / per-PID
@@ -180,8 +182,7 @@ impl super::demuxer::Demuxer {
                     self.queue_nonconformant(stream, NonConformantIssue::PtsAnomaly { delta });
                 }
             }
-            self.last_pts_by_pid
-                .insert(pes.pid, observed_pts.as_ticks());
+            self.pid_state_mut(pes.pid).last_pts = Some(observed_pts.as_ticks());
         }
         // Opt-in PTS/DTS unwrap (`DemuxerConfig::unwrap_timestamps`,
         // default off — the branch below is skipped entirely and `pts`/`dts`
@@ -257,12 +258,9 @@ impl super::demuxer::Demuxer {
                 // counter still increments from the PES_start RAI bit.
                 let ra_count = if rai { 1 } else { 0 };
                 if ra_count > 0 {
-                    crate::mpegts::stats::bump_video_counters(
-                        &mut self.stream_codec_counters,
-                        stream.pid,
-                        0,
-                        ra_count,
-                    );
+                    self.pid_state_mut(stream.pid)
+                        .codec_mut(CodecKind::Video)
+                        .add_video(0, ra_count);
                 }
                 self.queue.push_back(DemuxEvent::Sample {
                     stream,
@@ -297,11 +295,9 @@ impl super::demuxer::Demuxer {
                     }
                     let meta_len = klv.len();
                     self.record_item(&stream, program_number, meta_len);
-                    crate::mpegts::stats::bump_klv_counters(
-                        &mut self.stream_codec_counters,
-                        stream.pid,
-                        1,
-                    );
+                    self.pid_state_mut(stream.pid)
+                        .codec_mut(CodecKind::Klv)
+                        .add_klv(1);
                     self.queue.push_back(DemuxEvent::Metadata {
                         stream,
                         pts,
@@ -390,11 +386,9 @@ impl super::demuxer::Demuxer {
                                 }
                                 let meta_len = payload_vec.len();
                                 self.record_item(&stream, program_number, meta_len);
-                                crate::mpegts::stats::bump_klv_counters(
-                                    &mut self.stream_codec_counters,
-                                    stream.pid,
-                                    1,
-                                );
+                                self.pid_state_mut(stream.pid)
+                                    .codec_mut(CodecKind::Klv)
+                                    .add_klv(1);
                                 self.queue.push_back(DemuxEvent::Metadata {
                                     stream,
                                     // PES PTS reused for every AU emitted
@@ -455,11 +449,9 @@ impl super::demuxer::Demuxer {
                                     let payload_vec = current_inner.to_vec();
                                     let meta_len = payload_vec.len();
                                     self.record_item(&stream, program_number, meta_len);
-                                    crate::mpegts::stats::bump_klv_counters(
-                                        &mut self.stream_codec_counters,
-                                        stream.pid,
-                                        1,
-                                    );
+                                    self.pid_state_mut(stream.pid)
+                                        .codec_mut(CodecKind::Klv)
+                                        .add_klv(1);
                                     self.queue.push_back(DemuxEvent::Metadata {
                                         stream,
                                         pts,
@@ -557,7 +549,7 @@ impl super::demuxer::Demuxer {
                 // Codec-specific counter bump. AAC-ADTS + MP2 have frame
                 // iterators in `codec::*`; LATM + AC-3 don't (their
                 // `stream_codec_stats` accessor falls back to
-                // `StreamCodecStats::Unknown` via the stats_per_stream-only
+                // `StreamCodecStats::Unknown` via the stats-only
                 // path).
                 //
                 // Use the resync variants (`frames_with_resync`) so a single
@@ -576,11 +568,9 @@ impl super::demuxer::Demuxer {
                     _ => 0, // AacLatm / Ac3 — no iterator yet
                 };
                 if frames_delta > 0 {
-                    crate::mpegts::stats::bump_audio_counters(
-                        &mut self.stream_codec_counters,
-                        stream.pid,
-                        frames_delta,
-                    );
+                    self.pid_state_mut(stream.pid)
+                        .codec_mut(CodecKind::Audio)
+                        .add_audio(frames_delta);
                 }
                 // AC-3 syncframe alignment enforcement.
                 //
@@ -616,7 +606,7 @@ impl super::demuxer::Demuxer {
             }
             StreamKind::Subtitle(codec) => {
                 let payload_len = pes.payload.len();
-                if self.subtitle_pids_seen.insert(stream.pid) {
+                if set_once(&mut self.pid_state_mut(stream.pid).subtitle_seen) {
                     self.subtitle_streams_seen_count += 1;
                 }
                 let entry = self.record_item(&stream, program_number, payload_len);

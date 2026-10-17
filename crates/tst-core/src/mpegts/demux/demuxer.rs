@@ -19,15 +19,16 @@ use crate::mpegts::demux::event::{
     AdaptationFieldKind, DemuxEvent, NonConformantIssue, StreamId, StreamKind,
 };
 use crate::mpegts::demux::pes::Reassembler;
+use crate::mpegts::demux::pid_state::{PidState, TopologyDiff};
 use crate::mpegts::demux::psi_assembler::PsiSectionAssembler;
 use crate::mpegts::demux::ts::{TsParseError, parse_ts_packet};
 use crate::mpegts::demux::types::{
     DEFAULT_AU_CELL_CAP_PER_PID, DEFAULT_AU_CELL_CAP_TOTAL, DEFAULT_AU_CELL_MAX_IN_FLIGHT_PIDS,
     DEFAULT_PES_CAP_PER_PID, DEFAULT_PES_CAP_TOTAL, DemuxerConfig, DemuxerStats, ProgramTracker,
 };
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 
 /// Per-PID PTS/DTS unwrap accumulator state, in raw 90 kHz ticks.
 ///
@@ -97,27 +98,9 @@ pub struct Demuxer {
     pub(super) programs: HashMap<u16, ProgramTracker>,
     /// Latest PAT version. Bump triggers PAT diff (programs added/removed).
     pub(super) pat_version: Option<u8>,
-    /// Per-PID stream kind cache for PES dispatch. Flat across all programs
-    /// (PIDs must be unique cross-program per ISO 13818-1).
-    pub(super) stream_kind_by_pid: HashMap<u16, StreamKind>,
-    pub(super) cc_by_pid: HashMap<u16, u8>,
-    /// Per-PID duplicate-packet tracking for the spec-legal one-extra rule
-    /// (H.222.0 §2.4.3.3: a packet may be transmitted exactly twice with the
-    /// same continuity_counter). A PID in this set had its immediately
-    /// preceding payload-bearing packet classified as a spec-legal duplicate
-    /// (same CC, no discontinuity_indicator). If the SAME CC appears a
-    /// THIRD time on that PID, that IS a discontinuity. The set is cleared
-    /// per-PID whenever the PID advances its CC normally, or when per-PID
-    /// state is dropped (PAT/PMT topology teardown, `reset_sync`).
-    pub(super) dup_by_pid: HashSet<u16>,
-    /// Raw bytes of the last routed payload-bearing packet per PID, retained
-    /// so duplicate detection can byte-compare a same-CC packet against its
-    /// predecessor (H.222.0 §2.4.3.3 requires duplicates to be bit-identical
-    /// apart from a refreshed PCR — see `pcr_masked_identical`). Lifecycle
-    /// mirrors `cc_by_pid` exactly: inserted on every routed payload packet,
-    /// removed/cleared wherever `cc_by_pid` is. Bounded like the sibling
-    /// per-PID maps (worst case 8191 PIDs × 188 B ≈ 1.5 MB on hostile input).
-    pub(super) last_pkt_raw_by_pid: HashMap<u16, [u8; 188]>,
+    /// Everything remembered per PID (kind, owner, continuity, timing,
+    /// unwrap, counters, once-flags) in one map. See `pid_state.rs`.
+    pub(super) pid_state: HashMap<u16, PidState>,
     /// Captured (expected, observed) CC pair when `check_continuity`
     /// flagged a real jump on the packet currently being routed. Drained
     /// by `handle_psi` when it consumes the strict-mode drop arm; cleared
@@ -129,16 +112,6 @@ pub struct Demuxer {
     /// PMT; per ITU-T H.222.0 §2.4.3.5 each program has its own time base,
     /// so PCR comparison MUST stay within a single PID's timeline).
     pub(super) last_pcr_by_pid: HashMap<u16, u64>,
-    pub(super) last_pts_by_pid: HashMap<u16, i64>,
-    /// Per-PID PTS/DTS unwrap accumulator — see [`UnwrapState`].
-    /// Populated and consulted only when
-    /// [`DemuxerConfig::unwrap_timestamps`] is `true`; stays empty (and
-    /// inert) otherwise. See [`Self::unwrap_pts`] /
-    /// [`Self::unwrap_dts_with_pts`] / [`Self::unwrap_secondary_ts`].
-    /// Cleared on [`Self::reset_sync`] alongside `last_pts_by_pid`, and
-    /// per PID by [`Self::drop_elementary_pid_state`] when a PID leaves
-    /// the topology.
-    pub(super) unwrap_state: HashMap<u16, UnwrapState>,
     /// Per-PROGRAM unwrap reference, keyed by `program_number` — the most
     /// recent `(raw, unwrapped)` pair emitted on ANY PID of that program.
     /// A PID's FIRST sample anchors against its program's reference rather
@@ -152,7 +125,7 @@ pub struct Demuxer {
     /// yet) contribute nothing here and anchor at their raw value.
     /// Populated and consulted only when
     /// [`DemuxerConfig::unwrap_timestamps`] is `true`; cleared alongside
-    /// `unwrap_state` on [`Self::reset_sync`], and dropped for a program
+    /// each PID's unwrap accumulator on [`Self::reset_sync`], and dropped for a program
     /// that leaves the PAT (its reference is unreachable, and a later
     /// program re-using the number owns a different time base).
     pub(super) program_clock: HashMap<u16, UnwrapState>,
@@ -192,35 +165,6 @@ pub struct Demuxer {
     pub(super) nonconformant_count: u64,
     pub(super) unwrap_reanchors_count: u64,
     pub(super) subtitle_streams_seen_count: u32,
-    /// Per-PID counters; entries created lazily on first event per PID.
-    pub(super) stats_per_stream: BTreeMap<u16, crate::mpegts::stats::StreamStats>,
-    /// Per-PID codec-specific counters. Allocated lazily on first event
-    /// for a PID whose stream_type falls into a counted family. PSI /
-    /// subtitle / LATM / AC-3 PIDs do NOT get an entry — they live only
-    /// in `stats_per_stream`.
-    pub(super) stream_codec_counters: BTreeMap<u16, crate::mpegts::stats::StreamCodecCounters>,
-    /// PIDs that have already emitted `SubtitleMissingDescriptor` for the
-    /// current PMT version. Cleared at the top of each PMT-version bump so
-    /// a fresh PMT re-fires if the descriptor is still missing.
-    pub(super) subtitle_missing_descriptor_emitted: HashSet<u16>,
-    /// PIDs the demuxer has emitted at least one `SamplePayload::Subtitle`
-    /// event for. Used to dedupe `subtitle_streams_seen` increments so
-    /// repeat samples on the same PID don't double-count. Cleared on
-    /// `reset_stats`.
-    pub(super) subtitle_pids_seen: HashSet<u16>,
-    /// PIDs that have already emitted `Av1RegistrationMalformed` for the
-    /// current PMT version. Cleared at the top of each PMT-version bump so
-    /// a fresh PMT re-fires if the malformed registration is still present.
-    pub(super) av1_registration_malformed_emitted: HashSet<u16>,
-    /// PIDs that have already emitted `SubtitleDescriptorAmbiguous` for the
-    /// current PMT version. Cleared at the top of each PMT-version bump so
-    /// a fresh PMT re-fires if the ambiguity is still present.
-    pub(super) subtitle_descriptor_ambiguous_emitted: HashSet<u16>,
-    /// PID → program_number lookup. Populated when a PMT is parsed;
-    /// entries are removed when the PAT drops a program. Replaces the
-    /// O(programs × streams) linear scan in `program_number_for_pid` that
-    /// ran at every event-emitting callsite.
-    pub(super) pid_to_program: HashMap<u16, u16>,
     /// Per-PID Metadata AU cell reassembler. Accumulates fragmented sync-
     /// metadata cells (H.222.0 §2.12.4.2 First/Middle/Last) into complete
     /// AUs. Single-cell (`Complete`) AUs pass through unchanged. Cleared
@@ -271,14 +215,9 @@ impl Demuxer {
             psi_assemblers,
             programs: HashMap::new(),
             pat_version: None,
-            stream_kind_by_pid: HashMap::new(),
-            cc_by_pid: HashMap::new(),
-            dup_by_pid: HashSet::new(),
-            last_pkt_raw_by_pid: HashMap::new(),
+            pid_state: HashMap::new(),
             last_psi_cc_jump: None,
             last_pcr_by_pid: HashMap::new(),
-            last_pts_by_pid: HashMap::new(),
-            unwrap_state: HashMap::new(),
             program_clock: HashMap::new(),
             pes: Reassembler::new(cap_per_pid, cap_total),
             queue: VecDeque::new(),
@@ -292,13 +231,6 @@ impl Demuxer {
             nonconformant_count: 0,
             unwrap_reanchors_count: 0,
             subtitle_streams_seen_count: 0,
-            stats_per_stream: BTreeMap::new(),
-            stream_codec_counters: BTreeMap::new(),
-            subtitle_missing_descriptor_emitted: HashSet::new(),
-            subtitle_pids_seen: HashSet::new(),
-            av1_registration_malformed_emitted: HashSet::new(),
-            subtitle_descriptor_ambiguous_emitted: HashSet::new(),
-            pid_to_program: HashMap::new(),
             au_reassembler: crate::mpegts::demux::au_reassemble::AuCellReassembler::with_limits(
                 au_cap,
                 au_cap_total,
@@ -702,14 +634,14 @@ impl Demuxer {
                 false,
                 cc_jumped,
             )?;
-        } else if pkt.has_payload && self.stream_kind_by_pid.contains_key(&pkt.pid) {
+        } else if pkt.has_payload && self.stream_kind(pkt.pid).is_some() {
             self.handle_pes_packet(&pkt)?;
         }
         Ok(())
     }
 
     pub(super) fn lookup_stream(&self, pid: u16) -> Option<StreamId> {
-        self.stream_kind_by_pid.get(&pid).copied().map(|kind| {
+        self.stream_kind(pid).map(|kind| {
             let program_number = self.program_number_for_pid(pid);
             StreamId {
                 pid,
@@ -719,10 +651,62 @@ impl Demuxer {
         })
     }
 
-    /// Look up the program_number for a PID via the `pid_to_program` map.
+    /// The PES dispatch kind a PMT declared for `pid`, if any.
+    pub(super) fn stream_kind(&self, pid: u16) -> Option<StreamKind> {
+        self.pid_state.get(&pid).and_then(|s| s.stream_kind)
+    }
+
+    /// The program that owns `pid`, if a PMT has declared it.
+    pub(super) fn program_of(&self, pid: u16) -> Option<u16> {
+        self.pid_state.get(&pid).and_then(|s| s.program)
+    }
+
+    /// The state entry for `pid`, created empty on first use.
+    pub(super) fn pid_state_mut(&mut self, pid: u16) -> &mut PidState {
+        self.pid_state.entry(pid).or_default()
+    }
+
+    /// Look up the program_number for a PID.
     /// Returns 0 if the PID is not owned by any known program (e.g. PSI PIDs).
     pub(super) fn program_number_for_pid(&self, pid: u16) -> u16 {
-        self.pid_to_program.get(&pid).copied().unwrap_or(0)
+        self.program_of(pid).unwrap_or(0)
+    }
+
+    /// Test probe: the unwrap accumulator of `pid`.
+    #[cfg(test)]
+    pub(super) fn unwrap_of(&self, pid: u16) -> Option<&UnwrapState> {
+        self.pid_state.get(&pid).and_then(|s| s.unwrap.as_ref())
+    }
+
+    /// Apply a topology change to the per-PID state. The ONE place where
+    /// PIDs enter and leave `pid_state` on a PAT/PMT change.
+    pub(super) fn apply_topology_diff(&mut self, diff: TopologyDiff) {
+        for pid in diff.retired {
+            self.pid_state.remove(&pid);
+            self.pes.remove_pid(pid);
+        }
+        for pmt_pid in diff.retired_pmt_pids {
+            if let Some(state) = self.pid_state.get_mut(&pmt_pid) {
+                state.clear_continuity();
+                if state.is_vacant() {
+                    self.pid_state.remove(&pmt_pid);
+                }
+            }
+        }
+        for pid in diff.kind_changed {
+            self.pes.remove_pid(pid);
+            if let Some(state) = self.pid_state.get_mut(&pid) {
+                state.clear_timing();
+            }
+        }
+        for (pid, kind, program) in diff.added {
+            let state = self.pid_state_mut(pid);
+            state.stream_kind = Some(kind);
+            state.program = Some(program);
+        }
+        if !diff.pcr_pid_changes.is_empty() {
+            self.retire_undeclared_pcr_history();
+        }
     }
 
     /// Pick the unwrapped value for a PID's very FIRST observed sample.
@@ -739,7 +723,7 @@ impl Demuxer {
     /// against an unrelated program's clock, and a PID with no owning
     /// program (PSI, or a PMT not yet parsed) always anchors at raw.
     fn anchor_first_sample(&self, pid: u16, raw_ticks: i64) -> i64 {
-        let Some(&prog) = self.pid_to_program.get(&pid) else {
+        let Some(prog) = self.program_of(pid) else {
             return raw_ticks;
         };
         match self.program_clock.get(&prog) {
@@ -774,7 +758,7 @@ impl Demuxer {
     /// program with no clock yet, and never crosses programs.
     fn dormant_reanchor(&self, pid: u16, raw_ticks: i64, state: UnwrapState) -> Option<i64> {
         const HALF_EPOCH: i64 = 1 << 32;
-        let prog = *self.pid_to_program.get(&pid)?;
+        let prog = self.program_of(pid)?;
         let reference = self.program_clock.get(&prog)?;
         if reference.last_unwrapped <= state.last_unwrapped {
             return None;
@@ -829,7 +813,7 @@ impl Demuxer {
         raw: crate::mpegts::common::Pts90khz,
     ) -> crate::mpegts::common::Pts90khz {
         let raw_ticks = raw.as_ticks();
-        let unwrapped = match self.unwrap_state.get(&pid).copied() {
+        let unwrapped = match self.pid_state.get(&pid).and_then(|s| s.unwrap) {
             Some(state) => match self.dormant_reanchor(pid, raw_ticks, state) {
                 Some(via_program) => {
                     self.unwrap_reanchors_count += 1;
@@ -849,8 +833,8 @@ impl Demuxer {
             last_raw: raw_ticks,
             last_unwrapped: unwrapped,
         };
-        self.unwrap_state.insert(pid, entry);
-        if let Some(&prog) = self.pid_to_program.get(&pid) {
+        self.pid_state_mut(pid).unwrap = Some(entry);
+        if let Some(prog) = self.program_of(pid) {
             self.program_clock.insert(prog, entry);
         }
         crate::mpegts::common::Pts90khz::new(unwrapped)
@@ -901,8 +885,9 @@ impl Demuxer {
         raw: crate::mpegts::common::Pts90khz,
     ) -> crate::mpegts::common::Pts90khz {
         let offset = self
-            .unwrap_state
+            .pid_state
             .get(&pid)
+            .and_then(|s| s.unwrap)
             .map_or(0, |s| s.last_unwrapped.saturating_sub(s.last_raw));
         crate::mpegts::common::Pts90khz::new(offset.saturating_add(raw.as_ticks()))
     }
@@ -971,10 +956,11 @@ impl Demuxer {
     /// [`crate::mpegts::stats::StreamCodecStats`] for the semantics of
     /// the return value (`None` vs `Some(Unknown)` vs typed variant).
     pub fn stream_codec_stats(&self, pid: u16) -> Option<crate::mpegts::stats::StreamCodecStats> {
-        if let Some(c) = self.stream_codec_counters.get(&pid) {
+        let state = self.pid_state.get(&pid)?;
+        if let Some(c) = &state.codec {
             return Some(c.to_public());
         }
-        if self.stats_per_stream.contains_key(&pid) {
+        if state.stats.is_some() {
             return Some(crate::mpegts::stats::StreamCodecStats::Unknown);
         }
         None
@@ -990,7 +976,11 @@ impl Demuxer {
             programs_seen: self.programs.len() as u32,
             subtitle_streams_seen: self.subtitle_streams_seen_count,
             unwrap_reanchors: self.unwrap_reanchors_count,
-            per_stream: self.stats_per_stream.clone(),
+            per_stream: self
+                .pid_state
+                .iter()
+                .filter_map(|(&pid, s)| s.stats.clone().map(|st| (pid, st)))
+                .collect(),
         }
     }
 
@@ -1022,17 +1012,17 @@ impl Demuxer {
             .insert(0x0000, PsiSectionAssembler::new());
         self.programs.clear();
         self.pat_version = None;
-        self.stream_kind_by_pid.clear();
-        self.cc_by_pid.clear();
-        self.dup_by_pid.clear();
-        self.last_pkt_raw_by_pid.clear();
+        // Per-PID state resets entry by entry: counters and the
+        // subtitle-seen flag survive a reconnect (`reset_stats` owns them).
+        for state in self.pid_state.values_mut() {
+            state.reset_sync();
+        }
+        self.pid_state.retain(|_, s| !s.is_vacant());
         self.last_psi_cc_jump = None;
         self.last_pcr_by_pid.clear();
-        self.last_pts_by_pid.clear();
         // A reconnect restarts the opt-in PTS/DTS unwrap timeline (see
         // `DemuxerConfig::unwrap_timestamps`) — stale offsets from the
         // dead connection must not splice into the new one's epoch.
-        self.unwrap_state.clear();
         self.program_clock.clear();
         // Drop all in-flight PES reassembly state. A new reassembler
         // with the same caps replaces it (Reassembler exposes no
@@ -1053,10 +1043,6 @@ impl Demuxer {
         // reconnect re-fires `SubtitleMissingDescriptor` /
         // `Av1RegistrationMalformed` / `SubtitleDescriptorAmbiguous` if
         // those still apply on the new connection.
-        self.subtitle_missing_descriptor_emitted.clear();
-        self.av1_registration_malformed_emitted.clear();
-        self.subtitle_descriptor_ambiguous_emitted.clear();
-        self.pid_to_program.clear();
         // Drop all in-flight AU cell reassembly buffers. Operational reset
         // — no NonConformant emitted; pre-reconnect cells are simply gone.
         self.au_reassembler.reset_all();
@@ -1083,9 +1069,10 @@ impl Demuxer {
         self.nonconformant_count = 0;
         self.unwrap_reanchors_count = 0;
         self.subtitle_streams_seen_count = 0;
-        self.subtitle_pids_seen.clear();
-        self.stats_per_stream.clear();
-        self.stream_codec_counters.clear();
+        for state in self.pid_state.values_mut() {
+            state.reset_stats();
+        }
+        self.pid_state.retain(|_, s| !s.is_vacant());
         // Drop cached PMT versions on each ProgramTracker so the next PMT
         // triggers pmt_versions_seen += 1 even if the version_number hasn't changed.
         for tracker in self.programs.values_mut() {
@@ -1531,9 +1518,12 @@ mod tests {
     }
 
     #[test]
-    fn bump_video_counters_increments_existing_entry() {
+    fn codec_counters_increment_existing_entry() {
         let mut demux = Demuxer::new();
-        crate::mpegts::stats::bump_video_counters(&mut demux.stream_codec_counters, 0x100, 2, 1);
+        demux
+            .pid_state_mut(0x100)
+            .codec_mut(crate::mpegts::stats::CodecKind::Video)
+            .add_video(2, 1);
         match demux.stream_codec_stats(0x100) {
             Some(crate::mpegts::stats::StreamCodecStats::Video {
                 nals_or_obus: 2,
@@ -1542,7 +1532,10 @@ mod tests {
             }) => {}
             other => panic!("expected Video {{2,1}}, got {:?}", other),
         }
-        crate::mpegts::stats::bump_video_counters(&mut demux.stream_codec_counters, 0x100, 3, 0);
+        demux
+            .pid_state_mut(0x100)
+            .codec_mut(crate::mpegts::stats::CodecKind::Video)
+            .add_video(3, 0);
         match demux.stream_codec_stats(0x100) {
             Some(crate::mpegts::stats::StreamCodecStats::Video {
                 nals_or_obus: 5,
@@ -3637,9 +3630,24 @@ mod tests {
         // Seed CC entries for both programs' video PIDs + the PMT PIDs.
         demuxer.feed(&payload_packet_for_test(0x1011, 5)).unwrap();
         demuxer.feed(&payload_packet_for_test(0x1111, 7)).unwrap();
-        assert!(demuxer.cc_by_pid.contains_key(&0x1011));
-        assert!(demuxer.cc_by_pid.contains_key(&0x1111));
-        assert!(demuxer.cc_by_pid.contains_key(&0x1100)); // PMT PID
+        assert!(
+            demuxer
+                .pid_state
+                .get(&0x1011)
+                .is_some_and(|s| s.cc.is_some())
+        );
+        assert!(
+            demuxer
+                .pid_state
+                .get(&0x1111)
+                .is_some_and(|s| s.cc.is_some())
+        );
+        assert!(
+            demuxer
+                .pid_state
+                .get(&0x1100)
+                .is_some_and(|s| s.cc.is_some())
+        ); // PMT PID
 
         // PAT v1 drops program 2 (CC=1 so it isn't swallowed as a duplicate of v0).
         demuxer
@@ -3647,15 +3655,24 @@ mod tests {
             .unwrap();
 
         assert!(
-            demuxer.cc_by_pid.contains_key(&0x1011),
+            demuxer
+                .pid_state
+                .get(&0x1011)
+                .is_some_and(|s| s.cc.is_some()),
             "program 1's PID 0x1011 cc must survive"
         );
         assert!(
-            !demuxer.cc_by_pid.contains_key(&0x1111),
+            demuxer
+                .pid_state
+                .get(&0x1111)
+                .is_none_or(|s| s.cc.is_none()),
             "program 2's PID 0x1111 cc must be cleared"
         );
         assert!(
-            !demuxer.cc_by_pid.contains_key(&0x1100),
+            demuxer
+                .pid_state
+                .get(&0x1100)
+                .is_none_or(|s| s.cc.is_none()),
             "program 2's PMT PID 0x1100 cc must be cleared"
         );
     }
@@ -3732,8 +3749,8 @@ mod tests {
                 0,
             ))
             .unwrap();
-        assert!(demuxer.stream_kind_by_pid.contains_key(&0x1111));
-        assert!(demuxer.pid_to_program.contains_key(&0x1111));
+        assert!(demuxer.stream_kind(0x1111).is_some());
+        assert!(demuxer.program_of(0x1111).is_some());
 
         // PAT v1 drops program 2 (CC=1 so it isn't swallowed as a duplicate of v0).
         demuxer
@@ -3742,12 +3759,12 @@ mod tests {
 
         // Sanity: the removed program's PID also leaves the routing maps.
         assert!(
-            !demuxer.stream_kind_by_pid.contains_key(&0x1111),
-            "stream_kind_by_pid must drop removed program's PID"
+            demuxer.stream_kind(0x1111).is_none(),
+            "stream kind must drop removed program's PID"
         );
         assert!(
-            !demuxer.pid_to_program.contains_key(&0x1111),
-            "pid_to_program must drop removed program's PID"
+            demuxer.program_of(0x1111).is_none(),
+            "owning program must drop removed program's PID"
         );
     }
 
@@ -3771,7 +3788,7 @@ mod tests {
                 0,
             ))
             .unwrap();
-        assert!(demuxer.stream_kind_by_pid.contains_key(&0x1011));
+        assert!(demuxer.stream_kind(0x1011).is_some());
         // PMT v1 (same program 1): replaces 0x1011 with 0x1012.
         // CC=1 so it isn't swallowed as a duplicate of the v0 PMT on this PID.
         demuxer
@@ -3785,15 +3802,15 @@ mod tests {
             ))
             .unwrap();
         assert!(
-            !demuxer.stream_kind_by_pid.contains_key(&0x1011),
+            demuxer.stream_kind(0x1011).is_none(),
             "removed PID 0x1011 must no longer route as a stream"
         );
         assert!(
-            !demuxer.pid_to_program.contains_key(&0x1011),
-            "removed PID 0x1011 must be gone from pid_to_program"
+            demuxer.program_of(0x1011).is_none(),
+            "removed PID 0x1011 must have no owning program"
         );
         assert!(
-            demuxer.stream_kind_by_pid.contains_key(&0x1012),
+            demuxer.stream_kind(0x1012).is_some(),
             "the surviving new PID 0x1012 must route"
         );
     }
@@ -4398,7 +4415,7 @@ mod tests {
         let out = d.unwrap_pts(0x100, Pts90khz::new(12_345));
         assert_eq!(out.as_ticks(), 12_345);
         assert_eq!(
-            d.unwrap_state.get(&0x100),
+            d.unwrap_of(0x100),
             Some(&UnwrapState {
                 last_raw: 12_345,
                 last_unwrapped: 12_345,
@@ -4413,7 +4430,7 @@ mod tests {
         let out = d.unwrap_pts(0x100, Pts90khz::new(91_000));
         assert_eq!(out.as_ticks(), 91_000, "no wrap — derived offset stays 0");
         assert_eq!(
-            d.unwrap_state.get(&0x100),
+            d.unwrap_of(0x100),
             Some(&UnwrapState {
                 last_raw: 91_000,
                 last_unwrapped: 91_000,
@@ -4432,7 +4449,7 @@ mod tests {
         assert_eq!(out.as_ticks(), raw1 + 180_000);
         assert!(out.as_ticks() > raw1, "must be monotonic across the wrap");
         assert_eq!(
-            d.unwrap_state.get(&0x100),
+            d.unwrap_of(0x100),
             Some(&UnwrapState {
                 last_raw: raw2,
                 last_unwrapped: raw1 + 180_000,
@@ -4450,7 +4467,7 @@ mod tests {
         let out = d.unwrap_pts(0x100, Pts90khz::new(99_000));
         assert_eq!(out.as_ticks(), 99_000);
         assert_eq!(
-            d.unwrap_state.get(&0x100),
+            d.unwrap_of(0x100),
             Some(&UnwrapState {
                 last_raw: 99_000,
                 last_unwrapped: 99_000,
@@ -4472,8 +4489,8 @@ mod tests {
     #[test]
     fn unwrap_pts_first_sample_anchors_to_its_programs_clock() {
         let mut d = Demuxer::new();
-        d.pid_to_program.insert(0x100, 1);
-        d.pid_to_program.insert(0x101, 1);
+        d.pid_state_mut(0x100).program = Some(1);
+        d.pid_state_mut(0x101).program = Some(1);
 
         // PID 0x100 establishes program 1's timeline and wraps.
         let raw1 = (1i64 << 33) - 100;
@@ -4486,7 +4503,7 @@ mod tests {
         let out = d.unwrap_pts(0x101, Pts90khz::new(100));
         assert_eq!(out.as_ticks(), (1i64 << 33) + 100);
         assert_eq!(
-            d.unwrap_state.get(&0x101),
+            d.unwrap_of(0x101),
             Some(&UnwrapState {
                 last_raw: 100,
                 last_unwrapped: (1i64 << 33) + 100,
@@ -4497,8 +4514,8 @@ mod tests {
     #[test]
     fn unwrap_pts_first_sample_never_anchors_across_programs() {
         let mut d = Demuxer::new();
-        d.pid_to_program.insert(0x100, 1);
-        d.pid_to_program.insert(0x200, 2);
+        d.pid_state_mut(0x100).program = Some(1);
+        d.pid_state_mut(0x200).program = Some(2);
 
         // Program 1 wraps; program 2 has no timeline of its own yet.
         let raw1 = (1i64 << 33) - 100;
@@ -4517,8 +4534,8 @@ mod tests {
     fn unwrap_pts_dormant_pid_reanchors_onto_fresher_program_clock() {
         const HALF: i64 = 1 << 32;
         let mut d = Demuxer::new();
-        d.pid_to_program.insert(0x100, 1);
-        d.pid_to_program.insert(0x101, 1);
+        d.pid_state_mut(0x100).program = Some(1);
+        d.pid_state_mut(0x101).program = Some(1);
         let _ = d.unwrap_pts(0x101, Pts90khz::new(0));
         for pts in [0, HALF / 2, HALF] {
             let _ = d.unwrap_pts(0x100, Pts90khz::new(pts));
@@ -4527,7 +4544,7 @@ mod tests {
         assert_eq!(out.as_ticks(), HALF + 100);
         assert_eq!(d.stats().unwrap_reanchors, 1);
         assert_eq!(
-            d.unwrap_state.get(&0x101),
+            d.unwrap_of(0x101),
             Some(&UnwrapState {
                 last_raw: HALF + 100,
                 last_unwrapped: HALF + 100,
@@ -4540,8 +4557,8 @@ mod tests {
     #[test]
     fn unwrap_pts_small_reorder_keeps_own_delta_and_does_not_count() {
         let mut d = Demuxer::new();
-        d.pid_to_program.insert(0x100, 1);
-        d.pid_to_program.insert(0x101, 1);
+        d.pid_state_mut(0x100).program = Some(1);
+        d.pid_state_mut(0x101).program = Some(1);
         let _ = d.unwrap_pts(0x101, Pts90khz::new(1_000));
         let _ = d.unwrap_pts(0x100, Pts90khz::new(1_000));
         let _ = d.unwrap_pts(0x100, Pts90khz::new(2_000));
@@ -4557,14 +4574,14 @@ mod tests {
         let _ = d.unwrap_pts(0x100, Pts90khz::new(raw1)); // anchors, offset 0
         let raw2 = raw1 + 180_000 - (1i64 << 33);
         let _ = d.unwrap_pts(0x100, Pts90khz::new(raw2)); // wraps — offset becomes 1<<33
-        let state_before = d.unwrap_state.get(&0x100).copied();
+        let state_before = d.unwrap_of(0x100).copied();
 
         // A DTS just below the (already-wrapped) PTS on the same PES
         // reuses the post-wrap offset — no independent wrap check.
         let dts = d.unwrap_secondary_ts(0x100, Pts90khz::new(raw2 - 3_000));
         assert_eq!(dts.as_ticks(), (1i64 << 33) + raw2 - 3_000);
         // The DTS call must not mutate the accumulator.
-        assert_eq!(d.unwrap_state.get(&0x100).copied(), state_before);
+        assert_eq!(d.unwrap_of(0x100).copied(), state_before);
     }
 
     #[test]

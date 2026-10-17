@@ -212,7 +212,7 @@ impl super::demuxer::Demuxer {
     /// `discontinuity_indicator`). The caller MUST suppress all payload
     /// routing for such packets — they carry no new data. A THIRD packet with
     /// the same CC on the same PID IS a discontinuity (the "only-two" rule is
-    /// enforced via `self.dup_by_pid`).
+    /// enforced via `PidState::dup`).
     ///
     /// Side effect: clears `self.last_psi_cc_jump` at entry, sets it to
     /// `Some((expected, observed))` when a real jump fires. `handle_psi`
@@ -225,7 +225,7 @@ impl super::demuxer::Demuxer {
         // Per ITU-T H.222.0 §2.4.3.3, the continuity_counter field on null PID
         // (0x1FFF) packets is undefined and MUST NOT be validated. Null packets
         // are >50% of bytes in CBR feeds, so tracking them would grow
-        // `cc_by_pid` with a sentinel entry that's never useful and could
+        // `pid_state` with a sentinel entry that's never useful and could
         // spuriously fire ContinuityJump. PCR tracking is intentionally NOT
         // skipped — PCR may legitimately ride null packets per §2.4.3.5 — that
         // path lives in `check_pcr` and is keyed on `pcr_27mhz.is_some()`.
@@ -239,7 +239,11 @@ impl super::demuxer::Demuxer {
             return (false, false);
         }
         let mut real_jump = false;
-        if let Some(prev_cc) = self.cc_by_pid.get(&pkt.pid).copied() {
+        let (prev_cc, prev_was_dup) = self
+            .pid_state
+            .get(&pkt.pid)
+            .map_or((None, false), |s| (s.cc, s.dup));
+        if let Some(prev_cc) = prev_cc {
             let expected = (prev_cc + 1) & 0x0F;
 
             // Spec-legal duplicate: same CC, no discontinuity_indicator, AND
@@ -260,20 +264,21 @@ impl super::demuxer::Demuxer {
             let is_identical_dup = pkt.continuity_counter == prev_cc
                 && !pkt.discontinuity_indicator
                 && self
-                    .last_pkt_raw_by_pid
+                    .pid_state
                     .get(&pkt.pid)
+                    .and_then(|s| s.last_pkt_raw.as_ref())
                     .is_some_and(|prev| pcr_masked_identical(prev, pkt.raw));
             if is_identical_dup {
-                if self.dup_by_pid.contains(&pkt.pid) {
+                if prev_was_dup {
                     // Third (or later) identical packet with the same CC —
                     // beyond the spec's only-two allowance. Surface exactly
                     // ONE discontinuity for this packet and route its payload
-                    // (the pre-duplicate-support behavior). `dup_by_pid`
+                    // (the pre-duplicate-support behavior). `PidState::dup`
                     // stays SET and the stored original bytes stay in place,
                     // so EVERY further identical packet in the run lands here
                     // too — the only-two enforcement does not reset mid-run.
                     // Early return keeps the generic CC-jump block below from
-                    // recording the same jump a second time. (cc_by_pid would
+                    // recording the same jump a second time. (the stored cc would
                     // be re-inserted with the identical value — skipping the
                     // tail is a no-op for it.)
                     self.last_psi_cc_jump = Some((expected, pkt.continuity_counter));
@@ -289,8 +294,8 @@ impl super::demuxer::Demuxer {
                     return (true, false);
                 }
                 // First duplicate — suppress and mark.
-                self.dup_by_pid.insert(pkt.pid);
-                // Do NOT update cc_by_pid / last_pkt_raw_by_pid — the next
+                self.pid_state_mut(pkt.pid).dup = true;
+                // Do NOT update the stored cc / raw bytes — the next
                 // non-duplicate packet on this PID must still expect
                 // prev_cc + 1, and a second duplicate must compare against
                 // the ORIGINAL packet's bytes.
@@ -299,7 +304,7 @@ impl super::demuxer::Demuxer {
             // Normal advance, discontinuity_indicator, or a same-CC packet
             // with differing bytes (routed as an ordinary CC jump below) —
             // clear any pending duplicate state for this PID.
-            self.dup_by_pid.remove(&pkt.pid);
+            self.pid_state_mut(pkt.pid).dup = false;
 
             // Per ISO/IEC 13818-1 §2.4.3.5, when discontinuity_indicator=1
             // the CC is explicitly permitted to be discontinuous on this
@@ -322,18 +327,17 @@ impl super::demuxer::Demuxer {
             }
         } else {
             // First packet ever seen on this PID — no prev state, no duplicate
-            // check possible. Clear dup state defensively (shouldn't be set
-            // since cc_by_pid and dup_by_pid are always cleared together, but
-            // this keeps invariants tight).
-            self.dup_by_pid.remove(&pkt.pid);
+            // check possible. A duplicate flag cannot be set without a cc
+            // (they clear together), so there is nothing to clear.
         }
         if pkt.discontinuity_indicator {
             if let Some(stream) = self.lookup_stream(pkt.pid) {
                 self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
             }
         }
-        self.cc_by_pid.insert(pkt.pid, pkt.continuity_counter);
-        self.last_pkt_raw_by_pid.insert(pkt.pid, *pkt.raw);
+        let state = self.pid_state_mut(pkt.pid);
+        state.cc = Some(pkt.continuity_counter);
+        state.last_pkt_raw = Some(*pkt.raw);
         (real_jump, false)
     }
 }
@@ -380,7 +384,7 @@ mod tests {
     fn null_pid_does_not_grow_cc_map() {
         // H.222.0 §2.4.3.3: continuity_counter on null PID (0x1FFF) is
         // undefined and MUST NOT be tracked. Feed 100 null packets with
-        // varying CC values — `cc_by_pid` must remain empty.
+        // varying CC values — `pid_state` must remain empty.
         let mut demuxer = Demuxer::new();
         for i in 0..100u8 {
             demuxer
@@ -388,9 +392,9 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(
-            demuxer.cc_by_pid.len(),
+            demuxer.pid_state.len(),
             0,
-            "null PID packets must not populate cc_by_pid"
+            "null PID packets must not populate pid_state"
         );
     }
 

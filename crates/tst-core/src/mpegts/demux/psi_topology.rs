@@ -13,9 +13,9 @@
 //!   that disappeared.
 //! - `retire_undeclared_pcr_history` — drops the PCR history of every PID
 //!   that no program declares as its `PCR_PID` any more.
-//! - `drop_elementary_pid_state` — clears every per-PID cache entry for
-//!   an elementary PID no longer reachable (program left the PAT, or the
-//!   stream was dropped by a PMT version change).
+//! - `pmt_topology_diff` — what a new PMT version changes in per-PID state,
+//!   as a `TopologyDiff` the coordinator applies (`apply_topology_diff`,
+//!   the one place PIDs enter and leave `pid_state`).
 //! - `handle_pmt_section` — full PMT parse + per-program PMT version
 //!   bump + stream-binding update + KLV link inference + descriptor
 //!   diagnostics + cross-program PID collision policy.
@@ -38,6 +38,7 @@ use crate::mpegts::demux::event::{
     StreamInfo, StreamKind,
 };
 use crate::mpegts::demux::pat_reassemble::PatReassemblyOutcome;
+use crate::mpegts::demux::pid_state::{TopologyDiff, set_once};
 use crate::mpegts::demux::psi::{PatEntry, Pmt, PsiParseError, parse_pat_section, parse_pmt};
 use crate::mpegts::demux::psi_assembler::AssemblerError;
 use crate::mpegts::demux::strict::StrictMode;
@@ -307,9 +308,8 @@ impl super::demuxer::Demuxer {
         // reuse across programs). A reassigned PMT PID must tear down the
         // stale program so the new program's PMT is adopted cleanly instead of
         // being rejected as PmtProgramNumberMismatch against the old identity.
-        // Per-PID cleanup is shared with the PMT-version path
-        // via `drop_elementary_pid_state`: every per-PID map keyed by an
-        // elementary PID of the dropped program is otherwise unreachable and
+        // Per-PID cleanup is shared with the PMT-version path through the
+        // `TopologyDiff`: a PID's state entry is otherwise unreachable and
         // would leak under PAT rotation.
         let removed: Vec<u16> = self
             .programs
@@ -320,11 +320,11 @@ impl super::demuxer::Demuxer {
             })
             .map(|(pmt_pid, _)| *pmt_pid)
             .collect();
+        let mut diff = TopologyDiff::default();
         for pmt_pid in removed {
             if let Some(tracker) = self.programs.remove(&pmt_pid) {
-                for stream in &tracker.streams {
-                    self.drop_elementary_pid_state(stream.pid);
-                }
+                diff.retired.extend(tracker.streams.iter().map(|s| s.pid));
+                diff.pcr_pid_changes.push((tracker.pcr_pid, None));
                 // The per-program unwrap reference is keyed by
                 // program_number, so it is unreachable once the program is
                 // gone — and a later program re-using the number must not
@@ -332,14 +332,13 @@ impl super::demuxer::Demuxer {
                 self.program_clock.remove(&tracker.program_number);
                 // Free the PSI assembly buffer + PMT-PID continuity state.
                 self.psi_assemblers.remove(&pmt_pid);
-                self.cc_by_pid.remove(&pmt_pid);
-                self.dup_by_pid.remove(&pmt_pid);
-                self.last_pkt_raw_by_pid.remove(&pmt_pid);
+                diff.retired_pmt_pids.push(pmt_pid);
             }
         }
-        // The removed programs' PCR PIDs lose their history here, unless a
-        // surviving program declares the same PID.
-        self.retire_undeclared_pcr_history();
+        // The removed programs' elementary PIDs lose all state and their PCR
+        // PIDs lose their history, unless a surviving program declares the
+        // same PID.
+        self.apply_topology_diff(diff);
 
         // Add empty trackers for programs that are new in this PAT version.
         // PMT contents will populate them when handle_pmt_section fires.
@@ -379,32 +378,38 @@ impl super::demuxer::Demuxer {
             .retain(|pid, _| programs.values().any(|t| t.pcr_pid == Some(*pid)));
     }
 
-    /// Remove every per-PID demuxer cache entry for an elementary `pid` that is
-    /// no longer reachable — its program left the PAT, or its stream was dropped
-    /// by a PMT version change. Sharing this between PAT removal and the
-    /// PMT-version path keeps topology cleanup consistent.
+    /// What a freshly accepted PMT version changes in per-PID state, as a
+    /// diff (see [`TopologyDiff`]). Reads the tracker's PRIOR stream list and
+    /// `PCR_PID`; mutates nothing.
     ///
-    /// PCR history is not elementary-PID state and is left alone here: a PID
-    /// dropped from a stream list may still be some program's `PCR_PID`. See
-    /// [`Self::retire_undeclared_pcr_history`].
-    pub(super) fn drop_elementary_pid_state(&mut self, pid: u16) {
-        self.stream_kind_by_pid.remove(&pid);
-        self.pid_to_program.remove(&pid);
-        self.cc_by_pid.remove(&pid);
-        self.dup_by_pid.remove(&pid);
-        self.last_pkt_raw_by_pid.remove(&pid);
-        self.last_pts_by_pid.remove(&pid);
-        // The opt-in unwrap accumulator is per-PID timeline state.
-        // A replacement stream reusing this PID must anchor on its program's
-        // clock, not inherit the dead stream's epoch.
-        self.unwrap_state.remove(&pid);
-        self.pes.remove_pid(pid);
-        self.stats_per_stream.remove(&pid);
-        self.stream_codec_counters.remove(&pid);
-        self.subtitle_missing_descriptor_emitted.remove(&pid);
-        self.av1_registration_malformed_emitted.remove(&pid);
-        self.subtitle_descriptor_ambiguous_emitted.remove(&pid);
-        self.subtitle_pids_seen.remove(&pid);
+    /// A moved `PCR_PID` is recorded in `pcr_pid_changes`; an unchanged one
+    /// keeps its baseline across the version bump.
+    fn pmt_topology_diff(
+        &self,
+        pmt_pid: u16,
+        new_pcr_pid: u16,
+        program_number: u16,
+        stream_infos: &[StreamInfo],
+    ) -> TopologyDiff {
+        let mut diff = TopologyDiff::default();
+        if let Some(tracker) = self.programs.get(&pmt_pid) {
+            for old in &tracker.streams {
+                match stream_infos.iter().find(|s| s.pid == old.pid) {
+                    None => diff.retired.push(old.pid),
+                    Some(new) if new.kind != old.kind => diff.kind_changed.push(old.pid),
+                    Some(_) => {}
+                }
+            }
+            if tracker.pcr_pid != Some(new_pcr_pid) {
+                diff.pcr_pid_changes
+                    .push((tracker.pcr_pid, Some(new_pcr_pid)));
+            }
+        }
+        diff.added = stream_infos
+            .iter()
+            .map(|s| (s.pid, s.kind, program_number))
+            .collect();
+        diff
     }
 
     pub(super) fn handle_pmt_section(&mut self, pmt_pid: u16, section: &[u8]) {
@@ -479,12 +484,11 @@ impl super::demuxer::Demuxer {
         // malformed. Only PIDs owned by *this* PMT are dropped to leave any
         // other program's state intact.
         for s in &pmt.streams {
-            self.subtitle_missing_descriptor_emitted
-                .remove(&s.elementary_pid);
-            self.av1_registration_malformed_emitted
-                .remove(&s.elementary_pid);
-            self.subtitle_descriptor_ambiguous_emitted
-                .remove(&s.elementary_pid);
+            if let Some(state) = self.pid_state.get_mut(&s.elementary_pid) {
+                state.subtitle_missing_descriptor_emitted = false;
+                state.av1_registration_malformed_emitted = false;
+                state.subtitle_descriptor_ambiguous_emitted = false;
+            }
         }
         // Drop any in-flight AU cell reassembly buffers wholesale on PMT
         // version change. A PMT bump may have reassigned PIDs (sync ↔ async
@@ -589,7 +593,7 @@ impl super::demuxer::Demuxer {
 
         // Emit SubtitleMissingDescriptor once per PID per fresh PMT version.
         for (pid, kind) in subtitle_missing {
-            if self.subtitle_missing_descriptor_emitted.insert(pid) {
+            if set_once(&mut self.pid_state_mut(pid).subtitle_missing_descriptor_emitted) {
                 self.queue_nonconformant(
                     StreamId {
                         pid,
@@ -603,7 +607,7 @@ impl super::demuxer::Demuxer {
 
         // Emit Av1RegistrationMalformed once per PID per fresh PMT version.
         for (pid, kind) in av1_malformed {
-            if self.av1_registration_malformed_emitted.insert(pid) {
+            if set_once(&mut self.pid_state_mut(pid).av1_registration_malformed_emitted) {
                 self.queue_nonconformant(
                     StreamId {
                         pid,
@@ -617,7 +621,11 @@ impl super::demuxer::Demuxer {
 
         // Emit SubtitleDescriptorAmbiguous once per PID per fresh PMT version.
         for (pid, kind, tags) in subtitle_ambiguous {
-            if self.subtitle_descriptor_ambiguous_emitted.insert(pid) {
+            if set_once(
+                &mut self
+                    .pid_state_mut(pid)
+                    .subtitle_descriptor_ambiguous_emitted,
+            ) {
                 self.queue_nonconformant(
                     StreamId {
                         pid,
@@ -629,77 +637,20 @@ impl super::demuxer::Demuxer {
             }
         }
 
-        // Update stream_kind_by_pid for all non-colliding streams.
-        for (pid, kind) in kind_inserts {
-            self.stream_kind_by_pid.insert(pid, kind);
-        }
-
-        // A PMT version bump may drop or reassign elementary PIDs. Clear
-        // the full per-PID state for any PID the prior version owned that is
-        // gone from the new stream set — the same cleanup PAT program removal
-        // performs — so a removed PID can no longer route stale PES, timing, or
-        // stats. Persisting PIDs were just re-inserted above; new PIDs are added
-        // below.
-        let new_pids: HashSet<u16> = stream_infos.iter().map(|s| s.pid).collect();
-        let removed_pids: Vec<u16> = self
-            .programs
-            .get(&pmt_pid)
-            .map(|t| {
-                t.streams
-                    .iter()
-                    .map(|s| s.pid)
-                    .filter(|pid| !new_pids.contains(pid))
-                    .collect()
-            })
-            .unwrap_or_default();
-        for pid in removed_pids {
-            self.drop_elementary_pid_state(pid);
-        }
-
-        // Flush PES / CC / PTS state for PIDs that persist across
-        // this PMT version bump but whose stream kind changed. A partial video PES
-        // buffered before the bump must not be emitted under the new kind (e.g.
-        // audio), and the stale CC / PTS baselines would produce false anomaly
-        // events on the first post-bump packet.
-        let kind_changed_pids: Vec<u16> = self
-            .programs
-            .get(&pmt_pid)
-            .map(|t| {
-                t.streams
-                    .iter()
-                    .filter_map(|old| {
-                        let new_kind = stream_infos
-                            .iter()
-                            .find(|s| s.pid == old.pid)
-                            .map(|s| s.kind);
-                        match new_kind {
-                            Some(nk) if nk != old.kind => Some(old.pid),
-                            _ => None,
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        for pid in kind_changed_pids {
-            self.pes.remove_pid(pid);
-            self.cc_by_pid.remove(&pid);
-            self.dup_by_pid.remove(&pid);
-            self.last_pkt_raw_by_pid.remove(&pid);
-            self.last_pts_by_pid.remove(&pid);
-            // Same reasoning as the removal path — a PID whose kind
-            // changed carries a different stream, so its unwrap accumulator
-            // belongs to the old timeline.
-            self.unwrap_state.remove(&pid);
-        }
+        // A PMT version bump may drop or reassign elementary PIDs. Work out
+        // what changed and apply it in one place: a PID the prior version
+        // owned that is gone from the new stream set loses ALL its per-PID
+        // state (the same cleanup PAT program removal performs), so it can no
+        // longer route stale PES, timing, or stats; a PID that persists under
+        // a different kind loses its PES buffer and timing baselines (a
+        // partial video PES buffered before the bump must not be emitted
+        // under the new kind, and stale CC / PTS baselines would produce false
+        // anomaly events on the first post-bump packet); kinds and owners are
+        // set for every accepted (new and persisting) stream.
+        let diff = self.pmt_topology_diff(pmt_pid, pmt.pcr_pid, program_number, &stream_infos);
 
         // Build klv_links from the accepted streams.
         let prog_map = self.build_program_map(pmt_pid, &pmt, program_number, &stream_infos);
-
-        // Populate pid_to_program for the accepted (new + persisting) streams;
-        // removed PIDs were already dropped above.
-        for s in &stream_infos {
-            self.pid_to_program.insert(s.pid, program_number);
-        }
 
         // Update tracker.
         let tracker = self.programs.get_mut(&pmt_pid).expect("checked above");
@@ -708,10 +659,9 @@ impl super::demuxer::Demuxer {
         tracker.streams = stream_infos;
         tracker.klv_mismatch_coalesce.clear();
 
-        // If this update moved `PCR_PID`, the old PID's history is
-        // retired unless another program still declares it. An unchanged
-        // `PCR_PID` keeps its baseline across the version bump.
-        self.retire_undeclared_pcr_history();
+        // Applied after the tracker update: a moved `PCR_PID` retires the old
+        // PID's history only if no program still declares it.
+        self.apply_topology_diff(diff);
 
         // Emit ProgramMap event.
         self.queue.push_back(DemuxEvent::ProgramMap(prog_map));
@@ -871,7 +821,7 @@ impl super::demuxer::Demuxer {
 #[cfg(test)]
 mod tests {
     use super::super::demuxer::Demuxer;
-    use super::super::event::{DemuxEvent, NonConformantIssue, PsiSyntaxKind};
+    use super::super::event::{DemuxEvent, NonConformantIssue, PsiSyntaxKind, StreamKind};
     use super::super::strict::StrictMode;
     use super::super::types::DemuxerConfig;
     use crate::mpegts::common::Pts90khz;
@@ -1318,8 +1268,8 @@ mod tests {
 
         // Verify state is populated before the PMT bump.
         assert!(
-            demux.cc_by_pid.contains_key(&0x0101),
-            "cc_by_pid should have an entry for PID 0x0101 after PES packet"
+            demux.pid_state.get(&0x0101).is_some_and(|s| s.cc.is_some()),
+            "the PID should have a cc entry for PID 0x0101 after PES packet"
         );
         // Note: last_pts_by_pid is only populated on a *completed* PES —
         // the unbounded video PES above isn't complete yet. The PES reassembler
@@ -1342,8 +1292,8 @@ mod tests {
             "in-flight PES must be dropped when PID kind changes (video→audio)"
         );
         assert!(
-            !demux.cc_by_pid.contains_key(&0x0101),
-            "cc_by_pid entry for PID 0x0101 must be removed on kind change"
+            demux.pid_state.get(&0x0101).is_none_or(|s| s.cc.is_none()),
+            "cc entry for PID 0x0101 must be removed on kind change"
         );
     }
 
@@ -1353,7 +1303,7 @@ mod tests {
     // replacement stream; inheriting the dead stream's epoch would splice two
     // timelines together.
     #[test]
-    fn drop_elementary_pid_state_clears_unwrap_state() {
+    fn retiring_a_pid_clears_unwrap_state() {
         let cfg = DemuxerConfig::builder().unwrap_timestamps(true).build();
         let mut demux = Demuxer::with_config(cfg);
 
@@ -1362,14 +1312,17 @@ mod tests {
         let _ = demux.unwrap_pts(0x0100, Pts90khz::new((1i64 << 33) - 100));
         let _ = demux.unwrap_pts(0x0100, Pts90khz::new(100));
         assert!(
-            demux.unwrap_state.contains_key(&0x0100),
+            demux.unwrap_of(0x0100).is_some(),
             "test setup: PID 0x0100 should hold an unwrap accumulator entry"
         );
 
-        demux.drop_elementary_pid_state(0x0100);
+        demux.apply_topology_diff(super::super::pid_state::TopologyDiff {
+            retired: vec![0x0100],
+            ..Default::default()
+        });
 
         assert!(
-            demux.unwrap_state.get(&0x0100).is_none(),
+            demux.unwrap_of(0x0100).is_none(),
             "the unwrap accumulator for a PID dropped from the topology must be \
              removed alongside its other per-PID state"
         );
@@ -1397,7 +1350,7 @@ mod tests {
         // topology-cleanup edge is under test here.
         let _ = demux.unwrap_pts(0x0101, Pts90khz::new(900_000));
         assert!(
-            demux.unwrap_state.contains_key(&0x0101),
+            demux.unwrap_of(0x0101).is_some(),
             "test setup: PID 0x0101 should hold an unwrap accumulator entry"
         );
 
@@ -1408,7 +1361,7 @@ mod tests {
         demux.feed(&pmt_v1_pkt).unwrap();
 
         assert!(
-            demux.unwrap_state.get(&0x0101).is_none(),
+            demux.unwrap_of(0x0101).is_none(),
             "the unwrap accumulator for PID 0x0101 must be flushed on kind change"
         );
     }
@@ -1449,9 +1402,108 @@ mod tests {
              must be dropped with the program"
         );
         assert!(
-            demux.unwrap_state.get(&0x0101).is_none(),
+            demux.unwrap_of(0x0101).is_none(),
             "the removed program's elementary PIDs must lose their unwrap \
              accumulators too"
+        );
+    }
+
+    /// A fully populated `PidState` for `pid`. Written as an exhaustive
+    /// struct literal on purpose: a field added to `PidState` stops this
+    /// compiling until the retirement tests below cover it.
+    fn fully_populated_state() -> super::super::pid_state::PidState {
+        use crate::mpegts::stats::{CodecKind, StreamCodecCounters, StreamStats};
+        super::super::pid_state::PidState {
+            stream_kind: Some(StreamKind::Unknown(0xFC)),
+            program: Some(1),
+            cc: Some(3),
+            dup: true,
+            last_pkt_raw: Some([0x47; 188]),
+            last_pts: Some(90_000),
+            unwrap: Some(super::super::demuxer::UnwrapState {
+                last_raw: 1,
+                last_unwrapped: 1,
+            }),
+            stats: Some(StreamStats::default()),
+            codec: Some(StreamCodecCounters::new(CodecKind::Video)),
+            subtitle_missing_descriptor_emitted: true,
+            av1_registration_malformed_emitted: true,
+            subtitle_descriptor_ambiguous_emitted: true,
+            subtitle_seen: true,
+        }
+    }
+
+    // The invariant the four teardown fixes restored by hand: once a PMT
+    // retires a PID, NOTHING about it survives — no `PidState` entry and no
+    // reassembler buffer.
+    #[test]
+    fn pmt_retiring_a_pid_leaves_no_entry_anywhere() {
+        let pat_pkt = wrap_section_in_ts_packet(0x0000, &build_pat_section(1, 0, &[(1, 0x1000)]));
+        let pmt_v0 = build_pmt_section(1, 0x0101, 0, &[(0x1B, 0x0101), (0x03, 0x0102)]);
+        let mut demux = Demuxer::new();
+        demux.feed(&pat_pkt).unwrap();
+        demux
+            .feed(&wrap_section_in_ts_packet(0x1000, &pmt_v0))
+            .unwrap();
+
+        // An in-flight video PES gives the reassembler a buffer for 0x0101; the
+        // literal fills every other field.
+        let mut pes_pkt = [0xFFu8; 188];
+        pes_pkt[..4].copy_from_slice(&[0x47, 0x41, 0x01, 0x10]);
+        pes_pkt[4..10].copy_from_slice(&[0x00, 0x00, 0x01, 0xE0, 0x00, 0x00]);
+        demux.feed(&pes_pkt).unwrap();
+        assert!(demux.pes.has_pid(0x0101), "test setup: PES buffered");
+        demux.pid_state.insert(0x0101, fully_populated_state());
+
+        // PMT v1 keeps 0x0102 and drops 0x0101.
+        let pmt_v1 = build_pmt_section(1, 0x0102, 1, &[(0x03, 0x0102)]);
+        demux
+            .feed(&wrap_section_in_ts_packet_cc(0x1000, &pmt_v1, 1))
+            .unwrap();
+
+        assert!(
+            demux.pid_state.get(&0x0101).is_none(),
+            "a retired PID must have no PidState entry"
+        );
+        assert!(
+            !demux.pes.has_pid(0x0101),
+            "a retired PID must have no reassembler buffer"
+        );
+        assert!(
+            demux
+                .pid_state
+                .get(&0x0102)
+                .is_some_and(|s| s.stream_kind.is_some()),
+            "the persisting PID keeps its kind"
+        );
+    }
+
+    // Same invariant through the other door: the program leaves the PAT.
+    #[test]
+    fn pat_removing_a_program_leaves_no_entry_for_its_pids() {
+        let pat_pkt = wrap_section_in_ts_packet(0x0000, &build_pat_section(1, 0, &[(1, 0x1000)]));
+        let pmt_v0 = build_pmt_section(1, 0x0101, 0, &[(0x1B, 0x0101)]);
+        let mut demux = Demuxer::new();
+        demux.feed(&pat_pkt).unwrap();
+        demux
+            .feed(&wrap_section_in_ts_packet(0x1000, &pmt_v0))
+            .unwrap();
+        demux.pid_state.insert(0x0101, fully_populated_state());
+        demux.pid_state.insert(0x1000, fully_populated_state());
+
+        let pat_v1 = build_pat_section(1, 1, &[(2, 0x1100)]);
+        demux
+            .feed(&wrap_section_in_ts_packet_cc(0x0000, &pat_v1, 1))
+            .unwrap();
+
+        assert!(demux.pid_state.get(&0x0101).is_none());
+        assert!(!demux.pes.has_pid(0x0101));
+        // The removed program's PMT PID keeps no continuity baseline.
+        assert!(
+            demux
+                .pid_state
+                .get(&0x1000)
+                .is_none_or(|s| s.cc.is_none() && !s.dup && s.last_pkt_raw.is_none())
         );
     }
 }
