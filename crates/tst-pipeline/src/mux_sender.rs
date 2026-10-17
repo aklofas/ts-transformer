@@ -231,6 +231,13 @@ enum BackpressureState {
     Overflow,
 }
 
+/// Why [`MuxSender::with_parts`] could not run its closure.
+#[cfg(feature = "std")]
+pub(crate) enum PartsError {
+    Poisoned,
+    Closed,
+}
+
 /// Build the poisoned-lock error for a named `send_*` site.
 ///
 /// Called when `self.inner.lock()` returns `Err` (the Mutex is poisoned
@@ -290,7 +297,50 @@ impl<T: Transport> MuxSender<T> {
         push: impl FnOnce(&mut Muxer) -> Result<(), MuxError>,
     ) -> Result<(), MuxSenderError> {
         let mut inner = self.inner.lock().map_err(|_| lock_poisoned(site))?;
-        inner.push_then_drain(push)
+        inner.push_then_drain(None, push)
+    }
+
+    /// [`Self::push`] for a video access unit: the transport's
+    /// [`Transport::on_video_au`] hook runs once, before the push.
+    fn push_video_au(
+        &self,
+        site: &'static str,
+        pts: Pts90khz,
+        key_frame: bool,
+        push: impl FnOnce(&mut Muxer) -> Result<(), MuxError>,
+    ) -> Result<(), MuxSenderError> {
+        let mut inner = self.inner.lock().map_err(|_| lock_poisoned(site))?;
+        inner.push_then_drain(Some((pts, key_frame)), push)
+    }
+
+    /// Run `f` over the muxer and the transport under the inner lock, for a
+    /// shell that owns this sender and needs both at once (a segment cut
+    /// that must also re-emit PSI).
+    #[cfg(feature = "std")]
+    pub(crate) fn with_parts<R>(
+        &self,
+        f: impl FnOnce(&mut Muxer, &mut T) -> R,
+    ) -> Result<R, PartsError> {
+        let mut inner = self.inner.lock().map_err(|_| PartsError::Poisoned)?;
+        if inner.closed {
+            return Err(PartsError::Closed);
+        }
+        let inner = &mut *inner;
+        Ok(f(&mut inner.muxer, &mut inner.transport))
+    }
+
+    /// Run `f` over the transport under the inner lock, recovering a
+    /// poisoned lock (the last observed state is what a stats read wants).
+    #[cfg(feature = "std")]
+    pub(crate) fn with_transport<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        f(&mut inner.transport)
+    }
+
+    /// Whether a previous call panicked while holding the inner lock.
+    #[cfg(feature = "std")]
+    pub(crate) fn is_poisoned(&self) -> bool {
+        self.inner.is_poisoned()
     }
 
     /// Send one video access unit. Annex-B framing is required.
@@ -364,7 +414,9 @@ impl<T: Transport> MuxSender<T> {
         pts: Pts90khz,
         key_frame: bool,
     ) -> Result<(), MuxSenderError> {
-        self.push("send_video", |m| m.push_video(nal, pts, key_frame))
+        self.push_video_au("send_video", pts, key_frame, |m| {
+            m.push_video(nal, pts, key_frame)
+        })
     }
 
     /// Send one pre-built KLV blob. `pts` is in 90 kHz units (the
@@ -425,7 +477,7 @@ impl<T: Transport> MuxSender<T> {
         pts: Pts90khz,
         key_frame: bool,
     ) -> Result<(), MuxSenderError> {
-        self.push("send_video_to", |m| {
+        self.push_video_au("send_video_to", pts, key_frame, |m| {
             m.push_video_to(handle, nal, pts, key_frame)
         })
     }
@@ -462,7 +514,7 @@ impl<T: Transport> MuxSender<T> {
         dts: Pts90khz,
         key_frame: bool,
     ) -> Result<(), MuxSenderError> {
-        self.push("send_video_to_with_dts", |m| {
+        self.push_video_au("send_video_to_with_dts", pts, key_frame, |m| {
             m.push_video_to_with_dts(handle, nal, pts, dts, key_frame)
         })
     }
@@ -491,7 +543,7 @@ impl<T: Transport> MuxSender<T> {
         key_frame: bool,
         misp: &tst_core::codec::misp_time::MispTimestamp,
     ) -> Result<(), MuxSenderError> {
-        self.push("send_video_misp_to", |m| {
+        self.push_video_au("send_video_misp_to", pts, key_frame, |m| {
             m.push_video_misp_to(handle, nal, pts, key_frame, misp)
         })
     }
@@ -523,7 +575,7 @@ impl<T: Transport> MuxSender<T> {
         key_frame: bool,
         misp: &tst_core::codec::misp_time::MispTimestamp,
     ) -> Result<(), MuxSenderError> {
-        self.push("send_video_misp_to_with_dts", |m| {
+        self.push_video_au("send_video_misp_to_with_dts", pts, key_frame, |m| {
             m.push_video_misp_to_with_dts(handle, nal, pts, dts, key_frame, misp)
         })
     }
@@ -1089,6 +1141,7 @@ impl<T: Transport> Inner<T> {
     /// PTS, data slices) don't need to be marshalled into a common enum.
     fn push_then_drain(
         &mut self,
+        video_au: Option<(Pts90khz, bool)>,
         push: impl FnOnce(&mut Muxer) -> Result<(), MuxError>,
     ) -> Result<(), MuxSenderError> {
         if self.closed {
@@ -1098,6 +1151,19 @@ impl<T: Transport> Inner<T> {
         // here happens BEFORE this call's input is touched.
         self.drain_pending()
             .map_err(|e| e.with_input_consumed(false))?;
+        // A video access unit first tells the transport (a segmenting one
+        // cuts here); a cut asks the muxer to re-emit PAT/PMT so the access
+        // unit opens the new segment. A failure here is before this call's
+        // input is touched.
+        if let Some((pts, key_frame)) = video_au {
+            let cut = self
+                .transport
+                .on_video_au(pts, key_frame)
+                .map_err(|e| MuxSenderError::from(e).with_input_consumed(false))?;
+            if cut {
+                self.muxer.request_psi();
+            }
+        }
         // Push new content. Sample back-pressure between the push (queue at
         // peak) and the drain (queue back to zero).
         let push_result = push(&mut self.muxer);
@@ -2462,7 +2528,7 @@ mod cancel_tests {
             b_s.inner
                 .lock()
                 .unwrap()
-                .push_then_drain(|m| reference(m))
+                .push_then_drain(None, |m| reference(m))
                 .unwrap();
             let (got, want) = (a_out.lock().unwrap(), b_out.lock().unwrap());
             assert!(!want.is_empty(), "{name}: reference produced no bytes");

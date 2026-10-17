@@ -408,6 +408,22 @@ pub trait Transport: Send {
     fn as_any(&self) -> Option<&dyn core::any::Any> {
         None
     }
+
+    /// Called by `MuxSender` once per video access unit, before it is muxed.
+    ///
+    /// A segmenting transport cuts its open segment here when `key_frame`
+    /// is set and returns `Ok(true)`, so the caller re-emits PAT/PMT and the
+    /// keyframe opens the new segment. Every other transport keeps the
+    /// default, which does nothing and returns `Ok(false)`. An `Err` fails
+    /// the send before the access unit is touched.
+    fn on_video_au(
+        &mut self,
+        pts: crate::mpegts::common::Pts90khz,
+        key_frame: bool,
+    ) -> Result<bool, TransportError> {
+        let _ = (pts, key_frame);
+        Ok(false)
+    }
 }
 
 /// Type-erased cancel-handle accessor returned by
@@ -687,6 +703,13 @@ impl<T: Transport + ?Sized> Transport for Box<T> {
     }
     fn as_any(&self) -> Option<&dyn core::any::Any> {
         (**self).as_any()
+    }
+    fn on_video_au(
+        &mut self,
+        pts: crate::mpegts::common::Pts90khz,
+        key_frame: bool,
+    ) -> Result<bool, TransportError> {
+        (**self).on_video_au(pts, key_frame)
     }
 }
 
