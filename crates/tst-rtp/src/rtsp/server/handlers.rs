@@ -18,7 +18,9 @@ use crate::rtsp::message::{RtspRequest, RtspResponse};
 use crate::rtsp::server::ServerState;
 use crate::rtsp::server::auth::{AuthVerifyError, build_challenge_header, verify_authorization};
 use crate::rtsp::server::mount::MountEntry;
-use crate::rtsp::server::session::ServerSessionState;
+use crate::rtsp::server::session::{
+    Playback, ReaderSession, ReaderTransport, Role, ServerSessionState,
+};
 
 /// `Server:` header value for outbound responses.
 pub(crate) fn server_header() -> String {
@@ -314,7 +316,7 @@ pub(crate) fn control_segment(uri: &str) -> Option<&str> {
 /// trailing segment — the caller falls back to [`extract_mount_path`]
 /// in both cases.
 pub(crate) fn publisher_mount_path(uri: &str, session: &ServerSessionState) -> Option<String> {
-    let publish = session.publish.as_ref()?;
+    let publish = session.publisher()?;
     let last = last_path_segment(uri)?;
     publish.track_for_raw_segment(last)?;
     Some(normalize_mount_path(uri, |seg| seg == last))
@@ -462,9 +464,16 @@ pub(crate) fn handle_setup(
     }
     // One role per session: a connection that announced a publisher
     // cannot also become a reader (the session registry, and through it
-    // `stop()`'s notice, names one mount per session).
-    if session.publish.is_some() {
-        return handle_not_valid_in_state(req);
+    // `stop()`'s notice, names one mount per session). A reader that is
+    // playing or paused cannot be re-pointed at another mount either: the
+    // running fanout would keep serving the old one.
+    match &session.role {
+        Role::Publisher(_)
+        | Role::Reader(ReaderSession {
+            playback: Playback::Playing { .. } | Playback::Paused,
+            ..
+        }) => return handle_not_valid_in_state(req),
+        Role::Idle | Role::Reader(_) => {}
     }
 
     // Per RFC 7826 §13.3: TCP-interleaved is incompatible with multicast.
@@ -483,6 +492,7 @@ pub(crate) fn handle_setup(
     use crate::rtsp::client::transport_negotiation::RtspTransportKind;
     let session_id = generate_session_id();
     let transport_response_header: String;
+    let reader_transport: ReaderTransport;
     match parsed.kind {
         RtspTransportKind::Udp => {
             if is_multicast {
@@ -508,6 +518,7 @@ pub(crate) fn handle_setup(
                     port_range,
                     ttl,
                 );
+                reader_transport = ReaderTransport::Multicast;
             } else {
                 // Unicast UDP REQUIRES a valid client_port pair — the
                 // server fans RTP out to client_port.0 (RTP) and RTCP to
@@ -542,7 +553,10 @@ pub(crate) fn handle_setup(
                     "RTP/AVP;unicast;client_port={}-{};server_port={}-{}",
                     client_port.0, client_port.1, server_rtp_port, server_rtcp_port,
                 );
-                session.udp_sockets = Some((rtp_sock, rtcp_sock));
+                reader_transport = ReaderTransport::Udp {
+                    sockets: (rtp_sock, rtcp_sock),
+                    negotiated: parsed.clone(),
+                };
             }
         }
         RtspTransportKind::TcpInterleaved => {
@@ -553,15 +567,20 @@ pub(crate) fn handle_setup(
             let Some((base, companion)) = next_interleaved_pair() else {
                 return error_response(req, 500, "Internal Server Error");
             };
-            session.interleaved_channels = Some((base, companion));
+            reader_transport = ReaderTransport::Interleaved {
+                channels: (base, companion),
+            };
             transport_response_header =
                 format!("RTP/AVP/TCP;unicast;interleaved={base}-{companion}");
         }
     }
 
-    session.session_id = Some(session_id.clone());
-    session.mount_path = Some(mount_path);
-    session.transport = Some(parsed);
+    session.set_role(Role::Reader(ReaderSession {
+        session_id: session_id.clone(),
+        mount_path,
+        transport: reader_transport,
+        playback: Playback::Ready,
+    }));
 
     let mut resp = ok_response(req);
     resp.headers.insert(
@@ -664,9 +683,7 @@ pub(crate) fn bind_server_udp_pair(
 ///
 /// Rejection codes:
 /// - 401 Unauthorized — auth check fails.
-/// - 454 Session Not Found — `session.session_id` is None (PLAY before
-///   SETUP), or the SETUP-allocated transport is missing for a unicast
-///   mount.
+/// - 454 Session Not Found — the session is `Idle` (PLAY before SETUP).
 /// - 455 Method Not Valid in This State — the session announced a
 ///   publisher (one role per connection).
 /// - 404 Not Found — mount disappeared between SETUP and PLAY (rare).
@@ -698,15 +715,15 @@ pub(crate) fn handle_play(
     if let Err(challenge) = check_auth(req, state, session, "PLAY") {
         return challenge;
     }
-    // A publisher session never plays (one role per session).
-    if session.publish.is_some() {
-        return handle_not_valid_in_state(req);
-    }
-    let Some(session_id) = session.session_id.clone() else {
-        return error_response(req, 454, "Session Not Found");
-    };
-    let Some(mount_path) = session.mount_path.clone() else {
-        return error_response(req, 454, "Session Not Found");
+    let (session_id, mount_path, transport) = match &session.role {
+        // A publisher session never plays (one role per session).
+        Role::Publisher(_) => return handle_not_valid_in_state(req),
+        Role::Idle => return error_response(req, 454, "Session Not Found"),
+        Role::Reader(r) => (
+            r.session_id.clone(),
+            r.mount_path.clone(),
+            r.transport.clone(),
+        ),
     };
     let mounts = match state.mounts.lock() {
         Ok(m) => m,
@@ -729,23 +746,20 @@ pub(crate) fn handle_play(
     }
 
     // Unicast PLAY: subscribe + spawn per-peer fanout.
-    let Some(transport) = session.transport.clone() else {
-        return error_response(req, 454, "Session Not Found");
-    };
-    use crate::rtsp::client::transport_negotiation::RtspTransportKind;
     let drop_counter =
         crate::rtsp::server::fanout::PeerDropCounter::with_mount_total(mount.frames_dropped());
     let rx = mount.fanout().subscribe();
-    let peer_transport = match transport.kind {
-        RtspTransportKind::Udp => {
-            let Some((rtp_sock, _rtcp_sock)) = session.udp_sockets.clone() else {
-                return error_response(req, 500, "Internal Server Error");
-            };
+    let peer_transport = match transport {
+        ReaderTransport::Udp {
+            sockets,
+            negotiated,
+        } => {
+            let (rtp_sock, _rtcp_sock) = sockets;
             // SETUP (handle_setup) already rejected a UDP unicast without a
             // client_port (461). Defense-in-depth: never fall back to a
             // bogus port-0 fan-out target — fail closed if it's somehow
             // absent at PLAY time.
-            let Some(client_port) = transport.client_port else {
+            let Some(client_port) = negotiated.client_port else {
                 return error_response(req, 500, "Internal Server Error");
             };
             let peer_addr = compute_udp_play_target(session.peer_addr, client_port.0);
@@ -754,21 +768,20 @@ pub(crate) fn handle_play(
                 peer_addr,
             }
         }
-        RtspTransportKind::TcpInterleaved => {
+        ReaderTransport::Interleaved { channels } => {
             // The connection handler stored the session's writer (plain TCP
             // or TLS); the fanout task shares it with the response writer.
             // Only a unit-test session built without a connection has none.
             let Some(writer) = session.writer.clone() else {
                 return error_response(req, 500, "Internal Server Error");
             };
-            let (rtp_channel, _rtcp_channel) = session
-                .interleaved_channels
-                .expect("SETUP populated interleaved_channels for TcpInterleaved transport");
             crate::rtsp::server::fanout::PeerTransport::Interleaved {
                 writer,
-                rtp_channel,
+                rtp_channel: channels.0,
             }
         }
+        // The multicast mount returned above.
+        ReaderTransport::Multicast => return play_response_ok(req, &session_id, 0, 0),
     };
     // A second PLAY without PAUSE (RFC 7826 §13.4 allows it) replaces the
     // fanout; a detached old task would keep streaming to the same peer
@@ -778,7 +791,7 @@ pub(crate) fn handle_play(
     // land inside it (see `ServerSessionState::retire_fanout`). The old
     // task exits at its next frame boundary; the session's Drop is the
     // backstop for a peer that never reads.
-    if session.fanout_handle.is_some() {
+    if session.is_playing() {
         session.retire_fanout();
         session.peer_cancel = tokio_util::sync::CancellationToken::new();
     }
@@ -801,8 +814,12 @@ pub(crate) fn handle_play(
         clock,
         drop_counter.clone(),
     );
-    session.fanout_handle = Some(join);
-    session.peer_drop_counter = Some(drop_counter);
+    if let Role::Reader(r) = &mut session.role {
+        r.playback = Playback::Playing {
+            fanout: join,
+            drop_counter,
+        };
+    }
 
     play_response_ok(req, &session_id, initial_seq, initial_rtptime)
 }
@@ -845,7 +862,7 @@ fn play_response_ok(
 /// a fresh fanout task; the `peer_cancel` token is replaced after
 /// cancellation since `CancellationToken` doesn't auto-reset.
 ///
-/// A publisher session (`session.publish.is_some()`) answers 200 with no
+/// A publisher session (`Role::Publisher`) answers 200 with no
 /// fanout retire — PAUSE on the publisher direction has no RFC 7826
 /// analogue (RECORD has no PAUSE semantics defined); we just acknowledge
 /// it and keep recording state untouched, matching how `handle_setup`'s
@@ -863,10 +880,10 @@ pub(crate) fn handle_pause(
     if let Err(challenge) = check_auth(req, state, session, "PAUSE") {
         return challenge;
     }
-    let Some(session_id) = session.session_id.clone() else {
+    let Some(session_id) = session.session_id().map(str::to_owned) else {
         return error_response(req, 454, "Session Not Found");
     };
-    if session.publish.is_some() {
+    if matches!(session.role, Role::Publisher(_)) {
         let mut resp = ok_response(req);
         resp.headers.insert("session".into(), session_id);
         return resp;
@@ -884,6 +901,9 @@ pub(crate) fn handle_pause(
     // aborts retired fanouts and is the backstop for that case.
     session.retire_fanout();
     session.peer_cancel = tokio_util::sync::CancellationToken::new();
+    if let Role::Reader(r) = &mut session.role {
+        r.playback = Playback::Paused;
+    }
 
     let mut resp = ok_response(req);
     resp.headers.insert("session".into(), session_id);
@@ -909,26 +929,15 @@ pub(crate) fn handle_teardown(
     if let Err(challenge) = check_auth(req, state, session, "TEARDOWN") {
         return challenge;
     }
-    let session_id = session.session_id.clone().unwrap_or_default();
-    // End the publisher before touching the reader-fanout fields below —
-    // `PublishSession::end` flushes the adapter, cancels any UDP ingest
-    // tasks, and frees the mount's publisher slot (bumping its
-    // generation) so a fresh ANNOUNCE can claim it right away.
-    if let Some(mut p) = session.publish.take() {
-        p.end();
-    }
-    // Retire, don't `abort()` — the 200 OK is written on the same
-    // connection before FIN and must not land inside a half-written
-    // interleaved frame (see `ServerSessionState::retire_fanout`).
-    session.retire_fanout();
-    // Clear all session state; the session task closes the TCP after
-    // observing the 200 OK + TEARDOWN method.
-    session.session_id = None;
-    session.mount_path = None;
-    session.transport = None;
-    session.udp_sockets = None;
-    session.interleaved_channels = None;
-    session.peer_drop_counter = None;
+    let session_id = session.session_id().unwrap_or_default().to_owned();
+    // Retire the reader's fanout and end a publisher — `PublishSession::end`
+    // flushes the adapter, cancels any UDP ingest tasks, and frees the
+    // mount's publisher slot (bumping its generation) so a fresh ANNOUNCE can
+    // claim it right away. The fanout is retired, not `abort()`ed: the 200 OK
+    // is written on the same connection before FIN and must not land inside a
+    // half-written interleaved frame (see `ServerSessionState::retire_fanout`).
+    // The session task closes the TCP after observing the 200 OK + TEARDOWN.
+    session.end_role();
 
     let mut resp = ok_response(req);
     if !session_id.is_empty() {
@@ -1318,10 +1327,15 @@ mod tests {
             transport_resp.contains("client_port=5004-5005"),
             "transport missing client_port echo: {transport_resp}"
         );
-        assert!(session.session_id.is_some());
-        assert!(session.udp_sockets.is_some());
-        assert!(session.interleaved_channels.is_none());
-        assert_eq!(session.mount_path.as_deref(), Some("/live"));
+        assert!(session.session_id().is_some());
+        assert!(matches!(
+            &session.role,
+            Role::Reader(ReaderSession {
+                transport: ReaderTransport::Udp { .. },
+                ..
+            })
+        ));
+        assert_eq!(session.mount_path(), Some("/live"));
     }
 
     /// A second PLAY without PAUSE replaces the fanout instead of
@@ -1398,12 +1412,19 @@ mod tests {
             "RTP/AVP/TCP;unicast;interleaved=0-1".into(),
         );
         assert_eq!(handle_setup(&setup, &state, &mut session).status, 200);
-        let channel = session.interleaved_channels.unwrap().0;
+        let Role::Reader(ReaderSession {
+            transport: ReaderTransport::Interleaved { channels },
+            ..
+        }) = &session.role
+        else {
+            panic!("SETUP made an interleaved reader");
+        };
+        let channel = channels.0;
 
         let (ready_tx, ready_rx) = oneshot::channel();
         let (resume_tx, resume_rx) = oneshot::channel();
         let old_writer = writer.clone();
-        session.fanout_handle = Some(tokio::spawn(async move {
+        session.install_test_fanout(tokio::spawn(async move {
             let mut g = old_writer.lock().await;
             // A 16-byte payload, suspended after its first byte.
             g.write_all(&[b'$', channel, 0, 16, 0x55]).await.unwrap();
@@ -1493,7 +1514,7 @@ mod tests {
 
         let ended = std::sync::Arc::new(AtomicBool::new(false));
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-        session.fanout_handle = Some(parked_fanout(writer.clone(), ready_tx, ended.clone()));
+        session.install_test_fanout(parked_fanout(writer.clone(), ready_tx, ended.clone()));
         ready_rx.await.unwrap();
         (state, session, writer, ended, client.unwrap())
     }
@@ -1567,8 +1588,13 @@ mod tests {
             transport_resp.contains("interleaved="),
             "transport missing interleaved=: {transport_resp}"
         );
-        assert!(session.interleaved_channels.is_some());
-        assert!(session.udp_sockets.is_none());
+        assert!(matches!(
+            &session.role,
+            Role::Reader(ReaderSession {
+                transport: ReaderTransport::Interleaved { .. },
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -1618,8 +1644,14 @@ mod tests {
         assert!(transport_resp.contains("ttl=4"));
         // Multicast SETUP doesn't bind per-session UDP sockets — the
         // per-mount sender drives the actual sends.
-        assert!(session.udp_sockets.is_none());
-        assert!(session.session_id.is_some());
+        assert!(matches!(
+            &session.role,
+            Role::Reader(ReaderSession {
+                transport: ReaderTransport::Multicast,
+                ..
+            })
+        ));
+        assert!(session.session_id().is_some());
     }
 
     /// Guard: a multicast group port of 65535 must not panic (no u16
@@ -1689,8 +1721,7 @@ mod tests {
         let mut session = ServerSessionState::new();
         let resp = handle_setup(&req, &state, &mut session);
         assert_eq!(resp.status, 461);
-        assert!(session.udp_sockets.is_none());
-        assert!(session.session_id.is_none());
+        assert!(matches!(session.role, Role::Idle));
     }
 
     /// client_port=65535 has no valid RTCP companion (65536 overflows
@@ -1771,12 +1802,15 @@ mod tests {
         let state = make_state_with_mount();
         let req = make_req(RtspMethod::Teardown, "rtsp://127.0.0.1:8554/live");
         let mut session = ServerSessionState::new();
-        session.session_id = Some("abc123".into());
-        session.mount_path = Some("/live".into());
+        session.set_role(Role::Reader(ReaderSession {
+            session_id: "abc123".into(),
+            mount_path: "/live".into(),
+            transport: ReaderTransport::Multicast,
+            playback: Playback::Ready,
+        }));
         let resp = handle_teardown(&req, &state, &mut session);
         assert_eq!(resp.status, 200);
-        assert!(session.session_id.is_none());
-        assert!(session.mount_path.is_none());
+        assert!(matches!(session.role, Role::Idle));
         // Session header is echoed when a session was active.
         assert_eq!(
             resp.headers.get("session").map(String::as_str),

@@ -1,6 +1,6 @@
 //! Per-publisher session state tracked across ANNOUNCE/SETUP/RECORD.
 //!
-//! One [`PublishSession`] lives on [`crate::rtsp::server::session::ServerSessionState::publish`]
+//! One [`PublishSession`] lives in [`crate::rtsp::server::session::Role::Publisher`]
 //! for the lifetime of a publisher's RTSP connection: `handle_announce`
 //! creates it (claiming the mount's publisher slot), `handle_setup_record`
 //! fills in each track's transport, `handle_record` flips `recording`,
@@ -44,7 +44,7 @@ pub(crate) struct PublishTrack {
     pub(crate) udp_spawned: bool,
 }
 
-/// Per-publisher session state. Lives on `ServerSessionState::publish`
+/// Per-publisher session state. Lives in `ServerSessionState::role` (`Role::Publisher`)
 /// from a successful ANNOUNCE until TEARDOWN or the session ends.
 pub(crate) struct PublishSession {
     pub(crate) mount: Arc<PublishMountState>,
@@ -54,6 +54,11 @@ pub(crate) struct PublishSession {
     pub(crate) slot_generation: u64,
     pub(crate) tracks: Vec<PublishTrack>,
     pub(crate) recording: bool,
+    /// RTSP session id, allocated by the first track SETUP; `None` after
+    /// ANNOUNCE until then.
+    pub(crate) session_id: Option<String>,
+    /// Mount path of that first SETUP.
+    pub(crate) mount_path: Option<String>,
     pub(crate) adapter: Arc<Mutex<Box<dyn PublishAdapter>>>,
     /// Set by [`Self::end`] under the adapter mutex and read by
     /// [`super::udp_ingest::deliver`] under the same mutex: the gate that
@@ -112,6 +117,8 @@ impl PublishSession {
             slot_generation,
             tracks,
             recording: false,
+            session_id: None,
+            mount_path: None,
             adapter: Arc::new(Mutex::new(adapter)),
             adapter_ended: Arc::new(AtomicBool::new(false)),
             udp_cancel: CancellationToken::new(),
