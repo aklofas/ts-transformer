@@ -132,7 +132,9 @@ fn build_via_config() -> Result<Socket, Box<dyn std::error::Error>> {
 }
 ```
 
-`ListenerBuilder` and `ListenerConfig` mirror the same pattern.
+`ListenerBuilder` and `ListenerConfig` mirror the same pattern; the listener's
+socket options are a `SocketConfig` in `ListenerConfig::socket`, next to
+`backlog` and `reuse_addr`.
 
 ## Sender / receiver presets
 
@@ -586,7 +588,15 @@ leak through logs.
 
 When a URL query parameter and a builder setter both target the same
 option, **the URL value wins**. Last-occurrence wins on duplicate keys.
-Caller's `SocketBuilder` / config struct is never mutated by URL parsing.
+`SrtUrl::config` is a `SocketConfig` holding exactly the keys the URL
+carried. Layer it over a config you built with
+`cfg.merge_from(&parsed.config)`: every key the URL set overwrites, every
+other field keeps its value, and `role` is never touched. A listener takes
+it as `listener_cfg.socket.merge_from(&parsed.config)`. To open the URL
+directly, `SrtUrl::socket_config(role)` returns the dial config (the
+sender preset is merged under the URL for `Role::Sender`) and
+`SrtUrl::listener_config()` the listener's. The caller's `SocketBuilder`
+is never mutated by URL parsing.
 
 ### Strictness
 

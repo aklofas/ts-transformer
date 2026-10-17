@@ -378,7 +378,7 @@ from tstrans.exceptions import SrtError, SrtErrorKind
 
 Caller mode is the default when `?mode=` is omitted. URL query parameters
 (`passphrase`, `latency`, `streamid`, `mss`, `payloadsize`, …) apply
-through the SRT URL overlay:
+from the SRT URL:
 
 ```python
 from tstrans.shells import Sender

@@ -1469,7 +1469,7 @@ const SRT_PARSE: &[Row] = &[
 fn effective_srt(url: &str) -> Effective {
     let u = SrtUrl::parse(url).map_err(|e| e.to_string())?;
     let mut cfg = tst_srt::config::SocketConfig::default();
-    u.overlay.apply_to_socket(&mut cfg);
+    cfg.merge_from(&u.config);
     Ok(vec![
         ("host", u.host.clone()),
         ("port", u.port.to_string()),
@@ -1480,7 +1480,10 @@ fn effective_srt(url: &str) -> Effective {
                 .as_ref()
                 .map_or("none".into(), |p| p.as_str().to_string()),
         ),
-        ("pbkeylen", format!("{:?}", cfg.key_length)),
+        (
+            "pbkeylen",
+            format!("{:?}", cfg.key_length.unwrap_or_default()),
+        ),
         ("latency", ms(cfg.latency)),
         ("rcvlatency", ms(cfg.recv_latency)),
         ("peerlatency", ms(cfg.peer_latency)),

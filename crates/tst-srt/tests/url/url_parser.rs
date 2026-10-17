@@ -71,7 +71,7 @@ fn rejects_userinfo_user_only() {
 #[test]
 fn passphrase_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?passphrase=hunter-too-long-thanks").unwrap();
-    assert!(u.overlay.passphrase.is_some());
+    assert!(u.config.passphrase.is_some());
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn passphrase_percent_decoded() {
     // Passphrase contains a percent-encoded space.
     let u = SrtUrl::parse("srt://1.2.3.4:9000?passphrase=hunter%20too%20long").unwrap();
     assert_eq!(
-        u.overlay.passphrase.as_ref().unwrap().as_str(),
+        u.config.passphrase.as_ref().unwrap().as_str(),
         "hunter too long"
     );
 }
@@ -94,7 +94,7 @@ fn passphrase_percent_decoded() {
 fn streamid_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?streamid=front-camera").unwrap();
     assert_eq!(
-        u.overlay.stream_id.as_ref().unwrap().as_str(),
+        u.config.stream_id.as_ref().unwrap().as_str(),
         "front-camera"
     );
 }
@@ -104,7 +104,7 @@ fn streamid_with_embedded_equals() {
     // The common parser splits on the FIRST `=` per RFC 3986 form-data;
     // trailing `=` chars are part of the value.
     let u = SrtUrl::parse("srt://1.2.3.4:9000?streamid=foo=bar").unwrap();
-    assert_eq!(u.overlay.stream_id.as_ref().unwrap().as_str(), "foo=bar");
+    assert_eq!(u.config.stream_id.as_ref().unwrap().as_str(), "foo=bar");
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn streamid_non_ascii_rejects() {
 fn congestion_live() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?congestion=live").unwrap();
     assert!(matches!(
-        u.overlay.congestion,
+        u.config.congestion,
         Some(tst_srt::Congestion::Live)
     ));
 }
@@ -126,7 +126,7 @@ fn congestion_live() {
 fn congestion_file() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?congestion=file").unwrap();
     assert!(matches!(
-        u.overlay.congestion,
+        u.config.congestion,
         Some(tst_srt::Congestion::File)
     ));
 }
@@ -147,14 +147,14 @@ fn congestion_unknown_rejects() {
 #[test]
 fn packetfilter_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?packetfilter=fec,cols:10,rows:5,arq:onreq").unwrap();
-    assert!(u.overlay.packet_filter.is_some());
+    assert!(u.config.packet_filter.is_some());
 }
 
 #[test]
 fn pbkeylen_16() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?pbkeylen=16").unwrap();
     assert!(matches!(
-        u.overlay.key_length,
+        u.config.key_length,
         Some(tst_srt::KeyLength::Aes128)
     ));
 }
@@ -163,7 +163,7 @@ fn pbkeylen_16() {
 fn pbkeylen_24() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?pbkeylen=24").unwrap();
     assert!(matches!(
-        u.overlay.key_length,
+        u.config.key_length,
         Some(tst_srt::KeyLength::Aes192)
     ));
 }
@@ -172,7 +172,7 @@ fn pbkeylen_24() {
 fn pbkeylen_32() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?pbkeylen=32").unwrap();
     assert!(matches!(
-        u.overlay.key_length,
+        u.config.key_length,
         Some(tst_srt::KeyLength::Aes256)
     ));
 }
@@ -186,7 +186,7 @@ fn pbkeylen_invalid() {
 #[test]
 fn latency_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?latency=200").unwrap();
-    assert_eq!(u.overlay.latency, Some(Duration::from_millis(200)));
+    assert_eq!(u.config.latency, Some(Duration::from_millis(200)));
 }
 
 #[test]
@@ -212,32 +212,32 @@ fn latency_overflow_rejects() {
 #[test]
 fn rcvlatency_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?rcvlatency=120").unwrap();
-    assert_eq!(u.overlay.recv_latency, Some(Duration::from_millis(120)));
+    assert_eq!(u.config.recv_latency, Some(Duration::from_millis(120)));
 }
 
 #[test]
 fn peerlatency_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?peerlatency=80").unwrap();
-    assert_eq!(u.overlay.peer_latency, Some(Duration::from_millis(80)));
+    assert_eq!(u.config.peer_latency, Some(Duration::from_millis(80)));
 }
 
 #[test]
 fn mss_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?mss=1400").unwrap();
-    assert_eq!(u.overlay.mss, Some(1400));
+    assert_eq!(u.config.mss, Some(1400));
 }
 
 #[test]
 fn payloadsize_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?payloadsize=1316").unwrap();
-    assert_eq!(u.overlay.payload_size, Some(1316));
+    assert_eq!(u.config.payload_size, Some(1316));
 }
 
 #[test]
 fn maxbw_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?maxbw=10000000").unwrap();
     assert!(matches!(
-        u.overlay.max_bandwidth,
+        u.config.max_bandwidth,
         Some(tst_srt::MaxBandwidth::Limited(10_000_000))
     ));
 }
@@ -245,13 +245,13 @@ fn maxbw_query() {
 #[test]
 fn inputbw_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?inputbw=5000000").unwrap();
-    assert_eq!(u.overlay.input_bandwidth, Some(5_000_000));
+    assert_eq!(u.config.input_bandwidth, Some(5_000_000));
 }
 
 #[test]
 fn oheadbw_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?oheadbw=25").unwrap();
-    assert_eq!(u.overlay.overhead_bandwidth_pct, Some(25));
+    assert_eq!(u.config.overhead_bandwidth_pct, Some(25));
 }
 
 #[test]
@@ -267,25 +267,25 @@ fn oheadbw_out_of_range() {
 #[test]
 fn lossmaxttl_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?lossmaxttl=20").unwrap();
-    assert_eq!(u.overlay.loss_max_ttl, Some(20));
+    assert_eq!(u.config.loss_max_ttl, Some(20));
 }
 
 #[test]
 fn fc_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?fc=8192").unwrap();
-    assert_eq!(u.overlay.flow_window_packets, Some(8192));
+    assert_eq!(u.config.flow_window_packets, Some(8192));
 }
 
 #[test]
 fn tlpktdrop_zero() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?tlpktdrop=0").unwrap();
-    assert_eq!(u.overlay.too_late_packet_drop, Some(false));
+    assert_eq!(u.config.too_late_packet_drop, Some(false));
 }
 
 #[test]
 fn tlpktdrop_one() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?tlpktdrop=1").unwrap();
-    assert_eq!(u.overlay.too_late_packet_drop, Some(true));
+    assert_eq!(u.config.too_late_packet_drop, Some(true));
 }
 
 #[test]
@@ -304,13 +304,13 @@ fn tlpktdrop_two_rejects() {
 #[test]
 fn x_recvtimeout_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?x-recvtimeout=5000").unwrap();
-    assert_eq!(u.overlay.recv_timeout, Some(Duration::from_millis(5000)));
+    assert_eq!(u.config.recv_timeout, Some(Duration::from_millis(5000)));
 }
 
 #[test]
 fn x_sendtimeout_query() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?x-sendtimeout=2000").unwrap();
-    assert_eq!(u.overlay.send_timeout, Some(Duration::from_millis(2000)));
+    assert_eq!(u.config.send_timeout, Some(Duration::from_millis(2000)));
 }
 
 #[test]
@@ -323,7 +323,7 @@ fn x_unknown_extension_rejects() {
 #[test]
 fn mode_caller_accepted_noop() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?mode=caller&latency=100").unwrap();
-    assert_eq!(u.overlay.latency, Some(Duration::from_millis(100)));
+    assert_eq!(u.config.latency, Some(Duration::from_millis(100)));
 }
 
 #[test]
@@ -337,7 +337,7 @@ fn group1_conntimeo_honored() {
     // `conntimeo` was promoted from Group 3 (rejected) to Group 1 (honored).
     let u = SrtUrl::parse("srt://1.2.3.4:9000?conntimeo=5000").unwrap();
     assert_eq!(
-        u.overlay.connect_timeout,
+        u.config.connect_timeout,
         Some(std::time::Duration::from_millis(5000))
     );
 }
@@ -422,7 +422,7 @@ fn all_group3_keys_reject_with_srto() {
 #[test]
 fn last_occurrence_wins_on_duplicate_keys() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?latency=100&latency=200").unwrap();
-    assert_eq!(u.overlay.latency, Some(Duration::from_millis(200)));
+    assert_eq!(u.config.latency, Some(Duration::from_millis(200)));
 }
 
 #[test]
@@ -442,11 +442,11 @@ fn multi_key_url_combines() {
     .unwrap();
     assert_eq!(u.host, "camera.local");
     assert_eq!(u.port, 9000);
-    assert_eq!(u.overlay.stream_id.as_ref().unwrap().as_str(), "front");
-    assert_eq!(u.overlay.latency, Some(Duration::from_millis(200)));
-    assert!(u.overlay.passphrase.is_some());
+    assert_eq!(u.config.stream_id.as_ref().unwrap().as_str(), "front");
+    assert_eq!(u.config.latency, Some(Duration::from_millis(200)));
+    assert!(u.config.passphrase.is_some());
     assert!(matches!(
-        u.overlay.key_length,
+        u.config.key_length,
         Some(tst_srt::KeyLength::Aes192)
     ));
 }
@@ -474,57 +474,65 @@ fn passphrase_with_plus_sign_is_literal_plus() {
     // exercises); a raw `+` would also arrive as `+` unchanged.
     let u = SrtUrl::parse("srt://1.2.3.4:9000?passphrase=hunter%2Btoo%2Blong").unwrap();
     assert_eq!(
-        u.overlay.passphrase.as_ref().unwrap().as_str(),
+        u.config.passphrase.as_ref().unwrap().as_str(),
         "hunter+too+long"
     );
 }
 
 #[test]
-fn apply_to_socket_writes_through() {
+fn merge_from_writes_the_urls_keys_through() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?latency=200&streamid=front&pbkeylen=24").unwrap();
     let mut cfg = SocketConfig::default();
-    u.overlay.apply_to_socket(&mut cfg);
+    cfg.merge_from(&u.config);
     assert_eq!(cfg.latency, Some(Duration::from_millis(200)));
     assert_eq!(cfg.stream_id.as_ref().unwrap().as_str(), "front");
-    assert!(matches!(cfg.key_length, tst_srt::KeyLength::Aes192));
+    assert!(matches!(cfg.key_length, Some(tst_srt::KeyLength::Aes192)));
 }
 
 #[test]
-fn apply_to_socket_url_wins_over_existing() {
-    // Pre-populate cfg with a builder value; overlay should overwrite.
+fn merge_from_url_wins_over_existing() {
+    // Pre-populate cfg with a builder value; the URL's key should overwrite.
     let mut cfg = SocketConfig::default();
     cfg.latency = Some(Duration::from_millis(100));
     let u = SrtUrl::parse("srt://1.2.3.4:9000?latency=200").unwrap();
-    u.overlay.apply_to_socket(&mut cfg);
+    cfg.merge_from(&u.config);
     assert_eq!(cfg.latency, Some(Duration::from_millis(200)));
 }
 
 #[test]
-fn apply_to_socket_does_not_clear_unset_fields() {
-    // Overlay has only latency set; other pre-populated fields stay.
+fn merge_from_does_not_clear_unset_fields() {
+    // The URL has only latency set; other pre-populated fields stay.
     let mut cfg = SocketConfig::default();
     cfg.mss = Some(1316);
     let u = SrtUrl::parse("srt://1.2.3.4:9000?latency=100").unwrap();
-    u.overlay.apply_to_socket(&mut cfg);
+    cfg.merge_from(&u.config);
     assert_eq!(cfg.latency, Some(Duration::from_millis(100)));
     assert_eq!(cfg.mss, Some(1316)); // preserved
 }
 
 #[test]
-fn apply_to_socket_x_recvtimeout_lands() {
+fn merge_from_x_recvtimeout_lands() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?x-recvtimeout=5000").unwrap();
     let mut cfg = SocketConfig::default();
-    u.overlay.apply_to_socket(&mut cfg);
+    cfg.merge_from(&u.config);
     assert_eq!(cfg.recv_timeout, Some(Duration::from_millis(5000)));
 }
 
 #[test]
-fn apply_to_listener_subset() {
-    // ListenerConfig shares many fields with SocketConfig; the apply
-    // method writes the overlapping subset.
+fn url_config_holds_only_the_urls_keys() {
+    let u = SrtUrl::parse("srt://1.2.3.4:9000?latency=100").unwrap();
+    assert_eq!(u.config.latency, Some(Duration::from_millis(100)));
+    assert!(u.config.connect_timeout.is_none());
+    assert!(u.config.linger.is_none());
+    assert!(u.config.key_length.is_none());
+}
+
+#[test]
+fn listener_config_carries_the_url_as_its_socket_options() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?latency=100&passphrase=hunter-too-long").unwrap();
-    let mut cfg = ListenerConfig::default();
-    u.overlay.apply_to_listener(&mut cfg);
-    assert_eq!(cfg.latency, Some(Duration::from_millis(100)));
-    assert!(cfg.passphrase.is_some());
+    let cfg: ListenerConfig = u.listener_config();
+    assert_eq!(cfg.socket.latency, Some(Duration::from_millis(100)));
+    assert!(cfg.socket.passphrase.is_some());
+    assert_eq!(cfg.backlog, ListenerConfig::default().backlog);
+    assert_eq!(cfg.reuse_addr, ListenerConfig::default().reuse_addr);
 }

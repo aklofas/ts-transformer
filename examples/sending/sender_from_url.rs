@@ -1,7 +1,7 @@
 //! MuxSender-from-URL example.
 //!
 //! Demonstrates the full `srt://host:port?key=value` flow: parse the URL,
-//! apply its overlay to a fresh `SocketConfig`, connect. Then opens an
+//! merge its keys into a `SocketConfig`, connect. Then opens an
 //! intentionally-malformed URL to show how each `UrlError` variant
 //! surfaces — the error vocabulary is part of the API and worth seeing
 //! end-to-end.
@@ -49,9 +49,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // so this gets overwritten — that's the intended behavior.
     sb.latency_ms(100);
     let mut config = sb.config();
-    parsed.overlay.apply_to_socket(&mut config);
+    config.merge_from(&parsed.config);
     println!(
-        "applied overlay; config has latency = {:?}, streamid = {:?}",
+        "merged the URL; config has latency = {:?}, streamid = {:?}",
         config.latency,
         config.stream_id.as_ref().map(|s| s.as_str()),
     );

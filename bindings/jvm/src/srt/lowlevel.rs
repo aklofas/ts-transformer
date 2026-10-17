@@ -134,7 +134,7 @@ fn unbox_nullable_long(env: &mut JNIEnv, obj: &JObject) -> jni::errors::Result<O
 
 /// Apply the nullable knob args into a `SocketConfig`. Returns `Err` if any
 /// validated knob (passphrase, stream_id, congestion, mss, payload_size) fails.
-/// Does NOT apply the URL overlay — the caller does that after this returns.
+/// Does NOT apply the URL's keys — the caller does that after this returns.
 #[allow(clippy::cast_sign_loss)]
 fn build_socket_config(
     env: &mut JNIEnv,
@@ -256,13 +256,13 @@ fn build_listener_config(
     let mut cfg = ListenerConfig::default();
 
     if let Some(ms) = unbox_nullable_int(env, latency_ms)? {
-        cfg.latency = Some(Duration::from_millis(ms as u64));
+        cfg.socket.latency = Some(Duration::from_millis(ms as u64));
     }
 
     if !passphrase.is_null() {
         let s: String = env.get_string(passphrase).map(Into::into)?;
         match Passphrase::new(s) {
-            Ok(pp) => cfg.passphrase = Some(pp),
+            Ok(pp) => cfg.socket.passphrase = Some(pp),
             Err(e) => {
                 throw_srt(env, BindingErrorKind::ConfigInvalid, &e.to_string());
                 return Err(jni::errors::Error::JavaException);
@@ -273,7 +273,7 @@ fn build_listener_config(
     if !congestion.is_null() {
         let s: String = env.get_string(congestion).map(Into::into)?;
         match Congestion::from_str_strict(&s) {
-            Ok(c) => cfg.congestion = Some(c),
+            Ok(c) => cfg.socket.congestion = Some(c),
             Err(e) => {
                 throw_srt(env, BindingErrorKind::ConfigInvalid, &e.to_string());
                 return Err(jni::errors::Error::JavaException);
@@ -282,27 +282,27 @@ fn build_listener_config(
     }
 
     if let Some(ms) = unbox_nullable_int(env, recv_timeout_ms)? {
-        cfg.recv_timeout = Some(Duration::from_millis(ms as u64));
+        cfg.socket.recv_timeout = Some(Duration::from_millis(ms as u64));
     }
 
     if let Some(ms) = unbox_nullable_int(env, send_timeout_ms)? {
-        cfg.send_timeout = Some(Duration::from_millis(ms as u64));
+        cfg.socket.send_timeout = Some(Duration::from_millis(ms as u64));
     }
 
     if let Some(ms) = unbox_nullable_int(env, recv_latency_ms)? {
-        cfg.recv_latency = Some(Duration::from_millis(ms as u64));
+        cfg.socket.recv_latency = Some(Duration::from_millis(ms as u64));
     }
 
     if let Some(bps) = unbox_nullable_long(env, max_bandwidth_bps)? {
-        cfg.max_bandwidth = Some(MaxBandwidth::Limited(bps as u64));
+        cfg.socket.max_bandwidth = Some(MaxBandwidth::Limited(bps as u64));
     }
 
     if let Some(v) = unbox_nullable_int(env, mss)? {
-        cfg.mss = Some(checked_u16(env, v as i64, "mss")?);
+        cfg.socket.mss = Some(checked_u16(env, v as i64, "mss")?);
     }
 
     if let Some(v) = unbox_nullable_int(env, payload_size)? {
-        cfg.payload_size = Some(checked_u16(env, v as i64, "payloadSize")?);
+        cfg.socket.payload_size = Some(checked_u16(env, v as i64, "payloadSize")?);
     }
 
     Ok(cfg)
@@ -403,8 +403,8 @@ jni_native! {
             return 0;
         }
 
-        // URL overlay AFTER kwargs — URL wins on conflict (Q4-A).
-        parsed.overlay.apply_to_socket(&mut cfg);
+        // The URL's keys AFTER kwargs — URL wins on conflict.
+        cfg.merge_from(&parsed.config);
 
         let addr = join_host_port(&parsed.host, parsed.port);
         let socket = match SrtSocket::connect_with(&cfg, addr.as_str()) {
@@ -514,8 +514,8 @@ jni_native! {
             return 0;
         }
 
-        // URL overlay AFTER kwargs.
-        parsed.overlay.apply_to_listener(&mut cfg);
+        // The URL's keys AFTER kwargs.
+        cfg.socket.merge_from(&parsed.config);
 
         let addr = if parsed.host.is_empty() {
             format!("0.0.0.0:{}", parsed.port)

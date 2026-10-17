@@ -28,7 +28,7 @@ fn ipv6_loopback_available() -> bool {
     std::net::UdpSocket::bind("[::1]:0").is_ok()
 }
 
-/// Caller mode: the overlay is applied, the sender defaults are merged,
+/// Caller mode: the URL's keys are applied, the sender defaults are merged,
 /// the transport is connected and alive, bytes arrive at the peer.
 #[test]
 fn connect_round_trips_over_loopback() {
@@ -59,7 +59,7 @@ fn connect_round_trips_over_loopback() {
 /// the plain Python/JVM receivers do today. That the preset is genuinely
 /// absent is asserted on the config in `url.rs`'s unit tests (a live
 /// socket reports back neither the linger nor the role); this pins that
-/// the overlay-only config still produces a working connection.
+/// the keys-only config still produces a working connection.
 #[test]
 fn connect_recv_round_trips_over_loopback() {
     require_loopback!();
@@ -214,7 +214,7 @@ fn spawn_connector(
 }
 
 /// Happy path: a peer that connects is handed back as a live transport,
-/// and a successful accept leaves the slot un-latched. The overlay is
+/// and a successful accept leaves the slot un-latched. The URL's keys are
 /// applied to the listener side (`latency` is a listener-side key).
 #[test]
 fn accept_one_hands_back_a_connecting_peer() {

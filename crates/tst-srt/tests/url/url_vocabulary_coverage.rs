@@ -2,7 +2,7 @@
 //!
 //! Asserts:
 //!   1. All 16 Group 1 honored keys parse to a `Some(_)` field on
-//!      `UrlOverlay` (catches "I forgot to wire the new key into the
+//!      `SrtUrl::config` (catches "I forgot to wire the new key into the
 //!      apply layer").
 //!   2. All 2 Group 2 keys parse successfully.
 //!   3. All 24 Group 3 keys reject with `UnsupportedKey` carrying a
@@ -64,7 +64,7 @@ const GROUP3_KEYS: &[&str] = &[
 ];
 
 /// For each Group 1 key, build a URL with a value the parser will accept,
-/// parse it, and assert the resulting overlay has at least one Some(_)
+/// parse it, and assert the resulting config has at least one Some(_)
 /// field. (Approximation: we count distinct fields by snapshotting before
 /// and after; if the parse succeeds, the key is wired.)
 #[test]

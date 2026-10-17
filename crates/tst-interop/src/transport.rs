@@ -120,9 +120,9 @@ const UDP_RECV_POLL: Duration = Duration::from_millis(200);
 /// rejected here before that generous caller-side deadline would have
 /// given up anyway.
 ///
-/// The URL's `conntimeo`/`connect_timeout` overlay overrides this
-/// default when present, even in listener mode: `apply_to_listener`
-/// deliberately never applies it to `ListenerConfig` (libsrt's
+/// The URL's `conntimeo`/`connect_timeout` overrides this
+/// default when present, even in listener mode: a listener never
+/// applies it to the socket (libsrt's
 /// `SRTO_CONNTIMEO` is caller-only), so the parsed value would
 /// otherwise go unused for a listener-mode URL — reusing it here as the
 /// accept bound lets a caller (e.g. a test) ask for a short window
@@ -287,23 +287,23 @@ fn srt_socket(url: &str) -> Result<tst_srt::Socket, String> {
             b.linger(SRT_LINGER);
             b.latency(SRT_LATENCY);
             let mut cfg = b.config();
-            parsed.overlay.apply_to_socket(&mut cfg);
+            cfg.merge_from(&parsed.config);
             tst_srt::Socket::connect_with(&cfg, (parsed.host.as_str(), parsed.port))
                 .map_err(|e| format!("srt connect {url}: {e}"))
         }
         tst_srt::url::Mode::Listener => {
             let mut b = tst_srt::ListenerBuilder::new();
             b.recv_timeout(DEFAULT_SRT_RECV_TIMEOUT);
-            // `ListenerConfig::linger` is a libsrt PRE option: set on the
+            // `ListenerConfig`'s `linger` is a libsrt PRE option: set on the
             // listener, inherited by every socket it accepts
-            // (`crates/tst-srt/src/config.rs:244-248`) — needed here too
+            // — needed here too
             // in case the accepted socket ends up on the send side (a
             // listener-mode SRT cell where the listener pushes and the
             // caller receives is just as legal as the reverse).
             b.linger(SRT_LINGER);
             b.latency(SRT_LATENCY);
             let mut cfg = b.config();
-            parsed.overlay.apply_to_listener(&mut cfg);
+            cfg.socket.merge_from(&parsed.config);
             // Empty host (`srt://:port?mode=listener`) means "bind every
             // interface" per `Mode::Listener`'s own doc — `SrtUrl` passes
             // the raw (possibly empty) host through unresolved, so the
@@ -322,9 +322,9 @@ fn srt_socket(url: &str) -> Result<tst_srt::Socket, String> {
             // sender that never connects fails cleanly instead of
             // hanging this whole subcommand. `conntimeo`/`connect_timeout`
             // doubles as the accept bound here — see `SRT_ACCEPT_TIMEOUT`'s
-            // doc comment for why that overlay field is otherwise unused
+            // doc comment for why that field is otherwise unused
             // in listener mode.
-            let accept_timeout = parsed.overlay.connect_timeout.unwrap_or(SRT_ACCEPT_TIMEOUT);
+            let accept_timeout = parsed.config.connect_timeout.unwrap_or(SRT_ACCEPT_TIMEOUT);
             let (socket, _peer) = listener
                 .accept_timeout(accept_timeout)
                 .map_err(|e| format!("srt accept {url}: {e}"))?;

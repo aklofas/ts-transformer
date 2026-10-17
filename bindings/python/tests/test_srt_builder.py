@@ -272,7 +272,7 @@ def test_url_value_overrides_kwarg_value() -> None:
     fails at the right boundary (timeout/connect_failed) rather than
     config-invalid. This is a smoke test for the precedence ordering —
     the deeper property (URL wins) is enforced by the unconditional
-    overwrite in `UrlOverlay::apply_to_socket` at the Rust layer.
+    overwrite in `SocketConfig::merge_from` at the Rust layer.
     """
     b = tstrans.srt.Builder(
         "srt://192.0.2.1:9000?latency=200",
@@ -281,7 +281,7 @@ def test_url_value_overrides_kwarg_value() -> None:
     )
     with pytest.raises(SrtError) as exc_info:
         b.connect()
-    # The URL parsed without error (CONFIG_INVALID would mean overlay
+    # The URL parsed without error (CONFIG_INVALID would mean the parser
     # rejected the value). TIMEOUT/CONNECT_FAILED means we got past
     # config to the actual handshake.
     assert exc_info.value.kind in (SrtErrorKind.TIMEOUT, SrtErrorKind.CONNECT_FAILED)

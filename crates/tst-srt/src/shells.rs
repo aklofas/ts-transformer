@@ -33,7 +33,7 @@
 //! [`SocketConfig::merge_sender_defaults`](crate::config::SocketConfig::merge_sender_defaults).
 //! A managed caller-mode RECEIVER therefore runs with the sender preset
 //! (15 s connect timeout, 5 s linger, `Role::Sender`) —
-//! [`SrtUrl::connect_recv`] (the overlay-only open) is for the plain
+//! [`SrtUrl::connect_recv`] (the URL-keys-only open) is for the plain
 //! Python/JVM opens that never merged it, not for this family.
 
 use std::sync::Arc;

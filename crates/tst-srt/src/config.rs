@@ -28,14 +28,17 @@ const RECEIVER_DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Configuration for a caller-side data socket.
 ///
 /// All `Option<T>` fields default to `None`, meaning "leave the libsrt default."
-/// `KeyLength` defaults to `Aes128` (only relevant when `passphrase` is set).
+/// `key_length` is only relevant when `passphrase` is set, where `None`
+/// means AES-128.
 #[must_use]
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct SocketConfig {
     // Encryption
     pub passphrase: Option<Passphrase>,
-    pub key_length: KeyLength,
+    /// AES key length; `None` is libsrt's AES-128 (applied before the
+    /// passphrase, so only a socket with a passphrase uses it).
+    pub key_length: Option<KeyLength>,
 
     // Timeouts
     pub send_timeout: Option<Duration>,
@@ -129,6 +132,47 @@ pub struct SocketConfig {
 }
 
 impl SocketConfig {
+    /// Overwrites every field of `self` that `other` has set: this is the
+    /// one "URL wins" rule, used wherever a parsed URL's keys are layered
+    /// over a config built from other sources. `None` fields of `other`
+    /// leave `self` alone, and [`role`](Self::role) is never touched
+    /// because it is not a URL key.
+    pub fn merge_from(&mut self, other: &SocketConfig) {
+        macro_rules! take {
+            ($($f:ident),+ $(,)?) => {
+                $(if other.$f.is_some() {
+                    self.$f = other.$f.clone();
+                })+
+            };
+        }
+        take!(
+            passphrase,
+            key_length,
+            send_timeout,
+            recv_timeout,
+            connect_timeout,
+            linger,
+            latency,
+            peer_latency,
+            recv_latency,
+            recv_buf_bytes,
+            send_buf_bytes,
+            max_bandwidth,
+            input_bandwidth,
+            overhead_bandwidth_pct,
+            mss,
+            payload_size,
+            udp_recv_buffer_bytes,
+            udp_send_buffer_bytes,
+            stream_id,
+            loss_max_ttl,
+            too_late_packet_drop,
+            flow_window_packets,
+            packet_filter,
+            congestion,
+        );
+    }
+
     /// Returns a `SocketConfig` pre-populated with the live-streaming sender
     /// preset suitable for radio-link MPEG-TS+SRT delivery from gimbaled
     /// platforms:
@@ -217,89 +261,35 @@ impl SocketConfig {
 
 /// Configuration for a listener (passive) socket.
 ///
-/// Most fields parallel `SocketConfig`; the listener applies them to itself
-/// and inherits the timeout fields onto sockets returned by `accept()`.
+/// The socket options are a [`SocketConfig`] in [`socket`](Self::socket);
+/// the listener applies the ones that make sense on a passive socket:
+/// `passphrase`, `key_length`, `latency`, `recv_latency`, `mss`,
+/// `flow_window_packets`, `recv_buf_bytes`, `max_bandwidth`,
+/// `overhead_bandwidth_pct`, `payload_size`, `udp_recv_buffer_bytes`,
+/// `loss_max_ttl`, `too_late_packet_drop`, `packet_filter`, `congestion`,
+/// `recv_timeout` and `linger`. The rest (`send_timeout`,
+/// `connect_timeout`, `peer_latency`, `stream_id`, the send-side buffers
+/// and bandwidth, `role`) are caller-side and are stored but not applied.
+/// Accepted sockets inherit the PRE options through libsrt.
 #[must_use]
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ListenerConfig {
-    // Encryption (applied to listener; libsrt enforces during handshake)
-    pub passphrase: Option<Passphrase>,
-    pub key_length: KeyLength,
-
-    // Latency / buffering (listener-side)
-    pub latency: Option<Duration>,
-    pub recv_latency: Option<Duration>,
-    /// Receive buffer size in **bytes**, passed verbatim to `SRTO_RCVBUF`.
-    ///
-    /// See [`SocketConfig::recv_buf_bytes`] for sizing guidance.
-    pub recv_buf_bytes: Option<u32>,
-
-    // Bandwidth
-    pub max_bandwidth: Option<MaxBandwidth>,
-    pub overhead_bandwidth_pct: Option<u8>,
-
-    // Wire / packet sizing
-    pub mss: Option<u16>,
-    pub payload_size: Option<u16>,
-
-    /// Underlying UDP socket recv buffer (separate from SRT's packet queue).
-    /// See `SocketConfig::udp_recv_buffer_bytes` for context.
-    pub udp_recv_buffer_bytes: Option<u32>,
-
-    // Reliability / loss
-    pub loss_max_ttl: Option<u32>,
-
-    // Congestion / priority
-    pub too_late_packet_drop: Option<bool>,
-    /// Flow-control window in packets (`SRTO_FC`, libsrt default 25600).
-    /// Also the hard ceiling for [`Self::recv_buf_bytes`] — libsrt
-    /// silently clamps the receive buffer to this window, so raise both
-    /// together for large-buffer configurations.
-    pub flow_window_packets: Option<u32>,
-    pub packet_filter: Option<PacketFilter>,
-    pub congestion: Option<Congestion>,
-
-    // Listener-specific
+    /// The socket options the listener applies and its accepted sockets
+    /// inherit.
+    pub socket: SocketConfig,
+    /// Length of the pending-connection queue.
     pub backlog: u32,
+    /// Sets `SO_REUSEADDR` on the listening socket.
     pub reuse_addr: bool,
-
-    // Inherited by accepted sockets
-    pub recv_timeout: Option<Duration>,
-    pub send_timeout: Option<Duration>,
-
-    /// SRT linger timeout. `None` preserves libsrt's default — which is
-    /// `l_onoff=0, l_linger=0` (linger off; close returns immediately and
-    /// data still queued in the send buffer is dropped). Note: this differs
-    /// from the kernel SO_LINGER default; libsrt initializes its own
-    /// `struct linger`. See `srtcore/socketconfig.h:333-336`. Inherited by
-    /// accepted sockets via libsrt's option-inheritance (PRE options).
-    pub linger: Option<Duration>,
 }
 
 impl Default for ListenerConfig {
     fn default() -> Self {
         Self {
-            passphrase: None,
-            key_length: KeyLength::default(),
-            latency: None,
-            recv_latency: None,
-            recv_buf_bytes: None,
-            max_bandwidth: None,
-            overhead_bandwidth_pct: None,
-            mss: None,
-            payload_size: None,
-            udp_recv_buffer_bytes: None,
-            loss_max_ttl: None,
-            too_late_packet_drop: None,
-            flow_window_packets: None,
-            packet_filter: None,
-            congestion: None,
+            socket: SocketConfig::default(),
             backlog: 5,
             reuse_addr: true,
-            recv_timeout: None,
-            send_timeout: None,
-            linger: None,
         }
     }
 }
@@ -312,7 +302,7 @@ mod tests {
     fn socket_default_is_unencrypted() {
         let cfg = SocketConfig::default();
         assert!(cfg.passphrase.is_none());
-        assert_eq!(cfg.key_length, KeyLength::Aes128);
+        assert_eq!(cfg.key_length, None);
     }
 
     #[test]
@@ -334,7 +324,7 @@ mod tests {
     fn sender_defaults_leaves_other_fields_at_default() {
         let cfg = SocketConfig::sender_defaults();
         assert!(cfg.passphrase.is_none());
-        assert_eq!(cfg.key_length, KeyLength::Aes128);
+        assert_eq!(cfg.key_length, None);
         assert!(cfg.send_timeout.is_none());
         assert!(cfg.recv_timeout.is_none());
         assert!(cfg.latency.is_none());
@@ -442,5 +432,43 @@ mod tests {
         cfg.merge_receiver_defaults();
         assert_eq!(cfg.role, Role::Sender);
         assert_eq!(cfg.connect_timeout, Some(Duration::from_secs(15)));
+    }
+
+    #[test]
+    fn merge_from_overwrites_only_the_fields_other_set() {
+        let mut cfg = SocketConfig {
+            latency: Some(Duration::from_millis(100)),
+            mss: Some(1200),
+            key_length: Some(KeyLength::Aes256),
+            role: Role::Sender,
+            ..Default::default()
+        };
+        let other = SocketConfig {
+            latency: Some(Duration::from_millis(250)),
+            recv_timeout: Some(Duration::from_millis(5)),
+            // `role` is not a URL key: another config's role must not leak.
+            role: Role::Receiver,
+            ..Default::default()
+        };
+        cfg.merge_from(&other);
+        assert_eq!(cfg.latency, Some(Duration::from_millis(250)));
+        assert_eq!(cfg.recv_timeout, Some(Duration::from_millis(5)));
+        assert_eq!(cfg.mss, Some(1200));
+        assert_eq!(cfg.key_length, Some(KeyLength::Aes256));
+        assert_eq!(cfg.role, Role::Sender);
+    }
+
+    #[test]
+    fn merge_from_a_default_changes_nothing() {
+        let mut cfg = SocketConfig::sender_defaults();
+        cfg.latency = Some(Duration::from_millis(7));
+        let before = format!("{cfg:?}");
+        cfg.merge_from(&SocketConfig::default());
+        assert_eq!(format!("{cfg:?}"), before);
+    }
+
+    #[test]
+    fn listener_default_leaves_key_length_unset() {
+        assert_eq!(ListenerConfig::default().socket.key_length, None);
     }
 }

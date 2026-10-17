@@ -85,25 +85,8 @@ impl core::panic::unwind_safe::UnwindSafe for tst_srt::builder::SocketBuilder
 pub mod tst_srt::config
 #[non_exhaustive] pub struct tst_srt::config::ListenerConfig
 pub tst_srt::config::ListenerConfig::backlog: u32
-pub tst_srt::config::ListenerConfig::congestion: core::option::Option<tst_srt::options::Congestion>
-pub tst_srt::config::ListenerConfig::flow_window_packets: core::option::Option<u32>
-pub tst_srt::config::ListenerConfig::key_length: tst_srt::options::KeyLength
-pub tst_srt::config::ListenerConfig::latency: core::option::Option<core::time::Duration>
-pub tst_srt::config::ListenerConfig::linger: core::option::Option<core::time::Duration>
-pub tst_srt::config::ListenerConfig::loss_max_ttl: core::option::Option<u32>
-pub tst_srt::config::ListenerConfig::max_bandwidth: core::option::Option<tst_srt::options::MaxBandwidth>
-pub tst_srt::config::ListenerConfig::mss: core::option::Option<u16>
-pub tst_srt::config::ListenerConfig::overhead_bandwidth_pct: core::option::Option<u8>
-pub tst_srt::config::ListenerConfig::packet_filter: core::option::Option<tst_srt::options::PacketFilter>
-pub tst_srt::config::ListenerConfig::passphrase: core::option::Option<tst_srt::options::Passphrase>
-pub tst_srt::config::ListenerConfig::payload_size: core::option::Option<u16>
-pub tst_srt::config::ListenerConfig::recv_buf_bytes: core::option::Option<u32>
-pub tst_srt::config::ListenerConfig::recv_latency: core::option::Option<core::time::Duration>
-pub tst_srt::config::ListenerConfig::recv_timeout: core::option::Option<core::time::Duration>
 pub tst_srt::config::ListenerConfig::reuse_addr: bool
-pub tst_srt::config::ListenerConfig::send_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::config::ListenerConfig::too_late_packet_drop: core::option::Option<bool>
-pub tst_srt::config::ListenerConfig::udp_recv_buffer_bytes: core::option::Option<u32>
+pub tst_srt::config::ListenerConfig::socket: tst_srt::config::SocketConfig
 impl core::clone::Clone for tst_srt::config::ListenerConfig
 pub fn tst_srt::config::ListenerConfig::clone(&self) -> tst_srt::config::ListenerConfig
 impl core::default::Default for tst_srt::config::ListenerConfig
@@ -122,7 +105,7 @@ pub tst_srt::config::SocketConfig::congestion: core::option::Option<tst_srt::opt
 pub tst_srt::config::SocketConfig::connect_timeout: core::option::Option<core::time::Duration>
 pub tst_srt::config::SocketConfig::flow_window_packets: core::option::Option<u32>
 pub tst_srt::config::SocketConfig::input_bandwidth: core::option::Option<u64>
-pub tst_srt::config::SocketConfig::key_length: tst_srt::options::KeyLength
+pub tst_srt::config::SocketConfig::key_length: core::option::Option<tst_srt::options::KeyLength>
 pub tst_srt::config::SocketConfig::latency: core::option::Option<core::time::Duration>
 pub tst_srt::config::SocketConfig::linger: core::option::Option<core::time::Duration>
 pub tst_srt::config::SocketConfig::loss_max_ttl: core::option::Option<u32>
@@ -144,6 +127,7 @@ pub tst_srt::config::SocketConfig::too_late_packet_drop: core::option::Option<bo
 pub tst_srt::config::SocketConfig::udp_recv_buffer_bytes: core::option::Option<u32>
 pub tst_srt::config::SocketConfig::udp_send_buffer_bytes: core::option::Option<u32>
 impl tst_srt::config::SocketConfig
+pub fn tst_srt::config::SocketConfig::merge_from(&mut self, &tst_srt::config::SocketConfig)
 pub fn tst_srt::config::SocketConfig::merge_receiver_defaults(&mut self)
 pub fn tst_srt::config::SocketConfig::merge_sender_defaults(&mut self)
 pub fn tst_srt::config::SocketConfig::receiver_defaults() -> Self
@@ -926,15 +910,17 @@ impl core::marker::UnsafeUnpin for tst_srt::url::UrlError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::url::UrlError
 impl !core::panic::unwind_safe::UnwindSafe for tst_srt::url::UrlError
 pub struct tst_srt::url::SrtUrl
+pub tst_srt::url::SrtUrl::config: tst_srt::config::SocketConfig
 pub tst_srt::url::SrtUrl::host: alloc::string::String
 pub tst_srt::url::SrtUrl::mode: tst_srt::url::Mode
-pub tst_srt::url::SrtUrl::overlay: tst_srt::url::UrlOverlay
 pub tst_srt::url::SrtUrl::port: u16
 impl tst_srt::url::SrtUrl
 pub fn tst_srt::url::SrtUrl::accept_one(&self, &tst_core::cancel::CancelSlot) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
 pub fn tst_srt::url::SrtUrl::connect(&self) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
 pub fn tst_srt::url::SrtUrl::connect_recv(&self) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
+pub fn tst_srt::url::SrtUrl::listener_config(&self) -> tst_srt::config::ListenerConfig
 pub fn tst_srt::url::SrtUrl::parse(&str) -> core::result::Result<Self, tst_srt::url::UrlError>
+pub fn tst_srt::url::SrtUrl::socket_config(&self, tst_srt::options::Role) -> tst_srt::config::SocketConfig
 impl core::clone::Clone for tst_srt::url::SrtUrl
 pub fn tst_srt::url::SrtUrl::clone(&self) -> tst_srt::url::SrtUrl
 impl core::fmt::Debug for tst_srt::url::SrtUrl
@@ -946,45 +932,6 @@ impl core::marker::Unpin for tst_srt::url::SrtUrl
 impl core::marker::UnsafeUnpin for tst_srt::url::SrtUrl
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::url::SrtUrl
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::url::SrtUrl
-pub struct tst_srt::url::UrlOverlay
-pub tst_srt::url::UrlOverlay::congestion: core::option::Option<tst_srt::options::Congestion>
-pub tst_srt::url::UrlOverlay::connect_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::url::UrlOverlay::flow_window_packets: core::option::Option<u32>
-pub tst_srt::url::UrlOverlay::input_bandwidth: core::option::Option<u64>
-pub tst_srt::url::UrlOverlay::key_length: core::option::Option<tst_srt::options::KeyLength>
-pub tst_srt::url::UrlOverlay::latency: core::option::Option<core::time::Duration>
-pub tst_srt::url::UrlOverlay::linger: core::option::Option<core::time::Duration>
-pub tst_srt::url::UrlOverlay::loss_max_ttl: core::option::Option<u32>
-pub tst_srt::url::UrlOverlay::max_bandwidth: core::option::Option<tst_srt::options::MaxBandwidth>
-pub tst_srt::url::UrlOverlay::mss: core::option::Option<u16>
-pub tst_srt::url::UrlOverlay::overhead_bandwidth_pct: core::option::Option<u8>
-pub tst_srt::url::UrlOverlay::packet_filter: core::option::Option<tst_srt::options::PacketFilter>
-pub tst_srt::url::UrlOverlay::passphrase: core::option::Option<tst_srt::options::Passphrase>
-pub tst_srt::url::UrlOverlay::payload_size: core::option::Option<u16>
-pub tst_srt::url::UrlOverlay::peer_latency: core::option::Option<core::time::Duration>
-pub tst_srt::url::UrlOverlay::recv_latency: core::option::Option<core::time::Duration>
-pub tst_srt::url::UrlOverlay::recv_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::url::UrlOverlay::send_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::url::UrlOverlay::stream_id: core::option::Option<tst_srt::options::StreamId>
-pub tst_srt::url::UrlOverlay::too_late_packet_drop: core::option::Option<bool>
-pub tst_srt::url::UrlOverlay::udp_recv_buffer_bytes: core::option::Option<u32>
-pub tst_srt::url::UrlOverlay::udp_send_buffer_bytes: core::option::Option<u32>
-impl tst_srt::url::UrlOverlay
-pub fn tst_srt::url::UrlOverlay::apply_to_listener(&self, &mut tst_srt::config::ListenerConfig)
-pub fn tst_srt::url::UrlOverlay::apply_to_socket(&self, &mut tst_srt::config::SocketConfig)
-impl core::clone::Clone for tst_srt::url::UrlOverlay
-pub fn tst_srt::url::UrlOverlay::clone(&self) -> tst_srt::url::UrlOverlay
-impl core::default::Default for tst_srt::url::UrlOverlay
-pub fn tst_srt::url::UrlOverlay::default() -> tst_srt::url::UrlOverlay
-impl core::fmt::Debug for tst_srt::url::UrlOverlay
-pub fn tst_srt::url::UrlOverlay::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_srt::url::UrlOverlay
-impl core::marker::Send for tst_srt::url::UrlOverlay
-impl core::marker::Sync for tst_srt::url::UrlOverlay
-impl core::marker::Unpin for tst_srt::url::UrlOverlay
-impl core::marker::UnsafeUnpin for tst_srt::url::UrlOverlay
-impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::url::UrlOverlay
-impl core::panic::unwind_safe::UnwindSafe for tst_srt::url::UrlOverlay
 #[non_exhaustive] pub enum tst_srt::AcceptError
 pub tst_srt::AcceptError::ListenerClosed
 pub tst_srt::AcceptError::Other
@@ -1384,25 +1331,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::builder::ListenerBuild
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::builder::ListenerBuilder
 #[non_exhaustive] pub struct tst_srt::ListenerConfig
 pub tst_srt::ListenerConfig::backlog: u32
-pub tst_srt::ListenerConfig::congestion: core::option::Option<tst_srt::options::Congestion>
-pub tst_srt::ListenerConfig::flow_window_packets: core::option::Option<u32>
-pub tst_srt::ListenerConfig::key_length: tst_srt::options::KeyLength
-pub tst_srt::ListenerConfig::latency: core::option::Option<core::time::Duration>
-pub tst_srt::ListenerConfig::linger: core::option::Option<core::time::Duration>
-pub tst_srt::ListenerConfig::loss_max_ttl: core::option::Option<u32>
-pub tst_srt::ListenerConfig::max_bandwidth: core::option::Option<tst_srt::options::MaxBandwidth>
-pub tst_srt::ListenerConfig::mss: core::option::Option<u16>
-pub tst_srt::ListenerConfig::overhead_bandwidth_pct: core::option::Option<u8>
-pub tst_srt::ListenerConfig::packet_filter: core::option::Option<tst_srt::options::PacketFilter>
-pub tst_srt::ListenerConfig::passphrase: core::option::Option<tst_srt::options::Passphrase>
-pub tst_srt::ListenerConfig::payload_size: core::option::Option<u16>
-pub tst_srt::ListenerConfig::recv_buf_bytes: core::option::Option<u32>
-pub tst_srt::ListenerConfig::recv_latency: core::option::Option<core::time::Duration>
-pub tst_srt::ListenerConfig::recv_timeout: core::option::Option<core::time::Duration>
 pub tst_srt::ListenerConfig::reuse_addr: bool
-pub tst_srt::ListenerConfig::send_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::ListenerConfig::too_late_packet_drop: core::option::Option<bool>
-pub tst_srt::ListenerConfig::udp_recv_buffer_bytes: core::option::Option<u32>
+pub tst_srt::ListenerConfig::socket: tst_srt::config::SocketConfig
 impl core::clone::Clone for tst_srt::config::ListenerConfig
 pub fn tst_srt::config::ListenerConfig::clone(&self) -> tst_srt::config::ListenerConfig
 impl core::default::Default for tst_srt::config::ListenerConfig
@@ -1521,7 +1451,7 @@ pub tst_srt::SocketConfig::congestion: core::option::Option<tst_srt::options::Co
 pub tst_srt::SocketConfig::connect_timeout: core::option::Option<core::time::Duration>
 pub tst_srt::SocketConfig::flow_window_packets: core::option::Option<u32>
 pub tst_srt::SocketConfig::input_bandwidth: core::option::Option<u64>
-pub tst_srt::SocketConfig::key_length: tst_srt::options::KeyLength
+pub tst_srt::SocketConfig::key_length: core::option::Option<tst_srt::options::KeyLength>
 pub tst_srt::SocketConfig::latency: core::option::Option<core::time::Duration>
 pub tst_srt::SocketConfig::linger: core::option::Option<core::time::Duration>
 pub tst_srt::SocketConfig::loss_max_ttl: core::option::Option<u32>
@@ -1543,6 +1473,7 @@ pub tst_srt::SocketConfig::too_late_packet_drop: core::option::Option<bool>
 pub tst_srt::SocketConfig::udp_recv_buffer_bytes: core::option::Option<u32>
 pub tst_srt::SocketConfig::udp_send_buffer_bytes: core::option::Option<u32>
 impl tst_srt::config::SocketConfig
+pub fn tst_srt::config::SocketConfig::merge_from(&mut self, &tst_srt::config::SocketConfig)
 pub fn tst_srt::config::SocketConfig::merge_receiver_defaults(&mut self)
 pub fn tst_srt::config::SocketConfig::merge_sender_defaults(&mut self)
 pub fn tst_srt::config::SocketConfig::receiver_defaults() -> Self
@@ -1592,15 +1523,17 @@ impl core::marker::UnsafeUnpin for tst_srt::transport::SrtTransport
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::transport::SrtTransport
 impl !core::panic::unwind_safe::UnwindSafe for tst_srt::transport::SrtTransport
 pub struct tst_srt::SrtUrl
+pub tst_srt::SrtUrl::config: tst_srt::config::SocketConfig
 pub tst_srt::SrtUrl::host: alloc::string::String
 pub tst_srt::SrtUrl::mode: tst_srt::url::Mode
-pub tst_srt::SrtUrl::overlay: tst_srt::url::UrlOverlay
 pub tst_srt::SrtUrl::port: u16
 impl tst_srt::url::SrtUrl
 pub fn tst_srt::url::SrtUrl::accept_one(&self, &tst_core::cancel::CancelSlot) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
 pub fn tst_srt::url::SrtUrl::connect(&self) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
 pub fn tst_srt::url::SrtUrl::connect_recv(&self) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
+pub fn tst_srt::url::SrtUrl::listener_config(&self) -> tst_srt::config::ListenerConfig
 pub fn tst_srt::url::SrtUrl::parse(&str) -> core::result::Result<Self, tst_srt::url::UrlError>
+pub fn tst_srt::url::SrtUrl::socket_config(&self, tst_srt::options::Role) -> tst_srt::config::SocketConfig
 impl core::clone::Clone for tst_srt::url::SrtUrl
 pub fn tst_srt::url::SrtUrl::clone(&self) -> tst_srt::url::SrtUrl
 impl core::fmt::Debug for tst_srt::url::SrtUrl
@@ -1663,42 +1596,3 @@ impl core::marker::Unpin for tst_srt::options::StreamId
 impl core::marker::UnsafeUnpin for tst_srt::options::StreamId
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::options::StreamId
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::options::StreamId
-pub struct tst_srt::UrlOverlay
-pub tst_srt::UrlOverlay::congestion: core::option::Option<tst_srt::options::Congestion>
-pub tst_srt::UrlOverlay::connect_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::UrlOverlay::flow_window_packets: core::option::Option<u32>
-pub tst_srt::UrlOverlay::input_bandwidth: core::option::Option<u64>
-pub tst_srt::UrlOverlay::key_length: core::option::Option<tst_srt::options::KeyLength>
-pub tst_srt::UrlOverlay::latency: core::option::Option<core::time::Duration>
-pub tst_srt::UrlOverlay::linger: core::option::Option<core::time::Duration>
-pub tst_srt::UrlOverlay::loss_max_ttl: core::option::Option<u32>
-pub tst_srt::UrlOverlay::max_bandwidth: core::option::Option<tst_srt::options::MaxBandwidth>
-pub tst_srt::UrlOverlay::mss: core::option::Option<u16>
-pub tst_srt::UrlOverlay::overhead_bandwidth_pct: core::option::Option<u8>
-pub tst_srt::UrlOverlay::packet_filter: core::option::Option<tst_srt::options::PacketFilter>
-pub tst_srt::UrlOverlay::passphrase: core::option::Option<tst_srt::options::Passphrase>
-pub tst_srt::UrlOverlay::payload_size: core::option::Option<u16>
-pub tst_srt::UrlOverlay::peer_latency: core::option::Option<core::time::Duration>
-pub tst_srt::UrlOverlay::recv_latency: core::option::Option<core::time::Duration>
-pub tst_srt::UrlOverlay::recv_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::UrlOverlay::send_timeout: core::option::Option<core::time::Duration>
-pub tst_srt::UrlOverlay::stream_id: core::option::Option<tst_srt::options::StreamId>
-pub tst_srt::UrlOverlay::too_late_packet_drop: core::option::Option<bool>
-pub tst_srt::UrlOverlay::udp_recv_buffer_bytes: core::option::Option<u32>
-pub tst_srt::UrlOverlay::udp_send_buffer_bytes: core::option::Option<u32>
-impl tst_srt::url::UrlOverlay
-pub fn tst_srt::url::UrlOverlay::apply_to_listener(&self, &mut tst_srt::config::ListenerConfig)
-pub fn tst_srt::url::UrlOverlay::apply_to_socket(&self, &mut tst_srt::config::SocketConfig)
-impl core::clone::Clone for tst_srt::url::UrlOverlay
-pub fn tst_srt::url::UrlOverlay::clone(&self) -> tst_srt::url::UrlOverlay
-impl core::default::Default for tst_srt::url::UrlOverlay
-pub fn tst_srt::url::UrlOverlay::default() -> tst_srt::url::UrlOverlay
-impl core::fmt::Debug for tst_srt::url::UrlOverlay
-pub fn tst_srt::url::UrlOverlay::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_srt::url::UrlOverlay
-impl core::marker::Send for tst_srt::url::UrlOverlay
-impl core::marker::Sync for tst_srt::url::UrlOverlay
-impl core::marker::Unpin for tst_srt::url::UrlOverlay
-impl core::marker::UnsafeUnpin for tst_srt::url::UrlOverlay
-impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::url::UrlOverlay
-impl core::panic::unwind_safe::UnwindSafe for tst_srt::url::UrlOverlay
