@@ -216,7 +216,10 @@ pub fn record_pair(reg: &[Entry], e: &Entry) -> Result<String, String> {
 
 /// The whole `generated/<family>.rs` text.
 pub fn file(reg: &[Entry], family: &str) -> Result<String, String> {
-    let mine: Vec<&Entry> = reg.iter().filter(|e| e.family == family).collect();
+    let mine: Vec<&Entry> = reg
+        .iter()
+        .filter(|e| e.family == family && e.python)
+        .collect();
     if mine.iter().any(|e| e.is_native()) {
         return crate::emit_pyclass::file(reg, family);
     }

@@ -268,7 +268,10 @@ pub fn class(reg: &[Entry], e: &Entry) -> Result<String, String> {
 
 /// The whole `generated/<family>.rs` text of a family of native classes.
 pub fn file(reg: &[Entry], family: &str) -> Result<String, String> {
-    let mine: Vec<&Entry> = reg.iter().filter(|e| e.family == family).collect();
+    let mine: Vec<&Entry> = reg
+        .iter()
+        .filter(|e| e.family == family && e.python)
+        .collect();
     if mine.iter().any(|e| !e.is_native()) {
         return Err(format!(
             "family `{family}` mixes native classes and dataclasses; give each its own family"

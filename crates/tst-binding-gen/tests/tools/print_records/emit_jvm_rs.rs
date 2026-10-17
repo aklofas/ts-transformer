@@ -21,7 +21,8 @@ fn scalar_jvalue(sc: Sc, val: &str) -> String {
     let i = sc.info();
     let arg = match sc {
         Sc::U8 | Sc::U16 | Sc::I8 | Sc::I16 => format!("{val} as i32"),
-        Sc::U32 | Sc::U64 => format!("{val} as i64"),
+        Sc::U32 | Sc::U64 | Sc::Usize => format!("{val} as i64"),
+        Sc::Duration => format!("i64::try_from({val}.as_micros()).unwrap_or(i64::MAX)"),
         Sc::Bool => format!("u8::from({val})"),
         _ => val.to_string(),
     };

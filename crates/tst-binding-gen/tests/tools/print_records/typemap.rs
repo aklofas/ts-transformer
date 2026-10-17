@@ -17,6 +17,10 @@ pub enum Sc {
     F32,
     F64,
     Bool,
+    /// A `usize` count: crosses to the host as an unsigned 64-bit value.
+    Usize,
+    /// A `Duration`: crosses to the host as whole microseconds, saturating.
+    Duration,
 }
 
 /// A host-side type for a `@[custom]` field: the generator never converts
@@ -497,6 +501,13 @@ pub const HOSTS: &[HostRow] = &[
         "Lorg/tstrans/codec/MispTimeKind;",
         "crate::codec::misp_time::build_kind",
     ),
+    host(
+        "ClockAlignment",
+        "crate::rtp::publish::ClockAlignmentPy",
+        "ClockAlignment",
+        "Lorg/tstrans/rtp/ClockAlignment;",
+        "crate::rtp::publish::build_clock_alignment",
+    ),
 ];
 
 fn host_row(name: &str) -> &'static HostRow {
@@ -598,6 +609,20 @@ impl Sc {
                 'z',
                 "booleanValue",
             ),
+            Sc::Usize | Sc::Duration => (
+                if self == Sc::Usize {
+                    "usize"
+                } else {
+                    "Duration"
+                },
+                "int",
+                "long",
+                "Long",
+                'J',
+                "Long",
+                'j',
+                "longValue",
+            ),
         };
         ScInfo {
             rs,
@@ -608,6 +633,31 @@ impl Sc {
             jvalue,
             extract,
             unbox,
+        }
+    }
+
+    /// The Rust type of a native Python class's field of this scalar.
+    pub fn host_rs(self) -> &'static str {
+        match self {
+            Sc::Usize | Sc::Duration => "u64",
+            other => other.info().rs,
+        }
+    }
+
+    /// The host value of `e`, a by-value expression of this scalar.
+    pub fn to_host(self, e: &str) -> String {
+        match self {
+            Sc::Usize => format!("{e} as u64"),
+            Sc::Duration => {
+                // A dereference binds looser than a method call.
+                let recv = if e.starts_with('*') {
+                    format!("({e})")
+                } else {
+                    e.to_string()
+                };
+                format!("u64::try_from({recv}.as_micros()).unwrap_or(u64::MAX)")
+            }
+            _ => e.to_string(),
         }
     }
 
@@ -637,6 +687,8 @@ const SCALARS: &[(&str, Sc)] = &[
     ("f32", Sc::F32),
     ("f64", Sc::F64),
     ("bool", Sc::Bool),
+    ("usize", Sc::Usize),
+    ("Duration", Sc::Duration),
 ];
 
 const PATH_PREFIXES: &[&str] = &[
@@ -648,6 +700,8 @@ const PATH_PREFIXES: &[&str] = &[
     "std::option::",
     "alloc::collections::",
     "std::collections::",
+    "std::time::",
+    "core::time::",
 ];
 
 /// Maps a type spelling as `stringify!` wrote it. `names` are the registered
@@ -787,10 +841,10 @@ impl Ty {
     }
 
     /// Whether a value of this type has no way back from the host: a map, a
-    /// host-typed enum, or a list or option of them.
+    /// host-typed enum, a count or a duration, or a list or option of them.
     pub fn is_to_host_only(&self) -> bool {
         match self {
-            Ty::Map(_) | Ty::Host(_) => true,
+            Ty::Map(_) | Ty::Host(_) | Ty::Scalar(Sc::Usize | Sc::Duration) => true,
             Ty::Opt(t) | Ty::List(t) => t.is_to_host_only(),
             _ => false,
         }
@@ -826,7 +880,7 @@ impl Ty {
     /// The Rust type of a native class's field.
     pub fn host_rs(&self) -> String {
         match self {
-            Ty::Scalar(s) => s.info().rs.into(),
+            Ty::Scalar(s) => s.host_rs().into(),
             Ty::Str => "String".into(),
             Ty::Bytes => "crate::util::HostBytes".into(),
             Ty::Opt(t) => format!("Option<{}>", t.host_rs()),
@@ -866,6 +920,9 @@ impl Ty {
                 return format!("{c}({e})");
             }
             return match inner.as_ref() {
+                Ty::Scalar(sc @ (Sc::Usize | Sc::Duration)) => {
+                    format!("{val}.map(|v| {})", sc.to_host("v"))
+                }
                 Ty::Scalar(_) => val,
                 Ty::Custom(_) => val,
                 Ty::Host(h) => format!("{val}.map({}::from)", host_row(h).py_rs),
@@ -874,7 +931,7 @@ impl Ty {
             };
         }
         match self {
-            Ty::Scalar(_) => val,
+            Ty::Scalar(sc) => sc.to_host(&val),
             Ty::Str => format!("{recv}.clone()"),
             Ty::Bytes => format!("crate::util::HostBytes({recv}.to_vec())"),
             Ty::Record(n) => format!("{n}::from({e})"),

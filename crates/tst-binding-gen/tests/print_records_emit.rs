@@ -371,13 +371,13 @@ fn an_unmapped_type_is_an_error_naming_it() {
 fn an_unmapped_field_names_its_record_and_field() {
     tst_core::binding_record! {
         pub struct Bad {
-            pub stats: std::time::Duration,
+            pub stats: std::time::Instant,
         }
     }
     let reg = vec![entry(Bad::BINDING_SCHEMA, Direction::Both)];
     let err = emit_py::record_pair(&reg, &reg[0]).unwrap_err();
     assert!(
-        err.contains("Bad.stats") && err.contains("Duration"),
+        err.contains("Bad.stats") && err.contains("Instant"),
         "{err}"
     );
 }
@@ -601,6 +601,7 @@ fn declared_records() -> Vec<String> {
             }
             let name = lines[i..]
                 .iter()
+                .filter(|l| !l.trim_start().starts_with("//"))
                 .find_map(|l| l.split("struct ").nth(1))
                 .and_then(|r| r.split(|c: char| !c.is_alphanumeric() && c != '_').next())
                 .unwrap_or_else(|| panic!("{}: binding_record! without a struct", f.display()));
@@ -1051,14 +1052,23 @@ fn every_registered_record_renders_every_target() {
                 .any(|e| e.family == **f && e.jvm && e.jvm_builder)
         })
         .count();
+    let py_families = families
+        .iter()
+        .filter(|f| reg.iter().any(|e| e.family == **f && e.python))
+        .count();
     let jvm_records = reg.iter().filter(|e| e.jvm).count();
-    // One Python converter file per family, one JVM file per family that has
-    // a JVM record, the `.py` and `.pyi` blocks per dataclass (the `.pyi`
-    // block only for a native class) and a Java block per JVM record.
-    let py_blocks: usize = reg.iter().map(|e| if e.is_native() { 1 } else { 2 }).sum();
+    // One Python converter file per family that has a Python record, one JVM
+    // file per family that has a JVM record, the `.py` and `.pyi` blocks per
+    // dataclass (the `.pyi` block only for a native class) and a Java block
+    // per JVM record.
+    let py_blocks: usize = reg
+        .iter()
+        .filter(|e| e.python)
+        .map(|e| if e.is_native() { 1 } else { 2 })
+        .sum();
     assert_eq!(
         targets.len(),
-        families.len() + jvm_families + py_blocks + jvm_records
+        py_families + jvm_families + py_blocks + jvm_records
     );
 }
 
@@ -1939,5 +1949,147 @@ fn a_record_java_builds_itself_has_a_java_block_and_no_jni_builder() {
             .iter()
             .any(|t| t.path.ends_with("org/tstrans/codec/LeafFixture.java")),
         "the Java record is still generated"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Counters: usize, Duration, a record only Java exposes, one host name twice
+// ---------------------------------------------------------------------------
+
+tst_core::binding_record! {
+    /// A counter snapshot with a count and a duration.
+    #[derive(Debug, Clone, Copy, Default)]
+    pub struct CounterFixture {
+        /// Live subscribers.
+        pub peers: usize,
+        /// Smoothed round-trip time in whole microseconds.
+        pub rtt: std::time::Duration,
+        /// Time since the last cut, absent before the first.
+        pub age: Option<std::time::Duration>,
+    }
+}
+
+fn counter_reg() -> Vec<Entry> {
+    let mut e = native(CounterFixture::BINDING_SCHEMA);
+    e.py_rename = &[("rtt", "rtt_us")];
+    vec![e]
+}
+
+#[test]
+fn a_count_and_a_duration_cross_to_the_host_as_wide_unsigned_values() {
+    let reg = counter_reg();
+    let raw = emit_pyclass::file(&reg, "native_test").unwrap();
+    parses(&raw);
+    for want in [
+        "pub peers: u64,",
+        "pub rtt_us: u64,",
+        "pub age: Option<u64>,",
+        "peers: r.peers as u64,",
+        "rtt_us: u64::try_from(r.rtt.as_micros()).unwrap_or(u64::MAX),",
+        "age: r.age.map(|v| u64::try_from(v.as_micros()).unwrap_or(u64::MAX)),",
+    ] {
+        assert!(raw.contains(want), "{want}\n{raw}");
+    }
+    let jvm = emit_jvm_rs::record_pair(&reg, &reg[0]).unwrap();
+    parses(&jvm);
+    // Java reads all three as `long`, an absent duration as `null`.
+    assert!(
+        jvm.contains("(JJLjava/lang/Long;)V"),
+        "a count and a duration are long, an optional one boxed\n{jvm}"
+    );
+    assert!(jvm.contains("JValue::Long(r.peers as i64)"), "{jvm}");
+    assert!(
+        jvm.contains("i64::try_from(r.rtt.as_micros()).unwrap_or(i64::MAX)"),
+        "{jvm}"
+    );
+    let java = emit_java::block(&reg, &reg[0]).unwrap();
+    assert!(
+        java.contains("public record CounterFixture(long peers, long rtt, Long age)"),
+        "{java}"
+    );
+}
+
+#[test]
+fn a_count_or_a_duration_only_crosses_to_the_host() {
+    let reg = vec![entry(CounterFixture::BINDING_SCHEMA, Direction::Both)];
+    let err = emit_jvm_rs::record_pair(&reg, &reg[0]).unwrap_err();
+    assert!(
+        err.contains("CounterFixture.peers") && err.contains("only crosses to the host"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_record_only_java_exposes_has_a_jni_builder_and_a_java_block_and_no_python_target() {
+    let mut java_only = native(CounterFixture::BINDING_SCHEMA);
+    java_only.python = false;
+    let reg = vec![java_only];
+    let targets = write::targets(&root(), &reg).unwrap();
+    let paths: Vec<String> = targets
+        .iter()
+        .map(|t| t.path.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        paths
+            .iter()
+            .any(|p| p.ends_with("jvm/src/generated/native_test.rs")),
+        "{paths:?}"
+    );
+    assert!(
+        paths
+            .iter()
+            .any(|p| p.ends_with("org/tstrans/codec/CounterFixture.java")),
+        "{paths:?}"
+    );
+    assert!(
+        !paths
+            .iter()
+            .any(|p| p.contains("python/src/generated") || p.ends_with(".pyi")),
+        "{paths:?}"
+    );
+}
+
+#[test]
+fn two_records_with_one_host_name_keep_to_their_own_module() {
+    let mut tcp = native(CounterFixture::BINDING_SCHEMA);
+    tcp.family = "stats_a";
+    tcp.py_module = "tstrans.tcp";
+    tcp.host_name = "SocketStats";
+    tcp.jvm = false;
+    let mut udp = native(LeafFixture::BINDING_SCHEMA);
+    udp.family = "stats_b";
+    udp.py_module = "tstrans.udp";
+    udp.host_name = "SocketStats";
+    udp.jvm = false;
+    let reg = vec![tcp, udp];
+    let targets = write::targets(&root(), &reg).unwrap();
+    let paths: Vec<String> = targets
+        .iter()
+        .map(|t| t.path.to_string_lossy().into_owned())
+        .collect();
+    for want in [
+        "python/src/generated/stats_a.rs",
+        "python/src/generated/stats_b.rs",
+        "python/python/tstrans/tcp.pyi",
+        "python/python/tstrans/udp.pyi",
+    ] {
+        assert!(paths.iter().any(|p| p.ends_with(want)), "{want}: {paths:?}");
+    }
+    for fam in ["stats_a", "stats_b"] {
+        let raw = emit_pyclass::file(&reg, fam).unwrap();
+        assert!(raw.contains("pub struct SocketStats {"), "{raw}");
+        assert!(raw.contains("name = \"SocketStats\""), "{raw}");
+    }
+}
+
+#[test]
+fn a_host_enum_row_names_its_python_wrapper_and_its_jni_builder() {
+    let t = typemap::map("ClockAlignment", &[]).unwrap();
+    assert_eq!(t.host_rs(), "crate::rtp::publish::ClockAlignmentPy");
+    assert_eq!(t.java(), "ClockAlignment");
+    assert_eq!(t.sig(&[]), "Lorg/tstrans/rtp/ClockAlignment;");
+    assert_eq!(
+        typemap::host_jvm("ClockAlignment"),
+        "crate::rtp::publish::build_clock_alignment"
     );
 }

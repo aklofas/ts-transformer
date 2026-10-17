@@ -80,11 +80,13 @@ pub fn targets(root: &Path, reg: &[Entry]) -> Result<Vec<Target>, String> {
         }
     }
     for f in &families {
-        out.push(Target {
-            path: root.join(format!("bindings/python/src/generated/{f}.rs")),
-            body: emit_py::file(reg, f)?,
-            kind: Kind::Whole,
-        });
+        if reg.iter().any(|e| e.family == *f && e.python) {
+            out.push(Target {
+                path: root.join(format!("bindings/python/src/generated/{f}.rs")),
+                body: emit_py::file(reg, f)?,
+                kind: Kind::Whole,
+            });
+        }
         if reg.iter().any(|e| e.family == *f && e.jvm && e.jvm_builder) {
             out.push(Target {
                 path: root.join(format!("bindings/jvm/src/generated/{f}.rs")),
@@ -99,7 +101,7 @@ pub fn targets(root: &Path, reg: &[Entry]) -> Result<Vec<Target>, String> {
         let (begin, end) = markers("#", name);
         // A native class has no `.py` definition: the module re-exports it
         // from the extension.
-        if !e.is_native() {
+        if e.python && !e.is_native() {
             out.push(Target {
                 path: root.join(format!("bindings/python/python/{module}.py")),
                 body: emit_pyi::py_block(reg, e)?,
@@ -109,15 +111,17 @@ pub fn targets(root: &Path, reg: &[Entry]) -> Result<Vec<Target>, String> {
                 },
             });
         }
-        out.push(Target {
-            path: root.join(format!("bindings/python/python/{module}.pyi")),
-            body: if e.is_native() {
-                emit_pyclass::pyi_block(reg, e)?
-            } else {
-                emit_pyi::pyi_block(reg, e)?
-            },
-            kind: Kind::Block { begin, end },
-        });
+        if e.python {
+            out.push(Target {
+                path: root.join(format!("bindings/python/python/{module}.pyi")),
+                body: if e.is_native() {
+                    emit_pyclass::pyi_block(reg, e)?
+                } else {
+                    emit_pyi::pyi_block(reg, e)?
+                },
+                kind: Kind::Block { begin, end },
+            });
+        }
         if e.jvm {
             let (begin, end) = markers("//", name);
             out.push(Target {
