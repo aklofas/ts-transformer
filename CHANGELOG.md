@@ -322,7 +322,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `RtspServer` runs two runtime worker threads instead of one per core,
   and `stop()` returns as soon as every session task has ended, waiting at
   most `graceful_shutdown_drain` plus 500 ms, instead of always sleeping the
-  second. The server is a signalling plane that moves little data, so a
+  drain plus one second. The server is a signalling plane that moves little data, so a
   thread per core only cost memory on large hosts; the fixed sleep made every
   `stop()` slow even with no clients. A session still running at the drain
   bound is left to end on its own cancel, as before.
