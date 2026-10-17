@@ -70,6 +70,7 @@
 //!   `Demuxer::flush()` to drain any partial PES at end-of-stream.
 
 use crate::reconnect::background::Shutdown;
+use crate::reconnect::latch::Latch;
 use crate::reconnect::{ReconnectMode, ReconnectPolicy};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -136,7 +137,7 @@ pub struct ManagedRecvTransport<R: RecvTransport> {
     explicit_close: bool,
     /// Shared latched-close, set by the cancel handle from any thread.
     /// Read at every loop iteration in `recv_bytes`.
-    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    cancelled: Arc<Latch>,
     /// The cancel handle that can currently unblock this receiver: the live
     /// inner's, installed at construction and re-installed on each
     /// successful rebuild, cleared when the inner is torn down. Held in an
@@ -252,7 +253,7 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
             policy,
             closed: false,
             explicit_close: false,
-            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            cancelled: Arc::new(Latch::new()),
             active,
             reconnects: Arc::new(AtomicU64::new(0)),
             attempts: Arc::new(AtomicU64::new(0)),
@@ -327,7 +328,7 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
         // The entry gate distinguishes two latched-close scenarios:
         // - explicit_close || cancelled → caller-initiated → ExplicitClose.
         // - closed only (set by budget-exhausted path) → Closed (peer-EOS-ish).
-        if self.explicit_close || self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        if self.explicit_close || self.cancelled.is_cancelled() {
             // Latch on the way out: a cancel that landed between calls set
             // only the shared flag, so without this `is_alive()` would keep
             // reporting live for a receiver that can never deliver again.
@@ -341,7 +342,7 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
         }
         let mut attempt: u32 = 0;
         loop {
-            if self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            if self.cancelled.is_cancelled() {
                 // Cross-thread cancel fired mid-loop. Latch both flags:
                 // closed for is_alive(); explicit_close so re-entry returns
                 // ExplicitClose (caller-initiated, not budget-exhausted).
@@ -424,7 +425,7 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
                         // the previous inner was torn down before the
                         // factory ran) and the caller would go on to receive
                         // from a connection they already asked to abandon.
-                        if self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                        if self.cancelled.is_cancelled() {
                             // `t` is dropped here, never stored and never
                             // read from, so `inner` stays `None`. Latch both
                             // flags: closed for is_alive(); explicit_close so
@@ -548,7 +549,7 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
 }
 
 struct ManagedRecvCancel {
-    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    cancelled: Arc<Latch>,
     shutdown: Arc<Shutdown>,
     factory_cancel: Option<Arc<FactoryCancel>>,
     active: Arc<CancelSlot>,
@@ -559,8 +560,7 @@ impl tst_core::transport::TransportCancel for ManagedRecvCancel {
         // Latch FIRST, so the recv loop sees the cancel however far along it
         // is: whichever of the three wakes below lands, the loop rechecks
         // this flag before it does anything else with the transport.
-        self.cancelled
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.cancelled.set_cancelled();
         // Wake a backoff wait and a factory parked in re-accept; both are
         // no-ops when nothing is waiting there.
         self.shutdown.signal();

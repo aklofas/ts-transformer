@@ -13,6 +13,7 @@
 
 pub(crate) mod background;
 mod gap_buffer;
+pub(crate) mod latch;
 
 pub use gap_buffer::{GapBuffer, OverflowPolicy};
 
@@ -375,17 +376,12 @@ pub struct ManagedTransport<T: Transport> {
     factory: Arc<dyn Fn() -> Result<T, TransportError> + Send + Sync>,
     policy: ReconnectPolicy,
     gap: Arc<Mutex<GapBuffer>>,
-    /// Latched true by `cancel_handle().cancel()` or `close()`. The
-    /// reconnect loop checks this each iteration so a cancel mid-retry
-    /// breaks out instead of waiting through the full backoff budget.
-    closed: Arc<std::sync::atomic::AtomicBool>,
-    /// Latched ONLY by `cancel_handle().cancel()` — never by `close()` or
-    /// `Drop`, which share the rest of the terminal transition
-    /// (`terminal_signal`). Read wherever the `closed` latch turns a send
-    /// away, so a cancel is reported as `ExplicitClose` and an own close as
-    /// `Closed` (the normative table; the receive twin keeps
-    /// `explicit_close` for the same split).
-    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    /// The `closed`/`cancelled` latch pair (see `Latch`): `closed` is set by
+    /// `cancel_handle().cancel()`, `close()` and `Drop`; `cancelled` only by
+    /// a cancel, so a cancel is reported as `ExplicitClose` and an own close
+    /// as `Closed`. The reconnect loop checks `closed` each iteration so a
+    /// cancel mid-retry breaks out instead of waiting through the backoff.
+    latch: Arc<latch::Latch>,
     /// Wakes any backoff wait (blocking loop or background worker) when
     /// `close()` / `cancel()` / `Drop` latch shutdown. `closed` stays the
     /// semantic flag; this is the wakeup channel.
@@ -428,8 +424,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             factory: Arc::new(factory),
             policy,
             gap: Arc::new(Mutex::new(gap)),
-            closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            latch: Arc::new(latch::Latch::new()),
             shutdown: Arc::new(Shutdown::new()),
             shared,
             bg_thread: Mutex::new(None),
@@ -517,7 +512,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// after the drain has already fully succeeded also returns
     /// `ExplicitClose` on this call — the entry gate above would return it
     /// on the next one anyway. The wrapper's OWN `close()`/`Drop` reports
-    /// `Closed` at every one of those exits (`latched_error`).
+    /// `Closed` at every one of those exits (`Latch::error`).
     ///
     /// # Panics
     ///
@@ -529,8 +524,8 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// recoverable-path lock poison (the inner-transport mutex) instead
     /// returns `Err(TransportError::Broken { .. })`.
     fn send_managed(&self, bytes: &[u8]) -> Result<(), TransportError> {
-        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-            return Err(self.latched_error());
+        if self.latch.is_closed() {
+            return Err(self.latch.error());
         }
         if self.policy.mode == ReconnectMode::Background {
             // Report a completed give-up cycle exactly once. This call's
@@ -614,8 +609,8 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 // `Ok(())`. Ahead of the enqueue, so it also outranks a full
                 // `Reject` buffer's `Backpressure` (same order as the
                 // enqueue after the direct send, below).
-                if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-                    return Err(self.latched_error());
+                if self.latch.is_closed() {
+                    return Err(self.latch.error());
                 }
                 let worker_active = self
                     .shared
@@ -758,8 +753,8 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             // latch and exit) behind a wrapper that will never send again.
             // Ahead of the enqueue, so it also outranks a full `Reject`
             // buffer's `Backpressure`.
-            if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-                return Err(self.latched_error());
+            if self.latch.is_closed() {
+                return Err(self.latch.error());
             }
             let queued = match gap.enqueue_tracked(bytes.to_vec()) {
                 Ok(seq) => seq,
@@ -898,8 +893,8 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     fn reconnect_and_drain(&self) -> Result<(), TransportError> {
         let mut attempt: u32 = 0;
         loop {
-            if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-                return Err(self.latched_error());
+            if self.latch.is_closed() {
+                return Err(self.latch.error());
             }
             attempt += 1;
             let Some(wait) = self.policy.next_delay(attempt) else {
@@ -936,7 +931,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             if self.shutdown.wait_timeout(wait) {
                 // close()/cancel() latched during the backoff wait — same
                 // exit as the loop-top closed check, just prompt.
-                return Err(self.latched_error());
+                return Err(self.latch.error());
             }
             self.shared
                 .reconnect_attempts
@@ -946,12 +941,12 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     match install_fresh_inner(
                         &self.inner,
                         &self.active,
-                        &self.closed,
+                        &self.latch,
                         &self.shared,
                         new_inner,
                     ) {
                         Install::Installed => {}
-                        Install::Closed => return Err(self.latched_error()),
+                        Install::Closed => return Err(self.latch.error()),
                         // A poisoned inner lock means a previous panic left
                         // the wrapper in an unknown state. Route to
                         // TransportError::Broken; the caller's shell propagates
@@ -970,14 +965,14 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     // socket fail the in-flight send with a wire-looking
                     // `Broken` — the caller asked for the close, so report
                     // the close. (Same guard as the receive side's post-error
-                    // `cancelled` check.) `latched_error` names WHICH close:
+                    // `cancelled` check.) `Latch::error` names WHICH close:
                     // `ExplicitClose` for a cancel, `Closed` for the
                     // wrapper's own close()/Drop. A cancel that lands after a
                     // fully successful drain is reported here too — the next
                     // call would anyway, via send_managed's entry gate.
                     let drained = self.drain_gap_if_alive();
-                    if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-                        return Err(self.latched_error());
+                    if self.latch.is_closed() {
+                        return Err(self.latch.error());
                     }
                     return drained;
                 }
@@ -1009,8 +1004,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             inner: Arc::clone(&self.inner),
             factory: Arc::clone(&self.factory),
             gap: Arc::clone(&self.gap),
-            closed: Arc::clone(&self.closed),
-            cancelled: Arc::clone(&self.cancelled),
+            latch: Arc::clone(&self.latch),
             shutdown: Arc::clone(&self.shutdown),
             shared: Arc::clone(&self.shared),
             policy: self.policy.clone(),
@@ -1019,30 +1013,11 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         *slot = Some(thread::spawn(move || background::worker_run(ctx)));
     }
 
-    /// See the free [`terminal_signal`]: the `&self` spelling for the
-    /// `Transport::close` path. `Drop` calls the free fn directly because
-    /// its impl carries no `'static` bound.
-    fn terminal_signal(&self) {
-        terminal_signal(&self.closed, &self.shutdown, &self.active);
-    }
-
-    /// Latch the cancel an inner reported (see [`latch_inner_cancel`]) and
+    /// Latch the cancel an inner reported (see `Latch::inner_cancel`) and
     /// return the error to report for it. Callers hold neither lock.
     fn inner_cancelled(&self) -> TransportError {
-        latch_inner_cancel(&self.closed, &self.cancelled, &self.shutdown, &self.active);
-        self.latched_error()
-    }
-
-    /// The error a latched-closed wrapper reports: the cancel if one fired,
-    /// else the wrapper's own `close()`/`Drop`. Every `closed`-latch exit
-    /// goes through this — the latch alone cannot tell the two apart
-    /// because `close()`, `Drop` and `cancel()` share `terminal_signal`.
-    fn latched_error(&self) -> TransportError {
-        if self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
-            TransportError::ExplicitClose
-        } else {
-            TransportError::Closed
-        }
+        self.latch.inner_cancel(&self.shutdown, &self.active);
+        self.latch.error()
     }
 }
 
@@ -1086,7 +1061,7 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
         // `SrtTransport` keeps answering `socket.is_some()` after its fd
         // was closed by the cancel handle, and a background worker may
         // still be winding down.
-        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+        if self.latch.is_closed() {
             return false;
         }
         if self
@@ -1112,7 +1087,7 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
         // once that handle fires. Signalling alone would leave close() waiting on
         // the transport's own timeout (or forever, for a channel/socket
         // with none).
-        self.terminal_signal();
+        self.latch.terminal(&self.shutdown, &self.active);
         // Join an active worker. Bounded: it exits at its next shutdown
         // check; an in-flight factory() call must return first — connect
         // timeouts are the factory's own knob.
@@ -1128,7 +1103,7 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
         // invariant is that it mirrors `inner` — the only clear sites are the
         // ones that set `*guard = None`. Don't "fix" this to match. (There is
         // no stale handle to worry about either way: `CancelSlot::cancel`,
-        // fired just above by `terminal_signal()`, already `take()`s —
+        // fired just above by `Latch::terminal`, already `take()`s —
         // consumes — whatever target was installed, so the slot carries
         // nothing left to clear here; the asymmetry is only about `inner`.)
         //
@@ -1146,8 +1121,7 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
 
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
         Some(Arc::new(ManagedCancel {
-            closed: Arc::clone(&self.closed),
-            cancelled: Arc::clone(&self.cancelled),
+            latch: Arc::clone(&self.latch),
             shutdown: Arc::clone(&self.shutdown),
             active: Arc::clone(&self.active),
         }))
@@ -1180,59 +1154,8 @@ impl<T: Transport> Drop for ManagedTransport<T> {
         // Non-blocking here rests on the `TransportCancel` contract (an
         // interrupt, never a wait) — the same reliance every cross-thread
         // `cancel()` already has.
-        terminal_signal(&self.closed, &self.shutdown, &self.active);
+        self.latch.terminal(&self.shutdown, &self.active);
     }
-}
-
-/// The one terminal transition shared by `ManagedTransport::close`,
-/// its `Drop`, and `ManagedCancel::cancel`:
-///
-/// 1. latch `closed` — every send path and both reconnect loops exit at
-///    their next check;
-/// 2. wake a backoff wait (either mode) — a no-op when nothing waits;
-/// 3. fire the live inner's wake handle out of the `active` slot — the
-///    ONLY thing that returns a worker parked inside an inner
-///    `send_bytes` (the shutdown signal never reaches a transport call).
-///    The handle comes from the slot, never from the `inner` mutex:
-///    every send path holds `inner` across the inner `send_bytes`, so a
-///    cancel that read the inner out of that mutex would queue behind the
-///    very call it was asked to interrupt (locking invariant 5). The slot
-///    latches, so an inner installed after this point (a reconnect was
-///    mid-flight) is cancelled on arrival instead of being parked on.
-///
-/// Takes no lock of its own and fires the target outside the slot's
-/// lock, so it is safe from `Drop` provided the target honours the
-/// `TransportCancel` contract (an interrupt, not a wait).
-fn terminal_signal(
-    closed: &std::sync::atomic::AtomicBool,
-    shutdown: &Shutdown,
-    active: &CancelSlot,
-) {
-    closed.store(true, std::sync::atomic::Ordering::Release);
-    shutdown.signal();
-    active.cancel();
-}
-
-/// The terminal transition for an inner transport (or the factory) that
-/// reported `ExplicitClose`, shared by the inline paths and the background
-/// worker. Called with neither lock held (locking invariant 5).
-///
-/// If the wrapper is already latched, its own `close()` / `Drop` /
-/// `cancel()` fired the inner's wake handle and the inner is reporting
-/// exactly that: the reason is recorded and stays as it is (`Closed` for an
-/// own close). Otherwise the inner was cancelled from outside the wrapper,
-/// which is recorded as a cancel, in `ManagedCancel::cancel`'s order.
-fn latch_inner_cancel(
-    closed: &std::sync::atomic::AtomicBool,
-    cancelled: &std::sync::atomic::AtomicBool,
-    shutdown: &Shutdown,
-    active: &CancelSlot,
-) {
-    if closed.load(std::sync::atomic::Ordering::Acquire) {
-        return;
-    }
-    cancelled.store(true, std::sync::atomic::Ordering::Release);
-    terminal_signal(closed, shutdown, active);
 }
 
 /// Test-only checkpoint between `send_managed`'s entry gate and its
@@ -1259,24 +1182,20 @@ mod before_gap_lock {
 }
 
 struct ManagedCancel {
-    closed: Arc<std::sync::atomic::AtomicBool>,
-    /// The wrapper's cancel-only latch — see `ManagedTransport::cancelled`.
-    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    latch: Arc<latch::Latch>,
     shutdown: Arc<Shutdown>,
     active: Arc<CancelSlot>,
 }
 
 impl TransportCancel for ManagedCancel {
     fn cancel(&self) {
-        // Latch the cancel FIRST, then the shared terminal transition
-        // (close()/Drop run the same three steps without this latch), so a
-        // send woken by step 3 already reads the reason as the cancel.
-        self.cancelled
-            .store(true, std::sync::atomic::Ordering::Release);
-        terminal_signal(&self.closed, &self.shutdown, &self.active);
+        // `Latch::cancel` latches the cancel FIRST, then runs the shared
+        // terminal transition (close()/Drop run it without the cancel
+        // latch), so a send woken by step 3 already reads the cancel.
+        self.latch.cancel(&self.shutdown, &self.active);
     }
     fn is_cancelled(&self) -> bool {
-        // The slot latches in `terminal_signal`, i.e. on cancel() AND on the
+        // The slot latches in `Latch::terminal`, i.e. on cancel() AND on the
         // wrapper's own close()/Drop (one terminal transition).
         // Documented on the trait: where close() is implemented by firing the
         // same handle, is_cancelled() reads true after that close() too.
@@ -1830,12 +1749,12 @@ mod cancel_tests {
     fn background_close_before_the_enqueue_is_reported_as_closed() {
         let mut managed = background_in_outage(4, OverflowPolicy::DropOldest);
         let stats = managed.stats_handle();
-        let (closed, shutdown, active) = (
-            Arc::clone(&managed.closed),
+        let (latch, shutdown, active) = (
+            Arc::clone(&managed.latch),
             Arc::clone(&managed.shutdown),
             Arc::clone(&managed.active),
         );
-        before_gap_lock::arm(move || terminal_signal(&closed, &shutdown, &active));
+        before_gap_lock::arm(move || latch.terminal(&shutdown, &active));
 
         let result = managed.send_bytes(b"late");
 
