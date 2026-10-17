@@ -1,6 +1,6 @@
 //! Configuration structs — the canonical types for socket/listener setup.
 //!
-//! `SocketBuilder`/`ListenerBuilder` (in `builder.rs`) are sugar over these.
+//! `SrtSocketBuilder`/`SrtListenerBuilder` (in `builder.rs`) are sugar over these.
 //! Bindings (UniFFI dictionaries, JNI POJOs, cbindgen C structs) consume
 //! these directly.
 
@@ -33,7 +33,7 @@ const RECEIVER_DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 #[must_use]
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
-pub struct SocketConfig {
+pub struct SrtSocketConfig {
     // Encryption
     pub passphrase: Option<Passphrase>,
     /// AES key length; `None` is libsrt's AES-128 (applied before the
@@ -131,13 +131,13 @@ pub struct SocketConfig {
     pub congestion: Option<Congestion>,
 }
 
-impl SocketConfig {
+impl SrtSocketConfig {
     /// Overwrites every field of `self` that `other` has set: this is the
     /// one "URL wins" rule, used wherever a parsed URL's keys are layered
     /// over a config built from other sources. `None` fields of `other`
     /// leave `self` alone, and [`role`](Self::role) is never touched
     /// because it is not a URL key.
-    pub fn merge_from(&mut self, other: &SocketConfig) {
+    pub fn merge_from(&mut self, other: &SrtSocketConfig) {
         macro_rules! take {
             ($($f:ident),+ $(,)?) => {
                 $(if other.$f.is_some() {
@@ -173,7 +173,7 @@ impl SocketConfig {
         );
     }
 
-    /// Returns a `SocketConfig` pre-populated with the live-streaming sender
+    /// Returns a `SrtSocketConfig` pre-populated with the live-streaming sender
     /// preset suitable for radio-link MPEG-TS+SRT delivery from gimbaled
     /// platforms:
     ///
@@ -189,10 +189,10 @@ impl SocketConfig {
     /// to layer caller-specific fields:
     ///
     /// ```
-    /// # use tst_srt::SocketConfig;
+    /// # use tst_srt::SrtSocketConfig;
     /// # use tst_srt::options::Passphrase;
     /// # let passphrase = Passphrase::new("secretsecretsecret").unwrap();
-    /// let mut cfg = SocketConfig::sender_defaults();
+    /// let mut cfg = SrtSocketConfig::sender_defaults();
     /// cfg.passphrase = Some(passphrase);
     /// ```
     pub fn sender_defaults() -> Self {
@@ -204,7 +204,7 @@ impl SocketConfig {
     /// Apply sender defaults to fields the caller has not explicitly set.
     /// Preserves caller intent: only fills in `connect_timeout` if `None`,
     /// `linger` if `None`, and `role` if `Role::Receiver` (the default).
-    /// Idempotent when called repeatedly on a sender-configured `SocketConfig`.
+    /// Idempotent when called repeatedly on a sender-configured `SrtSocketConfig`.
     ///
     /// Useful when a caller has parsed configuration from another source
     /// (e.g. URL query parameters via `tst_srt::url::parse`) and wants to
@@ -233,7 +233,7 @@ impl SocketConfig {
         }
     }
 
-    /// Returns a `SocketConfig` pre-populated with the live-streaming
+    /// Returns a `SrtSocketConfig` pre-populated with the live-streaming
     /// receiver preset:
     ///
     /// - `connect_timeout = 15s` — caller-mode receivers face the same
@@ -261,7 +261,7 @@ impl SocketConfig {
 
 /// Configuration for a listener (passive) socket.
 ///
-/// The socket options are a [`SocketConfig`] in [`socket`](Self::socket);
+/// The socket options are a [`SrtSocketConfig`] in [`socket`](Self::socket);
 /// the listener applies the ones that make sense on a passive socket:
 /// `passphrase`, `key_length`, `latency`, `recv_latency`, `mss`,
 /// `flow_window_packets`, `recv_buf_bytes`, `max_bandwidth`,
@@ -274,25 +274,33 @@ impl SocketConfig {
 #[must_use]
 #[non_exhaustive]
 #[derive(Debug, Clone)]
-pub struct ListenerConfig {
+pub struct SrtListenerConfig {
     /// The socket options the listener applies and its accepted sockets
     /// inherit.
-    pub socket: SocketConfig,
+    pub socket: SrtSocketConfig,
     /// Length of the pending-connection queue.
     pub backlog: u32,
     /// Sets `SO_REUSEADDR` on the listening socket.
     pub reuse_addr: bool,
 }
 
-impl Default for ListenerConfig {
+impl Default for SrtListenerConfig {
     fn default() -> Self {
         Self {
-            socket: SocketConfig::default(),
+            socket: SrtSocketConfig::default(),
             backlog: 5,
             reuse_addr: true,
         }
     }
 }
+
+/// The name this type had before it was renamed.
+#[deprecated(since = "0.9.0", note = "renamed to `SrtSocketConfig`")]
+pub type SocketConfig = SrtSocketConfig;
+
+/// The name this type had before it was renamed.
+#[deprecated(since = "0.9.0", note = "renamed to `SrtListenerConfig`")]
+pub type ListenerConfig = SrtListenerConfig;
 
 #[cfg(test)]
 mod tests {
@@ -300,21 +308,21 @@ mod tests {
 
     #[test]
     fn socket_default_is_unencrypted() {
-        let cfg = SocketConfig::default();
+        let cfg = SrtSocketConfig::default();
         assert!(cfg.passphrase.is_none());
         assert_eq!(cfg.key_length, None);
     }
 
     #[test]
     fn listener_default_has_backlog_5() {
-        let cfg = ListenerConfig::default();
+        let cfg = SrtListenerConfig::default();
         assert_eq!(cfg.backlog, 5);
         assert!(cfg.reuse_addr);
     }
 
     #[test]
     fn sender_defaults_sets_three_fields() {
-        let cfg = SocketConfig::sender_defaults();
+        let cfg = SrtSocketConfig::sender_defaults();
         assert_eq!(cfg.connect_timeout, Some(Duration::from_secs(15)));
         assert_eq!(cfg.linger, Some(Duration::from_secs(5)));
         assert_eq!(cfg.role, Role::Sender);
@@ -322,7 +330,7 @@ mod tests {
 
     #[test]
     fn sender_defaults_leaves_other_fields_at_default() {
-        let cfg = SocketConfig::sender_defaults();
+        let cfg = SrtSocketConfig::sender_defaults();
         assert!(cfg.passphrase.is_none());
         assert_eq!(cfg.key_length, None);
         assert!(cfg.send_timeout.is_none());
@@ -349,7 +357,7 @@ mod tests {
 
     #[test]
     fn merge_sender_defaults_fills_unset_fields() {
-        let mut cfg = SocketConfig::default();
+        let mut cfg = SrtSocketConfig::default();
         cfg.merge_sender_defaults();
         assert_eq!(cfg.connect_timeout, Some(Duration::from_secs(15)));
         assert_eq!(cfg.linger, Some(Duration::from_secs(5)));
@@ -358,7 +366,7 @@ mod tests {
 
     #[test]
     fn merge_sender_defaults_is_idempotent() {
-        let mut cfg = SocketConfig::default();
+        let mut cfg = SrtSocketConfig::default();
         cfg.merge_sender_defaults();
         let after_first = cfg.clone();
         cfg.merge_sender_defaults();
@@ -369,7 +377,7 @@ mod tests {
 
     #[test]
     fn merge_sender_defaults_preserves_explicit_connect_timeout() {
-        let mut cfg = SocketConfig {
+        let mut cfg = SrtSocketConfig {
             connect_timeout: Some(Duration::from_secs(7)),
             ..Default::default()
         };
@@ -381,7 +389,7 @@ mod tests {
 
     #[test]
     fn merge_sender_defaults_preserves_explicit_linger() {
-        let mut cfg = SocketConfig {
+        let mut cfg = SrtSocketConfig {
             linger: Some(Duration::from_secs(30)),
             ..Default::default()
         };
@@ -393,7 +401,7 @@ mod tests {
 
     #[test]
     fn receiver_defaults_sets_one_field() {
-        let cfg = SocketConfig::receiver_defaults();
+        let cfg = SrtSocketConfig::receiver_defaults();
         assert_eq!(cfg.connect_timeout, Some(Duration::from_secs(15)));
         // Role::Receiver is the default; receiver_defaults leaves it at default.
         assert_eq!(cfg.role, Role::Receiver);
@@ -404,7 +412,7 @@ mod tests {
 
     #[test]
     fn merge_receiver_defaults_fills_unset_fields() {
-        let mut cfg = SocketConfig::default();
+        let mut cfg = SrtSocketConfig::default();
         cfg.merge_receiver_defaults();
         assert_eq!(cfg.connect_timeout, Some(Duration::from_secs(15)));
         assert_eq!(cfg.role, Role::Receiver);
@@ -413,7 +421,7 @@ mod tests {
 
     #[test]
     fn merge_receiver_defaults_preserves_explicit_connect_timeout() {
-        let mut cfg = SocketConfig {
+        let mut cfg = SrtSocketConfig {
             connect_timeout: Some(Duration::from_secs(7)),
             ..Default::default()
         };
@@ -425,7 +433,7 @@ mod tests {
     #[test]
     fn merge_receiver_defaults_preserves_explicit_sender_role() {
         // Explicit Role::Sender is not overridden by merge_receiver_defaults.
-        let mut cfg = SocketConfig {
+        let mut cfg = SrtSocketConfig {
             role: Role::Sender,
             ..Default::default()
         };
@@ -436,14 +444,14 @@ mod tests {
 
     #[test]
     fn merge_from_overwrites_only_the_fields_other_set() {
-        let mut cfg = SocketConfig {
+        let mut cfg = SrtSocketConfig {
             latency: Some(Duration::from_millis(100)),
             mss: Some(1200),
             key_length: Some(KeyLength::Aes256),
             role: Role::Sender,
             ..Default::default()
         };
-        let other = SocketConfig {
+        let other = SrtSocketConfig {
             latency: Some(Duration::from_millis(250)),
             recv_timeout: Some(Duration::from_millis(5)),
             // `role` is not a URL key: another config's role must not leak.
@@ -460,15 +468,15 @@ mod tests {
 
     #[test]
     fn merge_from_a_default_changes_nothing() {
-        let mut cfg = SocketConfig::sender_defaults();
+        let mut cfg = SrtSocketConfig::sender_defaults();
         cfg.latency = Some(Duration::from_millis(7));
         let before = format!("{cfg:?}");
-        cfg.merge_from(&SocketConfig::default());
+        cfg.merge_from(&SrtSocketConfig::default());
         assert_eq!(format!("{cfg:?}"), before);
     }
 
     #[test]
     fn listener_default_leaves_key_length_unset() {
-        assert_eq!(ListenerConfig::default().socket.key_length, None);
+        assert_eq!(SrtListenerConfig::default().socket.key_length, None);
     }
 }

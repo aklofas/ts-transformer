@@ -71,8 +71,8 @@ impl SrtStats {
     }
 }
 
-impl From<&tst_srt::Stats> for SrtStats {
-    fn from(r: &tst_srt::Stats) -> Self {
+impl From<&tst_srt::SrtStats> for SrtStats {
+    fn from(r: &tst_srt::SrtStats) -> Self {
         Self {
             bytes_sent: r.bytes_sent,
             bytes_received: r.bytes_received,

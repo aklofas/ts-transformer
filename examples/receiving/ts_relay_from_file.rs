@@ -18,7 +18,7 @@ use std::fs::File;
 use std::io::Read;
 use std::time::Duration;
 use tst_pipeline::{Sender, SenderConfig};
-use tst_srt::SocketBuilder;
+use tst_srt::SrtSocketBuilder;
 use tst_srt::SrtTransport;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -29,12 +29,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = args.next().ok_or("missing addr")?;
 
     // 120 ms latency — reasonable LAN/regional WAN default. See
-    // `send_pipeline_to_socket.rs` header for the full SocketBuilder knob
+    // `send_pipeline_to_socket.rs` header for the full SrtSocketBuilder knob
     // discussion.
     //
-    // Bind-then-step shape (`SocketBuilder` is `&mut self -> &mut Self`):
+    // Bind-then-step shape (`SrtSocketBuilder` is `&mut self -> &mut Self`):
     // construct, mutate, then call the terminal `connect`.
-    let mut sb = SocketBuilder::new();
+    let mut sb = SrtSocketBuilder::new();
     sb.latency(Duration::from_millis(120));
     let socket = sb.connect(addr.as_str())?;
     let transport = SrtTransport::new(socket);

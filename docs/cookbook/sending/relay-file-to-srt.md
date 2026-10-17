@@ -12,16 +12,16 @@ The sender is byte-stream oriented — file reads of any size are fine, the send
 
 ```rust,no_run
 use tst_pipeline::{Sender, SenderConfig};
-use tst_srt::{SocketBuilder, SrtTransport};
+use tst_srt::{SrtSocketBuilder, SrtTransport};
 use std::fs::File;
 use std::io::Read;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Mutators take `&mut self` and `connect` takes `&self`: a one-statement
-    // chain off `SocketBuilder::new()` also works, but binding the builder
+    // chain off `SrtSocketBuilder::new()` also works, but binding the builder
     // first lets you set options step by step and reuse it.
-    let mut sb = SocketBuilder::new();
+    let mut sb = SrtSocketBuilder::new();
     sb.latency(Duration::from_millis(120));
     let socket = sb.connect("127.0.0.1:9000")?;
     let mut sender = Sender::new(SrtTransport::new(socket), SenderConfig::default());

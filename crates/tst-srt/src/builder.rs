@@ -1,40 +1,40 @@
-//! Fluent builders over `SocketConfig` / `ListenerConfig`.
+//! Fluent builders over `SrtSocketConfig` / `SrtListenerConfig`.
 //!
 //! The builder is sugar; the canonical type is the config struct.
 //! Bindings consume the config struct directly. Rust callers can use either.
 
-use crate::config::{ListenerConfig, SocketConfig};
-use crate::error::{BindError, ConnectError, OptionError, StreamIdError};
-use crate::listener::Listener;
+use crate::config::{SrtListenerConfig, SrtSocketConfig};
+use crate::error::{BindError, OptionError, SrtConnectError, StreamIdError};
+use crate::listener::SrtListener;
 use crate::options::{
     Congestion, KeyLength, MaxBandwidth, PacketFilter, Passphrase, Role, StreamId,
 };
-use crate::socket::Socket;
+use crate::socket::SrtSocket;
 use std::net::ToSocketAddrs;
 use std::time::Duration;
 
-/// Fluent builder for [`Socket`] with chained option setters.
+/// Fluent builder for [`SrtSocket`] with chained option setters.
 ///
-/// `SocketBuilder::new()` starts from libsrt defaults; each setter mutates the
-/// underlying [`SocketConfig`] in place and returns `&mut Self` so calls can be
-/// chained. The terminal call is [`SocketBuilder::connect`], which takes
+/// `SrtSocketBuilder::new()` starts from libsrt defaults; each setter mutates the
+/// underlying [`SrtSocketConfig`] in place and returns `&mut Self` so calls can be
+/// chained. The terminal call is [`SrtSocketBuilder::connect`], which takes
 /// `&self` (clones the inner config) and opens the socket.
 ///
 /// The `&mut self -> &mut Self` shape translates directly to Kotlin's `apply`
 /// scope, Swift's `var b = …; b.x(); b.y();`, Java's chain on a fresh local,
 /// and Python's step-wise assignment — see `docs/reference/binding-authors.md`.
 ///
-/// See [`SocketBuilder::sender_defaults`] / [`SocketBuilder::receiver_defaults`]
+/// See [`SrtSocketBuilder::sender_defaults`] / [`SrtSocketBuilder::receiver_defaults`]
 /// for live-streaming preset bundles.
 ///
 /// # Example — sender with non-default latency, bandwidth cap, and passphrase
 /// ```no_run
-/// use tst_srt::{MaxBandwidth, Passphrase, SocketBuilder};
+/// use tst_srt::{MaxBandwidth, Passphrase, SrtSocketBuilder};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let passphrase = Passphrase::new("hunter2hunter2")?;
 ///
-/// let mut b = SocketBuilder::new();
+/// let mut b = SrtSocketBuilder::new();
 /// b.sender_defaults();
 /// b.latency_ms(120);
 /// b.max_bandwidth(MaxBandwidth::Limited(1_250_000)); // 10 Mbps cap
@@ -46,11 +46,11 @@ use std::time::Duration;
 /// ```
 #[must_use]
 #[derive(Default)]
-pub struct SocketBuilder {
-    config: SocketConfig,
+pub struct SrtSocketBuilder {
+    config: SrtSocketConfig,
 }
 
-impl SocketBuilder {
+impl SrtSocketBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -148,7 +148,7 @@ impl SocketBuilder {
     /// libsrt silently clamps this to the flow-control window
     /// (`SRTO_FC`, default 25600 packets ≈ 37.7 MB at default MSS); a
     /// clamped request emits a `tracing::warn!`. Raise
-    /// [`SocketConfig::flow_window_packets`](crate::SocketConfig::flow_window_packets)
+    /// [`SrtSocketConfig::flow_window_packets`](crate::SrtSocketConfig::flow_window_packets)
     /// together with this for larger buffers.
     pub fn recv_buf_bytes(&mut self, n: u32) -> &mut Self {
         self.config.recv_buf_bytes = Some(n);
@@ -208,10 +208,10 @@ impl SocketBuilder {
     /// already set explicitly (merge-if-default semantics — order-independent).
     ///
     /// ```
-    /// # use tst_srt::{Socket, SocketBuilder};
+    /// # use tst_srt::{SrtSocket, SrtSocketBuilder};
     /// # use tst_srt::options::Passphrase;
     /// # let passphrase = Passphrase::new("secretsecretsecret").unwrap();
-    /// let mut b = SocketBuilder::new();
+    /// let mut b = SrtSocketBuilder::new();
     /// b.sender_defaults();
     /// b.passphrase(passphrase);
     /// // b.connect("host:port")?
@@ -234,15 +234,15 @@ impl SocketBuilder {
     /// Clones the inner config so the builder can be reused. Cloning is
     /// cheap — at most three short heap allocations (optional
     /// `Passphrase`, `StreamId`, and `PacketFilter`, all `String`-backed).
-    pub fn config(&self) -> SocketConfig {
+    pub fn config(&self) -> SrtSocketConfig {
         self.config.clone()
     }
 
     /// Terminal call: open and connect the socket.
     ///
     /// Takes `&self` (not `self`) so the builder can be reused; clones the
-    /// inner config into [`Socket::connect_with`]. Cloning is cheap — the
-    /// config is a flat `SocketConfig` with at most three short heap
+    /// inner config into [`SrtSocket::connect_with`]. Cloning is cheap — the
+    /// config is a flat `SrtSocketConfig` with at most three short heap
     /// allocations (the optional `Passphrase`, `StreamId`, and
     /// `PacketFilter`, all `String`-backed).
     ///
@@ -256,32 +256,32 @@ impl SocketBuilder {
     /// `bindings/c/include/tstrans.h` and `docs/reference/binding-authors.md`.
     ///
     /// # Errors
-    /// Returns [`ConnectError`] on hostname-resolution failure, libsrt
+    /// Returns [`SrtConnectError`] on hostname-resolution failure, libsrt
     /// option-set failure, or SRT-handshake failure (handshake timeout,
     /// auth mismatch, peer reject, etc.).
-    pub fn connect(&self, addr: impl ToSocketAddrs) -> Result<Socket, ConnectError> {
-        Socket::connect_with(&self.config, addr)
+    pub fn connect(&self, addr: impl ToSocketAddrs) -> Result<SrtSocket, SrtConnectError> {
+        SrtSocket::connect_with(&self.config, addr)
     }
 }
 
-/// Fluent builder for [`Listener`] with chained option setters.
+/// Fluent builder for [`SrtListener`] with chained option setters.
 ///
-/// `ListenerBuilder::new()` starts from libsrt defaults; each setter mutates
-/// the underlying [`ListenerConfig`] in place and returns `&mut Self` so calls
-/// can be chained. The terminal call is [`ListenerBuilder::bind`], which takes
+/// `SrtListenerBuilder::new()` starts from libsrt defaults; each setter mutates
+/// the underlying [`SrtListenerConfig`] in place and returns `&mut Self` so calls
+/// can be chained. The terminal call is [`SrtListenerBuilder::bind`], which takes
 /// `&self` (clones the inner config) and binds the listener.
 ///
-/// The `&mut self -> &mut Self` shape mirrors [`SocketBuilder`] and translates
+/// The `&mut self -> &mut Self` shape mirrors [`SrtSocketBuilder`] and translates
 /// directly to Kotlin's `apply` scope, Swift's `var b = …; b.x(); b.y();`,
 /// Java's chain on a fresh local, and Python's step-wise assignment — see
 /// `docs/reference/binding-authors.md`.
 #[must_use]
 #[derive(Default)]
-pub struct ListenerBuilder {
-    config: ListenerConfig,
+pub struct SrtListenerBuilder {
+    config: SrtListenerConfig,
 }
 
-impl ListenerBuilder {
+impl SrtListenerBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -313,7 +313,7 @@ impl ListenerBuilder {
         self.config.socket.payload_size = Some(n);
         self
     }
-    /// See `SocketBuilder::udp_recv_buffer_bytes`.
+    /// See `SrtSocketBuilder::udp_recv_buffer_bytes`.
     pub fn udp_recv_buffer_bytes(&mut self, n: u32) -> &mut Self {
         self.config.socket.udp_recv_buffer_bytes = Some(n);
         self
@@ -328,7 +328,7 @@ impl ListenerBuilder {
     }
     /// Set the SRT receive buffer size in **bytes** (`SRTO_RCVBUF`).
     ///
-    /// Passed verbatim to libsrt. See [`SocketBuilder::recv_buf_bytes`] for
+    /// Passed verbatim to libsrt. See [`SrtSocketBuilder::recv_buf_bytes`] for
     /// sizing guidance.
     pub fn recv_buf_bytes(&mut self, n: u32) -> &mut Self {
         self.config.socket.recv_buf_bytes = Some(n);
@@ -382,31 +382,39 @@ impl ListenerBuilder {
     /// Clones the inner config so the builder can be reused. Cloning is
     /// cheap — at most two short heap allocations (optional `Passphrase` and
     /// `PacketFilter`, both `String`-backed).
-    pub fn config(&self) -> ListenerConfig {
+    pub fn config(&self) -> SrtListenerConfig {
         self.config.clone()
     }
 
-    /// Terminal call: bind, listen, return the Listener.
+    /// Terminal call: bind, listen, return the SrtListener.
     ///
     /// Takes `&self` (not `self`) so the builder can be reused; clones the
-    /// inner config into [`Listener::bind_with`]. Cloning is cheap — the
-    /// config is a flat `ListenerConfig` with at most two short heap
+    /// inner config into [`SrtListener::bind_with`]. Cloning is cheap — the
+    /// config is a flat `SrtListenerConfig` with at most two short heap
     /// allocations (the optional `Passphrase` and `PacketFilter`, both
     /// `String`-backed).
     ///
     /// # C ABI
     ///
-    /// No direct counterpart — `Listener` itself is not exposed at the C
+    /// No direct counterpart — `SrtListener` itself is not exposed at the C
     /// ABI. The C receivers fold the bind/listen/accept sequence into
     /// their `tst_*_receiver_open_listener` calls.
     ///
     /// # Errors
     /// Returns [`BindError`] on hostname-resolution failure, libsrt
     /// option-set failure, or bind/listen failure.
-    pub fn bind(&self, addr: impl ToSocketAddrs) -> Result<Listener, BindError> {
-        Listener::bind_with(&self.config, addr)
+    pub fn bind(&self, addr: impl ToSocketAddrs) -> Result<SrtListener, BindError> {
+        SrtListener::bind_with(&self.config, addr)
     }
 }
+
+/// The name this type had before it was renamed.
+#[deprecated(since = "0.9.0", note = "renamed to `SrtSocketBuilder`")]
+pub type SocketBuilder = SrtSocketBuilder;
+
+/// The name this type had before it was renamed.
+#[deprecated(since = "0.9.0", note = "renamed to `SrtListenerBuilder`")]
+pub type ListenerBuilder = SrtListenerBuilder;
 
 #[cfg(test)]
 mod tests {
@@ -414,7 +422,7 @@ mod tests {
 
     #[test]
     fn socket_builder_chains() {
-        let cfg = SocketBuilder::new()
+        let cfg = SrtSocketBuilder::new()
             .latency_ms(120)
             .mss(1316)
             .payload_size(1316)
@@ -427,7 +435,7 @@ mod tests {
 
     #[test]
     fn listener_builder_chains() {
-        let cfg = ListenerBuilder::new()
+        let cfg = SrtListenerBuilder::new()
             .backlog(10)
             .reuse_addr(false)
             .config();
@@ -438,18 +446,18 @@ mod tests {
 
     #[test]
     fn try_stream_id_validates() {
-        let mut b = SocketBuilder::new();
+        let mut b = SrtSocketBuilder::new();
         assert!(b.try_stream_id("publish:cam1").is_ok());
 
         let too_long = "a".repeat(513);
-        let mut b = SocketBuilder::new();
+        let mut b = SrtSocketBuilder::new();
         assert!(b.try_stream_id(too_long.as_str()).is_err());
     }
 
     #[test]
     fn builder_sender_defaults_matches_config_sender_defaults() {
-        let from_builder = SocketBuilder::new().sender_defaults().config();
-        let from_struct = SocketConfig::sender_defaults();
+        let from_builder = SrtSocketBuilder::new().sender_defaults().config();
+        let from_struct = SrtSocketConfig::sender_defaults();
         assert_eq!(from_builder.connect_timeout, from_struct.connect_timeout);
         assert_eq!(from_builder.linger, from_struct.linger);
         assert_eq!(from_builder.role, from_struct.role);
@@ -458,7 +466,7 @@ mod tests {
     #[test]
     fn builder_sender_defaults_then_override() {
         // Preset applied first, explicit setter wins (last-write).
-        let cfg = SocketBuilder::new()
+        let cfg = SrtSocketBuilder::new()
             .sender_defaults()
             .connect_timeout(Duration::from_secs(7))
             .config();
@@ -470,7 +478,7 @@ mod tests {
     #[test]
     fn builder_explicit_then_sender_defaults_preserves_explicit() {
         // Explicit setter first, preset doesn't clobber (merge-if-default).
-        let cfg = SocketBuilder::new()
+        let cfg = SrtSocketBuilder::new()
             .connect_timeout(Duration::from_secs(7))
             .sender_defaults()
             .config();
@@ -481,8 +489,8 @@ mod tests {
 
     #[test]
     fn builder_receiver_defaults_matches_config_receiver_defaults() {
-        let from_builder = SocketBuilder::new().receiver_defaults().config();
-        let from_struct = SocketConfig::receiver_defaults();
+        let from_builder = SrtSocketBuilder::new().receiver_defaults().config();
+        let from_struct = SrtSocketConfig::receiver_defaults();
         assert_eq!(from_builder.connect_timeout, from_struct.connect_timeout);
         assert_eq!(from_builder.linger, from_struct.linger);
         assert_eq!(from_builder.role, from_struct.role);
@@ -490,7 +498,7 @@ mod tests {
 
     #[test]
     fn builder_receiver_defaults_then_override() {
-        let cfg = SocketBuilder::new()
+        let cfg = SrtSocketBuilder::new()
             .receiver_defaults()
             .connect_timeout(Duration::from_secs(7))
             .config();
@@ -501,7 +509,7 @@ mod tests {
     #[test]
     fn builder_explicit_sender_then_receiver_defaults_preserves_explicit() {
         // Explicit Role::Sender is not overridden by receiver_defaults.
-        let cfg = SocketBuilder::new()
+        let cfg = SrtSocketBuilder::new()
             .role(Role::Sender)
             .receiver_defaults()
             .config();

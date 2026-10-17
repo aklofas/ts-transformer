@@ -16,12 +16,12 @@ are named `<Component>Config`. Do not use the `Options` suffix.
 `DemuxerOptions`) force readers to guess which suffix a particular type
 uses. The workspace's construction-parameter types use `Config`
 (`MuxerConfig`, `MuxerProgramConfig`, `SenderConfig`, `RawSenderConfig`,
-`SocketConfig`, `ListenerConfig`, `DemuxerConfig`, `PairerConfig`,
+`SrtSocketConfig`, `SrtListenerConfig`, `DemuxerConfig`, `PairerConfig`,
 `EncodeConfig`).
 
 A transport has one config type for its socket options, and the URL parses
-into it. An SRT URL is a `SocketConfig` holding exactly the keys the URL
-carried, and `ListenerConfig` holds a `SocketConfig` in `socket` next to
+into it. An SRT URL is a `SrtSocketConfig` holding exactly the keys the URL
+carried, and `SrtListenerConfig` holds a `SrtSocketConfig` in `socket` next to
 `backlog` and `reuse_addr`, so there is no separate URL representation
 and no copy of the socket fields for listeners.
 
@@ -161,7 +161,7 @@ demux_receiver.recv_event()?;                     // wire read
 
 **Adjective use note:** `send_` and `recv_` also appear as adjectives
 on builder config-setter methods that qualify a configured aspect
-(e.g., `SocketBuilder::send_timeout`, `ListenerBuilder::recv_latency`).
+(e.g., `SrtSocketBuilder::send_timeout`, `SrtListenerBuilder::recv_latency`).
 These are configuration setters returning `&mut Self`, not operations
 — the rule above governs operation names, not adjective-prefixed
 setters. Config setters follow the existing builder-method
@@ -186,16 +186,16 @@ Use `#[derive(Default)]` plain struct (or a manual `Default` impl) when:
 
 **Why:** No documented rule means new contributors invent local
 conventions. The rule above matches the workspace's existing shape:
-`MuxerConfigBuilder` + `MuxerProgramConfigBuilder` + `SocketBuilder` +
-`ListenerBuilder` use chainable `&mut self -> &mut Self`.
+`MuxerConfigBuilder` + `MuxerProgramConfigBuilder` + `SrtSocketBuilder` +
+`SrtListenerBuilder` use chainable `&mut self -> &mut Self`.
 `RawSenderConfig` is empty/`#[derive(Default)]` with no builder.
 
 **Examples:**
 
 ```rust
 // Builder warranted (≥2 knobs + validation):
-pub struct SocketBuilder { ... }
-impl SocketBuilder {
+pub struct SrtSocketBuilder { ... }
+impl SrtSocketBuilder {
     pub fn new() -> Self { ... }
     pub fn payload_size(&mut self, n: u16) -> &mut Self { ... }
     pub fn passphrase(&mut self, p: Passphrase) -> &mut Self { ... }
@@ -237,7 +237,7 @@ builder where one exists.
 
 ```rust
 // Recommended for Rust callers — default-and-assign:
-let mut cfg = SocketConfig::default();
+let mut cfg = SrtSocketConfig::default();
 cfg.payload_size = Some(1316);
 cfg.passphrase = Some(Passphrase::from_env("MY_KEY")?);
 
@@ -252,7 +252,7 @@ bldr.add_program(MuxerProgramConfigBuilder::new(1, 0x1000).build());
 let cfg = bldr.build()?;
 
 // NOT supported (Rust compile error E0639):
-let cfg = SocketConfig { payload_size: Some(1316), ..Default::default() };
+let cfg = SrtSocketConfig { payload_size: Some(1316), ..Default::default() };
 ```
 
 ---
@@ -264,8 +264,8 @@ happens at the **constructor boundary** that consumes the config —
 `Muxer::new(config)`, `MuxerConfigBuilder::build()`, etc. — by calling
 `config.validate()` and returning `Err(...)` on rejection. Where a config
 has no `validate()`, the consuming constructor checks each field as it
-applies it: `Socket::connect_with(&config, addr)` rejects a bad option
-with `ConnectError::InvalidOption`.
+applies it: `SrtSocket::connect_with(&config, addr)` rejects a bad option
+with `SrtConnectError::InvalidOption`.
 
 **Why:** Public-field configs (per the rule above) can be hand-built
 with struct-update syntax (`SomeConfig { field: x, ..Default::default() }`

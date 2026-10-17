@@ -36,7 +36,7 @@ in-memory test mock returns `None`). All real transports — `SrtTransport`
 (implements both `Transport` and `RecvTransport`) and `ManagedTransport`
 decorating it — return `Some`.
 
-`tst-srt`'s `Socket::cancel_handle()` and `Listener::cancel_handle()`
+`tst-srt`'s `SrtSocket::cancel_handle()` and `SrtListener::cancel_handle()`
 return the concrete `ResourceCancel` struct directly (no `Option`); these
 are the paths to use when you're working below the pipeline shells.
 
@@ -58,7 +58,7 @@ From `tst-srt` directly (Socket / Listener):
 ```rust,ignore
 use tst_pipeline::ResourceCancel;  // re-exported from tst_core::ResourceCancel
 
-let socket: tst_srt::Socket = /* ... */;
+let socket: tst_srt::SrtSocket = /* ... */;
 let cancel: ResourceCancel = socket.cancel_handle();
 // `ResourceCancel: Clone` — the inner state is Arc-shared, so all clones
 // fire the closer once across the whole set.
@@ -124,7 +124,7 @@ but `SrtTransport` reads its own cancel latch afterwards and surfaces
 close, so it is reported as the close, not as the wire error it provoked.
 Every binding projects that to its `CLOSED` kind with the detail
 `cancelled from another thread`. (Through 0.6.x this was
-`TransportError::Broken`.) A direct `Socket::send` / `Socket::recv`, which
+`TransportError::Broken`.) A direct `SrtSocket::send` / `SrtSocket::recv`, which
 is below the transport layer, still reports the libsrt error.
 
 ## Per-language idiom
@@ -155,17 +155,17 @@ The Rust API is the source of truth — every binding crate forwards
   multiple threads — runs the closer at most once.
 - The underlying close (`srt_close` for SRT transports) runs on the
   thread that wins the atomic swap. The closer's return code is
-  consumed there, which is why `Socket::close` and `Listener::close`
+  consumed there, which is why `SrtSocket::close` and `SrtListener::close`
   are infallible.
 - `is_cancelled()` (on the concrete `ResourceCancel` struct) is advisory;
   the underlying close may not have completed yet on another thread.
 - `is_cancelled()` answers **"did a caller cancel?"**, never "is this
   socket finished?". A peer disconnect or a wire failure leaves it
   `false`, however dead the connection is — use `is_alive()` on the
-  transport for that. The owner's internal teardown (`Socket`/`Listener`
+  transport for that. The owner's internal teardown (`SrtSocket`/`SrtListener`
   `Drop`, and the transport error paths that retire a dead socket) goes
   through `close_without_cancel()`, which closes and wakes without
-  latching; `Socket::close()` and a cross-thread `cancel()` latch.
+  latching; `SrtSocket::close()` and a cross-thread `cancel()` latch.
 
 ## Why this and not `close()`?
 
@@ -200,7 +200,7 @@ above. See the **Sync vs. async** section in
 
 | Transport | Cancel handle | Notes |
 |-----------|--------------|-------|
-| SRT (`tst-srt`) | `ResourceCancel` | From `Socket::cancel_handle()` or `pipeline_shell.cancel_handle()`. |
+| SRT (`tst-srt`) | `ResourceCancel` | From `SrtSocket::cancel_handle()` or `pipeline_shell.cancel_handle()`. |
 | RTP / RTSP (`tst-rtp`) | `RtpCancelHandle` | From `RtpTransport::cancel_handle()` or the pipeline shell. |
 | TCP / TLS (`tst-tcp`) | `TcpCancelHandle` | From the inherent `TcpTransport::cancel_handle()`, from `Transport::cancel_handle` / `RecvTransport::cancel_handle` on the same transport, or from the pipeline shell (which reads the trait method). All three hand back the same handle. |
 | UDP (`tst-udp`) | `UdpCancelHandle` | From the inherent `UdpTransport::cancel_handle()` / `UdpRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. A parked `recv_bytes` observes it at its next ~100 ms poll tick and returns `ExplicitClose`; `send_bytes` never parks and checks it at entry. `close()` stays `Closed`. `recv_timeout` (per-call deadline) does not observe it — check `is_cancelled()` between slices. |
@@ -238,7 +238,7 @@ is the name factories use for the same type (it is a type alias of
 ## Managed receivers in listener mode
 
 A listener-mode `ManagedRecvTransport` re-runs its factory after a peer
-disconnect, and that factory parks in `Listener::accept()` until the next
+disconnect, and that factory parks in `SrtListener::accept()` until the next
 peer arrives — a wait nothing outside the factory can reach. The managed
 transport's cancel handle reaches it through a `FactoryCancel` slot: the
 factory installs the listener's own cancel handle into the slot around
@@ -250,7 +250,7 @@ attempts.
 ```rust,ignore
 use std::sync::Arc;
 use tst_pipeline::{BrokenCause, FactoryCancel, ManagedRecvTransport, ReconnectPolicy, TransportError};
-use tst_srt::{ListenerBuilder, SrtTransport};
+use tst_srt::{SrtListenerBuilder, SrtTransport};
 
 let factory_cancel = Arc::new(FactoryCancel::new());
 let fc = Arc::clone(&factory_cancel);
@@ -258,7 +258,7 @@ let factory = Box::new(move || -> Result<SrtTransport, TransportError> {
     if fc.is_cancelled() {
         return Err(TransportError::ExplicitClose);
     }
-    let mut listener = ListenerBuilder::new().bind("0.0.0.0:9000")
+    let mut listener = SrtListenerBuilder::new().bind("0.0.0.0:9000")
         .map_err(|e| TransportError::Broken { msg: e.to_string(), errno_code: None, cause: BrokenCause::Unspecified })?;
     fc.install(Arc::new(listener.cancel_handle()));   // `ResourceCancel: TransportCancel`
     let accepted = listener.accept();
@@ -281,10 +281,10 @@ stays uncancellable is the very first one inside a listener open, before
 any handle exists.
 
 The bindings do not each hand-roll the sequence above:
-`tst_srt::Listener::accept_one_cancellable(&cfg, addr, &slot)` is that
+`tst_srt::SrtListener::accept_one_cancellable(&cfg, addr, &slot)` is that
 whole bind → install → accept → clear → classify body behind one call,
 and every SRT listener factory in the C, Python and JVM bindings goes
 through it. Reach for it rather than the long form whenever your factory
 binds and accepts exactly once; write the long form only when you need
-something in the middle of it (a different `ListenerConfig` per attempt,
+something in the middle of it (a different `SrtListenerConfig` per attempt,
 say, or per-phase error mapping).

@@ -21,7 +21,7 @@ use std::ffi::CString;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 use tstrans::config::{tst_sender_config_free, tst_sender_config_new};
 use tstrans::error::TstError;
 use tstrans::sender::ts_sender::{
@@ -44,7 +44,7 @@ fn ts_sender_streamid_observed_on_listener() {
     let (sid_tx, sid_rx) = mpsc::channel::<Option<String>>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -101,7 +101,7 @@ fn ts_sender_latency_negotiated() {
     let (ok_tx, ok_rx) = mpsc::channel::<bool>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -148,12 +148,12 @@ fn ts_sender_latency_negotiated() {
 /// the URL key survives parse -> setsockopt -> handshake.
 /// `configure_listener` adds any listener option the key needs to agree
 /// with (the FEC `packetfilter` test sets the same filter on both sides).
-fn assert_url_open_succeeds(query: &str, configure_listener: fn(&mut ListenerBuilder)) {
+fn assert_url_open_succeeds(query: &str, configure_listener: fn(&mut SrtListenerBuilder)) {
     let (port_tx, port_rx) = mpsc::channel::<u16>();
     let (ok_tx, ok_rx) = mpsc::channel::<bool>();
 
     let listener_thread = thread::spawn(move || {
-        let mut builder = ListenerBuilder::new();
+        let mut builder = SrtListenerBuilder::new();
         configure_listener(&mut builder);
         let mut listener = builder
             .recv_timeout(Duration::from_secs(5))
@@ -225,7 +225,7 @@ fn ts_sender_passphrase_handshake_ok() {
 
     let listener_thread = thread::spawn(move || {
         use tst_srt::Passphrase;
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .passphrase(Passphrase::new("hunter-too-long-thanks").unwrap())
             .key_length(tst_srt::KeyLength::Aes128)
             .recv_timeout(Duration::from_secs(5))
@@ -344,7 +344,7 @@ fn variant_ts_sender_open_with_url() {
     let (sid_tx, sid_rx) = mpsc::channel::<Option<String>>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -389,7 +389,7 @@ fn variant_managed_ts_sender_open_with_url() {
     let (sid_tx, sid_rx) = mpsc::channel::<Option<String>>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -434,7 +434,7 @@ fn variant_managed_sender_get_reconnect_stats() {
     let (ok_tx, ok_rx) = mpsc::channel::<bool>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -526,7 +526,7 @@ fn url_streamid_overrides_builder_streamid() {
     let (sid_tx, sid_rx) = mpsc::channel::<Option<String>>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -676,7 +676,7 @@ fn cfg_byte_unchanged_after_failed_parse() {
         let (port_tx, port_rx) = mpsc::channel::<u16>();
         let (ok_tx, ok_rx) = mpsc::channel::<bool>();
         let listener_thread = thread::spawn(move || {
-            let mut listener = ListenerBuilder::new()
+            let mut listener = SrtListenerBuilder::new()
                 .recv_timeout(Duration::from_secs(5))
                 .bind("127.0.0.1:0")
                 .expect("bind");
@@ -758,7 +758,7 @@ fn managed_ts_sender_url_options_persist_across_reconnect() {
 
     let listener_thread = thread::spawn(move || {
         // phase 1: bind to :0, learn the port, accept the initial connection.
-        let mut listener1 = ListenerBuilder::new()
+        let mut listener1 = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind phase 1");
@@ -783,7 +783,7 @@ fn managed_ts_sender_url_options_persist_across_reconnect() {
 
         // phase 2: rebind to the SAME port so the managed sender's reconnect
         // attempt reaches us. Allow up to 10s for the reconnect to complete.
-        let mut listener2 = ListenerBuilder::new()
+        let mut listener2 = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(10))
             .bind(format!("127.0.0.1:{port}"))
             .expect("bind phase 2");

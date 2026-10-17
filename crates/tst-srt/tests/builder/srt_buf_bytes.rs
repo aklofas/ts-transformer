@@ -12,7 +12,7 @@
 
 use std::ffi::c_int;
 use std::time::Duration;
-use tst_srt::{ListenerBuilder, SocketBuilder};
+use tst_srt::{SrtListenerBuilder, SrtSocketBuilder};
 
 fn read_i32(handle: srt_sys::SRTSOCKET, opt: srt_sys::SRT_SOCKOPT) -> Option<i32> {
     let mut value: c_int = 0;
@@ -43,7 +43,7 @@ fn recv_buf_bytes_and_send_buf_bytes_are_byte_scaled() {
     let target_recv: u32 = 4 * 1024 * 1024; // 4 MB
     let target_send: u32 = 2 * 1024 * 1024; // 2 MB
 
-    let mut builder = ListenerBuilder::new();
+    let mut builder = SrtListenerBuilder::new();
     builder
         .recv_buf_bytes(target_recv)
         .recv_timeout(Duration::from_secs(5));
@@ -53,7 +53,7 @@ fn recv_buf_bytes_and_send_buf_bytes_are_byte_scaled() {
     let accept = lb.spawn_accept(|sock| sock);
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .recv_buf_bytes(target_recv)
         .send_buf_bytes(target_send)
         .send_timeout(Duration::from_secs(5))

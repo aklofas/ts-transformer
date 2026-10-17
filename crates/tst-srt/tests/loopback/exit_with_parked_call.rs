@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use tst_core::mpegts::demux::DemuxerConfig;
 use tst_pipeline::ReconnectPolicy;
 use tst_srt::url::SrtUrl;
-use tst_srt::{ListenerBuilder, SocketBuilder};
+use tst_srt::{SrtListenerBuilder, SrtSocketBuilder};
 
 /// Set (to any value) in the child's environment.
 const CHILD_ENV: &str = "TST_SRT_EXIT_WITH_PARKED_CALL_CHILD";
@@ -181,7 +181,7 @@ fn exit_is_clean_with_a_listener_parked_in_accept() {
         return;
     }
     require_loopback!();
-    let mut listener = ListenerBuilder::new()
+    let mut listener = SrtListenerBuilder::new()
         .bind("127.0.0.1:0")
         .expect("bind 127.0.0.1:0");
     let latch = ParkLatch::default();
@@ -203,7 +203,7 @@ fn exit_is_clean_with_a_listener_parked_in_accept_timeout() {
         return;
     }
     require_loopback!();
-    let mut listener = ListenerBuilder::new()
+    let mut listener = SrtListenerBuilder::new()
         .bind("127.0.0.1:0")
         .expect("bind 127.0.0.1:0");
     let latch = ParkLatch::default();
@@ -255,7 +255,7 @@ fn exit_is_clean_with_a_socket_parked_in_recv() {
     // The accepted side only has to stay open: hand it back and keep it.
     let accept = lb.spawn_accept(|sock| sock);
     accept.wait_ready();
-    let mut socket = SocketBuilder::new()
+    let mut socket = SrtSocketBuilder::new()
         .connect(format!("127.0.0.1:{port}"))
         .expect("connect");
     let _accepted = accept.join();
@@ -284,14 +284,14 @@ fn exit_is_clean_with_a_socket_parked_in_send() {
         return;
     }
     require_loopback!();
-    let mut listener = ListenerBuilder::new()
+    let mut listener = SrtListenerBuilder::new()
         .too_late_packet_drop(false)
         .bind("127.0.0.1:0")
         .expect("bind 127.0.0.1:0");
     let port = listener.local_addr().expect("local_addr").port();
     let cancel_accept = listener.cancel_handle();
     let accept = std::thread::spawn(move || listener.accept());
-    let mut socket = SocketBuilder::new()
+    let mut socket = SrtSocketBuilder::new()
         .too_late_packet_drop(false)
         .connect(format!("127.0.0.1:{port}"))
         .expect("connect");
@@ -338,7 +338,7 @@ fn exit_is_clean_with_a_caller_parked_in_connect() {
     let port = silent.local_addr().expect("local_addr").port();
     let latch = ParkLatch::default();
     latch.park(move || {
-        SocketBuilder::new()
+        SrtSocketBuilder::new()
             .connect_timeout(Duration::from_secs(300))
             .connect(format!("127.0.0.1:{port}"))
     });
@@ -362,7 +362,7 @@ fn exit_is_clean_after_a_clean_close() {
     let port = lb.port;
     let accept = lb.spawn_accept(|sock| sock);
     accept.wait_ready();
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .connect(format!("127.0.0.1:{port}"))
         .expect("connect");
     let accepted = accept.join();

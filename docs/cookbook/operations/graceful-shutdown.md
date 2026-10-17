@@ -20,13 +20,13 @@ The parked syscall returns within one libsrt I/O cycle (typically
 
 ```rust,no_run
 use tst_pipeline::{Sender, SenderConfig, TransportCancel};
-use tst_srt::{SocketBuilder, SrtTransport};
+use tst_srt::{SrtSocketBuilder, SrtTransport};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let socket = SocketBuilder::new().connect("127.0.0.1:9000")?;
+    let socket = SrtSocketBuilder::new().connect("127.0.0.1:9000")?;
     let mut sender = Sender::new(SrtTransport::new(socket), SenderConfig::default());
 
     // Snapshot the cancel handle BEFORE the send loop. After this point

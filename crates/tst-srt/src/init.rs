@@ -1,8 +1,8 @@
 //! Crate-private libsrt initialization.
 //!
 //! `srt_startup()` must be called once before any libsrt API use. Lazy via
-//! `OnceLock` from any constructor that needs libsrt (`Socket::connect_with`,
-//! `Listener::bind_with`, etc.). Each of them is admitted by the exit guard
+//! `OnceLock` from any constructor that needs libsrt (`SrtSocket::connect_with`,
+//! `SrtListener::bind_with`, etc.). Each of them is admitted by the exit guard
 //! first, so the startup — and the registration of the exit handler at its
 //! end — happens inside an operation the handler waits for.
 //!

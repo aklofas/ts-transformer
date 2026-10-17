@@ -50,7 +50,7 @@ use tst_core::mpegts::demux::{
     VideoPayload, split_video,
 };
 use tst_pipeline::{DemuxReceiver, ShellErrorKind};
-use tst_srt::SocketBuilder;
+use tst_srt::SrtSocketBuilder;
 use tst_srt::SrtTransport;
 
 struct Args {
@@ -129,9 +129,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Match latency to the listener — libsrt negotiates the max of the
     // two sides at handshake, but matching avoids surprise.
     //
-    // Bind-then-step shape (`SocketBuilder` is `&mut self -> &mut Self`):
+    // Bind-then-step shape (`SrtSocketBuilder` is `&mut self -> &mut Self`):
     // construct, mutate, then call the terminal `connect`.
-    let mut sb = SocketBuilder::new();
+    let mut sb = SrtSocketBuilder::new();
     sb.latency(args.latency);
     let socket = sb.connect(args.addr.as_str())?;
     eprintln!("connected; reading events");

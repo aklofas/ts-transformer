@@ -29,7 +29,7 @@ use tst_core::mpegts::mux::{
 };
 use tst_pipeline::{DemuxReceiver, DemuxReceiverErrorSource, MuxSender, TransportError};
 use tst_srt::SrtTransport;
-use tst_srt::{ListenerBuilder, SocketBuilder};
+use tst_srt::{SrtListenerBuilder, SrtSocketBuilder};
 use tst_test_helpers::synthetic_nal;
 
 /// Minimal KLV blob with a valid SMPTE UL prefix so the demuxer classifies
@@ -72,7 +72,7 @@ fn end_to_end_sender_to_receiver() {
     // Listener side: bind to ephemeral port. `recv_latency` budget gives
     // libsrt's TSBPD path time to reorder + emit packets even on a busy CI
     // box; matches the sender side's `latency` for symmetry.
-    let mut builder = ListenerBuilder::new();
+    let mut builder = SrtListenerBuilder::new();
     builder.recv_latency(Duration::from_millis(120));
     let lb = crate::common::Loopback::bind_with(builder);
     let port = lb.port;
@@ -132,7 +132,7 @@ fn end_to_end_sender_to_receiver() {
     // MuxSender on the main thread: connect, build the pipeline, push N
     // video + N KLV frames at 30 fps PTS spacing (3000 ticks ≈ 33 ms at
     // 90 kHz), then brief sleep + close to let bytes drain on the wire.
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .latency(Duration::from_millis(120))
         .connect(format!("127.0.0.1:{port}"))
         .expect("connect");

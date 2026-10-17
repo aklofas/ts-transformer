@@ -65,7 +65,7 @@ static OPEN_SOCKETS: Mutex<Option<HashMap<u64, OpenSocket>>> = Mutex::new(None);
 
 struct OpenSocket {
     handle: srt_sys::SRTSOCKET,
-    /// Clone of the handle the `Socket` / `Listener` owns, so the exit
+    /// Clone of the handle the `SrtSocket` / `SrtListener` owns, so the exit
     /// handler can latch `is_cancelled()` before it closes.
     cancel: ResourceCancel,
 }
@@ -366,9 +366,9 @@ mod tests {
         open_sockets().as_ref().is_some_and(|m| m.contains_key(&id))
     }
 
-    use crate::config::{ListenerConfig, SocketConfig};
-    use crate::error::{AcceptError, BindError, ConnectError, RecvError, SendError};
-    use crate::{Listener, Socket, SrtTransport};
+    use crate::config::{SrtListenerConfig, SrtSocketConfig};
+    use crate::error::{AcceptError, BindError, RecvError, SendError, SrtConnectError};
+    use crate::{SrtListener, SrtSocket, SrtTransport};
     use std::process::{Command, Stdio};
     use std::sync::mpsc;
     use tst_core::transport::{RecvTransport, Transport, TransportError};
@@ -514,12 +514,12 @@ mod tests {
         // fails at its timeout and takes the error tail.
         let silent = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind the silent peer");
         let port = silent.local_addr().expect("local_addr").port();
-        let config = SocketConfig {
+        let config = SrtSocketConfig {
             connect_timeout: Some(Duration::from_millis(300)),
-            ..SocketConfig::default()
+            ..SrtSocketConfig::default()
         };
         let count = count_while_paused_at(Checkpoint::AfterBlockingCall, move || {
-            Socket::connect_with(&config, format!("127.0.0.1:{port}"))
+            SrtSocket::connect_with(&config, format!("127.0.0.1:{port}"))
         });
         assert_eq!(
             count, 1,
@@ -560,10 +560,10 @@ mod tests {
         }
         // A live connection, built before the flag is set.
         let mut listener =
-            Listener::bind_with(&ListenerConfig::default(), "127.0.0.1:0").expect("bind");
+            SrtListener::bind_with(&SrtListenerConfig::default(), "127.0.0.1:0").expect("bind");
         let port = listener.local_addr().expect("local_addr").port();
         let caller = std::thread::spawn(move || {
-            Socket::connect_with(&SocketConfig::default(), format!("127.0.0.1:{port}"))
+            SrtSocket::connect_with(&SrtSocketConfig::default(), format!("127.0.0.1:{port}"))
         });
         let (mut accepted, _peer) = listener.accept().expect("accept");
         let mut socket = caller.join().expect("join the caller").expect("connect");
@@ -604,7 +604,11 @@ mod tests {
         ));
         let slot = tst_core::cancel::CancelSlot::new();
         assert!(matches!(
-            Listener::accept_one_cancellable(&ListenerConfig::default(), "127.0.0.1:0", &slot),
+            SrtListener::accept_one_cancellable(
+                &SrtListenerConfig::default(),
+                "127.0.0.1:0",
+                &slot
+            ),
             Err(TransportError::ExplicitClose)
         ));
         assert_eq!(
@@ -625,11 +629,11 @@ mod tests {
         }
         set_exiting_for_test();
         assert!(matches!(
-            Socket::connect_with(&SocketConfig::default(), "127.0.0.1:9"),
-            Err(ConnectError::Other { .. })
+            SrtSocket::connect_with(&SrtSocketConfig::default(), "127.0.0.1:9"),
+            Err(SrtConnectError::Other { .. })
         ));
         assert!(matches!(
-            Listener::bind_with(&ListenerConfig::default(), "127.0.0.1:0"),
+            SrtListener::bind_with(&SrtListenerConfig::default(), "127.0.0.1:0"),
             Err(BindError::Other { .. })
         ));
         assert!(

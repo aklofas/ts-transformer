@@ -96,7 +96,7 @@ pub fn wait_for_ready(ready: &AtomicBool) {
 /// ```ignore
 /// mod common;
 /// use std::time::Duration;
-/// use tst_srt::SocketBuilder;
+/// use tst_srt::SrtSocketBuilder;
 ///
 /// #[test]
 /// fn round_trip() {
@@ -111,7 +111,7 @@ pub fn wait_for_ready(ready: &AtomicBool) {
 ///     });
 ///     accept.wait_ready();
 ///
-///     let mut socket = SocketBuilder::new()
+///     let mut socket = SrtSocketBuilder::new()
 ///         .recv_timeout(Duration::from_secs(5))
 ///         .connect(format!("127.0.0.1:{port}"))
 ///         .expect("connect");
@@ -125,7 +125,7 @@ pub fn wait_for_ready(ready: &AtomicBool) {
 /// Design notes:
 /// - `Loopback` is consumed by `spawn_accept` because the underlying
 ///   `Listener` is moved into the accept thread. Cache `port` off the
-///   listener BEFORE spawn for use in `SocketBuilder::connect`.
+///   listener BEFORE spawn for use in `SrtSocketBuilder::connect`.
 /// - The closure `f: FnOnce(Socket) -> R` receives the ACCEPTED socket
 ///   (the per-connection socket, not the listener). `R` is whatever the
 ///   test wants returned from the accept thread (typically a `Vec<u8>`
@@ -136,7 +136,7 @@ pub fn wait_for_ready(ready: &AtomicBool) {
 /// - `AcceptHandle::join` panics if the accept thread panicked — same
 ///   semantics as `JoinHandle::join().expect(...)`.
 pub struct Loopback {
-    pub listener: tst_srt::Listener,
+    pub listener: tst_srt::SrtListener,
     pub port: u16,
 }
 
@@ -145,7 +145,7 @@ impl Loopback {
     /// Panics if bind fails — the test should have called `require_loopback!()`
     /// first.
     pub fn bind() -> Self {
-        let listener = tst_srt::ListenerBuilder::new()
+        let listener = tst_srt::SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .send_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
@@ -158,14 +158,14 @@ impl Loopback {
     /// non-default options (encryption, custom timeouts, stream-id ACL).
     /// The builder MUST not already have called `.bind(...)`; this method
     /// supplies the bind address.
-    pub fn bind_with(builder: tst_srt::ListenerBuilder) -> Self {
+    pub fn bind_with(builder: tst_srt::SrtListenerBuilder) -> Self {
         Self::bind_at(builder, "127.0.0.1:0")
     }
 
     /// [`bind_with`](Self::bind_with) at a caller-supplied address — for the
     /// IPv6 loopback test (`[::1]:0`). Read `listener.local_addr()` off the
     /// returned fixture to assert the family it actually bound.
-    pub fn bind_at(builder: tst_srt::ListenerBuilder, addr: &str) -> Self {
+    pub fn bind_at(builder: tst_srt::SrtListenerBuilder, addr: &str) -> Self {
         let listener = builder
             .bind(addr)
             .unwrap_or_else(|e| panic!("bind {addr}: {e}"));
@@ -182,7 +182,7 @@ impl Loopback {
     /// `accept()` never completes (see [`AcceptHandle`]).
     pub fn spawn_accept<F, R>(self, f: F) -> AcceptHandle<R>
     where
-        F: FnOnce(tst_srt::Socket) -> R + Send + 'static,
+        F: FnOnce(tst_srt::SrtSocket) -> R + Send + 'static,
         R: Send + 'static,
     {
         let ready = Arc::new(AtomicBool::new(false));

@@ -13,7 +13,7 @@
 //! lives here rather than in `receiving/demux_receiver_loopback.rs`
 //! because it exercises the `tst_managed_demux_receiver_*` *caller*-mode
 //! open path against a background-thread *listener* built directly on
-//! `tst_srt::ListenerBuilder` — the same threading shape as
+//! `tst_srt::SrtListenerBuilder` — the same threading shape as
 //! `managed_ts_sender_url_options_persist_across_reconnect` in
 //! `ts_sender.rs`, just mirrored sender→receiver.
 
@@ -21,7 +21,7 @@ use std::ffi::CString;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 use tstrans::demux_config::{
     tst_demux_config_free, tst_demux_config_new, tst_demux_config_set_unwrap_timestamps,
 };
@@ -85,7 +85,7 @@ use super::last_error_msg;
 fn managed_demux_receiver_end_reason_reconnect_stats_and_unwrap_config() {
     // Bind on the test thread so the port AND the listener's cancel handle
     // are in hand before the peer thread parks in `accept()`.
-    let mut listener = ListenerBuilder::new()
+    let mut listener = SrtListenerBuilder::new()
         .recv_timeout(Duration::from_secs(5))
         .bind("127.0.0.1:0")
         .expect("bind");

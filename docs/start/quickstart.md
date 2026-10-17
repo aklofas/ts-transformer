@@ -86,12 +86,12 @@ Save this as `src/bin/send.rs`. Create the receiver in the next section
 before running it.
 
 ```rust
-use tst_srt::SocketBuilder;
+use tst_srt::SrtSocketBuilder;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Configure the socket, then connect to the local receiver.
-    let mut sb = SocketBuilder::new();
+    let mut sb = SrtSocketBuilder::new();
     sb.latency(Duration::from_millis(120));
     let mut socket = sb.connect("127.0.0.1:9000")?;
     socket.send(b"hello, srt")?;
@@ -115,12 +115,12 @@ acknowledgment that a receiving application has processed the data.
 Save this as `src/bin/receive.rs`:
 
 ```rust
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Listen locally and wait for one sender to connect.
-    let mut lb = ListenerBuilder::new();
+    let mut lb = SrtListenerBuilder::new();
     lb.latency(Duration::from_millis(120));
     let mut listener = lb.bind("127.0.0.1:9000")?;
     let (mut socket, peer) = listener.accept()?;
@@ -171,11 +171,11 @@ use tst_core::klv::st0601::{UasDatalinkLs, encode_to_vec};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::MuxerConfig;
 use tst_pipeline::MuxSender;
-use tst_srt::{SocketBuilder, SrtTransport};
+use tst_srt::{SrtSocketBuilder, SrtTransport};
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut sb = SocketBuilder::new();
+    let mut sb = SrtSocketBuilder::new();
     sb.latency(Duration::from_millis(120));
     let socket = sb.connect("127.0.0.1:9000")?;
     let transport = SrtTransport::new(socket);

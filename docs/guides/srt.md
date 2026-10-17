@@ -4,11 +4,11 @@
 > **Who this is for:** You're integrating the SRT transport layer — opening sockets, listeners, builders; tuning latency / encryption / reconnect.
 
 > **You will learn:**
-> - How `Socket`, `Listener`, and `SocketBuilder` compose
+> - How `SrtSocket`, `SrtListener`, and `SrtSocketBuilder` compose
 > - How to enable AES encryption with a passphrase
 > - The full set of supported SRT URL query parameters
 > - How `ResourceCancel` lets you cancel blocking I/O from another thread
-> - How `ManagedTransport` wraps a Socket for automatic reconnect
+> - How `ManagedTransport` wraps a SrtSocket for automatic reconnect
 > - Why `SrtTransport` implements both `Transport` and `RecvTransport` —
 >   sender vs. receiver is a preset choice, not a type choice
 
@@ -17,7 +17,7 @@
 When you need to send or receive raw SRT messages directly — handshake,
 encryption, latency tuning, stream identification, statistics, and the per-call
 error model — `tst_srt` is the layer you reach for. It's a safe Rust wrapper
-over libsrt 1.5.7 with `Socket` and `Listener` types modeled on
+over libsrt 1.5.7 with `SrtSocket` and `SrtListener` types modeled on
 `std::net::TcpStream` / `TcpListener`.
 
 Read this guide if your data path is byte-oriented and you handle the
@@ -30,27 +30,27 @@ optional gap-buffering on top of an SRT socket, read
 For wire-protocol details, see the IETF draft `draft-sharabayko-srt`,
 the canonical normative reference for SRT 1.5.
 
-## `Socket` and `Listener`
+## `SrtSocket` and `SrtListener`
 
 The connection model mirrors `std::net::TcpStream` / `TcpListener`:
 
-- Caller: `SocketBuilder::new()...connect(addr)` returns a `Socket`.
+- Caller: `SrtSocketBuilder::new()...connect(addr)` returns a `SrtSocket`.
   Synchronous; blocks until the SRT handshake completes (including
   key-material exchange when encryption is on) or errors.
-- Listener: `ListenerBuilder::new()...bind(addr)` returns a `Listener`.
+- Listener: `SrtListenerBuilder::new()...bind(addr)` returns a `SrtListener`.
   `listener.accept()` blocks until the next peer's handshake completes
-  and returns `(Socket, SocketAddr)`.
-- Drop closes the socket. `Socket::close` and `Listener::close` exist
+  and returns `(SrtSocket, SocketAddr)`.
+- Drop closes the socket. `SrtSocket::close` and `SrtListener::close` exist
   for callers who want to close before drop.
 
 Caller, sending five messages then closing:
 
 ```rust,no_run
-use tst_srt::SocketBuilder;
+use tst_srt::SrtSocketBuilder;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut socket = SocketBuilder::new()
+    let mut socket = SrtSocketBuilder::new()
         .latency(Duration::from_millis(120))
         .connect("127.0.0.1:9000")?;
     for i in 0..5 {
@@ -67,11 +67,11 @@ Listener, accepting one peer and draining to EOF (compare
 
 ```rust,no_run
 use tst_srt::error::RecvError;
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut listener = ListenerBuilder::new()
+    let mut listener = SrtListenerBuilder::new()
         .latency(Duration::from_millis(120))
         .bind("127.0.0.1:9000")?;
     let (mut socket, _peer) = listener.accept()?;
@@ -89,24 +89,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Builders vs. config structs
 
-Two equivalent forms construct the same `Socket`:
+Two equivalent forms construct the same `SrtSocket`:
 
-- The builder — `SocketBuilder::new().latency(...).passphrase(...).connect(addr)` —
+- The builder — `SrtSocketBuilder::new().latency(...).passphrase(...).connect(addr)` —
   is a fluent wrapper. Each setter takes the typed wrapper
   (`Passphrase`, `KeyLength`, `StreamId`, ...), mutates the builder in
   place, and returns `&mut Self` so calls can be chained on a temporary
-  or a `let mut b = SocketBuilder::new();` binding. Terminal call is
+  or a `let mut b = SrtSocketBuilder::new();` binding. Terminal call is
   `connect(addr)`, which takes `&self` and clones the inner config so
   the builder can be reused. The shape translates directly to Kotlin's
   `apply { }`, Swift's mutable local, Java's chain, and Python's
-  step-wise — see `docs/reference/binding-authors.md`. `ListenerBuilder` follows
+  step-wise — see `docs/reference/binding-authors.md`. `SrtListenerBuilder` follows
   the identical shape: `&mut self -> &mut Self` mutators, terminal
-  `bind(addr)` taking `&self` and cloning the inner `ListenerConfig`.
-- The config struct — `SocketConfig` — is the canonical type. Every
+  `bind(addr)` taking `&self` and cloning the inner `SrtListenerConfig`.
+- The config struct — `SrtSocketConfig` — is the canonical type. Every
   field is `pub`, so bindings (UniFFI dictionaries, JNI POJOs,
   cbindgen C structs) consume it directly. It is `#[non_exhaustive]`, so
-  outside `tst-srt` you start from `SocketConfig::default()` (or a preset),
-  assign the fields you need, and call `Socket::connect_with(&cfg, addr)`.
+  outside `tst-srt` you start from `SrtSocketConfig::default()` (or a preset),
+  assign the fields you need, and call `SrtSocket::connect_with(&cfg, addr)`.
 
 Rust callers prefer the builder; binding generators prefer the struct
 because it maps onto plain dictionary / POJO / C-struct shapes. The
@@ -114,26 +114,26 @@ builder's `.config()` method exposes the underlying struct for
 inspection or copying.
 
 ```rust,no_run
-use tst_srt::{Socket, SocketBuilder, SocketConfig};
+use tst_srt::{SrtSocket, SrtSocketBuilder, SrtSocketConfig};
 use std::time::Duration;
 
-fn build_via_builder() -> Result<Socket, Box<dyn std::error::Error>> {
-    let s = SocketBuilder::new()
+fn build_via_builder() -> Result<SrtSocket, Box<dyn std::error::Error>> {
+    let s = SrtSocketBuilder::new()
         .latency(Duration::from_millis(120))
         .connect("127.0.0.1:9000")?;
     Ok(s)
 }
 
-fn build_via_config() -> Result<Socket, Box<dyn std::error::Error>> {
-    let mut cfg = SocketConfig::default();
+fn build_via_config() -> Result<SrtSocket, Box<dyn std::error::Error>> {
+    let mut cfg = SrtSocketConfig::default();
     cfg.latency = Some(Duration::from_millis(120));
-    let s = Socket::connect_with(&cfg, "127.0.0.1:9000")?;
+    let s = SrtSocket::connect_with(&cfg, "127.0.0.1:9000")?;
     Ok(s)
 }
 ```
 
-`ListenerBuilder` and `ListenerConfig` mirror the same pattern; the listener's
-socket options are a `SocketConfig` in `ListenerConfig::socket`, next to
+`SrtListenerBuilder` and `SrtListenerConfig` mirror the same pattern; the listener's
+socket options are a `SrtSocketConfig` in `SrtListenerConfig::socket`, next to
 `backlog` and `reuse_addr`.
 
 ## Sender / receiver presets
@@ -165,13 +165,13 @@ not set `SRTO_SENDER`.
 Two consumer paths, both supported in `tst_srt`:
 
 ```rust,no_run
-use tst_srt::{Socket, SocketBuilder, SocketConfig};
+use tst_srt::{SrtSocket, SrtSocketBuilder, SrtSocketConfig};
 use tst_srt::options::Passphrase;
 use std::time::Duration;
 
-fn via_builder(passphrase: Passphrase) -> Result<Socket, Box<dyn std::error::Error>> {
+fn via_builder(passphrase: Passphrase) -> Result<SrtSocket, Box<dyn std::error::Error>> {
     // Builder chain — pure-Rust idiomatic
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .sender_defaults()
         .passphrase(passphrase)
         .latency(Duration::from_millis(200))
@@ -179,18 +179,18 @@ fn via_builder(passphrase: Passphrase) -> Result<Socket, Box<dyn std::error::Err
     Ok(socket)
 }
 
-fn via_struct(passphrase: Passphrase) -> Result<Socket, Box<dyn std::error::Error>> {
+fn via_struct(passphrase: Passphrase) -> Result<SrtSocket, Box<dyn std::error::Error>> {
     // Struct construction — FFI / UniFFI / JNI dictionary mirror
-    let mut cfg = SocketConfig::sender_defaults();
+    let mut cfg = SrtSocketConfig::sender_defaults();
     cfg.passphrase = Some(passphrase);
     cfg.latency = Some(Duration::from_millis(200));
-    let socket = Socket::connect_with(&cfg, "host:9000")?;
+    let socket = SrtSocket::connect_with(&cfg, "host:9000")?;
     Ok(socket)
 }
 ```
 
-The receiver side mirrors exactly: `SocketBuilder::new().receiver_defaults()`
-or `SocketConfig::receiver_defaults()`.
+The receiver side mirrors exactly: `SrtSocketBuilder::new().receiver_defaults()`
+or `SrtSocketConfig::receiver_defaults()`.
 
 ### Filling in defaults on an existing config
 
@@ -199,8 +199,8 @@ and you want the preset to fill in only the fields the caller didn't
 set, use the in-place merge:
 
 ```rust,no_run
-# use tst_srt::SocketConfig;
-fn apply(mut cfg: SocketConfig) -> SocketConfig {
+# use tst_srt::SrtSocketConfig;
+fn apply(mut cfg: SrtSocketConfig) -> SrtSocketConfig {
     cfg.merge_sender_defaults();
     // connect_timeout / linger / role get the preset values only if
     // the URL or other source didn't already set them.
@@ -214,7 +214,7 @@ Calling the merge twice is idempotent.
 
 ### Opting out
 
-Don't call the preset — `SocketConfig::default()` gives all-`None` /
+Don't call the preset — `SrtSocketConfig::default()` gives all-`None` /
 `Role::Receiver`, which preserves libsrt's raw defaults across the
 board. Every caller-mode SRT open in the `tst-c` C ABI (`tst_*_open`,
 plain and managed, sender and receiver side) applies the sender preset
@@ -233,7 +233,7 @@ internally.
   `--no-default-features` builds an unencrypted libsrt;
   setting a passphrase against that build fails at handshake.
 - Both peers must agree on passphrase and key length. A mismatch
-  surfaces as `ConnectError::Rejected { reason: RejectReason::BadSecret, .. }`
+  surfaces as `SrtConnectError::Rejected { reason: RejectReason::BadSecret, .. }`
   on the caller; the listener sees nothing — libsrt rejects the handshake
   before `accept()` returns (the `AcceptError::PeerRejected` variant exists
   but nothing produces it today).
@@ -242,11 +242,11 @@ Paired listener and caller, mirroring
 [examples/encrypted_send_recv.rs](/examples/sending/encrypted_send_recv.rs):
 
 ```rust,no_run
-use tst_srt::{KeyLength, ListenerBuilder, Passphrase, SocketBuilder};
+use tst_srt::{KeyLength, SrtListenerBuilder, Passphrase, SrtSocketBuilder};
 use std::time::Duration;
 
 fn listen() -> Result<(), Box<dyn std::error::Error>> {
-    let mut listener = ListenerBuilder::new()
+    let mut listener = SrtListenerBuilder::new()
         .passphrase(Passphrase::new("shared-secret-not-for-production")?)
         .key_length(KeyLength::Aes256)
         .latency(Duration::from_millis(120))
@@ -256,7 +256,7 @@ fn listen() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn call() -> Result<(), Box<dyn std::error::Error>> {
-    let mut socket = SocketBuilder::new()
+    let mut socket = SrtSocketBuilder::new()
         .passphrase(Passphrase::new("shared-secret-not-for-production")?)
         .key_length(KeyLength::Aes256)
         .latency(Duration::from_millis(120))
@@ -281,8 +281,8 @@ The `latency` setter takes a `Duration` and maps to libsrt's
   archival capture, store-and-forward, low-priority feeds.
 
 The recovery window is bounded by `latency`. Too low and late packets
-are dropped (counted in `Stats::packets_dropped_send_side` on the sender
-or `Stats::packets_dropped_recv_side` on the receiver, under
+are dropped (counted in `SrtStats::packets_dropped_send_side` on the sender
+or `SrtStats::packets_dropped_recv_side` on the receiver, under
 `Congestion::Live`); too high and you pay the full setting in wall-clock
 delay. Tune by measurement.
 
@@ -320,12 +320,12 @@ the builder before `connect`; the listener reads it post-`accept` via
 `socket.stream_id() -> Option<&str>`.
 
 ```rust,no_run
-use tst_srt::{ListenerBuilder, SocketBuilder, StreamId};
+use tst_srt::{SrtListenerBuilder, SrtSocketBuilder, StreamId};
 use std::time::Duration;
 
 fn caller() -> Result<(), Box<dyn std::error::Error>> {
     let id = StreamId::new("sensor-platform-1")?;
-    let _socket = SocketBuilder::new()
+    let _socket = SrtSocketBuilder::new()
         .stream_id(id)
         .latency(Duration::from_millis(120))
         .connect("127.0.0.1:9000")?;
@@ -333,7 +333,7 @@ fn caller() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn listener_inspect() -> Result<(), Box<dyn std::error::Error>> {
-    let mut listener = ListenerBuilder::new().bind("127.0.0.1:9000")?;
+    let mut listener = SrtListenerBuilder::new().bind("127.0.0.1:9000")?;
     let (socket, peer) = listener.accept()?;
     match socket.stream_id() {
         Some(id) if id.starts_with("sensor-") => { /* keep, dispatch by id */ }
@@ -348,9 +348,9 @@ The common pattern is to encode a platform identifier — synthetic
 values like `"sensor-platform-1"` or `"TEST-001"` are appropriate for
 examples and tests; never hard-code real call signs or operational
 identifiers in source. Filter logic is intentionally caller-side:
-`Listener::accept` returns every successful handshake and the
+`SrtListener::accept` returns every successful handshake and the
 application's accept loop decides whether to keep the connection. See
-"Stream-ID filtering on `Listener`" in
+"Stream-ID filtering on `SrtListener`" in
 [`docs/project/deferred-features.md`](/docs/project/deferred-features.md) for the rationale.
 
 ## Packet filters
@@ -361,12 +361,12 @@ after validating charset and a 512-byte length cap. Returns
 only; the spec semantics are libsrt's.
 
 ```rust,no_run
-use tst_srt::{PacketFilter, SocketBuilder};
+use tst_srt::{PacketFilter, SrtSocketBuilder};
 use std::time::Duration;
 
 fn fec_caller() -> Result<(), Box<dyn std::error::Error>> {
     let pf = PacketFilter::new("fec,cols:10,rows:5,arq:onreq")?;
-    let _socket = SocketBuilder::new()
+    let _socket = SrtSocketBuilder::new()
         .packet_filter(pf)
         .latency(Duration::from_millis(250))
         .connect("127.0.0.1:9000")?;
@@ -380,7 +380,7 @@ is documented upstream at the Haivision libsrt repository
 packet-filter / FEC builder" in
 [`docs/project/deferred-features.md`](/docs/project/deferred-features.md).
 
-## `Stats`
+## `SrtStats`
 
 `socket.stats()` returns `Result<Stats, IoError>`, a snapshot of
 libsrt's per-socket performance counters. The fields most useful for
@@ -408,11 +408,11 @@ operational dashboards:
 `stats()` is cheap — call on whatever cadence your dashboard needs.
 
 ```rust,no_run
-use tst_srt::Socket;
+use tst_srt::SrtSocket;
 use std::thread;
 use std::time::Duration;
 
-fn dashboard(socket: &Socket) -> Result<(), Box<dyn std::error::Error>> {
+fn dashboard(socket: &SrtSocket) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let s = socket.stats()?;
         eprintln!(
@@ -433,18 +433,18 @@ fn dashboard(socket: &Socket) -> Result<(), Box<dyn std::error::Error>> {
 every call site. Each enum carries an `Other { kind: SrtErrno, message:
 String }` catch-all for libsrt errors outside the specific variants.
 
-- `BindError` — `Listener::bind_with` failed: `AddressInUse`,
+- `BindError` — `SrtListener::bind_with` failed: `AddressInUse`,
   `PermissionDenied`, `InvalidAddress`, `InvalidOption`, `System`,
   `Other`.
-- `AcceptError` — `Listener::accept` failed: `TimedOut`,
+- `AcceptError` — `SrtListener::accept` failed: `TimedOut`,
   `ListenerClosed`, `PeerRejected { reason, detail }`, `System`,
   `Other`.
-- `ConnectError` — `Socket::connect_with` failed: `InvalidAddress`,
+- `SrtConnectError` — `SrtSocket::connect_with` failed: `InvalidAddress`,
   `BadEncryption { detail }`, `Rejected { reason, detail }`,
   `TimedOut`, `Refused`, `InvalidOption`, `System`, `Other`.
-- `SendError` — `Socket::send` failed: `TimedOut`, `ConnectionBroken`,
+- `SendError` — `SrtSocket::send` failed: `TimedOut`, `ConnectionBroken`,
   `PayloadTooLarge { actual, limit }`, `QueueFull`, `System`, `Other`.
-- `RecvError` — `Socket::recv` failed: `TimedOut`, `ConnectionBroken`,
+- `RecvError` — `SrtSocket::recv` failed: `TimedOut`, `ConnectionBroken`,
   `BufferTooSmall { buf_len, message_len }`, `System`, `Other`.
 - `IoError` — generic libsrt I/O surface (`close`, `peer_addr`,
   `local_addr`, `stats`): `SocketClosed`, `System`, `Other`.
@@ -461,9 +461,9 @@ Recovery summary:
 | `RecvError::ConnectionBroken` | No | Close, re-bind / re-connect |
 | `SendError::Other { kind: SrtErrno::Async, .. }` | Yes | Send buffer full (libsrt `EASYNCSND`) — backoff / retry. `SrtTransport` maps it to `TransportError::Backpressure`. (`SendError::QueueFull` exists but is never produced.) |
 | `SendError::ConnectionBroken` | No | Reconnect (consider `ManagedTransport`) |
-| `ConnectError::TimedOut` | Yes | Retry with longer timeout |
-| `ConnectError::Rejected { reason: BadSecret, .. }` | No | Verify passphrase match |
-| `ConnectError::BadEncryption { .. }` | No | Verify passphrase / key length |
+| `SrtConnectError::TimedOut` | Yes | Retry with longer timeout |
+| `SrtConnectError::Rejected { reason: BadSecret, .. }` | No | Verify passphrase match |
+| `SrtConnectError::BadEncryption { .. }` | No | Verify passphrase / key length |
 | `BindError::AddressInUse` | No | Pick a different port |
 | `BindError::PermissionDenied` | No | Run with the right user / capability |
 
@@ -474,40 +474,40 @@ Recovery summary:
 
 The public API is sync blocking. Calls that block:
 
-- `SocketBuilder::connect` / `Socket::connect_with` — until the SRT
+- `SrtSocketBuilder::connect` / `SrtSocket::connect_with` — until the SRT
   handshake completes or an error fires.
-- `Listener::accept` — blocks indefinitely until the next peer's
-  handshake completes. Use `Listener::accept_timeout` to impose a
+- `SrtListener::accept` — blocks indefinitely until the next peer's
+  handshake completes. Use `SrtListener::accept_timeout` to impose a
   deadline (see below).
-- `Socket::recv` — until a message is available, the connection
+- `SrtSocket::recv` — until a message is available, the connection
   breaks, or the configured `recv_timeout` expires.
-- `Socket::send` — until the bytes are accepted by libsrt's send
+- `SrtSocket::send` — until the bytes are accepted by libsrt's send
   buffer; under flow-control backpressure this can block until the
   buffer drains or `send_timeout` expires.
 
-Calls that don't block: builder / config setters, `Socket::stats`,
-`Socket::peer_addr`, `Socket::local_addr`, `Socket::stream_id`,
-`Socket::close`, `Listener::close`.
+Calls that don't block: builder / config setters, `SrtSocket::stats`,
+`SrtSocket::peer_addr`, `SrtSocket::local_addr`, `SrtSocket::stream_id`,
+`SrtSocket::close`, `SrtListener::close`.
 
 Timeouts are configured pre-`connect` / pre-`bind` via the builder's
 `recv_timeout(Duration)` and `send_timeout(Duration)` (or
-`SocketConfig::recv_timeout` / `send_timeout`); retune post-connect
-via `Socket::set_recv_timeout` / `Socket::set_send_timeout`.
+`SrtSocketConfig::recv_timeout` / `send_timeout`); retune post-connect
+via `SrtSocket::set_recv_timeout` / `SrtSocket::set_send_timeout`.
 
 **Bounding `accept`:** libsrt's `srt_accept` does not honor
-`SRTO_RCVTIMEO` — `ListenerBuilder::recv_timeout` and
-`Listener::set_recv_timeout` apply to *accepted sockets*, not to the
+`SRTO_RCVTIMEO` — `SrtListenerBuilder::recv_timeout` and
+`SrtListener::set_recv_timeout` apply to *accepted sockets*, not to the
 `accept` call itself. To impose a deadline on the accept call, use
-[`Listener::accept_timeout(duration)`](/crates/tst-srt/src/listener.rs)
+[`SrtListener::accept_timeout(duration)`](/crates/tst-srt/src/listener.rs)
 instead of `listener.accept()`. It registers the listener fd with a
 one-shot `srt_epoll_wait` and returns `AcceptError::TimedOut` when
 `duration` elapses with no incoming connection.
 
 ```rust
 use std::time::Duration;
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 
-let mut listener = ListenerBuilder::new().bind("127.0.0.1:9000")?;
+let mut listener = SrtListenerBuilder::new().bind("127.0.0.1:9000")?;
 // accept_timeout returns Err(AcceptError::TimedOut) after 500 ms.
 match listener.accept_timeout(Duration::from_millis(500)) {
     Ok((socket, peer)) => { /* handle connection */ }
@@ -521,7 +521,7 @@ sync-vs-async section in [reference/architecture.md](/docs/reference/architectur
 
 ## Cancelling a blocked call
 
-`Socket::cancel_handle()` and `Listener::cancel_handle()` return a
+`SrtSocket::cancel_handle()` and `SrtListener::cancel_handle()` return a
 clone-able `ResourceCancel` (`Send + Sync`, idempotent). Calling
 `cancel()` from any thread closes the underlying SRT socket: a thread
 parked in `send` / `recv` wakes with a connection error, and a parked
@@ -579,7 +579,7 @@ FFmpeg, GStreamer, etc.) — use builder-style config if portability matters.
 
 `mode=caller` (the default when `?mode=` is absent) and `mode=listener`
 are both accepted. `mode=rendezvous` rejects with
-`UrlError::UnsupportedMode`. Userinfo (`srt://user:pass@host:port`) is
+`SrtUrlError::UnsupportedMode`. Userinfo (`srt://user:pass@host:port`) is
 explicitly rejected, with a hint pointing at `?passphrase=...` —
 userinfo is not used by mainstream SRT tooling and is too easy to
 leak through logs.
@@ -588,14 +588,14 @@ leak through logs.
 
 When a URL query parameter and a builder setter both target the same
 option, **the URL value wins**. Last-occurrence wins on duplicate keys.
-`SrtUrl::config` is a `SocketConfig` holding exactly the keys the URL
+`SrtUrl::config` is a `SrtSocketConfig` holding exactly the keys the URL
 carried. Layer it over a config you built with
 `cfg.merge_from(&parsed.config)`: every key the URL set overwrites, every
 other field keeps its value, and `role` is never touched. A listener takes
 it as `listener_cfg.socket.merge_from(&parsed.config)`. To open the URL
 directly, `SrtUrl::socket_config(role)` returns the dial config (the
 sender preset is merged under the URL for `Role::Sender`) and
-`SrtUrl::listener_config()` the listener's. The caller's `SocketBuilder`
+`SrtUrl::listener_config()` the listener's. The caller's `SrtSocketBuilder`
 is never mutated by URL parsing.
 
 ### Strictness
@@ -608,13 +608,13 @@ Strict ASCII canonical forms — matches libsrt apps' own URL parser:
 - Strings: percent-decoded once via the form-urlencoded convention
   (`+` is treated as space; literal `+` must be encoded as `%2B`).
 
-Anything else rejects with `UrlError::InvalidValue` carrying the key
+Anything else rejects with `SrtUrlError::InvalidValue` carrying the key
 name and a description.
 
 ### Deferred / unsupported keys
 
 About two dozen libsrt URL keys are recognized by name but not yet
-exposed (the parser knows them and rejects with `UrlError::UnsupportedKey`
+exposed (the parser knows them and rejects with `SrtUrlError::UnsupportedKey`
 carrying the libsrt `SRTO_*` name so the operator can tell whether a
 URL was malformed or asked for an option this library doesn't ship
 yet). See [`deferred-features.md`](/docs/project/deferred-features.md) for the full
@@ -635,12 +635,12 @@ Each item below maps to an entry in
   libsrt 1.5.7 negotiates with anything 1.3 or newer.
 - Typed FEC / packet-filter builder — pass the libsrt spec string
   verbatim today.
-- Stream-ID filtering on `Listener` — kept caller-side intentionally.
+- Stream-ID filtering on `SrtListener` — kept caller-side intentionally.
 - Custom congestion-controller selection — `Live` and `File` ship.
 
 ## See also
 
 - **Runnable example:** `cargo run -p tst-examples --example sender_from_url` — [examples/sending/sender_from_url.rs](/examples/sending/sender_from_url.rs)
 - **Runnable example:** `cargo run -p tst-examples --example encrypted_send_recv` — [examples/sending/encrypted_send_recv.rs](/examples/sending/encrypted_send_recv.rs)
-- [guides/pipeline.md](/docs/guides/pipeline.md) — the higher-level shells that wrap a `Socket`.
+- [guides/pipeline.md](/docs/guides/pipeline.md) — the higher-level shells that wrap a `SrtSocket`.
 - [reference/architecture.md](/docs/reference/architecture.md) — how `tst-srt` fits with `tst-core` and `tst-pipeline`.

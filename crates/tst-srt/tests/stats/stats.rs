@@ -2,7 +2,7 @@
 
 use std::sync::mpsc;
 use std::time::Duration;
-use tst_srt::SocketBuilder;
+use tst_srt::SrtSocketBuilder;
 
 #[test]
 fn stats_after_round_trip_show_nonzero_bytes() {
@@ -26,7 +26,7 @@ fn stats_after_round_trip_show_nonzero_bytes() {
     });
     accept.wait_ready();
 
-    let mut socket = SocketBuilder::new()
+    let mut socket = SrtSocketBuilder::new()
         .recv_timeout(Duration::from_secs(5))
         .send_timeout(Duration::from_secs(5))
         .connect(format!("127.0.0.1:{port}"))

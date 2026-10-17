@@ -21,7 +21,7 @@
 use std::ffi::CString;
 use std::time::{Duration, Instant};
 
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 use tstrans::config::{
     tst_reconnect_policy_free, tst_reconnect_policy_new,
     tst_reconnect_policy_set_backoff_constant_ms, tst_reconnect_policy_set_max_attempts,
@@ -42,7 +42,7 @@ use crate::common::last_error_msg;
 fn recv_side_reconnect_attempts_counts_attempts_not_successes() {
     // A listener that accepts exactly one peer and is then dropped: every
     // later factory call (a fresh connect to the same port) fails.
-    let mut listener = ListenerBuilder::new()
+    let mut listener = SrtListenerBuilder::new()
         .recv_timeout(Duration::from_secs(5))
         .bind("127.0.0.1:0")
         .expect("bind");

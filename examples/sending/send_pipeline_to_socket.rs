@@ -2,7 +2,7 @@
 //!
 //! This is the SRT-side analogue of `mux_to_file.rs` — same synthetic-AU
 //! shape, but the file sink is replaced with an `SrtTransport`. Demonstrates
-//! the canonical `MuxSender` + `SocketBuilder` shape integrators reach for
+//! the canonical `MuxSender` + `SrtSocketBuilder` shape integrators reach for
 //! when the upstream is an encoder and the downstream is an SRT peer.
 //!
 //! On the receiver side, run something like:
@@ -15,7 +15,7 @@ use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::MuxerConfig;
 use tst_pipeline::MuxSender;
-use tst_srt::SocketBuilder;
+use tst_srt::SrtSocketBuilder;
 use tst_srt::SrtTransport;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:9000".into());
 
-    // SocketBuilder applies sender-side defaults via `connect`. The single
+    // SrtSocketBuilder applies sender-side defaults via `connect`. The single
     // option we override here is `latency`, the most user-visible knob:
     //
     //   - SRT's reliability comes from a fixed-latency receiver buffer; the
@@ -40,11 +40,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //   - `passphrase` — enables AES encryption (10..=79 chars). Must match
     //     on both ends. See `encrypted_send_recv.rs` for the full pattern.
     //
-    // Bind-then-step shape (`SocketBuilder` is `&mut self -> &mut Self`):
+    // Bind-then-step shape (`SrtSocketBuilder` is `&mut self -> &mut Self`):
     // construct, mutate, then call the terminal `connect`. Same shape every
     // example uses — see `docs/reference/binding-authors.md` for how Kotlin/Swift/
     // Python bindings spell the same idiom.
-    let mut sb = SocketBuilder::new();
+    let mut sb = SrtSocketBuilder::new();
     sb.latency(Duration::from_millis(120));
     let socket = sb.connect(addr.as_str())?;
 

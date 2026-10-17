@@ -1,7 +1,7 @@
 //! Drop semantics + explicit close.
 
 use std::time::Duration;
-use tst_srt::SocketBuilder;
+use tst_srt::SrtSocketBuilder;
 
 #[test]
 fn drop_closes_cleanly() {
@@ -14,7 +14,7 @@ fn drop_closes_cleanly() {
     });
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .recv_timeout(Duration::from_secs(5))
         .connect(format!("127.0.0.1:{port}"))
         .expect("connect");
@@ -40,7 +40,7 @@ fn explicit_close_succeeds() {
     });
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .recv_timeout(Duration::from_secs(5))
         .connect(format!("127.0.0.1:{port}"))
         .expect("connect");

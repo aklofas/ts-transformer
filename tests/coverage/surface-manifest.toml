@@ -1519,7 +1519,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-srt"
-item = "tst_srt::SocketBuilder"
+item = "tst_srt::SrtSocketBuilder"
 owning_tests = ["crates/tst-srt/tests/builder/lifecycle.rs"]
 bindings = ["java:org.tstrans.srt.Builder", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
@@ -1528,7 +1528,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-srt"
-item = "tst_srt::Socket"
+item = "tst_srt::SrtSocket"
 owning_tests = ["crates/tst-srt/tests/builder/lifecycle.rs"]
 bindings = ["java:org.tstrans.srt.Socket", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
@@ -1537,7 +1537,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-srt"
-item = "tst_srt::Listener"
+item = "tst_srt::SrtListener"
 owning_tests = ["crates/tst-srt/tests/builder/listener.rs"]
 bindings = ["java:org.tstrans.srt.Listener", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
@@ -1721,7 +1721,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-srt"
-item = "tst_srt::listener::Listener::accept_one_cancellable"
+item = "tst_srt::listener::SrtListener::accept_one_cancellable"
 owning_tests = ["crates/tst-srt/tests/loopback/listener_accept_one_cancellable.rs"]
 # Bind + one accept reachable through a CancelSlot — the body every SRT
 # listener reconnect factory used to copy. Called by the C, Python and JVM
@@ -2688,22 +2688,22 @@ reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
 item = "tst_rtp::rtsp::client::session::RtspSession::into_h264_receiver"
 reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
 
-# tst_srt::Listener graduated to [[surface]] once the JVM SRT binding covered it.
+# tst_srt::SrtListener graduated to [[surface]] once the JVM SRT binding covered it.
 
-# tst_srt::Socket graduated to [[surface]] once the JVM SRT binding covered it.
+# tst_srt::SrtSocket graduated to [[surface]] once the JVM SRT binding covered it.
 
-# tst_srt::SocketBuilder graduated to [[surface]] once the JVM SRT binding covered it.
+# tst_srt::SrtSocketBuilder graduated to [[surface]] once the JVM SRT binding covered it.
 
 [[exempt]]
-item = "tst_srt::builder::ListenerBuilder::recv_buf_bytes"
+item = "tst_srt::builder::SrtListenerBuilder::recv_buf_bytes"
 reason = "renamed from recv_buf_packets; bulk bootstrap 2026-06-03"
 
 [[exempt]]
-item = "tst_srt::builder::SocketBuilder::recv_buf_bytes"
+item = "tst_srt::builder::SrtSocketBuilder::recv_buf_bytes"
 reason = "renamed from recv_buf_packets; bulk bootstrap 2026-06-03"
 
 [[exempt]]
-item = "tst_srt::builder::SocketBuilder::send_buf_bytes"
+item = "tst_srt::builder::SrtSocketBuilder::send_buf_bytes"
 reason = "renamed from send_buf_packets; bulk bootstrap 2026-06-03"
 
 [[exempt]]

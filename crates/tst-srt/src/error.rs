@@ -1,6 +1,6 @@
 //! Error types for tst-srt.
 //!
-//! Per-call-category enums (`ConnectError`, `BindError`, etc.) are the
+//! Per-call-category enums (`SrtConnectError`, `BindError`, etc.) are the
 //! Rust-idiomatic surface — exhaustive `match` is meaningful at every call
 //! site. The umbrella `SrtError` exists for callers who want one type to
 //! propagate across categories.
@@ -221,7 +221,7 @@ pub enum IoError {
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
-pub enum ConnectError {
+pub enum SrtConnectError {
     #[error("invalid address: {0}")]
     InvalidAddress(#[from] AddrError),
     #[error("encryption configuration rejected: {detail}")]
@@ -321,7 +321,7 @@ pub enum RecvError {
 #[non_exhaustive]
 pub enum SrtError {
     #[error(transparent)]
-    Connect(#[from] ConnectError),
+    Connect(#[from] SrtConnectError),
     #[error(transparent)]
     Bind(#[from] BindError),
     #[error(transparent)]
@@ -406,14 +406,14 @@ pub(crate) fn last_reject(sock: srt_sys::SRTSOCKET) -> RejectReason {
 ///
 /// The `reason` must be obtained via [`last_reject`] from the live socket
 /// **before** `srt_close` is called. This function is the single point where
-/// `RawError` is translated into `ConnectError`; the `From<RawError>` impl
+/// `RawError` is translated into `SrtConnectError`; the `From<RawError>` impl
 /// delegates here (for call sites that have already read the reject reason).
 ///
 /// # Category note
 /// SRT handshake rejects produce `SRT_ECONNREJ = 1002` → major 1 →
 /// `SrtErrno::Setup`. Plain connection refusals produce major-2 codes. Both
 /// categories must be checked for a typed reject reason.
-pub(crate) fn classify_connect_error(raw: RawError, reason: RejectReason) -> ConnectError {
+pub(crate) fn classify_connect_error(raw: RawError, reason: RejectReason) -> SrtConnectError {
     if matches!(raw.kind, SrtErrno::Connection | SrtErrno::Setup) {
         // SRT_REJ_TIMEOUT (16): the peer set RejectReason::Timeout on a
         // connect that exhausted SRTO_CONNTIMEO (raises SRT_ENOSERVER /
@@ -421,11 +421,11 @@ pub(crate) fn classify_connect_error(raw: RawError, reason: RejectReason) -> Con
         // `reason != Unknown` branch, which would otherwise produce a
         // misleading Rejected{Timeout} ("peer rejected" — no peer answered).
         if reason == RejectReason::Timeout {
-            return ConnectError::TimedOut;
+            return SrtConnectError::TimedOut;
         }
         // `reason != Unknown` means libsrt recorded a typed handshake reject.
         if reason != RejectReason::Unknown {
-            return ConnectError::Rejected {
+            return SrtConnectError::Rejected {
                 reason,
                 detail: raw.message,
             };
@@ -438,12 +438,12 @@ pub(crate) fn classify_connect_error(raw: RawError, reason: RejectReason) -> Con
     if matches!(raw.kind, SrtErrno::Connection)
         && (raw.message.contains("refused") || raw.message.contains("Refused"))
     {
-        return ConnectError::Refused;
+        return SrtConnectError::Refused;
     }
     if is_timeout(&raw) {
-        return ConnectError::TimedOut;
+        return SrtConnectError::TimedOut;
     }
-    ConnectError::Other {
+    SrtConnectError::Other {
         kind: raw.kind,
         message: raw.message,
     }
@@ -593,8 +593,8 @@ pub(crate) fn is_broken(raw: &RawError) -> bool {
 // matched where it doesn't (broken/refused/in-use ride generic majors).
 // ============================================================================
 
-impl From<RawError> for ConnectError {
-    /// Convert a raw libsrt error to `ConnectError` without a pre-captured
+impl From<RawError> for SrtConnectError {
+    /// Convert a raw libsrt error to `SrtConnectError` without a pre-captured
     /// reject reason. The connect path in `socket.rs` uses
     /// [`classify_connect_error`] directly (which accepts a reject reason
     /// captured from the live socket before `srt_close`); this `From` impl
@@ -682,6 +682,10 @@ impl From<RawError> for IoError {
     }
 }
 
+/// The name this type had before it was renamed.
+#[deprecated(since = "0.9.0", note = "renamed to `SrtConnectError`")]
+pub type ConnectError = SrtConnectError;
+
 #[cfg(test)]
 // bindgen emits `SRT_REJECT_REASON_*` and `SRT_REJX_*` constants as
 // `u32` on most targets (since they're #defined as positive ordinals
@@ -706,9 +710,9 @@ mod tests {
 
     #[test]
     fn umbrella_from_per_call() {
-        let e: SrtError = ConnectError::TimedOut.into();
+        let e: SrtError = SrtConnectError::TimedOut.into();
         match e {
-            SrtError::Connect(ConnectError::TimedOut) => {}
+            SrtError::Connect(SrtConnectError::TimedOut) => {}
             _ => panic!("expected Connect(TimedOut)"),
         }
     }
@@ -1209,7 +1213,7 @@ mod tests {
         let reason = RejectReason::BadSecret;
         let err = classify_connect_error(raw, reason);
         match err {
-            ConnectError::Rejected {
+            SrtConnectError::Rejected {
                 reason: RejectReason::BadSecret,
                 ..
             } => {}
@@ -1228,7 +1232,7 @@ mod tests {
         let reason = RejectReason::Unknown;
         let err = classify_connect_error(raw, reason);
         match err {
-            ConnectError::Other { .. } => {}
+            SrtConnectError::Other { .. } => {}
             other => panic!("expected Other, got {other:?}"),
         }
     }
@@ -1244,7 +1248,7 @@ mod tests {
         let reason = RejectReason::Unknown;
         let err = classify_connect_error(raw, reason);
         match err {
-            ConnectError::Refused => {}
+            SrtConnectError::Refused => {}
             other => panic!("expected Refused, got {other:?}"),
         }
     }
@@ -1263,14 +1267,14 @@ mod tests {
         let reason = RejectReason::Unknown;
         let err = classify_connect_error(raw, reason);
         match err {
-            ConnectError::Other { .. } => {}
+            SrtConnectError::Other { .. } => {}
             other => panic!("expected Other, got {other:?}"),
         }
     }
 
     // A blocking connect that exhausts SRTO_CONNTIMEO raises
     // SRT_ENOSERVER (major Setup) and sets RejectReason::Timeout.  The
-    // documented ConnectError::TimedOut must be returned, not Rejected.
+    // documented SrtConnectError::TimedOut must be returned, not Rejected.
     #[test]
     fn setup_category_reject_timeout_maps_to_timed_out() {
         let raw = RawError {
@@ -1281,7 +1285,7 @@ mod tests {
         let reason = RejectReason::Timeout;
         let err = classify_connect_error(raw, reason);
         match err {
-            ConnectError::TimedOut => {}
+            SrtConnectError::TimedOut => {}
             other => panic!("expected TimedOut, got {other:?}"),
         }
     }
@@ -1298,7 +1302,7 @@ mod tests {
         let reason = RejectReason::BadSecret;
         let err = classify_connect_error(raw, reason);
         match err {
-            ConnectError::Rejected {
+            SrtConnectError::Rejected {
                 reason: RejectReason::BadSecret,
                 ..
             } => {}
@@ -1319,7 +1323,7 @@ mod tests {
         let reason = RejectReason::Unknown;
         let err = classify_connect_error(raw, reason);
         match err {
-            ConnectError::TimedOut => {}
+            SrtConnectError::TimedOut => {}
             other => panic!("expected TimedOut, got {other:?}"),
         }
     }

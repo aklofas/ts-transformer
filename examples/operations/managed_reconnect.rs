@@ -27,7 +27,7 @@ use tst_pipeline::{
     TransportError,
 };
 use tst_srt::SrtTransport;
-use tst_srt::{ListenerBuilder, SocketBuilder};
+use tst_srt::{SrtListenerBuilder, SrtSocketBuilder};
 
 // NUM_FRAMES is the total number of synthetic video frames the sender pushes.
 // Sized so we span at least two peer-induced disconnects with comfortable
@@ -99,8 +99,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // of the two peers' values, and a mismatch is a common config
             // smell to flag.
             //
-            // Bind-then-step shape (`ListenerBuilder` is `&mut self -> &mut Self`).
-            let mut lb = ListenerBuilder::new();
+            // Bind-then-step shape (`SrtListenerBuilder` is `&mut self -> &mut Self`).
+            let mut lb = SrtListenerBuilder::new();
             lb.latency(Duration::from_millis(120));
             let mut listener = lb.bind(bind_addr.as_str())?;
             ready_tx.send(()).ok();
@@ -172,7 +172,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The `move` captures `connect_addr_for_factory` by value — the closure
     // owns its address string, so each rebuild knows where to dial.
     //
-    // We map `ConnectError` (the rich, typed error from `SocketBuilder`)
+    // We map `ConnectError` (the rich, typed error from `SrtSocketBuilder`)
     // onto `TransportError::Broken` because `ManagedTransport`'s contract
     // speaks `TransportError`. The projection collapses a number of
     // distinct connect-time failure modes into one bucket — that's
@@ -182,11 +182,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------------------------------------------------------------------
     let connect_addr_for_factory = connect_addr.clone();
     let factory = move || -> Result<SrtTransport, TransportError> {
-        // Bind-then-step shape (`SocketBuilder` is `&mut self -> &mut Self`).
+        // Bind-then-step shape (`SrtSocketBuilder` is `&mut self -> &mut Self`).
         // `connect` is a `&self` terminal so chaining `.map_err()` after it on
         // the same expression is fine — the named binding only matters for the
         // mutating steps.
-        let mut sb = SocketBuilder::new();
+        let mut sb = SrtSocketBuilder::new();
         sb.latency(Duration::from_millis(120));
         let socket =
             sb.connect(connect_addr_for_factory.as_str())

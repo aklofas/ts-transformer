@@ -2,7 +2,7 @@
 
 use std::net::ToSocketAddrs;
 use std::time::Duration;
-use tst_srt::SocketBuilder;
+use tst_srt::SrtSocketBuilder;
 
 #[test]
 fn connect_walks_to_v4_when_v6_first_and_unbindable() {
@@ -29,7 +29,7 @@ fn connect_walks_to_v4_when_v6_first_and_unbindable() {
     let accept = lb.spawn_accept(|sock| sock);
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .connect_timeout(Duration::from_secs(2))
         .send_timeout(Duration::from_secs(5))
         .connect(format!("localhost:{port}"))

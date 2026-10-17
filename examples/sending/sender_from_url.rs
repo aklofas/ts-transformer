@@ -2,7 +2,7 @@
 //!
 //! Demonstrates the full `srt://host:port?key=value` flow: parse the URL,
 //! merge its keys into a `SocketConfig`, connect. Then opens an
-//! intentionally-malformed URL to show how each `UrlError` variant
+//! intentionally-malformed URL to show how each `SrtUrlError` variant
 //! surfaces — the error vocabulary is part of the API and worth seeing
 //! end-to-end.
 //!
@@ -18,7 +18,7 @@
 //! There's no listener side here; the connect call will fail with
 //! `connection refused` or similar — the point is the URL parse + apply.
 
-use tst_srt::{SocketBuilder, SrtUrl, UrlError};
+use tst_srt::{SrtSocketBuilder, SrtUrl, SrtUrlError};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Happy path: parse a URL with a representative subset of options.
@@ -40,11 +40,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //    (the URL will overwrite them, which is exactly the intended
     //    semantic for deployment overrides).
     //
-    // Bind-then-step shape (`SocketBuilder` is `&mut self -> &mut Self`):
+    // Bind-then-step shape (`SrtSocketBuilder` is `&mut self -> &mut Self`):
     // construct, mutate, then call the terminal `config()`. This shape
     // mirrors how Kotlin/Swift/Python bindings will spell the same idiom
     // — see `docs/reference/binding-authors.md`.
-    let mut sb = SocketBuilder::new();
+    let mut sb = SrtSocketBuilder::new();
     // Hypothetical baked-in default: 100ms latency. URL says 200ms,
     // so this gets overwritten — that's the intended behavior.
     sb.latency_ms(100);
@@ -63,12 +63,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //    shape).
     //
     // Uncomment if running against a real listener:
-    // let socket = tst_srt::Socket::connect_with(
+    // let socket = tst_srt::SrtSocket::connect_with(
     //     &config,
     //     format!("{}:{}", parsed.host, parsed.port).as_str(),
     // )?;
 
-    // 4. Show how each UrlError variant surfaces — useful for operators
+    // 4. Show how each SrtUrlError variant surfaces — useful for operators
     //    who need to know which malformed URL produces which message.
     //
     // We exercise the most-common variants here. The full set lives in
@@ -95,23 +95,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn print_error_classification(label: &str, e: &UrlError) {
+fn print_error_classification(label: &str, e: &SrtUrlError) {
     // Why a separate helper: distinguishing variant family in operator
-    // logs is the point of this example. The Display impl on UrlError
+    // logs is the point of this example. The Display impl on SrtUrlError
     // already produces a readable message; here we add the variant tag
     // so operators can see "ah, that's a parser-level type error
     // (InvalidValue) vs. a typed-constructor rejection (OptionValidation)".
     let variant = match e {
-        UrlError::Syntax(_) => "Syntax",
-        UrlError::WrongScheme { .. } => "WrongScheme",
-        UrlError::MissingPort => "MissingPort",
-        UrlError::MissingHost => "MissingHost",
-        UrlError::UserinfoNotSupported => "UserinfoNotSupported",
-        UrlError::UnsupportedMode { .. } => "UnsupportedMode",
-        UrlError::UnsupportedKey { .. } => "UnsupportedKey",
-        UrlError::UnknownKey { .. } => "UnknownKey",
-        UrlError::InvalidValue { .. } => "InvalidValue",
-        UrlError::OptionValidation { .. } => "OptionValidation",
+        SrtUrlError::Syntax(_) => "Syntax",
+        SrtUrlError::WrongScheme { .. } => "WrongScheme",
+        SrtUrlError::MissingPort => "MissingPort",
+        SrtUrlError::MissingHost => "MissingHost",
+        SrtUrlError::UserinfoNotSupported => "UserinfoNotSupported",
+        SrtUrlError::UnsupportedMode { .. } => "UnsupportedMode",
+        SrtUrlError::UnsupportedKey { .. } => "UnsupportedKey",
+        SrtUrlError::UnknownKey { .. } => "UnknownKey",
+        SrtUrlError::InvalidValue { .. } => "InvalidValue",
+        SrtUrlError::OptionValidation { .. } => "OptionValidation",
         _ => "Other",
     };
     println!("[{label}] {variant}: {e}");

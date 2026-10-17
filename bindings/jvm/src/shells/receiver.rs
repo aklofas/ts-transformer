@@ -23,7 +23,7 @@ use super::open::{open_recv, read_url};
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
 use crate::generated::stats_shells::build_socket_stats;
-use crate::generated::stats_srt::build_stats as build_srt_stats;
+use crate::generated::stats_srt::build_srt_stats;
 use crate::handle::OwnedRegistry;
 
 type Shell = PlReceiver<Box<dyn RecvTransport>>;

@@ -5,8 +5,8 @@
 //! `std::net::SocketAddr` and the C representation exclusively through
 //! these helpers so callers never touch raw FFI.
 //!
-//! Both IPv4 and IPv6 are supported — `Socket::connect_with` and
-//! `Listener::bind_with` walk every address resolved by
+//! Both IPv4 and IPv6 are supported — `SrtSocket::connect_with` and
+//! `SrtListener::bind_with` walk every address resolved by
 //! `to_socket_addrs`, so AAAA records that resolve before A records on
 //! dual-stack hosts will be tried first, falling through to v4 if v6
 //! isn't routable.
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn os_sockaddr_layout_matches_sockaddr_in_on_v4() {
-        // Smoke check: the FFI cast Socket::connect / Listener::bind use
+        // Smoke check: the FFI cast SrtSocket::connect / SrtListener::bind use
         // assumes OsSocketAddr's storage matches the platform's
         // sockaddr layout. Verify the byte length agrees with libc's
         // sockaddr_in on Unix — on Windows libc::sockaddr_in doesn't

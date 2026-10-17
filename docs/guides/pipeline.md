@@ -118,11 +118,11 @@ Mirroring [../examples/sending/send_pipeline_to_socket.rs](/examples/sending/sen
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::MuxerConfig;
 use tst_pipeline::MuxSender;
-use tst_srt::{SocketBuilder, SrtTransport};
+use tst_srt::{SrtSocketBuilder, SrtTransport};
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .latency(Duration::from_millis(120))
         .connect("127.0.0.1:9000")?;
     let sender = MuxSender::new(SrtTransport::new(socket), MuxerConfig::default())?;
@@ -184,13 +184,13 @@ Mirroring [../examples/receiving/ts_relay_from_file.rs](/examples/receiving/ts_r
 
 ```rust,no_run
 use tst_pipeline::{Sender, SenderConfig};
-use tst_srt::{SocketBuilder, SrtTransport};
+use tst_srt::{SrtSocketBuilder, SrtTransport};
 use std::fs::File;
 use std::io::Read;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .latency(Duration::from_millis(120))
         .connect("127.0.0.1:9000")?;
     let mut sender = Sender::new(SrtTransport::new(socket), SenderConfig::default());
@@ -266,7 +266,7 @@ internally where their thread-safety contract requires it.
   same way: a call parked in `send_bytes` / `recv_bytes` when `cancel()`
   runs returns `ExplicitClose`, and so does every call after it — SRT,
   TCP/TLS, RTP, UDP, RIST and both managed wrappers, as well as
-  `tst_srt::Listener::accept_one_cancellable`. `SrtTransport`'s cancel
+  `tst_srt::SrtListener::accept_one_cancellable`. `SrtTransport`'s cancel
   closes the socket under the parked call and libsrt reports a connection
   error, but the transport reads its own cancel latch and reports the
   cancel; a cancel never surfaces as `Broken`. `ManagedRecvTransport` also
@@ -315,12 +315,12 @@ impl SrtTransport {
 }
 ```
 
-`SrtTransport::new` wraps an already-connected `Socket`. Configure the
+`SrtTransport::new` wraps an already-connected `SrtSocket`. Configure the
 socket (passphrase, latency, stream id, etc.) before wrapping —
 `SrtTransport` doesn't expose libsrt knobs of its own. `max_payload` is
 read from the socket's negotiated `SRTO_PAYLOADSIZE`
-(`Socket::payload_limit`) — 1316 for an unconfigured socket, or e.g. 1456
-when `payloadsize=` / `SocketConfig::payload_size` was set. `DEFAULT_PAYLOAD`
+(`SrtSocket::payload_limit`) — 1316 for an unconfigured socket, or e.g. 1456
+when `payloadsize=` / `SrtSocketConfig::payload_size` was set. `DEFAULT_PAYLOAD`
 is the 1316-byte fallback constant.
 
 Error mapping from `SendError` → `TransportError`:
@@ -333,16 +333,16 @@ Error mapping from `SendError` → `TransportError`:
 | `Other { kind: SrtErrno::Async, .. }` | `Backpressure(message)` |
 | `Other { .. }` | `Broken(message)` (drops socket) |
 
-When a transport is marked broken, the wrapped `Socket` is dropped
+When a transport is marked broken, the wrapped `SrtSocket` is dropped
 internally — subsequent `send_bytes` calls return `Closed` until a
 new `SrtTransport` is built.
 
-### Default sender SocketConfig overrides (tst-c connect path)
+### Default sender SrtSocketConfig overrides (tst-c connect path)
 
 A caller-mode open from an `srt://` URL — `tst_srt::SrtUrl::connect`, and
 therefore every caller-mode `tst_*_open` in the C ABI — merges these
-overrides into the URL's `SocketConfig`
-(`SocketConfig::merge_sender_defaults`, only for fields the URL left
+overrides into the URL's `SrtSocketConfig`
+(`SrtSocketConfig::merge_sender_defaults`, only for fields the URL left
 unset):
 
 | Field | Default | libsrt default | Why |
@@ -351,9 +351,9 @@ unset):
 | `linger` | 5 s | off (0 s; drains in background) | Bounds an intentional synchronous drain on close — libsrt's own default returns immediately without waiting for the backlog to flush |
 | `role` | `Role::Sender` | `Role::Receiver` (default) | Sets `SRTO_SENDER=1` for HSv4-peer compatibility |
 
-Pure-Rust users who build a `SrtTransport` via `SocketBuilder` directly
+Pure-Rust users who build a `SrtTransport` via `SrtSocketBuilder` directly
 do **not** get these defaults — set them explicitly via the builder, or
-start from `SocketConfig::sender_defaults()`.
+start from `SrtSocketConfig::sender_defaults()`.
 
 ## `ManagedTransport<T>` — reconnect + gap buffer
 
@@ -370,7 +370,7 @@ plain or wrapped.
 
 The factory closure is what the manager calls to rebuild the inner
 transport. Most callers wire it as a closure running
-`SocketBuilder::new()...connect(addr).map(SrtTransport::new)`. The
+`SrtSocketBuilder::new()...connect(addr).map(SrtTransport::new)`. The
 closure must be `Fn + Send + Sync + 'static` so the manager can hold
 it in an `Arc<dyn Fn …>`.
 
@@ -603,11 +603,11 @@ for strict-mode rejections, unrecoverable sync loss, or malformed PES.
 ```rust,no_run
 use tst_core::mpegts::demux::DemuxEvent;
 use tst_pipeline::DemuxReceiver;
-use tst_srt::{ListenerBuilder, SrtTransport};
+use tst_srt::{SrtListenerBuilder, SrtTransport};
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut listener = ListenerBuilder::new()
+    let mut listener = SrtListenerBuilder::new()
         .latency(Duration::from_millis(120))
         .bind("0.0.0.0:9000")?;
     let (socket, _peer) = listener.accept()?;
@@ -709,7 +709,7 @@ timeout (transport still alive, caller may retry). It never returns
 closed.
 
 Whether the timeout arm can fire is per-transport configuration: SRT
-via `SocketBuilder::recv_timeout` / `Socket::set_recv_timeout`
+via `SrtSocketBuilder::recv_timeout` / `SrtSocket::set_recv_timeout`
 (`SRTO_RCVTIMEO`), RTP via `RtpRecvTransport::set_recv_timeout`. With
 one configured, a `DemuxReceiver` pump regains control on every
 deadline tick as a retryable `Backpressure`-kind error — a stall
@@ -936,6 +936,6 @@ Receive side:
 ## See also
 
 - **Runnable example:** `cargo run -p tst-examples --example send_pipeline_to_socket` — [examples/sending/send_pipeline_to_socket.rs](/examples/sending/send_pipeline_to_socket.rs)
-- [guides/srt.md](/docs/guides/srt.md) — the `Socket` and `Listener` that sit behind `SrtTransport`.
+- [guides/srt.md](/docs/guides/srt.md) — the `SrtSocket` and `SrtListener` that sit behind `SrtTransport`.
 - [guides/mpegts-mux.md](/docs/guides/mpegts-mux.md) — the muxer that `MuxSender` wraps.
 - [guides/mpegts-demux.md](/docs/guides/mpegts-demux.md) — the demuxer that `DemuxReceiver` wraps.

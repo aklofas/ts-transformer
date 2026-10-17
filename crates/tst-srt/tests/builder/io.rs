@@ -1,7 +1,7 @@
 //! Send/recv round-trip; timeouts; buffer-too-small.
 
 use std::time::Duration;
-use tst_srt::SocketBuilder;
+use tst_srt::SrtSocketBuilder;
 use tst_srt::error::RecvError;
 
 #[test]
@@ -19,7 +19,7 @@ fn small_payload_round_trips() {
     });
     accept.wait_ready();
 
-    let mut socket = SocketBuilder::new()
+    let mut socket = SrtSocketBuilder::new()
         .recv_timeout(Duration::from_secs(5))
         .send_timeout(Duration::from_secs(5))
         .connect(format!("127.0.0.1:{port}"))
@@ -43,7 +43,7 @@ fn recv_timeout_trips_typed_error() {
     });
     accept.wait_ready();
 
-    let mut socket = SocketBuilder::new()
+    let mut socket = SrtSocketBuilder::new()
         .recv_timeout(Duration::from_millis(500))
         .send_timeout(Duration::from_secs(5))
         .connect(format!("127.0.0.1:{port}"))

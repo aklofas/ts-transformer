@@ -120,20 +120,20 @@ can pull in `tst-core` and use `klv::st0601::decode` without touching the
 muxer or transport. A consumer who already has their own TS muxer can
 skip `mpegts::mux` and feed bytes through `tst_pipeline::Sender`. A
 consumer who only wants the SRT socket — for an entirely different
-streaming protocol on top — can use `tst_srt::Socket` and `tst_srt::Listener`
+streaming protocol on top — can use `tst_srt::SrtSocket` and `tst_srt::SrtListener`
 directly.
 
 ## Inside `tst-srt`
 
 The SRT-specific surface lives in its own crate so `tst-core` stays
 free of any libsrt dependency. `tst-srt` re-exports the safe wrappers
-at the crate root: `Socket` / `Listener` (connected and listening
-sockets), `SocketBuilder` / `ListenerBuilder` (fluent construction over
-`SocketConfig` / `ListenerConfig`), `SrtTransport` (the canonical
+at the crate root: `SrtSocket` / `SrtListener` (connected and listening
+sockets), `SrtSocketBuilder` / `SrtListenerBuilder` (fluent construction over
+`SrtSocketConfig` / `SrtListenerConfig`), `SrtTransport` (the canonical
 `Transport` + `RecvTransport` impl), `ResourceCancel` (one-shot
-pre-emptive close), and `Stats` (live snapshot of libsrt's internal
+pre-emptive close), and `SrtStats` (live snapshot of libsrt's internal
 counters). The `url::SrtUrl` type parses `srt://host:port?key=value&…`
-into a `SocketConfig` using libsrt's documented option vocabulary,
+into a `SrtSocketConfig` using libsrt's documented option vocabulary,
 and `addr::*` handles IPv4 / IPv6 sockaddr marshalling. See
 [guides/srt.md](/docs/guides/srt.md) for the full surface.
 
@@ -146,7 +146,7 @@ implementation. Metadata typing for both directions is `klv::st0601` /
 `klv::st0605`. MPEG-TS sync-metadata AU cell carriage lives at
 `mpegts::au_cell` (per ITU-T H.222.0 V9 § 2.12.4.2). The canonical
 `Transport` + `RecvTransport` impl is `SrtTransport` in `tst-srt` over
-`tst_srt::Socket` — the same wrapper handles both directions on a connected
+`tst_srt::SrtSocket` — the same wrapper handles both directions on a connected
 socket. The opt-in `tst_pipeline::ext::pairing` module ships a stateful `Pairer` for
 KLV ↔ video pairing — see `docs/guides/pipeline.md` for the
 nearest-PTS / sample-and-hold strategy chooser.
@@ -253,7 +253,7 @@ reassembly + NAL split + KLV unwrap). All three are generic over the
 `RecvTransport` trait — the receive-side counterpart to `Transport`,
 exposing `recv_bytes`, `max_payload`, `is_alive`, and `close`.
 `SrtTransport` implements both `Transport` and `RecvTransport`, so the
-same wrapper handles both directions on a connected `tst_srt::Socket`.
+same wrapper handles both directions on a connected `tst_srt::SrtSocket`.
 
 `DemuxReceiver` is the canonical full-demux shell. It composes
 `Receiver → Demuxer` internally and exposes a single `recv_event`
@@ -336,7 +336,7 @@ is the runnable companion.
 
 ## Sync vs. async
 
-The public API is sync blocking. `Socket::send` and `Socket::recv` block
+The public API is sync blocking. `SrtSocket::send` and `SrtSocket::recv` block
 the calling thread; `MuxSender::send_video` blocks until the underlying
 SRT socket has accepted the bytes; reconnect inside `ManagedTransport`
 runs on the caller's thread by default. This isn't an async runtime —
@@ -396,7 +396,7 @@ today's owners.
 | `tst-rtp` | `RtpRecvTransport` built from an RTSP session | one std thread, `rtsp-rtcp-ingest` | when the transport is built from the interleaved pump's channels | never signalled and never joined; it exits when the pump's RTCP sender drops, which the client's `Drop` causes | no exit hook; the thread ends with the process |
 | `tst-hls` | `HlsPublisher` (only when it serves HTTP) | private tokio runtime with 2 worker threads named `tst-hls-rt` | `HlsPublisher::with_config`, which binds the listener | `HlsServerHandle::shutdown()` after `finish_serving()`, or `Drop` of the publisher or handle: cancel, then a wait of up to 2 s for the runtime to shut down | no exit hook; the runtime ends with the process |
 | `tst-pipeline` | `ManagedTransport` with `ReconnectMode::Background` | one unnamed std thread per outage | the first send that finds the inner transport down spawns it, and so does a send that meets a backlog after a give-up | `close()` latches closed, wakes the backoff wait and the inner transport's cancel handle, then joins; the join waits for an in-flight factory call. `Drop` signals the same way and detaches | no exit hook; a worker still running ends with the process |
-| `tst-srt` | libsrt itself (garbage-collector and queue worker threads); not a Rust object | libsrt's threads, process-wide | the first libsrt use (`srt_startup`) | each `Socket` and `Listener` `close()`; `srt_cleanup()` stops the library | guarded: the `atexit` handler in `exit_guard.rs` closes every open socket, waits up to 2 s for operations in flight, then runs `srt_cleanup()` |
+| `tst-srt` | libsrt itself (garbage-collector and queue worker threads); not a Rust object | libsrt's threads, process-wide | the first libsrt use (`srt_startup`) | each `SrtSocket` and `SrtListener` `close()`; `srt_cleanup()` stops the library | guarded: the `atexit` handler in `exit_guard.rs` closes every open socket, waits up to 2 s for operations in flight, then runs `srt_cleanup()` |
 | `tst-rist` | `RistTransport`, `RistRecvTransport` (one librist context each) | librist's protocol thread | `RistCtx::new` calls `rist_start` | `close()` calls `rist_destroy`, which joins the thread. `Drop` calls `close()`, so it waits too | not guarded: there is no exit hook, so keep the owner alive until `close()` returns |
 
 Where today's code differs from the rule, the difference stays until the

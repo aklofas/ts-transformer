@@ -681,6 +681,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   optional durations as `-1`, `org.tstrans.rtp.RtspStats` and
   `org.tstrans.shells.TransportStats` stay hand-written.
 
+### Deprecated — tst-srt
+
+- `Socket`, `Listener`, `SocketBuilder`, `ListenerBuilder`, `SocketConfig`,
+  `ListenerConfig`, `Stats`, `error::ConnectError` and `url::UrlError` are
+  now `SrtSocket`, `SrtListener`, `SrtSocketBuilder`, `SrtListenerBuilder`,
+  `SrtSocketConfig`, `SrtListenerConfig`, `SrtStats`, `SrtConnectError` and
+  `SrtUrlError`. The old names are deprecated aliases at every path they had
+  until 0.10.0. Every other transport's types carry their prefix, and
+  `use tst_srt::SocketConfig` collided with `tst_udp::SocketConfig`.
+
 ### Deprecated — tst-udp, tst-tcp
 
 - `tst_udp::SocketConfig` → `UdpConfig` (the old name is a deprecated alias

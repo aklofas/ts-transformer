@@ -5,7 +5,7 @@
 use crate::common::Loopback;
 use std::time::Duration;
 use tst_core::transport::{RecvTransport, Transport};
-use tst_srt::{SocketBuilder, SrtTransport};
+use tst_srt::{SrtSocketBuilder, SrtTransport};
 
 #[test]
 fn socket_stats_returns_some_on_live_send() {
@@ -23,7 +23,7 @@ fn socket_stats_returns_some_on_live_send() {
     });
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .send_timeout(Duration::from_secs(5))
         .connect(format!("127.0.0.1:{port}"))
         .expect("connect");
@@ -60,7 +60,7 @@ fn socket_stats_returns_none_after_close() {
     });
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .send_timeout(Duration::from_secs(5))
         .connect(format!("127.0.0.1:{port}"))
         .expect("connect");
@@ -101,7 +101,7 @@ fn managed_socket_stats_forwards_when_alive_and_none_after_close() {
     });
     accept.wait_ready();
 
-    let initial = SocketBuilder::new()
+    let initial = SrtSocketBuilder::new()
         .send_timeout(Duration::from_secs(5))
         .connect(format!("127.0.0.1:{port}"))
         .expect("connect");
@@ -157,7 +157,7 @@ fn recv_transport_socket_stats_returns_some_on_live_recv() {
     });
     accept.wait_ready();
 
-    let mut socket = SocketBuilder::new()
+    let mut socket = SrtSocketBuilder::new()
         .send_timeout(Duration::from_secs(5))
         .connect(format!("127.0.0.1:{port}"))
         .expect("connect");

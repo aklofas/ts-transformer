@@ -2,7 +2,7 @@
 
 use std::ffi::c_int;
 use std::time::Duration;
-use tst_srt::{ListenerBuilder, SocketBuilder};
+use tst_srt::{SrtListenerBuilder, SrtSocketBuilder};
 
 fn read_u32(handle: srt_sys::SRTSOCKET, opt: srt_sys::SRT_SOCKOPT) -> Option<u32> {
     let mut value: c_int = 0;
@@ -18,7 +18,7 @@ fn read_u32(handle: srt_sys::SRTSOCKET, opt: srt_sys::SRT_SOCKOPT) -> Option<u32
 #[test]
 fn udp_buffer_sizes_round_trip() {
     require_loopback!();
-    let mut builder = ListenerBuilder::new();
+    let mut builder = SrtListenerBuilder::new();
     builder
         .udp_recv_buffer_bytes(2_000_000)
         .recv_timeout(Duration::from_secs(5));
@@ -28,7 +28,7 @@ fn udp_buffer_sizes_round_trip() {
     let accept = lb.spawn_accept(|sock| sock);
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .udp_recv_buffer_bytes(2_000_000)
         .udp_send_buffer_bytes(2_000_000)
         .send_timeout(Duration::from_secs(5))

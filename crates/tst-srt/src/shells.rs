@@ -30,7 +30,7 @@
 //! Every C caller-mode open — plain and managed, TS / raw / demux — and
 //! every managed caller-mode open in the Python and JVM bindings goes
 //! through [`SrtUrl::connect`], which applies
-//! [`SocketConfig::merge_sender_defaults`](crate::config::SocketConfig::merge_sender_defaults).
+//! [`SrtSocketConfig::merge_sender_defaults`](crate::config::SrtSocketConfig::merge_sender_defaults).
 //! A managed caller-mode RECEIVER therefore runs with the sender preset
 //! (15 s connect timeout, 5 s linger, `Role::Sender`) —
 //! [`SrtUrl::connect_recv`] (the URL-keys-only open) is for the plain
@@ -57,7 +57,7 @@ use crate::url::{Mode, SrtUrl};
 /// [`SrtUrl::accept_one`] passes through unchanged — `ExplicitClose` must
 /// survive so the decorator reports a caller-initiated close, not a wire
 /// fault; `Broken { "bind: …" | "accept: …" }` is already the recoverable
-/// shape. Everything else (the typed [`ConnectError`](crate::ConnectError)
+/// shape. Everything else (the typed [`SrtConnectError`](crate::SrtConnectError)
 /// from [`SrtUrl::connect`]) becomes the recoverable `Broken` the
 /// reconnect loop retries, its message prefixed `connect: `. Once
 /// process exit has started there is nothing to

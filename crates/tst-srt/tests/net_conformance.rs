@@ -8,7 +8,7 @@
 //! retry.
 //!
 //! `peer_eof_is_not_a_cancel` is the row the SRT cancel latch is kept
-//! separate from the "closer has run" sentinel for: `Socket::drop` sets
+//! separate from the "closer has run" sentinel for: `SrtSocket::drop` sets
 //! that sentinel on every transport error path that retires a dead socket,
 //! so an `is_cancelled()` that read it would make a peer that merely went
 //! away indistinguishable from a caller cancel, and every clean SRT
@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use tst_core::transport::conformance::{self as kit, BrokenSource, RecvRow, SendPark, SendRow};
 use tst_core::transport::{RecvTransport, TransportError};
-use tst_srt::{Listener, ListenerBuilder, Socket, SocketBuilder, SrtTransport};
+use tst_srt::{SrtListener, SrtListenerBuilder, SrtSocket, SrtSocketBuilder, SrtTransport};
 
 /// libsrt's live-mode `SRTO_PAYLOADSIZE` maximum — what a foreign peer at the
 /// maximum delivers regardless of our local value (`SRT_LIVE_MAX_PAYLOAD` in
@@ -53,7 +53,7 @@ const RECV_TICK: Duration = Duration::from_millis(200);
 /// The caller's receive buffer is drained afterwards so every row starts
 /// clean: `not_alive_after_cancel` performs exactly ONE receive and would
 /// read a leftover warm-up datagram as success.
-fn warm_up(peer: &mut Socket, t: &mut SrtTransport) {
+fn warm_up(peer: &mut SrtSocket, t: &mut SrtTransport) {
     const WARMUP: [u8; 188] = [0x47; 188];
     let mut buf = vec![0u8; 2048];
     let mut warmed = false;
@@ -84,9 +84,9 @@ fn warm_up(peer: &mut Socket, t: &mut SrtTransport) {
 }
 
 struct Pair {
-    listener: Mutex<Listener>,
+    listener: Mutex<SrtListener>,
     port: u16,
-    peer: Mutex<Option<Socket>>,
+    peer: Mutex<Option<SrtSocket>>,
     /// Pre-obtained at bind, fired by `Drop` — including on an unwind out of
     /// a failed row. libsrt's GC can prune a broken not-yet-accepted
     /// connection from the accept queue, leaving a blocking `accept()` parked
@@ -105,7 +105,7 @@ impl Drop for Pair {
 
 impl Pair {
     fn bind() -> Self {
-        let mut b = ListenerBuilder::new();
+        let mut b = SrtListenerBuilder::new();
         b.recv_timeout(RECV_TICK)
             .send_timeout(Duration::from_secs(5));
         let listener = b.bind("127.0.0.1:0").expect("bind 127.0.0.1:0");
@@ -126,7 +126,7 @@ impl Pair {
     fn connect(&self) -> SrtTransport {
         let port = self.port;
         let caller = thread::spawn(move || {
-            let mut b = SocketBuilder::new();
+            let mut b = SrtSocketBuilder::new();
             b.recv_timeout(RECV_TICK)
                 .send_timeout(Duration::from_secs(5));
             b.connect(format!("127.0.0.1:{port}"))

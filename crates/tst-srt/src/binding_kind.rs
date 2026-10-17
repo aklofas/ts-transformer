@@ -12,15 +12,15 @@
 //! `WOULD_BLOCK`) and `TooLarge` is `TOO_LARGE` (not `CONFIG_INVALID`).
 
 use crate::error::{
-    AcceptError, BindError, ConnectError, IoError, OptionError, RecvError, SendError, SrtError,
+    AcceptError, BindError, IoError, OptionError, RecvError, SendError, SrtConnectError, SrtError,
 };
-use crate::url::UrlError;
+use crate::url::SrtUrlError;
 use tst_pipeline::binding::{BindingError, BindingErrorKind as K};
 
-/// Every `UrlError` variant is caller misconfiguration (no match: the enum
+/// Every `SrtUrlError` variant is caller misconfiguration (no match: the enum
 /// is `#[non_exhaustive]` and there is nothing to discriminate).
-impl From<UrlError> for BindingError {
-    fn from(e: UrlError) -> Self {
+impl From<SrtUrlError> for BindingError {
+    fn from(e: SrtUrlError) -> Self {
         BindingError::new(K::ConfigInvalid, e.to_string())
     }
 }
@@ -39,16 +39,18 @@ impl From<OptionError> for BindingError {
     }
 }
 
-impl From<ConnectError> for BindingError {
-    fn from(e: ConnectError) -> Self {
+impl From<SrtConnectError> for BindingError {
+    fn from(e: SrtConnectError) -> Self {
         let kind = match &e {
-            ConnectError::InvalidAddress(_) | ConnectError::InvalidOption(_) => K::ConfigInvalid,
-            ConnectError::TimedOut => K::SrtTimeout,
-            ConnectError::Refused
-            | ConnectError::BadEncryption { .. }
-            | ConnectError::Rejected { .. }
-            | ConnectError::System(_)
-            | ConnectError::Other { .. } => K::SrtConnectFailed,
+            SrtConnectError::InvalidAddress(_) | SrtConnectError::InvalidOption(_) => {
+                K::ConfigInvalid
+            }
+            SrtConnectError::TimedOut => K::SrtTimeout,
+            SrtConnectError::Refused
+            | SrtConnectError::BadEncryption { .. }
+            | SrtConnectError::Rejected { .. }
+            | SrtConnectError::System(_)
+            | SrtConnectError::Other { .. } => K::SrtConnectFailed,
         };
         BindingError::new(kind, e.to_string())
     }
@@ -140,7 +142,7 @@ impl From<SrtError> for BindingError {
 #[cfg(test)]
 mod tests {
     use crate::error::{
-        AcceptError, BindError, ConnectError, IoError, RecvError, SendError, SrtError,
+        AcceptError, BindError, IoError, RecvError, SendError, SrtConnectError, SrtError,
     };
     use std::io;
     use tst_core::transport::TransportError;
@@ -153,15 +155,15 @@ mod tests {
     #[test]
     fn connect_bind_accept_classification() {
         assert_eq!(
-            BindingError::from(ConnectError::TimedOut).kind,
+            BindingError::from(SrtConnectError::TimedOut).kind,
             K::SrtTimeout
         );
         assert_eq!(
-            BindingError::from(ConnectError::Refused).kind,
+            BindingError::from(SrtConnectError::Refused).kind,
             K::SrtConnectFailed
         );
         assert_eq!(
-            BindingError::from(ConnectError::System(sys())).kind,
+            BindingError::from(SrtConnectError::System(sys())).kind,
             K::SrtConnectFailed
         );
         assert_eq!(
@@ -222,7 +224,7 @@ mod tests {
         );
         let e: BindingError = SrtError::from(tst_core::error::MuxError::InvalidNal).into();
         assert_eq!(e.kind, K::InvalidNal);
-        let e: BindingError = SrtError::from(ConnectError::Refused).into();
+        let e: BindingError = SrtError::from(SrtConnectError::Refused).into();
         assert_eq!(e.kind, K::SrtConnectFailed);
         assert_eq!(K::SrtConnectFailed.name(), "CONNECT_FAILED");
         assert_eq!(K::SrtConnectFailed.variant_name(), "SRT_CONNECT_FAILED");

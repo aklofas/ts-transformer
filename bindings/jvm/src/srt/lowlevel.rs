@@ -26,8 +26,7 @@ use jni::sys::{jboolean, jint, jlong, jobject};
 use tst_core::transport::{RecvTransport, Transport, TransportCancel};
 use tst_pipeline::binding::{BindingErrorKind, Domain, Opened, Owned};
 use tst_srt::{
-    Listener as SrtListener, ListenerConfig, Socket as SrtSocket, SocketConfig, SrtTransport,
-    SrtUrl,
+    SrtListener, SrtListenerConfig, SrtSocket, SrtSocketConfig, SrtTransport, SrtUrl,
     options::{Congestion, MaxBandwidth, Passphrase, StreamId},
     url::Mode,
 };
@@ -124,7 +123,7 @@ fn unbox_nullable_long(env: &mut JNIEnv, obj: &JObject) -> jni::errors::Result<O
 }
 
 // ---------------------------------------------------------------------------
-// Helper: build SocketConfig from knob args
+// Helper: build SrtSocketConfig from knob args
 // ---------------------------------------------------------------------------
 //
 // Mode ordinals (the Java Builder.Mode enum, passed as mode.ordinal()):
@@ -132,7 +131,7 @@ fn unbox_nullable_long(env: &mut JNIEnv, obj: &JObject) -> jni::errors::Result<O
 // nConnect rejects LISTENER(2) and RENDEZVOUS(3); nListen rejects CALLER(1)
 // and RENDEZVOUS(3). URL_CHOICE(0) defers to the URL's ?mode= parameter.
 
-/// Apply the nullable knob args into a `SocketConfig`. Returns `Err` if any
+/// Apply the nullable knob args into a `SrtSocketConfig`. Returns `Err` if any
 /// validated knob (passphrase, stream_id, congestion, mss, payload_size) fails.
 /// Does NOT apply the URL's keys — the caller does that after this returns.
 #[allow(clippy::cast_sign_loss)]
@@ -150,8 +149,8 @@ fn build_socket_config(
     max_bandwidth_bps: &JObject,
     mss: &JObject,
     payload_size: &JObject,
-) -> jni::errors::Result<SocketConfig> {
-    let mut cfg = SocketConfig::default();
+) -> jni::errors::Result<SrtSocketConfig> {
+    let mut cfg = SrtSocketConfig::default();
 
     // latency_ms — applied to both SRTO_LATENCY on socket configs
     if let Some(ms) = unbox_nullable_int(env, latency_ms)? {
@@ -170,7 +169,7 @@ fn build_socket_config(
         }
     }
 
-    // stream_id (caller-side only; not in ListenerConfig)
+    // stream_id (caller-side only; not in SrtListenerConfig)
     if !stream_id.is_null() {
         let s: String = env.get_string(stream_id).map(Into::into)?;
         match StreamId::new(s) {
@@ -209,7 +208,7 @@ fn build_socket_config(
         cfg.send_timeout = Some(Duration::from_millis(ms as u64));
     }
 
-    // peer_latency_ms (caller-only; not in ListenerConfig)
+    // peer_latency_ms (caller-only; not in SrtListenerConfig)
     if let Some(ms) = unbox_nullable_int(env, peer_latency_ms)? {
         cfg.peer_latency = Some(Duration::from_millis(ms as u64));
     }
@@ -237,9 +236,9 @@ fn build_socket_config(
     Ok(cfg)
 }
 
-/// Apply the nullable knob args into a `ListenerConfig`. Shares most knobs with
+/// Apply the nullable knob args into a `SrtListenerConfig`. Shares most knobs with
 /// `build_socket_config` but omits `stream_id`, `peer_latency_ms`, and
-/// `connect_timeout_ms` (not present on `ListenerConfig`).
+/// `connect_timeout_ms` (not present on `SrtListenerConfig`).
 #[allow(clippy::cast_sign_loss)]
 fn build_listener_config(
     env: &mut JNIEnv,
@@ -252,8 +251,8 @@ fn build_listener_config(
     max_bandwidth_bps: &JObject,
     mss: &JObject,
     payload_size: &JObject,
-) -> jni::errors::Result<ListenerConfig> {
-    let mut cfg = ListenerConfig::default();
+) -> jni::errors::Result<SrtListenerConfig> {
+    let mut cfg = SrtListenerConfig::default();
 
     if let Some(ms) = unbox_nullable_int(env, latency_ms)? {
         cfg.socket.latency = Some(Duration::from_millis(ms as u64));
@@ -438,12 +437,12 @@ jni_native! {
         mode: jni::sys::jint,
         latency_ms: JObject<'local>,
         passphrase: JString<'local>,
-        stream_id: JString<'local>, // accepted but ignored for listener (no ListenerConfig.stream_id)
+        stream_id: JString<'local>, // accepted but ignored for listener (no SrtListenerConfig.stream_id)
         congestion: JString<'local>,
-        connect_timeout_ms: JObject<'local>, // accepted but ignored (no ListenerConfig.connect_timeout)
+        connect_timeout_ms: JObject<'local>, // accepted but ignored (no SrtListenerConfig.connect_timeout)
         recv_timeout_ms: JObject<'local>,
         send_timeout_ms: JObject<'local>,
-        peer_latency_ms: JObject<'local>, // accepted but ignored (no ListenerConfig.peer_latency)
+        peer_latency_ms: JObject<'local>, // accepted but ignored (no SrtListenerConfig.peer_latency)
         recv_latency_ms: JObject<'local>,
         max_bandwidth_bps: JObject<'local>,
         mss: JObject<'local>,
@@ -491,8 +490,8 @@ jni_native! {
             Err(_) => return 0,
         };
 
-        // Silently ignore: stream_id (no ListenerConfig field), connect_timeout_ms
-        // (no ListenerConfig field), peer_latency_ms (no ListenerConfig field).
+        // Silently ignore: stream_id (no SrtListenerConfig field), connect_timeout_ms
+        // (no SrtListenerConfig field), peer_latency_ms (no SrtListenerConfig field).
         // This matches tst-py: apply_stream_id goes to socket_cfg only; peer_latency
         // goes to socket_cfg only; connect_timeout goes to socket_cfg only.
         let _ = (&stream_id, &connect_timeout_ms, &peer_latency_ms); // suppress unused warnings

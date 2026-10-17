@@ -335,9 +335,9 @@ fn run_binding_contract(id: &str, input: &[u8]) -> Vec<CoreEvent> {
             use std::time::Duration;
             use tst_core::transport::{RecvTransport, TransportError};
             use tst_pipeline::binding::BindingError;
-            use tst_srt::{ListenerBuilder, SocketBuilder, SrtTransport};
+            use tst_srt::{SrtListenerBuilder, SrtSocketBuilder, SrtTransport};
 
-            let mut listener = ListenerBuilder::new()
+            let mut listener = SrtListenerBuilder::new()
                 .recv_timeout(Duration::from_secs(5))
                 .send_timeout(Duration::from_secs(5))
                 .bind("127.0.0.1:0")
@@ -346,7 +346,7 @@ fn run_binding_contract(id: &str, input: &[u8]) -> Vec<CoreEvent> {
                 );
             let port = listener.local_addr().expect("local_addr").port();
             let peer = std::thread::spawn(move || {
-                SocketBuilder::new()
+                SrtSocketBuilder::new()
                     .send_timeout(Duration::from_secs(5))
                     .connect(format!("127.0.0.1:{port}"))
                     .expect("idle peer connect")

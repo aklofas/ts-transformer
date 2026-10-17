@@ -3,12 +3,12 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tst_srt::{AcceptError, ListenerBuilder};
+use tst_srt::{AcceptError, SrtListenerBuilder};
 
 #[test]
 fn accept_timeout_returns_timed_out_when_no_connection() {
     require_loopback!();
-    let mut listener = ListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
+    let mut listener = SrtListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
 
     let start = std::time::Instant::now();
     let result = listener.accept_timeout(Duration::from_millis(200));
@@ -32,7 +32,7 @@ fn accept_timeout_returns_timed_out_when_no_connection() {
 #[test]
 fn accept_timeout_succeeds_when_peer_connects() {
     require_loopback!();
-    let mut listener = ListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
+    let mut listener = SrtListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
     let port = listener.local_addr().unwrap().port();
 
     // Spawn a connector in another thread with a short delay so the
@@ -50,7 +50,7 @@ fn accept_timeout_succeeds_when_peer_connects() {
     let r = ready.clone();
     let connector = std::thread::spawn(move || {
         crate::common::wait_for_ready(&r);
-        let socket = tst_srt::SocketBuilder::new()
+        let socket = tst_srt::SrtSocketBuilder::new()
             .connect(format!("127.0.0.1:{port}"))
             .expect("connect");
         let _ = release_rx.recv();
@@ -79,11 +79,11 @@ fn accept_timeout_succeeds_when_peer_connects() {
 #[test]
 fn accept_timeout_drains_connection_queued_before_subscribe() {
     require_loopback!();
-    let mut listener = ListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
+    let mut listener = SrtListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
     let port = listener.local_addr().unwrap().port();
 
     let connector = std::thread::spawn(move || {
-        tst_srt::SocketBuilder::new()
+        tst_srt::SrtSocketBuilder::new()
             .connect(format!("127.0.0.1:{port}"))
             .expect("connect")
     });

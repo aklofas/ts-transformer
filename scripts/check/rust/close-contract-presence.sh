@@ -13,8 +13,8 @@ TYPES=(
     "crates/tst-pipeline/src/receiver/mod.rs:Receiver"
     "crates/tst-pipeline/src/raw_receiver.rs:RawReceiver"
     "crates/tst-pipeline/src/ext/pairing/mod.rs:Pairer"
-    "crates/tst-srt/src/socket.rs:Socket"
-    "crates/tst-srt/src/listener.rs:Listener"
+    "crates/tst-srt/src/socket.rs:SrtSocket"
+    "crates/tst-srt/src/listener.rs:SrtListener"
     "crates/tst-core/src/mpegts/mux/mod.rs:Muxer"
     "crates/tst-core/src/mpegts/demux/demuxer.rs:Demuxer"
 )

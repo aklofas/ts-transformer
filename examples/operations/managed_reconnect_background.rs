@@ -32,7 +32,7 @@ use tst_pipeline::{
     ReconnectPolicy, TransportError,
 };
 use tst_srt::SrtTransport;
-use tst_srt::{ListenerBuilder, SocketBuilder};
+use tst_srt::{SrtListenerBuilder, SrtSocketBuilder};
 
 // NUM_FRAMES / FRAME_INTERVAL together decide how many messages land while
 // the link is down (see the peer thread below, and the factory-closure
@@ -82,11 +82,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let peer_handle = thread::spawn(
         move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             for round in 0..2 {
-                // Bind-then-step shape (`ListenerBuilder` is
+                // Bind-then-step shape (`SrtListenerBuilder` is
                 // `&mut self -> &mut Self`). Latency must match the
                 // sender's (120 ms) — SRT negotiates the max of the two
                 // peers' values.
-                let mut lb = ListenerBuilder::new();
+                let mut lb = SrtListenerBuilder::new();
                 lb.latency(Duration::from_millis(120));
                 let mut listener = lb.bind(bind_addr.as_str())?;
                 if round == 0 {
@@ -162,7 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------------------------------------------------------------------
     let connect_addr_for_factory = connect_addr.clone();
     let factory = move || -> Result<SrtTransport, TransportError> {
-        let mut sb = SocketBuilder::new();
+        let mut sb = SrtSocketBuilder::new();
         sb.latency(Duration::from_millis(120));
         let socket =
             sb.connect(connect_addr_for_factory.as_str())

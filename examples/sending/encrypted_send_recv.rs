@@ -6,7 +6,7 @@
 //!
 //!   cargo run -p tst-examples --example encrypted_send_recv
 //!
-//! Demonstrates: SocketBuilder/ListenerBuilder + Passphrase + KeyLength +
+//! Demonstrates: SrtSocketBuilder/SrtListenerBuilder + Passphrase + KeyLength +
 //! StreamId. The same shape applies across-network — only the bind/connect
 //! addresses change.
 
@@ -14,7 +14,7 @@ use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use tst_srt::{KeyLength, ListenerBuilder, Passphrase, SocketBuilder, StreamId};
+use tst_srt::{KeyLength, Passphrase, SrtListenerBuilder, SrtSocketBuilder, StreamId};
 
 // PASSPHRASE is the shared secret both peers must agree on for AES-CTR
 // encryption. Named `shared-secret-not-for-production` so anyone reading the
@@ -69,8 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // `Passphrase::new` validates: 10–79 ASCII-printable bytes (libsrt's
             // own constraint). The constant above sits comfortably inside that.
             let passphrase = Passphrase::new(PASSPHRASE)?;
-            // Bind-then-step shape (`ListenerBuilder` is `&mut self -> &mut Self`).
-            let mut lb = ListenerBuilder::new();
+            // Bind-then-step shape (`SrtListenerBuilder` is `&mut self -> &mut Self`).
+            let mut lb = SrtListenerBuilder::new();
             lb.passphrase(passphrase);
             // AES-256 is overkill for 16 short messages but mirrors what a
             // production deployment would pick; switching the constant to
@@ -138,8 +138,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let passphrase = Passphrase::new(PASSPHRASE)?;
             let stream_id = StreamId::new(STREAM_ID)?;
-            // Bind-then-step shape (`SocketBuilder` is `&mut self -> &mut Self`).
-            let mut sb = SocketBuilder::new();
+            // Bind-then-step shape (`SrtSocketBuilder` is `&mut self -> &mut Self`).
+            let mut sb = SrtSocketBuilder::new();
             sb.passphrase(passphrase);
             sb.key_length(KeyLength::Aes256);
             sb.stream_id(stream_id);

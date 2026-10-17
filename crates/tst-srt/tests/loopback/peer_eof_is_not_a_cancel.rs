@@ -21,7 +21,7 @@
 
 use std::time::Duration;
 use tst_core::transport::{RecvTransport, TransportError};
-use tst_srt::{SocketBuilder, SrtTransport};
+use tst_srt::{SrtSocketBuilder, SrtTransport};
 
 /// Peer closes cleanly while we hold a receiver: the receive ends (EOS or
 /// a Broken-class error, both acceptable at this layer), the transport is
@@ -39,7 +39,7 @@ fn peer_close_ends_the_stream_without_latching_is_cancelled() {
     let accept = lb.spawn_accept(|sock| sock);
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .recv_timeout(Duration::from_millis(200))
         .latency(Duration::from_millis(120))
         .connect(format!("127.0.0.1:{port}"))
@@ -105,7 +105,7 @@ fn caller_cancel_still_latches_is_cancelled() {
     let accept = lb.spawn_accept(|sock| sock);
     accept.wait_ready();
 
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .recv_timeout(Duration::from_millis(200))
         .latency(Duration::from_millis(120))
         .connect(format!("127.0.0.1:{port}"))

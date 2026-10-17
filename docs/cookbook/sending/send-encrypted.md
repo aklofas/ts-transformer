@@ -8,18 +8,18 @@
 
 Reach for this when you need a secure uplink. SRT's encryption is AES-CTR with a passphrase-derived key, negotiated during the handshake; both peers must agree on the same passphrase and key length.
 
-The diff against an unencrypted setup is small: `passphrase(...)` plus `key_length(...)` on both the `SocketBuilder` and the `ListenerBuilder`. `Passphrase::new` validates length (10–79 ASCII-printable bytes, libsrt's own constraint).
+The diff against an unencrypted setup is small: `passphrase(...)` plus `key_length(...)` on both the `SrtSocketBuilder` and the `SrtListenerBuilder`. `Passphrase::new` validates length (10–79 ASCII-printable bytes, libsrt's own constraint).
 
 ```rust,no_run
-use tst_srt::{KeyLength, Passphrase, SocketBuilder};
+use tst_srt::{KeyLength, Passphrase, SrtSocketBuilder};
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let passphrase = Passphrase::new("shared-secret-not-for-production")?;
     // Mutators return `&mut Self` and `connect` takes `&self`: a
-    // one-statement chain off `SocketBuilder::new()` also works, but a
+    // one-statement chain off `SrtSocketBuilder::new()` also works, but a
     // bound builder can be stepped and reused.
-    let mut sb = SocketBuilder::new();
+    let mut sb = SrtSocketBuilder::new();
     sb.passphrase(passphrase);
     sb.key_length(KeyLength::Aes256);
     sb.latency(Duration::from_millis(120));

@@ -1,10 +1,10 @@
-//! `SrtTransport` — the canonical `Transport` impl backed by a `srt::Socket`.
+//! `SrtTransport` — the canonical `Transport` impl backed by a `srt::SrtSocket`.
 //!
-//! Wraps the safe-Rust `Socket` and translates `SendError` to the
+//! Wraps the safe-Rust `SrtSocket` and translates `SendError` to the
 //! `Transport`-trait shape. Used as the inner of `ManagedTransport` in
 //! the canonical reconnecting setup.
 
-use crate::Socket;
+use crate::SrtSocket;
 use crate::error::{SendError, SrtErrno};
 use std::sync::Arc;
 use tst_core::transport::{BrokenCause, SocketStats, Transport, TransportCancel, TransportError};
@@ -19,7 +19,7 @@ const SRT_LIVE_MAX_PAYLOAD: usize = 1456;
 
 /// SRT-backed [`Transport`] and [`tst_core::transport::RecvTransport`] impl.
 ///
-/// Wraps a connected [`Socket`] and translates libsrt send/receive errors
+/// Wraps a connected [`SrtSocket`] and translates libsrt send/receive errors
 /// into the scheme-neutral [`TransportError`] shape. Intended to be used as
 /// the inner of `ManagedTransport` in the canonical reconnecting setup.
 ///
@@ -63,11 +63,11 @@ const SRT_LIVE_MAX_PAYLOAD: usize = 1456;
 /// | 7 | `MJ_PEERERROR` |
 /// | other | raw libsrt errno value |
 pub struct SrtTransport {
-    socket: Option<Socket>,
+    socket: Option<SrtSocket>,
     max_payload: usize,
     /// The socket's one-shot closer, captured at construction so
     /// [`Self::srt_cancel_handle`] can hand it out without an `Option`
-    /// and after `close()` has taken the socket. `Socket::close` fires
+    /// and after `close()` has taken the socket. `SrtSocket::close` fires
     /// this same handle, so it reads cancelled once the transport is
     /// closed by either path.
     ///
@@ -77,7 +77,7 @@ pub struct SrtTransport {
     /// reads dead at once.
     cancel: tst_core::ResourceCancel,
     /// Set by this transport's own `close()`, BEFORE the socket is
-    /// dropped. `Socket::close` fires `cancel` too, so the latch alone
+    /// dropped. `SrtSocket::close` fires `cancel` too, so the latch alone
     /// cannot tell "the caller closed this transport" from "another
     /// thread cancelled it"; this flag is what makes a post-`close()`
     /// operation report `Closed` and a post-cancel one `ExplicitClose`.
@@ -92,22 +92,22 @@ impl SrtTransport {
     /// Used as a fallback only — [`Self::new`] queries the socket directly.
     pub const DEFAULT_PAYLOAD: usize = tst_core::mpegts::common::SRT_TS_BUNDLE_BYTES;
 
-    /// Wrap an already-connected `Socket`. Caller is responsible for
+    /// Wrap an already-connected `SrtSocket`. Caller is responsible for
     /// configuring it (passphrase, latency, etc.) before passing in.
     ///
     /// `max_payload` is read from the socket's negotiated `SRTO_PAYLOADSIZE`
-    /// (via [`Socket::payload_limit`]). On a fresh post-handshake socket
+    /// (via [`SrtSocket::payload_limit`]). On a fresh post-handshake socket
     /// this matches whatever both peers agreed during the SRT handshake —
     /// libsrt's default of 1316 bytes for unconfigured sockets, or a
     /// configured value like 1456 when the `payloadsize=` URL key (or
-    /// [`SocketConfig::payload_size`]) was set on either side.
+    /// [`SrtSocketConfig::payload_size`]) was set on either side.
     ///
     /// To send smaller messages, configure a smaller `payload_size` before
     /// connecting.
     ///
-    /// [`Socket::payload_limit`]: crate::Socket::payload_limit
-    /// [`SocketConfig::payload_size`]: crate::config::SocketConfig::payload_size
-    pub fn new(socket: Socket) -> Self {
+    /// [`SrtSocket::payload_limit`]: crate::SrtSocket::payload_limit
+    /// [`SrtSocketConfig::payload_size`]: crate::config::SrtSocketConfig::payload_size
+    pub fn new(socket: SrtSocket) -> Self {
         let max_payload = socket.payload_limit();
         let cancel = socket.cancel_handle();
         Self {
@@ -133,7 +133,7 @@ impl SrtTransport {
         self.cancel.clone()
     }
 
-    /// Snapshot the libsrt-flavored 17-field [`Stats`] for the underlying
+    /// Snapshot the libsrt-flavored 17-field [`SrtStats`] for the underlying
     /// socket. Returns `Err(IoError::SocketClosed)` once the transport
     /// has been closed (either explicitly via [`Transport::close`] or
     /// implicitly after a `Broken` send/recv tore the socket down).
@@ -143,8 +143,8 @@ impl SrtTransport {
     /// the SRT-specific extras (`mbps_estimated_bandwidth`, the
     /// `rtt: Duration`, the symmetric send/recv-side byte-loss split).
     ///
-    /// [`Stats`]: crate::Stats
-    pub fn stats(&self) -> Result<crate::Stats, crate::error::IoError> {
+    /// [`SrtStats`]: crate::SrtStats
+    pub fn stats(&self) -> Result<crate::SrtStats, crate::error::IoError> {
         let socket = self
             .socket
             .as_ref()
@@ -189,7 +189,7 @@ impl SrtTransport {
     ///
     /// Together with `cancelled_or` this makes the reason STICKY: every later
     /// op keeps reporting it, as the normative table requires.
-    fn slot(&mut self) -> Result<&mut Socket, TransportError> {
+    fn slot(&mut self) -> Result<&mut SrtSocket, TransportError> {
         if self.closed {
             return Err(TransportError::Closed);
         }
@@ -287,12 +287,12 @@ impl Transport for SrtTransport {
     }
 
     fn close(&mut self) {
-        // Set BEFORE the socket goes: `Socket::close` fires the same
+        // Set BEFORE the socket goes: `SrtSocket::close` fires the same
         // cancel handle, so without this flag every later op would read
         // the latch and report `ExplicitClose` for our own close.
         self.closed = true;
         if let Some(socket) = self.socket.take() {
-            // Socket::close consumes self and is infallible; the cancel handle consumes the srt_close rc.
+            // SrtSocket::close consumes self and is infallible; the cancel handle consumes the srt_close rc.
             socket.close();
         }
     }
@@ -428,7 +428,7 @@ impl Drop for SrtTransport {
     }
 }
 
-/// Map the libsrt-flavored `crate::socket::Stats` into the abstract
+/// Map the libsrt-flavored `crate::socket::SrtStats` into the abstract
 /// `tst_core::transport::SocketStats`. Unit conversions:
 /// * RTT: `Duration` → microseconds, saturating at `u32::MAX`.
 /// * Bandwidth: libsrt-side u64 bps is passed through; the redundant
@@ -436,8 +436,8 @@ impl Drop for SrtTransport {
 ///   saturated into `link_bandwidth_bps`.
 /// * Send-side byte loss: libsrt doesn't export `byteSndLossTotal`, so
 ///   the abstract struct has no `bytes_lost_send` field. The local
-///   `Stats::bytes_lost_send_side` is always 0 today and is dropped.
-fn map_stats(s: &crate::socket::Stats) -> SocketStats {
+///   `SrtStats::bytes_lost_send_side` is always 0 today and is dropped.
+fn map_stats(s: &crate::socket::SrtStats) -> SocketStats {
     let rtt_us = u32::try_from(s.rtt.as_micros()).unwrap_or(u32::MAX);
     let link_bandwidth_bps =
         if s.mbps_estimated_bandwidth.is_finite() && s.mbps_estimated_bandwidth >= 0.0 {
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn srt_transport_max_payload_matches_default() {
-        // Without an actual connected Socket, just verify the constant.
+        // Without an actual connected SrtSocket, just verify the constant.
         // SrtTransport::DEFAULT_PAYLOAD == 1316 (libsrt default).
         assert_eq!(
             SrtTransport::DEFAULT_PAYLOAD,

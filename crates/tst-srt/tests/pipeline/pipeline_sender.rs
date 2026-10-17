@@ -5,7 +5,7 @@ use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::MuxerConfig;
 use tst_pipeline::MuxSender;
-use tst_srt::SocketBuilder;
+use tst_srt::SrtSocketBuilder;
 use tst_srt::SrtTransport;
 use tst_test_helpers::synthetic_nal;
 
@@ -30,7 +30,7 @@ fn sender_round_trip_one_frame() {
     accept.wait_ready();
 
     // MuxSender thread: connect + send one frame.
-    let socket = SocketBuilder::new()
+    let socket = SrtSocketBuilder::new()
         .latency(Duration::from_millis(120))
         .connect(format!("127.0.0.1:{port}"))
         .expect("connect");

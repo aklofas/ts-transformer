@@ -8,9 +8,9 @@
 #![cfg(feature = "mbedtls")]
 
 use std::time::Duration;
-use tst_srt::error::ConnectError;
 use tst_srt::error::RejectReason;
-use tst_srt::{ListenerBuilder, Passphrase, SocketBuilder};
+use tst_srt::error::SrtConnectError;
+use tst_srt::{Passphrase, SrtListenerBuilder, SrtSocketBuilder};
 
 // Note on negative tests: srt_accept does NOT honor SRTO_RCVTIMEO. A spawned
 // listener thread that calls accept() will block forever if no successful
@@ -33,7 +33,7 @@ fn unencrypted_handshake_succeeds() {
     });
     accept.wait_ready();
 
-    let _socket = SocketBuilder::new()
+    let _socket = SrtSocketBuilder::new()
         .recv_timeout(Duration::from_secs(5))
         .send_timeout(Duration::from_secs(5))
         .connect(format!("127.0.0.1:{port}"))
@@ -45,7 +45,7 @@ fn unencrypted_handshake_succeeds() {
 #[test]
 fn matching_passphrase_succeeds() {
     require_loopback!();
-    let mut builder = ListenerBuilder::new();
+    let mut builder = SrtListenerBuilder::new();
     builder
         .passphrase(Passphrase::new(PASS).unwrap())
         .recv_timeout(Duration::from_secs(5));
@@ -57,7 +57,7 @@ fn matching_passphrase_succeeds() {
     });
     accept.wait_ready();
 
-    let _socket = SocketBuilder::new()
+    let _socket = SrtSocketBuilder::new()
         .passphrase(Passphrase::new(PASS).unwrap())
         .recv_timeout(Duration::from_secs(5))
         .connect(format!("127.0.0.1:{port}"))
@@ -73,8 +73,8 @@ fn mismatched_passphrase_rejects_connect() {
     // rejection-path tests we leave the listener idle and rely on libsrt's
     // internal worker threads to handle handshake-level rejection. The
     // Loopback helper assumes an accept thread, so this test keeps a direct
-    // ListenerBuilder + bind.
-    let listener = ListenerBuilder::new()
+    // SrtListenerBuilder + bind.
+    let listener = SrtListenerBuilder::new()
         .passphrase(Passphrase::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap())
         .bind("127.0.0.1:0")
         .expect("bind");
@@ -82,7 +82,7 @@ fn mismatched_passphrase_rejects_connect() {
 
     crate::common::settle();
 
-    let result = SocketBuilder::new()
+    let result = SrtSocketBuilder::new()
         .passphrase(Passphrase::new("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB").unwrap())
         .recv_timeout(Duration::from_secs(5))
         .send_timeout(Duration::from_secs(5))
@@ -94,7 +94,7 @@ fn mismatched_passphrase_rejects_connect() {
     // so SRT_ECONNREJ (major 1 → Setup) + SRT_REJ_BADSECRET (reason 10) is
     // correctly mapped to Rejected { reason: BadSecret }.
     match result {
-        Err(ConnectError::Rejected {
+        Err(SrtConnectError::Rejected {
             reason: RejectReason::BadSecret,
             ..
         }) => { /* expected */ }

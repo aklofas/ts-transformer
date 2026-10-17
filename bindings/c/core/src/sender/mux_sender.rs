@@ -677,7 +677,7 @@ pub(crate) fn require_caller_mode(url: &tst_srt::SrtUrl) -> Result<(), ()> {
 /// the function name is the authoritative listener-mode signal, so requiring
 /// the URL to also carry `?mode=listener` is redundant.
 ///
-/// Any error other than [`tst_srt::UrlError::MissingHost`] is returned
+/// Any error other than [`tst_srt::SrtUrlError::MissingHost`] is returned
 /// unchanged (the first-pass error is already recorded in the thread-local
 /// last-error by `parse_c_srt_url`).
 ///
@@ -704,7 +704,7 @@ pub(crate) unsafe fn parse_c_srt_url_listener(
         .to_string_lossy()
         .into_owned();
     match tst_srt::SrtUrl::parse(&s) {
-        Err(tst_srt::UrlError::MissingHost) => {}
+        Err(tst_srt::SrtUrlError::MissingHost) => {}
         _ => {
             // Some other error (or unexpectedly Ok) — the first pass already
             // recorded it; return the original Err(()).

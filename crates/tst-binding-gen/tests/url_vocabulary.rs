@@ -1468,7 +1468,7 @@ const SRT_PARSE: &[Row] = &[
 
 fn effective_srt(url: &str) -> Effective {
     let u = SrtUrl::parse(url).map_err(|e| e.to_string())?;
-    let mut cfg = tst_srt::config::SocketConfig::default();
+    let mut cfg = tst_srt::config::SrtSocketConfig::default();
     cfg.merge_from(&u.config);
     Ok(vec![
         ("host", u.host.clone()),

@@ -128,7 +128,7 @@ on (default).
 | Caller / Listener / Rendezvous handshake | ⚙️ Partial | Caller + Listener exposed; Rendezvous reachable via raw `tstrans-srt-sys` only. |
 | Live congestion controller (`SRTO_CONGESTION=live`) | ✅ Full | `Congestion::Live` (default). |
 | File congestion controller (`SRTO_CONGESTION=file`) | ✅ Full | `Congestion::File`. |
-| Message API (datagram-style send/recv) | ✅ Full | `Socket::send` / `Socket::recv`. |
+| Message API (datagram-style send/recv) | ✅ Full | `SrtSocket::send` / `SrtSocket::recv`. |
 | Stream API (`SRTO_TSBPDMODE=false`, `SRTO_MESSAGEAPI=false`) | ⏳ Planned | Reachable only via `tstrans-srt-sys` today. |
 | Bonded sockets / groups (`SRT_GROUP_*`) | ❌ Out of scope | No consumer demand. |
 | Async / poll API (`srt_epoll_*`) | ⏳ Planned | Today's API is sync blocking. Reactor is on the roadmap. |
@@ -186,7 +186,7 @@ The C ABI (`tst-c`) always enables `rtsp-server` (no TLS surface at all);
 the JVM and Python bindings enable `rtsp-server-tls` (they ship the server's
 TLS acceptor).
 
-### Tunables (`SocketConfig` / `ListenerConfig`)
+### Tunables (`SrtSocketConfig` / `SrtListenerConfig`)
 
 Each row maps a libsrt option to its safe-Rust accessor. Accessors that
 aren't yet wrapped are reachable via `tstrans-srt-sys`.
@@ -217,8 +217,8 @@ aren't yet wrapped are reachable via `tstrans-srt-sys`.
 | `SRTO_CONNTIMEO` | `connect_timeout: Option<Duration>` | ✅ Full |
 | `SRTO_LINGER` | `linger: Option<Duration>` | ✅ Full |
 | `SRTO_SENDER` | `role: Role` (`Receiver` / `Sender`) | ✅ Full — `Sender` sets `SRTO_SENDER=1` for HSv4-peer compatibility. |
-| Sender / receiver socket presets | `SocketConfig::sender_defaults()` / `::receiver_defaults()` + `merge_sender_defaults()` / `merge_receiver_defaults()` + `SocketBuilder::sender_defaults()` / `::receiver_defaults()` chain methods | ✅ Full — domain-tuned bundle (`connect_timeout=15s`, `linger=5s` sender / off receiver, `role=Sender` / `Receiver`). Merge-if-default semantics preserve explicit caller values. |
-| Per-socket statistics (`srt_bistats`) | `Socket::stats() -> Stats` | ⚙️ Partial — flat counter snapshot; finer windowing TBD. |
+| Sender / receiver socket presets | `SrtSocketConfig::sender_defaults()` / `::receiver_defaults()` + `merge_sender_defaults()` / `merge_receiver_defaults()` + `SrtSocketBuilder::sender_defaults()` / `::receiver_defaults()` chain methods | ✅ Full — domain-tuned bundle (`connect_timeout=15s`, `linger=5s` sender / off receiver, `role=Sender` / `Receiver`). Merge-if-default semantics preserve explicit caller values. |
+| Per-socket statistics (`srt_bistats`) | `SrtSocket::stats() -> SrtStats` | ⚙️ Partial — flat counter snapshot; finer windowing TBD. |
 | All other `SRTO_*` options | — | 🔁 Pass-through via `tstrans-srt-sys` (raw FFI). |
 
 ### Packet filters (`SRTO_PACKETFILTER`)
@@ -454,7 +454,7 @@ Composite views layered on top: `GeoPoint`, `Attitude`, `FieldOfView`,
 | `RawReceiver<R>` | ✅ Full | One `recv_one` call returns one owned byte vec — no TS framing or demux. |
 | `ManagedRecvTransport<R>` | ✅ Full | Reconnect decorator for the receive direction. No gap buffer (recv-side bytes that never arrived can't be replayed); restarts on `Closed` / `Broken` per `ReconnectPolicy`. |
 | `RecvTransport` trait | ✅ Full | Receive-side counterpart to `Transport`: `recv_bytes`, `max_payload`, `is_alive`, `close`, plus the defaulted `cancel_handle`. Implemented by `SrtTransport`, `TcpTransport`, `RtpRecvTransport`, `UdpRecvTransport`, `RistRecvTransport`, the `ManagedRecvTransport<R>` decorator, and any consumer-side mock. `cancel_handle` is overridden by every transport — on the send trait by `SrtTransport` / `RtpTransport` / `TcpTransport` / `UdpTransport` / `RistTransport` and on this receive trait by `SrtTransport` / `RtpRecvTransport` / `TcpTransport` / `UdpRecvTransport` / `RistRecvTransport`, so shells and the managed wrappers see it either way; `ManagedRecvTransport<R>` overrides it unconditionally (its own cancel latch works even around an uncancellable inner). A call parked when the handle fires returns `TransportError::ExplicitClose` on all of them. See [`srt-cancel-handle.md`](/docs/reference/srt-cancel-handle.md). |
-| `SrtTransport` impl `RecvTransport` | ✅ Full | Same `SrtTransport` wrapper handles both send and receive directions on a connected SRT `Socket`. |
+| `SrtTransport` impl `RecvTransport` | ✅ Full | Same `SrtTransport` wrapper handles both send and receive directions on a connected SRT `SrtSocket`. |
 | `DemuxReceiver::add_byte_sink` fan-out | ✅ Full | Register `Box<dyn FnMut(&[u8]) + Send>` callbacks; each sink sees every 188-byte TS packet in registration order before the demuxer parses it. |
 | `DemuxReceiver::with_demux_options` | ✅ Full | Construct a receiver around a custom `DemuxerConfig` (e.g. strict mode, PES caps, link overrides). |
 | Stream-end contract | ✅ Full | `TransportError::Closed` → iterator termination after `Demuxer::flush`. `Broken` → `DemuxReceiverError::Transport(Broken(_))`. `Demux` → strict-mode rejection or malformed PES. |
@@ -475,7 +475,7 @@ Composite views layered on top: `GeoPoint`, `Attitude`, `FieldOfView`,
 The five transports split into two models: **connectionless** transports expose
 a single one-shot factory (`listen`) that binds a socket and serves as the
 receive transport for its lifetime, while **connection-oriented** transports
-expose a `Listener` that loops over `accept` / `accept_blocking` to hand back
+expose a `SrtListener` that loops over `accept` / `accept_blocking` to hand back
 one dedicated transport per inbound peer. There is deliberately no
 `TcpRecvTransport::listen` convenience wrapper: such a wrapper would accept
 only the first connection and discard the listener, which is almost never the
@@ -488,7 +488,7 @@ constructor for the TCP listener; callers call `accept_blocking` once per peer.
 | RTP | Connectionless | `RtpRecvTransport::listen` | `url: &str` (`rtp://host:port`) | `RtpRecvTransport` |
 | RIST | Connectionless | `RistRecvTransport::listen` | `url: &str` (`rist://@host:port`) | `RistRecvTransport` |
 | TCP | Connection-oriented | `TcpListener::from_url` / `TcpListener::bind` → `accept_blocking` | url (`tcp://…?listen=1`) / `SocketAddr` | one `TcpTransport` per accepted peer |
-| SRT | Connection-oriented | `ListenerBuilder::bind` / `Listener::bind_with` → `accept` → `SrtTransport::new` | addr / config+addr | one `SrtTransport` per accepted peer |
+| SRT | Connection-oriented | `SrtListenerBuilder::bind` / `SrtListener::bind_with` → `accept` → `SrtTransport::new` | addr / config+addr | one `SrtTransport` per accepted peer |
 
 ---
 
@@ -584,9 +584,9 @@ do not decode audio content or verify CRCs. C ABI exposure is deferred.
 | Static-link discipline | ✅ Full | libsrt + mbedTLS (and librist when enabled) statically embedded into `libtstrans.so` and `libtstrans.a`; the C++ runtime stays dynamic (`ldd libtstrans.so` shows libstdc++ / libgcc_s / libm / libc; a static-archive consumer links the C++ runtime — `-lstdc++`, or `-lc++` on macOS — as the `Libs:` line of `tstrans.pc` says). |
 | Distribution artifacts | ✅ Full | `libtstrans.so` + `libtstrans.a` + `tstrans.h` + `tstrans.pc`. Tarball staged manually; GitHub Releases publishing not automated today. |
 | End-to-end C smoke test | ✅ Full | `bindings/c/tests/smoke.c` compiled by `cc` and linked against the cdylib at test time; exercises muxer push/pull + every NULL-close path + invalid-URL last-error. |
-| Live-socket roundtrip test | ✅ Full | `bindings/c/tests/receiving/live_pair.rs` binds a real `Listener` on 127.0.0.1, connects `tst_mux_sender_t`, sends a NAL, asserts the listener receives a TS sync byte. |
+| Live-socket roundtrip test | ✅ Full | `bindings/c/tests/receiving/live_pair.rs` binds a real `SrtListener` on 127.0.0.1, connects `tst_mux_sender_t`, sends a NAL, asserts the listener receives a TS sync byte. |
 | Multi-platform Tier 1 | ✅ Full — Linux x86_64 + aarch64 + macOS arm64 + Windows MSVC all gating | See "Build targets" section at top of this document. |
-| Pre-emptive close cancellation while parked in libsrt | ✅ Full | `Sender::close()` (and the underlying `Socket::cancel_handle()`) atomically closes the SRT handle from any thread, unblocking a peer thread parked in `srt_sendmsg`/`srt_recvmsg`. See [`pipeline.md`](/docs/guides/pipeline.md). |
+| Pre-emptive close cancellation while parked in libsrt | ✅ Full | `Sender::close()` (and the underlying `SrtSocket::cancel_handle()`) atomically closes the SRT handle from any thread, unblocking a peer thread parked in `srt_sendmsg`/`srt_recvmsg`. See [`pipeline.md`](/docs/guides/pipeline.md). |
 
 ---
 
@@ -663,7 +663,7 @@ covers.
 | --- | --- | --- |
 | `tstrans-srt-sys` | ✅ Full | Bindgen-generated FFI to libsrt 1.5.7; encryption via mbedTLS. |
 | `tst-core` | ✅ Full | Safe Rust API — MPEG-TS mux/demux, KLV substrate + typed sets (ST 0601 / 0102 / 0605 / 0903 / 0806 / 1010 / 1204) + the ST 0805 KLV→CoT conversion layer, codec parsers (H.264 / H.265 / H.266 / AV1 / AAC / AC-3 / MPEG-2 audio), `Transport` + `RecvTransport` traits. No SRT dependency. |
-| `tst-srt` | ✅ Full | SRT-specific safe wrapper — `Socket`, `Listener`, `SocketBuilder`, `SrtTransport` (implements both `Transport` and `RecvTransport`), `ResourceCancel`, URL parsing. Wraps libsrt 1.5.7. |
+| `tst-srt` | ✅ Full | SRT-specific safe wrapper — `SrtSocket`, `SrtListener`, `SrtSocketBuilder`, `SrtTransport` (implements both `Transport` and `RecvTransport`), `ResourceCancel`, URL parsing. Wraps libsrt 1.5.7. |
 | `tst-pipeline` | ✅ Full | Composition layer — `MuxSender<T>` / `Sender<T>` / `RawSender<T>` / `DemuxReceiver<R>` / `Receiver<R>` / `RawReceiver<R>` shells; `ManagedTransport` reconnect wrapper; `Pairer` KLV↔video alignment. Decoupled from libsrt via the `Transport`/`RecvTransport` traits. |
 | `tst-c` | ✅ Full | cdylib + staticlib + cbindgen-generated `tstrans.h` + pkg-config. ABI version **0.24** (additive minor bumps). Multi-platform Tier 1 (Linux x86_64 + aarch64 + macOS arm64 + Windows MSVC all gating). |
 | `tst-py` | ✅ Full | PyO3 bindings, published to PyPI as **`tstrans`** (0.8.0). File I/O (inspect + offline build of `.ts`); typed KLV decode/encode for the core MISB sets (ST 0601 / 0102 / 0605 / 0903) plus ST 0806 / 1010 / 1204 and the ST 0805 KLV→CoT conversion layer; codec parsers; live UDP / TCP / RTP (incl. RTSP) / SRT / HLS / RIST transports + Pairer; TLS variants ship in the wheels (`tcps://` caller + listener, `rtsps://` client + server, HTTPS HLS) as does RIST PSK encryption; optional `[pandas]` extra for DataFrame + NumPy adapters. |

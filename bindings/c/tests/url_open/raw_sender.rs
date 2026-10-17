@@ -5,7 +5,7 @@ use std::ffi::CString;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 use tstrans::config::{tst_raw_sender_config_free, tst_raw_sender_config_new};
 use tstrans::error::TstError;
 use tstrans::sender::raw_sender::{
@@ -22,7 +22,7 @@ fn variant_raw_sender_open_with_url() {
     let (sid_tx, sid_rx) = mpsc::channel::<Option<String>>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -67,7 +67,7 @@ fn variant_managed_raw_sender_open_with_url() {
     let (sid_tx, sid_rx) = mpsc::channel::<Option<String>>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -112,7 +112,7 @@ fn variant_managed_raw_sender_get_reconnect_stats() {
     let (ok_tx, ok_rx) = mpsc::channel::<bool>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");

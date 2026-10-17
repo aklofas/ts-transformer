@@ -16,7 +16,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 use tstrans::error::TstError;
 
 /// Plain-SRT code observed by the op that a cross-thread cancel interrupts.
@@ -55,7 +55,7 @@ pub(crate) struct PeerListener {
 
 impl PeerListener {
     pub(crate) fn spawn() -> Self {
-        let mut listener = ListenerBuilder::new()
+        let mut listener = SrtListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
             .expect("bind");
@@ -260,7 +260,7 @@ fn parked_recv_cancel<T: 'static>(
     // CLOSE the peer socket (dropping a `&Socket` closes nothing and the
     // reader would never return, turning a failing test into a hang).
     let mut peer = Some(
-        tst_srt::SocketBuilder::new()
+        tst_srt::SrtSocketBuilder::new()
             .connect_timeout(Duration::from_secs(5))
             .connect(format!("127.0.0.1:{port}"))
             .expect("peer connect"),

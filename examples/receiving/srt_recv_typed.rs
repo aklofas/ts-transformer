@@ -30,7 +30,7 @@ use std::env;
 use std::time::Duration;
 use tst_core::mpegts::demux::DemuxEvent;
 use tst_pipeline::DemuxReceiver;
-use tst_srt::ListenerBuilder;
+use tst_srt::SrtListenerBuilder;
 use tst_srt::SrtTransport;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -48,12 +48,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // negotiates the maximum during handshake), so the matching
     // `send_pipeline_to_socket` example uses the same 120ms.
     //
-    // `bind` is the terminal call on `ListenerBuilder` — no separate
+    // `bind` is the terminal call on `SrtListenerBuilder` — no separate
     // `.build()` step. It returns a ready-to-accept `Listener`.
     //
-    // Bind-then-step shape (`ListenerBuilder` is `&mut self -> &mut Self`):
+    // Bind-then-step shape (`SrtListenerBuilder` is `&mut self -> &mut Self`):
     // construct, mutate, then call the terminal `bind`.
-    let mut lb = ListenerBuilder::new();
+    let mut lb = SrtListenerBuilder::new();
     lb.latency(Duration::from_millis(120));
     let mut listener = lb.bind(format!("0.0.0.0:{port}").as_str())?;
     eprintln!("listening on 0.0.0.0:{port}");
