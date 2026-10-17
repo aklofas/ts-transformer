@@ -44,16 +44,8 @@ fn doc_comment(doc: &str, indent: &str) -> String {
     out
 }
 
-/// The fields the class exposes to Python, in declaration order.
-fn py_fields<'a>(e: &Entry, flds: &'a [Fld<'a>]) -> Vec<&'a Fld<'a>> {
-    flds.iter()
-        .filter(|f| f.ty.is_some() && e.py_crosses(f.spec))
-        .collect()
-}
-
-/// The fields the class holds: the exposed ones and the hidden ones, which
-/// only the hand-written extras read.
-fn held_fields<'a>(flds: &'a [Fld<'a>]) -> Vec<&'a Fld<'a>> {
+/// The fields the class holds and exposes, in declaration order.
+fn py_fields<'a>(flds: &'a [Fld<'a>]) -> Vec<&'a Fld<'a>> {
     flds.iter().filter(|f| f.ty.is_some()).collect()
 }
 
@@ -62,7 +54,7 @@ fn is_copy(reg: &[Entry], e: &Entry) -> bool {
     let Ok(flds) = resolve(reg, &e.schema) else {
         return false;
     };
-    held_fields(&flds).iter().all(|f| {
+    py_fields(&flds).iter().all(|f| {
         f.ty.as_ref()
             .expect("crossing")
             .host_copy(&|n| lookup(reg, n).is_some_and(|d| d.is_native() && is_copy(reg, d)))
@@ -110,12 +102,6 @@ fn extra(e: &Entry, x: &PyExtra) -> String {
     };
     let mut o = doc_comment(x.doc, "    ");
     match x.kind {
-        ExtraKind::Getter => {
-            o.push_str(&format!(
-                "    #[getter]\n    fn {}(&self) -> {} {{\n        {hook}(self)\n    }}\n",
-                x.name, x.ret_rs
-            ));
-        }
         ExtraKind::Method => {
             o.push_str(&format!(
                 "    fn {}(&self{lead_params}) -> {} {{\n        {hook}(self{lead_args})\n    }}\n",
@@ -201,7 +187,7 @@ fn ctor(e: &Entry, flds: &[&Fld]) -> String {
 pub fn docs(reg: &[Entry], e: &Entry) -> Result<String, String> {
     let flds = resolve(reg, &e.schema)?;
     let mut text = doc_comment(e.schema.doc, "");
-    for f in py_fields(e, &flds) {
+    for f in py_fields(&flds) {
         text.push_str(&doc_comment(f.spec.doc, "    "));
     }
     for x in e.py_extras {
@@ -214,20 +200,10 @@ pub fn docs(reg: &[Entry], e: &Entry) -> Result<String, String> {
 pub fn class(reg: &[Entry], e: &Entry) -> Result<String, String> {
     let s = &e.schema;
     let flds = resolve(reg, s)?;
-    let cross = py_fields(e, &flds);
-    let held = held_fields(&flds);
-    if e.py_ctor && held.len() != cross.len() {
-        return Err(format!(
-            "{}: a constructor cannot take a hidden field",
-            s.name
-        ));
-    }
-    for f in e.py_skip.iter().chain(e.py_rename.iter().map(|(r, _)| r)) {
+    let cross = py_fields(&flds);
+    for (f, _) in e.py_rename {
         if !s.fields.iter().any(|x| x.name == *f) {
-            return Err(format!(
-                "{}: py_skip or py_rename names no field `{f}`",
-                s.name
-            ));
+            return Err(format!("{}: py_rename names no field `{f}`", s.name));
         }
     }
     let mut derives = vec!["Debug", "Clone"];
@@ -236,30 +212,21 @@ pub fn class(reg: &[Entry], e: &Entry) -> Result<String, String> {
     }
     if e.py_eq {
         derives.push("PartialEq");
-        if is_eq(&held) {
+        if is_eq(&cross) {
             derives.push("Eq");
         }
     }
     let name = e.name();
     let mut o = doc_comment(s.doc, "");
     let eq = if e.py_eq { ", eq" } else { "" };
-    // With a hidden field the getters are declared field by field.
-    let get_all = if held.len() == cross.len() {
-        ", get_all"
-    } else {
-        ""
-    };
     o.push_str(&format!(
-        "#[pyclass(frozen{get_all}{eq}, name = \"{name}\", module = \"{}\")]\n",
+        "#[pyclass(frozen, get_all{eq}, name = \"{name}\", module = \"{}\")]\n",
         e.py_module
     ));
     o.push_str(&format!("#[derive({})]\n", derives.join(", ")));
     o.push_str(&format!("pub struct {name} {{\n"));
-    for f in &held {
+    for f in &cross {
         o.push_str(&doc_comment(f.spec.doc, "    "));
-        if get_all.is_empty() && e.py_crosses(f.spec) {
-            o.push_str("    #[pyo3(get)]\n");
-        }
         o.push_str(&format!(
             "    pub {}: {},\n",
             e.py_name(f.spec.name),
@@ -286,7 +253,7 @@ pub fn class(reg: &[Entry], e: &Entry) -> Result<String, String> {
         "impl From<&{}> for {name} {{\n    fn from(r: &{}) -> Self {{\n        Self {{\n",
         e.rust_path, e.rust_path
     ));
-    for f in &held {
+    for f in &cross {
         let ty = f.ty.as_ref().expect("crossing");
         let custom = (f.custom && !ty.is_py_copy()).then(|| custom_path(e, f));
         o.push_str(&format!(
@@ -328,7 +295,7 @@ pub fn file(reg: &[Entry], family: &str) -> Result<String, String> {
 /// ending inside the class body.
 pub fn pyi_block(reg: &[Entry], e: &Entry) -> Result<String, String> {
     let flds = resolve(reg, &e.schema)?;
-    let cross = py_fields(e, &flds);
+    let cross = py_fields(&flds);
     let name = e.name();
     let mut o = format!("@final\nclass {name}:\n");
     if e.py_ctor {
@@ -376,10 +343,6 @@ pub fn pyi_block(reg: &[Entry], e: &Entry) -> Result<String, String> {
             format!(", {params}")
         };
         match x.kind {
-            ExtraKind::Getter => o.push_str(&format!(
-                "    @property\n    def {}(self) -> {}: ...\n",
-                x.name, x.ret_py
-            )),
             ExtraKind::Method => o.push_str(&format!(
                 "    def {}(self{lead}) -> {}: ...\n",
                 x.name, x.ret_py

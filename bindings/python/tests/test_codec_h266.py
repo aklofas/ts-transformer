@@ -109,13 +109,13 @@ def test_parse_h266_sps_coded_dimensions_no_crop():
 
 
 def test_parse_h266_sps_profile_tier_level():
-    """profile_tier_level() returns an H266ProfileTierLevel with correct fields."""
+    """profile_tier_level is an H266ProfileTierLevel attribute with correct fields."""
     sps = parse_h266_sps(SPS_MAIN10_BYTES)
-    ptl = sps.profile_tier_level()
+    ptl = sps.profile_tier_level
     assert isinstance(ptl, H266ProfileTierLevel)
-    assert ptl.general_level_idc == sps.general_level_idc
-    assert ptl.general_tier_flag == sps.general_tier_flag
-    assert ptl.general_profile_idc == sps.general_profile_idc
+    assert ptl.general_profile_idc == 1  # Main10
+    assert ptl.general_tier_flag is False  # Main tier
+    assert ptl.general_level_idc == 63  # Level 4.0
 
 
 def test_parse_h266_sps_truncated_empty_raises_codec_error():
@@ -229,19 +229,17 @@ def test_parse_h266_vps_empty_raises_codec_error():
 def test_h266_profile_tier_level_repr():
     """H266ProfileTierLevel.__repr__ contains profile_idc, tier, and level."""
     sps = parse_h266_sps(SPS_MAIN10_BYTES)
-    ptl = sps.profile_tier_level()
+    ptl = sps.profile_tier_level
     r = repr(ptl)
     assert "profile_idc=" in r
     assert "level_idc=" in r
 
 
 def test_h266_profile_tier_level_fields():
-    """profile_tier_level() fields match the SPS scalar getters."""
+    """profile_tier_level carries the values the SPS repr reports."""
     sps = parse_h266_sps(SPS_MAIN10_BYTES)
-    ptl = sps.profile_tier_level()
-    assert ptl.general_profile_idc == sps.general_profile_idc
-    assert ptl.general_tier_flag == sps.general_tier_flag
-    assert ptl.general_level_idc == sps.general_level_idc
+    ptl = sps.profile_tier_level
+    assert f"profile={ptl.general_profile_idc}, level={ptl.general_level_idc}" in repr(sps)
 
 
 # ---------------------------------------------------------------------------

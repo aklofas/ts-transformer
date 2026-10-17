@@ -32,6 +32,8 @@ crate::binding_record! {
         pub chroma_format: ChromaFormat,
         /// True for progressive encoding (`frame_mbs_only_flag=1`).
         pub frame_mbs_only: bool,
+        /// Frame rate as a rational number, or absent when the VUI is absent.
+        pub frame_rate: Option<Rational>,
         /// True when `fixed_frame_rate_flag=1` in the VUI.
         pub fixed_frame_rate: bool,
         /// True when the stream may contain B-frames. A heuristic: the VUI
@@ -39,8 +41,6 @@ crate::binding_record! {
         /// the constrained High subsets are B-frameless and every other profile
         /// may have B-frames.
         pub has_b_frames: bool,
-        /// Frame rate as a rational number, or absent when the VUI is absent.
-        pub frame_rate: Option<Rational>,
         /// VUI colour info, or absent when the VUI is absent or
         /// `video_signal_type` is not present.
         pub color: Option<ColorInfo>,

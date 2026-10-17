@@ -548,8 +548,9 @@ What a registry row adds beyond the fields: `host_name` (the Rust
 `AdtsFrameOwned` is `AdtsFrame` to the hosts), `py_ctor` (a constructor taking
 every crossing field, in order, all required), `py_eq` (`==` by field),
 `py_repr` (a `format!` string and its arguments; without it `__repr__` lists
-the fields), `py_skip` (a field Java has and Python does not) and `py_extras`:
-methods and properties the fields do not give, each calling the hand-written
+the fields), `py_rename` (a Python attribute named otherwise than the Rust
+field) and `py_extras`:
+methods and static methods the fields do not give, each calling the hand-written
 `crate::custom::<record>_<name>(self, …)` and declared in the stub.
 
 The generator is never its own oracle: byte-level expectations come from the
