@@ -440,6 +440,10 @@ A field takes `@[…]` prefixes; they may repeat, e.g.
 - `@[skip]` — the field does not cross.
 - `@[java("name")]` — the JVM name, where it is not the camelCase of the Rust
   field.
+- `@[py_default("text")]` — the Python source text of the dataclass default,
+  where the type does not imply the one the host needs
+  (`@[py_default("5_000_000")] pub update_interval_us: u64`). It wins over the
+  default the type implies; the Java record has no default to carry.
 
 Where the generated text goes:
 
@@ -469,6 +473,15 @@ Field types and defaults:
   the Builder starts it at the same value. A required record has no such
   default and is refused. A `@[custom]` field takes the default of its row in
   the type table; its converter owns the rest.
+- A required `String` component that is `null` in a Java record is an
+  `IllegalArgumentException` naming it (`CotConfig.platformType must not be
+  null`); an optional one is `None`.
+- A record that crosses one way is registered with that direction: `ToHost`
+  has no reader and no `_from_py`, `FromHost` has no builder and no `_to_py`.
+- A record whose Java shape the schema cannot express (the ST 1204 `CoreId`
+  flattens each typed UUID into two components) is registered as Python-only:
+  it has no Java block and no JVM converter, and its Java record and JNI
+  converters stay hand-written.
 
 A custom field names its host types in a row of the generator's type table
 (`CUSTOM` in `typemap.rs`, keyed by the Rust type with paths and `Option<…>`

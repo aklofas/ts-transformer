@@ -9,19 +9,15 @@
 //! reader — the same one `st1204::validateMismmsNative` uses — so this module
 //! needs no `UasDatalinkLs` reader of its own.
 //!
-//! `CotConfig` is a small Java `record` (5 fields), read field-by-field via
-//! its accessor methods (`platformType`/`updateIntervalUs`/`producer`/
-//! `geoidUndulationM`/`how`) — no `Builder` round-trip needed, unlike
-//! `RvtLs`.
+//! `CotConfig` is a small Java `record` (5 components) read by the generated
+//! `read_cot_config`; a null string component or a negative
+//! `updateIntervalUs` is an `IllegalArgumentException` naming the component.
 //!
 //! ### JNI local-ref capacity
 //!
-//! No entry point here calls `ensure_local_capacity` directly:
-//! `read_uas_datalink_for_validate` already reserves 320 on the caller's
-//! behalf (same as `validateMismmsNative`), and `read_cot_config` plus the
-//! final `new_string` only add a handful more refs — comfortably inside that
-//! margin, mirroring how `validateMismmsNative` piggybacks on the same
-//! reservation for its own post-read work.
+//! `read_cot_config` reserves its own capacity, and the final `new_string` adds
+//! one more reference; `read_uas_datalink_for_validate` has already reserved
+//! its own on the caller's behalf (same as `validateMismmsNative`).
 //!
 //! ### Error mapping
 //!
@@ -40,61 +36,12 @@ use jni::objects::JObject;
 use jni::sys::{jlong, jobject};
 use tst_core::error::CotError;
 use tst_core::klv::st0805::{
-    CotConfig as RustCotConfig, platform_position_xml, platform_uid, sensor_point_of_interest_xml,
-    spi_uid,
+    platform_position_xml, platform_uid, sensor_point_of_interest_xml, spi_uid,
 };
 
-use crate::jutil::{read_nullable_double, read_nullable_string, require_non_null};
+use crate::jutil::require_non_null;
 
 // ── CotConfig <-> Java record ────────────────────────────────────────────────
-
-/// Read a mandatory (non-null) `String` accessor, throwing
-/// `IllegalArgumentException` naming `field` if the value is null. Sibling of
-/// `st0601::read_string` (mandatory) / `jutil::read_nullable_string`
-/// (optional) — kept local since `CotConfig` is this module's only
-/// mandatory-string caller.
-fn read_mandatory_string(
-    env: &mut JNIEnv<'_>,
-    obj: &JObject<'_>,
-    field: &str,
-) -> jni::errors::Result<String> {
-    match read_nullable_string(env, obj, field)? {
-        Some(s) => Ok(s),
-        None => {
-            let _ = env.throw_new(
-                "java/lang/IllegalArgumentException",
-                format!("CotConfig.{field} must not be null"),
-            );
-            Err(jni::errors::Error::JavaException)
-        }
-    }
-}
-
-/// Read a Java `CotConfig` record into a Rust `CotConfig`.
-fn read_cot_config(env: &mut JNIEnv<'_>, obj: &JObject<'_>) -> jni::errors::Result<RustCotConfig> {
-    let platform_type = read_mandatory_string(env, obj, "platformType")?;
-    let update_interval_us_raw = env.call_method(obj, "updateIntervalUs", "()J", &[])?.j()?;
-    if update_interval_us_raw < 0 {
-        let _ = env.throw_new(
-            "java/lang/IllegalArgumentException",
-            format!(
-                "CotConfig.updateIntervalUs must be non-negative; got {update_interval_us_raw}"
-            ),
-        );
-        return Err(jni::errors::Error::JavaException);
-    }
-    let update_interval_us = update_interval_us_raw as u64;
-    let producer = read_mandatory_string(env, obj, "producer")?;
-    let geoid_undulation_m = read_nullable_double(env, obj, "geoidUndulationM")?;
-    let how = read_mandatory_string(env, obj, "how")?;
-    Ok(RustCotConfig {
-        platform_type,
-        update_interval_us,
-        producer,
-        geoid_undulation_m,
-        how,
-    })
-}
 
 /// Validate a `generatedUs` `jlong` is non-negative before the `as u64` cast
 /// — a negative Java value would otherwise wrap to a far-future timestamp.
@@ -156,7 +103,7 @@ jni_native! {
             Ok(r) => r,
             Err(_) => return std::ptr::null_mut(),
         };
-        let cfg = match read_cot_config(env, &config) {
+        let cfg = match crate::generated::st0805::read_cot_config(env, &config) {
             Ok(c) => c,
             Err(_) => return std::ptr::null_mut(),
         };
@@ -193,7 +140,7 @@ jni_native! {
             Ok(r) => r,
             Err(_) => return std::ptr::null_mut(),
         };
-        let cfg = match read_cot_config(env, &config) {
+        let cfg = match crate::generated::st0805::read_cot_config(env, &config) {
             Ok(c) => c,
             Err(_) => return std::ptr::null_mut(),
         };

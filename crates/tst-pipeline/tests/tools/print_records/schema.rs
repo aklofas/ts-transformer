@@ -9,10 +9,8 @@ pub enum Direction {
     /// Rust to host and host to Rust.
     Both,
     /// Rust to host only: the builder and the Python `_to_py` converter.
-    #[allow(dead_code)] // no registered record is one-way yet; the emitter tests build them
     ToHost,
     /// Host to Rust only: the reader and the Python `_from_py` converter.
-    #[allow(dead_code)] // as ToHost
     FromHost,
 }
 
@@ -34,6 +32,9 @@ pub struct Entry {
     /// The Java package directory, e.g. `org/tstrans/klv`.
     pub java_pkg: &'static str,
     pub direction: Direction,
+    /// Whether the JVM side is generated. `false` for a record whose Java
+    /// shape the schema cannot express: it is generated for Python only.
+    pub jvm: bool,
     /// The path a binding crate names the record by, e.g.
     /// `tst_core::klv::st0601::WavelengthRecord`. Explicit because the
     /// declaring module is often private and re-exported higher up.
@@ -43,14 +44,20 @@ pub struct Entry {
     pub schema: RecordSchema,
 }
 
-/// One ST 0601 record: both directions, the `tstrans.klv` module and the
+/// One record of a family: both directions, the `tstrans.klv` module and the
 /// `org.tstrans.klv` package.
-fn st0601(rust_path: &'static str, java_implements: &'static str, schema: RecordSchema) -> Entry {
+fn klv(
+    family: &'static str,
+    rust_path: &'static str,
+    java_implements: &'static str,
+    schema: RecordSchema,
+) -> Entry {
     Entry {
-        family: "st0601",
+        family,
         py_module: "tstrans.klv",
         java_pkg: "org/tstrans/klv",
         direction: Direction::Both,
+        jvm: true,
         rust_path,
         java_implements,
         schema,
@@ -60,42 +67,68 @@ fn st0601(rust_path: &'static str, java_implements: &'static str, schema: Record
 /// Every generated record. A record declared with `binding_record!` and
 /// absent here is caught by the registry-completeness test.
 pub fn records() -> Vec<Entry> {
+    use tst_core::klv::st0102::SecurityLs;
     use tst_core::klv::st0601::{
         AirbaseLocations, ControlCommand, CountryCodes, ImageHorizonPixels, Location,
         MetadataSubstreamId, PayloadList, PayloadRecord, SdccFlpField, SensorFrameRate,
         UasDatalinkLs, ViewDomain, ViewDomainPair, WavelengthRecord, Waypoint, WeaponsStore,
     };
+    use tst_core::klv::st0605::PrecisionTimeStampPack;
+    use tst_core::klv::st0805::CotConfig;
+    use tst_core::klv::st0806::{RvtAoi, RvtLs, RvtPoi, RvtUserData};
+    use tst_core::klv::st0903::{VTargetPack, VmtiLs};
+    use tst_core::klv::st1010::SdccFlp;
+    use tst_core::klv::st1204::CoreId;
     macro_rules! rec {
-        ($name:ident) => {
-            rec!($name, "")
+        ($family:literal, $module:literal, $name:ident) => {
+            rec!($family, $module, $name, "")
         };
-        ($name:ident, $implements:expr) => {
-            st0601(
-                concat!("tst_core::klv::st0601::", stringify!($name)),
+        ($family:literal, $module:literal, $name:ident, $implements:expr) => {
+            klv(
+                $family,
+                concat!("tst_core::klv::", $module, "::", stringify!($name)),
                 $implements,
                 $name::BINDING_SCHEMA,
             )
         };
     }
+    let mut core_id = rec!("st1204", "st1204", CoreId);
+    core_id.jvm = false;
+    let mut cot_config = rec!("st0805", "st0805", CotConfig);
+    cot_config.direction = Direction::FromHost;
+    // The only SDCC-FLP encoder takes plain lists, not the record.
+    let mut sdcc_flp = rec!("st1010", "st1010", SdccFlp);
+    sdcc_flp.direction = Direction::ToHost;
     // The list items and nested records come first: a record is registered
     // before the records that hold it.
     vec![
-        rec!(WavelengthRecord),
-        rec!(ImageHorizonPixels),
-        rec!(ControlCommand),
-        rec!(SensorFrameRate),
-        rec!(MetadataSubstreamId),
-        rec!(CountryCodes),
-        rec!(Location),
-        rec!(AirbaseLocations),
-        rec!(PayloadRecord),
-        rec!(PayloadList),
-        rec!(WeaponsStore),
-        rec!(Waypoint),
-        rec!(ViewDomainPair),
-        rec!(ViewDomain),
-        rec!(SdccFlpField),
-        rec!(UasDatalinkLs, "KlvSet"),
+        rec!("st0601", "st0601", WavelengthRecord),
+        rec!("st0601", "st0601", ImageHorizonPixels),
+        rec!("st0601", "st0601", ControlCommand),
+        rec!("st0601", "st0601", SensorFrameRate),
+        rec!("st0601", "st0601", MetadataSubstreamId),
+        rec!("st0601", "st0601", CountryCodes),
+        rec!("st0601", "st0601", Location),
+        rec!("st0601", "st0601", AirbaseLocations),
+        rec!("st0601", "st0601", PayloadRecord),
+        rec!("st0601", "st0601", PayloadList),
+        rec!("st0601", "st0601", WeaponsStore),
+        rec!("st0601", "st0601", Waypoint),
+        rec!("st0601", "st0601", ViewDomainPair),
+        rec!("st0601", "st0601", ViewDomain),
+        rec!("st0601", "st0601", SdccFlpField),
+        rec!("st0601", "st0601", UasDatalinkLs, "KlvSet"),
+        rec!("st0903", "st0903", VTargetPack),
+        rec!("st0903", "st0903", VmtiLs, "KlvSet"),
+        rec!("st0806", "st0806", RvtUserData),
+        rec!("st0806", "st0806", RvtPoi),
+        rec!("st0806", "st0806", RvtAoi),
+        rec!("st0806", "st0806", RvtLs),
+        rec!("st0102", "st0102", SecurityLs, "KlvSet"),
+        core_id,
+        rec!("st0605", "st0605", PrecisionTimeStampPack, "KlvSet"),
+        sdcc_flp,
+        cot_config,
     ]
 }
 

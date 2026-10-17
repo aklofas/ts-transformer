@@ -318,6 +318,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `operationalModeCode`, `platformStatusCode` and `sensorControlModeCode` take
   an `Integer` where they took an `int`. A call with an `int` still compiles;
   code compiled against 0.8 must be recompiled.
+- `VTargetPack.Builder` has no constructor argument; set the id with
+  `targetId(long)`.
+- `SecurityLs.Builder.securityClassification`,
+  `classifyingCountryCodingMethod` and `objectCountryCodingMethod` (the `int`
+  and the enum overloads) are replaced by `securityClassificationCode`,
+  `classifyingCountryCodingMethodCode` and `objectCountryCodingMethodCode`,
+  named for their components and taking an `Integer`; pass an enum constant's
+  `code()`. The typed accessors of the record are unchanged.
+- `RvtPoi.Builder.poiTypeCode` and `RvtAoi.Builder.aoiTypeCode` take an
+  `Integer` where they took an `int`; a call with an `int` still compiles.
 
 ### Changed — tst-c
 
@@ -366,7 +376,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `binding_schema::{RecordSchema, FieldSpec, FieldMark}` and the
   `binding_record!` macro (Internal tier): one declaration per crossing record,
   from which the Python and JVM projections are generated. `WavelengthRecord`
-  is declared through it; its fields and derives are unchanged.
+  is declared through it; its fields and derives are unchanged. A field takes
+  `@[py_default("text")]` for a Python default the type does not imply
+  (`FieldSpec::py_default`).
+- `klv::st1204::CoreId` implements `Default` (version `1`, no UUID), so the
+  binding layer can build the `#[non_exhaustive]` record by assignment.
 - `mpegts::demux::low_level::iter_au_cells` — the Metadata AU cell iterator,
   previously reachable only through a hidden test module.
 - `NonConformantIssue` implements `std::error::Error`. Its `Display` text is
@@ -483,6 +497,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ViewDomain`, `SdccFlpField`) and `WavelengthRecord`. Fields and behaviour are
   unchanged except as listed under Changed; their docstrings are the Rust
   documentation.
+- The other KLV records are generated the same way: `tstrans.klv.VmtiLs`,
+  `VTargetPack`, `RvtLs`, `RvtPoi`, `RvtAoi`, `RvtUserData`, `SecurityLs`,
+  `CoreId`, `PrecisionTimeStampPack`, `SdccFlp` and `CotConfig`. Their fields,
+  order, annotations and defaults are unchanged; their docstrings are the Rust
+  documentation.
 
 ### Added — tst-jni
 
@@ -519,6 +538,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ViewDomain`, `SdccFlpField`) and `WavelengthRecord`. Components and
   behaviour are unchanged except as listed under Changed; their Javadoc is the
   Rust documentation.
+- The other KLV records are generated the same way, except `CoreId`, whose
+  seven flattened components the schema cannot express and which stays
+  hand-written: `org.tstrans.klv.VmtiLs`, `VTargetPack`, `RvtLs`, `RvtPoi`,
+  `RvtAoi`, `RvtUserData`, `SecurityLs`, `PrecisionTimeStampPack`, `SdccFlp`
+  and `CotConfig`. Components and behaviour are unchanged except as listed
+  under Changed; their Javadoc is the Rust documentation. A `null` string
+  component of a record handed to an encode or CoT call, and a negative
+  `PrecisionTimeStampPack.timestampUs`, throw `IllegalArgumentException`
+  naming the component.
 
 ### Deprecated — tst-py
 

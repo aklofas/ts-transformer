@@ -11,9 +11,14 @@ use tst_core::error::KlvFieldError;
 use tst_core::klv::ImapbSpecial;
 use tst_core::klv::UniversalLabel;
 use tst_core::klv::pack::OwnedRawField;
+use tst_core::klv::st0102::{
+    ClassifyingCountryCodingMethod, ObjectCountryCodingMethod, SecurityClassification,
+};
 use tst_core::klv::st0601::{
     IcingDetected, OperationalMode, PayloadType, PlatformStatus, SensorControlMode, SensorFovName,
 };
+use tst_core::klv::st0605::TimeStatus;
+use tst_core::klv::st0806::{RvtAoiType, RvtPoiType};
 
 use crate::jutil::{
     build_field_errors, build_long_list, build_unknown_list, checked_u8, checked_u64,
@@ -428,4 +433,338 @@ pub(crate) fn read_payload_record_payload_type(
         code,
         "PayloadRecord.payloadTypeCode",
     )?))
+}
+
+/// ST 0102 typed tags: 1..=14, 22, 23 and 24. An `unknown` entry whose tag a
+/// typed field owns is dropped: typed wins.
+fn is_st0102_typed_tag(tag: u32) -> bool {
+    matches!(tag, 1..=14 | 22 | 23 | 24)
+}
+
+/// ST 0903.6 VMTI typed tags: 1..=13 and 101..=103.
+fn is_st0903_vmti_typed_tag(tag: u32) -> bool {
+    matches!(tag, 1..=13 | 101..=103)
+}
+
+/// ST 0903.6 VTargetPack typed tags: 1..=23 and 100..=107.
+fn is_st0903_vtarget_typed_tag(tag: u32) -> bool {
+    matches!(tag, 1..=23 | 100..=107)
+}
+
+/// ST 0806.4 RVT typed tags: 1..=21, no gaps.
+fn is_st0806_rvt_typed_tag(tag: u32) -> bool {
+    matches!(tag, 1..=21)
+}
+
+/// ST 0806.4 POI and AOI typed tags: both sets share 1..=10.
+fn is_st0806_poi_aoi_typed_tag(tag: u32) -> bool {
+    matches!(tag, 1..=10)
+}
+
+/// The pass-through fields every typed set carries, per record: `unknown`
+/// crosses both ways (a typed tag is dropped), `field_errors` is a parser
+/// diagnostic that does not cross back.
+macro_rules! unknown_and_field_errors {
+    ($build_unknown:ident, $read_unknown:ident, $build_errors:ident, $read_errors:ident, $typed:ident) => {
+        pub(crate) fn $build_unknown<'l>(
+            env: &mut JNIEnv<'l>,
+            v: &[OwnedRawField],
+        ) -> jni::errors::Result<JObject<'l>> {
+            build_unknown_list(env, v)
+        }
+
+        pub(crate) fn $read_unknown(
+            env: &mut JNIEnv<'_>,
+            obj: &JObject<'_>,
+        ) -> jni::errors::Result<Vec<OwnedRawField>> {
+            let list = env
+                .call_method(obj, "unknown", "()Ljava/util/List;", &[])?
+                .l()?;
+            read_unknown_list(env, &list, $typed)
+        }
+
+        pub(crate) fn $build_errors<'l>(
+            env: &mut JNIEnv<'l>,
+            v: &[KlvFieldError],
+        ) -> jni::errors::Result<JObject<'l>> {
+            build_field_errors(env, v)
+        }
+
+        /// A parser diagnostic: it does not cross back.
+        pub(crate) fn $read_errors(
+            _env: &mut JNIEnv<'_>,
+            _obj: &JObject<'_>,
+        ) -> jni::errors::Result<Vec<KlvFieldError>> {
+            Ok(Vec::new())
+        }
+    };
+}
+
+/// A coded-enum field: a boxed `Integer` code point, `null` when absent; the
+/// wire-unknown variant keeps its code. `$accessor` is the record component.
+macro_rules! coded_enum_fields {
+    ($build:ident, $read:ident, $ty:ident, $accessor:literal) => {
+        pub(crate) fn $build<'l>(
+            env: &mut JNIEnv<'l>,
+            v: &Option<$ty>,
+        ) -> jni::errors::Result<JObject<'l>> {
+            boxed_code(env, v.map(|v| v.to_wire()))
+        }
+
+        pub(crate) fn $read(
+            env: &mut JNIEnv<'_>,
+            obj: &JObject<'_>,
+        ) -> jni::errors::Result<Option<$ty>> {
+            Ok(read_code(env, obj, $accessor)?.map($ty::from_wire))
+        }
+    };
+}
+
+/// The `sentinelTags` list of a nested ST 0806 set, each entry a `u32`.
+fn read_sentinel_tags(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+    record: &str,
+) -> jni::errors::Result<Vec<u32>> {
+    let list = env
+        .call_method(obj, "sentinelTags", "()Ljava/util/List;", &[])?
+        .l()?;
+    let mut out = Vec::new();
+    for v in read_long_list(env, &list)? {
+        let tag = u32::try_from(v).map_err(|_| {
+            illegal_argument(
+                env,
+                format!("{record}.sentinelTags entry out of u32 range: {v}"),
+            )
+        })?;
+        out.push(tag);
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// ST 0102 — SecurityLs
+// ---------------------------------------------------------------------------
+
+coded_enum_fields!(
+    build_security_ls_security_classification,
+    read_security_ls_security_classification,
+    SecurityClassification,
+    "securityClassificationCode"
+);
+coded_enum_fields!(
+    build_security_ls_classifying_country_coding_method,
+    read_security_ls_classifying_country_coding_method,
+    ClassifyingCountryCodingMethod,
+    "classifyingCountryCodingMethodCode"
+);
+coded_enum_fields!(
+    build_security_ls_object_country_coding_method,
+    read_security_ls_object_country_coding_method,
+    ObjectCountryCodingMethod,
+    "objectCountryCodingMethodCode"
+);
+unknown_and_field_errors!(
+    build_security_ls_unknown,
+    read_security_ls_unknown,
+    build_security_ls_field_errors,
+    read_security_ls_field_errors,
+    is_st0102_typed_tag
+);
+
+// ---------------------------------------------------------------------------
+// ST 0605 — PrecisionTimeStampPack
+// ---------------------------------------------------------------------------
+
+pub(crate) fn build_precision_time_stamp_pack_time_status<'l>(
+    env: &mut JNIEnv<'l>,
+    v: &TimeStatus,
+) -> jni::errors::Result<JObject<'l>> {
+    env.new_object(
+        "org/tstrans/klv/TimeStatus",
+        "(I)V",
+        &[JValue::Int(i32::from(v.0))],
+    )
+}
+
+pub(crate) fn read_precision_time_stamp_pack_time_status(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<TimeStatus> {
+    let status = env
+        .call_method(obj, "timeStatus", "()Lorg/tstrans/klv/TimeStatus;", &[])?
+        .l()?;
+    let raw = env.call_method(&status, "raw", "()I", &[])?.i()?;
+    Ok(TimeStatus(checked_u8(
+        env,
+        i64::from(raw),
+        "timeStatus.raw",
+    )?))
+}
+
+// ---------------------------------------------------------------------------
+// ST 0903 — VTargetPack, VmtiLs
+// ---------------------------------------------------------------------------
+
+/// The 3-byte colour crosses as the nested `VTargetPack.TargetColor` record.
+pub(crate) fn build_v_target_pack_target_color<'l>(
+    env: &mut JNIEnv<'l>,
+    v: &Option<[u8; 3]>,
+) -> jni::errors::Result<JObject<'l>> {
+    match v {
+        Some([r, g, b]) => env.new_object(
+            "org/tstrans/klv/VTargetPack$TargetColor",
+            "(III)V",
+            &[
+                JValue::Int(i32::from(*r)),
+                JValue::Int(i32::from(*g)),
+                JValue::Int(i32::from(*b)),
+            ],
+        ),
+        None => Ok(JObject::null()),
+    }
+}
+
+pub(crate) fn read_v_target_pack_target_color(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<Option<[u8; 3]>> {
+    let color = env
+        .call_method(
+            obj,
+            "targetColor",
+            "()Lorg/tstrans/klv/VTargetPack$TargetColor;",
+            &[],
+        )?
+        .l()?;
+    if color.is_null() {
+        return Ok(None);
+    }
+    let mut rgb = [0u8; 3];
+    for (slot, (name, label)) in rgb.iter_mut().zip([
+        ("r", "targetColor.r"),
+        ("g", "targetColor.g"),
+        ("b", "targetColor.b"),
+    ]) {
+        let raw = env.call_method(&color, name, "()I", &[])?.i()?;
+        *slot = checked_u8(env, i64::from(raw), label)?;
+    }
+    Ok(Some(rgb))
+}
+
+unknown_and_field_errors!(
+    build_v_target_pack_unknown,
+    read_v_target_pack_unknown,
+    build_v_target_pack_field_errors,
+    read_v_target_pack_field_errors,
+    is_st0903_vtarget_typed_tag
+);
+unknown_and_field_errors!(
+    build_vmti_ls_unknown,
+    read_vmti_ls_unknown,
+    build_vmti_ls_field_errors,
+    read_vmti_ls_field_errors,
+    is_st0903_vmti_typed_tag
+);
+
+// ---------------------------------------------------------------------------
+// ST 0806 — RvtPoi, RvtAoi, RvtLs
+// ---------------------------------------------------------------------------
+
+coded_enum_fields!(
+    build_rvt_poi_poi_type,
+    read_rvt_poi_poi_type,
+    RvtPoiType,
+    "poiTypeCode"
+);
+coded_enum_fields!(
+    build_rvt_aoi_aoi_type,
+    read_rvt_aoi_aoi_type,
+    RvtAoiType,
+    "aoiTypeCode"
+);
+
+pub(crate) fn build_rvt_poi_sentinel_tags<'l>(
+    env: &mut JNIEnv<'l>,
+    v: &[u32],
+) -> jni::errors::Result<JObject<'l>> {
+    build_long_list(env, v.iter().map(|&t| i64::from(t)))
+}
+
+pub(crate) fn read_rvt_poi_sentinel_tags(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<Vec<u32>> {
+    read_sentinel_tags(env, obj, "RvtPoi")
+}
+
+pub(crate) fn build_rvt_aoi_sentinel_tags<'l>(
+    env: &mut JNIEnv<'l>,
+    v: &[u32],
+) -> jni::errors::Result<JObject<'l>> {
+    build_long_list(env, v.iter().map(|&t| i64::from(t)))
+}
+
+pub(crate) fn read_rvt_aoi_sentinel_tags(
+    env: &mut JNIEnv<'_>,
+    obj: &JObject<'_>,
+) -> jni::errors::Result<Vec<u32>> {
+    read_sentinel_tags(env, obj, "RvtAoi")
+}
+
+unknown_and_field_errors!(
+    build_rvt_poi_unknown,
+    read_rvt_poi_unknown,
+    build_rvt_poi_field_errors,
+    read_rvt_poi_field_errors,
+    is_st0806_poi_aoi_typed_tag
+);
+unknown_and_field_errors!(
+    build_rvt_aoi_unknown,
+    read_rvt_aoi_unknown,
+    build_rvt_aoi_field_errors,
+    read_rvt_aoi_field_errors,
+    is_st0806_poi_aoi_typed_tag
+);
+unknown_and_field_errors!(
+    build_rvt_ls_unknown,
+    read_rvt_ls_unknown,
+    build_rvt_ls_field_errors,
+    read_rvt_ls_field_errors,
+    is_st0806_rvt_typed_tag
+);
+
+// ---------------------------------------------------------------------------
+// ST 1010 — SdccFlp
+// ---------------------------------------------------------------------------
+
+/// The matrices cross as primitive arrays.
+pub(crate) fn build_sdcc_flp_std_devs<'l>(
+    env: &mut JNIEnv<'l>,
+    v: &[f64],
+) -> jni::errors::Result<JObject<'l>> {
+    build_double_array(env, v)
+}
+
+pub(crate) fn build_sdcc_flp_correlations<'l>(
+    env: &mut JNIEnv<'l>,
+    v: &[f64],
+) -> jni::errors::Result<JObject<'l>> {
+    build_double_array(env, v)
+}
+
+pub(crate) fn build_sdcc_flp_correlation_present<'l>(
+    env: &mut JNIEnv<'l>,
+    v: &[bool],
+) -> jni::errors::Result<JObject<'l>> {
+    let flags: Vec<u8> = v.iter().map(|&b| u8::from(b)).collect();
+    let arr = env.new_boolean_array(flags.len() as i32)?;
+    env.set_boolean_array_region(&arr, 0, &flags)?;
+    Ok(arr.into())
+}
+
+fn build_double_array<'l>(env: &mut JNIEnv<'l>, v: &[f64]) -> jni::errors::Result<JObject<'l>> {
+    let arr = env.new_double_array(v.len() as i32)?;
+    env.set_double_array_region(&arr, 0, v)?;
+    Ok(arr.into())
 }

@@ -68,28 +68,50 @@ pub enum IdType {
     Managed,
 }
 
-/// A decoded MIIS Core Identifier (ST 1204.3 §7.3).
+crate::binding_record! {
+    /// A decoded MIIS Core Identifier (ST 1204.3 §7.3).
+    ///
+    /// Contains the raw version byte plus up to four optional UUID components.
+    /// The EBNF constraint — `minor` XOR any-of-(sensor/platform/window) — is
+    /// enforced by [`decode`] and should be maintained by callers of
+    /// [`encode_to_vec`].
+    #[non_exhaustive]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct CoreId {
+        /// Wire version byte. Always `1` for decoded values; set to `1` when
+        /// constructing a value to encode.
+        pub version: u8,
+        /// Sensor UUID and its type, if present.
+        @[custom]
+        pub sensor: Option<(IdType, [u8; 16])>,
+        /// Platform UUID and its type, if present.
+        @[custom]
+        pub platform: Option<(IdType, [u8; 16])>,
+        /// Window UUID, if present. Window has no type bits — its presence is
+        /// indicated by usage-byte bit b2.
+        @[custom]
+        pub window: Option<[u8; 16]>,
+        /// Minor Core Identifier UUID. When present, sensor/platform/window
+        /// must all be `None` (ST 1204.3 §7.3.1 EBNF rule).
+        @[custom]
+        pub minor: Option<[u8; 16]>,
+    }
+}
+
+/// An empty identifier: version `1` and no UUID.
 ///
-/// Contains the raw version byte plus up to four optional UUID components.
-/// The EBNF constraint — `minor` XOR any-of-(sensor/platform/window) — is
-/// enforced by [`decode`] and should be maintained by callers of
-/// [`encode_to_vec`].
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CoreId {
-    /// Wire version byte. Always `1` for decoded values; set to `1` when
-    /// constructing a value to encode.
-    pub version: u8,
-    /// Sensor UUID and its type, if present.
-    pub sensor: Option<(IdType, [u8; 16])>,
-    /// Platform UUID and its type, if present.
-    pub platform: Option<(IdType, [u8; 16])>,
-    /// Window UUID, if present. Window has no type bits — its presence is
-    /// indicated by usage-byte bit b2.
-    pub window: Option<[u8; 16]>,
-    /// Minor Core Identifier UUID. When present, sensor/platform/window
-    /// must all be `None` (ST 1204.3 §7.3.1 EBNF rule).
-    pub minor: Option<[u8; 16]>,
+/// `CoreId` is `#[non_exhaustive]`, so a crate that cannot name its fields
+/// in a struct literal starts from this value and assigns each field.
+impl Default for CoreId {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            sensor: None,
+            platform: None,
+            window: None,
+            minor: None,
+        }
+    }
 }
 
 /// Errors returned by [`decode`].

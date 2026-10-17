@@ -25,6 +25,7 @@ pub tst_core::binding_schema::FieldSpec::doc: &'static str
 pub tst_core::binding_schema::FieldSpec::java: core::option::Option<&'static str>
 pub tst_core::binding_schema::FieldSpec::mark: tst_core::binding_schema::FieldMark
 pub tst_core::binding_schema::FieldSpec::name: &'static str
+pub tst_core::binding_schema::FieldSpec::py_default: core::option::Option<&'static str>
 pub tst_core::binding_schema::FieldSpec::ty: &'static str
 impl core::clone::Clone for tst_core::binding_schema::FieldSpec
 pub fn tst_core::binding_schema::FieldSpec::clone(&self) -> tst_core::binding_schema::FieldSpec
@@ -3673,6 +3674,8 @@ pub fn tst_core::klv::st1204::CoreId::clone(&self) -> tst_core::klv::st1204::Cor
 impl core::cmp::Eq for tst_core::klv::st1204::CoreId
 impl core::cmp::PartialEq for tst_core::klv::st1204::CoreId
 pub fn tst_core::klv::st1204::CoreId::eq(&self, &tst_core::klv::st1204::CoreId) -> bool
+impl core::default::Default for tst_core::klv::st1204::CoreId
+pub fn tst_core::klv::st1204::CoreId::default() -> Self
 impl core::fmt::Debug for tst_core::klv::st1204::CoreId
 pub fn tst_core::klv::st1204::CoreId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::fmt::Display for tst_core::klv::st1204::CoreId

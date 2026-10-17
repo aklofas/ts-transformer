@@ -125,12 +125,7 @@ impl Gen<'_> {
     /// An expression that reads the Java object `o` as `ty`.
     fn read_obj(&mut self, ty: &Ty, o: &str, path: &str) -> String {
         match ty {
-            Ty::Str => {
-                let s = self.fresh("s");
-                format!(
-                    "{{ let {s}: &jni::objects::JString = (&{o}).into(); String::from(env.get_string({s})?) }}"
-                )
-            }
+            Ty::Str => self.read_str(o, Some(path)),
             Ty::Bytes => format!("crate::jutil::read_byte_buffer(env, &{o})?"),
             Ty::Record(n) => format!("{}(env, &{o})?", conv_fn(self.reg, self.e, n, "read")),
             Ty::Scalar(sc) => {
@@ -142,7 +137,11 @@ impl Gen<'_> {
                 self.narrow(*sc, &raw, path)
             }
             Ty::Opt(inner) => {
-                let v = self.read_obj(inner, o, path);
+                // The null test above already covers a string.
+                let v = match inner.as_ref() {
+                    Ty::Str => self.read_str(o, None),
+                    _ => self.read_obj(inner, o, path),
+                };
                 format!("if {o}.is_null() {{ None }} else {{ Some({v}) }}")
             }
             Ty::List(inner) => {
@@ -166,6 +165,22 @@ impl Gen<'_> {
             }
             Ty::Custom(_) => unreachable!("custom fields are converted by name"),
         }
+    }
+
+    /// An expression that reads the Java `String` `o`. With a `path`, a null
+    /// is an `IllegalArgumentException` naming that field: a required string
+    /// has no Rust value to take its place.
+    fn read_str(&mut self, o: &str, path: Option<&str>) -> String {
+        let s = self.fresh("s");
+        let guard = match path {
+            Some(p) => format!(
+                "if {o}.is_null() {{ return Err(crate::jutil::null_field(env, \"{p}\")); }} "
+            ),
+            None => String::new(),
+        };
+        format!(
+            "{{ {guard}let {s}: &jni::objects::JString = (&{o}).into(); String::from(env.get_string({s})?) }}"
+        )
     }
 
     /// `raw` is a value of the scalar's Java width; unsigned types are
@@ -387,7 +402,7 @@ pub fn record_pair(reg: &[Entry], e: &Entry) -> Result<String, String> {
 /// The whole `generated/<family>.rs` text.
 pub fn file(reg: &[Entry], family: &str) -> Result<String, String> {
     let mut body = Vec::new();
-    for e in reg.iter().filter(|e| e.family == family) {
+    for e in reg.iter().filter(|e| e.family == family && e.jvm) {
         body.push(record_pair(reg, e)?);
     }
     let body = body.join("\n");

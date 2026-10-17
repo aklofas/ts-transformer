@@ -22,6 +22,7 @@
 //!         @[custom] pub name: Option<String>, // converted by a hand-written function
 //!         @[skip] pub scratch: Vec<u8>,       // never crosses
 //!         @[java("minCode")] pub min: u8,     // host name override
+//!         @[py_default("0")] pub id: u8,      // Python dataclass default
 //!     }
 //! }
 //! ```
@@ -50,6 +51,9 @@ pub struct FieldSpec {
     pub mark: FieldMark,
     /// Host name override; `None` means the camelCase of `name`.
     pub java: Option<&'static str>,
+    /// The Python source text of the field's dataclass default, when the
+    /// host default is not the one the generator derives from the type.
+    pub py_default: Option<&'static str>,
     /// The field's doc lines joined by `"\n"`, each as written after `///`;
     /// `""` when it has none.
     pub doc: &'static str,
@@ -110,12 +114,13 @@ macro_rules! __mark {
         compile_error!("binding_record!: a field takes one of `@[custom]` or `@[skip]`, once")
     };
     (@go $cur:ident; java($j:literal) $($r:tt)*) => { $crate::__mark!(@go $cur; $($r)*) };
+    (@go $cur:ident; py_default($p:literal) $($r:tt)*) => { $crate::__mark!(@go $cur; $($r)*) };
     (@go $cur:ident; , $($r:tt)*) => { $crate::__mark!(@go $cur; $($r)*) };
     (@go $cur:ident; $x:tt $($r:tt)*) => {
         compile_error!(concat!(
             "binding_record!: unknown field mark `",
             stringify!($x),
-            "`; a mark is `custom`, `skip` or `java(\"name\")`"
+            "`; a mark is `custom`, `skip`, `java(\"name\")` or `py_default(\"text\")`"
         ))
     };
     ($($t:tt)*) => { $crate::__mark!(@go Plain; $($t)*) };
@@ -136,18 +141,36 @@ macro_rules! __java {
     ($($t:tt)*) => { $crate::__java!(@go; $($t)*) };
 }
 
+/// The Python default text carried by a `py_default("…")` among the `@[...]`
+/// groups; a second `py_default("…")` on one field is an error.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __py_default {
+    (@go;) => { ::core::option::Option::None };
+    (@go [$p:literal];) => { ::core::option::Option::Some($p) };
+    (@go; py_default($p:literal) $($r:tt)*) => { $crate::__py_default!(@go [$p]; $($r)*) };
+    (@go [$p0:literal]; py_default($p:literal) $($r:tt)*) => {
+        compile_error!("binding_record!: a field takes `@[py_default(\"text\")]` once")
+    };
+    (@go $([$p0:literal])?; $x:tt $($r:tt)*) => { $crate::__py_default!(@go $([$p0])?; $($r)*) };
+    ($($t:tt)*) => { $crate::__py_default!(@go; $($t)*) };
+}
+
 /// Declares a record that crosses to a host language.
 ///
 /// Emits the struct exactly as written (attributes, docs, visibility) and
 /// an associated `BINDING_SCHEMA: RecordSchema`. A field's marks sit in
 /// `@[...]` groups before it: `@[custom]` (hand-written converter), `@[skip]`
-/// (does not cross) and `@[java("name")]` (host name override). A field may
-/// carry several groups, each mark at most once, and `custom` excludes `skip`:
+/// (does not cross), `@[java("name")]` (host name override) and
+/// `@[py_default("text")]` (the Python source text of the dataclass default,
+/// for a default the type does not imply). A field may carry several groups,
+/// each mark at most once, and `custom` excludes `skip`:
 ///
 /// ```
 /// tst_core::binding_record! {
 ///     pub struct X {
 ///         @[custom] @[java("eCode")] pub e: Option<u8>,
+///         @[py_default("\"x\"")] pub name: String,
 ///     }
 /// }
 /// ```
@@ -186,6 +209,14 @@ macro_rules! __java {
 ///     }
 /// }
 /// ```
+///
+/// ```compile_fail
+/// tst_core::binding_record! {
+///     pub struct X {
+///         @[py_default("1")] @[py_default("2")] pub e: u8,
+///     }
+/// }
+/// ```
 #[macro_export]
 macro_rules! binding_record {
     (
@@ -212,6 +243,7 @@ macro_rules! binding_record {
                         ty: stringify!($fty),
                         mark: $crate::__mark!($($($mark)*)*),
                         java: $crate::__java!($($($mark)*)*),
+                        py_default: $crate::__py_default!($($($mark)*)*),
                         doc: $crate::__docs!($(#[$($fmeta)*])*),
                     } ),* ],
                     doc: $crate::__docs!($(#[$($meta)*])*),

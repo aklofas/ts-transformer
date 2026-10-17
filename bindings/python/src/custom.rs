@@ -14,13 +14,18 @@ use tst_core::error::KlvFieldError;
 use tst_core::klv::ImapbSpecial;
 use tst_core::klv::UniversalLabel;
 use tst_core::klv::pack::OwnedRawField;
+use tst_core::klv::st0102::{
+    ClassifyingCountryCodingMethod, ObjectCountryCodingMethod, SecurityClassification,
+};
 use tst_core::klv::st0601::{
     IcingDetected, OperationalMode, PayloadType, PlatformStatus, SensorControlMode, SensorFovName,
 };
+use tst_core::klv::st0605::TimeStatus;
+use tst_core::klv::st0806::{RvtAoiType, RvtPoiType};
+use tst_core::klv::st1204::IdType;
 
 use crate::klv::{
-    convert_field_errors, convert_unknown, enum_field_to_u8, enum_field_to_u64,
-    is_st0601_typed_tag, py_to_unknown,
+    convert_field_errors, convert_unknown, enum_field_to_u8, enum_field_to_u64, py_to_unknown,
 };
 
 // ---------------------------------------------------------------------------
@@ -357,4 +362,393 @@ pub(crate) fn payload_record_payload_type_to_py(
 pub(crate) fn payload_record_payload_type_from_py(obj: &Bound<'_, PyAny>) -> PyResult<PayloadType> {
     let v = obj.getattr(intern!(obj.py(), "payload_type"))?;
     Ok(PayloadType::from_wire(enum_field_to_u64(&v)?))
+}
+
+/// The typed-tag predicates the `unknown` readers filter by: a caller-supplied
+/// entry whose tag a typed field owns is dropped, because the typed field wins.
+///
+/// ST 0601 typed tags: 1..=65 and 67..=143. Tag 66 is the deprecated
+/// placeholder and 144..=255 are forward-compat, so both may appear in
+/// `unknown`. Keep this in step with the ST 0601 tag table when a tag is typed.
+pub(crate) fn is_st0601_typed_tag(tag: u32) -> bool {
+    matches!(tag, 1..=65 | 67..=143)
+}
+
+/// ST 0102 typed tags: 1..=14, 22, 23 and 24.
+fn is_st0102_typed_tag(tag: u32) -> bool {
+    matches!(tag, 1..=14 | 22 | 23 | 24)
+}
+
+/// ST 0903.6 VMTI typed tags: 1..=13 and 101..=103. Tag 7 is deprecated in
+/// v6; it counts as typed so a colliding entry cannot re-enter.
+fn is_st0903_vmti_typed_tag(tag: u32) -> bool {
+    matches!(tag, 1..=13 | 101..=103)
+}
+
+/// ST 0903.6 VTargetPack typed tags: 1..=23 and 100..=107.
+fn is_st0903_vtarget_typed_tag(tag: u32) -> bool {
+    matches!(tag, 1..=23 | 100..=107)
+}
+
+/// ST 0806.4 RVT typed tags: 1..=21, no gaps.
+fn is_st0806_rvt_typed_tag(tag: u32) -> bool {
+    matches!(tag, 1..=21)
+}
+
+/// ST 0806.4 POI and AOI typed tags: both sets share 1..=10.
+fn is_st0806_poi_aoi_typed_tag(tag: u32) -> bool {
+    matches!(tag, 1..=10)
+}
+
+/// The two diagnostic-and-pass-through fields every typed set carries, per
+/// record: `unknown` crosses both ways (typed tags dropped), `field_errors`
+/// is a parser diagnostic that does not cross back.
+macro_rules! unknown_and_field_errors {
+    ($unknown_to:ident, $unknown_from:ident, $errors_to:ident, $errors_from:ident, $typed:ident) => {
+        pub(crate) fn $unknown_to(py: Python<'_>, v: &[OwnedRawField]) -> PyResult<PyObject> {
+            convert_unknown(py, v)
+        }
+
+        /// An entry whose tag a typed field owns is dropped: typed wins.
+        pub(crate) fn $unknown_from(obj: &Bound<'_, PyAny>) -> PyResult<Vec<OwnedRawField>> {
+            py_to_unknown(obj, $typed)
+        }
+
+        pub(crate) fn $errors_to(py: Python<'_>, v: &[KlvFieldError]) -> PyResult<PyObject> {
+            convert_field_errors(py, v)
+        }
+
+        /// A parser diagnostic: it does not cross back.
+        pub(crate) fn $errors_from(_obj: &Bound<'_, PyAny>) -> PyResult<Vec<KlvFieldError>> {
+            Ok(Vec::new())
+        }
+    };
+}
+
+/// A coded-enum field: the `tstrans.klv` member for a known code point, the
+/// raw `int` for the enum's wire-unknown variant.
+macro_rules! coded_enum_fields {
+    ($to:ident, $from:ident, $ty:ident, $unknown:ident, $field:literal) => {
+        pub(crate) fn $to(py: Python<'_>, v: &Option<$ty>) -> PyResult<PyObject> {
+            let Some(v) = v else { return Ok(py.None()) };
+            let other = match v {
+                $ty::$unknown(b) => Some(u64::from(*b)),
+                _ => None,
+            };
+            coded_enum(py, stringify!($ty), other, u64::from(v.to_wire()))
+        }
+
+        pub(crate) fn $from(obj: &Bound<'_, PyAny>) -> PyResult<Option<$ty>> {
+            let v = obj.getattr(intern!(obj.py(), $field))?;
+            Ok(if v.is_none() {
+                None
+            } else {
+                Some($ty::from_wire(enum_field_to_u8(&v)?))
+            })
+        }
+    };
+}
+
+// ---------------------------------------------------------------------------
+// ST 0102 — SecurityLs
+// ---------------------------------------------------------------------------
+
+coded_enum_fields!(
+    security_ls_security_classification_to_py,
+    security_ls_security_classification_from_py,
+    SecurityClassification,
+    Unknown,
+    "security_classification"
+);
+coded_enum_fields!(
+    security_ls_classifying_country_coding_method_to_py,
+    security_ls_classifying_country_coding_method_from_py,
+    ClassifyingCountryCodingMethod,
+    Unknown,
+    "classifying_country_coding_method"
+);
+coded_enum_fields!(
+    security_ls_object_country_coding_method_to_py,
+    security_ls_object_country_coding_method_from_py,
+    ObjectCountryCodingMethod,
+    Unknown,
+    "object_country_coding_method"
+);
+unknown_and_field_errors!(
+    security_ls_unknown_to_py,
+    security_ls_unknown_from_py,
+    security_ls_field_errors_to_py,
+    security_ls_field_errors_from_py,
+    is_st0102_typed_tag
+);
+
+// ---------------------------------------------------------------------------
+// ST 0605 — PrecisionTimeStampPack
+// ---------------------------------------------------------------------------
+
+pub(crate) fn precision_time_stamp_pack_time_status_to_py(
+    py: Python<'_>,
+    v: &TimeStatus,
+) -> PyResult<PyObject> {
+    let cls = py.import_bound("tstrans.klv")?.getattr("TimeStatus")?;
+    Ok(cls.call1((v.0,))?.unbind())
+}
+
+pub(crate) fn precision_time_stamp_pack_time_status_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<TimeStatus> {
+    let py = obj.py();
+    let raw: u8 = obj
+        .getattr(intern!(py, "time_status"))?
+        .getattr(intern!(py, "raw"))?
+        .extract()?;
+    Ok(TimeStatus(raw))
+}
+
+// ---------------------------------------------------------------------------
+// ST 0903 — VTargetPack, VmtiLs
+// ---------------------------------------------------------------------------
+
+pub(crate) fn v_target_pack_target_color_to_py(
+    py: Python<'_>,
+    v: &Option<[u8; 3]>,
+) -> PyResult<PyObject> {
+    Ok(match v {
+        Some(rgb) => PyTuple::new_bound(py, rgb).into_py(py),
+        None => py.None(),
+    })
+}
+
+/// A non-null value of any length but 3 is a caller bug: it raises instead of
+/// dropping the colour.
+pub(crate) fn v_target_pack_target_color_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<Option<[u8; 3]>> {
+    let v = obj.getattr(intern!(obj.py(), "target_color"))?;
+    if v.is_none() {
+        return Ok(None);
+    }
+    let rgb: Vec<u8> = v.extract()?;
+    let rgb: [u8; 3] = rgb.as_slice().try_into().map_err(|_| {
+        PyValueError::new_err(format!(
+            "target_color must be a 3-tuple, got length {}",
+            rgb.len()
+        ))
+    })?;
+    Ok(Some(rgb))
+}
+
+unknown_and_field_errors!(
+    v_target_pack_unknown_to_py,
+    v_target_pack_unknown_from_py,
+    v_target_pack_field_errors_to_py,
+    v_target_pack_field_errors_from_py,
+    is_st0903_vtarget_typed_tag
+);
+unknown_and_field_errors!(
+    vmti_ls_unknown_to_py,
+    vmti_ls_unknown_from_py,
+    vmti_ls_field_errors_to_py,
+    vmti_ls_field_errors_from_py,
+    is_st0903_vmti_typed_tag
+);
+
+// ---------------------------------------------------------------------------
+// ST 0806 — RvtPoi, RvtAoi, RvtLs
+// ---------------------------------------------------------------------------
+
+coded_enum_fields!(
+    rvt_poi_poi_type_to_py,
+    rvt_poi_poi_type_from_py,
+    RvtPoiType,
+    Other,
+    "poi_type"
+);
+coded_enum_fields!(
+    rvt_aoi_aoi_type_to_py,
+    rvt_aoi_aoi_type_from_py,
+    RvtAoiType,
+    Other,
+    "aoi_type"
+);
+
+pub(crate) fn rvt_poi_sentinel_tags_to_py(py: Python<'_>, v: &[u32]) -> PyResult<PyObject> {
+    Ok(PyTuple::new_bound(py, v.iter().map(|&t| u64::from(t))).into_py(py))
+}
+
+pub(crate) fn rvt_poi_sentinel_tags_from_py(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u32>> {
+    obj.getattr(intern!(obj.py(), "sentinel_tags"))?.extract()
+}
+
+pub(crate) fn rvt_aoi_sentinel_tags_to_py(py: Python<'_>, v: &[u32]) -> PyResult<PyObject> {
+    rvt_poi_sentinel_tags_to_py(py, v)
+}
+
+pub(crate) fn rvt_aoi_sentinel_tags_from_py(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u32>> {
+    rvt_poi_sentinel_tags_from_py(obj)
+}
+
+unknown_and_field_errors!(
+    rvt_poi_unknown_to_py,
+    rvt_poi_unknown_from_py,
+    rvt_poi_field_errors_to_py,
+    rvt_poi_field_errors_from_py,
+    is_st0806_poi_aoi_typed_tag
+);
+unknown_and_field_errors!(
+    rvt_aoi_unknown_to_py,
+    rvt_aoi_unknown_from_py,
+    rvt_aoi_field_errors_to_py,
+    rvt_aoi_field_errors_from_py,
+    is_st0806_poi_aoi_typed_tag
+);
+unknown_and_field_errors!(
+    rvt_ls_unknown_to_py,
+    rvt_ls_unknown_from_py,
+    rvt_ls_field_errors_to_py,
+    rvt_ls_field_errors_from_py,
+    is_st0806_rvt_typed_tag
+);
+
+// ---------------------------------------------------------------------------
+// ST 1010 — SdccFlp
+// ---------------------------------------------------------------------------
+
+pub(crate) fn sdcc_flp_std_devs_to_py(py: Python<'_>, v: &[f64]) -> PyResult<PyObject> {
+    Ok(PyTuple::new_bound(py, v).into_py(py))
+}
+
+pub(crate) fn sdcc_flp_correlations_to_py(py: Python<'_>, v: &[f64]) -> PyResult<PyObject> {
+    Ok(PyTuple::new_bound(py, v).into_py(py))
+}
+
+pub(crate) fn sdcc_flp_correlation_present_to_py(py: Python<'_>, v: &[bool]) -> PyResult<PyObject> {
+    Ok(PyTuple::new_bound(py, v).into_py(py))
+}
+
+// ---------------------------------------------------------------------------
+// ST 1204 — CoreId
+// ---------------------------------------------------------------------------
+
+/// The `tstrans.klv.IdType` member of the same name.
+fn id_type_to_py(py: Python<'_>, ty: IdType) -> PyResult<PyObject> {
+    let name = match ty {
+        IdType::Physical => "PHYSICAL",
+        IdType::Virtual => "VIRTUAL",
+        IdType::Managed => "MANAGED",
+        _ => {
+            return Err(PyValueError::new_err(
+                "unknown IdType variant crossing the binding",
+            ));
+        }
+    };
+    let cls = py.import_bound("tstrans.klv")?.getattr("IdType")?;
+    Ok(cls.getattr(name)?.unbind())
+}
+
+fn id_type_from_py(obj: &Bound<'_, PyAny>) -> PyResult<IdType> {
+    let name: String = obj.getattr("name")?.extract()?;
+    match name.as_str() {
+        "PHYSICAL" => Ok(IdType::Physical),
+        "VIRTUAL" => Ok(IdType::Virtual),
+        "MANAGED" => Ok(IdType::Managed),
+        other => Err(PyValueError::new_err(format!(
+            "unknown IdType variant: {other}"
+        ))),
+    }
+}
+
+/// A UUID of any length but 16 is a caller bug: it raises, naming the field.
+fn uuid_from_bytes(field: &str, bytes: &[u8]) -> PyResult<[u8; 16]> {
+    bytes.try_into().map_err(|_| {
+        PyValueError::new_err(format!(
+            "CoreId.{field} UUID must be 16 bytes, got {}",
+            bytes.len()
+        ))
+    })
+}
+
+/// A typed UUID crosses as a `(IdType, bytes)` tuple.
+fn typed_uuid_to_py(py: Python<'_>, v: &Option<(IdType, [u8; 16])>) -> PyResult<PyObject> {
+    Ok(match v {
+        Some((ty, uuid)) => {
+            let ty = id_type_to_py(py, *ty)?;
+            let bytes: PyObject = PyBytes::new_bound(py, uuid).into_py(py);
+            PyTuple::new_bound(py, [ty, bytes]).into_py(py)
+        }
+        None => py.None(),
+    })
+}
+
+fn typed_uuid_from_py(
+    obj: &Bound<'_, PyAny>,
+    field: &'static str,
+) -> PyResult<Option<(IdType, [u8; 16])>> {
+    let v = obj.getattr(field)?;
+    if v.is_none() {
+        return Ok(None);
+    }
+    let (ty, bytes): (Bound<'_, PyAny>, Vec<u8>) = v.extract()?;
+    Ok(Some((
+        id_type_from_py(&ty)?,
+        uuid_from_bytes(field, &bytes)?,
+    )))
+}
+
+fn plain_uuid_to_py(py: Python<'_>, v: &Option<[u8; 16]>) -> PyObject {
+    match v {
+        Some(uuid) => PyBytes::new_bound(py, uuid).into_py(py),
+        None => py.None(),
+    }
+}
+
+fn plain_uuid_from_py(obj: &Bound<'_, PyAny>, field: &'static str) -> PyResult<Option<[u8; 16]>> {
+    let v = obj.getattr(field)?;
+    if v.is_none() {
+        return Ok(None);
+    }
+    let bytes: Vec<u8> = v.extract()?;
+    Ok(Some(uuid_from_bytes(field, &bytes)?))
+}
+
+pub(crate) fn core_id_sensor_to_py(
+    py: Python<'_>,
+    v: &Option<(IdType, [u8; 16])>,
+) -> PyResult<PyObject> {
+    typed_uuid_to_py(py, v)
+}
+
+pub(crate) fn core_id_sensor_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<Option<(IdType, [u8; 16])>> {
+    typed_uuid_from_py(obj, "sensor")
+}
+
+pub(crate) fn core_id_platform_to_py(
+    py: Python<'_>,
+    v: &Option<(IdType, [u8; 16])>,
+) -> PyResult<PyObject> {
+    typed_uuid_to_py(py, v)
+}
+
+pub(crate) fn core_id_platform_from_py(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<Option<(IdType, [u8; 16])>> {
+    typed_uuid_from_py(obj, "platform")
+}
+
+pub(crate) fn core_id_window_to_py(py: Python<'_>, v: &Option<[u8; 16]>) -> PyResult<PyObject> {
+    Ok(plain_uuid_to_py(py, v))
+}
+
+pub(crate) fn core_id_window_from_py(obj: &Bound<'_, PyAny>) -> PyResult<Option<[u8; 16]>> {
+    plain_uuid_from_py(obj, "window")
+}
+
+pub(crate) fn core_id_minor_to_py(py: Python<'_>, v: &Option<[u8; 16]>) -> PyResult<PyObject> {
+    Ok(plain_uuid_to_py(py, v))
+}
+
+pub(crate) fn core_id_minor_from_py(obj: &Bound<'_, PyAny>) -> PyResult<Option<[u8; 16]>> {
+    plain_uuid_from_py(obj, "minor")
 }

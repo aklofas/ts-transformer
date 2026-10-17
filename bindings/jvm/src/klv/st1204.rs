@@ -1,6 +1,12 @@
 //! JNI surface for ST 1204 MIIS Core Identifier decode/encode/text and
 //! the ST 0902.8 MISMMS validator.
 //!
+//! The Java `CoreId` record flattens each typed UUID into two components
+//! (`sensorType` + `sensorId`, `platformType` + `platformId`), a shape the
+//! `binding_record!` schema cannot express, so its Java side is not generated
+//! and `build_core_id` / `read_core_id` below stay hand-written; the Python
+//! `CoreId` is generated.
+//!
 //! `decodeCoreIdNative(byte[]) -> CoreId` — calls `tst_core::klv::st1204::decode`,
 //! maps `St1204Error` to `KlvDecodeException`, and constructs the `CoreId` record.
 //!

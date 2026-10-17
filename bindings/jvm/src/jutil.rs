@@ -370,6 +370,16 @@ pub fn checked_u32(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Re
     Ok(value as u32)
 }
 
+/// Throws `IllegalArgumentException` for a required record component that is
+/// null, and returns the error that carries it.
+pub fn null_field(env: &mut JNIEnv, field: &str) -> jni::errors::Error {
+    let _ = env.throw_new(
+        "java/lang/IllegalArgumentException",
+        format!("{field} must not be null"),
+    );
+    jni::errors::Error::JavaException
+}
+
 /// Convert a Java `long` (carrying an unsigned ST 0903 u64 value) to `u64`,
 /// rejecting only a negative `i64` (which is a caller bug — Java has no
 /// unsigned primitive, so large values arrive as a bit-pattern `long`).
@@ -402,70 +412,6 @@ pub fn read_nullable_int(
     }
     let v = env.call_method(&obj, "intValue", "()I", &[])?.i()?;
     Ok(Some(v))
-}
-
-/// Read a nullable `Long` accessor. Returns `None` for null.
-pub fn read_nullable_long(
-    env: &mut JNIEnv,
-    rec: &JObject,
-    name: &str,
-) -> jni::errors::Result<Option<i64>> {
-    let obj = env.call_method(rec, name, "()Ljava/lang/Long;", &[])?.l()?;
-    if obj.is_null() {
-        return Ok(None);
-    }
-    let v = env.call_method(&obj, "longValue", "()J", &[])?.j()?;
-    Ok(Some(v))
-}
-
-/// Read a nullable `Double` accessor. Returns `None` for null.
-pub fn read_nullable_double(
-    env: &mut JNIEnv,
-    rec: &JObject,
-    name: &str,
-) -> jni::errors::Result<Option<f64>> {
-    let obj = env
-        .call_method(rec, name, "()Ljava/lang/Double;", &[])?
-        .l()?;
-    if obj.is_null() {
-        return Ok(None);
-    }
-    let v = env.call_method(&obj, "doubleValue", "()D", &[])?.d()?;
-    Ok(Some(v))
-}
-
-/// Read a nullable `String` accessor. Returns `None` for null.
-pub fn read_nullable_string(
-    env: &mut JNIEnv,
-    rec: &JObject,
-    name: &str,
-) -> jni::errors::Result<Option<String>> {
-    let obj = env
-        .call_method(rec, name, "()Ljava/lang/String;", &[])?
-        .l()?;
-    if obj.is_null() {
-        return Ok(None);
-    }
-    let j_str: &jni::objects::JString = (&obj).into();
-    let s: String = env.get_string(j_str).map(Into::into)?;
-    Ok(Some(s))
-}
-
-/// Read a nullable `ByteBuffer` accessor using `read_byte_buffer` (honours
-/// position/limit; works for heap and direct buffers). Returns `None` for null.
-pub fn read_nullable_byte_buffer(
-    env: &mut JNIEnv,
-    rec: &JObject,
-    name: &str,
-) -> jni::errors::Result<Option<Vec<u8>>> {
-    let obj = env
-        .call_method(rec, name, "()Ljava/nio/ByteBuffer;", &[])?
-        .l()?;
-    if obj.is_null() {
-        return Ok(None);
-    }
-    let bytes = read_byte_buffer(env, &obj)?;
-    Ok(Some(bytes))
 }
 
 /// Join `host:port`, bracketing bare IPv6 literals so `Socket::connect_with` /

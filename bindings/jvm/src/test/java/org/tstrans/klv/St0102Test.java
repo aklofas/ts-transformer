@@ -209,10 +209,10 @@ class St0102Test {
     void encodeFullRoundTrip() throws KlvDecodeException, KlvEncodeException {
         // Build a SecurityLs via Builder with all 6 required fields, encode, decode.
         SecurityLs original = new SecurityLs.Builder()
-                .securityClassification(SecurityClassification.TOP_SECRET)
-                .classifyingCountryCodingMethod(ClassifyingCountryCodingMethod.ISO_3166_THREE_LETTER)
+                .securityClassificationCode(SecurityClassification.TOP_SECRET.code())
+                .classifyingCountryCodingMethodCode(ClassifyingCountryCodingMethod.ISO_3166_THREE_LETTER.code())
                 .classifyingCountry("//USA")
-                .objectCountryCodingMethod(ObjectCountryCodingMethod.ISO_3166_THREE_LETTER)
+                .objectCountryCodingMethodCode(ObjectCountryCodingMethod.ISO_3166_THREE_LETTER.code())
                 .objectCountryCodes("USA")
                 .version(12)
                 .build();
@@ -237,7 +237,7 @@ class St0102Test {
         // the round-trip should preserve it (encode reads the raw Integer,
         // not the typed accessor, so unknown codepoints also round-trip).
         SecurityLs original = new SecurityLs.Builder()
-                .securityClassification(0x01)  // raw int overload
+                .securityClassificationCode(0x01)  // raw int overload
                 .build();
         byte[] wire = Klv.encodeSecurity(original);
         SecurityLs decoded = Klv.decodeSecurity(wire);
@@ -284,10 +284,10 @@ class St0102Test {
     void encodeSecurityStrictComplianceSucceedsWithAllRequired() throws KlvEncodeException, KlvDecodeException {
         // Provide all 6 required tags — strict compliance must succeed.
         SecurityLs rec = new SecurityLs.Builder()
-                .securityClassification(SecurityClassification.UNCLASSIFIED)
-                .classifyingCountryCodingMethod(ClassifyingCountryCodingMethod.ISO_3166_TWO_LETTER)
+                .securityClassificationCode(SecurityClassification.UNCLASSIFIED.code())
+                .classifyingCountryCodingMethodCode(ClassifyingCountryCodingMethod.ISO_3166_TWO_LETTER.code())
                 .classifyingCountry("//US")
-                .objectCountryCodingMethod(ObjectCountryCodingMethod.ISO_3166_TWO_LETTER)
+                .objectCountryCodingMethodCode(ObjectCountryCodingMethod.ISO_3166_TWO_LETTER.code())
                 .objectCountryCodes("US")
                 .version(12)
                 .build();
@@ -321,9 +321,9 @@ class St0102Test {
     @Test
     void builderEnumOverloadsStoreCode() {
         SecurityLs s = new SecurityLs.Builder()
-                .securityClassification(SecurityClassification.SECRET)
-                .classifyingCountryCodingMethod(ClassifyingCountryCodingMethod.GENC_NUMERIC)
-                .objectCountryCodingMethod(ObjectCountryCodingMethod.GENC_ADMIN_SUB)
+                .securityClassificationCode(SecurityClassification.SECRET.code())
+                .classifyingCountryCodingMethodCode(ClassifyingCountryCodingMethod.GENC_NUMERIC.code())
+                .objectCountryCodingMethodCode(ObjectCountryCodingMethod.GENC_ADMIN_SUB.code())
                 .build();
         assertEquals(0x04, (int) s.securityClassificationCode());
         assertEquals(0x0F, (int) s.classifyingCountryCodingMethodCode());
