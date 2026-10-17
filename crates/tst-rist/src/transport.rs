@@ -70,9 +70,7 @@ impl RistTransport {
                 "URL has '@' prefix — use RistRecvTransport::listen".into(),
             ));
         }
-        let mut cfg = RistConfig::default();
-        cfg.merge_from_url(&parsed);
-        Self::connect_with_config(&parsed, &cfg)
+        Self::connect_with_config(&parsed, &parsed.config)
     }
 
     /// Build a sender from a parsed URL + config.

@@ -8,7 +8,7 @@ use std::time::Instant;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, ServerConfig, ServerConnection, StreamOwned};
 
-use crate::config::SocketConfig;
+use crate::config::TcpConfig;
 use crate::error::TcpError;
 use crate::recv_knobs::apply_knobs;
 use crate::transport::TcpTransport;
@@ -105,8 +105,8 @@ where
 /// - IP literal → `iPAddress` SAN
 ///
 /// Resolution to a socket address happens at connect time.
-pub fn connect_tls(url: &TcpUrl, cfg: &SocketConfig) -> Result<TcpTransport, TcpError> {
-    let roots = if let Some(ca_path) = &url.ca {
+pub fn connect_tls(url: &TcpUrl, cfg: &TcpConfig) -> Result<TcpTransport, TcpError> {
+    let roots = if let Some(ca_path) = &cfg.ca {
         let pem = std::fs::read(ca_path).map_err(TcpError::Io)?;
         tst_core::net::tls::load_root_store(&pem).map_err(tls_load_error)?
     } else {
@@ -176,7 +176,7 @@ pub fn connect_tls(url: &TcpUrl, cfg: &SocketConfig) -> Result<TcpTransport, Tcp
 fn complete_client_handshake(
     conn: &mut ClientConnection,
     sock: &mut TcpStream,
-    cfg: &SocketConfig,
+    cfg: &TcpConfig,
 ) -> Result<(), TcpError> {
     let budget = cfg.connect_timeout_or_default();
     // `None` = no deadline: a budget too large to add to `now` (the URL
@@ -252,7 +252,7 @@ pub(crate) fn tls_load_error(e: tst_core::net::tls::TlsLoadError) -> TcpError {
 pub fn accept_tls(
     socket: TcpStream,
     peer: SocketAddr,
-    cfg: &SocketConfig,
+    cfg: &TcpConfig,
     server_config: Arc<ServerConfig>,
 ) -> Result<TcpTransport, TcpError> {
     apply_knobs(&socket, cfg).map_err(TcpError::Io)?;

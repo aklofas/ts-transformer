@@ -12,6 +12,7 @@ use tst_pipeline::binding::opened::{cancel_of, recv_cancel_of};
 use tst_pipeline::binding::{BindingError, Domain, Opened};
 
 use crate::TcpTransportBuilder;
+use crate::error::TcpError;
 
 /// Open a `tcp://` or `tcps://` sender: connect as a caller (TLS for
 /// `tcps://`).
@@ -19,7 +20,9 @@ use crate::TcpTransportBuilder;
 /// # Errors
 /// The URL, connect and TLS errors' kinds.
 pub fn open_sender(url: &str) -> Result<Opened<Box<dyn Transport>>, BindingError> {
-    let t = TcpTransportBuilder::from_url(url)?.build()?;
+    let t = TcpTransportBuilder::from_url(url)
+        .map_err(TcpError::Url)?
+        .build()?;
     let cancel = cancel_of(&t);
     Ok(Opened::new(Box::new(t), cancel, Domain::Tcp))
 }
@@ -30,7 +33,9 @@ pub fn open_sender(url: &str) -> Result<Opened<Box<dyn Transport>>, BindingError
 /// # Errors
 /// The URL, connect and TLS errors' kinds.
 pub fn open_recv(url: &str) -> Result<Opened<Box<dyn RecvTransport>>, BindingError> {
-    let t = TcpTransportBuilder::from_url(url)?.build()?;
+    let t = TcpTransportBuilder::from_url(url)
+        .map_err(TcpError::Url)?
+        .build()?;
     let cancel = recv_cancel_of(&t);
     Ok(Opened::new(Box::new(t), cancel, Domain::Tcp))
 }

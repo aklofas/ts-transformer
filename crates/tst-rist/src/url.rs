@@ -7,16 +7,18 @@
 //! - `rist://239.x.x.x:port` — multicast sender
 //! - Query params: `profile`, `buffer`, `aes-type`, `secret`, `cname`,
 //!   `recovery_maxbitrate` (alias `bandwidth`), `session_timeout`,
-//!   `compression`. `bandwidth` and `recovery_maxbitrate` set the same
+//!   `compression`, `pkt_size`. `bandwidth` and `recovery_maxbitrate` set the same
 //!   librist field (`recovery_maxbitrate`, the retransmit-bandwidth cap in
 //!   kbps); giving both with different values is a parse error.
 
 use std::net::IpAddr;
 use std::time::Duration;
 
-use thiserror::Error;
+use tst_core::url::UrlError;
+use tst_core::url::common::{parse_bool, parse_int, parse_size, parse_url};
+use tst_core::url::query::{QueryKey, UnknownKeys, apply_query};
 
-use crate::config::{RistProfile, RistSecret};
+use crate::config::{EncryptionKey, RistConfig, RistProfile, RistSecret};
 
 /// Parsed `rist://` URL.
 #[derive(Debug, Clone)]
@@ -26,144 +28,206 @@ pub struct RistUrl {
     pub port: u16,
     /// True if the URL had `@` prefix (recv-bind intent, ffmpeg convention).
     pub is_recv_bind: bool,
-    pub profile: Option<RistProfile>,
-    /// `?bandwidth=` — alias of [`Self::recovery_maxbitrate_kbps`] (same
-    /// librist field). `parse` rejects the two with different values.
-    pub bandwidth_kbps: Option<u32>,
-    /// Recovery buffer.
-    pub buffer_ms: Option<Duration>,
-    /// AES key size in bits (128/192/256).
-    pub aes_type: Option<u32>,
-    /// AES PSK from the URL. Redacting newtype — its plaintext never appears in `Debug`.
-    pub secret: Option<RistSecret>,
-    /// RTCP CNAME.
-    pub cname: Option<String>,
-    /// `?recovery_maxbitrate=` — librist `recovery_maxbitrate`, the
-    /// retransmit-bandwidth cap in kbps. `?bandwidth=` is an alias.
-    pub recovery_maxbitrate_kbps: Option<u32>,
-    /// Receiver session timeout in ms.
-    pub session_timeout_ms: Option<u32>,
-    /// NULL-packet deletion / compression (librist-specific).
-    pub compression: Option<bool>,
+    /// The settings the URL's query carried, over the defaults of
+    /// [`RistConfig`]. A `secret` sets [`RistConfig::encryption`] and
+    /// promotes the profile to Main.
+    pub config: RistConfig,
+    /// `?aes-type=` until the end of the parse, when it sizes the key of a
+    /// `?secret=` (the two keys arrive in either order).
+    aes_bits: Option<u32>,
 }
 
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum RistUrlError {
-    #[error("URL scheme must be 'rist', got '{0}'")]
-    BadScheme(String),
-    #[error("URL must include a port")]
-    MissingPort,
-    #[error("host '{0}' is not a literal IPv4/IPv6 address")]
-    BadHost(String),
-    #[error("query param '{key}' has invalid value '{value}': {detail}")]
-    BadQueryValue {
-        key: String,
-        value: String,
-        detail: String,
-    },
-    #[error("aes-type must be 128, 192, or 256; got {0}")]
-    BadAesType(u32),
-    #[error(
-        "aes-type given without secret; aes-type only selects the key size for a secret (a secret without aes-type defaults to AES-256)"
-    )]
-    AesTypeWithoutSecret,
-    #[error("URL parse failed: {0}")]
-    Parse(#[from] tst_core::url::common::UrlError),
+type Applied = Result<(), UrlError>;
+
+fn set_profile(u: &mut RistUrl, key: &str, value: &str) -> Applied {
+    u.config.profile = match value {
+        "simple" => RistProfile::Simple,
+        "main" => RistProfile::Main,
+        other => {
+            return Err(UrlError::BadQueryValue {
+                key: key.to_string(),
+                value: other.to_string(),
+                detail: "expected one of: simple, main".into(),
+            });
+        }
+    };
+    Ok(())
 }
+
+fn set_bandwidth(u: &mut RistUrl, key: &str, value: &str) -> Applied {
+    u.config.bandwidth_kbps = Some(parse_int(key, value)?);
+    Ok(())
+}
+
+fn set_buffer(u: &mut RistUrl, key: &str, value: &str) -> Applied {
+    let ms: u32 = parse_int(key, value)?;
+    u.config.buffer = Duration::from_millis(ms as u64);
+    Ok(())
+}
+
+fn set_aes_type(u: &mut RistUrl, key: &str, value: &str) -> Applied {
+    let n: u32 = parse_int(key, value)?;
+    match n {
+        128 | 192 | 256 => {
+            u.aes_bits = Some(n);
+            Ok(())
+        }
+        _ => Err(UrlError::Rejected(format!(
+            "aes-type must be 128, 192, or 256; got {n}"
+        ))),
+    }
+}
+
+fn set_secret(u: &mut RistUrl, key: &str, value: &str) -> Applied {
+    if value.is_empty() {
+        return Err(UrlError::BadQueryValue {
+            key: key.to_string(),
+            value: String::new(),
+            detail: "must be non-empty".into(),
+        });
+    }
+    // librist's own default key size for a secret without `aes-type`; an
+    // `aes-type` resizes it when the parse ends.
+    u.config.encryption = Some(EncryptionKey {
+        size_bits: 256,
+        secret: RistSecret::new(value),
+        rotation: 0,
+    });
+    Ok(())
+}
+
+fn set_cname(u: &mut RistUrl, _key: &str, value: &str) -> Applied {
+    u.config.cname = Some(value.to_string());
+    Ok(())
+}
+
+fn set_recovery_maxbitrate(u: &mut RistUrl, key: &str, value: &str) -> Applied {
+    u.config.recovery_maxbitrate_kbps = Some(parse_int(key, value)?);
+    Ok(())
+}
+
+fn set_session_timeout(u: &mut RistUrl, key: &str, value: &str) -> Applied {
+    let ms: u32 = parse_int(key, value)?;
+    u.config.session_timeout = Some(Duration::from_millis(ms as u64));
+    Ok(())
+}
+
+fn set_compression(u: &mut RistUrl, key: &str, value: &str) -> Applied {
+    u.config.compression = parse_bool(key, value)?;
+    Ok(())
+}
+
+fn set_pkt_size(u: &mut RistUrl, key: &str, value: &str) -> Applied {
+    u.config.pkt_size = parse_size(key, value)?;
+    Ok(())
+}
+
+/// The query keys a `rist://` URL accepts; the parser and the generated key
+/// documentation both read this table.
+#[doc(hidden)]
+pub const URL_KEYS: &[QueryKey<RistUrl>] = &[
+    QueryKey::new(
+        "profile",
+        &[],
+        "RIST profile",
+        "`simple` or `main`",
+        set_profile,
+    ),
+    QueryKey::new(
+        "recovery_maxbitrate",
+        &["recovery-maxbitrate"],
+        "Retransmit bandwidth cap",
+        "kilobits per second",
+        set_recovery_maxbitrate,
+    ),
+    QueryKey::new(
+        "bandwidth",
+        &[],
+        "Alias of `recovery_maxbitrate`; a different value is an error",
+        "kilobits per second",
+        set_bandwidth,
+    ),
+    QueryKey::new("buffer", &[], "Recovery buffer", "milliseconds", set_buffer),
+    QueryKey::new(
+        "session_timeout",
+        &["session-timeout"],
+        "Session timeout",
+        "milliseconds",
+        set_session_timeout,
+    ),
+    QueryKey::new(
+        "aes-type",
+        &[],
+        "Encryption key size",
+        "128, 192 or 256; needs `secret`",
+        set_aes_type,
+    ),
+    QueryKey::new(
+        "secret",
+        &[],
+        "Encryption passphrase",
+        "non-empty text; alone it means AES-256",
+        set_secret,
+    ),
+    QueryKey::new("cname", &[], "RIST canonical name", "text", set_cname),
+    QueryKey::new(
+        "compression",
+        &[],
+        "NULL-packet compression",
+        "boolean",
+        set_compression,
+    ),
+    QueryKey::new(
+        "pkt_size",
+        &[],
+        "Largest payload one send accepts",
+        "bytes with the `K`/`M` forms",
+        set_pkt_size,
+    ),
+];
 
 impl RistUrl {
-    pub fn parse(s: &str) -> Result<Self, RistUrlError> {
-        use tst_core::url::common::parse_url;
-
-        let parsed = parse_url(s)?;
+    pub fn parse(s: &str) -> Result<Self, UrlError> {
+        let parsed =
+            parse_url(s).map_err(|e| UrlError::Rejected(format!("URL parse failed: {e}")))?;
         if parsed.scheme != "rist" {
-            return Err(RistUrlError::BadScheme(parsed.scheme.to_string()));
+            return Err(UrlError::BadScheme {
+                expected: "'rist'",
+                got: parsed.scheme.to_string(),
+            });
         }
-        let port = parsed.port.ok_or(RistUrlError::MissingPort)?;
+        let port = parsed.port.ok_or(UrlError::MissingPort)?;
 
         // ffmpeg convention: `@host` marks recv-bind intent. parse_url stores
         // the `@` chunk in the username slot; same trick as tst-udp / tst-tcp.
         let is_recv_bind = parsed.username.is_some();
 
         let host_str = parsed.host;
-        let addr: IpAddr = host_str
-            .parse()
-            .map_err(|_| RistUrlError::BadHost(host_str.to_string()))?;
+        let addr: IpAddr = host_str.parse().map_err(|_| {
+            UrlError::BadHost(format!(
+                "host '{host_str}' is not a literal IPv4/IPv6 address"
+            ))
+        })?;
 
-        let mut profile = None;
-        let mut bandwidth_kbps = None;
-        let mut buffer_ms = None;
-        let mut aes_type = None;
-        let mut secret = None;
-        let mut cname = None;
-        let mut recovery_maxbitrate_kbps = None;
-        let mut session_timeout_ms = None;
-        let mut compression = None;
-
-        for (k, v) in &parsed.query {
-            let key = k.as_ref();
-            let value = v.as_ref();
-            match key {
-                "profile" => {
-                    profile = Some(match value {
-                        "simple" => RistProfile::Simple,
-                        "main" => RistProfile::Main,
-                        other => {
-                            return Err(RistUrlError::BadQueryValue {
-                                key: key.to_string(),
-                                value: other.to_string(),
-                                detail: "expected one of: simple, main".into(),
-                            });
-                        }
-                    });
-                }
-                "bandwidth" => {
-                    bandwidth_kbps = Some(parse_u32(key, value)?);
-                }
-                "buffer" => {
-                    let ms: u32 = parse_u32(key, value)?;
-                    buffer_ms = Some(Duration::from_millis(ms as u64));
-                }
-                "aes-type" => {
-                    let n: u32 = parse_u32(key, value)?;
-                    match n {
-                        128 | 192 | 256 => aes_type = Some(n),
-                        _ => return Err(RistUrlError::BadAesType(n)),
-                    }
-                }
-                "secret" => {
-                    if value.is_empty() {
-                        return Err(RistUrlError::BadQueryValue {
-                            key: key.to_string(),
-                            value: String::new(),
-                            detail: "must be non-empty".into(),
-                        });
-                    }
-                    secret = Some(RistSecret::new(value));
-                }
-                "cname" => {
-                    cname = Some(value.to_string());
-                }
-                "recovery_maxbitrate" | "recovery-maxbitrate" => {
-                    recovery_maxbitrate_kbps = Some(parse_u32(key, value)?);
-                }
-                "session_timeout" | "session-timeout" => {
-                    session_timeout_ms = Some(parse_u32(key, value)?);
-                }
-                "compression" => {
-                    compression = Some(parse_bool(key, value)?);
-                }
-                _ => {}
-            }
-        }
+        let mut url = Self {
+            addr,
+            port,
+            is_recv_bind,
+            config: RistConfig::default(),
+            aes_bits: None,
+        };
+        // Unknown params are silently ignored.
+        apply_query(URL_KEYS, &mut url, &parsed.query, UnknownKeys::Ignore)?;
 
         // `bandwidth` is an alias of `recovery_maxbitrate` (both set librist's
         // `recovery_maxbitrate`, the retransmit-bandwidth cap). Two different
         // values is a contradiction, not a precedence question.
-        if let (Some(bw), Some(rm)) = (bandwidth_kbps, recovery_maxbitrate_kbps) {
+        if let (Some(bw), Some(rm)) = (
+            url.config.bandwidth_kbps,
+            url.config.recovery_maxbitrate_kbps,
+        ) {
             if bw != rm {
-                return Err(RistUrlError::BadQueryValue {
+                return Err(UrlError::BadQueryValue {
                     key: "bandwidth".to_string(),
                     value: bw.to_string(),
                     detail: format!(
@@ -174,43 +238,22 @@ impl RistUrl {
             }
         }
 
-        match (aes_type, &secret) {
-            (Some(_), None) => return Err(RistUrlError::AesTypeWithoutSecret),
-            (None, Some(_)) => aes_type = Some(256), // librist's own default for a secret without a key size
+        match (url.aes_bits.take(), &mut url.config.encryption) {
+            (Some(_), None) => {
+                return Err(UrlError::Rejected(
+                    "aes-type given without secret; aes-type only selects the key size for a secret (a secret without aes-type defaults to AES-256)".into(),
+                ));
+            }
+            (Some(bits), Some(key)) => key.size_bits = bits,
             _ => {}
         }
+        // A key needs the Main profile.
+        if url.config.encryption.is_some() {
+            url.config.profile = RistProfile::Main;
+        }
 
-        Ok(Self {
-            addr,
-            port,
-            is_recv_bind,
-            profile,
-            bandwidth_kbps,
-            buffer_ms,
-            aes_type,
-            secret,
-            cname,
-            recovery_maxbitrate_kbps,
-            session_timeout_ms,
-            compression,
-        })
+        Ok(url)
     }
-}
-
-fn parse_u32(key: &str, value: &str) -> Result<u32, RistUrlError> {
-    tst_core::url::common::parse_int_query(value).map_err(|detail| RistUrlError::BadQueryValue {
-        key: key.to_string(),
-        value: value.to_string(),
-        detail,
-    })
-}
-
-fn parse_bool(key: &str, value: &str) -> Result<bool, RistUrlError> {
-    tst_core::url::common::parse_bool_query(value).map_err(|detail| RistUrlError::BadQueryValue {
-        key: key.to_string(),
-        value: value.to_string(),
-        detail,
-    })
 }
 
 /// Render the endpoint librist parses (`rist_parse_address2`). `SocketAddr`'s
@@ -247,12 +290,17 @@ mod tests {
         let u = RistUrl::parse(
             "rist://1.2.3.4:8000?profile=main&bandwidth=10000&buffer=200&aes-type=256&secret=topsecret&cname=uav-12"
         ).unwrap();
-        assert_eq!(u.profile, Some(RistProfile::Main));
-        assert_eq!(u.bandwidth_kbps, Some(10000));
-        assert_eq!(u.buffer_ms, Some(Duration::from_millis(200)));
-        assert_eq!(u.aes_type, Some(256));
-        assert_eq!(u.secret.as_ref().map(RistSecret::expose), Some("topsecret"));
-        assert_eq!(u.cname.as_deref(), Some("uav-12"));
+        assert_eq!(u.config.profile, RistProfile::Main);
+        assert_eq!(u.config.bandwidth_kbps, Some(10000));
+        assert_eq!(u.config.buffer, Duration::from_millis(200));
+        assert_eq!(
+            u.config
+                .encryption
+                .as_ref()
+                .map(|k| (k.size_bits, k.secret.expose())),
+            Some((256, "topsecret"))
+        );
+        assert_eq!(u.config.cname.as_deref(), Some("uav-12"));
     }
 
     #[test]
@@ -266,47 +314,54 @@ mod tests {
             !dbg.contains("topsecret"),
             "RistUrl Debug leaked the PSK: {dbg}"
         );
-        let secret_dbg = format!("{:?}", u.secret);
+        let secret_dbg = format!("{:?}", u.config.encryption);
         assert!(
             !secret_dbg.contains("topsecret"),
             "RistSecret Debug leaked the PSK: {secret_dbg}"
         );
         // The plaintext is still reachable via the explicit accessor.
-        assert_eq!(u.secret.as_ref().map(RistSecret::expose), Some("topsecret"));
+        assert_eq!(
+            u.config.encryption.as_ref().map(|k| k.secret.expose()),
+            Some("topsecret")
+        );
     }
 
     #[test]
     fn rejects_invalid_aes_type() {
         let err = RistUrl::parse("rist://1.2.3.4:8000?aes-type=64");
-        assert!(matches!(err, Err(RistUrlError::BadAesType(64))));
+        assert!(
+            matches!(err, Err(UrlError::Rejected(ref m)) if m == "aes-type must be 128, 192, or 256; got 64")
+        );
     }
 
     #[test]
     fn rejects_bad_scheme() {
         assert!(matches!(
             RistUrl::parse("udp://host:8000"),
-            Err(RistUrlError::BadScheme(_))
+            Err(UrlError::BadScheme { .. })
         ));
     }
 
     #[test]
     fn secret_alone_defaults_aes_type_to_256() {
         let u = RistUrl::parse("rist://127.0.0.1:9000?secret=example").unwrap();
-        assert_eq!(u.aes_type, Some(256));
-        assert!(u.secret.is_some());
+        assert_eq!(u.config.encryption.as_ref().map(|k| k.size_bits), Some(256));
     }
 
     #[test]
     fn aes_type_without_secret_is_rejected() {
         let e = RistUrl::parse("rist://127.0.0.1:9000?aes-type=256").unwrap_err();
-        assert!(matches!(e, RistUrlError::AesTypeWithoutSecret), "got {e:?}");
+        assert!(
+            matches!(&e, UrlError::Rejected(m) if m.starts_with("aes-type given without secret")),
+            "got {e:?}"
+        );
     }
 
     #[test]
     fn empty_secret_is_rejected() {
         let e = RistUrl::parse("rist://127.0.0.1:9000?secret=").unwrap_err();
         assert!(
-            matches!(e, RistUrlError::BadQueryValue { ref key, .. } if key == "secret"),
+            matches!(e, UrlError::BadQueryValue { ref key, .. } if key == "secret"),
             "got {e:?}"
         );
     }
@@ -327,7 +382,7 @@ mod tests {
     #[test]
     fn conflicting_bandwidth_and_recovery_maxbitrate_rejected() {
         match RistUrl::parse("rist://1.2.3.4:5?bandwidth=1000&recovery_maxbitrate=5000") {
-            Err(RistUrlError::BadQueryValue { key, value, detail }) => {
+            Err(UrlError::BadQueryValue { key, value, detail }) => {
                 assert_eq!(key, "bandwidth");
                 assert_eq!(value, "1000");
                 assert!(
@@ -340,14 +395,32 @@ mod tests {
         // Order-independent.
         assert!(matches!(
             RistUrl::parse("rist://1.2.3.4:5?recovery_maxbitrate=5000&bandwidth=1000"),
-            Err(RistUrlError::BadQueryValue { .. })
+            Err(UrlError::BadQueryValue { .. })
         ));
     }
 
     #[test]
     fn equal_bandwidth_and_recovery_maxbitrate_accepted() {
         let u = RistUrl::parse("rist://1.2.3.4:5?bandwidth=4000&recovery-maxbitrate=4000").unwrap();
-        assert_eq!(u.bandwidth_kbps, Some(4000));
-        assert_eq!(u.recovery_maxbitrate_kbps, Some(4000));
+        assert_eq!(u.config.bandwidth_kbps, Some(4000));
+        assert_eq!(u.config.recovery_maxbitrate_kbps, Some(4000));
+    }
+
+    #[test]
+    fn aes_type_and_secret_combine_in_either_order() {
+        for q in ["aes-type=128&secret=s", "secret=s&aes-type=128"] {
+            let u = RistUrl::parse(&format!("rist://1.2.3.4:8000?{q}")).unwrap();
+            let k = u.config.encryption.expect("a key");
+            assert_eq!((k.size_bits, k.secret.expose()), (128, "s"));
+            assert_eq!(u.config.profile, RistProfile::Main);
+        }
+    }
+
+    #[test]
+    fn pkt_size_is_a_byte_size() {
+        let u = RistUrl::parse("rist://1.2.3.4:8000?pkt_size=1K").unwrap();
+        assert_eq!(u.config.pkt_size, 1024);
+        let e = RistUrl::parse("rist://1.2.3.4:8000?pkt_size=big").unwrap_err();
+        assert!(matches!(e, UrlError::BadQueryValue { ref key, .. } if key == "pkt_size"));
     }
 }

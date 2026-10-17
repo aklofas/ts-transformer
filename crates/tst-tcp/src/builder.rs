@@ -2,11 +2,12 @@
 
 use std::time::Duration;
 
-use crate::config::SocketConfig;
+use crate::config::TcpConfig;
 use crate::error::TcpError;
 use crate::listener::TcpListener;
 use crate::transport::TcpTransport;
-use crate::url::{TcpUrl, TcpUrlError};
+use crate::url::TcpUrl;
+use tst_core::url::UrlError;
 
 /// Builder for caller-side [`TcpTransport`].
 ///
@@ -31,7 +32,7 @@ use crate::url::{TcpUrl, TcpUrlError};
 #[derive(Debug, Clone)]
 pub struct TcpTransportBuilder {
     url: TcpUrl,
-    config: SocketConfig,
+    config: TcpConfig,
 }
 
 impl TcpTransportBuilder {
@@ -39,12 +40,11 @@ impl TcpTransportBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`TcpUrlError`] if the URL is malformed or uses `?listen=1`
+    /// Returns [`UrlError`] if the URL is malformed or uses `?listen=1`
     /// (listeners must use [`TcpListenerBuilder`] instead).
-    pub fn from_url(url: &str) -> Result<Self, TcpUrlError> {
+    pub fn from_url(url: &str) -> Result<Self, UrlError> {
         let url = TcpUrl::parse(url)?;
-        let mut config = SocketConfig::default();
-        config.merge_from_url(&url);
+        let config = url.config.clone();
         Ok(Self { url, config })
     }
 
@@ -122,7 +122,7 @@ impl TcpTransportBuilder {
     ///   handshake completes inside `build`, so a returned transport is ready
     ///   for application data.
     /// - The TLS feature is disabled but the URL used `tcps://`.
-    pub fn build(self) -> Result<TcpTransport, TcpError> {
+    pub fn build(&self) -> Result<TcpTransport, TcpError> {
         TcpTransport::connect_with_config(&self.url, &self.config)
     }
 }
@@ -146,7 +146,7 @@ impl TcpTransportBuilder {
 #[derive(Debug, Clone)]
 pub struct TcpListenerBuilder {
     url: TcpUrl,
-    config: SocketConfig,
+    config: TcpConfig,
 }
 
 impl TcpListenerBuilder {
@@ -155,19 +155,18 @@ impl TcpListenerBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`TcpUrlError`] if the URL is malformed or does not have
+    /// Returns [`UrlError`] if the URL is malformed or does not have
     /// `?listen=1` (callers must use [`TcpTransportBuilder`] instead).
-    pub fn from_url(url: &str) -> Result<Self, TcpUrlError> {
+    pub fn from_url(url: &str) -> Result<Self, UrlError> {
         let url = TcpUrl::parse(url)?;
         if !url.listen {
-            return Err(TcpUrlError::NotAListenerUrl(
+            return Err(UrlError::Rejected(
                 "URL does not have ?listen=1 — use TcpTransportBuilder::from_url \
                  for caller-side"
                     .into(),
             ));
         }
-        let mut config = SocketConfig::default();
-        config.merge_from_url(&url);
+        let config = url.config.clone();
         Ok(Self { url, config })
     }
 
@@ -204,10 +203,10 @@ impl TcpListenerBuilder {
     /// - Insufficient permissions to bind.
     /// - TLS handshake setup fails (for `tcps://`).
     /// - The TLS feature is disabled but the URL used `tcps://`.
-    pub fn build(self) -> Result<TcpListener, TcpError> {
+    pub fn build(&self) -> Result<TcpListener, TcpError> {
         let mut listener = TcpListener::from_parsed(&self.url)?;
         // Apply any builder-set config overrides.
-        *listener.config_mut() = self.config;
+        *listener.config_mut() = self.config.clone();
         Ok(listener)
     }
 }
@@ -254,7 +253,9 @@ mod tests {
         // coerced into a listener and not deferred to a confusing failure
         // inside build().
         let err = TcpListenerBuilder::from_url("tcp://0.0.0.0:5000").unwrap_err();
-        assert!(matches!(err, TcpUrlError::NotAListenerUrl(_)));
+        assert!(
+            matches!(&err, UrlError::Rejected(m) if m.starts_with("URL does not have ?listen=1"))
+        );
     }
 
     #[test]

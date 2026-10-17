@@ -2,8 +2,8 @@ pub mod tst_tcp
 pub mod tst_tcp::builder
 pub struct tst_tcp::builder::TcpListenerBuilder
 impl tst_tcp::builder::TcpListenerBuilder
-pub fn tst_tcp::builder::TcpListenerBuilder::build(self) -> core::result::Result<tst_tcp::listener::TcpListener, tst_tcp::error::TcpError>
-pub fn tst_tcp::builder::TcpListenerBuilder::from_url(&str) -> core::result::Result<Self, tst_tcp::url::TcpUrlError>
+pub fn tst_tcp::builder::TcpListenerBuilder::build(&self) -> core::result::Result<tst_tcp::listener::TcpListener, tst_tcp::error::TcpError>
+pub fn tst_tcp::builder::TcpListenerBuilder::from_url(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 pub fn tst_tcp::builder::TcpListenerBuilder::nodelay(&mut self, bool) -> &mut Self
 pub fn tst_tcp::builder::TcpListenerBuilder::pkt_size(&mut self, usize) -> &mut Self
 pub fn tst_tcp::builder::TcpListenerBuilder::rcvbuf(&mut self, usize) -> &mut Self
@@ -21,9 +21,9 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_tcp::builder::TcpListenerBu
 impl core::panic::unwind_safe::UnwindSafe for tst_tcp::builder::TcpListenerBuilder
 pub struct tst_tcp::builder::TcpTransportBuilder
 impl tst_tcp::builder::TcpTransportBuilder
-pub fn tst_tcp::builder::TcpTransportBuilder::build(self) -> core::result::Result<tst_tcp::transport::TcpTransport, tst_tcp::error::TcpError>
+pub fn tst_tcp::builder::TcpTransportBuilder::build(&self) -> core::result::Result<tst_tcp::transport::TcpTransport, tst_tcp::error::TcpError>
 pub fn tst_tcp::builder::TcpTransportBuilder::connect_timeout(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_tcp::builder::TcpTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_tcp::url::TcpUrlError>
+pub fn tst_tcp::builder::TcpTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 pub fn tst_tcp::builder::TcpTransportBuilder::keepalive(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_tcp::builder::TcpTransportBuilder::nodelay(&mut self, bool) -> &mut Self
 pub fn tst_tcp::builder::TcpTransportBuilder::pkt_size(&mut self, usize) -> &mut Self
@@ -41,31 +41,34 @@ impl core::marker::UnsafeUnpin for tst_tcp::builder::TcpTransportBuilder
 impl core::panic::unwind_safe::RefUnwindSafe for tst_tcp::builder::TcpTransportBuilder
 impl core::panic::unwind_safe::UnwindSafe for tst_tcp::builder::TcpTransportBuilder
 pub mod tst_tcp::config
-#[non_exhaustive] pub struct tst_tcp::config::SocketConfig
-pub tst_tcp::config::SocketConfig::connect_timeout: core::option::Option<core::time::Duration>
-pub tst_tcp::config::SocketConfig::keepalive: core::option::Option<core::time::Duration>
-pub tst_tcp::config::SocketConfig::nodelay: core::option::Option<bool>
-pub tst_tcp::config::SocketConfig::pkt_size: core::option::Option<usize>
-pub tst_tcp::config::SocketConfig::rcvbuf: core::option::Option<usize>
-pub tst_tcp::config::SocketConfig::sndbuf: core::option::Option<usize>
-impl tst_tcp::config::SocketConfig
-pub const tst_tcp::config::SocketConfig::DEFAULT_PKT_SIZE: usize
-pub fn tst_tcp::config::SocketConfig::connect_timeout_or_default(&self) -> core::time::Duration
-pub fn tst_tcp::config::SocketConfig::merge_from_url(&mut self, &tst_tcp::url::TcpUrl)
-pub fn tst_tcp::config::SocketConfig::pkt_size_or_default(&self) -> usize
-impl core::clone::Clone for tst_tcp::config::SocketConfig
-pub fn tst_tcp::config::SocketConfig::clone(&self) -> tst_tcp::config::SocketConfig
-impl core::default::Default for tst_tcp::config::SocketConfig
-pub fn tst_tcp::config::SocketConfig::default() -> tst_tcp::config::SocketConfig
-impl core::fmt::Debug for tst_tcp::config::SocketConfig
-pub fn tst_tcp::config::SocketConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_tcp::config::SocketConfig
-impl core::marker::Send for tst_tcp::config::SocketConfig
-impl core::marker::Sync for tst_tcp::config::SocketConfig
-impl core::marker::Unpin for tst_tcp::config::SocketConfig
-impl core::marker::UnsafeUnpin for tst_tcp::config::SocketConfig
-impl core::panic::unwind_safe::RefUnwindSafe for tst_tcp::config::SocketConfig
-impl core::panic::unwind_safe::UnwindSafe for tst_tcp::config::SocketConfig
+#[non_exhaustive] pub struct tst_tcp::config::TcpConfig
+pub tst_tcp::config::TcpConfig::ca: core::option::Option<std::path::PathBuf>
+pub tst_tcp::config::TcpConfig::cert: core::option::Option<std::path::PathBuf>
+pub tst_tcp::config::TcpConfig::connect_timeout: core::option::Option<core::time::Duration>
+pub tst_tcp::config::TcpConfig::keepalive: core::option::Option<core::time::Duration>
+pub tst_tcp::config::TcpConfig::key: core::option::Option<std::path::PathBuf>
+pub tst_tcp::config::TcpConfig::nodelay: core::option::Option<bool>
+pub tst_tcp::config::TcpConfig::pkt_size: core::option::Option<usize>
+pub tst_tcp::config::TcpConfig::rcvbuf: core::option::Option<usize>
+pub tst_tcp::config::TcpConfig::sndbuf: core::option::Option<usize>
+impl tst_tcp::config::TcpConfig
+pub const tst_tcp::config::TcpConfig::DEFAULT_PKT_SIZE: usize
+pub fn tst_tcp::config::TcpConfig::connect_timeout_or_default(&self) -> core::time::Duration
+pub fn tst_tcp::config::TcpConfig::pkt_size_or_default(&self) -> usize
+impl core::clone::Clone for tst_tcp::config::TcpConfig
+pub fn tst_tcp::config::TcpConfig::clone(&self) -> tst_tcp::config::TcpConfig
+impl core::default::Default for tst_tcp::config::TcpConfig
+pub fn tst_tcp::config::TcpConfig::default() -> tst_tcp::config::TcpConfig
+impl core::fmt::Debug for tst_tcp::config::TcpConfig
+pub fn tst_tcp::config::TcpConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_tcp::config::TcpConfig
+impl core::marker::Send for tst_tcp::config::TcpConfig
+impl core::marker::Sync for tst_tcp::config::TcpConfig
+impl core::marker::Unpin for tst_tcp::config::TcpConfig
+impl core::marker::UnsafeUnpin for tst_tcp::config::TcpConfig
+impl core::panic::unwind_safe::RefUnwindSafe for tst_tcp::config::TcpConfig
+impl core::panic::unwind_safe::UnwindSafe for tst_tcp::config::TcpConfig
+pub type tst_tcp::config::SocketConfig = tst_tcp::config::TcpConfig
 pub mod tst_tcp::error
 #[non_exhaustive] pub enum tst_tcp::error::TcpError
 pub tst_tcp::error::TcpError::Closed
@@ -75,13 +78,13 @@ pub tst_tcp::error::TcpError::InvalidConfig(alloc::string::String)
 pub tst_tcp::error::TcpError::Io(core::io::error::Error)
 pub tst_tcp::error::TcpError::Tls(alloc::string::String)
 pub tst_tcp::error::TcpError::TlsDisabled
-pub tst_tcp::error::TcpError::Url(tst_tcp::url::TcpUrlError)
+pub tst_tcp::error::TcpError::Url(tst_core::url::common::UrlError)
 impl core::convert::From<core::io::error::Error> for tst_tcp::error::TcpError
 pub fn tst_tcp::error::TcpError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_core::url::common::UrlError> for tst_tcp::error::TcpError
+pub fn tst_tcp::error::TcpError::from(tst_core::url::common::UrlError) -> Self
 impl core::convert::From<tst_tcp::error::TcpError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_tcp::error::TcpError) -> Self
-impl core::convert::From<tst_tcp::url::TcpUrlError> for tst_tcp::error::TcpError
-pub fn tst_tcp::error::TcpError::from(tst_tcp::url::TcpUrlError) -> Self
 impl core::error::Error for tst_tcp::error::TcpError
 pub fn tst_tcp::error::TcpError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_tcp::error::TcpError
@@ -102,7 +105,7 @@ pub fn tst_tcp::listener::TcpListener::accept_blocking(&self) -> core::result::R
 pub fn tst_tcp::listener::TcpListener::bind(core::net::socket_addr::SocketAddr) -> core::result::Result<Self, tst_tcp::error::TcpError>
 pub fn tst_tcp::listener::TcpListener::cancel_handle(&self) -> tst_tcp::transport::TcpCancelHandle
 pub fn tst_tcp::listener::TcpListener::close(&self)
-pub fn tst_tcp::listener::TcpListener::config_mut(&mut self) -> &mut tst_tcp::config::SocketConfig
+pub fn tst_tcp::listener::TcpListener::config_mut(&mut self) -> &mut tst_tcp::config::TcpConfig
 pub fn tst_tcp::listener::TcpListener::from_url(&str) -> core::result::Result<Self, tst_tcp::error::TcpError>
 pub fn tst_tcp::listener::TcpListener::local_addr(&self) -> core::io::error::Result<core::net::socket_addr::SocketAddr>
 impl core::marker::Freeze for tst_tcp::listener::TcpListener
@@ -153,8 +156,8 @@ impl core::marker::Unpin for tst_tcp::tls::TlsStream
 impl core::marker::UnsafeUnpin for tst_tcp::tls::TlsStream
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_tcp::tls::TlsStream
 impl !core::panic::unwind_safe::UnwindSafe for tst_tcp::tls::TlsStream
-pub fn tst_tcp::tls::accept_tls(std::net::tcp::TcpStream, core::net::socket_addr::SocketAddr, &tst_tcp::config::SocketConfig, alloc::sync::Arc<rustls::server::server_conn::ServerConfig>) -> core::result::Result<tst_tcp::transport::TcpTransport, tst_tcp::error::TcpError>
-pub fn tst_tcp::tls::connect_tls(&tst_tcp::url::TcpUrl, &tst_tcp::config::SocketConfig) -> core::result::Result<tst_tcp::transport::TcpTransport, tst_tcp::error::TcpError>
+pub fn tst_tcp::tls::accept_tls(std::net::tcp::TcpStream, core::net::socket_addr::SocketAddr, &tst_tcp::config::TcpConfig, alloc::sync::Arc<rustls::server::server_conn::ServerConfig>) -> core::result::Result<tst_tcp::transport::TcpTransport, tst_tcp::error::TcpError>
+pub fn tst_tcp::tls::connect_tls(&tst_tcp::url::TcpUrl, &tst_tcp::config::TcpConfig) -> core::result::Result<tst_tcp::transport::TcpTransport, tst_tcp::error::TcpError>
 pub mod tst_tcp::transport
 pub struct tst_tcp::transport::TcpCancelHandle
 impl tst_tcp::transport::TcpCancelHandle
@@ -178,7 +181,7 @@ pub struct tst_tcp::transport::TcpTransport
 impl tst_tcp::transport::TcpTransport
 pub fn tst_tcp::transport::TcpTransport::cancel_handle(&self) -> tst_tcp::transport::TcpCancelHandle
 pub fn tst_tcp::transport::TcpTransport::connect(&str) -> core::result::Result<Self, tst_tcp::error::TcpError>
-pub fn tst_tcp::transport::TcpTransport::connect_with_config(&tst_tcp::url::TcpUrl, &tst_tcp::config::SocketConfig) -> core::result::Result<Self, tst_tcp::error::TcpError>
+pub fn tst_tcp::transport::TcpTransport::connect_with_config(&tst_tcp::url::TcpUrl, &tst_tcp::config::TcpConfig) -> core::result::Result<Self, tst_tcp::error::TcpError>
 pub fn tst_tcp::transport::TcpTransport::peer(&self) -> core::net::socket_addr::SocketAddr
 pub fn tst_tcp::transport::TcpTransport::stats(&self) -> tst_tcp::stats::TcpStats
 impl tst_core::transport::RecvTransport for tst_tcp::transport::TcpTransport
@@ -203,50 +206,14 @@ impl core::marker::UnsafeUnpin for tst_tcp::transport::TcpTransport
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_tcp::transport::TcpTransport
 impl !core::panic::unwind_safe::UnwindSafe for tst_tcp::transport::TcpTransport
 pub mod tst_tcp::url
-#[non_exhaustive] pub enum tst_tcp::url::TcpUrlError
-pub tst_tcp::url::TcpUrlError::BadHost(alloc::string::String)
-pub tst_tcp::url::TcpUrlError::BadQueryValue
-pub tst_tcp::url::TcpUrlError::BadQueryValue::detail: alloc::string::String
-pub tst_tcp::url::TcpUrlError::BadQueryValue::key: alloc::string::String
-pub tst_tcp::url::TcpUrlError::BadQueryValue::value: alloc::string::String
-pub tst_tcp::url::TcpUrlError::BadScheme(alloc::string::String)
-pub tst_tcp::url::TcpUrlError::MissingPort
-pub tst_tcp::url::TcpUrlError::NotAListenerUrl(alloc::string::String)
-pub tst_tcp::url::TcpUrlError::Parse(tst_core::url::common::UrlError)
-impl core::convert::From<tst_core::url::common::UrlError> for tst_tcp::url::TcpUrlError
-pub fn tst_tcp::url::TcpUrlError::from(tst_core::url::common::UrlError) -> Self
-impl core::convert::From<tst_tcp::url::TcpUrlError> for tst_pipeline::binding::kind::BindingError
-pub fn tst_pipeline::binding::kind::BindingError::from(tst_tcp::url::TcpUrlError) -> Self
-impl core::convert::From<tst_tcp::url::TcpUrlError> for tst_tcp::error::TcpError
-pub fn tst_tcp::error::TcpError::from(tst_tcp::url::TcpUrlError) -> Self
-impl core::error::Error for tst_tcp::url::TcpUrlError
-pub fn tst_tcp::url::TcpUrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
-impl core::fmt::Debug for tst_tcp::url::TcpUrlError
-pub fn tst_tcp::url::TcpUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::fmt::Display for tst_tcp::url::TcpUrlError
-pub fn tst_tcp::url::TcpUrlError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_tcp::url::TcpUrlError
-impl core::marker::Send for tst_tcp::url::TcpUrlError
-impl core::marker::Sync for tst_tcp::url::TcpUrlError
-impl core::marker::Unpin for tst_tcp::url::TcpUrlError
-impl core::marker::UnsafeUnpin for tst_tcp::url::TcpUrlError
-impl core::panic::unwind_safe::RefUnwindSafe for tst_tcp::url::TcpUrlError
-impl core::panic::unwind_safe::UnwindSafe for tst_tcp::url::TcpUrlError
 pub struct tst_tcp::url::TcpUrl
-pub tst_tcp::url::TcpUrl::ca: core::option::Option<alloc::string::String>
-pub tst_tcp::url::TcpUrl::cert: core::option::Option<alloc::string::String>
-pub tst_tcp::url::TcpUrl::connect_timeout: core::option::Option<core::time::Duration>
+pub tst_tcp::url::TcpUrl::config: tst_tcp::config::TcpConfig
 pub tst_tcp::url::TcpUrl::host: alloc::string::String
-pub tst_tcp::url::TcpUrl::keepalive: core::option::Option<core::time::Duration>
-pub tst_tcp::url::TcpUrl::key: core::option::Option<alloc::string::String>
 pub tst_tcp::url::TcpUrl::listen: bool
-pub tst_tcp::url::TcpUrl::nodelay: core::option::Option<bool>
 pub tst_tcp::url::TcpUrl::port: u16
-pub tst_tcp::url::TcpUrl::rcvbuf: core::option::Option<usize>
-pub tst_tcp::url::TcpUrl::sndbuf: core::option::Option<usize>
 pub tst_tcp::url::TcpUrl::tls: bool
 impl tst_tcp::url::TcpUrl
-pub fn tst_tcp::url::TcpUrl::parse(&str) -> core::result::Result<Self, tst_tcp::url::TcpUrlError>
+pub fn tst_tcp::url::TcpUrl::parse(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 impl core::clone::Clone for tst_tcp::url::TcpUrl
 pub fn tst_tcp::url::TcpUrl::clone(&self) -> tst_tcp::url::TcpUrl
 impl core::fmt::Debug for tst_tcp::url::TcpUrl
@@ -258,31 +225,6 @@ impl core::marker::Unpin for tst_tcp::url::TcpUrl
 impl core::marker::UnsafeUnpin for tst_tcp::url::TcpUrl
 impl core::panic::unwind_safe::RefUnwindSafe for tst_tcp::url::TcpUrl
 impl core::panic::unwind_safe::UnwindSafe for tst_tcp::url::TcpUrl
-#[non_exhaustive] pub struct tst_tcp::SocketConfig
-pub tst_tcp::SocketConfig::connect_timeout: core::option::Option<core::time::Duration>
-pub tst_tcp::SocketConfig::keepalive: core::option::Option<core::time::Duration>
-pub tst_tcp::SocketConfig::nodelay: core::option::Option<bool>
-pub tst_tcp::SocketConfig::pkt_size: core::option::Option<usize>
-pub tst_tcp::SocketConfig::rcvbuf: core::option::Option<usize>
-pub tst_tcp::SocketConfig::sndbuf: core::option::Option<usize>
-impl tst_tcp::config::SocketConfig
-pub const tst_tcp::config::SocketConfig::DEFAULT_PKT_SIZE: usize
-pub fn tst_tcp::config::SocketConfig::connect_timeout_or_default(&self) -> core::time::Duration
-pub fn tst_tcp::config::SocketConfig::merge_from_url(&mut self, &tst_tcp::url::TcpUrl)
-pub fn tst_tcp::config::SocketConfig::pkt_size_or_default(&self) -> usize
-impl core::clone::Clone for tst_tcp::config::SocketConfig
-pub fn tst_tcp::config::SocketConfig::clone(&self) -> tst_tcp::config::SocketConfig
-impl core::default::Default for tst_tcp::config::SocketConfig
-pub fn tst_tcp::config::SocketConfig::default() -> tst_tcp::config::SocketConfig
-impl core::fmt::Debug for tst_tcp::config::SocketConfig
-pub fn tst_tcp::config::SocketConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for tst_tcp::config::SocketConfig
-impl core::marker::Send for tst_tcp::config::SocketConfig
-impl core::marker::Sync for tst_tcp::config::SocketConfig
-impl core::marker::Unpin for tst_tcp::config::SocketConfig
-impl core::marker::UnsafeUnpin for tst_tcp::config::SocketConfig
-impl core::panic::unwind_safe::RefUnwindSafe for tst_tcp::config::SocketConfig
-impl core::panic::unwind_safe::UnwindSafe for tst_tcp::config::SocketConfig
 pub struct tst_tcp::TcpCancelHandle
 impl tst_tcp::transport::TcpCancelHandle
 pub fn tst_tcp::transport::TcpCancelHandle::cancel(&self)
@@ -301,13 +243,40 @@ impl core::marker::Unpin for tst_tcp::transport::TcpCancelHandle
 impl core::marker::UnsafeUnpin for tst_tcp::transport::TcpCancelHandle
 impl core::panic::unwind_safe::RefUnwindSafe for tst_tcp::transport::TcpCancelHandle
 impl core::panic::unwind_safe::UnwindSafe for tst_tcp::transport::TcpCancelHandle
+#[non_exhaustive] pub struct tst_tcp::TcpConfig
+pub tst_tcp::TcpConfig::ca: core::option::Option<std::path::PathBuf>
+pub tst_tcp::TcpConfig::cert: core::option::Option<std::path::PathBuf>
+pub tst_tcp::TcpConfig::connect_timeout: core::option::Option<core::time::Duration>
+pub tst_tcp::TcpConfig::keepalive: core::option::Option<core::time::Duration>
+pub tst_tcp::TcpConfig::key: core::option::Option<std::path::PathBuf>
+pub tst_tcp::TcpConfig::nodelay: core::option::Option<bool>
+pub tst_tcp::TcpConfig::pkt_size: core::option::Option<usize>
+pub tst_tcp::TcpConfig::rcvbuf: core::option::Option<usize>
+pub tst_tcp::TcpConfig::sndbuf: core::option::Option<usize>
+impl tst_tcp::config::TcpConfig
+pub const tst_tcp::config::TcpConfig::DEFAULT_PKT_SIZE: usize
+pub fn tst_tcp::config::TcpConfig::connect_timeout_or_default(&self) -> core::time::Duration
+pub fn tst_tcp::config::TcpConfig::pkt_size_or_default(&self) -> usize
+impl core::clone::Clone for tst_tcp::config::TcpConfig
+pub fn tst_tcp::config::TcpConfig::clone(&self) -> tst_tcp::config::TcpConfig
+impl core::default::Default for tst_tcp::config::TcpConfig
+pub fn tst_tcp::config::TcpConfig::default() -> tst_tcp::config::TcpConfig
+impl core::fmt::Debug for tst_tcp::config::TcpConfig
+pub fn tst_tcp::config::TcpConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_tcp::config::TcpConfig
+impl core::marker::Send for tst_tcp::config::TcpConfig
+impl core::marker::Sync for tst_tcp::config::TcpConfig
+impl core::marker::Unpin for tst_tcp::config::TcpConfig
+impl core::marker::UnsafeUnpin for tst_tcp::config::TcpConfig
+impl core::panic::unwind_safe::RefUnwindSafe for tst_tcp::config::TcpConfig
+impl core::panic::unwind_safe::UnwindSafe for tst_tcp::config::TcpConfig
 pub struct tst_tcp::TcpListener
 impl tst_tcp::listener::TcpListener
 pub fn tst_tcp::listener::TcpListener::accept_blocking(&self) -> core::result::Result<tst_tcp::transport::TcpTransport, tst_tcp::error::TcpError>
 pub fn tst_tcp::listener::TcpListener::bind(core::net::socket_addr::SocketAddr) -> core::result::Result<Self, tst_tcp::error::TcpError>
 pub fn tst_tcp::listener::TcpListener::cancel_handle(&self) -> tst_tcp::transport::TcpCancelHandle
 pub fn tst_tcp::listener::TcpListener::close(&self)
-pub fn tst_tcp::listener::TcpListener::config_mut(&mut self) -> &mut tst_tcp::config::SocketConfig
+pub fn tst_tcp::listener::TcpListener::config_mut(&mut self) -> &mut tst_tcp::config::TcpConfig
 pub fn tst_tcp::listener::TcpListener::from_url(&str) -> core::result::Result<Self, tst_tcp::error::TcpError>
 pub fn tst_tcp::listener::TcpListener::local_addr(&self) -> core::io::error::Result<core::net::socket_addr::SocketAddr>
 impl core::marker::Freeze for tst_tcp::listener::TcpListener
@@ -319,8 +288,8 @@ impl !core::panic::unwind_safe::RefUnwindSafe for tst_tcp::listener::TcpListener
 impl !core::panic::unwind_safe::UnwindSafe for tst_tcp::listener::TcpListener
 pub struct tst_tcp::TcpListenerBuilder
 impl tst_tcp::builder::TcpListenerBuilder
-pub fn tst_tcp::builder::TcpListenerBuilder::build(self) -> core::result::Result<tst_tcp::listener::TcpListener, tst_tcp::error::TcpError>
-pub fn tst_tcp::builder::TcpListenerBuilder::from_url(&str) -> core::result::Result<Self, tst_tcp::url::TcpUrlError>
+pub fn tst_tcp::builder::TcpListenerBuilder::build(&self) -> core::result::Result<tst_tcp::listener::TcpListener, tst_tcp::error::TcpError>
+pub fn tst_tcp::builder::TcpListenerBuilder::from_url(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 pub fn tst_tcp::builder::TcpListenerBuilder::nodelay(&mut self, bool) -> &mut Self
 pub fn tst_tcp::builder::TcpListenerBuilder::pkt_size(&mut self, usize) -> &mut Self
 pub fn tst_tcp::builder::TcpListenerBuilder::rcvbuf(&mut self, usize) -> &mut Self
@@ -363,7 +332,7 @@ pub struct tst_tcp::TcpTransport
 impl tst_tcp::transport::TcpTransport
 pub fn tst_tcp::transport::TcpTransport::cancel_handle(&self) -> tst_tcp::transport::TcpCancelHandle
 pub fn tst_tcp::transport::TcpTransport::connect(&str) -> core::result::Result<Self, tst_tcp::error::TcpError>
-pub fn tst_tcp::transport::TcpTransport::connect_with_config(&tst_tcp::url::TcpUrl, &tst_tcp::config::SocketConfig) -> core::result::Result<Self, tst_tcp::error::TcpError>
+pub fn tst_tcp::transport::TcpTransport::connect_with_config(&tst_tcp::url::TcpUrl, &tst_tcp::config::TcpConfig) -> core::result::Result<Self, tst_tcp::error::TcpError>
 pub fn tst_tcp::transport::TcpTransport::peer(&self) -> core::net::socket_addr::SocketAddr
 pub fn tst_tcp::transport::TcpTransport::stats(&self) -> tst_tcp::stats::TcpStats
 impl tst_core::transport::RecvTransport for tst_tcp::transport::TcpTransport
@@ -389,9 +358,9 @@ impl !core::panic::unwind_safe::RefUnwindSafe for tst_tcp::transport::TcpTranspo
 impl !core::panic::unwind_safe::UnwindSafe for tst_tcp::transport::TcpTransport
 pub struct tst_tcp::TcpTransportBuilder
 impl tst_tcp::builder::TcpTransportBuilder
-pub fn tst_tcp::builder::TcpTransportBuilder::build(self) -> core::result::Result<tst_tcp::transport::TcpTransport, tst_tcp::error::TcpError>
+pub fn tst_tcp::builder::TcpTransportBuilder::build(&self) -> core::result::Result<tst_tcp::transport::TcpTransport, tst_tcp::error::TcpError>
 pub fn tst_tcp::builder::TcpTransportBuilder::connect_timeout(&mut self, core::time::Duration) -> &mut Self
-pub fn tst_tcp::builder::TcpTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_tcp::url::TcpUrlError>
+pub fn tst_tcp::builder::TcpTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 pub fn tst_tcp::builder::TcpTransportBuilder::keepalive(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_tcp::builder::TcpTransportBuilder::nodelay(&mut self, bool) -> &mut Self
 pub fn tst_tcp::builder::TcpTransportBuilder::pkt_size(&mut self, usize) -> &mut Self
@@ -408,3 +377,4 @@ impl core::marker::Unpin for tst_tcp::builder::TcpTransportBuilder
 impl core::marker::UnsafeUnpin for tst_tcp::builder::TcpTransportBuilder
 impl core::panic::unwind_safe::RefUnwindSafe for tst_tcp::builder::TcpTransportBuilder
 impl core::panic::unwind_safe::UnwindSafe for tst_tcp::builder::TcpTransportBuilder
+pub type tst_tcp::SocketConfig = tst_tcp::config::TcpConfig

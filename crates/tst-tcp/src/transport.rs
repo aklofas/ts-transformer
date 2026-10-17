@@ -11,7 +11,7 @@ use tst_core::transport::{
     BrokenCause, RecvTransport, SocketStats, Transport, TransportCancel, TransportError,
 };
 
-use crate::config::SocketConfig;
+use crate::config::TcpConfig;
 use crate::error::TcpError;
 use crate::recv_knobs::apply_knobs;
 use crate::stats::TcpStats;
@@ -197,7 +197,7 @@ pub(crate) fn connect_stream(
 /// The one connect-error mapping for `tcp://` and `tcps://`: a connect
 /// that ran out `connect_timeout` is `ConnectTimeout`
 /// (`TCP_CONNECT_TIMEOUT`, -32); anything else from the socket is `Io`.
-pub(crate) fn map_connect_err(e: std::io::Error, cfg: &SocketConfig) -> TcpError {
+pub(crate) fn map_connect_err(e: std::io::Error, cfg: &TcpConfig) -> TcpError {
     if e.kind() == std::io::ErrorKind::TimedOut {
         TcpError::ConnectTimeout {
             seconds: cfg.connect_timeout_or_default().as_secs(),
@@ -217,13 +217,11 @@ impl TcpTransport {
                 "URL has ?listen=1 — use TcpListener::bind".into(),
             ));
         }
-        let mut cfg = SocketConfig::default();
-        cfg.merge_from_url(&url);
-        Self::connect_with_config(&url, &cfg)
+        Self::connect_with_config(&url, &url.config)
     }
 
     /// Build a caller-side `TcpTransport` from an already-parsed URL + config.
-    pub fn connect_with_config(url: &TcpUrl, cfg: &SocketConfig) -> Result<Self, TcpError> {
+    pub fn connect_with_config(url: &TcpUrl, cfg: &TcpConfig) -> Result<Self, TcpError> {
         if url.tls {
             #[cfg(feature = "tls")]
             {
@@ -253,7 +251,7 @@ impl TcpTransport {
     pub(crate) fn from_accepted_plain(
         socket: TcpStream,
         peer: SocketAddr,
-        cfg: &SocketConfig,
+        cfg: &TcpConfig,
     ) -> Result<Self, TcpError> {
         apply_knobs(&socket, cfg).map_err(TcpError::Io)?;
         Ok(Self {
@@ -268,11 +266,7 @@ impl TcpTransport {
 
     /// Build from a TLS-wrapped stream (called by tls::connect_tls / tls::accept_tls).
     #[cfg(feature = "tls")]
-    pub(crate) fn from_tls(
-        tls: crate::tls::TlsStream,
-        peer: SocketAddr,
-        cfg: &SocketConfig,
-    ) -> Self {
+    pub(crate) fn from_tls(tls: crate::tls::TlsStream, peer: SocketAddr, cfg: &TcpConfig) -> Self {
         Self {
             inner: InnerStream::Tls(Box::new(tls)),
             pkt_size: cfg.pkt_size_or_default(),
@@ -741,7 +735,7 @@ mod connect_stream_tests {
 
     #[test]
     fn map_connect_err_maps_timed_out_to_connect_timeout_and_the_rest_to_io() {
-        let cfg = crate::config::SocketConfig {
+        let cfg = crate::config::TcpConfig {
             connect_timeout: Some(std::time::Duration::from_secs(3)),
             ..Default::default()
         };

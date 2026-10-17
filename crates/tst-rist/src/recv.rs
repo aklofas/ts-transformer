@@ -83,9 +83,7 @@ impl RistRecvTransport {
                 "URL missing '@' prefix — use rist://@host:port for receivers".into(),
             ));
         }
-        let mut cfg = RistConfig::default();
-        cfg.merge_from_url(&parsed);
-        Self::listen_with_config(&parsed, &cfg)
+        Self::listen_with_config(&parsed, &parsed.config)
     }
 
     /// Build a receiver from a parsed URL + config.

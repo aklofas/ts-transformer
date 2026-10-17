@@ -391,34 +391,34 @@ impl PyRistTransportBuilder {
             pyo3::exceptions::PyValueError::new_err("url(...) is required before build()")
         })?;
         // `RistTransportBuilder::new` parses the URL and seeds the config from
-        // URL params (via RistConfig::merge_from_url).
+        // URL params (the URL keys of the key table).
         let mut b = RistTransportBuilder::new(url_str)
             .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
         if let Some(p) = self.profile {
-            b = b.profile(p.into());
+            b.profile(p.into());
         }
         if let Some(kbps) = self.bandwidth_kbps {
-            b = b.bandwidth_kbps(kbps);
+            b.bandwidth_kbps(kbps);
         }
         if let Some(ms) = self.buffer_ms {
-            b = b.buffer(std::time::Duration::from_millis(ms));
+            b.buffer(std::time::Duration::from_millis(ms));
         }
         if let Some(ref cname) = self.cname {
-            b = b.cname(cname.as_str());
+            b.cname(cname.as_str());
         }
         if let Some(ref key_obj) = self.encryption {
             let key_ref = key_obj.bind(py).downcast::<PyEncryptionKey>()?.clone();
             let inner_key = key_ref.borrow().inner.clone();
-            b = b.encryption(inner_key);
+            b.encryption(inner_key);
         }
         if let Some(kbps) = self.recovery_maxbitrate_kbps {
-            b = b.recovery_maxbitrate_kbps(kbps);
+            b.recovery_maxbitrate_kbps(kbps);
         }
         if let Some(v) = self.pkt_size {
-            b = b.pkt_size(v);
+            b.pkt_size(v);
         }
         if let Some(v) = self.compression {
-            b = b.compression(v);
+            b.compression(v);
         }
         let t = crate::util::allow_threads_parking(py, || b.connect())
             .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
@@ -670,21 +670,21 @@ impl PyRistRecvTransportBuilder {
         let mut b = RistRecvTransportBuilder::new(url_str)
             .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
         if let Some(p) = self.profile {
-            b = b.profile(p.into());
+            b.profile(p.into());
         }
         if let Some(ms) = self.buffer_ms {
-            b = b.buffer(std::time::Duration::from_millis(ms));
+            b.buffer(std::time::Duration::from_millis(ms));
         }
         if let Some(ref cname) = self.cname {
-            b = b.cname(cname.as_str());
+            b.cname(cname.as_str());
         }
         if let Some(ref key_obj) = self.encryption {
             let key_ref = key_obj.bind(py).downcast::<PyEncryptionKey>()?.clone();
             let inner_key = key_ref.borrow().inner.clone();
-            b = b.encryption(inner_key);
+            b.encryption(inner_key);
         }
         if let Some(ms) = self.session_timeout_ms {
-            b = b.session_timeout(std::time::Duration::from_millis(ms));
+            b.session_timeout(std::time::Duration::from_millis(ms));
         }
         let t = crate::util::allow_threads_parking(py, || b.listen())
             .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;

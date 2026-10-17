@@ -2,14 +2,7 @@
 //! see `tst-srt/src/binding_kind.rs` for the why.
 
 use crate::error::TcpError;
-use crate::url::TcpUrlError;
 use tst_pipeline::binding::{BindingError, BindingErrorKind as K};
-
-impl From<TcpUrlError> for BindingError {
-    fn from(e: TcpUrlError) -> Self {
-        BindingError::new(K::TcpUrl, e.to_string())
-    }
-}
 
 impl From<TcpError> for BindingError {
     fn from(e: TcpError) -> Self {
@@ -56,13 +49,8 @@ mod tests {
             BindingError::from(TcpError::TlsDisabled).kind,
             K::TcpTlsDisabled
         );
-        // Both ways into TCP_URL: the URL error on its own, and wrapped.
         assert_eq!(
-            BindingError::from(crate::url::TcpUrlError::MissingPort).kind,
-            K::TcpUrl
-        );
-        assert_eq!(
-            BindingError::from(TcpError::Url(crate::url::TcpUrlError::MissingPort)).kind,
+            BindingError::from(TcpError::Url(tst_core::url::UrlError::MissingPort)).kind,
             K::TcpUrl
         );
         assert_eq!(K::TcpUrl.c_projection(), -31);

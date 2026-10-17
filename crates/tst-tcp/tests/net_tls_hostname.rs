@@ -26,7 +26,6 @@ use std::thread;
 use std::time::Duration;
 
 use tst_core::transport::{BrokenCause, RecvTransport, Transport, TransportError};
-use tst_tcp::config::SocketConfig;
 use tst_tcp::error::TcpError;
 use tst_tcp::url::TcpUrl;
 use tst_tcp::{TcpListener, TcpTransport};
@@ -118,7 +117,7 @@ fn tcps_hostname_loopback_handshake_and_roundtrip() {
     // "127.0.0.1" → no matching iPAddress SAN → certificate error.
     let dial_url = format!("tcps://localhost:{port}?ca={}", ca_path.display());
     let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
-    let mut client = TcpTransport::connect_with_config(&parsed, &SocketConfig::default())
+    let mut client = TcpTransport::connect_with_config(&parsed, &parsed.config)
         .expect("tcps connect (hostname dial must succeed with dnsName SAN)");
 
     // The handshake already completed inside `connect_with_config`, so the
@@ -184,7 +183,7 @@ fn tcps_ip_dial_against_dns_only_cert_loopback_fails() {
     // rejects the certificate during the handshake, which `connect` runs.
     let dial_url = format!("tcps://127.0.0.1:{port}?ca={}", ca_path.display());
     let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
-    let result = TcpTransport::connect_with_config(&parsed, &SocketConfig::default());
+    let result = TcpTransport::connect_with_config(&parsed, &parsed.config);
 
     // Join before asserting so the server thread is always reaped, even if
     // the assertion below fires (no parked accept_blocking leaks on test fail).
@@ -362,7 +361,7 @@ fn tcps_explicit_close_loopback_ends_the_peer_read() {
     let dial_url = format!("tcps://localhost:{port}?ca={}", ca_path.display());
     let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
     let mut client =
-        TcpTransport::connect_with_config(&parsed, &SocketConfig::default()).expect("tcps connect");
+        TcpTransport::connect_with_config(&parsed, &parsed.config).expect("tcps connect");
     // The client's handshake completed inside connect; this send is plain
     // application data (the server's lazy half completed when its accept
     // answered the ClientHello).
@@ -457,7 +456,7 @@ fn tcps_close_then_drop_loopback_still_reaches_the_peer_as_close_notify() {
     let dial_url = format!("tcps://localhost:{port}?ca={}", ca_path.display());
     let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
     let mut client =
-        TcpTransport::connect_with_config(&parsed, &SocketConfig::default()).expect("tcps connect");
+        TcpTransport::connect_with_config(&parsed, &parsed.config).expect("tcps connect");
     client.send_bytes(b"ping").expect("client send");
     ready_rx
         .recv_timeout(Duration::from_secs(5))
@@ -517,7 +516,7 @@ fn tcps_close_loopback_before_handshake_and_twice_is_quiet() {
     );
     let client = thread::spawn(move || {
         let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
-        let _ = TcpTransport::connect_with_config(&parsed, &SocketConfig::default());
+        let _ = TcpTransport::connect_with_config(&parsed, &parsed.config);
     });
 
     let mut accepted = listener.accept_blocking().expect("server accept");

@@ -24,12 +24,17 @@
 //! Listener URLs (`?listen=1`) must use an IP literal because the OS must bind
 //! a socket to a specific address. Pass `0.0.0.0` (IPv4) or `::` (IPv6) to
 //! listen on all interfaces. A hostname in a listener URL is rejected at parse
-//! time with [`TcpUrlError::BadHost`].
+//! time with [`UrlError::BadHost`].
 
 use std::net::IpAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
-use thiserror::Error;
+use tst_core::url::UrlError;
+use tst_core::url::common::{parse_bool, parse_int, parse_size, parse_url};
+use tst_core::url::query::{QueryKey, UnknownKeys, apply_query};
+
+use crate::config::TcpConfig;
 
 /// Parsed TCP URL.
 #[derive(Debug, Clone)]
@@ -45,143 +50,186 @@ pub struct TcpUrl {
     pub tls: bool,
     /// True if the URL had `?listen=1` (listener intent).
     pub listen: bool,
-    /// TCP_NODELAY override.
-    pub nodelay: Option<bool>,
-    /// SO_KEEPALIVE idle time (None = disabled, Some(d) = enabled with idle d).
-    pub keepalive: Option<Duration>,
-    /// SO_RCVBUF size.
-    pub rcvbuf: Option<usize>,
-    /// SO_SNDBUF size.
-    pub sndbuf: Option<usize>,
-    /// Connect timeout (caller only).
-    pub connect_timeout: Option<Duration>,
-    /// Server cert path (TLS listener only).
-    pub cert: Option<String>,
-    /// Server key path (TLS listener only).
-    pub key: Option<String>,
-    /// Custom CA bundle path (TLS caller only; if None uses native roots).
-    pub ca: Option<String>,
+    /// The socket and TLS settings the URL's query carried, over the
+    /// defaults of [`TcpConfig`].
+    pub config: TcpConfig,
 }
 
-/// Errors from `TcpUrl::parse`.
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum TcpUrlError {
-    #[error("URL scheme must be 'tcp' or 'tcps', got '{0}'")]
-    BadScheme(String),
-    #[error("URL must include a port")]
-    MissingPort,
-    #[error("listener host '{0}' must be a literal IPv4/IPv6 address")]
-    BadHost(String),
-    /// A caller-only URL (no `?listen=1`) was passed to
-    /// `TcpListenerBuilder::from_url`, which requires a listener URL. The
-    /// message names the right entry point (mirrors
-    /// `UdpUrlError::SendRecvMismatch`).
-    #[error("{0}")]
-    NotAListenerUrl(String),
-    #[error("query param '{key}' has invalid value '{value}': {detail}")]
-    BadQueryValue {
-        key: String,
-        value: String,
-        detail: String,
-    },
-    #[error("URL parse failed: {0}")]
-    Parse(#[from] tst_core::url::common::UrlError),
+type Applied = Result<(), UrlError>;
+
+fn set_listen(u: &mut TcpUrl, key: &str, value: &str) -> Applied {
+    u.listen = parse_bool(key, value)?;
+    Ok(())
+}
+
+fn set_nodelay(u: &mut TcpUrl, key: &str, value: &str) -> Applied {
+    u.config.nodelay = Some(parse_bool(key, value)?);
+    Ok(())
+}
+
+fn set_keepalive(u: &mut TcpUrl, key: &str, value: &str) -> Applied {
+    u.config.keepalive = Some(Duration::from_secs(parse_int(key, value)?));
+    Ok(())
+}
+
+fn set_rcvbuf(u: &mut TcpUrl, key: &str, value: &str) -> Applied {
+    u.config.rcvbuf = Some(parse_size(key, value)?);
+    Ok(())
+}
+
+fn set_sndbuf(u: &mut TcpUrl, key: &str, value: &str) -> Applied {
+    u.config.sndbuf = Some(parse_size(key, value)?);
+    Ok(())
+}
+
+fn set_pkt_size(u: &mut TcpUrl, key: &str, value: &str) -> Applied {
+    u.config.pkt_size = Some(parse_size(key, value)?);
+    Ok(())
+}
+
+fn set_connect_timeout(u: &mut TcpUrl, key: &str, value: &str) -> Applied {
+    u.config.connect_timeout = Some(Duration::from_secs(parse_int(key, value)?));
+    Ok(())
+}
+
+fn set_cert(u: &mut TcpUrl, _key: &str, value: &str) -> Applied {
+    u.config.cert = Some(PathBuf::from(value));
+    Ok(())
+}
+
+fn set_key(u: &mut TcpUrl, _key: &str, value: &str) -> Applied {
+    u.config.key = Some(PathBuf::from(value));
+    Ok(())
+}
+
+fn set_ca(u: &mut TcpUrl, _key: &str, value: &str) -> Applied {
+    u.config.ca = Some(PathBuf::from(value));
+    Ok(())
+}
+
+/// The query keys a `tcp://` or `tcps://` URL accepts; the parser and the
+/// generated key documentation both read this table.
+#[doc(hidden)]
+pub const URL_KEYS: &[QueryKey<TcpUrl>] = &[
+    QueryKey::new(
+        "listen",
+        &[],
+        "Bind and accept instead of connecting",
+        "boolean",
+        set_listen,
+    ),
+    QueryKey::new(
+        "nodelay",
+        &[],
+        "Disable Nagle's algorithm",
+        "boolean",
+        set_nodelay,
+    ),
+    QueryKey::new(
+        "keepalive",
+        &[],
+        "`SO_KEEPALIVE` idle time",
+        "seconds",
+        set_keepalive,
+    ),
+    QueryKey::new(
+        "rcvbuf",
+        &[],
+        "Kernel socket buffer size",
+        "bytes; `K` and `M` suffixes are 1024-based; at most 256 MiB",
+        set_rcvbuf,
+    ),
+    QueryKey::new(
+        "sndbuf",
+        &[],
+        "Kernel socket buffer size",
+        "bytes; `K` and `M` suffixes are 1024-based; at most 256 MiB",
+        set_sndbuf,
+    ),
+    QueryKey::new(
+        "pkt_size",
+        &[],
+        "Largest payload chunk one send accepts",
+        "bytes with the `K`/`M` forms",
+        set_pkt_size,
+    ),
+    QueryKey::new(
+        "connect_timeout",
+        &[],
+        "Connect deadline",
+        "seconds",
+        set_connect_timeout,
+    ),
+    QueryKey::new(
+        "cert",
+        &[],
+        "Server certificate",
+        "PEM file path; a `tcps` listener",
+        set_cert,
+    ),
+    QueryKey::new(
+        "key",
+        &[],
+        "Server private key",
+        "PEM file path; a `tcps` listener",
+        set_key,
+    ),
+    QueryKey::new(
+        "ca",
+        &[],
+        "Custom trust anchors for a caller (the system roots otherwise)",
+        "PEM file path",
+        set_ca,
+    ),
+];
+
+/// The refusal for a listener URL whose host is not an IP literal.
+pub(crate) fn listener_host_rejection(host: &str) -> UrlError {
+    UrlError::BadHost(format!(
+        "listener host '{host}' must be a literal IPv4/IPv6 address"
+    ))
 }
 
 impl TcpUrl {
-    pub fn parse(s: &str) -> Result<Self, TcpUrlError> {
-        use tst_core::url::common::parse_url;
-
-        let parsed = parse_url(s)?;
+    pub fn parse(s: &str) -> Result<Self, UrlError> {
+        let parsed =
+            parse_url(s).map_err(|e| UrlError::Rejected(format!("URL parse failed: {e}")))?;
         let tls = match parsed.scheme {
             "tcp" => false,
             "tcps" => true,
-            other => return Err(TcpUrlError::BadScheme(other.to_string())),
-        };
-        let port = parsed.port.ok_or(TcpUrlError::MissingPort)?;
-
-        // Parse query params first — we need `listen` before host validation.
-        let mut listen = false;
-        let mut nodelay = None;
-        let mut keepalive = None;
-        let mut rcvbuf = None;
-        let mut sndbuf = None;
-        let mut connect_timeout = None;
-        let mut cert = None;
-        let mut key = None;
-        let mut ca = None;
-
-        for (k, v) in &parsed.query {
-            let key_str = k.as_ref();
-            let value = v.as_ref();
-            match key_str {
-                "listen" => listen = parse_bool(key_str, value)?,
-                "nodelay" => nodelay = Some(parse_bool(key_str, value)?),
-                "keepalive" => keepalive = Some(parse_duration_secs(key_str, value)?),
-                "rcvbuf" => rcvbuf = Some(parse_byte_size(key_str, value)?),
-                "sndbuf" => sndbuf = Some(parse_byte_size(key_str, value)?),
-                "connect_timeout" => connect_timeout = Some(parse_duration_secs(key_str, value)?),
-                "cert" => cert = Some(value.to_string()),
-                "key" => key = Some(value.to_string()),
-                "ca" => ca = Some(value.to_string()),
-                _ => { /* ignore unknown params */ }
+            other => {
+                return Err(UrlError::BadScheme {
+                    expected: "'tcp' or 'tcps'",
+                    got: other.to_string(),
+                });
             }
-        }
+        };
+        let port = parsed.port.ok_or(UrlError::MissingPort)?;
 
         // tst-core's parse_url already strips IPv6 brackets from parsed.host
         // (e.g. `[::1]` → `::1`), so no bracket-stripping is needed here.
-        let host = parsed.host.to_string();
+        let mut url = Self {
+            host: parsed.host.to_string(),
+            port,
+            tls,
+            listen: false,
+            config: TcpConfig::default(),
+        };
+
+        // Unknown params are silently ignored. The query is applied before
+        // the host check because `listen` decides whether the host must be
+        // an IP literal.
+        apply_query(URL_KEYS, &mut url, &parsed.query, UnknownKeys::Ignore)?;
 
         // Listeners bind a socket — the host must be an IP literal. Callers
         // accept hostnames: resolution happens at connect time and TLS uses
         // the name for SNI/verification.
-        if listen && host.parse::<IpAddr>().is_err() {
-            return Err(TcpUrlError::BadHost(host));
+        if url.listen && url.host.parse::<IpAddr>().is_err() {
+            return Err(listener_host_rejection(&url.host));
         }
 
-        Ok(Self {
-            host,
-            port,
-            tls,
-            listen,
-            nodelay,
-            keepalive,
-            rcvbuf,
-            sndbuf,
-            connect_timeout,
-            cert,
-            key,
-            ca,
-        })
+        Ok(url)
     }
-}
-
-fn parse_bool(key: &str, value: &str) -> Result<bool, TcpUrlError> {
-    tst_core::url::common::parse_bool_query(value).map_err(|detail| TcpUrlError::BadQueryValue {
-        key: key.to_string(),
-        value: value.to_string(),
-        detail,
-    })
-}
-
-fn parse_duration_secs(key: &str, value: &str) -> Result<Duration, TcpUrlError> {
-    let secs: u64 = tst_core::url::common::parse_int_query(value).map_err(|detail| {
-        TcpUrlError::BadQueryValue {
-            key: key.to_string(),
-            value: value.to_string(),
-            detail,
-        }
-    })?;
-    Ok(Duration::from_secs(secs))
-}
-
-fn parse_byte_size(key: &str, value: &str) -> Result<usize, TcpUrlError> {
-    tst_core::url::common::parse_byte_size(value).map_err(|detail| TcpUrlError::BadQueryValue {
-        key: key.to_string(),
-        value: value.to_string(),
-        detail,
-    })
 }
 
 #[cfg(test)]
@@ -219,8 +267,14 @@ mod tests {
             TcpUrl::parse("tcps://0.0.0.0:7001?listen=1&cert=server.crt&key=server.key").unwrap();
         assert!(u.tls);
         assert!(u.listen);
-        assert_eq!(u.cert.as_deref(), Some("server.crt"));
-        assert_eq!(u.key.as_deref(), Some("server.key"));
+        assert_eq!(
+            u.config.cert.as_deref(),
+            Some(std::path::Path::new("server.crt"))
+        );
+        assert_eq!(
+            u.config.key.as_deref(),
+            Some(std::path::Path::new("server.key"))
+        );
     }
 
     #[test]
@@ -228,7 +282,7 @@ mod tests {
         // The "M" multiply must not panic in debug or wrap in release.
         let err = TcpUrl::parse("tcp://1.2.3.4:7001?rcvbuf=999999999999999999999M")
             .expect_err("overflowing rcvbuf must be rejected");
-        assert!(matches!(err, TcpUrlError::BadQueryValue { .. }));
+        assert!(matches!(err, UrlError::BadQueryValue { .. }));
     }
 
     #[test]
@@ -237,7 +291,7 @@ mod tests {
         let err = TcpUrl::parse("tcp://1.2.3.4:7001?sndbuf=999999M")
             .expect_err("absurd sndbuf must exceed the byte-size ceiling");
         match err {
-            TcpUrlError::BadQueryValue { detail, .. } => {
+            UrlError::BadQueryValue { detail, .. } => {
                 assert!(detail.contains("exceeds maximum"), "detail: {detail}");
             }
             other => panic!("unexpected error: {other:?}"),
@@ -247,7 +301,7 @@ mod tests {
     #[test]
     fn byte_size_at_ceiling_is_accepted() {
         let u = TcpUrl::parse("tcp://1.2.3.4:7001?rcvbuf=256M").unwrap();
-        assert_eq!(u.rcvbuf, Some(256 * 1024 * 1024));
+        assert_eq!(u.config.rcvbuf, Some(256 * 1024 * 1024));
     }
 
     #[test]
@@ -261,7 +315,7 @@ mod tests {
     fn rejects_bad_scheme() {
         assert!(matches!(
             TcpUrl::parse("udp://host:7001"),
-            Err(TcpUrlError::BadScheme(_))
+            Err(UrlError::BadScheme { .. })
         ));
     }
 
@@ -269,7 +323,7 @@ mod tests {
     fn rejects_missing_port() {
         assert!(matches!(
             TcpUrl::parse("tcp://1.2.3.4"),
-            Err(TcpUrlError::MissingPort)
+            Err(UrlError::MissingPort)
         ));
     }
 
@@ -279,11 +333,11 @@ mod tests {
             "tcp://1.2.3.4:7001?nodelay=1&keepalive=30&rcvbuf=8M&sndbuf=2M&connect_timeout=10",
         )
         .unwrap();
-        assert_eq!(u.nodelay, Some(true));
-        assert_eq!(u.keepalive, Some(Duration::from_secs(30)));
-        assert_eq!(u.rcvbuf, Some(8 * 1024 * 1024));
-        assert_eq!(u.sndbuf, Some(2 * 1024 * 1024));
-        assert_eq!(u.connect_timeout, Some(Duration::from_secs(10)));
+        assert_eq!(u.config.nodelay, Some(true));
+        assert_eq!(u.config.keepalive, Some(Duration::from_secs(30)));
+        assert_eq!(u.config.rcvbuf, Some(8 * 1024 * 1024));
+        assert_eq!(u.config.sndbuf, Some(2 * 1024 * 1024));
+        assert_eq!(u.config.connect_timeout, Some(Duration::from_secs(10)));
     }
 
     #[test]
@@ -298,12 +352,46 @@ mod tests {
     #[test]
     fn hostname_listener_rejected() {
         let err = TcpUrl::parse("tcp://relay.example.com:7001?listen=1").unwrap_err();
-        assert!(matches!(err, TcpUrlError::BadHost(h) if h == "relay.example.com"));
+        assert!(
+            matches!(err, UrlError::BadHost(ref h) if h == "listener host 'relay.example.com' must be a literal IPv4/IPv6 address")
+        );
     }
 
     #[test]
     fn ipv6_literal_host_is_bracket_stripped() {
         let u = TcpUrl::parse("tcps://[::1]:7001").unwrap();
         assert_eq!(u.host, "::1");
+    }
+
+    #[test]
+    fn pkt_size_is_a_byte_size() {
+        let u = TcpUrl::parse("tcp://1.2.3.4:7001?pkt_size=8K").unwrap();
+        assert_eq!(u.config.pkt_size, Some(8192));
+        let err = TcpUrl::parse("tcp://1.2.3.4:7001?pkt_size=big").unwrap_err();
+        assert!(matches!(err, UrlError::BadQueryValue { ref key, .. } if key == "pkt_size"));
+    }
+
+    #[test]
+    fn nodelay_defaults_on_and_the_url_overrides_it() {
+        assert_eq!(
+            TcpUrl::parse("tcp://1.2.3.4:7001").unwrap().config.nodelay,
+            Some(true)
+        );
+        assert_eq!(
+            TcpUrl::parse("tcp://1.2.3.4:7001?nodelay=0")
+                .unwrap()
+                .config
+                .nodelay,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn tls_paths_land_in_the_config() {
+        let u = TcpUrl::parse("tcps://1.2.3.4:7001?ca=/tmp/ca.pem").unwrap();
+        assert_eq!(
+            u.config.ca.as_deref(),
+            Some(std::path::Path::new("/tmp/ca.pem"))
+        );
     }
 }
