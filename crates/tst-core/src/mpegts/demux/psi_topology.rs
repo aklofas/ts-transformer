@@ -1488,6 +1488,13 @@ mod tests {
         demux
             .feed(&wrap_section_in_ts_packet(0x1000, &pmt_v0))
             .unwrap();
+
+        // An in-flight video PES gives the reassembler a buffer for 0x0101.
+        let mut pes_pkt = [0xFFu8; 188];
+        pes_pkt[..4].copy_from_slice(&[0x47, 0x41, 0x01, 0x10]);
+        pes_pkt[4..10].copy_from_slice(&[0x00, 0x00, 0x01, 0xE0, 0x00, 0x00]);
+        demux.feed(&pes_pkt).unwrap();
+        assert!(demux.pes.has_pid(0x0101), "test setup: PES buffered");
         demux.pid_state.insert(0x0101, fully_populated_state());
         demux.pid_state.insert(0x1000, fully_populated_state());
 
