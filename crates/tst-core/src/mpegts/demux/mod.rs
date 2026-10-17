@@ -16,6 +16,7 @@ pub mod demuxer;
 pub mod event;
 pub(crate) mod payload;
 mod pes;
+mod pid_state;
 mod psi;
 pub(crate) mod psi_assembler;
 pub mod strict;

@@ -16,10 +16,9 @@
 //!   `touch_last_seen`, adds `bytes`, and returns the entry for arms
 //!   that do one thing more with it (subtitle label, KLV counter bump).
 //!
-//! The per-PID codec counter bumps (`bump_video_counters` /
-//! `bump_klv_counters` / `bump_audio_counters`) are shared free functions
-//! in `mpegts::stats` (also used by the muxer's stats accounting) — call
-//! sites pass `&mut self.stream_codec_counters` directly.
+//! The per-PID codec counters live in `PidState::codec`; call sites bump
+//! them through `PidState::codec_mut` and `StreamCodecCounters::add_*`
+//! (the muxer's stats accounting shares the `add_*` methods).
 //!
 //! The 3 public stats accessors (`stats`, `reset_stats`,
 //! `stream_codec_stats`) stay in `demuxer.rs` (the coordinator) since
@@ -42,9 +41,9 @@ impl super::demuxer::Demuxer {
         program_number: u16,
     ) -> &mut crate::mpegts::stats::StreamStats {
         use crate::mpegts::common::StreamTypeCode;
-        self.stats_per_stream
-            .entry(pid)
-            .or_insert_with(|| crate::mpegts::stats::StreamStats {
+        self.pid_state_mut(pid)
+            .stats
+            .get_or_insert_with(|| crate::mpegts::stats::StreamStats {
                 pid,
                 stream_type: StreamTypeCode::from_byte(stream_type),
                 program_number,
