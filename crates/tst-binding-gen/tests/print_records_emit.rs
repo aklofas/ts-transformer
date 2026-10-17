@@ -1102,8 +1102,11 @@ fn the_big_record_is_declared_in_struct_order_with_its_residue_marked() {
         ]
     );
     // The declaration order is the order of the struct in the source.
-    let src =
-        std::fs::read_to_string(root().join("crates/tst-core/src/klv/st0601/model.rs")).unwrap();
+    // Line endings are normalised: a checkout with CRLF endings would otherwise
+    // never match the brace-and-newline pattern below.
+    let src = std::fs::read_to_string(root().join("crates/tst-core/src/klv/st0601/model.rs"))
+        .unwrap()
+        .replace("\r\n", "\n");
     let start = src.find("pub struct UasDatalinkLs {").unwrap();
     let body = &src[start..start + src[start..].find("\n    }\n").unwrap()];
     let declared: Vec<&str> = body
