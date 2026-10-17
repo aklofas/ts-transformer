@@ -270,14 +270,19 @@ def _build_ts_stream(target_mb: int = 50) -> bytes:
 def test_push_video_releases_gil() -> None:
     """One push_video of a 100 MB NAL must let other Python threads run."""
     m = Muxer(_muxer_config_video_only())
-    # 100 MB (~150ms) keeps the single call comfortably above the 100ms
-    # _MIN_WORKLOAD_MS cushion even on the fastest CI runners (a 30 MB call
-    # clocked at 49.6ms on one).
+    # One 100 MB call clocks ~125 ms on a dev box and ~150 ms elsewhere;
+    # three calls (the muxer queue drained between them, outside the probed
+    # window) put the combined window at ~3x the 100ms _MIN_WORKLOAD_MS
+    # cushion, so a fast runner cannot finish under it.
     nal = _huge_h264_nal(100)
-    pts = Pts90khz.from_raw(900_000)
+    drain = bytearray(188 * 100_000)
 
     with _GilProbe() as probe:
-        probe.call(m.push_video, nal, pts=pts)
+        for i in range(3):
+            pts = Pts90khz.from_raw(900_000 + i * 90_000)
+            probe.call(m.push_video, nal, pts=pts)
+            while m.pull(drain) > 0:
+                pass
 
     probe.assert_released("push_video")
 
@@ -324,10 +329,10 @@ def test_push_subtitle_releases_gil() -> None:
     payload = _max_subtitle_payload()
 
     # ~5-7 us inside Rust per call on a dev box (the muxer only copies the
-    # payload into TS packets), so 25 000 calls put the combined window at
-    # ~170 ms — over _MIN_WORKLOAD_MS (100 ms) — for ~0.7 s wall-clock,
+    # payload into TS packets), so 75 000 calls put the combined window at
+    # ~470 ms — about 4x _MIN_WORKLOAD_MS (100 ms) — for ~2 s wall-clock,
     # comfortably under the 20 s @pytest.mark.timeout even on slow runners.
-    n_calls = 25_000
+    n_calls = 75_000
     # Each call emits ~330 packets; drain every 1000 calls (~330 K packets)
     # so the 1 M-packet buffer never overflows.
     drain_every = 1000
@@ -361,13 +366,17 @@ def test_push_video_to_with_dts_releases_gil() -> None:
     handle = handles[0]
     nal = _huge_h264_nal()
 
-    # Loop 3× so the combined window comfortably exceeds the 100ms
-    # _MIN_WORKLOAD_MS cushion on fast hardware — a single
-    # push_video_to_with_dts call clocked at ~49ms on a Ryzen 9 7950X3D.
+    # A single push_video_to_with_dts call clocked at ~26ms on a Ryzen 9
+    # 7950X3D; fourteen calls (queue drained between them, outside the probed
+    # window, so the packet buffer never overflows) put the combined window
+    # at ~3x the 100ms _MIN_WORKLOAD_MS cushion.
+    drain = bytearray(188 * 100_000)
     with _GilProbe() as probe:
-        for i in range(3):
+        for i in range(14):
             ts = Pts90khz.from_raw(900_000 + i * 90_000)
             probe.call(m.push_video_to_with_dts, handle, nal, pts=ts, dts=ts)
+            while m.pull(drain) > 0:
+                pass
 
     probe.assert_released("push_video_to_with_dts")
 
@@ -397,10 +406,10 @@ def test_demuxer_feed_releases_gil() -> None:
     d = Demuxer()
 
     # The demuxer walks a 20 MB stream in ~3.5 ms of Rust on a dev box
-    # (~85 us per 500 KB feed); 60 passes put the combined in-Rust window
-    # at ~200 ms, over _MIN_WORKLOAD_MS, for ~0.25 s wall-clock.
+    # (~85 us per 500 KB feed); 200 passes put the combined in-Rust window
+    # at ~600 ms, about 6x _MIN_WORKLOAD_MS, for ~1 s wall-clock.
     with _GilProbe() as probe:
-        for _ in range(60):
+        for _ in range(200):
             for ci in range(n_chunks):
                 start_off = ci * chunk_size
                 end_off = min(start_off + chunk_size, len(ts_bytes))
@@ -422,14 +431,14 @@ def test_iter_aac_frames_with_resync_releases_gil() -> None:
 
     The Rust resync scanner walks the entire buffer byte-by-byte
     looking for sync patterns; on this scale one call takes ~140ms on a
-    dev box (a single long Rust call). Two calls clear the
-    _MIN_WORKLOAD_MS cushion with margin without doubling the ~1 GB
-    peak (buffer + owned frame copies) a larger input would cost.
+    dev box (a single long Rust call). Four calls put the window at
+    ~3x+ the _MIN_WORKLOAD_MS cushion without growing the ~1 GB peak
+    (buffer + owned frame copies) a larger input would cost.
     """
     buf = _huge_aac_buf()
 
     with _GilProbe() as probe:
-        for _ in range(2):
+        for _ in range(4):
             probe.call(iter_aac_frames_with_resync, buf)
 
     probe.assert_released("iter_aac_frames_with_resync")
@@ -439,12 +448,12 @@ def test_iter_aac_frames_with_resync_releases_gil() -> None:
 def test_iter_mpeg2_audio_frames_with_resync_releases_gil() -> None:
     """iter_mpeg2_audio_frames_with_resync on ~500MB must release the GIL.
 
-    Two ~125 ms calls, for the same reason as the AAC twin above.
+    Four ~160 ms calls, for the same reason as the AAC twin above.
     """
     buf = _huge_mp2_buf()
 
     with _GilProbe() as probe:
-        for _ in range(2):
+        for _ in range(4):
             probe.call(iter_mpeg2_audio_frames_with_resync, buf)
 
     probe.assert_released("iter_mpeg2_audio_frames_with_resync")
