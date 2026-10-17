@@ -39,7 +39,7 @@ jni_native! {
 }
 
 jni_native! {
-    /// `nShutdown(handle)` — stop serving, drain the runtime. A miss is a no-op
+    /// `nShutdown(handle)` — stop serving and wait up to 2 s for the `tst-hls` thread. A miss is a no-op
     /// (the Java side already made a second call unreachable).
     fn Java_org_tstrans_hls_HlsServerHandle_nShutdown<'local>(_env, _class, handle: jlong) = () => {
         if let Some(h) = REGISTRY.close(handle as u64) {
