@@ -48,18 +48,29 @@ fn rtp_enum_member(py: Python<'_>, enum_name: &str, member: &str) -> PyResult<Py
 
 /// A publish mount's clock alignment as the host reads it: the
 /// `tstrans.rtp.ClockAlignment` member of the same name. A variant this build
-/// does not know, or a missing member, reads as `None`.
+/// does not know raises `RuntimeError`, as the Java builder throws.
 #[derive(Debug, Clone, Copy)]
 pub struct ClockAlignmentPy(RustClockAlignment);
 
-impl From<RustClockAlignment> for ClockAlignmentPy {
-    fn from(a: RustClockAlignment) -> Self {
-        Self(a)
+impl TryFrom<RustClockAlignment> for ClockAlignmentPy {
+    type Error = PyErr;
+
+    fn try_from(a: RustClockAlignment) -> PyResult<Self> {
+        match a {
+            RustClockAlignment::NotApplicable
+            | RustClockAlignment::Pending
+            | RustClockAlignment::Provisional
+            | RustClockAlignment::SenderReport => Ok(Self(a)),
+            _ => Err(PyRuntimeError::new_err(
+                "ClockAlignment variant unknown to this build of tstrans",
+            )),
+        }
     }
 }
 
 impl ClockAlignmentPy {
-    /// The member name; `UNKNOWN` for a variant this build does not know.
+    /// The member name (`UNKNOWN` cannot occur: construction refuses a
+    /// variant this build does not know).
     pub fn name(self) -> &'static str {
         match self.0 {
             RustClockAlignment::NotApplicable => "NOT_APPLICABLE",
@@ -224,8 +235,8 @@ impl PyPublishMount {
         clippy::disallowed_methods,
         reason = "snapshots counters under a short in-memory mutex"
     )]
-    pub fn stats(&self, py: Python<'_>) -> PublishMountStats {
-        PublishMountStats::from(&py.allow_threads(|| self.inner.stats()))
+    pub fn stats(&self, py: Python<'_>) -> PyResult<PublishMountStats> {
+        PublishMountStats::try_from(&py.allow_threads(|| self.inner.stats()))
     }
 
     /// End the application side only: a `DemuxReceiver` taken from this

@@ -132,7 +132,7 @@ tst_core::binding_record! {
         /// Receive-rate estimate in bits per second.
         pub recv_bandwidth_bps: u64,
         /// libsrt's estimate of the link bandwidth in megabits per second; the
-        /// bits-per-second view is `link_bandwidth_bps` of the socket stats.
+        /// bits-per-second view is the link bandwidth of the socket stats.
         pub mbps_estimated_bandwidth: f64,
         /// Current send-side buffer occupancy in packets.
         pub send_buffer_packets: u32,

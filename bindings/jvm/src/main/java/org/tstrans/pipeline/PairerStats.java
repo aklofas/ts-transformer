@@ -4,6 +4,9 @@ package org.tstrans.pipeline;
 /**
  * Frozen pairing-counter snapshot.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param paired Video units emitted together with their KLV.
  * @param unpairedVideo Video units emitted with no KLV to pair.
  * @param unpairedKlv KLV records emitted with no video to pair.

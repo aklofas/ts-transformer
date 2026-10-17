@@ -26,6 +26,9 @@ import java.util.List;
  * vmask}, {@code vtracker}, {@code vchip}, {@code vchipSeries}, {@code vobjectSeries}) stay as
  * optional pass-through bytes — typed inner layers deferred.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param targetId BER-OID {@code targetId} per §10.2.2.1. Up to 9 BER-OID wire bytes (≈ 63 bits)
  *     per ST 0903.6 §10.2.2.1; widened to 64 bits.
  * @param centroidPixel Tag 1 {@code targetCentroid} per §10.2.2.2 — pixel number, V6 truncated

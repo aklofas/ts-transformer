@@ -4,6 +4,9 @@ package org.tstrans.klv;
 /**
  * Configuration for KLV→CoT conversion (ST 0805.1).
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param platformType CoT type for the Platform Position event. ST 0805.1 §5 gives {@code
  *     a-f-A-M-F} as the fixed-wing example and explicitly requires it be overridable per platform
  *     (rotary-wing, manned pods, ...).

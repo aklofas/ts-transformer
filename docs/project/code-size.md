@@ -48,7 +48,7 @@ fraction of a percent, not to the line.
 | **bindings/c**, **bindings/python**, **bindings/jvm** | The C ABI (`tst-c` + `tst-c-core`), the PyO3 extension plus its Python package and stubs, and the JNI crate plus its Java sources. Each binding's own test suite is in its `test` column. |
 | **examples** | The runnable Rust examples. C examples live under `bindings/c/examples` and are counted with the C binding. |
 | **embedded** | The self-contained bare-metal and FreeRTOS reference projects under `embedded/`. |
-| **test-infra** | `tst-test-helpers`, `tst-integration` (cross-binding harness), `tst-interop` (live tool matrix + soak), and the root `tests/` manifests and goldens. |
+| **test-infra** | `tst-test-helpers`, `tst-integration` (cross-binding harness), `tst-interop` (live tool matrix + soak), `tst-binding-gen` (the binding record generator), and the root `tests/` manifests and goldens. |
 | **scripts** | `scripts/` (CI ratchets, generators, interop + release tooling), `embedded/scripts/`, and `oss-fuzz/`. |
 | **ci** | GitHub Actions workflows. |
 | **docs** | Every Markdown file in the tree, wherever it lives. |

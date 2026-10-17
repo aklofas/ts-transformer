@@ -6,7 +6,7 @@
 
 use crate::emit_jvm_rs::CTOR_MAX;
 use crate::schema::{Entry, paras, unlink};
-use crate::typemap::{Fld, resolve};
+use crate::typemap::{Fld, Sc, Ty, resolve};
 
 /// Javadoc text from a Rust doc paragraph. The text cannot close the
 /// comment, start a unicode escape, open an HTML tag or entity, or start a
@@ -72,6 +72,9 @@ fn wrap(first: &str, rest: &str, text: &str) -> Vec<String> {
     lines
 }
 
+/// The Javadoc sentence for a record with an unsigned 64-bit component.
+pub const UNSIGNED_NOTE: &str = "Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63 or more reads as negative.";
+
 fn javadoc(e: &Entry, flds: &[&Fld]) -> String {
     let rename: Vec<(&str, &str)> = flds
         .iter()
@@ -84,6 +87,19 @@ fn javadoc(e: &Entry, flds: &[&Fld]) -> String {
             lines.push(" *".into());
         }
         lines.extend(wrap(" * ", " * ", &escape_javadoc(p, &rename)));
+    }
+    // Java has no unsigned types: a `u64` component is the bit pattern read as
+    // a signed `long`. One sentence for every record that has one.
+    let wide = |t: &Ty| match t {
+        Ty::Scalar(Sc::U64) => true,
+        Ty::Opt(i) => matches!(**i, Ty::Scalar(Sc::U64)),
+        _ => false,
+    };
+    if flds.iter().any(|f| f.ty.as_ref().is_some_and(wide)) {
+        if !lines.is_empty() {
+            lines.push(" *".into());
+        }
+        lines.extend(wrap(" * ", " * ", UNSIGNED_NOTE));
     }
     let documented: Vec<(&&Fld, Vec<String>)> = flds
         .iter()

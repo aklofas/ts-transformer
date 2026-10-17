@@ -5,6 +5,9 @@ package org.tstrans.rtp;
  * Frozen snapshot of a publish mount's stats. Counters are cumulative over the mount's life, across
  * publishers.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param rtpPacketsReceived RTP packets received from publishers, counted before validation.
  * @param bytesReceived Bytes of those RTP packets, headers included.
  * @param malformedPackets Packets dropped as unusable: not RTP, the wrong payload type, an invalid

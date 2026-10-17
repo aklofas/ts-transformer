@@ -8,6 +8,9 @@ package org.tstrans.srt;
  * the blocking mode, since that mode's reconnect loop runs synchronously inside the call that
  * observed the break rather than on a separate worker this flag could observe as active.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param reconnectAttempts Total factory invocations across all reconnect cycles, successful and
  *     failed.
  * @param reconnectSuccesses Factory calls that returned a transport, which was installed as the new

@@ -10,7 +10,7 @@
 
 use crate::emit_py::HEADER;
 use crate::schema::{Entry, ExtraKind, PyExtra, lookup, paras, snake, unlink};
-use crate::typemap::{Fld, Sc, Ty, resolve};
+use crate::typemap::{Fld, Sc, Ty, host_fallible, resolve};
 
 /// The longest line of a generated doc comment.
 const DOC_WIDTH: usize = 76;
@@ -249,10 +249,21 @@ pub fn class(reg: &[Entry], e: &Entry) -> Result<String, String> {
     o.push_str(&methods.join("\n"));
     o.push_str("}\n\n");
 
-    o.push_str(&format!(
-        "impl From<&{}> for {name} {{\n    fn from(r: &{}) -> Self {{\n        Self {{\n",
-        e.rust_path, e.rust_path
-    ));
+    // A field whose conversion can fail makes the whole construction fail.
+    let fallible = cross
+        .iter()
+        .any(|f| matches!(f.ty, Some(Ty::Host(h)) if host_fallible(h)));
+    if fallible {
+        o.push_str(&format!(
+            "impl TryFrom<&{}> for {name} {{\n    type Error = PyErr;\n\n    fn try_from(r: &{}) -> PyResult<Self> {{\n        Ok(Self {{\n",
+            e.rust_path, e.rust_path
+        ));
+    } else {
+        o.push_str(&format!(
+            "impl From<&{}> for {name} {{\n    fn from(r: &{}) -> Self {{\n        Self {{\n",
+            e.rust_path, e.rust_path
+        ));
+    }
     for f in &cross {
         let ty = f.ty.as_ref().expect("crossing");
         let custom = (f.custom && !ty.is_py_copy()).then(|| custom_path(e, f));
@@ -262,7 +273,11 @@ pub fn class(reg: &[Entry], e: &Entry) -> Result<String, String> {
             ty.to_host(&format!("&r.{}", f.spec.name), custom.as_deref())
         ));
     }
-    o.push_str("        }\n    }\n}\n");
+    o.push_str(if fallible {
+        "        })\n    }\n}\n"
+    } else {
+        "        }\n    }\n}\n"
+    });
     Ok(o)
 }
 

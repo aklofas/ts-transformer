@@ -280,8 +280,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tstrans.rist.RistStats` has no `packets_missing` or `recovered_packets`.
   Both were always 0, because the polling path does not track them, and the
   Rust record has no such field; the class now lists the fields the Rust record
-  carries. `tstrans.rtp.PublishMountStats.alignment` reads `None` for a clock
-  alignment this build does not know, where it raised `RuntimeError`.
+  carries.
   `tstrans.srt.SrtStats.rtt_us` no longer stops at the 32-bit maximum (about
   71 minutes); it is the whole round-trip time in microseconds.
 

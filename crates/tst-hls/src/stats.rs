@@ -12,7 +12,7 @@ tst_core::binding_record! {
     pub struct HlsStats {
         /// Total completed segments (history + current run).
         pub segments_written: u64,
-        /// Total bytes accepted by `push_ts` across all segments.
+        /// Total bytes accepted from the muxer across all segments.
         pub bytes_pushed_total: u64,
         /// Bytes in the currently-open segment (0 between cuts).
         pub open_segment_bytes: u64,

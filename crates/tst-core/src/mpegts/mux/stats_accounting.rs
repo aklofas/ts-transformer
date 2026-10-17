@@ -31,15 +31,15 @@ crate::binding_record! {
     #[must_use]
     #[derive(Debug, Clone, Default, PartialEq, Eq)]
     pub struct MuxerStats {
-        /// Total 188-byte TS packets drained via [`Muxer::pull`].
+        /// Total 188-byte TS packets drained from the muxer.
         pub ts_packets_emitted: u64,
-        /// Total bytes drained via [`Muxer::pull`] (`ts_packets_emitted * 188`).
+        /// Total bytes drained from the muxer: 188 for every packet in `ts_packets_emitted`.
         pub ts_bytes_emitted: u64,
         /// Number of programs (PAT entries) in this muxer's configuration.
         pub programs_configured: u32,
         /// Number of subtitle streams configured across all programs in this
-        /// muxer. Counts the `StreamSpec::Subtitle` entries from
-        /// `MuxerConfig::programs`.
+        /// muxer. Counts the subtitle entries of the muxer
+        /// configuration's programs.
         pub subtitle_streams_configured: u32,
         /// Per-stream counters, keyed by PID. One entry per configured
         /// video or KLV stream. `StreamStats::items` = push_video_to /

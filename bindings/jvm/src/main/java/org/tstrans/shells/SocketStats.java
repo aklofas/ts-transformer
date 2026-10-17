@@ -10,6 +10,9 @@ package org.tstrans.shells;
  * SRT-specific extras (estimated bandwidth, the symmetric send/recv-side loss split) read the SRT
  * stats of an {@code srt://} shell.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param rttUs Smoothed round-trip time in microseconds. {@code 0} means "not yet measured" (no
  *     samples observed). Transports that don't expose RTT report {@code 0}; saturates at the 32-bit
  *     maximum (about 71 minutes) where the underlying value exceeds the field range.

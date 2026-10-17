@@ -1196,13 +1196,13 @@ tst_core::binding_record! {
         pub mounts: usize,
         /// Publish mounts that currently have a publisher (an ANNOUNCE that
         /// claimed the mount and has not yet ended by TEARDOWN, a dropped
-        /// connection, `remove_mount` or `stop()`).
+        /// connection, the mount's removal or the server's stop).
         pub active_publishers: usize,
         /// RTP packets received from publishers across every publish mount,
         /// cumulative over the server's life. Counted with relaxed atomics
         /// beside each mount's own counter, so a snapshot taken while packets
-        /// arrive may differ from the sum of the mounts' `rtp_packets_received`
-        /// by the packets in flight.
+        /// arrive may differ from the sum of the mounts' own received-packet
+        /// counters by the packets in flight.
         pub total_rtp_packets_received: u64,
         /// Bytes of those RTP packets, headers included; same consistency as
         /// `total_rtp_packets_received`.

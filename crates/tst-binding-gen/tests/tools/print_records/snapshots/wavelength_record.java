@@ -3,6 +3,9 @@
  * definition. {@code minNm}/{@code maxNm} are ST 1201.5 IMAPB(0,1e9,4)-encoded on the wire, giving
  * ~½ nm precision across the full X-ray-to-VHF spectrum span the spec cites.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param id BER-OID wavelength band id.
  * @param minNm Band minimum wavelength, nanometres.
  * @param maxNm Band maximum wavelength, nanometres.

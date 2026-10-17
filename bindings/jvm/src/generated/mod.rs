@@ -1,5 +1,5 @@
 //! Converters written by `print-records` from the `binding_record!`
-//! declarations in `tst-core`. Each family file is generated end to end;
+//! declarations in `tst-core` and the crates that own a record. Each family file is generated end to end;
 //! edit the declaration, then run `cargo run -p tst-binding-gen --bin print-records -- --write`.
 
 pub(crate) mod codec;

@@ -7,6 +7,9 @@ package org.tstrans.klv;
  * Wire form is 26 bytes: the 16-byte universal label, a 1-byte BER length, the 1-byte time status
  * and the 8-byte big-endian microsecond timestamp.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param timestampUs Microseconds since 1970-01-01T00:00:00Z (POSIX epoch), big-endian.
  */
 public record PrecisionTimeStampPack(TimeStatus timeStatus, long timestampUs) implements KlvSet {

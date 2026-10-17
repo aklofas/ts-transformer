@@ -8,6 +8,9 @@ package org.tstrans.rtp;
  * peerCount} reflects the live subscriber count on the broadcast channel. {@code
  * framesDroppedTotal} sums per-peer dropped-frame counters reported by lagging subscribers.
  *
+ * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
+ * or more reads as negative.
+ *
  * @param bytesPushed Cumulative TS bytes pushed through this mount's fan-out.
  * @param packetsPushed Cumulative RTP-sized chunks broadcast through this mount.
  * @param peerCount Live subscriber count on the broadcast channel.
