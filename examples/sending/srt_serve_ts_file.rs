@@ -153,7 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //
     // Bind-then-step shape (`SrtListenerBuilder` is `&mut self -> &mut Self`):
     // construct, mutate, then call the terminal `bind`. Same pattern as
-    // `SocketBuilder` — translates uniformly across language bindings.
+    // `SrtSocketBuilder` — translates uniformly across language bindings.
     let mut lb = SrtListenerBuilder::new();
     lb.latency(args.latency);
     let mut listener = lb.bind(args.bind.as_str())?;
