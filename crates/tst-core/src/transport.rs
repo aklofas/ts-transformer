@@ -415,9 +415,10 @@ pub trait Transport: Send {
     /// is set and returns `Ok(true)`, so the caller re-emits PAT/PMT and the
     /// keyframe opens the new segment. Every other transport keeps the
     /// default, which does nothing and returns `Ok(false)`. An `Err` fails
-    /// the send before the access unit is touched. A transport that wraps
-    /// another must forward this hook to its inner transport (the `Box<T>`
-    /// impl does), or a wrapped segmenting transport never sees a keyframe.
+    /// the send before the access unit is touched. A wrapper
+    /// that may carry a segmenting transport must forward this hook to its
+    /// inner transport (the `Box<T>` impl does); a wrapper that does not
+    /// serves no keyframe cuts for a segmented inner transport.
     fn on_video_au(
         &mut self,
         pts: crate::mpegts::common::Pts90khz,

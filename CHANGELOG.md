@@ -274,9 +274,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   input-consumption semantics (a failed publisher push keeps its bytes queued
   for the next call, and `finish` offers them once more), and `P` must now be
   `Send`, because a `Transport` is `Send`. `MuxPublisher` no longer implements
-  `UnwindSafe` / `RefUnwindSafe` (it holds the sender's mutex).
+  `UnwindSafe` / `RefUnwindSafe` (it holds the sender's type-erased cancel
+  handle).
   `push_video_misp` on a config without exactly one video stream now fails
-  before any segment is cut, and the tracing span is named `mux_sender`.
+  before any segment is cut, so a rejected call leaves the segment unchanged,
+  and the tracing span is named `mux_sender` because the shell now runs inside
+  the sender's span.
 
 ### Changed — tst-srt (BREAKING)
 
@@ -330,7 +333,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   current-thread runtime) instead of two `tst-hls-rt` workers, the
   one-thread-per-owner rule `architecture.md` states; dropping the
   publisher now cancels and detaches the server instead of waiting up to
-  2 s for it, and `shutdown()` keeps the 2 s bound.
+  2 s for it, so a drop never blocks the dropping thread, and `shutdown()`
+  keeps the 2 s bound.
 
 ### Changed — tst-py (BREAKING)
 
@@ -623,7 +627,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `TcpConfig` carries `cert`, `key` and `ca` so TLS material is not URL-only.
 - The srt, udp, tcp and rist receive transports record an `EndReason`
   (`Cancelled`, `CleanTeardown` on a tcp peer close, `TransportFailed`), so
-  `end_reason()` answers on every shell, not only rtp. srt records no
+  `end_reason()` answers on every Rust, Python and JVM shell, not only rtp. srt records no
   `CleanTeardown`: libsrt reports a peer's close as a broken link.
 
 ### Added — tst-rtp
