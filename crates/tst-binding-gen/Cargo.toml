@@ -31,5 +31,13 @@ path  = "tests/tools/print_records.rs"
 test  = false
 bench = false
 
+# Writes the URL key table in docs/reference/conventions.md for
+# scripts/check/repo/url-keys.sh.
+[[bin]]
+name  = "print-url-keys"
+path  = "tests/tools/print_url_keys.rs"
+test  = false
+bench = false
+
 [lints]
 workspace = true

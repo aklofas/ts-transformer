@@ -118,14 +118,14 @@ pub const URL_KEYS: &[QueryKey<HlsConfig>] = &[
     QueryKey::new(
         "auth_user",
         &[],
-        "HTTP Basic credentials",
+        "HTTP Basic user name",
         "text",
         set_auth_user,
     ),
     QueryKey::new(
         "auth_pass",
         &[],
-        "HTTP Basic credentials",
+        "HTTP Basic password",
         "text",
         set_auth_pass,
     ),

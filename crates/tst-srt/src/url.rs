@@ -21,7 +21,7 @@ use crate::transport::SrtTransport;
 use std::time::Duration;
 use tst_core::cancel::CancelSlot;
 use tst_core::url::common::{UrlError as CoreUrlError, parse_url};
-use tst_core::url::query::{QueryKey, lookup};
+use tst_core::url::query::{KeyDoc, QueryKey, lookup};
 
 /// `?latency=N` is parsed as N milliseconds (libsrt-URL canonical), but
 /// ffmpeg's URL parses it as microseconds. A user copying an ffmpeg URL
@@ -606,10 +606,21 @@ fn set_send_timeout(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied
     Ok(())
 }
 
+/// The keys an `srt://` URL consumes at the URL level, outside the config
+/// table below, as the generated key documentation lists them.
+#[doc(hidden)]
+pub const URL_LEVEL_KEYS: &[KeyDoc] = &[KeyDoc {
+    scheme: "srt",
+    canonical: "mode",
+    aliases: &[],
+    meaning: "Connection role",
+    unit: "`caller` or `listener`; default `caller`",
+}];
+
 /// The query keys an `srt://` URL applies to a [`SrtSocketConfig`]; the
 /// parser and the generated key documentation both read this table. The
-/// `mode` key and the recognised-but-unexposed keys are handled around
-/// it, not in it.
+/// `mode` key (see [`URL_LEVEL_KEYS`]) and the recognised-but-unexposed keys
+/// are handled around it, not in it.
 #[doc(hidden)]
 pub const URL_KEYS: &[QueryKey<SrtSocketConfig, SrtUrlError>] = &[
     QueryKey::new(
