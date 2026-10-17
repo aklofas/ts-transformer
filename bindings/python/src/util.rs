@@ -371,3 +371,20 @@ pub(crate) fn with_query(url: &str, key: &str, value: impl core::fmt::Display) -
     let sep = if url.contains('?') { '&' } else { '?' };
     format!("{url}{sep}{key}={value}")
 }
+
+/// Bytes a generated native class holds. A getter on the class hands out a
+/// Python `bytes`, where a plain `Vec<u8>` field would become a `list`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostBytes(pub Vec<u8>);
+
+impl ToPyObject for HostBytes {
+    fn to_object(&self, py: Python<'_>) -> PyObject {
+        PyBytes::new_bound(py, &self.0).into_any().unbind()
+    }
+}
+
+impl IntoPy<PyObject> for HostBytes {
+    fn into_py(self, py: Python<'_>) -> PyObject {
+        self.to_object(py)
+    }
+}

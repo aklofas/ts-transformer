@@ -46,11 +46,15 @@ pub enum ChromaFormat {
     Yuv444,
 }
 
-/// Numerator/denominator pair (no implicit reduction).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Rational {
-    pub num: u32,
-    pub den: u32,
+crate::binding_record! {
+    /// Numerator/denominator pair (no implicit reduction).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Rational {
+        /// Numerator.
+        pub num: u32,
+        /// Denominator.
+        pub den: u32,
+    }
 }
 
 /// H.264 §E.2.1 / H.265 §E.3.1 / H.266 §7.7.3.1 `aspect_ratio_idc`→SAR
@@ -79,28 +83,35 @@ pub(crate) fn aspect_ratio_idc_to_sar(idc: u8) -> Option<Rational> {
     })
 }
 
-/// VUI / video signal type metadata. All fields decoded per
-/// ITU-T H.273 / ISO/IEC 23091-2 (the codec-independent registry
-/// referenced by both H.264 §E.2.1 and H.265 §E.2.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ColorInfo {
-    pub primaries: ColourPrimaries,
-    pub transfer: TransferCharacteristics,
-    pub matrix: MatrixCoefficients,
-    /// `false` = limited range (16-235 for 8-bit luma); `true` = full range (0-255).
-    pub full_range: bool,
-    /// Chroma sample location type. `None` when the bitstream did not
-    /// signal `chroma_sample_loc_info`. Per spec the value is constrained:
-    /// 0..=5 for H.264 §E.2.1 / H.265 §E.2.1; 0..=6 for H.266 via H.274
-    /// §7.3 (p. 20). For H.266 streams with `vui_chroma_loc_info_present_flag
-    /// = 0` AND `ChromaFormatIdc == 1` (4:2:0), H.274 §7.3 (p. 20) infers
-    /// `vui_chroma_sample_loc_type_frame = 6` ("unknown or unspecified") —
-    /// callers needing the inferred value should substitute 6 when
-    /// `chroma_loc.is_none()` in that case. The parser does not pre-populate
-    /// the inference to keep "absent" and "absent and inferred" distinguishable.
-    pub chroma_loc: Option<u8>,
-    /// Pixel aspect ratio. `None` when `aspect_ratio_idc == 0` (unspecified).
-    pub sample_aspect_ratio: Option<Rational>,
+crate::binding_record! {
+    /// VUI / video signal type metadata. All fields decoded per
+    /// ITU-T H.273 / ISO/IEC 23091-2 (the codec-independent registry
+    /// referenced by both H.264 §E.2.1 and H.265 §E.2.1).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ColorInfo {
+        /// Colour primaries.
+        pub primaries: ColourPrimaries,
+        /// Transfer characteristics.
+        pub transfer: TransferCharacteristics,
+        /// Matrix coefficients.
+        pub matrix: MatrixCoefficients,
+        /// `false` = limited range (16-235 for 8-bit luma); `true` = full range
+        /// (0-255).
+        pub full_range: bool,
+        /// Chroma sample location type. `None` when the bitstream did not signal
+        /// `chroma_sample_loc_info`. Per spec the value is constrained: 0..=5 for
+        /// H.264 §E.2.1 / H.265 §E.2.1; 0..=6 for H.266 via H.274 §7.3 (p. 20).
+        /// For H.266 streams with `vui_chroma_loc_info_present_flag = 0` AND
+        /// `ChromaFormatIdc == 1` (4:2:0), H.274 §7.3 (p. 20) infers
+        /// `vui_chroma_sample_loc_type_frame = 6` ("unknown or unspecified") —
+        /// callers needing the inferred value should substitute 6 when
+        /// `chroma_loc.is_none()` in that case. The parser does not pre-populate
+        /// the inference to keep "absent" and "absent and inferred"
+        /// distinguishable.
+        @[skip] pub chroma_loc: Option<u8>,
+        /// Pixel aspect ratio. `None` when `aspect_ratio_idc == 0` (unspecified).
+        @[skip] pub sample_aspect_ratio: Option<Rational>,
+    }
 }
 
 /// ITU-T H.273 V4 (07/2024) §8.1 Table 2 — colour primaries.

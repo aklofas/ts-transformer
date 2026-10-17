@@ -45,10 +45,9 @@ use tst_core::mpegts::demux::{
 use tst_core::mpegts::mux::Av1CarriageMode;
 use tst_core::shared::SharedBytes;
 
-use crate::codec::aac::build_adts_frame;
-use crate::codec::mpegaudio::build_mpeg2_audio_frame;
-use crate::codec::shared::{build_nal_unit, build_obu};
+use crate::codec::shared::build_nal_unit;
 use crate::error::{map_codec_parse_error, throw_demux};
+use crate::generated::codec::{build_adts_frame_owned, build_frame_owned, build_obu};
 use crate::handle::HandleRegistry;
 use crate::jutil::enum_const;
 use tst_pipeline::binding::BindingErrorKind;
@@ -961,8 +960,7 @@ pub(crate) fn build_video_units<'local>(
         VideoPayload::Obus(obus) => {
             for obu in obus {
                 env.with_local_frame(16, |inner| {
-                    let val =
-                        build_obu(inner, obu).map_err(|()| jni::errors::Error::JavaException)?;
+                    let val = build_obu(inner, obu)?;
                     inner.call_method(
                         &list,
                         "add",
@@ -980,7 +978,7 @@ pub(crate) fn build_video_units<'local>(
 
 /// Build a `java.util.ArrayList<AdtsFrame>` from owned AAC frames; each frame is
 /// constructed inside a per-element local frame so its refs are reclaimed
-/// (unbounded frame counts per AU). Reuses [`build_adts_frame`] — the same
+/// (unbounded frame counts per AU). Reuses [`build_adts_frame_owned`] — the same
 /// frame→jobject construction the eager audio path used. Backs
 /// [`DemuxEvent.Audio.parse()`] for AAC.
 fn build_adts_frame_list<'local>(
@@ -992,7 +990,7 @@ fn build_adts_frame_list<'local>(
         .map_err(|_| ())?;
     for f in frames {
         env.with_local_frame(24, |inner| {
-            let val = build_adts_frame(inner, f).map_err(|()| jni::errors::Error::JavaException)?;
+            let val = build_adts_frame_owned(inner, f)?;
             inner.call_method(
                 &list,
                 "add",
@@ -1007,7 +1005,7 @@ fn build_adts_frame_list<'local>(
 }
 
 /// Build a `java.util.ArrayList<Mpeg2AudioFrame>` from owned MP2 frames. The MP2
-/// twin of [`build_adts_frame_list`]; reuses [`build_mpeg2_audio_frame`]. Backs
+/// twin of [`build_adts_frame_list`]; reuses [`build_frame_owned`]. Backs
 /// [`DemuxEvent.Audio.parse()`] for MP2.
 fn build_mpeg2_frame_list<'local>(
     env: &mut JNIEnv<'local>,
@@ -1018,8 +1016,7 @@ fn build_mpeg2_frame_list<'local>(
         .map_err(|_| ())?;
     for f in frames {
         env.with_local_frame(24, |inner| {
-            let val = build_mpeg2_audio_frame(inner, f)
-                .map_err(|()| jni::errors::Error::JavaException)?;
+            let val = build_frame_owned(inner, f)?;
             inner.call_method(
                 &list,
                 "add",

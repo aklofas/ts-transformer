@@ -107,7 +107,6 @@ tst_core::binding_record! {
     ///
     /// Every shape of field a native class holds.
     #[derive(Debug, Clone, PartialEq, Eq)]
-    #[non_exhaustive]
     pub struct NativeFixture {
         /// Plain scalar.
         pub id: u8,
@@ -982,6 +981,17 @@ fn no_rust_only_text_reaches_a_host_doc() {
 }
 
 #[test]
+fn a_doc_ends_for_the_hosts_at_the_rust_only_line() {
+    assert_eq!(
+        schema::paras(
+            " Host text.\n\n More host text.\n <!-- rust-only -->\n Owned variant of [`X`].\n ```\n code\n ```"
+        ),
+        vec!["Host text.", "More host text."]
+    );
+    assert!(schema::paras(" <!-- rust-only -->\n only for Rust").is_empty());
+}
+
+#[test]
 fn rust_paths_and_link_definitions_become_plain_names_in_host_docs() {
     assert_eq!(
         schema::unlink("call `klv::st0806::decode` or `Self::field()` then [`Name`]"),
@@ -1003,7 +1013,7 @@ fn rust_paths_and_link_definitions_become_plain_names_in_host_docs() {
 #[test]
 fn every_registered_record_renders_every_target() {
     let reg = schema::records();
-    assert_eq!(reg.len(), 27);
+    assert_eq!(reg.len(), 53);
     for e in &reg {
         let n = e.schema.name;
         let py = emit_py::record_pair(&reg, e).unwrap_or_else(|m| panic!("{n}: {m}"));
@@ -1035,7 +1045,10 @@ fn every_registered_record_renders_every_target() {
     families.dedup();
     let jvm_families = families
         .iter()
-        .filter(|f| reg.iter().any(|e| e.family == **f && e.jvm))
+        .filter(|f| {
+            reg.iter()
+                .any(|e| e.family == **f && e.jvm && e.jvm_builder)
+        })
         .count();
     let jvm_records = reg.iter().filter(|e| e.jvm).count();
     // One Python converter file per family, one JVM file per family that has
@@ -1637,6 +1650,7 @@ fn native_reg() -> Vec<Entry> {
     let mut big = native(NativeFixture::BINDING_SCHEMA);
     big.host_name = "NativeHost";
     big.py_skip = &["level"];
+    big.py_rename = &[("flag", "enabled")];
     r.push(leaf);
     r.push(big);
     r
@@ -1680,9 +1694,7 @@ fn a_native_class_is_a_frozen_get_all_struct_of_host_copies() {
     );
     // The big one: the host name, host types, no constructor, no Copy.
     assert!(
-        raw.contains(
-            r#"#[pyclass(frozen, get_all, name = "NativeHost", module = "tstrans.codec")]"#
-        ),
+        raw.contains(r#"#[pyclass(frozen, name = "NativeHost", module = "tstrans.codec")]"#),
         "{raw}"
     );
     assert!(
@@ -1692,6 +1704,7 @@ fn a_native_class_is_a_frozen_get_all_struct_of_host_copies() {
     for field in [
         "pub id: u8,",
         "pub name: String,",
+        "pub enabled: bool,",
         "pub raw: crate::util::HostBytes,",
         "pub header: crate::util::HostBytes,",
         "pub chroma: crate::codec::ChromaFormatPy,",
@@ -1712,9 +1725,13 @@ fn a_native_class_is_a_frozen_get_all_struct_of_host_copies() {
         !raw.contains("pub scratch"),
         "a skipped field is not held\n{raw}"
     );
+    // A hidden field is held for the extras but has no getter, so the
+    // getters are declared field by field.
+    assert!(raw.contains("    pub level: u8,"), "{raw}");
     assert!(
-        !raw.contains("pub level"),
-        "a py_skip field is not held\n{raw}"
+        raw.contains("#[pyo3(get)]\n    pub id: u8,")
+            && !raw.contains("#[pyo3(get)]\n    pub level"),
+        "{raw}"
     );
     assert!(!raw.contains("fn new(id"), "{raw}");
     assert!(raw.contains("impl From<&"), "{raw}");
@@ -1729,6 +1746,7 @@ fn a_native_class_converts_each_shape_of_field_from_the_rust_record() {
     for want in [
         "id: r.id,",
         "name: r.name.clone(),",
+        "enabled: r.flag,",
         "raw: crate::util::HostBytes(r.raw.to_vec()),",
         "header: crate::util::HostBytes(r.header.to_vec()),",
         "chroma: crate::codec::ChromaFormatPy::from(r.chroma),",
@@ -1736,7 +1754,7 @@ fn a_native_class_converts_each_shape_of_field_from_the_rust_record() {
         "count: r.count,",
         "leaves: r.leaves.iter().map(LeafFixture::from).collect(),",
         "by_id: r.by_id.iter().map(|(k, v)| (*k, LeafFixture::from(v))).collect(),",
-        "size: crate::custom::native_fixture_size_to_py(&r.size),",
+        "size: r.size,",
     ] {
         assert!(raw.contains(want), "{want}\n{raw}");
     }
@@ -1752,6 +1770,7 @@ fn a_native_class_stub_lists_the_constructor_properties_and_extras() {
          \x20   def __new__(cls, num: int, den: int) -> LeafFixture: ...\n\
          \x20   @property\n    def num(self) -> int: ...\n\
          \x20   @property\n    def den(self) -> int: ...\n\
+         \x20   def __eq__(self, other: object, /) -> bool: ...\n\
          \x20   def as_float(self) -> float: ...\n\
          \x20   @staticmethod\n    def zero(den: int) -> LeafFixture: ...\n\
          \x20   @property\n    def ratio(self) -> int: ...\n"
@@ -1884,7 +1903,7 @@ fn a_dataclass_refuses_a_map_or_a_host_typed_field() {
 fn a_native_struct_holds_the_crossing_fields_and_no_others() {
     let reg = native_reg();
     let raw = emit_pyclass::file(&reg, "native_test").unwrap();
-    for (name, held) in [("LeafFixture", 2), ("NativeHost", 11)] {
+    for (name, held) in [("LeafFixture", 2), ("NativeHost", 12)] {
         // The struct body: between its `pub struct` line and the closing brace.
         let from = raw.find(&format!("pub struct {name} {{")).unwrap();
         let body = &raw[from..from + raw[from..].find("\n}\n").unwrap()];
@@ -1899,7 +1918,7 @@ fn a_native_struct_holds_the_crossing_fields_and_no_others() {
         .lines()
         .filter(|l| l.starts_with("            ") && l.trim_start().contains(": "))
         .count();
-    assert_eq!(assigned, 11, "{conv}");
+    assert_eq!(assigned, 12, "{conv}");
 }
 
 #[test]
@@ -1917,5 +1936,25 @@ fn a_renamed_record_cannot_be_held_and_py_skip_must_name_a_field() {
         .unwrap();
     reg[i].py_skip = &["nope"];
     let err = emit_pyclass::file(&reg, "native_test").unwrap_err();
-    assert!(err.contains("py_skip names no field `nope`"), "{err}");
+    assert!(err.contains("names no field `nope`"), "{err}");
+}
+
+#[test]
+fn a_record_java_builds_itself_has_a_java_block_and_no_jni_builder() {
+    let mut reg = native_reg();
+    let i = reg
+        .iter()
+        .position(|x| x.schema.name == "LeafFixture")
+        .unwrap();
+    reg[i].jvm_builder = false;
+    let jvm = emit_jvm_rs::file(&reg, "native_test").unwrap();
+    assert!(!jvm.contains("fn build_leaf_fixture"), "{jvm}");
+    assert!(jvm.contains("fn build_native_fixture"), "{jvm}");
+    let targets = write::targets(&root(), &reg).unwrap();
+    assert!(
+        targets
+            .iter()
+            .any(|t| t.path.ends_with("org/tstrans/codec/LeafFixture.java")),
+        "the Java record is still generated"
+    );
 }

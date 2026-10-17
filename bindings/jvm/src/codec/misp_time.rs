@@ -19,12 +19,13 @@
 
 use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JObject, JValue};
+use jni::objects::{JByteArray, JObject};
 use jni::sys::{jint, jobject};
-use tst_core::codec::misp_time::{MispTimeKind, MispTimestamp, extract};
+use tst_core::codec::misp_time::{MispTimeKind, extract};
 use tst_core::mpegts::mux::VideoCodec;
 
 use crate::error::{CodecErrFields, throw_codec};
+use crate::generated::codec::build_misp_timestamp;
 use tst_pipeline::binding::BindingErrorKind;
 
 /// Map the Java `VideoCodec` ordinal (0-3) to the mux-side `VideoCodec`.
@@ -52,7 +53,10 @@ fn java_video_codec_ordinal_to_rust(env: &mut JNIEnv, ordinal: jint) -> Option<V
 /// Build the Java `org.tstrans.codec.MispTimeKind` enum constant.
 /// Throws `CodecParseException(ENGINE_ERROR)` and returns `Err(())` for
 /// unrecognised variants (non_exhaustive guard); never returns silently.
-fn build_kind<'local>(env: &mut JNIEnv<'local>, kind: MispTimeKind) -> Result<JObject<'local>, ()> {
+pub(crate) fn build_kind<'local>(
+    env: &mut JNIEnv<'local>,
+    kind: MispTimeKind,
+) -> Result<JObject<'local>, ()> {
     let name = match kind {
         MispTimeKind::Micro => "MICRO",
         MispTimeKind::Nano => "NANO",
@@ -76,26 +80,6 @@ fn build_kind<'local>(env: &mut JNIEnv<'local>, kind: MispTimeKind) -> Result<JO
     )
     .map_err(|_| ())?
     .l()
-    .map_err(|_| ())
-}
-
-/// Build a Java `MispTimestamp` record from a Rust `MispTimestamp`.
-/// The record ctor is `(MispTimeKind, int timeStatus, long value)`.
-fn build_misp_timestamp<'local>(
-    env: &mut JNIEnv<'local>,
-    ts: &MispTimestamp,
-) -> Result<JObject<'local>, ()> {
-    env.ensure_local_capacity(8).map_err(|_| ())?;
-    let kind = build_kind(env, ts.kind)?;
-    env.new_object(
-        "org/tstrans/codec/MispTimestamp",
-        "(Lorg/tstrans/codec/MispTimeKind;IJ)V",
-        &[
-            JValue::Object(&kind),
-            JValue::Int(i32::from(ts.time_status)),
-            JValue::Long(ts.value as i64),
-        ],
-    )
     .map_err(|_| ())
 }
 
@@ -123,7 +107,7 @@ jni_native! {
             Ok(None) => JObject::null().into_raw(),
             Ok(Some(ts)) => match build_misp_timestamp(env, &ts) {
                 Ok(obj) => obj.into_raw(),
-                Err(()) => JObject::null().into_raw(),
+                Err(_) => JObject::null().into_raw(),
             },
             Err(e) => {
                 let msg = e.to_string();

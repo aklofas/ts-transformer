@@ -16,30 +16,48 @@
 use crate::codec::CodecParseError;
 use crate::codec::bitreader::BitReader;
 
-#[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub struct H265ProfileTierLevel {
-    pub general_profile_space: u8,
-    pub general_tier_flag: bool,
-    pub general_profile_idc: u8,
-    /// 32-bit flag word per H.265 §7.3.3 — bit `i` set means the stream
-    /// conforms to profile `i`. Many real Main10 streams have
-    /// `general_profile_idc=1` (Main) but `profile_compatibility_flags`
-    /// bit 2 set; ffmpeg `hevc/ps.c:267-270` uses this to disambiguate
-    /// Main vs Main10 vs Main10-Intra.
-    pub general_profile_compatibility_flags: u32,
-    /// `general_progressive_source_flag` (§7.4.4): the stream is progressive.
-    pub general_progressive_source_flag: bool,
-    /// `general_interlaced_source_flag` (§7.4.4): the stream is interlaced.
-    pub general_interlaced_source_flag: bool,
-    /// `general_non_packed_constraint_flag` (§7.4.4): no frame-packing
-    /// arrangement SEI in the bitstream.
-    pub general_non_packed_constraint_flag: bool,
-    /// `general_frame_only_constraint_flag` (§7.4.4): stream contains
-    /// only frames (no field pictures).
-    pub general_frame_only_constraint_flag: bool,
-    pub general_level_idc: u8,
+crate::binding_record! {
+    /// H.265 profile/tier/level fields parsed from a VPS or SPS NAL unit.
+    ///
+    /// These fields are decoded from the `profile_tier_level()` syntax structure
+    /// at H.265 §7.3.3. The SPS and the VPS expose the same values through their
+    /// `profile_tier_level` member, which returns this object; the fields are
+    /// also available directly on both. `general_profile_space` is always 0 when
+    /// reconstructed from an SPS or VPS, because they do not store that field
+    /// separately (it is always 0 for all ITU-T registered profiles).
+    #[must_use]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    #[non_exhaustive]
+    pub struct H265ProfileTierLevel {
+        /// 2-bit `general_profile_space` (§7.3.3). In practice always 0 for ITU-T
+        /// registered profiles.
+        pub general_profile_space: u8,
+        /// `general_tier_flag` (§7.4.4): true = High tier, false = Main tier.
+        pub general_tier_flag: bool,
+        /// 5-bit `general_profile_idc` (§7.3.3). Common values: 1=Main, 2=Main10,
+        /// 4=Rext, 5=HEVC-HM, 6=Multiview-Main, 7=Scalable-Main.
+        pub general_profile_idc: u8,
+        /// 32-bit `general_profile_compatibility_flags` (§7.3.3). Bit `i` set
+        /// means the stream conforms to profile `i`. MSB-first: spec-bit j lives
+        /// at `flags & (1 << (31 - j))`. Many real Main10 streams have
+        /// `general_profile_idc=1` (Main) but bit 2 (= 1 << 29) set; ffmpeg uses
+        /// it to disambiguate Main vs Main10 vs Main10-Intra.
+        pub general_profile_compatibility_flags: u32,
+        /// `general_progressive_source_flag` (§7.4.4): the stream is progressive.
+        pub general_progressive_source_flag: bool,
+        /// `general_interlaced_source_flag` (§7.4.4): the stream is interlaced.
+        pub general_interlaced_source_flag: bool,
+        /// `general_non_packed_constraint_flag` (§7.4.4): no frame-packing
+        /// arrangement SEI in the bitstream.
+        pub general_non_packed_constraint_flag: bool,
+        /// `general_frame_only_constraint_flag` (§7.4.4): stream contains only
+        /// frames (no field pictures).
+        pub general_frame_only_constraint_flag: bool,
+        /// `general_level_idc` (§7.3.3). Level encoded as `30 * level_major + 3 *
+        /// level_minor` for levels up to 6.2: e.g. 120 = Level 4.0, 150 = Level
+        /// 5.0, 180 = Level 6.0.
+        pub general_level_idc: u8,
+    }
 }
 
 pub(crate) fn parse(

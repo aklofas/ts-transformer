@@ -7,32 +7,42 @@ use crate::codec::CodecParseError;
 use crate::codec::bitreader::BitReader;
 use alloc::vec::Vec;
 
-#[must_use]
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct H265Vps {
-    pub vps_video_parameter_set_id: u8,
-    pub max_layers_minus1: u8,
-    pub max_sub_layers_minus1: u8,
-    pub temporal_id_nesting_flag: bool,
-    pub general_profile_idc: u8,
-    pub general_tier_flag: bool,
-    pub general_level_idc: u8,
-    /// 32-bit `general_profile_compatibility_flags` per H.265 §7.3.3 — bit
-    /// `i` set means the stream conforms to profile `i`. See [`H265Sps`]
-    /// for the disambiguation rationale (Main vs Main10 vs Main10-Intra).
-    ///
-    /// [`H265Sps`]: crate::codec::h265::H265Sps
-    pub general_profile_compatibility_flags: u32,
-    /// `general_progressive_source_flag` (§7.4.4).
-    pub general_progressive_source_flag: bool,
-    /// `general_interlaced_source_flag` (§7.4.4).
-    pub general_interlaced_source_flag: bool,
-    /// `general_non_packed_constraint_flag` (§7.4.4).
-    pub general_non_packed_constraint_flag: bool,
-    /// `general_frame_only_constraint_flag` (§7.4.4).
-    pub general_frame_only_constraint_flag: bool,
-    pub raw_rbsp: Vec<u8>,
+crate::binding_record! {
+    /// Parsed H.265 Video Parameter Set.
+    #[must_use]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct H265Vps {
+        /// 4-bit `vps_video_parameter_set_id` — identifies this VPS.
+        pub vps_video_parameter_set_id: u8,
+        /// `vps_max_layers_minus1` — max number of spatial layers (6-bit).
+        pub max_layers_minus1: u8,
+        /// `vps_max_sub_layers_minus1` — max temporal sub-layer count (3-bit).
+        pub max_sub_layers_minus1: u8,
+        /// `vps_temporal_id_nesting_flag`: when true, temporal sub-layer `j <
+        /// max_sub_layers_minus1` nests inside sub-layer `j+1`.
+        pub temporal_id_nesting_flag: bool,
+        /// `general_profile_idc` decoded from the VPS profile_tier_level block.
+        pub general_profile_idc: u8,
+        /// `general_tier_flag` decoded from the VPS profile_tier_level block.
+        pub general_tier_flag: bool,
+        /// `general_level_idc` decoded from the VPS profile_tier_level block.
+        pub general_level_idc: u8,
+        /// 32-bit `general_profile_compatibility_flags` per H.265 §7.3.3 — bit
+        /// `i` set means the stream conforms to profile `i`. See the SPS for the
+        /// disambiguation rationale (Main vs Main10 vs Main10-Intra).
+        pub general_profile_compatibility_flags: u32,
+        /// `general_progressive_source_flag` (§7.4.4).
+        pub general_progressive_source_flag: bool,
+        /// `general_interlaced_source_flag` (§7.4.4).
+        pub general_interlaced_source_flag: bool,
+        /// `general_non_packed_constraint_flag` (§7.4.4).
+        pub general_non_packed_constraint_flag: bool,
+        /// `general_frame_only_constraint_flag` (§7.4.4).
+        pub general_frame_only_constraint_flag: bool,
+        /// The original RBSP bytes as supplied to the parser.
+        pub raw_rbsp: Vec<u8>,
+    }
 }
 
 /// Parse a single VPS RBSP. Input contract: RBSP body only (no NAL

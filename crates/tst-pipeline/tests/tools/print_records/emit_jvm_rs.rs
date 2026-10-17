@@ -434,7 +434,10 @@ pub fn record_pair(reg: &[Entry], e: &Entry) -> Result<String, String> {
 /// The whole `generated/<family>.rs` text.
 pub fn file(reg: &[Entry], family: &str) -> Result<String, String> {
     let mut body = Vec::new();
-    for e in reg.iter().filter(|e| e.family == family && e.jvm) {
+    for e in reg
+        .iter()
+        .filter(|e| e.family == family && e.jvm && e.jvm_builder)
+    {
         body.push(record_pair(reg, e)?);
     }
     let body = body.join("\n");

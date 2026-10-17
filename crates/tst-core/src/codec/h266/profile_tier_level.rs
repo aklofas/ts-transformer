@@ -3,16 +3,26 @@
 use crate::codec::CodecParseError;
 use crate::codec::bitreader::BitReader;
 
-#[must_use]
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct H266ProfileTierLevel {
-    /// `general_profile_idc` u(7) — H.266 V4 Annex A profile assignment.
-    pub general_profile_idc: u8,
-    /// `general_tier_flag` u(1) — 0 = Main tier, 1 = High tier.
-    pub general_tier_flag: bool,
-    /// `general_level_idc` u(8) — H.266 V4 Annex A.4 level table.
-    pub general_level_idc: u8,
+crate::binding_record! {
+    /// H.266 profile/tier/level fields parsed from an SPS NAL unit.
+    ///
+    /// H.266 V4 §7.3.3 PTL carries fewer fields than H.265: only
+    /// `general_profile_idc`, `general_tier_flag` and `general_level_idc` are
+    /// surfaced here. The SPS exposes the same values through its
+    /// `profile_tier_level` member.
+    #[must_use]
+    #[non_exhaustive]
+    #[derive(Debug, Clone, PartialEq, Eq, Default)]
+    pub struct H266ProfileTierLevel {
+        /// 7-bit `general_profile_idc` (H.266 V4 §7.3.3). Common values:
+        /// 1=Main10, 2=MultilayerMain10 (H.266 V4 Annex A).
+        pub general_profile_idc: u8,
+        /// `general_tier_flag` — false = Main tier, true = High tier.
+        pub general_tier_flag: bool,
+        /// `general_level_idc` — H.266 V4 Annex A.4 level table. Encoded as the
+        /// level value multiplied by 16: e.g. 64 = Level 4.0, 80 = Level 5.0.
+        pub general_level_idc: u8,
+    }
 }
 
 /// Walk the full PTL syntax via a caller-supplied bit cursor.

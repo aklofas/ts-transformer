@@ -1378,7 +1378,7 @@ impl PyMuxer {
         pts: &Bound<'_, PyAny>,
         dts: Option<&Bound<'_, PyAny>>,
         key_frame: bool,
-        misp: PyRef<'_, crate::codec::MispTimestampPy>,
+        misp: PyRef<'_, crate::generated::codec::MispTimestamp>,
     ) -> PyResult<()> {
         use tst_core::codec::misp_time::MispTimestamp;
         let rust_pts = py_pts90khz(pts)?;

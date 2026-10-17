@@ -37,7 +37,6 @@ pub enum PyShape {
 
 /// How a hand-written method or property of a native class is called.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // the first native family registers its extras
 pub enum ExtraKind {
     /// A read-only property.
     Getter,
@@ -76,6 +75,9 @@ pub struct Entry {
     /// Whether the JVM side is generated. `false` for a record whose Java
     /// shape the schema cannot express: it is generated for Python only.
     pub jvm: bool,
+    /// Whether a JNI builder is generated for the record. `false` for a
+    /// record Java builds itself: only its Java record is generated.
+    pub jvm_builder: bool,
     /// The path a binding crate names the record by, e.g.
     /// `tst_core::klv::st0601::WavelengthRecord`. Explicit because the
     /// declaring module is often private and re-exported higher up.
@@ -96,8 +98,12 @@ pub struct Entry {
     /// `PartialEq`, the generated struct derives it.
     pub py_eq: bool,
     /// Rust fields that cross to Java and not to Python: the native class
-    /// holds none of them (an `extra` property of the same name replaces it).
+    /// holds them, and only its hand-written extras read them (an extra of
+    /// the same name takes their place).
     pub py_skip: &'static [&'static str],
+    /// `(Rust field, Python name)` where the Python attribute is not named
+    /// as the Rust field.
+    pub py_rename: &'static [(&'static str, &'static str)],
     /// A native class's `__repr__` as a `format!` string and its argument
     /// expressions (`self` is the class); `None` lists the fields.
     pub py_repr: Option<(&'static str, &'static [&'static str])>,
@@ -122,6 +128,7 @@ impl Entry {
             java_pkg,
             direction,
             jvm: true,
+            jvm_builder: true,
             rust_path,
             java_implements,
             schema,
@@ -130,6 +137,7 @@ impl Entry {
             py_ctor: false,
             py_eq: false,
             py_skip: &[],
+            py_rename: &[],
             py_repr: None,
             py_extras: &[],
         }
@@ -148,10 +156,17 @@ impl Entry {
         self.shape == PyShape::Native
     }
 
-    /// The Python name of a Rust field: `None` when it does not cross to
-    /// Python.
+    /// Whether a field crosses to Python.
     pub fn py_crosses(&self, f: &FieldSpec) -> bool {
         f.mark != FieldMark::Skip && !self.py_skip.contains(&f.name)
+    }
+
+    /// The Python attribute name of a Rust field.
+    pub fn py_name(&self, rust: &'static str) -> &'static str {
+        self.py_rename
+            .iter()
+            .find(|(r, _)| *r == rust)
+            .map_or(rust, |(_, p)| p)
     }
 }
 
@@ -209,9 +224,7 @@ pub fn records() -> Vec<Entry> {
     // The only SDCC-FLP encoder takes plain lists, not the record.
     let mut sdcc_flp = rec!("st1010", "st1010", SdccFlp);
     sdcc_flp.direction = Direction::ToHost;
-    // The list items and nested records come first: a record is registered
-    // before the records that hold it.
-    vec![
+    let mut v = vec![
         rec!("st0601", "st0601", WavelengthRecord),
         rec!("st0601", "st0601", ImageHorizonPixels),
         rec!("st0601", "st0601", ControlCommand),
@@ -239,7 +252,9 @@ pub fn records() -> Vec<Entry> {
         rec!("st0605", "st0605", PrecisionTimeStampPack, "KlvSet"),
         sdcc_flp,
         cot_config,
-    ]
+    ];
+    v.extend(codec_records());
+    v
 }
 
 /// A reference-style link definition line, `` [`x`]: crate::path::x ``: it
@@ -249,15 +264,22 @@ fn is_link_definition(line: &str) -> bool {
     t.starts_with('[') && t.contains("]: ")
 }
 
+/// The line that ends the host-facing part of a doc: what follows it is for
+/// Rust readers (a doctest, a note on the owned/borrowed pair) and never
+/// reaches a host doc. rustdoc renders an HTML comment as nothing.
+pub const RUST_ONLY: &str = "<!-- rust-only -->";
+
 /// The paragraphs of a joined doc text: runs of lines between empty ones,
 /// each line without the space a `///` comment leaves, joined by one space.
-/// Link definition lines are dropped.
+/// Link definition lines are dropped, and so is everything from the
+/// [`RUST_ONLY`] line on.
 pub fn paras(doc: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut cur: Vec<&str> = Vec::new();
     for l in doc
         .lines()
         .map(|l| l.strip_prefix(' ').unwrap_or(l))
+        .take_while(|l| l.trim() != RUST_ONLY)
         .filter(|l| !is_link_definition(l))
     {
         if l.trim().is_empty() {
@@ -340,7 +362,9 @@ pub fn snake(name: &str) -> String {
     let mut out = String::new();
     for (i, c) in chars.iter().enumerate() {
         if c.is_ascii_uppercase() {
-            let prev_lower = i > 0 && chars[i - 1].is_ascii_lowercase();
+            // A digit ends a word as a lower-case letter does: `H264Sps`.
+            let prev_lower =
+                i > 0 && (chars[i - 1].is_ascii_lowercase() || chars[i - 1].is_ascii_digit());
             let next_lower = chars.get(i + 1).is_some_and(|n| n.is_ascii_lowercase());
             if i > 0 && (prev_lower || (next_lower && chars[i - 1].is_ascii_uppercase())) {
                 out.push('_');
@@ -446,4 +470,412 @@ pub fn crossing(schema: &RecordSchema) -> impl Iterator<Item = &FieldSpec> {
 
 pub fn lookup<'a>(reg: &'a [Entry], name: &str) -> Option<&'a Entry> {
     reg.iter().find(|e| e.schema.name == name)
+}
+
+// ---------------------------------------------------------------------------
+// The codec parameter sets: native Python classes, built from the Rust parse
+// results and handed to the hosts (Rust to host only).
+// ---------------------------------------------------------------------------
+
+/// A coded-size method of an SPS.
+const fn coded(name: &'static str, doc: &'static str) -> PyExtra {
+    PyExtra {
+        name,
+        kind: ExtraKind::Method,
+        params: &[],
+        ret_rs: "u32",
+        ret_py: "int",
+        doc,
+    }
+}
+
+const fn ptl_method(ret: &'static str, doc: &'static str) -> PyExtra {
+    PyExtra {
+        name: "profile_tier_level",
+        kind: ExtraKind::Method,
+        params: &[],
+        ret_rs: ret,
+        ret_py: ret,
+        doc,
+    }
+}
+
+const fn general(
+    name: &'static str,
+    rs: &'static str,
+    py: &'static str,
+    doc: &'static str,
+) -> PyExtra {
+    PyExtra {
+        name,
+        kind: ExtraKind::Getter,
+        params: &[],
+        ret_rs: rs,
+        ret_py: py,
+        doc,
+    }
+}
+
+const H264_SPS_EXTRAS: &[PyExtra] = &[
+    coded(
+        "coded_width",
+        " Coded picture width before `frame_crop` is applied (luma samples).\n Equal to `width + crop_left + crop_right`.",
+    ),
+    coded(
+        "coded_height",
+        " Coded picture height before `frame_crop` is applied (luma samples).\n Equal to `height + crop_top + crop_bottom`.",
+    ),
+];
+
+const H265_SPS_EXTRAS: &[PyExtra] = &[
+    ptl_method(
+        "H265ProfileTierLevel",
+        " Reconstructed `H265ProfileTierLevel` from the fields decoded inside\n this SPS's `profile_tier_level()` block.",
+    ),
+    coded(
+        "coded_width",
+        " Coded picture width before conformance-window crop is applied\n (luma samples). Equal to `width + crop_left + crop_right`.",
+    ),
+    coded(
+        "coded_height",
+        " Coded picture height before conformance-window crop is applied\n (luma samples). Equal to `height + crop_top + crop_bottom`.",
+    ),
+];
+
+const H265_VPS_EXTRAS: &[PyExtra] = &[ptl_method(
+    "H265ProfileTierLevel",
+    " Reconstructed `H265ProfileTierLevel` from the fields decoded inside\n this VPS's `profile_tier_level()` block.",
+)];
+
+const H266_SPS_EXTRAS: &[PyExtra] = &[
+    general(
+        "general_profile_idc",
+        "u8",
+        "int",
+        " `general_profile_idc` decoded from the SPS profile_tier_level block\n (H.266 V4 §7.3.3). Common values: 1=Main10, 2=MultilayerMain10.",
+    ),
+    general(
+        "general_tier_flag",
+        "bool",
+        "bool",
+        " `general_tier_flag` — false = Main tier, true = High tier.",
+    ),
+    general(
+        "general_level_idc",
+        "u8",
+        "int",
+        " `general_level_idc` — H.266 V4 Annex A.4 level table.",
+    ),
+    ptl_method(
+        "H266ProfileTierLevel",
+        " Reconstructed `H266ProfileTierLevel` from the fields decoded inside\n this SPS's `profile_tier_level()` block (H.266 V4 §7.3.3).",
+    ),
+    coded(
+        "coded_width",
+        " Pre-crop luma width — `pic_width_max_in_luma_samples` before\n conformance-window cropping. Equal to `width + crop_left + crop_right`.",
+    ),
+    coded(
+        "coded_height",
+        " Pre-crop luma height — `pic_height_max_in_luma_samples` before\n conformance-window cropping. Equal to `height + crop_top + crop_bottom`.",
+    ),
+];
+
+const MISP_EXTRAS: &[PyExtra] = &[
+    PyExtra {
+        name: "micros",
+        kind: ExtraKind::Static,
+        params: &[("value_us", "u64", "int"), ("time_status", "u8", "int")],
+        ret_rs: "Self",
+        ret_py: "MispTimestamp",
+        doc: " Construct a microsecond-precision timestamp (valid for H.264 + H.265).",
+    },
+    PyExtra {
+        name: "nanos",
+        kind: ExtraKind::Static,
+        params: &[("value_ns", "u64", "int"), ("time_status", "u8", "int")],
+        ret_rs: "Self",
+        ret_py: "MispTimestamp",
+        doc: " Construct a nanosecond-precision timestamp (H.265-only, ST 0604.6 §12.2).",
+    },
+];
+
+const RATIONAL_EXTRAS: &[PyExtra] = &[PyExtra {
+    name: "as_float",
+    kind: ExtraKind::Method,
+    params: &[],
+    ret_rs: "f64",
+    ret_py: "float",
+    doc: " Return `num / den` as a floating-point value.",
+}];
+
+/// A codec record: native class, to the host only, in `tstrans.codec` and
+/// `org.tstrans.codec`.
+fn codec(rust_path: &'static str, java_implements: &'static str, schema: RecordSchema) -> Entry {
+    let mut e = Entry::new(
+        "codec",
+        "tstrans.codec",
+        "org/tstrans/codec",
+        Direction::ToHost,
+        rust_path,
+        java_implements,
+        schema,
+    );
+    e.shape = PyShape::Native;
+    e
+}
+
+/// The codec records. The values the others hold come first.
+fn codec_records() -> Vec<Entry> {
+    use tst_core::codec::aac::AdtsFrameOwned;
+    use tst_core::codec::av1::{Av1FrameHeaderLight, Av1ObuStream, Av1SequenceHeader};
+    use tst_core::codec::h264::{H264ParameterSets, H264Pps, H264SliceHeaderLight, H264Sps};
+    use tst_core::codec::h265::{
+        H265ParameterSets, H265Pps, H265ProfileTierLevel, H265SliceHeaderLight, H265Sps, H265Vps,
+    };
+    use tst_core::codec::h266::{
+        H266ParameterSets, H266Pps, H266ProfileTierLevel, H266SliceHeaderLight, H266Sps, H266Vps,
+    };
+    use tst_core::codec::misp_time::MispTimestamp;
+    use tst_core::codec::mpegaudio::FrameOwned;
+    use tst_core::codec::{ColorInfo, Obu, ObuExtension, Rational};
+    macro_rules! rec {
+        ($module:literal, $name:ident) => {
+            rec!($module, $name, "")
+        };
+        ($module:literal, $name:ident, $implements:expr) => {
+            codec(
+                concat!("tst_core::codec::", $module, stringify!($name)),
+                $implements,
+                $name::BINDING_SCHEMA,
+            )
+        };
+    }
+    // The module prefix is empty for the types declared in `codec` itself.
+    let mut rational = rec!("", Rational);
+    rational.py_ctor = true;
+    rational.py_extras = RATIONAL_EXTRAS;
+    rational.py_repr = Some(("Rational(num={}, den={})", &["self.num", "self.den"]));
+
+    let mut color = rec!("", ColorInfo);
+    color.py_ctor = true;
+    color.py_repr = Some((
+        "ColorInfo(primaries={:?}, transfer={:?}, matrix={:?}, full_range={})",
+        &[
+            "self.primaries",
+            "self.transfer",
+            "self.matrix",
+            "self.full_range",
+        ],
+    ));
+
+    let mut ext = rec!("", ObuExtension);
+    ext.py_ctor = true;
+    ext.py_repr = Some((
+        "ObuExtension(temporal_id={}, spatial_id={})",
+        &["self.temporal_id", "self.spatial_id"],
+    ));
+
+    let mut obu = rec!("", Obu, "VideoUnit");
+    obu.py_ctor = true;
+    obu.py_repr = Some((
+        "Obu(obu_type={}, payload_len={})",
+        &["self.obu_type", "self.payload.0.len()"],
+    ));
+
+    let mut misp = rec!("misp_time::", MispTimestamp);
+    misp.py_ctor = true;
+    misp.py_eq = true;
+    misp.py_extras = MISP_EXTRAS;
+    misp.py_repr = Some((
+        "MispTimestamp(kind={}, time_status={:#04X}, value={})",
+        &[
+            "crate::custom::misp_timestamp_kind_text(self.kind)",
+            "self.time_status",
+            "self.value",
+        ],
+    ));
+
+    let mut h264_sps = rec!("h264::", H264Sps);
+    h264_sps.py_extras = H264_SPS_EXTRAS;
+    h264_sps.py_repr = Some((
+        "H264Sps(profile={}, level={}, {}x{}, sps_id={})",
+        &[
+            "self.profile_idc",
+            "self.level_idc",
+            "self.width",
+            "self.height",
+            "self.seq_parameter_set_id",
+        ],
+    ));
+    let mut h264_pps = rec!("h264::", H264Pps);
+    h264_pps.py_repr = Some((
+        "H264Pps(pps_id={}, sps_id={})",
+        &["self.pic_parameter_set_id", "self.seq_parameter_set_id"],
+    ));
+    let mut h264_slice = rec!("h264::", H264SliceHeaderLight);
+    h264_slice.py_repr = Some((
+        "H264SliceHeaderLight(first={}, slice_type={:?}, idr={})",
+        &["self.first_in_pic", "self.slice_type", "self.idr"],
+    ));
+    let mut h264_sets = rec!("h264::", H264ParameterSets);
+    h264_sets.py_repr = Some((
+        "H264ParameterSets(n_sps={}, n_pps={})",
+        &["self.sps_by_id.len()", "self.pps_by_id.len()"],
+    ));
+
+    let mut h265_ptl = rec!("h265::", H265ProfileTierLevel);
+    // Java builds it from an SPS or a VPS; no native hands one over.
+    h265_ptl.jvm_builder = false;
+    h265_ptl.py_repr = Some((
+        "H265ProfileTierLevel(profile_idc={}, tier={}, level_idc={})",
+        &[
+            "self.general_profile_idc",
+            "self.general_tier_flag",
+            "self.general_level_idc",
+        ],
+    ));
+    let mut h265_sps = rec!("h265::", H265Sps);
+    h265_sps.py_extras = H265_SPS_EXTRAS;
+    h265_sps.py_repr = Some((
+        "H265Sps(profile={}, level={}, {}x{}, sps_id={})",
+        &[
+            "self.general_profile_idc",
+            "self.general_level_idc",
+            "self.width",
+            "self.height",
+            "self.sps_seq_parameter_set_id",
+        ],
+    ));
+    let mut h265_vps = rec!("h265::", H265Vps);
+    h265_vps.py_extras = H265_VPS_EXTRAS;
+    h265_vps.py_repr = Some((
+        "H265Vps(vps_id={}, profile={}, level={})",
+        &[
+            "self.vps_video_parameter_set_id",
+            "self.general_profile_idc",
+            "self.general_level_idc",
+        ],
+    ));
+    let mut h265_pps = rec!("h265::", H265Pps);
+    h265_pps.py_repr = Some((
+        "H265Pps(pps_id={}, sps_id={})",
+        &[
+            "self.pps_pic_parameter_set_id",
+            "self.pps_seq_parameter_set_id",
+        ],
+    ));
+    let mut h265_slice = rec!("h265::", H265SliceHeaderLight);
+    h265_slice.py_repr = Some((
+        "H265SliceHeaderLight(first={}, slice_type={:?}, idr={})",
+        &["self.first_in_pic", "self.slice_type", "self.idr"],
+    ));
+    let mut h265_sets = rec!("h265::", H265ParameterSets);
+    h265_sets.py_repr = Some((
+        "H265ParameterSets(n_vps={}, n_sps={}, n_pps={})",
+        &[
+            "self.vps_by_id.len()",
+            "self.sps_by_id.len()",
+            "self.pps_by_id.len()",
+        ],
+    ));
+
+    let mut h266_ptl = rec!("h266::", H266ProfileTierLevel);
+    h266_ptl.py_repr = Some((
+        "H266ProfileTierLevel(profile_idc={}, tier={}, level_idc={})",
+        &[
+            "self.general_profile_idc",
+            "self.general_tier_flag",
+            "self.general_level_idc",
+        ],
+    ));
+    let mut h266_sps = rec!("h266::", H266Sps);
+    // Python reaches the profile/tier/level through its own methods and
+    // calls the VUI colour `color`, as H.264 and H.265 do.
+    h266_sps.py_skip = &["profile_tier_level"];
+    h266_sps.py_rename = &[("color_info", "color")];
+    h266_sps.py_extras = H266_SPS_EXTRAS;
+    h266_sps.py_repr = Some((
+        "H266Sps(profile={}, level={}, {}x{}, sps_id={})",
+        &[
+            "self.profile_tier_level.general_profile_idc",
+            "self.profile_tier_level.general_level_idc",
+            "self.width",
+            "self.height",
+            "self.sps_id",
+        ],
+    ));
+    let mut h266_vps = rec!("h266::", H266Vps);
+    h266_vps.py_repr = Some((
+        "H266Vps(vps_id={}, max_layers={}, max_sub_layers={})",
+        &["self.vps_id", "self.max_layers", "self.max_sub_layers"],
+    ));
+    let mut h266_pps = rec!("h266::", H266Pps);
+    h266_pps.py_repr = Some((
+        "H266Pps(pps_id={}, sps_id={})",
+        &["self.pps_id", "self.sps_id"],
+    ));
+    let mut h266_slice = rec!("h266::", H266SliceHeaderLight);
+    h266_slice.py_repr = Some((
+        "H266SliceHeaderLight(first={}, slice_type={:?}, idr={})",
+        &["self.first_in_pic", "self.slice_type", "self.idr"],
+    ));
+    let mut h266_sets = rec!("h266::", H266ParameterSets);
+    h266_sets.py_repr = Some((
+        "H266ParameterSets(n_vps={}, n_sps={}, n_pps={})",
+        &["self.vpses.len()", "self.spses.len()", "self.ppses.len()"],
+    ));
+
+    let mut av1_seq = rec!("av1::", Av1SequenceHeader);
+    av1_seq.py_repr = Some((
+        "Av1SequenceHeader(profile={}, {}x{}, bit_depth={})",
+        &[
+            "self.profile",
+            "self.max_frame_width",
+            "self.max_frame_height",
+            "self.bit_depth",
+        ],
+    ));
+    let mut av1_frame = rec!("av1::", Av1FrameHeaderLight);
+    av1_frame.py_repr = Some((
+        "Av1FrameHeaderLight(type={}, show={}, show_existing={})",
+        &[
+            "self.frame_type",
+            "self.show_frame",
+            "self.show_existing_frame",
+        ],
+    ));
+    let av1_stream = rec!("av1::", Av1ObuStream);
+
+    let mut adts = rec!("aac::", AdtsFrameOwned, "AudioFrame");
+    adts.host_name = "AdtsFrame";
+    adts.py_rename = &[("body", "payload")];
+    adts.py_repr = Some((
+        "AdtsFrame(profile={:?}, sr={}, ch={}, frame_len={})",
+        &[
+            "self.profile",
+            "self.sample_rate_hz",
+            "self.channel_configuration",
+            "self.frame_length_bytes",
+        ],
+    ));
+    let mut mpeg = rec!("mpegaudio::", FrameOwned, "AudioFrame");
+    mpeg.host_name = "Mpeg2AudioFrame";
+    mpeg.py_rename = &[("body", "payload")];
+    mpeg.py_repr = Some((
+        "Mpeg2AudioFrame(layer={:?}, version={:?}, bitrate={}kbps, sr={}Hz, ch_mode={:?}, frame_len={})",
+        &[
+            "self.layer",
+            "self.version",
+            "self.bitrate_kbps",
+            "self.sample_rate_hz",
+            "self.channel_mode",
+            "self.frame_length_bytes",
+        ],
+    ));
+
+    vec![
+        rational, color, ext, obu, misp, h264_sps, h264_pps, h264_slice, h264_sets, h265_ptl,
+        h265_sps, h265_vps, h265_pps, h265_slice, h265_sets, h266_ptl, h266_sps, h266_vps,
+        h266_pps, h266_slice, h266_sets, av1_seq, av1_frame, av1_stream, adts, mpeg,
+    ]
 }

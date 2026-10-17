@@ -7,30 +7,32 @@ use crate::codec::bitreader::BitReader;
 use crate::codec::h265::sps::H265Sps;
 use alloc::vec::Vec;
 
-/// Light-weight H.265 slice segment header — fields required for keyframe
-/// detection and frame-type classification without walking into slice data.
-#[must_use]
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct H265SliceHeaderLight {
-    /// True when `first_slice_segment_in_pic_flag == 1` — this slice covers
-    /// the first CTB row in the picture, marking the start of a new frame.
-    pub first_in_pic: bool,
-    /// Slice type (B / P / I). Set from bitstream when `first_in_pic == true`;
-    /// returns [`H265SliceType::I`] as a conservative fallback for continuation
-    /// slices where PPS context is required to skip `slice_segment_address`.
-    pub slice_type: H265SliceType,
-    /// `slice_pic_parameter_set_id` — links this slice to a PPS.
-    pub pps_id: u8,
-    /// `pic_order_cnt_lsb` read using the bit width from the supplied SPS
-    /// (`log2_max_pic_order_cnt_lsb_minus4 + 4`). `Some(0)` for IDR slices
-    /// (implicit per spec). `None` when no SPS context was supplied.
-    pub pic_order_cnt_lsb: Option<u16>,
-    /// True when `nal_unit_type` is IDR_W_RADL (19) or IDR_N_LP (20).
-    pub idr: bool,
-    /// Raw RBSP bytes as supplied by the caller — preserved for downstream
-    /// parsers that need fields beyond what this light subset extracts.
-    pub raw_rbsp: Vec<u8>,
+crate::binding_record! {
+    /// Light-weight H.265 slice segment header — fields required for keyframe
+    /// detection and frame-type classification without walking into slice data.
+    #[must_use]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct H265SliceHeaderLight {
+        /// True when `first_slice_segment_in_pic_flag == 1` — this slice covers
+        /// the first CTB row in the picture, marking the start of a new frame.
+        pub first_in_pic: bool,
+        /// Slice type (B / P / I). Set from the bitstream when `first_in_pic` is
+        /// true; I as a conservative fallback for continuation slices, where PPS
+        /// context is required to skip `slice_segment_address`.
+        pub slice_type: H265SliceType,
+        /// `slice_pic_parameter_set_id` — links this slice to a PPS.
+        pub pps_id: u8,
+        /// `pic_order_cnt_lsb` read using the bit width from the supplied SPS
+        /// (`log2_max_pic_order_cnt_lsb_minus4 + 4`). 0 for IDR slices (implicit
+        /// per spec); absent when no SPS context was supplied.
+        pub pic_order_cnt_lsb: Option<u16>,
+        /// True when `nal_unit_type` is IDR_W_RADL (19) or IDR_N_LP (20).
+        pub idr: bool,
+        /// Raw RBSP bytes as supplied by the caller — preserved for downstream
+        /// parsers that need fields beyond what this light subset extracts.
+        pub raw_rbsp: Vec<u8>,
+    }
 }
 
 /// H.265 slice type (B / P / I). Only three values are defined by the spec

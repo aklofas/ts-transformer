@@ -9,10 +9,8 @@
 
 use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
-use tst_core::codec::{
-    ChromaFormat, ColorInfo, ColourPrimaries, MatrixCoefficients, Rational, TransferCharacteristics,
-};
-use tst_core::codec::{NalUnit, Obu};
+use tst_core::codec::NalUnit;
+use tst_core::codec::{ChromaFormat, ColourPrimaries, MatrixCoefficients, TransferCharacteristics};
 
 use crate::jutil::enum_const;
 
@@ -112,49 +110,6 @@ pub(crate) fn build_matrix<'local>(
     enum_const(env, "codec", "MatrixCoefficients", name)
 }
 
-/// Build `org.tstrans.codec.Rational(long, long)` from a `Rational`.
-pub(crate) fn build_rational<'local>(
-    env: &mut JNIEnv<'local>,
-    r: &Rational,
-) -> Result<JObject<'local>, ()> {
-    env.new_object(
-        "org/tstrans/codec/Rational",
-        "(JJ)V",
-        &[
-            JValue::Long(i64::from(r.num)),
-            JValue::Long(i64::from(r.den)),
-        ],
-    )
-    .map_err(|_| ())
-}
-
-/// Build `org.tstrans.codec.ColorInfo(primaries, transfer, matrix, fullRange)`.
-/// Only the binding-exposed subset is forwarded (chroma_loc /
-/// sample_aspect_ratio are intentionally dropped, matching tst-py's ColorInfoPy).
-pub(crate) fn build_color_info<'local>(
-    env: &mut JNIEnv<'local>,
-    c: &ColorInfo,
-) -> Result<JObject<'local>, ()> {
-    // 8 slots: the 3 enum constants + their lookups + scratch.
-    env.ensure_local_capacity(8).map_err(|_| ())?;
-    let primaries = build_colour_primaries(env, c.primaries)?;
-    let transfer = build_transfer(env, c.transfer)?;
-    let matrix = build_matrix(env, c.matrix)?;
-    env.new_object(
-        "org/tstrans/codec/ColorInfo",
-        "(Lorg/tstrans/codec/ColourPrimaries;\
-Lorg/tstrans/codec/TransferCharacteristics;\
-Lorg/tstrans/codec/MatrixCoefficients;Z)V",
-        &[
-            JValue::Object(&primaries),
-            JValue::Object(&transfer),
-            JValue::Object(&matrix),
-            JValue::Bool(u8::from(c.full_range)),
-        ],
-    )
-    .map_err(|_| ())
-}
-
 /// Build `org.tstrans.codec.NalUnit` from a `tst_core` demux `NalUnit` by
 /// calling the matching Java static factory (`h264`/`h265`/`h266`), mirroring
 /// `NalUnitPy::make_h264/h265/h266`.
@@ -224,87 +179,4 @@ pub(crate) fn build_nal_unit<'local>(
         .map_err(|_| ())?
         .l()
         .map_err(|_| ())
-}
-
-/// Build `org.tstrans.codec.Obu(obuType, extension, payload)` from a `tst_core`
-/// demux `Obu`. `extension` is null when absent.
-pub(crate) fn build_obu<'local>(env: &mut JNIEnv<'local>, o: &Obu) -> Result<JObject<'local>, ()> {
-    let extension = match &o.extension {
-        Some(ext) => env
-            .new_object(
-                "org/tstrans/codec/ObuExtension",
-                "(II)V",
-                &[
-                    JValue::Int(i32::from(ext.temporal_id)),
-                    JValue::Int(i32::from(ext.spatial_id)),
-                ],
-            )
-            .map_err(|_| ())?,
-        None => JObject::null(),
-    };
-    let arr = env.byte_array_from_slice(&o.payload).map_err(|_| ())?;
-    let payload_buf = env
-        .call_static_method(
-            "java/nio/ByteBuffer",
-            "wrap",
-            "([B)Ljava/nio/ByteBuffer;",
-            &[JValue::Object(&arr)],
-        )
-        .map_err(|_| ())?
-        .l()
-        .map_err(|_| ())?;
-    env.new_object(
-        "org/tstrans/codec/Obu",
-        "(ILorg/tstrans/codec/ObuExtension;Ljava/nio/ByteBuffer;)V",
-        &[
-            JValue::Int(i32::from(o.obu_type)),
-            JValue::Object(&extension),
-            JValue::Object(&payload_buf),
-        ],
-    )
-    .map_err(|_| ())
-}
-
-/// Call a fluent Builder setter that takes an `int` parameter and returns the
-/// builder (discarded — caller chains via `?`). The full JNI descriptor is
-/// assembled from `ret_desc` (e.g. `"Lorg/tstrans/codec/H264Sps$Builder;"`).
-pub(crate) fn builder_set_int<'local>(
-    env: &mut JNIEnv<'local>,
-    b: &JObject<'local>,
-    ret_desc: &str,
-    method: &str,
-    v: i32,
-) -> Result<(), ()> {
-    let sig = format!("(I){ret_desc}");
-    env.call_method(b, method, &sig, &[JValue::Int(v)])
-        .map_err(|_| ())?;
-    Ok(())
-}
-
-/// Like [`builder_set_int`] but for a `long` parameter.
-pub(crate) fn builder_set_long<'local>(
-    env: &mut JNIEnv<'local>,
-    b: &JObject<'local>,
-    ret_desc: &str,
-    method: &str,
-    v: i64,
-) -> Result<(), ()> {
-    let sig = format!("(J){ret_desc}");
-    env.call_method(b, method, &sig, &[JValue::Long(v)])
-        .map_err(|_| ())?;
-    Ok(())
-}
-
-/// Like [`builder_set_int`] but for a `boolean` parameter.
-pub(crate) fn builder_set_bool<'local>(
-    env: &mut JNIEnv<'local>,
-    b: &JObject<'local>,
-    ret_desc: &str,
-    method: &str,
-    v: bool,
-) -> Result<(), ()> {
-    let sig = format!("(Z){ret_desc}");
-    env.call_method(b, method, &sig, &[JValue::Bool(u8::from(v))])
-        .map_err(|_| ())?;
-    Ok(())
 }

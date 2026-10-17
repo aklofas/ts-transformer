@@ -72,44 +72,63 @@ impl<'a> Frame<'a> {
     }
 }
 
-/// Owned variant of [`Frame`].
-///
-/// `body: Vec<u8>` instead of `&'a [u8]` — usable across FFI / thread /
-/// async boundaries where the borrowed source slice doesn't outlive the
-/// consumer.
-///
-/// Round-trip with [`Frame::to_owned`] / [`Self::as_ref`].
-///
-/// # Example — collect owned frames for a Java consumer
-/// ```
-/// use tst_core::codec::mpegaudio::{frames, FrameOwned};
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let payload: &[u8] = &[/* MPEG-Audio bytes */];
-/// # let payload: &[u8] = &[];
-/// let owned: Vec<FrameOwned> = frames(payload)
-///     .filter_map(Result::ok)
-///     .map(|f| f.to_owned())
-///     .collect();
-/// // `owned` outlives `payload` — safe to wrap as a Java List<MpegAudioFrame>.
-/// let _ = owned;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct FrameOwned {
-    pub layer: Layer,
-    pub version: Version,
-    pub bitrate_kbps: u32,
-    pub sample_rate_hz: u32,
-    pub channel_mode: ChannelMode,
-    pub channels: u8,
-    pub frame_length_bytes: u32,
-    pub samples_per_frame: u16,
-    pub has_crc: bool,
-    pub raw_header: [u8; 4],
-    pub body: Vec<u8>,
+crate::binding_record! {
+    /// One decoded MPEG audio frame: the parsed header fields, the raw header
+    /// bytes and the full frame bytes.
+    /// <!-- rust-only -->
+    /// Owned variant of [`Frame`].
+    ///
+    /// `body: Vec<u8>` instead of `&'a [u8]` — usable across FFI / thread /
+    /// async boundaries where the borrowed source slice doesn't outlive the
+    /// consumer.
+    ///
+    /// Round-trip with [`Frame::to_owned`] / [`Self::as_ref`].
+    ///
+    /// # Example — collect owned frames for a Java consumer
+    /// ```
+    /// use tst_core::codec::mpegaudio::{frames, FrameOwned};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let payload: &[u8] = &[/* MPEG-Audio bytes */];
+    /// # let payload: &[u8] = &[];
+    /// let owned: Vec<FrameOwned> = frames(payload)
+    ///     .filter_map(Result::ok)
+    ///     .map(|f| f.to_owned())
+    ///     .collect();
+    /// // `owned` outlives `payload` — safe to wrap as a Java List<MpegAudioFrame>.
+    /// let _ = owned;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct FrameOwned {
+        /// MPEG audio layer (I, II, or III).
+        pub layer: Layer,
+        /// MPEG audio version (MPEG-1, MPEG-2, or MPEG-2.5).
+        pub version: Version,
+        /// Bitrate in kilobits per second (e.g. 128, 192, 320).
+        pub bitrate_kbps: u32,
+        /// Sample rate in Hz (e.g. 44100, 48000).
+        pub sample_rate_hz: u32,
+        /// Channel mode (Stereo, JointStereo, DualChannel, or Mono).
+        pub channel_mode: ChannelMode,
+        /// Number of audio channels (1 for Mono, 2 for all other modes).
+        pub channels: u8,
+        /// Total frame byte count as computed from the header fields.
+        pub frame_length_bytes: u32,
+        /// Number of PCM samples encoded in this frame. Depends on (version,
+        /// layer): Layer I = 384; Layer II = 1152; Layer III MPEG-1 = 1152; Layer
+        /// III MPEG-2/2.5 = 576.
+        pub samples_per_frame: u16,
+        /// True when a 16-bit CRC follows the 4-byte header (protection_bit == 0
+        /// in the raw header).
+        pub has_crc: bool,
+        /// Raw 4-byte MPEG audio frame header bytes.
+        pub raw_header: [u8; 4],
+        /// The full frame bytes (header and body).
+        @[java("payload")] pub body: Vec<u8>,
+    }
 }
 
 impl FrameOwned {

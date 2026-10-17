@@ -5,6 +5,9 @@
 //! generator calls it and never writes it. See "Adding a crossing record" in
 //! `docs/reference/binding-authors.md`.
 
+mod codec;
+pub(crate) use codec::*;
+
 use pyo3::exceptions::PyValueError;
 use pyo3::intern;
 use pyo3::prelude::*;

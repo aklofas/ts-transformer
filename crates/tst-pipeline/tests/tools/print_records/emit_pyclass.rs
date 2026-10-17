@@ -44,11 +44,17 @@ fn doc_comment(doc: &str, indent: &str) -> String {
     out
 }
 
-/// The fields that cross to Python, in declaration order.
+/// The fields the class exposes to Python, in declaration order.
 fn py_fields<'a>(e: &Entry, flds: &'a [Fld<'a>]) -> Vec<&'a Fld<'a>> {
     flds.iter()
         .filter(|f| f.ty.is_some() && e.py_crosses(f.spec))
         .collect()
+}
+
+/// The fields the class holds: the exposed ones and the hidden ones, which
+/// only the hand-written extras read.
+fn held_fields<'a>(flds: &'a [Fld<'a>]) -> Vec<&'a Fld<'a>> {
+    flds.iter().filter(|f| f.ty.is_some()).collect()
 }
 
 /// Whether the generated struct of `e` is `Copy`.
@@ -56,7 +62,7 @@ fn is_copy(reg: &[Entry], e: &Entry) -> bool {
     let Ok(flds) = resolve(reg, &e.schema) else {
         return false;
     };
-    py_fields(e, &flds).iter().all(|f| {
+    held_fields(&flds).iter().all(|f| {
         f.ty.as_ref()
             .expect("crossing")
             .host_copy(&|n| lookup(reg, n).is_some_and(|d| d.is_native() && is_copy(reg, d)))
@@ -134,7 +140,7 @@ fn repr(e: &Entry, flds: &[&Fld]) -> String {
             let mut parts = Vec::new();
             let mut args = Vec::new();
             for f in flds {
-                let n = f.spec.name;
+                let n = e.py_name(f.spec.name);
                 if matches!(f.ty, Some(Ty::Bytes)) {
                     parts.push(format!("{n}=<{{}} bytes>"));
                     args.push(format!("self.{n}.0.len()"));
@@ -155,8 +161,8 @@ fn repr(e: &Entry, flds: &[&Fld]) -> String {
     o
 }
 
-fn ctor(flds: &[&Fld]) -> String {
-    let names: Vec<&str> = flds.iter().map(|f| f.spec.name).collect();
+fn ctor(e: &Entry, flds: &[&Fld]) -> String {
+    let names: Vec<&str> = flds.iter().map(|f| e.py_name(f.spec.name)).collect();
     let params: Vec<String> = flds
         .iter()
         .map(|f| {
@@ -166,13 +172,13 @@ fn ctor(flds: &[&Fld]) -> String {
             } else {
                 t.host_rs()
             };
-            format!("{}: {rs}", f.spec.name)
+            format!("{}: {rs}", e.py_name(f.spec.name))
         })
         .collect();
     let init: Vec<String> = flds
         .iter()
         .map(|f| {
-            let n = f.spec.name;
+            let n = e.py_name(f.spec.name);
             if matches!(f.ty, Some(Ty::Bytes)) {
                 format!("{n}: crate::util::HostBytes({n})")
             } else {
@@ -209,9 +215,19 @@ pub fn class(reg: &[Entry], e: &Entry) -> Result<String, String> {
     let s = &e.schema;
     let flds = resolve(reg, s)?;
     let cross = py_fields(e, &flds);
-    for f in e.py_skip {
+    let held = held_fields(&flds);
+    if e.py_ctor && held.len() != cross.len() {
+        return Err(format!(
+            "{}: a constructor cannot take a hidden field",
+            s.name
+        ));
+    }
+    for f in e.py_skip.iter().chain(e.py_rename.iter().map(|(r, _)| r)) {
         if !s.fields.iter().any(|x| x.name == *f) {
-            return Err(format!("{}: py_skip names no field `{f}`", s.name));
+            return Err(format!(
+                "{}: py_skip or py_rename names no field `{f}`",
+                s.name
+            ));
         }
     }
     let mut derives = vec!["Debug", "Clone"];
@@ -220,24 +236,33 @@ pub fn class(reg: &[Entry], e: &Entry) -> Result<String, String> {
     }
     if e.py_eq {
         derives.push("PartialEq");
-        if is_eq(&cross) {
+        if is_eq(&held) {
             derives.push("Eq");
         }
     }
     let name = e.name();
     let mut o = doc_comment(s.doc, "");
     let eq = if e.py_eq { ", eq" } else { "" };
+    // With a hidden field the getters are declared field by field.
+    let get_all = if held.len() == cross.len() {
+        ", get_all"
+    } else {
+        ""
+    };
     o.push_str(&format!(
-        "#[pyclass(frozen, get_all{eq}, name = \"{name}\", module = \"{}\")]\n",
+        "#[pyclass(frozen{get_all}{eq}, name = \"{name}\", module = \"{}\")]\n",
         e.py_module
     ));
     o.push_str(&format!("#[derive({})]\n", derives.join(", ")));
     o.push_str(&format!("pub struct {name} {{\n"));
-    for f in &cross {
+    for f in &held {
         o.push_str(&doc_comment(f.spec.doc, "    "));
+        if get_all.is_empty() && e.py_crosses(f.spec) {
+            o.push_str("    #[pyo3(get)]\n");
+        }
         o.push_str(&format!(
             "    pub {}: {},\n",
-            f.spec.name,
+            e.py_name(f.spec.name),
             f.ty.as_ref().expect("crossing").host_rs()
         ));
     }
@@ -248,7 +273,7 @@ pub fn class(reg: &[Entry], e: &Entry) -> Result<String, String> {
     o.push_str(" {\n");
     let mut methods = Vec::new();
     if e.py_ctor {
-        methods.push(ctor(&cross));
+        methods.push(ctor(e, &cross));
     }
     for x in e.py_extras {
         methods.push(extra(e, x));
@@ -261,12 +286,12 @@ pub fn class(reg: &[Entry], e: &Entry) -> Result<String, String> {
         "impl From<&{}> for {name} {{\n    fn from(r: &{}) -> Self {{\n        Self {{\n",
         e.rust_path, e.rust_path
     ));
-    for f in &cross {
+    for f in &held {
         let ty = f.ty.as_ref().expect("crossing");
-        let custom = f.custom.then(|| custom_path(e, f));
+        let custom = (f.custom && !ty.is_py_copy()).then(|| custom_path(e, f));
         o.push_str(&format!(
             "            {}: {},\n",
-            f.spec.name,
+            e.py_name(f.spec.name),
             ty.to_host(&format!("&r.{}", f.spec.name), custom.as_deref())
         ));
     }
@@ -316,7 +341,7 @@ pub fn pyi_block(reg: &[Entry], e: &Entry) -> Result<String, String> {
                 } else {
                     t.py_ann_native()
                 };
-                format!("{}: {ann}", f.spec.name)
+                format!("{}: {ann}", e.py_name(f.spec.name))
             })
             .collect();
         if params.is_empty() {
@@ -331,9 +356,12 @@ pub fn pyi_block(reg: &[Entry], e: &Entry) -> Result<String, String> {
     for f in &cross {
         o.push_str(&format!(
             "    @property\n    def {}(self) -> {}: ...\n",
-            f.spec.name,
+            e.py_name(f.spec.name),
             f.ty.as_ref().expect("crossing").py_ann_native()
         ));
+    }
+    if e.py_eq {
+        o.push_str("    def __eq__(self, other: object, /) -> bool: ...\n");
     }
     for x in e.py_extras {
         let params = x

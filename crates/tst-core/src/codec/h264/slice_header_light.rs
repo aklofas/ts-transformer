@@ -13,29 +13,31 @@ use crate::codec::bitreader::BitReader;
 use crate::codec::h264::model::H264Sps;
 use alloc::vec::Vec;
 
-/// Light-weight H.264 slice header — fields required for keyframe detection
-/// and frame-type classification without walking into slice data.
-#[must_use]
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct H264SliceHeaderLight {
-    /// True when `first_mb_in_slice == 0` — i.e., this slice covers the
-    /// first macroblock in the picture, marking the start of a new frame.
-    pub first_in_pic: bool,
-    /// Slice type — normalised via `slice_type % 5` per H.264 §7.4.3.
-    pub slice_type: H264SliceType,
-    /// `pic_parameter_set_id` — links this slice to a PPS.
-    pub pps_id: u8,
-    /// `frame_num` as read from the bitstream using the bit width
-    /// `log2_max_frame_num_minus4 + 4` from the referenced SPS. `None` when
-    /// no SPS context was supplied to `parse_slice_header_light`.
-    pub frame_num: Option<u32>,
-    /// True when `nal_unit_type == 5` (IDR slice).
-    pub idr: bool,
-    /// The raw RBSP bytes as supplied by the caller — preserved for
-    /// downstream parsers that need fields beyond what this light subset
-    /// extracts.
-    pub raw_rbsp: Vec<u8>,
+crate::binding_record! {
+    /// Light-weight H.264 slice header — fields required for keyframe detection
+    /// and frame-type classification without walking into slice data.
+    #[must_use]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct H264SliceHeaderLight {
+        /// True when `first_mb_in_slice == 0` — i.e., this slice covers the first
+        /// macroblock in the picture, marking the start of a new frame.
+        pub first_in_pic: bool,
+        /// Slice type — normalised via `slice_type % 5` per H.264 §7.4.3.
+        pub slice_type: H264SliceType,
+        /// `pic_parameter_set_id` — links this slice to a PPS.
+        pub pps_id: u8,
+        /// `frame_num` as read from the bitstream using the bit width
+        /// `log2_max_frame_num_minus4 + 4` from the referenced SPS; absent when
+        /// no SPS context was supplied to the parser.
+        @[custom] pub frame_num: Option<u32>,
+        /// True when `nal_unit_type == 5` (IDR slice).
+        pub idr: bool,
+        /// The raw RBSP bytes as supplied by the caller — preserved for
+        /// downstream parsers that need fields beyond what this light subset
+        /// extracts.
+        pub raw_rbsp: Vec<u8>,
+    }
 }
 
 /// H.264 slice type, normalised via `slice_type % 5` per H.264 §7.4.3.

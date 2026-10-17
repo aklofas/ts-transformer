@@ -40,16 +40,24 @@ pub enum MispTimeKind {
     Nano,
 }
 
-/// One MISP timestamp destined for (or extracted from) a video SEI.
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MispTimestamp {
-    pub kind: MispTimeKind,
-    /// MISB ST 0603 Time Status byte (see [`crate::klv::st0605`] for the
-    /// same byte in Class 0 packs).
-    pub time_status: u8,
-    /// Micro: microseconds since the MISP epoch. Nano: nanoseconds.
-    pub value: u64,
+crate::binding_record! {
+    /// One MISP timestamp destined for (or extracted from) a video SEI.
+    ///
+    /// Build one with the microsecond constructor `micros(value_us, time_status)`
+    /// or the nanosecond constructor `nanos(value_ns, time_status)`; direct
+    /// construction from a kind, a time status and a value is also accepted.
+    #[non_exhaustive]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct MispTimestamp {
+        /// Which time base the value carries: microseconds or nanoseconds since
+        /// the MISP epoch.
+        pub kind: MispTimeKind,
+        /// MISB ST 0603 Time Status byte (0x00 = unknown); the same byte as in ST
+        /// 0605 Class 0 packs.
+        pub time_status: u8,
+        /// Micro: microseconds since the MISP epoch. Nano: nanoseconds.
+        pub value: u64,
+    }
 }
 
 impl MispTimestamp {

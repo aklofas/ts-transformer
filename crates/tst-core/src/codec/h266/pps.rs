@@ -4,13 +4,19 @@ use crate::codec::CodecParseError;
 use crate::codec::bitreader::BitReader;
 use alloc::vec::Vec;
 
-#[must_use]
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct H266Pps {
-    pub pps_id: u8,
-    pub sps_id: u8,
-    pub raw_rbsp: Vec<u8>,
+crate::binding_record! {
+    /// Parsed H.266 Picture Parameter Set.
+    #[must_use]
+    #[non_exhaustive]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct H266Pps {
+        /// `pps_id` (6-bit) ∈ [0, 63] — H.266 V4 §7.3.2.5.
+        pub pps_id: u8,
+        /// `sps_id` (4-bit) — links this PPS to an SPS.
+        pub sps_id: u8,
+        /// The original RBSP bytes as supplied to the parser.
+        pub raw_rbsp: Vec<u8>,
+    }
 }
 
 /// Parse an H.266 PPS RBSP. Per H.266 V4 §7.3.2.5.

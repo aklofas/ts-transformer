@@ -15,8 +15,9 @@
 //! The strict native's Java wrapper on `Codec` is declared `throws
 //! CodecParseException`; the resync wrapper has no `throws`.
 //!
-//! [`build_mpeg2_audio_frame`] is `pub(crate)` because the demux audio-retype
-//! task reuses it to surface typed `Mpeg2AudioFrame`s on `Sample` payloads.
+//! The `Mpeg2AudioFrame` record is built by the generated
+//! `build_frame_owned`, which the demux audio-retype path reuses to surface
+//! typed frames on `Sample` payloads.
 
 use crate::panic::jni_native;
 use jni::JNIEnv;
@@ -27,10 +28,13 @@ use tst_core::codec::mpegaudio::{
 };
 
 use crate::error::map_codec_parse_error;
-use crate::jutil::wrap_heap_byte_buffer;
+use crate::generated::codec::build_frame_owned;
 
 /// Build the Java `org.tstrans.codec.Layer` enum constant.
-fn build_layer<'local>(env: &mut JNIEnv<'local>, l: Layer) -> Result<JObject<'local>, ()> {
+pub(crate) fn build_layer<'local>(
+    env: &mut JNIEnv<'local>,
+    l: Layer,
+) -> Result<JObject<'local>, ()> {
     let name = match l {
         Layer::I => "I",
         Layer::II => "II",
@@ -43,7 +47,10 @@ fn build_layer<'local>(env: &mut JNIEnv<'local>, l: Layer) -> Result<JObject<'lo
 }
 
 /// Build the Java `org.tstrans.codec.Version` enum constant.
-fn build_version<'local>(env: &mut JNIEnv<'local>, v: Version) -> Result<JObject<'local>, ()> {
+pub(crate) fn build_version<'local>(
+    env: &mut JNIEnv<'local>,
+    v: Version,
+) -> Result<JObject<'local>, ()> {
     let name = match v {
         Version::Mpeg1 => "MPEG1",
         Version::Mpeg2 => "MPEG2",
@@ -60,7 +67,7 @@ fn build_version<'local>(env: &mut JNIEnv<'local>, v: Version) -> Result<JObject
 }
 
 /// Build the Java `org.tstrans.codec.ChannelMode` enum constant.
-fn build_channel_mode<'local>(
+pub(crate) fn build_channel_mode<'local>(
     env: &mut JNIEnv<'local>,
     m: ChannelMode,
 ) -> Result<JObject<'local>, ()> {
@@ -80,48 +87,6 @@ fn build_channel_mode<'local>(
     .map_err(|_| ())
 }
 
-/// Build one Java `org.tstrans.codec.Mpeg2AudioFrame` record from an owned
-/// Rust frame.
-///
-/// `pub(crate)` so the demux audio-retype task can reuse it to surface typed
-/// `Mpeg2AudioFrame`s on `Sample` payloads. Returns `Err(())` (leaving a
-/// pending Java exception) on any JNI failure.
-pub(crate) fn build_mpeg2_audio_frame<'local>(
-    env: &mut JNIEnv<'local>,
-    f: &FrameOwned,
-) -> Result<JObject<'local>, ()> {
-    // layer + version + channelMode enums + 2 ByteBuffers (+ their scratch
-    // arrays) + the record itself; 16 slots safely covers the worst case.
-    env.ensure_local_capacity(16).map_err(|_| ())?;
-
-    let layer = build_layer(env, f.layer)?;
-    let version = build_version(env, f.version)?;
-    let channel_mode = build_channel_mode(env, f.channel_mode)?;
-    let raw_header = wrap_heap_byte_buffer(env, &f.raw_header)?;
-    // `payload` = full frame bytes (header + body), sourced from the owned
-    // `body` slice — matches tst-py's `payload` getter.
-    let payload = wrap_heap_byte_buffer(env, &f.body)?;
-
-    env.new_object(
-        "org/tstrans/codec/Mpeg2AudioFrame",
-        "(Lorg/tstrans/codec/Layer;Lorg/tstrans/codec/Version;JJLorg/tstrans/codec/ChannelMode;IJIZLjava/nio/ByteBuffer;Ljava/nio/ByteBuffer;)V",
-        &[
-            JValue::Object(&layer),
-            JValue::Object(&version),
-            JValue::Long(i64::from(f.bitrate_kbps)),
-            JValue::Long(i64::from(f.sample_rate_hz)),
-            JValue::Object(&channel_mode),
-            JValue::Int(i32::from(f.channels)),
-            JValue::Long(i64::from(f.frame_length_bytes)),
-            JValue::Int(i32::from(f.samples_per_frame)),
-            JValue::Bool(u8::from(f.has_crc)),
-            JValue::Object(&raw_header),
-            JValue::Object(&payload),
-        ],
-    )
-    .map_err(|_| ())
-}
-
 /// Build a `java.util.ArrayList<Mpeg2AudioFrame>` from owned frames; each frame
 /// is constructed inside a per-element local frame so its refs are reclaimed.
 fn build_frame_list<'local>(
@@ -133,8 +98,7 @@ fn build_frame_list<'local>(
         .map_err(|_| ())?;
     for f in frames {
         env.with_local_frame(24, |inner| {
-            let val = build_mpeg2_audio_frame(inner, f)
-                .map_err(|()| jni::errors::Error::JavaException)?;
+            let val = build_frame_owned(inner, f)?;
             inner.call_method(
                 &list,
                 "add",
@@ -173,7 +137,7 @@ jni_native! {
 
         match build_frame_list(env, &owned) {
             Ok(obj) => obj.into_raw(),
-            Err(()) => JObject::null().into_raw(),
+            Err(_) => JObject::null().into_raw(),
         }
     }
 }
@@ -198,7 +162,7 @@ jni_native! {
 
         match build_frame_list(env, &owned) {
             Ok(obj) => obj.into_raw(),
-            Err(()) => JObject::null().into_raw(),
+            Err(_) => JObject::null().into_raw(),
         }
     }
 }
