@@ -27,6 +27,21 @@
 //! requirement for metadata); a move of more than
 //! [`STEP_TOLERANCE_TICKS`] ticks [`Aligner::steps`].
 //!
+//! The alignment mode ([`Aligner::mode`]) moves like this:
+//!
+//! ```text
+//!   Pending ───── both reports known ─────────────────────► SenderReport
+//!   Pending ───── 2 s from the oldest held unit,
+//!                 video origin known ─────────────────────► Provisional
+//!   Provisional ─ a report pair arrives ──────────────────► SenderReport
+//!   SenderReport  a later pair replaces the mapping; a move of more
+//!                 than the step tolerance counts one step
+//!   SenderReport  mapping judged implausible, no validated
+//!                 one to restore ─────────────────────────► Provisional
+//!   any mode ──── source restart on either track,
+//!                 or the video PTS zero moves ────────────► Pending
+//! ```
+//!
 //! RTP timestamps are 32-bit and wrap. Each track keeps one
 //! nearest-continuation unwrap chain in [`TrackClock`], and EVERY RTP value
 //! the aligner uses goes through its track's chain in arrival order: KLV
@@ -69,6 +84,7 @@ use std::time::{Duration, Instant};
 
 use super::klv_depacketizer::KlvUnit;
 use super::mount::ClockAlignment;
+use crate::clock::Unwrap32;
 use crate::rtcp::SenderReport;
 
 /// How long [`Aligner`] waits, from the oldest held KLV unit, for sender
@@ -130,9 +146,8 @@ pub(crate) struct TrackClock {
     /// This track's most recent RTCP sender report, as `(ntp 32.32,
     /// unwrapped rtp)`.
     sr: Option<(u64, i64)>,
-    /// Nearest-continuation unwrap state: the last raw value fed to
-    /// [`Self::unwrap`] and the unwrapped `i64` it produced.
-    last: Option<(u32, i64)>,
+    /// Nearest-continuation unwrap state for this track's RTP timestamps.
+    unwrap: Unwrap32,
 }
 
 impl TrackClock {
@@ -140,21 +155,9 @@ impl TrackClock {
         Self::default()
     }
 
-    /// Unwrap `raw` against this track's running continuity state using the
-    /// half-range nearest-continuation rule (the 32-bit wrapping delta from
-    /// the last call, reinterpreted as a signed `i32`), advancing that
-    /// state. The first call for a track has no reference point, so it
-    /// anchors the chain at `raw` itself.
+    /// Unwrap `raw` against this track's chain, advancing it.
     fn unwrap(&mut self, raw: u32) -> i64 {
-        let unwrapped = match self.last {
-            None => raw as i64,
-            Some((prev_raw, prev_unwrapped)) => {
-                let delta = raw.wrapping_sub(prev_raw) as i32;
-                prev_unwrapped + delta as i64
-            }
-        };
-        self.last = Some((raw, unwrapped));
-        unwrapped
+        self.unwrap.unwrap(raw)
     }
 }
 
@@ -1566,5 +1569,196 @@ mod tests {
             out[0].1, -90_000,
             "a real pre-origin unit keeps its negative PTS"
         );
+    }
+}
+
+/// Random interleavings of video AUs, KLV units and sender reports from a
+/// publisher whose two RTP clocks share one wall clock.
+#[cfg(test)]
+mod interleaving_properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[derive(Debug, Clone)]
+    enum Op {
+        Video,
+        Klv { size: usize },
+        VideoSr,
+        KlvSr,
+        Advance { ms: u64 },
+        Restart,
+    }
+
+    fn op() -> impl Strategy<Value = Op> {
+        prop_oneof![
+            4 => Just(Op::Video),
+            6 => prop_oneof![
+                8 => Just(1usize),
+                1 => 1usize..=2_000,
+                1 => 60_000usize..=65_536,
+            ]
+            .prop_map(|size| Op::Klv { size }),
+            2 => Just(Op::VideoSr),
+            2 => Just(Op::KlvSr),
+            2 => (1u64..=3_000).prop_map(|ms| Op::Advance { ms }),
+            1 => Just(Op::Restart),
+        ]
+    }
+
+    /// An RTP base that sometimes starts within a few frames of the u32
+    /// wrap, so the chains unwrap mid-run.
+    fn rtp_base() -> impl Strategy<Value = u32> {
+        prop_oneof![any::<u32>(), (0u32..400_000).prop_map(|d| u32::MAX - d)]
+    }
+
+    fn ntp(wall: u64, secs0: u64) -> u64 {
+        ((secs0 + wall / 90_000) << 32) | (((wall % 90_000) << 32) / 90_000)
+    }
+
+    fn report(wall: u64, secs0: u64, rtp: u32) -> SenderReport {
+        SenderReport {
+            ssrc: 1,
+            ntp_timestamp: ntp(wall, secs0),
+            rtp_timestamp: rtp,
+            sender_packet_count: 0,
+            sender_octet_count: 0,
+            report_blocks: vec![],
+        }
+    }
+
+    fn placed_pts(a: &Aligner) -> Vec<i64> {
+        a.placed.iter().map(|p| p.pts).collect()
+    }
+
+    fn budgets_hold(a: &Aligner) -> Result<(), TestCaseError> {
+        let units = a.hold.len() + a.placed.len();
+        let bytes: usize = a.hold.iter().map(|h| h.unit.bytes.len()).sum::<usize>()
+            + a.placed.iter().map(|p| p.unit.bytes.len()).sum::<usize>();
+        prop_assert!(units <= ALIGN_HOLD_MAX_UNITS, "{units} units held");
+        prop_assert!(bytes <= ALIGN_HOLD_MAX_BYTES, "{bytes} bytes held");
+        prop_assert_eq!(bytes, a.held_bytes + a.placed_bytes);
+        Ok(())
+    }
+
+    proptest! {
+        /// With reports fed (and re-fed after every video restart) or none
+        /// at all, whatever the interleaving: the hold stays inside its
+        /// budgets, KLV emitted from one video epoch never steps back, and
+        /// a video AU, re-anchoring or not, leaves every placed unit's PTS
+        /// where it was.
+        #[test]
+        fn hold_stays_bounded_and_placement_never_moves_backwards(
+            burst in prop_oneof![3 => Just(0usize), 1 => 4_090usize..=4_400],
+            ops in proptest::collection::vec(op(), 0..=300),
+            with_reports in any::<bool>(),
+            vbase in rtp_base(),
+            kbase in rtp_base(),
+            secs0 in 0u64..=1_000_000,
+            wall0 in 0u64..=1_000_000_000,
+        ) {
+            let base = Instant::now();
+            let mut elapsed = Duration::ZERO;
+            let mut wall = wall0;
+            let (mut vbase, kbase) = (vbase, kbase);
+            let mut epoch = 0u8;
+            let mut video_started_at: Option<u64> = None;
+            let mut a = Aligner::new();
+            let mut last_pts: [Option<i64>; 256] = [None; 256];
+
+            let mut emitted = |out: Vec<(KlvUnit, i64)>| -> Result<(), TestCaseError> {
+                for (u, pts) in out {
+                    let e = usize::from(u.bytes[0]);
+                    if let Some(prev) = last_pts[e] {
+                        prop_assert!(pts >= prev, "epoch {e}: {pts} after {prev}");
+                    }
+                    last_pts[e] = Some(pts);
+                }
+                Ok(())
+            };
+
+            // A publisher that has already sent its first frame and, with
+            // reports, one report per track.
+            let first = |wall: u64, vbase: u32| (vbase.wrapping_add(wall as u32), 0i64);
+            let (rtp, pts) = first(wall, vbase);
+            video_started_at.get_or_insert(wall);
+            a.on_video_au(rtp, pts);
+            a.on_video_muxed(pts);
+            if with_reports {
+                a.on_video_sr(&report(wall, secs0, vbase.wrapping_add(wall as u32)));
+                a.on_klv_sr(&report(wall, secs0, kbase.wrapping_add(wall as u32)));
+            }
+
+            // A burst of small units at one instant, before any video
+            // catches up: the count budget binds here, not the age bound.
+            for _ in 0..burst {
+                let unit = KlvUnit {
+                    bytes: vec![epoch],
+                    rtp_timestamp: kbase.wrapping_add(wall as u32),
+                };
+                emitted(a.on_klv_unit(unit, base))?;
+                budgets_hold(&a)?;
+            }
+
+            for op in ops {
+                elapsed += Duration::from_millis(7);
+                wall += 600;
+                let now = base + elapsed;
+                match op {
+                    Op::Video => {
+                        let start = *video_started_at.get_or_insert(wall);
+                        let rtp = vbase.wrapping_add(wall as u32);
+                        let pts = (wall - start) as i64;
+                        let before = placed_pts(&a);
+                        a.on_video_au(rtp, pts);
+                        prop_assert_eq!(&before, &placed_pts(&a), "a video AU moved a placed unit");
+                        a.on_video_muxed(pts);
+                        emitted(a.poll(now))?;
+                    }
+                    Op::Klv { size } => {
+                        let mut bytes = vec![0u8; size];
+                        bytes[0] = epoch;
+                        let unit = KlvUnit {
+                            bytes,
+                            rtp_timestamp: kbase.wrapping_add(wall as u32),
+                        };
+                        emitted(a.on_klv_unit(unit, now))?;
+                    }
+                    Op::VideoSr if with_reports => {
+                        a.on_video_sr(&report(wall, secs0, vbase.wrapping_add(wall as u32)));
+                        emitted(a.poll(now))?;
+                    }
+                    Op::KlvSr if with_reports => {
+                        a.on_klv_sr(&report(wall, secs0, kbase.wrapping_add(wall as u32)));
+                        emitted(a.poll(now))?;
+                    }
+                    Op::VideoSr | Op::KlvSr => {}
+                    Op::Advance { ms } => {
+                        elapsed += Duration::from_millis(ms);
+                        wall += ms * 90;
+                        emitted(a.poll(base + elapsed))?;
+                    }
+                    Op::Restart => {
+                        // A new video source: a fresh random RTP origin,
+                        // the PTS line carrying on from the same wall clock.
+                        epoch = epoch.wrapping_add(1);
+                        vbase = vbase.wrapping_mul(2_654_435_761).wrapping_add(12_345);
+                        let start = *video_started_at.get_or_insert(wall);
+                        let (rtp, pts) = (vbase.wrapping_add(wall as u32), (wall - start) as i64);
+                        a.on_video_source_change();
+                        if with_reports {
+                            a.on_video_sr(&report(wall, secs0, rtp));
+                            a.on_klv_sr(&report(wall, secs0, kbase.wrapping_add(wall as u32)));
+                        }
+                        let before = placed_pts(&a);
+                        a.on_video_au(rtp, pts);
+                        prop_assert_eq!(&before, &placed_pts(&a), "a re-anchor moved a placed unit");
+                        a.on_video_muxed(pts);
+                    }
+                }
+                budgets_hold(&a)?;
+            }
+            emitted(a.drain(base + elapsed))?;
+            budgets_hold(&a)?;
+        }
     }
 }

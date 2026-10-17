@@ -8,7 +8,7 @@
 //! arms below.
 
 use std::collections::HashMap;
-use std::net::{SocketAddr, UdpSocket as StdUdpSocket};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -423,20 +423,19 @@ pub(crate) fn handle_setup(
             return error_response(req, 400, "Bad Request");
         }
     };
-    let parsed =
-        match crate::rtsp::client::transport_negotiation::parse_transport_response(transport_str) {
-            Ok(p) => p,
-            Err(_) => {
-                // Debug-capture (`?`): the header is untrusted wire input;
-                // escape control characters instead of logging them raw.
-                tracing::debug!(
-                    target: "tst_rtp::server",
-                    transport = ?transport_str,
-                    "SETUP rejected 400: malformed Transport header"
-                );
-                return error_response(req, 400, "Bad Request");
-            }
-        };
+    let parsed = match crate::rtsp::transport_negotiation::parse_transport_response(transport_str) {
+        Ok(p) => p,
+        Err(_) => {
+            // Debug-capture (`?`): the header is untrusted wire input;
+            // escape control characters instead of logging them raw.
+            tracing::debug!(
+                target: "tst_rtp::server",
+                transport = ?transport_str,
+                "SETUP rejected 400: malformed Transport header"
+            );
+            return error_response(req, 400, "Bad Request");
+        }
+    };
 
     // Route a publisher's SETUP (`mode=record`) to the publish handlers;
     // a reader's SETUP (no `mode=`, or any value other than "record")
@@ -481,7 +480,7 @@ pub(crate) fn handle_setup(
     if is_multicast
         && matches!(
             parsed.kind,
-            crate::rtsp::client::transport_negotiation::RtspTransportKind::TcpInterleaved
+            crate::rtsp::transport_negotiation::RtspTransportKind::TcpInterleaved
         )
     {
         return error_response(req, 461, "Unsupported Transport");
@@ -489,7 +488,7 @@ pub(crate) fn handle_setup(
 
     // Allocate transport-specific server state + build the response
     // header.
-    use crate::rtsp::client::transport_negotiation::RtspTransportKind;
+    use crate::rtsp::transport_negotiation::RtspTransportKind;
     let session_id = generate_session_id();
     let transport_response_header: String;
     let reader_transport: ReaderTransport;
@@ -506,7 +505,7 @@ pub(crate) fn handle_setup(
                 // Guard: group port 65535 has no valid RTCP companion
                 // port (65536 overflows u16). Emit a single-port range
                 // in that case rather than wrapping to 0. Mirrors the
-                // guard at handlers.rs bind_server_udp_pair (rtp_port ==
+                // guard in transport_negotiation::bind_udp_pair (rtp_port ==
                 // u16::MAX) and the transport.rs companion-port fallbacks.
                 let port_range = match group.port().checked_add(1) {
                     Some(rtcp_port) => format!("{}-{}", group.port(), rtcp_port),
@@ -619,11 +618,8 @@ pub(crate) fn generate_session_id() -> String {
     s
 }
 
-/// Bind a fresh server-side UDP RTP+RTCP socket pair on `bind_ip`.
-///
-/// RTCP MUST live on RTP+1 per RFC 3550 §11; we let the kernel pick the
-/// RTP port (passing port 0) and retry up to 16 times if the
-/// neighboring odd port is already in use.
+/// Bind a fresh server-side UDP RTP+RTCP socket pair on `bind_ip` through
+/// the shared allocator (kernel-picked RTP port, RTCP on RTP+1).
 ///
 /// Returns `(rtp_socket, rtcp_socket, rtp_port)`. Each socket is wrapped
 /// as `Arc<tokio::net::UdpSocket>` so it can be cloned into the
@@ -638,40 +634,17 @@ pub(crate) fn bind_server_udp_pair(
     ),
     std::io::Error,
 > {
-    for _attempt in 0..16 {
-        let rtp_addr = SocketAddr::new(bind_ip, 0);
-        let rtp_std = StdUdpSocket::bind(rtp_addr)?;
-        rtp_std.set_nonblocking(true)?;
-        let rtp_port = rtp_std.local_addr()?.port();
-        // Avoid the (extremely rare) case where the kernel hands us a
-        // port pair like (65535, 65536) where the +1 would wrap.
-        let Some(rtcp_port) = rtp_port.checked_add(1) else {
-            drop(rtp_std);
-            continue;
-        };
-        let rtcp_addr = SocketAddr::new(bind_ip, rtcp_port);
-        match StdUdpSocket::bind(rtcp_addr) {
-            Ok(rtcp_std) => {
-                rtcp_std.set_nonblocking(true)?;
-                let rtp = tokio::net::UdpSocket::from_std(rtp_std)?;
-                let rtcp = tokio::net::UdpSocket::from_std(rtcp_std)?;
-                return Ok((
-                    std::sync::Arc::new(rtp),
-                    std::sync::Arc::new(rtcp),
-                    rtp_port,
-                ));
-            }
-            Err(_) => {
-                // Neighboring RTCP slot taken; retry with a fresh RTP
-                // port.
-                drop(rtp_std);
-                continue;
-            }
-        }
-    }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::AddrInUse,
-        "could not find a free RTP+RTCP port pair",
+    let (rtp_std, rtcp_std, rtp_port) =
+        crate::rtsp::transport_negotiation::bind_udp_pair(bind_ip, 0)
+            .map_err(std::io::Error::other)?;
+    rtp_std.set_nonblocking(true)?;
+    rtcp_std.set_nonblocking(true)?;
+    let rtp = tokio::net::UdpSocket::from_std(rtp_std)?;
+    let rtcp = tokio::net::UdpSocket::from_std(rtcp_std)?;
+    Ok((
+        std::sync::Arc::new(rtp),
+        std::sync::Arc::new(rtcp),
+        rtp_port,
     ))
 }
 
@@ -971,11 +944,12 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     fn make_state() -> Arc<ServerState> {
-        let builder = crate::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        let builder =
+            crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
         Arc::new(ServerState {
             builder,
             cancel_token: CancellationToken::new(),
-            hard_cancel: crate::cancel::RtspServerCancelHandle::new(),
+            hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
             mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
             active_sessions: AtomicUsize::new(0),
             total_rtp_packets_sent: AtomicU64::new(0),
@@ -1053,12 +1027,13 @@ mod tests {
     #[test]
     fn describe_with_auth_required_returns_401_when_no_authorization() {
         use secrecy::SecretString;
-        let mut builder = crate::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        let mut builder =
+            crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
         builder.auth_digest_md5("tst", "admin", SecretString::new("secret".into()));
         let state = Arc::new(ServerState {
             builder,
             cancel_token: CancellationToken::new(),
-            hard_cancel: crate::cancel::RtspServerCancelHandle::new(),
+            hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
             mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
             active_sessions: AtomicUsize::new(0),
             total_rtp_packets_sent: AtomicU64::new(0),
@@ -1522,7 +1497,7 @@ mod tests {
     /// Wait (bounded) for the parked task to be ended and the writer to
     /// become lockable again — both must follow from dropping the session.
     async fn assert_parked_fanout_ended(
-        writer: &tokio::sync::Mutex<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>,
+        writer: &crate::rtsp::server::session::SessionWriter,
         ended: &AtomicBool,
         what: &str,
     ) {
@@ -1592,6 +1567,64 @@ mod tests {
             &session.role,
             Role::Reader(ReaderSession {
                 transport: ReaderTransport::Interleaved { .. },
+                ..
+            })
+        ));
+    }
+
+    fn interleaved_setup_request() -> RtspRequest {
+        let mut req = make_req(RtspMethod::Setup, "rtsp://127.0.0.1:8554/live");
+        req.headers.insert(
+            "transport".into(),
+            "RTP/AVP/TCP;unicast;interleaved=0-1".into(),
+        );
+        req
+    }
+
+    /// A reader that is playing or paused cannot be set up again: the
+    /// running fanout would keep serving the old setup. Refused with 455,
+    /// and the reader stays as it was.
+    #[tokio::test]
+    async fn setup_after_play_or_pause_on_a_reader_is_455() {
+        let state = make_state_with_mount();
+        let mut session = ServerSessionState::new();
+        assert_eq!(
+            handle_setup(&interleaved_setup_request(), &state, &mut session).status,
+            200
+        );
+        let session_id = session.session_id().unwrap().to_string();
+        session.install_test_fanout(tokio::spawn(std::future::pending::<()>()));
+
+        let resp = handle_setup(&interleaved_setup_request(), &state, &mut session);
+        assert_eq!(resp.status, 455, "SETUP while playing");
+        assert_eq!(session.session_id(), Some(session_id.as_str()));
+        assert!(session.is_playing());
+
+        session.retire_fanout();
+        let resp = handle_setup(&interleaved_setup_request(), &state, &mut session);
+        assert_eq!(resp.status, 455, "SETUP while paused");
+        assert_eq!(session.session_id(), Some(session_id.as_str()));
+    }
+
+    /// A second SETUP on a reader that has not played yet is accepted and
+    /// replaces the first: new session id, role still a ready reader.
+    #[test]
+    fn setup_after_a_first_setup_on_a_ready_reader_replaces_it() {
+        let state = make_state_with_mount();
+        let mut session = ServerSessionState::new();
+        assert_eq!(
+            handle_setup(&interleaved_setup_request(), &state, &mut session).status,
+            200
+        );
+        let first = session.session_id().unwrap().to_string();
+
+        let resp = handle_setup(&interleaved_setup_request(), &state, &mut session);
+        assert_eq!(resp.status, 200, "got: {} {}", resp.status, resp.reason);
+        assert_ne!(session.session_id().unwrap(), first);
+        assert!(matches!(
+            &session.role,
+            Role::Reader(ReaderSession {
+                playback: Playback::Ready,
                 ..
             })
         ));

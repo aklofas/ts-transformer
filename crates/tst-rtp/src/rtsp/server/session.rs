@@ -24,7 +24,6 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::error::RtspServerError;
-use crate::rtsp::client::transport_negotiation::TransportResponse;
 use crate::rtsp::message::{RtspFraming, RtspMethod, RtspRequest};
 use crate::rtsp::server::ServerState;
 use crate::rtsp::server::auth::generate_nonce;
@@ -32,6 +31,7 @@ use crate::rtsp::server::fanout::PeerDropCounter;
 use crate::rtsp::server::handlers;
 use crate::rtsp::server::publish;
 use crate::rtsp::server::publish::session::PublishSession;
+use crate::rtsp::transport_negotiation::TransportResponse;
 
 /// The write half of one RTSP session's connection — plain TCP or TLS —
 /// shared by the response writer, the interleaved fanout and
@@ -813,11 +813,7 @@ where
 /// half. Returns `true` when the caller must close the session (a
 /// violation was answered), `false` when the buffer head is within caps
 /// (`NeedMore` or `Complete` — nothing to do here either way).
-async fn reject_if_over_cap<W: AsyncWrite + Unpin>(
-    buf: &[u8],
-    peer: SocketAddr,
-    write_half: &AsyncMutex<W>,
-) -> bool {
+async fn reject_if_over_cap(buf: &[u8], peer: SocketAddr, write_half: &SessionWriter) -> bool {
     let cap_rejection = match crate::rtsp::message::rtsp_frame_decision(buf) {
         RtspFraming::HeadersTooLong => Some("headers exceed maximum"),
         RtspFraming::NonUtf8Headers { .. } => Some("non-UTF8 RTSP headers"),
@@ -914,11 +910,12 @@ mod session_tests {
         let server_handle = tokio::spawn(async move {
             let (tcp, peer) = listener.accept().await.unwrap();
             // Build a minimal ServerState for the test.
-            let builder = crate::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+            let builder =
+                crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
             let state = std::sync::Arc::new(crate::rtsp::server::ServerState {
                 builder,
                 cancel_token: tokio_util::sync::CancellationToken::new(),
-                hard_cancel: crate::cancel::RtspServerCancelHandle::new(),
+                hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
                 mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
                 active_sessions: std::sync::atomic::AtomicUsize::new(0),
                 total_rtp_packets_sent: std::sync::atomic::AtomicU64::new(0),
@@ -983,11 +980,12 @@ mod session_tests {
 
         let server_handle = tokio::spawn(async move {
             let (tcp, peer) = listener.accept().await.unwrap();
-            let builder = crate::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+            let builder =
+                crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
             let state = std::sync::Arc::new(crate::rtsp::server::ServerState {
                 builder,
                 cancel_token: tokio_util::sync::CancellationToken::new(),
-                hard_cancel: crate::cancel::RtspServerCancelHandle::new(),
+                hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
                 mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
                 active_sessions: std::sync::atomic::AtomicUsize::new(0),
                 total_rtp_packets_sent: std::sync::atomic::AtomicU64::new(0),
@@ -1043,7 +1041,8 @@ mod session_tests {
 
     /// Helper: build a minimal `ServerState` with Basic auth configured.
     fn make_state_with_basic_auth() -> Arc<ServerState> {
-        let mut builder = crate::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        let mut builder =
+            crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
         builder.auth_basic(
             "test",
             "user",
@@ -1052,7 +1051,7 @@ mod session_tests {
         Arc::new(ServerState {
             builder,
             cancel_token: tokio_util::sync::CancellationToken::new(),
-            hard_cancel: crate::cancel::RtspServerCancelHandle::new(),
+            hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
             mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
             active_sessions: std::sync::atomic::AtomicUsize::new(0),
             total_rtp_packets_sent: std::sync::atomic::AtomicU64::new(0),

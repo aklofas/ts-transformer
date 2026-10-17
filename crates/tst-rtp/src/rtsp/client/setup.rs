@@ -3,14 +3,16 @@
 //! rtpmap m-line). Implements UDP-first attempt with 461 →
 //! TCP-interleaved auto-fallback per RFC 7826 §17.4.6.
 
+use std::net::{IpAddr, Ipv4Addr};
+
 use crate::error::RtspError;
 use crate::h264::depacketizer::H264DepayConfig;
 use crate::rtsp::client::RtspClient;
 use crate::rtsp::client::session::RtspSession;
-use crate::rtsp::client::transport_negotiation::{
+use crate::rtsp::message::RtspMethod;
+use crate::rtsp::transport_negotiation::{
     RtspTransportKind, bind_udp_pair, build_transport_request, parse_transport_response,
 };
-use crate::rtsp::message::RtspMethod;
 use crate::sdp::pick::{pick_h264, pick_mp2t};
 use crate::sdp::{Sdp, SdpMedia};
 use crate::url::RtspTransportPref;
@@ -111,7 +113,7 @@ impl RtspClient {
             pref,
             RtspTransportPref::PreferUdp | RtspTransportPref::ForceUdp
         ) {
-            let (rtp, rtcp, port) = bind_udp_pair(5004)?;
+            let (rtp, rtcp, port) = bind_udp_pair(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 5004)?;
             Some((rtp, rtcp, port))
         } else {
             None

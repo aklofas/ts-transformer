@@ -38,8 +38,6 @@ mod setup_play;
 mod stream_end_reason;
 #[path = "rtsp_client/teardown.rs"]
 mod teardown;
-#[path = "rtsp_client/tls.rs"]
-mod tls;
 // Gate lives inside the file itself (`#![cfg(feature = "rtsp-server-tls")]`)
 // — it drives a real in-process `rtsps://` server via `RtspServerBuilder`.
 #[path = "rtsp_client/tls_keepalive.rs"]

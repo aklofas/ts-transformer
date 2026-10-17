@@ -34,7 +34,6 @@
 //! tree through that feature. See the README's "Feature flags" section for
 //! the tokio-free client-only build.
 
-pub mod builder;
 pub mod cancel;
 pub(crate) mod clock;
 pub mod depay;
@@ -62,16 +61,16 @@ pub use url::{DEFAULT_PKT_SIZE, RtpUrl, RtpUrlError};
 pub use transport::ConnectError;
 
 // RTSP client.
-pub use builder::RtspClientBuilder;
 pub use error::RtspError;
 pub use rtcp::ingest::SrAnchor;
 pub use rtcp::stats::RtcpStats;
 pub use rtcp::{ReceiverReport, ReportBlock, RtcpError, RtcpPacketType, SdesPacket, SenderReport};
+pub use rtsp::client::builder::RtspClientBuilder;
 pub use rtsp::client::options_describe::OptionsResponse;
 pub use rtsp::client::play::RtpInfo;
 pub use rtsp::client::session::RtspSession;
-pub use rtsp::client::transport_negotiation::RtspTransportKind;
 pub use rtsp::client::{RtspCancelHandle, RtspClient};
+pub use rtsp::transport_negotiation::RtspTransportKind;
 pub use sdp::{Sdp, SdpMedia};
 /// Re-export: the credential type accepted by
 /// [`RtspClientBuilder::auth`](crate::RtspClientBuilder::auth) — consumers
@@ -88,11 +87,11 @@ pub use h264::{
 // RTSP server (requires the `rtsp-server` feature, default-on). The error
 // enums stay unconditional — they have no tokio dependency, so gating them
 // would only fragment the error surface for no benefit.
-#[cfg(feature = "rtsp-server")]
-pub use builder::RtspServerBuilder;
-#[cfg(feature = "rtsp-server")]
-pub use cancel::RtspServerCancelHandle;
 pub use error::{MountError, RtspServerError};
+#[cfg(feature = "rtsp-server")]
+pub use rtsp::server::builder::RtspServerBuilder;
+#[cfg(feature = "rtsp-server")]
+pub use rtsp::server::cancel::RtspServerCancelHandle;
 #[cfg(feature = "rtsp-server")]
 pub use rtsp::server::mount::{MountHandle, MountKind, MountStats};
 #[cfg(feature = "rtsp-server")]

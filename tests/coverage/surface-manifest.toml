@@ -2441,8 +2441,8 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::builder::RtspClientBuilder::request_timeout"
-owning_tests = ["crates/tst-rtp/src/builder.rs", "crates/tst-rtp/tests/rtsp_client/builder_timeouts.rs"]
+item = "tst_rtp::rtsp::client::builder::RtspClientBuilder::request_timeout"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/builder.rs", "crates/tst-rtp/tests/rtsp_client/builder_timeouts.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -2454,8 +2454,8 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::builder::RtspClientBuilder::transport_preference"
-owning_tests = ["crates/tst-rtp/src/builder.rs", "crates/tst-rtp/tests/h264/rtsp_session.rs"]
+item = "tst_rtp::rtsp::client::builder::RtspClientBuilder::transport_preference"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/builder.rs", "crates/tst-rtp/tests/h264/rtsp_session.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -2467,8 +2467,8 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::builder::RtspClientBuilder::tcp_keepalive"
-owning_tests = ["crates/tst-rtp/src/builder.rs", "crates/tst-rtp/src/rtsp/client/mod.rs"]
+item = "tst_rtp::rtsp::client::builder::RtspClientBuilder::tcp_keepalive"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/builder.rs", "crates/tst-rtp/src/rtsp/client/mod.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -2487,9 +2487,9 @@ reason = "unit-covered (mount.rs push_video_to_with_dts_serves_distinct_dts); Ru
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::transport::RtpRecvTransport::end_reason"
+item = "tst_rtp::RtpRecvTransport::end_reason"
 owning_tests = [
-  "crates/tst-rtp/src/transport.rs",
+  "crates/tst-rtp/src/transport/mod.rs",
   "crates/tst-rtp/tests/rtsp_client/stream_end_reason.rs",
 ]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
@@ -2502,8 +2502,8 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::transport::RtpRecvTransport::end_reason_handle"
-owning_tests = ["crates/tst-rtp/src/transport.rs"]
+item = "tst_rtp::RtpRecvTransport::end_reason_handle"
+owning_tests = ["crates/tst-rtp/src/transport/mod.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -2514,8 +2514,8 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::transport::RtpRecvTransport::recv_timeout"
-owning_tests = ["crates/tst-rtp/src/transport.rs"]
+item = "tst_rtp::RtpRecvTransport::recv_timeout"
+owning_tests = ["crates/tst-rtp/src/transport/mod.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -2527,8 +2527,8 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::transport::RtpRecvTransport::set_recv_timeout"
-owning_tests = ["crates/tst-rtp/src/transport.rs"]
+item = "tst_rtp::RtpRecvTransport::set_recv_timeout"
+owning_tests = ["crates/tst-rtp/src/transport/mod.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
@@ -3852,7 +3852,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::builder::RtspServerBuilder::accept_unregistered_publishers"
+item = "tst_rtp::rtsp::server::builder::RtspServerBuilder::accept_unregistered_publishers"
 owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/on_demand.rs"]
 bindings = ["c:tst_rtsp_server_builder_accept_unregistered_publishers", "python:RtspServerConfig.accept_unregistered_publishers", "java:org.tstrans.rtp.RtspServerConfig.Builder.acceptUnregisteredPublishers", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []

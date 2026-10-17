@@ -107,7 +107,6 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-udp | opener | Provisional | URL → type-erased transport for the language bindings' shells |
 | tst-tcp | (crate) | Stable | small, settled; `SocketConfig` is now `TcpConfig` and stays as a deprecated alias, removed in 0.10.0 |
 | tst-tcp | opener | Provisional | URL → type-erased transport for the language bindings' shells |
-| tst-rtp | builder | Stable | RTSP client and server builders |
 | tst-rtp | cancel | Stable | RTP cancellation handle |
 | tst-rtp | depay | Stable | the access unit, configuration and counters the H.264 and H.265 depacketizers share (formerly `H264Au`/`H264DepayConfig`/`H264DepayStats`, still aliased under those names) |
 | tst-rtp | error | Stable | RTP error taxonomy |
@@ -119,7 +118,7 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-rtp | sdp | Stable | SDP parsing (`Sdp`, `SdpMedia`) |
 | tst-rtp | transport | Stable | RTP transports (unicast/multicast, v4/v6); `ConnectError` is now `RtpConnectError` and stays as a deprecated alias, removed in 0.10.0; `RtpRecvTransport::{end_reason, end_reason_handle}` are Provisional — they return tst-core's `EndReason`/`EndReasonHandle` |
 | tst-rtp | url | Stable | `rtp(s)://`/`rtsp(s)://` URL parsing; `UrlError` is now `RtpUrlError` and stays as a deprecated alias, removed in 0.10.0 |
-| tst-rtp | rtsp | Provisional | server surface (`RtspServer`) still evolving; the client API (`RtspClient`) is stable in practice, but the module's tier is set by the server surface — the rail is module-granular, not sub-module |
+| tst-rtp | rtsp | Provisional | server surface (`RtspServer`) still evolving; the client API (`RtspClient`) is stable in practice, but the module's tier is set by the server surface — the rail is module-granular, not sub-module. `RtspClientBuilder`, `RtspServerBuilder` and `RtspServerCancelHandle` (in `rtsp::client` and `rtsp::server`, formerly in `builder` and `cancel`) keep the Stable tier they had |
 | tst-hls | (crate) | Provisional | crate split out of `tst-tcp` in 0.3.0 |
 | tst-rist | (crate) | Provisional | profile coverage still evolving |
 | tst-rist | opener | Provisional | URL → type-erased transport for the language bindings' shells |

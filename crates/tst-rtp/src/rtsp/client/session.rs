@@ -17,7 +17,7 @@ use bytes::Bytes;
 
 use crate::h264::depacketizer::H264DepayConfig;
 use crate::h264::receiver::H264Receiver;
-use crate::rtsp::client::transport_negotiation::RtspTransportKind;
+use crate::rtsp::transport_negotiation::RtspTransportKind;
 use crate::transport::RtpRecvTransport;
 use tst_core::transport::EndReasonHandle;
 

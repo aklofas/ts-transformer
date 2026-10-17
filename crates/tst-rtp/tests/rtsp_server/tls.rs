@@ -201,6 +201,33 @@ fn start_rejects_tls_paths_on_plaintext_bind() {
     );
 }
 
+/// A background thread told to stop, and joined, when this drops: a test
+/// that fails while the thread loops must not leave it running.
+struct StopOnDrop {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl StopOnDrop {
+    fn new(body: impl FnOnce(&std::sync::atomic::AtomicBool) + Send + 'static) -> Self {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        Self {
+            stop,
+            thread: Some(std::thread::spawn(move || body(&flag))),
+        }
+    }
+}
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
 /// TCP-interleaved PLAY works over an `rtsps://` control connection and
 /// the media arrives on it.
 #[test]
@@ -236,24 +263,19 @@ fn interleaved_play_over_rtsps_delivers_ts() {
     rx.set_recv_timeout(Some(std::time::Duration::from_secs(5)));
 
     // Push until the fanout is attached and a packet comes back.
-    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let pusher = {
-        let stop = stop.clone();
-        std::thread::spawn(move || {
-            let au = [0u8, 0, 0, 1, 0x65, 0x88, 0x84, 0x00];
-            let mut pts = 0i64;
-            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                let _ = mount.push_video(&au, tst_core::mpegts::common::Pts90khz::new(pts), true);
-                pts += 3003;
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-        })
-    };
+    let pusher = StopOnDrop::new(move |stop| {
+        let au = [0u8, 0, 0, 1, 0x65, 0x88, 0x84, 0x00];
+        let mut pts = 0i64;
+        while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = mount.push_video(&au, tst_core::mpegts::common::Pts90khz::new(pts), true);
+            pts += 3003;
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    });
     let mut buf = [0u8; 2048];
     let n = tst_core::transport::RecvTransport::recv_bytes(&mut rx, &mut buf)
         .expect("TS over the TLS session");
-    stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    pusher.join().unwrap();
+    drop(pusher);
     assert!(
         n >= 188 && n % 188 == 0 && buf[0] == 0x47,
         "got {n} bytes starting {:#x}",

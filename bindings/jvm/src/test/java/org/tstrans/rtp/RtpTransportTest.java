@@ -113,7 +113,7 @@ class RtpTransportTest {
     /** Build a single 188-byte MPEG-TS packet (0x47 sync byte + filler). The
      *  RTP recv path enforces MP2T shape (188-byte aligned, 0x47-prefixed) and
      *  silently drops anything else — see {@code is_valid_mp2t_payload} in
-     *  {@code tst-rtp/src/transport.rs} — so tests exercising real delivery
+     *  {@code tst-rtp/src/transport/recv.rs} — so tests exercising real delivery
      *  through {@link RecvTransport#recv} must use TS-shaped payloads, not
      *  arbitrary bytes. */
     private static byte[] tsPacket(byte filler) {

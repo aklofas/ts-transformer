@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 
 use tst_core::mpegts::common::Pts90khz;
 
+use crate::clock::Unwrap32;
 use crate::depay::{AccessUnit, DepayConfig, DepayStats, ParameterSetInjection};
 use crate::packet::RtpHeader;
 
@@ -84,10 +85,8 @@ pub(crate) struct Core<F: Format> {
     last_seq: Option<u16>,
 
     // RTP timestamp unwrapping (rule 3)
-    /// Last RTP timestamp seen (wrapping u32).
-    last_ts: Option<u32>,
-    /// Extended (unwrapped) timestamp corresponding to `last_ts`.
-    ts_ext: i64,
+    /// Nearest-continuation unwrap chain over the RTP timestamps.
+    ts_unwrap: Unwrap32,
 
     // PTS anchoring
     /// Extended timestamp at which the current AU started.
@@ -153,8 +152,7 @@ impl<F: Format> Core<F> {
             stats: DepayStats::default(),
             ssrc: None,
             last_seq: None,
-            last_ts: None,
-            ts_ext: 0,
+            ts_unwrap: Unwrap32::default(),
             au_ts_ext: 0,
             pts_base: None,
             last_emitted_pts: -SSRC_RESET_PTS_STEP,
@@ -188,7 +186,7 @@ impl<F: Format> Core<F> {
                 self.au_has_ps = [false; MAX_PS_SLOTS];
                 // Reset seq/ts tracking.
                 self.last_seq = None;
-                self.last_ts = None;
+                self.ts_unwrap = Unwrap32::default();
                 // PTS stays monotonic; next AU re-anchors at
                 // last_emitted_pts + SSRC_RESET_PTS_STEP.
                 self.pts_base = None;
@@ -231,16 +229,9 @@ impl<F: Format> Core<F> {
         self.last_seq = Some(header.seq);
 
         // ── Rule 3: timestamp boundary ────────────────────────────────────
-        // Unwrap the RTP timestamp.
-        let ts_ext = if let Some(last_ts) = self.last_ts {
-            // Nearest-distance unwrap: cast the wrapping_sub to i32 then i64.
-            self.ts_ext + (header.timestamp.wrapping_sub(last_ts) as i32 as i64)
-        } else {
-            // First packet seeds ts_ext = 0.
-            0
-        };
-        self.last_ts = Some(header.timestamp);
-        self.ts_ext = ts_ext;
+        // Unwrap the RTP timestamp. The chain anchors at the first value;
+        // only differences matter (`pts_base` is taken from the same chain).
+        let ts_ext = self.ts_unwrap.unwrap(header.timestamp);
 
         if let Some(open_ts) = self.au_ts {
             if header.timestamp != open_ts {

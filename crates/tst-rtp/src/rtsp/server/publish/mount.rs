@@ -8,6 +8,19 @@
 //! hands out as an [`RtpRecvTransport`] — the SAME constructor the RTSP
 //! *client*'s TCP-interleaved path uses, so `DemuxReceiver` and every
 //! binding's receiver work against a publish mount unchanged.
+//!
+//! The mount's publisher slot is exclusive and carries a generation:
+//!
+//! ```text
+//!   Free ──── try_begin_publisher ───► Held(g) ──── end_publisher ───► Free (g + 1)
+//!    │                                   │
+//!    └───────────────── close ───────────┴──────────────────────────► Closed
+//! ```
+//!
+//! A claim on a `Held` or `Closed` slot returns `None`. Ending a held
+//! publisher empties the slot and bumps the generation, so a stale
+//! publisher reference is observably out of date; `close` does the same
+//! and then keeps the slot shut for good.
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -607,7 +620,7 @@ impl PublishMountHandle {
     /// [`RtspServerError::TransportTaken`].
     ///
     /// The returned [`RtpRecvTransport`] is built through the same
-    /// `from_mpsc_placeholder` constructor the RTSP *client*'s
+    /// `from_packet_channel` constructor the RTSP *client*'s
     /// TCP-interleaved path uses, so `DemuxReceiver` and every binding's
     /// receiver work against it unchanged. Its cancel handle and
     /// end-reason slot are swapped for this mount's shared ones (mirrors
@@ -627,7 +640,7 @@ impl PublishMountHandle {
             .state
             .take_app_rx()
             .ok_or(RtspServerError::TransportTaken)?;
-        let mut t = RtpRecvTransport::from_mpsc_placeholder(rx)
+        let mut t = RtpRecvTransport::from_packet_channel(rx)
             .with_cancel_handle(self.state.app_cancel.clone());
         t.set_end_reason_slot(self.state.app_end_reason.clone());
         Ok(t)

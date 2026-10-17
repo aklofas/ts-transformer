@@ -1,9 +1,9 @@
 //! Server accept loop. Binds a tokio `TcpListener` to the configured
 //! bind URL, runs an async accept loop, and spawns
-//! `session::handle_tcp_connection` (or `handle_tls_connection`) per accepted client. For `rtsps://`
-//! binds, the accepted TCP stream is handed to
-//! `tls::TlsServerConfig::accept` before being
-//! passed to the per-session task.
+//! `session::handle_tcp_connection` (or `handle_tls_connection`) per
+//! accepted client. For `rtsps://` binds, the accepted TCP stream is
+//! handed to `tls::TlsServerConfig::accept` before being passed to the
+//! per-session task.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;

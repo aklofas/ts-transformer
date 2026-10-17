@@ -72,6 +72,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::h264::{H264Depacketizer, H264DepayConfig, ParameterSetInjection};
+    use crate::packet::RtpHeader;
+    use proptest::prelude::*;
 
     #[test]
     fn nal_units_that_fit_travel_whole_with_the_marker_on_the_last() {
@@ -128,10 +131,6 @@ mod tests {
         assert!(packetize(std::iter::empty::<&[u8]>(), 1200).is_empty());
         assert!(packetize([&[][..]], 1200).is_empty());
     }
-
-    use crate::h264::{H264Depacketizer, H264DepayConfig, ParameterSetInjection};
-    use crate::packet::RtpHeader;
-    use proptest::prelude::*;
 
     proptest! {
         #[test]

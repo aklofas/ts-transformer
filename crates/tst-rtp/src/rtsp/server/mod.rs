@@ -1,7 +1,13 @@
 //! RTSP server — accepts client connections, manages sessions, fans out
 //! one Muxer's TS bytes to N connected peers.
+//!
+//! What ends a mount, for each mount family, is tabulated in the
+//! architecture reference's "Mount lifecycle" section
+//! (`docs/reference/architecture.md`).
 
 pub(crate) mod auth;
+pub mod builder;
+pub mod cancel;
 pub(crate) mod fanout;
 pub(crate) mod handlers;
 pub(crate) mod listener;
@@ -21,10 +27,11 @@ use tokio::io::AsyncWriteExt;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-use crate::builder::RtspServerBuilder;
-use crate::cancel::RtspServerCancelHandle;
 use crate::error::RtspServerError;
 use crate::rtsp::server::session::SessionWriter;
+
+use self::builder::RtspServerBuilder;
+use self::cancel::RtspServerCancelHandle;
 use crate::url::RtspScheme;
 
 /// Bound of the on-demand publish-mount queue (see
@@ -389,7 +396,7 @@ pub(crate) fn test_muxer_cfg() -> tst_core::mpegts::mux::MuxerConfig {
 }
 
 impl RtspServer {
-    /// Internal — called from [`crate::builder::RtspServerBuilder::build`].
+    /// Internal — called from [`crate::rtsp::server::builder::RtspServerBuilder::build`].
     /// Constructs the tokio Runtime and the shared `ServerState`.
     pub(crate) fn from_builder(b: RtspServerBuilder) -> Result<Self, RtspServerError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
