@@ -85,11 +85,13 @@ pub fn targets(root: &Path, reg: &[Entry]) -> Result<Vec<Target>, String> {
             body: emit_py::file(reg, f)?,
             kind: Kind::Whole,
         });
-        out.push(Target {
-            path: root.join(format!("bindings/jvm/src/generated/{f}.rs")),
-            body: emit_jvm_rs::file(reg, f)?,
-            kind: Kind::Whole,
-        });
+        if reg.iter().any(|e| e.family == *f && e.jvm) {
+            out.push(Target {
+                path: root.join(format!("bindings/jvm/src/generated/{f}.rs")),
+                body: emit_jvm_rs::file(reg, f)?,
+                kind: Kind::Whole,
+            });
+        }
     }
     for e in reg {
         let name = e.schema.name;
@@ -108,15 +110,17 @@ pub fn targets(root: &Path, reg: &[Entry]) -> Result<Vec<Target>, String> {
             body: emit_pyi::pyi_block(reg, e)?,
             kind: Kind::Block { begin, end },
         });
-        let (begin, end) = markers("//", name);
-        out.push(Target {
-            path: root.join(format!(
-                "bindings/jvm/src/main/java/{}/{name}.java",
-                e.java_pkg
-            )),
-            body: emit_java::block(reg, e)?,
-            kind: Kind::Block { begin, end },
-        });
+        if e.jvm {
+            let (begin, end) = markers("//", name);
+            out.push(Target {
+                path: root.join(format!(
+                    "bindings/jvm/src/main/java/{}/{name}.java",
+                    e.java_pkg
+                )),
+                body: emit_java::block(reg, e)?,
+                kind: Kind::Block { begin, end },
+            });
+        }
     }
     Ok(out)
 }

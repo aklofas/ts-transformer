@@ -73,6 +73,19 @@ tst_core::binding_record! {
     }
 }
 
+tst_core::binding_record! {
+    /// Fields whose Python default is declared.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct DefaultFixture {
+        pub id: u8,
+        @[py_default("\"x\"")]
+        pub name: String,
+        @[py_default("5_000_000")]
+        pub count: u64,
+        pub note: Option<String>,
+    }
+}
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -97,6 +110,7 @@ fn entry(schema: tst_core::binding_schema::RecordSchema, direction: Direction) -
         py_module: "tstrans.klv",
         java_pkg: "org/tstrans/klv",
         direction,
+        jvm: true,
         rust_path: schema.rust_path,
         java_implements: "",
         schema,
@@ -845,7 +859,7 @@ fn rust_paths_and_link_definitions_become_plain_names_in_host_docs() {
 #[test]
 fn every_registered_record_renders_every_target() {
     let reg = schema::records();
-    assert_eq!(reg.len(), 16);
+    assert_eq!(reg.len(), 27);
     for e in &reg {
         let n = e.schema.name;
         let py = emit_py::record_pair(&reg, e).unwrap_or_else(|m| panic!("{n}: {m}"));
@@ -864,11 +878,21 @@ fn every_registered_record_renders_every_target() {
             "{n}: {jvm}"
         );
     }
-    // Two converter files per family, three host texts per record.
     let targets = write::targets(&root(), &reg).unwrap();
     let mut families: Vec<&str> = reg.iter().map(|e| e.family).collect();
     families.dedup();
-    assert_eq!(targets.len(), 2 * families.len() + 3 * reg.len());
+    let jvm_families = families
+        .iter()
+        .filter(|f| reg.iter().any(|e| e.family == **f && e.jvm))
+        .count();
+    let jvm_records = reg.iter().filter(|e| e.jvm).count();
+    // One Python converter file per family, one JVM file per family that has
+    // a JVM record, the `.py` and `.pyi` blocks per record and a Java block
+    // per JVM record.
+    assert_eq!(
+        targets.len(),
+        families.len() + jvm_families + 2 * reg.len() + jvm_records
+    );
 }
 
 #[test]
@@ -1346,4 +1370,59 @@ fn hand_written_text_after_the_end_marker_survives_write_and_check() {
             .any(|(p, _)| p.ends_with("klv.py"))
     );
     std::fs::remove_dir_all(&d).unwrap();
+}
+
+#[test]
+fn a_declared_python_default_replaces_the_one_the_type_implies() {
+    let schema = DefaultFixture::BINDING_SCHEMA;
+    assert_eq!(schema.fields[0].py_default, None);
+    assert_eq!(schema.fields[1].py_default, Some("\"x\""));
+    let reg = vec![entry(schema, Direction::Both)];
+    let py = emit_pyi::py_block(&reg, &reg[0]).unwrap();
+    assert!(py.contains("    id: int\n"), "{py}");
+    assert!(py.contains("    name: str = \"x\"\n"), "{py}");
+    assert!(py.contains("    count: int = 5_000_000\n"), "{py}");
+    assert!(py.contains("    note: str | None = None\n"), "{py}");
+    let pyi = emit_pyi::pyi_block(&reg, &reg[0]).unwrap();
+    assert!(pyi.contains("    name: str = ...\n"), "{pyi}");
+}
+
+#[test]
+fn a_required_string_read_rejects_null_naming_the_field_and_an_optional_one_does_not() {
+    let reg = vec![entry(DefaultFixture::BINDING_SCHEMA, Direction::FromHost)];
+    let read = emit_jvm_rs::record_pair(&reg, &reg[0]).unwrap();
+    parses(&read);
+    assert!(
+        read.contains("crate::jutil::null_field(env, \"DefaultFixture.name\")"),
+        "{read}"
+    );
+    // `note` is tested for null by its own `Option` branch.
+    assert_eq!(read.matches("null_field(").count(), 1, "{read}");
+}
+
+#[test]
+fn a_python_only_record_has_no_java_or_jvm_target() {
+    let mut only = entry(WavelengthRecord::BINDING_SCHEMA, Direction::Both);
+    only.family = "pyonly";
+    only.jvm = false;
+    let reg = vec![only];
+    let targets = write::targets(&root(), &reg).unwrap();
+    let paths: Vec<String> = targets
+        .iter()
+        .map(|t| t.path.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        paths
+            .iter()
+            .any(|p| p.ends_with("python/src/generated/pyonly.rs")),
+        "{paths:?}"
+    );
+    assert!(
+        !paths
+            .iter()
+            .any(|p| p.ends_with(".java") || p.contains("jvm/src/generated")),
+        "{paths:?}"
+    );
+    // Its Python text still renders.
+    emit_py::file(&reg, "pyonly").unwrap();
 }

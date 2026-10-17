@@ -221,13 +221,13 @@ class St1204Test {
         UasDatalinkLs base = fullMismmsRecord();
         // Rebuild security LS without the caveats item (Tag 5 in Security LS).
         SecurityLs secNoCaveats = new SecurityLs.Builder()
-                .securityClassification(SecurityClassification.UNCLASSIFIED)
-                .classifyingCountryCodingMethod(ClassifyingCountryCodingMethod.ISO_3166_THREE_LETTER)
+                .securityClassificationCode(SecurityClassification.UNCLASSIFIED.code())
+                .classifyingCountryCodingMethodCode(ClassifyingCountryCodingMethod.ISO_3166_THREE_LETTER.code())
                 .classifyingCountry("//USA")
                 .sciShiInfo("SCI")
                 // Omit caveats (Tag 5 in Security LS)
                 .releasingInstructions("USA")
-                .objectCountryCodingMethod(ObjectCountryCodingMethod.ISO_3166_THREE_LETTER)
+                .objectCountryCodingMethodCode(ObjectCountryCodingMethod.ISO_3166_THREE_LETTER.code())
                 .objectCountryCodes("USA")
                 .version(12)
                 .build();
@@ -426,13 +426,13 @@ class St1204Test {
     private UasDatalinkLs fullMismmsRecord() {
         // Encode a minimal but complete Security LS (all 9 required sub-items).
         SecurityLs sec = new SecurityLs.Builder()
-                .securityClassification(SecurityClassification.UNCLASSIFIED)
-                .classifyingCountryCodingMethod(ClassifyingCountryCodingMethod.ISO_3166_THREE_LETTER)
+                .securityClassificationCode(SecurityClassification.UNCLASSIFIED.code())
+                .classifyingCountryCodingMethodCode(ClassifyingCountryCodingMethod.ISO_3166_THREE_LETTER.code())
                 .classifyingCountry("//USA")
                 .sciShiInfo("SCI")
                 .caveats("FOUO")
                 .releasingInstructions("USA")
-                .objectCountryCodingMethod(ObjectCountryCodingMethod.ISO_3166_THREE_LETTER)
+                .objectCountryCodingMethodCode(ObjectCountryCodingMethod.ISO_3166_THREE_LETTER.code())
                 .objectCountryCodes("USA")
                 .version(12)
                 .build();

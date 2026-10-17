@@ -304,7 +304,7 @@ class St0903Test {
 
     @Test
     void vtargetBuilderConstructsPack() {
-        VTargetPack p = new VTargetPack.Builder(42L)
+        VTargetPack p = new VTargetPack.Builder().targetId(42L)
                 .priority(5)
                 .confidenceLevel(80)
                 .targetColor(new VTargetPack.TargetColor(255, 128, 0))
@@ -339,7 +339,7 @@ class St0903Test {
         VmtiLs rec = new VmtiLs.Builder()
                 .versionNumber(6)
                 .numTargetsReported(1L)
-                .targets(java.util.List.of(new VTargetPack.Builder(1L).build()))
+                .targets(java.util.List.of(new VTargetPack.Builder().targetId(1L).build()))
                 .build();
         KlvEncodeException ex = assertThrows(KlvEncodeException.class,
                 () -> Klv.encodeVmtiStrictCompliance(rec));
@@ -349,8 +349,8 @@ class St0903Test {
     @Test
     void encodeVmtiStrictComplianceDuplicateTargetIdThrows() {
         // Two VTargetPacks with the same target_id triggers DUPLICATE_TARGET_ID.
-        VTargetPack packA = new VTargetPack.Builder(7L).priority(1).build();
-        VTargetPack packB = new VTargetPack.Builder(7L).priority(2).build();
+        VTargetPack packA = new VTargetPack.Builder().targetId(7L).priority(1).build();
+        VTargetPack packB = new VTargetPack.Builder().targetId(7L).priority(2).build();
         VmtiLs rec = new VmtiLs.Builder()
                 .versionNumber(6)
                 .numTargetsReported(2L)
@@ -364,7 +364,7 @@ class St0903Test {
     @Test
     void encodeVmtiStrictComplianceSucceedsWithValidRecord() throws KlvEncodeException, KlvDecodeException {
         // A valid record with required items (Tags 4 + 6) plus a non-empty pack.
-        VTargetPack pack = new VTargetPack.Builder(1L).priority(5).build();
+        VTargetPack pack = new VTargetPack.Builder().targetId(1L).priority(5).build();
         VmtiLs rec = new VmtiLs.Builder()
                 .versionNumber(6)
                 .numTargetsReported(1L)
@@ -404,7 +404,7 @@ class St0903Test {
     void encodeVmtiStandaloneStrictComplianceForbiddenOffsetThrows() {
         // A VTargetPack with an offset tag (centroid_lat_offset = Tag 10) triggers
         // FORBIDDEN_STANDALONE_OFFSET.
-        VTargetPack packWithOffset = new VTargetPack.Builder(1L)
+        VTargetPack packWithOffset = new VTargetPack.Builder().targetId(1L)
                 .priority(5)
                 .centroidLatOffset(0.001)
                 .build();
@@ -452,7 +452,7 @@ class St0903Test {
      * O(1) regardless of target count.
      *
      * <p>Uses encode→decode round-trip: encode 500 targets, then decode. The
-     * decode path exercises the fixed {@code build_vmti} loop. The test asserts
+     * decode path exercises the fixed {@code build_vmti_ls} loop. The test asserts
      * functional correctness; the absence of local-ref-table-overflow is the
      * implicit guarantee of the fix.
      */
@@ -462,7 +462,7 @@ class St0903Test {
         java.util.List<VTargetPack> targets = new java.util.ArrayList<>(count);
         for (long id = 1; id <= count; id++) {
             // Each pack must have at least one field; priority is the smallest.
-            targets.add(new VTargetPack.Builder(id).priority(1).build());
+            targets.add(new VTargetPack.Builder().targetId(id).priority(1).build());
         }
         VmtiLs vmti = new VmtiLs.Builder()
                 .versionNumber(6)
@@ -492,7 +492,7 @@ class St0903Test {
         long bigPixel    = 0x1_FFFF_FFFFL; // 8589934591 — above u32::MAX, valid V6
         long u32MaxRow   = 0xFFFF_FFFFL;   // u32::MAX — max valid for V4 fields
 
-        VTargetPack pack = new VTargetPack.Builder(bigTargetId)
+        VTargetPack pack = new VTargetPack.Builder().targetId(bigTargetId)
                 .centroidPixel(bigPixel)
                 .bboxTopLeftPixel(bigPixel + 1L)
                 .bboxBottomRightPixel(bigPixel + 2L)

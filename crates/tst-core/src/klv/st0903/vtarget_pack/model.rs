@@ -272,128 +272,133 @@ pub enum VTargetPackError {
     },
 }
 
-/// MISB ST 0903.6 §10.2 Table 10 — typed VTargetPack.
-///
-/// The wire form is a leading BER-OID-encoded `targetId` (no Tag —
-/// per §10.2.2.1 "has no Tag") followed by a Local Set–encoded body
-/// using BER-OID tag + BER short/long length + value tuples.
-///
-/// `target_id` is a `u64` decoded from the BER-OID Target ID (≈ 63 bits
-/// per ST 0903.6 §10.2.2.1; spec allows up to 9 wire bytes, V9 in
-/// §10.2 Table 10). The pixel-number fields are `u64`: the V6 fields
-/// (`centroid_pixel`, `bbox_top_left_pixel`, `bbox_bottom_right_pixel`)
-/// carry up to 6 wire bytes; the V4 `centroid_pix_row` /
-/// `centroid_pix_col` are 4 wire bytes (see their per-field notes for the
-/// `u32::MAX` ceiling).
-///
-/// `detection_status` is the raw §10.2.2.24 / §7.2 Table 5 codepoint:
-/// 0=Inactive, 1=Active-Moving, 2=Dropped, 3=Active-Stopped,
-/// 4=Active-Coasting. Typed enum deferred — stays as raw `u8`.
-///
-/// 7 nested/sibling Local Sets (`target_location`,
-/// `geospatial_contour_series`, `vmask`, `vtracker`, `vchip`,
-/// `vchip_series`, `vobject_series`) stay as `Option<Vec<u8>>`
-/// pass-through bytes — typed inner layers deferred.
-#[must_use]
-#[derive(Debug, Clone, Default)]
-pub struct VTargetPack {
-    /// BER-OID `targetId` per §10.2.2.1. Up to 9 BER-OID wire bytes
-    /// (≈ 63 bits) per ST 0903.6 §10.2.2.1; widened to `u64`.
-    pub target_id: u64,
-    /// Tag 1 `targetCentroid` per §10.2.2.2 — pixel number, V6
-    /// truncated big-endian (up to 6 wire bytes, max `(1u64 << 48) - 1`).
-    /// A value above `(1u64 << 48) - 1` would encode to 7+ bytes and the
-    /// decoder rejects — callers must keep this within the V6 range.
-    pub centroid_pixel: Option<u64>,
-    /// Tag 2 `boundingBoxTopLeft` per §10.2.2.3 — pixel number, V6
-    /// (up to 6 wire bytes, max `(1u64 << 48) - 1`). Same V6 cap as Tag 1.
-    pub bbox_top_left_pixel: Option<u64>,
-    /// Tag 3 `boundingBoxBottomRight` per §10.2.2.4 — pixel number, V6
-    /// (up to 6 wire bytes, max `(1u64 << 48) - 1`). Same V6 cap as Tag 1.
-    pub bbox_bottom_right_pixel: Option<u64>,
-    /// Tag 4 `targetPriority` per §10.2.2.5 — fixed-length 1, valid 1..=255.
-    pub priority: Option<u8>,
-    /// Tag 5 `targetConfidenceLevel` per §10.2.2.6 — fixed-length 1,
-    /// valid 0..=100 (percent).
-    pub confidence_level: Option<u8>,
-    /// Tag 6 `targetHistory` per §10.2.2.7 — V2 (frame count, 0..=65535).
-    pub history: Option<u16>,
-    /// Tag 7 `percentageOfTargetPixels` per §10.2.2.8 — fixed-length 1,
-    /// valid 1..=100 (percent).
-    pub percentage_of_target_pixels: Option<u8>,
-    /// Tag 8 `targetColor` per §10.2.2.9 — fixed 3 bytes [R, G, B].
-    pub target_color: Option<[u8; 3]>,
-    /// Tag 9 `targetIntensity` per §10.2.2.10 — V3 (24-bit dynamic range,
-    /// max `(1u32 << 24) - 1` = 16777215). A value above `(1u32 << 24) - 1`
-    /// would encode to 4 bytes but the decoder rejects (V3 max 3 bytes) —
-    /// callers must keep this within the V3 range.
-    pub target_intensity: Option<u32>,
-    /// Tag 10 `targetLocationOffsetLat` per §10.2.2.11 —
-    /// IMAPB(-19.2°, 19.2°, 3 bytes).
-    pub centroid_lat_offset: Option<f64>,
-    /// Tag 11 `targetLocationOffsetLon` per §10.2.2.12 — IMAPB(-19.2°, 19.2°, 3).
-    pub centroid_lon_offset: Option<f64>,
-    /// Tag 12 `targetHae` per §10.2.2.13 — IMAPB(-900 m, 19000 m, 2).
-    pub centroid_hae: Option<f64>,
-    /// Tag 13 `boundingBoxTopLeftLatOffset` per §10.2.2.14 —
-    /// IMAPB(-19.2°, 19.2°, 3).
-    pub bbox_top_left_lat_offset: Option<f64>,
-    /// Tag 14 `boundingBoxTopLeftLonOffset` per §10.2.2.15 — IMAPB(-19.2°, 19.2°, 3).
-    pub bbox_top_left_lon_offset: Option<f64>,
-    /// Tag 15 `boundingBoxBottomRightLatOffset` per §10.2.2.16 —
-    /// IMAPB(-19.2°, 19.2°, 3).
-    pub bbox_bottom_right_lat_offset: Option<f64>,
-    /// Tag 16 `boundingBoxBottomRightLonOffset` per §10.2.2.17 —
-    /// IMAPB(-19.2°, 19.2°, 3).
-    pub bbox_bottom_right_lon_offset: Option<f64>,
-    /// Tag 17 `targetLocation` per §10.2.2.18 — Defined Length
-    /// Truncation Pack pass-through bytes (typed inner deferred).
-    pub target_location: Option<Vec<u8>>,
-    /// Tag 18 `geospatialContourSeries` per §10.2.2.19 — Series of
-    /// Location pass-through bytes (typed inner deferred).
-    pub geospatial_contour_series: Option<Vec<u8>>,
-    /// Tag 19 `centroidPixRow` per §10.2.2.20 — V4 (1..=2^32-1);
-    /// widened to `u64` for consistency with other pixel fields. Note:
-    /// the V4 wire format is 4 bytes (max `u32::MAX`); a value above
-    /// `u32::MAX` would encode but fail to decode — callers must keep
-    /// this within the V4 range.
-    pub centroid_pix_row: Option<u64>,
-    /// Tag 20 `centroidPixCol` per §10.2.2.21 — V4 (1..=2^32-1);
-    /// widened to `u64` for consistency with other pixel fields. Note:
-    /// the V4 wire format is 4 bytes (max `u32::MAX`); a value above
-    /// `u32::MAX` would encode but fail to decode — callers must keep
-    /// this within the V4 range.
-    pub centroid_pix_col: Option<u64>,
-    /// Tag 22 `algorithmId` per §10.2.2.23 — V3 reference into the
-    /// parent VMTI LS Algorithm Series (max `(1u32 << 24) - 1`). Same V3
-    /// cap as Tag 9 — values above 16777215 encode to 4 bytes and the
-    /// decoder rejects.
-    pub algorithm_id: Option<u32>,
-    /// Tag 23 `detectionStatus` per §10.2.2.24 — fixed-length 1.
-    /// See struct-level doc for the 5 spec codepoints.
-    pub detection_status: Option<u8>,
-    /// Tag 101 `vMask` per §10.2.2.25 — VMask LS pass-through bytes
-    /// (typed inner deferred).
-    pub vmask: Option<Vec<u8>>,
-    /// Tag 104 `vTracker` per §10.2.2.28 — VTracker LS pass-through
-    /// bytes (typed inner deferred).
-    pub vtracker: Option<Vec<u8>>,
-    /// Tag 105 `vChip` per §10.2.2.29 — VChip LS pass-through bytes
-    /// (typed inner deferred).
-    pub vchip: Option<Vec<u8>>,
-    /// Tag 106 `vChipSeries` per §10.2.2.30 — Series of VChip LS
-    /// pass-through bytes (typed inner deferred).
-    pub vchip_series: Option<Vec<u8>>,
-    /// Tag 107 `vObjectSeries` per §10.2.2.31 — Series of VObject
-    /// LS pass-through bytes (typed inner deferred).
-    pub vobject_series: Option<Vec<u8>>,
-    /// Tags not in `PACK_TAGS` (deprecated 21/102/103, future
-    /// additions). Preserved per ST 0107.5 §6 future-proof skip rule.
-    pub unknown: Vec<crate::klv::pack::OwnedRawField>,
-    /// Per-field validation errors (e.g. malformed IMAPB) accumulated
-    /// during lenient decode. Mirrors the
-    /// `klv::st0102::SecurityLs::field_errors` pattern.
-    pub field_errors: Vec<crate::error::KlvFieldError>,
+crate::binding_record! {
+    /// MISB ST 0903.6 §10.2 Table 10 — typed VTargetPack.
+    ///
+    /// The wire form is a leading BER-OID-encoded `targetId` (no Tag —
+    /// per §10.2.2.1 "has no Tag") followed by a Local Set–encoded body
+    /// using BER-OID tag + BER short/long length + value tuples.
+    ///
+    /// `target_id` is a `u64` decoded from the BER-OID Target ID (≈ 63 bits
+    /// per ST 0903.6 §10.2.2.1; spec allows up to 9 wire bytes, V9 in
+    /// §10.2 Table 10). The pixel-number fields are `u64`: the V6 fields
+    /// (`centroid_pixel`, `bbox_top_left_pixel`, `bbox_bottom_right_pixel`)
+    /// carry up to 6 wire bytes; the V4 `centroid_pix_row` /
+    /// `centroid_pix_col` are 4 wire bytes (see their per-field notes for the
+    /// 32-bit ceiling).
+    ///
+    /// `detection_status` is the raw §10.2.2.24 / §7.2 Table 5 codepoint:
+    /// 0=Inactive, 1=Active-Moving, 2=Dropped, 3=Active-Stopped,
+    /// 4=Active-Coasting. Typed enum deferred — stays as raw `u8`.
+    ///
+    /// 7 nested/sibling Local Sets (`target_location`,
+    /// `geospatial_contour_series`, `vmask`, `vtracker`, `vchip`,
+    /// `vchip_series`, `vobject_series`) stay as optional pass-through
+    /// bytes — typed inner layers deferred.
+    #[must_use]
+    #[derive(Debug, Clone, Default)]
+    pub struct VTargetPack {
+        /// BER-OID `targetId` per §10.2.2.1. Up to 9 BER-OID wire bytes
+        /// (≈ 63 bits) per ST 0903.6 §10.2.2.1; widened to `u64`.
+        pub target_id: u64,
+        /// Tag 1 `targetCentroid` per §10.2.2.2 — pixel number, V6
+        /// truncated big-endian (up to 6 wire bytes, max `(1u64 << 48) - 1`).
+        /// A value above `(1u64 << 48) - 1` would encode to 7+ bytes and the
+        /// decoder rejects — callers must keep this within the V6 range.
+        pub centroid_pixel: Option<u64>,
+        /// Tag 2 `boundingBoxTopLeft` per §10.2.2.3 — pixel number, V6
+        /// (up to 6 wire bytes, max `(1u64 << 48) - 1`). Same V6 cap as Tag 1.
+        pub bbox_top_left_pixel: Option<u64>,
+        /// Tag 3 `boundingBoxBottomRight` per §10.2.2.4 — pixel number, V6
+        /// (up to 6 wire bytes, max `(1u64 << 48) - 1`). Same V6 cap as Tag 1.
+        pub bbox_bottom_right_pixel: Option<u64>,
+        /// Tag 4 `targetPriority` per §10.2.2.5 — fixed-length 1, valid 1..=255.
+        pub priority: Option<u8>,
+        /// Tag 5 `targetConfidenceLevel` per §10.2.2.6 — fixed-length 1,
+        /// valid 0..=100 (percent).
+        pub confidence_level: Option<u8>,
+        /// Tag 6 `targetHistory` per §10.2.2.7 — V2 (frame count, 0..=65535).
+        pub history: Option<u16>,
+        /// Tag 7 `percentageOfTargetPixels` per §10.2.2.8 — fixed-length 1,
+        /// valid 1..=100 (percent).
+        pub percentage_of_target_pixels: Option<u8>,
+        /// Tag 8 `targetColor` per §10.2.2.9 — fixed 3 bytes [R, G, B].
+        @[custom]
+        pub target_color: Option<[u8; 3]>,
+        /// Tag 9 `targetIntensity` per §10.2.2.10 — V3 (24-bit dynamic range,
+        /// max `(1u32 << 24) - 1` = 16777215). A value above `(1u32 << 24) - 1`
+        /// would encode to 4 bytes but the decoder rejects (V3 max 3 bytes) —
+        /// callers must keep this within the V3 range.
+        pub target_intensity: Option<u32>,
+        /// Tag 10 `targetLocationOffsetLat` per §10.2.2.11 —
+        /// IMAPB(-19.2°, 19.2°, 3 bytes).
+        pub centroid_lat_offset: Option<f64>,
+        /// Tag 11 `targetLocationOffsetLon` per §10.2.2.12 — IMAPB(-19.2°, 19.2°, 3).
+        pub centroid_lon_offset: Option<f64>,
+        /// Tag 12 `targetHae` per §10.2.2.13 — IMAPB(-900 m, 19000 m, 2).
+        pub centroid_hae: Option<f64>,
+        /// Tag 13 `boundingBoxTopLeftLatOffset` per §10.2.2.14 —
+        /// IMAPB(-19.2°, 19.2°, 3).
+        pub bbox_top_left_lat_offset: Option<f64>,
+        /// Tag 14 `boundingBoxTopLeftLonOffset` per §10.2.2.15 — IMAPB(-19.2°, 19.2°, 3).
+        pub bbox_top_left_lon_offset: Option<f64>,
+        /// Tag 15 `boundingBoxBottomRightLatOffset` per §10.2.2.16 —
+        /// IMAPB(-19.2°, 19.2°, 3).
+        pub bbox_bottom_right_lat_offset: Option<f64>,
+        /// Tag 16 `boundingBoxBottomRightLonOffset` per §10.2.2.17 —
+        /// IMAPB(-19.2°, 19.2°, 3).
+        pub bbox_bottom_right_lon_offset: Option<f64>,
+        /// Tag 17 `targetLocation` per §10.2.2.18 — Defined Length
+        /// Truncation Pack pass-through bytes (typed inner deferred).
+        pub target_location: Option<Vec<u8>>,
+        /// Tag 18 `geospatialContourSeries` per §10.2.2.19 — Series of
+        /// Location pass-through bytes (typed inner deferred).
+        pub geospatial_contour_series: Option<Vec<u8>>,
+        /// Tag 19 `centroidPixRow` per §10.2.2.20 — V4 (1..=2^32-1);
+        /// widened to `u64` for consistency with other pixel fields. Note:
+        /// the V4 wire format is 4 bytes (max 4294967295); a value above
+        /// that would encode but fail to decode — callers must keep
+        /// this within the V4 range.
+        pub centroid_pix_row: Option<u64>,
+        /// Tag 20 `centroidPixCol` per §10.2.2.21 — V4 (1..=2^32-1);
+        /// widened to `u64` for consistency with other pixel fields. Note:
+        /// the V4 wire format is 4 bytes (max 4294967295); a value above
+        /// that would encode but fail to decode — callers must keep
+        /// this within the V4 range.
+        pub centroid_pix_col: Option<u64>,
+        /// Tag 22 `algorithmId` per §10.2.2.23 — V3 reference into the
+        /// parent VMTI LS Algorithm Series (max `(1u32 << 24) - 1`). Same V3
+        /// cap as Tag 9 — values above 16777215 encode to 4 bytes and the
+        /// decoder rejects.
+        pub algorithm_id: Option<u32>,
+        /// Tag 23 `detectionStatus` per §10.2.2.24 — fixed-length 1.
+        /// See struct-level doc for the 5 spec codepoints.
+        pub detection_status: Option<u8>,
+        /// Tag 101 `vMask` per §10.2.2.25 — VMask LS pass-through bytes
+        /// (typed inner deferred).
+        pub vmask: Option<Vec<u8>>,
+        /// Tag 104 `vTracker` per §10.2.2.28 — VTracker LS pass-through
+        /// bytes (typed inner deferred).
+        pub vtracker: Option<Vec<u8>>,
+        /// Tag 105 `vChip` per §10.2.2.29 — VChip LS pass-through bytes
+        /// (typed inner deferred).
+        pub vchip: Option<Vec<u8>>,
+        /// Tag 106 `vChipSeries` per §10.2.2.30 — Series of VChip LS
+        /// pass-through bytes (typed inner deferred).
+        pub vchip_series: Option<Vec<u8>>,
+        /// Tag 107 `vObjectSeries` per §10.2.2.31 — Series of VObject
+        /// LS pass-through bytes (typed inner deferred).
+        pub vobject_series: Option<Vec<u8>>,
+        /// Tags not in `PACK_TAGS` (deprecated 21/102/103, future
+        /// additions). Preserved per ST 0107.5 §6 future-proof skip rule.
+        @[custom]
+        pub unknown: Vec<crate::klv::pack::OwnedRawField>,
+        /// Per-field validation errors (e.g. malformed IMAPB) accumulated
+        /// during lenient decode. The other typed sets collect the same
+        /// diagnostic in their own `field_errors`.
+        @[custom]
+        pub field_errors: Vec<crate::error::KlvFieldError>,
+    }
 }
 
 /// Manual `PartialEq` excluding [`VTargetPack::field_errors`]. Same

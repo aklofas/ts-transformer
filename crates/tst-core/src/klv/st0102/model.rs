@@ -9,44 +9,64 @@ use crate::klv::st0102::enums::{
 use alloc::string::String;
 use alloc::vec::Vec;
 
-#[must_use]
-#[derive(Debug, Clone, Default)]
-pub struct SecurityLs {
-    // Required per spec (still Option<T> at decode time so lenient
-    // mode tolerates broken input; decode_strict rejects a record
-    // missing any of 1, 2, 3, 12, 13, 22).
-    pub security_classification: Option<SecurityClassification>, // Tag 1
-    pub classifying_country_coding_method: Option<ClassifyingCountryCodingMethod>, // Tag 2
-    pub classifying_country: Option<String>,                     // Tag 3
-    pub object_country_coding_method: Option<ObjectCountryCodingMethod>, // Tag 12
-    pub object_country_codes: Option<String>,                    // Tag 13 (UTF-16)
-    pub version: Option<u16>,                                    // Tag 22
+crate::binding_record! {
+    /// MISB ST 0102.12 Security Metadata Local Set typed view.
+    ///
+    /// Required tags per ST 0102.12 §6.7 Table 1: 1, 2, 3, 12, 13 and 22.
+    /// Lenient decode tolerates missing required tags, unknown enum codepoints
+    /// and a malformed Tag 13 UTF-16 value (surfaced in `field_errors`); strict
+    /// decode rejects all of them.
+    ///
+    /// The three enum-typed fields (`security_classification`,
+    /// `classifying_country_coding_method` and `object_country_coding_method`)
+    /// cross as the enum member for a known codepoint and as the raw code for an
+    /// unknown one, so a forward-compat codepoint round-trips.
+    #[must_use]
+    #[derive(Debug, Clone, Default)]
+    pub struct SecurityLs {
+        // Required per spec (still Option<T> at decode time so lenient
+        // mode tolerates broken input; decode_strict rejects a record
+        // missing any of 1, 2, 3, 12, 13, 22).
+        @[custom]
+        @[java("securityClassificationCode")]
+        pub security_classification: Option<SecurityClassification>, // Tag 1
+        @[custom]
+        @[java("classifyingCountryCodingMethodCode")]
+        pub classifying_country_coding_method: Option<ClassifyingCountryCodingMethod>, // Tag 2
+        pub classifying_country: Option<String>,                     // Tag 3
+        @[custom]
+        @[java("objectCountryCodingMethodCode")]
+        pub object_country_coding_method: Option<ObjectCountryCodingMethod>, // Tag 12
+        pub object_country_codes: Option<String>,                    // Tag 13 (UTF-16)
+        pub version: Option<u16>,                                    // Tag 22
 
-    // Context (per-spec semantics: present only when applicable).
-    pub sci_shi_info: Option<String>,                  // Tag 4
-    pub caveats: Option<String>,                       // Tag 5
-    pub releasing_instructions: Option<String>,        // Tag 6
-    pub classified_by: Option<String>,                 // Tag 7
-    pub derived_from: Option<String>,                  // Tag 8
-    pub classification_reason: Option<String>,         // Tag 9
-    pub declassification_date: Option<String>,         // Tag 10 ("YYYYMMDD")
-    pub classification_marking_system: Option<String>, // Tag 11
+        // Context (per-spec semantics: present only when applicable).
+        pub sci_shi_info: Option<String>,                  // Tag 4
+        pub caveats: Option<String>,                       // Tag 5
+        pub releasing_instructions: Option<String>,        // Tag 6
+        pub classified_by: Option<String>,                 // Tag 7
+        pub derived_from: Option<String>,                  // Tag 8
+        pub classification_reason: Option<String>,         // Tag 9
+        pub declassification_date: Option<String>,         // Tag 10 ("YYYYMMDD")
+        pub classification_marking_system: Option<String>, // Tag 11
 
-    // Optional.
-    pub classification_comments: Option<String>, // Tag 14
-    pub classifying_country_coding_method_version_date: Option<String>, // Tag 23 ("YYYY-MM-DD")
-    pub object_country_coding_method_version_date: Option<String>, // Tag 24 ("YYYY-MM-DD")
+        // Optional.
+        pub classification_comments: Option<String>, // Tag 14
+        pub classifying_country_coding_method_version_date: Option<String>, // Tag 23 ("YYYY-MM-DD")
+        pub object_country_coding_method_version_date: Option<String>, // Tag 24 ("YYYY-MM-DD")
 
-    /// Forward-compat: tags outside the LS table preserved verbatim.
-    /// Both `decode` and `decode_strict` populate this per ST 0107.5 §6.
-    pub unknown: Vec<OwnedRawField>,
+        /// Forward-compat: tags outside the LS table preserved verbatim.
+        /// Both `decode` and `decode_strict` populate this per ST 0107.5 §6.
+        @[custom]
+        pub unknown: Vec<OwnedRawField>,
 
-    /// Lenient-mode diagnosis: known tags whose value validation
-    /// failed (e.g. Tag 13 UTF-16 decode failure, Tag 22 wrong
-    /// length). Mirrors `klv::st0601::UasDatalinkLs.field_errors`.
-    /// Strict-mode raises these as `Err` instead of populating
-    /// this field. Encode does not consume this field.
-    pub field_errors: Vec<KlvFieldError>,
+        /// Lenient-mode diagnosis: known tags whose value validation
+        /// failed (e.g. Tag 13 UTF-16 decode failure, Tag 22 wrong
+        /// length). Strict mode raises these as an error instead of
+        /// populating this field. Encode does not consume this field.
+        @[custom]
+        pub field_errors: Vec<KlvFieldError>,
+    }
 }
 
 /// Manual `PartialEq` excluding [`SecurityLs::field_errors`]. The

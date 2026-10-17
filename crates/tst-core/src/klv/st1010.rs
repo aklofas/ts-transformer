@@ -65,26 +65,31 @@ use crate::error::{KlvDecodeError, KlvEncodeError, KlvFieldError};
 use crate::klv::imapb::{ImapbParams, decode_imapb, encode_imapb};
 use crate::klv::length::{read_ber_oid, write_ber_oid};
 
-/// One parsed SDCC-FLP (ST 1010.3 §6-§7). N×N symmetric: N std devs
-/// (diagonal) + N(N-1)/2 correlations (upper triangle, row-major).
-#[derive(Debug, Clone, PartialEq)]
-pub struct SdccFlp {
-    /// `u64` (not `usize`) per the workspace's public-surface FFI-portability
-    /// convention (`scripts/check/rust/no-public-usize.sh`) — a size/count
-    /// field on a public struct must not vary shape across 32-/64-bit
-    /// targets, even though typed KLV never crosses the C ABI today.
-    pub matrix_size: u64,
-    /// Diagonal σ values, length == matrix_size (empty when Slen == 0).
-    pub std_devs: Vec<f64>,
-    /// Upper-triangle correlations, row-major (i<j), ABSENT slots as 0.0
-    /// (sparse-mode zeros are reconstituted). Unlike `std_devs`, this is
-    /// ALWAYS the full `matrix_size*(matrix_size-1)/2` length regardless of
-    /// `Clen` — a `Clen==0` pack (no correlation data at all) still gets a
-    /// zero-filled vector of that length, not an empty one. Only empty
-    /// when `matrix_size <= 1` (no possible correlation slots).
-    pub correlations: Vec<f64>,
-    /// True where the wire actually carried the slot (all-true in full mode).
-    pub correlation_present: Vec<bool>,
+crate::binding_record! {
+    /// One parsed SDCC-FLP (ST 1010.3 §6-§7). N×N symmetric: N std devs
+    /// (diagonal) + N(N-1)/2 correlations (upper triangle, row-major).
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct SdccFlp {
+        /// `u64` (not `usize`) per the workspace's public-surface FFI-portability
+        /// convention (`scripts/check/rust/no-public-usize.sh`) — a size/count
+        /// field on a public struct must not vary shape across 32-/64-bit
+        /// targets, even though typed KLV never crosses the C ABI today.
+        pub matrix_size: u64,
+        /// Diagonal σ values, length == matrix_size (empty when Slen == 0).
+        @[custom]
+        pub std_devs: Vec<f64>,
+        /// Upper-triangle correlations, row-major (i<j), ABSENT slots as 0.0
+        /// (sparse-mode zeros are reconstituted). Unlike `std_devs`, this is
+        /// ALWAYS the full `matrix_size*(matrix_size-1)/2` length regardless of
+        /// `Clen` — a `Clen==0` pack (no correlation data at all) still gets a
+        /// zero-filled vector of that length, not an empty one. Only empty
+        /// when `matrix_size <= 1` (no possible correlation slots).
+        @[custom]
+        pub correlations: Vec<f64>,
+        /// True where the wire actually carried the slot (all-true in full mode).
+        @[custom]
+        pub correlation_present: Vec<bool>,
+    }
 }
 
 impl SdccFlp {

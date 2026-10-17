@@ -38,6 +38,9 @@ pub(crate) fn read_wavelength_record(
         .call_method(obj, "name", "()Ljava/lang/String;", &[])?
         .l()?;
     let name = {
+        if o1.is_null() {
+            return Err(crate::jutil::null_field(env, "WavelengthRecord.name"));
+        }
         let s2: &jni::objects::JString = (&o1).into();
         String::from(env.get_string(s2)?)
     };
@@ -227,6 +230,9 @@ pub(crate) fn read_control_command(
         .call_method(obj, "command", "()Ljava/lang/String;", &[])?
         .l()?;
     let command = {
+        if o1.is_null() {
+            return Err(crate::jutil::null_field(env, "ControlCommand.command"));
+        }
         let s2: &jni::objects::JString = (&o1).into();
         String::from(env.get_string(s2)?)
     };
@@ -572,6 +578,9 @@ pub(crate) fn read_payload_record(
         .call_method(obj, "name", "()Ljava/lang/String;", &[])?
         .l()?;
     let name = {
+        if o1.is_null() {
+            return Err(crate::jutil::null_field(env, "PayloadRecord.name"));
+        }
         let s2: &jni::objects::JString = (&o1).into();
         String::from(env.get_string(s2)?)
     };
@@ -681,6 +690,9 @@ pub(crate) fn read_weapons_store(
         .call_method(obj, "weaponType", "()Ljava/lang/String;", &[])?
         .l()?;
     let weapon_type = {
+        if o1.is_null() {
+            return Err(crate::jutil::null_field(env, "WeaponsStore.weaponType"));
+        }
         let s2: &jni::objects::JString = (&o1).into();
         String::from(env.get_string(s2)?)
     };

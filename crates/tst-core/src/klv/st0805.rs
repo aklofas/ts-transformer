@@ -56,28 +56,34 @@ const CE90_TO_1SIGMA: f64 = 2.146;
 /// standard) necessary."
 const LE90_TO_1SIGMA: f64 = 1.645;
 
-/// Configuration for KLV→CoT conversion (ST 0805.1).
-#[derive(Debug, Clone, PartialEq)]
-pub struct CotConfig {
-    /// CoT type for the Platform Position event. ST 0805.1 §5 gives
-    /// `a-f-A-M-F` as the fixed-wing example and explicitly requires it be
-    /// overridable per platform (rotary-wing, manned pods, ...).
-    pub platform_type: String,
-    /// `stale = time + update_interval_us`. ST 0805.1 defines `stale` as
-    /// "time of next message" but gives no concrete interval — this default
-    /// is an implementation choice, not a spec value.
-    pub update_interval_us: u64,
-    /// XML attribute name stamped in `<detail><_flow-tags_ .../>`. Written
-    /// verbatim as an XML `Name` production (an attribute *name*, not an
-    /// *value*) — it must be a syntactically valid XML Name. It is neither
-    /// validated nor escaped; an invalid value produces malformed XML.
-    pub producer: String,
-    /// Geoid undulation (HAE − MSL) applied when only an MSL-referenced
-    /// altitude tag is available. `None` emits the MSL value as-is.
-    pub geoid_undulation_m: Option<f64>,
-    /// CoT `how` attribute. ST 0805.1 §5 fixes this at `m-p`
-    /// (machine-passed) for both event types.
-    pub how: String,
+crate::binding_record! {
+    /// Configuration for KLV→CoT conversion (ST 0805.1).
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct CotConfig {
+        /// CoT type for the Platform Position event. ST 0805.1 §5 gives
+        /// `a-f-A-M-F` as the fixed-wing example and explicitly requires it be
+        /// overridable per platform (rotary-wing, manned pods, ...).
+        @[py_default("\"a-f-A-M-F\"")]
+        pub platform_type: String,
+        /// The `stale` time is the event time plus this interval. ST 0805.1 defines `stale` as
+        /// "time of next message" but gives no concrete interval — this default
+        /// is an implementation choice, not a spec value.
+        @[py_default("5_000_000")]
+        pub update_interval_us: u64,
+        /// XML attribute name stamped in `<detail><_flow-tags_ .../>`. Written
+        /// verbatim as an XML `Name` production (an attribute *name*, not an
+        /// *value*) — it must be a syntactically valid XML Name. It is neither
+        /// validated nor escaped; an invalid value produces malformed XML.
+        @[py_default("\"ST0601CoT\"")]
+        pub producer: String,
+        /// Geoid undulation (HAE − MSL) applied when only an MSL-referenced
+        /// altitude tag is available. Absent emits the MSL value as-is.
+        pub geoid_undulation_m: Option<f64>,
+        /// CoT `how` attribute. ST 0805.1 §5 fixes this at `m-p`
+        /// (machine-passed) for both event types.
+        @[py_default("\"m-p\"")]
+        pub how: String,
+    }
 }
 
 impl Default for CotConfig {

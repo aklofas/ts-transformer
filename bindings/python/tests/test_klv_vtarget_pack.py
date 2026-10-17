@@ -93,7 +93,7 @@ def test_vtarget_pack_vmask_is_bytes_not_list():
 def _vmti_with_color(color):
     """Minimal VmtiLs carrying one VTargetPack with the given target_color,
     constructed so it round-trips through `encode_vmti` (which dispatches
-    via `py_to_vtarget_pack` — the validator under test)."""
+    via `v_target_pack_from_py` — the validator under test)."""
     return VmtiLs(
         precision_time_stamp=1_700_000_000_000_000,
         version_number=6,

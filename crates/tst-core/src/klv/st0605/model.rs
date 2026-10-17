@@ -33,11 +33,17 @@ impl TimeStatus {
     }
 }
 
-/// MISB ST 0605 §7 Precision Time Stamp Pack typed view.
-#[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PrecisionTimeStampPack {
-    pub time_status: TimeStatus,
-    /// Microseconds since 1970-01-01T00:00:00Z (POSIX epoch), big-endian.
-    pub timestamp_us: u64,
+crate::binding_record! {
+    /// MISB ST 0605 §7 Precision Time Stamp Pack typed view.
+    ///
+    /// Wire form is 26 bytes: the 16-byte universal label, a 1-byte BER length,
+    /// the 1-byte time status and the 8-byte big-endian microsecond timestamp.
+    #[must_use]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct PrecisionTimeStampPack {
+        @[custom]
+        pub time_status: TimeStatus,
+        /// Microseconds since 1970-01-01T00:00:00Z (POSIX epoch), big-endian.
+        pub timestamp_us: u64,
+    }
 }

@@ -129,6 +129,104 @@ const CUSTOM: &[CustomRow] = &[
         java_default: None,
         prim: None,
     },
+    // ST 0102 and ST 0806 coded enums cross as the enum member (Python) or
+    // the raw code point in a boxed `Integer` (Java), as the ST 0601 ones do.
+    CustomRow {
+        rust: "SecurityClassification",
+        py: "SecurityClassification | int",
+        java: "Integer",
+        sig: "Ljava/lang/Integer;",
+        py_default: None,
+        java_default: None,
+        prim: None,
+    },
+    CustomRow {
+        rust: "ClassifyingCountryCodingMethod",
+        py: "ClassifyingCountryCodingMethod | int",
+        java: "Integer",
+        sig: "Ljava/lang/Integer;",
+        py_default: None,
+        java_default: None,
+        prim: None,
+    },
+    CustomRow {
+        rust: "ObjectCountryCodingMethod",
+        py: "ObjectCountryCodingMethod | int",
+        java: "Integer",
+        sig: "Ljava/lang/Integer;",
+        py_default: None,
+        java_default: None,
+        prim: None,
+    },
+    CustomRow {
+        rust: "RvtPoiType",
+        py: "RvtPoiType | int",
+        java: "Integer",
+        sig: "Ljava/lang/Integer;",
+        py_default: None,
+        java_default: None,
+        prim: None,
+    },
+    CustomRow {
+        rust: "RvtAoiType",
+        py: "RvtAoiType | int",
+        java: "Integer",
+        sig: "Ljava/lang/Integer;",
+        py_default: None,
+        java_default: None,
+        prim: None,
+    },
+    // The ST 0605 time status byte, a host class of its own.
+    CustomRow {
+        rust: "TimeStatus",
+        py: "TimeStatus",
+        java: "TimeStatus",
+        sig: "Lorg/tstrans/klv/TimeStatus;",
+        py_default: None,
+        java_default: None,
+        prim: None,
+    },
+    // The ST 0903 target colour: a 3-tuple in Python, a nested record in Java.
+    CustomRow {
+        rust: "[u8;3]",
+        py: "tuple[int, int, int]",
+        java: "TargetColor",
+        sig: "Lorg/tstrans/klv/VTargetPack$TargetColor;",
+        py_default: None,
+        java_default: None,
+        prim: None,
+    },
+    // An ST 1204 typed UUID. The Java record flattens it into two
+    // components, so the record is generated for Python only and these
+    // Java columns are never read.
+    CustomRow {
+        rust: "(IdType,[u8;16])",
+        py: "tuple[IdType, bytes]",
+        java: "",
+        sig: "",
+        py_default: None,
+        java_default: None,
+        prim: None,
+    },
+    // The ST 1010 matrices: tuples in Python, primitive arrays in Java.
+    CustomRow {
+        rust: "Vec<f64>",
+        py: "tuple[float, ...]",
+        java: "double[]",
+        sig: "[D",
+        py_default: Some("()"),
+        java_default: None,
+        prim: None,
+    },
+    CustomRow {
+        rust: "Vec<bool>",
+        py: "tuple[bool, ...]",
+        java: "boolean[]",
+        sig: "[Z",
+        py_default: Some("()"),
+        java_default: None,
+        prim: None,
+    },
     // The ST 0601 pass-through lists, whose host item types are not the
     // Rust ones.
     CustomRow {
@@ -553,6 +651,10 @@ pub fn resolve<'a>(reg: &[Entry], schema: &'a RecordSchema) -> Result<Vec<Fld<'a
             } else if let Some((p, j)) = type_default(t) {
                 py_default = Some(p);
                 java_default = j;
+            }
+            // A declared default wins over the one the type implies.
+            if let Some(d) = f.py_default {
+                py_default = Some(d.to_string());
             }
             if py_default.is_none() {
                 if let Some(d) = defaulted {

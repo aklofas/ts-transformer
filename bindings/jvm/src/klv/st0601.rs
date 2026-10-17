@@ -26,7 +26,7 @@
 
 use crate::panic::jni_native;
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JObject, JValue};
+use jni::objects::{JByteArray, JObject};
 use jni::sys::{jint, jlong, jobject, jstring};
 use tst_core::error::KlvFieldError;
 use tst_core::klv::st0601::{
@@ -34,7 +34,7 @@ use tst_core::klv::st0601::{
     decode_strict, decode_strict_compliance, encode_strict_compliance, encode_to_vec_with,
     st0601_sentinel_meaning,
 };
-use tst_core::klv::st1010::{SdccFlp, decode_sdcc_flp, encode_sdcc_flp_mode2};
+use tst_core::klv::st1010::{decode_sdcc_flp, encode_sdcc_flp_mode2};
 
 use crate::error::{map_klv_decode_error, map_klv_encode_error, throw_klv_decode};
 use tst_pipeline::binding::BindingErrorKind;
@@ -275,28 +275,6 @@ fn map_sdcc_field_error(env: &mut JNIEnv, e: &KlvFieldError) {
     throw_klv_decode(env, kind, &msg);
 }
 
-/// Build a `org.tstrans.klv.SdccFlp` Java record from a decoded Rust `SdccFlp`.
-fn build_sdcc_flp(env: &mut JNIEnv<'_>, m: &SdccFlp) -> jni::errors::Result<jobject> {
-    let std_devs_arr = env.new_double_array(m.std_devs.len() as i32)?;
-    env.set_double_array_region(&std_devs_arr, 0, &m.std_devs)?;
-    let correlations_arr = env.new_double_array(m.correlations.len() as i32)?;
-    env.set_double_array_region(&correlations_arr, 0, &m.correlations)?;
-    let presence: Vec<u8> = m.correlation_present.iter().map(|&b| u8::from(b)).collect();
-    let presence_arr = env.new_boolean_array(presence.len() as i32)?;
-    env.set_boolean_array_region(&presence_arr, 0, &presence)?;
-    let obj = env.new_object(
-        "org/tstrans/klv/SdccFlp",
-        "(J[D[D[Z)V",
-        &[
-            JValue::Long(m.matrix_size as i64),
-            JValue::Object(&std_devs_arr),
-            JValue::Object(&correlations_arr),
-            JValue::Object(&presence_arr),
-        ],
-    )?;
-    Ok(obj.into_raw())
-}
-
 /// Read a Java `double[]` into a `Vec<f64>`.
 fn read_double_array(
     env: &mut JNIEnv,
@@ -331,7 +309,9 @@ jni_native! {
             }
         };
         match decode_sdcc_flp(&bytes) {
-            Ok(m) => build_sdcc_flp(env, &m).unwrap_or_else(|_| JObject::null().into_raw()),
+            Ok(m) => crate::generated::st1010::build_sdcc_flp(env, &m)
+                .map(JObject::into_raw)
+                .unwrap_or_else(|_| JObject::null().into_raw()),
             Err(e) => {
                 map_sdcc_field_error(env, &e);
                 JObject::null().into_raw()
