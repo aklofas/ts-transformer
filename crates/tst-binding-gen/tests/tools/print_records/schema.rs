@@ -83,6 +83,9 @@ pub struct Entry {
     /// The interface the Java record implements, `""` for none.
     pub java_implements: &'static str,
     pub schema: RecordSchema,
+    /// Whether the Python side is generated. `false` for a record only Java
+    /// exposes (Python hands the same numbers over as a dict).
+    pub python: bool,
     /// The Python host type.
     pub shape: PyShape,
     /// The name of the host classes when it is not the Rust name (the Rust
@@ -126,6 +129,7 @@ impl Entry {
             rust_path,
             java_implements,
             schema,
+            python: true,
             shape: PyShape::Dataclass,
             host_name: "",
             py_ctor: false,
