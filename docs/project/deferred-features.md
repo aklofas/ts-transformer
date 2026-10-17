@@ -549,8 +549,8 @@ mean **Deferred**. An entry whose feature has shipped must never read
   projection structs (`VideoSample`, `KlvSample`), a tagged-enum
   output (`PairerOutput`) that maps to C discriminator + union, and
   no lifetimes.
-- **Trigger to revisit:** decided for 0.7.0 (see the shell parity matrix in
-  `docs/reference/binding-authors.md`): stays deferred because it is a new
+- **Trigger to revisit:** decided for 0.7.0 (see the `# capability:` lines in
+  `tests/coverage/surface-manifest.toml`): stays deferred because it is a new
   handle family (~7 entry points, a tagged output discriminator + union,
   two projection structs), not a < 1-day addition. Reopens when (a) the
   tst-uniffi design decides `Pairer` is in the mobile surface — then the C
@@ -1257,8 +1257,8 @@ mean **Deferred**. An entry whose feature has shipped must never read
   Rust surface ships first and a binding follows a binding consumer's
   ask. None exists — the integrator that asked for the mount DTS method
   consumes the Rust crates directly. For C it is additive ABI work (a
-  minor bump), decided for 0.7.0 (see the shell parity matrix in
-  `docs/reference/binding-authors.md`) to stay deferred: three variants
+  minor bump), decided for 0.7.0 (see the `# capability:` lines in
+  `tests/coverage/surface-manifest.toml`) to stay deferred: three variants
   across six live shells plus the RTSP mount is 21 entry points with
   per-shell tests, above the < 1-day bar for a ship-now cell.
 - **Trigger to revisit:** the first C consumer needing B-frame or ST

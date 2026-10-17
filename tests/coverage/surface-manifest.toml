@@ -29,11 +29,31 @@
 #                         c:/python:/java: columns of every pre-existing row;
 #                         it is a TODO, not a claim. Replace it with a real
 #                         symbol, :deferred or :n/a when you check the row.
+#                         The rail freezes the number of these per column
+#                         (UNAUDITED_CELLS_MAX): it may only fall, so a new or
+#                         edited row never carries one.
 #   "<prefix>:deferred"   no twin in that binding today (a real, checked gap).
 #   "<prefix>:n/a"        no twin by design.
+# :deferred and :n/a may carry their reason in parentheses:
+# "java:deferred(reason)", "python:n/a(reason)"; the bare forms stay valid.
+# A cell written by tst-binding-gen (a generated record's python:/java: cells)
+# is rewritten by `print-records --write` and compared by --check; edit the
+# registry, not the cell.
 # swift:/kotlin: are :deferred everywhere: tst-uniffi does not exist yet.
 # The optional " [feature=X]" suffix marks a symbol absent from builds without X
 # (X in {srt,rtp,udp,tcp,hls,rist}); the ratchet skips resolving it unless X is built.
+
+# --- Rules ---------------------------------------------------------------
+# An item whose key matches an item_regex is exempt without a row of its own.
+# A `[[exempt]]` row is for a single item that needs its own reason.
+
+[[exempt_rule]]
+item_regex = '::(clone|eq|ne|fmt|hash|cmp|partial_cmp|default)$'
+reason = "derived trait method"
+
+[[exempt_rule]]
+item_regex = '^rist_sys::'
+reason = "bindgen surface"
 
 # --- Seed: key mappable surface items ------------------------------------
 # These rows map high-value items to owning tests + binding columns. The rest
@@ -50,6 +70,8 @@ bindings = ["c:tst_demuxer_feed", "python:Demuxer.feed", "java:org.tstrans.mpegt
 scenario_ids = ["h264-st0601-mp", "malformed-pes-lenient"]
 tier = "A"
 
+# capability: Single-stream push (push_video, push_klv, push_audio, push_subtitle, push_data): Rust, C, Python and JVM.
+# capability: Per-stream handle accessors (video_handles, video_stream_handle): Rust, Python and JVM; C has none, because tst_mux_config_add_video_stream returns the handle at configuration time and the caller keeps it.
 [[surface]]
 kind = "rust"
 crate = "tst-core"
@@ -465,18 +487,6 @@ owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
-[[exempt]]
-item = "tst_core::codec::misp_time::MispTimeError::clone"
-reason = "derived trait method; module covered by misp_time tests"
-
-[[exempt]]
-item = "tst_core::codec::misp_time::MispTimeError::eq"
-reason = "derived trait method; module covered by misp_time tests"
-
-[[exempt]]
-item = "tst_core::codec::misp_time::MispTimeError::fmt"
-reason = "derived trait method (Debug + Display); module covered by misp_time tests"
-
 [[surface]]
 kind = "rust"
 crate = "tst-core"
@@ -484,18 +494,6 @@ item = "tst_core::codec::misp_time::MispTimeExtractError"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
-
-[[exempt]]
-item = "tst_core::codec::misp_time::MispTimeExtractError::clone"
-reason = "derived trait method; module covered by misp_time tests"
-
-[[exempt]]
-item = "tst_core::codec::misp_time::MispTimeExtractError::eq"
-reason = "derived trait method; module covered by misp_time tests"
-
-[[exempt]]
-item = "tst_core::codec::misp_time::MispTimeExtractError::fmt"
-reason = "derived trait method (Debug + Display); module covered by misp_time tests"
 
 [[surface]]
 kind = "rust"
@@ -505,24 +503,12 @@ owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
-[[exempt]]
-item = "tst_core::codec::misp_time::MispTimeKind::clone"
-reason = "derived trait method; module covered by misp_time tests"
-
-[[exempt]]
-item = "tst_core::codec::misp_time::MispTimeKind::eq"
-reason = "derived trait method; module covered by misp_time tests"
-
-[[exempt]]
-item = "tst_core::codec::misp_time::MispTimeKind::fmt"
-reason = "derived trait method; module covered by misp_time tests"
-
 [[surface]]
 kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::misp_time::MispTimestamp"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.codec.MispTimestamp", "java:org.tstrans.codec.MispTimestamp", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[surface]]
@@ -540,18 +526,6 @@ item = "tst_core::codec::misp_time::MispTimestamp::nanos"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
-
-[[exempt]]
-item = "tst_core::codec::misp_time::MispTimestamp::clone"
-reason = "derived trait method; module covered by misp_time tests"
-
-[[exempt]]
-item = "tst_core::codec::misp_time::MispTimestamp::eq"
-reason = "derived trait method; module covered by misp_time tests"
-
-[[exempt]]
-item = "tst_core::codec::misp_time::MispTimestamp::fmt"
-reason = "derived trait method; module covered by misp_time tests"
 
 [[surface]]
 kind = "rust"
@@ -622,28 +596,8 @@ item = "tst_core::codec::nal_framing::ParameterSets"
 reason = "new 2026-09-02, tst-core only (Apple/VideoToolbox PoC); no binding wraps it yet — graduate to [[surface]] when a binding wraps it"
 
 [[exempt]]
-item = "tst_core::codec::nal_framing::ParameterSets::clone"
-reason = "new 2026-09-02, tst-core only (Apple/VideoToolbox PoC); no binding wraps it yet — graduate to [[surface]] when a binding wraps it"
-
-[[exempt]]
-item = "tst_core::codec::nal_framing::ParameterSets::eq"
-reason = "new 2026-09-02, tst-core only (Apple/VideoToolbox PoC); no binding wraps it yet — graduate to [[surface]] when a binding wraps it"
-
-[[exempt]]
-item = "tst_core::codec::nal_framing::ParameterSets::default"
-reason = "new 2026-09-02, tst-core only (Apple/VideoToolbox PoC); no binding wraps it yet — graduate to [[surface]] when a binding wraps it"
-
-[[exempt]]
-item = "tst_core::codec::nal_framing::ParameterSets::fmt"
-reason = "new 2026-09-02, tst-core only (Apple/VideoToolbox PoC); no binding wraps it yet — graduate to [[surface]] when a binding wraps it"
-
-[[exempt]]
 item = "tst_core::codec::nal_framing::extract_parameter_sets"
 reason = "new 2026-09-02, tst-core only (Apple/VideoToolbox PoC); no binding wraps it yet — graduate to [[surface]] when a binding wraps it"
-
-[[exempt]]
-item = "tst_core::error::KlvPatchError::fmt"
-reason = "error-enum trait method (Debug/Display); covered via st0601 patch() tests"
 
 [[exempt]]
 item = "tst_core::error::KlvPatchError::from"
@@ -684,18 +638,6 @@ scenario_ids = []
 tier = "A"
 
 [[exempt]]
-item = "tst_core::klv::imapb::ImapbSpecial::clone"
-reason = "derive-generated; covered indirectly by encode_imapb_special tests"
-
-[[exempt]]
-item = "tst_core::klv::imapb::ImapbSpecial::eq"
-reason = "derive-generated; covered indirectly by encode_imapb_special tests"
-
-[[exempt]]
-item = "tst_core::klv::imapb::ImapbSpecial::fmt"
-reason = "derive-generated; covered indirectly by encode_imapb_special tests"
-
-[[exempt]]
 item = "tst_core::klv::length::ber_oid_len_u64"
 reason = "u64 sibling of ber_oid_len; encode-helper sizing (Rust-only, no FFI exposure)"
 
@@ -707,145 +649,33 @@ reason = "u64 sibling of read_ber_oid; ST 0903 VMTI targetId"
 item = "tst_core::klv::length::write_ber_oid_u64"
 reason = "u64 sibling of write_ber_oid; ST 0903 VMTI targetId"
 
-[[exempt]]
-item = "tst_core::klv::st0601::IcingDetected::clone"
-reason = "derive impl for the tag 34 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::IcingDetected::eq"
-reason = "derive impl for the tag 34 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::IcingDetected::fmt"
-reason = "derive impl for the tag 34 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::OperationalMode::clone"
-reason = "derive impl for the tag 77 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::OperationalMode::eq"
-reason = "derive impl for the tag 77 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::OperationalMode::fmt"
-reason = "derive impl for the tag 77 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::SensorFovName::clone"
-reason = "derive impl for the tag 63 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::SensorFovName::eq"
-reason = "derive impl for the tag 63 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::SensorFovName::fmt"
-reason = "derive impl for the tag 63 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::PlatformStatus::clone"
-reason = "derive impl for the tag 125 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::PlatformStatus::eq"
-reason = "derive impl for the tag 125 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::PlatformStatus::fmt"
-reason = "derive impl for the tag 125 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::SensorControlMode::clone"
-reason = "derive impl for the tag 126 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::SensorControlMode::eq"
-reason = "derive impl for the tag 126 coded enum; wire-code pins + round-trips in st0601::tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::SensorControlMode::fmt"
-reason = "derive impl for the tag 126 coded enum; wire-code pins + round-trips in st0601::tests"
-
 [[surface]]
 item = "tst_core::klv::st0601::ImageHorizonPixels"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs", "crates/tst-core/src/klv/st0601/packs.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.ImageHorizonPixels", "java:org.tstrans.klv.ImageHorizonPixels", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ImageHorizonPixels::clone"
-reason = "derive impl for the tag 81 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ImageHorizonPixels::eq"
-reason = "derive impl for the tag 81 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ImageHorizonPixels::default"
-reason = "derive impl for the tag 81 pack struct; used by packs::parse_image_horizon's ..Default::default() base"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ImageHorizonPixels::fmt"
-reason = "derive impl for the tag 81 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::ControlCommand"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs", "crates/tst-core/src/klv/st0601/packs.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.ControlCommand", "java:org.tstrans.klv.ControlCommand", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ControlCommand::clone"
-reason = "derive impl for the tag 115 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ControlCommand::eq"
-reason = "derive impl for the tag 115 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ControlCommand::fmt"
-reason = "derive impl for the tag 115 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::SdccFlpField"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.SdccFlpField", "java:org.tstrans.klv.SdccFlpField", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::klv::st0601::SdccFlpField::clone"
-reason = "derive impl for the tag 102 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::SdccFlpField::eq"
-reason = "derive impl for the tag 102 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::SdccFlpField::fmt"
-reason = "derive impl for the tag 102 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::SensorFrameRate"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs", "crates/tst-core/src/klv/st0601/packs.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.SensorFrameRate", "java:org.tstrans.klv.SensorFrameRate", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::klv::st0601::SensorFrameRate::clone"
-reason = "derive impl for the tag 127 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::SensorFrameRate::eq"
-reason = "derive impl for the tag 127 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::SensorFrameRate::fmt"
-reason = "derive impl for the tag 127 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::SensorFrameRate::fps"
@@ -857,44 +687,16 @@ tier = "A"
 [[surface]]
 item = "tst_core::klv::st0601::MetadataSubstreamId"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs", "crates/tst-core/src/klv/st0601/packs.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.MetadataSubstreamId", "java:org.tstrans.klv.MetadataSubstreamId", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::klv::st0601::MetadataSubstreamId::clone"
-reason = "derive impl for the tag 143 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::MetadataSubstreamId::eq"
-reason = "derive impl for the tag 143 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::MetadataSubstreamId::fmt"
-reason = "derive impl for the tag 143 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::CountryCodes"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.CountryCodes", "java:org.tstrans.klv.CountryCodes", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::klv::st0601::CountryCodes::clone"
-reason = "derive impl for the tag 122 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::CountryCodes::eq"
-reason = "derive impl for the tag 122 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::CountryCodes::default"
-reason = "derive impl for the tag 122 pack struct; used by packs::parse_country_codes's ..CountryCodes::default() base"
-
-[[exempt]]
-item = "tst_core::klv::st0601::CountryCodes::fmt"
-reason = "derive impl for the tag 122 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::WavelengthRecord"
@@ -903,118 +705,38 @@ bindings = ["c:unaudited", "python:tstrans.klv.WavelengthRecord", "java:org.tstr
 scenario_ids = []
 tier = "A"
 
-[[exempt]]
-item = "tst_core::klv::st0601::WavelengthRecord::clone"
-reason = "derive impl for the tag 128 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::WavelengthRecord::eq"
-reason = "derive impl for the tag 128 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::WavelengthRecord::fmt"
-reason = "derive impl for the tag 128 pack struct; exercised the same way"
-
 [[surface]]
 item = "tst_core::klv::st0601::Location"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.Location", "java:org.tstrans.klv.Location", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::klv::st0601::Location::clone"
-reason = "derive impl for the Location struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::Location::eq"
-reason = "derive impl for the Location struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::Location::default"
-reason = "derive impl for the Location struct; used by packs::parse_location's ..Location::default() base"
-
-[[exempt]]
-item = "tst_core::klv::st0601::Location::fmt"
-reason = "derive impl for the Location struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::AirbaseLocations"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.AirbaseLocations", "java:org.tstrans.klv.AirbaseLocations", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::klv::st0601::AirbaseLocations::clone"
-reason = "derive impl for the tag 130 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::AirbaseLocations::eq"
-reason = "derive impl for the tag 130 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::AirbaseLocations::default"
-reason = "derive impl for the tag 130 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::AirbaseLocations::fmt"
-reason = "derive impl for the tag 130 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::PayloadType::clone"
-reason = "derive impl for the tag 138 Payload Type enum; wire-code pins + round-trips in st0601::tests::wpc_payload_list_vector"
-
-[[exempt]]
-item = "tst_core::klv::st0601::PayloadType::eq"
-reason = "derive impl for the tag 138 Payload Type enum; wire-code pins + round-trips in st0601::tests::wpc_payload_list_vector"
-
-[[exempt]]
-item = "tst_core::klv::st0601::PayloadType::fmt"
-reason = "derive impl for the tag 138 Payload Type enum; wire-code pins + round-trips in st0601::tests::wpc_payload_list_vector"
 
 [[surface]]
 item = "tst_core::klv::st0601::PayloadRecord"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.PayloadRecord", "java:org.tstrans.klv.PayloadRecord", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::klv::st0601::PayloadRecord::clone"
-reason = "derive impl for the tag 138 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::PayloadRecord::eq"
-reason = "derive impl for the tag 138 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::PayloadRecord::fmt"
-reason = "derive impl for the tag 138 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::PayloadList"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.PayloadList", "java:org.tstrans.klv.PayloadList", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::klv::st0601::PayloadList::clone"
-reason = "derive impl for the tag 138 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::PayloadList::eq"
-reason = "derive impl for the tag 138 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::PayloadList::fmt"
-reason = "derive impl for the tag 138 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::WeaponsStore"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.WeaponsStore", "java:org.tstrans.klv.WeaponsStore", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -1053,98 +775,26 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
-[[exempt]]
-item = "tst_core::klv::st0601::WeaponsStore::clone"
-reason = "derive impl for the tag 140 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::WeaponsStore::eq"
-reason = "derive impl for the tag 140 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::WeaponsStore::fmt"
-reason = "derive impl for the tag 140 pack struct; exercised the same way"
-
 [[surface]]
 item = "tst_core::klv::st0601::Waypoint"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.Waypoint", "java:org.tstrans.klv.Waypoint", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::klv::st0601::Waypoint::clone"
-reason = "derive impl for the tag 141 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::Waypoint::eq"
-reason = "derive impl for the tag 141 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::Waypoint::fmt"
-reason = "derive impl for the tag 141 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::ViewDomain"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.ViewDomain", "java:org.tstrans.klv.ViewDomain", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ViewDomain::clone"
-reason = "derive impl for the tag 142 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ViewDomain::eq"
-reason = "derive impl for the tag 142 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ViewDomain::default"
-reason = "derive impl for the tag 142 pack struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ViewDomain::fmt"
-reason = "derive impl for the tag 142 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::ViewDomainPair"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.ViewDomainPair", "java:org.tstrans.klv.ViewDomainPair", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ViewDomainPair::clone"
-reason = "derive impl for the tag 142 pair struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ViewDomainPair::eq"
-reason = "derive impl for the tag 142 pair struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ViewDomainPair::default"
-reason = "derive impl for the tag 142 pair struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::ViewDomainPair::fmt"
-reason = "derive impl for the tag 142 pair struct; exercised the same way"
-
-[[exempt]]
-item = "tst_core::klv::st0601::OutOfRangePolicy::clone"
-reason = "added 2026-07-10 (OutOfRangePolicy); exercised by st0601::mapping indicator_* unit tests + st0601::tests indicator round-trips"
-
-[[exempt]]
-item = "tst_core::klv::st0601::OutOfRangePolicy::default"
-reason = "added 2026-07-10 (OutOfRangePolicy); exercised by st0601::mapping indicator_* unit tests + st0601::tests indicator round-trips"
-
-[[exempt]]
-item = "tst_core::klv::st0601::OutOfRangePolicy::eq"
-reason = "added 2026-07-10 (OutOfRangePolicy); exercised by st0601::mapping indicator_* unit tests + st0601::tests indicator round-trips"
-
-[[exempt]]
-item = "tst_core::klv::st0601::OutOfRangePolicy::fmt"
-reason = "added 2026-07-10 (OutOfRangePolicy); exercised by st0601::mapping indicator_* unit tests + st0601::tests indicator round-trips"
 
 [[exempt]]
 item = "tst_core::klv::st0601::encode_to_vec_with"
@@ -1153,28 +803,28 @@ reason = "added 2026-07-10 (encode_to_vec_with); exercised by st0601::tests indi
 [[surface]]
 item = "tst_core::klv::st0806::RvtAoi"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.RvtAoi", "java:org.tstrans.klv.RvtAoi", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::RvtLs"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.RvtLs", "java:org.tstrans.klv.RvtLs", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::RvtPoi"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.RvtPoi", "java:org.tstrans.klv.RvtPoi", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::RvtUserData"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.RvtUserData", "java:org.tstrans.klv.RvtUserData", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -1504,108 +1154,8 @@ item = "tst_core::klv::RVT_USER_DEFINED_LS_UL"
 reason = "top-level re-export of tst_core::klv::st0806::RVT_USER_DEFINED_LS_UL; see that entry for coverage"
 
 [[exempt]]
-item = "tst_core::klv::RvtAoi::clone"
-reason = "derive impl for st0806 RvtAoi; see tst_core::klv::st0806::RvtAoi entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtAoi::eq"
-reason = "derive impl for st0806 RvtAoi; see tst_core::klv::st0806::RvtAoi entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtAoi::fmt"
-reason = "derive impl for st0806 RvtAoi; see tst_core::klv::st0806::RvtAoi entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtAoi::default"
-reason = "derive impl for st0806 RvtAoi; see tst_core::klv::st0806::RvtAoi entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtLs::clone"
-reason = "derive impl for st0806 RvtLs; see tst_core::klv::st0806::RvtLs entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtLs::eq"
-reason = "derive impl for st0806 RvtLs; see tst_core::klv::st0806::RvtLs entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtLs::fmt"
-reason = "derive impl for st0806 RvtLs; see tst_core::klv::st0806::RvtLs entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtLs::default"
-reason = "derive impl for st0806 RvtLs; see tst_core::klv::st0806::RvtLs entry — graduate alongside it"
-
-[[exempt]]
 item = "tst_core::klv::RvtLs::frame_center_mgrs"
 reason = "st0806 RvtLs accessor; mirrored by the Python and Java st0806 suites, no dedicated Rust test yet"
-
-[[exempt]]
-item = "tst_core::klv::RvtPoi::clone"
-reason = "derive impl for st0806 RvtPoi; see tst_core::klv::st0806::RvtPoi entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtPoi::eq"
-reason = "derive impl for st0806 RvtPoi; see tst_core::klv::st0806::RvtPoi entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtPoi::fmt"
-reason = "derive impl for st0806 RvtPoi; see tst_core::klv::st0806::RvtPoi entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtPoi::default"
-reason = "derive impl for st0806 RvtPoi; see tst_core::klv::st0806::RvtPoi entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtUserData::clone"
-reason = "derive impl for st0806 RvtUserData; see tst_core::klv::st0806::RvtUserData entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtUserData::eq"
-reason = "derive impl for st0806 RvtUserData; see tst_core::klv::st0806::RvtUserData entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtUserData::fmt"
-reason = "derive impl for st0806 RvtUserData; see tst_core::klv::st0806::RvtUserData entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtUserData::default"
-reason = "derive impl for st0806 RvtUserData; see tst_core::klv::st0806::RvtUserData entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::RvtAoiType::clone"
-reason = "derive impl for st0806 RvtAoiType; covered when D3/D4 decode/encode tests land"
-
-[[exempt]]
-item = "tst_core::klv::RvtAoiType::eq"
-reason = "derive impl for st0806 RvtAoiType; covered when D3/D4 decode/encode tests land"
-
-[[exempt]]
-item = "tst_core::klv::RvtAoiType::fmt"
-reason = "derive impl for st0806 RvtAoiType; covered when D3/D4 decode/encode tests land"
-
-[[exempt]]
-item = "tst_core::klv::RvtPoiType::clone"
-reason = "derive impl for st0806 RvtPoiType; covered when D3/D4 decode/encode tests land"
-
-[[exempt]]
-item = "tst_core::klv::RvtPoiType::eq"
-reason = "derive impl for st0806 RvtPoiType; covered when D3/D4 decode/encode tests land"
-
-[[exempt]]
-item = "tst_core::klv::RvtPoiType::fmt"
-reason = "derive impl for st0806 RvtPoiType; covered when D3/D4 decode/encode tests land"
-
-[[exempt]]
-item = "tst_core::klv::RvtUserDataType::clone"
-reason = "derive impl for st0806 RvtUserDataType; covered when D3/D4 decode/encode tests land"
-
-[[exempt]]
-item = "tst_core::klv::RvtUserDataType::eq"
-reason = "derive impl for st0806 RvtUserDataType; covered when D3/D4 decode/encode tests land"
-
-[[exempt]]
-item = "tst_core::klv::RvtUserDataType::fmt"
-reason = "derive impl for st0806 RvtUserDataType; covered when D3/D4 decode/encode tests land"
 
 [[surface]]
 kind = "rust"
@@ -1643,10 +1193,12 @@ reason = "round-2 T2-AUCELL aggregate byte cap (2026-06-08); sibling of au_cell_
 item = "tst_core::mpegts::demux::DemuxerConfigBuilder::au_cell_max_in_flight_pids"
 reason = "round-2 T2-AUCELL active-PID cap (2026-06-08); sibling of au_cell_cap_per_pid; graduate to [[surface]] as coverage is asserted"
 
+# capability: Pre-sync ingress ceiling (DemuxerConfig::sync_buf_cap, 0 is the default): Rust; C tst_demux_config_set_sync_buf_cap; Python DemuxerConfig.sync_buf_cap; JVM DemuxerConfig.Builder.syncBufCap.
 [[exempt]]
 item = "tst_core::mpegts::demux::DemuxerConfigBuilder::sync_buf_cap"
 reason = "field-feedback-hardening 2026-07-08; tested via Python+JVM binding mirrors; graduate to [[surface]] as coverage is asserted"
 
+# capability: Continuous timestamps across the 33-bit rollover (DemuxerConfig::unwrap_timestamps): Rust; C tst_demux_config_set_unwrap_timestamps; Python DemuxerConfig.unwrap_timestamps; JVM DemuxerConfig.Builder.unwrapTimestamps.
 [[exempt]]
 item = "tst_core::mpegts::demux::DemuxerConfigBuilder::unwrap_timestamps"
 reason = "apple-poc pts-unwrap knob 2026-09-02; Rust-only opt-in, no binding wiring yet; graduate to [[surface]] as coverage is asserted"
@@ -1786,34 +1338,6 @@ owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
 bindings = ["java:org.tstrans.mpegts.NonConformantKind", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
-[[exempt]]
-item = "tst_core::mpegts::demux::event::PsiSyntaxKind::clone"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_core::mpegts::demux::event::PsiSyntaxKind::eq"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_core::mpegts::demux::event::PsiSyntaxKind::fmt"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_core::mpegts::demux::event::StreamKindTag::clone"
-reason = "derive impl; behavior covered by the StreamKind::tag unit test"
-
-[[exempt]]
-item = "tst_core::mpegts::demux::event::StreamKindTag::eq"
-reason = "derive impl; behavior covered by the StreamKind::tag unit test"
-
-[[exempt]]
-item = "tst_core::mpegts::demux::event::StreamKindTag::fmt"
-reason = "derive impl; behavior covered by the StreamKind::tag unit test"
-
-[[exempt]]
-item = "tst_core::mpegts::demux::event::StreamKindTag::hash"
-reason = "derive impl; behavior covered by the StreamKind::tag unit test"
-
 [[surface]]
 kind = "rust"
 crate = "tst-core"
@@ -1871,22 +1395,6 @@ owning_tests = ["crates/tst-core/tests/mpegts/mux_data.rs"]
 bindings = ["c:tst_data_stream_handle_t", "python:DataStreamHandle", "java:org.tstrans.mpegts.DataStreamHandle", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::mpegts::mux::DataStreamHandle::clone"
-reason = "derive impl; handle identity covered by mux_data.rs accessor-parity asserts"
-
-[[exempt]]
-item = "tst_core::mpegts::mux::DataStreamHandle::eq"
-reason = "derive impl; handle identity covered by mux_data.rs accessor-parity asserts"
-
-[[exempt]]
-item = "tst_core::mpegts::mux::DataStreamHandle::fmt"
-reason = "derive impl; handle identity covered by mux_data.rs accessor-parity asserts"
-
-[[exempt]]
-item = "tst_core::mpegts::mux::DataStreamHandle::hash"
-reason = "derive impl; handle identity covered by mux_data.rs accessor-parity asserts"
 
 [[surface]]
 kind = "rust"
@@ -1955,6 +1463,7 @@ bindings = ["c:tst_muxer_push_data", "python:Muxer.push_data", "java:org.tstrans
 scenario_ids = []
 tier = "A"
 
+# capability: Targeted push (push_video_to and its siblings): Rust, C, Python and JVM.
 [[surface]]
 kind = "rust"
 crate = "tst-core"
@@ -1981,10 +1490,12 @@ owning_tests = ["crates/tst-core/tests/mpegts/mux.rs"]
 bindings = ["c:tst_muxer_push_subtitle", "python:Muxer.push_subtitle", "java:org.tstrans.mpegts.Muxer.pushSubtitle", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
+# capability: On-wire push that is aware of the AV1 carriage (push_video_wire, push_video_wire_to): Rust, C, Python and JVM.
 [[exempt]]
 item = "tst_core::mpegts::mux::Muxer::push_video_wire_to"
 reason = "wire-push entry point for transmux pass-through"
 
+# capability: PTS plus DTS on a targeted push (push_video_to_with_dts): Rust, C, Python and JVM.
 [[exempt]]
 item = "tst_core::mpegts::mux::Muxer::push_video_wire_to_with_dts"
 reason = "PTS+DTS wire-push entry point for transmux pass-through"
@@ -2309,6 +1820,7 @@ bindings = ["java:org.tstrans.shells.CancelHandle", "c:unaudited", "python:unaud
 scenario_ids = []
 tier = "A"
 
+# capability: Shells over udp, tcp and rist: Rust; C tst_{udp,tcp,rist}_{sender,receiver,mux_sender,demux_receiver}_*; Python tstrans.shells.*.open(udp://...); JVM org.tstrans.shells.*.open(udp://...).
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -2318,6 +1830,7 @@ bindings = ["java:org.tstrans.shells.Sender", "c:unaudited", "python:unaudited",
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
+# capability: srt_stats on a shell: Rust; C has the per-family tst_*_get_socket_stats getters instead; Python and JVM on Sender and Receiver over srt:// only, none on MuxSender or DemuxReceiver.
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -2369,14 +1882,6 @@ owning_tests = ["crates/tst-core/src/net/io_classify.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::net::io_classify::SendClass::clone"
-reason = "derive impl for SendClass (a Copy type); no in-tree call site clones a SendClass directly, comparisons use Copy semantics"
-
-[[exempt]]
-item = "tst_core::net::io_classify::SendClass::fmt"
-reason = "derive impl for SendClass; Debug bound required by the io_classify/write_loop_tests assert_eq! failure-message formatting"
 
 [[surface]]
 kind = "rust"
@@ -2438,23 +1943,7 @@ item = "tst_core::shared::SharedBytes::slice"
 reason = "raw-first refactor 2026-06-08; graduate to [[surface]] as coverage is asserted"
 
 [[exempt]]
-item = "tst_core::shared::SharedBytes::clone"
-reason = "raw-first refactor 2026-06-08; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_core::shared::SharedBytes::eq"
-reason = "raw-first refactor 2026-06-08; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
 item = "tst_core::shared::SharedBytes::from"
-reason = "raw-first refactor 2026-06-08; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_core::shared::SharedBytes::fmt"
-reason = "raw-first refactor 2026-06-08; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_core::shared::SharedBytes::hash"
 reason = "raw-first refactor 2026-06-08; graduate to [[surface]] as coverage is asserted"
 
 [[exempt]]
@@ -2484,18 +1973,6 @@ owning_tests = ["crates/tst-tcp/tests/net_loopback.rs", "crates/tst-tcp/tests/ne
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_core::transport::BrokenCause::clone"
-reason = "derive impl for BrokenCause (a Copy type); exercised transitively via the derived TransportError::clone on every Broken clone in the tst-pipeline fixture tests — no in-tree call site clones a BrokenCause directly"
-
-[[exempt]]
-item = "tst_core::transport::BrokenCause::default"
-reason = "derive impl (#[default] Unspecified) so the cause has a conventional zero value; every in-tree producer names its cause explicitly, no call site uses Default"
-
-[[exempt]]
-item = "tst_core::transport::BrokenCause::fmt"
-reason = "derive impl for BrokenCause; Debug bound required by assert_eq! failure-message formatting in the tst-tcp peer-close tests and by TransportError's derived Debug"
 
 # percent_decode: pub because RtspUrl::parse decodes userinfo through it —
 # parse_url itself returns userinfo verbatim on a Stable-tier module.
@@ -2540,6 +2017,7 @@ tier = "A"
 # binding covered it; one org.tstrans.shells.DemuxReceiver now serves every
 # transport (the per-transport org.tstrans.rtp.DemuxReceiver is a deprecated
 # subclass of it).
+# capability: recv_event on DemuxReceiver: Rust; C tst_demux_receiver_* poll; JVM DemuxReceiver.recvEvent (null at end of stream); Python iterates the receiver instead.
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -2551,6 +2029,7 @@ tier = "A"
 
 # ManagedDemuxReceiver is the typed managed-demux shell; graduated once the
 # JVM mirror org.tstrans.srt.ManagedDemuxReceiver existed.
+# capability: Managed-receiver end reason (end_reason_handle): Rust; C tst_managed_demux_receiver_end_reason, mapped onto the TstStreamEndReason enum the RTP surface already uses; Python tstrans.shells.EndReason and JVM org.tstrans.shells.EndReason, each one enum for every transport.
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -2614,6 +2093,8 @@ tier = "A"
 # tst_pipeline::MuxSender graduated to [[surface]] once the JVM SRT binding
 # covered it; one org.tstrans.shells.MuxSender now serves every transport
 # (the per-transport org.tstrans.rtp.MuxSender is a deprecated subclass of it).
+# capability: MuxSender DTS and MISP video variants on live shells: Rust; C deferred (the offline tst_muxer_push_video_to_with_dts and tst_muxer_push_video_misp_to exist), Python and JVM deferred; see the MuxSender entries in docs/project/deferred-features.md.
+# capability: MuxSender::finish (drain, report the first drain error, close; it does not cancel first): Rust; C tst_mux_sender_finish, tst_managed_mux_sender_finish and tst_{udp,tcp,rtp,rist}_mux_sender_finish; Python MuxSender.finish and ManagedMuxSender.finish; JVM shells.MuxSender.finish and ManagedMuxSender.finish.
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -2676,6 +2157,7 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
+# capability: FileTransport::finish: Rust only; FileTransport is a capture transport that no binding exposes.
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -2730,14 +2212,11 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
+# capability: Pairer (KLV to video alignment): Rust; Python tstrans.pipeline.Pairer; JVM org.tstrans.pipeline.Pairer; C deferred, see the pipeline::ext::pairing entry in docs/project/deferred-features.md.
 [[surface]]
 item = "tst_pipeline::ext::pairing::VideoSample::split_units"
 owning_tests = ["crates/tst-pipeline/src/ext/pairing/nearest.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
-
-[[exempt]]
-item = "tst_core::cancel::CancelSlot::default"
-reason = "derive(Default); exercised through CancelSlot::new in crates/tst-core/src/cancel.rs"
 
 # MuxPublisher<P> is generic, so cargo public-api's bracket truncation
 # collapses the struct line AND every one of its methods (with_config,
@@ -2798,42 +2277,14 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
-[[exempt]]
-item = "tst_pipeline::reconnect::ManagedStatsHandle::clone"
-reason = "derive impl for ManagedStatsHandle, mirroring cancel_handle()'s cloneable-observer contract; not yet invoked by an in-tree .clone() call — interim exemption, graduate alongside a future multi-consumer stats test"
-
 # background-reconnect arc, 2026-08-19 — ManagedTransportStats is the stats()
 # snapshot type; clone is present but unexercised in-tree, fmt(Debug) backs the
 # {s:?} diagnostics in reconnect_background.rs's assertion messages.
-
-[[exempt]]
-item = "tst_pipeline::reconnect::ManagedTransportStats::clone"
-reason = "derive impl for ManagedTransportStats (the stats() snapshot type); not yet invoked by an in-tree .clone() call — interim exemption, graduate alongside a future multi-consumer stats test"
-
-[[exempt]]
-item = "tst_pipeline::reconnect::ManagedTransportStats::fmt"
-reason = "derive impl for ManagedTransportStats; Debug bound required by the {s:?} diagnostic format strings in reconnect_background.rs's assertions"
 
 # background-reconnect arc, 2026-08-19 — ReconnectMode's default/eq are directly
 # asserted by reconnect_policy_default_mode_is_blocking (mod.rs unit test); clone
 # is exercised transitively via ReconnectPolicy::clone() in spawn_worker()
 # (mod.rs:716), which every Background-mode reconnect_background.rs test invokes.
-
-[[exempt]]
-item = "tst_pipeline::reconnect::ReconnectMode::clone"
-reason = "derive impl for ReconnectMode; exercised transitively via ReconnectPolicy::clone() in spawn_worker() (mod.rs:716), invoked on every Background-mode reconnect_background.rs test"
-
-[[exempt]]
-item = "tst_pipeline::reconnect::ReconnectMode::default"
-reason = "derive impl for ReconnectMode; covered by reconnect_policy_default_mode_is_blocking (mod.rs unit test)"
-
-[[exempt]]
-item = "tst_pipeline::reconnect::ReconnectMode::eq"
-reason = "derive impl for ReconnectMode; covered by reconnect_policy_default_mode_is_blocking (mod.rs unit test) plus pervasive mode-gating comparisons in reconnect_background.rs"
-
-[[exempt]]
-item = "tst_pipeline::reconnect::ReconnectMode::fmt"
-reason = "derive impl for ReconnectMode; Debug bound required by reconnect_policy_default_mode_is_blocking's assert_eq (mod.rs)"
 
 # EndReasonHandle is the cloneable end-reason observer every receive surface
 # hands out (ManagedDemuxReceiver::end_reason_handle(),
@@ -2862,30 +2313,6 @@ scenario_ids = []
 tier = "A"
 
 [[exempt]]
-item = "tst_core::transport::EndReasonHandle::clone"
-reason = "derive impl for EndReasonHandle; shared by every receive surface and exercised in transport.rs end_reason_tests
-
-[[exempt]]
-item = "tst_core::transport::EndReasonHandle::default"
-reason = "derive impl backing EndReasonHandle::default(), used to build the empty handle in every receive surface and in transport.rs end_reason_tests
-
-[[exempt]]
-item = "tst_core::transport::EndReasonHandle::fmt"
-reason = "derive impl for EndReasonHandle; Debug bound required by assert_eq! failure-message formatting across the receive-surface tests
-
-[[exempt]]
-item = "tst_core::transport::EndReason::clone"
-derive impl for EndReason; exercised by assert_eq! across the receive-surface end_reason tests
-
-[[exempt]]
-item = "tst_core::transport::EndReason::eq"
-derive impl for EndReason; exercised by assert_eq! across the receive-surface end_reason tests
-
-[[exempt]]
-item = "tst_core::transport::EndReason::fmt"
-derive impl for EndReason; exercised by assert_eq! across the receive-surface end_reason tests
-
-[[exempt]]
 item = "tst_rist::RistSecret"
 reason = "round-2 4th-pass RIST PSK Debug-redaction newtype (2026-06-08); root re-export; graduate to [[surface]] as coverage is asserted"
 
@@ -2900,14 +2327,6 @@ reason = "round-2 4th-pass RIST PSK Debug-redaction newtype (2026-06-08); gradua
 [[exempt]]
 item = "tst_rist::config::RistSecret::expose"
 reason = "round-2 4th-pass RIST PSK Debug-redaction newtype (2026-06-08); graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_rist::config::RistSecret::clone"
-reason = "round-2 4th-pass RIST PSK Debug-redaction newtype (2026-06-08); derived; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_rist::config::RistSecret::fmt"
-reason = "round-2 4th-pass RIST PSK Debug-redaction newtype (2026-06-08); redacting Debug; graduate to [[surface]] as coverage is asserted"
 
 [[exempt]]
 item = "tst_rist::recv::RistRecvTransport::socket_stats"
@@ -3073,18 +2492,6 @@ scenario_ids = []
 tier = "A"
 
 [[exempt]]
-item = "tst_rtp::rtcp::RtcpError::clone"
-reason = "round-2 T2-RTCP-ENC fallible encoders (2026-06-08); derived; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_rtp::rtcp::RtcpError::eq"
-reason = "round-2 T2-RTCP-ENC fallible encoders (2026-06-08); derived; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_rtp::rtcp::RtcpError::fmt"
-reason = "round-2 T2-RTCP-ENC fallible encoders (2026-06-08); Debug+Display; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
 item = "tst_rtp::rtsp::server::mount::MountHandle::push_video_to_with_dts"
 reason = "unit-covered (mount.rs push_video_to_with_dts_serves_distinct_dts); Rust-only by design (bindings parity deferred — see deferred-features); graduate with the mount push family"
 
@@ -3094,6 +2501,7 @@ reason = "unit-covered (mount.rs push_video_to_with_dts_serves_distinct_dts); Ru
 # exercised against a real RTSP session (clean teardown, keepalive 454,
 # keepalive write failure, wire reset) in
 # tests/rtsp_client/stream_end_reason.rs.
+# capability: end_reason on a receiver: Rust, recorded by the rtp transport and the managed SRT receivers; C tst_rtp_{receiver,demux_receiver}_end_reason; Python and JVM EndReason, absent (None, null) on plain srt, udp, tcp and rist.
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
@@ -3152,14 +2560,6 @@ item = "tst_rtp::h264::H264Depacketizer"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
-item = "tst_rtp::depay::AccessUnit::clone"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::depay::AccessUnit::fmt"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
 item = "tst_rtp::h264::depacketizer::H264Depacketizer"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
@@ -3181,50 +2581,6 @@ reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests 
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264Depacketizer::stats"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::depay::DepayConfig::clone"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::depay::DepayConfig::default"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::depay::DepayConfig::fmt"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::depay::DepayStats::clone"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::depay::DepayStats::default"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::depay::DepayStats::eq"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::depay::DepayStats::fmt"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::depay::ParameterSetInjection::clone"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::depay::ParameterSetInjection::default"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::depay::ParameterSetInjection::eq"
-reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
-
-[[exempt]]
-item = "tst_rtp::depay::ParameterSetInjection::fmt"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
@@ -3390,42 +2746,6 @@ item = "tst_tcp::transport::TcpCancelHandle::is_cancelled"
 reason = "added 2026-07-02; cancel handle for cooperative TCP shutdown"
 
 [[exempt]]
-item = "tst_tcp::transport::TcpCancelHandle::clone"
-reason = "added 2026-07-02; cancel handle for cooperative TCP shutdown"
-
-[[exempt]]
-item = "tst_tcp::transport::TcpCancelHandle::fmt"
-reason = "added 2026-07-02; cancel handle for cooperative TCP shutdown"
-
-[[exempt]]
-item = "tst_core::mpegts::demux::AdaptationFieldKind::clone"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_core::mpegts::demux::AdaptationFieldKind::eq"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_core::mpegts::demux::AdaptationFieldKind::fmt"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_core::klv::st0601::St0601SentinelMeaning::clone"
-reason = "derive impl for the sentinel enum; covered by mapping tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::St0601SentinelMeaning::eq"
-reason = "derive impl for the sentinel enum; covered by mapping tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::St0601SentinelMeaning::fmt"
-reason = "derive impl for the sentinel enum; covered by mapping tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::St0601SentinelMeaning::hash"
-reason = "derive impl for the sentinel enum; covered by mapping tests"
-
-[[exempt]]
 item = "tst_core::klv::st0601::st0601_sentinel_meaning"
 reason = "Sentinel meaning lookup; exercised by mapping::tests::sentinel_meaning_table"
 
@@ -3520,18 +2840,6 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
-[[exempt]]
-item = "tst_core::klv::st0601::MismmsViolation::clone"
-reason = "derive impl for MismmsViolation; covered by validate_mismms tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::MismmsViolation::eq"
-reason = "derive impl for MismmsViolation; covered by validate_mismms tests"
-
-[[exempt]]
-item = "tst_core::klv::st0601::MismmsViolation::fmt"
-reason = "derive impls (Debug + Display) for MismmsViolation; covered by validate_mismms tests"
-
 
 [[exempt]]
 item = "tst_core::error::MuxError::from"
@@ -3622,7 +2930,7 @@ tier = "A"
 [[surface]]
 item = "tst_core::klv::st1204::CoreId"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.CoreId", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3689,46 +2997,10 @@ bindings = ["python:CoreId", "c:unaudited", "java:unaudited", "swift:deferred", 
 scenario_ids = []
 tier = "A"
 
-[[exempt]]
-item = "tst_core::klv::st1204::CoreId::clone"
-reason = "derive impl for st1204 CoreId; covered by decode/encode tests"
-
-[[exempt]]
-item = "tst_core::klv::st1204::CoreId::eq"
-reason = "derive impl for st1204 CoreId; covered by decode/encode tests"
-
-[[exempt]]
-item = "tst_core::klv::st1204::CoreId::fmt"
-reason = "derive impl for st1204 CoreId; covered by decode/encode tests"
-
-[[exempt]]
-item = "tst_core::klv::st1204::IdType::clone"
-reason = "derive impl for st1204 IdType; covered by decode tests"
-
-[[exempt]]
-item = "tst_core::klv::st1204::IdType::eq"
-reason = "derive impl for st1204 IdType; covered by decode tests"
-
-[[exempt]]
-item = "tst_core::klv::st1204::IdType::fmt"
-reason = "derive impl for st1204 IdType; covered by decode tests"
-
-[[exempt]]
-item = "tst_core::klv::st1204::St1204Error::clone"
-reason = "derive impl for st1204 error; covered by error-path tests"
-
-[[exempt]]
-item = "tst_core::klv::st1204::St1204Error::eq"
-reason = "derive impl for st1204 error; covered by error-path tests"
-
-[[exempt]]
-item = "tst_core::klv::st1204::St1204Error::fmt"
-reason = "derive impl for st1204 error; covered by error-path tests"
-
 [[surface]]
 item = "tst_core::klv::st1010::SdccFlp"
 owning_tests = ["crates/tst-core/src/klv/st1010.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.SdccFlp", "java:org.tstrans.klv.SdccFlp", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3754,18 +3026,6 @@ scenario_ids = []
 tier = "A"
 
 [[exempt]]
-item = "tst_core::klv::st1010::SdccFlp::clone"
-reason = "derive impl for st1010 SdccFlp; covered by decode/encode tests"
-
-[[exempt]]
-item = "tst_core::klv::st1010::SdccFlp::eq"
-reason = "derive impl for st1010 SdccFlp; covered by decode/encode tests"
-
-[[exempt]]
-item = "tst_core::klv::st1010::SdccFlp::fmt"
-reason = "derive impl for st1010 SdccFlp; covered by decode/encode tests"
-
-[[exempt]]
 item = "tst_core::klv::SdccFlp"
 reason = "top-level re-export of tst_core::klv::st1010::SdccFlp; see that entry for coverage"
 
@@ -3780,7 +3040,7 @@ reason = "top-level re-export of tst_core::klv::st1010::encode_sdcc_flp_mode2; s
 [[surface]]
 item = "tst_core::klv::st0805::CotConfig"
 owning_tests = ["crates/tst-core/src/klv/st0805.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.CotConfig", "java:org.tstrans.klv.CotConfig", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3831,201 +3091,6 @@ reason = "top-level re-export of tst_core::klv::st0805::sensor_point_of_interest
 [[exempt]]
 item = "tst_core::klv::spi_uid"
 reason = "top-level re-export of tst_core::klv::st0805::spi_uid; see that entry for coverage"
-
-[[exempt]]
-item = "tst_core::klv::st0805::CotConfig::clone"
-reason = "derive impl for st0805 CotConfig; see tst_core::klv::st0805::CotConfig entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::st0805::CotConfig::eq"
-reason = "derive impl for st0805 CotConfig; see tst_core::klv::st0805::CotConfig entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::st0805::CotConfig::default"
-reason = "derive impl for st0805 CotConfig; see tst_core::klv::st0805::CotConfig entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::klv::st0805::CotConfig::fmt"
-reason = "derive impl for st0805 CotConfig; see tst_core::klv::st0805::CotConfig entry — graduate alongside it"
-
-[[exempt]]
-item = "tst_core::error::CotError::clone"
-reason = "derive impl for st0805 CotError; covered by error-path tests"
-
-[[exempt]]
-item = "tst_core::error::CotError::eq"
-reason = "derive impl for st0805 CotError; covered by error-path tests"
-
-[[exempt]]
-item = "tst_core::error::CotError::fmt"
-reason = "derive impl for st0805 CotError; covered by error-path tests"
-
-[[exempt]]
-item = "rist_sys::iovec::clone"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::iovec::default"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::iovec::fmt"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::msghdr::clone"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::msghdr::default"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::msghdr::fmt"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::pollfd::clone"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::pollfd::default"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::pollfd::fmt"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::receiver_flow_attr_callback_t"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_DEFAULT_RECOVERY_PRIORITY"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_PEER_WEIGHT_DUPLICATE"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_RECOVERY_DEPTH_DEFAULT"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_RECOVERY_DEPTH_MAX"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_RECOVERY_DEPTH_MIN"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::rist_transport_ops::clone"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::rist_transport_ops::default"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::rist_transport_ops::fmt"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_LOCAL_PORT"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_MCAST_SOURCE"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_MCAST_TTL"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_MERGE_MODE"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_RECOVERY_DEPTH"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_RECOVERY_PRIORITY"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_REFLECTOR"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_SPLIT_MODE"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_SRP_COMPAT"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::sa_family_t"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::sockaddr::clone"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::sockaddr::default"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::sockaddr::fmt"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::__socklen_t"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::socklen_t"
-reason = "librist 0.2.18 bindgen surface growth 2026-07-24; graduate to [[surface]] as coverage is asserted"
-[[exempt]]
-item = "rist_sys::RIST_DEFAULT_RTT_DROP"
-reason = "librist 0.2.20 bindgen surface growth 2026-08-30; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_DEFAULT_RTT_DROP_SETTLE"
-reason = "librist 0.2.20 bindgen surface growth 2026-08-30; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_DEFAULT_RTT_DROP_TRICKLE"
-reason = "librist 0.2.20 bindgen surface growth 2026-08-30; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_DEFAULT_RTT_RESTORE"
-reason = "librist 0.2.20 bindgen surface growth 2026-08-30; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_CBR_OUTPUT"
-reason = "librist 0.2.20 bindgen surface growth 2026-08-30; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_RTT_DROP"
-reason = "librist 0.2.20 bindgen surface growth 2026-08-30; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_RTT_DROP_SETTLE"
-reason = "librist 0.2.20 bindgen surface growth 2026-08-30; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_RTT_DROP_TRICKLE"
-reason = "librist 0.2.20 bindgen surface growth 2026-08-30; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "rist_sys::RIST_URL_PARAM_RTT_RESTORE"
-reason = "librist 0.2.20 bindgen surface growth 2026-08-30; graduate to [[surface]] as coverage is asserted"
 
 
 # --- tst_pipeline::binding (2026-09) — Owned handle state machine + panic helpers. ---
@@ -4552,6 +3617,7 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
+# capability: Cross-thread cancel entry point: Rust on every transport (cancel_handle is Some everywhere); C tst_<transport>_<shell>_cancel for srt, rtp, tcp, udp and rist; Python and JVM on every shell, the SRT listener and managed shells, H264Receiver and the raw transports.
 [[surface]]
 kind = "rust"
 crate = "tst-srt"
@@ -4674,36 +3740,12 @@ reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catal
 item = "tst_udp::UdpCancelHandle"
 reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
-[[exempt]]
-item = "tst_rtp::ClockAlignment::clone"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_rtp::ClockAlignment::default"
-reason = "Default impl (NotApplicable); no direct binding method"
-
-[[exempt]]
-item = "tst_rtp::ClockAlignment::eq"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_rtp::ClockAlignment::fmt"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_rtp::PublisherInfo::clone"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_rtp::PublisherInfo::fmt"
-reason = "derive impl; no direct binding method"
-
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::PublishMountStats"
 owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/stats.rs", "crates/tst-rtp/tests/rtsp_server/publish/es_h264_klv.rs"]
-bindings = ["c:tst_rtsp_publish_mount_stats_t", "python:PublishMountStats", "java:org.tstrans.rtp.PublishMountStats", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_rtsp_publish_mount_stats_t", "python:tstrans.rtp.PublishMountStats", "java:org.tstrans.rtp.PublishMountStats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4751,10 +3793,6 @@ owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/lifecycle.rs"]
 bindings = ["c:tst_rtsp_publish_mount_cancel", "python:PublishMount.cancel", "java:org.tstrans.rtp.PublishMount.cancel", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
-
-[[exempt]]
-item = "tst_rtp::PublishMountHandle::clone"
-reason = "derive impl; no direct binding method"
 
 [[surface]]
 kind = "rust"
@@ -4810,18 +3848,6 @@ bindings = ["c:tst_rtsp_publish_mount_get_stats", "python:PublishMount.stats", "
 scenario_ids = []
 tier = "A"
 
-[[exempt]]
-item = "tst_rtp::PublishMountStats::clone"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_rtp::PublishMountStats::default"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_rtp::PublishMountStats::fmt"
-reason = "derive impl; no direct binding method"
-
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
@@ -4831,18 +3857,7 @@ bindings = ["c:tst_rtsp_publish_mount_t", "python:PublishMount", "java:org.tstra
 scenario_ids = []
 tier = "A"
 
-[[exempt]]
-item = "tst_rtp::rtsp::server::publish::PublishShape::clone"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_rtp::rtsp::server::publish::PublishShape::eq"
-reason = "derive impl; no direct binding method"
-
-[[exempt]]
-item = "tst_rtp::rtsp::server::publish::PublishShape::fmt"
-reason = "derive impl; no direct binding method"
-
+# capability: RTSP publisher role (add_publish_mount, next_publisher, remove_mount, publish-mount transport, stats and publisher info, accept_unregistered_publishers): Rust; C tst_rtsp_server_* and tst_rtsp_publish_mount_*; Python RtspServer and PublishMount; JVM RtspServer and PublishMount.
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"

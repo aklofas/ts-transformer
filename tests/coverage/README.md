@@ -111,12 +111,32 @@ un-catalogued. The ratchet (`scripts/check/repo/surface-manifest.sh`) enforces:
   Three sentinels stand in for a symbol and are never resolved:
   `"<prefix>:unaudited"` (nobody has checked — the value the bulk migration
   wrote, a TODO rather than a claim), `"<prefix>:deferred"` (a checked gap) and
-  `"<prefix>:n/a"` (no twin by design). `swift:` / `kotlin:` real symbols are
+  `"<prefix>:n/a"` (no twin by design). `:deferred` and `:n/a` may carry their
+  reason in parentheses (`"java:deferred(reason)"`, `"python:n/a(reason)"`); the
+  bare forms stay valid. `swift:` / `kotlin:` real symbols are
   accepted unresolved until tst-uniffi ships.
+- **(b3) `unaudited` is frozen per column** — the number of `:unaudited` cells in
+  the `c`, `python` and `java` columns may not exceed `UNAUDITED_CELLS_MAX` in
+  the rail (`--print-baseline` prints it). Auditing a cell lowers the count and
+  the maximum in the same change; a new or edited row names a real symbol,
+  `:deferred(reason)` or `:n/a(reason)`.
+- **generated cells** — the `python:` and `java:` cells of a `[[surface]]` row
+  keyed by a generated record's Rust path are written by
+  `print-records --write` and compared by `scripts/check/repo/binding-records.sh`;
+  edit the registry, not the cell. A record the host builds by hand keeps its
+  hand-written cell for that column.
+- **`[[exempt_rule]]`** — a table with an `item_regex` (an extended regular
+  expression over the item key) and a `reason`. An item that matches is exempt
+  without a row of its own and is neither listed nor counted by rule (c): the
+  derived trait methods (`::clone`, `::eq`, `::fmt`, ...) and the `rist_sys`
+  bindgen surface. A `[[exempt]]` row is for one item that needs its own reason;
+  the rail warns about a row a rule already covers.
+- **`# capability:` comments** — a capability that spans several items is a
+  comment line above its rows; it states which binding carries it.
 - **(c) closure** — the items extracted from the `public-api.txt` baselines
   that no `[[surface]]` or `[[exempt]]` row names must be exactly the set the rail
-  pins as `UNAUDITED_COUNT` / `UNAUDITED_SHA256` (2 075 items; the 2026-06-03
-  bootstrap left most of them uncatalogued). `bash scripts/check/repo/surface-manifest.sh
+  pins as `UNAUDITED_COUNT` / `UNAUDITED_SHA256` (the 2026-06-03
+  bootstrap left most of them uncatalogued; the number is in the rail). `bash scripts/check/repo/surface-manifest.sh
   --list-unaudited` prints them.
 
 **Adding a new public API item:** a CI failure means the un-catalogued set changed —

@@ -10,9 +10,14 @@
 #   (b2) every [[surface]] row carries all five binding columns (c, python, java,
 #       swift, kotlin) — "<prefix>:unaudited" / ":deferred" / ":n/a" declare a
 #       column whose twin is unchecked / absent today / absent by design;
+#       ":deferred(reason)" and ":n/a(reason)" say why, in the cell;
+#   (b3) "unaudited" is frozen per column: the number of :unaudited cells in
+#       the c, python and java columns may not exceed UNAUDITED_CELLS_MAX;
 #   (c) closure: the mappable public-api.txt items that no [[surface]] or
 #       [[exempt]] row names are exactly the pinned set (UNAUDITED_COUNT
-#       items whose sorted list hashes to UNAUDITED_SHA256).
+#       items whose sorted list hashes to UNAUDITED_SHA256). An item matching
+#       an [[exempt_rule]] item_regex in the manifest is covered by that rule
+#       and is neither listed nor counted.
 #
 # Run it:          bash scripts/check/repo/surface-manifest.sh
 # Pinned set:      bash scripts/check/repo/surface-manifest.sh --list-unaudited
@@ -28,6 +33,7 @@
 #   SURFACE_PY_PACKAGE      the package name a module-qualified cell starts with
 #   SURFACE_REQUIRED_PREFIXES  binding columns every [[surface]] row must carry
 #   SURFACE_UNAUDITED_COUNT / SURFACE_UNAUDITED_SHA256  rule (c) baseline
+#   SURFACE_UNAUDITED_CELLS_MAX  rule (b3) maxima, "<c> <python> <java>"
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -46,6 +52,11 @@ SURFACE_JAVA_DIR="${SURFACE_JAVA_DIR:-$ROOT/bindings/jvm/src/main/java}"
 # shrinks the set: re-pin both values with --print-baseline in that change.
 UNAUDITED_COUNT=2081
 UNAUDITED_SHA256=57342eb014e824e430a14a80c56209165d61cd240963421350632b4fe66c7da8
+
+# Rule (b3): the most :unaudited cells each binding column may hold, in the
+# order "c python java". The number may only fall: auditing a cell lowers it,
+# and a new row names a real symbol, :deferred(reason) or :n/a(reason).
+UNAUDITED_CELLS_MAX="317 228 184"
 
 # ---------------------------------------------------------------------------
 # extract_items: stdin is a public-api.txt; stdout is one canonical key per
@@ -83,14 +94,41 @@ sha256_of() {
 # rule (c) pins by UNAUDITED_COUNT and UNAUDITED_SHA256.
 # ---------------------------------------------------------------------------
 list_unaudited() {
-  local named c f
+  local named c f rules
+  rules="$(rule_regex)"
   named="$(mktemp)"
   grep -E '^item = ' "$SURFACE_MANIFEST" | sed -nE 's/^item = "([^"]+)".*/\1/p' | LC_ALL=C sort -u > "$named"
   for c in $SURFACE_CRATES; do
     f="$SURFACE_BASELINE_DIR/$c/public-api.txt"; [ -f "$f" ] || continue
     extract_items < "$f"
-  done | LC_ALL=C sort -u | LC_ALL=C comm -23 - "$named"
+  done | LC_ALL=C sort -u | LC_ALL=C comm -23 - "$named" \
+  | { if [ -n "$rules" ]; then grep -Ev -e "$rules" || true; else cat; fi; }
   rm -f "$named"
+}
+
+# rule_regex: the [[exempt_rule]] item_regex values of the manifest, joined
+# into one extended regex; empty when the manifest has none.
+rule_regex() {
+  sed -nE "s/^item_regex = '(.*)'[[:space:]]*(#.*)?\$/(\\1)/p" "$SURFACE_MANIFEST" | paste -sd'|' -
+}
+
+# rows_covered_by_rule: how many [[exempt]] rows name an item an
+# [[exempt_rule]] already covers (such a row is redundant).
+rows_covered_by_rule() {
+  local rules; rules="$(rule_regex)"
+  [ -n "$rules" ] || { echo 0; return; }
+  awk '/^\[\[/ { ex = ($0 == "[[exempt]]") } ex && /^item = / { print }' "$SURFACE_MANIFEST" \
+    | sed -nE 's/^item = "([^"]+)".*/\1/p' | { grep -Ec -e "$rules" || true; } | tail -1
+}
+
+# unaudited_cells: stdout is the number of :unaudited cells in each binding
+# column, "<c> <python> <java>".
+unaudited_cells() {
+  local p out=""
+  for p in c python java; do
+    out="$out$({ grep -E '^bindings = ' "$SURFACE_MANIFEST" | grep -o "\"$p:unaudited" || true; } | wc -l | tr -d ' ') "
+  done
+  echo "${out% }"
 }
 
 # ---------------------------------------------------------------------------
@@ -176,7 +214,7 @@ check_python_symbols() {
     }
     {
       item = $1; sym = $2; shown = sym
-      if (sym ~ /^(unaudited|deferred|n\/a)$/) next
+      if (sym ~ /^(unaudited|deferred|n\/a)(\(.*\))?$/) next
       if (match(sym, / *\[feature=[a-z]+\]/)) {
         feat = substr(sym, RSTART, RLENGTH); gsub(/[^a-z=]/, "", feat); sub(/^feature=/, "", feat)
         sym = substr(sym, 1, RSTART - 1)
@@ -261,13 +299,14 @@ run_check() {
       printf '%s\n' $SURFACE_BUILT_FEATURES | grep -Fxq "$feat" || continue
     fi
     case "$sym" in
-      *:deferred|*:n/a|*:unaudited)
+      *:deferred|*:n/a|*:unaudited|*:deferred\(*\)|*:n/a\(*\))
         # Five-column sentinels — declared, never resolved (rule b2):
         #   :unaudited  nobody has checked whether a twin exists (the value the
         #               bulk migration wrote; burn these down to a real symbol,
         #               :deferred or :n/a as rows are audited)
         #   :deferred   no twin in that binding TODAY
         #   :n/a        no twin by design
+        # :deferred and :n/a may carry their reason: :deferred(reason).
         # This arm MUST precede `c:*)`: the resolution arms are unbounded
         # substring greps, and the word "deferred" really does occur in
         # tstrans.h (1x) and in the Python (3 files) and Java (11 files)
@@ -317,10 +356,29 @@ run_check() {
     }
     /^\[\[surface\]\]/ { flush(); insurf = 1; hasb = 0; item = "?"; bline = ""; next }
     /^\[\[exempt\]\]/  { flush(); insurf = 0; next }
+    /^\[\[exempt_rule\]\]/ { flush(); insurf = 0; next }
     insurf && /^item = /     { item = $0; sub(/^item = "/, "", item); sub(/".*$/, "", item) }
     insurf && /^bindings = / { hasb = 1; bline = $0 }
     END { flush() }
   ' "$SURFACE_MANIFEST" >> "$errs"
+
+  # (b3) unaudited is frozen per column: each count may only fall.
+  local have_cells want_cells i cols
+  have_cells="$(unaudited_cells)"
+  want_cells="${SURFACE_UNAUDITED_CELLS_MAX:-$UNAUDITED_CELLS_MAX}"
+  cols=(c python java)
+  for i in 0 1 2; do
+    local h w
+    h="$(echo "$have_cells" | cut -d' ' -f$((i + 1)))"
+    w="$(echo "$want_cells" | cut -d' ' -f$((i + 1)))"
+    if [ "$h" -gt "$w" ]; then
+      echo "FAIL: ${cols[$i]}: column holds $h :unaudited cells, above its maximum $w. A new or edited row names a real symbol, :deferred(reason) or :n/a(reason)." >> "$errs"
+    fi
+  done
+  local covered; covered="$(rows_covered_by_rule)"
+  if [ "$covered" != "0" ]; then
+    echo "surface-manifest: warning: $covered [[exempt]] rows name items an [[exempt_rule]] already covers; delete them" >&2
+  fi
 
   # (c) closure: the set of mappable baseline items that no row names must
   # equal the pinned baseline, by count and by digest.
@@ -359,6 +417,7 @@ case "${1:-}" in
     t="$(mktemp)"; list_unaudited > "$t"
     echo "UNAUDITED_COUNT=$(wc -l < "$t" | tr -d ' ')"
     echo "UNAUDITED_SHA256=$(sha256_of < "$t")"
+    echo "UNAUDITED_CELLS_MAX=\"$(unaudited_cells)\""
     rm -f "$t" ;;
   *)
     run_check
