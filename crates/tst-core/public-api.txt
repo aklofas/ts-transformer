@@ -7374,9 +7374,20 @@ pub fn tst_core::cancel::ResourceCancel::is_cancelled(&self) -> bool
 pub mod tst_core::url
 pub mod tst_core::url::common
 #[non_exhaustive] pub enum tst_core::url::common::UrlError
+pub tst_core::url::common::UrlError::BadHost(alloc::string::String)
 pub tst_core::url::common::UrlError::BadPercentEncoding
 pub tst_core::url::common::UrlError::BadPercentEncoding::detail: alloc::string::String
+pub tst_core::url::common::UrlError::BadQueryValue
+pub tst_core::url::common::UrlError::BadQueryValue::detail: alloc::string::String
+pub tst_core::url::common::UrlError::BadQueryValue::key: alloc::string::String
+pub tst_core::url::common::UrlError::BadQueryValue::value: alloc::string::String
+pub tst_core::url::common::UrlError::BadScheme
+pub tst_core::url::common::UrlError::BadScheme::expected: &'static str
+pub tst_core::url::common::UrlError::BadScheme::got: alloc::string::String
 pub tst_core::url::common::UrlError::EmptyScheme
+pub tst_core::url::common::UrlError::HostResolve
+pub tst_core::url::common::UrlError::HostResolve::detail: alloc::string::String
+pub tst_core::url::common::UrlError::HostResolve::host: alloc::string::String
 pub tst_core::url::common::UrlError::InvalidPort
 pub tst_core::url::common::UrlError::InvalidPort::detail: alloc::string::String
 pub tst_core::url::common::UrlError::InvalidPort::got: alloc::string::String
@@ -7385,7 +7396,10 @@ pub tst_core::url::common::UrlError::MalformedIpv6Literal::got: alloc::string::S
 pub tst_core::url::common::UrlError::MissingHost
 pub tst_core::url::common::UrlError::MissingPort
 pub tst_core::url::common::UrlError::MissingSchemeSeparator
+pub tst_core::url::common::UrlError::Rejected(alloc::string::String)
 pub tst_core::url::common::UrlError::UnclosedIpv6Bracket
+pub tst_core::url::common::UrlError::UnknownQueryKey
+pub tst_core::url::common::UrlError::UnknownQueryKey::key: alloc::string::String
 impl core::clone::Clone for tst_core::url::common::UrlError
 pub fn tst_core::url::common::UrlError::clone(&self) -> tst_core::url::common::UrlError
 impl core::cmp::Eq for tst_core::url::common::UrlError
@@ -7430,16 +7444,30 @@ impl<'a> core::panic::unwind_safe::UnwindSafe for tst_core::url::common::ParsedU
 pub const tst_core::url::common::MAX_BYTE_SIZE: usize
 pub fn tst_core::url::common::is_multicast_v4(core::net::ip_addr::Ipv4Addr) -> bool
 pub fn tst_core::url::common::is_multicast_v6(core::net::ip_addr::Ipv6Addr) -> bool
+pub fn tst_core::url::common::parse_bool(&str, &str) -> core::result::Result<bool, tst_core::url::common::UrlError>
 pub fn tst_core::url::common::parse_bool_query(&str) -> core::result::Result<bool, alloc::string::String>
 pub fn tst_core::url::common::parse_byte_size(&str) -> core::result::Result<usize, alloc::string::String>
 pub fn tst_core::url::common::parse_host_port(&str) -> core::result::Result<(core::net::ip_addr::IpAddr, u16), tst_core::url::common::UrlError>
+pub fn tst_core::url::common::parse_int<T>(&str, &str) -> core::result::Result<T, tst_core::url::common::UrlError> where T: core::str::traits::FromStr, <T as core::str::traits::FromStr>::Err: core::fmt::Display
 pub fn tst_core::url::common::parse_int_query<T>(&str) -> core::result::Result<T, alloc::string::String> where T: core::str::traits::FromStr, <T as core::str::traits::FromStr>::Err: core::fmt::Display
+pub fn tst_core::url::common::parse_size(&str, &str) -> core::result::Result<usize, tst_core::url::common::UrlError>
 pub fn tst_core::url::common::parse_url(&str) -> core::result::Result<tst_core::url::common::ParsedUrl<'_>, tst_core::url::common::UrlError>
 pub fn tst_core::url::common::percent_decode(&str) -> core::result::Result<alloc::borrow::Cow<'_, str>, tst_core::url::common::UrlError>
 #[non_exhaustive] pub enum tst_core::url::UrlError
+pub tst_core::url::UrlError::BadHost(alloc::string::String)
 pub tst_core::url::UrlError::BadPercentEncoding
 pub tst_core::url::UrlError::BadPercentEncoding::detail: alloc::string::String
+pub tst_core::url::UrlError::BadQueryValue
+pub tst_core::url::UrlError::BadQueryValue::detail: alloc::string::String
+pub tst_core::url::UrlError::BadQueryValue::key: alloc::string::String
+pub tst_core::url::UrlError::BadQueryValue::value: alloc::string::String
+pub tst_core::url::UrlError::BadScheme
+pub tst_core::url::UrlError::BadScheme::expected: &'static str
+pub tst_core::url::UrlError::BadScheme::got: alloc::string::String
 pub tst_core::url::UrlError::EmptyScheme
+pub tst_core::url::UrlError::HostResolve
+pub tst_core::url::UrlError::HostResolve::detail: alloc::string::String
+pub tst_core::url::UrlError::HostResolve::host: alloc::string::String
 pub tst_core::url::UrlError::InvalidPort
 pub tst_core::url::UrlError::InvalidPort::detail: alloc::string::String
 pub tst_core::url::UrlError::InvalidPort::got: alloc::string::String
@@ -7448,7 +7476,10 @@ pub tst_core::url::UrlError::MalformedIpv6Literal::got: alloc::string::String
 pub tst_core::url::UrlError::MissingHost
 pub tst_core::url::UrlError::MissingPort
 pub tst_core::url::UrlError::MissingSchemeSeparator
+pub tst_core::url::UrlError::Rejected(alloc::string::String)
 pub tst_core::url::UrlError::UnclosedIpv6Bracket
+pub tst_core::url::UrlError::UnknownQueryKey
+pub tst_core::url::UrlError::UnknownQueryKey::key: alloc::string::String
 impl core::clone::Clone for tst_core::url::common::UrlError
 pub fn tst_core::url::common::UrlError::clone(&self) -> tst_core::url::common::UrlError
 impl core::cmp::Eq for tst_core::url::common::UrlError
@@ -7492,7 +7523,10 @@ impl<'a> core::panic::unwind_safe::RefUnwindSafe for tst_core::url::common::Pars
 impl<'a> core::panic::unwind_safe::UnwindSafe for tst_core::url::common::ParsedUrl<'a>
 pub fn tst_core::url::is_multicast_v4(core::net::ip_addr::Ipv4Addr) -> bool
 pub fn tst_core::url::is_multicast_v6(core::net::ip_addr::Ipv6Addr) -> bool
+pub fn tst_core::url::parse_bool(&str, &str) -> core::result::Result<bool, tst_core::url::common::UrlError>
 pub fn tst_core::url::parse_host_port(&str) -> core::result::Result<(core::net::ip_addr::IpAddr, u16), tst_core::url::common::UrlError>
+pub fn tst_core::url::parse_int<T>(&str, &str) -> core::result::Result<T, tst_core::url::common::UrlError> where T: core::str::traits::FromStr, <T as core::str::traits::FromStr>::Err: core::fmt::Display
+pub fn tst_core::url::parse_size(&str, &str) -> core::result::Result<usize, tst_core::url::common::UrlError>
 pub fn tst_core::url::parse_url(&str) -> core::result::Result<tst_core::url::common::ParsedUrl<'_>, tst_core::url::common::UrlError>
 pub macro tst_core::binding_record!
 #[non_exhaustive] pub enum tst_core::BrokenCause
@@ -7894,9 +7928,20 @@ impl core::marker::UnsafeUnpin for tst_core::transport::TransportError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::TransportError
 impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::TransportError
 #[non_exhaustive] pub enum tst_core::UrlError
+pub tst_core::UrlError::BadHost(alloc::string::String)
 pub tst_core::UrlError::BadPercentEncoding
 pub tst_core::UrlError::BadPercentEncoding::detail: alloc::string::String
+pub tst_core::UrlError::BadQueryValue
+pub tst_core::UrlError::BadQueryValue::detail: alloc::string::String
+pub tst_core::UrlError::BadQueryValue::key: alloc::string::String
+pub tst_core::UrlError::BadQueryValue::value: alloc::string::String
+pub tst_core::UrlError::BadScheme
+pub tst_core::UrlError::BadScheme::expected: &'static str
+pub tst_core::UrlError::BadScheme::got: alloc::string::String
 pub tst_core::UrlError::EmptyScheme
+pub tst_core::UrlError::HostResolve
+pub tst_core::UrlError::HostResolve::detail: alloc::string::String
+pub tst_core::UrlError::HostResolve::host: alloc::string::String
 pub tst_core::UrlError::InvalidPort
 pub tst_core::UrlError::InvalidPort::detail: alloc::string::String
 pub tst_core::UrlError::InvalidPort::got: alloc::string::String
@@ -7905,7 +7950,10 @@ pub tst_core::UrlError::MalformedIpv6Literal::got: alloc::string::String
 pub tst_core::UrlError::MissingHost
 pub tst_core::UrlError::MissingPort
 pub tst_core::UrlError::MissingSchemeSeparator
+pub tst_core::UrlError::Rejected(alloc::string::String)
 pub tst_core::UrlError::UnclosedIpv6Bracket
+pub tst_core::UrlError::UnknownQueryKey
+pub tst_core::UrlError::UnknownQueryKey::key: alloc::string::String
 impl core::clone::Clone for tst_core::url::common::UrlError
 pub fn tst_core::url::common::UrlError::clone(&self) -> tst_core::url::common::UrlError
 impl core::cmp::Eq for tst_core::url::common::UrlError

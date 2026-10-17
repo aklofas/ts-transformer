@@ -417,6 +417,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — tst-core
 
+- `url::UrlError` gains `BadScheme`, `BadHost`, `HostResolve`, `BadQueryValue`, `UnknownQueryKey` and `Rejected`, and `url::common::{parse_size, parse_bool, parse_int}` return it, so every transport's URL errors share one type.
 - `binding_schema::{RecordSchema, FieldSpec, FieldMark}` and the
   `binding_record!` macro (Internal tier): one declaration per crossing record,
   from which the Python and JVM projections are generated. `WavelengthRecord`

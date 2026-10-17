@@ -19,7 +19,10 @@
 //! URLs use fragments.
 
 pub mod common;
+#[doc(hidden)]
+pub mod query;
 
 pub use common::{
-    ParsedUrl, UrlError, is_multicast_v4, is_multicast_v6, parse_host_port, parse_url,
+    ParsedUrl, UrlError, is_multicast_v4, is_multicast_v6, parse_bool, parse_host_port, parse_int,
+    parse_size, parse_url,
 };
