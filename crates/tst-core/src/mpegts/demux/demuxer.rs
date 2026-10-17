@@ -369,12 +369,11 @@ impl Demuxer {
             // without this a stray 0x47 inside PES payload causes false
             // sync after a packet loss.
             if resyncing {
-                use super::sync_ingress::NofMResult;
-                match super::sync_ingress::sync_n_of_m_check(live) {
-                    NofMResult::Accept => {
+                match super::sync_ingress::SYNC_REACQ.verify(live, 0) {
+                    Some(true) => {
                         // Fall through to packet parse below.
                     }
-                    NofMResult::Reject => {
+                    Some(false) => {
                         // Stray 0x47 — advance past it and keep
                         // searching. Charge 1 byte against the
                         // sync-search window so adversarial input
@@ -387,7 +386,7 @@ impl Demuxer {
                         }
                         continue;
                     }
-                    NofMResult::NeedMoreBytes => {
+                    None => {
                         // Not enough strides buffered to confirm or
                         // reject. Keep the candidate in the buffer and
                         // return — the next `feed` call will deliver
