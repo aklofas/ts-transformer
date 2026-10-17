@@ -36,50 +36,13 @@ use pyo3::prelude::*;
 use tst_hls::HlsPublisher;
 use tst_pipeline::{MuxPublisher as RustMuxPublisher, MuxPublisherError};
 
+use crate::generated::stats_hls::MuxPublisherStats;
 use crate::hls::publisher::PyHlsPublisher;
 use crate::hls::publisher_abc::PyPublisherStats;
 use crate::hls::{Locked, map_mux_publisher_error};
 use crate::mux::{PyMuxerProgramConfig, py_pts90khz};
 use crate::raise::{HLS, raise};
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
-
-// ---------------------------------------------------------------------------
-// MuxPublisherStats — frozen mirror of tst_pipeline::MuxPublisherStats
-// ---------------------------------------------------------------------------
-
-/// Cumulative `MuxPublisher` shell stats (`tstrans.hls.MuxPublisherStats`).
-///
-/// Mirrors `tst_pipeline::MuxPublisherStats`.
-#[pyclass(name = "MuxPublisherStats", module = "tstrans.hls", frozen, get_all)]
-#[derive(Clone)]
-pub(crate) struct PyMuxPublisherStats {
-    /// Total TS bytes drained from the muxer and handed to the publisher.
-    pub bytes_pushed: u64,
-    /// Total muxer drain calls that produced at least one chunk.
-    pub drain_calls: u64,
-    /// Total explicit `cut_segment()` calls (plus auto-cuts on keyframes).
-    pub cut_calls: u64,
-}
-
-impl From<tst_pipeline::MuxPublisherStats> for PyMuxPublisherStats {
-    fn from(s: tst_pipeline::MuxPublisherStats) -> Self {
-        Self {
-            bytes_pushed: s.bytes_pushed,
-            drain_calls: s.drain_calls,
-            cut_calls: s.cut_calls,
-        }
-    }
-}
-
-#[pymethods]
-impl PyMuxPublisherStats {
-    fn __repr__(&self) -> String {
-        format!(
-            "MuxPublisherStats(bytes_pushed={}, drain_calls={}, cut_calls={})",
-            self.bytes_pushed, self.drain_calls, self.cut_calls,
-        )
-    }
-}
 
 // ---------------------------------------------------------------------------
 // PyMuxPublisher — wraps MuxPublisher<HlsPublisher>
@@ -279,9 +242,9 @@ impl PyMuxPublisher {
     // ── Stats ────────────────────────────────────────────────────────────────
 
     /// Shell-level stats (`MuxPublisherStats`).
-    fn stats(&self, py: Python<'_>) -> PyResult<PyMuxPublisherStats> {
+    fn stats(&self, py: Python<'_>) -> PyResult<MuxPublisherStats> {
         let stats = self.with_inner(py, |mp| Ok(mp.stats()))?;
-        Ok(PyMuxPublisherStats::from(stats))
+        Ok(MuxPublisherStats::from(&stats))
     }
 
     /// Publisher-side universal stats (`PublisherStats`).

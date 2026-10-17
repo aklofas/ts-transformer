@@ -140,25 +140,40 @@ use tracing::{debug, info, warn};
 use tst_core::cancel::CancelSlot;
 use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
 
-/// Snapshot of `ManagedTransport`'s reconnect/gap telemetry.
-///
-/// **Stability: Stable** — see the
-/// [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct ManagedTransportStats {
-    /// Total `factory()` invocations across all reconnect cycles.
-    pub reconnect_attempts: u64,
-    /// Successful reconnects (factory returned a transport that was installed).
-    pub reconnect_successes: u64,
-    /// Messages currently queued in the gap buffer.
-    pub gap_len: u64,
-    /// Messages lost to `DropOldest` eviction (plus oversized-after-reconnect drops).
-    pub gap_messages_dropped: u64,
-    /// Bytes lost to the same.
-    pub gap_bytes_dropped: u64,
-    /// True while a background reconnect worker is active (`ReconnectMode::Background` only).
-    pub reconnecting: bool,
+tst_core::binding_record! {
+    /// Frozen reconnect and gap telemetry snapshot of a managed
+    /// (auto-reconnect) sender.
+    ///
+    /// `reconnecting` is only ever true under the background reconnect mode.
+    /// It is always false in the blocking mode, since that mode's reconnect
+    /// loop runs synchronously inside the call that observed the break rather
+    /// than on a separate worker this flag could observe as active.
+    ///
+    /// <!-- rust-only -->
+    /// Snapshot of `ManagedTransport`'s reconnect/gap telemetry.
+    ///
+    /// **Stability: Stable** — see the
+    /// [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
+    #[derive(Debug, Clone)]
+    #[non_exhaustive]
+    pub struct ManagedTransportStats {
+        /// Total factory invocations across all reconnect cycles, successful and
+        /// failed.
+        pub reconnect_attempts: u64,
+        /// Factory calls that returned a transport, which was installed as the
+        /// new inner connection.
+        pub reconnect_successes: u64,
+        /// Messages currently queued in the gap buffer, awaiting drain once the
+        /// inner transport reconnects.
+        pub gap_len: u64,
+        /// Messages evicted by the drop-oldest overflow policy, plus
+        /// oversized-after-reconnect drops discovered during drain.
+        pub gap_messages_dropped: u64,
+        /// Bytes evicted by the same.
+        pub gap_bytes_dropped: u64,
+        /// True while a background reconnect worker is active.
+        pub reconnecting: bool,
+    }
 }
 
 /// Cloneable, `Send + Sync` observer for [`ManagedTransportStats`].

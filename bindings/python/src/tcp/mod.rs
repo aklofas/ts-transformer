@@ -54,8 +54,9 @@ use pyo3::types::{PyBytes, PyMemoryView};
 use tst_core::transport::{RecvTransport, Transport};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned, SendHalf};
 use tst_tcp::error::TcpError;
-use tst_tcp::{TcpListener, TcpStats, TcpTransport};
+use tst_tcp::{TcpListener, TcpTransport};
 
+use crate::generated::stats_tcp::SocketStats;
 use crate::raise::{TCP, pyok, pyres, raise};
 use crate::util::{CancelSource, close_owned};
 
@@ -92,54 +93,6 @@ impl PyTcpCancelHandle {
 
     fn __repr__(&self) -> String {
         format!("CancelHandle(cancelled={})", self.is_cancelled())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PyTcpStats — frozen mirror of TcpStats
-// ---------------------------------------------------------------------------
-
-/// Cumulative stats snapshot for a TCP transport handle.
-///
-/// Returned by `Transport.stats()`. Both send and receive counters are
-/// populated on the same handle (TCP is full-duplex).
-#[pyclass(frozen, get_all, name = "SocketStats", module = "tstrans.tcp")]
-pub(crate) struct PyTcpStats {
-    /// Bytes successfully sent.
-    pub bytes_sent: u64,
-    /// Bytes successfully received.
-    pub bytes_received: u64,
-    /// Number of successful send calls.
-    pub send_calls: u64,
-    /// Number of successful recv calls.
-    pub recv_calls: u64,
-    /// Send-side I/O errors.
-    pub send_errors: u64,
-    /// Receive-side I/O errors.
-    pub recv_errors: u64,
-}
-
-impl From<TcpStats> for PyTcpStats {
-    fn from(s: TcpStats) -> Self {
-        Self {
-            bytes_sent: s.bytes_sent,
-            bytes_received: s.bytes_received,
-            send_calls: s.send_calls,
-            recv_calls: s.recv_calls,
-            send_errors: s.send_errors,
-            recv_errors: s.recv_errors,
-        }
-    }
-}
-
-#[pymethods]
-impl PyTcpStats {
-    fn __repr__(&self) -> String {
-        format!(
-            "SocketStats(bytes_sent={}, bytes_received={}, \
-             send_calls={}, recv_calls={})",
-            self.bytes_sent, self.bytes_received, self.send_calls, self.recv_calls,
-        )
     }
 }
 
@@ -322,7 +275,7 @@ impl PyTcpTransport {
     ///
     /// Releases the GIL during mutex acquisition so a concurrent `recv()`
     /// parked in another thread cannot freeze the interpreter.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyTcpStats>> {
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
         let s = pyok(
             py,
             &TCP,
@@ -332,7 +285,7 @@ impl PyTcpTransport {
                     .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |t| t.0.stats())
             }),
         )?;
-        Py::new(py, PyTcpStats::from(s))
+        Py::new(py, SocketStats::from(&s))
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -903,7 +856,7 @@ impl PyClientCert {
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(parent.py(), "tcp")?;
     m.add_class::<PyTcpCancelHandle>()?;
-    m.add_class::<PyTcpStats>()?;
+    crate::generated::stats_tcp::register(&m)?;
     m.add_class::<PyTcpTransport>()?;
     m.add_class::<PyTcpTransportBuilder>()?;
     m.add_class::<PyTcpListener>()?;

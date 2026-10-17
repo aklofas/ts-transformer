@@ -46,10 +46,11 @@ use super::mux_sender::build_transport_stats;
 use super::open::{open_recv, read_url};
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
+use crate::generated::stats_mpegts::build_muxer_stats;
+use crate::generated::stats_shells::build_socket_stats;
 use crate::handle::OwnedRegistry;
-use crate::jutil::build_socket_stats;
 use crate::mpegts::{
-    build_demux_config_from_args, build_muxer_stats, convert_event, throw_demux_error,
+    build_demux_config_from_args, convert_event, shell_muxer_stats, throw_demux_error,
 };
 
 /// Native backing for `org.tstrans.shells.DemuxReceiver`. Only `sink_error` is
@@ -407,7 +408,7 @@ jni_native! {
                 return JObject::null();
             }
         };
-        build_socket_stats(env, "org/tstrans/shells/SocketStats", &stats)
+        build_socket_stats(env, &stats)
             .unwrap_or_else(|_| JObject::null())
     }
 }
@@ -440,15 +441,17 @@ jni_native! {
         sock.bytes_received = combined.bytes_received;
         sock.packets_received = combined.packets_received;
 
-        let sock_obj = match build_socket_stats(env, "org/tstrans/shells/SocketStats", &sock) {
+        let sock_obj = match build_socket_stats(env, &sock) {
             Ok(o) => o,
             Err(_) => return JObject::null(),
         };
         let mux_obj = match build_muxer_stats(
             env,
-            combined.packets_received as i64,
-            combined.bytes_received as i64,
-            combined.program_maps_seen as i64,
+            &shell_muxer_stats(
+                combined.packets_received,
+                combined.bytes_received,
+                combined.program_maps_seen,
+            ),
         ) {
             Ok(o) => o,
             Err(_) => return JObject::null(),

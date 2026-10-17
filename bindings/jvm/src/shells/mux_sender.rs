@@ -39,10 +39,12 @@ use super::cancel::cancel_view_handle;
 use super::open::{open_send, read_url};
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
+use crate::generated::stats_mpegts::build_muxer_stats;
+use crate::generated::stats_shells::build_socket_stats;
 use crate::handle::OwnedRegistry;
-use crate::jutil::{build_socket_stats, checked_u8, decode_stream_handle, read_bytes};
-use crate::mpegts::build_muxer_stats;
+use crate::jutil::{checked_u8, decode_stream_handle, read_bytes};
 use crate::mpegts::muxer::{build_muxer_config_from_arrays, throw_mux_error};
+use crate::mpegts::shell_muxer_stats;
 
 type Inner = RustMuxSender<Box<dyn Transport>>;
 
@@ -501,15 +503,17 @@ jni_native! {
             }
         };
 
-        let sock_obj = match build_socket_stats(env, "org/tstrans/shells/SocketStats", &sock) {
+        let sock_obj = match build_socket_stats(env, &sock) {
             Ok(o) => o,
             Err(_) => return JObject::null(),
         };
         let mux_obj = match build_muxer_stats(
             env,
-            pipe.packets_sent as i64,
-            pipe.bytes_sent as i64,
-            i64::from(pipe.programs_configured),
+            &shell_muxer_stats(
+                pipe.packets_sent,
+                pipe.bytes_sent,
+                u64::from(pipe.programs_configured),
+            ),
         ) {
             Ok(o) => o,
             Err(_) => return JObject::null(),

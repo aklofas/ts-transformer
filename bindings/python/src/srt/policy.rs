@@ -25,9 +25,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyType;
 
 use tst_pipeline::{
-    BackoffStrategy as RustBackoff, ManagedTransportStats as RustManagedTransportStats,
-    OverflowPolicy as RustOverflow, ReconnectMode as RustReconnectMode,
-    ReconnectPolicy as RustPolicy,
+    BackoffStrategy as RustBackoff, OverflowPolicy as RustOverflow,
+    ReconnectMode as RustReconnectMode, ReconnectPolicy as RustPolicy,
 };
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -35,7 +34,6 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyOverflowPolicy>()?;
     m.add_class::<PyReconnectMode>()?;
     m.add_class::<PyReconnectPolicy>()?;
-    m.add_class::<PyManagedTransportStats>()?;
     Ok(())
 }
 
@@ -327,61 +325,5 @@ impl PyReconnectPolicy {
                 backoff_repr, self.inner.gap_buffer_capacity, overflow_repr, mode_repr,
             ),
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PyManagedTransportStats — frozen mirror of tst_pipeline::ManagedTransportStats
-// ---------------------------------------------------------------------------
-
-/// Snapshot of `ManagedSender` / `ManagedMuxSender` reconnect/gap
-/// telemetry. Returned by `reconnect_stats()`. Mirror of
-/// `tst_pipeline::ManagedTransportStats` (and the C ABI's
-/// `TstManagedTransportStats`) — same field order.
-///
-/// `reconnecting` is only ever `True` under `ReconnectMode.BACKGROUND`
-/// (always `False` in `BLOCKING` mode, since that mode's reconnect loop
-/// runs synchronously inside the call that observed the break rather
-/// than on a separate worker this flag could observe as "active").
-#[pyclass(
-    frozen,
-    get_all,
-    name = "ManagedTransportStats",
-    module = "tstrans.srt"
-)]
-pub(crate) struct PyManagedTransportStats {
-    pub reconnect_attempts: u64,
-    pub reconnect_successes: u64,
-    pub gap_len: u64,
-    pub gap_messages_dropped: u64,
-    pub gap_bytes_dropped: u64,
-    pub reconnecting: bool,
-}
-
-impl PyManagedTransportStats {
-    pub(crate) fn from_core(s: RustManagedTransportStats) -> Self {
-        Self {
-            reconnect_attempts: s.reconnect_attempts,
-            reconnect_successes: s.reconnect_successes,
-            gap_len: s.gap_len,
-            gap_messages_dropped: s.gap_messages_dropped,
-            gap_bytes_dropped: s.gap_bytes_dropped,
-            reconnecting: s.reconnecting,
-        }
-    }
-}
-
-#[pymethods]
-impl PyManagedTransportStats {
-    fn __repr__(&self) -> String {
-        format!(
-            "ManagedTransportStats(reconnect_attempts={}, reconnect_successes={}, gap_len={}, gap_messages_dropped={}, gap_bytes_dropped={}, reconnecting={})",
-            self.reconnect_attempts,
-            self.reconnect_successes,
-            self.gap_len,
-            self.gap_messages_dropped,
-            self.gap_bytes_dropped,
-            if self.reconnecting { "True" } else { "False" },
-        )
     }
 }

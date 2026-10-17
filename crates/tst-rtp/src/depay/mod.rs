@@ -116,33 +116,38 @@ impl Default for DepayConfig {
     }
 }
 
-/// Counters for monitoring a depacketizer.
-///
-/// Returned by value from the depacketizer's `stats` (the struct is `Copy`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct DepayStats {
-    /// Number of complete, unpoisoned AUs emitted.
-    pub aus_emitted: u64,
-    /// Number of AUs discarded due to poisoning (seq gaps, F-bit, etc.).
-    /// Includes AUs dropped for exceeding `max_au_bytes`
-    /// (those are also counted in `aus_dropped_oversize`).
-    pub aus_dropped: u64,
-    /// Number of AUs dropped specifically because their accumulated buffer
-    /// size exceeded [`DepayConfig::max_au_bytes`]. Every oversize drop
-    /// also increments `aus_dropped` at the normal AU-boundary tick site.
-    pub aus_dropped_oversize: u64,
-    /// Number of RTP packets discarded (empty, reserved, interleaved types).
-    pub packets_discarded: u64,
-    /// Number of NALUs discarded (F-bit set, open FU at AU completion, etc.).
-    pub nalus_discarded: u64,
-    /// Number of sequence-number gaps detected.
-    pub seq_gaps: u64,
-    /// Number of duplicate sequence numbers detected.
-    pub duplicate_packets: u64,
-    /// Number of times cached parameter sets were updated (in-band
-    /// parameter-set bytes differed from the cached value).
-    pub parameter_set_updates: u64,
-    /// Number of SSRC changes (source restarts) detected.
-    pub ssrc_changes: u64,
+tst_core::binding_record! {
+    /// RFC 6184 depacketizer counters: a frozen snapshot. All counters are
+    /// cumulative since the receiver started listening (or since the RTSP
+    /// session started).
+    ///
+    /// <!-- rust-only -->
+    /// Returned by value from the depacketizer's `stats` (the struct is `Copy`).
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct DepayStats {
+        /// Number of complete, unpoisoned AUs emitted.
+        pub aus_emitted: u64,
+        /// Number of AUs discarded due to poisoning (seq gaps, F-bit, etc.).
+        /// Includes AUs dropped for exceeding `max_au_bytes`
+        /// (those are also counted in `aus_dropped_oversize`).
+        pub aus_dropped: u64,
+        /// Number of AUs dropped specifically because their accumulated buffer
+        /// size exceeded [`DepayConfig::max_au_bytes`]. Every oversize drop is
+        /// also counted in `aus_dropped`.
+        pub aus_dropped_oversize: u64,
+        /// Number of RTP packets discarded (empty, reserved, interleaved types).
+        pub packets_discarded: u64,
+        /// Number of NALUs discarded (F-bit set, open FU at AU completion, etc.).
+        pub nalus_discarded: u64,
+        /// Number of sequence-number gaps detected.
+        pub seq_gaps: u64,
+        /// Number of duplicate sequence numbers detected.
+        pub duplicate_packets: u64,
+        /// Number of times cached parameter sets were updated (in-band
+        /// parameter-set bytes differed from the cached value).
+        pub parameter_set_updates: u64,
+        /// Number of SSRC changes (source restarts) detected.
+        pub ssrc_changes: u64,
+    }
 }

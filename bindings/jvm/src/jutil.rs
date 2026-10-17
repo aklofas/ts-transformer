@@ -7,7 +7,6 @@ use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::jlong;
 use tst_core::error::KlvFieldError as RustKlvFieldError;
 use tst_core::klv::OwnedRawField;
-use tst_core::transport::SocketStats;
 
 /// Decode a packed stream-handle `jlong` into a typed stream handle.
 ///
@@ -449,45 +448,4 @@ pub fn enum_const<'local>(
         .map_err(|_| ())?
         .l()
         .map_err(|_| ())
-}
-
-/// Build a `SocketStats` Java record at `class_path` (e.g.
-/// `org/tstrans/srt/SocketStats` or `org/tstrans/rtp/SocketStats`) from the
-/// Rust `tst_core::transport::SocketStats`. Field order matches every
-/// `SocketStats` record ctor exactly (16 longs, in declaration order): rttUs,
-/// sendBandwidthBps, recvBandwidthBps, linkBandwidthBps, bytesSent,
-/// packetsSent, bytesReceived, packetsReceived, bytesLostRecv,
-/// packetsLostRecv, packetsLostSend, packetsRetransmitted,
-/// packetsDroppedSend, packetsDroppedRecv, sendBufferPackets,
-/// recvBufferPackets. All counters widen to `i64` (Java has no unsigned
-/// types — the bit pattern is reinterpreted; documented on the Java records).
-pub fn build_socket_stats<'local>(
-    env: &mut JNIEnv<'local>,
-    class_path: &str,
-    s: &SocketStats,
-) -> jni::errors::Result<JObject<'local>> {
-    env.ensure_local_capacity(4)?;
-    let sig = "(JJJJJJJJJJJJJJJJ)V"; // 16 longs
-    env.new_object(
-        class_path,
-        sig,
-        &[
-            JValue::Long(i64::from(s.rtt_us)),
-            JValue::Long(s.send_bandwidth_bps as i64),
-            JValue::Long(s.recv_bandwidth_bps as i64),
-            JValue::Long(s.link_bandwidth_bps as i64),
-            JValue::Long(s.bytes_sent as i64),
-            JValue::Long(s.packets_sent as i64),
-            JValue::Long(s.bytes_received as i64),
-            JValue::Long(s.packets_received as i64),
-            JValue::Long(s.bytes_lost_recv as i64),
-            JValue::Long(s.packets_lost_recv as i64),
-            JValue::Long(s.packets_lost_send as i64),
-            JValue::Long(s.packets_retransmitted as i64),
-            JValue::Long(s.packets_dropped_send as i64),
-            JValue::Long(s.packets_dropped_recv as i64),
-            JValue::Long(i64::from(s.send_buffer_packets)),
-            JValue::Long(i64::from(s.recv_buffer_packets)),
-        ],
-    )
 }

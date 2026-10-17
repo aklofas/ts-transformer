@@ -35,8 +35,9 @@ use pyo3::prelude::*;
 use tst_core::publisher::Publisher;
 use tst_hls::{HlsError, HlsMode, HlsPublisher, HlsPublisherBuilder, HlsServerHandle};
 
+use crate::generated::stats_hls::HlsStats;
 use crate::hls::Locked;
-use crate::hls::config::{PyHlsMode, PyHlsStats};
+use crate::hls::config::PyHlsMode;
 use crate::hls::publisher_abc::PyPublisherStats;
 use crate::raise::{HLS, raise};
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
@@ -204,9 +205,9 @@ impl PyHlsPublisher {
     }
 
     /// Richer HLS-specific stats (`HlsStats`).
-    fn hls_stats(&self, py: Python<'_>) -> PyResult<PyHlsStats> {
+    fn hls_stats(&self, py: Python<'_>) -> PyResult<HlsStats> {
         let stats = self.with_inner(py, |inner| Ok(inner.hls_stats()))?;
-        Ok(PyHlsStats::from(stats))
+        Ok(HlsStats::from(&stats))
     }
 
     /// Local socket address the HTTP server bound to, as `"ip:port"`

@@ -429,7 +429,11 @@ compile error until it is classified.
 A struct that crosses to Python and the JVM field by field is declared once,
 through `tst_core::binding_record!`. The macro emits the struct exactly as
 written (derives, docs, visibility) plus a hidden `BINDING_SCHEMA` constant
-that the binding generator reads, so the struct is the schema.
+that the binding generator reads, so the struct is the schema. The macro is
+exported by `tst-core`, and a record is declared in the crate that owns it: the
+stats records live in `tst-core`, `tst-pipeline`, `tst-srt`, `tst-udp`,
+`tst-tcp`, `tst-rist`, `tst-hls` and `tst-rtp`. The generator is the
+`tst-binding-gen` crate, which depends on all of them.
 
 A field takes `@[…]` prefixes; they may repeat, e.g.
 `@[custom] @[java("…Code")]`. `custom` and `skip` exclude each other:
@@ -466,6 +470,10 @@ Field types and defaults:
   as `int`, `u32`/`u64` as `long`, `Vec<u8>` as `ByteBuffer`, `Vec<T>` as
   `List<T>`; an `Option<T>` is the boxed type, and a Builder sets an optional
   scalar by its primitive.
+- A `usize` count and a `Duration` cross to the host only: a count as an
+  unsigned 64-bit value (`long` in Java) and a duration as whole microseconds
+  in the same type, saturating. A record that holds either is registered
+  `ToHost`; name the host field `…_us` with `py_rename` and `@[java("…Us")]`.
 - A `@[custom]` `Vec<u8>` or `[u8; 16]` field is `byte[]` in Java and `bytes` in
   Python; a plain `Vec<u8>` is a `ByteBuffer`.
 - A required field that follows an optional one takes a host default: the
@@ -476,6 +484,10 @@ Field types and defaults:
 - A required `String` component that is `null` in a Java record is an
   `IllegalArgumentException` naming it (`CotConfig.platformType must not be
   null`); an optional one is `None`.
+- A record only one host exposes is registered for that host: `jvm = false`
+  for a record Python alone exposes (the TCP, UDP and RIST stats), `python =
+  false` for one only Java does (the demuxer and pairer stats, which Python
+  hands over as dicts).
 - A record that crosses one way is registered with that direction: `ToHost`
   has no reader and no `_from_py`, `FromHost` has no builder and no `_to_py`.
 - A record whose Java shape the schema cannot express (the ST 1204 `CoreId`

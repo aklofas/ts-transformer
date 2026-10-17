@@ -35,8 +35,9 @@ use tst_pipeline::binding::{BindingError, BindingErrorKind, Owned, SendHalf};
 use tst_rtp::builder::RtpRecvSocketBuilder;
 use tst_rtp::{RtpRecvTransport, RtpSocketBuilder, RtpTransport};
 
+use crate::generated::stats_shells::SocketStats;
 use crate::raise::{RTP, pyok, pyres, raise};
-use crate::shells::cancel::{PyCancelHandle, PySocketStats};
+use crate::shells::cancel::PyCancelHandle;
 use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
@@ -159,7 +160,7 @@ impl PyRtpTransport {
     /// Snapshot of wire-level statistics. Returns a frozen `SocketStats`
     /// dataclass; the `bytes_sent` / `packets_sent` counters tick on
     /// each successful `.send()`.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
         let core_stats = pyok(
             py,
             &RTP,
@@ -171,7 +172,7 @@ impl PyRtpTransport {
                     })
             }),
         )?;
-        Py::new(py, PySocketStats::from_core(core_stats))
+        Py::new(py, SocketStats::from(&core_stats))
     }
 
     /// Return a shareable cancel handle. Calling `.cancel()` on the
@@ -359,7 +360,7 @@ impl PyRtpRecvTransport {
     /// dataclass; the `bytes_received` / `packets_received` counters
     /// tick on each successful `.recv()`. Waits (GIL released) for a
     /// recv parked on another thread.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
         let core_stats = pyok(
             py,
             &RTP,
@@ -371,7 +372,7 @@ impl PyRtpRecvTransport {
                     })
             }),
         )?;
-        Py::new(py, PySocketStats::from_core(core_stats))
+        Py::new(py, SocketStats::from(&core_stats))
     }
 
     /// Return a shareable cancel handle. Calling `.cancel()` on the

@@ -4,7 +4,6 @@ pub(crate) mod errors;
 mod lowlevel;
 mod managed_basic;
 mod managed_convenience;
-pub(crate) mod stats;
 
 use std::time::Duration;
 

@@ -114,14 +114,10 @@ def test_recv_transport_stats_fields():
         assert hasattr(s, "packets_retransmitted")
         assert hasattr(s, "packets_dropped")
         assert hasattr(s, "packets_received")
-        assert hasattr(s, "packets_missing")
-        assert hasattr(s, "recovered_packets")
         assert hasattr(s, "current_bandwidth_kbps")
         assert hasattr(s, "rtt_us")
         # All counters start at zero.
         assert s.packets_received >= 0
-        assert s.packets_missing >= 0
-        assert s.recovered_packets >= 0
     finally:
         rx.close()
 

@@ -138,7 +138,7 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<crate::mux::PyMuxer>()?;
     // MuxerStats snapshot (StreamCodecStats is pure Python —
     // constructed by `Muxer.stream_codec_stats` per call).
-    m.add_class::<crate::mux::PyMuxerStats>()?;
+    generated::stats_mpegts::register(m)?;
     // codec submodule — shared types, NalUnit, Obu, and per-codec
     // PyClasses.
     codec::register(m)?;

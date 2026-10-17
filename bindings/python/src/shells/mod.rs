@@ -19,7 +19,7 @@ use pyo3::prelude::*;
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(parent.py(), "shells")?;
-    m.add_class::<cancel::PySocketStats>()?;
+    crate::generated::stats_shells::register(&m)?;
     m.add_class::<cancel::PyCancelHandle>()?;
     m.add_class::<sender::PySender>()?;
     m.add_class::<receiver::PyReceiver>()?;

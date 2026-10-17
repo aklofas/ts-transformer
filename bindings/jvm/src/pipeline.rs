@@ -353,16 +353,7 @@ jni_native! {
             closed(env);
             return JObject::null().into_raw();
         };
-        match env.new_object(
-            "org/tstrans/pipeline/PairerStats",
-            "(JJJJ)V",
-            &[
-                JValue::Long(s.paired as i64),
-                JValue::Long(s.unpaired_video as i64),
-                JValue::Long(s.unpaired_klv as i64),
-                JValue::Long(s.pass_through as i64),
-            ],
-        ) {
+        match crate::generated::stats_pipeline::build_pairer_stats(env, &s) {
             Ok(o) => o.into_raw(),
             Err(_) => JObject::null().into_raw(),
         }
@@ -383,18 +374,7 @@ jni_native! {
             closed(env);
             return JObject::null().into_raw();
         };
-        match env.new_object(
-            "org/tstrans/mpegts/DemuxerStats",
-            "(JJJJJJ)V",
-            &[
-                JValue::Long(s.program_maps_seen as i64),
-                JValue::Long(s.pmt_versions_seen as i64),
-                JValue::Long(s.discontinuities as i64),
-                JValue::Long(s.nonconformant as i64),
-                JValue::Long(s.programs_seen as i64),
-                JValue::Long(s.subtitle_streams_seen as i64),
-            ],
-        ) {
+        match crate::generated::stats_mpegts::build_demuxer_stats(env, &s) {
             Ok(o) => o.into_raw(),
             Err(_) => JObject::null().into_raw(),
         }

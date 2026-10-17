@@ -23,7 +23,7 @@ use jni::objects::{JByteArray, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 
 use tst_core::publisher::{Publisher, PublisherStats};
-use tst_hls::{HlsError, HlsMode, HlsPublisher, HlsPublisherBuilder, HlsStats};
+use tst_hls::{HlsError, HlsMode, HlsPublisher, HlsPublisherBuilder};
 
 use crate::error::throw_closed;
 use crate::handle::HandleRegistry;
@@ -90,24 +90,6 @@ pub(crate) fn build_publisher_stats<'local>(
             JValue::Long(s.bytes_written as i64),
             JValue::Long(opt(s.current_segment_age)),
             JValue::Long(opt(s.last_segment_duration)),
-        ],
-    )
-}
-
-/// `org.tstrans.hls.HlsStats(JJJJ)`.
-fn build_hls_stats<'local>(
-    env: &mut JNIEnv<'local>,
-    s: &HlsStats,
-) -> jni::errors::Result<JObject<'local>> {
-    env.ensure_local_capacity(4)?;
-    env.new_object(
-        "org/tstrans/hls/HlsStats",
-        "(JJJJ)V",
-        &[
-            JValue::Long(s.segments_written as i64),
-            JValue::Long(s.bytes_pushed_total as i64),
-            JValue::Long(s.open_segment_bytes as i64),
-            JValue::Long(s.forced_cuts as i64),
         ],
     )
 }
@@ -320,7 +302,7 @@ jni_native! {
         handle: jlong,
     ) -> jobject = std::ptr::null_mut() => {
         match REGISTRY.with(handle as u64, |p| p.hls_stats()) {
-            Some(s) => build_hls_stats(env, &s)
+            Some(s) => crate::generated::stats_hls::build_hls_stats(env, &s)
                 .map(|o| o.into_raw())
                 .unwrap_or(std::ptr::null_mut()),
             None => {

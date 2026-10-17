@@ -2,16 +2,25 @@
 
 use tst_core::transport::SocketStats;
 
-/// Cumulative stats for a single TCP transport handle.
-#[derive(Debug, Clone, Copy, Default)]
-#[non_exhaustive]
-pub struct TcpStats {
-    pub bytes_sent: u64,
-    pub bytes_received: u64,
-    pub send_calls: u64,
-    pub recv_calls: u64,
-    pub send_errors: u64,
-    pub recv_errors: u64,
+tst_core::binding_record! {
+    /// Cumulative stats snapshot for a TCP transport handle. Both send and
+    /// receive counters are populated on the same handle (TCP is full-duplex).
+    #[derive(Debug, Clone, Copy, Default)]
+    #[non_exhaustive]
+    pub struct TcpStats {
+        /// Bytes successfully sent.
+        pub bytes_sent: u64,
+        /// Bytes successfully received.
+        pub bytes_received: u64,
+        /// Number of successful send calls.
+        pub send_calls: u64,
+        /// Number of successful recv calls.
+        pub recv_calls: u64,
+        /// Send-side I/O errors.
+        pub send_errors: u64,
+        /// Receive-side I/O errors.
+        pub recv_errors: u64,
+    }
 }
 
 impl TcpStats {

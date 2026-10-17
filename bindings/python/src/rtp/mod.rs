@@ -25,6 +25,7 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     server::register(&m)?;
     publish::register(&m)?;
     h264_receiver::register(&m)?;
+    crate::generated::stats_rtp::register(&m)?;
     parent.add_submodule(&m)?;
     Ok(())
 }

@@ -38,30 +38,42 @@ impl<F: FnOnce()> Drop for OnDrop<F> {
 /// default cadence and is ample for cumulative counters polled on demand.
 pub(crate) const STATS_INTERVAL_MS: i32 = 1000;
 
-/// Cumulative stats for a single RIST transport handle.
-///
-/// librist exposes much richer counters via its `rist_stats` callback (sent /
-/// received / retransmitted / dropped / RTT / bandwidth) — those are surfaced
-/// here as a flat struct after periodic polling.
-#[derive(Debug, Clone, Copy, Default)]
-#[non_exhaustive]
-pub struct RistStats {
-    pub bytes_sent: u64,
-    pub bytes_received: u64,
-    pub packets_sent: u64,
-    pub packets_received: u64,
-    pub packets_retransmitted: u64,
-    /// Packets that never reached the application. Aggregates librist's
-    /// wire-loss count (the `lost` counter from the receiver stats callback)
-    /// with packets librist delivered but this transport dropped at the app
-    /// boundary (a datagram larger than the caller's buffer, or a malformed
-    /// null-payload block). These are disjoint sets, so there is no
-    /// double-counting; the wire-loss term normally dominates.
-    pub packets_dropped: u64,
-    /// Smoothed bandwidth, kbps.
-    pub bandwidth_kbps: u32,
-    /// Smoothed RTT, microseconds.
-    pub rtt_us: u32,
+tst_core::binding_record! {
+    /// Cumulative stats snapshot for a RIST transport handle.
+    ///
+    /// Send-side counters are zero on a receive-only handle and vice-versa.
+    /// The round-trip time is a smoothed value that stays 0 until the first
+    /// RTCP exchange.
+    ///
+    /// <!-- rust-only -->
+    /// librist exposes much richer counters via its `rist_stats` callback (sent /
+    /// received / retransmitted / dropped / RTT / bandwidth) — those are surfaced
+    /// here as a flat struct after periodic polling.
+    #[derive(Debug, Clone, Copy, Default)]
+    #[non_exhaustive]
+    pub struct RistStats {
+        @[skip]
+        pub bytes_sent: u64,
+        @[skip]
+        pub bytes_received: u64,
+        /// Payload packets successfully sent (sender only).
+        pub packets_sent: u64,
+        /// Packets successfully received (receiver only).
+        pub packets_received: u64,
+        /// Packets retransmitted due to ARQ (sender only).
+        pub packets_retransmitted: u64,
+        /// Packets that never reached the application. Aggregates librist's
+        /// wire-loss count (the `lost` counter from the receiver stats callback)
+        /// with packets librist delivered but this transport dropped at the app
+        /// boundary (a datagram larger than the caller's buffer, or a malformed
+        /// null-payload block). These are disjoint sets, so there is no
+        /// double-counting; the wire-loss term normally dominates.
+        pub packets_dropped: u64,
+        /// Smoothed bandwidth, kbps.
+        pub bandwidth_kbps: u32,
+        /// Smoothed RTT, microseconds.
+        pub rtt_us: u32,
+    }
 }
 
 impl RistStats {

@@ -35,10 +35,11 @@ use tst_pipeline::{
     DemuxReceiver as RustDemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource,
 };
 
+use crate::generated::stats_mpegts::MuxerStats;
+use crate::generated::stats_shells::SocketStats;
 use crate::mpegts::demux_error_to_pyerr;
-use crate::mux::PyMuxerStats;
 use crate::raise::{pyok, raise};
-use crate::shells::cancel::{PyCancelHandle, PySocketStats, cancel_source};
+use crate::shells::cancel::{PyCancelHandle, cancel_source};
 use crate::shells::end_reason::{end_detail, end_reason_to_py};
 use crate::util::{CancelSource, close_owned};
 
@@ -304,7 +305,7 @@ impl PyDemuxReceiver {
     }
 
     /// Snapshot of the scheme-neutral 16-field wire stats.
-    fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
+    fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
         // Release the GIL before taking the inner lock. A registered byte
         // sink fires `Python::with_gil` inside `recv_event` while holding
         // this same lock; if we held the GIL here we would deadlock
@@ -322,7 +323,7 @@ impl PyDemuxReceiver {
                     })
             }),
         )?;
-        Py::new(py, PySocketStats::from_core(core))
+        Py::new(py, SocketStats::from(&core))
     }
 
     /// Tuple of `(SocketStats, MuxerStats)`. Same shape as
@@ -331,7 +332,7 @@ impl PyDemuxReceiver {
     /// DemuxReceiver.
     ///
     /// Returns the transport's `CLOSED` kind if the receiver has been closed.
-    fn stats(&self, py: Python<'_>) -> PyResult<(Py<PySocketStats>, Py<PyMuxerStats>)> {
+    fn stats(&self, py: Python<'_>) -> PyResult<(Py<SocketStats>, Py<MuxerStats>)> {
         // Release the GIL before taking the inner lock — same rationale
         // as `socket_stats` above (GIL↔mutex ABBA deadlock with byte
         // sinks). Extract plain Rust values under the lock, then build
@@ -362,8 +363,8 @@ impl PyDemuxReceiver {
                 })
         });
         let (sock_stats, mux_stats) = pyok(py, &self.owned.snapshot().domain, raw)?;
-        let sock_py = Py::new(py, PySocketStats::from_core(sock_stats))?;
-        let mux_py = Py::new(py, PyMuxerStats::from_inner(mux_stats))?;
+        let sock_py = Py::new(py, SocketStats::from(&sock_stats))?;
+        let mux_py = Py::new(py, MuxerStats::from(&mux_stats))?;
         Ok((sock_py, mux_py))
     }
 

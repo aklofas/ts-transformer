@@ -17,12 +17,12 @@ use crate::panic::jni_native;
 use std::sync::LazyLock;
 
 use jni::JNIEnv;
-use jni::objects::{JBooleanArray, JByteArray, JIntArray, JValue};
+use jni::objects::{JBooleanArray, JByteArray, JIntArray};
 use jni::sys::{jboolean, jint, jlong, jobject};
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_hls::{HlsError, HlsPublisher};
-use tst_pipeline::{MuxPublisher as RustMuxPublisher, MuxPublisherError, MuxPublisherStats};
+use tst_pipeline::{MuxPublisher as RustMuxPublisher, MuxPublisherError};
 
 use crate::error::throw_closed;
 use crate::handle::HandleRegistry;
@@ -46,22 +46,6 @@ fn with_shell(
         Some(Err(e)) => mux_publisher_error(env, e),
         None => throw_closed(env, "MuxPublisher"),
     }
-}
-
-fn build_mux_publisher_stats<'local>(
-    env: &mut JNIEnv<'local>,
-    s: &MuxPublisherStats,
-) -> jni::errors::Result<jni::objects::JObject<'local>> {
-    env.ensure_local_capacity(4)?;
-    env.new_object(
-        "org/tstrans/hls/MuxPublisherStats",
-        "(JJJ)V",
-        &[
-            JValue::Long(s.bytes_pushed as i64),
-            JValue::Long(s.drain_calls as i64),
-            JValue::Long(s.cut_calls as i64),
-        ],
-    )
 }
 
 jni_native! {
@@ -233,7 +217,7 @@ jni_native! {
         handle: jlong,
     ) -> jobject = std::ptr::null_mut() => {
         match REGISTRY.with(handle as u64, |s| s.stats()) {
-            Some(st) => build_mux_publisher_stats(env, &st)
+            Some(st) => crate::generated::stats_hls::build_mux_publisher_stats(env, &st)
                 .map(|o| o.into_raw())
                 .unwrap_or(std::ptr::null_mut()),
             None => {

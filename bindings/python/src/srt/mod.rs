@@ -18,13 +18,12 @@ mod lowlevel;
 pub(crate) mod managed_basic;
 pub(crate) mod managed_convenience;
 pub(crate) mod policy;
-pub(crate) mod transport;
 
 use pyo3::prelude::*;
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(parent.py(), "srt")?;
-    transport::register(&m)?;
+    crate::generated::stats_srt::register(&m)?;
     lowlevel::register(&m)?;
     policy::register(&m)?;
     managed_basic::register(&m)?;

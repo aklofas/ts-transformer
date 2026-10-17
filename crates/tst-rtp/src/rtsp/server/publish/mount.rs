@@ -481,69 +481,74 @@ impl Default for PublishMountStatsInner {
     }
 }
 
-/// Snapshot of [`PublishMountHandle::stats`]. Counters are cumulative
-/// over the mount's life, across publishers.
-#[derive(Debug, Clone, Default)]
-#[non_exhaustive]
-pub struct PublishMountStats {
-    /// RTP packets received from publishers, counted before validation.
-    pub rtp_packets_received: u64,
-    /// Bytes of those RTP packets, headers included.
-    pub bytes_received: u64,
-    /// Packets dropped as unusable: not RTP, the wrong payload type, an
-    /// invalid MP2T payload, or an interleaved frame on an unknown channel.
-    pub malformed_packets: u64,
-    /// UDP datagrams dropped because they came from an IP other than the
-    /// publisher's control connection.
-    pub source_rejected: u64,
-    /// Frames emitted to the mount's sinks (PLAY readers and the
-    /// application transport).
-    pub frames_emitted: u64,
-    /// Frames dropped because the application transport's queue was full.
-    /// The queue holds 6 577 frames (about 8.7 MB): one maximum-size
-    /// (8 MiB) elementary access unit, re-muxed, plus 64 frames of
-    /// headroom. It fills only when the application stops reading. Held
-    /// KLV released in the same burst (up to the 4 MiB / 4 096-unit hold,
-    /// about 3 500 frames) narrows the headroom: an access unit above
-    /// about 4 MB released together with a full hold can overflow the
-    /// queue of an application that is not draining it.
-    pub frames_dropped_app: u64,
-    /// Frames dropped across PLAY readers that lagged behind the fan-out.
-    pub frames_dropped_readers: u64,
-    /// Access units emitted by an elementary-shape adapter.
-    pub aus_emitted: u64,
-    /// Access units an elementary-shape adapter dropped.
-    pub aus_dropped: u64,
-    /// Access units an elementary-shape adapter muxed with a PTS below one
-    /// it had already muxed: a publisher sending B-frames (RTP carries
-    /// presentation times in decode order). They are still muxed, but the
-    /// re-muxed TS carries a PTS and no DTS, so a player slaved to its PCR
-    /// may show them late. Nonzero means the publisher uses B-frames.
-    pub aus_reordered: u64,
-    /// KLV units emitted by an elementary-shape adapter.
-    pub klv_units_emitted: u64,
-    /// KLV units an elementary-shape adapter dropped: damaged or oversize
-    /// on the wire, past the hold's bounds (4 096 units or 4 MiB, held
-    /// for alignment and waiting for the video together; two seconds
-    /// without a video track, or ten seconds placed but not reached by
-    /// the video), held at a source restart, placed before the video's
-    /// first frame, or refused by the muxer.
-    pub klv_units_dropped: u64,
-    /// How the current publisher's tracks are aligned to one clock.
-    pub alignment: ClockAlignment,
-    /// Times a new clock mapping replaced the previous one.
-    pub alignment_steps: u64,
-    /// Source restarts on an elementary publisher's tracks: each time a
-    /// video or KLV track's RTP SSRC changed mid-session, counted once per
-    /// change per track. The track's depacketizer and its clock alignment
-    /// restart (KLV units held at that moment are dropped and counted in
-    /// [`Self::klv_units_dropped`]); RTCP sender reports are only taken
-    /// from a track's current SSRC.
-    pub ssrc_changes: u64,
-    /// Publishers that have ended on this mount.
-    pub generation: u64,
-    /// Live PLAY readers subscribed to the mount's fan-out.
-    pub peer_count: usize,
+tst_core::binding_record! {
+    /// Frozen snapshot of a publish mount's stats. Counters are cumulative
+    /// over the mount's life, across publishers.
+    ///
+    /// <!-- rust-only -->
+    /// Snapshot of [`PublishMountHandle::stats`].
+    #[derive(Debug, Clone, Default)]
+    #[non_exhaustive]
+    pub struct PublishMountStats {
+        /// RTP packets received from publishers, counted before validation.
+        pub rtp_packets_received: u64,
+        /// Bytes of those RTP packets, headers included.
+        pub bytes_received: u64,
+        /// Packets dropped as unusable: not RTP, the wrong payload type, an
+        /// invalid MP2T payload, or an interleaved frame on an unknown channel.
+        pub malformed_packets: u64,
+        /// UDP datagrams dropped because they came from an IP other than the
+        /// publisher's control connection.
+        pub source_rejected: u64,
+        /// Frames emitted to the mount's sinks (PLAY readers and the
+        /// application transport).
+        pub frames_emitted: u64,
+        /// Frames dropped because the application transport's queue was full.
+        /// The queue holds 6 577 frames (about 8.7 MB): one maximum-size
+        /// (8 MiB) elementary access unit, re-muxed, plus 64 frames of
+        /// headroom. It fills only when the application stops reading. Held
+        /// KLV released in the same burst (up to the 4 MiB / 4 096-unit hold,
+        /// about 3 500 frames) narrows the headroom: an access unit above
+        /// about 4 MB released together with a full hold can overflow the
+        /// queue of an application that is not draining it.
+        pub frames_dropped_app: u64,
+        /// Frames dropped across PLAY readers that lagged behind the fan-out.
+        pub frames_dropped_readers: u64,
+        /// Access units emitted by an elementary-shape adapter.
+        pub aus_emitted: u64,
+        /// Access units an elementary-shape adapter dropped.
+        pub aus_dropped: u64,
+        /// Access units an elementary-shape adapter muxed with a PTS below one
+        /// it had already muxed: a publisher sending B-frames (RTP carries
+        /// presentation times in decode order). They are still muxed, but the
+        /// re-muxed TS carries a PTS and no DTS, so a player slaved to its PCR
+        /// may show them late. Nonzero means the publisher uses B-frames.
+        pub aus_reordered: u64,
+        /// KLV units emitted by an elementary-shape adapter.
+        pub klv_units_emitted: u64,
+        /// KLV units an elementary-shape adapter dropped: damaged or oversize
+        /// on the wire, past the hold's bounds (4 096 units or 4 MiB, held
+        /// for alignment and waiting for the video together; two seconds
+        /// without a video track, or ten seconds placed but not reached by
+        /// the video), held at a source restart, placed before the video's
+        /// first frame, or refused by the muxer.
+        pub klv_units_dropped: u64,
+        /// How the current publisher's tracks are aligned to one clock.
+        pub alignment: ClockAlignment,
+        /// Times a new clock mapping replaced the previous one.
+        pub alignment_steps: u64,
+        /// Source restarts on an elementary publisher's tracks: each time a
+        /// video or KLV track's RTP SSRC changed mid-session, counted once per
+        /// change per track. The track's depacketizer and its clock alignment
+        /// restart (KLV units held at that moment are dropped and counted in
+        /// [`Self::klv_units_dropped`]); RTCP sender reports are only taken
+        /// from a track's current SSRC.
+        pub ssrc_changes: u64,
+        /// Publishers that have ended on this mount.
+        pub generation: u64,
+        /// Live PLAY readers subscribed to the mount's fan-out.
+        pub peer_count: usize,
+    }
 }
 
 /// Public mount surface for a publish mount. Returned by

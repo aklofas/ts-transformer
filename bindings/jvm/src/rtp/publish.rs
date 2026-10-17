@@ -21,8 +21,7 @@ use jni::sys::{jboolean, jint, jlong};
 use tst_core::mpegts::demux::DemuxerConfig;
 use tst_rtp::rtsp::server::publish::{
     ClockAlignment as RustClockAlignment, PublishMountHandle as RustPublishMountHandle,
-    PublishMountStats as RustPublishMountStats, PublishShape as RustPublishShape,
-    PublisherInfo as RustPublisherInfo,
+    PublishShape as RustPublishShape, PublisherInfo as RustPublisherInfo,
 };
 
 use crate::handle::HandleRegistry;
@@ -71,55 +70,27 @@ fn enum_const<'local>(
     .l()
 }
 
-/// The `ClockAlignment` member name; `None` for a variant this build does not
-/// know (the Rust enum is non-exhaustive).
-fn alignment_name(a: RustClockAlignment) -> Option<&'static str> {
-    Some(match a {
+/// The Java `ClockAlignment` constant for `a`. A variant this build does not
+/// know throws `RuntimeException` and returns `Err(())`: the exception is
+/// already pending (the Rust enum is non-exhaustive).
+pub(crate) fn build_clock_alignment<'local>(
+    env: &mut JNIEnv<'local>,
+    a: RustClockAlignment,
+) -> Result<JObject<'local>, ()> {
+    let name = match a {
         RustClockAlignment::NotApplicable => "NOT_APPLICABLE",
         RustClockAlignment::Pending => "PENDING",
         RustClockAlignment::Provisional => "PROVISIONAL",
         RustClockAlignment::SenderReport => "SENDER_REPORT",
-        _ => return None,
-    })
-}
-
-/// Build `org.tstrans.rtp.PublishMountStats`: the Rust fields in Rust order.
-fn build_stats<'local>(
-    env: &mut JNIEnv<'local>,
-    s: &RustPublishMountStats,
-) -> jni::errors::Result<JObject<'local>> {
-    let Some(name) = alignment_name(s.alignment) else {
-        let _ = env.throw_new(
-            "java/lang/RuntimeException",
-            "ClockAlignment variant unknown to this build of tstrans",
-        );
-        return Ok(JObject::null());
+        _ => {
+            let _ = env.throw_new(
+                "java/lang/RuntimeException",
+                "ClockAlignment variant unknown to this build of tstrans",
+            );
+            return Err(());
+        }
     };
-    let alignment = enum_const(env, "ClockAlignment", name)?;
-    let l = |v: u64| JValue::Long(v as i64);
-    env.new_object(
-        "org/tstrans/rtp/PublishMountStats",
-        "(JJJJJJJJJJJJLorg/tstrans/rtp/ClockAlignment;JJJJ)V",
-        &[
-            l(s.rtp_packets_received),
-            l(s.bytes_received),
-            l(s.malformed_packets),
-            l(s.source_rejected),
-            l(s.frames_emitted),
-            l(s.frames_dropped_app),
-            l(s.frames_dropped_readers),
-            l(s.aus_emitted),
-            l(s.aus_dropped),
-            l(s.aus_reordered),
-            l(s.klv_units_emitted),
-            l(s.klv_units_dropped),
-            JValue::Object(&alignment),
-            l(s.alignment_steps),
-            l(s.ssrc_changes),
-            l(s.generation),
-            l(s.peer_count as u64),
-        ],
-    )
+    enum_const(env, "ClockAlignment", name).map_err(|_| ())
 }
 
 /// Build `org.tstrans.rtp.PublisherInfo(String, PublishShape, boolean, long, long)`.
@@ -213,7 +184,8 @@ jni_native! {
         let Some(s) = with_publish(env, handle, |m| m.stats()) else {
             return JObject::null();
         };
-        build_stats(env, &s).unwrap_or_else(|_| JObject::null())
+        crate::generated::stats_rtp::build_publish_mount_stats(env, &s)
+            .unwrap_or_else(|_| JObject::null())
     }
 }
 
