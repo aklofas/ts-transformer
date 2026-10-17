@@ -276,6 +276,8 @@ pub struct H264Sps {
     pub chroma_format: crate::codec::ChromaFormatPy,
     /// True for progressive encoding (`frame_mbs_only_flag=1`).
     pub frame_mbs_only: bool,
+    /// Frame rate as a rational number, or absent when the VUI is absent.
+    pub frame_rate: Option<Rational>,
     /// True when `fixed_frame_rate_flag=1` in the VUI.
     pub fixed_frame_rate: bool,
     /// True when the stream may contain B-frames. A heuristic: the VUI
@@ -283,8 +285,6 @@ pub struct H264Sps {
     /// and the constrained High subsets are B-frameless and every other
     /// profile may have B-frames.
     pub has_b_frames: bool,
-    /// Frame rate as a rational number, or absent when the VUI is absent.
-    pub frame_rate: Option<Rational>,
     /// VUI colour info, or absent when the VUI is absent or
     /// `video_signal_type` is not present.
     pub color: Option<ColorInfo>,
@@ -346,9 +346,9 @@ impl From<&tst_core::codec::h264::H264Sps> for H264Sps {
             bit_depth_chroma: r.bit_depth_chroma,
             chroma_format: crate::codec::ChromaFormatPy::from(r.chroma_format),
             frame_mbs_only: r.frame_mbs_only,
+            frame_rate: r.frame_rate.as_ref().map(Rational::from),
             fixed_frame_rate: r.fixed_frame_rate,
             has_b_frames: r.has_b_frames,
-            frame_rate: r.frame_rate.as_ref().map(Rational::from),
             color: r.color.as_ref().map(ColorInfo::from),
             crop_left: r.crop_left,
             crop_right: r.crop_right,
@@ -940,92 +940,53 @@ impl From<&tst_core::codec::h266::H266ProfileTierLevel> for H266ProfileTierLevel
 }
 
 /// Parsed H.266 Sequence Parameter Set.
-#[pyclass(frozen, name = "H266Sps", module = "tstrans.codec")]
+#[pyclass(frozen, get_all, name = "H266Sps", module = "tstrans.codec")]
 #[derive(Debug, Clone)]
 pub struct H266Sps {
     /// `sps_seq_parameter_set_id` (4-bit) — identifies this SPS (H.266
     /// §7.3.2.4).
-    #[pyo3(get)]
     pub sps_id: u8,
     /// `sps_video_parameter_set_id` (4-bit) — links this SPS to a VPS.
-    #[pyo3(get)]
     pub vps_id: u8,
     /// The `profile_tier_level()` block of this SPS (H.266 V4 §7.3.3).
     pub profile_tier_level: H266ProfileTierLevel,
     /// Post-crop display width in luma samples (after conformance window is
     /// applied).
-    #[pyo3(get)]
     pub width: u32,
     /// Post-crop display height in luma samples.
-    #[pyo3(get)]
     pub height: u32,
     /// Chroma subsampling format.
-    #[pyo3(get)]
     pub chroma_format: crate::codec::ChromaFormatPy,
     /// Luma bit depth. In H.266 V4, a single `sps_bitdepth_minus8` encodes
     /// both luma and chroma — they are always equal.
-    #[pyo3(get)]
     pub bit_depth_luma: u8,
     /// Chroma bit depth. Equal to `bit_depth_luma` per H.266 V4 §7.4.3.4
     /// (single `sps_bitdepth_minus8` field covers both planes).
-    #[pyo3(get)]
     pub bit_depth_chroma: u8,
     /// VUI colour info, or absent when the VUI is absent or
     /// `colour_description` is not present. Decoded per H.274 §7.2
     /// (codec-independent colour registry).
-    #[pyo3(get)]
     pub color: Option<ColorInfo>,
     /// Frame rate as a rational number, or absent when the timing HRD
     /// parameters are absent. In H.266, timing lives in
     /// `general_timing_hrd_parameters()` (§7.3.5.1), not the VUI.
-    #[pyo3(get)]
     pub frame_rate: Option<Rational>,
     /// Luma-sample conformance-window crop offsets per H.266 §7.4.3.4.
     /// `coded_width = width + crop_left + crop_right` (and similarly for
     /// height). Useful for sizing GPU buffers.
-    #[pyo3(get)]
     pub crop_left: u32,
     /// Right crop offset in luma samples.
-    #[pyo3(get)]
     pub crop_right: u32,
     /// Top crop offset in luma samples.
-    #[pyo3(get)]
     pub crop_top: u32,
     /// Bottom crop offset in luma samples.
-    #[pyo3(get)]
     pub crop_bottom: u32,
     /// The original RBSP bytes as supplied to the parser.
-    #[pyo3(get)]
     pub raw_rbsp: crate::util::HostBytes,
 }
 
 #[pymethods]
 impl H266Sps {
-    /// `general_profile_idc` decoded from the SPS profile_tier_level block
-    /// (H.266 V4 §7.3.3). Common values: 1=Main10, 2=MultilayerMain10.
-    #[getter]
-    fn general_profile_idc(&self) -> u8 {
-        crate::custom::h266_sps_general_profile_idc(self)
-    }
-
-    /// `general_tier_flag` — false = Main tier, true = High tier.
-    #[getter]
-    fn general_tier_flag(&self) -> bool {
-        crate::custom::h266_sps_general_tier_flag(self)
-    }
-
-    /// `general_level_idc` — H.266 V4 Annex A.4 level table.
-    #[getter]
-    fn general_level_idc(&self) -> u8 {
-        crate::custom::h266_sps_general_level_idc(self)
-    }
-
-    /// Reconstructed `H266ProfileTierLevel` from the fields decoded inside
-    /// this SPS's `profile_tier_level()` block (H.266 V4 §7.3.3).
-    fn profile_tier_level(&self) -> H266ProfileTierLevel {
-        crate::custom::h266_sps_profile_tier_level(self)
-    }
-
     /// Pre-crop luma width — `pic_width_max_in_luma_samples` before
     /// conformance-window cropping. Equal to `width + crop_left +
     /// crop_right`.

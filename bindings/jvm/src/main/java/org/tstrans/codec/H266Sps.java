@@ -169,7 +169,7 @@ public record H266Sps(
      * @return the coded (pre-crop) width
      */
     public long codedWidth() {
-        return width + cropLeft + cropRight;
+        return CodedSize.of(width, cropLeft, cropRight);
     }
 
     /**
@@ -180,35 +180,6 @@ public record H266Sps(
      * @return the coded (pre-crop) height
      */
     public long codedHeight() {
-        return height + cropTop + cropBottom;
+        return CodedSize.of(height, cropTop, cropBottom);
     }
-
-    /**
-     * {@code general_profile_idc} from {@link #profileTierLevel}. Convenience
-     * accessor mirroring tst-py's flattened {@code general_profile_idc} getter.
-     *
-     * @return the 7-bit profile idc
-     */
-    public int generalProfileIdc() {
-        return profileTierLevel.generalProfileIdc();
-    }
-
-    /**
-     * {@code general_tier_flag} from {@link #profileTierLevel}.
-     *
-     * @return false = Main tier, true = High tier
-     */
-    public boolean generalTierFlag() {
-        return profileTierLevel.generalTierFlag();
-    }
-
-    /**
-     * {@code general_level_idc} from {@link #profileTierLevel}.
-     *
-     * @return the level idc (H.266 V4 Annex A.4)
-     */
-    public int generalLevelIdc() {
-        return profileTierLevel.generalLevelIdc();
-    }
-
 }

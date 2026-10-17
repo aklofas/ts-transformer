@@ -107,6 +107,7 @@ tst_core::binding_record! {
     ///
     /// Every shape of field a native class holds.
     #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
     pub struct NativeFixture {
         /// Plain scalar.
         pub id: u8,
@@ -1630,14 +1631,6 @@ const LEAF_EXTRAS: &[PyExtra] = &[
         ret_py: "LeafFixture",
         doc: "",
     },
-    PyExtra {
-        name: "ratio",
-        kind: ExtraKind::Getter,
-        params: &[],
-        ret_rs: "u32",
-        ret_py: "int",
-        doc: "",
-    },
 ];
 
 fn native_reg() -> Vec<Entry> {
@@ -1649,7 +1642,6 @@ fn native_reg() -> Vec<Entry> {
     leaf.py_repr = Some(("Leaf({}/{})", &["self.num", "self.den"]));
     let mut big = native(NativeFixture::BINDING_SCHEMA);
     big.host_name = "NativeHost";
-    big.py_skip = &["level"];
     big.py_rename = &[("flag", "enabled")];
     r.push(leaf);
     r.push(big);
@@ -1685,16 +1677,14 @@ fn a_native_class_is_a_frozen_get_all_struct_of_host_copies() {
         "{raw}"
     );
     assert!(
-        raw.contains("#[getter]\n    fn ratio(&self) -> u32"),
-        "{raw}"
-    );
-    assert!(
         raw.contains("\"Leaf({}/{})\",\n            self.num,\n            self.den"),
         "{raw}"
     );
     // The big one: the host name, host types, no constructor, no Copy.
     assert!(
-        raw.contains(r#"#[pyclass(frozen, name = "NativeHost", module = "tstrans.codec")]"#),
+        raw.contains(
+            r#"#[pyclass(frozen, get_all, name = "NativeHost", module = "tstrans.codec")]"#
+        ),
         "{raw}"
     );
     assert!(
@@ -1724,14 +1714,6 @@ fn a_native_class_is_a_frozen_get_all_struct_of_host_copies() {
     assert!(
         !raw.contains("pub scratch"),
         "a skipped field is not held\n{raw}"
-    );
-    // A hidden field is held for the extras but has no getter, so the
-    // getters are declared field by field.
-    assert!(raw.contains("    pub level: u8,"), "{raw}");
-    assert!(
-        raw.contains("#[pyo3(get)]\n    pub id: u8,")
-            && !raw.contains("#[pyo3(get)]\n    pub level"),
-        "{raw}"
     );
     assert!(!raw.contains("fn new(id"), "{raw}");
     assert!(raw.contains("impl From<&"), "{raw}");
@@ -1773,7 +1755,7 @@ fn a_native_class_stub_lists_the_constructor_properties_and_extras() {
          \x20   def __eq__(self, other: object, /) -> bool: ...\n\
          \x20   def as_float(self) -> float: ...\n\
          \x20   @staticmethod\n    def zero(den: int) -> LeafFixture: ...\n\
-         \x20   @property\n    def ratio(self) -> int: ...\n"
+         "
     );
     let big = emit_pyclass::pyi_block(&reg, named(&reg, "NativeFixture")).unwrap();
     assert!(big.starts_with("@final\nclass NativeHost:\n"), "{big}");
@@ -1788,7 +1770,8 @@ fn a_native_class_stub_lists_the_constructor_properties_and_extras() {
     ] {
         assert!(big.contains(want), "{want}\n{big}");
     }
-    assert!(!big.contains("scratch") && !big.contains("level"), "{big}");
+    assert!(!big.contains("scratch"), "{big}");
+    assert!(big.contains("def level(self) -> int: ..."), "{big}");
     assert!(!big.contains("__new__"), "{big}");
 }
 
@@ -1922,7 +1905,7 @@ fn a_native_struct_holds_the_crossing_fields_and_no_others() {
 }
 
 #[test]
-fn a_renamed_record_cannot_be_held_and_py_skip_must_name_a_field() {
+fn py_rename_must_name_a_field() {
     // `NativeHost` is `NativeFixture` to the hosts: no other record holds it.
     let mut reg = native_reg();
     let mut holder = native(OptFixture::BINDING_SCHEMA);
@@ -1934,7 +1917,7 @@ fn a_renamed_record_cannot_be_held_and_py_skip_must_name_a_field() {
         .iter()
         .position(|x| x.schema.name == "NativeFixture")
         .unwrap();
-    reg[i].py_skip = &["nope"];
+    reg[i].py_rename = &[("nope", "x")];
     let err = emit_pyclass::file(&reg, "native_test").unwrap_err();
     assert!(err.contains("names no field `nope`"), "{err}");
 }

@@ -257,7 +257,7 @@ public record H265Sps(
      * @return the coded (pre-crop) width
      */
     public long codedWidth() {
-        return width + cropLeft + cropRight;
+        return CodedSize.of(width, cropLeft, cropRight);
     }
 
     /**
@@ -268,7 +268,7 @@ public record H265Sps(
      * @return the coded (pre-crop) height
      */
     public long codedHeight() {
-        return height + cropTop + cropBottom;
+        return CodedSize.of(height, cropTop, cropBottom);
     }
 
     /**

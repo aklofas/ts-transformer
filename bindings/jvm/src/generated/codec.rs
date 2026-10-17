@@ -165,6 +165,17 @@ pub(crate) fn build_h264_sps<'l>(
         "(Z)Lorg/tstrans/codec/H264Sps$Builder;",
         &[JValue::Bool(u8::from(r.frame_mbs_only))],
     )?;
+    if let Some(v) = &r.frame_rate {
+        let o1 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+            build_rational(env, v)
+        })?;
+        env.call_method(
+            &b,
+            "frameRate",
+            "(Lorg/tstrans/codec/Rational;)Lorg/tstrans/codec/H264Sps$Builder;",
+            &[JValue::Object(&o1)],
+        )?;
+    }
     env.call_method(
         &b,
         "fixedFrameRate",
@@ -177,17 +188,6 @@ pub(crate) fn build_h264_sps<'l>(
         "(Z)Lorg/tstrans/codec/H264Sps$Builder;",
         &[JValue::Bool(u8::from(r.has_b_frames))],
     )?;
-    if let Some(v) = &r.frame_rate {
-        let o1 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            build_rational(env, v)
-        })?;
-        env.call_method(
-            &b,
-            "frameRate",
-            "(Lorg/tstrans/codec/Rational;)Lorg/tstrans/codec/H264Sps$Builder;",
-            &[JValue::Object(&o1)],
-        )?;
-    }
     if let Some(v) = &r.color {
         let o2 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
             build_color_info(env, v)

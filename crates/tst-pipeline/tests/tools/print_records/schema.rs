@@ -38,8 +38,6 @@ pub enum PyShape {
 /// How a hand-written method or property of a native class is called.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExtraKind {
-    /// A read-only property.
-    Getter,
     /// An instance method.
     Method,
     /// A static method returning the class.
@@ -97,10 +95,6 @@ pub struct Entry {
     /// A native class compares by field (`==`); the Rust record needs no
     /// `PartialEq`, the generated struct derives it.
     pub py_eq: bool,
-    /// Rust fields that cross to Java and not to Python: the native class
-    /// holds them, and only its hand-written extras read them (an extra of
-    /// the same name takes their place).
-    pub py_skip: &'static [&'static str],
     /// `(Rust field, Python name)` where the Python attribute is not named
     /// as the Rust field.
     pub py_rename: &'static [(&'static str, &'static str)],
@@ -136,7 +130,6 @@ impl Entry {
             host_name: "",
             py_ctor: false,
             py_eq: false,
-            py_skip: &[],
             py_rename: &[],
             py_repr: None,
             py_extras: &[],
@@ -154,11 +147,6 @@ impl Entry {
 
     pub fn is_native(&self) -> bool {
         self.shape == PyShape::Native
-    }
-
-    /// Whether a field crosses to Python.
-    pub fn py_crosses(&self, f: &FieldSpec) -> bool {
-        f.mark != FieldMark::Skip && !self.py_skip.contains(&f.name)
     }
 
     /// The Python attribute name of a Rust field.
@@ -500,22 +488,6 @@ const fn ptl_method(ret: &'static str, doc: &'static str) -> PyExtra {
     }
 }
 
-const fn general(
-    name: &'static str,
-    rs: &'static str,
-    py: &'static str,
-    doc: &'static str,
-) -> PyExtra {
-    PyExtra {
-        name,
-        kind: ExtraKind::Getter,
-        params: &[],
-        ret_rs: rs,
-        ret_py: py,
-        doc,
-    }
-}
-
 const H264_SPS_EXTRAS: &[PyExtra] = &[
     coded(
         "coded_width",
@@ -548,28 +520,6 @@ const H265_VPS_EXTRAS: &[PyExtra] = &[ptl_method(
 )];
 
 const H266_SPS_EXTRAS: &[PyExtra] = &[
-    general(
-        "general_profile_idc",
-        "u8",
-        "int",
-        " `general_profile_idc` decoded from the SPS profile_tier_level block\n (H.266 V4 §7.3.3). Common values: 1=Main10, 2=MultilayerMain10.",
-    ),
-    general(
-        "general_tier_flag",
-        "bool",
-        "bool",
-        " `general_tier_flag` — false = Main tier, true = High tier.",
-    ),
-    general(
-        "general_level_idc",
-        "u8",
-        "int",
-        " `general_level_idc` — H.266 V4 Annex A.4 level table.",
-    ),
-    ptl_method(
-        "H266ProfileTierLevel",
-        " Reconstructed `H266ProfileTierLevel` from the fields decoded inside\n this SPS's `profile_tier_level()` block (H.266 V4 §7.3.3).",
-    ),
     coded(
         "coded_width",
         " Pre-crop luma width — `pic_width_max_in_luma_samples` before\n conformance-window cropping. Equal to `width + crop_left + crop_right`.",
@@ -789,9 +739,7 @@ fn codec_records() -> Vec<Entry> {
         ],
     ));
     let mut h266_sps = rec!("h266::", H266Sps);
-    // Python reaches the profile/tier/level through its own methods and
-    // calls the VUI colour `color`, as H.264 and H.265 do.
-    h266_sps.py_skip = &["profile_tier_level"];
+    // Python calls the VUI colour `color`, as H.264 and H.265 do.
     h266_sps.py_rename = &[("color_info", "color")];
     h266_sps.py_extras = H266_SPS_EXTRAS;
     h266_sps.py_repr = Some((

@@ -65,10 +65,6 @@ class H266Test {
         assertEquals(1, ptl.generalProfileIdc()); // Main 10
         assertFalse(ptl.generalTierFlag()); // Main tier
         assertEquals(63, ptl.generalLevelIdc()); // Level 4.0
-        // Convenience accessors mirror the nested values.
-        assertEquals(1, sps.generalProfileIdc());
-        assertFalse(sps.generalTierFlag());
-        assertEquals(63, sps.generalLevelIdc());
     }
 
     @Test

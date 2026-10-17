@@ -10,8 +10,7 @@ use tst_core::codec::misp_time::MispTimestamp as RustMispTimestamp;
 
 use crate::codec::MispTimeKindPy;
 use crate::generated::codec::{
-    H264Sps, H265ProfileTierLevel, H265Sps, H265Vps, H266ProfileTierLevel, H266Sps, MispTimestamp,
-    Rational,
+    H264Sps, H265ProfileTierLevel, H265Sps, H265Vps, H266Sps, MispTimestamp, Rational,
 };
 
 pub(crate) fn rational_as_float(r: &Rational) -> f64 {
@@ -55,12 +54,19 @@ impl From<MispTimestamp> for RustMispTimestamp {
 
 // --- H.264 ------------------------------------------------------------------
 
+/// The coded size of an SPS: the post-crop size plus the two crop offsets.
+/// The formula of the Rust `coded_width()` / `coded_height()`, which a host
+/// copy cannot reach; every codec's pair of hooks calls it.
+fn coded_size(size: u32, crop_a: u32, crop_b: u32) -> u32 {
+    size + crop_a + crop_b
+}
+
 pub(crate) fn h264_sps_coded_width(s: &H264Sps) -> u32 {
-    s.width + s.crop_left + s.crop_right
+    coded_size(s.width, s.crop_left, s.crop_right)
 }
 
 pub(crate) fn h264_sps_coded_height(s: &H264Sps) -> u32 {
-    s.height + s.crop_top + s.crop_bottom
+    coded_size(s.height, s.crop_top, s.crop_bottom)
 }
 
 // --- H.265 ------------------------------------------------------------------
@@ -82,11 +88,11 @@ pub(crate) fn h265_sps_profile_tier_level(s: &H265Sps) -> H265ProfileTierLevel {
 }
 
 pub(crate) fn h265_sps_coded_width(s: &H265Sps) -> u32 {
-    s.width + s.crop_left + s.crop_right
+    coded_size(s.width, s.crop_left, s.crop_right)
 }
 
 pub(crate) fn h265_sps_coded_height(s: &H265Sps) -> u32 {
-    s.height + s.crop_top + s.crop_bottom
+    coded_size(s.height, s.crop_top, s.crop_bottom)
 }
 
 pub(crate) fn h265_vps_profile_tier_level(v: &H265Vps) -> H265ProfileTierLevel {
@@ -105,28 +111,12 @@ pub(crate) fn h265_vps_profile_tier_level(v: &H265Vps) -> H265ProfileTierLevel {
 
 // --- H.266 ------------------------------------------------------------------
 
-pub(crate) fn h266_sps_general_profile_idc(s: &H266Sps) -> u8 {
-    s.profile_tier_level.general_profile_idc
-}
-
-pub(crate) fn h266_sps_general_tier_flag(s: &H266Sps) -> bool {
-    s.profile_tier_level.general_tier_flag
-}
-
-pub(crate) fn h266_sps_general_level_idc(s: &H266Sps) -> u8 {
-    s.profile_tier_level.general_level_idc
-}
-
-pub(crate) fn h266_sps_profile_tier_level(s: &H266Sps) -> H266ProfileTierLevel {
-    s.profile_tier_level
-}
-
 pub(crate) fn h266_sps_coded_width(s: &H266Sps) -> u32 {
-    s.width + s.crop_left + s.crop_right
+    coded_size(s.width, s.crop_left, s.crop_right)
 }
 
 pub(crate) fn h266_sps_coded_height(s: &H266Sps) -> u32 {
-    s.height + s.crop_top + s.crop_bottom
+    coded_size(s.height, s.crop_top, s.crop_bottom)
 }
 
 // --- AV1 --------------------------------------------------------------------

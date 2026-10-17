@@ -269,6 +269,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   declaration, so constructing it with positional arguments changes; construct
   it with keyword arguments, the documented path, which are unaffected.
 - `tstrans.klv.PayloadList.records` has no default; pass it explicitly.
+- `tstrans.codec.H266Sps.profile_tier_level` is an attribute, not a method, and
+  the `general_profile_idc`, `general_tier_flag` and `general_level_idc`
+  properties are gone: read `sps.profile_tier_level` and its fields. The record
+  has one shape on both hosts, with no duplicate accessors.
 - `repr()` of `tstrans.codec.Av1ObuStream` lists its fields (it was the
   default object repr), and `repr()` of `AdtsFrame` and `Mpeg2AudioFrame` prints
   the host enum members by their Rust names (`Ltp`, `Ii`, `Iii`) where it
@@ -332,6 +336,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `code()`. The typed accessors of the record are unchanged.
 - `RvtPoi.Builder.poiTypeCode` and `RvtAoi.Builder.aoiTypeCode` take an
   `Integer` where they took an `int`; a call with an `int` still compiles.
+- `org.tstrans.codec.H266Sps` has no `generalProfileIdc()`, `generalTierFlag()`
+  or `generalLevelIdc()`: read them from `profileTierLevel()`. The record has
+  one shape on both hosts, with no duplicate accessors.
+- `org.tstrans.codec.H264Sps` lists its components in the order of the Rust
+  declaration (`frameRate` follows `frameMbsOnly`), so the canonical
+  constructor's argument order changes; build it with `H264Sps.Builder`, the
+  documented path, whose setters keep their names.
 - A `null` required `String` component of a record handed to an encode or CoT
   call (an ST 0601 record's, for example) and a negative
   `PrecisionTimeStampPack.timestampUs` throw `IllegalArgumentException` naming
