@@ -85,19 +85,36 @@ impl PidState {
 
     /// `true` when nothing is set, so the entry can be dropped.
     pub(super) fn is_vacant(&self) -> bool {
-        self.stream_kind.is_none()
-            && self.program.is_none()
-            && self.cc.is_none()
-            && !self.dup
-            && self.last_pkt_raw.is_none()
-            && self.last_pts.is_none()
-            && self.unwrap.is_none()
-            && self.stats.is_none()
-            && self.codec.is_none()
-            && !self.subtitle_missing_descriptor_emitted
-            && !self.av1_registration_malformed_emitted
-            && !self.subtitle_descriptor_ambiguous_emitted
-            && !self.subtitle_seen
+        // Exhaustive on purpose: a new field fails to compile here until it
+        // is part of the vacancy test.
+        let Self {
+            stream_kind,
+            program,
+            cc,
+            dup,
+            last_pkt_raw,
+            last_pts,
+            unwrap,
+            stats,
+            codec,
+            subtitle_missing_descriptor_emitted,
+            av1_registration_malformed_emitted,
+            subtitle_descriptor_ambiguous_emitted,
+            subtitle_seen,
+        } = self;
+        stream_kind.is_none()
+            && program.is_none()
+            && cc.is_none()
+            && !dup
+            && last_pkt_raw.is_none()
+            && last_pts.is_none()
+            && unwrap.is_none()
+            && stats.is_none()
+            && codec.is_none()
+            && !subtitle_missing_descriptor_emitted
+            && !av1_registration_malformed_emitted
+            && !subtitle_descriptor_ambiguous_emitted
+            && !subtitle_seen
     }
 }
 
