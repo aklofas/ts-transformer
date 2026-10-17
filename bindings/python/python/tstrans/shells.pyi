@@ -62,8 +62,7 @@ class EndReason(enum.IntEnum):
 
     Every plain receive transport (rtp, srt, udp, tcp, rist) records a
     reason; srt never records `CLEAN_TEARDOWN`, because libsrt reports a
-    peer's close as a broken link. The managed byte receivers (reconnecting
-    `Receiver`s) are the exception and answer `None`."""
+    peer's close as a broken link."""
 
     CLEAN_TEARDOWN = 1
     SESSION_EXPIRED = 2
@@ -189,7 +188,7 @@ class Receiver:
         """Raises TypeError unless the shell was opened from an srt:// URL."""
     def end_reason(self) -> Optional[EndReason]:
         """The recorded reason, or `None` while the stream is live. Every plain
-        receive transport records one; the managed byte receivers answer `None`."""
+        receive transport records one."""
     def end_detail(self) -> Optional[str]: ...
     def close(self) -> None: ...
     def is_alive(self) -> bool: ...
@@ -368,7 +367,7 @@ class DemuxReceiver:
     def last_seen_micros(self, pid: int) -> Optional[int]: ...
     def end_reason(self) -> Optional[EndReason]:
         """The recorded reason, or `None` while the stream is live. Every plain
-        receive transport records one; the managed byte receivers answer `None`."""
+        receive transport records one."""
     def end_detail(self) -> Optional[str]: ...
     def close(self) -> None: ...
     def is_alive(self) -> bool: ...
