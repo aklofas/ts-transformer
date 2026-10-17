@@ -72,7 +72,7 @@ fn main() {
             eprintln!("binding-records: {} {why}", p.display());
         }
         if !stale.is_empty() {
-            eprintln!("Regenerate: cargo run -p tst-pipeline --bin print-records -- --write");
+            eprintln!("Regenerate: cargo run -p tst-binding-gen --bin print-records -- --write");
         }
         if !orphans.is_empty() {
             eprintln!("Delete the generated files and blocks no registered record renders.");

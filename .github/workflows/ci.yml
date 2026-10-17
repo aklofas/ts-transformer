@@ -696,7 +696,7 @@ jobs:
           # #[non_exhaustive] record in crates/tst-core/tests/binding_schema.rs
           # (a deliberate fixture that tests the non_exhaustive flag).
           # 195->196 (2026-10-16): +RichFixture, the print-records emitter-test fixture in
-          # crates/tst-pipeline/tests/print_records_emit.rs (a deliberate #[non_exhaustive] fixture).
+          # crates/tst-binding-gen/tests/print_records_emit.rs (a deliberate #[non_exhaustive] fixture).
           BASELINE=196
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then

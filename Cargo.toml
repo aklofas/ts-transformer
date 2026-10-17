@@ -6,6 +6,7 @@ members = [
     "crates/srt-sys",
     "bindings/c",
     "bindings/c/core",
+    "crates/tst-binding-gen",
     "crates/tst-core",
     "crates/tst-hls",
     "crates/tst-integration",

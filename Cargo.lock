@@ -1925,6 +1925,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tst-binding-gen"
+version = "0.8.0"
+dependencies = [
+ "tst-core",
+ "tst-hls",
+ "tst-pipeline",
+ "tst-rist",
+ "tst-rtp",
+ "tst-srt",
+ "tst-tcp",
+ "tst-udp",
+]
+
+[[package]]
 name = "tst-c"
 version = "0.8.0"
 dependencies = [
