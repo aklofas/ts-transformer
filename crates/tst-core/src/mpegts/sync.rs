@@ -33,10 +33,14 @@ impl TsSync {
         }
     }
 
-    /// Whether the candidate at `at` verifies. `None` means the bytes present
-    /// neither settle it nor rule it out (this includes `at` itself being past
-    /// the end): more bytes are needed. A stride
-    /// whose index is past the end of `buf` is not yet present.
+    /// Whether the candidate at `at` verifies.
+    ///
+    /// - `Some(true)`: enough strides carry the sync byte.
+    /// - `Some(false)`: the candidate byte is not a sync byte, or too many
+    ///   strides already differ for the rule to be met.
+    /// - `None`: the bytes present neither settle it nor rule it out, so more
+    ///   bytes are needed. This includes `at` itself being past the end of
+    ///   `buf`; a stride whose index is past the end is not yet present.
     pub fn verify(&self, buf: &[u8], at: usize) -> Option<bool> {
         match buf.get(at) {
             None => return None,
@@ -65,8 +69,14 @@ impl TsSync {
         }
     }
 
-    /// The first offset in `buf` whose candidate verifies, or `None` when no
-    /// candidate verifies before `buf` runs too short to decide one.
+    /// The first offset in `buf` whose candidate verifies.
+    ///
+    /// `None` is deliberately one answer for two situations: no candidate
+    /// verifies, or a candidate is still undecided because `buf` ends before
+    /// its strides do (the scan stops there, since a later candidate must not
+    /// be taken ahead of an earlier undecided one). A caller that must tell
+    /// them apart calls [`Self::verify`] itself; the demuxer does, so `find`
+    /// has no production caller and is kept as the reference scan.
     pub fn find(&self, buf: &[u8]) -> Option<usize> {
         for at in 0..buf.len() {
             if buf[at] != TS_SYNC_BYTE {
