@@ -51,15 +51,6 @@ path  = "tests/tools/print_kinds.rs"
 test  = false
 bench = false
 
-# Maintainer tool, not part of the published surface: renders the Python and
-# JVM projections of every `binding_record!` for scripts/check/repo/binding-records.sh.
-[[bin]]
-name  = "print-records"
-required-features = ["std"]
-path  = "tests/tools/print_records.rs"
-test  = false
-bench = false
-
 [[bench]]
 name    = "syncer"
 harness = false

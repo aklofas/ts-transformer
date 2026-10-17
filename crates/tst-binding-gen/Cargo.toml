@@ -1,0 +1,32 @@
+[package]
+name         = "tst-binding-gen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish      = false
+description  = "Maintainer tool: renders the Python and JVM projections of every binding_record! declaration. Not for external consumption."
+
+# The records live in tst-core and in the transport and pipeline crates; the
+# registry reads each crate's `BINDING_SCHEMA`, so this crate depends on all of
+# them. It is a separate package because the transport crates depend on
+# tst-pipeline, which therefore cannot depend on them.
+[dependencies]
+tst-core     = { path = "../tst-core" }
+tst-pipeline = { path = "../tst-pipeline" }
+tst-srt      = { path = "../tst-srt" }
+tst-udp      = { path = "../tst-udp" }
+tst-tcp      = { path = "../tst-tcp" }
+tst-rist     = { path = "../tst-rist" }
+tst-rtp      = { path = "../tst-rtp" }
+tst-hls      = { path = "../tst-hls" }
+
+# Renders the Python and JVM projections of every `binding_record!` for
+# scripts/check/repo/binding-records.sh.
+[[bin]]
+name  = "print-records"
+path  = "tests/tools/print_records.rs"
+test  = false
+bench = false
+
+[lints]
+workspace = true
