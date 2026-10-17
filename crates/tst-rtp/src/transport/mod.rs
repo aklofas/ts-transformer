@@ -21,6 +21,10 @@ mod rtcp_ingest;
 mod send;
 
 pub(crate) use recv::{MPSC_PUMP_DISCONNECTED, RECV_SCRATCH_LEN, Source, record_end};
+// The publisher adapters validate TS payloads with the receiver's rule; the
+// bare plane has no publisher, so the re-export follows the server feature.
+#[cfg(feature = "rtsp-server")]
+pub(crate) use recv::is_valid_mp2t_payload;
 pub use recv::{RtpRecvTransport, RtpStats};
 pub use send::RtpTransport;
 
@@ -1124,11 +1128,11 @@ mod tests {
         // 188 bytes, correct sync — valid.
         v = vec![0u8; 188];
         v[0] = 0x47;
-        assert!(is_valid_mp2t_payload(&v));
+        assert!(recv::is_valid_mp2t_payload(&v));
         // 376 bytes (2 packets), correct sync — valid.
         v = vec![0u8; 376];
         v[0] = 0x47;
-        assert!(is_valid_mp2t_payload(&v));
+        assert!(recv::is_valid_mp2t_payload(&v));
         // 189 bytes — not 188-aligned, invalid.
         v = vec![0x47u8; 189];
         assert!(!recv::is_valid_mp2t_payload(&v));
