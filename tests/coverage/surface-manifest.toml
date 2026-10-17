@@ -49,7 +49,7 @@
 
 [[exempt_rule]]
 item_regex = '::(clone|eq|ne|fmt|hash|cmp|partial_cmp|default)$'
-reason = "derived trait method"
+reason = "trait method (derived or std trait impl)"
 
 [[exempt_rule]]
 item_regex = '^rist_sys::'
@@ -1173,6 +1173,8 @@ owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
 bindings = ["java:org.tstrans.mpegts.DemuxEvent", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
+# capability: Pre-sync ingress ceiling (DemuxerConfig::sync_buf_cap, 0 is the default): Rust; C tst_demux_config_set_sync_buf_cap; Python DemuxerConfig.sync_buf_cap; JVM DemuxerConfig.Builder.syncBufCap.
+# capability: Continuous timestamps across the 33-bit rollover (DemuxerConfig::unwrap_timestamps): Rust; C tst_demux_config_set_unwrap_timestamps; Python DemuxerConfig.unwrap_timestamps; JVM DemuxerConfig.Builder.unwrapTimestamps.
 [[surface]]
 kind = "rust"
 crate = "tst-core"
@@ -1193,12 +1195,10 @@ reason = "round-2 T2-AUCELL aggregate byte cap (2026-06-08); sibling of au_cell_
 item = "tst_core::mpegts::demux::DemuxerConfigBuilder::au_cell_max_in_flight_pids"
 reason = "round-2 T2-AUCELL active-PID cap (2026-06-08); sibling of au_cell_cap_per_pid; graduate to [[surface]] as coverage is asserted"
 
-# capability: Pre-sync ingress ceiling (DemuxerConfig::sync_buf_cap, 0 is the default): Rust; C tst_demux_config_set_sync_buf_cap; Python DemuxerConfig.sync_buf_cap; JVM DemuxerConfig.Builder.syncBufCap.
 [[exempt]]
 item = "tst_core::mpegts::demux::DemuxerConfigBuilder::sync_buf_cap"
 reason = "field-feedback-hardening 2026-07-08; tested via Python+JVM binding mirrors; graduate to [[surface]] as coverage is asserted"
 
-# capability: Continuous timestamps across the 33-bit rollover (DemuxerConfig::unwrap_timestamps): Rust; C tst_demux_config_set_unwrap_timestamps; Python DemuxerConfig.unwrap_timestamps; JVM DemuxerConfig.Builder.unwrapTimestamps.
 [[exempt]]
 item = "tst_core::mpegts::demux::DemuxerConfigBuilder::unwrap_timestamps"
 reason = "apple-poc pts-unwrap knob 2026-09-02; Rust-only opt-in, no binding wiring yet; graduate to [[surface]] as coverage is asserted"
@@ -1495,7 +1495,7 @@ tier = "A"
 item = "tst_core::mpegts::mux::Muxer::push_video_wire_to"
 reason = "wire-push entry point for transmux pass-through"
 
-# capability: PTS plus DTS on a targeted push (push_video_to_with_dts): Rust, C, Python and JVM.
+# capability: PTS plus DTS on the on-wire targeted push (push_video_wire_to_with_dts): Rust, C, Python and JVM.
 [[exempt]]
 item = "tst_core::mpegts::mux::Muxer::push_video_wire_to_with_dts"
 reason = "PTS+DTS wire-push entry point for transmux pass-through"
@@ -2930,7 +2930,7 @@ tier = "A"
 [[surface]]
 item = "tst_core::klv::st1204::CoreId"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:unaudited", "python:tstrans.klv.CoreId", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.klv.CoreId", "java:org.tstrans.klv.CoreId", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 

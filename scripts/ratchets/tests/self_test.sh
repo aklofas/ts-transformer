@@ -469,6 +469,11 @@ printf '[[exempt]]\nitem = "demo::a"\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/sm
 expect "surface manifest: all exempted" 0 smf
 printf '[[exempt]]\nitem = "demo::a"\n' > "$tmp/smf/m.toml"
 expect "surface manifest: un-catalogued item" 1 smf
+# The manifest must parse as TOML: an unterminated string fails even when
+# every item is named.
+printf '[[exempt]]\nitem = "demo::a"\nreason = "unterminated\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/smf/m.toml"
+expect "surface manifest: an unterminated string is not valid TOML" 1 smf
+printf '[[exempt]]\nitem = "demo::a"\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/smf/m.toml"
 # Five-column sentinels so the expected failure can only come from rule (a).
 printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/NO_SUCH_FILE.rs"]\nbindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/smf/m.toml"
 expect "surface manifest: missing owning test" 1 smf

@@ -13,6 +13,7 @@
 #       ":deferred(reason)" and ":n/a(reason)" say why, in the cell;
 #   (b3) "unaudited" is frozen per column: the number of :unaudited cells in
 #       the c, python and java columns may not exceed UNAUDITED_CELLS_MAX;
+#   (a0) the manifest parses as TOML (python3 tomllib, skipped before 3.11);
 #   (c) closure: the mappable public-api.txt items that no [[surface]] or
 #       [[exempt]] row names are exactly the pinned set (UNAUDITED_COUNT
 #       items whose sorted list hashes to UNAUDITED_SHA256). An item matching
@@ -407,6 +408,30 @@ run_check() {
   return "$fail"
 }
 
+# check_manifest_toml: the manifest is read with grep/sed/awk and edited by
+# line, so nothing else notices a string left unterminated. Parse it once.
+# Skipped, with a note, where python3 has no tomllib (< 3.11).
+check_manifest_toml() {
+  local rc=0
+  python3 -I -c '
+import sys
+try:
+    import tomllib
+except ImportError:
+    sys.exit(3)
+try:
+    tomllib.load(open(sys.argv[1], "rb"))
+except Exception as e:
+    print("FAIL: %s is not valid TOML: %s" % (sys.argv[1], e), file=sys.stderr)
+    sys.exit(1)
+' "$SURFACE_MANIFEST" || rc=$?
+  case "$rc" in
+    0) ;;
+    3) echo "surface-manifest: python3 has no tomllib; skipping the TOML validity check" >&2 ;;
+    *) return 1 ;;
+  esac
+}
+
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
@@ -420,6 +445,7 @@ case "${1:-}" in
     echo "UNAUDITED_CELLS_MAX=\"$(unaudited_cells)\""
     rm -f "$t" ;;
   *)
+    check_manifest_toml
     run_check
     echo "surface-manifest: OK" ;;
 esac
