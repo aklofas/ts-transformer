@@ -776,6 +776,16 @@ impl Ty {
         matches!(self, Ty::Opt(_))
     }
 
+    /// Whether a native class holds this custom type as the Rust value, so
+    /// that no hand-written converter is called.
+    pub fn is_py_copy(&self) -> bool {
+        match self {
+            Ty::Opt(t) => t.is_py_copy(),
+            Ty::Custom(n) => custom_row(n).py_copy,
+            _ => false,
+        }
+    }
+
     /// Whether a value of this type has no way back from the host: a map, a
     /// host-typed enum, or a list or option of them.
     pub fn is_to_host_only(&self) -> bool {
@@ -857,6 +867,7 @@ impl Ty {
             }
             return match inner.as_ref() {
                 Ty::Scalar(_) => val,
+                Ty::Custom(_) => val,
                 Ty::Host(h) => format!("{val}.map({}::from)", host_row(h).py_rs),
                 Ty::Record(n) => format!("{recv}.as_ref().map({n}::from)"),
                 other => format!("{recv}.as_ref().map(|v| {})", other.to_host("v", None)),

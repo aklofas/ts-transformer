@@ -7,51 +7,53 @@ use crate::codec::bitreader::BitReader;
 use crate::codec::h266::sps::H266Sps;
 use alloc::vec::Vec;
 
-/// Light-weight H.266 slice header — fields required for keyframe detection
-/// and frame-type classification, extracted without walking into slice data.
-///
-/// # Known limitations
-///
-/// H.266 slice headers embed `picture_header_rbsp()` inline when
-/// `picture_header_in_slice_header_flag == 1`. The length of
-/// `picture_header_rbsp()` is determined by SPS / PPS context fields
-/// (`sps_subpic_info_present_flag`, `pps_log2_ctu_size_minus5`, etc.) that
-/// this light parser does not carry. As a result:
-///
-/// - **`slice_type`** always returns [`H266SliceType::I`] as a sentinel.
-///   Accurate extraction requires SPS-driven walking through
-///   `picture_header_rbsp()` — deferred.
-/// - **`pps_id`** always returns `0` as a sentinel for the same reason.
-/// - **`idr`** is accurate: derived solely from the NAL unit type (7 =
-///   IDR_W_RADL, 8 = IDR_N_LP).
-/// - **`first_in_pic`** is accurate: derived from
-///   `picture_header_in_slice_header_flag` (the first bit of the slice
-///   header), which is present before the deferred region.
-/// - **`pic_order_cnt_lsb`** is `Some(0)` for IDR slices (implicit per spec)
-///   and `None` otherwise (accurate extraction requires the
-///   `sps_log2_max_pic_order_cnt_lsb_minus4` field, which is deferred).
-#[must_use]
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct H266SliceHeaderLight {
-    /// True when `picture_header_in_slice_header_flag == 1` — the picture
-    /// header is embedded in this slice, marking the start of a new picture.
-    pub first_in_pic: bool,
-    /// Slice type. **Always returns [`H266SliceType::I`] as a sentinel** —
-    /// see struct-level "Known limitations".
-    pub slice_type: H266SliceType,
-    /// PPS id. **Always returns `0` as a sentinel** — see struct-level
-    /// "Known limitations".
-    pub pps_id: u8,
-    /// `slice_pic_order_cnt_lsb`. `Some(0)` for IDR slices (implicit per
-    /// spec); `None` for non-IDR slices where SPS context is required to
-    /// determine the bit width.
-    pub pic_order_cnt_lsb: Option<u16>,
-    /// True when `nal_unit_type` is IDR_W_RADL (7) or IDR_N_LP (8).
-    pub idr: bool,
-    /// Raw RBSP bytes as supplied by the caller — preserved for downstream
-    /// parsers that need fields beyond what this light subset extracts.
-    pub raw_rbsp: Vec<u8>,
+crate::binding_record! {
+    /// Light-weight H.266 slice header — fields required for keyframe detection
+    /// and frame-type classification, extracted without walking into slice data.
+    ///
+    /// Known limitations: H.266 slice headers embed `picture_header_rbsp()`
+    /// inline when `picture_header_in_slice_header_flag == 1`. The length of
+    /// `picture_header_rbsp()` is determined by SPS / PPS context fields
+    /// (`sps_subpic_info_present_flag`, `pps_log2_ctu_size_minus5`, etc.) that
+    /// this light parser does not carry. As a result `slice_type` is always the
+    /// intra slice type and `pps_id` is always 0, both as sentinels; accurate
+    /// extraction needs SPS-driven walking through `picture_header_rbsp()` and is
+    /// deferred. `idr` is accurate: it is derived solely from the NAL unit type
+    /// (7 = IDR_W_RADL, 8 = IDR_N_LP). `first_in_pic` is accurate: it is derived
+    /// from `picture_header_in_slice_header_flag`, the first bit of the slice
+    /// header, which is present before the deferred region. `pic_order_cnt_lsb`
+    /// is 0 for IDR slices (implicit per spec) and absent otherwise, because
+    /// accurate extraction requires the `sps_log2_max_pic_order_cnt_lsb_minus4`
+    /// field, which is deferred.
+    #[must_use]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct H266SliceHeaderLight {
+        /// True when `picture_header_in_slice_header_flag == 1` — the picture
+        /// header is embedded in this slice, marking the start of a new picture.
+        /// This field is accurate.
+        pub first_in_pic: bool,
+        /// Slice type. Always the intra slice type, as a sentinel — see the
+        /// struct-level limitations. Accurate extraction requires walking through
+        /// `picture_header_rbsp()`, whose length depends on SPS / PPS context
+        /// fields that this light parser does not carry; deferred pending a
+        /// context-tracking H.266 parser.
+        pub slice_type: H266SliceType,
+        /// PPS id. Always 0, as a sentinel — see `slice_type` for the same reason
+        /// and deferral note.
+        pub pps_id: u8,
+        /// `slice_pic_order_cnt_lsb`. 0 for IDR slices (implicit per spec);
+        /// absent for non-IDR slices, where SPS context is required to determine
+        /// the bit width. This field is accurate for IDR slices.
+        pub pic_order_cnt_lsb: Option<u16>,
+        /// True when `nal_unit_type` is IDR_W_RADL (7) or IDR_N_LP (8) per H.266
+        /// V4 Table 5. This field is accurate.
+        pub idr: bool,
+        /// The raw RBSP bytes as supplied to the parser — preserved for
+        /// downstream parsers that need fields beyond what this light subset
+        /// extracts.
+        pub raw_rbsp: Vec<u8>,
+    }
 }
 
 /// H.266 slice type (B / P / I). Only three values are defined by the spec

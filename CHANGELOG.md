@@ -269,6 +269,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   declaration, so constructing it with positional arguments changes; construct
   it with keyword arguments, the documented path, which are unaffected.
 - `tstrans.klv.PayloadList.records` has no default; pass it explicitly.
+- `repr()` of `tstrans.codec.Av1ObuStream` lists its fields (it was the
+  default object repr), and `repr()` of `AdtsFrame` and `Mpeg2AudioFrame` prints
+  the host enum members by their Rust names (`Ltp`, `Ii`, `Iii`) where it
+  printed the Rust variants (`LongTermPrediction`, `II`, `III`).
 
 ### Changed — tst-jni (BREAKING)
 
@@ -509,6 +513,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `CoreId`, `PrecisionTimeStampPack`, `SdccFlp` and `CotConfig`. Their fields,
   order, annotations and defaults are unchanged; their docstrings are the Rust
   documentation.
+- The codec records are generated as native classes that hold the parsed
+  values: `tstrans.codec.Rational`, `ColorInfo`, `Obu`, `ObuExtension`,
+  `MispTimestamp`, `H264Sps`, `H264Pps`, `H264SliceHeaderLight`,
+  `H264ParameterSets`, `H265ProfileTierLevel`, `H265Sps`, `H265Vps`,
+  `H265Pps`, `H265SliceHeaderLight`, `H265ParameterSets`,
+  `H266ProfileTierLevel`, `H266Sps`, `H266Vps`, `H266Pps`,
+  `H266SliceHeaderLight`, `H266ParameterSets`, `Av1SequenceHeader`,
+  `Av1FrameHeaderLight`, `Av1ObuStream`, `AdtsFrame` and `Mpeg2AudioFrame`.
+  Attributes, constructors, methods, values and comparison are unchanged
+  except as listed under Changed; their docstrings are the Rust
+  documentation. The dataclass docstrings of the KLV records now list their
+  documented fields.
 
 ### Added — tst-jni
 
@@ -551,6 +567,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `RvtAoi`, `RvtUserData`, `SecurityLs`, `PrecisionTimeStampPack`, `SdccFlp`
   and `CotConfig`. Components and behaviour are unchanged except as listed
   under Changed; their Javadoc is the Rust documentation.
+- The codec records are generated the same way: `org.tstrans.codec.Rational`,
+  `ColorInfo`, `Obu`, `ObuExtension`, `MispTimestamp`, `H264Sps`, `H264Pps`,
+  `H264SliceHeaderLight`, `H264ParameterSets`, `H265ProfileTierLevel`,
+  `H265Sps`, `H265Vps`, `H265Pps`, `H265SliceHeaderLight`,
+  `H265ParameterSets`, `H266ProfileTierLevel`, `H266Sps`, `H266Vps`,
+  `H266Pps`, `H266SliceHeaderLight`, `H266ParameterSets`,
+  `Av1SequenceHeader`, `Av1FrameHeaderLight`, `Av1ObuStream`, `AdtsFrame`
+  and `Mpeg2AudioFrame`. Components are unchanged; their Javadoc is the Rust
+  documentation. `H265ProfileTierLevel`, `AdtsFrame` and `Mpeg2AudioFrame`
+  gain a `Builder`, as every record of more than eight components has.
 
 ### Deprecated — tst-py
 

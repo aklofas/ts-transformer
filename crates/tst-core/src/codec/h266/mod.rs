@@ -122,11 +122,21 @@ pub fn parse_parameter_sets(nals: &[NalUnit]) -> Result<H266ParameterSets, Codec
     })
 }
 
-#[must_use]
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct H266ParameterSets {
-    pub vpses: Vec<H266Vps>,
-    pub spses: Vec<H266Sps>,
-    pub ppses: Vec<H266Pps>,
+crate::binding_record! {
+    /// All VPS, SPS, and PPS NAL units parsed from a sequence.
+    ///
+    /// Unlike the H.265 version, which is keyed by id, H.266 parameter sets are
+    /// ordered lists: look one up by its own id field (`vps_id`, `sps_id`,
+    /// `pps_id`).
+    #[must_use]
+    #[non_exhaustive]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct H266ParameterSets {
+        /// The parsed VPS NAL units, in the order they were parsed.
+        pub vpses: Vec<H266Vps>,
+        /// The parsed SPS NAL units, in the order they were parsed.
+        pub spses: Vec<H266Sps>,
+        /// The parsed PPS NAL units, in the order they were parsed.
+        pub ppses: Vec<H266Pps>,
+    }
 }

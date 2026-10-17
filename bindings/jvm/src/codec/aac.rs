@@ -13,8 +13,9 @@
 //! The strict native's Java wrapper on `Codec` is declared `throws
 //! CodecParseException`; the resync wrapper has no `throws`.
 //!
-//! [`build_adts_frame`] is `pub(crate)` because the demux audio-retype task
-//! reuses it to surface typed `AdtsFrame`s on `Sample` payloads.
+//! The `AdtsFrame` record is built by the generated `build_adts_frame_owned`,
+//! which the demux audio-retype path reuses to surface typed frames on
+//! `Sample` payloads.
 
 use crate::panic::jni_native;
 use jni::JNIEnv;
@@ -25,10 +26,13 @@ use tst_core::codec::aac::{
 };
 
 use crate::error::map_codec_parse_error;
-use crate::jutil::wrap_heap_byte_buffer;
+use crate::generated::codec::build_adts_frame_owned;
 
 /// Build the Java `org.tstrans.codec.AacProfile` enum constant.
-fn build_profile<'local>(env: &mut JNIEnv<'local>, p: AacProfile) -> Result<JObject<'local>, ()> {
+pub(crate) fn build_profile<'local>(
+    env: &mut JNIEnv<'local>,
+    p: AacProfile,
+) -> Result<JObject<'local>, ()> {
     let name = match p {
         AacProfile::Main => "MAIN",
         AacProfile::Lc => "LC",
@@ -46,7 +50,7 @@ fn build_profile<'local>(env: &mut JNIEnv<'local>, p: AacProfile) -> Result<JObj
 }
 
 /// Build the Java `org.tstrans.codec.MpegVersion` enum constant.
-fn build_mpeg_version<'local>(
+pub(crate) fn build_mpeg_version<'local>(
     env: &mut JNIEnv<'local>,
     v: MpegVersion,
 ) -> Result<JObject<'local>, ()> {
@@ -67,7 +71,7 @@ fn build_mpeg_version<'local>(
 /// Build the Java `org.tstrans.codec.AacChannelLayout` record via its canonical
 /// constructor `(boolean pceDefined, Integer channels)`, mirroring tst-py's
 /// flattened `is_pce_defined` + nullable `channels` shape.
-fn build_channel_layout<'local>(
+pub(crate) fn build_channel_layout<'local>(
     env: &mut JNIEnv<'local>,
     layout: AacChannelLayout,
 ) -> Result<JObject<'local>, ()> {
@@ -92,47 +96,6 @@ fn build_channel_layout<'local>(
     .map_err(|_| ())
 }
 
-/// Build one Java `org.tstrans.codec.AdtsFrame` record from an owned Rust frame.
-///
-/// `pub(crate)` so the demux audio-retype task can reuse it to surface typed
-/// `AdtsFrame`s on `Sample` payloads. Returns `Err(())` (leaving a pending Java
-/// exception) on any JNI failure.
-pub(crate) fn build_adts_frame<'local>(
-    env: &mut JNIEnv<'local>,
-    f: &AdtsFrameOwned,
-) -> Result<JObject<'local>, ()> {
-    // profile + mpegVersion + channelLayout + 2 ByteBuffers (+ their scratch
-    // arrays) + the record itself; 16 slots safely covers the worst case.
-    env.ensure_local_capacity(16).map_err(|_| ())?;
-
-    let profile = build_profile(env, f.profile)?;
-    let channel_layout = build_channel_layout(env, f.channel_layout)?;
-    let mpeg_version = build_mpeg_version(env, f.mpeg_version)?;
-    let raw_header = wrap_heap_byte_buffer(env, &f.raw_header)?;
-    // `payload` = full frame bytes (header + body), sourced from the owned
-    // `body` slice — matches tst-py's `payload` getter.
-    let payload = wrap_heap_byte_buffer(env, &f.body)?;
-
-    env.new_object(
-        "org/tstrans/codec/AdtsFrame",
-        "(Lorg/tstrans/codec/AacProfile;JILorg/tstrans/codec/AacChannelLayout;JIIZLorg/tstrans/codec/MpegVersion;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;)V",
-        &[
-            JValue::Object(&profile),
-            JValue::Long(i64::from(f.sample_rate_hz)),
-            JValue::Int(i32::from(f.channel_configuration)),
-            JValue::Object(&channel_layout),
-            JValue::Long(i64::from(f.frame_length_bytes)),
-            JValue::Int(i32::from(f.samples_per_frame)),
-            JValue::Int(i32::from(f.num_raw_data_blocks)),
-            JValue::Bool(u8::from(f.has_crc)),
-            JValue::Object(&mpeg_version),
-            JValue::Object(&raw_header),
-            JValue::Object(&payload),
-        ],
-    )
-    .map_err(|_| ())
-}
-
 /// Build a `java.util.ArrayList<AdtsFrame>` from owned frames; each frame is
 /// constructed inside a per-element local frame so its refs are reclaimed.
 fn build_frame_list<'local>(
@@ -144,7 +107,7 @@ fn build_frame_list<'local>(
         .map_err(|_| ())?;
     for f in frames {
         env.with_local_frame(24, |inner| {
-            let val = build_adts_frame(inner, f).map_err(|()| jni::errors::Error::JavaException)?;
+            let val = build_adts_frame_owned(inner, f)?;
             inner.call_method(
                 &list,
                 "add",
@@ -182,7 +145,7 @@ jni_native! {
 
         match build_frame_list(env, &owned) {
             Ok(obj) => obj.into_raw(),
-            Err(()) => JObject::null().into_raw(),
+            Err(_) => JObject::null().into_raw(),
         }
     }
 }
@@ -207,7 +170,7 @@ jni_native! {
 
         match build_frame_list(env, &owned) {
             Ok(obj) => obj.into_raw(),
-            Err(()) => JObject::null().into_raw(),
+            Err(_) => JObject::null().into_raw(),
         }
     }
 }

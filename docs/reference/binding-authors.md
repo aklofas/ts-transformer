@@ -196,6 +196,10 @@ with `tst_core::binding_record!` (marks and naming are in
    Javadoc: the first paragraph of each, so write it as complete sentences.
 4. Write the converters for each `@[custom]` field by the names in
    `conventions.md`, in `crate::custom` of each binding.
+5. A record that only crosses to the host, such as a parser's output, is
+   registered as a native Python class (`conventions.md` § "Native Python
+   classes"): the marker pair goes in the `.pyi` stub only, and the methods
+   its row lists are written in `crate::custom` of the Python binding.
 
 `scripts/check/repo/binding-records.sh` runs `print-records --check` and fails
 until the committed files match a fresh render. Run the independent pins as

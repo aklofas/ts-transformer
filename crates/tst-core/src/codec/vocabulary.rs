@@ -58,32 +58,37 @@ pub enum AudioCodec {
     Ac3,
 }
 
-/// One AV1 Open Bitstream Unit. Per AV1 Bitstream Spec §5.3.2.
-///
-/// The header byte (`obu_forbidden_bit | obu_type | obu_extension_flag |
-/// obu_has_size_field | obu_reserved_1bit`) and any extension byte are
-/// parsed during split; the LEB128 `obu_size` field is consumed and
-/// stripped. `payload` carries only the OBU body bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Obu {
-    /// 4-bit `obu_type` (AV1 §5.3.2). 1=SequenceHeader, 2=TemporalDelimiter,
-    /// 3=FrameHeader, 4=TileGroup, 5=Metadata, 6=Frame,
-    /// 7=RedundantFrameHeader, 8=TileList, 15=Padding.
-    pub obu_type: u8,
-    /// Optional extension header bytes when `obu_extension_flag = 1`.
-    pub extension: Option<ObuExtension>,
-    /// OBU payload bytes — header + extension byte + LEB128 size field
-    /// stripped. Pass-through; parsed by `codec::av1::parse_*` if the
-    /// consumer wants typed fields.
-    pub payload: SharedBytes,
+crate::binding_record! {
+    /// One AV1 Open Bitstream Unit. Per AV1 Bitstream Spec §5.3.2.
+    ///
+    /// The header byte (`obu_forbidden_bit | obu_type | obu_extension_flag |
+    /// obu_has_size_field | obu_reserved_1bit`) and any extension byte are
+    /// parsed during split; the LEB128 `obu_size` field is consumed and
+    /// stripped. `payload` carries only the OBU body bytes.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Obu {
+        /// 4-bit `obu_type` (AV1 §5.3.2). 1=SequenceHeader, 2=TemporalDelimiter,
+        /// 3=FrameHeader, 4=TileGroup, 5=Metadata, 6=Frame,
+        /// 7=RedundantFrameHeader, 8=TileList, 15=Padding.
+        pub obu_type: u8,
+        /// Extension header, present when `obu_extension_flag = 1`.
+        pub extension: Option<ObuExtension>,
+        /// OBU payload bytes — header, extension byte and LEB128 size field
+        /// stripped. Pass-through; the AV1 parsers give typed fields.
+        pub payload: SharedBytes,
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ObuExtension {
-    /// 3-bit `temporal_id` (AV1 §5.3.3).
-    pub temporal_id: u8,
-    /// 2-bit `spatial_id` (AV1 §5.3.3).
-    pub spatial_id: u8,
+crate::binding_record! {
+    /// AV1 OBU extension header. Present when `obu_extension_flag = 1`.
+    /// Per AV1 Bitstream Spec §5.3.3.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct ObuExtension {
+        /// 3-bit `temporal_id` (AV1 §5.3.3).
+        pub temporal_id: u8,
+        /// 2-bit `spatial_id` (AV1 §5.3.3).
+        pub spatial_id: u8,
+    }
 }
 
 /// One H.264 or H.265 NAL unit. Codec-tagged so wrapped languages

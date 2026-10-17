@@ -85,7 +85,7 @@ pub fn targets(root: &Path, reg: &[Entry]) -> Result<Vec<Target>, String> {
             body: emit_py::file(reg, f)?,
             kind: Kind::Whole,
         });
-        if reg.iter().any(|e| e.family == *f && e.jvm) {
+        if reg.iter().any(|e| e.family == *f && e.jvm && e.jvm_builder) {
             out.push(Target {
                 path: root.join(format!("bindings/jvm/src/generated/{f}.rs")),
                 body: emit_jvm_rs::file(reg, f)?,

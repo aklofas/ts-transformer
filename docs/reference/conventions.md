@@ -482,6 +482,17 @@ Field types and defaults:
   flattens each typed UUID into two components) is registered as Python-only:
   it has no Java block and no JVM converter, and its Java record and JNI
   converters stay hand-written.
+- A record Java builds itself, from other records (the H.265 profile/tier/level
+  block is made from an SPS or a VPS), is registered without a JNI builder: its
+  Java record is generated, and no native hands one over.
+- The host docs are the Rust docs: the record's, and each crossing field's.
+  A dataclass docstring lists the documented fields as bullets; Javadoc has
+  them as `@param`. A line `<!-- rust-only -->` ends the host-facing part of a
+  doc (a doctest, a note on the owned/borrowed pair); rustdoc renders it as
+  nothing. The text before it must read correctly once Rust paths are reduced
+  to plain names, and `print_records_emit` refuses Rust primitive types,
+  SCREAMING_CASE constants, function names and markdown emphasis in a code
+  span or Javadoc.
 
 A custom field names its host types in a row of the generator's type table
 (`CUSTOM` in `typemap.rs`, keyed by the Rust type with paths and `Option<…>`
@@ -530,7 +541,8 @@ A native field holds:
   builder). These cross to the host only;
 - a `@[custom]` field through `<record>_<field>_to_py(&Rust) -> Host` (no `py`
   argument, no `PyResult`), unless its row says the host takes the Rust value
-  as it is.
+  as it is (a `Copy` type such as `Option<u32>`); the Java side still needs
+  its `build_<record>_<field>`.
 
 What a registry row adds beyond the fields: `host_name` (the Rust
 `AdtsFrameOwned` is `AdtsFrame` to the hosts), `py_ctor` (a constructor taking

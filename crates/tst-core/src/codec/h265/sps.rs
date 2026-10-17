@@ -6,54 +6,76 @@ use crate::codec::{ChromaFormat, CodecParseError, ColorInfo, Rational, validate_
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-/// Parsed H.265 SPS fields. Populated by [`parse_sps`].
-#[must_use]
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct H265Sps {
-    pub sps_seq_parameter_set_id: u8,
-    pub sps_video_parameter_set_id: u8,
-    pub width: u32,
-    pub height: u32,
-    pub general_profile_idc: u8,
-    pub general_tier_flag: bool,
-    pub general_level_idc: u8,
-    /// 32-bit `general_profile_compatibility_flags` per H.265 §7.3.3 — bit
-    /// `i` set means the stream conforms to profile `i`. Real Main10 streams
-    /// often have `general_profile_idc=1` (Main) but bit 2 set; ffmpeg
-    /// `hevc/ps.c:267-270` uses this to disambiguate Main vs Main10 vs
-    /// Main10-Intra. Surfaced here so consumers can do the same.
-    pub general_profile_compatibility_flags: u32,
-    /// `general_progressive_source_flag` (§7.4.4).
-    pub general_progressive_source_flag: bool,
-    /// `general_interlaced_source_flag` (§7.4.4).
-    pub general_interlaced_source_flag: bool,
-    /// `general_non_packed_constraint_flag` (§7.4.4).
-    pub general_non_packed_constraint_flag: bool,
-    /// `general_frame_only_constraint_flag` (§7.4.4).
-    pub general_frame_only_constraint_flag: bool,
-    pub bit_depth_luma: u8,
-    pub bit_depth_chroma: u8,
-    pub chroma_format: ChromaFormat,
-    pub max_sub_layers_minus1: u8,
-    pub frame_rate: Option<Rational>,
-    pub color: Option<ColorInfo>,
-    /// Luma-sample crop offsets applied to the coded picture dimensions to
-    /// produce `width`/`height`. Computed from `conformance_window_flag` +
-    /// `conf_win_*_offset` per H.265 §7.4.3.2.1, already multiplied by
-    /// `SubWidthC` / `SubHeightC` (the chroma-array unit conversion). So
-    /// `coded_width = width + crop_left + crop_right` (and similarly for
-    /// height). Useful for sizing GPU buffers and for matching crops
-    /// against container-level conformance-window descriptors. All four
-    /// fields are zero when the SPS has no `conformance_window_flag` set.
-    pub crop_left: u32,
-    pub crop_right: u32,
-    pub crop_top: u32,
-    pub crop_bottom: u32,
-    /// `log2_max_pic_order_cnt_lsb_minus4` (H.265 §7.4.3.2.1). The bit width
-    /// of `pic_order_cnt_lsb` in slice headers equals this value plus 4.
-    pub log2_max_pic_order_cnt_lsb_minus4: u8,
-    pub raw_rbsp: Vec<u8>,
+crate::binding_record! {
+    /// Parsed H.265 Sequence Parameter Set.
+    #[must_use]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct H265Sps {
+        /// `sps_seq_parameter_set_id` — identifies this SPS (H.265 §7.4.3.2.1).
+        pub sps_seq_parameter_set_id: u8,
+        /// `sps_video_parameter_set_id` — links this SPS to a VPS.
+        pub sps_video_parameter_set_id: u8,
+        /// Post-crop display width in luma samples (after conformance window is
+        /// applied).
+        pub width: u32,
+        /// Post-crop display height in luma samples.
+        pub height: u32,
+        /// `general_profile_idc` (1=Main, 2=Main10, …). Decoded from the
+        /// `profile_tier_level()` block inside the SPS (§7.3.3).
+        pub general_profile_idc: u8,
+        /// `general_tier_flag` — true = High tier, false = Main tier.
+        pub general_tier_flag: bool,
+        /// `general_level_idc` — e.g. 120 for Level 4.0, 150 for Level 5.0.
+        pub general_level_idc: u8,
+        /// 32-bit `general_profile_compatibility_flags` per H.265 §7.3.3 — bit
+        /// `i` set means the stream conforms to profile `i`. Real Main10 streams
+        /// often have `general_profile_idc=1` (Main) but bit 2 set; ffmpeg
+        /// `hevc/ps.c:267-270` uses this to disambiguate Main vs Main10 vs
+        /// Main10-Intra. Surfaced here so consumers can do the same.
+        pub general_profile_compatibility_flags: u32,
+        /// `general_progressive_source_flag` (§7.4.4).
+        pub general_progressive_source_flag: bool,
+        /// `general_interlaced_source_flag` (§7.4.4).
+        pub general_interlaced_source_flag: bool,
+        /// `general_non_packed_constraint_flag` (§7.4.4).
+        pub general_non_packed_constraint_flag: bool,
+        /// `general_frame_only_constraint_flag` (§7.4.4).
+        pub general_frame_only_constraint_flag: bool,
+        /// Luma bit depth (8 + `bit_depth_luma_minus8`).
+        pub bit_depth_luma: u8,
+        /// Chroma bit depth (8 + `bit_depth_chroma_minus8`).
+        pub bit_depth_chroma: u8,
+        /// Chroma subsampling format.
+        pub chroma_format: ChromaFormat,
+        /// `sps_max_sub_layers_minus1` — max sub-layer temporal scalability.
+        pub max_sub_layers_minus1: u8,
+        /// Frame rate as a rational number, or absent when VUI timing is absent.
+        pub frame_rate: Option<Rational>,
+        /// VUI colour info, or absent when the VUI or
+        /// `video_signal_type_present_flag` is absent.
+        pub color: Option<ColorInfo>,
+        /// Luma-sample crop offsets applied to the coded picture dimensions to
+        /// produce `width`/`height`. Computed from `conformance_window_flag` +
+        /// `conf_win_*_offset` per H.265 §7.4.3.2.1, already multiplied by
+        /// `SubWidthC` / `SubHeightC` (the chroma-array unit conversion). So
+        /// `coded_width = width + crop_left + crop_right` (and similarly for
+        /// height). Useful for sizing GPU buffers and for matching crops against
+        /// container-level conformance-window descriptors. All four fields are
+        /// zero when the SPS has no `conformance_window_flag` set.
+        pub crop_left: u32,
+        /// Right crop offset in luma samples.
+        pub crop_right: u32,
+        /// Top crop offset in luma samples.
+        pub crop_top: u32,
+        /// Bottom crop offset in luma samples.
+        pub crop_bottom: u32,
+        /// `log2_max_pic_order_cnt_lsb_minus4` (H.265 §7.4.3.2.1). The bit width
+        /// of `pic_order_cnt_lsb` in slice headers equals this value plus 4.
+        pub log2_max_pic_order_cnt_lsb_minus4: u8,
+        /// The original RBSP bytes as supplied to the parser.
+        pub raw_rbsp: Vec<u8>,
+    }
 }
 
 impl H265Sps {

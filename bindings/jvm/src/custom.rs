@@ -5,6 +5,9 @@
 //! generator calls it and never writes it. See "Adding a crossing record" in
 //! `docs/reference/binding-authors.md`.
 
+mod codec;
+pub(crate) use codec::*;
+
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JObject, JValue};
 use tst_core::error::KlvFieldError;

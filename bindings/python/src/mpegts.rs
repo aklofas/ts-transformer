@@ -671,14 +671,7 @@ pub(crate) fn convert_video_payload(
         VideoPayload::Obus(obus) => {
             let list = pyo3::types::PyList::empty_bound(py);
             for obu in obus {
-                let ext = obu.extension.map(|e| crate::codec::ObuExtensionPy {
-                    temporal_id: e.temporal_id,
-                    spatial_id: e.spatial_id,
-                });
-                let obu_py = Py::new(
-                    py,
-                    crate::codec::ObuPy::make(obu.obu_type, ext, obu.payload.to_vec()),
-                )?;
+                let obu_py = Py::new(py, crate::generated::codec::Obu::from(obu))?;
                 list.append(obu_py)?;
             }
             Ok(list.into_py(py))

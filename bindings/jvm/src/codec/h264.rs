@@ -29,19 +29,19 @@ use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::{jint, jobject};
 use tst_core::codec::NalUnit;
 use tst_core::codec::h264::{
-    EntropyCodingMode, H264ParameterSets, H264Pps, H264SliceHeaderLight, H264SliceType, H264Sps,
-    parse_parameter_sets, parse_pps, parse_slice_header_light, parse_sps,
+    EntropyCodingMode, H264SliceType, H264Sps, parse_parameter_sets, parse_pps,
+    parse_slice_header_light, parse_sps,
 };
 
-use crate::codec::shared::{
-    build_color_info, build_rational, builder_set_bool, builder_set_int, builder_set_long,
-};
 use crate::error::map_codec_parse_error;
-use crate::jutil::{read_byte_buffer, wrap_heap_byte_buffer};
+use crate::generated::codec::{
+    build_h264_parameter_sets, build_h264_pps, build_h264_slice_header_light, build_h264_sps,
+};
+use crate::jutil::read_byte_buffer;
 
 /// Map a Rust [`EntropyCodingMode`] to its `org.tstrans.codec.EntropyCodingMode`
 /// constant.
-fn build_entropy_mode<'local>(
+pub(crate) fn build_entropy_mode<'local>(
     env: &mut JNIEnv<'local>,
     v: EntropyCodingMode,
 ) -> Result<JObject<'local>, ()> {
@@ -62,7 +62,7 @@ fn build_entropy_mode<'local>(
 /// Map a Rust [`H264SliceType`] to its `org.tstrans.codec.H264SliceType`
 /// constant. The `_ =>` arm maps any future marked-non-exhaustive variant to
 /// `UNKNOWN`, mirroring tst-py's `Unknown` catch-all.
-fn build_slice_type<'local>(
+pub(crate) fn build_slice_type<'local>(
     env: &mut JNIEnv<'local>,
     v: H264SliceType,
 ) -> Result<JObject<'local>, ()> {
@@ -84,170 +84,6 @@ fn build_slice_type<'local>(
     .map_err(|_| ())
 }
 
-/// Build a Java `H264Sps` via its `Builder`. Mirrors the KLV Builder-marshalling
-/// precedent. Returns `Err(())` if any JNI call fails (a pending Java exception
-/// is left in that case).
-fn build_sps<'local>(env: &mut JNIEnv<'local>, sps: &H264Sps) -> Result<JObject<'local>, ()> {
-    // 20 fields + nested ColorInfo/Rational/enum constants + builder + scratch;
-    // 32 slots safely covers the worst case.
-    env.ensure_local_capacity(32).map_err(|_| ())?;
-
-    let b = env
-        .new_object("org/tstrans/codec/H264Sps$Builder", "()V", &[])
-        .map_err(|_| ())?;
-
-    const RET: &str = "Lorg/tstrans/codec/H264Sps$Builder;";
-
-    builder_set_int(
-        env,
-        &b,
-        RET,
-        "seqParameterSetId",
-        i32::from(sps.seq_parameter_set_id),
-    )?;
-    builder_set_long(env, &b, RET, "width", i64::from(sps.width))?;
-    builder_set_long(env, &b, RET, "height", i64::from(sps.height))?;
-    builder_set_int(env, &b, RET, "profileIdc", i32::from(sps.profile_idc))?;
-    builder_set_int(env, &b, RET, "levelIdc", i32::from(sps.level_idc))?;
-    builder_set_int(
-        env,
-        &b,
-        RET,
-        "constraintSetFlags",
-        i32::from(sps.constraint_set_flags),
-    )?;
-    builder_set_int(env, &b, RET, "bitDepthLuma", i32::from(sps.bit_depth_luma))?;
-    builder_set_int(
-        env,
-        &b,
-        RET,
-        "bitDepthChroma",
-        i32::from(sps.bit_depth_chroma),
-    )?;
-
-    {
-        let cf = crate::codec::shared::build_chroma_format(env, sps.chroma_format)?;
-        env.call_method(
-            &b,
-            "chromaFormat",
-            "(Lorg/tstrans/codec/ChromaFormat;)Lorg/tstrans/codec/H264Sps$Builder;",
-            &[JValue::Object(&cf)],
-        )
-        .map_err(|_| ())?;
-    }
-
-    builder_set_bool(env, &b, RET, "frameMbsOnly", sps.frame_mbs_only)?;
-    builder_set_bool(env, &b, RET, "fixedFrameRate", sps.fixed_frame_rate)?;
-    builder_set_bool(env, &b, RET, "hasBFrames", sps.has_b_frames)?;
-
-    if let Some(ref r) = sps.frame_rate {
-        let jr = build_rational(env, r)?;
-        env.call_method(
-            &b,
-            "frameRate",
-            "(Lorg/tstrans/codec/Rational;)Lorg/tstrans/codec/H264Sps$Builder;",
-            &[JValue::Object(&jr)],
-        )
-        .map_err(|_| ())?;
-    }
-
-    if let Some(ref c) = sps.color {
-        let jc = build_color_info(env, c)?;
-        env.call_method(
-            &b,
-            "color",
-            "(Lorg/tstrans/codec/ColorInfo;)Lorg/tstrans/codec/H264Sps$Builder;",
-            &[JValue::Object(&jc)],
-        )
-        .map_err(|_| ())?;
-    }
-
-    builder_set_long(env, &b, RET, "cropLeft", i64::from(sps.crop_left))?;
-    builder_set_long(env, &b, RET, "cropRight", i64::from(sps.crop_right))?;
-    builder_set_long(env, &b, RET, "cropTop", i64::from(sps.crop_top))?;
-    builder_set_long(env, &b, RET, "cropBottom", i64::from(sps.crop_bottom))?;
-    builder_set_int(
-        env,
-        &b,
-        RET,
-        "log2MaxFrameNumMinus4",
-        i32::from(sps.log2_max_frame_num_minus4),
-    )?;
-
-    {
-        let buf = wrap_heap_byte_buffer(env, &sps.raw_rbsp)?;
-        env.call_method(
-            &b,
-            "rawRbsp",
-            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/H264Sps$Builder;",
-            &[JValue::Object(&buf)],
-        )
-        .map_err(|_| ())?;
-    }
-
-    env.call_method(&b, "build", "()Lorg/tstrans/codec/H264Sps;", &[])
-        .map_err(|_| ())?
-        .l()
-        .map_err(|_| ())
-}
-
-/// Build a Java `H264Pps` record directly (4 fields, no Builder needed).
-fn build_pps<'local>(env: &mut JNIEnv<'local>, pps: &H264Pps) -> Result<JObject<'local>, ()> {
-    env.ensure_local_capacity(8).map_err(|_| ())?;
-    let mode = build_entropy_mode(env, pps.entropy_coding_mode)?;
-    let buf = wrap_heap_byte_buffer(env, &pps.raw_rbsp)?;
-    env.new_object(
-        "org/tstrans/codec/H264Pps",
-        "(IILorg/tstrans/codec/EntropyCodingMode;Ljava/nio/ByteBuffer;)V",
-        &[
-            JValue::Int(i32::from(pps.pic_parameter_set_id)),
-            JValue::Int(i32::from(pps.seq_parameter_set_id)),
-            JValue::Object(&mode),
-            JValue::Object(&buf),
-        ],
-    )
-    .map_err(|_| ())
-}
-
-/// Box an `Option<u32>` into a `java.lang.Integer` (or null) for the
-/// `frameNum` slot.
-fn boxed_frame_num<'local>(
-    env: &mut JNIEnv<'local>,
-    v: Option<u32>,
-) -> Result<JObject<'local>, ()> {
-    match v {
-        // frame_num is at most 16 bits wide → always fits i32.
-        Some(n) => env
-            .new_object("java/lang/Integer", "(I)V", &[JValue::Int(n as i32)])
-            .map_err(|_| ()),
-        None => Ok(JObject::null()),
-    }
-}
-
-/// Build a Java `H264SliceHeaderLight` record directly.
-fn build_slice<'local>(
-    env: &mut JNIEnv<'local>,
-    h: &H264SliceHeaderLight,
-) -> Result<JObject<'local>, ()> {
-    env.ensure_local_capacity(8).map_err(|_| ())?;
-    let slice_type = build_slice_type(env, h.slice_type)?;
-    let frame_num = boxed_frame_num(env, h.frame_num)?;
-    let buf = wrap_heap_byte_buffer(env, &h.raw_rbsp)?;
-    env.new_object(
-        "org/tstrans/codec/H264SliceHeaderLight",
-        "(ZLorg/tstrans/codec/H264SliceType;ILjava/lang/Integer;ZLjava/nio/ByteBuffer;)V",
-        &[
-            JValue::Bool(u8::from(h.first_in_pic)),
-            JValue::Object(&slice_type),
-            JValue::Int(i32::from(h.pps_id)),
-            JValue::Object(&frame_num),
-            JValue::Bool(u8::from(h.idr)),
-            JValue::Object(&buf),
-        ],
-    )
-    .map_err(|_| ())
-}
-
 jni_native! {
     fn Java_org_tstrans_codec_Codec_nParseH264Sps<'local>(
         env,
@@ -259,9 +95,9 @@ jni_native! {
             Err(_) => return JObject::null().into_raw(),
         };
         match parse_sps(&bytes) {
-            Ok(sps) => match build_sps(env, &sps) {
+            Ok(sps) => match build_h264_sps(env, &sps) {
                 Ok(obj) => obj.into_raw(),
-                Err(()) => JObject::null().into_raw(),
+                Err(_) => JObject::null().into_raw(),
             },
             Err(e) => {
                 map_codec_parse_error(env, &e, "h264");
@@ -282,9 +118,9 @@ jni_native! {
             Err(_) => return JObject::null().into_raw(),
         };
         match parse_pps(&bytes) {
-            Ok(pps) => match build_pps(env, &pps) {
+            Ok(pps) => match build_h264_pps(env, &pps) {
                 Ok(obj) => obj.into_raw(),
-                Err(()) => JObject::null().into_raw(),
+                Err(_) => JObject::null().into_raw(),
             },
             Err(e) => {
                 map_codec_parse_error(env, &e, "h264");
@@ -335,9 +171,9 @@ jni_native! {
 
         let nut = (nal_unit_type & 0xff) as u8;
         match parse_slice_header_light(&bytes, sps_ctx.as_ref(), nut) {
-            Ok(h) => match build_slice(env, &h) {
+            Ok(h) => match build_h264_slice_header_light(env, &h) {
                 Ok(obj) => obj.into_raw(),
-                Err(()) => JObject::null().into_raw(),
+                Err(_) => JObject::null().into_raw(),
             },
             Err(e) => {
                 map_codec_parse_error(env, &e, "h264");
@@ -411,9 +247,9 @@ jni_native! {
         }
 
         match parse_parameter_sets(&rust_nals) {
-            Ok(ps) => match build_parameter_sets(env, &ps) {
+            Ok(ps) => match build_h264_parameter_sets(env, &ps) {
                 Ok(obj) => obj.into_raw(),
-                Err(()) => JObject::null().into_raw(),
+                Err(_) => JObject::null().into_raw(),
             },
             Err(e) => {
                 map_codec_parse_error(env, &e, "h264");
@@ -421,59 +257,4 @@ jni_native! {
             }
         }
     }
-}
-
-/// Build a Java `H264ParameterSets(Map<Integer,H264Sps>, Map<Integer,H264Pps>)`.
-/// Each map is a `java.util.HashMap`; entries are added inside a per-entry local
-/// frame so the SPS/PPS object refs are reclaimed each iteration.
-fn build_parameter_sets<'local>(
-    env: &mut JNIEnv<'local>,
-    ps: &H264ParameterSets,
-) -> Result<JObject<'local>, ()> {
-    env.ensure_local_capacity(16).map_err(|_| ())?;
-
-    let sps_map = env
-        .new_object("java/util/HashMap", "()V", &[])
-        .map_err(|_| ())?;
-    for (id, sps) in &ps.sps_by_id {
-        env.with_local_frame(48, |inner| {
-            let key =
-                inner.new_object("java/lang/Integer", "(I)V", &[JValue::Int(i32::from(*id))])?;
-            let val = build_sps(inner, sps).map_err(|()| jni::errors::Error::JavaException)?;
-            inner.call_method(
-                &sps_map,
-                "put",
-                "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
-                &[JValue::Object(&key), JValue::Object(&val)],
-            )?;
-            Ok::<(), jni::errors::Error>(())
-        })
-        .map_err(|_| ())?;
-    }
-
-    let pps_map = env
-        .new_object("java/util/HashMap", "()V", &[])
-        .map_err(|_| ())?;
-    for (id, pps) in &ps.pps_by_id {
-        env.with_local_frame(16, |inner| {
-            let key =
-                inner.new_object("java/lang/Integer", "(I)V", &[JValue::Int(i32::from(*id))])?;
-            let val = build_pps(inner, pps).map_err(|()| jni::errors::Error::JavaException)?;
-            inner.call_method(
-                &pps_map,
-                "put",
-                "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
-                &[JValue::Object(&key), JValue::Object(&val)],
-            )?;
-            Ok::<(), jni::errors::Error>(())
-        })
-        .map_err(|_| ())?;
-    }
-
-    env.new_object(
-        "org/tstrans/codec/H264ParameterSets",
-        "(Ljava/util/Map;Ljava/util/Map;)V",
-        &[JValue::Object(&sps_map), JValue::Object(&pps_map)],
-    )
-    .map_err(|_| ())
 }

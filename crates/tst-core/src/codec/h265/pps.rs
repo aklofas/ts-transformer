@@ -6,13 +6,19 @@ use crate::codec::CodecParseError;
 use crate::codec::bitreader::BitReader;
 use alloc::vec::Vec;
 
-#[must_use]
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct H265Pps {
-    pub pps_pic_parameter_set_id: u8,
-    pub pps_seq_parameter_set_id: u8,
-    pub raw_rbsp: Vec<u8>,
+crate::binding_record! {
+    /// Parsed H.265 Picture Parameter Set.
+    #[must_use]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct H265Pps {
+        /// `pps_pic_parameter_set_id` ∈ [0, 63].
+        pub pps_pic_parameter_set_id: u8,
+        /// `pps_seq_parameter_set_id` — links this PPS to an SPS. ∈ [0, 15].
+        pub pps_seq_parameter_set_id: u8,
+        /// The original RBSP bytes as supplied to the parser.
+        pub raw_rbsp: Vec<u8>,
+    }
 }
 
 pub fn parse_pps(rbsp: &[u8]) -> Result<H265Pps, CodecParseError> {

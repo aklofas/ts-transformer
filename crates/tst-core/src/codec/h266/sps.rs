@@ -6,28 +6,53 @@ use crate::codec::h266::vui::parse_h266_vui;
 use crate::codec::{ChromaFormat, CodecParseError, ColorInfo, Rational, validate_bit_depth_minus8};
 use alloc::vec::Vec;
 
-#[must_use]
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct H266Sps {
-    pub sps_id: u8,
-    pub vps_id: u8,
-    pub profile_tier_level: H266ProfileTierLevel,
-    pub width: u32,
-    pub height: u32,
-    pub chroma_format: ChromaFormat,
-    pub bit_depth_luma: u8,
-    pub bit_depth_chroma: u8,
-    pub color_info: Option<ColorInfo>,
-    pub frame_rate: Option<Rational>,
-    /// Luma-sample conformance-window crop offsets per H.266 §7.4.3.4.
-    /// `coded_width = width + crop_left + crop_right` (and similarly for
-    /// height). Useful for sizing GPU buffers.
-    pub crop_left: u32,
-    pub crop_right: u32,
-    pub crop_top: u32,
-    pub crop_bottom: u32,
-    pub raw_rbsp: Vec<u8>,
+crate::binding_record! {
+    /// Parsed H.266 Sequence Parameter Set.
+    #[must_use]
+    #[non_exhaustive]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct H266Sps {
+        /// `sps_seq_parameter_set_id` (4-bit) — identifies this SPS (H.266
+        /// §7.3.2.4).
+        pub sps_id: u8,
+        /// `sps_video_parameter_set_id` (4-bit) — links this SPS to a VPS.
+        pub vps_id: u8,
+        /// The `profile_tier_level()` block of this SPS (H.266 V4 §7.3.3).
+        pub profile_tier_level: H266ProfileTierLevel,
+        /// Post-crop display width in luma samples (after conformance window is
+        /// applied).
+        pub width: u32,
+        /// Post-crop display height in luma samples.
+        pub height: u32,
+        /// Chroma subsampling format.
+        pub chroma_format: ChromaFormat,
+        /// Luma bit depth. In H.266 V4, a single `sps_bitdepth_minus8` encodes
+        /// both luma and chroma — they are always equal.
+        pub bit_depth_luma: u8,
+        /// Chroma bit depth. Equal to `bit_depth_luma` per H.266 V4 §7.4.3.4
+        /// (single `sps_bitdepth_minus8` field covers both planes).
+        pub bit_depth_chroma: u8,
+        /// VUI colour info, or absent when the VUI is absent or
+        /// `colour_description` is not present. Decoded per H.274 §7.2
+        /// (codec-independent colour registry).
+        @[java("color")] pub color_info: Option<ColorInfo>,
+        /// Frame rate as a rational number, or absent when the timing HRD
+        /// parameters are absent. In H.266, timing lives in
+        /// `general_timing_hrd_parameters()` (§7.3.5.1), not the VUI.
+        pub frame_rate: Option<Rational>,
+        /// Luma-sample conformance-window crop offsets per H.266 §7.4.3.4.
+        /// `coded_width = width + crop_left + crop_right` (and similarly for
+        /// height). Useful for sizing GPU buffers.
+        pub crop_left: u32,
+        /// Right crop offset in luma samples.
+        pub crop_right: u32,
+        /// Top crop offset in luma samples.
+        pub crop_top: u32,
+        /// Bottom crop offset in luma samples.
+        pub crop_bottom: u32,
+        /// The original RBSP bytes as supplied to the parser.
+        pub raw_rbsp: Vec<u8>,
+    }
 }
 
 impl H266Sps {

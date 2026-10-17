@@ -57,14 +57,19 @@ use crate::codec::CodecParseError;
 use crate::codec::NalUnit;
 use alloc::collections::BTreeMap;
 
-/// All VPS, SPS, and PPS NAL units parsed from a slice.
-#[must_use]
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub struct H265ParameterSets {
-    pub vps_by_id: BTreeMap<u8, H265Vps>,
-    pub sps_by_id: BTreeMap<u8, H265Sps>,
-    pub pps_by_id: BTreeMap<u8, H265Pps>,
+crate::binding_record! {
+    /// All VPS, SPS, and PPS NAL units parsed from a slice.
+    #[must_use]
+    #[derive(Debug, Clone, PartialEq, Eq, Default)]
+    #[non_exhaustive]
+    pub struct H265ParameterSets {
+        /// The parsed VPS NAL units, keyed by `vps_video_parameter_set_id`.
+        pub vps_by_id: BTreeMap<u8, H265Vps>,
+        /// The parsed SPS NAL units, keyed by `sps_seq_parameter_set_id`.
+        pub sps_by_id: BTreeMap<u8, H265Sps>,
+        /// The parsed PPS NAL units, keyed by `pps_pic_parameter_set_id`.
+        pub pps_by_id: BTreeMap<u8, H265Pps>,
+    }
 }
 
 /// Parse all VPS/SPS/PPS NAL units from a slice. See [`crate::codec`]

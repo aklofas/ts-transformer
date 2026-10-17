@@ -38,18 +38,21 @@ use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::{jint, jobject};
 use tst_core::codec::NalUnit;
 use tst_core::codec::h266::{
-    H266ParameterSets, H266Pps, H266ProfileTierLevel, H266SliceHeaderLight, H266SliceType, H266Sps,
-    H266Vps, parse_parameter_sets, parse_pps, parse_slice_header_light, parse_sps, parse_vps,
+    H266SliceType, H266Sps, parse_parameter_sets, parse_pps, parse_slice_header_light, parse_sps,
+    parse_vps,
 };
 
-use crate::codec::shared::{build_color_info, build_rational, builder_set_int, builder_set_long};
 use crate::error::map_codec_parse_error;
-use crate::jutil::{read_byte_buffer, wrap_heap_byte_buffer};
+use crate::generated::codec::{
+    build_h266_parameter_sets, build_h266_pps, build_h266_slice_header_light, build_h266_sps,
+    build_h266_vps,
+};
+use crate::jutil::read_byte_buffer;
 
 /// Map a Rust [`H266SliceType`] to its `org.tstrans.codec.H266SliceType`
 /// constant. The `_ =>` arm maps any future marked-non-exhaustive variant to
 /// `UNKNOWN`, mirroring tst-py's `Unknown` catch-all.
-fn build_slice_type<'local>(
+pub(crate) fn build_slice_type<'local>(
     env: &mut JNIEnv<'local>,
     v: H266SliceType,
 ) -> Result<JObject<'local>, ()> {
@@ -69,187 +72,6 @@ fn build_slice_type<'local>(
     .map_err(|_| ())
 }
 
-/// Build a Java `H266ProfileTierLevel(int, boolean, int)` from the nested Rust
-/// PTL sub-record.
-fn build_ptl<'local>(
-    env: &mut JNIEnv<'local>,
-    ptl: &H266ProfileTierLevel,
-) -> Result<JObject<'local>, ()> {
-    env.new_object(
-        "org/tstrans/codec/H266ProfileTierLevel",
-        "(IZI)V",
-        &[
-            JValue::Int(i32::from(ptl.general_profile_idc)),
-            JValue::Bool(u8::from(ptl.general_tier_flag)),
-            JValue::Int(i32::from(ptl.general_level_idc)),
-        ],
-    )
-    .map_err(|_| ())
-}
-
-/// Build a Java `H266Sps` via its `Builder`. The nested PTL is built as a real
-/// sub-record and set as a field (not reconstructed from flattened fields).
-/// Returns `Err(())` if any JNI call fails (a pending Java exception is left).
-fn build_sps<'local>(env: &mut JNIEnv<'local>, sps: &H266Sps) -> Result<JObject<'local>, ()> {
-    // 15 fields + nested PTL/ColorInfo/Rational/enum constants + builder +
-    // scratch; 32 slots safely covers the worst case.
-    env.ensure_local_capacity(32).map_err(|_| ())?;
-
-    let b = env
-        .new_object("org/tstrans/codec/H266Sps$Builder", "()V", &[])
-        .map_err(|_| ())?;
-
-    const RET: &str = "Lorg/tstrans/codec/H266Sps$Builder;";
-
-    builder_set_int(env, &b, RET, "spsId", i32::from(sps.sps_id))?;
-    builder_set_int(env, &b, RET, "vpsId", i32::from(sps.vps_id))?;
-
-    {
-        let ptl = build_ptl(env, &sps.profile_tier_level)?;
-        env.call_method(
-            &b,
-            "profileTierLevel",
-            "(Lorg/tstrans/codec/H266ProfileTierLevel;)Lorg/tstrans/codec/H266Sps$Builder;",
-            &[JValue::Object(&ptl)],
-        )
-        .map_err(|_| ())?;
-    }
-
-    builder_set_long(env, &b, RET, "width", i64::from(sps.width))?;
-    builder_set_long(env, &b, RET, "height", i64::from(sps.height))?;
-
-    {
-        let cf = crate::codec::shared::build_chroma_format(env, sps.chroma_format)?;
-        env.call_method(
-            &b,
-            "chromaFormat",
-            "(Lorg/tstrans/codec/ChromaFormat;)Lorg/tstrans/codec/H266Sps$Builder;",
-            &[JValue::Object(&cf)],
-        )
-        .map_err(|_| ())?;
-    }
-
-    builder_set_int(env, &b, RET, "bitDepthLuma", i32::from(sps.bit_depth_luma))?;
-    builder_set_int(
-        env,
-        &b,
-        RET,
-        "bitDepthChroma",
-        i32::from(sps.bit_depth_chroma),
-    )?;
-
-    if let Some(ref c) = sps.color_info {
-        let jc = build_color_info(env, c)?;
-        env.call_method(
-            &b,
-            "color",
-            "(Lorg/tstrans/codec/ColorInfo;)Lorg/tstrans/codec/H266Sps$Builder;",
-            &[JValue::Object(&jc)],
-        )
-        .map_err(|_| ())?;
-    }
-
-    if let Some(ref r) = sps.frame_rate {
-        let jr = build_rational(env, r)?;
-        env.call_method(
-            &b,
-            "frameRate",
-            "(Lorg/tstrans/codec/Rational;)Lorg/tstrans/codec/H266Sps$Builder;",
-            &[JValue::Object(&jr)],
-        )
-        .map_err(|_| ())?;
-    }
-
-    builder_set_long(env, &b, RET, "cropLeft", i64::from(sps.crop_left))?;
-    builder_set_long(env, &b, RET, "cropRight", i64::from(sps.crop_right))?;
-    builder_set_long(env, &b, RET, "cropTop", i64::from(sps.crop_top))?;
-    builder_set_long(env, &b, RET, "cropBottom", i64::from(sps.crop_bottom))?;
-
-    {
-        let buf = wrap_heap_byte_buffer(env, &sps.raw_rbsp)?;
-        env.call_method(
-            &b,
-            "rawRbsp",
-            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/H266Sps$Builder;",
-            &[JValue::Object(&buf)],
-        )
-        .map_err(|_| ())?;
-    }
-
-    env.call_method(&b, "build", "()Lorg/tstrans/codec/H266Sps;", &[])
-        .map_err(|_| ())?
-        .l()
-        .map_err(|_| ())
-}
-
-/// Build a Java `H266Vps(int, int, int, ByteBuffer)` record directly.
-fn build_vps<'local>(env: &mut JNIEnv<'local>, vps: &H266Vps) -> Result<JObject<'local>, ()> {
-    env.ensure_local_capacity(8).map_err(|_| ())?;
-    let buf = wrap_heap_byte_buffer(env, &vps.raw_rbsp)?;
-    env.new_object(
-        "org/tstrans/codec/H266Vps",
-        "(IIILjava/nio/ByteBuffer;)V",
-        &[
-            JValue::Int(i32::from(vps.vps_id)),
-            JValue::Int(i32::from(vps.max_layers)),
-            JValue::Int(i32::from(vps.max_sub_layers)),
-            JValue::Object(&buf),
-        ],
-    )
-    .map_err(|_| ())
-}
-
-/// Build a Java `H266Pps(int, int, ByteBuffer)` record directly.
-fn build_pps<'local>(env: &mut JNIEnv<'local>, pps: &H266Pps) -> Result<JObject<'local>, ()> {
-    env.ensure_local_capacity(8).map_err(|_| ())?;
-    let buf = wrap_heap_byte_buffer(env, &pps.raw_rbsp)?;
-    env.new_object(
-        "org/tstrans/codec/H266Pps",
-        "(IILjava/nio/ByteBuffer;)V",
-        &[
-            JValue::Int(i32::from(pps.pps_id)),
-            JValue::Int(i32::from(pps.sps_id)),
-            JValue::Object(&buf),
-        ],
-    )
-    .map_err(|_| ())
-}
-
-/// Box an `Option<u16>` into a `java.lang.Integer` (or null) for the
-/// `picOrderCntLsb` slot.
-fn boxed_poc<'local>(env: &mut JNIEnv<'local>, v: Option<u16>) -> Result<JObject<'local>, ()> {
-    match v {
-        Some(n) => env
-            .new_object("java/lang/Integer", "(I)V", &[JValue::Int(i32::from(n))])
-            .map_err(|_| ()),
-        None => Ok(JObject::null()),
-    }
-}
-
-/// Build a Java `H266SliceHeaderLight` record directly.
-fn build_slice<'local>(
-    env: &mut JNIEnv<'local>,
-    h: &H266SliceHeaderLight,
-) -> Result<JObject<'local>, ()> {
-    env.ensure_local_capacity(8).map_err(|_| ())?;
-    let slice_type = build_slice_type(env, h.slice_type)?;
-    let poc = boxed_poc(env, h.pic_order_cnt_lsb)?;
-    let buf = wrap_heap_byte_buffer(env, &h.raw_rbsp)?;
-    env.new_object(
-        "org/tstrans/codec/H266SliceHeaderLight",
-        "(ZLorg/tstrans/codec/H266SliceType;ILjava/lang/Integer;ZLjava/nio/ByteBuffer;)V",
-        &[
-            JValue::Bool(u8::from(h.first_in_pic)),
-            JValue::Object(&slice_type),
-            JValue::Int(i32::from(h.pps_id)),
-            JValue::Object(&poc),
-            JValue::Bool(u8::from(h.idr)),
-            JValue::Object(&buf),
-        ],
-    )
-    .map_err(|_| ())
-}
-
 jni_native! {
     fn Java_org_tstrans_codec_Codec_nParseH266Sps<'local>(
         env,
@@ -261,9 +83,9 @@ jni_native! {
             Err(_) => return JObject::null().into_raw(),
         };
         match parse_sps(&bytes) {
-            Ok(sps) => match build_sps(env, &sps) {
+            Ok(sps) => match build_h266_sps(env, &sps) {
                 Ok(obj) => obj.into_raw(),
-                Err(()) => JObject::null().into_raw(),
+                Err(_) => JObject::null().into_raw(),
             },
             Err(e) => {
                 map_codec_parse_error(env, &e, "h266");
@@ -284,9 +106,9 @@ jni_native! {
             Err(_) => return JObject::null().into_raw(),
         };
         match parse_pps(&bytes) {
-            Ok(pps) => match build_pps(env, &pps) {
+            Ok(pps) => match build_h266_pps(env, &pps) {
                 Ok(obj) => obj.into_raw(),
-                Err(()) => JObject::null().into_raw(),
+                Err(_) => JObject::null().into_raw(),
             },
             Err(e) => {
                 map_codec_parse_error(env, &e, "h266");
@@ -307,9 +129,9 @@ jni_native! {
             Err(_) => return JObject::null().into_raw(),
         };
         match parse_vps(&bytes) {
-            Ok(vps) => match build_vps(env, &vps) {
+            Ok(vps) => match build_h266_vps(env, &vps) {
                 Ok(obj) => obj.into_raw(),
-                Err(()) => JObject::null().into_raw(),
+                Err(_) => JObject::null().into_raw(),
             },
             Err(e) => {
                 map_codec_parse_error(env, &e, "h266");
@@ -359,9 +181,9 @@ jni_native! {
 
         let nut = (nal_unit_type & 0xff) as u8;
         match parse_slice_header_light(&bytes, sps_ctx.as_ref(), nut) {
-            Ok(h) => match build_slice(env, &h) {
+            Ok(h) => match build_h266_slice_header_light(env, &h) {
                 Ok(obj) => obj.into_raw(),
-                Err(()) => JObject::null().into_raw(),
+                Err(_) => JObject::null().into_raw(),
             },
             Err(e) => {
                 map_codec_parse_error(env, &e, "h266");
@@ -446,9 +268,9 @@ jni_native! {
         }
 
         match parse_parameter_sets(&rust_nals) {
-            Ok(ps) => match build_parameter_sets(env, &ps) {
+            Ok(ps) => match build_h266_parameter_sets(env, &ps) {
                 Ok(obj) => obj.into_raw(),
-                Err(()) => JObject::null().into_raw(),
+                Err(_) => JObject::null().into_raw(),
             },
             Err(e) => {
                 map_codec_parse_error(env, &e, "h266");
@@ -456,79 +278,4 @@ jni_native! {
             }
         }
     }
-}
-
-/// Build a Java
-/// `H266ParameterSets(List<H266Vps>, List<H266Sps>, List<H266Pps>)`.
-/// Each list is a `java.util.ArrayList`; entries are added inside a per-entry
-/// local frame so the VPS/SPS/PPS object refs are reclaimed each iteration.
-/// Mirrors tst-py's list-backed `H266ParameterSets` (the Rust collections are
-/// `Vec`, not `BTreeMap`).
-fn build_parameter_sets<'local>(
-    env: &mut JNIEnv<'local>,
-    ps: &H266ParameterSets,
-) -> Result<JObject<'local>, ()> {
-    env.ensure_local_capacity(16).map_err(|_| ())?;
-
-    let vps_list = env
-        .new_object("java/util/ArrayList", "()V", &[])
-        .map_err(|_| ())?;
-    for vps in &ps.vpses {
-        env.with_local_frame(16, |inner| {
-            let val = build_vps(inner, vps).map_err(|()| jni::errors::Error::JavaException)?;
-            inner.call_method(
-                &vps_list,
-                "add",
-                "(Ljava/lang/Object;)Z",
-                &[JValue::Object(&val)],
-            )?;
-            Ok::<(), jni::errors::Error>(())
-        })
-        .map_err(|_| ())?;
-    }
-
-    let sps_list = env
-        .new_object("java/util/ArrayList", "()V", &[])
-        .map_err(|_| ())?;
-    for sps in &ps.spses {
-        env.with_local_frame(48, |inner| {
-            let val = build_sps(inner, sps).map_err(|()| jni::errors::Error::JavaException)?;
-            inner.call_method(
-                &sps_list,
-                "add",
-                "(Ljava/lang/Object;)Z",
-                &[JValue::Object(&val)],
-            )?;
-            Ok::<(), jni::errors::Error>(())
-        })
-        .map_err(|_| ())?;
-    }
-
-    let pps_list = env
-        .new_object("java/util/ArrayList", "()V", &[])
-        .map_err(|_| ())?;
-    for pps in &ps.ppses {
-        env.with_local_frame(16, |inner| {
-            let val = build_pps(inner, pps).map_err(|()| jni::errors::Error::JavaException)?;
-            inner.call_method(
-                &pps_list,
-                "add",
-                "(Ljava/lang/Object;)Z",
-                &[JValue::Object(&val)],
-            )?;
-            Ok::<(), jni::errors::Error>(())
-        })
-        .map_err(|_| ())?;
-    }
-
-    env.new_object(
-        "org/tstrans/codec/H266ParameterSets",
-        "(Ljava/util/List;Ljava/util/List;Ljava/util/List;)V",
-        &[
-            JValue::Object(&vps_list),
-            JValue::Object(&sps_list),
-            JValue::Object(&pps_list),
-        ],
-    )
-    .map_err(|_| ())
 }

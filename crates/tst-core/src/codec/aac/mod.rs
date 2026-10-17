@@ -167,45 +167,60 @@ impl<'a> AdtsFrame<'a> {
     }
 }
 
-/// Owned variant of [`AdtsFrame`].
-///
-/// `body: Vec<u8>` instead of `&'a [u8]` — usable across FFI / thread / async
-/// boundaries where the borrowed source slice doesn't outlive the consumer.
-///
-/// Round-trip with [`AdtsFrame::to_owned`] / [`Self::as_ref`].
-///
-/// # Example — collect owned frames from a borrowed iterator
-/// ```
-/// use tst_core::codec::aac::{frames, AdtsFrameOwned};
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let payload: &[u8] = &[/* ADTS-framed AAC bytes */];
-/// # let payload: &[u8] = &[];
-/// let owned: Vec<AdtsFrameOwned> = frames(payload)
-///     .filter_map(Result::ok)
-///     .map(|f| f.to_owned())
-///     .collect();
-/// // `owned` outlives `payload` — safe to ship over FFI.
-/// let _ = owned;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct AdtsFrameOwned {
-    pub profile: AacProfile,
-    pub sample_rate_hz: u32,
-    /// See [`AdtsFrame::channel_configuration`].
-    pub channel_configuration: u8,
-    /// See [`AdtsFrame::channel_layout`].
-    pub channel_layout: AacChannelLayout,
-    pub frame_length_bytes: u32,
-    pub samples_per_frame: u16,
-    pub num_raw_data_blocks: u8,
-    pub has_crc: bool,
-    pub mpeg_version: MpegVersion,
-    pub raw_header: Vec<u8>,
-    pub body: Vec<u8>,
+crate::binding_record! {
+    /// One decoded ADTS frame: the parsed header fields, the raw header bytes and
+    /// the full frame bytes.
+    /// <!-- rust-only -->
+    /// Owned variant of [`AdtsFrame`].
+    ///
+    /// `body: Vec<u8>` instead of `&'a [u8]` — usable across FFI / thread / async
+    /// boundaries where the borrowed source slice doesn't outlive the consumer.
+    ///
+    /// Round-trip with [`AdtsFrame::to_owned`] / [`Self::as_ref`].
+    ///
+    /// # Example — collect owned frames from a borrowed iterator
+    /// ```
+    /// use tst_core::codec::aac::{frames, AdtsFrameOwned};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let payload: &[u8] = &[/* ADTS-framed AAC bytes */];
+    /// # let payload: &[u8] = &[];
+    /// let owned: Vec<AdtsFrameOwned> = frames(payload)
+    ///     .filter_map(Result::ok)
+    ///     .map(|f| f.to_owned())
+    ///     .collect();
+    /// // `owned` outlives `payload` — safe to ship over FFI.
+    /// let _ = owned;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct AdtsFrameOwned {
+        /// AAC profile (Main / LC / SSR / LTP).
+        pub profile: AacProfile,
+        /// Sample rate in Hz (e.g. 44100, 48000).
+        pub sample_rate_hz: u32,
+        /// Raw 3-bit `channel_configuration` field from the ADTS header: 0 =
+        /// defined by a Program Config Element, 1..=7 = canonical channel counts.
+        pub channel_configuration: u8,
+        /// Typed channel layout.
+        pub channel_layout: AacChannelLayout,
+        /// Total frame byte count (header + body), as encoded in the ADTS header.
+        pub frame_length_bytes: u32,
+        /// Number of PCM samples in the frame (1024 for standard ADTS).
+        pub samples_per_frame: u16,
+        /// Number of raw data blocks in the frame (logical, not wire value).
+        pub num_raw_data_blocks: u8,
+        /// True when a 16-bit CRC follows the 7-byte fixed header.
+        pub has_crc: bool,
+        /// MPEG version (MPEG-2 or MPEG-4).
+        pub mpeg_version: MpegVersion,
+        /// Raw ADTS header bytes (7 bytes without CRC, 9 with CRC).
+        pub raw_header: Vec<u8>,
+        /// The full frame bytes (header and body).
+        @[java("payload")] pub body: Vec<u8>,
+    }
 }
 
 impl AdtsFrameOwned {

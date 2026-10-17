@@ -4,14 +4,22 @@ use crate::codec::CodecParseError;
 use crate::codec::bitreader::BitReader;
 use alloc::vec::Vec;
 
-#[must_use]
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct H266Vps {
-    pub vps_id: u8,
-    pub max_layers: u8,
-    pub max_sub_layers: u8,
-    pub raw_rbsp: Vec<u8>,
+crate::binding_record! {
+    /// Parsed H.266 Video Parameter Set.
+    #[must_use]
+    #[non_exhaustive]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct H266Vps {
+        /// 4-bit `vps_id` — identifies this VPS (H.266 V4 §7.3.2.3).
+        pub vps_id: u8,
+        /// Maximum number of spatial layers (`vps_max_layers_minus1 + 1`).
+        pub max_layers: u8,
+        /// Maximum number of temporal sub-layers (`vps_max_sub_layers_minus1 +
+        /// 1`).
+        pub max_sub_layers: u8,
+        /// The original RBSP bytes as supplied to the parser.
+        pub raw_rbsp: Vec<u8>,
+    }
 }
 
 /// Parse an H.266 VPS RBSP (Annex-B start codes already stripped,
