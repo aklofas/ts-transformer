@@ -395,7 +395,7 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/net-test-binaries.sh
 
-      - name: scripts/gen unit tests (benchmarks page, LOC report)
+      - name: scripts/gen unit tests
         # The generators' stdlib unittest suites and their committed fixtures;
         # nothing else runs them. Stdlib only, no pip install.
         if: matrix.name == 'linux-x86_64'
