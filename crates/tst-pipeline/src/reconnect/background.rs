@@ -32,6 +32,7 @@
 //!    — which `Relaxed` on both would not give on a weakly-ordered
 //!    target.
 
+use crate::reconnect::latch::Latch;
 use std::sync::atomic::Ordering;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::{Arc, Condvar, Mutex};
@@ -42,7 +43,7 @@ use tst_core::cancel::CancelSlot;
 use tst_core::mpegts::common::SRT_TS_BUNDLE_BYTES;
 use tst_core::transport::{Transport, TransportError};
 
-use super::{GapBuffer, ReconnectPolicy, latch_inner_cancel};
+use super::{GapBuffer, ReconnectPolicy};
 
 /// Interruptible sleep. `wait_timeout(dur)` parks up to `dur`, returning
 /// early (`true`) if `signal()` fired. A poisoned mutex reads as signaled
@@ -166,11 +167,9 @@ pub(crate) struct WorkerCtx<T: Transport> {
     pub(crate) inner: Arc<Mutex<Option<T>>>,
     pub(crate) factory: Arc<dyn Fn() -> Result<T, TransportError> + Send + Sync>,
     pub(crate) gap: Arc<Mutex<GapBuffer>>,
-    pub(crate) closed: Arc<AtomicBool>,
-    /// The wrapper's cancel-only latch, set here when an inner (or the
-    /// factory) reports `ExplicitClose` without the wrapper having been
-    /// cancelled — see `latch_inner_cancel`.
-    pub(crate) cancelled: Arc<AtomicBool>,
+    /// The wrapper's closed/cancelled latch; the worker records an inner's
+    /// (or the factory's) `ExplicitClose` on it via `Latch::inner_cancel`.
+    pub(crate) latch: Arc<Latch>,
     pub(crate) shutdown: Arc<Shutdown>,
     pub(crate) shared: Arc<ManagedShared>,
     pub(crate) policy: ReconnectPolicy,
@@ -208,7 +207,7 @@ pub(crate) enum Install {
 pub(crate) fn install_fresh_inner<T: Transport>(
     inner: &Mutex<Option<T>>,
     active: &CancelSlot,
-    closed: &AtomicBool,
+    latch: &Latch,
     shared: &ManagedShared,
     new_inner: T,
 ) -> Install {
@@ -233,7 +232,7 @@ pub(crate) fn install_fresh_inner<T: Transport>(
     // through a connection the caller has asked to abandon (and a real
     // socket, closed by that cancel, would turn the caller-initiated close
     // into a wire-looking `Broken`).
-    if closed.load(Ordering::Acquire) {
+    if latch.is_closed() {
         // Recover on poison rather than skip: the slot is a plain `Option`
         // a panic can never leave half-updated, and the fresh inner must
         // be closed on this path regardless of how an earlier holder
@@ -375,7 +374,7 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
     // `send_bytes` call ran a fresh `reconnect_and_drain` budget.
     let mut attempt: u32 = 0;
     'reconnect: loop {
-        if ctx.closed.load(Ordering::Acquire) {
+        if ctx.latch.is_closed() {
             return;
         }
         attempt += 1;
@@ -411,12 +410,12 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
             Err(TransportError::ExplicitClose) => {
                 // The dial was cancelled, not refused: stop dialling. No
                 // lock is held here.
-                latch_inner_cancel(&ctx.closed, &ctx.cancelled, &ctx.shutdown, &ctx.active);
+                ctx.latch.inner_cancel(&ctx.shutdown, &ctx.active);
                 return;
             }
             Err(_) => continue 'reconnect,
         };
-        match install_fresh_inner(&ctx.inner, &ctx.active, &ctx.closed, &ctx.shared, new_inner) {
+        match install_fresh_inner(&ctx.inner, &ctx.active, &ctx.latch, &ctx.shared, new_inner) {
             Install::Installed => {}
             // close()/cancel() landed while the factory ran: the fresh
             // inner is already closed and nothing may be drained into it.
@@ -440,7 +439,7 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
 
         // ---- drain phase ----
         loop {
-            if ctx.closed.load(Ordering::Acquire) {
+            if ctx.latch.is_closed() {
                 return;
             }
             // Per-message lock scope, order inner -> gap (invariant 1).
@@ -567,7 +566,7 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                 }
                 DrainStep::Broken => continue 'reconnect,
                 DrainStep::Cancelled => {
-                    latch_inner_cancel(&ctx.closed, &ctx.cancelled, &ctx.shutdown, &ctx.active);
+                    ctx.latch.inner_cancel(&ctx.shutdown, &ctx.active);
                     return; // the guard clears bg_active on the way out
                 }
             }

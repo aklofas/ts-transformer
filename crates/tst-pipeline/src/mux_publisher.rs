@@ -865,17 +865,17 @@ mod tests {
     /// recorded, failed or not.
     struct FailOncePublisher {
         offered: Vec<Vec<u8>>,
-        failed: bool,
+        has_failed: bool,
     }
 
     impl Publisher for FailOncePublisher {
         type Error = MemErr;
         fn push_ts(&mut self, ts: &[u8]) -> Result<(), MemErr> {
             self.offered.push(ts.to_vec());
-            if self.failed {
+            if self.has_failed {
                 Ok(())
             } else {
-                self.failed = true;
+                self.has_failed = true;
                 Err(MemErr)
             }
         }
@@ -896,7 +896,7 @@ mod tests {
     fn failed_push_ts_keeps_its_bytes_and_the_next_call_reoffers_them() {
         let p = FailOncePublisher {
             offered: vec![],
-            failed: false,
+            has_failed: false,
         };
         let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
         let au = h264_au();
