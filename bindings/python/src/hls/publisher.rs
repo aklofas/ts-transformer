@@ -434,8 +434,8 @@ impl PyHlsPublisherBuilder {
 /// can fetch the terminal playlist and every segment file after the stream
 /// has ended.
 ///
-/// `shutdown()` (or the context-manager `__exit__`, or drop) stops serving
-/// and drains the runtime. `shutdown()` is idempotent — a second call (via
+/// `shutdown()` (or the context-manager `__exit__`) stops serving and waits
+/// up to 2 s for the `tst-hls` thread; drop cancels and detaches. `shutdown()` is idempotent — a second call (via
 /// `close()`, `__exit__`, or drop after an explicit shutdown) is a no-op.
 #[pyclass(name = "HlsServerHandle", module = "tstrans.hls")]
 pub(crate) struct PyHlsServerHandle {
@@ -492,8 +492,8 @@ impl PyHlsServerHandle {
         Ok(handle.local_addr().port())
     }
 
-    /// Stop serving and drain the runtime. Idempotent: a second call is a
-    /// no-op. Also happens automatically on drop.
+    /// Stop serving and wait up to 2 s for the `tst-hls` thread. Idempotent:
+    /// a second call is a no-op. A plain drop cancels and detaches instead.
     fn shutdown(&self, py: Python<'_>) -> PyResult<()> {
         let handle = {
             let mut guard = self
