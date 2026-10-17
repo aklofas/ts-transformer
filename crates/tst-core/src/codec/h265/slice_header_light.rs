@@ -2,9 +2,10 @@
 //!
 //! Per H.265 §7.3.6.1.
 
-use crate::codec::CodecParseError;
 use crate::codec::bitreader::BitReader;
 use crate::codec::h265::sps::H265Sps;
+use crate::codec::nal::is_idr;
+use crate::codec::{CodecParseError, VideoCodec};
 use alloc::vec::Vec;
 
 crate::binding_record! {
@@ -132,7 +133,7 @@ pub fn parse_slice_header_light(
     let pic_order_cnt_lsb = if let Some(sps) = sps {
         // pic_order_cnt_lsb is present in all non-IDR slice headers.
         // For IDR slices it is implicitly 0 per H.265 §8.3.1.
-        if crate::codec::nal::is_idr(crate::codec::VideoCodec::H265, nal_unit_type) {
+        if is_idr(VideoCodec::H265, nal_unit_type) {
             Some(0)
         } else {
             let bits = sps.log2_max_pic_order_cnt_lsb_minus4 as u32 + 4;
@@ -147,7 +148,7 @@ pub fn parse_slice_header_light(
         slice_type,
         pps_id,
         pic_order_cnt_lsb,
-        idr: crate::codec::nal::is_idr(crate::codec::VideoCodec::H265, nal_unit_type),
+        idr: is_idr(VideoCodec::H265, nal_unit_type),
         raw_rbsp: rbsp.to_vec(),
     })
 }

@@ -22,7 +22,8 @@ pub struct StartCode {
     pub data_start: usize,
 }
 
-/// Every start code in `buf`, collected — for the one caller that needs random access (`mpegts::demux::payload::split_nals`).
+/// Every start code in `buf`, collected — for the one caller that needs random
+/// access (`mpegts::demux::payload::split_nals`).
 ///
 /// Same walk as [`start_codes`].
 pub(crate) fn start_code_vec(buf: &[u8]) -> Vec<StartCode> {
@@ -82,8 +83,9 @@ impl Iterator for StartCodes<'_> {
 }
 
 /// Iterate the NAL units of an Annex-B buffer: each item is one NAL unit
-/// with its header and without its start code, the byte slice between one start code's `data_start` and the next start code's
-/// `prefix_start` (or the end of `buf` for the last NAL).
+/// with its header and without its start code, the byte slice between one
+/// start code's `data_start` and the next start code's `prefix_start` (or the
+/// end of `buf` for the last NAL).
 ///
 /// Allocation-free — it holds one [`StartCodes`] walk and one lookahead
 /// match, so callers that only need the NAL bytes (not their offsets)

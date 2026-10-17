@@ -2182,7 +2182,7 @@ fn encode_with_field(set: impl FnOnce(&mut UasDatalinkLs)) -> Vec<u8> {
 /// ST 0601.19 §8 worked examples for the ranged fields — spec bytes,
 /// not round-trip (closed-loop tests can't catch a wrong wire formula).
 #[test]
-fn wpa_ranged_spec_vectors() {
+fn ranged_spec_vectors() {
     // (tag, example value, value bytes) — from ST 0601.19 §8 example rows.
     let vectors: &[(u8, f64, &[u8])] = &[
         (35, 235.924010, &[0xA7, 0xC4]),
@@ -2262,7 +2262,7 @@ fn decode_with_single_tlv_ber_oid(tag: u32, value: &[u8]) -> UasDatalinkLs {
 /// items — spec bytes, not round-trip (closed-loop tests can't catch a
 /// wrong wire formula).
 #[test]
-fn wpb_imapb_spec_vectors() {
+fn imapb_spec_vectors() {
     // (tag, example value, value bytes at the item's example/default length).
     let vectors: &[(u8, f64, &[u8])] = &[
         (96, 13_898.546_3, &[0x00, 0xD9, 0x2A]),
@@ -2314,7 +2314,7 @@ fn wpb_imapb_spec_vectors() {
 /// `field_errors`. Specials re-emit on encode when the field stays
 /// `None` — value wins otherwise, mirroring `sentinel_tags`.
 #[test]
-fn wpb_imapb_variable_length_decode_and_specials() {
+fn imapb_variable_length_decode_and_specials() {
     // Any length 1..=max_len decodes (2-byte Tag 104 value):
     let ls = decode_with_single_tlv(104, &[0x2F, 0x92]);
     assert!(ls.sensor_ellipsoid_height_extended_m.is_some());
@@ -2339,7 +2339,7 @@ fn wpb_imapb_variable_length_decode_and_specials() {
 /// `field_errors`, NOT `imapb_specials`, and the typed field stays `None`.
 /// See the `imapb_specials` field rustdoc for the policy rationale.
 #[test]
-fn wpb_imapb_reserved_and_out_of_range_land_in_field_errors() {
+fn imapb_reserved_and_out_of_range_land_in_field_errors() {
     // ReservedSpecial: top byte 0xCC (0b1100_1100) matches the 5-bit
     // PositiveInfinity prefix (0b11001) but carries a non-zero payload
     // (0x1234), which the +Inf family requires to be zero-filled — so it
@@ -2402,7 +2402,7 @@ fn wpb_imapb_reserved_and_out_of_range_land_in_field_errors() {
 /// `Indicator` emits the ST 1201.5 `IMAP_ABOVE_MAXIMUM` special at
 /// `default_len` instead of erroring.
 #[test]
-fn wpb_imapb_indicator_policy() {
+fn imapb_indicator_policy() {
     // > 40000 max
     let rec = UasDatalinkLs {
         altitude_agl_m: Some(50_000.0),
@@ -2427,11 +2427,11 @@ fn wpb_imapb_indicator_policy() {
 /// ST 0601.19 §8 worked examples for the raw/simple fields — spec
 /// bytes in BOTH directions, not round-trip (closed-loop tests can't
 /// catch a wrong wire formula). No LSB tolerance: unlike the
-/// IMAPB-quantized ranged fields in [`wpa_ranged_spec_vectors`], these
+/// IMAPB-quantized ranged fields in [`ranged_spec_vectors`], these
 /// are identity encodings (raw int/string bytes), so decoded values and
 /// encoded VALUE bytes must match the spec examples exactly.
 #[test]
-fn wpa_raw_spec_vectors() {
+fn ranged_raw_spec_vectors() {
     // Decode + encode against ST 0601.19 §8 examples.
     // Tag 39 — Outside Air Temperature (I8): 84 → 0x54.
     let ls = decode_with_single_tlv(39, &[0x54]);
@@ -2591,7 +2591,7 @@ fn strict_encode_sanitizes_all_string_fields() {
 
 #[allow(clippy::field_reassign_with_default)]
 #[test]
-fn wpa_coded_enums_round_trip_and_other() {
+fn ranged_coded_enums_round_trip_and_other() {
     let ls = decode_with_single_tlv(34, &[0x02]);
     assert_eq!(ls.icing_detected, Some(IcingDetected::IcingDetected));
     let ls = decode_with_single_tlv(63, &[0x08]);
@@ -2609,12 +2609,12 @@ fn wpa_coded_enums_round_trip_and_other() {
 
 /// ST 0601.19 §8 worked examples for the coded enums — spec
 /// bytes in both directions (decode from example bytes AND `tlv_value`
-/// encode asserts), matching the rigor of `wpa_raw_spec_vectors`: these
+/// encode asserts), matching the rigor of `ranged_raw_spec_vectors`: these
 /// are identity codepoint encodings, so no LSB tolerance is needed. Also
 /// covers the `Other(code)` byte-exact round trip for the two enums the
 /// RED test above doesn't exercise (it only shows `Other` on tag 77).
 #[test]
-fn wpa_coded_enum_spec_vectors() {
+fn ranged_coded_enum_spec_vectors() {
     // Tag 34 — Icing Detected (§8.34): worked example "Icing Detected" → 0x02.
     let ls = decode_with_single_tlv(34, &[0x02]);
     assert_eq!(ls.icing_detected, Some(IcingDetected::IcingDetected));
@@ -2668,7 +2668,7 @@ fn wpa_coded_enum_spec_vectors() {
 /// other typed tag).
 #[test]
 #[allow(clippy::type_complexity)]
-fn wpa_nested_set_bytes_move_from_unknown_to_named_fields() {
+fn ranged_nested_set_bytes_move_from_unknown_to_named_fields() {
     let cases: &[(u8, fn(&UasDatalinkLs) -> Option<&[u8]>)] = &[
         (73, |r| r.rvt.as_deref()),
         (95, |r| r.sar_mi_local_set.as_deref()),
@@ -2724,7 +2724,7 @@ fn wpa_nested_set_bytes_move_from_unknown_to_named_fields() {
 /// a Reserved-meaning tag (67) still errors under the same policy.
 #[allow(clippy::field_reassign_with_default)]
 #[test]
-fn wpa_new_signed_tags_populate_sentinels_and_indicator() {
+fn ranged_new_signed_tags_populate_sentinels_and_indicator() {
     // Decode: INT_MIN on newly-typed signed tags -> sentinel_tags, field None.
     for &(tag, len) in &[
         (40u8, 4usize),
@@ -2770,11 +2770,11 @@ fn wpa_new_signed_tags_populate_sentinels_and_indicator() {
 /// MISB ST 0601.19 §8 worked examples for the 10
 /// var-length int/enum items plus Tag 139 — spec bytes in both
 /// directions (identity big-endian encodings, no quantization tolerance
-/// needed, matching the rigor of `wpa_raw_spec_vectors`). All ten
+/// needed, matching the rigor of `ranged_raw_spec_vectors`). All ten
 /// integer example byte strings are already the encoder's shortest
 /// form, so decode-then-reencode reproduces them exactly.
 #[test]
-fn wpb_var_len_spec_vectors() {
+fn imapb_var_len_spec_vectors() {
     let ls = decode_with_single_tlv(110, &[0x4D, 0xAF]);
     assert_eq!(ls.time_airborne_s, Some(19887));
     let encoded = encode_with_field(|r| r.time_airborne_s = Some(19887));
@@ -2847,14 +2847,14 @@ fn wpb_var_len_spec_vectors() {
 
 /// Var-length int decode accepts any wire length in `1..=max_len` (not
 /// just the spec example length) — mirrors
-/// `wpb_imapb_variable_length_decode_and_specials` for the var-length
+/// `imapb_variable_length_decode_and_specials` for the var-length
 /// substrate. An over-`max_len` wire value is a per-field decode error
 /// collected in `field_errors`, not a fatal `decode()` failure. Tag
 /// 124's all-zero bitfield is non-conformant per spec (§8.124 declares
 /// range `1..255`, i.e. at least one bit must be set) but decode stays
 /// lenient and does not reject it.
 #[test]
-fn wpb_var_len_variable_length_decode_and_invalid_length() {
+fn imapb_var_len_variable_length_decode_and_invalid_length() {
     // Tag 110 (max_len=4): a 1-byte wire value decodes fine.
     let ls = decode_with_single_tlv(110, &[0x07]);
     assert_eq!(ls.time_airborne_s, Some(7));
@@ -2885,7 +2885,7 @@ fn wpb_var_len_variable_length_decode_and_invalid_length() {
 /// wire-unknown fallback as the coded enums (Tags 34/63/77) —
 /// round-trips byte-exact.
 #[test]
-fn wpb_platform_status_and_sensor_control_mode_other_round_trip() {
+fn imapb_platform_status_and_sensor_control_mode_other_round_trip() {
     let ls = decode_with_single_tlv(125, &[0xFE]);
     assert_eq!(ls.platform_status, Some(PlatformStatus::Other(0xFE)));
     let encoded = encode_with_field(|r| r.platform_status = Some(PlatformStatus::Other(0xFE)));
@@ -2935,7 +2935,7 @@ fn decode_body(body: &[u8]) -> UasDatalinkLs {
 /// spec bytes, not round-trip (closed-loop tests can't catch a wrong wire
 /// formula).
 #[test]
-fn wpc_simple_pack_spec_vectors() {
+fn pack_simple_spec_vectors() {
     // Tag 81 — geo-truncated example: (0,36)->(56,0), no optional geo fields.
     let ls = decode_with_single_tlv(81, &[0x00, 0x24, 0x38, 0x00]);
     let h = ls.image_horizon.unwrap();
@@ -3024,7 +3024,7 @@ fn wpc_simple_pack_spec_vectors() {
 /// `decode_strict_compliance_allows_duplicate_unknown_tag`'s strict
 /// fixture shape.
 #[test]
-fn wpc_strict_allows_repeated_115_and_102() {
+fn pack_strict_allows_repeated_115_and_102() {
     let mut body = Vec::new();
     body.extend_from_slice(&[0x02, 0x08]); // Tag 2
     body.extend_from_slice(&1_700_000_000_000_000u64.to_be_bytes());
@@ -3047,7 +3047,7 @@ fn wpc_strict_allows_repeated_115_and_102() {
 /// Method 14 (GENC 3-letter), Overflight "CAN", Operator unknown (length-0
 /// marker), Manufacture "FRA". Byte-fidelity re-encode.
 #[test]
-fn wpc_country_codes_vector() {
+fn pack_country_codes_vector() {
     let v = hex("01 0E 03 43414E 00 03 465241");
     let cc = decode_with_single_tlv(122, &v).country_codes.unwrap();
     assert_eq!(cc.coding_method, 14);
@@ -3065,7 +3065,7 @@ fn wpc_country_codes_vector() {
 /// trailing length-0 byte at all) — distinct from the length-0 "unknown"
 /// marker pinned above.
 #[test]
-fn wpc_country_codes_truncation_cases() {
+fn pack_country_codes_truncation_cases() {
     // Manufacture unknown (explicit length-0 marker) with Operator
     // present. The field VALUES round-trip, but canonicalizing re-encode
     // drops the now-redundant trailing zero-length Manufacture pair —
@@ -3099,7 +3099,7 @@ fn wpc_country_codes_truncation_cases() {
 /// those same raw bytes (cross-check), not the spec prose's "1000/2000
 /// nm" reading.
 #[test]
-fn wpc_wavelengths_list_vector() {
+fn pack_wavelengths_list_vector() {
     let v = hex("0D 15 0000 07D0 0000 0FA0 4E4E 4952");
     let list = decode_with_single_tlv_ber_oid(128, &v)
         .wavelengths_list
@@ -3129,7 +3129,7 @@ fn wpc_wavelengths_list_vector() {
 /// ST 0601.19 §8.130 worked example (transcribed from the cached spec
 /// PDF): two full Location DLPs (take-off, recovery), each lat+lon+hae.
 #[test]
-fn wpc_airbase_locations_vector() {
+fn pack_airbase_locations_vector() {
     let v = hex("0B406BC20919BDA554070E000B40783CB819A2927407C600");
     let al = decode_with_single_tlv_ber_oid(130, &v)
         .airbase_locations
@@ -3154,7 +3154,7 @@ fn wpc_airbase_locations_vector() {
 /// `sensor_frame_rate_explicit_denominator_one_canonicalizes_away`
 /// canonicalization precedent.
 #[test]
-fn wpc_airbase_locations_recovery_omitted_defaults_to_take_off() {
+fn pack_airbase_locations_recovery_omitted_defaults_to_take_off() {
     let v = hex("0B406BC20919BDA554070E00"); // take-off only, no recovery pair
     let al = decode_with_single_tlv_ber_oid(130, &v)
         .airbase_locations
@@ -3170,7 +3170,7 @@ fn wpc_airbase_locations_recovery_omitted_defaults_to_take_off() {
 /// pair with HAE truncated away entirely (distinct from a 4-byte
 /// lat-only pack, which Table 16 does not permit — see the next test).
 #[test]
-fn wpc_location_pair_only_no_hae_round_trips() {
+fn pack_location_pair_only_no_hae_round_trips() {
     let v = hex("08 406BC209 19BDA554"); // take-off = lat+lon only, no HAE
     let al = decode_with_single_tlv_ber_oid(130, &v)
         .airbase_locations
@@ -3190,7 +3190,7 @@ fn wpc_location_pair_only_no_hae_round_trips() {
 /// lat-only truncation. Must land in `field_errors`, not silently
 /// decode a partial `Location`.
 #[test]
-fn wpc_location_four_byte_length_rejected() {
+fn pack_location_four_byte_length_rejected() {
     let v = hex("04 406BC209"); // take-off slot declares length 4 (lat-only) — invalid
     let ls = decode_with_single_tlv_ber_oid(130, &v);
     assert_eq!(
@@ -3220,7 +3220,7 @@ fn wpc_location_four_byte_length_rejected() {
 /// interior-absent field filled by the ST 1201.5 special-value filler
 /// and decoded straight back to `None`.
 #[test]
-fn wpc_location_interior_absent_lat_or_lon_round_trips_via_filler() {
+fn pack_location_interior_absent_lat_or_lon_round_trips_via_filler() {
     let al = super::packs::AirbaseLocations {
         take_off: Some(super::packs::Location {
             lat_deg: Some(38.8),
@@ -3247,7 +3247,7 @@ fn wpc_location_interior_absent_lat_or_lon_round_trips_via_filler() {
 /// (0,EO,"VIS Nose Camera"), (1,EO,"ACME VIS Model 123"),
 /// (2,EO,"ACME IR Model 456").
 #[test]
-fn wpc_payload_list_vector() {
+fn pack_payload_list_vector() {
     let v = hex("03 12 0000 0F56 4953 204E 6F73 6520 4361 6D65 7261
          15 01 0012 4143 4D45 2056 4953 204D 6F64 656C 2031 3233
          14 02 0011 4143 4D45 2049 5220 4D6F 6465 6C20 3435 36");
@@ -3278,7 +3278,7 @@ fn wpc_payload_list_vector() {
 /// vectors and build the outer VLP ourselves rather than trusting the
 /// spec's stated outer length.
 #[test]
-fn wpc_weapons_stores_vector() {
+fn pack_weapons_stores_vector() {
     let r1 = hex("0E 01 01 01 03 82 03 07 48 61 72 70 6F 6F 6E"); // Harpoon
     let r2 = hex("0F 01 01 02 02 9E 04 08 48 65 6C 6C 66 69 72 65"); // Hellfire
     let r3 = hex("0C 01 02 01 01 03 06 47 42 55 2D 31 35"); // GBU-15
@@ -3332,7 +3332,7 @@ fn wpc_weapons_stores_vector() {
 /// (current, planned, cancelled, historical) plus a full Location on every
 /// record.
 #[test]
-fn wpc_waypoint_list_vector() {
+fn pack_waypoint_list_vector() {
     let v = hex("0F 00 0001 03 4071D894 19BDBFE7 089800
          0F 01 0002 02 4071D388 19BCCE24 08FC00
          0F 02 7FFF 01 4071E308 19BF2C1B 07D000
@@ -3365,7 +3365,7 @@ fn wpc_waypoint_list_vector() {
 /// azimuth domain (210, 300), elevation domain (-75, 50), roll domain truncated
 /// away entirely (trailing truncation — no pair-length byte at all).
 #[test]
-fn wpc_view_domain_truncated_roll() {
+fn pack_view_domain_truncated_roll() {
     let v = hex("06 348000 4B0000 06 1A4000 0C8000");
     let vd = decode_with_single_tlv_ber_oid(142, &v).view_domain.unwrap();
     assert!((vd.azimuth.unwrap().start_deg - 210.0).abs() < 0.01);
@@ -3382,7 +3382,7 @@ fn wpc_view_domain_truncated_roll() {
 /// present elevation and roll pairs — pins that an interior "unknown"
 /// marker does not stop the walk (mirrors §8.142 Figure 89).
 #[test]
-fn wpc_view_domain_leading_unknown_pair() {
+fn pack_view_domain_leading_unknown_pair() {
     let v = hex("00 06 1A4000 0C8000 06 578000 050000");
     let vd = decode_with_single_tlv_ber_oid(142, &v).view_domain.unwrap();
     assert_eq!(vd.azimuth, None);
@@ -3452,7 +3452,7 @@ fn enc_roll(v: f64) -> Vec<u8> {
 /// it in wire order. Two occurrences over two disjoint preceding-item
 /// groups prove per-occurrence capture (not a single running list).
 #[test]
-fn wpc_sdcc_positional_capture() {
+fn pack_sdcc_positional_capture() {
     // Body: tag13, tag14, tag15 values then a 3x3 SDCC pack (the full N = 3
     // golden), twice with different members to prove per-occurrence
     // capture.
@@ -3483,7 +3483,7 @@ fn wpc_sdcc_positional_capture() {
 /// `field_errors` rather than panicking or silently capturing a bogus
 /// zero-length window.
 #[test]
-fn wpc_sdcc_malformed_header_is_field_error_not_panic() {
+fn pack_sdcc_malformed_header_is_field_error_not_panic() {
     let ls = decode_with_single_tlv(102, &[]);
     assert!(ls.sdcc_flps.is_empty());
     assert_eq!(ls.field_errors.len(), 1);
@@ -3524,7 +3524,7 @@ fn repeated_sdcc_history_cannot_expand_quadratically() {
             "one TruncatedField per rejected occurrence"
         );
     }
-    // `wpc_sdcc_positional_capture` pins that a pack which CAN hold its
+    // `pack_sdcc_positional_capture` pins that a pack which CAN hold its
     // matrix (the N = 3 golden) is still captured positionally.
 
     // Standard-deviation-only packs are not held to the Bit Vector bound, so
@@ -3570,10 +3570,10 @@ fn repeated_sdcc_history_cannot_expand_quadratically() {
 /// Now that Tag 102 is typed (`sdcc_flps`), it is rejected from
 /// `unknown` on encode — the same `ReservedTagInUnknown` contract as
 /// every other typed tag (mirrors
-/// `wpa_nested_set_bytes_move_from_unknown_to_named_fields`'s per-tag
+/// `ranged_nested_set_bytes_move_from_unknown_to_named_fields`'s per-tag
 /// check).
 #[test]
-fn wpc_sdcc_tag_rejected_from_unknown() {
+fn pack_sdcc_tag_rejected_from_unknown() {
     let mut rec = UasDatalinkLs::default();
     rec.unknown.push(OwnedRawField {
         tag: 102,

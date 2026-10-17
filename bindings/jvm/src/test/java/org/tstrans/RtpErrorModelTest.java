@@ -17,7 +17,7 @@ class RtpErrorModelTest {
     /**
      * The members are exactly the domain's {@code BindingErrorKind} subset:
      * the five {@code TransportError} projections an rtp shell can raise plus
-     * {@code tst_rtp::ConnectError}'s six variants plus {@code END_OF_STREAM}
+     * {@code tst_rtp::RtpConnectError}'s six variants plus {@code END_OF_STREAM}
      * (the peer ended the stream) and the two shell-generic kinds
      * {@code INPUT_MALFORMED} and {@code CONFIG_INVALID}. The four retired members have
      * no producer left now that the rtp tables point at the shared classifier.

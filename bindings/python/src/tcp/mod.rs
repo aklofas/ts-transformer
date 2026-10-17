@@ -61,42 +61,6 @@ use crate::raise::{TCP, pyok, pyres, raise};
 use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
-// PyTcpCancelHandle — the shell's shared cancel state, exposed to Python
-// ---------------------------------------------------------------------------
-
-/// Python-side cancel handle for `tcp.Transport` / `tcp.Listener`. Wraps the
-/// shell's shared [`CancelSource`] over the real `TcpCancelHandle` — the
-/// same object `close()` fires first — so `is_cancelled()` reports the
-/// shell's state, not this wrapper's history (the udp / rist twins have
-/// the same shape).
-#[pyclass(frozen, name = "CancelHandle", module = "tstrans.tcp")]
-pub(crate) struct PyTcpCancelHandle {
-    src: Arc<CancelSource>,
-}
-
-#[pymethods]
-impl PyTcpCancelHandle {
-    /// Signal cancellation. Idempotent. A `recv()` / `send()` /
-    /// `accept_blocking()` parked on the originating object raises
-    /// `TcpError(CLOSED)` ("cancelled from another thread") within about one
-    /// 100 ms slice, and every later call on it raises the same. The object
-    /// itself is NOT closed — `close()` afterwards is quiet.
-    fn cancel(&self) {
-        tst_core::transport::TransportCancel::cancel(&*self.src);
-    }
-
-    /// `True` once the shell was cancelled or closed through ANY handle or
-    /// its own `close()` (shared state).
-    fn is_cancelled(&self) -> bool {
-        self.src.is_cancelled()
-    }
-
-    fn __repr__(&self) -> String {
-        format!("CancelHandle(cancelled={})", self.is_cancelled())
-    }
-}
-
-// ---------------------------------------------------------------------------
 // PyTcpTransport -- wraps tst_tcp::TcpTransport (dual-trait send+recv)
 // ---------------------------------------------------------------------------
 
@@ -141,12 +105,10 @@ impl PyTcpTransport {
 
     /// Obtain a cross-thread cancel handle. Lock-free: never waits behind a
     /// parked `recv()` or `send()` (the handle lives outside the slot).
-    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyTcpCancelHandle>> {
+    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<crate::shells::cancel::PyCancelHandle>> {
         Py::new(
             py,
-            PyTcpCancelHandle {
-                src: Arc::clone(&self.cancel),
-            },
+            crate::shells::cancel::PyCancelHandle::from_source(&self.cancel),
         )
     }
 
@@ -505,12 +467,10 @@ impl PyTcpListener {
 
     /// Obtain a cross-thread cancel handle. Lock-free: never waits behind a
     /// parked `accept_blocking()` (the handle lives outside the slot).
-    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyTcpCancelHandle>> {
+    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<crate::shells::cancel::PyCancelHandle>> {
         Py::new(
             py,
-            PyTcpCancelHandle {
-                src: Arc::clone(&self.cancel),
-            },
+            crate::shells::cancel::PyCancelHandle::from_source(&self.cancel),
         )
     }
 
@@ -855,7 +815,6 @@ impl PyClientCert {
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(parent.py(), "tcp")?;
-    m.add_class::<PyTcpCancelHandle>()?;
     crate::generated::stats_tcp::register(&m)?;
     m.add_class::<PyTcpTransport>()?;
     m.add_class::<PyTcpTransportBuilder>()?;

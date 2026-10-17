@@ -48,11 +48,13 @@ RecvTransport = _udp.RecvTransport
 TransportBuilder = _udp.TransportBuilder
 RecvTransportBuilder = _udp.RecvTransportBuilder
 SocketStats = _udp.SocketStats
-CancelHandle = _udp.CancelHandle
 
 # UdpError + UdpErrorKind live in tstrans.exceptions but are also exposed
 # here for convenience (mirrors the rtp/srt pattern).
 from .exceptions import UdpError, UdpErrorKind  # noqa: E402
+
+# One cancel-handle class for every transport and shell (same shared cancel state).
+from .shells import CancelHandle  # noqa: E402
 
 __all__: list[str] = [
     "Transport",

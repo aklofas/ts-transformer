@@ -11,7 +11,7 @@
 //! `crates/tst-core/src/error.rs`.
 
 use tst_core::error::{MuxError, MuxErrorKind};
-use tst_core::mpegts::mux::{StreamKind, TeletextField};
+use tst_core::mpegts::mux::{MuxStreamKind, TeletextField};
 
 /// Helper: assert a `MuxError` variant returns the expected kind.
 fn assert_kind(e: MuxError, expected: MuxErrorKind) {
@@ -246,7 +246,7 @@ fn pmt_too_large_routes_to_config_invalid() {
 fn invalid_stream_handle_routes_to_invalid_usage() {
     assert_kind(
         MuxError::InvalidStreamHandle {
-            kind: StreamKind::Video,
+            kind: MuxStreamKind::Video,
             index: 0,
         },
         MuxErrorKind::InvalidUsage,
@@ -257,7 +257,7 @@ fn invalid_stream_handle_routes_to_invalid_usage() {
 fn ambiguous_target_routes_to_invalid_usage() {
     assert_kind(
         MuxError::AmbiguousTarget {
-            kind: StreamKind::Video,
+            kind: MuxStreamKind::Video,
             count: 2,
         },
         MuxErrorKind::InvalidUsage,
@@ -297,7 +297,7 @@ fn program_not_found_routes_to_invalid_usage() {
 fn descriptor_index_out_of_range_routes_to_invalid_usage() {
     assert_kind(
         MuxError::DescriptorIndexOutOfRange {
-            kind: StreamKind::Video,
+            kind: MuxStreamKind::Video,
             index: 5,
             program_number: 1,
         },

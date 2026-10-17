@@ -30,7 +30,9 @@ Transport = _rist.Transport
 TransportBuilder = _rist.TransportBuilder
 RecvTransport = _rist.RecvTransport
 RecvTransportBuilder = _rist.RecvTransportBuilder
-CancelHandle = _rist.CancelHandle
+
+# One cancel-handle class for every transport and shell (same shared cancel state).
+from .shells import CancelHandle  # noqa: E402
 
 __all__ = [
     "RistProfile",

@@ -103,7 +103,7 @@ fn builder_rejects_out_of_range_video_index() {
         matches!(
             result,
             Err(MuxError::DescriptorIndexOutOfRange {
-                kind: StreamKind::Video,
+                kind: MuxStreamKind::Video,
                 index: 7,
                 program_number: 1,
             })

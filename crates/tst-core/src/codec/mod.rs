@@ -786,6 +786,27 @@ mod layering_tests {
     fn codec_never_imports_mpegts() {
         // Built from pieces so this file does not contain the needle itself.
         let needle = concat!("crate::", "mpegts");
+        // The part of `line` before a `//` comment; a `//` inside a string
+        // literal does not start one.
+        fn code_part(line: &str) -> &str {
+            let (mut in_str, mut escaped) = (false, false);
+            let bytes = line.as_bytes();
+            for (i, &b) in bytes.iter().enumerate() {
+                if in_str {
+                    match (escaped, b) {
+                        (true, _) => escaped = false,
+                        (false, b'\\') => escaped = true,
+                        (false, b'"') => in_str = false,
+                        _ => {}
+                    }
+                } else if b == b'"' {
+                    in_str = true;
+                } else if b == b'/' && bytes.get(i + 1) == Some(&b'/') {
+                    return &line[..i];
+                }
+            }
+            line
+        }
         fn walk(
             dir: &std::path::Path,
             needle: &str,
@@ -798,7 +819,7 @@ mod layering_tests {
                 } else if path.extension().is_some_and(|e| e == "rs") {
                     let text = std::fs::read_to_string(&path).expect("read source");
                     for (n, line) in text.lines().enumerate() {
-                        let code = line.split("//").next().unwrap_or("");
+                        let code = code_part(line);
                         if code.contains(needle) {
                             hits.push(std::format!(
                                 "{}:{}: {}",

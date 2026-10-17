@@ -1901,7 +1901,7 @@ pub tst_core::error::MuxError::AbsIndexOutOfRange::len: u32
 pub tst_core::error::MuxError::AbsIndexOutOfRange::program_number: u16
 pub tst_core::error::MuxError::AmbiguousTarget
 pub tst_core::error::MuxError::AmbiguousTarget::count: usize
-pub tst_core::error::MuxError::AmbiguousTarget::kind: tst_core::mpegts::mux::StreamKind
+pub tst_core::error::MuxError::AmbiguousTarget::kind: tst_core::mpegts::mux::MuxStreamKind
 pub tst_core::error::MuxError::AudioTooLarge
 pub tst_core::error::MuxError::AudioTooLarge::max: usize
 pub tst_core::error::MuxError::AudioTooLarge::size: usize
@@ -1916,7 +1916,7 @@ pub tst_core::error::MuxError::DataTooLarge::max: usize
 pub tst_core::error::MuxError::DataTooLarge::size: usize
 pub tst_core::error::MuxError::DescriptorIndexOutOfRange
 pub tst_core::error::MuxError::DescriptorIndexOutOfRange::index: u32
-pub tst_core::error::MuxError::DescriptorIndexOutOfRange::kind: tst_core::mpegts::mux::StreamKind
+pub tst_core::error::MuxError::DescriptorIndexOutOfRange::kind: tst_core::mpegts::mux::MuxStreamKind
 pub tst_core::error::MuxError::DescriptorIndexOutOfRange::program_number: u16
 pub tst_core::error::MuxError::DuplicatePidAcrossPrograms
 pub tst_core::error::MuxError::DuplicatePidAcrossPrograms::pid: u16
@@ -1935,7 +1935,7 @@ pub tst_core::error::MuxError::InvalidLanguageCode::code: [u8; 3]
 pub tst_core::error::MuxError::InvalidNal
 pub tst_core::error::MuxError::InvalidStreamHandle
 pub tst_core::error::MuxError::InvalidStreamHandle::index: usize
-pub tst_core::error::MuxError::InvalidStreamHandle::kind: tst_core::mpegts::mux::StreamKind
+pub tst_core::error::MuxError::InvalidStreamHandle::kind: tst_core::mpegts::mux::MuxStreamKind
 pub tst_core::error::MuxError::InvalidTeletextField
 pub tst_core::error::MuxError::InvalidTeletextField::field: tst_core::mpegts::mux::TeletextField
 pub tst_core::error::MuxError::InvalidTeletextField::max: u8
@@ -6089,20 +6089,20 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::Demuxe
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::DemuxerConfig
 pub struct tst_core::mpegts::demux::DemuxerConfigBuilder
 impl tst_core::mpegts::demux::DemuxerConfigBuilder
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::au_cell_cap_per_pid(self, usize) -> Self
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::au_cell_cap_total(self, usize) -> Self
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::au_cell_max_in_flight_pids(self, usize) -> Self
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::av1_carriage(self, tst_core::mpegts::common::Av1CarriageMode) -> Self
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::build(self) -> tst_core::mpegts::demux::DemuxerConfig
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::cfi_tolerance(self, bool) -> Self
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::link_klv(self, u16, u16) -> Self
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::au_cell_cap_per_pid(&mut self, usize) -> &mut Self
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::au_cell_cap_total(&mut self, usize) -> &mut Self
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::au_cell_max_in_flight_pids(&mut self, usize) -> &mut Self
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::av1_carriage(&mut self, tst_core::mpegts::common::Av1CarriageMode) -> &mut Self
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::build(&self) -> tst_core::mpegts::demux::DemuxerConfig
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::cfi_tolerance(&mut self, bool) -> &mut Self
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::link_klv(&mut self, u16, u16) -> &mut Self
 pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::new() -> Self
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::pes_cap_per_pid(self, usize) -> Self
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::pes_cap_total(self, usize) -> Self
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::strict(self, tst_core::mpegts::demux::strict::StrictMode) -> Self
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::sync_buf_cap(self, usize) -> Self
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::treat_as(self, u16, tst_core::mpegts::demux::event::StreamKind) -> Self
-pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::unwrap_timestamps(self, bool) -> Self
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::pes_cap_per_pid(&mut self, usize) -> &mut Self
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::pes_cap_total(&mut self, usize) -> &mut Self
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::strict(&mut self, tst_core::mpegts::demux::strict::StrictMode) -> &mut Self
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::sync_buf_cap(&mut self, usize) -> &mut Self
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::treat_as(&mut self, u16, tst_core::mpegts::demux::event::StreamKind) -> &mut Self
+pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::unwrap_timestamps(&mut self, bool) -> &mut Self
 impl core::default::Default for tst_core::mpegts::demux::DemuxerConfigBuilder
 pub fn tst_core::mpegts::demux::DemuxerConfigBuilder::default() -> tst_core::mpegts::demux::DemuxerConfigBuilder
 impl core::fmt::Debug for tst_core::mpegts::demux::DemuxerConfigBuilder
@@ -6548,32 +6548,32 @@ impl core::marker::Unpin for tst_core::mpegts::mux::KlvStreamType
 impl core::marker::UnsafeUnpin for tst_core::mpegts::mux::KlvStreamType
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::mux::KlvStreamType
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::KlvStreamType
-#[non_exhaustive] pub enum tst_core::mpegts::mux::StreamKind
-pub tst_core::mpegts::mux::StreamKind::Audio
-pub tst_core::mpegts::mux::StreamKind::Data
-pub tst_core::mpegts::mux::StreamKind::Klv
-pub tst_core::mpegts::mux::StreamKind::Subtitle
-pub tst_core::mpegts::mux::StreamKind::Video
-impl core::clone::Clone for tst_core::mpegts::mux::StreamKind
-pub fn tst_core::mpegts::mux::StreamKind::clone(&self) -> tst_core::mpegts::mux::StreamKind
-impl core::cmp::Eq for tst_core::mpegts::mux::StreamKind
-impl core::cmp::PartialEq for tst_core::mpegts::mux::StreamKind
-pub fn tst_core::mpegts::mux::StreamKind::eq(&self, &tst_core::mpegts::mux::StreamKind) -> bool
-impl core::fmt::Debug for tst_core::mpegts::mux::StreamKind
-pub fn tst_core::mpegts::mux::StreamKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::fmt::Display for tst_core::mpegts::mux::StreamKind
-pub fn tst_core::mpegts::mux::StreamKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for tst_core::mpegts::mux::StreamKind
-pub fn tst_core::mpegts::mux::StreamKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for tst_core::mpegts::mux::StreamKind
-impl core::marker::StructuralPartialEq for tst_core::mpegts::mux::StreamKind
-impl core::marker::Freeze for tst_core::mpegts::mux::StreamKind
-impl core::marker::Send for tst_core::mpegts::mux::StreamKind
-impl core::marker::Sync for tst_core::mpegts::mux::StreamKind
-impl core::marker::Unpin for tst_core::mpegts::mux::StreamKind
-impl core::marker::UnsafeUnpin for tst_core::mpegts::mux::StreamKind
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::mux::StreamKind
-impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::StreamKind
+#[non_exhaustive] pub enum tst_core::mpegts::mux::MuxStreamKind
+pub tst_core::mpegts::mux::MuxStreamKind::Audio
+pub tst_core::mpegts::mux::MuxStreamKind::Data
+pub tst_core::mpegts::mux::MuxStreamKind::Klv
+pub tst_core::mpegts::mux::MuxStreamKind::Subtitle
+pub tst_core::mpegts::mux::MuxStreamKind::Video
+impl core::clone::Clone for tst_core::mpegts::mux::MuxStreamKind
+pub fn tst_core::mpegts::mux::MuxStreamKind::clone(&self) -> tst_core::mpegts::mux::MuxStreamKind
+impl core::cmp::Eq for tst_core::mpegts::mux::MuxStreamKind
+impl core::cmp::PartialEq for tst_core::mpegts::mux::MuxStreamKind
+pub fn tst_core::mpegts::mux::MuxStreamKind::eq(&self, &tst_core::mpegts::mux::MuxStreamKind) -> bool
+impl core::fmt::Debug for tst_core::mpegts::mux::MuxStreamKind
+pub fn tst_core::mpegts::mux::MuxStreamKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_core::mpegts::mux::MuxStreamKind
+pub fn tst_core::mpegts::mux::MuxStreamKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_core::mpegts::mux::MuxStreamKind
+pub fn tst_core::mpegts::mux::MuxStreamKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_core::mpegts::mux::MuxStreamKind
+impl core::marker::StructuralPartialEq for tst_core::mpegts::mux::MuxStreamKind
+impl core::marker::Freeze for tst_core::mpegts::mux::MuxStreamKind
+impl core::marker::Send for tst_core::mpegts::mux::MuxStreamKind
+impl core::marker::Sync for tst_core::mpegts::mux::MuxStreamKind
+impl core::marker::Unpin for tst_core::mpegts::mux::MuxStreamKind
+impl core::marker::UnsafeUnpin for tst_core::mpegts::mux::MuxStreamKind
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::mux::MuxStreamKind
+impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::MuxStreamKind
 pub enum tst_core::mpegts::mux::StreamSpec
 pub tst_core::mpegts::mux::StreamSpec::Audio
 pub tst_core::mpegts::mux::StreamSpec::Audio::codec: tst_core::codec::AudioCodec
@@ -6942,6 +6942,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::mux::VideoStr
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::VideoStreamHandle
 pub const tst_core::mpegts::mux::MAX_PROGRAMS: usize
 pub const tst_core::mpegts::mux::MAX_SUBTITLE_STREAMS_PER_PROGRAM: usize
+pub type tst_core::mpegts::mux::StreamKind = tst_core::mpegts::mux::MuxStreamKind
 pub mod tst_core::mpegts::stats
 #[non_exhaustive] pub enum tst_core::mpegts::stats::StreamCodecStats
 #[non_exhaustive] pub tst_core::mpegts::stats::StreamCodecStats::Audio
@@ -7785,7 +7786,7 @@ pub tst_core::MuxError::AbsIndexOutOfRange::len: u32
 pub tst_core::MuxError::AbsIndexOutOfRange::program_number: u16
 pub tst_core::MuxError::AmbiguousTarget
 pub tst_core::MuxError::AmbiguousTarget::count: usize
-pub tst_core::MuxError::AmbiguousTarget::kind: tst_core::mpegts::mux::StreamKind
+pub tst_core::MuxError::AmbiguousTarget::kind: tst_core::mpegts::mux::MuxStreamKind
 pub tst_core::MuxError::AudioTooLarge
 pub tst_core::MuxError::AudioTooLarge::max: usize
 pub tst_core::MuxError::AudioTooLarge::size: usize
@@ -7800,7 +7801,7 @@ pub tst_core::MuxError::DataTooLarge::max: usize
 pub tst_core::MuxError::DataTooLarge::size: usize
 pub tst_core::MuxError::DescriptorIndexOutOfRange
 pub tst_core::MuxError::DescriptorIndexOutOfRange::index: u32
-pub tst_core::MuxError::DescriptorIndexOutOfRange::kind: tst_core::mpegts::mux::StreamKind
+pub tst_core::MuxError::DescriptorIndexOutOfRange::kind: tst_core::mpegts::mux::MuxStreamKind
 pub tst_core::MuxError::DescriptorIndexOutOfRange::program_number: u16
 pub tst_core::MuxError::DuplicatePidAcrossPrograms
 pub tst_core::MuxError::DuplicatePidAcrossPrograms::pid: u16
@@ -7819,7 +7820,7 @@ pub tst_core::MuxError::InvalidLanguageCode::code: [u8; 3]
 pub tst_core::MuxError::InvalidNal
 pub tst_core::MuxError::InvalidStreamHandle
 pub tst_core::MuxError::InvalidStreamHandle::index: usize
-pub tst_core::MuxError::InvalidStreamHandle::kind: tst_core::mpegts::mux::StreamKind
+pub tst_core::MuxError::InvalidStreamHandle::kind: tst_core::mpegts::mux::MuxStreamKind
 pub tst_core::MuxError::InvalidTeletextField
 pub tst_core::MuxError::InvalidTeletextField::field: tst_core::mpegts::mux::TeletextField
 pub tst_core::MuxError::InvalidTeletextField::max: u8

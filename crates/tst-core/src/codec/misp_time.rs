@@ -311,8 +311,11 @@ fn scan_sei_nal(
     codec: VideoCodec,
 ) -> Result<Option<MispTimestamp>, MispTimeExtractError> {
     let (is_sei, header_len) = match codec {
-        VideoCodec::H264 => (!nal.is_empty() && nal[0] & 0x1F == 6, 1),
-        VideoCodec::H265 => (nal.len() >= 2 && matches!((nal[0] >> 1) & 0x3F, 39 | 40), 2),
+        VideoCodec::H264 => (crate::codec::nal::nal_unit_type(codec, nal) == Some(6), 1),
+        VideoCodec::H265 => (
+            nal.len() >= 2 && matches!(crate::codec::nal::nal_unit_type(codec, nal), Some(39 | 40)),
+            2,
+        ),
         VideoCodec::H266 | VideoCodec::Av1 => (false, 0),
     };
     if !is_sei {
@@ -446,6 +449,7 @@ fn first_vcl_prefix_offset(au: &[u8], codec: VideoCodec) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::codec::VideoCodec;
 
     // The pre-refactor body, kept verbatim as a differential oracle.
     fn old_first_vcl_prefix_offset(au: &[u8], codec: VideoCodec) -> Option<usize> {
@@ -496,8 +500,6 @@ mod tests {
             proptest::prop_assert_eq!(first_vcl_prefix_offset(&buf, codec), old_first_vcl_prefix_offset(&buf, codec));
         }
     }
-    use crate::codec::VideoCodec;
-
     // Minimal Annex-B AU builders for splice tests.
     fn h264_au(nal_headers: &[u8]) -> Vec<u8> {
         let mut v = Vec::new();

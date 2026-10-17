@@ -49,12 +49,13 @@ fuzz_target!(|data: &[u8]| {
     let shape = (selector >> 5) & 0b11;
     let reset_midway = (selector >> 7) & 1 == 1;
 
-    let mut builder = DemuxerConfig::builder()
+    let mut builder = DemuxerConfig::builder();
+    builder
         .strict(strict)
         .cfi_tolerance(cfi_tolerance)
         .unwrap_timestamps(unwrap_timestamps);
     if small_cap {
-        builder = builder.sync_buf_cap(4 * 1024);
+        builder.sync_buf_cap(4 * 1024);
     }
     let mut d = Demuxer::with_config(builder.build());
 

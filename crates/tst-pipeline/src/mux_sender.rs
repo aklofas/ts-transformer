@@ -1302,7 +1302,8 @@ mod multi_stream_tests {
     use super::*;
     use alloc::string::ToString;
     use tst_core::mpegts::mux::{
-        AudioCodec, KlvStreamType, MuxerProgramConfigBuilder, StreamKind, SubtitleCodec, VideoCodec,
+        AudioCodec, KlvStreamType, MuxStreamKind, MuxerProgramConfigBuilder, SubtitleCodec,
+        VideoCodec,
     };
     use tst_core::transport::{Transport, TransportError};
 
@@ -1732,7 +1733,7 @@ mod multi_stream_tests {
         let err = s.send_video(&nal, Pts90khz::new(0), true).unwrap_err();
         match err.source {
             MuxSenderErrorSource::Mux(MuxError::AmbiguousTarget {
-                kind: StreamKind::Video,
+                kind: MuxStreamKind::Video,
                 count: 2,
             }) => {}
             other => panic!("expected AmbiguousTarget, got {other:?}"),

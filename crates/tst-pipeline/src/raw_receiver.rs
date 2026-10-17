@@ -24,12 +24,16 @@ use crate::shell_error::ShellErrorKind;
 /// Aggregate receive stats for [`RawReceiver`].
 #[must_use]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct RawRecvStats {
+pub struct RawReceiverStats {
     /// Total bytes received from the transport.
     pub bytes_received: u64,
     /// Count of successful `recv_one()` calls.
     pub packets_received: u64,
 }
+
+/// The previous name of [`RawReceiverStats`], kept for one release.
+#[deprecated(since = "0.9.0", note = "renamed to `RawReceiverStats`")]
+pub type RawRecvStats = RawReceiverStats;
 
 /// Receive shell that emits one raw byte vec per transport message.
 ///
@@ -74,7 +78,7 @@ pub struct RawReceiver<R: RecvTransport> {
     /// construction. Avoids a per-call allocation for the recv itself;
     /// `recv_one` still allocates a `Vec` for the returned slice.
     buf: Vec<u8>,
-    stats: RawRecvStats,
+    stats: RawReceiverStats,
     /// Lifetime span — see [`crate::shell_error::ShellSpan`] for the
     /// unwind-safe rationale. Private; never exposed publicly.
     _span: crate::shell_error::ShellSpan,
@@ -176,7 +180,7 @@ impl<R: RecvTransport> RawReceiver<R> {
         Self {
             transport,
             buf: vec![0u8; cap],
-            stats: RawRecvStats::default(),
+            stats: RawReceiverStats::default(),
             _span: core::panic::AssertUnwindSafe(span),
         }
     }
@@ -243,7 +247,7 @@ impl<R: RecvTransport> RawReceiver<R> {
     /// # C ABI
     ///
     /// `tst_raw_receiver_get_stats` — see `bindings/c/include/tstrans.h`.
-    pub fn stats(&self) -> RawRecvStats {
+    pub fn stats(&self) -> RawReceiverStats {
         self.stats
     }
 
@@ -253,7 +257,7 @@ impl<R: RecvTransport> RawReceiver<R> {
     ///
     /// `tst_raw_receiver_reset_stats` — see `bindings/c/include/tstrans.h`.
     pub fn reset_stats(&mut self) {
-        self.stats = RawRecvStats::default();
+        self.stats = RawReceiverStats::default();
     }
 
     /// Wire-level transport stats (RTT, packet loss, bandwidth, queue

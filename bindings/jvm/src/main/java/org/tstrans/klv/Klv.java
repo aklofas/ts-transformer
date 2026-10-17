@@ -691,7 +691,10 @@ public final class Klv {
      *                    {@code detail/_flow-tags_}; an explicit argument (not
      *                    sampled internally) so conversion stays deterministic —
      *                    a replayed-file CoT run must be byte-identical to a
-     *                    live one (ST 0805.1 §1)
+     *                    live one (ST 0805.1 §1). Java has no unsigned
+     *                    {@code long}, so the value is read as an unsigned bit
+     *                    pattern: a negative argument is a large unsigned time,
+     *                    not an error
      * @return the serialized CoT event XML
      * @throws IllegalArgumentException naming the missing KLV tag when a
      *         mapping-required field (uid components, timestamp, sensor

@@ -1,5 +1,6 @@
-//! Cancellation primitives: [`FlagCancel`] (a shared flag), [`ResourceCancel`] (one fixed resource handle plus its closer) and
-//! [`CancelSlot`] (whichever handle is currently able to unblock a worker).
+//! Cancellation primitives: [`FlagCancel`] (a shared flag), [`ResourceCancel`]
+//! (one fixed resource handle plus its closer) and [`CancelSlot`] (whichever
+//! handle is currently able to unblock a worker).
 //!
 //! **Stability: Stable** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).

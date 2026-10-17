@@ -15,8 +15,8 @@ use alloc::format;
 use tst_core::error::MuxError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
-    AudioStreamHandle, DataStreamHandle, KlvStreamHandle, Muxer, StreamKind, SubtitleStreamHandle,
-    VideoStreamHandle,
+    AudioStreamHandle, DataStreamHandle, KlvStreamHandle, MuxStreamKind, Muxer,
+    SubtitleStreamHandle, VideoStreamHandle,
 };
 
 pub struct TstMuxer {
@@ -247,7 +247,7 @@ pub unsafe extern "C" fn tst_muxer_push_video_wire(
             [single] => *single,
             _ => {
                 return record_mux_error(&MuxError::AmbiguousTarget {
-                    kind: StreamKind::Video,
+                    kind: MuxStreamKind::Video,
                     count: handles.len(),
                 });
             }

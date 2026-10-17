@@ -26,9 +26,10 @@ folded into the relevant domains and listed in their own section below.
   `"../fixtures/…"`, and `mod common;` became
   `#[path = "../common/mod.rs"] mod common;`. (`env!("CARGO_MANIFEST_DIR")`-
   anchored and CWD-relative paths were unaffected.)
-- Note: the `conformance` domain contains a member also named `conformance`,
-  so `tests/conformance/conformance.rs` is the former `tests/conformance.rs`
-  and `tests/conformance.rs` is now the aggregator.
+- Note: the binary is `codec_conformance` and its directory is
+  `tests/codec_conformance/`. The member `tests/codec_conformance/conformance.rs`
+  is the former `tests/conformance.rs`, and `tests/codec_conformance.rs` is the
+  aggregator.
 
 ## Equivalence check
 
@@ -125,13 +126,13 @@ so these corpus checks skip in CI exactly as they did under `tst-srt`.)
 | `h266_codec_integration.rs` | `codec/h266_codec_integration.rs` |
 | `h266_real_encoder_round_trip.rs` | `codec/h266_real_encoder_round_trip.rs` |
 
-### `conformance/` — Conformance-corpus parsing plus demux error/recovery discrimination. Pure tst-core.
+### `codec_conformance/` — Conformance-corpus parsing plus demux error/recovery discrimination. Pure tst-core.
 
 | old `tests/…` | new `tests/…` |
 | --- | --- |
-| `conformance.rs` | `conformance/conformance.rs` |
-| `demux_error_discrimination.rs` | `conformance/demux_error_discrimination.rs` |
-| `demux_malformed_pes_recovery.rs` | `conformance/demux_malformed_pes_recovery.rs` |
+| `conformance.rs` | `codec_conformance/conformance.rs` |
+| `demux_error_discrimination.rs` | `codec_conformance/demux_error_discrimination.rs` |
+| `demux_malformed_pes_recovery.rs` | `codec_conformance/demux_malformed_pes_recovery.rs` |
 
 ### `regression/` — Cross-implementation interop regressions (output shape vs external decoders/tools). Exercise tst-core mux/demux/KLV output only — no transport.
 

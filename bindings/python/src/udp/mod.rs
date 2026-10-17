@@ -52,52 +52,6 @@ use crate::raise::{UDP, pyok, pyres, raise};
 use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
-// PyUdpCancelHandle — the shell's shared cancel state, exposed to Python
-// ---------------------------------------------------------------------------
-
-/// Python-side cancel handle. Wraps the shell's shared
-/// [`crate::util::CancelSource`], which forwards into the transport's real
-/// `UdpCancelHandle`: every handle obtained from the same shell — and the
-/// shell's own `close()` — flips one flag, so `is_cancelled()` reports the
-/// shell's state, not this wrapper's history.
-#[pyclass(frozen, name = "CancelHandle", module = "tstrans.udp")]
-pub(crate) struct PyUdpCancelHandle {
-    src: Arc<CancelSource>,
-}
-
-#[pymethods]
-impl PyUdpCancelHandle {
-    /// Signal cancellation. Idempotent — repeated calls are a no-op.
-    /// A `RecvTransport.recv()` parked on the poll loop raises
-    /// `UdpError(CLOSED)` (detail "cancelled from another thread") within
-    /// about one 100 ms slice, and every later `send()` / `recv()` on the
-    /// originating object raises the same. The object itself is NOT
-    /// closed — call `close()` (quiet after a cancel) to release it.
-    fn cancel(&self) {
-        tst_core::transport::TransportCancel::cancel(&*self.src);
-    }
-
-    /// `True` once the shell was cancelled or closed through ANY handle
-    /// or its own `close()` (shared state).
-    fn is_cancelled(&self) -> bool {
-        self.src.is_cancelled()
-    }
-
-    fn __repr__(&self) -> String {
-        format!("CancelHandle(cancelled={})", self.is_cancelled())
-    }
-}
-
-impl PyUdpCancelHandle {
-    /// The single constructor both udp transport classes use.
-    pub(crate) fn from_source(src: &Arc<CancelSource>) -> Self {
-        Self {
-            src: Arc::clone(src),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // PyUdpTransport — wraps tst_udp::UdpTransport
 // ---------------------------------------------------------------------------
 
@@ -132,8 +86,11 @@ impl PyUdpTransport {
 
     /// Obtain a cross-thread cancel handle. Lock-free: never waits behind
     /// an in-flight `send()` (the handle lives outside the slot).
-    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyUdpCancelHandle>> {
-        Py::new(py, PyUdpCancelHandle::from_source(&self.cancel))
+    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<crate::shells::cancel::PyCancelHandle>> {
+        Py::new(
+            py,
+            crate::shells::cancel::PyCancelHandle::from_source(&self.cancel),
+        )
     }
 
     /// Send one datagram payload. Accepts any bytes-like object:
@@ -363,8 +320,11 @@ impl PyUdpRecvTransport {
 
     /// Obtain a cross-thread cancel handle. Lock-free: never waits behind
     /// a parked `recv()` (the handle lives outside the slot).
-    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyUdpCancelHandle>> {
-        Py::new(py, PyUdpCancelHandle::from_source(&self.cancel))
+    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<crate::shells::cancel::PyCancelHandle>> {
+        Py::new(
+            py,
+            crate::shells::cancel::PyCancelHandle::from_source(&self.cancel),
+        )
     }
 
     /// Receive one datagram. Returns `(payload_bytes, sender_addr_str)`.
@@ -587,7 +547,6 @@ impl PyUdpRecvTransportBuilder {
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(parent.py(), "udp")?;
-    m.add_class::<PyUdpCancelHandle>()?;
     crate::generated::stats_udp::register(&m)?;
     m.add_class::<PyUdpTransport>()?;
     m.add_class::<PyUdpTransportBuilder>()?;

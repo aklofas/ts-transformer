@@ -87,12 +87,16 @@ impl crate::shell_error::ShellError for RawSenderError {
 /// this layer.
 #[must_use]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct RawSendStats {
+pub struct RawSenderStats {
     /// Bytes that succeeded through the transport.
     pub bytes_sent: u64,
     /// Count of successful `send()` calls.
     pub packets_sent: u64,
 }
+
+/// The previous name of [`RawSenderStats`], kept for one release.
+#[deprecated(since = "0.9.0", note = "renamed to `RawSenderStats`")]
+pub type RawSendStats = RawSenderStats;
 
 /// One-shot byte-blind sender. See module docs for the no-buffering /
 /// no-framing contract.
@@ -139,7 +143,7 @@ pub struct RawSendStats {
 pub struct RawSender<T: Transport> {
     transport: T,
     _config: RawSenderConfig,
-    stats: RawSendStats,
+    stats: RawSenderStats,
     /// Lifetime span — see [`crate::shell_error::ShellSpan`] for the
     /// unwind-safe rationale. Private; never exposed publicly.
     _span: crate::shell_error::ShellSpan,
@@ -168,7 +172,7 @@ impl<T: Transport> RawSender<T> {
         Self {
             transport,
             _config: config,
-            stats: RawSendStats::default(),
+            stats: RawSenderStats::default(),
             _span: core::panic::AssertUnwindSafe(span),
         }
     }
@@ -267,14 +271,14 @@ impl<T: Transport> RawSender<T> {
     }
 
     /// Snapshot stats counters.
-    pub fn stats(&self) -> RawSendStats {
+    pub fn stats(&self) -> RawSenderStats {
         self.stats
     }
 
     /// Zero all stats counters. Stats-only — does not affect transport,
     /// pending data, or any other state.
     pub fn reset_stats(&mut self) {
-        self.stats = RawSendStats::default();
+        self.stats = RawSenderStats::default();
     }
 }
 

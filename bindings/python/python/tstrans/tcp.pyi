@@ -16,6 +16,8 @@ from enum import IntEnum
 from types import TracebackType
 from typing import Any, Optional, Type, Union, final
 
+from tstrans.shells import CancelHandle as CancelHandle
+
 # A bytes-like input -- `bytes`, `bytearray`, `memoryview`, NumPy uint8,
 # or any object implementing the buffer protocol. Concrete extraction
 # happens in Rust via a two-path fast/fallback pattern.
@@ -141,39 +143,6 @@ class TlsConfig:
         verify_hostname: bool = True,
         client_cert: ClientCert | None = None,
     ) -> TlsConfig: ...
-    def __repr__(self) -> str: ...
-
-
-# ---------------------------------------------------------------------------
-# CancelHandle -- cross-thread cancel for Transport / Listener
-# ---------------------------------------------------------------------------
-
-
-@final
-class CancelHandle:
-    """Cross-thread cancel handle for ``Transport`` / ``Listener``.
-
-    ``cancel()`` from any thread ends a ``recv()`` / ``send()`` /
-    ``accept_blocking()`` parked on the originating object with
-    ``TcpError(kind=CLOSED)`` ("cancelled from another thread") within
-    about one 100 ms slice, and every later call on that object raises
-    the same. The object is not closed by a cancel — ``close()``
-    afterwards is quiet.
-
-    Obtain one with ``Transport.cancel_handle()`` /
-    ``Listener.cancel_handle()``. Every handle from the same object
-    shares one flag, which ``close()`` also sets.
-    """
-
-    def cancel(self) -> None:
-        """Signal cancellation. Idempotent."""
-        ...
-
-    def is_cancelled(self) -> bool:
-        """``True`` once this object was cancelled or closed through any
-        handle."""
-        ...
-
     def __repr__(self) -> str: ...
 
 

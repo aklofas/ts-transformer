@@ -15,7 +15,7 @@ accept directly.
 
 The accompanying `.json` sidecar declares the source vector's URL and
 sha256 (of the upstream archive, not the stripped fixture) and the
-expected parser outcome. See `crates/tst-core/tests/conformance.rs`
+expected parser outcome. See `crates/tst-core/tests/codec_conformance/conformance.rs`
 for how the test runner consumes them.
 
 ## Starter fixture set
@@ -28,7 +28,7 @@ The starter set holds these 11 parameter-set fixtures:
 | H.264 | `h264/MR9_BT_B.bin` | MR9_BT_B.h264 (JVT-AVC AVCv1) | Main (77) | 2.1 | 8 | 4:2:0 | |
 | H.264 | `h264/HCAFR1_HHI.bin` | HCAFR1_HHI.264 (JVT-AVC FRExt) | High (100) | 3.0 | 8 | 4:2:0 | |
 | H.265 | `h265/AMVP_A_MTK_4.bin` | AMVP_A_MTK_4.bit (JCT-VC HEVC_v1) | Main (1) | 4.0 (level_idc=120) | 8 | 4:2:0 | |
-| H.265 | `h265/DBLK_A_MAIN10_VIXS_4.bin` | DBLK_A_MAIN10_VIXS_4.bit (JCT-VC HEVC_v1) | Main 10 (2) | 4.0 (level_idc=120) | 10 | 4:2:0 | **Currently skipped** — known parser bug in `short_term_rps` (see `KNOWN_PARSER_BUGS` in `tests/conformance.rs`) |
+| H.265 | `h265/DBLK_A_MAIN10_VIXS_4.bin` | DBLK_A_MAIN10_VIXS_4.bit (JCT-VC HEVC_v1) | Main 10 (2) | 4.0 (level_idc=120) | 10 | 4:2:0 | **Currently skipped** — known parser bug in `short_term_rps` (see `KNOWN_PARSER_BUGS` in `tests/codec_conformance/conformance.rs`) |
 | H.265 | `h265/QMATRIX_A_RExt_Sony_1.bin` | QMATRIX_A_RExt_Sony_1.bit (JCT-VC RExt) | Main 4:4:4 (4) | n/a | n/a | n/a | Deliberate `EngineError` bail — `sps_scaling_list_data_present_flag=1` triggers unimplemented scaling-list walk (H.265 §7.3.4) |
 | H.266 | `h266/8b420_A_Bytedance_2.bin` | 8b420_A_Bytedance_2.bit (JVET draft6) | Main 10 (1) | 3.1 (level_idc=51) | 8 | 4:2:0 | |
 | H.266 | `h266/10b400_A_Bytedance_2.bin` | 10b400_A_Bytedance_2.bit (JVET draft6) | Main 10 (1) | 3.1 (level_idc=51) | 10 | Monochrome | |

@@ -462,7 +462,7 @@ fn locate_lone_program<T>(streams: &[Vec<T>]) -> usize {
 fn resolve_lone<T, H>(
     streams: &[Vec<T>],
     none_configured: MuxError,
-    kind: StreamKind,
+    kind: MuxStreamKind,
     pack: fn(usize, usize) -> H,
 ) -> Result<H, MuxError> {
     let total: usize = streams.iter().map(|s| s.len()).sum();

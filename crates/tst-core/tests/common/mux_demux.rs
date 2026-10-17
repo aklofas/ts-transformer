@@ -44,7 +44,7 @@ pub fn demux_bytes_flushed(bytes: &[u8]) -> Vec<DemuxEvent> {
 }
 
 /// [`demux_bytes`] through a demuxer built from `builder`.
-pub fn collect_events_with(builder: DemuxerConfigBuilder, ts_bytes: &[u8]) -> Vec<DemuxEvent> {
+pub fn collect_events_with(builder: &DemuxerConfigBuilder, ts_bytes: &[u8]) -> Vec<DemuxEvent> {
     let mut d = Demuxer::with_config(builder.build());
     d.feed(ts_bytes).unwrap();
     collect_events(&mut d)

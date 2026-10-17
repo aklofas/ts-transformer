@@ -56,13 +56,15 @@ TransportBuilder = _tcp.TransportBuilder
 Listener = _tcp.Listener
 ListenerBuilder = _tcp.ListenerBuilder
 SocketStats = _tcp.SocketStats
-CancelHandle = _tcp.CancelHandle
 TlsConfig = _tcp.TlsConfig
 ClientCert = _tcp.ClientCert
 
 # TcpError + TcpErrorKind live in tstrans.exceptions but are also exposed
 # here for convenience (mirrors the rtp/srt/udp pattern).
 from .exceptions import TcpError, TcpErrorKind  # noqa: E402
+
+# One cancel-handle class for every transport and shell (same shared cancel state).
+from .shells import CancelHandle  # noqa: E402
 
 __all__: list[str] = [
     "Transport",

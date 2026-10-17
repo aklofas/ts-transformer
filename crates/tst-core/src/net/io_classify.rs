@@ -3,13 +3,13 @@
 //!
 //! Hosts both the send and the receive classifier, shared by every
 //! transport so they agree on which kinds mean "the deadline ticked over,
-//! nothing is wrong with the socket" and which are terminal. The transports set `SO_SNDTIMEO` to the cancel-poll
-//! interval ([`crate::cancel::CANCEL_POLL_INTERVAL`]) so a parked send
-//! wakes to re-check its cancel flag; `std` spells that expiry as
-//! `WouldBlock` on Linux/macOS (`EAGAIN`) and as `TimedOut` on Windows
-//! (`WSAETIMEDOUT`). The receive paths already treat both as the poll tick;
-//! a send path matching only `WouldBlock` would latch the transport dead on
-//! a Windows send stall.
+//! nothing is wrong with the socket" and which are terminal. The transports
+//! set `SO_SNDTIMEO` to the cancel-poll interval
+//! ([`crate::cancel::CANCEL_POLL_INTERVAL`]) so a parked send wakes to
+//! re-check its cancel flag; `std` spells that expiry as `WouldBlock` on
+//! Linux/macOS (`EAGAIN`) and as `TimedOut` on Windows (`WSAETIMEDOUT`). The receive
+//! paths already treat both as the poll tick; a send path matching only
+//! `WouldBlock` would latch the transport dead on a Windows send stall.
 
 use std::io;
 
@@ -60,8 +60,8 @@ pub enum RecvAction {
 /// `Interrupted` is `EINTR` — a signal landed on the thread parked in
 /// `recv`, which is exactly what the SIGINT-handler shutdown pattern
 /// delivers. The send path already treats it as transient
-/// ([`classify_send_error`]) and every receive path retries it for the same reason: a fatal receive latches
-/// `alive = false`, so letting a handled signal through to that
+/// ([`classify_send_error`]) and every receive path retries it for the same
+/// reason: a fatal receive latches `alive = false`, so letting a handled signal through to that
 /// arm would leave the receiver permanently dead with every later call
 /// reporting `Closed`. Everything else is terminal.
 pub fn classify_recv_error(kind: io::ErrorKind) -> RecvAction {

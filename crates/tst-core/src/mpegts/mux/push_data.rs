@@ -20,7 +20,7 @@ use super::pes::{
 };
 use super::state::ts_packets_for;
 use super::ts::AdaptationField;
-use super::types::{DataStreamHandle, StreamKind};
+use super::types::{DataStreamHandle, MuxStreamKind};
 
 impl Muxer {
     /// Push one data payload on the muxer's single data stream.
@@ -47,7 +47,7 @@ impl Muxer {
         let handle = super::resolve_lone(
             &self.data_streams,
             MuxError::NoDataStreamsConfigured,
-            StreamKind::Data,
+            MuxStreamKind::Data,
             DataStreamHandle::pack,
         )?;
         self.push_data_to(handle, data, pts)
@@ -125,7 +125,7 @@ impl Muxer {
         let (prog_idx, within_idx) = handle.unpack();
         if prog_idx >= self.data_streams.len() || within_idx >= self.data_streams[prog_idx].len() {
             return Err(MuxError::InvalidStreamHandle {
-                kind: StreamKind::Data,
+                kind: MuxStreamKind::Data,
                 index: handle.0 as usize,
             });
         }

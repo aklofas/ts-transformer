@@ -291,27 +291,27 @@ kinds! {
     RistPeerCreateFailed = -62 => "RIST_PEER_CREATE_FAILED", "PEER_CREATE_FAILED", -38;
     /// The URL carries `?pt=` (elementary RTP): use the H.264 receiver, not the MP2T transport.
     ///
-    /// tst-rtp `ConnectError::PayloadTypeParam`.
+    /// tst-rtp `RtpConnectError::PayloadTypeParam`.
     RtpPayloadTypeParam = -63 => "RTP_PAYLOAD_TYPE_PARAM", "PAYLOAD_TYPE_PARAM", -15;
     /// The H.264 receiver requires a dynamic payload type in `?pt=` on the URL.
     ///
-    /// tst-rtp `ConnectError::MissingPayloadTypeParam`.
+    /// tst-rtp `RtpConnectError::MissingPayloadTypeParam`.
     RtpMissingPayloadTypeParam = -64 => "RTP_MISSING_PAYLOAD_TYPE_PARAM", "MISSING_PAYLOAD_TYPE_PARAM", -15;
     /// The `rtp://` or `rtsp://` URL could not be parsed.
     ///
-    /// tst-rtp `ConnectError::Url`.
+    /// tst-rtp `RtpConnectError::Url`.
     RtpUrl = -65 => "RTP_URL", "URL", -15;
     /// The host is not a literal IPv4 or IPv6 address. The RTP transport does no DNS resolution: pre-resolve it and pass the literal.
     ///
-    /// tst-rtp `ConnectError::HostNotLiteral`.
+    /// tst-rtp `RtpConnectError::HostNotLiteral`.
     RtpHostNotLiteral = -66 => "RTP_HOST_NOT_LITERAL", "HOST_NOT_LITERAL", -15;
     /// UDP socket error: an OS-level bind, connect or setsockopt failure.
     ///
-    /// tst-rtp `ConnectError::Io`.
+    /// tst-rtp `RtpConnectError::Io`.
     RtpIo = -67 => "RTP_IO", "IO", -15;
     /// The multicast interface is unsupported here, typically because the platform needs a different form (IPv6 needs a scope-id integer).
     ///
-    /// tst-rtp `ConnectError::IfaceUnsupported`.
+    /// tst-rtp `RtpConnectError::IfaceUnsupported`.
     RtpIfaceUnsupported = -68 => "RTP_IFACE_UNSUPPORTED", "IFACE_UNSUPPORTED", -15;
     /// One sync-search window held no packet boundary; the scanned bytes are discarded and the next feed starts a fresh search.
     ///
@@ -1996,7 +1996,7 @@ mod tests {
     fn mux_error_four_precise_kinds_and_kind_fallback() {
         use BindingErrorKind as K;
         use tst_core::error::MuxError;
-        use tst_core::mpegts::mux::StreamKind;
+        use tst_core::mpegts::mux::MuxStreamKind;
         assert_eq!(kind_of_mux(&MuxError::InvalidNal), K::InvalidNal);
         assert_eq!(kind_of_mux(&MuxError::InvalidAv1Obu), K::InvalidAv1Obu);
         assert_eq!(
@@ -2019,7 +2019,7 @@ mod tests {
         assert_eq!(kind_of_mux(&MuxError::InvalidConfig("x")), K::ConfigInvalid);
         assert_eq!(
             kind_of_mux(&MuxError::InvalidStreamHandle {
-                kind: StreamKind::Video,
+                kind: MuxStreamKind::Video,
                 index: 9
             }),
             K::InvalidUsage

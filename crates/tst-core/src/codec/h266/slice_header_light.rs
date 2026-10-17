@@ -2,9 +2,10 @@
 //!
 //! Per H.266 V4 §7.3.7.1.
 
-use crate::codec::CodecParseError;
 use crate::codec::bitreader::BitReader;
 use crate::codec::h266::sps::H266Sps;
+use crate::codec::nal::is_idr;
+use crate::codec::{CodecParseError, VideoCodec};
 use alloc::vec::Vec;
 
 crate::binding_record! {
@@ -120,19 +121,18 @@ pub fn parse_slice_header_light(
     // For non-IDR slices the bit width comes from
     // sps_log2_max_pic_order_cnt_lsb_minus4, which requires the deferred
     // SPS-driven parser path — return None.
-    let pic_order_cnt_lsb =
-        if crate::codec::nal::is_idr(crate::codec::VideoCodec::H266, nal_unit_type) {
-            Some(0)
-        } else {
-            None
-        };
+    let pic_order_cnt_lsb = if is_idr(VideoCodec::H266, nal_unit_type) {
+        Some(0)
+    } else {
+        None
+    };
 
     Ok(H266SliceHeaderLight {
         first_in_pic,
         slice_type,
         pps_id,
         pic_order_cnt_lsb,
-        idr: crate::codec::nal::is_idr(crate::codec::VideoCodec::H266, nal_unit_type),
+        idr: is_idr(VideoCodec::H266, nal_unit_type),
         raw_rbsp: rbsp.to_vec(),
     })
 }
