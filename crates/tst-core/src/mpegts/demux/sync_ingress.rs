@@ -126,7 +126,7 @@ impl super::demuxer::Demuxer {
             if !self.programs.values().any(|t| t.pcr_pid == Some(pkt.pid)) {
                 return;
             }
-            if let Some(&last) = self.last_pcr_by_pid.get(&pkt.pid) {
+            if let Some(last) = self.pcr.last(pkt.pid) {
                 let diff = pcr_diff_27mhz(now, last);
                 if diff.abs() > PCR_ANOMALY_THRESHOLD {
                     // Dedicated PCR PIDs have no `lookup_stream` entry —
@@ -139,7 +139,7 @@ impl super::demuxer::Demuxer {
                     );
                 }
             }
-            self.last_pcr_by_pid.insert(pkt.pid, now);
+            self.pcr.record(pkt.pid, now);
         }
     }
 

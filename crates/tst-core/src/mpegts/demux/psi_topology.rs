@@ -329,7 +329,7 @@ impl super::demuxer::Demuxer {
                 // program_number, so it is unreachable once the program is
                 // gone — and a later program re-using the number must not
                 // anchor its first sample onto this one's epoch.
-                self.program_clock.remove(&tracker.program_number);
+                self.timestamps.retire_program(tracker.program_number);
                 // Free the PSI assembly buffer + PMT-PID continuity state.
                 self.psi_assemblers.remove(&pmt_pid);
                 diff.retired_pmt_pids.push(pmt_pid);
@@ -374,8 +374,8 @@ impl super::demuxer::Demuxer {
     /// baseline.
     pub(super) fn retire_undeclared_pcr_history(&mut self) {
         let programs = &self.programs;
-        self.last_pcr_by_pid
-            .retain(|pid, _| programs.values().any(|t| t.pcr_pid == Some(*pid)));
+        self.pcr
+            .retain_declared(|pid| programs.values().any(|t| t.pcr_pid == Some(pid)));
     }
 
     /// What a freshly accepted PMT version changes in per-PID state, as a
@@ -826,6 +826,11 @@ mod tests {
     use super::super::types::DemuxerConfig;
     use crate::mpegts::common::Pts90khz;
     use crate::mpegts::common::crc32::crc32_mpeg2;
+    use crate::mpegts::demux::test_support::{
+        drain_all_events, pat_packet_with_multi_section, pat_packet_with_multi_section_cc,
+        pat_packet_with_programs, pat_packet_with_programs_cc, payload_packet_for_test,
+        pmt_packet_for_test, pmt_packet_for_test_cc, pmt_packet_with_multi_section,
+    };
     use alloc::vec::Vec;
 
     use crate::mpegts::demux::test_support::{
@@ -1201,7 +1206,7 @@ mod tests {
         pcr_pkt[10] = 0x7E; // reserved bits per §2.4.3.5
         demux.feed(&pcr_pkt).unwrap();
         assert!(
-            demux.last_pcr_by_pid.contains_key(&0x0100),
+            demux.pcr.contains(0x0100),
             "PCR PID 0x0100 should be in last_pcr_by_pid after first PMT"
         );
 
@@ -1213,7 +1218,7 @@ mod tests {
         demux.feed(&pmt_v1_pkt).unwrap();
 
         assert!(
-            !demux.last_pcr_by_pid.contains_key(&0x0100),
+            !demux.pcr.contains(0x0100),
             "stale last_pcr_by_pid entry for old PCR-only PID 0x0100 must be removed on PCR-PID change"
         );
     }
@@ -1386,7 +1391,7 @@ mod tests {
         // accumulator and program 1's running clock.
         let _ = demux.unwrap_pts(0x0101, Pts90khz::new(900_000));
         assert!(
-            demux.program_clock.contains_key(&1),
+            demux.timestamps.has_program(1),
             "test setup: program 1 should hold a running unwrap reference"
         );
 
@@ -1397,7 +1402,7 @@ mod tests {
         demux.feed(&pat_v1_pkt).unwrap();
 
         assert!(
-            demux.program_clock.get(&1).is_none(),
+            !demux.timestamps.has_program(1),
             "the running unwrap reference for a program removed from the PAT \
              must be dropped with the program"
         );
@@ -1420,7 +1425,7 @@ mod tests {
             dup: true,
             last_pkt_raw: Some([0x47; 188]),
             last_pts: Some(90_000),
-            unwrap: Some(super::super::demuxer::UnwrapState {
+            unwrap: Some(super::super::timestamp::UnwrapState {
                 last_raw: 1,
                 last_unwrapped: 1,
             }),
@@ -1511,6 +1516,883 @@ mod tests {
                 .pid_state
                 .get(&0x1000)
                 .is_none_or(|s| s.cc.is_none() && !s.dup && s.last_pkt_raw.is_none())
+        );
+    }
+
+    /// Per ISO/IEC 13818-1 §2.4.4.4, PSI sections with `current_next_indicator=0`
+    /// describe a future-staged table not yet in effect. ffmpeg drops these
+    /// (mpegts.c:1759, 2610-2611, 2832, 2969-2970, 2974). If we instead process
+    /// them and bump `pat_version`, the *real* current section that follows is
+    /// then deduplicated as "same version, skip", silently dropping streams
+    /// that are still active.
+    ///
+    /// We verify the staged PAT is not processed by feeding only the staged
+    /// PAT (cn=0) followed by a PMT on the PID it announces. With the bug,
+    /// the staged PAT installs PID 0x100 in `programs` and the PMT then fires
+    /// a ProgramMap. With the fix, the PAT is dropped, PID 0x100 is unknown,
+    /// and the PMT is silently ignored — no ProgramMap.
+    #[test]
+    fn pat_with_current_next_indicator_zero_is_dropped() {
+        let mut demux = Demuxer::new();
+
+        // Build a PAT with current_next_indicator=0 announcing program 1 → 0x100.
+        // Byte 5 = 0xC0 → reserved(2)=11, version(5)=0, current_next(1)=0.
+        let mut pat = vec![
+            0x00, // table_id = PAT
+            0xB0, 0x0D, // syntax=1, section_length=0x00D
+            0x00, 0x01, // transport_stream_id=1
+            0xC0, // reserved=11, version=0, current_next=0
+            0x00, 0x00, // section_number, last_section_number
+            0x00, 0x01, // program_number=1
+            0xE1, 0x00, // reserved=111, pmt_pid=0x100
+        ];
+        let pat_crc = crate::mpegts::common::crc32::crc32_mpeg2(&pat);
+        pat.extend_from_slice(&pat_crc.to_be_bytes());
+
+        let mut ts_pat = [0xFFu8; 188];
+        ts_pat[0] = 0x47;
+        ts_pat[1] = 0x40; // PUSI=1, pid_high=0
+        ts_pat[2] = 0x00; // pid_low=0 → PID 0x0000
+        ts_pat[3] = 0x10; // adaptation=01, CC=0
+        ts_pat[4] = 0x00; // pointer_field
+        ts_pat[5..5 + pat.len()].copy_from_slice(&pat);
+        demux.feed(&ts_pat).expect("staged PAT feed");
+
+        // Build a valid current PMT (cn=1) for program 1 announcing one
+        // H.264 stream on PID 0x101. Body is 18 bytes (0x12) past byte 3.
+        let mut pmt = vec![
+            0x02, // table_id = PMT
+            0xB0, 0x12, // syntax=1, section_length=0x012
+            0x00, 0x01, // program_number=1
+            0xC1, // reserved=11, version=0, current_next=1
+            0x00, 0x00, // section_number, last_section_number
+            0xE1, 0x01, // reserved=111, pcr_pid=0x101
+            0xF0, 0x00, // reserved=1111, program_info_length=0
+            0x1B, // stream_type = H.264
+            0xE1, 0x01, // reserved=111, elementary_pid=0x101
+            0xF0, 0x00, // reserved=1111, es_info_length=0
+        ];
+        let pmt_crc = crate::mpegts::common::crc32::crc32_mpeg2(&pmt);
+        pmt.extend_from_slice(&pmt_crc.to_be_bytes());
+
+        let mut ts_pmt = [0xFFu8; 188];
+        ts_pmt[0] = 0x47;
+        ts_pmt[1] = 0x41; // PUSI=1, pid_high=1
+        ts_pmt[2] = 0x00; // pid_low=0 → PID 0x100
+        ts_pmt[3] = 0x10; // adaptation=01, CC=0
+        ts_pmt[4] = 0x00; // pointer_field
+        ts_pmt[5..5 + pmt.len()].copy_from_slice(&pmt);
+        demux.feed(&ts_pmt).expect("PMT feed");
+
+        // With the fix, the staged PAT is dropped → PID 0x100 was never
+        // installed as a PMT PID → the PMT packet on 0x100 is ignored → no
+        // ProgramMap fires. With the bug, the staged PAT installed the
+        // program and a ProgramMap fires from the PMT.
+        let mut saw_program_map = false;
+        while let Some(ev) = demux.next_event() {
+            if matches!(ev, DemuxEvent::ProgramMap(_)) {
+                saw_program_map = true;
+            }
+        }
+        assert!(
+            !saw_program_map,
+            "PAT with current_next=0 must be dropped — its PID 0x100 must not \
+             be registered, so a subsequent PMT on 0x100 is ignored and no \
+             ProgramMap fires"
+        );
+    }
+
+    /// Per ISO/IEC 13818-1 §2.4.4.4, the PMT case mirrors the PAT case: a PMT
+    /// with `current_next_indicator=0` is the next staged table, not the
+    /// current one. Processing it bumps `pmt_version`, which then dedupes the
+    /// real current PMT — silently dropping streams.
+    #[test]
+    fn pmt_with_current_next_indicator_zero_is_dropped() {
+        let mut demux = Demuxer::new();
+
+        // Seed a normal PAT mapping program 1 → PMT PID 0x100, so the
+        // demuxer routes packets on PID 0x100 to handle_pmt_section.
+        let mut pat = vec![
+            0x00, // table_id
+            0xB0, 0x0D, // syntax=1, section_length=0x00D
+            0x00, 0x01, // transport_stream_id=1
+            0xC1, // reserved=11, version=0, current_next=1
+            0x00, 0x00, // section_number, last_section_number
+            0x00, 0x01, // program_number=1
+            0xE1, 0x00, // reserved=111, pmt_pid=0x100
+        ];
+        let pat_crc = crate::mpegts::common::crc32::crc32_mpeg2(&pat);
+        pat.extend_from_slice(&pat_crc.to_be_bytes());
+
+        let mut ts_pat = [0xFFu8; 188];
+        ts_pat[0] = 0x47;
+        ts_pat[1] = 0x40;
+        ts_pat[2] = 0x00;
+        ts_pat[3] = 0x10;
+        ts_pat[4] = 0x00;
+        ts_pat[5..5 + pat.len()].copy_from_slice(&pat);
+        demux.feed(&ts_pat).expect("PAT feed");
+
+        // Drain PAT-induced events (no ProgramMap yet — needs PMT).
+        while demux.next_event().is_some() {}
+
+        // Build a PMT with current_next_indicator=0 announcing one H.264
+        // video stream on PID 0x101. Byte 5 = 0xC0.
+        //   table_id=0x02, syntax=1, section_length, program_number=1,
+        //   byte5=0xC0 (current_next=0), section_number=0, last=0,
+        //   reserved+pcr_pid=0xE101, reserved+program_info_length=0xF000,
+        //   stream_type=0x1B (H.264), reserved+elementary_pid=0xE101,
+        //   reserved+es_info_length=0xF000, CRC32.
+        // Body length from byte 3: 5 (header tail) + 4 (program_info hdr)
+        //   + 5 (stream entry) + 4 (CRC) = 18 = 0x12.
+        let mut pmt = vec![
+            0x02, // table_id = PMT
+            0xB0, 0x12, // syntax=1, section_length=0x012
+            0x00, 0x01, // program_number=1
+            0xC0, // reserved=11, version=0, current_next=0
+            0x00, 0x00, // section_number, last_section_number
+            0xE1, 0x01, // reserved=111, pcr_pid=0x101
+            0xF0, 0x00, // reserved=1111, program_info_length=0
+            0x1B, // stream_type = H.264
+            0xE1, 0x01, // reserved=111, elementary_pid=0x101
+            0xF0, 0x00, // reserved=1111, es_info_length=0
+        ];
+        let pmt_crc = crate::mpegts::common::crc32::crc32_mpeg2(&pmt);
+        pmt.extend_from_slice(&pmt_crc.to_be_bytes());
+
+        let mut ts_pmt = [0xFFu8; 188];
+        ts_pmt[0] = 0x47;
+        ts_pmt[1] = 0x41; // PUSI=1, pid_high=1
+        ts_pmt[2] = 0x00; // pid_low=0 → PID = 0x100
+        ts_pmt[3] = 0x10;
+        ts_pmt[4] = 0x00; // pointer_field
+        ts_pmt[5..5 + pmt.len()].copy_from_slice(&pmt);
+        demux.feed(&ts_pmt).expect("staged PMT feed");
+
+        // The staged PMT must NOT produce a ProgramMap event.
+        let mut saw_program_map = false;
+        while let Some(ev) = demux.next_event() {
+            if matches!(ev, DemuxEvent::ProgramMap(_)) {
+                saw_program_map = true;
+            }
+        }
+        assert!(
+            !saw_program_map,
+            "PMT with current_next=0 must not produce ProgramMap events"
+        );
+    }
+
+    #[test]
+    fn first_pat_creates_program_trackers_for_all_entries() {
+        let mut demuxer = Demuxer::new();
+        let pat = pat_packet_with_programs(&[(1, 0x1000), (2, 0x1100)], 0);
+        demuxer.feed(&pat).unwrap();
+
+        let progs = demuxer.programs_for_test();
+        assert_eq!(
+            progs.len(),
+            2,
+            "expected 2 program trackers, got {}",
+            progs.len()
+        );
+        assert!(
+            progs.contains_key(&0x1000),
+            "missing tracker for pmt_pid=0x1000"
+        );
+        assert!(
+            progs.contains_key(&0x1100),
+            "missing tracker for pmt_pid=0x1100"
+        );
+    }
+
+    #[test]
+    fn pat_version_bump_adds_new_program() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        assert_eq!(demuxer.programs_for_test().len(), 1);
+
+        demuxer
+            .feed(&pat_packet_with_programs_cc(
+                &[(1, 0x1000), (2, 0x1100)],
+                1,
+                1,
+            ))
+            .unwrap();
+        let progs = demuxer.programs_for_test();
+        assert_eq!(
+            progs.len(),
+            2,
+            "expected 2 trackers after version bump, got {}",
+            progs.len()
+        );
+        assert!(progs.contains_key(&0x1000));
+        assert!(progs.contains_key(&0x1100));
+    }
+
+    #[test]
+    fn pat_version_bump_removes_dropped_program() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000), (2, 0x1100)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pat_packet_with_programs_cc(&[(1, 0x1000)], 1, 1))
+            .unwrap();
+
+        let progs = demuxer.programs_for_test();
+        assert_eq!(
+            progs.len(),
+            1,
+            "expected 1 tracker after program removal, got {}",
+            progs.len()
+        );
+        assert!(
+            progs.contains_key(&0x1000),
+            "surviving program 1 tracker missing"
+        );
+        assert!(
+            !progs.contains_key(&0x1100),
+            "dropped program 2 tracker still present"
+        );
+    }
+
+    #[test]
+    fn each_program_has_independent_pmt_version() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000), (2, 0x1100)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x1011,
+                &[(0x1B, 0x1011), (0x06, 0x1031)],
+                3,
+            ))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1100,
+                2,
+                0x1111,
+                &[(0x24, 0x1111), (0x06, 0x1131)],
+                5,
+            ))
+            .unwrap();
+
+        let progs = demuxer.programs_for_test();
+        assert_eq!(progs[&0x1000].pmt_version, Some(3));
+        assert_eq!(progs[&0x1100].pmt_version, Some(5));
+        assert_eq!(progs[&0x1000].streams.len(), 2);
+        assert_eq!(progs[&0x1100].streams.len(), 2);
+    }
+
+    #[test]
+    fn pid_collision_across_programs_emits_nonconformant() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000), (2, 0x1100)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                0,
+            ))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1100,
+                2,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                0,
+            ))
+            .unwrap();
+
+        let mut nonconformant_seen = false;
+        while let Some(ev) = demuxer.next_event() {
+            if let DemuxEvent::NonConformant {
+                issue: NonConformantIssue::PidReusedAcrossPrograms { pid: 0x1011, .. },
+                ..
+            } = ev
+            {
+                nonconformant_seen = true;
+            }
+        }
+        assert!(
+            nonconformant_seen,
+            "expected PidReusedAcrossPrograms event for PID 0x1011"
+        );
+
+        let progs = demuxer.programs_for_test();
+        assert!(
+            progs[&0x1000].streams.iter().any(|s| s.pid == 0x1011),
+            "program 1 should retain ownership of PID 0x1011"
+        );
+        assert!(
+            !progs[&0x1100].streams.iter().any(|s| s.pid == 0x1011),
+            "program 2 must not own PID 0x1011 after collision"
+        );
+    }
+
+    #[test]
+    fn stream_kind_by_pid_tracks_across_pat_changes() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                0,
+            ))
+            .unwrap();
+
+        let progs = demuxer.programs_for_test();
+        assert!(progs.contains_key(&0x1000), "program 1 tracker missing");
+        assert_eq!(progs[&0x1000].streams.len(), 1);
+        assert_eq!(progs[&0x1000].streams[0].pid, 0x1011);
+
+        demuxer
+            .feed(&pat_packet_with_programs_cc(
+                &[(1, 0x1000), (2, 0x1100)],
+                1,
+                1,
+            ))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1100,
+                2,
+                0x1111,
+                &[(0x1B, 0x1111)],
+                0,
+            ))
+            .unwrap();
+
+        let progs = demuxer.programs_for_test();
+        assert_eq!(progs.len(), 2, "expected 2 program trackers after add");
+        assert!(
+            progs.contains_key(&0x1000),
+            "program 1 tracker must survive"
+        );
+        assert!(progs.contains_key(&0x1100), "program 2 tracker must appear");
+        assert!(
+            progs[&0x1000].streams.iter().any(|s| s.pid == 0x1011),
+            "program 1 stream 0x1011 must survive after PAT bump"
+        );
+        assert!(
+            progs[&0x1100].streams.iter().any(|s| s.pid == 0x1111),
+            "program 2 stream 0x1111 must be tracked"
+        );
+    }
+
+    #[test]
+    fn program_removed_drops_streams_from_tracker() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000), (2, 0x1100)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                0,
+            ))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1100,
+                2,
+                0x1111,
+                &[(0x1B, 0x1111)],
+                0,
+            ))
+            .unwrap();
+
+        assert_eq!(
+            demuxer.programs_for_test().len(),
+            2,
+            "expected 2 trackers before removal"
+        );
+
+        demuxer
+            .feed(&pat_packet_with_programs_cc(&[(1, 0x1000)], 1, 1))
+            .unwrap();
+
+        let progs = demuxer.programs_for_test();
+        assert_eq!(progs.len(), 1, "expected 1 tracker after removal");
+        assert!(
+            progs.contains_key(&0x1000),
+            "surviving program 1 tracker missing"
+        );
+        assert!(
+            !progs.contains_key(&0x1100),
+            "dropped program 2 tracker still present"
+        );
+        assert!(
+            progs[&0x1000].streams.iter().any(|s| s.pid == 0x1011),
+            "program 1 stream 0x1011 must survive program 2 removal"
+        );
+    }
+
+    /// A complete 2-section PAT must reassemble such that BOTH
+    /// declared programs produce trackers end-to-end, and must NOT emit
+    /// PsiMultiSectionUnsupported.
+    #[test]
+    fn demuxer_reassembles_complete_multi_section_pat() {
+        // Section 0 carries program 1 on PMT PID 0x100;
+        // section 1 carries program 2 on PMT PID 0x200.
+        // Both share transport_stream_id=0x0001, version=0, current_next=1.
+        let s0 = pat_packet_with_multi_section(0, 1, &[(1u16, 0x0100u16)]);
+        // Section 1 arrives as a separate TS packet on the same PID, so its CC
+        // must differ from section 0's (CC=0) to avoid duplicate suppression.
+        let s1 = pat_packet_with_multi_section_cc(1, 1, &[(2u16, 0x0200u16)], 1);
+        let mut demuxer = Demuxer::new();
+        demuxer.feed(&s0).unwrap();
+        demuxer.feed(&s1).unwrap();
+        // Feed PMTs for BOTH reassembled PMT PIDs so each tracker emits a
+        // ProgramMap. If apply_pat_programs silently dropped section 1's
+        // program, no tracker would exist for PMT PID 0x0200 and the PMT
+        // arriving on it would be dropped (no ProgramMap for program 2).
+        let pmt1 = pmt_packet_for_test(0x0100, 1, 0x0101, &[(0x1B, 0x0101)], 0);
+        let pmt2 = pmt_packet_for_test(0x0200, 2, 0x0201, &[(0x1B, 0x0201)], 0);
+        demuxer.feed(&pmt1).unwrap();
+        demuxer.feed(&pmt2).unwrap();
+        demuxer.flush();
+        let events = drain_all_events(&mut demuxer);
+
+        let saw_multi_section_nonconformance = events.iter().any(|e| {
+            matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::PsiMultiSectionUnsupported { .. },
+                    ..
+                }
+            )
+        });
+        assert!(
+            !saw_multi_section_nonconformance,
+            "a VALID complete multi-section PAT must NOT emit PsiMultiSectionUnsupported"
+        );
+        // Both reassembled sections must have produced trackers: assert a
+        // PMT-driven ProgramMap (one with streams) fired for program 1 AND
+        // program 2.
+        let saw_program_1 = events.iter().any(|e| {
+            matches!(e, DemuxEvent::ProgramMap(pm) if pm.program_number == 1 && !pm.streams.is_empty())
+        });
+        let saw_program_2 = events.iter().any(|e| {
+            matches!(e, DemuxEvent::ProgramMap(pm) if pm.program_number == 2 && !pm.streams.is_empty())
+        });
+        assert!(
+            saw_program_1,
+            "program 1 (PAT section 0) must produce a ProgramMap with streams"
+        );
+        assert!(
+            saw_program_2,
+            "program 2 (PAT section 1) must produce a ProgramMap with streams — proves section 1 was not dropped during reassembly"
+        );
+    }
+
+    /// An INCOMPLETE multi-section PAT (only section 0 of 2) must
+    /// stay pending — no ProgramMap AND no PsiMultiSectionUnsupported.
+    #[test]
+    fn demuxer_does_not_emit_program_map_for_incomplete_multi_section_pat() {
+        // Only section 0 of a 2-section PAT, section 1 never arrives.
+        let s0 = pat_packet_with_multi_section(0, 1, &[(1u16, 0x0100u16)]);
+        let mut demuxer = Demuxer::new();
+        demuxer.feed(&s0).unwrap();
+        demuxer.flush();
+        let events = drain_all_events(&mut demuxer);
+
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::ProgramMap(_))),
+            "an INCOMPLETE multi-section PAT must NOT apply a partial program set"
+        );
+        assert!(
+            !events.iter().any(|e| {
+                matches!(
+                    e,
+                    DemuxEvent::NonConformant {
+                        issue: NonConformantIssue::PsiMultiSectionUnsupported { .. },
+                        ..
+                    }
+                )
+            }),
+            "an INCOMPLETE (not broken) multi-section PAT must NOT emit PsiMultiSectionUnsupported"
+        );
+    }
+
+    #[test]
+    fn demuxer_emits_non_conformance_on_multi_section_pmt() {
+        // Drive a normal PAT first so the demuxer creates a tracker for
+        // the PMT PID; then feed a PMT with last_section_number=1. PAT
+        // lands; PMT triggers PsiMultiSectionUnsupported on its own PID.
+        let pat = pat_packet_with_programs(&[(1, 0x100)], 0);
+        let pmt = pmt_packet_with_multi_section(0x100, 1, 0x101, &[(0x1B /* H.264 */, 0x101)], 0);
+
+        let mut demuxer = Demuxer::new();
+        demuxer.feed(&pat).unwrap();
+        demuxer.feed(&pmt).unwrap();
+        let events = drain_all_events(&mut demuxer);
+
+        let nc = events.iter().find_map(|e| match e {
+            DemuxEvent::NonConformant { issue, .. } => Some(issue.clone()),
+            _ => None,
+        });
+        match nc {
+            Some(NonConformantIssue::PsiMultiSectionUnsupported {
+                pid,
+                table_id,
+                last_section_number,
+            }) => {
+                assert_eq!(pid, 0x100);
+                assert_eq!(table_id, 0x02);
+                assert_eq!(last_section_number, 1);
+            }
+            other => panic!("expected PsiMultiSectionUnsupported, got {other:?}"),
+        }
+        // ProgramMap may fire from the PAT (announces the empty program),
+        // but the PMT-driven version (which would populate streams) must
+        // NOT have arrived — the rejection happens before stream emission.
+        // The empty ProgramMap from the PAT carries no streams; assert no
+        // ProgramMap event contains streams.
+        for e in &events {
+            if let DemuxEvent::ProgramMap(pm) = e {
+                assert!(
+                    pm.streams.is_empty(),
+                    "no PMT-driven ProgramMap should have streams after rejection: {pm:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pat_removed_program_clears_cc_by_pid() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000), (2, 0x1100)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                0,
+            ))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1100,
+                2,
+                0x1111,
+                &[(0x1B, 0x1111)],
+                0,
+            ))
+            .unwrap();
+        // Seed CC entries for both programs' video PIDs + the PMT PIDs.
+        demuxer.feed(&payload_packet_for_test(0x1011, 5)).unwrap();
+        demuxer.feed(&payload_packet_for_test(0x1111, 7)).unwrap();
+        assert!(
+            demuxer
+                .pid_state
+                .get(&0x1011)
+                .is_some_and(|s| s.cc.is_some())
+        );
+        assert!(
+            demuxer
+                .pid_state
+                .get(&0x1111)
+                .is_some_and(|s| s.cc.is_some())
+        );
+        assert!(
+            demuxer
+                .pid_state
+                .get(&0x1100)
+                .is_some_and(|s| s.cc.is_some())
+        ); // PMT PID
+
+        // PAT v1 drops program 2 (CC=1 so it isn't swallowed as a duplicate of v0).
+        demuxer
+            .feed(&pat_packet_with_programs_cc(&[(1, 0x1000)], 1, 1))
+            .unwrap();
+
+        assert!(
+            demuxer
+                .pid_state
+                .get(&0x1011)
+                .is_some_and(|s| s.cc.is_some()),
+            "program 1's PID 0x1011 cc must survive"
+        );
+        assert!(
+            demuxer
+                .pid_state
+                .get(&0x1111)
+                .is_none_or(|s| s.cc.is_none()),
+            "program 2's PID 0x1111 cc must be cleared"
+        );
+        assert!(
+            demuxer
+                .pid_state
+                .get(&0x1100)
+                .is_none_or(|s| s.cc.is_none()),
+            "program 2's PMT PID 0x1100 cc must be cleared"
+        );
+    }
+
+    #[test]
+    fn pat_removed_program_clears_stream_kind_and_pid_to_program() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000), (2, 0x1100)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                0,
+            ))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1100,
+                2,
+                0x1111,
+                &[(0x1B, 0x1111)],
+                0,
+            ))
+            .unwrap();
+        assert!(demuxer.stream_kind(0x1111).is_some());
+        assert!(demuxer.program_of(0x1111).is_some());
+
+        // PAT v1 drops program 2 (CC=1 so it isn't swallowed as a duplicate of v0).
+        demuxer
+            .feed(&pat_packet_with_programs_cc(&[(1, 0x1000)], 1, 1))
+            .unwrap();
+
+        // Sanity: the removed program's PID also leaves the routing maps.
+        assert!(
+            demuxer.stream_kind(0x1111).is_none(),
+            "stream kind must drop removed program's PID"
+        );
+        assert!(
+            demuxer.program_of(0x1111).is_none(),
+            "owning program must drop removed program's PID"
+        );
+    }
+
+    /// A PMT version change that drops an elementary PID must clear that
+    /// PID's per-PID routing state, exactly as PAT program removal does. Before
+    /// the fix, `stream_kind_by_pid` retained the removed PID so later packets
+    /// on it were still routed as PES (stale-sample emission).
+    #[test]
+    fn pmt_version_change_clears_removed_stream_pid_state() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        // PMT v0: video PID 0x1011.
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                0,
+            ))
+            .unwrap();
+        assert!(demuxer.stream_kind(0x1011).is_some());
+        // PMT v1 (same program 1): replaces 0x1011 with 0x1012.
+        // CC=1 so it isn't swallowed as a duplicate of the v0 PMT on this PID.
+        demuxer
+            .feed(&pmt_packet_for_test_cc(
+                0x1000,
+                1,
+                0x1012,
+                &[(0x1B, 0x1012)],
+                1,
+                1,
+            ))
+            .unwrap();
+        assert!(
+            demuxer.stream_kind(0x1011).is_none(),
+            "removed PID 0x1011 must no longer route as a stream"
+        );
+        assert!(
+            demuxer.program_of(0x1011).is_none(),
+            "removed PID 0x1011 must have no owning program"
+        );
+        assert!(
+            demuxer.stream_kind(0x1012).is_some(),
+            "the surviving new PID 0x1012 must route"
+        );
+    }
+
+    /// Lenient: a valid multi-section PAT must NOT surface a false
+    /// `PsiSyntax(SectionNumberNonZero)` for its section_number>0 sections.
+    #[test]
+    fn valid_multi_section_pat_emits_no_psi_syntax_event() {
+        let s0 = pat_packet_with_multi_section(0, 1, &[(1u16, 0x0100u16)]);
+        let s1 = pat_packet_with_multi_section(1, 1, &[(2u16, 0x0200u16)]);
+        let mut demuxer = Demuxer::new();
+        demuxer.feed(&s0).unwrap();
+        demuxer.feed(&s1).unwrap();
+        demuxer.flush();
+        let events = drain_all_events(&mut demuxer);
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::PsiSyntax { .. },
+                    ..
+                }
+            )),
+            "a valid multi-section PAT must not emit PsiSyntax"
+        );
+    }
+
+    /// Strict: `StrictMode::Full` must accept a valid multi-section PAT —
+    /// the section_number>0 of section 1 is conformant, not a hard failure.
+    #[test]
+    fn strict_full_accepts_valid_multi_section_pat() {
+        let s0 = pat_packet_with_multi_section(0, 1, &[(1u16, 0x0100u16)]);
+        let s1 = pat_packet_with_multi_section(1, 1, &[(2u16, 0x0200u16)]);
+        let mut demuxer = Demuxer::with_config(
+            DemuxerConfig::builder()
+                .strict(crate::mpegts::demux::StrictMode::Full)
+                .build(),
+        );
+        demuxer.feed(&s0).unwrap();
+        let r = demuxer.feed(&s1);
+        assert!(
+            r.is_ok(),
+            "StrictMode::Full must not reject a valid multi-section PAT (err = {:?})",
+            r.err()
+        );
+    }
+
+    /// A PAT version that reassigns an existing PMT PID to a different
+    /// program_number must adopt the new program — its PMT must be accepted,
+    /// not rejected as `PmtProgramNumberMismatch` against the stale identity.
+    #[test]
+    fn pat_reuse_of_pmt_pid_for_new_program_accepts_new_pmt() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                0,
+            ))
+            .unwrap();
+        // PAT v1: program 2 reuses the same PMT PID 0x1000.
+        // Both PAT and PMT need CC=1 — they arrive on PIDs already seen at CC=0.
+        demuxer
+            .feed(&pat_packet_with_programs_cc(&[(2, 0x1000)], 1, 1))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test_cc(
+                0x1000,
+                2,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                1,
+                1,
+            ))
+            .unwrap();
+        demuxer.flush();
+        let events = drain_all_events(&mut demuxer);
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::PmtProgramNumberMismatch { .. },
+                    ..
+                }
+            )),
+            "reused PMT PID with a new program must not raise PmtProgramNumberMismatch"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::ProgramMap(pm) if pm.program_number == 2)),
+            "the new program 2 must produce a ProgramMap"
+        );
+    }
+
+    #[test]
+    fn pat_removed_program_clears_pes_reassembler_state() {
+        // Drive the Reassembler to buffer a partial PES on program 2's PID,
+        // then drop program 2 via PAT and verify the PES partial buffer is
+        // cleaned.
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000), (2, 0x1100)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1100,
+                2,
+                0x1111,
+                &[(0x1B, 0x1111)],
+                0,
+            ))
+            .unwrap();
+        // Build a PUSI packet with PES start code so the Reassembler
+        // initialises its partial-PES buffer on PID 0x1111.
+        let mut pes_start = [0xFFu8; 188];
+        pes_start[0] = 0x47;
+        pes_start[1] = 0x40 | ((0x1111u16 >> 8) as u8 & 0x1F); // PUSI + pid hi
+        pes_start[2] = (0x1111u16 & 0xFF) as u8;
+        pes_start[3] = 0x10; // payload-only, CC=0
+        // PES header at offset 4..
+        pes_start[4] = 0x00;
+        pes_start[5] = 0x00;
+        pes_start[6] = 0x01;
+        pes_start[7] = 0xE0; // stream_id = video
+        pes_start[8] = 0x00;
+        pes_start[9] = 0x00; // PES_packet_length = 0 (unbounded)
+        pes_start[10] = 0x80;
+        pes_start[11] = 0x00;
+        pes_start[12] = 0x00; // PES_header_data_length=0
+        demuxer.feed(&pes_start).unwrap();
+        let buffered_before = demuxer.pes.buffered_bytes();
+        assert!(
+            buffered_before > 0,
+            "PES reassembler must have buffered bytes for PID 0x1111"
+        );
+
+        // PAT v1 drops program 2 (CC=1 so it isn't swallowed as a duplicate of v0).
+        demuxer
+            .feed(&pat_packet_with_programs_cc(&[(1, 0x1000)], 1, 1))
+            .unwrap();
+
+        // The PID's partial-PES buffer must be cleaned; total_buffered drops
+        // back to 0.
+        assert_eq!(
+            demuxer.pes.buffered_bytes(),
+            0,
+            "PES reassembler total_buffered must reflect dropped PID's bytes"
         );
     }
 }
