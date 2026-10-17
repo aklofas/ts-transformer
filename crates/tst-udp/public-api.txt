@@ -103,6 +103,7 @@ pub fn tst_udp::recv::UdpRecvTransport::with_config(&tst_udp::url::UdpUrl, &tst_
 impl tst_core::transport::RecvTransport for tst_udp::recv::UdpRecvTransport
 pub fn tst_udp::recv::UdpRecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_udp::recv::UdpRecvTransport::close(&mut self)
+pub fn tst_udp::recv::UdpRecvTransport::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
 pub fn tst_udp::recv::UdpRecvTransport::is_alive(&self) -> bool
 pub fn tst_udp::recv::UdpRecvTransport::max_payload(&self) -> usize
 pub fn tst_udp::recv::UdpRecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
@@ -239,6 +240,7 @@ pub fn tst_udp::recv::UdpRecvTransport::with_config(&tst_udp::url::UdpUrl, &tst_
 impl tst_core::transport::RecvTransport for tst_udp::recv::UdpRecvTransport
 pub fn tst_udp::recv::UdpRecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_udp::recv::UdpRecvTransport::close(&mut self)
+pub fn tst_udp::recv::UdpRecvTransport::end_reason_handle(&self) -> core::option::Option<tst_core::transport::EndReasonHandle>
 pub fn tst_udp::recv::UdpRecvTransport::is_alive(&self) -> bool
 pub fn tst_udp::recv::UdpRecvTransport::max_payload(&self) -> usize
 pub fn tst_udp::recv::UdpRecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>

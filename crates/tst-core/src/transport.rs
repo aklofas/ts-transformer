@@ -491,6 +491,8 @@ pub trait TransportCancel: Send + Sync {
 /// | `tst_pipeline::ManagedDemuxReceiver` | `ReconnectExhausted`, `Cancelled` |
 /// | `tst_rtp::RtpRecvTransport` / `H264Receiver` fed by an `RtspClient` | `CleanTeardown`, `SessionExpired`, `KeepaliveFailed`, `TransportFailed`, `ProtocolError`, `Cancelled` |
 /// | a plain `rtp://` `RtpRecvTransport` | `Cancelled` |
+/// | `tst_srt::SrtTransport`, `tst_udp::UdpRecvTransport`, `tst_rist::RistRecvTransport` | `Cancelled`, `TransportFailed` |
+/// | `tst_tcp::TcpTransport` | `Cancelled`, `CleanTeardown`, `TransportFailed` |
 /// | the application transport of an RTSP publish mount | `CleanTeardown`, `Cancelled` |
 ///
 /// The C binding reports these through `tst_stream_end_reason`

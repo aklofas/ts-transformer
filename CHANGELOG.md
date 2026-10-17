@@ -381,6 +381,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tstrans.rist.CancelHandle` are `tstrans.shells.CancelHandle`: one class over
   the same cancel state instead of one class per transport. `isinstance` checks keep
   working; `repr` and `__module__` now name `tstrans.shells`.
+- `Receiver.end_reason()` / `DemuxReceiver.end_reason()` return the reason
+  on srt, udp, tcp and rist shells instead of `None`, because those
+  transports now record why a stream ended and the shells answer the same
+  everywhere.
 
 ### Changed — tst-jni (BREAKING)
 
@@ -469,6 +473,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   every other `long` timestamp: a negative value is a large unsigned time, not
   an `IllegalArgumentException`, because Java has no unsigned `long` and the
   other timestamp arguments already read it this way.
+- `org.tstrans.shells.Receiver.endReason()` / `DemuxReceiver.endReason()`
+  return the reason on srt, udp, tcp and rist shells instead of `null`,
+  because those transports now record why a stream ended and the shells
+  answer the same everywhere.
 
 ### Changed — tst-c
 
@@ -603,6 +611,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   already had. A `?pkt_size=` value that fails the bound is now an error on
   these two schemes, where the key was ignored as unknown before.
   `TcpConfig` carries `cert`, `key` and `ca` so TLS material is not URL-only.
+- The srt, udp, tcp and rist receive transports record an `EndReason`
+  (`Cancelled`, `CleanTeardown` on a tcp peer close, `TransportFailed`), so
+  `end_reason()` answers on every shell, not only rtp. srt records no
+  `CleanTeardown`: libsrt reports a peer's close as a broken link.
 
 ### Added — tst-rtp
 

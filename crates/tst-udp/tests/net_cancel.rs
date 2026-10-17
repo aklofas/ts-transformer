@@ -21,7 +21,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tst_core::transport::{RecvTransport, Transport, TransportError};
+use tst_core::transport::{EndReason, RecvTransport, Transport, TransportError};
 use tst_udp::{UdpRecvTransport, UdpTransport, UdpTransportBuilder};
 
 /// A std socket the sender tests aim at; kept alive so the port stays bound.
@@ -329,4 +329,18 @@ fn recv_empty_buffer_loopback_is_noop() {
         matches!(next, Ok(Some(188))),
         "the queued datagram must survive the empty read, got {next:?}"
     );
+}
+
+/// A cancelled receiver records `Cancelled` on the handle taken before the
+/// transport moved; a fresh one reads `None`.
+#[test]
+fn recv_cancel_loopback_records_cancelled_end_reason() {
+    let mut recv = UdpRecvTransport::listen("udp://@127.0.0.1:0").expect("bind");
+    let reason = recv.end_reason_handle().expect("udp records end reasons");
+    assert_eq!(reason.get(), None, "live receiver has no end reason");
+    recv.cancel_handle().cancel();
+    let mut buf = vec![0u8; recv.max_payload()];
+    let r = recv.recv_bytes(&mut buf);
+    assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
+    assert_eq!(reason.get(), Some(EndReason::Cancelled));
 }

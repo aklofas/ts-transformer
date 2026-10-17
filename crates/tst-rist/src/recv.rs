@@ -3,7 +3,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tst_core::transport::{BrokenCause, RecvTransport, TransportCancel, TransportError};
+use tst_core::transport::{
+    BrokenCause, EndReason, EndReasonHandle, RecvTransport, TransportCancel, TransportError,
+};
 
 use crate::config::RistConfig;
 use crate::error::RistError;
@@ -65,6 +67,27 @@ pub struct RistRecvTransport {
     /// Set by [`RistCancelHandle::cancel`]; read at entry and at the end of
     /// every poll tick before `alive`.
     cancel: RistCancelHandle,
+    /// Why the stream ended, shared with every handle from
+    /// [`RecvTransport::end_reason_handle`]; written first-writer-wins
+    /// through [`record_rist_end`].
+    end_reason: EndReasonHandle,
+}
+
+/// The reasons a RIST receive stream can end with: a cancel or close, or a
+/// librist read failure. A RIST receiver has no end of stream, so no
+/// `CleanTeardown` is recorded. Every recording site goes through
+/// [`record_rist_end`].
+fn rist_receiver_can_end_with(r: &EndReason) -> bool {
+    matches!(r, EndReason::Cancelled | EndReason::TransportFailed { .. })
+}
+
+/// Record why a RIST receive stream ended (first writer wins).
+fn record_rist_end(h: &EndReasonHandle, r: EndReason) {
+    debug_assert!(
+        rist_receiver_can_end_with(&r),
+        "a RIST receiver cannot end with {r:?}"
+    );
+    h.record(r);
 }
 
 // Same Send/!Sync reasoning as RistTransport: RecvTransport methods take
@@ -92,6 +115,7 @@ impl RistRecvTransport {
             ctx: crate::ctx::RistCtx::open(url, cfg, crate::ctx::Role::Receiver)?,
             alive: Arc::new(AtomicBool::new(true)),
             cancel: RistCancelHandle::new(),
+            end_reason: EndReasonHandle::default(),
         })
     }
 
@@ -119,8 +143,8 @@ impl RistRecvTransport {
     }
 }
 
-impl RecvTransport for RistRecvTransport {
-    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+impl RistRecvTransport {
+    fn recv_once(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         // An empty destination is a no-op — `Ok(0)` before librist
         // or either flag is consulted (the kit row `empty_recv_is_noop`;
         // without this an empty read burns a 100 ms tick and reports
@@ -244,6 +268,23 @@ impl RecvTransport for RistRecvTransport {
             }
         }
     }
+}
+
+impl RecvTransport for RistRecvTransport {
+    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        let r = self.recv_once(buf);
+        match &r {
+            Err(TransportError::ExplicitClose) => {
+                record_rist_end(&self.end_reason, EndReason::Cancelled);
+            }
+            Err(TransportError::Broken { msg, .. }) => record_rist_end(
+                &self.end_reason,
+                EndReason::TransportFailed { msg: msg.clone() },
+            ),
+            _ => {}
+        }
+        r
+    }
 
     fn max_payload(&self) -> usize {
         // Recv-side deliverable ceiling (see RecvTransport::max_payload
@@ -273,7 +314,12 @@ impl RecvTransport for RistRecvTransport {
 
     fn close(&mut self) {
         self.alive.store(false, Ordering::Release);
+        record_rist_end(&self.end_reason, EndReason::Cancelled);
         self.ctx.destroy();
+    }
+
+    fn end_reason_handle(&self) -> Option<EndReasonHandle> {
+        Some(self.end_reason.clone())
     }
 }
 

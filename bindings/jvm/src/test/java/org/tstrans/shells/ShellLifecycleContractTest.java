@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -36,8 +35,7 @@ import org.tstrans.shells.ShellPeers.Tx;
  *       contract of every handle in this binding.
  *   <li>A receive parked on a thread ends within 5 s of {@code cancelHandle().cancel()} from
  *       another thread, with the transport's own exception class (exactly, not a base class)
- *       and kind {@code CLOSED}. An rtp receiver then reports {@link EndReason#CANCELLED}; the other
- *       transports record no end reason and report {@code null}.
+ *       and kind {@code CLOSED}. The receiver then reports {@link EndReason#CANCELLED}.
  *   <li>While a receive is parked, {@code isAlive()} and {@code cancelHandle()} each answer within
  *       1 s. {@code socketStats()} reads the counters held inside the shell, so it waits for the
  *       parked call by design; it answers within 1 s once the cancel has ended that call.
@@ -53,7 +51,8 @@ import org.tstrans.shells.ShellPeers.Tx;
  *       transport's class. A {@code tcp} peer's clean close reads {@code END_OF_STREAM} on the
  *       first receive and every later one. An {@code srt} peer's close reads {@code BROKEN}
  *       first (libsrt reports a broken link, never a clean EOF) and {@code END_OF_STREAM} after.
- *       {@code endReason()} stays {@code null}. A datagram transport ({@code rtp}, {@code udp}, {@code rist}) cannot see a peer close, so it
+ *       {@code endReason()} reads {@code CLEAN_TEARDOWN} for the {@code tcp} peer close and
+ *       {@code TRANSPORT_FAILED} for the {@code srt} one. A datagram transport ({@code rtp}, {@code udp}, {@code rist}) cannot see a peer close, so it
  *       has no rule 8 case.
  * </ol>
  *
@@ -134,13 +133,7 @@ class ShellLifecycleContractTest {
                 assertEquals(ShellPeers.errorClass(scheme), ended.getClass(), String.valueOf(ended));
                 assertEquals("CLOSED", ShellPeers.kindName(ended));
             }
-            // Only the rtp transport records an end reason; the others document
-            // "the transport records no end reason" and answer null.
-            if (scheme.equals("rtp")) {
-                assertEquals(EndReason.CANCELLED, rx.endReason());
-            } else {
-                assertNull(rx.endReason(), scheme + " records no end reason");
-            }
+            assertEquals(EndReason.CANCELLED, rx.endReason());
         }
     }
 
@@ -251,7 +244,9 @@ class ShellLifecycleContractTest {
                 assertEquals(ShellPeers.errorClass(scheme), later.getClass(), String.valueOf(later));
                 assertEquals("END_OF_STREAM", ShellPeers.kindName(later));
             }
-            assertNull(rx.endReason(), scheme + " records no end reason");
+            assertEquals(
+                    scheme.equals("srt") ? EndReason.TRANSPORT_FAILED : EndReason.CLEAN_TEARDOWN,
+                    rx.endReason());
         }
     }
 }

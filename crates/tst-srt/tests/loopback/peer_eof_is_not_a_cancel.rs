@@ -20,7 +20,7 @@
 //! closes and wakes without latching.
 
 use std::time::Duration;
-use tst_core::transport::{RecvTransport, TransportError};
+use tst_core::transport::{EndReason, RecvTransport, TransportError};
 use tst_srt::{SrtSocketBuilder, SrtTransport};
 
 /// Peer closes cleanly while we hold a receiver: the receive ends (EOS or
@@ -122,4 +122,74 @@ fn caller_cancel_still_latches_is_cancelled() {
         handle.is_cancelled(),
         "a caller cancel must latch is_cancelled()"
     );
+}
+
+/// A cancelled receiver records `Cancelled`; a peer's close (libsrt reports
+/// a broken link) records `TransportFailed`, never `CleanTeardown`.
+#[test]
+fn recv_end_reason_is_cancelled_or_transport_failed() {
+    require_loopback!();
+
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+    let accept = lb.spawn_accept(|sock| sock);
+    accept.wait_ready();
+    let socket = SrtSocketBuilder::new()
+        .recv_timeout(Duration::from_millis(200))
+        .latency(Duration::from_millis(120))
+        .connect(format!("127.0.0.1:{port}"))
+        .expect("connect");
+    let handle = socket.cancel_handle();
+    let mut rx = SrtTransport::new(socket);
+    let reason = rx.end_reason_handle().expect("srt records end reasons");
+    assert_eq!(reason.get(), None, "live receiver has no end reason");
+
+    let peer = accept.join();
+    peer.close();
+    let mut buf = vec![0u8; 1500];
+    for _ in 0..100 {
+        match rx.recv_bytes(&mut buf) {
+            Ok(_) | Err(TransportError::Backpressure { .. }) => continue,
+            Err(_) => break,
+        }
+    }
+    assert!(
+        matches!(reason.get(), Some(EndReason::TransportFailed { .. })),
+        "a peer close is a broken link, got {:?}",
+        reason.get()
+    );
+
+    // First writer wins: the cancel afterwards does not overwrite it.
+    handle.cancel();
+    let _ = rx.recv_bytes(&mut buf);
+    assert!(matches!(
+        reason.get(),
+        Some(EndReason::TransportFailed { .. })
+    ));
+}
+
+/// A cancel before any failure records `Cancelled`.
+#[test]
+fn recv_cancel_records_cancelled_end_reason() {
+    require_loopback!();
+
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+    let accept = lb.spawn_accept(|sock| sock);
+    accept.wait_ready();
+    let socket = SrtSocketBuilder::new()
+        .recv_timeout(Duration::from_millis(200))
+        .latency(Duration::from_millis(120))
+        .connect(format!("127.0.0.1:{port}"))
+        .expect("connect");
+    let handle = socket.cancel_handle();
+    let mut rx = SrtTransport::new(socket);
+    let reason = rx.end_reason_handle().expect("srt records end reasons");
+    let _peer = accept.join();
+
+    handle.cancel();
+    let mut buf = vec![0u8; 1500];
+    let r = rx.recv_bytes(&mut buf);
+    assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
+    assert_eq!(reason.get(), Some(EndReason::Cancelled));
 }
