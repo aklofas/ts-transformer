@@ -106,9 +106,8 @@ fn fields(reg: &[Entry], e: &Entry, stub: bool) -> Result<String, String> {
 
 /// The block between the `.py` markers.
 pub fn py_block(reg: &[Entry], e: &Entry) -> Result<String, String> {
-    let s = &e.schema;
     let mut o = String::from("@dataclass(frozen=True, slots=True)\n");
-    o.push_str(&format!("class {}:\n", s.name));
+    o.push_str(&format!("class {}:\n", e.name()));
     let doc = doc_paragraphs(reg, e)?;
     if !doc.is_empty() {
         o.push_str(&docstring_paras(&doc));
@@ -122,7 +121,7 @@ pub fn py_block(reg: &[Entry], e: &Entry) -> Result<String, String> {
 /// The block between the `.pyi` markers.
 pub fn pyi_block(reg: &[Entry], e: &Entry) -> Result<String, String> {
     let mut o = String::from("@dataclass(frozen=True, slots=True)\n");
-    o.push_str(&format!("class {}:\n", e.schema.name));
+    o.push_str(&format!("class {}:\n", e.name()));
     let body = fields(reg, e, true)?;
     o.push_str(if body.is_empty() { "    pass\n" } else { &body });
     Ok(o)

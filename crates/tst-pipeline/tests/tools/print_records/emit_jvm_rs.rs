@@ -117,6 +117,26 @@ impl Gen<'_> {
                     item_pre.join(" ")
                 ));
             }
+            Ty::Host(h) => pre.push(format!(
+                "let {var} = {}(env, {}).map_err(|()| jni::errors::Error::JavaException)?;",
+                crate::typemap::host_jvm(h),
+                deref(src)
+            )),
+            Ty::Map(inner) => {
+                let mut item_pre = Vec::new();
+                let x = self.build_obj(inner, "item", None, &mut item_pre);
+                let seq = src.strip_prefix('&').unwrap_or(src);
+                pre.push(format!(
+                    "let {var} = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {{ \
+                     let map = env.new_object(\"java/util/HashMap\", \"()V\", &[])?; \
+                     for (key, item) in {seq}.iter() {{ \
+                     env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {{ \
+                     let k = env.call_static_method(\"java/lang/Integer\", \"valueOf\", \"(I)Ljava/lang/Integer;\", &[JValue::Int(i32::from(*key))])?.l()?; \
+                     {} env.call_method(&map, \"put\", \"(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;\", &[JValue::Object(&k), JValue::Object(&{x})])?; Ok(()) }})?; }} \
+                     Ok(map) }})?;",
+                    item_pre.join(" ")
+                ));
+            }
             Ty::Custom(_) => unreachable!("custom fields are converted by name"),
         }
         var
@@ -163,6 +183,7 @@ impl Gen<'_> {
                      {tail} }})?; items.push(item); }} items }}"
                 )
             }
+            Ty::Host(_) | Ty::Map(_) => unreachable!("a host-typed field is built, never read"),
             Ty::Custom(_) => unreachable!("custom fields are converted by name"),
         }
     }
@@ -215,7 +236,7 @@ fn var_of(name: &str) -> String {
 fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
     let s = &e.schema;
     let path = e.rust_path;
-    let class = format!("{}/{}", e.java_pkg, s.name);
+    let class = format!("{}/{}", e.java_pkg, e.name());
     let crossing: Vec<&Fld> = flds.iter().filter(|f| f.ty.is_some()).collect();
     let mut g = Gen { reg, e, n: 0 };
     let mut o = format!(
@@ -324,7 +345,7 @@ fn read(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
         let ty = f.ty.as_ref().expect("crossing");
         let name = f.spec.name;
         let var = var_of(name);
-        let fpath = format!("{}.{}", s.name, f.java);
+        let fpath = format!("{}.{}", e.name(), f.java);
         if f.custom {
             o.push_str(&format!(
                 "    let {var} = crate::custom::read_{}_{name}(env, obj)?;\n",
@@ -389,6 +410,17 @@ fn read(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
 /// The builder and reader text for one record, per its direction.
 pub fn record_pair(reg: &[Entry], e: &Entry) -> Result<String, String> {
     let flds = resolve(reg, &e.schema)?;
+    if e.direction.crosses_in() {
+        if let Some(f) = flds
+            .iter()
+            .find(|f| f.ty.as_ref().is_some_and(|t| t.is_to_host_only()) && !f.custom)
+        {
+            return Err(format!(
+                "{}.{}: a map or a host-typed field only crosses to the host; register the record ToHost",
+                e.schema.name, f.spec.name
+            ));
+        }
+    }
     let mut parts = Vec::new();
     if e.direction.crosses_out() {
         parts.push(build(reg, e, &flds));

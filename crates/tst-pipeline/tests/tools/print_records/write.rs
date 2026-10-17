@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::schema::Entry;
-use crate::{emit_java, emit_jvm_rs, emit_py, emit_pyi};
+use crate::{emit_java, emit_jvm_rs, emit_py, emit_pyclass, emit_pyi};
 
 pub enum Kind {
     /// The file is generated end to end.
@@ -94,20 +94,28 @@ pub fn targets(root: &Path, reg: &[Entry]) -> Result<Vec<Target>, String> {
         }
     }
     for e in reg {
-        let name = e.schema.name;
+        let name = e.name();
         let module = e.py_module.replace('.', "/");
         let (begin, end) = markers("#", name);
-        out.push(Target {
-            path: root.join(format!("bindings/python/python/{module}.py")),
-            body: emit_pyi::py_block(reg, e)?,
-            kind: Kind::Block {
-                begin: begin.clone(),
-                end: end.clone(),
-            },
-        });
+        // A native class has no `.py` definition: the module re-exports it
+        // from the extension.
+        if !e.is_native() {
+            out.push(Target {
+                path: root.join(format!("bindings/python/python/{module}.py")),
+                body: emit_pyi::py_block(reg, e)?,
+                kind: Kind::Block {
+                    begin: begin.clone(),
+                    end: end.clone(),
+                },
+            });
+        }
         out.push(Target {
             path: root.join(format!("bindings/python/python/{module}.pyi")),
-            body: emit_pyi::pyi_block(reg, e)?,
+            body: if e.is_native() {
+                emit_pyclass::pyi_block(reg, e)?
+            } else {
+                emit_pyi::pyi_block(reg, e)?
+            },
             kind: Kind::Block { begin, end },
         });
         if e.jvm {
