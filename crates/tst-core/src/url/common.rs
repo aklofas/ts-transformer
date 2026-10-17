@@ -76,6 +76,29 @@ pub enum UrlError {
     /// but unparseable.
     #[error("URL must include a port")]
     MissingPort,
+    /// The URL's scheme is not one the parser accepts. `expected` carries
+    /// the accepted spelling with its quoting, e.g. `'tcp' or 'tcps'`.
+    #[error("URL scheme must be {expected}, got '{got}'")]
+    BadScheme { expected: &'static str, got: String },
+    /// The host is unusable; the message is the caller's full text.
+    #[error("{0}")]
+    BadHost(String),
+    /// The host name did not resolve.
+    #[error("could not resolve host '{host}': {detail}")]
+    HostResolve { host: String, detail: String },
+    /// A query value could not be parsed for its key.
+    #[error("query param '{key}' has invalid value '{value}': {detail}")]
+    BadQueryValue {
+        key: String,
+        value: String,
+        detail: String,
+    },
+    /// A query key the scheme does not define, under a rejecting policy.
+    #[error("unknown URL key '{key}'")]
+    UnknownQueryKey { key: String },
+    /// A transport rule refused the URL; the message is the rule's text.
+    #[error("{0}")]
+    Rejected(String),
 }
 
 /// Parse a URL of shape `scheme://[user[:password]@]host[:port][/path][?query]`.
@@ -354,9 +377,83 @@ where
     value.parse().map_err(|e: T::Err| e.to_string())
 }
 
+fn bad_value(key: &str, value: &str, detail: String) -> UrlError {
+    UrlError::BadQueryValue {
+        key: key.into(),
+        value: value.into(),
+        detail,
+    }
+}
+
+/// [`parse_byte_size`] for the query key `key`, failing with
+/// [`UrlError::BadQueryValue`] carrying the same detail text.
+pub fn parse_size(key: &str, value: &str) -> Result<usize, UrlError> {
+    parse_byte_size(value).map_err(|d| bad_value(key, value, d))
+}
+
+/// [`parse_bool_query`] for the query key `key`, failing with
+/// [`UrlError::BadQueryValue`] carrying the same detail text.
+pub fn parse_bool(key: &str, value: &str) -> Result<bool, UrlError> {
+    parse_bool_query(value).map_err(|d| bad_value(key, value, d))
+}
+
+/// [`parse_int_query`] for the query key `key`, failing with
+/// [`UrlError::BadQueryValue`] carrying the same detail text.
+pub fn parse_int<T>(key: &str, value: &str) -> Result<T, UrlError>
+where
+    T: core::str::FromStr,
+    T::Err: core::fmt::Display,
+{
+    parse_int_query(value).map_err(|d| bad_value(key, value, d))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_parsers_carry_key_value_and_the_old_detail() {
+        assert_eq!(parse_size("rcvbuf", "4M"), Ok(4 << 20));
+        assert_eq!(parse_bool("x", "on"), Ok(true));
+        assert_eq!(parse_int::<u16>("n", "7"), Ok(7));
+        assert_eq!(
+            parse_bool("x", "maybe"),
+            Err(UrlError::BadQueryValue {
+                key: "x".into(),
+                value: "maybe".into(),
+                detail: "expected one of: 1/0/true/false/yes/no/on/off".into(),
+            })
+        );
+        let e = parse_int::<u8>("n", "300").unwrap_err();
+        let UrlError::BadQueryValue { detail, .. } = &e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(Some(detail.clone()), parse_int_query::<u8>("300").err());
+        assert!(parse_size("s", "999M").is_err());
+    }
+
+    #[test]
+    fn new_variants_render_their_text() {
+        let e = UrlError::BadScheme {
+            expected: "'tcp' or 'tcps'",
+            got: "x".into(),
+        };
+        assert_eq!(e.to_string(), "URL scheme must be 'tcp' or 'tcps', got 'x'");
+        assert_eq!(
+            UrlError::UnknownQueryKey { key: "k".into() }.to_string(),
+            "unknown URL key 'k'"
+        );
+        assert_eq!(UrlError::Rejected("no".into()).to_string(), "no");
+        assert_eq!(UrlError::BadHost("bad".into()).to_string(), "bad");
+        assert_eq!(
+            UrlError::HostResolve {
+                host: "h".into(),
+                detail: "d".into()
+            }
+            .to_string(),
+            "could not resolve host 'h': d"
+        );
+    }
 
     #[test]
     fn parse_url_scheme_host_port() {
