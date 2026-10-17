@@ -111,7 +111,8 @@ fn status_of(response: &str) -> u16 {
 fn tcp_to(port: u16) -> TcpStream {
     let tcp = TcpStream::connect(("127.0.0.1", port)).expect("publisher connects");
     tcp.set_nodelay(true).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    tcp.set_read_timeout(Some(super::raw_rtsp::scaled(Duration::from_secs(2))))
+        .unwrap();
     tcp
 }
 
