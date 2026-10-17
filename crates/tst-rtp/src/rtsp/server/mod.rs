@@ -59,8 +59,11 @@ pub(crate) struct ServerState {
     /// Graceful-shutdown signal. `stop()` flips this; per-session tasks
     /// observe via `.cancelled()` await.
     pub(crate) cancel_token: CancellationToken,
-    /// Turns `true` once the listener task has drained every session task
-    /// (bounded by `graceful_shutdown_drain`) and exited. `stop()` waits on it.
+    /// Turns `true` once the listener task has drained every connection
+    /// handler it spawned (bounded by `graceful_shutdown_drain`) and exited.
+    /// `stop()` waits on it. The fanout, multicast and UDP-ingest tasks a
+    /// handler spawns end on the cancel token on their own and are not
+    /// tracked here.
     pub(crate) sessions_ended: Arc<tokio::sync::watch::Sender<bool>>,
     /// Hard-cancel signal (independent from graceful). Exposed publicly
     /// via [`RtspServer::cancel_handle`].
