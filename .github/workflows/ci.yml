@@ -706,7 +706,10 @@ jobs:
           # 196->197 (2026-10-17): +NativeFixture, the native-class emitter-test fixture in the same
           # file (exercises the read-by-name path of a #[non_exhaustive] record); the 36 record
           # attributes that moved inside binding_record! invocations are the same attributes, re-indented.
-          BASELINE=197
+          # 197->194 (2026-10-17): -UdpUrlError, -TcpUrlError, -RistUrlError, -HlsUrlError (the four
+          # small transports report URL errors through tst_core::url::UrlError); +url::query::QueryKey
+          # (hidden). The renamed enums/structs keep their attribute.
+          BASELINE=194
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
             echo "non_exhaustive count regressed: expected >= $BASELINE, observed $OBSERVED" >&2
