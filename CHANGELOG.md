@@ -237,7 +237,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `tstrans.hls.MuxPublisher.send_video` / `send_klv` / `send_audio` /
   `send_subtitle` are renamed `push_video` / `push_klv` / `push_audio` /
-  `push_subtitle`.
+  `push_subtitle`: `send` names an operation that hands bytes to a
+  transport, and a publisher has none (the Rust `MuxPublisher` made the same
+  rename).
 - The shell classes live in `tstrans.shells` (one class per shell for every
   transport; see Added). `tstrans.srt.MuxSender` and `tstrans.rtp.MuxSender`
   are the same class, so `isinstance` checks against the old module's name
@@ -255,7 +257,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   integer.
 - `CancelHandle` and `SocketStats` returned by every srt and rtp class
   (listeners, managed shells, `H264Receiver`, the raw RTP transports) are
-  `tstrans.shells.CancelHandle` / `SocketStats`.
+  `tstrans.shells.CancelHandle` / `SocketStats`: one class per concept across
+  every transport, so a handle or a stats snapshot has one type whatever
+  scheme opened it.
 - `Class.open(url)` (and the deprecated `tstrans.srt`/`tstrans.rtp` aliases) raise `ValueError` for a URL whose scheme no shell supports; previously the srt/rtp class raised its transport's `CONFIG_INVALID`. A supported scheme with a bad URL still raises that transport's error. Because an alias is the unified class, a deprecated alias given another supported scheme opens that transport: `tstrans.srt.MuxSender.from_url("udp://…", cfg)` returns a UDP shell.
 - `tstrans.rtp.MuxSender(url, cfg)` (0.8 and the deprecated 0.9 spelling)
   forced `pkt_size=1316` over a `?pkt_size=` key in the URL; in 0.9 the URL
@@ -294,7 +298,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   constant, not its ordinal.
 - `org.tstrans.hls.MuxPublisher.sendVideo` / `sendKlv` / `sendAudio` /
   `sendSubtitle` are renamed `pushVideo` / `pushKlv` / `pushAudio` /
-  `pushSubtitle`.
+  `pushSubtitle`: `send` names an operation that hands bytes to a transport,
+  and a publisher has none (the Rust `MuxPublisher` made the same rename).
 - The shell classes live in `org.tstrans.shells` (see Added). Their methods
   declare `throws BindingException` (plus `MuxException` on pushes): a
   transport failure throws that transport's exception, and every one of
