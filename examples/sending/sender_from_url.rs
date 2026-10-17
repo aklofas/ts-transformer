@@ -1,7 +1,7 @@
 //! MuxSender-from-URL example.
 //!
 //! Demonstrates the full `srt://host:port?key=value` flow: parse the URL,
-//! merge its keys into a `SocketConfig`, connect. Then opens an
+//! merge its keys into a `SrtSocketConfig`, connect. Then opens an
 //! intentionally-malformed URL to show how each `SrtUrlError` variant
 //! surfaces — the error vocabulary is part of the API and worth seeing
 //! end-to-end.

@@ -21,7 +21,7 @@ Cookbook: [Send a single TS packet](../../docs/cookbook/sending/send-single-pack
 cargo run -p tst-examples --example encrypted_send_recv
 ```
 
-Diff from §1: pass a passphrase + key length on the `SocketBuilder`. The
+Diff from §1: pass a passphrase + key length on the `SrtSocketBuilder`. The
 listener side runs in the same process so the example is self-contained.
 
 Cookbook: [Send video + KLV with passphrase encryption](../../docs/cookbook/sending/send-encrypted.md).

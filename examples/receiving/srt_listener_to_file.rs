@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out_path = args.next().unwrap_or_else(|| "out.ts".into());
 
     // Build the listener via the typed builder rather than constructing a
-    // `ListenerConfig` directly — the builder validates each option as it is
+    // `SrtListenerConfig` directly — the builder validates each option as it is
     // set and produces a bound listener in a single call. The `latency(120ms)`
     // value is the conventional starting point for live SRT: enough buffer
     // for typical round-trip jitter and a handful of retransmissions, without
