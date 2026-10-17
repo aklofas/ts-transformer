@@ -10,6 +10,8 @@ from enum import IntEnum
 from types import TracebackType
 from typing import Optional, Self, Type, final
 
+from tstrans.shells import CancelHandle as CancelHandle
+
 from .exceptions import RistError as RistError
 from .exceptions import RistErrorKind as RistErrorKind
 
@@ -93,39 +95,6 @@ class EncryptionKey:
     def aes256(secret: bytes | str) -> EncryptionKey:
         """AES-256 PSK. ``secret`` may be ``bytes`` or ``str``."""
         ...
-
-
-# ---------------------------------------------------------------------------
-# CancelHandle — cross-thread cancel for Transport / RecvTransport
-# ---------------------------------------------------------------------------
-
-
-@final
-class CancelHandle:
-    """Cross-thread cancel handle for ``Transport`` / ``RecvTransport``.
-
-    ``cancel()`` from any thread ends a ``recv()`` parked in
-    ``RecvTransport`` with ``RistError(kind=CLOSED)`` ("cancelled from
-    another thread") within about one 100 ms poll window, and every later
-    ``send()`` / ``recv()`` on the originating object raises the same.
-    The object is not closed by a cancel — ``close()`` afterwards is
-    quiet.
-
-    Obtain one with ``Transport.cancel_handle()`` /
-    ``RecvTransport.cancel_handle()``. Every handle from the same object
-    shares one flag, which ``close()`` also sets.
-    """
-
-    def cancel(self) -> None:
-        """Signal cancellation. Idempotent."""
-        ...
-
-    def is_cancelled(self) -> bool:
-        """``True`` once this object was cancelled or closed through any
-        handle."""
-        ...
-
-    def __repr__(self) -> str: ...
 
 
 # ---------------------------------------------------------------------------

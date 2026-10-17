@@ -39,7 +39,7 @@ use tst_core::error::MuxError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     AudioCodec, AudioStreamHandle, Av1CarriageMode, DataStreamHandle, KlvStreamHandle,
-    KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, StreamKind, SubtitleCodec,
+    KlvStreamType, MuxStreamKind, Muxer, MuxerConfig, MuxerProgramConfigBuilder, SubtitleCodec,
     SubtitleStreamHandle, VideoCodec, VideoStreamHandle,
 };
 
@@ -353,7 +353,7 @@ jni_native! {
             match handles.as_slice() {
                 [h] => mux.push_video_wire_to(*h, &buf, Pts90khz::new(pts), key_frame != 0),
                 _ => Err(MuxError::AmbiguousTarget {
-                    kind: StreamKind::Video,
+                    kind: MuxStreamKind::Video,
                     count: handles.len(),
                 }),
             }

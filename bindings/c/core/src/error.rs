@@ -443,7 +443,7 @@ pub unsafe extern "C" fn tst_clear_last_error() {
 
 use tst_core::error::{DemuxError, KlvDecodeError, MuxError};
 #[cfg(test)]
-use tst_core::mpegts::mux::StreamKind;
+use tst_core::mpegts::mux::MuxStreamKind;
 use tst_pipeline::binding::BindingError;
 
 /// THE error path for every data-path failure: writes the kind's frozen C
@@ -813,7 +813,7 @@ mod tests {
     #[test]
     fn ambiguous_target_message_points_to_to_siblings() {
         let e = MuxError::AmbiguousTarget {
-            kind: StreamKind::Video,
+            kind: MuxStreamKind::Video,
             count: 2,
         };
         record_mux_error(&e);
@@ -853,7 +853,7 @@ mod tests {
 
     #[test]
     fn every_known_mux_error_variant_maps_to_expected_code() {
-        use tst_core::mpegts::mux::{StreamKind, TeletextField};
+        use tst_core::mpegts::mux::{MuxStreamKind, TeletextField};
 
         // (variant, expected TstError code). Cover every variant of MuxError.
         // Expected codes come from reading record_mux_error's explicit match
@@ -888,14 +888,14 @@ mod tests {
             ),
             (
                 MuxError::InvalidStreamHandle {
-                    kind: StreamKind::Video,
+                    kind: MuxStreamKind::Video,
                     index: 0,
                 },
                 TstError::InvalidUsage,
             ),
             (
                 MuxError::AmbiguousTarget {
-                    kind: StreamKind::Video,
+                    kind: MuxStreamKind::Video,
                     count: 2,
                 },
                 TstError::InvalidUsage,
@@ -1010,7 +1010,7 @@ mod tests {
             ),
             (
                 MuxError::DescriptorIndexOutOfRange {
-                    kind: StreamKind::Video,
+                    kind: MuxStreamKind::Video,
                     index: 5,
                     program_number: 1,
                 },

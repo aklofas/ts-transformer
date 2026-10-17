@@ -350,34 +350,34 @@ impl DemuxerConfigBuilder {
         Self::default()
     }
 
-    pub fn strict(mut self, mode: StrictMode) -> Self {
+    pub fn strict(&mut self, mode: StrictMode) -> &mut Self {
         self.options.strict = mode;
         self
     }
 
-    pub fn pes_cap_per_pid(mut self, bytes: usize) -> Self {
+    pub fn pes_cap_per_pid(&mut self, bytes: usize) -> &mut Self {
         self.options.pes_cap_per_pid = Some(bytes);
         self
     }
 
-    pub fn pes_cap_total(mut self, bytes: usize) -> Self {
+    pub fn pes_cap_total(&mut self, bytes: usize) -> &mut Self {
         self.options.pes_cap_total = Some(bytes);
         self
     }
 
     /// Set the pre-sync ingress buffer ceiling. See
     /// [`DemuxerConfig::sync_buf_cap`].
-    pub fn sync_buf_cap(mut self, bytes: usize) -> Self {
+    pub fn sync_buf_cap(&mut self, bytes: usize) -> &mut Self {
         self.options.sync_buf_cap = Some(bytes);
         self
     }
 
-    pub fn link_klv(mut self, klv_pid: u16, video_pid: u16) -> Self {
+    pub fn link_klv(&mut self, klv_pid: u16, video_pid: u16) -> &mut Self {
         self.options.klv_link_overrides.push((klv_pid, video_pid));
         self
     }
 
-    pub fn treat_as(mut self, pid: u16, kind: StreamKind) -> Self {
+    pub fn treat_as(&mut self, pid: u16, kind: StreamKind) -> &mut Self {
         self.options.stream_kind_overrides.insert(pid, kind);
         self
     }
@@ -385,28 +385,28 @@ impl DemuxerConfigBuilder {
     /// Set the expected AV1 PES carriage mode. Default
     /// [`crate::mpegts::common::Av1CarriageMode::Mpeg2TsBinding`] (spec-conformant).
     /// Set to `InteropRawObu` to match ffmpeg/libaom/hls.js senders.
-    pub fn av1_carriage(mut self, mode: crate::mpegts::common::Av1CarriageMode) -> Self {
+    pub fn av1_carriage(&mut self, mode: crate::mpegts::common::Av1CarriageMode) -> &mut Self {
         self.options.av1_carriage = mode;
         self
     }
 
     /// Set the per-PID AU cell reassembly buffer cap. See
     /// [`DemuxerConfig::au_cell_cap_per_pid`].
-    pub fn au_cell_cap_per_pid(mut self, bytes: usize) -> Self {
+    pub fn au_cell_cap_per_pid(&mut self, bytes: usize) -> &mut Self {
         self.options.au_cell_cap_per_pid = Some(bytes);
         self
     }
 
     /// Set the aggregate AU cell reassembly cap across all PIDs. See
     /// [`DemuxerConfig::au_cell_cap_total`].
-    pub fn au_cell_cap_total(mut self, bytes: usize) -> Self {
+    pub fn au_cell_cap_total(&mut self, bytes: usize) -> &mut Self {
         self.options.au_cell_cap_total = Some(bytes);
         self
     }
 
     /// Set the ceiling on concurrently in-flight AU cell reassembly PIDs.
     /// See [`DemuxerConfig::au_cell_max_in_flight_pids`].
-    pub fn au_cell_max_in_flight_pids(mut self, pids: usize) -> Self {
+    pub fn au_cell_max_in_flight_pids(&mut self, pids: usize) -> &mut Self {
         self.options.au_cell_max_in_flight_pids = Some(pids);
         self
     }
@@ -415,20 +415,20 @@ impl DemuxerConfigBuilder {
     /// `cell_fragment_indication` bits are set to `0b00` (middle) or
     /// `0b01` (last) without a prior First cell. See
     /// [`DemuxerConfig::cfi_tolerance`].
-    pub fn cfi_tolerance(mut self, enable: bool) -> Self {
+    pub fn cfi_tolerance(&mut self, enable: bool) -> &mut Self {
         self.options.cfi_tolerance = enable;
         self
     }
 
     /// Enable the opt-in PTS/DTS unwrap. See
     /// [`DemuxerConfig::unwrap_timestamps`].
-    pub fn unwrap_timestamps(mut self, enable: bool) -> Self {
+    pub fn unwrap_timestamps(&mut self, enable: bool) -> &mut Self {
         self.options.unwrap_timestamps = enable;
         self
     }
 
-    pub fn build(self) -> DemuxerConfig {
-        self.options
+    pub fn build(&self) -> DemuxerConfig {
+        self.options.clone()
     }
 }
 
@@ -470,16 +470,16 @@ mod tests {
 
     #[test]
     fn builder_sets_cfi_tolerance() {
-        let builder = DemuxerConfig::builder().cfi_tolerance(true);
+        let mut builder = DemuxerConfig::builder();
+        builder.cfi_tolerance(true);
         let config = builder.options;
         assert!(config.cfi_tolerance);
     }
 
     #[test]
     fn builder_can_toggle_cfi_tolerance_off() {
-        let builder = DemuxerConfig::builder()
-            .cfi_tolerance(true)
-            .cfi_tolerance(false);
+        let mut builder = DemuxerConfig::builder();
+        builder.cfi_tolerance(true).cfi_tolerance(false);
         assert!(!builder.options.cfi_tolerance);
     }
 
@@ -490,7 +490,8 @@ mod tests {
 
     #[test]
     fn builder_sets_unwrap_timestamps() {
-        let builder = DemuxerConfig::builder().unwrap_timestamps(true);
+        let mut builder = DemuxerConfig::builder();
+        builder.unwrap_timestamps(true);
         assert!(builder.options.unwrap_timestamps);
     }
 }

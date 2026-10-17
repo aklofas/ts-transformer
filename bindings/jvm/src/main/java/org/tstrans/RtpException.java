@@ -3,7 +3,7 @@ package org.tstrans;
 /**
  * Checked exception for the RTP transport surface ({@code org.tstrans.rtp}).
  * {@link Kind} carries the Rust {@code tst_core::transport::TransportError}
- * projections an rtp shell can raise plus {@code tst_rtp::ConnectError}'s six
+ * projections an rtp shell can raise plus {@code tst_rtp::RtpConnectError}'s six
  * variants; the names are the {@code BindingErrorKind} members, verified
  * against this enum at load time by {@link NativeLoader}.
  */

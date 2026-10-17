@@ -489,7 +489,7 @@ fn push_video_to_invalid_handle_rejects() {
     assert!(matches!(
         m.push_video_to(bad, &nal, Pts90khz::new(0), false),
         Err(MuxError::InvalidStreamHandle {
-            kind: StreamKind::Video,
+            kind: MuxStreamKind::Video,
             ..
         })
     ));
@@ -503,7 +503,7 @@ fn push_klv_to_invalid_handle_rejects() {
     assert!(matches!(
         m.push_klv_to(bad, &klv, Pts90khz::new(0), 0x00),
         Err(MuxError::InvalidStreamHandle {
-            kind: StreamKind::Klv,
+            kind: MuxStreamKind::Klv,
             ..
         })
     ));
@@ -526,7 +526,7 @@ fn push_video_rejects_when_multiple_video_streams_configured() {
     assert!(matches!(
         m.push_video(&nal, Pts90khz::new(0), false),
         Err(MuxError::AmbiguousTarget {
-            kind: StreamKind::Video,
+            kind: MuxStreamKind::Video,
             count: 2
         })
     ));
@@ -548,7 +548,7 @@ fn push_klv_rejects_when_multiple_klv_streams_configured() {
     assert!(matches!(
         m.push_klv(&klv, Pts90khz::new(0), 0x00),
         Err(MuxError::AmbiguousTarget {
-            kind: StreamKind::Klv,
+            kind: MuxStreamKind::Klv,
             count: 2
         })
     ));
@@ -568,7 +568,7 @@ fn push_video_rejects_when_no_video_streams_configured() {
     assert!(matches!(
         m.push_video(&nal, Pts90khz::new(0), false),
         Err(MuxError::AmbiguousTarget {
-            kind: StreamKind::Video,
+            kind: MuxStreamKind::Video,
             count: 0
         })
     ));
@@ -719,7 +719,7 @@ fn bare_push_audio_rejects_when_two_audio_streams_configured() {
         matches!(
             err,
             MuxError::AmbiguousTarget {
-                kind: StreamKind::Audio,
+                kind: MuxStreamKind::Audio,
                 count: 2
             }
         ),

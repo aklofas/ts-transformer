@@ -17,7 +17,7 @@ use tst_core::MuxError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, SamplePayload, StreamKind as DemuxStreamKind};
 use tst_core::mpegts::mux::{
-    DataStreamHandle, Muxer, MuxerConfig, MuxerProgramConfigBuilder, StreamKind, VideoCodec,
+    DataStreamHandle, MuxStreamKind, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
 
 /// One video + three data streams (0xF0 w/ descriptor, 0xF1, bare 0x06
@@ -184,7 +184,7 @@ fn data_push_errors() {
     let mut mux = Muxer::new(three_data_cfg()).unwrap();
     match mux.push_data(b"x", Pts90khz::new(0)) {
         Err(MuxError::AmbiguousTarget { kind, count }) => {
-            assert_eq!(kind, StreamKind::Data);
+            assert_eq!(kind, MuxStreamKind::Data);
             assert_eq!(count, 3);
         }
         other => panic!("expected AmbiguousTarget, got {other:?}"),
@@ -193,7 +193,7 @@ fn data_push_errors() {
     // Out-of-range handle (program 0 has only 3 data streams).
     match mux.push_data_to(DataStreamHandle::pack(0, 7), b"x", Pts90khz::new(0)) {
         Err(MuxError::InvalidStreamHandle { kind, index }) => {
-            assert_eq!(kind, StreamKind::Data);
+            assert_eq!(kind, MuxStreamKind::Data);
             assert_eq!(index, 7);
         }
         other => panic!("expected InvalidStreamHandle, got {other:?}"),

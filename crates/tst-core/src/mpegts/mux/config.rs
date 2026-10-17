@@ -9,7 +9,7 @@ use crate::error::MuxError;
 use crate::mpegts::common::pid;
 use crate::mpegts::mux::types::{
     AudioCodec, Av1CarriageMode, KlvStreamType, MAX_PROGRAMS, MAX_SUBTITLE_STREAMS_PER_PROGRAM,
-    StreamKind, StreamSpec, SubtitleCodec, TeletextField, VideoCodec,
+    MuxStreamKind, StreamSpec, SubtitleCodec, TeletextField, VideoCodec,
 };
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -1008,7 +1008,7 @@ impl MuxerProgramConfigBuilder {
 
     /// Add an arbitrary private/application data elementary stream to this
     /// program (PES pass-through, the write-side dual of demux
-    /// `StreamKind::Unknown`).
+    /// `MuxStreamKind::Unknown`).
     ///
     /// `pid` must be in `0x0010..=0x1FFE` and distinct from all other PIDs
     /// in this program. `stream_type` is the raw PMT stream_type byte
@@ -1057,7 +1057,7 @@ impl MuxerProgramConfigBuilder {
         descs: Vec<Vec<u8>>,
     ) -> Result<&mut Self, MuxError> {
         self.set_descriptors_for_kind(
-            StreamKind::Video,
+            MuxStreamKind::Video,
             |s| matches!(s, StreamSpec::Video { .. }),
             video_idx,
             descs,
@@ -1077,7 +1077,7 @@ impl MuxerProgramConfigBuilder {
         descs: Vec<Vec<u8>>,
     ) -> Result<&mut Self, MuxError> {
         self.set_descriptors_for_kind(
-            StreamKind::Klv,
+            MuxStreamKind::Klv,
             |s| matches!(s, StreamSpec::Klv { .. }),
             klv_idx,
             descs,
@@ -1097,7 +1097,7 @@ impl MuxerProgramConfigBuilder {
         descs: Vec<Vec<u8>>,
     ) -> Result<&mut Self, MuxError> {
         self.set_descriptors_for_kind(
-            StreamKind::Audio,
+            MuxStreamKind::Audio,
             |s| matches!(s, StreamSpec::Audio { .. }),
             audio_idx,
             descs,
@@ -1124,7 +1124,7 @@ impl MuxerProgramConfigBuilder {
         descs: Vec<Vec<u8>>,
     ) -> Result<&mut Self, MuxError> {
         self.set_descriptors_for_kind(
-            StreamKind::Subtitle,
+            MuxStreamKind::Subtitle,
             |s| matches!(s, StreamSpec::Subtitle { .. }),
             subtitle_idx,
             descs,
@@ -1147,7 +1147,7 @@ impl MuxerProgramConfigBuilder {
         descs: Vec<Vec<u8>>,
     ) -> Result<&mut Self, MuxError> {
         self.set_descriptors_for_kind(
-            StreamKind::Data,
+            MuxStreamKind::Data,
             |s| matches!(s, StreamSpec::Data { .. }),
             data_idx,
             descs,
@@ -1162,7 +1162,7 @@ impl MuxerProgramConfigBuilder {
     /// `kind_idx + 1` matching streams have been added.
     fn set_descriptors_for_kind(
         &mut self,
-        kind: StreamKind,
+        kind: MuxStreamKind,
         is_kind: impl Fn(&StreamSpec) -> bool,
         kind_idx: usize,
         descs: Vec<Vec<u8>>,

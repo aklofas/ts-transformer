@@ -489,8 +489,9 @@ fn overflow_drops_buffer_emits_nonconformant() {
     patch_au_cell(&mut ts, off0, CellFragmentIndication::First, 10, &a);
     patch_au_cell(&mut ts, off1, CellFragmentIndication::Middle, 11, &b);
 
-    let builder = DemuxerConfig::builder().au_cell_cap_per_pid(10); // 5 + 10 = 15 > 10
-    let events = collect_events_with(builder, &ts);
+    let mut builder = DemuxerConfig::builder();
+    builder.au_cell_cap_per_pid(10); // 5 + 10 = 15 > 10
+    let events = collect_events_with(&builder, &ts);
 
     assert!(
         !events

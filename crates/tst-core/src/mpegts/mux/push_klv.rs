@@ -15,7 +15,7 @@ use super::pes::{
     write_pes_header,
 };
 use super::state::ts_packets_for;
-use super::types::{KlvStreamHandle, KlvStreamType, StreamKind};
+use super::types::{KlvStreamHandle, KlvStreamType, MuxStreamKind};
 
 impl Muxer {
     /// Push one KLV metadata blob.
@@ -56,7 +56,7 @@ impl Muxer {
         let handle = super::resolve_lone(
             &self.klv_streams,
             MuxError::NoKlvStreamsConfigured,
-            StreamKind::Klv,
+            MuxStreamKind::Klv,
             KlvStreamHandle::pack,
         )?;
         self.push_klv_to(handle, klv, pts, metadata_service_id)
@@ -134,7 +134,7 @@ impl Muxer {
         let (prog_idx, within_idx) = handle.unpack();
         if prog_idx >= self.klv_streams.len() || within_idx >= self.klv_streams[prog_idx].len() {
             return Err(MuxError::InvalidStreamHandle {
-                kind: StreamKind::Klv,
+                kind: MuxStreamKind::Klv,
                 index: handle.0 as usize,
             });
         }

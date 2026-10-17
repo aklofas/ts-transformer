@@ -9,7 +9,7 @@
 
 use tst_core::codec::misp_time::MispTimeError;
 use tst_core::error::{DemuxError, MuxError};
-use tst_core::mpegts::mux::{StreamKind, TeletextField};
+use tst_core::mpegts::mux::{MuxStreamKind, TeletextField};
 use tst_core::transport::{BrokenCause, TransportError};
 
 /// All 38 `MuxError` variants, in `crates/tst-core/src/error.rs` order.
@@ -28,11 +28,11 @@ pub fn every_mux_error() -> Vec<MuxError> {
         MuxError::KlvTooLarge { size: 2, max: 1 },
         MuxError::AudioTooLarge { size: 2, max: 1 },
         MuxError::InvalidStreamHandle {
-            kind: StreamKind::Video,
+            kind: MuxStreamKind::Video,
             index: 3,
         },
         MuxError::AmbiguousTarget {
-            kind: StreamKind::Klv,
+            kind: MuxStreamKind::Klv,
             count: 2,
         },
         MuxError::NoKlvStreamsConfigured,
@@ -82,7 +82,7 @@ pub fn every_mux_error() -> Vec<MuxError> {
         MuxError::DataTooLarge { size: 2, max: 1 },
         MuxError::DataPidUsedAsPcrPid { pid: 0x102 },
         MuxError::DescriptorIndexOutOfRange {
-            kind: StreamKind::Audio,
+            kind: MuxStreamKind::Audio,
             index: 5,
             program_number: 1,
         },

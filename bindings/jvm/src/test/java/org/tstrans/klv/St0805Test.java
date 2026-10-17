@@ -219,15 +219,16 @@ class St0805Test {
     }
 
     // -----------------------------------------------------------------------
-    // Negative jlong -> u64 wrap guards
+    // Negative jlong -> unsigned bit pattern
     // -----------------------------------------------------------------------
 
     @Test
-    void negativeGeneratedUsThrows() {
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> Klv.platformPositionXml(fixture(), -1L));
-        assertTrue(ex.getMessage().contains("generatedUs"),
-                "expected message to mention generatedUs; got: " + ex.getMessage());
+    void negativeGeneratedUsIsTheBitPatternOfALargeUnsignedTime() {
+        // Java has no unsigned long: -1 reads as 2^64 - 1 microseconds, which is
+        // year 586524, and the call returns rather than throwing.
+        String xml = Klv.platformPositionXml(fixture(), -1L);
+        assertTrue(xml.contains("=\"586524-01-19T08:01:49.551615Z\"/>"),
+                "expected the flow-tags time to be 2^64-1 microseconds; got: " + xml);
     }
 
     @Test
@@ -236,7 +237,8 @@ class St0805Test {
         // and the stale time saturates rather than the call throwing.
         CotConfig cfg = CotConfig.builder().updateIntervalUs(-5L).build();
         String xml = Klv.platformPositionXml(fixture(), cfg, GENERATED_US);
-        assertTrue(xml.contains("stale="), "expected a stale attribute; got: " + xml);
+        assertTrue(xml.contains("stale=\"586524-01-19T08:01:49.551615Z\""),
+                "expected the stale time to saturate at 2^64-1 microseconds; got: " + xml);
     }
 
     @Test

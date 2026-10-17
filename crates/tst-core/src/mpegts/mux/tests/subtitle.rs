@@ -107,7 +107,7 @@ fn push_subtitle_bare_rejects_when_multiple_subtitle_streams() {
         matches!(
             err,
             MuxError::AmbiguousTarget {
-                kind: StreamKind::Subtitle,
+                kind: MuxStreamKind::Subtitle,
                 count: 2,
             }
         ),

@@ -135,11 +135,15 @@ pub use mux_sender::{MuxSender, MuxSenderError, MuxSenderErrorSource, MuxSenderS
 // under `ext::pairing` to signal its opt-in, extension-module nature.
 // Callers write `use tst_pipeline::ext::pairing::Pairer` explicitly.
 // See `crate::ext` for rationale.
+#[allow(deprecated)]
+pub use raw_receiver::RawRecvStats;
 pub use raw_receiver::{
-    RawReceiver, RawReceiverConfig, RawReceiverError, RawReceiverErrorSource, RawRecvStats,
+    RawReceiver, RawReceiverConfig, RawReceiverError, RawReceiverErrorSource, RawReceiverStats,
 };
+#[allow(deprecated)]
+pub use raw_sender::RawSendStats;
 pub use raw_sender::{
-    RawSendStats, RawSender, RawSenderConfig, RawSenderError, RawSenderErrorSource,
+    RawSender, RawSenderConfig, RawSenderError, RawSenderErrorSource, RawSenderStats,
 };
 pub use receiver::{Receiver, ReceiverConfig, ReceiverError, ReceiverErrorSource, ReceiverStats};
 #[cfg(feature = "std")]

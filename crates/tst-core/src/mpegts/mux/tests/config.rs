@@ -565,10 +565,10 @@ fn data_cap_enforced() {
 
 #[test]
 fn stream_kind_display() {
-    assert_eq!(StreamKind::Video.to_string(), "video");
-    assert_eq!(StreamKind::Audio.to_string(), "audio");
-    assert_eq!(StreamKind::Klv.to_string(), "klv");
-    assert_eq!(StreamKind::Subtitle.to_string(), "subtitle");
+    assert_eq!(MuxStreamKind::Video.to_string(), "video");
+    assert_eq!(MuxStreamKind::Audio.to_string(), "audio");
+    assert_eq!(MuxStreamKind::Klv.to_string(), "klv");
+    assert_eq!(MuxStreamKind::Subtitle.to_string(), "subtitle");
 }
 
 #[test]

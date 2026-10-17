@@ -187,8 +187,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   | `?pt=33` | `invalid pt '33': payload type 33 is MPEG-TS — use the MP2T receiver (no ?pt=)` | `bad value for query parameter pt: 33 (payload type 33 is MPEG-TS — use the MP2T receiver (no ?pt=))` |
   | `?recv_timeout=0` | `invalid recv_timeout '0': must be nonzero` | `bad value for query parameter recv_timeout: 0 (must be nonzero)` |
 
-  Every other key follows the same pattern: the old `invalid <key> '<value>':
-  <reason>` is now `bad value for query parameter <key>: <value> (<reason>)`.
+  The same rewrite applies to the remaining keys: the old `invalid <key>
+  '<value>': <reason>` is now `bad value for query parameter <key>: <value>
+  (<reason>)`. Seven keys carried no reason before and carry none now (`iface`,
+  `rcvbuf`, `sndbuf`, `source`, `transport`, `rtsp_version`, `tcp_keepalive`);
+  they read `bad value for query parameter <key>: <value>`.
 
 ### Changed — tst-core (BREAKING)
 
@@ -221,6 +224,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   need not (and, without an unreachable-pattern warning, should not) carry a
   wildcard arm. Kind enums are deliberately exhaustive so that a new kind is
   a compile error in every exhaustive match.
+- `DemuxerConfigBuilder` setters take `&mut self` and `build` takes `&self`,
+  like `MuxerConfigBuilder`, so every builder in the workspace follows one
+  rule. Chained calls on a temporary are unchanged; a builder held in a `let`
+  is now mutated in place instead of consumed.
 
 ### Changed — tst-pipeline (BREAKING)
 
@@ -361,6 +368,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tstrans.srt.SrtStats.rtt_us` no longer stops at the 32-bit maximum (about
   71 minutes); it is the whole round-trip time in microseconds. The old
   saturation hid long round trips.
+- `tstrans.udp.CancelHandle`, `tstrans.tcp.CancelHandle` and
+  `tstrans.rist.CancelHandle` are `tstrans.shells.CancelHandle`: one class over
+  the same cancel state instead of one class per transport. `isinstance` checks keep
+  working; `repr` and `__module__` now name `tstrans.shells`.
 
 ### Changed — tst-jni (BREAKING)
 
@@ -445,6 +456,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   so a decoded value with bit 63 set encodes back unchanged.
 - `org.tstrans.srt.SrtStats.rttUs` no longer stops at the 32-bit maximum (about
   71 minutes); it is the whole round-trip time in microseconds.
+- `St0805`'s `generatedUs` argument follows the unsigned bit-pattern contract of
+  every other `long` timestamp: a negative value is a large unsigned time, not
+  an `IllegalArgumentException`, because Java has no unsigned `long` and the
+  other timestamp arguments already read it this way.
 
 ### Changed — tst-c
 
@@ -711,6 +726,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   components has. `org.tstrans.hls.PublisherStats`, which carries its
   optional durations as `-1`, `org.tstrans.rtp.RtspStats` and
   `org.tstrans.shells.TransportStats` stay hand-written.
+
+### Deprecated — tst-core
+
+- `mpegts::mux::StreamKind` is renamed `MuxStreamKind`; the old name is a
+  deprecated alias until 0.10.0. The demux event's `StreamKind` keeps its name:
+  two different types shared one.
+
+### Deprecated — tst-pipeline
+
+- `RawSendStats` is renamed `RawSenderStats` and `RawRecvStats` is renamed
+  `RawReceiverStats`, matching the `RawSender` and `RawReceiver` shells they
+  belong to; the old names are deprecated aliases until 0.10.0.
 
 ### Deprecated — tst-srt
 

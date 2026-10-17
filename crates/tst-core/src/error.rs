@@ -6,7 +6,7 @@
 use alloc::string::String;
 use thiserror::Error;
 
-use crate::mpegts::mux::{StreamKind, TeletextField};
+use crate::mpegts::mux::{MuxStreamKind, TeletextField};
 
 // ============================================================================
 // KLV errors
@@ -524,7 +524,7 @@ pub enum MuxError {
     /// muxer that produced them — passing one from a different muxer is
     /// also rejected here.
     #[error("invalid {kind} stream handle (index {index}) — not a configured stream")]
-    InvalidStreamHandle { kind: StreamKind, index: usize },
+    InvalidStreamHandle { kind: MuxStreamKind, index: usize },
 
     /// Caller invoked the no-suffix `push_video` / `push_klv` (or the
     /// `MuxSender::send_video` / `send_klv` wrappers) on a muxer that has more
@@ -533,7 +533,7 @@ pub enum MuxError {
     #[error(
         "ambiguous push: {count} {kind} streams configured — call push_{kind}_to(handle, ...) instead"
     )]
-    AmbiguousTarget { kind: StreamKind, count: usize },
+    AmbiguousTarget { kind: MuxStreamKind, count: usize },
 
     /// `Muxer::push_klv` shorthand called when no KLV streams configured.
     /// Use `push_klv_to(handle, ...)` with a KLV handle from `klv_handles()`,
@@ -719,7 +719,7 @@ pub enum MuxError {
          (call after the corresponding add_{kind})"
     )]
     DescriptorIndexOutOfRange {
-        kind: StreamKind,
+        kind: MuxStreamKind,
         index: u32,
         program_number: u16,
     },
@@ -947,7 +947,7 @@ mod tests {
     #[test]
     fn descriptor_index_out_of_range_displays() {
         let err = MuxError::DescriptorIndexOutOfRange {
-            kind: StreamKind::Video,
+            kind: MuxStreamKind::Video,
             index: 5,
             program_number: 1,
         };

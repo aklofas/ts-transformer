@@ -18,7 +18,7 @@ use super::pes::{
 };
 use super::state::{ts_packets_for, validate_annex_b, wrap_av1_obus_binding};
 use super::ts::AdaptationField;
-use super::types::{Av1CarriageMode, StreamKind, VideoCodec, VideoStreamHandle};
+use super::types::{Av1CarriageMode, MuxStreamKind, VideoCodec, VideoStreamHandle};
 
 /// Whether the caller-supplied bytes are elementary (need binding
 /// framing in `Mpeg2TsBinding` mode) or already in on-wire carriage form
@@ -61,7 +61,7 @@ impl Muxer {
         let total_video: usize = self.video_streams.iter().map(|v| v.len()).sum();
         if total_video != 1 {
             return Err(MuxError::AmbiguousTarget {
-                kind: StreamKind::Video,
+                kind: MuxStreamKind::Video,
                 count: total_video,
             });
         }
@@ -291,7 +291,7 @@ impl Muxer {
         if prog_idx >= self.video_streams.len() || within_idx >= self.video_streams[prog_idx].len()
         {
             return Err(MuxError::InvalidStreamHandle {
-                kind: StreamKind::Video,
+                kind: MuxStreamKind::Video,
                 index: handle.0 as usize,
             });
         }
@@ -403,7 +403,7 @@ impl Muxer {
             // Report the raw packed value as an opaque index so the error message
             // carries the full handle encoding without confusing prog vs within.
             return Err(MuxError::InvalidStreamHandle {
-                kind: StreamKind::Video,
+                kind: MuxStreamKind::Video,
                 index: handle.0 as usize,
             });
         }

@@ -156,48 +156,6 @@ impl From<PyRistProfile> for RistProfile {
 // PyRistTransport — wraps tst_rist::RistTransport
 // ---------------------------------------------------------------------------
 
-/// Python-side cancel handle. Wraps the shell's shared
-/// [`crate::util::CancelSource`], which forwards into the transport's real
-/// `RistCancelHandle`: every handle obtained from the same shell — and the
-/// shell's own `close()` — flips one flag, so `is_cancelled()` reports the
-/// shell's state, not this wrapper's history.
-#[pyclass(frozen, name = "CancelHandle", module = "tstrans.rist")]
-pub(crate) struct PyRistCancelHandle {
-    src: Arc<CancelSource>,
-}
-
-#[pymethods]
-impl PyRistCancelHandle {
-    /// Signal cancellation. Idempotent — repeated calls are a no-op.
-    /// A `RecvTransport.recv()` parked on librist's poll raises
-    /// `RistError(CLOSED)` (detail "cancelled from another thread") within
-    /// about one 100 ms window, and every later `send()` / `recv()` on the
-    /// originating object raises the same. The object itself is NOT
-    /// closed — call `close()` (quiet after a cancel) to release it.
-    fn cancel(&self) {
-        tst_core::transport::TransportCancel::cancel(&*self.src);
-    }
-
-    /// `True` once the shell was cancelled or closed through ANY handle
-    /// or its own `close()` (shared state).
-    fn is_cancelled(&self) -> bool {
-        self.src.is_cancelled()
-    }
-
-    fn __repr__(&self) -> String {
-        format!("CancelHandle(cancelled={})", self.is_cancelled())
-    }
-}
-
-impl PyRistCancelHandle {
-    /// The single constructor both rist transport classes use.
-    pub(crate) fn from_source(src: &Arc<CancelSource>) -> Self {
-        Self {
-            src: Arc::clone(src),
-        }
-    }
-}
-
 /// RIST sender — wraps `tst_rist::RistTransport`.
 ///
 /// Construct via `Transport.builder().url("rist://host:port").build()`.
@@ -223,8 +181,11 @@ pub(crate) struct PyRistTransport {
 impl PyRistTransport {
     /// Obtain a cross-thread cancel handle. Lock-free: never waits behind
     /// an in-flight `send()` (the handle lives outside the slot).
-    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyRistCancelHandle>> {
-        Py::new(py, PyRistCancelHandle::from_source(&self.cancel))
+    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<crate::shells::cancel::PyCancelHandle>> {
+        Py::new(
+            py,
+            crate::shells::cancel::PyCancelHandle::from_source(&self.cancel),
+        )
     }
 
     /// Return a builder for configuring and constructing a `Transport`.
@@ -487,8 +448,11 @@ pub(crate) struct PyRistRecvTransport {
 impl PyRistRecvTransport {
     /// Obtain a cross-thread cancel handle. Lock-free: never waits behind
     /// a parked `recv()` (the handle lives outside the slot).
-    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyRistCancelHandle>> {
-        Py::new(py, PyRistCancelHandle::from_source(&self.cancel))
+    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<crate::shells::cancel::PyCancelHandle>> {
+        Py::new(
+            py,
+            crate::shells::cancel::PyCancelHandle::from_source(&self.cancel),
+        )
     }
 
     /// Return a builder for configuring and constructing a `RecvTransport`.
@@ -716,7 +680,6 @@ impl PyRistRecvTransportBuilder {
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(parent.py(), "rist")?;
-    m.add_class::<PyRistCancelHandle>()?;
     m.add_class::<PyRistProfile>()?;
     crate::generated::stats_rist::register(&m)?;
     m.add_class::<PyEncryptionKey>()?;

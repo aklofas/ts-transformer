@@ -4,7 +4,7 @@
 
 use tst_core::MuxError;
 use tst_core::mpegts::mux::{
-    AudioCodec, KlvStreamType, MuxerProgramConfigBuilder, StreamKind, SubtitleCodec, VideoCodec,
+    AudioCodec, KlvStreamType, MuxStreamKind, MuxerProgramConfigBuilder, SubtitleCodec, VideoCodec,
 };
 
 #[test]
@@ -20,7 +20,7 @@ fn stream_descriptors_for_video_out_of_range_does_not_panic() {
             index,
             program_number,
         }) => {
-            assert_eq!(kind, StreamKind::Video);
+            assert_eq!(kind, MuxStreamKind::Video);
             assert_eq!(index, 5);
             assert_eq!(program_number, 1);
         }
@@ -40,7 +40,7 @@ fn stream_descriptors_for_klv_out_of_range_does_not_panic() {
             index,
             program_number,
         }) => {
-            assert_eq!(kind, StreamKind::Klv);
+            assert_eq!(kind, MuxStreamKind::Klv);
             assert_eq!(index, 5);
             assert_eq!(program_number, 1);
         }
@@ -60,7 +60,7 @@ fn stream_descriptors_for_audio_out_of_range_does_not_panic() {
             index,
             program_number,
         }) => {
-            assert_eq!(kind, StreamKind::Audio);
+            assert_eq!(kind, MuxStreamKind::Audio);
             assert_eq!(index, 5);
             assert_eq!(program_number, 1);
         }
@@ -88,7 +88,7 @@ fn stream_descriptors_for_subtitle_out_of_range_does_not_panic() {
             index,
             program_number,
         }) => {
-            assert_eq!(kind, StreamKind::Subtitle);
+            assert_eq!(kind, MuxStreamKind::Subtitle);
             assert_eq!(index, 5);
             assert_eq!(program_number, 1);
         }

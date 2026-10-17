@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use super::Muxer;
 use super::pes::{PesPtsField, write_audio_pes};
 use super::state::ts_packets_for;
-use super::types::{AudioStreamHandle, StreamKind};
+use super::types::{AudioStreamHandle, MuxStreamKind};
 
 impl Muxer {
     /// Push one audio frame buffer, single-stream shorthand.
@@ -41,7 +41,7 @@ impl Muxer {
         let handle = super::resolve_lone(
             &self.audio_streams,
             MuxError::NoAudioStreamsConfigured,
-            StreamKind::Audio,
+            MuxStreamKind::Audio,
             AudioStreamHandle::pack,
         )?;
         self.push_audio_to(handle, pts, frames)
@@ -77,7 +77,7 @@ impl Muxer {
         if prog_idx >= self.audio_streams.len() || within_idx >= self.audio_streams[prog_idx].len()
         {
             return Err(MuxError::InvalidStreamHandle {
-                kind: StreamKind::Audio,
+                kind: MuxStreamKind::Audio,
                 index: handle.0 as usize,
             });
         }

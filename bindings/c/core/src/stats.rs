@@ -98,8 +98,8 @@ const _TST_RAW_SEND_STATS_SIZE: () = assert!(
     "TstRawSendStats must be 16 bytes (2 × u64)"
 );
 
-impl From<&tst_pipeline::RawSendStats> for TstRawSendStats {
-    fn from(s: &tst_pipeline::RawSendStats) -> Self {
+impl From<&tst_pipeline::RawSenderStats> for TstRawSendStats {
+    fn from(s: &tst_pipeline::RawSenderStats) -> Self {
         Self {
             bytes_sent: s.bytes_sent,
             packets_sent: s.packets_sent,
@@ -151,8 +151,8 @@ const _TST_RAW_RECV_STATS_SIZE: () = assert!(
 );
 
 #[cfg(feature = "std")]
-impl From<&tst_pipeline::RawRecvStats> for TstRawRecvStats {
-    fn from(s: &tst_pipeline::RawRecvStats) -> Self {
+impl From<&tst_pipeline::RawReceiverStats> for TstRawRecvStats {
+    fn from(s: &tst_pipeline::RawReceiverStats) -> Self {
         Self {
             bytes_received: s.bytes_received,
             packets_received: s.packets_received,

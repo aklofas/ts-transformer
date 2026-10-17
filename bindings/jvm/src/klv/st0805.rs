@@ -43,20 +43,6 @@ use crate::jutil::require_non_null;
 
 // ── CotConfig <-> Java record ────────────────────────────────────────────────
 
-/// Validate a `generatedUs` `jlong` is non-negative before the `as u64` cast
-/// — a negative Java value would otherwise wrap to a far-future timestamp.
-/// Shared by both XML entry points.
-fn checked_generated_us(env: &mut JNIEnv<'_>, generated_us: jlong) -> jni::errors::Result<u64> {
-    if generated_us < 0 {
-        let _ = env.throw_new(
-            "java/lang/IllegalArgumentException",
-            format!("generatedUs must be non-negative; got {generated_us}"),
-        );
-        return Err(jni::errors::Error::JavaException);
-    }
-    Ok(generated_us as u64)
-}
-
 // ── Error mapping ─────────────────────────────────────────────────────────────
 
 /// Throw `IllegalArgumentException` with `e`'s `Display` message. See the
@@ -107,10 +93,8 @@ jni_native! {
             Ok(c) => c,
             Err(_) => return std::ptr::null_mut(),
         };
-        let generated_us = match checked_generated_us(env, generated_us) {
-            Ok(v) => v,
-            Err(_) => return std::ptr::null_mut(),
-        };
+        // Bit pattern: Java has no unsigned long, so a negative value is a large unsigned time.
+        let generated_us = generated_us as u64;
         match platform_position_xml(&rust_rec, &cfg, generated_us) {
             Ok(xml) => new_string_or_throw(env, &xml, "platformPositionXmlNative"),
             Err(e) => {
@@ -144,10 +128,8 @@ jni_native! {
             Ok(c) => c,
             Err(_) => return std::ptr::null_mut(),
         };
-        let generated_us = match checked_generated_us(env, generated_us) {
-            Ok(v) => v,
-            Err(_) => return std::ptr::null_mut(),
-        };
+        // Bit pattern: Java has no unsigned long, so a negative value is a large unsigned time.
+        let generated_us = generated_us as u64;
         match sensor_point_of_interest_xml(&rust_rec, &cfg, generated_us) {
             Ok(xml) => new_string_or_throw(env, &xml, "sensorPointOfInterestXmlNative"),
             Err(e) => {

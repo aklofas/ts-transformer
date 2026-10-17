@@ -97,7 +97,7 @@ pub enum SubtitleCodec {
 /// [`MuxError::InvalidStreamHandle`](crate::error::MuxError::InvalidStreamHandle), [`MuxError::DescriptorIndexOutOfRange`](crate::error::MuxError::DescriptorIndexOutOfRange)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum StreamKind {
+pub enum MuxStreamKind {
     Video,
     Audio,
     Klv,
@@ -105,17 +105,22 @@ pub enum StreamKind {
     Data,
 }
 
-impl core::fmt::Display for StreamKind {
+impl core::fmt::Display for MuxStreamKind {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(match self {
-            StreamKind::Video => "video",
-            StreamKind::Audio => "audio",
-            StreamKind::Klv => "klv",
-            StreamKind::Subtitle => "subtitle",
-            StreamKind::Data => "data",
+            MuxStreamKind::Video => "video",
+            MuxStreamKind::Audio => "audio",
+            MuxStreamKind::Klv => "klv",
+            MuxStreamKind::Subtitle => "subtitle",
+            MuxStreamKind::Data => "data",
         })
     }
 }
+
+/// The previous name of [`MuxStreamKind`], kept for one release. The demux event's
+/// [`StreamKind`](crate::mpegts::demux::StreamKind) is a different type and keeps its name.
+#[deprecated(since = "0.9.0", note = "renamed to `MuxStreamKind`")]
+pub type StreamKind = MuxStreamKind;
 
 /// Field-name discriminator inside a teletext-stream configuration block;
 /// used by [`MuxError::InvalidTeletextField`](crate::error::MuxError::InvalidTeletextField) in place of `&'static str`
@@ -228,7 +233,7 @@ impl StreamSpec {
 // ── StreamHandle macro ────────────────────────────────────────────────────
 //
 // All five *StreamHandle types share byte-identical Debug + impl blocks;
-// only the type name (for constructor / debug label) and the StreamKind
+// only the type name (for constructor / debug label) and the MuxStreamKind
 // variant (for the try_from_raw error) differ. This macro emits those
 // two blocks, keeping the per-type struct definition and its public
 // rustdoc outside so each type reads independently in docs.
@@ -328,7 +333,7 @@ macro_rules! impl_stream_handle {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VideoStreamHandle(pub(super) u32);
 
-impl_stream_handle!(VideoStreamHandle, StreamKind::Video, "VideoStreamHandle");
+impl_stream_handle!(VideoStreamHandle, MuxStreamKind::Video, "VideoStreamHandle");
 
 /// Opaque handle to a configured KLV stream on a `Muxer`.
 ///
@@ -350,7 +355,7 @@ impl_stream_handle!(VideoStreamHandle, StreamKind::Video, "VideoStreamHandle");
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KlvStreamHandle(pub(super) u32);
 
-impl_stream_handle!(KlvStreamHandle, StreamKind::Klv, "KlvStreamHandle");
+impl_stream_handle!(KlvStreamHandle, MuxStreamKind::Klv, "KlvStreamHandle");
 
 /// Opaque handle to a configured audio stream on a `Muxer`.
 ///
@@ -371,7 +376,7 @@ impl_stream_handle!(KlvStreamHandle, StreamKind::Klv, "KlvStreamHandle");
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AudioStreamHandle(pub(super) u32);
 
-impl_stream_handle!(AudioStreamHandle, StreamKind::Audio, "AudioStreamHandle");
+impl_stream_handle!(AudioStreamHandle, MuxStreamKind::Audio, "AudioStreamHandle");
 
 /// Per-program upper bound on subtitle streams. Total program-stream
 /// cap with all kinds saturated: ≤16 video + ≤16 KLV + ≤16 audio +
@@ -402,7 +407,7 @@ pub struct SubtitleStreamHandle(pub(super) u32);
 
 impl_stream_handle!(
     SubtitleStreamHandle,
-    StreamKind::Subtitle,
+    MuxStreamKind::Subtitle,
     "SubtitleStreamHandle"
 );
 
@@ -426,7 +431,7 @@ impl_stream_handle!(
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DataStreamHandle(pub(super) u32);
 
-impl_stream_handle!(DataStreamHandle, StreamKind::Data, "DataStreamHandle");
+impl_stream_handle!(DataStreamHandle, MuxStreamKind::Data, "DataStreamHandle");
 
 /// Maximum number of programs in one transport stream multiplex.
 /// Mirrors the per-program 16-video + 16-KLV stream caps; far above any
@@ -452,7 +457,7 @@ mod try_from_raw_tests {
         let forged = valid.raw() | 0x100;
         match VideoStreamHandle::try_from_raw(forged) {
             Err(MuxError::InvalidStreamHandle { kind, index }) => {
-                assert_eq!(kind, StreamKind::Video);
+                assert_eq!(kind, MuxStreamKind::Video);
                 assert_eq!(index, forged as usize);
             }
             other => panic!("expected InvalidStreamHandle, got {other:?}"),
@@ -473,7 +478,7 @@ mod try_from_raw_tests {
         let forged = valid.raw() | 0x100;
         match KlvStreamHandle::try_from_raw(forged) {
             Err(MuxError::InvalidStreamHandle { kind, index }) => {
-                assert_eq!(kind, StreamKind::Klv);
+                assert_eq!(kind, MuxStreamKind::Klv);
                 assert_eq!(index, forged as usize);
             }
             other => panic!("expected InvalidStreamHandle, got {other:?}"),
@@ -486,7 +491,7 @@ mod try_from_raw_tests {
         let forged = valid.raw() | 0x100;
         match AudioStreamHandle::try_from_raw(forged) {
             Err(MuxError::InvalidStreamHandle { kind, index }) => {
-                assert_eq!(kind, StreamKind::Audio);
+                assert_eq!(kind, MuxStreamKind::Audio);
                 assert_eq!(index, forged as usize);
             }
             other => panic!("expected InvalidStreamHandle, got {other:?}"),
@@ -499,7 +504,7 @@ mod try_from_raw_tests {
         let forged = valid.raw() | 0x100;
         match SubtitleStreamHandle::try_from_raw(forged) {
             Err(MuxError::InvalidStreamHandle { kind, index }) => {
-                assert_eq!(kind, StreamKind::Subtitle);
+                assert_eq!(kind, MuxStreamKind::Subtitle);
                 assert_eq!(index, forged as usize);
             }
             other => panic!("expected InvalidStreamHandle, got {other:?}"),
@@ -512,7 +517,7 @@ mod try_from_raw_tests {
         let forged = valid.raw() | 0x100;
         match DataStreamHandle::try_from_raw(forged) {
             Err(MuxError::InvalidStreamHandle { kind, index }) => {
-                assert_eq!(kind, StreamKind::Data);
+                assert_eq!(kind, MuxStreamKind::Data);
                 assert_eq!(index, forged as usize);
             }
             other => panic!("expected InvalidStreamHandle, got {other:?}"),

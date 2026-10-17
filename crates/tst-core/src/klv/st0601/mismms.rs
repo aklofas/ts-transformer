@@ -480,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn wpb_mismms_typed_96_104() {
+    fn imapb_mismms_typed_96_104() {
         // The extended-range IMAPB items (96/104) are wired into presence via
         // `each_typed_field`'s generic Imapb match arm. This pins that:
         // typed-only 96/104 satisfy the 22|96 and 15|75|104 groups, and setting

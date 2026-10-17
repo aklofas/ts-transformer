@@ -10,7 +10,7 @@ use std::time::Duration;
 use tracing::info_span;
 use tst_core::error::MuxError;
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::mux::{Muxer, MuxerConfig, StreamKind};
+use tst_core::mpegts::mux::{MuxStreamKind, Muxer, MuxerConfig};
 use tst_core::publisher::{Publisher, PublisherStats};
 
 use crate::binding::kind::{coarsen, kind_of_mux};
@@ -190,7 +190,7 @@ impl<P: Publisher> MuxPublisher<P> {
                 let handles = inner.muxer.video_handles();
                 let [handle] = handles.as_slice() else {
                     return Err(MuxPublisherError::Mux(MuxError::AmbiguousTarget {
-                        kind: StreamKind::Video,
+                        kind: MuxStreamKind::Video,
                         count: handles.len(),
                     }));
                 };

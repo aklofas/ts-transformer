@@ -8,7 +8,7 @@
 //! 5 `DemuxError`; 2 `TsFramingError`.
 
 use tst_core::error::{DemuxError, MuxError};
-use tst_core::mpegts::mux::{StreamKind, TeletextField};
+use tst_core::mpegts::mux::{MuxStreamKind, TeletextField};
 use tst_core::transport::{BrokenCause, TransportError};
 use tst_pipeline::ShellErrorKind::{
     Backpressure, Closed, ConfigInvalid, EndOfStream, InputMalformed, TransportBroken,
@@ -47,14 +47,14 @@ fn mux_rows() -> Vec<(MuxError, ShellErrorKind)> {
         ),
         (
             MuxError::InvalidStreamHandle {
-                kind: StreamKind::Video,
+                kind: MuxStreamKind::Video,
                 index: 0,
             },
             ConfigInvalid,
         ),
         (
             MuxError::AmbiguousTarget {
-                kind: StreamKind::Video,
+                kind: MuxStreamKind::Video,
                 count: 2,
             },
             ConfigInvalid,
@@ -152,7 +152,7 @@ fn mux_rows() -> Vec<(MuxError, ShellErrorKind)> {
         ),
         (
             MuxError::DescriptorIndexOutOfRange {
-                kind: StreamKind::Video,
+                kind: MuxStreamKind::Video,
                 index: 5,
                 program_number: 1,
             },

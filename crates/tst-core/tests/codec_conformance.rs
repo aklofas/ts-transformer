@@ -12,9 +12,9 @@
 mod common;
 // serde_json (the sidecar parser) is a std-only dependency.
 #[cfg(feature = "std")]
-#[path = "conformance/conformance.rs"]
+#[path = "codec_conformance/conformance.rs"]
 mod conformance;
-#[path = "conformance/demux_error_discrimination.rs"]
+#[path = "codec_conformance/demux_error_discrimination.rs"]
 mod demux_error_discrimination;
-#[path = "conformance/demux_malformed_pes_recovery.rs"]
+#[path = "codec_conformance/demux_malformed_pes_recovery.rs"]
 mod demux_malformed_pes_recovery;

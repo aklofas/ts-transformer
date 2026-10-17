@@ -16,7 +16,7 @@ use super::pes::{
 };
 use super::state::ts_packets_for;
 use super::ts::AdaptationField;
-use super::types::{StreamKind, SubtitleCodec, SubtitleStreamHandle};
+use super::types::{MuxStreamKind, SubtitleCodec, SubtitleStreamHandle};
 
 impl Muxer {
     /// Push one subtitle PES unit, single-stream shorthand.
@@ -49,7 +49,7 @@ impl Muxer {
         let handle = super::resolve_lone(
             &self.subtitle_streams,
             MuxError::NoSubtitleStreamsConfigured,
-            StreamKind::Subtitle,
+            MuxStreamKind::Subtitle,
             SubtitleStreamHandle::pack,
         )?;
         self.push_subtitle_to(handle, pts, payload)
@@ -88,7 +88,7 @@ impl Muxer {
             || within_idx >= self.subtitle_streams[prog_idx].len()
         {
             return Err(MuxError::InvalidStreamHandle {
-                kind: StreamKind::Subtitle,
+                kind: MuxStreamKind::Subtitle,
                 index: handle.0 as usize,
             });
         }

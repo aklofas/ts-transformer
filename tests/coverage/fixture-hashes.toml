@@ -120,7 +120,7 @@ sha256 = "67e310bfdf7b13dae6eb348ef8fa375bfc44e34cf14cd9e56849a422da648e28"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/conformance/README.md"
-sha256 = "9fe3b0ed7a0278ddfce3ae1edeb4c29a36b8fa02d8f694d23ad0501cfe22b51c"
+sha256 = "c9db033ac2e12eb1ce2e6deedaa5f082b748f3eae76b0be1acf90d0a9dc19c7f"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/conformance/_cache/.gitkeep"
