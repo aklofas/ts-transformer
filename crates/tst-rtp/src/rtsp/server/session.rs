@@ -1536,4 +1536,312 @@ mod session_tests {
             "closure observed at {closed_at:?} after the first byte; the bound is {bound:?}"
         );
     }
+
+    /// A reference model of the session lifecycle, written from what the
+    /// handlers do today, and a property test that drives random request
+    /// sequences through `dispatch` and compares every response status and
+    /// the session's observable fields against it.
+    mod lifecycle_model {
+        use super::*;
+        use crate::rtsp::server::mount::{MountEntry, MountKind, MountState};
+        use crate::rtsp::server::publish::mount::PublishMountState;
+        use crate::rtsp::server::{test_muxer_cfg, test_state};
+        use proptest::prelude::*;
+
+        const SDP_MP2T: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 33\r\na=control:streamid=0\r\n";
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum Mount {
+            /// A muxer-backed mount that only readers use.
+            Live,
+            /// A publish mount: one publisher, and readers of the re-served bytes.
+            Pub,
+        }
+
+        impl Mount {
+            fn path(self) -> &'static str {
+                match self {
+                    Mount::Live => "/live",
+                    Mount::Pub => "/pub",
+                }
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        enum Call {
+            Options,
+            Describe,
+            SetupReader,
+            SetupRecord,
+            Play,
+            Pause,
+            Teardown,
+            Announce,
+            Record,
+            GetParameter,
+        }
+
+        /// What the request's `Session:` header carries.
+        #[derive(Clone, Copy, Debug)]
+        enum Sess {
+            Absent,
+            /// The id this session was given, when it has one.
+            Echo,
+            Wrong,
+        }
+
+        /// The session's lifecycle position. `mount` is the mount the
+        /// session's `mount_path` names.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum Model {
+            Init,
+            Described,
+            ReaderSetup {
+                mount: Mount,
+            },
+            Playing {
+                mount: Mount,
+            },
+            Paused {
+                mount: Mount,
+            },
+            Announced {
+                mount: Mount,
+            },
+            PublisherSetup {
+                mount: Mount,
+            },
+            Recording {
+                mount: Mount,
+            },
+            /// After a TEARDOWN: the connection closes, so no request follows.
+            Closed,
+        }
+
+        /// The status `call` draws in `model`, and the position it leaves.
+        fn expect(model: Model, call: Call, at: Mount, wrong_sid: bool) -> (u16, Model) {
+            use Model::*;
+            let publisher = matches!(
+                model,
+                Announced { .. } | PublisherSetup { .. } | Recording { .. }
+            );
+            let has_session = matches!(model, ReaderSetup { .. } | Playing { .. } | Paused { .. });
+            match call {
+                Call::Options | Call::GetParameter => (200, model),
+                Call::Describe => (200, if model == Init { Described } else { model }),
+                Call::Teardown => (200, Closed),
+                Call::Announce => {
+                    if publisher || has_session {
+                        (455, model)
+                    } else if at == Mount::Live {
+                        (461, model)
+                    } else {
+                        (200, Announced { mount: at })
+                    }
+                }
+                Call::SetupReader => {
+                    if publisher {
+                        (455, model)
+                    } else if matches!(model, Playing { .. }) {
+                        // A second SETUP re-points the session and keeps the
+                        // running fanout.
+                        (200, Playing { mount: at })
+                    } else {
+                        (200, ReaderSetup { mount: at })
+                    }
+                }
+                Call::SetupRecord => {
+                    if at == Mount::Live {
+                        (461, model)
+                    } else {
+                        match model {
+                            Announced { .. } => (200, PublisherSetup { mount: at }),
+                            PublisherSetup { .. } | Recording { .. } => {
+                                (if wrong_sid { 454 } else { 455 }, model)
+                            }
+                            _ => (455, model),
+                        }
+                    }
+                }
+                Call::Play => {
+                    if publisher {
+                        (455, model)
+                    } else {
+                        match model {
+                            ReaderSetup { mount } | Playing { mount } | Paused { mount } => {
+                                (200, Playing { mount })
+                            }
+                            _ => (454, model),
+                        }
+                    }
+                }
+                Call::Pause => match model {
+                    ReaderSetup { mount } | Playing { mount } | Paused { mount } => {
+                        (200, Paused { mount })
+                    }
+                    PublisherSetup { .. } | Recording { .. } => (200, model),
+                    _ => (454, model),
+                },
+                Call::Record => match model {
+                    PublisherSetup { mount } | Recording { mount } => (200, Recording { mount }),
+                    _ => (455, model),
+                },
+            }
+        }
+
+        fn request(call: Call, at: Mount, sess: Sess, session: &ServerSessionState) -> RtspRequest {
+            use crate::rtsp::message::RtspMethod as M;
+            let (method, uri) = match call {
+                Call::Options => (M::Options, format!("rtsp://h{}", at.path())),
+                Call::Describe => (M::Describe, format!("rtsp://h{}", at.path())),
+                Call::SetupReader | Call::SetupRecord => {
+                    (M::Setup, format!("rtsp://h{}/streamid=0", at.path()))
+                }
+                Call::Play => (M::Play, format!("rtsp://h{}", at.path())),
+                Call::Pause => (M::Pause, format!("rtsp://h{}", at.path())),
+                Call::Teardown => (M::Teardown, format!("rtsp://h{}", at.path())),
+                Call::Announce => (M::Announce, format!("rtsp://h{}", at.path())),
+                Call::Record => (M::Record, format!("rtsp://h{}", at.path())),
+                Call::GetParameter => (M::GetParameter, format!("rtsp://h{}", at.path())),
+            };
+            let mut r = RtspRequest::new(method, uri, crate::url::RtspVersion::V1_0);
+            r.headers.insert("cseq".into(), "1".into());
+            match call {
+                Call::SetupReader => {
+                    r.headers.insert(
+                        "transport".into(),
+                        "RTP/AVP/TCP;unicast;interleaved=0-1".into(),
+                    );
+                }
+                Call::SetupRecord => {
+                    r.headers.insert(
+                        "transport".into(),
+                        "RTP/AVP/TCP;unicast;interleaved=0-1;mode=record".into(),
+                    );
+                }
+                Call::Announce => {
+                    r.headers
+                        .insert("content-type".into(), "application/sdp".into());
+                    r.body = bytes::Bytes::from(SDP_MP2T);
+                }
+                _ => {}
+            }
+            match sess {
+                Sess::Absent => {}
+                Sess::Echo => {
+                    if let Some(id) = &session.session_id {
+                        r.headers.insert("session".into(), id.clone());
+                    }
+                }
+                Sess::Wrong => {
+                    r.headers.insert("session".into(), "not-the-id".into());
+                }
+            }
+            r
+        }
+
+        /// The session fields `model` implies.
+        fn check_fields(model: Model, s: &ServerSessionState) -> Result<(), TestCaseError> {
+            use Model::*;
+            let (id, path, fanout, publish, recording) = match model {
+                Init | Described | Closed => (false, None, false, false, false),
+                ReaderSetup { mount } | Paused { mount } => {
+                    (true, Some(mount.path()), false, false, false)
+                }
+                Playing { mount } => (true, Some(mount.path()), true, false, false),
+                Announced { .. } => (false, None, false, true, false),
+                PublisherSetup { mount } => (true, Some(mount.path()), false, true, false),
+                Recording { mount } => (true, Some(mount.path()), false, true, true),
+            };
+            prop_assert_eq!(s.session_id.is_some(), id, "session_id in {:?}", model);
+            prop_assert_eq!(s.mount_path.as_deref(), path, "mount_path in {:?}", model);
+            prop_assert_eq!(s.fanout_handle.is_some(), fanout, "fanout in {:?}", model);
+            prop_assert_eq!(s.publish.is_some(), publish, "publish in {:?}", model);
+            if let Some(p) = &s.publish {
+                prop_assert_eq!(p.recording, recording, "recording in {:?}", model);
+            }
+            Ok(())
+        }
+
+        fn run(calls: &[(Call, Mount, Sess)]) -> Result<(), TestCaseError> {
+            let state = test_state();
+            {
+                let mut mounts = state.mounts.lock().unwrap();
+                let live =
+                    MountState::new("/live", MountKind::Unicast, test_muxer_cfg(), 8).unwrap();
+                mounts.insert("/live".into(), MountEntry::Local(live));
+                let publish = PublishMountState::new("/pub", 8, Default::default());
+                mounts.insert("/pub".into(), MountEntry::Publish(publish));
+            }
+            let mut session = ServerSessionState::new();
+            session.writer = Some(session_writer(tokio::io::sink()));
+            let mut model = Model::Init;
+            let mut trail = Vec::new();
+            for &(call, at, sess) in calls {
+                trail.push((call, at, sess));
+                let req = request(call, at, sess, &session);
+                let wrong_sid = matches!(sess, Sess::Wrong);
+                let (want, next) = expect(model, call, at, wrong_sid);
+                let got = dispatch(&req, &state, &mut session).status;
+                prop_assert_eq!(
+                    got,
+                    want,
+                    "status of {:?} in {:?}; sequence so far {:?}",
+                    (call, at, sess),
+                    model,
+                    trail
+                );
+                model = next;
+                if model == Model::Closed {
+                    // The connection closes after a TEARDOWN: every field is clear.
+                    check_fields(model, &session)?;
+                    break;
+                }
+                check_fields(model, &session)?;
+            }
+            Ok(())
+        }
+
+        fn call() -> impl Strategy<Value = Call> {
+            prop_oneof![
+                2 => Just(Call::Options),
+                2 => Just(Call::Describe),
+                4 => Just(Call::SetupReader),
+                3 => Just(Call::SetupRecord),
+                4 => Just(Call::Play),
+                3 => Just(Call::Pause),
+                1 => Just(Call::Teardown),
+                3 => Just(Call::Announce),
+                3 => Just(Call::Record),
+                2 => Just(Call::GetParameter),
+            ]
+        }
+
+        fn at() -> impl Strategy<Value = Mount> {
+            prop_oneof![Just(Mount::Live), Just(Mount::Pub)]
+        }
+
+        fn sess() -> impl Strategy<Value = Sess> {
+            prop_oneof![
+                3 => Just(Sess::Absent),
+                3 => Just(Sess::Echo),
+                1 => Just(Sess::Wrong),
+            ]
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(2048))]
+
+            #[test]
+            fn requests_follow_the_lifecycle_model(
+                calls in proptest::collection::vec((call(), at(), sess()), 1..=12),
+            ) {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                rt.block_on(async { run(&calls) })?;
+            }
+        }
+    }
 }
