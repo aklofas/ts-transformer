@@ -58,5 +58,7 @@ pub mod demux;
 pub mod descriptors;
 pub mod mux;
 pub mod stats;
+#[doc(hidden)]
+pub mod sync;
 
 pub use stats::StreamStats;

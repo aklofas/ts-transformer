@@ -21,6 +21,7 @@ use tst_core::mpegts::common::{
     SRT_TS_BUNDLE_BYTES as SRT_BUNDLE_BYTES, SRT_TS_BUNDLE_PACKETS as SRT_BUNDLE_PACKETS,
     TS_PACKET_SIZE, TS_SYNC_BYTE as SYNC_BYTE,
 };
+use tst_core::mpegts::sync::TsSync;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TsFramingMode {
@@ -195,6 +196,7 @@ impl TsFraming {
         // Scan from current buffer head for a candidate position. Need at
         // least 2*188+1 = 377 bytes after the candidate to verify P, P+188, P+376.
         const NEEDED: usize = 2 * TS_PACKET_SIZE + 1;
+        const ACQUIRE: TsSync = TsSync::strict(3);
         while !self.buffer.is_empty() {
             // Find next 0x47 in buffer.
             let candidate_idx = match self.buffer.iter().position(|&b| b == SYNC_BYTE) {
@@ -222,9 +224,7 @@ impl TsFraming {
                 self.check_unsynced_limit()?;
                 return Ok(false);
             }
-            if self.buffer[TS_PACKET_SIZE] == SYNC_BYTE
-                && self.buffer[2 * TS_PACKET_SIZE] == SYNC_BYTE
-            {
+            if ACQUIRE.verify(self.buffer.make_contiguous(), 0) == Some(true) {
                 self.state = State::Synced;
                 self.unsynced_consumed = 0;
                 return Ok(true);
