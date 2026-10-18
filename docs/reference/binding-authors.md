@@ -640,23 +640,31 @@ baseline (by design)" for the full rationale.
 
 ### How these rules are checked
 
-The additive-only rule is enforced by three checks, not by review:
+The additive-only rule is enforced by three checks, not by review. They fire
+in this order, so a change is stopped by the earliest one that sees it:
 
-- **`scripts/check/c/abi-symbols.sh`**, in the `build` CI job on every PR.
-  It compares the library's exported names with `bindings/c/abi-symbols.txt`
-  and with the previous release tag. It fails when an exported name differs
-  from the list, when a name present at the tag is gone, and when a name was
-  added without a higher `TST_ABI_VERSION_MINOR`.
-- **`scripts/check/c/abi-compat.sh`**, in the `c-abi` CI job on every PR and
-  again at release qualification. It runs `abidiff` between the previous
-  tag's library and this tree's staged all-features library, over the `tst_*`
-  surface only (`bindings/c/abi.suppr`). It fails when a function was removed
-  or changed, a struct grew or moved, or an enumerator was renumbered, and
-  when a symbol was added without a minor bump. At a higher major the
-  incompatible-change check passes; that is the 1.0 break.
-- **`scripts/check/c/examples-compile.sh`**, in the `build` CI job. It
-  compiles and links every C example against the generated header, so a
-  changed signature or a missing declaration fails there.
+1. **The stale-header refusal**, in every CI build of `tst-c`. The build
+   regenerates `tstrans.h` and refuses to continue when it differs from the
+   committed `bindings/c/include/tstrans.h`. A declaration that leaves or
+   changes in the header fails the build here, before any library is judged.
+2. **`scripts/check/c/abi-symbols.sh`**, in the `build` CI job on every PR.
+   It compares the library's exported names with `bindings/c/abi-symbols.txt`
+   and with the previous release tag. It fails when an exported name differs
+   from the list, when a name present at the tag is gone, and when a name was
+   added without a higher `TST_ABI_VERSION_MINOR`.
+3. **`scripts/check/c/abi-compat.sh`**, in the `c-abi` CI job on every PR and
+   again at release qualification. It runs `abidiff` between the previous
+   tag's library and this tree's staged all-features library, over the `tst_*`
+   surface (`bindings/c/abi.suppr`). It fails when a function was removed or
+   changed, when a struct the header shows grew or moved, when an enumerator
+   was renumbered, and when a symbol was added without a minor bump. Opaque
+   handles, the types the header declares without a body, are suppressed: the
+   list is derived from the header on every run, so it cannot drift. At a
+   higher major the incompatible-change check passes; that is the 1.0 break.
+
+`scripts/check/c/examples-compile.sh`, in the `build` CI job, additionally
+compiles and links every C example against the generated header, so a changed
+signature or a missing declaration also fails there.
 
 Until a release's GitHub Release carries the C package, the `c-abi` job builds
 the previous tag's library from source and caches it. Once the Release carries
