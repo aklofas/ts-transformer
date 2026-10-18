@@ -47,84 +47,88 @@ for a path inside a crate that also has a broader row (`mpegts` vs.
 `mpegts::demux::low_level`; the fully-enumerated `tst-rtp` modules vs.
 its `rtsp` row), the more specific row wins for that path.
 
-| Package | Module | Tier | Why |
-|---|---|---|---|
-| tst-core | mpegts | Stable | core mux/demux engine; `mux::StreamKind` is now `MuxStreamKind` and stays as a deprecated alias, removed in 0.10.0 |
-| tst-core | mpegts::demux::low_level | Internal | extension surface, binding-canonical workflow |
-| tst-core | binding_schema | Internal | the crossing-record schema the binding generator reads; `binding_record!` and `BINDING_SCHEMA` exist for the generator, not for consumers |
-| tst-core | klv | Stable | KLV substrate (encode/decode machinery) |
-| tst-core | klv::checksum | Stable | KLV substrate machinery, same tier as `klv` itself |
-| tst-core | klv::imapb | Stable | KLV substrate machinery, same tier as `klv` itself |
-| tst-core | klv::length | Stable | KLV substrate machinery, same tier as `klv` itself |
-| tst-core | klv::pack | Stable | KLV substrate machinery, same tier as `klv` itself |
-| tst-core | klv::universal_label | Stable | KLV substrate machinery, same tier as `klv` itself |
-| tst-core | klv::st0601 | Stable | primary metadata dialect of the project scope |
-| tst-core | klv::st0102 | Provisional | typed set, recent surface |
-| tst-core | klv::st0605 | Provisional | typed set, recent surface |
-| tst-core | klv::st0903 | Provisional | typed set, recent surface |
-| tst-core | klv::st0805 | Provisional | typed set, recent surface |
-| tst-core | klv::st0806 | Provisional | typed set, recent surface |
-| tst-core | klv::st1010 | Provisional | typed set, recent surface |
-| tst-core | klv::st1204 | Provisional | typed set, recent surface |
-| tst-core | codec | Stable | shared parameter types (`ChromaFormat`/`ColorInfo`/`Rational`/etc.) used by every codec parser below |
-| tst-core | codec::util | Stable | shared codec utility (NAL-unit counting), same tier as `codec` itself |
-| tst-core | codec::h264 | Stable | primary video codec path |
-| tst-core | codec::h265 | Stable | primary video codec path |
-| tst-core | codec::h266 | Provisional | newer codec, less field exposure |
-| tst-core | codec::av1 | Provisional | newer codec, less field exposure |
-| tst-core | codec::misp_time | Provisional | MISB ST 0604 MISP timestamp helpers, recent surface |
-| tst-core | codec::annexb | Provisional | the Annex-B start-code scanner every NAL consumer shares; new public surface |
-| tst-core | codec::nal | Provisional | NAL header type table (H.264/H.265/H.266); new public surface |
-| tst-core | codec::aac | Provisional | audio parser |
-| tst-core | codec::ac3 | Provisional | audio parser |
-| tst-core | codec::mpegaudio | Provisional | audio parser |
-| tst-core | codec::nal_framing | Provisional | new module, Annex B ↔ length-prefixed NAL conversion for VideoToolbox-style consumers |
-| tst-core | transport | Stable | trait contract all transports implement; the executable form (`transport::conformance`) sits behind the non-default `conformance` feature; `EndReason` and `EndReasonHandle` are Provisional (new; surfaces will add variants); the `*ErrorKind` enums are exhaustive (`conventions.md`). |
-| tst-core | error | Stable | error taxonomy; the `*ErrorKind` enums are exhaustive (`conventions.md`) |
-| tst-core | cancel | Stable | cancellation plumbing shared across transports; spec-silent, defaults to tst-core's tier. `FlagCancel` and `ResourceCancel` (formerly `SrtCancelHandle`, kept as a deprecated alias for one minor) are Stable. `CancelSlot` (re-exported by `tst-pipeline` as the `FactoryCancel` alias) is Provisional — same divergence shape as `tst-rtp`'s `h264` row below |
-| tst-core | io_file | Stable | file I/O convenience layer over mux/demux (`file` feature); spec-silent, defaults to tst-core's tier |
-| tst-core | net | Stable | shared socket-setup plumbing consumed by transport crates; spec-silent, defaults to tst-core's tier |
-| tst-core | publisher | Provisional | `Publisher` trait + stats for segment-publishing transports (HLS); its only implementor (`tst-hls`) and only consumer (`tst-pipeline::mux_publisher`) are both Provisional — no Stable-tier evidence backs the trait yet, unlike `transport`, whose implementors are mostly Stable |
-| tst-core | shared | Stable | `SharedBytes` zero-copy buffer used throughout demux event payloads; spec-silent, defaults to tst-core's tier |
-| tst-core | url | Stable | shared URL-parsing plumbing used by every transport crate; spec-silent, defaults to tst-core's tier |
-| tst-pipeline | mux_sender | Stable | canonical send shell |
-| tst-pipeline | sender | Stable | TS-bytes send shell |
-| tst-pipeline | raw_sender | Stable | TS-bytes send shell, raw variant; `RawSendStats` is now `RawSenderStats` and stays as a deprecated alias, removed in 0.10.0 |
-| tst-pipeline | demux_receiver | Stable | canonical receive shell |
-| tst-pipeline | receiver | Stable | TS-bytes receive shell |
-| tst-pipeline | raw_receiver | Stable | TS-bytes receive shell, raw variant; `RawRecvStats` is now `RawReceiverStats` and stays as a deprecated alias, removed in 0.10.0 |
-| tst-pipeline | managed_demux_receiver | Stable | `Managed*` reconnect wrapper |
-| tst-pipeline | managed_receive | Stable | `Managed*` reconnect wrapper |
-| tst-pipeline | reconnect | Stable | reconnect config |
-| tst-pipeline | shell_error | Stable | shell error taxonomy |
-| tst-pipeline | mux_publisher | Provisional | HLS-adjacent, newer |
-| tst-pipeline | ext | Provisional | extensions (pairing, file transport) — newer surface |
-| tst-pipeline | binding | Provisional | binding-shared handle layer (`Owned`, `HandleState`, panic helpers, `BindingErrorKind`, `view`, `opened`, `ManagedHandles`); `no_std` + `alloc` except `ManagedHandles` (`std`); shape may still move before 1.0; kept a module of tst-pipeline, not a crate (see `architecture.md`) |
-| tst-srt | (crate) | Stable | primary transport of the project scope; the `Srt`-prefixed type names (`SrtSocket`, `SrtListener`, `SrtSocketBuilder`, `SrtListenerBuilder`, `SrtSocketConfig`, `SrtListenerConfig`, `SrtStats`, `SrtConnectError`, `SrtUrlError`) replace the unprefixed ones (`Socket`, `Listener`, `SocketBuilder`, `ListenerBuilder`, `SocketConfig`, `ListenerConfig`, `Stats`, `ConnectError`, `url::UrlError`), which stay as deprecated aliases, removed in 0.10.0 |
-| tst-srt | opener | Provisional | URL → type-erased transport for the language bindings' shells |
-| tst-srt | shells | Provisional | URL → managed-shell open path returning `tst_pipeline::binding::ManagedHandles`; new surface, may still move before 1.0 |
-| tst-udp | (crate) | Stable | small, settled; `SocketConfig` is now `UdpConfig` and stays as a deprecated alias, removed in 0.10.0 |
-| tst-udp | opener | Provisional | URL → type-erased transport for the language bindings' shells |
-| tst-tcp | (crate) | Stable | small, settled; `SocketConfig` is now `TcpConfig` and stays as a deprecated alias, removed in 0.10.0 |
-| tst-tcp | opener | Provisional | URL → type-erased transport for the language bindings' shells |
-| tst-rtp | cancel | Stable | RTP cancellation handle |
-| tst-rtp | depay | Stable | the access unit, configuration and counters the H.264 and H.265 depacketizers share (formerly `H264Au`/`H264DepayConfig`/`H264DepayStats`, still aliased under those names) |
-| tst-rtp | error | Stable | RTP error taxonomy |
-| tst-rtp | h264 | Stable | RFC 6184 H.264 packetizer, depacketizer and receiver; `H264Receiver::set_recv_timeout` and `end_reason()` are Provisional — same divergence shape as `transport`'s row below |
-| tst-rtp | h265 | Provisional | RFC 7798 H.265 packetizer and depacketizer; new surface |
-| tst-rtp | opener | Provisional | URL opener for the language bindings' shells (type-erased transport + cancel + domain) |
-| tst-rtp | packet | Stable | RTP packet parse/build |
-| tst-rtp | rtcp | Stable | RTCP SR/RR/SDES packet codecs and `RtcpStats` |
-| tst-rtp | sdp | Stable | SDP parsing (`Sdp`, `SdpMedia`) |
-| tst-rtp | transport | Stable | RTP transports (unicast/multicast, v4/v6); `ConnectError` is now `RtpConnectError` and stays as a deprecated alias, removed in 0.10.0; `RtpRecvTransport::{end_reason, end_reason_handle}` are Provisional — they return tst-core's `EndReason`/`EndReasonHandle` |
-| tst-rtp | url | Stable | `rtp(s)://`/`rtsp(s)://` URL parsing; `UrlError` is now `RtpUrlError` and stays as a deprecated alias, removed in 0.10.0 |
-| tst-rtp | rtsp | Provisional | server surface (`RtspServer`) still evolving; the client API (`RtspClient`) is stable in practice, but the module's tier is set by the server surface — the rail is module-granular, not sub-module. `RtspClientBuilder`, `RtspServerBuilder` and `RtspServerCancelHandle` (in `rtsp::client` and `rtsp::server`, formerly in `builder` and `cancel`) keep the Stable tier they had |
-| tst-hls | (crate) | Provisional | crate split out of `tst-tcp` in 0.3.0 |
-| tst-rist | (crate) | Provisional | profile coverage still evolving |
-| tst-rist | opener | Provisional | URL → type-erased transport for the language bindings' shells |
-| tstrans-srt-sys | (crate) | Internal | raw FFI, no direct-consumer promise; documentation-only row — no `public-api.txt` baseline exists for this crate |
-| tstrans-rist-sys | (crate) | Internal | raw FFI, no direct-consumer promise |
-| tstrans-mbedtls-src | (crate) | Internal | build-time source provider |
+The Before Stable column says, for each Provisional row, what would let
+it move to Stable; Stable and Internal rows carry `—`. Which rows 1.0
+needs is in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
+
+| Package | Module | Tier | Why | Before Stable |
+|---|---|---|---|---|
+| tst-core | mpegts | Stable | core mux/demux engine; `mux::StreamKind` is now `MuxStreamKind` and stays as a deprecated alias, removed in 0.10.0 | — |
+| tst-core | mpegts::demux::low_level | Internal | extension surface, binding-canonical workflow | — |
+| tst-core | binding_schema | Internal | the crossing-record schema the binding generator reads; `binding_record!` and `BINDING_SCHEMA` exist for the generator, not for consumers | — |
+| tst-core | klv | Stable | KLV substrate (encode/decode machinery) | — |
+| tst-core | klv::checksum | Stable | KLV substrate machinery, same tier as `klv` itself | — |
+| tst-core | klv::imapb | Stable | KLV substrate machinery, same tier as `klv` itself | — |
+| tst-core | klv::length | Stable | KLV substrate machinery, same tier as `klv` itself | — |
+| tst-core | klv::pack | Stable | KLV substrate machinery, same tier as `klv` itself | — |
+| tst-core | klv::universal_label | Stable | KLV substrate machinery, same tier as `klv` itself | — |
+| tst-core | klv::st0601 | Stable | primary metadata dialect of the project scope | — |
+| tst-core | klv::st0102 | Provisional | typed set, recent surface | one minor with no signature change and a binding consumer |
+| tst-core | klv::st0605 | Provisional | typed set, recent surface | one minor with no signature change and a binding consumer |
+| tst-core | klv::st0903 | Provisional | typed set, recent surface | one minor with no signature change and a binding consumer, with the typed nested VMTI sets either added or confirmed out of the surface |
+| tst-core | klv::st0805 | Provisional | typed set, recent surface | one minor with no signature change and a binding consumer |
+| tst-core | klv::st0806 | Provisional | typed set, recent surface | one minor with no signature change and a binding consumer |
+| tst-core | klv::st1010 | Provisional | typed set, recent surface | one minor with no signature change and a binding consumer |
+| tst-core | klv::st1204 | Provisional | typed set, recent surface | one minor with no signature change and a binding consumer |
+| tst-core | codec | Stable | shared parameter types (`ChromaFormat`/`ColorInfo`/`Rational`/etc.) used by every codec parser below | — |
+| tst-core | codec::util | Stable | shared codec utility (NAL-unit counting), same tier as `codec` itself | — |
+| tst-core | codec::h264 | Stable | primary video codec path | — |
+| tst-core | codec::h265 | Stable | primary video codec path | — |
+| tst-core | codec::h266 | Provisional | newer codec, less field exposure | parameter-set parsing exercised by an outside encoder's capture with no signature change |
+| tst-core | codec::av1 | Provisional | newer codec, less field exposure | carriage-mode decision exercised by an outside producer's capture |
+| tst-core | codec::misp_time | Provisional | MISB ST 0604 MISP timestamp helpers, recent surface | MISP timestamps from an outside producer's capture parsed with no signature change |
+| tst-core | codec::annexb | Provisional | the Annex-B start-code scanner every NAL consumer shares; new public surface | one minor with no signature change while every NAL consumer in the workspace uses it |
+| tst-core | codec::nal | Provisional | NAL header type table (H.264/H.265/H.266); new public surface | one minor with no change to the NAL type tables or their names |
+| tst-core | codec::aac | Provisional | audio parser | the LATM decision made, either parsed or confirmed out of the surface, and one minor with no signature change |
+| tst-core | codec::ac3 | Provisional | audio parser | the E-AC-3 and DVB decision made, either parsed or confirmed out of the surface, and one minor with no signature change |
+| tst-core | codec::mpegaudio | Provisional | audio parser | one minor with no signature change and a binding consumer |
+| tst-core | codec::nal_framing | Provisional | new module, Annex B ↔ length-prefixed NAL conversion for VideoToolbox-style consumers | a length-prefixed consumer such as VideoToolbox driven through it with no shape change |
+| tst-core | transport | Stable | trait contract all transports implement; the executable form (`transport::conformance`) sits behind the non-default `conformance` feature; `EndReason` and `EndReasonHandle` are Provisional (new; surfaces will add variants); the `*ErrorKind` enums are exhaustive (`conventions.md`). | — |
+| tst-core | error | Stable | error taxonomy; the `*ErrorKind` enums are exhaustive (`conventions.md`) | — |
+| tst-core | cancel | Stable | cancellation plumbing shared across transports; spec-silent, defaults to tst-core's tier. `FlagCancel` and `ResourceCancel` (formerly `SrtCancelHandle`, kept as a deprecated alias for one minor) are Stable. `CancelSlot` (re-exported by `tst-pipeline` as the `FactoryCancel` alias) is Provisional — same divergence shape as `tst-rtp`'s `h264` row below | — |
+| tst-core | io_file | Stable | file I/O convenience layer over mux/demux (`file` feature); spec-silent, defaults to tst-core's tier | — |
+| tst-core | net | Stable | shared socket-setup plumbing consumed by transport crates; spec-silent, defaults to tst-core's tier | — |
+| tst-core | publisher | Provisional | `Publisher` trait + stats for segment-publishing transports (HLS); its only implementor (`tst-hls`) and only consumer (`tst-pipeline::mux_publisher`) are both Provisional — no Stable-tier evidence backs the trait yet, unlike `transport`, whose implementors are mostly Stable | a Stable implementor, which in practice means `tst-hls` moving to Stable |
+| tst-core | shared | Stable | `SharedBytes` zero-copy buffer used throughout demux event payloads; spec-silent, defaults to tst-core's tier | — |
+| tst-core | url | Stable | shared URL-parsing plumbing used by every transport crate; spec-silent, defaults to tst-core's tier | — |
+| tst-pipeline | mux_sender | Stable | canonical send shell | — |
+| tst-pipeline | sender | Stable | TS-bytes send shell | — |
+| tst-pipeline | raw_sender | Stable | TS-bytes send shell, raw variant; `RawSendStats` is now `RawSenderStats` and stays as a deprecated alias, removed in 0.10.0 | — |
+| tst-pipeline | demux_receiver | Stable | canonical receive shell | — |
+| tst-pipeline | receiver | Stable | TS-bytes receive shell | — |
+| tst-pipeline | raw_receiver | Stable | TS-bytes receive shell, raw variant; `RawRecvStats` is now `RawReceiverStats` and stays as a deprecated alias, removed in 0.10.0 | — |
+| tst-pipeline | managed_demux_receiver | Stable | `Managed*` reconnect wrapper | — |
+| tst-pipeline | managed_receive | Stable | `Managed*` reconnect wrapper | — |
+| tst-pipeline | reconnect | Stable | reconnect config | — |
+| tst-pipeline | shell_error | Stable | shell error taxonomy | — |
+| tst-pipeline | mux_publisher | Provisional | HLS-adjacent, newer | the HLS publisher's segment contract unchanged for one minor |
+| tst-pipeline | ext | Provisional | extensions (pairing, file transport) — newer surface | pairing and the file transport unchanged for one minor, with the pairing C exposure either built or confirmed out of the surface |
+| tst-pipeline | binding | Provisional | binding-shared handle layer (`Owned`, `HandleState`, panic helpers, `BindingErrorKind`, `view`, `opened`, `ManagedHandles`); `no_std` + `alloc` except `ManagedHandles` (`std`); shape may still move before 1.0; kept a module of tst-pipeline, not a crate (see `architecture.md`) | the planned mobile bindings built on it without a shape change |
+| tst-srt | (crate) | Stable | primary transport of the project scope; the `Srt`-prefixed type names (`SrtSocket`, `SrtListener`, `SrtSocketBuilder`, `SrtListenerBuilder`, `SrtSocketConfig`, `SrtListenerConfig`, `SrtStats`, `SrtConnectError`, `SrtUrlError`) replace the unprefixed ones (`Socket`, `Listener`, `SocketBuilder`, `ListenerBuilder`, `SocketConfig`, `ListenerConfig`, `Stats`, `ConnectError`, `url::UrlError`), which stay as deprecated aliases, removed in 0.10.0 | — |
+| tst-srt | opener | Provisional | URL → type-erased transport for the language bindings' shells | the opener signature unchanged while a second binding family adopts it |
+| tst-srt | shells | Provisional | URL → managed-shell open path returning `tst_pipeline::binding::ManagedHandles`; new surface, may still move before 1.0 | the managed-shell open path unchanged while the planned mobile bindings adopt it |
+| tst-udp | (crate) | Stable | small, settled; `SocketConfig` is now `UdpConfig` and stays as a deprecated alias, removed in 0.10.0 | — |
+| tst-udp | opener | Provisional | URL → type-erased transport for the language bindings' shells | the opener signature unchanged while a second binding family adopts it |
+| tst-tcp | (crate) | Stable | small, settled; `SocketConfig` is now `TcpConfig` and stays as a deprecated alias, removed in 0.10.0 | — |
+| tst-tcp | opener | Provisional | URL → type-erased transport for the language bindings' shells | the opener signature unchanged while a second binding family adopts it |
+| tst-rtp | cancel | Stable | RTP cancellation handle | — |
+| tst-rtp | depay | Stable | the access unit, configuration and counters the H.264 and H.265 depacketizers share (formerly `H264Au`/`H264DepayConfig`/`H264DepayStats`, still aliased under those names) | — |
+| tst-rtp | error | Stable | RTP error taxonomy | — |
+| tst-rtp | h264 | Stable | RFC 6184 H.264 packetizer, depacketizer and receiver; `H264Receiver::set_recv_timeout` and `end_reason()` are Provisional — same divergence shape as `transport`'s row below | — |
+| tst-rtp | h265 | Provisional | RFC 7798 H.265 packetizer and depacketizer; new surface | H.265 RTP from an outside sender depacketized with no signature change |
+| tst-rtp | opener | Provisional | URL opener for the language bindings' shells (type-erased transport + cancel + domain) | the opener signature unchanged while a second binding family adopts it |
+| tst-rtp | packet | Stable | RTP packet parse/build | — |
+| tst-rtp | rtcp | Stable | RTCP SR/RR/SDES packet codecs and `RtcpStats` | — |
+| tst-rtp | sdp | Stable | SDP parsing (`Sdp`, `SdpMedia`) | — |
+| tst-rtp | transport | Stable | RTP transports (unicast/multicast, v4/v6); `ConnectError` is now `RtpConnectError` and stays as a deprecated alias, removed in 0.10.0; `RtpRecvTransport::{end_reason, end_reason_handle}` are Provisional — they return tst-core's `EndReason`/`EndReasonHandle` | — |
+| tst-rtp | url | Stable | `rtp(s)://`/`rtsp(s)://` URL parsing; `UrlError` is now `RtpUrlError` and stays as a deprecated alias, removed in 0.10.0 | — |
+| tst-rtp | rtsp | Provisional | server surface (`RtspServer`) still evolving; the client API (`RtspClient`) is stable in practice, but the module's tier is set by the server surface — the rail is module-granular, not sub-module. `RtspClientBuilder`, `RtspServerBuilder` and `RtspServerCancelHandle` (in `rtsp::client` and `rtsp::server`, formerly in `builder` and `cancel`) keep the Stable tier they had | the server builder, mount and publisher-role surface unchanged for one minor, with publisher resource budgets settled |
+| tst-hls | (crate) | Provisional | crate split out of `tst-tcp` in 0.3.0 | the segment and playlist contract unchanged for one minor, with low-latency HLS either added or confirmed out of the surface |
+| tst-rist | (crate) | Provisional | profile coverage still evolving | the supported profiles and URL keys fixed, and one minor with no signature change |
+| tst-rist | opener | Provisional | URL → type-erased transport for the language bindings' shells | the opener signature unchanged while a second binding family adopts it |
+| tstrans-srt-sys | (crate) | Internal | raw FFI, no direct-consumer promise; documentation-only row — no `public-api.txt` baseline exists for this crate | — |
+| tstrans-rist-sys | (crate) | Internal | raw FFI, no direct-consumer promise | — |
+| tstrans-mbedtls-src | (crate) | Internal | build-time source provider | — |
 
 ### Root-level re-exports
 

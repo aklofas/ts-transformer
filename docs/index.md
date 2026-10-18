@@ -24,6 +24,7 @@ For deployment planning, see [code size](/docs/project/code-size.md) and
 [benchmarks and capacity testing](/docs/project/benchmarks.md). Project
 policies cover [licensing](/README.md#license),
 [security](/SECURITY.md), and [releasing](/docs/project/releasing.md).
+What must hold before 1.0 is in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 
 ## Which language should I pick?
 
