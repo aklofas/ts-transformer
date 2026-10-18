@@ -773,5 +773,26 @@ expect "dependency-lattice: the committed table passes"              0 bash scri
 # abi-compat: the C ABI compatibility rail judges planted C libraries (SKIPs without abidiff).
 expect "abi-compat: the planted-library matrix" 0 bash scripts/check/c/tests/abi-compat-selftest.sh
 
+# publish-guards: a callable workflow's publish-shaped job needs `inputs.dry_run` in its `if:`.
+pg="$tmp/publish-guards"; mkdir -p "$pg"
+cat > "$pg/bad.yml" <<'YML'
+name: bad
+on:
+  workflow_call:
+    inputs:
+      dry_run: {type: boolean, default: false}
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    environment: pypi
+    steps:
+      - run: echo hi
+YML
+sed "s/github.event_name == 'push'/github.event_name == 'push' \&\& !inputs.dry_run/" "$pg/bad.yml" > "$pg/good.yml"
+expect "publish-guards: an unguarded callable publish job fails" 1 bash scripts/check/repo/publish-guards.sh "$pg/bad.yml"
+grep -q "job 'publish'" "$tmp/out" || { echo "FAIL: publish-guards: the failure did not name the job"; sed 's/^/    /' "$tmp/out"; fail=1; }
+expect "publish-guards: a guarded job passes" 0 bash scripts/check/repo/publish-guards.sh "$pg/good.yml"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"
