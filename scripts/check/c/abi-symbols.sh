@@ -22,8 +22,8 @@
 # (_init, _fini, __bss_start, _edata, _end) and Rust runtime names are dropped.
 #
 # Previous tag: the newest vMAJOR.MINOR.PATCH tag (version order) that does not
-# point at HEAD (scripts/dev/prev-tag.sh, shared with the c-abi CI job). Its symbol set is its own bindings/c/abi-symbols.txt when it has one,
-# else the declaration set of its bindings/c/include/tstrans.h, which the
+# point at HEAD (scripts/dev/prev-tag.sh, shared with the c-abi CI job). Its
+# symbol set is its own bindings/c/abi-symbols.txt when it has one, else the declaration set of its bindings/c/include/tstrans.h, which the
 # first release with this list exported exactly.
 #
 # Linux only (GNU nm, ELF): SKIP elsewhere. Without tags: FAIL under CI
