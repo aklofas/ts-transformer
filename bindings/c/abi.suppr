@@ -13,3 +13,13 @@
 # tst_* / TST_* (statics and Rust runtime data are not the C ABI).
 [suppress_variable]
   name_not_regexp = ^(tst_|TST_)
+
+# Opaque handles. The header only forward-declares these (`typedef struct X X;`),
+# so a C caller never sees their layout: they are Rust structs whose fields are
+# private implementation and may change between releases. Listed by name so a
+# public, field-visible struct is never swept in. A handle added later has no
+# old counterpart and needs no entry; an existing handle whose internals change
+# is added here with its name.
+[suppress_type]
+  type_kind = struct
+  name_regexp = ^tst_c_core::.*::(TstDemuxConfig|TstDemuxer|TstDemuxReceiver|TstHlsServerHandle|TstManagedDemuxReceiver|TstManagedMuxSender|TstManagedRawReceiver|TstManagedRawSender|TstManagedReceiver|TstManagedSender|TstMuxConfig|TstMuxer|TstMuxPublisher|TstMuxSender|TstPublisher|TstRawReceiver|TstRawSender|TstReceiver|TstRistDemuxReceiver|TstRistMuxSender|TstRistReceiver|TstRistSender|TstRtpDemuxReceiver|TstRtpMuxSender|TstRtpReceiver|TstRtpSender|TstRtspSession|TstSender|TstSt0601|TstTcpDemuxReceiver|TstTcpListener|TstTcpMuxSender|TstTcpReceiver|TstTcpSender|TstUdpDemuxReceiver|TstUdpMuxSender|TstUdpReceiver|TstUdpSender)$

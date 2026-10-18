@@ -148,7 +148,8 @@ binding-canonical-workflow rule that keeps an item public in the first
 place) are covered by
 [`/docs/reference/public-api.md`](/docs/reference/public-api.md) and
 [`/docs/reference/binding-authors.md`](/docs/reference/binding-authors.md),
-not restated here.
+not restated here. How the C ABI rules are checked in CI is in the
+"Versioning" section of the binding-authors page.
 
 ## Decision log
 

@@ -638,6 +638,36 @@ baseline (by design)" for the full rationale.
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that
   preserve both shape and behaviour.
 
+### How these rules are checked
+
+The additive-only rule is enforced by three checks, not by review:
+
+- **`scripts/check/c/abi-symbols.sh`**, in the `build` CI job on every PR.
+  It compares the library's exported names with `bindings/c/abi-symbols.txt`
+  and with the previous release tag. It fails when an exported name differs
+  from the list, when a name present at the tag is gone, and when a name was
+  added without a higher `TST_ABI_VERSION_MINOR`.
+- **`scripts/check/c/abi-compat.sh`**, in the `c-abi` CI job on every PR and
+  again at release qualification. It runs `abidiff` between the previous
+  tag's library and this tree's staged all-features library, over the `tst_*`
+  surface only (`bindings/c/abi.suppr`). It fails when a function was removed
+  or changed, a struct grew or moved, or an enumerator was renumbered, and
+  when a symbol was added without a minor bump. At a higher major the
+  incompatible-change check passes; that is the 1.0 break.
+- **`scripts/check/c/examples-compile.sh`**, in the `build` CI job. It
+  compiles and links every C example against the generated header, so a
+  changed signature or a missing declaration fails there.
+
+Until a release's GitHub Release carries the C package, the `c-abi` job builds
+the previous tag's library from source and caches it. Once the Release carries
+`tstrans-c-*-linux-x86_64.tar.gz`, the job reads the tag's ABI description
+from that package instead.
+
+Struct growth is a 1.0 item. A struct that is already public does not grow
+before 1.0: `abi-compat.sh` fails on it even with a minor bump. From 1.0, every
+new struct starts with a size field, and the existing structs convert to that
+shape at the 1.0 major.
+
 Bindings should compile-time-assert the minor they require:
 
 ```c
