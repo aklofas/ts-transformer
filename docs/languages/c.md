@@ -34,6 +34,19 @@ SRT_FORCE_VENDORED=1 cargo build -p tst-c --release --features srt
 
 The build vendors libsrt 1.5.7 + mbedTLS 3.6.x statically — your `libtstrans.so` has no external dependencies beyond the C and C++ runtimes (libc, libm, libstdc++, libgcc_s; older glibc also splits out libpthread and libdl). Verify with `ldd target/release/libtstrans.so`.
 
+### A coherent set: `c-package.sh`
+
+`target/<profile>/include/tstrans_config.h` and `tstrans.pc` are overwritten by every build of the profile, so after a mixed sequence of builds they can describe a different feature set than the library beside them. `scripts/dev/c-package.sh` builds `tst-c` and stages that one build's header, config, libraries, `tstrans.pc` (its `prefix` pointing at the package) and a `manifest.json` of SHA-256 hashes into a read-only directory:
+
+```sh
+bash scripts/dev/c-package.sh --features srt,rtp --out /tmp/tstrans-pkg
+# or --all-features; add --profile release for an optimised build
+gcc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib -Wl,-rpath,/tmp/tstrans-pkg/lib \
+    -o myapp myapp.c -ltstrans
+```
+
+Remove a package with `chmod -R u+w /tmp/tstrans-pkg && rm -rf /tmp/tstrans-pkg`.
+
 ### Compile + link
 
 Direct gcc/clang:

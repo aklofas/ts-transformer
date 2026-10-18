@@ -87,7 +87,7 @@ fn main() {
         if let Some(diff) = header_post::header_differs(&rendered, &committed) {
             panic!(
                 "bindings/c/include/tstrans.h is stale. Regenerate it with \
-                 `cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h` \
+                 `env -u CI cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h` \
                  and commit it.\n{diff}"
             );
         }

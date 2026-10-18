@@ -45,7 +45,7 @@ Read the rail output, not only the exit codes: a rail prints `SKIP:` or
 `scripts/check/python/stubtest.sh`, QEMU for the embedded gates) and that
 is not a pass.
 
-A change to the C API changes `bindings/c/include/tstrans.h`: regenerate it (`cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h`) and commit it in the same commit. A build with `CI` set refuses a stale committed copy.
+A change to the C API changes `bindings/c/include/tstrans.h`: regenerate it (`env -u CI cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h`) and commit it in the same commit. A build with `CI` set refuses a stale committed copy. To compile C code against a header, config and library that are certain to come from one build, stage a package with `scripts/dev/c-package.sh --features <list> --out <dir>` (see `docs/languages/c.md`); `target/<profile>/include` is overwritten by every build.
 
 Three ratchets need a deliberate update when your change is intentional:
 

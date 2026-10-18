@@ -610,6 +610,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   video access unit; a segmenting transport cuts its open segment there and
   returns `true` to have PAT/PMT re-emitted. Every other transport keeps the
   default, so a segmenting shell needs no second drain loop.
+- `scripts/dev/c-package.sh` stages the header, `tstrans_config.h`, the
+  libraries, `tstrans.pc` and a hash manifest of one build into a read-only
+  directory, so a consumer's header and library always come from the same
+  feature set. The `target/<profile>/include` copy is overwritten by every
+  build and could describe a different feature set than the library.
 
 ### Added — tst-pipeline
 

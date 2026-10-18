@@ -27,13 +27,18 @@ from `bindings/c`, as in the `gcc -I` line above. It holds `tstrans.h` and the
 `tstrans_config.h` that defines `TST_HAS_*` for that build. The committed
 `include/tstrans_config.h` is the bare flavour: it defines no feature, so the
 udp / tcp / hls / rist examples stop at their `#error` guard against it.
-One trap: that generated header reflects the LAST tst-c build, and cargo only
-reruns cbindgen when the build is not fresh — so if you build with fewer
-features and then re-run the all-features build from cache, the narrower
-header stays on disk. `touch cbindgen.toml` (here in `bindings/c`; it is
-`bindings/c/cbindgen.toml` from the workspace root) before rebuilding forces
-it to regenerate — the rail below does this for you. Examples that
-spawn threads add `-lpthread`.
+That generated header reflects the LAST tst-c build of the profile, while the
+library beside it may be from an earlier one. To get a header, config, library
+and `tstrans.pc` that are guaranteed to come from one feature set, stage a
+package and compile against it:
+
+```sh
+bash scripts/dev/c-package.sh --features srt,rtp --out /tmp/tstrans-pkg   # from the workspace root
+gcc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib -Wl,-rpath,/tmp/tstrans-pkg/lib \
+    -Wall -Werror -o /tmp/<name> bindings/c/examples/<category>/<name>.c -ltstrans -lpthread
+```
+
+Examples that spawn threads add `-lpthread`.
 
 To compile every example in one go (what CI does on the linux leg):
 
