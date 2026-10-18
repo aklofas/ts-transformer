@@ -1,0 +1,611 @@
+name: release-qualify
+
+# One run on one commit produces the qualification record of that commit:
+# every test leg (called from the existing workflows in dry-run mode), the
+# time-boxed fuzz run, the C ABI comparison with the previous tag, the CI
+# result on the same SHA, the SBOMs, then `qualification.json`, its rendered
+# text, SHA256SUMS, build-provenance attestations and the C package.
+#
+# Nothing here publishes to a registry. Every called workflow gets
+# `dry_run: true`; its publish jobs are skipped by that input (the callee
+# rail scripts/check/repo/publish-guards.sh keeps it so). The only write is
+# the Release attach job, on a pushed `v*` tag whose verdict is GO.
+#
+# No secrets are passed down: a called workflow gets none from this one.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit to qualify (must be reachable from main or a v* tag)
+        type: string
+        required: true
+  push:
+    tags: ["v*"]
+  # Rehearsal path: a change to this workflow or to the collector runs the
+  # whole thing on the PR head. The release gate (reachable from main or a v*
+  # tag) applies to the other two triggers.
+  pull_request:
+    paths:
+      - ".github/workflows/release-qualify.yml"
+      - "scripts/gen/qualification*"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  resolve:
+    name: resolve the commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      ref: ${{ steps.r.outputs.ref }}
+      label: ${{ steps.r.outputs.label }}
+      slug: ${{ steps.r.outputs.slug }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.sha || github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Resolve the SHA and the label
+        id: r
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          short="${sha:0:8}"
+          git fetch --tags --force origin
+          tag="$(git tag --points-at "$sha" --list 'v*' | sort -V | tail -1)"
+          on_main=false
+          git merge-base --is-ancestor "$sha" origin/main && on_main=true
+          has_tag=false
+          [ -n "$(git tag --contains "$sha" --list 'v*')" ] && has_tag=true
+          if [ "$EVENT" = pull_request ]; then
+            label="PR #$PR_NUMBER at $short"
+            slug="pr-$PR_NUMBER-$short"
+          else
+            if [ "$on_main" != true ] && [ "$has_tag" != true ]; then
+              echo "::error::$sha is neither reachable from origin/main nor from a v* tag; refusing to qualify it"
+              exit 1
+            fi
+            if [ -n "$tag" ]; then
+              label="$tag"; slug="$tag"
+            else
+              label="main at $short"; slug="main-$short"
+            fi
+          fi
+          echo "ref=$sha" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          echo "qualifying $sha as '$label'"
+
+  # The four test workflows, called with dry_run so none can publish.
+  interop:
+    needs: resolve
+    uses: ./.github/workflows/interop.yml
+    with:
+      ref: ${{ needs.resolve.outputs.ref }}
+      dry_run: true
+
+  sanitizers:
+    needs: resolve
+    uses: ./.github/workflows/sanitizers.yml
+    with:
+      ref: ${{ needs.resolve.outputs.ref }}
+      dry_run: true
+
+  jvm-jar:
+    needs: resolve
+    uses: ./.github/workflows/jvm-jar.yml
+    with:
+      ref: ${{ needs.resolve.outputs.ref }}
+      dry_run: true
+
+  python-wheels:
+    needs: resolve
+    # GitHub refuses a called workflow whose (skipped) publish job asks for
+    # id-token when this caller does not grant it. dry_run keeps that job from
+    # running; the grant only lets the workflow load.
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/python-wheels.yml
+    with:
+      ref: ${{ needs.resolve.outputs.ref }}
+      dry_run: true
+
+  fuzz:
+    name: fuzz 60 s per target (${{ matrix.crate }})
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [tst-core, tst-rtp, tst-srt]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+          submodules: recursive
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
+
+      - name: Install nightly + cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal --no-self-update
+          # No --locked, as in ci.yml's fuzz-smoke job: cargo-fuzz 0.13.1's
+          # bundled Cargo.lock does not build on current nightlies.
+          cargo +nightly install cargo-fuzz --quiet
+
+      - name: Manifest matches the fuzz directories
+        run: bash scripts/check/repo/fuzz-targets.sh
+
+      - name: Fuzz every declared target of ${{ matrix.crate }}
+        env:
+          CRATE: ${{ matrix.crate }}
+          SECONDS_PER_TARGET: "60"
+          SRT_FORCE_VENDORED: "1"
+          RIST_FORCE_VENDORED: "1"
+        run: |
+          python3 -c '
+          import sys, tomllib
+          t = tomllib.load(open("tests/coverage/fuzz-targets.toml", "rb"))["target"]
+          print("\n".join(x["name"] for x in t if x["crate"] == sys.argv[1]))
+          ' "$CRATE" > "$RUNNER_TEMP/targets.txt"
+          [ -s "$RUNNER_TEMP/targets.txt" ] || { echo "no targets declared for $CRATE" >&2; exit 1; }
+          cd "crates/$CRATE/fuzz"
+          run=0; crashes=0; failed=0
+          while IFS= read -r name; do
+            corpus=()
+            [ -d "seeds/$name" ] && corpus=("seeds/$name")
+            echo "::group::fuzz $name"
+            if cargo +nightly fuzz run "$name" ${corpus[@]+"${corpus[@]}"} -- "-max_total_time=$SECONDS_PER_TARGET"; then
+              run=$((run + 1))
+            else
+              found=0
+              [ -d "artifacts/$name" ] && found="$(find "artifacts/$name" -type f | wc -l | tr -d ' ')"
+              if [ "$found" -gt 0 ]; then
+                # A crash is a finding: the target ran, and the record says so.
+                run=$((run + 1)); crashes=$((crashes + found))
+              fi
+              failed=$((failed + 1))
+              echo "::error::fuzz target $name failed ($found artefact file(s))"
+            fi
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/targets.txt"
+          jq -n --arg crate "$CRATE" --argjson run "$run" --argjson secs "$SECONDS_PER_TARGET" --argjson crashes "$crashes" \
+            '{crate:$crate, targets_run:$run, seconds_per_target:$secs, crashes:$crashes}' > "$RUNNER_TEMP/fuzz-$CRATE.json"
+          [ "$failed" -eq 0 ]
+
+      - name: Keep the fuzz result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-${{ matrix.crate }}
+          path: ${{ runner.temp }}/fuzz-${{ matrix.crate }}.json
+          if-no-files-found: ignore
+
+      - name: Upload crash artefacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crashes-${{ matrix.crate }}
+          path: crates/${{ matrix.crate }}/fuzz/artifacts
+          if-no-files-found: ignore
+
+  abi:
+    name: C ABI, C package, semver report
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      semver: ${{ steps.semver.outcome }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+          submodules: recursive
+
+      - name: Install build prerequisites and abigail-tools
+        # Pinned to the version on the ubuntu-24.04 image; an image move makes
+        # the pin fail loudly, then re-pin.
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build binutils jq abigail-tools=2.4-3build1
+
+      - name: Rust toolchain, cargo cache
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-key: cargo-release-qualify-abi-${{ hashFiles('Cargo.lock') }}
+
+      - name: Select the previous release tag
+        id: prev
+        run: bash scripts/dev/prev-c-library.sh select
+
+      - name: Previous library from the tag's Release package
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREV: ${{ steps.prev.outputs.prev }}
+        run: bash scripts/dev/prev-c-library.sh release
+
+      - name: Previous library cache
+        if: steps.release.outputs.lib == ''
+        id: cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/prev-target/debug/libtstrans.so
+          key: c-abi-${{ steps.prev.outputs.prev }}-${{ hashFiles('rust-toolchain.toml') }}
+
+      - name: Previous library built from source at the tag
+        if: steps.release.outputs.lib == '' && steps.cache.outputs.cache-hit != 'true'
+        env:
+          PREV: ${{ steps.prev.outputs.prev }}
+        run: bash scripts/dev/prev-c-library.sh build
+
+      - name: Stage the C package (debug profile) and its ABI corpus
+        # The debug profile keeps the DWARF abidw and abidiff need; a release
+        # strip would be refused by abi-compat.sh. c-package.sh leaves the
+        # directory read-only: unlock it for the two extra files, then lock it.
+        run: |
+          bash scripts/dev/c-package.sh --all-features --profile debug --out "$RUNNER_TEMP/pkg"
+          chmod -R u+w "$RUNNER_TEMP/pkg"
+          abidw --out-file "$RUNNER_TEMP/pkg/tstrans.abi" "$RUNNER_TEMP/pkg/lib/libtstrans.so"
+          cp bindings/c/abi-symbols.txt "$RUNNER_TEMP/pkg/"
+          chmod -R a-w "$RUNNER_TEMP/pkg"
+
+      - name: Compare with the previous tag and write abi.json
+        env:
+          PREV: ${{ steps.prev.outputs.prev }}
+          PREV_MINOR: ${{ steps.prev.outputs.prev_minor }}
+          HEAD_MINOR: ${{ steps.prev.outputs.head_minor }}
+          RELEASE_LIB: ${{ steps.release.outputs.lib }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/abi-record"
+          old="$(bash scripts/dev/prev-c-library.sh resolve)"
+          if [ -n "$RELEASE_LIB" ]; then how="from its Release package"; else how="built"; fi
+          bash scripts/dev/prev-c-library.sh header "$RUNNER_TEMP/prev-tstrans.h"
+          set +e
+          bash scripts/check/c/abi-compat.sh "$old" "$RUNNER_TEMP/pkg/lib/libtstrans.so" "$PREV_MINOR" "$HEAD_MINOR" \
+            --header "$RUNNER_TEMP/pkg/include/tstrans.h" --old-header "$RUNNER_TEMP/prev-tstrans.h" 2>&1 | tee "$RUNNER_TEMP/abi-record/abi-report.txt"
+          rc="${PIPESTATUS[0]}"
+          set -e
+          verdict=incompatible
+          [ "$rc" -eq 0 ] && verdict=compatible
+          symbols="$(sed -n 's/.* \/ \([0-9][0-9]*\) new tst_ symbols.*/\1/p' "$RUNNER_TEMP/abi-record/abi-report.txt" | head -1)"
+          abidiff_exit="$(sed -n 's/^abi-compat: abidiff exit \([0-9][0-9]*\)$/\1/p' "$RUNNER_TEMP/abi-record/abi-report.txt" | head -1)"
+          jq -n --slurpfile m "$RUNNER_TEMP/pkg/manifest.json" \
+            --arg prev "$PREV" --arg how "$how" --arg verdict "$verdict" \
+            --arg symbols "${symbols:-}" --arg ax "${abidiff_exit:-}" \
+            --arg abidiff "$(abidiff --version | sed 's/^abidiff: *//')" \
+            '{major:$m[0].abi.major, minor:$m[0].abi.minor,
+              symbols:(if $symbols == "" then null else ($symbols|tonumber) end),
+              previous_tag:$prev, previous_source:$how,
+              abidiff_exit:(if $ax == "" then null else ($ax|tonumber) end),
+              verdict:$verdict, abidiff_version:$abidiff}' > "$RUNNER_TEMP/abi-record/abi.json"
+          cat "$RUNNER_TEMP/abi-record/abi.json"
+          exit "$rc"
+
+      - name: Package the C library
+        run: |
+          version="$(jq -r .version "$RUNNER_TEMP/pkg/manifest.json")"
+          name="tstrans-c-$version-linux-x86_64"
+          mkdir -p "$RUNNER_TEMP/c-package"
+          mv "$RUNNER_TEMP/pkg" "$RUNNER_TEMP/$name"
+          tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$(git log -1 --format=%ct)" \
+            -czf "$RUNNER_TEMP/c-package/$name.tar.gz" -C "$RUNNER_TEMP" "$name"
+          ls -l "$RUNNER_TEMP/c-package"
+
+      - name: cargo-semver-checks report (informational)
+        id: semver
+        continue-on-error: true
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          cargo +stable install cargo-semver-checks --version 0.51.0 --locked --quiet
+          bash scripts/dev/semver-checks.sh "$RUNNER_TEMP/semver"
+          cp "$RUNNER_TEMP/semver/semver-checks.json" "$RUNNER_TEMP/abi-record/"
+          jq -n --arg v "$(cargo +stable semver-checks --version | sed 's/^cargo-semver-checks *//')" '{version:$v}' > "$RUNNER_TEMP/abi-record/semver-checks-tool.json"
+
+      - name: Keep the ABI record
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: abi-record
+          path: ${{ runner.temp }}/abi-record
+          if-no-files-found: ignore
+
+      - name: Keep the C package
+        uses: actions/upload-artifact@v7
+        with:
+          name: c-package
+          path: ${{ runner.temp }}/c-package
+          if-no-files-found: error
+
+  ci-lookup:
+    name: ci result on this commit
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Read the ci workflow's conclusion for the SHA
+        # ci runs on every push to main and on every PR head, so this reads a
+        # result rather than starting one. No run for the SHA (a dispatch on an
+        # unpushed commit) is recorded as "missing", which is a NO-GO.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.resolve.outputs.ref }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-record"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=50" > "$RUNNER_TEMP/ci-runs.json"
+          jq '[.workflow_runs[] | {status, conclusion, url:.html_url, created_at}] | sort_by(.created_at) | last // null
+              | if . == null then {conclusion:"missing", run_url:""}
+                elif .status != "completed" then {conclusion:.status, run_url:.url}
+                else {conclusion:(.conclusion // "missing"), run_url:.url} end' \
+            "$RUNNER_TEMP/ci-runs.json" > "$RUNNER_TEMP/ci-record/ci.json"
+          cat "$RUNNER_TEMP/ci-record/ci.json"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ci-record
+          path: ${{ runner.temp }}/ci-record
+          if-no-files-found: error
+
+  sbom:
+    name: CycloneDX SBOMs (C library, Python extension)
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+
+      - name: Generate one SBOM per binding crate
+        # cargo-cyclonedx walks the whole workspace and writes one file next to
+        # every member's Cargo.toml; the two that bundle natives are tst-c (the
+        # C package) and tst-py (the wheel). Dependency resolution only, no
+        # build, so no submodules are needed.
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          cargo +stable install cargo-cyclonedx --version 0.5.9 --locked --quiet
+          cargo +stable cyclonedx --all-features -f json --spec-version 1.5 --override-filename tstrans.cdx
+          mkdir -p "$RUNNER_TEMP/sbom"
+          cp bindings/c/tstrans.cdx.json "$RUNNER_TEMP/sbom/tstrans-c.cdx.json"
+          cp bindings/python/tstrans.cdx.json "$RUNNER_TEMP/sbom/tstrans-py.cdx.json"
+          jq -n --arg v "$(cargo +stable cyclonedx --version | awk '{print $NF}')" '{version:$v}' > "$RUNNER_TEMP/sbom/sbom-tool.json"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: ${{ runner.temp }}/sbom
+          if-no-files-found: error
+
+  qualify:
+    name: qualification record
+    needs: [resolve, interop, sanitizers, jvm-jar, python-wheels, fuzz, abi, ci-lookup, sbom]
+    # Runs after every leg whatever its result: a failed leg is a line in the
+    # record and a NO-GO, not a missing record.
+    if: always() && needs.resolve.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      verdict: ${{ steps.verdict.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Pinned Rust toolchain
+        uses: ./.github/actions/rust-setup
+
+      - name: Record the source, toolchain and host
+        # Written before any artefact is downloaded, so `dirty` describes the
+        # checkout and nothing this job adds.
+        env:
+          LABEL: ${{ needs.resolve.outputs.label }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/artifacts"
+          dirty=false
+          [ -n "$(git status --porcelain)" ] && dirty=true
+          sub() {
+            jq -n --arg p "$1" --arg sha "$(git -C "$1" rev-parse HEAD)" \
+              --arg d "$(git -C "$1" describe --tags --always)" \
+              '{($p): {sha:$sha, describe:$d}}'
+          }
+          subs="$( { sub crates/srt-sys/vendor/srt; sub crates/rist-sys/vendor/librist; sub crates/mbedtls-src/vendor/mbedtls; } | jq -s add)"
+          nightly="$(sed -n 's/.*rustup toolchain install \(nightly-[0-9-]*\).*/\1/p' .github/workflows/ci.yml | head -1)"
+          cbindgen="$(awk '/^name = "cbindgen"$/ {getline; gsub(/[^0-9.]/, "", $0); print; exit}' Cargo.lock)"
+          . /etc/os-release
+          jq -n --arg label "$LABEL" --arg sha "$(git rev-parse HEAD)" --arg ref "${GITHUB_REF}" \
+            --argjson dirty "$dirty" --argjson subs "$subs" \
+            --arg rust "$(rustc --version | awk '{print $1" "$2}')" --arg nightly "$nightly" --arg cbindgen "$cbindgen" \
+            --arg runner "ubuntu-$VERSION_ID" --arg arch "$(uname -m)" --arg kernel "$(uname -r | cut -d- -f1)" \
+            '{label:$label,
+              source:{sha:$sha, ref:$ref, dirty:$dirty, submodules:$subs},
+              toolchain:{rust:$rust, nightly_public_api:$nightly, cbindgen:$cbindgen, tools:{}},
+              host:{runner:$runner, arch:$arch, kernel:$kernel}}' > "$RUNNER_TEMP/artifacts/context.json"
+
+      - name: Download every leg's artefacts
+        # Only the record-bearing artefacts: the wheels, the fat jar and the
+        # native libraries of the called workflows are not part of the record.
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "{interop-evidence,sanitizer-*,fuzz-tst-*,abi-record,c-package,ci-record,sbom}"
+          path: ${{ runner.temp }}/downloaded
+
+      - name: Lay the artefacts out for the collector
+        run: |
+          D="$RUNNER_TEMP/downloaded"; A="$RUNNER_TEMP/artifacts"
+          ls "$D" || true
+          # Interop evidence and the four sanitizer one-liners keep their
+          # artefact names as directories (the layout the collector reads).
+          [ -d "$D/interop-evidence" ] && cp -r "$D/interop-evidence" "$A/interop-evidence"
+          for d in "$D"/sanitizer-*; do [ -d "$d" ] && cp -r "$d" "$A/"; done
+          [ -f "$D/ci-record/ci.json" ] && cp "$D/ci-record/ci.json" "$A/ci.json"
+          for f in abi.json semver-checks.json; do [ -f "$D/abi-record/$f" ] && cp "$D/abi-record/$f" "$A/$f"; done
+          # One fuzz.json from the per-crate parts. None at all = no file = a
+          # missing leg, never a pass.
+          parts=("$D"/fuzz-tst-*/fuzz-*.json)
+          if [ -e "${parts[0]}" ]; then
+            jq -s '{targets_run:(map(.targets_run)|add), seconds_per_target:(map(.seconds_per_target)|min),
+                    crashes:(map(.crashes)|add), crates:(map(.crate))}' "${parts[@]}" > "$A/fuzz.json"
+          fi
+          # The tool versions the record names.
+          abidiff="$(jq -r '.abidiff_version // empty' "$A/abi.json" 2>/dev/null || true)"
+          semver="$(jq -r '.version // empty' "$D/abi-record/semver-checks-tool.json" 2>/dev/null || true)"
+          cyclone="$(jq -r '.version // empty' "$D/sbom/sbom-tool.json" 2>/dev/null || true)"
+          jq --arg a "$abidiff" --arg s "$semver" --arg c "$cyclone" \
+            '.toolchain.tools = ({} + (if $a != "" then {abidiff:$a} else {} end)
+                                    + (if $s != "" then {"cargo-semver-checks":$s} else {} end)
+                                    + (if $c != "" then {"cargo-cyclonedx":$c} else {} end))' \
+            "$A/context.json" > "$A/context.json.new" && mv "$A/context.json.new" "$A/context.json"
+
+      - name: Record each leg's conclusion
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          R_INTEROP: ${{ needs.interop.result }}
+          R_SANITIZERS: ${{ needs.sanitizers.result }}
+          R_JVM: ${{ needs.jvm-jar.result }}
+          R_WHEELS: ${{ needs.python-wheels.result }}
+          R_FUZZ: ${{ needs.fuzz.result }}
+          R_ABI: ${{ needs.abi.result }}
+          R_SEMVER: ${{ needs.abi.outputs.semver }}
+        run: |
+          jq -n --arg u "$RUN_URL" \
+            --arg interop "$R_INTEROP" --arg san "$R_SANITIZERS" --arg jvm "$R_JVM" --arg wheels "$R_WHEELS" \
+            --arg fuzz "$R_FUZZ" --arg abi "$R_ABI" --arg semver "$R_SEMVER" \
+            '{interop:{conclusion:$interop, run_url:$u},
+              sanitizers:{conclusion:$san, run_url:$u},
+              "jvm-jar":{conclusion:$jvm, run_url:$u},
+              "python-wheels":{conclusion:$wheels, run_url:$u},
+              fuzz:{conclusion:$fuzz, run_url:$u},
+              "c-abi":{conclusion:$abi, run_url:$u},
+              "semver-checks":{conclusion:(if $semver == "" then "missing" else $semver end), run_url:$u}}' \
+            > "$RUNNER_TEMP/artifacts/legs.json"
+          cat "$RUNNER_TEMP/artifacts/legs.json"
+
+      - name: Collect the qualification record
+        # No continue-on-error: an empty or malformed artefact makes the
+        # collector exit 2 with no record, and that must fail this job.
+        run: |
+          mkdir -p "$RUNNER_TEMP/bundle"
+          bash scripts/gen/qualification.sh collect --artifacts "$RUNNER_TEMP/artifacts" --out "$RUNNER_TEMP/bundle/qualification.json"
+
+      - name: Render the record, add the natives to the SBOMs, write the bundle
+        run: |
+          B="$RUNNER_TEMP/bundle"
+          python3 - "$B/qualification.json" "$B/qualification.md" <<'PY'
+          import json, sys
+          sys.path.insert(0, "scripts/gen")
+          import qualification
+          rec = json.load(open(sys.argv[1]))
+          open(sys.argv[2], "w").write(qualification.render_block(rec))
+          PY
+          # The three bundled native libraries are not Cargo dependencies, so the
+          # SBOMs list them from the submodule commits the record names.
+          for f in tstrans-c tstrans-py; do
+            [ -f "$RUNNER_TEMP/downloaded/sbom/$f.cdx.json" ] || { echo "::warning::no $f SBOM was produced"; continue; }
+            jq --slurpfile ctx "$RUNNER_TEMP/artifacts/context.json" --slurpfile rec "$B/qualification.json" '
+              ($ctx[0].source.submodules) as $s | ($rec[0].natives) as $n |
+              .components += [
+                {type:"library", "bom-ref":"native:libsrt", name:"libsrt", version:$n.libsrt,
+                 purl:("pkg:github/Haivision/srt@" + $s["crates/srt-sys/vendor/srt"].sha),
+                 properties:[{name:"tstrans:submodule-commit", value:$s["crates/srt-sys/vendor/srt"].sha}]},
+                {type:"library", "bom-ref":"native:librist", name:"librist", version:$n.librist,
+                 purl:("pkg:generic/librist@" + $n.librist),
+                 properties:[{name:"tstrans:submodule-commit", value:$s["crates/rist-sys/vendor/librist"].sha}]},
+                {type:"library", "bom-ref":"native:mbedtls", name:"mbedtls", version:$n.mbedtls,
+                 purl:("pkg:github/Mbed-TLS/mbedtls@" + $s["crates/mbedtls-src/vendor/mbedtls"].sha),
+                 properties:[{name:"tstrans:submodule-commit", value:$s["crates/mbedtls-src/vendor/mbedtls"].sha}]}]' \
+              "$RUNNER_TEMP/downloaded/sbom/$f.cdx.json" > "$B/$f.cdx.json"
+          done
+          cp "$RUNNER_TEMP"/downloaded/c-package/*.tar.gz "$B/" || echo "::warning::no C package was produced"
+          bash scripts/gen/qualification.sh checksums --dir "$B"
+          ls -l "$B"
+          cat "$B/qualification.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attest the bundle (build provenance)
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            ${{ runner.temp }}/bundle/qualification.json
+            ${{ runner.temp }}/bundle/qualification.md
+            ${{ runner.temp }}/bundle/tstrans-c.cdx.json
+            ${{ runner.temp }}/bundle/tstrans-py.cdx.json
+            ${{ runner.temp }}/bundle/tstrans-c-*.tar.gz
+            ${{ runner.temp }}/bundle/SHA256SUMS
+
+      - name: Keep the bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualification-${{ needs.resolve.outputs.slug }}
+          path: ${{ runner.temp }}/bundle
+          if-no-files-found: error
+
+      - name: Verdict
+        id: verdict
+        run: |
+          v="$(jq -r .verdict "$RUNNER_TEMP/bundle/qualification.json")"
+          echo "verdict=$v" >> "$GITHUB_OUTPUT"
+          echo "verdict: $v"
+          jq -r '.verdict_reasons[]' "$RUNNER_TEMP/bundle/qualification.json"
+          # A GO bundle is complete: both SBOMs and the C package are in it.
+          B="$RUNNER_TEMP/bundle"
+          for f in tstrans-c.cdx.json tstrans-py.cdx.json; do
+            [ -f "$B/$f" ] || { echo "::error::$f is missing from the bundle"; exit 1; }
+          done
+          ls "$B"/tstrans-c-*-linux-x86_64.tar.gz >/dev/null || { echo "::error::the C package is missing from the bundle"; exit 1; }
+          [ "$v" = GO ]
+
+  attach:
+    name: attach the bundle to the Release
+    needs: [resolve, qualify]
+    # Tag pushes only, and only for a GO. This job is an upload to the
+    # project's own GitHub Release, not a registry publish; the called
+    # workflows above never reach their publish jobs.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.qualify.outputs.verdict == 'GO'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: qualification-${{ needs.resolve.outputs.slug }}
+          path: ${{ runner.temp }}/bundle
+
+      - name: Verify the checksums, then upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd "$RUNNER_TEMP/bundle"
+          sha256sum -c SHA256SUMS
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber ./*
+          else
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --draft --notes "Draft: notes from the CHANGELOG to follow." ./*
+          fi
