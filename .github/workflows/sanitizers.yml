@@ -196,7 +196,7 @@ jobs:
           cargo +nightly nextest run --profile sanitizer \
             -p tst-srt -p tst-rist -p tst-c \
             --features tst-c/srt,tst-c/rtp,tst-c/udp,tst-c/tcp,tst-c/hls,tst-c/rist \
-            -E 'not (test(smoke_c_compiles_links_runs) | test(cdylib_exports_only_prefixed_symbols) | test(srt_symbols_not_exported) | test(c_program_sees_the_runtime_answers))' \
+            -E 'not (test(smoke_c_compiles_links_runs) | test(c_program_sees_the_runtime_answers))' \
             --no-fail-fast \
             -Z build-std=std,panic_abort \
             --target x86_64-unknown-linux-gnu
@@ -267,7 +267,7 @@ jobs:
           cargo +nightly nextest run --profile sanitizer \
             -p tst-srt -p tst-rist -p tst-c \
             --features tst-c/srt,tst-c/rtp,tst-c/udp,tst-c/tcp,tst-c/hls,tst-c/rist \
-            -E 'not (test(smoke_c_compiles_links_runs) | test(cdylib_exports_only_prefixed_symbols) | test(srt_symbols_not_exported) | test(c_program_sees_the_runtime_answers))' \
+            -E 'not (test(smoke_c_compiles_links_runs) | test(c_program_sees_the_runtime_answers))' \
             --no-fail-fast \
             -Z build-std=std,panic_abort \
             --target x86_64-unknown-linux-gnu

@@ -34,7 +34,9 @@ expect "an added function with a minor bump passes"        0 "$tmp/v1.so" "$tmp/
 expect "an incompatible change passes with a major bump"   0 "$tmp/v1.so" "$tmp/v2_removed.so" 0 0 0 1
 expect "a missing old library is a tool error"             2 "$tmp/absent.so" "$tmp/v1.so" 3 3
 expect "an old library with no tst_ symbols is a tool error" 2 "$tmp/plain.so" "$tmp/v1.so" 3 4
-# nm hidden from PATH (a PATH of symlinks to everything but nm)
+# nm hidden from PATH (a PATH of symlinks to everything but nm). This tool
+# list must grow when abi-compat.sh starts using another tool, or this row
+# fails for the wrong reason.
 mkdir "$tmp/nonm"
 for t in bash env dirname mktemp rm cat sed grep awk sort comm wc tr abidiff abidw cc; do
     p="$(command -v "$t" 2>/dev/null)" && ln -s "$p" "$tmp/nonm/$t"

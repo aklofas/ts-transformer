@@ -51,7 +51,6 @@ unchanged (484) and the test leaf-name multiset is byte-identical before/after
 | `feature_matrix_compile.rs` | `abi/feature_matrix_compile.rs` |
 | `header_drift.rs` | `abi/header_drift.rs` |
 | `smoke.rs` | `abi/smoke.rs` |
-| `symbol_audit.rs` | `abi/symbol_audit.rs` |
 | `version_check.rs` | `abi/version_check.rs` |
 
 ### `receiving/` — C ABI receiver loopbacks (demux/raw/TS) and sender+receiver live pairing.
