@@ -3,6 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::csv::{RSS_HEADER, csv_rows};
 use crate::proxy::ProxyStats;
 use crate::report_types::{
     CellMetrics, ManagedSendStats, PublishMountReport, RECONNECT_MODES, VerifyReport,
@@ -205,30 +206,8 @@ pub struct RssSample {
 /// truncated soak artifact must never silently read as "no data,
 /// every check vacuously passes."
 pub fn parse_rss_csv(text: &str) -> Result<Vec<RssSample>, String> {
-    let mut lines = text.lines().enumerate();
-    let Some((_, header)) = lines.next() else {
-        return Err("rss.csv: empty file (expected a header line)".to_string());
-    };
-    if header.trim() != "elapsed_s,leg,process,pid,rss_kb" {
-        return Err(format!(
-            "rss.csv line 1: expected header `elapsed_s,leg,process,pid,rss_kb`, got: {header:?}"
-        ));
-    }
-
     let mut samples = Vec::new();
-    for (idx, raw_line) in lines {
-        let line_no = idx + 1;
-        let line = raw_line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let fields: Vec<&str> = line.split(',').collect();
-        if fields.len() != 5 {
-            return Err(format!(
-                "rss.csv line {line_no}: expected 5 comma-separated fields, got {}: {line:?}",
-                fields.len()
-            ));
-        }
+    for (line_no, fields) in csv_rows(text, RSS_HEADER, 5, "rss.csv")? {
         let elapsed_s: f64 = fields[0]
             .parse()
             .map_err(|_| format!("rss.csv line {line_no}: invalid elapsed_s {:?}", fields[0]))?;
@@ -3479,7 +3458,7 @@ pub(crate) mod tests {
 
         let err = parse_rss_csv("elapsed_s,leg,process,pid,rss_kb\n0,srt,send,1000\n")
             .expect_err("wrong field count must be rejected");
-        assert!(err.contains("5 comma-separated fields"), "{err}");
+        assert!(err.contains("expected 5 fields"), "{err}");
 
         let err =
             parse_rss_csv("not,the,right,header\n").expect_err("wrong header must be rejected");

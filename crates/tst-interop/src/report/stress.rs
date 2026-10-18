@@ -17,13 +17,13 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::csv::{RSS_HEADER, csv_rows};
 use super::soak::{RssSample, linear_regression_slope};
 use crate::proxy::ProxyStats;
 use crate::report_types::{CellMetrics, VerifyReport};
 
 const PROC_HEADER: &str = "elapsed_s,leg,process,pid,utime_ticks,stime_ticks,threads,fds";
 const HOST_HEADER: &str = "elapsed_s,load1,load5,load15,procs_running,mem_available_kb";
-const RSS_HEADER: &str = "elapsed_s,leg,process,pid,rss_kb";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProcSample {
@@ -57,40 +57,6 @@ fn opt<T: std::str::FromStr>(field: &str, name: &str, line_no: usize) -> Result<
         .map_err(|_| format!("line {line_no}: {name} must be numeric or empty, got {field:?}"))
 }
 
-fn csv_rows<'a>(
-    text: &'a str,
-    header: &str,
-    columns: usize,
-    file: &str,
-) -> Result<Vec<(usize, Vec<&'a str>)>, String> {
-    let mut lines = text.lines().enumerate();
-    let Some((_, first)) = lines.next() else {
-        return Err(format!("{file}: empty file (expected a header line)"));
-    };
-    if first.trim() != header {
-        return Err(format!(
-            "{file} line 1: expected header `{header}`, got: {first:?}"
-        ));
-    }
-    let mut rows = Vec::new();
-    for (idx, raw) in lines {
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let fields: Vec<&str> = line.split(',').collect();
-        if fields.len() != columns {
-            return Err(format!(
-                "{file} line {}: expected {columns} fields, got {}: {line:?}",
-                idx + 1,
-                fields.len()
-            ));
-        }
-        rows.push((idx + 1, fields));
-    }
-    Ok(rows)
-}
-
 pub fn parse_proc_csv(text: &str) -> Result<Vec<ProcSample>, String> {
     csv_rows(text, PROC_HEADER, 8, "proc.csv")?
         .into_iter()
@@ -120,7 +86,7 @@ pub fn parse_proc_csv(text: &str) -> Result<Vec<ProcSample>, String> {
 /// streams of one transport, each with its own leg (`<transport>-<k>`,
 /// see `StreamArtifacts::leg`), so soak's allowlist would reject every
 /// real stress artifact. `RssSample` itself is still the shared type —
-/// only the parsing/validation is duplicated here.
+/// only the leg/process validation differs; both read the same CSV rows.
 pub fn parse_rss_csv(text: &str) -> Result<Vec<RssSample>, String> {
     csv_rows(text, RSS_HEADER, 5, "rss.csv")?
         .into_iter()
