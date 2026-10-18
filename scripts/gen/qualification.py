@@ -58,7 +58,6 @@ MAINTAINER_LOCAL = [
     "bench regression",
     "one-hour synthetic soak",
 ]
-PEER_KEYS = ("ffmpeg", "tsp", "gst-launch-1.0", "vlc", "mpv")
 
 
 def die(msg, rc=2):
@@ -128,7 +127,7 @@ def _find_sanitizer(art, job):
     return None
 
 
-def _interop(art, legs):
+def _interop(art):
     results = read_json(os.path.join(art, "interop-evidence", "results.json"))
     inv = read_json(os.path.join(art, "interop-evidence", "inventory.json")) or {}
     if results is None or not os.path.isfile(os.path.join(art, "interop-evidence", "inventory.json")):
@@ -192,7 +191,7 @@ def collect(art, root):
         e = legs_in.get(name) or {}
         return e.get("conclusion"), e.get("run_url", "")
 
-    interop, peers_all = _interop(art, legs_in)
+    interop, peers_all = _interop(art)
     fuzz_in = read_json(os.path.join(art, "fuzz.json"))
     declared = 0
     with open(os.path.join(root, "tests/coverage/fuzz-targets.toml")) as f:

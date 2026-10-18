@@ -404,6 +404,12 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/qualification.sh
 
+      - name: check-publish-guards (callable workflows keep publish jobs behind dry_run; callers pass dry_run true)
+        # The rail defaults to .github/workflows/*.yml; its self-test runs on
+        # fixtures only, so this step is what enforces the rule on the real files.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/publish-guards.sh
+
       - name: check-roster-sync (workflow and rail lists agree with cargo metadata)
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/roster-sync.sh
