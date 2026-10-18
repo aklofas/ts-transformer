@@ -1364,7 +1364,7 @@ jobs:
         id: cache
         uses: actions/cache@v5
         with:
-          path: ${{ github.workspace }}/../prev-target/debug/libtstrans.so
+          path: ${{ runner.temp }}/prev-target/debug/libtstrans.so
           key: c-abi-${{ steps.prev.outputs.prev }}-${{ hashFiles('rust-toolchain.toml') }}
 
       - name: Previous library built from source at the tag
@@ -1372,10 +1372,10 @@ jobs:
         env:
           PREV: ${{ steps.prev.outputs.prev }}
         run: |
-          git worktree add ../prev "$PREV"
-          git -C ../prev submodule update --init --recursive
-          (cd ../prev && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/../prev-target" cargo build -p tst-c --all-features)
-          test -f ../prev-target/debug/libtstrans.so
+          git worktree add "$RUNNER_TEMP/prev" "$PREV"
+          git -C "$RUNNER_TEMP/prev" submodule update --init --recursive
+          (cd "$RUNNER_TEMP/prev" && CARGO_TARGET_DIR="$RUNNER_TEMP/prev-target" cargo build -p tst-c --all-features)
+          test -f "$RUNNER_TEMP/prev-target/debug/libtstrans.so"
 
       - name: Stage this tree's package
         run: bash scripts/dev/c-package.sh --all-features --out "$RUNNER_TEMP/pkg"
@@ -1390,7 +1390,7 @@ jobs:
           if [ -n "$RELEASE_LIB" ]; then
             old="$RELEASE_LIB"; how="from its Release package"
           else
-            old="$GITHUB_WORKSPACE/../prev-target/debug/libtstrans.so"; how="built from source"
+            old="$RUNNER_TEMP/prev-target/debug/libtstrans.so"; how="built from source"
           fi
           echo "previous tag $PREV, $how"
           bash scripts/check/c/abi-compat.sh "$old" "$RUNNER_TEMP/pkg/lib/libtstrans.so" "$PREV_MINOR" "$HEAD_MINOR" --header "$RUNNER_TEMP/pkg/include/tstrans.h" 2>&1 | tee "$RUNNER_TEMP/abi-report.txt"
