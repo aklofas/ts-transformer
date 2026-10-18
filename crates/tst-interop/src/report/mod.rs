@@ -160,13 +160,16 @@ pub struct Results {
 pub struct InventorySummary {
     pub shape: String,
     pub declared_cells: usize,
-    /// The `[census] full_cells` the expectations file declared.
+    /// The `[census] full_cells` the expectations file declared. Defaults
+    /// to 0 so a `results.json` written before the census was recorded
+    /// still deserializes.
+    #[serde(default)]
     pub expected_full_cells: usize,
     pub allowed_skips: Vec<String>,
 }
 
 // ---------------------------------------------------------------------
-// `report soak`
+// `report merge` / `report render` — the interop-matrix half
 // ---------------------------------------------------------------------
 
 mod csv;
