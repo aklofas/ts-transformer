@@ -770,5 +770,8 @@ expect "dependency-lattice: a plane holding a forbidden crate fails" 1 env LATTI
 grep -q 'contains serde_json' "$tmp/out" || { echo "FAIL: dependency-lattice: the forbidden-crate row failed for another reason"; sed 's/^/    /' "$tmp/out"; fail=1; }
 expect "dependency-lattice: the committed table passes"              0 bash scripts/check/repo/dependency-lattice.sh
 
+# abi-compat: the C ABI compatibility rail judges planted C libraries (SKIPs without abidiff).
+expect "abi-compat: the planted-library matrix" 0 bash scripts/check/c/tests/abi-compat-selftest.sh
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

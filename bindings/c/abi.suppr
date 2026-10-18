@@ -1,0 +1,15 @@
+# libabigail suppression file for scripts/check/c/abi-compat.sh.
+# The shared library is a Rust cdylib: its DWARF also describes every Rust
+# std/core/alloc type and every dependency crate. None of that is the C ABI.
+# The C ABI is the exported tst_* functions and TST_*/tst_* variables, and the
+# types reachable from them. Nothing else is suppressed.
+
+# Keep only the exported C functions: drop every function whose name is not tst_*
+# (Rust-mangled and runtime-support symbols are not the C ABI).
+[suppress_function]
+  name_not_regexp = ^tst_
+
+# Keep only the exported C variables: drop every variable whose name is not
+# tst_* / TST_* (statics and Rust runtime data are not the C ABI).
+[suppress_variable]
+  name_not_regexp = ^(tst_|TST_)
