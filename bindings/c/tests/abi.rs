@@ -17,7 +17,5 @@ mod header_drift;
 mod rtp_url_refusal;
 #[path = "abi/smoke.rs"]
 mod smoke;
-#[path = "abi/symbol_audit.rs"]
-mod symbol_audit;
 #[path = "abi/version_check.rs"]
 mod version_check;

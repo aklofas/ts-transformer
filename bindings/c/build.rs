@@ -110,8 +110,8 @@ fn main() {
     // cdylib already localizes every symbol that is not a crate-graph
     // `pub` `#[no_mangle]` export, so libsrt/mbedTLS symbols are emitted
     // with LOCAL binding (`t`/`b`/`r` in `nm`) and never reach the
-    // dynamic export table. The `srt_symbols_not_exported` integration
-    // test enforces this invariant (0 global srt_*/SRT_* symbols).
+    // dynamic export table. scripts/check/c/abi-symbols.sh enforces this
+    // invariant: any srt_*/SRT_* name is a line the committed list lacks.
     //
     // macOS still uses -exported_symbols_list (whitelist by symbol-name
     // pattern; the leaf crate's exports.txt). Windows MSVC has no export

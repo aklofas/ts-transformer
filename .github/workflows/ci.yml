@@ -572,6 +572,19 @@ jobs:
         # build MUST stay the last cdylib-producing build before the test step.
         run: cargo build --workspace --all-features
 
+      - name: check-c-abi-symbols
+        # The exported symbol list (bindings/c/abi-symbols.txt) against a
+        # staged all-features package, and against the previous release tag:
+        # no name may disappear, none may appear without a minor bump. The tag
+        # comparison reads the tag's header and library source, so fetch the
+        # tags first (the checkout above is depth 1, no tags; depth 1 per tag
+        # is far cheaper than a full history). linux-x86_64 only: the rail
+        # reads an ELF dynamic table with GNU nm.
+        if: matrix.name == 'linux-x86_64'
+        run: |
+          git fetch --tags --depth=1 origin
+          bash scripts/check/c/abi-symbols.sh
+
       - name: cargo test (all features)
         if: matrix.phase != 'default'
         # The default feature set no longer includes the transports
