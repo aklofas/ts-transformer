@@ -3,7 +3,9 @@
 //! keeps apart for each feature set. The files are then copied to
 //! `target/<profile>/include` and `target/<profile>/tstrans.pc` as a
 //! convenience for local use. That location is shared by every build of the
-//! profile, so `tstrans_config.h` and `tstrans.pc` there are last-build-wins;
+//! profile and is refreshed only when this build script re-runs (a feature-set
+//! change, a change under `bindings/c`, or a touched `cbindgen.toml`), so the
+//! copy can be stale beside a fresh library;
 //! `scripts/dev/c-package.sh` stages one build's files immutably.
 //!
 //! When the `CI` environment variable is set and non-empty, the build fails if
@@ -213,7 +215,7 @@ fn main() {
         .replace("@FEATURES@", &features);
     std::fs::write(out_path.join("tstrans.pc"), &pc).expect("write tstrans.pc");
 
-    // Convenience copies under target/<profile> (last build wins).
+    // Convenience copies under target/<profile> (refreshed only when this script re-runs).
     let profile_include = profile_dir.join("include");
     std::fs::create_dir_all(&profile_include).expect("create target include dir");
     for name in ["tstrans.h", "tstrans_config.h"] {

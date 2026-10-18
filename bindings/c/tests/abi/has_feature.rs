@@ -50,7 +50,7 @@ fn c_program_sees_the_runtime_answers() {
         .unwrap_or_else(|_| PathBuf::from(manifest_dir).join("../../target"));
     let debug_dir = target_dir.join("debug");
     // This build's own include dir (OUT_DIR) holds its tstrans_config.h; the
-    // copy under target/debug is last-build-wins.
+    // copy under target/debug is refreshed only when the build script re-runs.
     let include_dir = PathBuf::from(env!("OUT_DIR")).join("include");
     let c_file = PathBuf::from(manifest_dir).join("tests/has_feature.c");
     let bin = std::env::temp_dir().join("tst_has_feature_check");
