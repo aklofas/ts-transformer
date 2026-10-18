@@ -638,6 +638,12 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/c/examples-compile.sh
 
+      - name: C package staging self-test (scripts/dev/c-package.sh)
+        # Stages two packages (srt,rtp and all features) and checks each
+        # one's header, config, libraries and hashes come from one build.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/dev/test_c_package.sh
+
       - name: Public-API ratchet (no unintended SemVer breaks)
         # Checks every crate with a committed public-api.txt baseline
         # (scripts/lib/roster.sh public-api) against it. tst-c is excluded: its ABI surface is a

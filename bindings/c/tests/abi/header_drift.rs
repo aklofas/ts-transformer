@@ -2,7 +2,7 @@
 //! against the current source tree. The header is the same file for every
 //! feature set (the feature defines live in `tstrans_config.h`), so the test
 //! runs in every flavour. Drift indicates a forgotten regenerate-and-commit
-//! step: `cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h`.
+//! step: `env -u CI cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -40,7 +40,7 @@ fn committed_header_matches_cbindgen_output() {
     if let Some(diff) = header_post::header_differs(&generated, &expected) {
         panic!(
             "bindings/c/include/tstrans.h differs from cbindgen output. Run \
-             `cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h` \
+             `env -u CI cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h` \
              and commit the diff.\n{diff}"
         );
     }
