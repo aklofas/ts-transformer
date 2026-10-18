@@ -22,14 +22,14 @@ Every test (or test job) maps to one of these tiers:
 | --- | --- | --- | --- |
 | **A** | Always-on, hermetic, fast. The default suite. | PR CI (`build (linux-x86_64)`, `build (linux-aarch64)`), both feature modes | **Yes** — a red here blocks merge |
 | **A-soft** | Historical tier: always-on on a platform that was still phasing in. | Nowhere today — since 2026-05-30 all four platforms are gating (see ci.yml's build matrix), so these jobs are tier A | Yes — promoted to A |
-| **B** | Needs external tools (ffmpeg / tsduck / vlc) or the long soak. | Local `scripts/release-validation.sh` before tagging | No (local, pre-release) |
+| **B** | Needs external tools (ffmpeg / tsduck / vlc) or the long soak. | The `release-qualify.yml` run (a GO record) before tagging; the soak and the real-capture check are maintainer-local | No (local, pre-release) |
 | **C** | Manual / diagnostic. Run explicitly by a maintainer. | `#[ignore]`d; run with `-- --ignored` on demand | No |
 | **D** | Deferred / advisory. Documented intent, not yet implemented. | Nowhere yet | No |
 
 Notes:
 - The Rust integration tests under `crates/*/tests/<domain>/` and the unit
   tests are **Tier A**. The fuzz compile-check is Tier A; long fuzz runs are
-  Tier B (see `fuzz-targets.toml` + `scripts/release-validation.sh`).
+  Tier B (see `fuzz-targets.toml`; maintainer-local before tagging).
 - ffmpeg/tsduck round-trip tests and the 1-hour soak are **Tier B**.
 - Tests marked `#[ignore]` for an external decoder, a real encoder, or a
   diagnostic dump are **Tier C** (catalogued in `skip-ledger.toml`).

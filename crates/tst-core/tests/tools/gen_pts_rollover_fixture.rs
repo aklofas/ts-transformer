@@ -1,6 +1,6 @@
 //! Test tool: emit a synthetic MPEG-TS file with PTS values straddling
-//! the 33-bit boundary. Used by release-validation.sh Step 8 (PTS
-//! rollover stress).
+//! the 33-bit boundary. Used by the maintainer-local PTS-rollover
+//! stress check.
 //!
 //! The initial PTS is set 5 seconds below 2^33 (in 90 kHz ticks); the
 //! stream runs for `duration_secs` seconds; midway through, the PTS

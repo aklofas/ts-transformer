@@ -99,6 +99,7 @@ the set — 14 published artifacts per release in total.
    ```bash
    gh workflow run release-qualify.yml -f sha=<candidate>
    ```
+   The commit must be on `main` or be a `v*` tag; the run's `resolve` job refuses anything else.
    One run calls the wheels, JVM, interop, sanitizer, fuzz, ABI and semver
    legs in rehearsal mode (nothing is published) and writes a record. The run
    must end **GO**: every leg succeeded on that commit, the tree was clean, and
@@ -111,7 +112,7 @@ the set — 14 published artifacts per release in total.
    `qualification.md`, the SBOMs, `SHA256SUMS`, the build attestations and the
    C package. Download it from the run's artefacts.
 5. **Commit the record.** In a docs-only PR, add the run's `qualification.json`
-   as `docs/project/qualification.json` and render the evidence page's
+   as `docs/project/qualification.json` (CI's `check-qualification` step verifies the page matches it) and render the evidence page's
    generated block:
    ```bash
    bash scripts/gen/qualification.sh render --write

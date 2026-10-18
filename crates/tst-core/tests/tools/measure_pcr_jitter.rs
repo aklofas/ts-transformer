@@ -1,6 +1,6 @@
 //! Test tool: walk PCR samples in an MPEG-TS file; compute inter-PCR
 //! delta median + 95th percentile (in milliseconds). Used by
-//! release-validation.sh Step 9 (PCR jitter test).
+//! the maintainer-local PCR jitter check.
 //!
 //! Fail-exit conditions (from the measured corpus PCR cadence):
 //!   median > 67 ms
