@@ -12,6 +12,9 @@ three workflows — treat them as one release transaction:
 A GitHub Release (notes seeded from the CHANGELOG highlights block) completes
 the set — 14 published artifacts per release in total.
 
+The 1.0 release has further conditions, listed with the check that proves
+each in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
+
 > **Release state.** All three registries are
 > live: crates.io (all 11 crates, first published at 0.4.0 and OIDC-wired
 > since), PyPI `tstrans` (since 0.2.0), and Maven Central
