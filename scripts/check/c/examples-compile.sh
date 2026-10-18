@@ -29,7 +29,7 @@
 # So after any narrower tst-c build (e.g. a header-drift run's
 # `--features srt,rtp`), an already-cached all-features build is "fresh", build.rs
 # is skipped, and the srt-only header stays on disk while the all-features
-# cdylib is up to date. We therefore PROBE the header with the preprocessor
+# cdylib is up to date. We therefore PROBE the generated tstrans_config.h
 # after building and, if any TST_HAS_* is missing, touch one of build.rs's
 # `rerun-if-changed` inputs (cbindgen.toml; mtime only, git sees no change)
 # to force cbindgen to rerun, then probe again and fail closed if it is
@@ -58,10 +58,10 @@ EXAMPLES_DIR="bindings/c/examples"
 # default is ./target. tst-c's build.rs emits the header next to the cdylib
 # under <target>/<profile>/, so both paths follow the same root.
 LIB_DIR="${CARGO_TARGET_DIR:-target}/debug"
-# The header must be the one cbindgen emitted for THIS build: the committed
-# bindings/c/include/tstrans.h is the `--features srt,rtp` rendering (see
-# bindings/c/tests header_drift), so it defines only TST_HAS_SRT/RTP and the
-# udp/tcp/hls/rist examples would trip their #error guards against it.
+# The include dir must be the one the build wrote for THIS feature set: the
+# committed bindings/c/include/tstrans_config.h is the bare flavour (no
+# TST_HAS_* defined), so the udp/tcp/hls/rist examples would trip their #error
+# guards against it.
 INCLUDE_DIR="$LIB_DIR/include"
 CC="${CC:-cc}"
 
@@ -71,15 +71,16 @@ build_all_features() {
         cargo build -p tst-c --all-features --quiet
 }
 
-# Ask the preprocessor whether the header on disk is the all-features
-# rendering. Test the VALUES, not definedness: the header's tail defines every
-# feature macro it did not get from the build to 0 (so consumer code can write
-# `#if TST_HAS_UDP`), which makes `defined(TST_HAS_UDP)` true in every
-# rendering. The examples' own guards test `TST_HAS_<X> == 0` for the same
-# reason.
+# Ask whether the tstrans_config.h on disk is the all-features one: it must
+# define each transport macro to 1. (tstrans.h's tail defines every macro the
+# config leaves out to 0, so a preprocessor test on definedness would pass in
+# every flavour; the config file is where the build records what it enabled.)
 header_is_all_features() {
-    printf '#include "tstrans.h"\n#if !(TST_HAS_SRT && TST_HAS_RTP && TST_HAS_UDP && TST_HAS_TCP && TST_HAS_HLS && TST_HAS_RIST)\n#error stale\n#endif\n' \
-        | "$CC" -fsyntax-only -x c -I "$INCLUDE_DIR" - 2>/dev/null
+    local cfg="$INCLUDE_DIR/tstrans_config.h" f
+    [ -f "$cfg" ] || return 1
+    for f in SRT RTP UDP TCP HLS RIST; do
+        grep -q "^#define TST_HAS_$f 1\$" "$cfg" || return 1
+    done
 }
 
 echo "examples-compile: building libtstrans (all features)..."
@@ -91,7 +92,7 @@ if [ ! -f "$LIB_DIR/libtstrans.so" ] || [ ! -f "$INCLUDE_DIR/tstrans.h" ]; then
 fi
 
 if ! header_is_all_features; then
-    echo "examples-compile: $INCLUDE_DIR/tstrans.h is a narrower-feature rendering (a" \
+    echo "examples-compile: $INCLUDE_DIR/tstrans_config.h is a narrower-feature one (a" \
          "narrower tst-c build ran since the all-features one); forcing cbindgen to rerun..."
     touch bindings/c/cbindgen.toml
     build_all_features

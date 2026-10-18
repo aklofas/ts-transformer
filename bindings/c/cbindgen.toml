@@ -13,6 +13,7 @@ include_guard = "TSTRANS_H"
 pragma_once   = false
 no_includes   = false
 sys_includes  = ["stddef.h"]
+includes      = ["tstrans_config.h"]
 cpp_compat    = true
 documentation = true
 documentation_style = "doxy"
@@ -24,11 +25,10 @@ usize_is_size_t = true
 sort_by = "Name"
 
 trailer = """
-/* Always emit TST_HAS_* defines so consumer C code can #if-test them
- * without prior knowledge of build flavor. cbindgen wraps cfg-gated
- * symbols in #ifdef TST_HAS_SRT / #ifdef TST_HAS_RTP blocks when the
- * corresponding feature is active; these fallback defines ensure the
- * macros are always defined (to 0) even in feature-stripped builds.
+/* tstrans_config.h (included above) defines TST_HAS_<FEATURE> to 1 for each
+ * feature the library was built with and leaves the rest undefined. These
+ * fallbacks define the absent ones to 0, so consumer C code can #if-test
+ * every macro without prior knowledge of the build flavor.
  */
 #if !defined(TST_HAS_SRT)
 #define TST_HAS_SRT 0

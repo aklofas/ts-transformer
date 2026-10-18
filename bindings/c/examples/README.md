@@ -21,11 +21,12 @@ gcc -I ../../target/debug/include -L ../../target/debug \
 LD_LIBRARY_PATH=../../target/debug /tmp/<name>
 ```
 
-Use the header cbindgen generated for the feature set you just built — the
-workspace's `target/debug/include/tstrans.h`, i.e. `../../target/debug/include`
-from `bindings/c`, as in the `gcc -I` line above. The committed `include/tstrans.h` is the
-`--features srt,rtp` rendering: it only defines `TST_HAS_SRT` / `TST_HAS_RTP`,
-so the udp / tcp / hls / rist examples stop at their `#error` guard against it.
+Use the include directory cbindgen generated for the feature set you just built — the
+workspace's `target/debug/include`, i.e. `../../target/debug/include`
+from `bindings/c`, as in the `gcc -I` line above. It holds `tstrans.h` and the
+`tstrans_config.h` that defines `TST_HAS_*` for that build. The committed
+`include/tstrans_config.h` is the bare flavour: it defines no feature, so the
+udp / tcp / hls / rist examples stop at their `#error` guard against it.
 One trap: that generated header reflects the LAST tst-c build, and cargo only
 reruns cbindgen when the build is not fresh — so if you build with fewer
 features and then re-run the all-features build from cache, the narrower

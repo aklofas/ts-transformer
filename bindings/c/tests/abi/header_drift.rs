@@ -3,17 +3,12 @@
 //! that inserts domain-grouping section dividers.
 //! Drift indicates a forgotten regenerate-and-commit step.
 
-// The committed header is generated with `srt` + `rtp` on (cbindgen emits
-// every transport's items guarded by `#if defined(TST_HAS_*)` regardless of
-// build features, but the top-level `#define TST_HAS_SRT 1` / `TST_HAS_RTP 1`
-// injected by build.rs only appear when those features are active). All six
-// transports are now opt-in, so regenerate with
-// `cargo build -p tst-c --features srt,rtp`. The drift assertion only matches
-// cbindgen output when exactly `srt` + `rtp` are on (under all-features the
-// injected defines would also include udp/tcp/hls/rist = 1). Gate the test to
-// that flavor; the per-flavor `tst-c feature matrix` CI jobs cover
-// compile-level cfg-leak detection via
-// `scripts/check/c/header-conditional-sections.sh`.
+// The committed header is generated with `srt` + `rtp` on. The feature
+// defines live in `tstrans_config.h`, not in the header, so the comparison no
+// longer depends on them; the test stays gated to that flavor until the
+// per-flavor `tst-c feature matrix` CI jobs (compile-level cfg-leak detection
+// via `scripts/check/c/header-conditional-sections.sh`) are the only check.
+// Regenerate with `cargo build -p tst-c --features srt,rtp`.
 #![cfg(all(feature = "srt", feature = "rtp"))]
 
 use std::fs;
@@ -47,13 +42,7 @@ fn committed_header_matches_cbindgen_output() {
     generated.write(&mut buf);
     let generated = String::from_utf8(buf).expect("cbindgen output is utf-8");
 
-    // The committed header is the srt,rtp rendering, so inject exactly those
-    // two defines (FEATURES[..2] = SRT, RTP) whatever features this test
-    // binary was built with.
-    let generated = header_post::add_section_dividers(&header_post::inject_feature_defines(
-        &generated,
-        &header_post::FEATURES[..2],
-    ));
+    let generated = header_post::add_section_dividers(&generated);
 
     // Normalize line endings before comparing: on Windows the committed header
     // is checked out with CRLF (default core.autocrlf, no .gitattributes pins
@@ -108,4 +97,30 @@ fn mirror_enums_finds_every_column_zero_tst_enum() {
 fn mirror_enums_sees_every_c_binding_enum() {
     let core_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("core/src");
     assert_eq!(header_post::mirror_enums(&core_src).len(), 24);
+}
+
+#[test]
+fn config_defines_only_the_active_features() {
+    let config = header_post::render_config(&header_post::FEATURES[..2]);
+    let defines: Vec<&str> = config
+        .lines()
+        .filter(|l| l.starts_with("#define TST_HAS_"))
+        .collect();
+    assert_eq!(
+        defines,
+        vec!["#define TST_HAS_SRT 1", "#define TST_HAS_RTP 1"]
+    );
+    assert!(
+        config.contains("#ifndef TSTRANS_CONFIG_H")
+            && config.ends_with("#endif /* TSTRANS_CONFIG_H */\n")
+    );
+
+    // The committed config is the bare flavour: a guard and no feature define.
+    let committed = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("include/tstrans_config.h"),
+    )
+    .expect("read committed tstrans_config.h")
+    .replace("\r\n", "\n");
+    assert!(!committed.contains("#define TST_HAS_"));
+    assert!(committed.contains("#ifndef TSTRANS_CONFIG_H"));
 }

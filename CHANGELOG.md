@@ -556,6 +556,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Doc comment only: the `tst_stream_end_reason` enum doc and the managed receiver's end-reason getter doc no longer name a Rust type.
 - Doc comments only: the demux receivers' `_recv_event` error lists name `TST_E_TOO_LARGE` (-6) for a pre-sync buffer that outgrew `sync_buf_cap`. No declaration, value or symbol changed.
 - `TST_ABI_VERSION_MINOR` is 24, the trailer defines `TST_HAS_TLS` (0 unless built with `tls`), and the TLS setters' docs describe the `tls` feature.
+- `tstrans.h` no longer defines the `TST_HAS_*` macros itself; it includes `tstrans_config.h`, so one header serves every feature set instead of one rendering per feature set (existing `#include <tstrans.h>` and `#if TST_HAS_*` code is unchanged).
 
 ### Added — tst-core
 
@@ -678,6 +679,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that loads libtstrans at run time can check before resolving that
   feature's symbols; before, only the `TST_HAS_*` defines of the header it
   compiled against were available. ABI minor 25 (additive).
+- `tstrans_config.h`, written beside the generated `tstrans.h` and included by it, defines `TST_HAS_<FEATURE>` to 1 for each feature the library was built with; `pkg-config --variable=features tstrans` lists them. A consumer can now see the build's feature set without parsing the header.
 
 ### Added — tst-py
 
