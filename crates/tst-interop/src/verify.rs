@@ -869,7 +869,7 @@ impl Tally {
     /// Nothing else excuses one. A PTS that steps backwards is a real
     /// defect wherever it comes from, and a body flip can no longer
     /// manufacture a fake one: `Class::BodyFlip` never targets a PES
-    /// header (see `corrupt.rs`'s comment on the draw range). Truncation
+    /// header (see `corrupt/tap.rs`'s comment on the draw range). Truncation
     /// is the single exception because it is the single class that
     /// removes a non-multiple of 188 bytes, leaving the stream misaligned
     /// until a parser re-locks — and a parser re-locking on a false 0x47
@@ -1671,7 +1671,7 @@ mod tests {
         // `seconds` for the same profile name — naming by profile + pid
         // alone collided under plain `cargo test` (single process, all
         // tests share one pid). Profile + seconds + pid + wall-clock
-        // nanos (report.rs's tempdir-test convention) makes every call a
+        // nanos (report/matrix.rs's tempdir-test convention) makes every call a
         // distinct file regardless of process model.
         let path = std::env::temp_dir().join(format!(
             "tst-interop-verify-wire-{name}-{seconds}-{}-{}.ts",
@@ -3179,7 +3179,7 @@ mod tests {
 
     // ---- Negative controls for the transport-loss excusals ----
     //
-    // The shapes `corrupt.rs` refuses to excuse, driven through
+    // The shapes `corrupt/attribution.rs` refuses to excuse, driven through
     // `Tally::finish` so the assertion is on the OUTCOME: whether any
     // verdict of the report still fails. Each asserts the report fails.
 

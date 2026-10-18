@@ -379,7 +379,7 @@ VLC_ENV_NOISE='vlcpulse audio output error|dbus interface error|globalhotkeys|no
 MPV_NO_STREAMS_SELECTED="No video or audio streams selected"
 
 # ---------------------------------------------------------------------
-# Cell JSON emission (RawCell — see crates/tst-interop/src/report.rs)
+# Cell JSON emission (RawCell — see crates/tst-interop/src/report/mod.rs)
 # ---------------------------------------------------------------------
 #
 # Callers set these globals before sourcing this file's emit_* helpers:
@@ -441,7 +441,7 @@ emit_fail() {
 # (`{pass, failures, metrics: {...}}`) — one level of nesting deeper
 # than `send --json`'s bare CellMetrics, and deeper than what
 # `emit_cell`'s `metrics_file` argument expects (a bare CellMetrics
-# object, matching RawCell.metrics's shape in report.rs). Callers that
+# object, matching RawCell.metrics's shape in report/mod.rs). Callers that
 # only have a VerifyReport file (every `recv`/`verify` call site) must
 # route it through this first — passing a VerifyReport straight to
 # emit_cell embeds the wrong shape and `report merge` fails to parse
@@ -625,7 +625,7 @@ write_provenance() {
 # `report soak` groups by (leg, process) and does not depend on it.
 #
 # A missing PID (process already gone) writes an empty rss_kb field,
-# which is exactly report.rs's `soak::RssSample` crash signal — never
+# which is exactly report/soak.rs's `soak::RssSample` crash signal — never
 # fails this loop itself, so one dead process doesn't stop sampling the
 # others.
 #

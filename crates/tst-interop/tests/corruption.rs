@@ -429,7 +429,7 @@ fn every_class_is_attributed_across_a_seed_sweep() {
 ///
 /// PAT/PMT injections are excluded from the shape census because the
 /// class collapses to the sync byte alone there (the other three are
-/// invisible on PSI); `corrupt.rs`'s own
+/// invisible on PSI); `corrupt/attribution.rs`'s own
 /// `header_class_on_a_psi_packet_only_ever_kills_the_sync_byte` covers
 /// that half.
 #[test]

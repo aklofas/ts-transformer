@@ -396,7 +396,7 @@ KLV_SET=rich
 # $CORRUPT_SPEC broken out for the declaration below. Mirrors
 # `corrupt::parse_corrupt`'s grammar: comma-separated key=value, classes
 # `+`-separated, an absent `classes=` meaning all seven, an absent
-# `min_gap=` meaning corrupt.rs's DEFAULT_MIN_GAP. This is deliberately a
+# `min_gap=` meaning corrupt/tap.rs's DEFAULT_MIN_GAP. This is deliberately a
 # re-derivation, not a second source of truth — `report soak` compares
 # what is declared here against the spec the SENDER wrote into its own
 # corruption log header, so a mistake in this block fails
@@ -455,7 +455,7 @@ PROXY_ADDR_POLL_TIMEOUT_S=10
 # with the sampler's nominal end-of-run instant, can elapse a few
 # seconds BEFORE the sampler's next 30s tick — which would otherwise
 # sample a PID that's already exited and record an empty `rss_kb`,
-# indistinguishable from a genuine crash (`report.rs`'s
+# indistinguishable from a genuine crash (`report/soak.rs`'s
 # `zero_process_exits` verdict). Comfortably larger than one 30s
 # sampler tick so the fix holds even under scheduling jitter well
 # beyond what was actually measured. Applied on BOTH sides of the gap:

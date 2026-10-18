@@ -113,7 +113,7 @@ oracle proves" below for the individual checks.
 SKIPPED — measured at realistic access-unit sizes**
 ([run 37875160134](https://github.com/aklofas/ts-transformer/actions/runs/37875160134),
 `workflow_dispatch`, 2026-10-09 at `41ed12e4`, `--seconds 10`, shape
-`full-159` (the count is `[census] full_cells` in `scripts/interop/expectations.toml`), empty allowed-skip list, no stale expectation). The two cells
+`full-159`, empty allowed-skip list, no stale expectation). The count is `[census] full_cells` in `scripts/interop/expectations.toml`. The two cells
 added on 2026-10-08 both pass, as they did on their first CI run
 ([run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566), 2026-10-08 at `945911d4`, the same census). Each has a GStreamer `rtspclientsink`
 publishing into `tst-interop recv`'s RTSP publish mount:
@@ -387,7 +387,7 @@ SRT leg's `recv`, not just its `send`, now survives a transport break via
 this short, the 6-hourly outage schedule never actually fires against the
 send/recv pair (only the proxy's own pre-warmup window elapses, which the
 runner deliberately shields them from), so the recv-side reconnect counter
-correctly reads 0; this is recorded, not gating (see `report.rs`'s own
+correctly reads 0; this is recorded, not gating (see `report/soak.rs`'s own
 module doc for why that check stays provisional even once a real count is
 available).
 

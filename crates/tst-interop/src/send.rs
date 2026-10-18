@@ -453,7 +453,7 @@ mod tests {
     }
 
     /// Discards everything; exists so a `ManagedTransport` can be
-    /// built without a socket. (`corrupt.rs`'s tests have a similar
+    /// built without a socket. (`corrupt/tap.rs`'s tests have a similar
     /// `VecTransport`, private to that module.)
     struct NullTransport;
     impl Transport for NullTransport {
