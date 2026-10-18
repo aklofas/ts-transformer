@@ -166,11 +166,27 @@ fn parse_kv_line(line: &str, line_no: usize) -> Result<(String, String), String>
 }
 
 /// Parse the expectations file format: `#`-comment lines, blank lines,
-/// `[[expect]]` block markers, and `key = "value"` lines within a block.
-/// Anything else is a loud parse error naming the offending line number.
+/// `[[expect]]` block markers, a `[census]` table holding
+/// `full_cells = <integer>`, and `key = "value"` lines within an
+/// `[[expect]]` block. Anything else is a loud parse error naming the
+/// offending line number. The census is read separately by
+/// [`parse_census`]; this returns only the rows.
 pub fn parse_expectations(text: &str) -> Result<Vec<Expectation>, String> {
+    parse_expectations_file(text).map(|(rows, _)| rows)
+}
+
+/// The number of cells a full-shape run produces, declared once in the
+/// `[census]` table of the expectations file. `None` when the file has
+/// no such table.
+pub fn parse_census(text: &str) -> Result<Option<usize>, String> {
+    parse_expectations_file(text).map(|(_, census)| census)
+}
+
+fn parse_expectations_file(text: &str) -> Result<(Vec<Expectation>, Option<usize>), String> {
     let mut out = Vec::new();
     let mut current: Option<ExpectBuilder> = None;
+    let mut in_census = false;
+    let mut census: Option<usize> = None;
     let mut last_line = 0;
 
     for (idx, raw_line) in text.lines().enumerate() {
@@ -184,7 +200,51 @@ pub fn parse_expectations(text: &str) -> Result<Vec<Expectation>, String> {
             if let Some(builder) = current.take() {
                 out.push(builder.finish(line_no)?);
             }
+            in_census = false;
             current = Some(ExpectBuilder::default());
+            continue;
+        }
+        if line == "[census]" {
+            if let Some(builder) = current.take() {
+                out.push(builder.finish(line_no)?);
+            }
+            if census.is_some() || in_census {
+                return Err(format!(
+                    "expectations line {line_no}: duplicate [census] table"
+                ));
+            }
+            in_census = true;
+            continue;
+        }
+        if in_census {
+            let (key, value) = line.split_once('=').ok_or_else(|| {
+                format!(
+                    "expectations line {line_no}: expected `full_cells = <integer>`, got: {line:?}"
+                )
+            })?;
+            if key.trim() != "full_cells" {
+                return Err(format!(
+                    "expectations line {line_no}: unknown [census] key {:?} (only `full_cells`)",
+                    key.trim()
+                ));
+            }
+            if census.is_some() {
+                return Err(format!(
+                    "expectations line {line_no}: duplicate `full_cells`"
+                ));
+            }
+            let n: usize = value.trim().parse().map_err(|_| {
+                format!(
+                    "expectations line {line_no}: `full_cells` must be a positive integer, got: {:?}",
+                    value.trim()
+                )
+            })?;
+            if n == 0 {
+                return Err(format!(
+                    "expectations line {line_no}: `full_cells` must be positive"
+                ));
+            }
+            census = Some(n);
             continue;
         }
         let (key, value) = parse_kv_line(line, line_no)?;
@@ -201,7 +261,7 @@ pub fn parse_expectations(text: &str) -> Result<Vec<Expectation>, String> {
         out.push(builder.finish(last_line)?);
     }
     reject_ambiguous(&out)?;
-    Ok(out)
+    Ok((out, census))
 }
 
 /// Can `a` and `b` (exact ids or trailing-`*` prefix globs) both match
@@ -432,9 +492,12 @@ pub struct InventoryCell {
 }
 
 /// `inventory.json`: the exact cell multiset a run intends to produce,
-/// plus the knobs that shaped it. `shape` is `full-159` only when no
+/// plus the knobs that shaped it. `shape` is `full` only when no
 /// `--cells`/`--profiles` narrowing was given (the advertised census);
-/// anything else is `subset` and the evidence page may not cite it.
+/// anything else is `subset` and the evidence page may not cite it. The
+/// cell count a `full` inventory must have is declared once, in the
+/// `[census]` table of the expectations file, and checked by
+/// [`check_inventory`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Inventory {
     pub shape: String,
@@ -450,14 +513,8 @@ pub struct Inventory {
     pub tools: serde_json::Value,
 }
 
-pub const SHAPE_FULL: &str = "full-159";
+pub const SHAPE_FULL: &str = "full";
 pub const SHAPE_SUBSET: &str = "subset";
-
-/// The declared cell count a `full-159` inventory must have — the number
-/// embedded in [`SHAPE_FULL`]'s own name, enforced here so a caller can't
-/// claim the advertised full census while actually declaring some other
-/// count under that label.
-pub const FULL_SHAPE_CELL_COUNT: usize = 159;
 
 pub fn parse_inventory(text: &str) -> Result<Inventory, String> {
     let inv: Inventory = serde_json::from_str(text).map_err(|e| format!("inventory.json: {e}"))?;
@@ -465,13 +522,6 @@ pub fn parse_inventory(text: &str) -> Result<Inventory, String> {
         return Err(format!(
             "inventory.json: shape must be {SHAPE_FULL:?} or {SHAPE_SUBSET:?}, got {:?}",
             inv.shape
-        ));
-    }
-    if inv.shape == SHAPE_FULL && inv.cells.len() != FULL_SHAPE_CELL_COUNT {
-        return Err(format!(
-            "inventory.json: shape {SHAPE_FULL:?} must declare exactly {FULL_SHAPE_CELL_COUNT} \
-             cells, got {}",
-            inv.cells.len()
         ));
     }
     // Every declared (id, profile) exactly once: the merge compares
@@ -512,7 +562,11 @@ pub fn parse_inventory(text: &str) -> Result<Inventory, String> {
 /// multiset: every declared (id, profile) exactly once, nothing else, and
 /// no `SKIPPED_TOOL_MISSING` outside `allowed_skips`. Reports EVERY
 /// problem in one error so a broken run is diagnosed in one read.
-pub fn check_inventory(raw_cells: &[RawCell], inv: &Inventory) -> Result<(), String> {
+pub fn check_inventory(
+    raw_cells: &[RawCell],
+    inv: &Inventory,
+    full_cells: usize,
+) -> Result<(), String> {
     let mut declared: BTreeMap<InventoryCell, usize> = BTreeMap::new();
     for c in &inv.cells {
         *declared.entry(c.clone()).or_insert(0) += 1;
@@ -527,6 +581,12 @@ pub fn check_inventory(raw_cells: &[RawCell], inv: &Inventory) -> Result<(), Str
             .or_insert(0) += 1;
     }
     let mut problems = Vec::new();
+    if inv.shape == SHAPE_FULL && inv.cells.len() != full_cells {
+        problems.push(format!(
+            "full shape declares {} cells but expectations.toml [census] full_cells = {full_cells}",
+            inv.cells.len()
+        ));
+    }
     for (cell, &n) in &declared {
         match produced.get(cell).copied().unwrap_or(0) {
             0 => problems.push(format!("missing: {} ({})", cell.id, cell.profile)),
@@ -594,8 +654,14 @@ pub fn merge(
 ) -> Result<Results, String> {
     let expectations_text = fs::read_to_string(expectations_path)
         .map_err(|e| format!("read {}: {e}", expectations_path.display()))?;
-    let expectations = parse_expectations(&expectations_text)
+    let (expectations, census) = parse_expectations_file(&expectations_text)
         .map_err(|e| format!("{}: {e}", expectations_path.display()))?;
+    let full_cells = census.ok_or_else(|| {
+        format!(
+            "{}: missing the [census] table (`full_cells = <n>`)",
+            expectations_path.display()
+        )
+    })?;
 
     let meta_text =
         fs::read_to_string(meta_path).map_err(|e| format!("read {}: {e}", meta_path.display()))?;
@@ -615,12 +681,17 @@ pub fn merge(
             cells_dir.display()
         ));
     }
-    check_inventory(&raw_cells, &inventory)?;
+    check_inventory(&raw_cells, &inventory, full_cells)?;
 
     let mut results = build_results(raw_cells, &expectations, meta);
     results.inventory = Some(InventorySummary {
-        shape: inventory.shape.clone(),
+        shape: if inventory.shape == SHAPE_FULL {
+            format!("full-{full_cells}")
+        } else {
+            inventory.shape.clone()
+        },
         declared_cells: inventory.cells.len(),
+        expected_full_cells: full_cells,
         allowed_skips: inventory.allowed_skips.clone(),
     });
 
@@ -889,7 +960,7 @@ mod tests {
             &[("udp/us-to-tsp", "baseline"), ("udp/tsp-to-us", "baseline")],
             &[],
         );
-        check_inventory(&cells, &inv).expect("exact multiset must pass");
+        check_inventory(&cells, &inv, 159).expect("exact multiset must pass");
     }
 
     #[test]
@@ -899,7 +970,7 @@ mod tests {
             &[("udp/us-to-tsp", "baseline"), ("udp/tsp-to-us", "baseline")],
             &[],
         );
-        let e = check_inventory(&cells, &inv).unwrap_err();
+        let e = check_inventory(&cells, &inv, 159).unwrap_err();
         assert!(e.contains("missing") && e.contains("udp/tsp-to-us"), "{e}");
     }
 
@@ -910,7 +981,7 @@ mod tests {
             raw_cell("udp/us-to-tsp", "baseline", RawVerdict::Pass),
         ];
         let inv = inventory(&[("udp/us-to-tsp", "baseline")], &[]);
-        let e = check_inventory(&cells, &inv).unwrap_err();
+        let e = check_inventory(&cells, &inv, 159).unwrap_err();
         assert!(
             e.contains("duplicate") && e.contains("udp/us-to-tsp"),
             "{e}"
@@ -924,7 +995,7 @@ mod tests {
             &[("udp/us-to-tsp", "baseline"), ("udp/us-to-tsp", "baseline")],
             &[],
         );
-        let e = check_inventory(&cells, &inv).unwrap_err();
+        let e = check_inventory(&cells, &inv, 159).unwrap_err();
         assert!(e.contains("missing") && e.contains("udp/us-to-tsp"), "{e}");
     }
 
@@ -935,7 +1006,7 @@ mod tests {
             raw_cell("srt/us-to-tsp", "baseline", RawVerdict::Pass),
         ];
         let inv = inventory(&[("udp/us-to-tsp", "baseline")], &[]);
-        let e = check_inventory(&cells, &inv).unwrap_err();
+        let e = check_inventory(&cells, &inv, 159).unwrap_err();
         assert!(e.contains("extra") && e.contains("srt/us-to-tsp"), "{e}");
     }
 
@@ -943,7 +1014,7 @@ mod tests {
     fn inventory_same_id_different_profile_is_a_distinct_cell() {
         let cells = vec![raw_cell("decode/mpv/audio", "audio", RawVerdict::Pass)];
         let inv = inventory(&[("decode/mpv/audio", "baseline")], &[]);
-        let e = check_inventory(&cells, &inv).unwrap_err();
+        let e = check_inventory(&cells, &inv, 159).unwrap_err();
         assert!(e.contains("missing") && e.contains("extra"), "{e}");
     }
 
@@ -955,7 +1026,7 @@ mod tests {
             RawVerdict::SkippedToolMissing,
         )];
         let inv = inventory(&[("decode/mpv/baseline", "baseline")], &[]);
-        let e = check_inventory(&cells, &inv).unwrap_err();
+        let e = check_inventory(&cells, &inv, 159).unwrap_err();
         assert!(
             e.contains("undeclared skip") && e.contains("decode/mpv/baseline"),
             "{e}"
@@ -964,7 +1035,7 @@ mod tests {
             &[("decode/mpv/baseline", "baseline")],
             &["decode/mpv/baseline"],
         );
-        check_inventory(&cells, &inv).expect("declared skip passes");
+        check_inventory(&cells, &inv, 159).expect("declared skip passes");
     }
 
     #[test]
@@ -977,13 +1048,54 @@ mod tests {
     }
 
     #[test]
-    fn parse_inventory_rejects_full_shape_with_wrong_count() {
-        let e = parse_inventory(
-            r#"{"shape":"full-159","seconds_per_cell":10,"cells_glob":"*","profiles":[],"cells":[{"id":"a","profile":"baseline"}],"allowed_skips":[],"tools":{}}"#,
+    fn full_shape_must_match_the_declared_census() {
+        let ids: Vec<String> = (0..158).map(|i| format!("udp/cell-{i}")).collect();
+        let cells: Vec<(&str, &str)> = ids.iter().map(|s| (s.as_str(), "baseline")).collect();
+        let inv = inventory(&cells, &[]);
+        let inv = Inventory {
+            shape: SHAPE_FULL.to_string(),
+            ..inv
+        };
+        let raw: Vec<RawCell> = cells
+            .iter()
+            .map(|(id, p)| raw_cell(id, p, RawVerdict::Pass))
+            .collect();
+        let e = check_inventory(&raw, &inv, 159).unwrap_err();
+        assert!(e.contains("158") && e.contains("159"), "{e}");
+        check_inventory(&raw, &inv, 158).expect("matching census passes");
+    }
+
+    #[test]
+    fn merge_requires_a_census_table() {
+        let dir = std::env::temp_dir().join(format!("tst-interop-census-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("cells")).unwrap();
+        fs::write(dir.join("cells/a.json"), "{}").unwrap();
+        fs::write(dir.join("e.toml"), "# none\n").unwrap();
+        fs::write(dir.join("m.json"), "{}").unwrap();
+        fs::write(dir.join("i.json"), "{}").unwrap();
+        let e = merge(
+            &dir.join("cells"),
+            &dir.join("e.toml"),
+            &dir.join("m.json"),
+            &dir.join("i.json"),
+            &dir.join("out.json"),
         )
         .unwrap_err();
-        assert!(e.contains("159"), "{e}");
-        assert!(e.contains('1'), "{e}"); // the actual declared count, 1, should be named
+        assert!(e.contains("[census]"), "{e}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn census_table_is_parsed_and_validated() {
+        let text = "[census]\nfull_cells = 159\n\n[[expect]]\ncell = \"a/b\"\nprofile = \"baseline\"\nverdict = \"known_flaky\"\nreason = \"r\"\n";
+        assert_eq!(parse_census(text).unwrap(), Some(159));
+        assert_eq!(parse_expectations(text).unwrap().len(), 1);
+        assert_eq!(parse_census("").unwrap(), None);
+        assert!(parse_census("[census]\nfull_cells = \"x\"\n").is_err());
+        assert!(parse_census("[census]\nfull_cells = 0\n").is_err());
+        assert!(parse_census("[census]\nother = 1\n").is_err());
+        assert!(parse_census("[census]\nfull_cells = 1\n[census]\nfull_cells = 2\n").is_err());
     }
 
     fn inventory_json(shape: &str, cells: &[(&str, &str)], profiles: &[&str]) -> String {
@@ -1005,7 +1117,7 @@ mod tests {
     #[test]
     fn parse_inventory_rejects_duplicate_declarations() {
         let same = vec![("udp/us-to-tsp", "baseline"); 159];
-        let e = parse_inventory(&inventory_json("full-159", &same, &["baseline"])).unwrap_err();
+        let e = parse_inventory(&inventory_json("full", &same, &["baseline"])).unwrap_err();
         assert!(
             e.contains("duplicate declared cell") && e.contains("udp/us-to-tsp (baseline)"),
             "{e}"
@@ -1042,7 +1154,7 @@ mod tests {
         // 159 distinct keys but a full shape that only lists one profile.
         let ids: Vec<String> = (0..159).map(|i| format!("udp/cell-{i}")).collect();
         let cells: Vec<(&str, &str)> = ids.iter().map(|s| (s.as_str(), "baseline")).collect();
-        let e = parse_inventory(&inventory_json("full-159", &cells, &["baseline"])).unwrap_err();
+        let e = parse_inventory(&inventory_json("full", &cells, &["baseline"])).unwrap_err();
         assert!(e.contains("must list every profile"), "{e}");
     }
 
@@ -1568,6 +1680,7 @@ mod tests {
             inventory: Some(InventorySummary {
                 shape: SHAPE_SUBSET.to_string(),
                 declared_cells: 3,
+                expected_full_cells: 159,
                 allowed_skips: Vec::new(),
             }),
             ..results.clone()
@@ -1865,6 +1978,7 @@ failure_contains = \"stream_sha256 mismatch\"
             "/../../scripts/interop/expectations.toml"
         ));
         let parsed = parse_expectations(text).expect("the live expectations table must parse");
+        assert_eq!(parse_census(text).unwrap(), Some(159));
         assert!(
             parsed.len() >= 65,
             "expected at least 65 rows, got {}",
@@ -1908,7 +2022,7 @@ failure_contains = \"stream_sha256 mismatch\"
         let expectations_path = dir.join("expectations.toml");
         fs::write(
             &expectations_path,
-            "[[expect]]\ncell = \"decode/mpv\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"gap\"\nfailure_contains = \"async KLV support\"\n",
+            "[census]\nfull_cells = 159\n\n[[expect]]\ncell = \"decode/mpv\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"gap\"\nfailure_contains = \"async KLV support\"\n",
         )
         .expect("write expectations");
 
@@ -1982,7 +2096,7 @@ failure_contains = \"stream_sha256 mismatch\"
         fs::write(cells_dir.join("README.txt"), "not a cell").expect("write stray file");
 
         let expectations_path = dir.join("expectations.toml");
-        fs::write(&expectations_path, "# no expectations\n").expect("write expectations");
+        fs::write(&expectations_path, "[census]\nfull_cells = 159\n").expect("write expectations");
 
         let meta_path = dir.join("meta.json");
         fs::write(&meta_path, r#"{"host": "test-host"}"#).expect("write meta");
@@ -2041,7 +2155,7 @@ failure_contains = \"stream_sha256 mismatch\"
         .expect("write cell a");
 
         let expectations_path = dir.join("expectations.toml");
-        fs::write(&expectations_path, "# no expectations\n").expect("write expectations");
+        fs::write(&expectations_path, "[census]\nfull_cells = 159\n").expect("write expectations");
 
         let meta_path = dir.join("meta.json");
         fs::write(&meta_path, r#"{"host": "test-host"}"#).expect("write meta");

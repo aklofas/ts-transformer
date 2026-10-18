@@ -8,8 +8,19 @@
 #
 # Grammar (hand-parsed by `report::parse_expectations` — read that
 # function for the exact rules; every line is either a `#` comment, a
-# blank line, a literal `[[expect]]` block marker, or a `key = "value"`
-# line inside a block):
+# blank line, a literal `[[expect]]` or `[census]` marker, a `key =
+# "value"` line inside an `[[expect]]` block, or `full_cells = <n>`
+# inside the `[census]` table):
+#
+#   [census]
+#   full_cells = 158                     # the cell count of a full-shape run, declared once
+#
+# The census is the single place the advertised full cell count lives.
+# `report merge` fails a full-shape inventory whose declared count
+# differs from it, records it as `inventory.expected_full_cells` in
+# results.json, and writes the shape as `full-<n>`; interop.yml and
+# run-matrix.sh read it from there. Change it only when a cell is
+# added or removed on purpose.
 #
 #   [[expect]]
 #   cell = "decode/mpv"                  # exact cell id, or a trailing "*" glob (e.g. "decode/*")
@@ -70,6 +81,9 @@
 # for the full mechanism + repro per cluster). No row exists without a
 # run that reproduced its exact
 # (cell, profile) FAIL first.
+
+[census]
+full_cells = 159
 
 [[expect]]
 cell = "hls/ffmpeg-pull"

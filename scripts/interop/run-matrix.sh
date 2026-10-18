@@ -89,7 +89,7 @@
 # per --profiles entry with DECLARE_ONLY=1 (each shape records the id
 # it WOULD run and returns immediately) and writes the resulting exact
 # {id, profile} multiset to DIR/inventory.json, whose `shape` field is
-# "full-159" iff --cells is the default "*" AND --profiles is the
+# "full" iff --cells is the default "*" AND --profiles is the
 # default full 12-profile list, else "subset". `tst-interop report
 # merge` is handed this file via --inventory and hard-fails (exit 2, no
 # results.json written) if the cells actually produced don't exactly
@@ -1362,7 +1362,7 @@ if [[ -n "$ALLOWED_SKIPS_ARG" ]]; then
 fi
 
 SHAPE=subset
-[[ "$CELLS_GLOB" == "*" && "$PROFILES_ARG" == "$ALL_PROFILE_NAMES" ]] && SHAPE=full-159
+[[ "$CELLS_GLOB" == "*" && "$PROFILES_ARG" == "$ALL_PROFILE_NAMES" ]] && SHAPE=full
 jq -n --arg shape "$SHAPE" --arg seconds "$SECONDS_ARG" --arg cells_glob "$CELLS_GLOB" \
   --arg profiles "$PROFILES_ARG" --rawfile tsv "$INVENTORY_TSV" \
   --argjson tools "$(tool_versions_json)" --argjson allowed_skips "$ALLOWED_SKIPS_JSON" \
@@ -1372,10 +1372,6 @@ jq -n --arg shape "$SHAPE" --arg seconds "$SECONDS_ARG" --arg cells_glob "$CELLS
     allowed_skips: $allowed_skips, tools: $tools}' >"$OUTDIR/inventory.json"
 declared=$(jq '.cells | length' "$OUTDIR/inventory.json")
 echo "run-matrix: declared $declared cell(s), shape=$SHAPE" >&2
-if [[ "$SHAPE" == "full-159" && "$declared" != "159" ]]; then
-  echo "run-matrix: FATAL: full shape declared $declared cells, expected 159 — a cell shape changed without this check being updated" >&2
-  exit 2
-fi
 
 # Same per-seconds budget the per-cell shapes use — gen/verify here do
 # real work proportional to --seconds (this scales correctly even for a
@@ -1450,6 +1446,10 @@ fi
 # unconditionally claiming both files were written.
 if [[ -s "$OUTDIR/results.json" ]]; then
   echo "run-matrix: wrote $OUTDIR/results.json + $OUTDIR/results.md (exit $merge_rc)" >&2
+  # The shape string comes from the merge, which read the census from
+  # expectations.toml; nothing here hard-codes a cell count.
+  echo "run-matrix: shape=$(jq -r '.inventory.shape' "$OUTDIR/results.json")" \
+    "expected_full_cells=$(jq -r '.inventory.expected_full_cells' "$OUTDIR/results.json")" >&2
 else
   echo "run-matrix: no results.json written (report merge exit $merge_rc)" >&2
 fi
