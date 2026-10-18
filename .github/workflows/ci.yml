@@ -1392,7 +1392,7 @@ jobs:
             old="$GITHUB_WORKSPACE/../prev-target/debug/libtstrans.so"; how="built from source"
           fi
           echo "previous tag $PREV, $how"
-          bash scripts/check/c/abi-compat.sh "$old" "$RUNNER_TEMP/pkg/lib/libtstrans.so" "$PREV_MINOR" "$HEAD_MINOR" 2>&1 | tee "$RUNNER_TEMP/abi-report.txt"
+          bash scripts/check/c/abi-compat.sh "$old" "$RUNNER_TEMP/pkg/lib/libtstrans.so" "$PREV_MINOR" "$HEAD_MINOR" --header "$RUNNER_TEMP/pkg/include/tstrans.h" 2>&1 | tee "$RUNNER_TEMP/abi-report.txt"
           exit "${PIPESTATUS[0]}"
 
       - name: Upload the abidiff report

@@ -3,8 +3,8 @@
 # bump (the additive-only rule documented at TST_ABI_VERSION_MINOR in
 # bindings/c/core/src/lib.rs).
 #
-# Usage: abi-compat.sh <old-lib-or-abi.xml> <new-lib> <old-minor> <new-minor>
-#                      [<old-major> <new-major>]
+# Usage: abi-compat.sh [--header <tstrans.h>] <old-lib-or-abi.xml> <new-lib>
+#                      <old-minor> <new-minor> [<old-major> <new-major>]
 #   <old> is a shared library or a libabigail corpus written by `abidw`;
 #   <new> is a shared library. The majors default to 0 (pre-1.0).
 #
@@ -17,6 +17,13 @@
 #     new-major > old-major the check passes (the 1.0 break).
 #   - an added exported symbol (a separate symbol diff) needs new-minor > old-minor.
 #
+# Opaque handles: every `typedef struct X X;` in the header (declared without a
+# body) is a type whose layout C never sees; its changes are suppressed (also
+# under its Rust spelling: tst_sender_t is TstSender in the debug info). The
+# list is derived from --header on every run (default: bindings/c/include/
+# tstrans.h of this tree, which holds only the default feature set; pass the
+# header of the staged all-features package, as the c-abi job does).
+#
 # Argument-driven: with no arguments it prints this usage and exits 2, with or
 # without abidiff. tests/abi-compat-selftest.sh is the entry point for sweeps.
 #
@@ -25,6 +32,15 @@
 # so a runner that lost the tool cannot pass silently.
 set -uo pipefail
 
+HEADER=""
+args=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --header) [ $# -ge 2 ] || { echo "abi-compat: --header needs a path" >&2; exit 2; }; HEADER="$2"; shift 2 ;;
+        *) args+=("$1"); shift ;;
+    esac
+done
+set -- ${args[@]+"${args[@]}"}
 if [ $# -ne 4 ] && [ $# -ne 6 ]; then
     sed -n '2,/^set -/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2
     exit 2
@@ -44,11 +60,27 @@ for f in "$OLD" "$NEW"; do
     [ -f "$f" ] || { echo "abi-compat: no such file: $f" >&2; exit 2; }
 done
 
-SUPPR="$(cd "$(dirname "$0")/../../.." && pwd)/bindings/c/abi.suppr"
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+SUPPR="$ROOT/bindings/c/abi.suppr"
 [ -f "$SUPPR" ] || { echo "abi-compat: missing $SUPPR" >&2; exit 2; }
+[ -n "$HEADER" ] || HEADER="$ROOT/bindings/c/include/tstrans.h"
+[ -r "$HEADER" ] || { echo "abi-compat: cannot read header: $HEADER" >&2; exit 2; }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+
+# Opaque handle types, derived from the header, appended to the suppressions.
+# DWARF names the Rust struct (TstSender) where the header says tst_sender_t,
+# so each tst_<snake>_t name also yields its Tst<Camel> spelling.
+sed -n 's/^typedef struct \([A-Za-z0-9_][A-Za-z0-9_]*\) \1;.*/\1/p' "$HEADER" \
+    | awk '{ print; if ($0 ~ /^tst_.*_t$/) { n = split(substr($0, 5, length($0) - 6), w, "_"); c = "Tst"; for (i = 1; i <= n; i++) c = c toupper(substr(w[i], 1, 1)) substr(w[i], 2); print c } }' \
+    | sort -u >"$tmp/opaque"
+n_opaque="$(wc -l <"$tmp/opaque" | tr -d ' ')"
+cp "$SUPPR" "$tmp/suppr"
+if [ "$n_opaque" -gt 0 ]; then
+    { printf '\n[suppress_type]\n  name_regexp = (^|::)(%s)$\n' "$(paste -sd'|' "$tmp/opaque")"; } >>"$tmp/suppr"
+fi
+echo "abi-compat: $n_opaque opaque handle types suppressed (derived from $HEADER)"
 
 # Exported C symbols of a library or an abidw corpus, one per line; a failing
 # listing is an error (exit 2), never an empty set.
@@ -68,7 +100,7 @@ symbols() { # <file> <out>
     fi
 }
 
-abidiff --no-added-syms --suppressions "$SUPPR" "$OLD" "$NEW" >"$tmp/report" 2>&1
+abidiff --no-added-syms --suppressions "$tmp/suppr" "$OLD" "$NEW" >"$tmp/report" 2>&1
 rc=$?
 if [ $((rc & 3)) -ne 0 ]; then
     echo "abi-compat: abidiff failed (exit $rc)" >&2
