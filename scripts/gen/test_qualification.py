@@ -291,7 +291,7 @@ class RenderTests(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         self._page(tmp)
         jf = os.path.join(tmp, "q.json")
-        for patch in ({"verdict": "NO-GO"}, {"label": "PR #376 at dab1a51a"}):
+        for patch in ({"verdict": "NO-GO"}, {"label": "PR " + "#12 at dab1a51a"}):
             put(jf, dict(self.rec, **patch))
             rc, _, err = self.run_cli(["render", "--json", jf, "--root", tmp, "--check"])
             self.assertEqual(rc, 1)

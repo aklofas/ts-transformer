@@ -794,5 +794,47 @@ expect "publish-guards: an unguarded callable publish job fails" 1 bash scripts/
 grep -q "job 'publish'" "$tmp/out" || { echo "FAIL: publish-guards: the failure did not name the job"; sed 's/^/    /' "$tmp/out"; fail=1; }
 expect "publish-guards: a guarded job passes" 0 bash scripts/check/repo/publish-guards.sh "$pg/good.yml"
 
+# publish-guards, caller side: a job calling a callable workflow that declares dry_run must pass `dry_run: true`.
+cat > "$pg/callee.yml" <<'YML'
+name: callee
+on:
+  workflow_call:
+    inputs:
+      dry_run: {type: boolean, default: false}
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+YML
+cat > "$pg/caller-bad.yml" <<'YML'
+name: caller
+on: push
+jobs:
+  call:
+    uses: ./.github/workflows/callee.yml
+    with:
+      dry_run: false
+YML
+cat > "$pg/caller-omit.yml" <<'YML'
+name: caller
+on: push
+jobs:
+  call:
+    uses: ./.github/workflows/callee.yml
+YML
+sed 's/dry_run: false/dry_run: true/' "$pg/caller-bad.yml" > "$pg/caller-good.yml"
+# a python3 without PyYAML forces the awk fallback
+mkdir -p "$pg/noyaml"
+real_py="$(command -v python3)"
+printf '#!/bin/sh\n[ "$1" = "-c" ] && exit 1\nexec %s "$@"\n' "$real_py" > "$pg/noyaml/python3"
+for mode in python awk; do
+  if [[ $mode == awk ]]; then pre=(env PATH="$pg/noyaml:$PATH"); else pre=(); fi
+  expect "publish-guards ($mode): a caller passing dry_run: false fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/caller-bad.yml"
+  grep -q "job 'call'" "$tmp/out" || { echo "FAIL: publish-guards ($mode): the failure did not name the job"; sed 's/^/    /' "$tmp/out"; fail=1; }
+  expect "publish-guards ($mode): a caller omitting dry_run fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/caller-omit.yml"
+  expect "publish-guards ($mode): a caller passing dry_run: true passes" 0 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/caller-good.yml"
+done
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

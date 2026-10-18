@@ -181,8 +181,8 @@ each in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
    checklist is the real gate. On a GO the tag run attaches the bundle and
    the C package to a **draft** Release for the tag. Edit that draft's notes
    from the CHANGELOG highlights block and publish it; do not create a second
-   Release by hand. On a NO-GO no draft is created: triage the reasons, then
-   create the Release by hand.
+   Release by hand. If the record is not a GO, no draft is created: read the
+   reasons, then create the Release by hand.
 
 ## crates.io publish (Rust crates)
 
