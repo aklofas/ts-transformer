@@ -100,7 +100,7 @@ each in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 4. **Qualify the candidate.** Once `ci` is green on the commit you intend to
    tag, dispatch the qualification run on that exact commit:
    ```bash
-   gh workflow run release-qualify.yml -f sha=<candidate>
+   gh workflow run release-qualify.yml -f sha=<the full 40-hex commit sha>
    ```
    The commit must be on `main` or be a `v*` tag; the run's `resolve` job refuses anything else.
    One run calls the wheels, JVM, interop, sanitizer, fuzz, ABI and semver
