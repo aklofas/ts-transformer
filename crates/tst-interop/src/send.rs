@@ -453,8 +453,8 @@ mod tests {
     }
 
     /// Discards everything; exists so a `ManagedTransport` can be
-    /// built without a socket. (`corrupt/tap.rs`'s tests have a similar
-    /// `VecTransport`, private to that module.)
+    /// built without a socket. (`corrupt/testing.rs` has a similar
+    /// `VecTransport`, shared by the tap and verify tests.)
     struct NullTransport;
     impl Transport for NullTransport {
         fn send_bytes(&mut self, _msg: &[u8]) -> Result<(), TransportError> {
