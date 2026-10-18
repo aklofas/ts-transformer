@@ -180,13 +180,13 @@ pub struct LogTail {
     /// Bytes of the trailing line the writer has not terminated yet
     /// (`read_until` appends to it; it is taken whole once the newline
     /// arrives). Never holds more than one line.
-    pub(super) carry: Vec<u8>,
+    carry: Vec<u8>,
     /// 1-based number of the next line, for error messages that name the
     /// same line the offline parser would.
     next_line: usize,
     /// Injections kept by [`LogTail::skip_history`], returned by the next
     /// [`LogTail::poll`] before anything appended later.
-    pub(super) held: Vec<Injection>,
+    held: Vec<Injection>,
 }
 
 impl LogTail {
@@ -310,5 +310,278 @@ impl LogTail {
                 return Ok(Some(parsed));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::tap::tests::*;
+    use super::*;
+    use crate::corrupt::*;
+
+    /// A restarted receiver re-attaches to a log the sender has been
+    /// writing for hours. The tail must stream it: memory bounded by the
+    /// longest line, not the archive (the previous whole-file carry with a
+    /// front drain per line was quadratic and held the archive in RAM).
+    #[test]
+    fn log_tail_streams_an_archive_with_bounded_carry() {
+        let b = baseline_bytes(60.0, "tail-capacity");
+        let (_, text, _) = run_tap(&b, cfg(&Class::ALL, 10_000, 1000));
+        let mut lines = text.lines();
+        let header = lines.next().unwrap();
+        let first = lines.next().expect("fixture must inject");
+        let mut archive = format!("{header}\n");
+        for _ in 0..4096 {
+            archive.push_str(first);
+            archive.push('\n');
+        }
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-tail-capacity-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, &archive).unwrap();
+        let mut tail = LogTail::open(&path).unwrap();
+        let history = tail.poll().unwrap();
+        let capacity = tail.carry.capacity();
+        assert!(tail.carry.is_empty());
+        drop(tail);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(history.len(), 4096);
+        assert!(
+            capacity < first.len() * 2 + 2,
+            "carry must hold at most one line, got capacity {capacity} for a {}-byte archive",
+            archive.len()
+        );
+    }
+
+    /// The sender appends; a poll can land mid-line. The partial line is
+    /// held, never parsed, and comes back exactly once when terminated.
+    #[test]
+    fn partial_last_line_is_held_until_terminated() {
+        use std::io::Write;
+        let b = baseline_bytes(60.0, "tail-partial");
+        let (_, text, _) = run_tap(&b, cfg(&Class::ALL, 10_000, 1000));
+        let mut lines = text.lines();
+        let header = lines.next().unwrap();
+        let first = lines.next().expect("fixture must inject");
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-tail-partial-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let (head, rest) = first.split_at(first.len() / 2);
+        std::fs::write(&path, format!("{header}\n{first}\n{head}")).unwrap();
+        let mut tail = LogTail::open(&path).unwrap();
+        assert_eq!(tail.poll().unwrap().len(), 1, "one complete line");
+        assert_eq!(tail.poll().unwrap().len(), 0, "the partial line is held");
+        assert!(!tail.carry.is_empty(), "held bytes live in carry");
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(f, "{rest}").unwrap();
+        drop(f);
+        let got = tail.poll().unwrap();
+        drop(tail);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(got.len(), 1, "the completed line arrives exactly once");
+    }
+
+    /// Archived logs (every soak before the geometry scaled) have no
+    /// `approx_slack`; they were all scale 1, so they must read as 128.
+    #[test]
+    fn an_archived_header_without_approx_slack_reads_as_scale_one() {
+        let json = r#"{"header":{"tap_version":1,"seed":12,"rate_per_10k":5,"min_gap":1000,"classes":["body_flip"],"attribution_window":500,"recovery_bound":600}}"#;
+        let LogLine::Header(h) = serde_json::from_str::<LogLine>(json).unwrap() else {
+            panic!("not a header");
+        };
+        assert_eq!(h.approx_slack, APPROX_SLACK);
+    }
+
+    #[test]
+    fn read_log_round_trips_and_the_parser_fails_closed() {
+        let b = baseline_bytes(6.0, "rt");
+        let (_, text, _) = run_tap(&b, cfg(&Class::ALL, 10_000, 1000));
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-corrupt-rt-{}.jsonl",
+            std::process::id()
+        ));
+        std::fs::write(&path, &text).unwrap();
+        let from_file = read_log(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let from_text = parse_log(&text).unwrap();
+        assert_eq!(from_file.1, from_text.1);
+        assert!(!from_file.1.is_empty());
+
+        let mut lines = text.lines();
+        let header = lines.next().unwrap();
+        let injection = lines.next().expect("at least one injection");
+        // Every rejection names the offending line.
+        for (bad, want) in [
+            (format!("{header}\n{header}"), "line 2"),
+            (injection.to_string(), "line 1"),
+            (format!("{header}\nnot json"), "line 2"),
+            (
+                header.replace("\"tap_version\":1", "\"tap_version\":2"),
+                "line 1",
+            ),
+        ] {
+            let e = parse_log(&bad).unwrap_err();
+            assert!(e.contains(want), "{e}");
+        }
+        assert!(parse_log("").unwrap_err().contains("no header"));
+    }
+
+    /// `LogTail` must read a file that is STILL GROWING: only complete
+    /// lines, never the same injection twice, and a half-written line
+    /// held back until the rest of it lands.
+    #[test]
+    fn log_tail_reads_a_growing_file_one_complete_line_at_a_time() {
+        use std::io::Write as _;
+
+        // 60s (~3600 packets) so `min_gap`'s 1000-packet floor still
+        // leaves several injections to hand out one at a time.
+        let b = baseline_bytes(60.0, "tail");
+        let (_, text, _) = run_tap(&b, cfg(&Class::ALL, 10_000, 1000));
+        let mut lines = text.lines();
+        let header = lines.next().unwrap().to_string();
+        let injections: Vec<String> = lines.map(str::to_string).collect();
+        assert!(injections.len() >= 2, "need two injections to tail");
+
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-corrupt-tail-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "{header}").unwrap();
+        f.flush().unwrap();
+
+        let mut tail = LogTail::open(&path).unwrap();
+        assert_eq!(tail.header().tap_version, TAP_VERSION);
+        assert!(tail.poll().unwrap().is_empty(), "nothing appended yet");
+
+        writeln!(f, "{}", injections[0]).unwrap();
+        f.flush().unwrap();
+        let first = tail.poll().unwrap();
+        assert_eq!(first.len(), 1);
+        assert!(tail.poll().unwrap().is_empty(), "no injection twice");
+
+        // A torn line: the sender is mid-write. Nothing is returned until
+        // the newline lands, and then the whole line parses.
+        let (head, rest) = injections[1].split_at(injections[1].len() / 2);
+        write!(f, "{head}").unwrap();
+        f.flush().unwrap();
+        assert!(tail.poll().unwrap().is_empty(), "a torn line is held back");
+        writeln!(f, "{rest}").unwrap();
+        f.flush().unwrap();
+        let second = tail.poll().unwrap();
+        assert_eq!(second.len(), 1);
+        assert!(
+            second[0].ordinal > first[0].ordinal,
+            "injections come back in log order"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `LogTail::open` fails closed on a file with no complete header
+    /// line yet — the caller's cue to wait and retry, not to proceed with
+    /// an empty judgement.
+    #[test]
+    fn log_tail_open_refuses_a_headerless_file() {
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-corrupt-tail-empty-{}.jsonl",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"").unwrap();
+        let e = LogTail::open(&path).unwrap_err();
+        assert!(e.contains("no header line yet"), "{e}");
+        // A header line without its newline is not a line yet either.
+        std::fs::write(&path, b"{\"header\":{").unwrap();
+        assert!(LogTail::open(&path).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn archive_of(n: usize, tag: &str) -> (std::path::PathBuf, usize) {
+        let b = baseline_bytes(60.0, tag);
+        let (_, text, _) = run_tap(&b, cfg(&Class::ALL, 10_000, 1000));
+        let mut lines = text.lines();
+        let header = lines.next().unwrap();
+        let first = lines.next().expect("fixture must inject");
+        let mut archive = format!("{header}\n");
+        for _ in 0..n {
+            archive.push_str(first);
+            archive.push('\n');
+        }
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-{tag}-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, &archive).unwrap();
+        (path, first.len())
+    }
+
+    /// A receiver attaching to a log that already holds hours of injections
+    /// (a hold's restarted leg) keeps only the newest `keep_last`: older
+    /// anchors are ones it never listened for, and the oldest would sit
+    /// past the 33-bit PCR half-range and block resolution outright.
+    #[test]
+    fn skip_history_keeps_the_newest_injections() {
+        let (path, _) = archive_of(5000, "skip-history");
+        let mut tail = LogTail::open(&path).unwrap();
+        let skipped = tail.skip_history(4096).unwrap();
+        let kept = tail.poll().unwrap();
+        assert_eq!(
+            tail.poll().unwrap().len(),
+            0,
+            "nothing left after the kept tail"
+        );
+        drop(tail);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(skipped, 904);
+        assert_eq!(kept.len(), 4096);
+    }
+
+    /// Fewer injections than the bound (every first receiver, which attaches
+    /// to a log the sender has barely started): nothing is skipped and the
+    /// order is kept.
+    #[test]
+    fn skip_history_keeps_everything_under_the_bound() {
+        let (path, _) = archive_of(10, "skip-small");
+        let mut tail = LogTail::open(&path).unwrap();
+        assert_eq!(tail.skip_history(4096).unwrap(), 0);
+        let kept = tail.poll().unwrap();
+        drop(tail);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(kept.len(), 10);
+    }
+
+    /// `keep_last = 0` is a real input (a judgement to keep no history at
+    /// all), and the bound has to hold there too: every injection counts
+    /// as skipped and `held` never grows past empty.
+    #[test]
+    fn skip_history_zero_keeps_nothing() {
+        let (path, _) = archive_of(10, "skip-zero");
+        let mut tail = LogTail::open(&path).unwrap();
+        let skipped = tail.skip_history(0).unwrap();
+        assert!(tail.held.is_empty(), "keep_last=0 must hold nothing");
+        assert_eq!(tail.poll().unwrap().len(), 0, "nothing left to return");
+        drop(tail);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(skipped, 10);
     }
 }

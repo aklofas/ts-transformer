@@ -346,37 +346,37 @@ impl AttributionReport {
 }
 
 #[derive(Clone, Copy, Default)]
-pub(super) struct InjState {
+struct InjState {
     /// Receiver packet ordinal this injection landed at, once its PCR
     /// anchor has been seen.
-    pub(super) resolved_at: Option<u64>,
-    pub(super) detected: bool,
-    pub(super) recovered: bool,
+    resolved_at: Option<u64>,
+    detected: bool,
+    recovered: bool,
     /// Resolved against a LATER base than the one logged (the logged one
     /// never arrived), so the position is approximate.
-    pub(super) approx: bool,
+    approx: bool,
     /// Receiver ordinal of the PCR packet this injection resolved from.
     /// `None` for one that carries no anchor (logged before the stream's
     /// first PCR). Together with `approx` this is the arrival evidence a
     /// reconnect gap has to respect — see [`ReconnectGap::holds`].
-    pub(super) anchor_at: Option<u64>,
+    anchor_at: Option<u64>,
     /// Its anchor base fell more than `MAX_APPROX_TICKS` behind the first
     /// base the receiver saw afterwards, so it can never be placed. Kept
     /// distinct from "not resolved yet" so the scan cursors can move past
     /// it instead of stalling on it forever.
-    pub(super) stranded: bool,
+    stranded: bool,
     /// A `ContinuityJump` landed inside this injection's attribution
     /// window, on a PID this injection could itself have suffered a gap
     /// on ([`reaches`]). Evidence that packets went missing around here
     /// for a reason the corruption log cannot own: an impairment proxy's
     /// loss, an SRT/RIST buffer overrun, a reconnect after an outage. See
     /// [`Attribution::lossy`] for what it excuses.
-    pub(super) cc_jump_in_window: bool,
+    cc_jump_in_window: bool,
     /// Set when a NON-[`Signal::Resync`] signal detected this injection,
     /// i.e. when the receiver's own demuxer reported it rather than only
     /// the harness's raw reader. See
     /// [`AttributionReport::detected_by_reader_only`].
-    pub(super) detected_by_demux: bool,
+    detected_by_demux: bool,
 }
 
 /// Matches receiver events against a corruption log. Pure: no I/O, no
@@ -445,7 +445,7 @@ pub struct Attribution {
     st: Vec<InjState>,
     /// Absolute index of `inj[0]`. Every cursor below is absolute, so
     /// they survive pruning unchanged.
-    pub(super) base: usize,
+    base: usize,
     window: u64,
     recovery_bound: u64,
     /// The header's approximate-resolution slack (see [`APPROX_SLACK`]).
@@ -969,7 +969,7 @@ impl Attribution {
         &self.inj[i - self.base]
     }
 
-    pub(super) fn state(&self, i: usize) -> &InjState {
+    fn state(&self, i: usize) -> &InjState {
         &self.st[i - self.base]
     }
 
@@ -1177,7 +1177,7 @@ impl Attribution {
     /// one-interval model predicts. At the default `min_gap` of 1000 the
     /// clamp is 371, which covers every injection in that run bar 4 of
     /// 3026.
-    pub(super) fn backward_reach(&self, i: usize) -> u64 {
+    fn backward_reach(&self, i: usize) -> u64 {
         let budget = self
             .min_gap
             .saturating_sub(self.window.saturating_add(self.approx_slack))
@@ -1187,7 +1187,7 @@ impl Attribution {
 
     /// First receiver ordinal injection `i`'s window covers, or `None`
     /// when it has no resolved position at all.
-    pub(super) fn window_lo(&self, i: usize) -> Option<u64> {
+    fn window_lo(&self, i: usize) -> Option<u64> {
         let r = self.state(i).resolved_at?;
         Some(r.saturating_sub(self.backward_reach(i)))
     }
@@ -1357,7 +1357,7 @@ impl Attribution {
     /// contains `at`. Takes `&self` — unlike [`Attribution::hit`] it never
     /// advances the cursors, so it is usable from read-only queries that
     /// run after some `on_*` call has already positioned them.
-    pub(super) fn window_contains(&self, i: usize, at: u64) -> bool {
+    fn window_contains(&self, i: usize, at: u64) -> bool {
         let Some(r) = self.state(i).resolved_at else {
             return false;
         };
@@ -1909,5 +1909,2015 @@ impl Attribution {
             approx_slack: self.approx_slack,
             anchors_rejected: self.anchors_rejected,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::corrupt::*;
+
+    /// A PAT/PMT PID carries no media, so "media on the injected PID"
+    /// can never arrive there — `Sample`/`Metadata` events only ever name
+    /// an elementary stream. Recovery from a PSI injection is therefore
+    /// proved by media on ANY PID, or every psi_flip in a soak run would
+    /// be reported unrecovered against a perfectly healthy stream.
+    #[test]
+    fn a_psi_injection_recovers_on_media_from_any_pid() {
+        let mut psi_inj = inj(1000, 0, Class::PsiFlip, 0, true);
+        psi_inj.psi = true;
+        let mut a = Attribution::strict(vec![psi_inj], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5010, Some(0), Signal::PsiChecksum);
+        a.on_media(5020, 0x1011); // an elementary stream, not pid 0
+        let r = a.finish(10_000);
+        assert!(r.unrecovered.is_empty(), "{:?}", r.unrecovered);
+
+        // A MEDIA-PID injection still has to be answered on its own PID:
+        // the relaxation is scoped to PSI, not a blanket "any event
+        // anywhere counts".
+        let mut a = Attribution::strict(vec![inj(1000, 0, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5010, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(5020, 0x1100);
+        let r = a.finish(10_000);
+        assert_eq!(r.unrecovered.len(), 1, "media on a different PID");
+    }
+
+    /// `Class::Header`'s PID-rewrite sub-kind moves the packet to
+    /// `REWRITTEN_PID`, so whatever the receiver reports about it, it
+    /// reports THERE. Run 3 (2026-09-17): ~50 events on 0x1FFE per leg
+    /// that nothing could explain because `reaches` only knew the
+    /// original PID.
+    #[test]
+    fn a_pid_rewrite_explains_a_signal_on_the_pid_it_moved_the_packet_to() {
+        let mut moved = inj(1000, 10, Class::Header, 0x1011, true);
+        moved.offsets = vec![1, 2];
+        let mut a = Attribution::strict(vec![moved], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5015, Some(REWRITTEN_PID), Signal::OtherNonConformant);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 1, "{r:?}");
+        assert!(
+            r.unexplained_events.is_empty(),
+            "{:?}",
+            r.unexplained_events
+        );
+
+        // Every other header shape stays confined to its own PID: a CC
+        // rewrite ([3]) and — the PSI shape, where the tap only ever
+        // destroys the sync byte ([0]) — must not reach 0x1FFE.
+        for (offsets, psi) in [(vec![3usize], false), (vec![0usize], true)] {
+            let mut other = inj(1000, 10, Class::Header, if psi { 0 } else { 0x1011 }, true);
+            other.offsets = offsets.clone();
+            other.psi = psi;
+            let mut a = Attribution::strict(vec![other], &hdr());
+            a.on_pcr(1000, 5000);
+            a.on_signal(5015, Some(REWRITTEN_PID), Signal::OtherNonConformant);
+            let r = a.finish(10_000);
+            // [0] is framing-wide and reaches everything by design; [3] is not.
+            let want_unexplained = u64::from(offsets != vec![0]);
+            assert_eq!(
+                r.unexplained_nonconformant, want_unexplained,
+                "{offsets:?}: {r:?}"
+            );
+        }
+    }
+
+    /// A derived anomaly (a PTS that stepped backwards) is asked about,
+    /// not fed in — and only a TRUNCATION answers for it. Asking must not
+    /// move any of the counters an event would.
+    #[test]
+    fn only_a_truncation_explains_a_derived_anomaly() {
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Truncate, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000); // resolves to receiver ordinal 5010
+        // The window opens at `r - since_pcr` (see `backward_reach`), not
+        // at `r`: with `since_pcr = 10` the injected packet's true
+        // receiver ordinal is somewhere in 5000..=5010, depending on how
+        // much of that span the transport lost.
+        assert!(!a.truncation_explains(4999), "before the window opens");
+        assert!(a.truncation_explains(5000), "earliest the injection can be");
+        assert!(a.truncation_explains(5010), "at the injection");
+        assert!(
+            a.truncation_explains(5010 + ATTRIBUTION_WINDOW),
+            "last packet in the window"
+        );
+        assert!(
+            !a.truncation_explains(5011 + ATTRIBUTION_WINDOW),
+            "past the window"
+        );
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.events, r.attributed_events, r.attributed_discontinuities),
+            (0, 0, 0),
+            "asking is not an event"
+        );
+
+        // Every other class leaves the anomaly unexplained: truncation is
+        // the only one that misaligns the byte stream, so it is the only
+        // one whose window may contain a PTS that was never a timestamp.
+        for class in Class::ALL.iter().filter(|&&c| c != Class::Truncate) {
+            let mut a = Attribution::strict(vec![inj(1000, 10, *class, 0x1011, true)], &hdr());
+            a.on_pcr(1000, 5000);
+            assert!(
+                !a.truncation_explains(5010),
+                "{class:?} must not excuse a derived anomaly"
+            );
+        }
+    }
+
+    /// The skipped count rides in the report so a coverage check can add it
+    /// back to what the receiver ingested.
+    #[test]
+    fn history_skipped_is_reported() {
+        let mut a = Attribution::lossy(vec![inj(1_000, 2, Class::Drop, 0x1011, true)], &hdr());
+        a.note_history_skipped(904);
+        a.on_pcr(1_000, 10);
+        a.on_signal(13, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!(r.history_skipped, 904);
+        assert_eq!(r.injected, 1);
+    }
+
+    /// A restarted receiver keeps the newest history in the log at attach,
+    /// but its first anchor is far past every one of them: they strand.
+    /// They stay `unresolved`, and are also named as history it could
+    /// never have heard, so coverage can judge only what it could.
+    #[test]
+    fn attach_history_stranded_before_the_first_anchor_is_unheard() {
+        let live = 1_000 + 10 * MAX_APPROX_TICKS;
+        let mut a = Attribution::lossy(
+            vec![
+                inj(1_000, 2, Class::Drop, 0x1011, true),
+                inj(1_000, 40, Class::Drop, 0x1011, true),
+                inj(1_000, 80, Class::Drop, 0x1011, true),
+                inj(live, 2, Class::Drop, 0x1011, true),
+            ],
+            &hdr(),
+        );
+        a.on_pcr(live, 10);
+        a.on_signal(13, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!(r.history_unheard, 3, "{r:?}");
+        assert_eq!(r.resolved, 1);
+        assert_eq!(r.unresolved, 3);
+        assert_eq!(r.injected, 4);
+    }
+
+    /// Only the batch present at attach is history. An injection appended
+    /// later that strands is a live one the receiver failed to place.
+    #[test]
+    fn appended_injections_that_strand_are_not_history() {
+        let mut a = Attribution::lossy(vec![inj(400_000, 2, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(400_000, 10);
+        a.on_signal(13, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+        let mut anchorless = inj(0, 0, Class::Drop, 0x1011, true);
+        anchorless.coord.pcr_base = None;
+        a.append(vec![
+            inj(
+                400_000 - 10 * MAX_APPROX_TICKS,
+                2,
+                Class::Drop,
+                0x1011,
+                true,
+            ),
+            anchorless,
+        ]);
+        let r = a.finish(2_000);
+        assert_eq!(r.unresolved, 2, "{r:?}");
+        assert_eq!(r.history_unheard, 0, "{r:?}");
+    }
+
+    /// A full restart history retires through `prune` long before
+    /// `finish`; the count must survive that.
+    #[test]
+    fn unheard_history_is_counted_when_it_is_pruned() {
+        let live = 1_000 + 10 * MAX_APPROX_TICKS;
+        let n = PRUNE_BATCH + 5;
+        let mut batch: Vec<Injection> = (0..n)
+            .map(|k| inj(1_000, k as u64, Class::Drop, 0x1011, true))
+            .collect();
+        batch.push(inj(live, 2, Class::Drop, 0x1011, true));
+        let mut a = Attribution::lossy(batch, &hdr());
+        a.on_pcr(live, 10);
+        a.on_signal(13, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+        assert!(a.base >= PRUNE_BATCH, "the history was not pruned");
+        let r = a.finish(2_000);
+        assert_eq!(r.history_unheard, n as u64, "{r:?}");
+        assert_eq!(r.unresolved, n as u64);
+        assert_eq!(r.resolved, 1);
+    }
+
+    /// An injection appended mid-capture is judged like any other once a
+    /// later PCR places it — but one whose coordinate has NO PCR anchor
+    /// arrives too late to be placed at all, and must be left unresolved
+    /// rather than blamed on a receiver that never saw that part of the
+    /// stream.
+    #[test]
+    fn appended_injections_resolve_forward_and_anchorless_ones_strand() {
+        let hdr = LogHeader {
+            tap_version: TAP_VERSION,
+            seed: 1,
+            rate_per_10k: 5,
+            min_gap: 1000,
+            classes: Class::ALL.to_vec(),
+            attribution_window: ATTRIBUTION_WINDOW,
+            recovery_bound: RECOVERY_BOUND,
+            approx_slack: APPROX_SLACK,
+        };
+        let mk = |pcr_base: Option<u64>, since: u64| Injection {
+            ordinal: 0,
+            coord: Coord {
+                pcr_base,
+                since_pcr: since,
+            },
+            class: Class::Drop,
+            pid: 0x1011,
+            offsets: vec![],
+            before: vec![],
+            after: vec![],
+            detectable: true,
+            psi: false,
+            pes_start: false,
+        };
+
+        let mut a = Attribution::strict(vec![mk(Some(100), 2)], &hdr);
+        a.on_pcr(100, 10);
+        a.on_signal(13, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+
+        // Appended after the capture is under way: anchored at a base
+        // still to come, and at none at all.
+        a.append(vec![mk(Some(200), 3), mk(None, 0)]);
+        a.on_pcr(200, 500);
+        a.on_signal(504, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(510, 0x1011);
+
+        let rep = a.finish(2000);
+        assert_eq!(rep.injected, 3);
+        assert_eq!(rep.resolved, 2, "both anchored injections placed");
+        assert_eq!(rep.unresolved, 1, "the anchorless late arrival is not");
+        assert_eq!(rep.attributed_events, 2);
+        assert!(rep.undetected.is_empty(), "{rep:?}");
+        assert!(
+            rep.unexplained_events.is_empty(),
+            "{:?}",
+            rep.unexplained_events
+        );
+    }
+
+    /// A zero-latency transport (UDP/TCP straight over loopback) hands the
+    /// receiver a PCR packet before the sender has even logged the
+    /// injection anchored at it: the tap logs per `send_bytes` message,
+    /// so an injection in the message AFTER the one carrying its PCR is
+    /// written only once that PCR is already on the receiver's side. The
+    /// late line must still resolve against the base it names, not
+    /// against whichever base the receiver sees next — that is a full PCR
+    /// interval downstream, past the event the injection caused.
+    #[test]
+    fn an_injection_logged_after_its_anchor_pcr_arrived_still_resolves_exactly() {
+        let mut a = Attribution::strict(Vec::new(), &hdr());
+        a.on_pcr(100, 10);
+        a.append(vec![inj(100, 2, Class::Drop, 0x1011, true)]);
+        a.on_signal(13, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+        // The next base, one 40 ms PCR interval and 80 packets later.
+        a.on_pcr(100 + 3600, 90);
+        let rep = a.finish(2000);
+        assert_eq!(rep.resolved, 1);
+        assert_eq!(rep.attributed_events, 1, "{rep:?}");
+        assert!(rep.undetected.is_empty(), "{rep:?}");
+        assert!(rep.unexplained_events.is_empty(), "{rep:?}");
+    }
+
+    /// The order in which the log tail and the wire deliver the same
+    /// evidence must not change the verdict: an injection read before its
+    /// anchor PCR and one read just after it are the same injection.
+    #[test]
+    fn appending_before_or_after_the_anchor_pcr_gives_the_same_report() {
+        let i1 = || inj(100, 2, Class::Drop, 0x1011, true);
+        let i2 = || inj(3700, 3, Class::Header, 0x1011, true);
+        let run = |log_first: bool| {
+            let mut a = Attribution::strict(Vec::new(), &hdr());
+            for (i, base, at) in [(i1(), 100, 10), (i2(), 3700, 1500)] {
+                if log_first {
+                    a.append(vec![i]);
+                    a.on_pcr(base, at);
+                } else {
+                    a.on_pcr(base, at);
+                    a.append(vec![i]);
+                }
+                a.on_signal(at + 3, Some(0x1011), Signal::ContinuityJump);
+                a.on_media(at + 10, 0x1011);
+            }
+            a.on_pcr(7300, 3000);
+            a.finish(4000)
+        };
+        let (log_first, pcr_first) = (run(true), run(false));
+        assert_eq!(log_first.attributed_events, 2, "{log_first:?}");
+        assert!(log_first.undetected.is_empty(), "{log_first:?}");
+        assert_eq!(log_first, pcr_first);
+    }
+
+    /// Before the first PCR there is nothing to strand against, so an
+    /// anchorless injection appended then still resolves at ordinal 0 —
+    /// the same treatment the constructors give it.
+    #[test]
+    fn an_anchorless_injection_appended_before_any_pcr_still_resolves() {
+        let hdr = LogHeader {
+            tap_version: TAP_VERSION,
+            seed: 1,
+            rate_per_10k: 5,
+            min_gap: 1000,
+            classes: Class::ALL.to_vec(),
+            attribution_window: ATTRIBUTION_WINDOW,
+            recovery_bound: RECOVERY_BOUND,
+            approx_slack: APPROX_SLACK,
+        };
+        let mut a = Attribution::strict(Vec::new(), &hdr);
+        a.append(vec![Injection {
+            ordinal: 0,
+            coord: Coord {
+                pcr_base: None,
+                since_pcr: 4,
+            },
+            class: Class::Drop,
+            pid: 0x1011,
+            offsets: vec![],
+            before: vec![],
+            after: vec![],
+            detectable: true,
+            psi: false,
+            pes_start: false,
+        }]);
+        a.on_signal(6, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(10, 0x1011);
+        let rep = a.finish(2000);
+        assert_eq!(rep.resolved, 1);
+        assert_eq!(rep.unresolved, 0);
+        assert_eq!(rep.attributed_events, 1);
+        assert!(rep.undetected.is_empty(), "{rep:?}");
+    }
+
+    // ---- Attribution ----
+
+    fn hdr() -> LogHeader {
+        LogHeader {
+            tap_version: 1,
+            seed: 1,
+            rate_per_10k: 5,
+            min_gap: 1000,
+            classes: Class::ALL.to_vec(),
+            attribution_window: ATTRIBUTION_WINDOW,
+            recovery_bound: RECOVERY_BOUND,
+            approx_slack: APPROX_SLACK,
+        }
+    }
+    fn inj(coord_pcr: u64, since: u64, class: Class, pid: u16, detectable: bool) -> Injection {
+        Injection {
+            ordinal: 0,
+            coord: Coord {
+                pcr_base: Some(coord_pcr),
+                since_pcr: since,
+            },
+            class,
+            pid,
+            offsets: vec![],
+            before: vec![],
+            after: vec![],
+            detectable,
+            psi: false,
+            pes_start: false,
+        }
+    }
+
+    /// Ruling A. Under transport loss an injection's own evidence can
+    /// surface BEFORE `resolved_at`, because that ordinal is a receiver
+    /// count plus a sender-side offset and the packets between the two
+    /// are exactly what the network may have eaten. A forward-only window
+    /// rejects it and reports the injection undetected for damage the
+    /// receiver noticed perfectly well.
+    ///
+    /// Measured live: 2 of 429 detectable `garbage`/`header` injections
+    /// on a 1-hour smoke run's rist leg, whose 100 ms PCR cadence gives the
+    /// widest `since_pcr` spans.
+    #[test]
+    fn an_injections_own_event_may_surface_before_its_resolved_position() {
+        // since_pcr 40: 25 of those 40 packets were lost in transit, so
+        // the injected packet actually arrived at receiver ordinal 4975
+        // while its coordinate resolves to 5000.
+        let mut a = Attribution::strict(vec![inj(1000, 40, Class::Garbage, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 4960);
+        a.on_signal(4975, None, Signal::Resync);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+
+        assert_eq!(r.attributed_events, 1, "{r:?}");
+        assert_eq!(r.undetected_count, 0, "{:?}", r.undetected);
+        assert_eq!(r.unexplained_total(), 0, "{:?}", r.unexplained_events);
+    }
+
+    /// The backward half is bounded by the injection's OWN `since_pcr`,
+    /// not by the whole window: an event further back than the anchor
+    /// span can reach is still unattributable.
+    #[test]
+    fn the_backward_reach_stops_at_the_anchor_span() {
+        let mut a = Attribution::strict(vec![inj(1000, 40, Class::Garbage, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 4960); // resolves to 5000, window opens at 4960
+        a.on_signal(4959, None, Signal::Resync);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 0, "{r:?}");
+        assert_eq!(r.unexplained_resyncs, 1, "{r:?}");
+    }
+
+    /// The clamp that keeps windows disjoint. Two injections one
+    /// `min_gap` apart must not both cover one event, or `hit` would hand
+    /// it to the newer and rob the older of its detection — the exact
+    /// ambiguity `CorruptConfig::validate`'s `min_gap` floor exists to
+    /// prevent.
+    ///
+    /// `since_pcr` really does reach this far: measured at 302 packets on
+    /// a 40 ms-PCR profile and 393 on a 100 ms one over a 1-hour smoke
+    /// run, against the ~130 a one-PCR-interval model predicts. So the
+    /// bound has to come from `min_gap`, not from a cadence assumption.
+    #[test]
+    fn a_wide_anchor_span_cannot_reach_into_its_predecessors_window() {
+        let h = hdr();
+        let budget = h.min_gap - (h.attribution_window + APPROX_SLACK) - 1;
+
+        // The worst case for disjointness, built deliberately: the
+        // PREDECESSOR resolves APPROXIMATELY, which widens its forward
+        // edge by APPROX_SLACK, and the SUCCESSOR carries a `since_pcr`
+        // wider than the budget, which is what the clamp has to cut back.
+        // Anchoring the first at a base the receiver never saw (1000)
+        // and delivering a LATER one (1090) is what makes it approx.
+        let wide = budget + 200;
+        let mut a = Attribution::strict(
+            vec![
+                inj(1000, 10, Class::Header, 0x1011, true),
+                inj(2000, wide, Class::Header, 0x1011, true),
+            ],
+            &h,
+        );
+        // The predecessor's own base (1000) never arrives; the next one
+        // does, so it resolves approximately to 5010 with a forward edge
+        // widened by APPROX_SLACK.
+        a.on_pcr(1090, 5000);
+        // The successor resolves exactly, and — as two real consecutive
+        // injections always are — exactly `min_gap` further down the
+        // stream: 5010 + 1000 = 6010.
+        a.on_pcr(2000, 6010 - wide);
+        assert!(
+            a.state(0).approx,
+            "the predecessor must resolve approximately"
+        );
+        assert!(!a.state(1).approx, "and the successor exactly");
+        assert_eq!(a.state(0).resolved_at, Some(5010));
+        assert_eq!(a.state(1).resolved_at, Some(6010));
+
+        // The clamp bit at all: the declared span really is wider than
+        // the reach the config can fund.
+        let reach = a.backward_reach(1);
+        assert!(reach < wide, "the wide span must be clamped, got {reach}");
+
+        // Both edges of `window_contains` are inclusive, so the budget
+        // has to leave one packet between a widened forward edge and the
+        // next window's lower edge. Sweep every ordinal either window can
+        // touch and require that none is covered twice.
+        let (lo0, hi1) = (
+            a.window_lo(0).unwrap(),
+            a.state(1).resolved_at.unwrap() + h.attribution_window,
+        );
+        for at in lo0..=hi1 {
+            let covered = (0..2).filter(|&i| a.window_contains(i, at)).count();
+            assert!(covered <= 1, "packet {at} covered by {covered} windows");
+        }
+        // …and the sweep is not vacuous: the two windows really do come
+        // within a packet or two of each other.
+        let gap = a.window_lo(1).unwrap()
+            - (a.state(0).resolved_at.unwrap() + h.attribution_window + APPROX_SLACK);
+        assert!(
+            gap <= 2,
+            "windows must be adjacent for this to test anything, gap {gap}"
+        );
+    }
+
+    /// The same disjointness at AU scale 4, where every number in the
+    /// header is 4× — including the slack an approximate resolution
+    /// widens by. An engine that kept the scale-1 slack would fund a
+    /// backward reach 384 packets too generous and let a successor's
+    /// window overlap its predecessor's widened edge.
+    #[test]
+    fn backward_reach_is_clamped_with_the_headers_scaled_slack() {
+        let mut h = hdr();
+        h.min_gap = 4000;
+        h.attribution_window = 2000;
+        h.recovery_bound = 2400;
+        h.approx_slack = 512;
+        let budget = h.min_gap - (h.attribution_window + h.approx_slack) - 1;
+        let wide = budget + 200;
+        let mut a = Attribution::strict(
+            vec![
+                inj(1000, 10, Class::Header, 0x1011, true),
+                inj(2000, wide, Class::Header, 0x1011, true),
+            ],
+            &h,
+        );
+        a.on_pcr(1090, 5000);
+        a.on_pcr(2000, 5010 + h.min_gap - wide);
+        assert!(a.state(0).approx);
+        assert_eq!(a.state(1).resolved_at, Some(5010 + h.min_gap));
+        assert_eq!(
+            a.backward_reach(1),
+            budget,
+            "the clamp must use the header's slack, not the scale-1 constant"
+        );
+        let (lo0, hi1) = (
+            a.window_lo(0).unwrap(),
+            a.state(1).resolved_at.unwrap() + h.attribution_window,
+        );
+        for at in lo0..=hi1 {
+            let covered = (0..2).filter(|&i| a.window_contains(i, at)).count();
+            assert!(covered <= 1, "packet {at} covered by {covered} windows");
+        }
+        let gap = a.window_lo(1).unwrap()
+            - (a.state(0).resolved_at.unwrap() + h.attribution_window + h.approx_slack);
+        assert!(gap <= 2, "windows must be adjacent, gap {gap}");
+    }
+
+    /// Ruling B. A continuity jump inside an injection's window, on the
+    /// PID it damaged, excuses that injection when its class does NOT
+    /// expect a jump: there the jump means the datagram carrying the
+    /// injection was lost in transit, so the damage never reached the
+    /// receiver to be noticed.
+    ///
+    /// The excusal survives; the ATTRIBUTION does not. A signal
+    /// of a class the injection cannot cause is no longer explained by it
+    /// (`can_explain`), so the jump is unexplained — transport loss under
+    /// lossy judgement, a discontinuity finding under strict — while
+    /// still marking the injection's packet as plausibly missing.
+    #[test]
+    fn a_cc_jump_a_class_does_not_expect_stays_unexplained_but_still_excuses() {
+        let build = |lossy: bool| {
+            let log = vec![inj(1000, 10, Class::PsiFlip, 0, true)];
+            let mut a = if lossy {
+                Attribution::lossy(log, &hdr())
+            } else {
+                Attribution::strict(log, &hdr())
+            };
+            a.on_pcr(1000, 5000);
+            // Its own jump, inside its own window, attributed to it — and
+            // NOT a signal `expects` accepts for a psi_flip.
+            a.on_signal(5100, Some(0), Signal::ContinuityJump);
+            a.on_media(5200, 0x1011);
+            a.finish(10_000)
+        };
+
+        let lossy = build(true);
+        assert_eq!(
+            lossy.attributed_events, 0,
+            "class-incompatible: not explained"
+        );
+        assert_eq!(lossy.unexplained_transport_loss, 1, "{lossy:?}");
+        assert_eq!(lossy.undetected_lost, 1, "{lossy:?}");
+        assert_eq!(lossy.undetected_count, 0, "{:?}", lossy.undetected);
+
+        // Strict has no transport to blame, so the finding stands.
+        let strict = build(false);
+        assert_eq!(strict.undetected_count, 1, "{strict:?}");
+        assert_eq!(strict.undetected_lost, 0, "{strict:?}");
+        assert_eq!(strict.unexplained_discontinuities, 1, "{strict:?}");
+    }
+
+    /// The other half of Ruling B, and the reason the blanket exclusion
+    /// existed: for a class whose expected signals INCLUDE a continuity
+    /// jump, its own jump is the detection and must never also excuse it.
+    #[test]
+    fn an_attributed_cc_jump_still_detects_a_class_that_expects_one() {
+        for class in [Class::Drop, Class::Header, Class::Truncate, Class::Garbage] {
+            let mut a = Attribution::lossy(vec![inj(1000, 10, class, 0x1011, true)], &hdr());
+            a.on_pcr(1000, 5000);
+            a.on_signal(5100, Some(0x1011), Signal::ContinuityJump);
+            a.on_media(5200, 0x1011);
+            let r = a.finish(10_000);
+            assert_eq!(r.undetected_count, 0, "{class:?}: {r:?}");
+            assert_eq!(
+                r.undetected_lost, 0,
+                "{class:?}: excused, not detected: {r:?}"
+            );
+        }
+    }
+
+    /// C2, the regression this exists for: on a lossy multi-day run the
+    /// excused continuity jumps must not be able to crowd an unexplained
+    /// RESYNC out of the evidence.
+    ///
+    /// A resync is the one signal with no second detection path — it is
+    /// not a `DemuxEvent`, and resync mode is exactly what suppresses the
+    /// `rawts_sync_loss` failure that would otherwise catch it — so if
+    /// the sample cap swallows it, `corruption_attributed` passes a run
+    /// whose receiver lost packet sync for reasons nothing explains.
+    #[test]
+    fn excused_jumps_never_crowd_out_an_unexplained_resync() {
+        let mut a = Attribution::lossy(vec![inj(1000, 10, Class::Header, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        // Comfortably more excusable jumps than the sample cap, none of
+        // them inside any injection's window.
+        for k in 0..(MAX_SAMPLES as u64 * 4) {
+            a.on_signal(20_000 + k, Some(0x1011), Signal::ContinuityJump);
+        }
+        a.on_signal(90_000, None, Signal::Resync);
+        let r = a.finish(100_000);
+
+        assert_eq!(r.unexplained_transport_loss, MAX_SAMPLES as u64 * 4);
+        assert_eq!(r.unexplained_resyncs, 1);
+        assert_eq!(
+            r.unexplained_total(),
+            1,
+            "the resync is the only corruption evidence here: {r:?}"
+        );
+        assert!(
+            r.unexplained_events.iter().any(|e| e.contains("Resync")),
+            "and it must be quotable in the failure: {:?}",
+            r.unexplained_events
+        );
+    }
+
+    /// A continuity jump on a PID an injection never touched is not that
+    /// injection's evidence. Today `hit` places by
+    /// window position alone, so the foreign jump is "attributed" and
+    /// the `Drop` counts as detected.
+    #[test]
+    fn attribution_rejects_unrelated_pid() {
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5020, Some(0x1031), Signal::ContinuityJump);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 0, "{r:?}");
+        assert_eq!(r.undetected_count, 1, "{r:?}");
+        assert_eq!(r.unexplained_discontinuities, 1, "{r:?}");
+    }
+
+    /// PR review finding: `reaches` treated `Signal::PsiChecksum` as
+    /// PID-unconstrained for ANY injection (its own doc claimed "a PSI
+    /// checksum failure is the PSI PID's own", but the code never
+    /// checked that `inj` was itself PSI-related), so a same-window
+    /// `Drop` on an unrelated media PID could "explain" a PAT/PMT
+    /// checksum failure it never came near — `Class::Drop`'s class check
+    /// is a vacuous `_ => true` for `PsiChecksum`, so only the PID rule
+    /// can be doing the rejecting here.
+    #[test]
+    fn attribution_rejects_a_psi_checksum_signal_from_a_non_psi_injection() {
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5020, Some(0), Signal::PsiChecksum);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 0, "{r:?}");
+        assert_eq!(r.undetected_count, 1, "{r:?}");
+        assert_eq!(r.unexplained_nonconformant, 1, "{r:?}");
+
+        // Positive control: an injection that DID touch a PSI table still
+        // gets the "PSI checksum failure is the PSI PID's own" escape.
+        let mut psi_inj = inj(1000, 10, Class::PsiFlip, 0, true);
+        psi_inj.psi = true;
+        let mut a = Attribution::strict(vec![psi_inj], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5020, Some(0), Signal::PsiChecksum);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 1, "{r:?}");
+        assert_eq!(r.undetected_count, 0, "{r:?}");
+    }
+
+    /// A PMT truncated inside its section reaches the demuxer as a section
+    /// whose CRC fails: `PsiChecksum` is the receiver noticing, and it must
+    /// count for a framing-class injection whose own PID is a PSI PID (six
+    /// RC-soak RIST events were "unexplained" for exactly this).
+    #[test]
+    fn a_framing_injection_on_a_psi_pid_is_noticed_by_a_psi_checksum() {
+        let mut pmt_cut = inj(1_000, 2, Class::Truncate, 0x1000, true);
+        pmt_cut.psi = true;
+        let mut a = Attribution::lossy(vec![pmt_cut], &hdr());
+        a.on_pcr(1_000, 10);
+        a.on_signal(16, Some(0x1000), Signal::PsiChecksum);
+        a.on_media(30, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!(r.attributed_events, 1);
+        assert_eq!(r.unexplained_total(), 0);
+        assert_eq!(r.undetected_total(), 0);
+
+        // The same signal on a NON-PSI framing injection is still not its
+        // expected effect (nothing in a media packet has a CRC to fail).
+        let mut a = Attribution::lossy(vec![inj(1_000, 2, Class::Truncate, 0x1011, true)], &hdr());
+        a.on_pcr(1_000, 10);
+        a.on_signal(16, Some(0x1011), Signal::PsiChecksum);
+        a.on_media(30, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!(r.attributed_events, 0);
+    }
+
+    /// Same PID, wrong class: a `Drop` can only surface as a continuity
+    /// jump, so a malformed-PES report on its own PID inside its window
+    /// is somebody else's problem, not its detection.
+    #[test]
+    fn attribution_rejects_a_class_incompatible_signal_on_the_same_pid() {
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5020, Some(0x1011), Signal::MalformedPes);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 0, "{r:?}");
+        assert_eq!(r.undetected_count, 1, "{r:?}");
+        assert_eq!(r.unexplained_nonconformant, 1, "{r:?}");
+    }
+
+    /// The loss-excusal follows the same rule: a jump on a foreign PID
+    /// says nothing about whether THIS injection's packet was lost, so
+    /// under lossy judgement it neither detects nor excuses a PSI flip
+    /// (whose packet would have to be missing from PID 0 to be excused).
+    #[test]
+    fn loss_excusal_needs_a_jump_on_the_injections_own_pid() {
+        let mut a = Attribution::lossy(vec![inj(1000, 10, Class::PsiFlip, 0, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5020, Some(0x1031), Signal::ContinuityJump);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            r.undetected_lost, 0,
+            "a foreign jump must not excuse: {r:?}"
+        );
+        assert_eq!(r.undetected_count, 1, "{r:?}");
+        assert_eq!(r.unexplained_transport_loss, 1, "{r:?}");
+
+        // Positive control: the jump on the PSI PID itself does excuse.
+        let mut a = Attribution::lossy(vec![inj(1000, 10, Class::PsiFlip, 0, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5020, Some(0), Signal::ContinuityJump);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(r.undetected_lost, 1, "{r:?}");
+        assert_eq!(r.undetected_count, 0, "{r:?}");
+    }
+
+    /// Framing-wide classes reach every PID: a truncation, a garbage
+    /// run or a destroyed sync byte breaks the multiplex, so a jump on
+    /// any PID inside the window is theirs. A `Header` that rewrote the
+    /// CC (offset 3) is confined to its own PID.
+    #[test]
+    fn framing_wide_injections_explain_signals_on_any_pid() {
+        for class in [Class::Truncate, Class::Garbage] {
+            let mut a = Attribution::strict(vec![inj(1000, 10, class, 0x1011, true)], &hdr());
+            a.on_pcr(1000, 5000);
+            a.on_signal(5020, Some(0x1031), Signal::ContinuityJump);
+            a.on_media(5100, 0x1031);
+            let r = a.finish(10_000);
+            assert_eq!(r.attributed_events, 1, "{class:?}: {r:?}");
+            assert_eq!(r.undetected_count, 0, "{class:?}: {r:?}");
+        }
+        let sync_byte = |offsets: Vec<usize>| {
+            let mut i = inj(1000, 10, Class::Header, 0x1011, true);
+            i.offsets = offsets;
+            let mut a = Attribution::strict(vec![i], &hdr());
+            a.on_pcr(1000, 5000);
+            a.on_signal(5020, Some(0x1031), Signal::ContinuityJump);
+            a.on_media(5100, 0x1031);
+            a.finish(10_000)
+        };
+        assert_eq!(
+            sync_byte(vec![0]).attributed_events,
+            1,
+            "sync-byte header damage is framing-wide"
+        );
+        assert_eq!(
+            sync_byte(vec![3]).attributed_events,
+            0,
+            "a CC rewrite is PID-local"
+        );
+    }
+
+    /// A resync is the HARNESS's raw reader noticing, not the receiver.
+    /// A garbage run detected only by a resync is counted
+    /// apart from a drop the demuxer itself reported.
+    #[test]
+    fn detection_credit_splits_reader_resyncs_from_demux_events() {
+        let mut a = Attribution::strict(
+            vec![
+                inj(1000, 10, Class::Garbage, 0x1011, true),
+                inj(1000, 2010, Class::Drop, 0x1011, true),
+                inj(1000, 4010, Class::Garbage, 0x1011, true),
+            ],
+            &hdr(),
+        );
+        a.on_pcr(1000, 5000);
+        a.on_signal(5015, None, Signal::Resync); // garbage #1: reader only
+        a.on_media(5100, 0x1011);
+        a.on_signal(7015, Some(0x1011), Signal::ContinuityJump); // drop: demux
+        a.on_media(7100, 0x1011);
+        a.on_signal(9012, None, Signal::Resync); // garbage #2: reader …
+        a.on_signal(9015, Some(0x1011), Signal::ContinuityJump); // … then demux too
+        a.on_media(9100, 0x1011);
+        let r = a.finish(20_000);
+        assert_eq!(r.undetected_count, 0, "{r:?}");
+        assert_eq!(r.detected_by_demux, 2, "{r:?}");
+        assert_eq!(r.detected_by_reader_only, 1, "{r:?}");
+        assert_eq!(
+            r.detected_by_reader_only_per_class.get("garbage"),
+            Some(&1),
+            "{r:?}"
+        );
+    }
+
+    /// The uncapped counters keep counting after the sample list stops.
+    /// A verdict reading `unexplained_events.len()` would report 64 for
+    /// any run above the cap, which is how a badly-broken run reads as a
+    /// mildly-broken one.
+    #[test]
+    fn unexplained_counts_are_uncapped_while_the_sample_list_is_capped() {
+        let mut a = Attribution::strict(vec![], &hdr());
+        let n = MAX_SAMPLES as u64 * 10;
+        for k in 0..n {
+            a.on_signal(1000 + k, Some(0x1011), Signal::PsiChecksum);
+        }
+        let r = a.finish(100_000);
+        assert_eq!(r.unexplained_events.len(), MAX_SAMPLES);
+        assert_eq!(r.unexplained_nonconformant, n);
+        assert_eq!(r.unexplained_total(), n);
+    }
+
+    /// The same cap/count split for the per-injection verdicts (I4):
+    /// `undetected`/`unrecovered` are samples, `*_count` are the truth.
+    #[test]
+    fn undetected_and_unrecovered_lists_are_capped_and_their_counts_are_not() {
+        let n = MAX_SAMPLES as u64 * 3;
+        // Detectable injections, spaced past every window, none of which
+        // ever produces an event or any media afterwards.
+        let log: Vec<Injection> = (0..n)
+            .map(|k| inj(1000, 10 + k * 2000, Class::Drop, 0x1011, true))
+            .collect();
+        let mut a = Attribution::strict(log, &hdr());
+        a.on_pcr(1000, 0);
+        // Walk the cursors past every window so the retirement path does
+        // the counting, not just the final sweep.
+        a.on_media(10 + n * 2000 + 10_000, 0x2222);
+        let r = a.finish(10 + n * 2000 + 20_000);
+
+        assert_eq!(r.undetected_count, n);
+        assert_eq!(r.unrecovered_count, n);
+        assert_eq!(r.undetected.len(), MAX_SAMPLES);
+        assert_eq!(r.unrecovered.len(), MAX_SAMPLES);
+    }
+
+    /// C1, the memory half: the engine must stop holding the log.
+    ///
+    /// A 72-hour soak logs a quarter of a million injections, each
+    /// carrying `before`/`after` byte images, against a receive process
+    /// whose own `rss_slope_*_recv` verdict gates at 200 KiB/h. Retained
+    /// state has to be bounded by the window the cursors are actually
+    /// working in, not by the length of the run.
+    #[test]
+    fn a_long_run_retires_injections_instead_of_accumulating_them() {
+        let n = 20_000u64;
+        let mut a = Attribution::strict(vec![], &hdr());
+        let mut peak = 0usize;
+        for k in 0..n {
+            let at = 10 + k * 2000;
+            a.append(vec![inj(1000, at, Class::Drop, 0x1011, true)]);
+            // A live receiver feeds every PCR it decodes, which is what
+            // turns a logged coordinate into a receiver position — and
+            // therefore what lets the resolution cursor move on.
+            a.on_pcr(1000, 0);
+            // One event per injection, inside its own window, which is
+            // what walks the scan cursors forward.
+            a.on_signal(at + 5, Some(0x1011), Signal::ContinuityJump);
+            a.on_media(at + 10, 0x1011);
+            peak = peak.max(a.retained());
+        }
+        assert!(
+            peak <= PRUNE_BATCH + 16,
+            "retained {peak} injections at peak against a {PRUNE_BATCH}-injection prune batch"
+        );
+
+        // …and the verdict is unchanged by the pruning: every one of them
+        // was detected and recovered.
+        let r = a.finish(10 + n * 2000 + 10_000);
+        assert_eq!(r.injected, n);
+        assert_eq!(r.resolved, n);
+        assert_eq!(r.undetected_count, 0, "{:?}", r.undetected);
+        assert_eq!(r.unrecovered_count, 0, "{:?}", r.unrecovered);
+    }
+
+    /// Pruning must not change a verdict. The same event stream is judged
+    /// twice — once long enough to retire most of the log, once short
+    /// enough that nothing retires — and the two reports must agree on
+    /// every counter.
+    #[test]
+    fn retiring_injections_does_not_change_the_verdict() {
+        let judge = |n: u64| {
+            let log: Vec<Injection> = (0..n)
+                .map(|k| inj(1000, 10 + k * 2000, Class::Drop, 0x1011, true))
+                .collect();
+            let mut a = Attribution::strict(log, &hdr());
+            a.on_pcr(1000, 0);
+            for k in 0..n {
+                let at = 10 + k * 2000;
+                // Every third injection is left with no event at all, so
+                // both the passing and the failing paths are exercised.
+                if k % 3 != 0 {
+                    a.on_signal(at + 5, Some(0x1011), Signal::ContinuityJump);
+                }
+                a.on_media(at + 10, 0x1011);
+            }
+            a.finish(10 + n * 2000 + 10_000)
+        };
+        // Below the batch nothing is ever retired; well above it, most of
+        // the log is. Both must produce the arithmetically exact verdict.
+        for n in [100u64, PRUNE_BATCH as u64 * 3] {
+            let r = judge(n);
+            assert_eq!(r.injected, n, "n={n}: {r:?}");
+            assert_eq!(r.resolved, n, "n={n}: {r:?}");
+            assert_eq!(r.detectable, n, "n={n}: {r:?}");
+            // Exactly the every-third injections that got no event.
+            assert_eq!(r.undetected_count, n.div_ceil(3), "n={n}: {r:?}");
+            assert_eq!(r.unrecovered_count, 0, "n={n}: {r:?}");
+        }
+    }
+
+    #[test]
+    fn attribution_explains_events_inside_the_window_and_flags_the_rest() {
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Header, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000); // injection resolves to receiver ordinal 5010
+        a.on_signal(5020, Some(0x1011), Signal::ContinuityJump); // explained
+        a.on_media(5100, 0x1011); // recovered
+        a.on_signal(9000, Some(0x1011), Signal::ContinuityJump); // unexplained
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 1);
+        assert_eq!(r.attributed_discontinuities, 1);
+        assert_eq!(r.unexplained_events.len(), 1);
+        assert!(r.undetected.is_empty() && r.unrecovered.is_empty());
+        assert_eq!(r.resolved, 1);
+    }
+
+    /// Transport-loss excusal, the Lossy half. An unexplained
+    /// `ContinuityJump` says packets went missing, which on a live
+    /// impaired link is the link doing its job — it is already counted in
+    /// the verifier's own `discontinuities`, and it is not corruption
+    /// evidence. `Strict` keeps failing on the identical input, because a
+    /// file has no transport to lose anything.
+    #[test]
+    fn lossy_excuses_an_unexplained_continuity_jump_and_strict_does_not() {
+        let build = |lossy: bool| {
+            let log = vec![inj(1000, 10, Class::Header, 0x1011, true)];
+            let mut a = if lossy {
+                Attribution::lossy(log, &hdr())
+            } else {
+                Attribution::strict(log, &hdr())
+            };
+            a.on_pcr(1000, 5000); // resolves to receiver ordinal 5010
+            a.on_signal(5020, Some(0x1011), Signal::ContinuityJump); // explained
+            a.on_media(5100, 0x1011);
+            // Far outside every window: nothing in the log explains it.
+            a.on_signal(9000, Some(0x1011), Signal::ContinuityJump);
+            a
+        };
+
+        let lossy = build(true).finish(10_000);
+        assert!(
+            lossy.unexplained_events.is_empty(),
+            "a transport gap is not corruption evidence: {:?}",
+            lossy.unexplained_events
+        );
+        assert_eq!(lossy.unexplained_transport_loss, 1);
+        // The raw tallies still reconcile: the event was counted, just not
+        // held against the tap.
+        assert_eq!(lossy.events, 2);
+        assert_eq!(lossy.attributed_events, 1);
+
+        let strict = build(false).finish(10_000);
+        assert_eq!(strict.unexplained_events.len(), 1);
+        assert_eq!(strict.unexplained_discontinuities, 1);
+        assert_eq!(strict.unexplained_transport_loss, 0);
+    }
+
+    /// The other families are NOT excused: a dropped packet cannot forge a
+    /// bad PSI CRC or a malformed PES header, so an unexplained one of
+    /// those still fails in Lossy exactly as in Strict.
+    #[test]
+    fn lossy_still_fails_an_unexplained_nonconformance_or_resync() {
+        for sig in [
+            Signal::PsiChecksum,
+            Signal::MalformedPes,
+            Signal::OtherNonConformant,
+            Signal::Resync,
+        ] {
+            let mut a =
+                Attribution::lossy(vec![inj(1000, 10, Class::Header, 0x1011, true)], &hdr());
+            a.on_pcr(1000, 5000);
+            a.on_signal(9000, Some(0x1011), sig);
+            let r = a.finish(10_000);
+            assert_eq!(
+                r.unexplained_events.len(),
+                1,
+                "{sig:?} must survive transport-loss excusal"
+            );
+            assert_eq!(r.unexplained_transport_loss, 0, "{sig:?}");
+        }
+    }
+
+    /// A forward PCR jump of two seconds, the shape a span of lost packets
+    /// leaves behind.
+    const PCR_FORWARD: Signal = Signal::PcrAnomaly { delta: 54_000_000 };
+
+    /// A lossy or strict attribution over `log` whose receiver reported
+    /// one program with its time base on the video PID.
+    fn with_video_pcr(lossy: bool, log: Vec<Injection>) -> Attribution {
+        let mut a = if lossy {
+            Attribution::lossy(log, &hdr())
+        } else {
+            Attribution::strict(log, &hdr())
+        };
+        a.on_program_map(1, 0x1000, 0x1011);
+        a
+    }
+
+    /// A forward PCR jump that coincides with a continuity gap on its own
+    /// PID is that gap's timestamp signature — packets went missing for
+    /// longer than the anomaly threshold — not corruption. Under lossy
+    /// judgement it is transport loss; strict has no transport and charges
+    /// it. Run 3 (2026-09-17): ~17 such jumps on the srt video PID, 1–3 per
+    /// outage window, every one beside an excused continuity jump.
+    #[test]
+    fn a_pcr_jump_beside_a_continuity_gap_is_transport_loss_only_under_lossy() {
+        // Far-away, never-resolved injection so the log is non-empty.
+        let bystander = || vec![inj(1000, 0, Class::Drop, 0x1011, true)];
+        for (lossy, want_excused) in [(true, 1u64), (false, 0u64)] {
+            let mut a = with_video_pcr(lossy, bystander());
+            // Gap first, jump inside the window after it.
+            a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+            a.on_signal(5000 + ATTRIBUTION_WINDOW, Some(0x1011), PCR_FORWARD);
+            let r = a.finish(10_000);
+            assert_eq!(
+                r.pcr_anomalies_excused, want_excused,
+                "lossy={lossy}: {r:?}"
+            );
+            assert_eq!(
+                r.unexplained_nonconformant,
+                1 - want_excused,
+                "lossy={lossy}: {r:?}"
+            );
+        }
+
+        // Same packet, jump QUEUED FIRST (tst_core's check_pcr runs before
+        // check_continuity): the gap evidence arrives one event late.
+        let mut a = with_video_pcr(true, bystander());
+        a.on_signal(5000, Some(0x1011), PCR_FORWARD);
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (1, 0),
+            "{r:?}"
+        );
+
+        // A gap on a DIFFERENT PID is not this PID's signature.
+        let mut a = with_video_pcr(true, bystander());
+        a.on_signal(5000, Some(0x1100), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1011), PCR_FORWARD);
+        assert_eq!(a.finish(10_000).unexplained_nonconformant, 1);
+
+        // Beyond the window, before or after: a finding.
+        let mut a = with_video_pcr(true, bystander());
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5001 + ATTRIBUTION_WINDOW, Some(0x1011), PCR_FORWARD);
+        assert_eq!(a.finish(10_000).unexplained_nonconformant, 1);
+        let mut a = with_video_pcr(true, bystander());
+        a.on_signal(5000, Some(0x1011), PCR_FORWARD);
+        a.on_signal(
+            5001 + ATTRIBUTION_WINDOW,
+            Some(0x1011),
+            Signal::ContinuityJump,
+        );
+        let r = a.finish(10_000);
+        assert_eq!(r.unexplained_nonconformant, 1, "{r:?}");
+        assert!(
+            r.unexplained_events
+                .iter()
+                .any(|e| e.starts_with("PcrAnomaly { delta: 54000000 } on pid Some(4113)")),
+            "a charged pending anomaly keeps its sample text: {:?}",
+            r.unexplained_events
+        );
+
+        // A pending anomaly at the end of the capture is charged by finish,
+        // never dropped.
+        let mut a = with_video_pcr(true, bystander());
+        a.on_signal(9990, Some(0x1011), PCR_FORWARD);
+        let r = a.finish(10_000);
+        assert_eq!((r.events, r.unexplained_nonconformant), (1, 1), "{r:?}");
+    }
+
+    /// The shape run 3 measured, 1–3 anomalies per outage window: every
+    /// anomaly beside a gap of its own, so every one is excused. One gap,
+    /// one anomaly is a bound on what ONE loss explains, not on the run.
+    #[test]
+    fn each_pcr_jump_beside_its_own_gap_is_excused() {
+        let mut a = with_video_pcr(true, vec![inj(1000, 0, Class::Drop, 0x1011, true)]);
+        for at in [5000, 5040, 5090] {
+            // The order tst_core emits them in, on one packet.
+            a.on_signal(at, Some(0x1011), PCR_FORWARD);
+            a.on_signal(at, Some(0x1011), Signal::ContinuityJump);
+        }
+        // And the other order: the gap a few packets before its PCR.
+        a.on_signal(5200, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5205, Some(0x1011), PCR_FORWARD);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (4, 0),
+            "{r:?}"
+        );
+    }
+
+    /// One continuity gap is one span of lost packets. The first PCR after
+    /// it carries the whole jump and the demuxer re-bases on it, so the gap
+    /// is the cause of that one anomaly and of no later one: a further
+    /// anomaly on the PID, with no further gap, is a clock misbehaving on
+    /// packets that all arrived.
+    #[test]
+    fn one_gap_excuses_at_most_one_pcr_anomaly() {
+        let mut a = with_video_pcr(true, vec![inj(1000, 0, Class::Drop, 0x1011, true)]);
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1011), PCR_FORWARD);
+        a.on_signal(5020, Some(0x1011), PCR_FORWARD);
+        a.on_signal(5030, Some(0x1011), PCR_FORWARD);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (1, 2),
+            "{r:?}"
+        );
+
+        // The same bound when the anomaly arrives first and the gap on its
+        // packet claims it: the gap is spent, and the next anomaly is not
+        // excused against it.
+        let mut a = with_video_pcr(true, vec![inj(1000, 0, Class::Drop, 0x1011, true)]);
+        a.on_signal(5000, Some(0x1011), PCR_FORWARD);
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1011), PCR_FORWARD);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (1, 1),
+            "{r:?}"
+        );
+    }
+
+    /// Packets that go missing take their share of the timeline with
+    /// them, so loss moves the clock FORWARD. A PCR behind its predecessor
+    /// is never a gap's signature, however close the gap: before it, or on
+    /// the same packet.
+    #[test]
+    fn a_backward_pcr_jump_beside_a_gap_is_a_finding() {
+        let back = Signal::PcrAnomaly { delta: -27_000_000 };
+        let mut a = with_video_pcr(true, vec![inj(1000, 0, Class::Drop, 0x1011, true)]);
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1011), back);
+        a.on_signal(6000, Some(0x1011), back);
+        a.on_signal(6000, Some(0x1011), Signal::ContinuityJump);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (0, 2),
+            "{r:?}"
+        );
+    }
+
+    /// The demuxer keeps a PCR timeline only for a PID some PMT declares
+    /// as `PCR_PID`, so it can never honestly report a `PcrAnomaly` on
+    /// `REWRITTEN_PID`. A PID rewrite explains a packet APPEARING there —
+    /// a non-conformance of that one packet, say — not a timeline being
+    /// kept for it, so it must not be able to claim the event in either
+    /// tier.
+    #[test]
+    fn a_pcr_anomaly_on_a_pid_no_pmt_declares_is_never_attributed() {
+        let mut moved = inj(1000, 10, Class::Header, 0x1011, true);
+        moved.offsets = vec![1, 2];
+        for lossy in [false, true] {
+            let mut a = with_video_pcr(lossy, vec![moved.clone()]);
+            a.on_pcr(1000, 5000); // resolves at 5010
+            a.on_signal(5010, Some(REWRITTEN_PID), PCR_FORWARD);
+            a.on_media(5100, 0x1011);
+            let r = a.finish(10_000);
+            assert_eq!(
+                (r.attributed_events, r.unexplained_nonconformant),
+                (0, 1),
+                "lossy={lossy}: a PCR anomaly on a PID no PMT declares is a library finding: {r:?}"
+            );
+
+            // Nor excused: a gap on that PID does not make it loss.
+            let mut a = with_video_pcr(lossy, vec![]);
+            a.on_signal(5000, Some(REWRITTEN_PID), Signal::ContinuityJump);
+            a.on_signal(5010, Some(REWRITTEN_PID), PCR_FORWARD);
+            let r = a.finish(10_000);
+            assert_eq!(
+                (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+                (0, 1),
+                "lossy={lossy}: {r:?}"
+            );
+
+            // The same injection still explains an anomaly on the PID it
+            // left, which IS declared, and a non-conformance on the PID it
+            // moved the packet to, which needs no timeline.
+            let mut a = with_video_pcr(lossy, vec![moved.clone()]);
+            a.on_pcr(1000, 5000);
+            a.on_signal(5010, Some(REWRITTEN_PID), Signal::OtherNonConformant);
+            a.on_signal(5012, Some(0x1011), PCR_FORWARD);
+            let r = a.finish(10_000);
+            assert_eq!(
+                (r.attributed_events, r.unexplained_nonconformant),
+                (2, 0),
+                "lossy={lossy}: {r:?}"
+            );
+        }
+
+        // Before any PMT is reported nothing is declared at all.
+        let mut a = Attribution::lossy(vec![], &hdr());
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1011), PCR_FORWARD);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (0, 1),
+            "{r:?}"
+        );
+    }
+
+    /// Everything the sender logged between the last media the receiver
+    /// saw and a reconnect marker never arrived — its PCR anchor included,
+    /// so it resolves approximately, against the first base the rebuilt
+    /// connection delivers. An injection placed inside that gap this way
+    /// is lost in transit, not undetected — for the PAT/PMT shapes that no continuity jump can
+    /// ever excuse (the demuxer reports none on a PSI PID), and for the
+    /// media shapes a 90 s outage strands far outside a 500-packet window.
+    /// Run 3 (2026-09-17): all 12 `undetected` on the srt leg sat at the
+    /// 6-hour outage boundaries.
+    #[test]
+    fn an_injection_resolved_inside_a_reconnect_gap_is_lost_in_transit() {
+        // A PAT flip anchored at PCR base 1000, +10 packets.
+        let mut pat_flip = inj(1000, 10, Class::PsiFlip, 0, true);
+        pat_flip.psi = true;
+        let run = |lossy: bool| {
+            let mut a = if lossy {
+                Attribution::lossy(vec![pat_flip.clone()], &hdr())
+            } else {
+                Attribution::strict(vec![pat_flip.clone()], &hdr())
+            };
+            a.on_media(4000, 0x1011); // last media before the link died
+            a.on_reconnect(4900); // the marker
+            // Base 1000 went down with the link. The first base the
+            // rebuilt connection delivers is a later one, so the injection
+            // resolves approximately, at 5010.
+            a.on_pcr(1500, 5000);
+            a.on_media(5100, 0x1011);
+            a.finish(10_000)
+        };
+        let r = run(true);
+        assert_eq!(
+            (
+                r.reconnects_seen,
+                r.lost_in_reconnect_gap,
+                r.undetected_lost
+            ),
+            (1, 1, 1),
+            "{r:?}"
+        );
+        assert_eq!(r.undetected_count, 0, "{r:?}");
+        let r = run(false);
+        assert_eq!(
+            (
+                r.reconnects_seen,
+                r.lost_in_reconnect_gap,
+                r.undetected_count
+            ),
+            (1, 0, 1),
+            "{r:?}"
+        );
+
+        // Two markers with no media between them (a rebuild that broke
+        // again): both gaps open at the same last media, and an injection
+        // between them is still lost.
+        let mut a = Attribution::lossy(vec![pat_flip.clone()], &hdr());
+        a.on_media(4000, 0x1011);
+        a.on_reconnect(4500);
+        a.on_reconnect(4900);
+        a.on_pcr(1500, 5000);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.reconnects_seen, r.lost_in_reconnect_gap),
+            (2, 1),
+            "{r:?}"
+        );
+
+        // The anchor arrived, and the link died between it and the
+        // injection: resolved exactly, but from BEFORE the marker, so
+        // nothing says the injection itself came through.
+        let mut a = Attribution::lossy(vec![pat_flip.clone()], &hdr());
+        a.on_pcr(1000, 3995); // resolves at 4005
+        a.on_media(4000, 0x1011);
+        a.on_reconnect(4900);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.lost_in_reconnect_gap, r.undetected_count),
+            (1, 0),
+            "{r:?}"
+        );
+
+        // Resolved AFTER the gap closes (marker + window + slack): judged
+        // on its own merits — here, undetected.
+        let mut a = Attribution::lossy(vec![pat_flip.clone()], &hdr());
+        a.on_media(4000, 0x1011);
+        a.on_reconnect(4000);
+        a.on_pcr(1000, 4000 + ATTRIBUTION_WINDOW + 200);
+        a.on_media(6000, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.lost_in_reconnect_gap, r.undetected_count),
+            (0, 1),
+            "{r:?}"
+        );
+    }
+
+    /// An unexplained event's sample names the nearest resolved injection,
+    /// so a report can be read offline for "what was nearby" — the
+    /// question run 3's six PMT checksum failures could not answer.
+    #[test]
+    fn an_unexplained_sample_names_the_nearest_injection() {
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Dup, 0x1011, false)], &hdr());
+        a.on_pcr(1000, 5000); // resolves at 5010
+        a.on_signal(7000, Some(0x1000), Signal::PsiChecksum);
+        let r = a.finish(10_000);
+        assert_eq!(
+            r.unexplained_events,
+            vec![
+                "PsiChecksum on pid Some(4096) at packet 7000 (nearest injection: dup on pid \
+                 0x1011 at packet 5010, 1990 packets before)"
+                    .to_string()
+            ],
+        );
+    }
+
+    /// The excusal is evidence-driven, not blanket: with NO continuity
+    /// jump in its window, an undetected injection still fails in Lossy.
+    /// Without this the whole corruption suite would go vacuous.
+    #[test]
+    fn lossy_without_a_cc_jump_in_the_window_still_reports_undetected() {
+        let mut a = Attribution::lossy(vec![inj(1000, 10, Class::PsiFlip, 0, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        // A jump far outside the window explains nothing about it.
+        a.on_signal(9000, Some(0x1011), Signal::ContinuityJump);
+        let r = a.finish(10_000);
+        assert_eq!(r.undetected.len(), 1, "{r:?}");
+        assert_eq!(r.undetected_lost, 0);
+    }
+
+    /// An injection's OWN continuity jump is its own damage surfacing, not
+    /// evidence that the network ate it, so it must not excuse that
+    /// injection's recovery obligation. `Drop` is the class this protects:
+    /// its only observable IS a continuity jump, so a self-excusing rule
+    /// would let every drop arrive pre-excused and never have to show the
+    /// stream recovering.
+    #[test]
+    fn an_injections_own_cc_jump_does_not_excuse_its_recovery() {
+        let mut a = Attribution::lossy(vec![inj(1000, 10, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000); // resolves to 5010
+        // Its own jump, inside its own window, attributed to it.
+        a.on_signal(5100, Some(0x1011), Signal::ContinuityJump);
+        // No media on 0x1011 afterwards, so it never recovers.
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 1, "the jump IS attributed: {r:?}");
+        assert_eq!(
+            r.unrecovered.len(),
+            1,
+            "a drop keeps its full recovery obligation: {r:?}"
+        );
+        assert_eq!(r.unrecovered_lost, 0, "{r:?}");
+    }
+
+    /// The other half of the same rule: a jump from a DIFFERENT injection
+    /// still excuses. `explainer` attributes a jump to the newest covering
+    /// injection that can cause it, so an older one whose window also
+    /// covers it is excused — which needs overlapping windows, the case a
+    /// real tap config forbids (`min_gap >= 2 * ATTRIBUTION_WINDOW`) but
+    /// an `approx` resolution's widened window can still produce.
+    ///
+    /// Both injections sit on the PSI PID because the excusal is
+    /// PID-constrained too: a gap on a PID an injection never touched says
+    /// nothing about whether ITS packet went missing, so
+    /// only a jump the older injection could itself have suffered counts.
+    #[test]
+    fn a_foreign_cc_jump_in_the_window_still_excuses() {
+        // Two injections 100 packets apart: deliberately closer than
+        // `min_gap` so their windows overlap and the newer one can own a
+        // jump that also falls inside the older one's window.
+        let build = |lossy: bool| {
+            let log = vec![
+                inj(1000, 10, Class::PsiFlip, 0, true),
+                inj(1000, 110, Class::Drop, 0, true),
+            ];
+            let mut a = if lossy {
+                Attribution::lossy(log, &hdr())
+            } else {
+                Attribution::strict(log, &hdr())
+            };
+            a.on_pcr(1000, 5000); // resolve to 5010 and 5110
+            // Inside BOTH windows and on a PID both injections damaged;
+            // `explainer` gives it to the newer (the Drop, the only one of
+            // the two whose class expects a jump), so the PsiFlip sees it
+            // as foreign.
+            a.on_signal(5200, Some(0), Signal::ContinuityJump);
+            a
+        };
+
+        // The psi_flip is detectable and expects a PsiChecksum event it
+        // never got, so it is BOTH undetected and unrecovered — one
+        // fixture covering both excused counters.
+        let lossy = build(true).finish(10_000);
+        assert_eq!(
+            (lossy.undetected_lost, lossy.unrecovered_lost),
+            (1, 1),
+            "the psi_flip is excused by the drop's foreign jump: {lossy:?}"
+        );
+        assert!(
+            lossy.undetected.is_empty(),
+            "nothing else was undetected: {lossy:?}"
+        );
+        assert_eq!(
+            lossy.unrecovered.len(),
+            1,
+            "and the drop itself is NOT excused by its own jump: {lossy:?}"
+        );
+        assert!(
+            lossy.unrecovered[0].contains("drop"),
+            "the surviving one must be the drop: {lossy:?}"
+        );
+
+        // Strict excuses neither, as always.
+        let strict = build(false).finish(10_000);
+        assert_eq!(strict.undetected.len(), 1, "{strict:?}");
+        assert_eq!(strict.unrecovered.len(), 2, "{strict:?}");
+        assert_eq!((strict.undetected_lost, strict.unrecovered_lost), (0, 0));
+    }
+
+    /// `explains_damage` answers for a content oracle, records nothing,
+    /// and covers exactly two cases: same PID any class, or Truncate/
+    /// Garbage on any PID (both destroy framing multiplex-wide).
+    #[test]
+    fn explains_damage_covers_same_pid_any_class_and_framing_classes_anywhere() {
+        let mut a = Attribution::strict(
+            vec![
+                inj(1000, 10, Class::BodyFlip, 0x1031, false),
+                inj(2000, 10, Class::Truncate, 0x1011, true),
+            ],
+            &hdr(),
+        );
+        a.on_pcr(1000, 5000); // body flip on 0x1031 resolves to 5010
+        a.on_pcr(2000, 7000); // truncate on 0x1011 resolves to 7010
+
+        // Same PID, any class.
+        assert!(a.explains_damage(5010, 0x1031));
+        assert!(a.explains_damage(5010 + ATTRIBUTION_WINDOW, 0x1031));
+        // A body flip on another PID explains nothing there.
+        assert!(!a.explains_damage(5010, 0x1011));
+        // Truncation breaks framing for the whole multiplex.
+        assert!(a.explains_damage(7010, 0x1031));
+        assert!(a.explains_damage(7010, 0x1011));
+        // Past the window, nothing is explained.
+        assert!(!a.explains_damage(7011 + ATTRIBUTION_WINDOW, 0x1031));
+
+        // It recorded nothing: no events, no detection, no recovery.
+        let r = a.finish(10_000);
+        assert_eq!(r.events, 0);
+        assert_eq!(r.attributed_events, 0);
+    }
+
+    #[test]
+    fn attribution_flags_undetected_and_unrecovered_injections() {
+        let mut a = Attribution::strict(
+            vec![
+                inj(1000, 10, Class::PsiFlip, 0, true),
+                inj(2000, 0, Class::Dup, 0x1011, false),
+            ],
+            &hdr(),
+        );
+        a.on_pcr(1000, 5000);
+        a.on_pcr(2000, 7000);
+        a.on_media(7100, 0x1011); // dup recovered (no detection required)
+        let r = a.finish(10_000);
+        assert_eq!(r.undetected.len(), 1, "psi_flip had no PsiChecksum event");
+        assert_eq!(
+            r.unrecovered.len(),
+            1,
+            "psi_flip (pid 0) never saw media after it"
+        );
+    }
+
+    #[test]
+    fn attribution_resolves_an_unseen_pcr_base_to_the_next_seen_one_wrap_aware() {
+        let near_wrap = (1u64 << 33) - 10;
+        let mut a = Attribution::strict(
+            vec![inj(near_wrap, 3, Class::Truncate, 0x1011, true)],
+            &hdr(),
+        );
+        a.on_pcr(5, 8000); // wrapped past 2^33; first base "at or after" near_wrap
+        a.on_signal(8010, None, Signal::Resync);
+        a.on_media(8020, 0x1011);
+        let r = a.finish(9000);
+        assert_eq!(r.resolved, 1);
+        assert_eq!(r.resyncs, 1);
+        assert!(
+            r.unexplained_events.is_empty() && r.undetected.is_empty() && r.unrecovered.is_empty()
+        );
+    }
+
+    #[test]
+    fn approximate_resolution_is_bounded_so_an_outage_strands_an_injection() {
+        // Just inside the bound: the logged anchor base never arrived (the
+        // corruption destroyed the packet carrying it), but the next base
+        // is close enough to place the injection approximately.
+        let mut a = Attribution::strict(vec![inj(2000, 0, Class::Header, 0x1011, true)], &hdr());
+        a.on_pcr(2000 + MAX_APPROX_TICKS, 5000);
+        a.on_signal(5010, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(5020, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!((r.resolved, r.unresolved), (1, 0));
+        assert!(r.undetected.is_empty() && r.unrecovered.is_empty());
+
+        // One tick further — a reconnect outage, through which the sender
+        // kept logging and the receiver saw nothing. Resolving here would
+        // pile every injection logged during the outage onto this one
+        // ordinal and report all but one as undetected, so the injection
+        // stays unresolved and is judged for nothing.
+        let mut a = Attribution::strict(vec![inj(2000, 0, Class::Header, 0x1011, true)], &hdr());
+        a.on_pcr(2000 + MAX_APPROX_TICKS + 1, 5000);
+        let r = a.finish(10_000);
+        assert_eq!((r.resolved, r.unresolved), (0, 1));
+        assert!(r.undetected.is_empty() && r.unrecovered.is_empty());
+    }
+
+    #[test]
+    fn a_stranded_injection_does_not_block_the_ones_after_it() {
+        // The cursor must step over an injection it can never place, or
+        // everything logged after the outage becomes unattributable too.
+        let mut a = Attribution::strict(
+            vec![
+                inj(2000, 0, Class::Header, 0x1011, true),
+                inj(2000 + 2 * MAX_APPROX_TICKS, 0, Class::Header, 0x1011, true),
+            ],
+            &hdr(),
+        );
+        a.on_pcr(2000 + 2 * MAX_APPROX_TICKS, 5000); // strands #0, resolves #1
+        a.on_signal(5010, Some(0x1011), Signal::ContinuityJump);
+        let r = a.finish(10_000);
+        assert_eq!((r.resolved, r.unresolved), (1, 1));
+        assert_eq!(
+            r.attributed_events, 1,
+            "the surviving injection is reachable"
+        );
+        assert!(r.undetected.is_empty());
+    }
+
+    /// A "PCR" decoded from a mis-framed packet (a framing injection's
+    /// aftermath) is a random 33-bit number. Fed as an anchor it stranded
+    /// every injection pending behind it. One implausible sample is held,
+    /// not accepted; the real anchor that follows resolves the injection.
+    #[test]
+    fn a_wild_pcr_sample_between_an_injection_and_its_anchor_is_not_an_anchor() {
+        let mut a = Attribution::lossy(
+            vec![inj(5_000_000, 3, Class::Garbage, 0x1011, true)],
+            &hdr(),
+        );
+        a.on_pcr(4_900_000, 100); // 1.1 s before the injection's base: accepted
+        a.on_pcr(3_000_000_000, 150); // 9 h away in one step: held as a candidate
+        a.on_pcr(5_000_000, 200); // the injection's own anchor
+        a.on_signal(204, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(220, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!((r.resolved, r.unresolved), (1, 0));
+        assert_eq!(r.attributed_events, 1);
+        assert_eq!(r.anchors_rejected, 1);
+    }
+
+    /// A genuine clock discontinuity (the source restarted) is confirmed by
+    /// the next sample agreeing with the candidate: both become anchors.
+    #[test]
+    fn a_clock_jump_confirmed_by_the_next_sample_re_anchors() {
+        let mut a = Attribution::strict(
+            vec![inj(2_001_000_000, 2, Class::Drop, 0x1011, true)],
+            &hdr(),
+        );
+        a.on_pcr(1_000_000, 10);
+        a.on_pcr(2_001_000_000, 50); // ≈ 6.2 h jump: held
+        a.on_pcr(2_001_009_000, 60); // 100 ms later on the new clock: confirms
+        a.on_signal(53, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(70, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!((r.resolved, r.unresolved), (1, 0));
+        assert_eq!(r.attributed_events, 1);
+        assert_eq!(
+            r.anchors_rejected, 0,
+            "a confirmed candidate was not rejected"
+        );
+    }
+
+    /// Two implausible samples that also disagree with each other (two
+    /// mis-framed packets in a row) anchor nothing; the plausible third one
+    /// resolves normally.
+    #[test]
+    fn two_disagreeing_wild_samples_anchor_nothing() {
+        let mut a = Attribution::lossy(vec![inj(5_000_000, 3, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(4_900_000, 100);
+        a.on_pcr(3_000_000_000, 150);
+        a.on_pcr(7_000_000_000, 160);
+        a.on_pcr(5_000_000, 200);
+        a.on_signal(204, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(220, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!((r.resolved, r.unresolved), (1, 0));
+        assert_eq!(r.attributed_events, 1);
+        assert_eq!(r.anchors_rejected, 2);
+    }
+
+    /// A receiver that ingests injections logged long before it listened
+    /// (history from before a restart, or a unit test feeding one) must not
+    /// let the oldest block the live ones: a 14-hour-old anchor is past the
+    /// 33-bit PCR half-range, so the naive "ahead ⇒ still in the future"
+    /// test read it as future and stopped the cursor in front of it.
+    #[test]
+    fn old_restart_history_must_not_block_live_injections() {
+        let current = 14 * 3600 * 90_000u64;
+        let mut a = Attribution::lossy(
+            vec![
+                inj(1_000, 2, Class::Drop, 0x1011, true),
+                inj(current, 3, Class::Drop, 0x1011, true),
+            ],
+            &hdr(),
+        );
+        a.on_pcr(current, 10);
+        a.on_signal(14, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+        let report = a.finish(2_000);
+        assert_eq!(report.resolved, 1, "current injection must be placed");
+        assert_eq!(
+            report.unresolved, 1,
+            "the ancient one is stranded, not waited for"
+        );
+        assert_eq!(report.attributed_events, 1);
+    }
+
+    #[test]
+    fn expected_signal_sets_cover_the_non_conformance_shapes() {
+        // An adaptation-field-length overrun (a `header` sub-kind) is
+        // reported as a plain non-conformance, not a resync, so it must
+        // still count as having noticed the injection.
+        let mut a = Attribution::strict(vec![inj(1000, 0, Class::Header, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5010, Some(0x1011), Signal::OtherNonConformant);
+        a.on_media(5020, 0x1011);
+        let r = a.finish(10_000);
+        assert!(r.undetected.is_empty(), "{:?}", r.undetected);
+        assert_eq!(r.attributed_nonconformant, 1);
+
+        // A flipped pointer field or section length surfaces as a
+        // table-id/section-length non-conformance before the CRC is
+        // reached.
+        let mut a = Attribution::strict(vec![inj(1000, 0, Class::PsiFlip, 0, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5010, Some(0), Signal::OtherNonConformant);
+        a.on_media(5020, 0);
+        let r = a.finish(10_000);
+        assert!(r.undetected.is_empty(), "{:?}", r.undetected);
+
+        // But the sets are not wide open: a dropped packet is a continuity
+        // jump and nothing else, so a resync must not be mistaken for
+        // having noticed it.
+        let mut a = Attribution::strict(vec![inj(1000, 0, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5010, None, Signal::Resync);
+        a.on_media(5020, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            r.undetected.len(),
+            1,
+            "a resync does not prove a drop was seen"
+        );
+    }
+
+    #[test]
+    fn attribution_reports_an_injection_whose_window_never_arrived_as_unresolved() {
+        let a = Attribution::strict(vec![inj(1000, 0, Class::Header, 0x1011, true)], &hdr());
+        let r = a.finish(100);
+        assert_eq!(r.unresolved, 1);
+        assert!(
+            r.undetected.is_empty(),
+            "an unresolved injection is not judged"
+        );
+    }
+
+    /// The reconnect excusal is for injections that never arrived. This
+    /// one did: its own anchor base arrives, exactly, AFTER the marker,
+    /// and media flows on both sides of its resolved position with no
+    /// continuity jump anywhere. A demuxer that said nothing about the
+    /// damaged PAT has missed it, inside the gap's window or not.
+    #[test]
+    fn an_injection_resolved_exactly_after_a_reconnect_marker_is_not_lost() {
+        let mut pat_flip = inj(1000, 10, Class::PsiFlip, 0, true);
+        pat_flip.psi = true;
+        // 4900 is the first packet after the marker: a marker is stamped
+        // with the count of packets received, a PCR with its 0-based
+        // ordinal.
+        for anchor_at in [5000, 4900] {
+            let mut a = Attribution::lossy(vec![pat_flip.clone()], &hdr());
+            a.on_media(4000, 0x1011); // last media before the link died
+            a.on_reconnect(4900); // the marker
+            a.on_pcr(1000, anchor_at); // the injection's OWN anchor, exact
+            a.on_media(anchor_at + 5, 0x1011); // media just before the injected packet...
+            a.on_media(anchor_at + 15, 0x1011); // ...and just after it
+            a.on_media(anchor_at + 100, 0x1011);
+            let r = a.finish(10_000);
+            assert_eq!(
+                (
+                    r.undetected_count,
+                    r.lost_in_reconnect_gap,
+                    r.undetected_lost
+                ),
+                (1, 0, 0),
+                "anchor at {anchor_at}: an injection anchored exactly on a post-reconnect PCR \
+                 arrived and must be detected: {r:?}"
+            );
+        }
+    }
+
+    /// A reconnect resets the demuxer, and until it has re-acquired what
+    /// a class is noticed by, an injection that arrived still could not
+    /// have been noticed. Each shape twice: placed before the media that
+    /// shows the demuxer able (lost in the gap), and after it (held).
+    #[test]
+    fn a_post_reconnect_injection_is_held_only_once_the_demuxer_could_notice_it() {
+        const VIDEO: u16 = 0x1011;
+        const KLV: u16 = 0x1100;
+        // Marker 4900, exact anchor 5000, injection at 5010, on `inj`'s
+        // PID; `media_before` is fed between the anchor and the injection.
+        let run = |inj: &Injection, media_before: &[u16]| {
+            let mut a = Attribution::lossy(vec![inj.clone()], &hdr());
+            a.on_media(4000, VIDEO); // before the marker: says nothing about after it
+            a.on_media(4000, KLV);
+            a.on_reconnect(4900);
+            a.on_pcr(1000, 5000);
+            for &pid in media_before {
+                a.on_media(5005, pid);
+            }
+            a.on_media(5015, VIDEO); // after the injection: too late to show anything
+            a.on_media(5015, KLV);
+            let r = a.finish(10_000);
+            (r.undetected_count, r.lost_in_reconnect_gap)
+        };
+        const HELD: (u64, u64) = (1, 0);
+        const LOST: (u64, u64) = (0, 1);
+
+        // Noticed as a continuity jump on its own PID: needs a previous
+        // counter THERE. Media on the other PID is not that.
+        let drop = inj(1000, 10, Class::Drop, KLV, true);
+        let mut pid_rewrite = inj(1000, 10, Class::Header, KLV, true);
+        pid_rewrite.offsets = vec![1, 2];
+        let mut cc_rewrite = inj(1000, 10, Class::Header, KLV, true);
+        cc_rewrite.offsets = vec![3];
+        for (name, i) in [
+            ("drop", &drop),
+            ("pid rewrite", &pid_rewrite),
+            ("cc rewrite", &cc_rewrite),
+        ] {
+            assert_eq!(run(i, &[]), LOST, "{name}, no media");
+            assert_eq!(run(i, &[VIDEO]), LOST, "{name}, media on another PID");
+            assert_eq!(run(i, &[KLV]), HELD, "{name}, media on its own PID");
+        }
+
+        // Noticed without per-PID history: media on any PID shows the
+        // PAT and a PMT read and the packets in sync.
+        let mut pat_flip = inj(1000, 10, Class::PsiFlip, 0, true);
+        pat_flip.psi = true;
+        let mut pmt_body_flip = inj(1000, 10, Class::BodyFlip, 0x1000, true);
+        pmt_body_flip.psi = true;
+        let mut af_overrun = inj(1000, 10, Class::Header, KLV, true);
+        af_overrun.offsets = vec![4];
+        let mut sync_byte = inj(1000, 10, Class::Header, KLV, true);
+        sync_byte.offsets = vec![0];
+        let truncate = inj(1000, 10, Class::Truncate, KLV, true);
+        let garbage = inj(1000, 10, Class::Garbage, KLV, true);
+        for (name, i) in [
+            ("pat flip", &pat_flip),
+            ("pmt body flip", &pmt_body_flip),
+            ("adaptation-field overrun", &af_overrun),
+            ("sync byte", &sync_byte),
+            ("truncate", &truncate),
+            ("garbage", &garbage),
+        ] {
+            assert_eq!(run(i, &[]), LOST, "{name}, no media");
+            assert_eq!(run(i, &[VIDEO]), HELD, "{name}, media on any PID");
+        }
+
+        // A second reconnect resets the demuxer again: media after the
+        // first marker shows nothing about the state after the second.
+        let mut a = Attribution::lossy(vec![drop.clone()], &hdr());
+        a.on_reconnect(4900);
+        a.on_media(4950, KLV);
+        a.on_reconnect(4990);
+        a.on_pcr(1000, 5000);
+        a.on_media(5015, KLV);
+        let r = a.finish(10_000);
+        assert_eq!((r.undetected_count, r.lost_in_reconnect_gap), LOST, "{r:?}");
+    }
+
+    /// A gap belongs to one reconnect epoch. Two reconnects in quick
+    /// succession leave the older gap's window reaching past the newer
+    /// marker, and the older gap saw no media of its own — so if it still
+    /// had a say there, a second reconnect would switch detection off for
+    /// everything the newer epoch demonstrably delivered.
+    #[test]
+    fn an_older_reconnect_gap_does_not_excuse_what_the_newest_epoch_holds() {
+        let mut pat_flip = inj(1000, 10, Class::PsiFlip, 0, true);
+        pat_flip.psi = true;
+        let mut a = Attribution::lossy(vec![pat_flip.clone()], &hdr());
+        a.on_media(4000, 0x1011);
+        a.on_reconnect(4900);
+        a.on_reconnect(4950);
+        a.on_pcr(1000, 5000); // exact, after the newest marker: resolves at 5010
+        a.on_media(5005, 0x1011); // the reset demuxer is parsing again
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.undetected_count, r.lost_in_reconnect_gap),
+            (1, 0),
+            "arrived in the newest epoch, after its media, and nothing was reported: {r:?}"
+        );
+
+        // The twin that IS lost: placed between the two markers, in an
+        // epoch that ended before the demuxer produced any media.
+        let mut a = Attribution::lossy(vec![pat_flip], &hdr());
+        a.on_media(4000, 0x1011);
+        a.on_reconnect(4900);
+        a.on_pcr(1000, 4905); // exact, after the first marker: resolves at 4915
+        a.on_reconnect(4950);
+        a.on_media(5005, 0x1011);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.undetected_count, r.lost_in_reconnect_gap),
+            (0, 1),
+            "{r:?}"
+        );
+    }
+
+    /// The declared `PCR_PID`s are the demuxer's CURRENT topology. A
+    /// reconnect resets the demuxer, so a PID declared before it is
+    /// declared no longer, and a `PcrAnomaly` there means a timeline
+    /// outlived its declaration: never excused, never attributed.
+    #[test]
+    fn a_pcr_pid_declared_before_a_reconnect_is_not_declared_after_it() {
+        let mut on_video = inj(1000, 10, Class::Header, 0x1011, true);
+        on_video.offsets = vec![4];
+        for lossy in [false, true] {
+            // Program 1 before the reconnect, only program 2 after it.
+            let run = |log: Vec<Injection>| {
+                let mut a = with_video_pcr(lossy, log);
+                a.on_reconnect(4000);
+                a.on_program_map(2, 0x1001, 0x1100);
+                a
+            };
+
+            // Beside a gap nothing else claims.
+            let mut a = run(vec![]);
+            a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+            a.on_signal(5010, Some(0x1011), PCR_FORWARD);
+            let r = a.finish(10_000);
+            assert_eq!(
+                (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+                (0, 1),
+                "lossy={lossy}: {r:?}"
+            );
+
+            // Inside the window of an injection that could otherwise
+            // explain it.
+            let mut a = run(vec![on_video.clone()]);
+            a.on_pcr(1000, 5000); // resolves at 5010
+            a.on_media(5005, 0x1100);
+            a.on_signal(5012, Some(0x1011), PCR_FORWARD);
+            let r = a.finish(10_000);
+            assert_eq!(
+                (r.attributed_events, r.unexplained_nonconformant),
+                (0, 1),
+                "lossy={lossy}: {r:?}"
+            );
+        }
+
+        // The healthy twin: the anomaly is on the PID the new topology
+        // declares, beside its own gap.
+        let mut a = with_video_pcr(true, vec![]);
+        a.on_reconnect(4000);
+        a.on_program_map(2, 0x1001, 0x1100);
+        a.on_signal(5000, Some(0x1100), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1100), PCR_FORWARD);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (1, 0),
+            "{r:?}"
+        );
+
+        // After a reconnect nothing is declared until a program map says
+        // so — the same fail-closed rule as at the start of a capture.
+        let mut a = with_video_pcr(true, vec![]);
+        a.on_reconnect(4000);
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1011), PCR_FORWARD);
+        a.on_program_map(1, 0x1000, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (0, 1),
+            "{r:?}"
+        );
+    }
+
+    /// Without a reconnect the declarations follow the program maps: a
+    /// later map for the same program replaces its `PCR_PID`, and a map
+    /// for a different program on the same PMT PID replaces the program
+    /// (the demuxer keeps one program per PMT PID).
+    #[test]
+    fn a_program_map_replaces_the_declaration_it_supersedes() {
+        let excused_on = |a: &mut Attribution, at: u64, pid: u16| {
+            a.on_signal(at, Some(pid), Signal::ContinuityJump);
+            a.on_signal(at + 10, Some(pid), PCR_FORWARD);
+        };
+
+        // Program 1 moves its time base from 0x1011 to 0x1100.
+        let mut a = with_video_pcr(true, vec![]);
+        a.on_program_map(1, 0x1000, 0x1100);
+        excused_on(&mut a, 5000, 0x1011);
+        excused_on(&mut a, 6000, 0x1100);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (1, 1),
+            "{r:?}"
+        );
+
+        // Program 2 takes over program 1's PMT PID.
+        let mut a = with_video_pcr(true, vec![]);
+        a.on_program_map(2, 0x1000, 0x1100);
+        excused_on(&mut a, 5000, 0x1011);
+        excused_on(&mut a, 6000, 0x1100);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (1, 1),
+            "{r:?}"
+        );
+
+        // A second program on its own PMT PID removes nothing.
+        let mut a = with_video_pcr(true, vec![]);
+        a.on_program_map(2, 0x1001, 0x1100);
+        excused_on(&mut a, 5000, 0x1011);
+        excused_on(&mut a, 6000, 0x1100);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (2, 0),
+            "{r:?}"
+        );
+    }
+
+    /// A continuity gap is evidence about the connection it was seen on.
+    /// After a reconnect the demuxer holds no PCR baseline from before it,
+    /// so a jump it reports is between two PCRs of the NEW connection and
+    /// a gap from the old one is not its cause.
+    #[test]
+    fn a_continuity_gap_from_before_a_reconnect_excuses_no_pcr_anomaly_after_it() {
+        let mut a = with_video_pcr(true, vec![]);
+        a.on_signal(3990, Some(0x1011), Signal::ContinuityJump);
+        a.on_reconnect(4000);
+        a.on_program_map(1, 0x1000, 0x1011);
+        a.on_signal(4010, Some(0x1011), PCR_FORWARD);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (0, 1),
+            "{r:?}"
+        );
     }
 }
