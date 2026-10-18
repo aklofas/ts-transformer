@@ -83,6 +83,12 @@ jobs:
           # and silently no-op'd the pre-rename guard).
           sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build ripgrep
 
+      - name: Install abigail-tools (linux-x86_64)
+        # abidiff + nm back the abi-compat self-test below, which fails under
+        # CI without abidiff by design. Pinned to the ubuntu-24.04 version.
+        if: matrix.name == 'linux-x86_64'
+        run: sudo apt-get -o Acquire::Retries=5 install -y binutils abigail-tools=2.4-3build1
+
       - name: Install build prerequisites (macOS)
         # librist's vendored build is meson-driven and needs `meson` + `ninja`
         # on PATH; cmake is pre-installed. ripgrep backs
@@ -571,6 +577,12 @@ jobs:
         # across the whole matrix after A5a added the per-feature step. This
         # build MUST stay the last cdylib-producing build before the test step.
         run: cargo build --workspace --all-features
+
+      - name: abi-compat self-test (abidiff verdicts on fixture libraries)
+        # abi-compat.sh itself runs in the c-abi job; this exercises its
+        # verdicts on small compiled fixtures.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/c/tests/abi-compat-selftest.sh
 
       - name: check-c-abi-symbols
         # The exported symbol list (bindings/c/abi-symbols.txt) against a
@@ -1286,6 +1298,110 @@ jobs:
         # binary (see bindings/c/tests/MOVEMENT_MAP.md); build that binary
         # and filter to its tests — the per-mode counts above are unchanged.
         run: cargo test -p tst-c ${{ matrix.cargo_flags }} --test abi feature_matrix_compile
+
+  c-abi:
+    name: C ABI vs previous tag (linux-x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    # abidiff of this tree's libtstrans against the previous release tag's.
+    # The previous library comes from the tag's Release package when that
+    # carries one; until then it is built from source at the tag (cold build
+    # about 15 minutes, then cached on the library file alone). Fails when
+    # neither source yields a library, never passes without a comparison.
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install build prerequisites and abigail-tools
+        # abigail-tools is pinned to the version on the ubuntu-24.04 image;
+        # a runner image move makes the pin fail loudly, then re-pin.
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build binutils abigail-tools=2.4-3build1
+
+      - name: Rust toolchain, cargo cache
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-key: cargo-c-abi-${{ hashFiles('Cargo.lock') }}
+
+      - name: Select the previous release tag
+        id: prev
+        run: |
+          git fetch --tags --depth=1 origin
+          prev="$(bash scripts/dev/prev-tag.sh)"
+          [ -n "$prev" ] || { echo "no vMAJOR.MINOR.PATCH tag in this clone" >&2; exit 1; }
+          pat='^pub const TST_ABI_VERSION_MINOR: [A-Za-z0-9_:]* = \([0-9][0-9]*\);.*'
+          prev_minor="$(git show "$prev:bindings/c/core/src/lib.rs" | sed -n "s/$pat/\1/p" | head -1)"
+          head_minor="$(sed -n "s/$pat/\1/p" bindings/c/core/src/lib.rs | head -1)"
+          [ -n "$prev_minor" ] && [ -n "$head_minor" ] || { echo "could not read the ABI minor ($prev_minor / $head_minor)" >&2; exit 1; }
+          echo "prev=$prev" >> "$GITHUB_OUTPUT"
+          echo "prev_minor=$prev_minor" >> "$GITHUB_OUTPUT"
+          echo "head_minor=$head_minor" >> "$GITHUB_OUTPUT"
+          echo "previous tag $prev (ABI minor $prev_minor), this tree ABI minor $head_minor"
+
+      - name: Previous library from the tag's Release package
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREV: ${{ steps.prev.outputs.prev }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/prev-release"
+          if gh release download "$PREV" -R "$GITHUB_REPOSITORY" -p 'tstrans-c-*-linux-x86_64.tar.gz' -D "$RUNNER_TEMP/prev-release" 2>/dev/null \
+             && tar -xzf "$RUNNER_TEMP"/prev-release/tstrans-c-*-linux-x86_64.tar.gz -C "$RUNNER_TEMP/prev-release" \
+             && abi="$(find "$RUNNER_TEMP/prev-release" -name tstrans.abi | head -1)" && [ -n "$abi" ]; then
+            echo "previous tag $PREV, taken from its Release package"
+            echo "lib=$abi" >> "$GITHUB_OUTPUT"
+          else
+            echo "the $PREV Release carries no C package"
+          fi
+
+      - name: Previous library cache
+        if: steps.release.outputs.lib == ''
+        id: cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}/../prev-target/debug/libtstrans.so
+          key: c-abi-${{ steps.prev.outputs.prev }}-${{ hashFiles('rust-toolchain.toml') }}
+
+      - name: Previous library built from source at the tag
+        if: steps.release.outputs.lib == '' && steps.cache.outputs.cache-hit != 'true'
+        env:
+          PREV: ${{ steps.prev.outputs.prev }}
+        run: |
+          git worktree add ../prev "$PREV"
+          git -C ../prev submodule update --init --recursive
+          (cd ../prev && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/../prev-target" cargo build -p tst-c --all-features)
+          test -f ../prev-target/debug/libtstrans.so
+
+      - name: Stage this tree's package
+        run: bash scripts/dev/c-package.sh --all-features --out "$RUNNER_TEMP/pkg"
+
+      - name: abidiff against the previous tag
+        env:
+          PREV: ${{ steps.prev.outputs.prev }}
+          PREV_MINOR: ${{ steps.prev.outputs.prev_minor }}
+          HEAD_MINOR: ${{ steps.prev.outputs.head_minor }}
+          RELEASE_LIB: ${{ steps.release.outputs.lib }}
+        run: |
+          if [ -n "$RELEASE_LIB" ]; then
+            old="$RELEASE_LIB"; how="from its Release package"
+          else
+            old="$GITHUB_WORKSPACE/../prev-target/debug/libtstrans.so"; how="built from source"
+          fi
+          echo "previous tag $PREV, $how"
+          bash scripts/check/c/abi-compat.sh "$old" "$RUNNER_TEMP/pkg/lib/libtstrans.so" "$PREV_MINOR" "$HEAD_MINOR" 2>&1 | tee "$RUNNER_TEMP/abi-report.txt"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Upload the abidiff report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: c-abi-report
+          path: ${{ runner.temp }}/abi-report.txt
+          if-no-files-found: ignore
 
   deny:
     name: cargo-deny (advisories + licenses)
