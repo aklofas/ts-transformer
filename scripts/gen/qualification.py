@@ -17,7 +17,9 @@ Artefact directory read by `collect` (a missing file is a missing leg, never a p
   sanitizer-<job>/sanitizer-<job>.json (or sanitizer-<job>.json) {job, conclusion}
   fuzz.json, abi.json, semver-checks.json
 
-A leg is GO only when its conclusion is exactly `success`. Stdlib only.
+A leg is GO only when its conclusion is exactly `success`. An empty or malformed
+artefact makes `collect` exit 2 and write NO record, so the job that runs it must
+never use `continue-on-error`. Stdlib only.
 """
 import argparse
 import hashlib
@@ -129,7 +131,7 @@ def _find_sanitizer(art, job):
 def _interop(art, legs):
     results = read_json(os.path.join(art, "interop-evidence", "results.json"))
     inv = read_json(os.path.join(art, "interop-evidence", "inventory.json")) or {}
-    if results is None:
+    if results is None or not os.path.isfile(os.path.join(art, "interop-evidence", "inventory.json")):
         return None, {}
     s, i = results.get("summary", {}), results.get("inventory", {})
     shape = i.get("shape", "unknown")
@@ -146,8 +148,12 @@ def _interop(art, legs):
     return rec, dict(inv.get("tools", {}))
 
 
-def verdict(legs, interop, fuzz):
+def verdict(legs, interop, fuzz, dirty=False, abi=None):
     reasons = []
+    if abi is not None and abi.get("verdict") != "compatible":
+        reasons.append("c-abi: abi.json verdict is %r, not 'compatible'" % abi.get("verdict"))
+    if dirty:
+        reasons.append("source: the qualified tree had uncommitted changes")
     for l in legs:
         if l["required"] and l["conclusion"] != "success":
             reasons.append("%s: %s" % (l["name"], l["conclusion"]))
@@ -156,7 +162,10 @@ def verdict(legs, interop, fuzz):
     else:
         if not interop["shape"].startswith("full"):
             reasons.append("interop: shape is %s, not a full census" % interop["shape"])
-        if interop["total"] != interop["expected_full_cells"]:
+        if interop["total"] <= 0 or interop["expected_full_cells"] <= 0:
+            reasons.append("interop: census undeclared (total %d, declared full census %d)"
+                           % (interop["total"], interop["expected_full_cells"]))
+        elif interop["total"] != interop["expected_full_cells"]:
             reasons.append("interop: total %d differs from the declared full census %d"
                            % (interop["total"], interop["expected_full_cells"]))
         for k in ("fail", "skipped", "stale"):
@@ -214,8 +223,10 @@ def collect(art, root):
         c, u = entry(n)
         add(n, c, u)
     c, u = entry("c-abi")
-    if c is None and abi_in is not None:
-        c = "success" if abi_in.get("verdict") == "compatible" else "failure"
+    if abi_in is None:
+        c = "missing"
+    elif abi_in.get("verdict") != "compatible":
+        c = "failure"
     add("c-abi", c, u)
     add("ci (on this sha)", (ci_in or {}).get("conclusion"), (ci_in or {}).get("run_url"))
     c, u = entry("semver-checks")
@@ -233,7 +244,7 @@ def collect(art, root):
     for r in read_json(os.path.join(art, "semver-checks.json")) or []:
         sc.append({"crate": r["crate"], "breaking": r.get("failed_checks", 0),
                    "exit": r["exit"], "analysed": r.get("analysed", False)})
-    v, reasons = verdict(legs, interop, fuzz)
+    v, reasons = verdict(legs, interop, fuzz, bool(ctx.get("source", {}).get("dirty")), abi_in)
     return {
         "schema_version": 0,
         "label": ctx.get("label", "unlabelled"),

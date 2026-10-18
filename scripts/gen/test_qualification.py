@@ -196,6 +196,44 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(rec["verdict"], "NO-GO")
 
 
+class HoleTests(unittest.TestCase):
+    def test_dirty_tree_is_no_go(self):
+        def m(f):
+            f["context.json"]["source"] = dict(CONTEXT["source"], dirty=True)
+        rec = collect(m)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertTrue(any("uncommitted" in r for r in rec["verdict_reasons"]))
+
+    def test_undeclared_census_is_no_go(self):
+        def m(f):
+            r = f["interop-evidence/results.json"]
+            del r["summary"]["total"]
+            del r["inventory"]["expected_full_cells"]
+        rec = collect(m)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertTrue(any("undeclared" in r for r in rec["verdict_reasons"]))
+
+    def test_missing_inventory_is_missing_interop(self):
+        def m(f):
+            f["interop-evidence/inventory.json"] = None
+        rec = collect(m)
+        self.assertEqual(leg(rec, "interop")["conclusion"], "missing")
+        self.assertEqual(rec["verdict"], "NO-GO")
+
+    def test_abi_missing_or_not_compatible_is_no_go(self):
+        rec = collect(lambda f: f.__setitem__("abi.json", None))
+        self.assertEqual(leg(rec, "c-abi")["conclusion"], "missing")
+        self.assertEqual(rec["verdict"], "NO-GO")
+        rec = collect(lambda f: f["abi.json"].update(verdict="breaking"))
+        self.assertEqual(leg(rec, "c-abi")["conclusion"], "failure")
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertTrue(any("breaking" in r for r in rec["verdict_reasons"]))
+
+    def test_abi_exit_zero_and_four_are_both_go(self):
+        for code in (0, 4):
+            self.assertEqual(collect(lambda f: f["abi.json"].update(abidiff_exit=code))["verdict"], "GO")
+
+
 class RenderTests(unittest.TestCase):
     def setUp(self):
         self.rec = collect()
