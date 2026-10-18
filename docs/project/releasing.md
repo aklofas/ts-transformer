@@ -94,23 +94,53 @@ the set — 14 published artifacts per release in total.
    `gh workflow run python-wheels.yml` builds every wheel + sdist and skips
    publish (publish is tag-gated). Confirm all legs are green, and watch for a
    leg sitting *queued* — that is the v0.1.0 failure mode.
-4. **Refresh the published interop/soak evidence.** Run a full local
-   `scripts/interop/run-matrix.sh` matrix and note the resulting census
-   (total/PASS/FAIL/EXPECTED-UNSUPPORTED/SKIPPED) against what
-   [`docs/project/validation-evidence.md`](/docs/project/validation-evidence.md) currently
-   claims — a changed census (a new unexpected `FAIL`, or a documented gap
-   now passing) means the page needs updating before the release, not after.
-   Also confirm the linked public CI run
-   (`.github/workflows/interop.yml`, weekly + `workflow_dispatch`) is the
-   latest one and still green; update the cited run URL if a newer one has
-   landed since the page was last touched.
-5. **CHANGELOG:** retitle the `[Unreleased]` section to `[X.Y.Z] — <date>`
+4. **Qualify the candidate.** Once `ci` is green on the commit you intend to
+   tag, dispatch the qualification run on that exact commit:
+   ```bash
+   gh workflow run release-qualify.yml -f sha=<candidate>
+   ```
+   One run calls the wheels, JVM, interop, sanitizer, fuzz, ABI and semver
+   legs in rehearsal mode (nothing is published) and writes a record. The run
+   must end **GO**: every leg succeeded on that commit, the tree was clean, and
+   the interop census matches `expectations.toml`. A **NO-GO** record lists
+   its reasons (a failed or missing leg, a stale `ci` result, a dirty tree, an
+   unexpected interop failure). A real leg failure is a finding to fix, not a
+   rerun; rerun only a failure that belongs to a ledgered flake class.
+
+   The run's bundle holds `qualification.json`, the rendered
+   `qualification.md`, the SBOMs, `SHA256SUMS`, the build attestations and the
+   C package. Download it from the run's artefacts.
+5. **Commit the record.** In a docs-only PR, add the run's `qualification.json`
+   as `docs/project/qualification.json` and render the evidence page's
+   generated block:
+   ```bash
+   bash scripts/gen/qualification.sh render --write
+   ```
+6. **Maintainer-local checks.** Some validation needs inputs that are not on a
+   CI runner, so the record lists them as `maintainer_local` and they stay
+   with you. Run each and note the result before tagging:
+   - the real-capture corpus cross-check,
+     `cargo test -p tst-core --test mpegts mux_local`;
+   - long fuzz runs, 10 minutes per target;
+   - the benchmark regression check;
+   - the one-hour synthetic soak.
+
+   The separate pre-release validation battery is retired. Its other steps
+   are covered as follows:
+
+   | Former step | Now covered by |
+   |---|---|
+   | Regression tier | `ci` |
+   | Baseline mux | the interop matrix's generated input |
+   | `tsanalyze` / `tspsi` / `ffprobe` goldens | the `analyze/{tsanalyze,tsp-analyze,ffprobe}/*` cells |
+   | FFmpeg muxer differential | retired; the `srt-live/*` and `decode/*` cells use FFmpeg as a peer |
+   | Player decode matrix | the `decode/*` cells |
+   | C demux round trip | `bindings/c/tests/receiving/demux_receiver_loopback.rs` |
+   | HLS segment probe | the `hls/{ffmpeg,tsp}-pull` cells and `crates/tst-hls/tests/net_hls_e2e.rs` |
+   | PTS-rollover and PCR-jitter checks | removed; they never ran |
+7. **CHANGELOG:** retitle the `[Unreleased]` section to `[X.Y.Z] — <date>`
    and open a fresh `[Unreleased]` stub. The "Release highlights" block is
    the seed for the GitHub Release notes.
-6. - [ ] Decide which Tier-B steps the interop matrix now owns (see the
-   "`release-validation.sh` consolidation" entry in
-   [`deferred-features.md`](/docs/project/deferred-features.md)) — retire
-   the duplicated player-decode / ffmpeg round-trip steps or record why not.
 
 ## Release procedure
 
@@ -139,8 +169,11 @@ the set — 14 published artifacts per release in total.
    - A Gradle / Maven resolve of `org.tstrans:tstrans-jvm:X.Y.Z` succeeds.
    - Every crate page at `https://crates.io/crates/<pkg>` shows X.Y.Z and
      the docs.rs builds are green (see the crates.io section below).
-   Only **after** all three verify, announce the release (GitHub Release
-   notes seeded from the CHANGELOG highlights block).
+   Only **after** all three verify, announce the release.
+5. **GitHub Release.** The tag push also runs `release-qualify.yml` again.
+   On a GO it attaches the bundle and the C package to a **draft** Release for
+   the tag. Edit that draft's notes from the CHANGELOG highlights block and
+   publish it. Do not create a second Release by hand.
 
 ## crates.io publish (Rust crates)
 

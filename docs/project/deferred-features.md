@@ -1781,32 +1781,6 @@ and the two below.
   harness gains a shared TLS-cert-provisioning helper cheap enough to
   extend to these three transports without a bespoke setup per cell.
 
-## `release-validation.sh` consolidation into the interop matrix
-
-- **Status:** Not done. The maintainer's local pre-release validation
-  battery (Tier B: FFmpeg differential muxing, a player decode
-  compatibility matrix, PTS-rollover/PCR-jitter checks, a soak run, long-
-  budget fuzzing, and a real-corpus structural cross-check) predates
-  the published interop matrix and soak runner
-  ([`docs/project/validation-evidence.md`](/docs/project/validation-evidence.md)) and
-  overlaps it in places — both now separately exercise "does this decode
-  in a real player," "does FFmpeg round-trip this correctly," and
-  "does this survive a multi-hour run." The two batteries have not been
-  consolidated; both still run as separate steps at release time.
-- **Why deferred:** The pre-release battery also covers the sensitive
-  real-world capture corpus and long-budget fuzzing, which are out of
-  scope for the interop matrix's remit (real tools over real synthetic
-  traffic, on a stock CI runner). Consolidating the overlapping steps —
-  deciding which battery owns the player-decode-matrix and FFmpeg-
-  differential checks going forward — is a deliberate design decision,
-  not a mechanical merge, and hasn't been made yet.
-- **Trigger to revisit:** every release's pre-tag checklist — step 6 of
-  [`releasing.md`](/docs/project/releasing.md) ("decide which Tier-B steps the
-  interop matrix now owns … retire the duplicated player-decode / ffmpeg
-  round-trip steps or record why not"). The player-decode matrix and the
-  ffmpeg round-trip are already covered by the `decode/*` and `ffmpeg/*`
-  cells.
-
 ## `BrokenCause` (clean-EOF discriminator) bindings parity (C / Python / JVM)
 
 - **Status:** Deferred. `TransportError::Broken` carries a structured
