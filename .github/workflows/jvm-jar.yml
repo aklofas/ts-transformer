@@ -1,6 +1,16 @@
 name: jvm-jar
 
 on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ''
+      dry_run:
+        type: boolean
+        required: false
+        default: false
   push:
     branches: [main]
     tags: ["v*"]
@@ -37,6 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.ref }}
           submodules: recursive  # tst-srt builds vendor/srt + vendor/mbedtls
 
       - name: Rust toolchain
@@ -152,6 +163,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         # no submodules: assembly does not build native code
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Set up JDK 17
         uses: actions/setup-java@v6
@@ -231,7 +244,10 @@ jobs:
     # re-stages the native libs and rebuilds/signs the jar — it does not
     # reuse assemble's artifact. A non-tag push skips this (the `if` is false).
     needs: [build, assemble]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # `inputs.dry_run` is unset (false) under the tag push, so the publish still
+    # runs on its own trigger. A call passes dry_run, and the caller is never a
+    # tag push, so a called run does not publish.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !inputs.dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
@@ -241,6 +257,8 @@ jobs:
       - uses: actions/checkout@v5
         # no submodules: publishing rebuilds the jar from staged native libs,
         # not from cargo.
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Set up JDK 17
         uses: actions/setup-java@v6

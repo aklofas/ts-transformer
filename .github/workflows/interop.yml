@@ -15,6 +15,16 @@ name: interop
 # scripts/interop/'s own stance (see lib.sh's header).
 
 on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ''
+      dry_run:
+        type: boolean
+        required: false
+        default: false
   schedule:
     # Mondays 05:00 UTC — weekly cadence, off-peak, and clear of the
     # sanitizers.yml nightly (03:00 UTC daily).
@@ -61,6 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.ref }}
           submodules: recursive
 
       - name: Install build prerequisites
