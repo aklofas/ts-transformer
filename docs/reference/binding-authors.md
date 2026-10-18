@@ -361,7 +361,7 @@ baseline (by design)" for the full rationale.
   incompatible change to the ABI shape. **0** today.
 - `TST_ABI_VERSION_MINOR` — incremented on additive, source-compatible
   changes (new event kinds, new C entry points, new error codes).
-  **24** today. History (additive bumps only — major stays at 0 pre-1.0):
+  **25** today. History (additive bumps only — major stays at 0 pre-1.0):
     - `1`: receiver-surface initial drop.
     - `2`: `ManagedDemuxReceiver` wired into
       `tst-c`; `TST_EVENT_KIND_RECONNECT_DISCONTINUITY = 6` added; TS-bytes
@@ -629,6 +629,12 @@ baseline (by design)" for the full rationale.
       `tst_rtsp_server_builder_tls_cert_pem` take effect (they were refused
       or ignored before). No symbol, layout, enum value or error code
       changed.
+    - `25` (`tst_has_feature`): `tst_has_feature(name)` returns 1 when the
+      library was built with the named cargo feature (`"srt"`, `"rtp"`,
+      `"udp"`, `"tcp"`, `"hls"`, `"rist"`, `"tls"`), else 0; NULL, an unknown
+      name and a name in another case answer 0. A program that loads
+      libtstrans at run time asks before resolving a feature's symbols. No
+      existing symbol, layout, enum value or error code changed.
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that
   preserve both shape and behaviour.
 

@@ -13,8 +13,9 @@
  *
  * What it does: queries every tst_get_*_version_* runtime accessor,
  * compares each result against the corresponding TST_*_VERSION_* compile-
- * time macro from the header, prints all seven values, and exits 0 on
- * agreement / 1 on mismatch.
+ * time macro from the header, prints all seven values, checks each
+ * feature query against its TST_HAS_* define, and exits 0 on agreement /
+ * 1 on mismatch.
  *
  * Why this matters:
  *
@@ -124,6 +125,27 @@ int main(void) {
                tst_get_abi_version_major(), TST_ABI_VERSION_MAJOR, &mismatched);
     check_pair("TST_ABI_VERSION_MINOR",
                tst_get_abi_version_minor(), TST_ABI_VERSION_MINOR, &mismatched);
+
+    /*
+     * ── Feature query ─────────────────────────────────────────────────
+     *
+     * The TST_HAS_* defines describe the build the header came from. A
+     * program that loads libtstrans at run time (dlopen / LoadLibrary)
+     * never sees the build the loaded library came from, so it asks:
+     * tst_has_feature(name) is 1 when that library was built with the
+     * cargo feature, 0 otherwise. Ask BEFORE resolving the feature's
+     * symbols, since a library built without it does not export them.
+     * Here the library and the header come from one build, so the two
+     * answers must agree.
+     */
+    printf("\nBuilt-in features (runtime query vs header define):\n");
+    check_pair("srt",  (uint32_t)tst_has_feature("srt"),  TST_HAS_SRT,  &mismatched);
+    check_pair("rtp",  (uint32_t)tst_has_feature("rtp"),  TST_HAS_RTP,  &mismatched);
+    check_pair("udp",  (uint32_t)tst_has_feature("udp"),  TST_HAS_UDP,  &mismatched);
+    check_pair("tcp",  (uint32_t)tst_has_feature("tcp"),  TST_HAS_TCP,  &mismatched);
+    check_pair("hls",  (uint32_t)tst_has_feature("hls"),  TST_HAS_HLS,  &mismatched);
+    check_pair("rist", (uint32_t)tst_has_feature("rist"), TST_HAS_RIST, &mismatched);
+    check_pair("tls",  (uint32_t)tst_has_feature("tls"),  TST_HAS_TLS,  &mismatched);
 
     /*
      * ── Tier 3: Header compile-time macros ────────────────────────────

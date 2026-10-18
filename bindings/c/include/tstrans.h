@@ -52,13 +52,13 @@
  * Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
  * for the bump policy.
  *
- * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 24` in the
+ * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 25` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_minor`].
  *
  * What each minor added is recorded once, in the repository's
  * `docs/reference/binding-authors.md` § "Versioning".
  */
-#define TST_ABI_VERSION_MINOR 24
+#define TST_ABI_VERSION_MINOR 25
 
 #define TST_CODEC_KIND_AUDIO 3
 
@@ -7145,6 +7145,23 @@ int tst_annexb_to_length_prefixed(const uint8_t *annexb,
                                   uint8_t *out,
                                   size_t out_cap,
                                   size_t *out_len);
+
+/**
+ * Returns 1 when this library was built with the cargo feature `name`
+ * (`"srt"`, `"rtp"`, `"udp"`, `"tcp"`, `"hls"`, `"rist"` or `"tls"`), 0
+ * otherwise, including for NULL, a name not in that list, or a name in
+ * another case. Never sets the last error.
+ *
+ * A program that loads libtstrans at run time (`dlopen` / `LoadLibrary`)
+ * asks here before resolving a feature's symbols. A program compiled
+ * against `tstrans.h` reads the `TST_HAS_*` defines instead.
+ *
+ * # Safety
+ *
+ * `name` must be NULL or point to a NUL-terminated string that stays
+ * valid for the duration of the call.
+ */
+int tst_has_feature(const char *name);
 
 #if defined(TST_HAS_HLS)
 /**

@@ -9,6 +9,8 @@
 mod error_routing;
 #[path = "abi/feature_matrix_compile.rs"]
 mod feature_matrix_compile;
+#[path = "abi/has_feature.rs"]
+mod has_feature;
 #[path = "abi/header_drift.rs"]
 mod header_drift;
 #[path = "abi/rtp_url_refusal.rs"]

@@ -237,12 +237,12 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 /// Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
 /// for the bump policy.
 ///
-/// Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 24` in the
+/// Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 25` in the
 /// generated header. Runtime accessor: [`tst_get_abi_version_minor`].
 ///
 /// What each minor added is recorded once, in the repository's
 /// `docs/reference/binding-authors.md` § "Versioning".
-pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 24;
+pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 25;
 
 // =========================================================================
 // Runtime version accessors
@@ -285,6 +285,43 @@ pub unsafe extern "C" fn tst_get_abi_version_major() -> u32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_get_abi_version_minor() -> u32 {
     TST_ABI_VERSION_MINOR as u32
+}
+
+/// Returns 1 when this library was built with the cargo feature `name`
+/// (`"srt"`, `"rtp"`, `"udp"`, `"tcp"`, `"hls"`, `"rist"` or `"tls"`), 0
+/// otherwise, including for NULL, a name not in that list, or a name in
+/// another case. Never sets the last error.
+///
+/// A program that loads libtstrans at run time (`dlopen` / `LoadLibrary`)
+/// asks here before resolving a feature's symbols. A program compiled
+/// against `tstrans.h` reads the `TST_HAS_*` defines instead.
+///
+/// # Safety
+///
+/// `name` must be NULL or point to a NUL-terminated string that stays
+/// valid for the duration of the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_has_feature(
+    name: *const crate::c_types::c_char,
+) -> crate::c_types::c_int {
+    crate::panic::ffi_catch(0, || {
+        if name.is_null() {
+            return 0;
+        }
+        // SAFETY: non-NULL and NUL-terminated per the contract above.
+        let name = unsafe { core::ffi::CStr::from_ptr(name) }.to_bytes();
+        let built = match name {
+            b"srt" => cfg!(feature = "srt"),
+            b"rtp" => cfg!(feature = "rtp"),
+            b"udp" => cfg!(feature = "udp"),
+            b"tcp" => cfg!(feature = "tcp"),
+            b"hls" => cfg!(feature = "hls"),
+            b"rist" => cfg!(feature = "rist"),
+            b"tls" => cfg!(feature = "tls"),
+            _ => false,
+        };
+        built as crate::c_types::c_int
+    })
 }
 
 // =========================================================================

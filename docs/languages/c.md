@@ -61,7 +61,7 @@ Every release exposes two pairs of macros in `tstrans.h` plus matching runtime a
 #define TST_VERSION_MINOR        8
 #define TST_VERSION_PATCH        0
 #define TST_ABI_VERSION_MAJOR    0   // C ABI contract version
-#define TST_ABI_VERSION_MINOR    24
+#define TST_ABI_VERSION_MINOR    25
 ```
 
 The **ABI** pair is what binding consumers should pin against. Minor bumps are additive (new entry points / new enum variants); a future major bump will be breaking (none yet — sitting at `0` pre-1.0). Check at process startup:
@@ -78,6 +78,8 @@ if (tst_get_abi_version_minor() < TST_ABI_VERSION_MINOR) {
 ```
 
 See [`examples/getting-started/version_check.c`](../../bindings/c/examples/getting-started/version_check.c) for the canonical startup pattern.
+
+A program that loads `libtstrans` at run time (`dlopen` / `LoadLibrary`) cannot read the `TST_HAS_*` defines of the build it loaded, so it asks the library: `tst_has_feature("udp")` returns 1 when the library was built with that cargo feature (`srt`, `rtp`, `udp`, `tcp`, `hls`, `rist` or `tls`, lower case) and 0 otherwise, including for NULL or an unknown name. Call it before resolving that feature's symbols. A program compiled against `tstrans.h` keeps using the defines.
 
 ## Hello world
 
