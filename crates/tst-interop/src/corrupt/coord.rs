@@ -602,6 +602,13 @@ mod properties {
     const MASK: u64 = (1 << 33) - 1;
     const HALF: u64 = 1 << 32;
 
+    /// A base origin: uniform over the circle half the time, otherwise
+    /// within `span` ticks BELOW the wrap so a run starting there crosses
+    /// 2^33.
+    fn origin(span: u64) -> impl Strategy<Value = u64> {
+        prop_oneof![0..=MASK, (MASK + 1 - span)..=MASK]
+    }
+
     fn hdr() -> LogHeader {
         LogHeader {
             tap_version: 1,
@@ -633,13 +640,6 @@ mod properties {
         }
     }
 
-    /// The ordering key the log promises: bases advance along the circle,
-    /// and within one base `since_pcr` advances. Position of `c` measured
-    /// from `origin`, so it is a plain integer pair even across a wrap.
-    fn key(origin: u64, c: &Coord) -> (u64, u64) {
-        (ticks_ahead(c.pcr_base.unwrap(), origin), c.since_pcr)
-    }
-
     proptest! {
         /// (a) The wrapping distance orders any two bases: equal bases are
         /// distance 0, the two directions sum to the full circle, and
@@ -655,29 +655,31 @@ mod properties {
             }
         }
 
-        /// (a) Along any run of coordinates whose bases advance within a
-        /// half-range (a run may straddle the 33-bit wrap), the
-        /// (base, since_pcr) lexicographic order measured from the first
-        /// base agrees with comparing wrapping distances pairwise.
+        /// (a) Along a run of coordinates whose bases advance within a
+        /// half-range, the engine's wrapping comparison agrees with an
+        /// independent reference: the plain unwrapped position
+        /// `(offset from origin, since_pcr)` compared as integers. Half of
+        /// the origins sit just below 2^33, so most such runs cross the
+        /// wrap.
         #[test]
         fn coordinate_order_is_lexicographic_across_a_wrap(
-            origin in 0..=MASK,
+            origin in origin(10_000_000),
             steps in proptest::collection::vec((0u64..2_000_000, 0u64..600), 2..24),
         ) {
-            let mut base = 0u64;
-            let mut run = Vec::new();
+            let mut off = 0u64;
+            let mut run = Vec::new(); // (unwrapped offset, Coord)
             for (step, since) in steps {
-                base += step;
-                run.push(Coord {
-                    pcr_base: Some((origin + base) & MASK),
+                off += step;
+                run.push((off, Coord {
+                    pcr_base: Some((origin + off) % (MASK + 1)),
                     since_pcr: since,
-                });
+                }));
             }
-            for i in 0..run.len() {
-                for j in 0..run.len() {
-                    let (ki, kj) = (key(origin, &run[i]), key(origin, &run[j]));
-                    // Pairwise wrapping comparison of the bases themselves.
-                    let (bi, bj) = (run[i].pcr_base.unwrap(), run[j].pcr_base.unwrap());
+            for (oi, ci) in &run {
+                for (oj, cj) in &run {
+                    let (bi, bj) = (ci.pcr_base.unwrap(), cj.pcr_base.unwrap());
+                    let reference = (oi, ci.since_pcr).cmp(&(oj, cj.since_pcr));
+                    // The engine's reading of the same two coordinates.
                     let base_cmp = if bi == bj {
                         std::cmp::Ordering::Equal
                     } else if ticks_ahead(bj, bi) < HALF {
@@ -685,21 +687,22 @@ mod properties {
                     } else {
                         std::cmp::Ordering::Greater
                     };
-                    prop_assert_eq!(ki.0.cmp(&kj.0), base_cmp);
-                    let lex = ki.cmp(&kj);
-                    let expected = base_cmp.then(run[i].since_pcr.cmp(&run[j].since_pcr));
-                    prop_assert_eq!(lex, expected);
+                    prop_assert_eq!(base_cmp.then(ci.since_pcr.cmp(&cj.since_pcr)), reference);
+                    if oj >= oi {
+                        prop_assert_eq!(ticks_ahead(bj, bi), oj - oi);
+                    }
                 }
             }
         }
 
         /// (b) An injection whose anchor base is in the PCR history lands
-        /// at `ord(anchor) + since_pcr`, exactly — whether it was known
+        /// at `ord(anchor) + since_pcr`, exactly: whether it was known
         /// before the PCRs arrived or appended afterwards (the history
-        /// replay), and whether or not the bases straddle the 33-bit wrap.
+        /// replay). Half of the origins sit just below 2^33, so the
+        /// history regularly straddles the wrap.
         #[test]
         fn resolve_returns_the_logged_packet_index(
-            origin in 0..=MASK,
+            origin in origin(40_000),
             steps in proptest::collection::vec((1u64..5_000, 0u64..400, 1u64..2_000), 1..30),
             appended_late in any::<bool>(),
         ) {
@@ -730,17 +733,50 @@ mod properties {
             }
         }
 
+        /// (b) A late append whose anchor base has LEFT the 64-entry
+        /// history (more than `MAX_APPROX_TICKS` older than the oldest
+        /// retained base) is stranded, never placed.
+        #[test]
+        fn a_late_append_past_the_history_is_stranded(
+            origin in origin(2_000_000),
+            since in 0u64..400,
+        ) {
+            let mut a = Attribution::strict(Vec::new(), &hdr());
+            let first = origin;
+            for k in 0..70u64 {
+                a.on_pcr((origin + k * 20_000) & MASK, 10_000 + k * 100);
+            }
+            a.append(vec![inj(first, since)]);
+            let (resolved, _, stranded) = a.placement(0);
+            prop_assert_eq!((resolved, stranded), (None, true));
+        }
+
         /// (c) The half-range rule, for a receiver at any base `r` and a
         /// logged base `d` ticks BEHIND it on the circle (wrapping
         /// distance): exact at 0, approximate within `MAX_APPROX_TICKS`,
         /// stranded beyond. A base AHEAD by at most `MAX_FUTURE_TICKS` is
         /// still to come (unplaced, not stranded); further ahead means its
-        /// age wrapped the counter, so it is stranded.
+        /// age wrapped the counter, so it is stranded. Both distances are
+        /// drawn in strata so the approximate tier and every boundary are
+        /// reached on each run.
         #[test]
         fn half_range_rule_holds_across_a_wrap(
-            r in 0..=MASK,
-            behind in 0u64..HALF,
-            ahead in 1u64..=HALF,
+            r in prop_oneof![0..=MASK, 0..100_000u64, (MASK - 100_000)..=MASK],
+            behind in prop_oneof![
+                Just(0u64),
+                1..=MAX_APPROX_TICKS,
+                Just(MAX_APPROX_TICKS),
+                Just(MAX_APPROX_TICKS + 1),
+                (MAX_APPROX_TICKS + 1)..HALF,
+                Just(HALF - 1),
+            ],
+            ahead in prop_oneof![
+                1..=MAX_FUTURE_TICKS,
+                Just(MAX_FUTURE_TICKS),
+                Just(MAX_FUTURE_TICKS + 1),
+                (MAX_FUTURE_TICKS + 1)..=HALF,
+                Just(HALF),
+            ],
             since in 0u64..600,
         ) {
             // behind
