@@ -13,7 +13,7 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
-use tst_test_helpers::ts_parser;
+use tst_test_helpers::rawts;
 
 const FIXTURES: &str = "tests/fixtures/local";
 
@@ -45,7 +45,7 @@ fn process_one(path: &Path) {
     let data = fs::read(path).expect("read fixture");
 
     // Use the existing parser to find what's in the original.
-    let original = ts_parser::parse(&data);
+    let original = rawts::parsed(&data);
     let video_stream = match original
         .streams
         .iter()
@@ -152,7 +152,7 @@ fn process_one(path: &Path) {
         eprintln!("  skipped {} non-Annex-B video AUs", skipped_video);
     }
 
-    let recovered = ts_parser::parse(&bytes);
+    let recovered = rawts::parsed(&bytes);
 
     // Structural assertions:
     assert!(recovered.pmt_pid.is_some(), "PMT not present in output");

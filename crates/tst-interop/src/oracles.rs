@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 use tst_core::mpegts::mux::Av1CarriageMode;
 
 use crate::profiles::{Invariants, KlvMode, Profile};
-use crate::rawts::WireSummary;
 use crate::verify::{self, ProgramCounts, VerifyMode, WireLayout};
+use tst_test_helpers::rawts::WireSummary;
 
 const PTS_WRAP: u64 = 1 << 33;
 const PCR_LOWER_SLACK_MS: f64 = 0.5;
@@ -596,7 +596,7 @@ mod tests {
 
     use super::*;
     use crate::profiles;
-    use crate::rawts::{self, PesShape, Program, Stream};
+    use tst_test_helpers::rawts::{self, PesShape, Program, Stream};
 
     fn stream(
         pid: u16,

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tst_core::transport::{SocketStats, Transport, TransportCancel, TransportError};
 
 use crate::impair::XorShift64;
-use crate::rawts::{Reader, classify_packet};
+use tst_test_helpers::rawts::{Reader, classify_packet};
 
 use super::coord::{Coord, Injection, LogHeader, LogLine, TAP_VERSION};
 
@@ -486,7 +486,7 @@ impl<T: Transport> Corrupter<T> {
         &mut self,
         class: Class,
         pkt: &[u8; PKT],
-        info: &crate::rawts::PacketInfo,
+        info: &tst_test_helpers::rawts::PacketInfo,
     ) -> Option<Mutation> {
         let mut p = *pkt;
         match class {
@@ -895,7 +895,7 @@ impl<T: Transport> Corrupter<T> {
 }
 
 /// PUSI set and the payload starting with a PES start code (§2.4.3.7).
-fn pes_start(p: &[u8; PKT], info: &crate::rawts::PacketInfo) -> bool {
+fn pes_start(p: &[u8; PKT], info: &tst_test_helpers::rawts::PacketInfo) -> bool {
     info.pusi && info.has_payload && p[info.payload_off..].starts_with(&[0, 0, 1])
 }
 
@@ -948,7 +948,7 @@ fn pes_start(p: &[u8; PKT], info: &crate::rawts::PacketInfo) -> bool {
 /// packet in a transport stream.
 fn sensitive_span(
     p: &[u8; PKT],
-    info: &crate::rawts::PacketInfo,
+    info: &tst_test_helpers::rawts::PacketInfo,
     psi: bool,
 ) -> Option<(usize, usize)> {
     if !psi || !info.has_payload || !info.pusi {
@@ -983,7 +983,7 @@ fn sensitive_span(
 /// land here at all".
 fn psi_section_body_start(
     p: &[u8; PKT],
-    info: &crate::rawts::PacketInfo,
+    info: &tst_test_helpers::rawts::PacketInfo,
     psi: bool,
 ) -> Option<usize> {
     if !psi || !info.has_payload || !info.pusi {
@@ -997,7 +997,10 @@ fn psi_section_body_start(
 /// Byte range of a PSI section's body, excluding the 3-byte section header
 /// and the trailing CRC32. `None` when the packet does not carry the start
 /// of a single complete section.
-fn psi_body_range(p: &[u8; PKT], info: &crate::rawts::PacketInfo) -> Option<(usize, usize)> {
+fn psi_body_range(
+    p: &[u8; PKT],
+    info: &tst_test_helpers::rawts::PacketInfo,
+) -> Option<(usize, usize)> {
     if !info.has_payload || !info.pusi {
         return None;
     }
@@ -1297,7 +1300,7 @@ pub(super) mod tests {
         let b = baseline_bytes(2.0, "psihdr");
         let pat: [u8; PKT] = b[..PKT].try_into().unwrap();
         assert_eq!(
-            crate::rawts::classify_packet(&pat).unwrap().pid,
+            tst_test_helpers::rawts::classify_packet(&pat).unwrap().pid,
             0,
             "the generator emits the PAT first"
         );
@@ -1527,7 +1530,7 @@ pub(super) mod tests {
             for i in inj.iter().filter(|i| i.pes_start) {
                 pes_starts += 1;
                 let pkt: [u8; PKT] = i.before[..].try_into().expect("a whole packet is logged");
-                let info = crate::rawts::classify_packet(&pkt).unwrap();
+                let info = tst_test_helpers::rawts::classify_packet(&pkt).unwrap();
                 // §2.4.3.7: the ES payload begins after the 9 fixed PES
                 // header bytes plus `header_data_length` optional ones.
                 let es = info.payload_off + 9 + usize::from(pkt[info.payload_off + 8]);
@@ -1562,7 +1565,7 @@ pub(super) mod tests {
         // discard it before the CRC is ever checked. See
         // `sensitive_span`'s own doc comment for the measured evidence.
         let pat = pkt_at(0);
-        let info = crate::rawts::classify_packet(&pat).unwrap();
+        let info = tst_test_helpers::rawts::classify_packet(&pat).unwrap();
         assert_eq!(info.pid, 0, "first packet of a fresh mux is the PAT");
         let (lo, hi) = sensitive_span(&pat, &info, true).unwrap();
         // pointer field at payload_off (0 here), then the 3-byte section
@@ -1589,7 +1592,7 @@ pub(super) mod tests {
         let (mut starts, mut video) = (0, 0);
         for n in 0..b.len() / 188 {
             let pkt = pkt_at(n);
-            let info = crate::rawts::classify_packet(&pkt).unwrap();
+            let info = tst_test_helpers::rawts::classify_packet(&pkt).unwrap();
             if info.pid != 0x1011 {
                 continue;
             }
@@ -1606,7 +1609,7 @@ pub(super) mod tests {
         // section header to locate.
         let mut pat = pkt_at(0);
         pat[1] &= !0x40;
-        let info = crate::rawts::classify_packet(&pat).unwrap();
+        let info = tst_test_helpers::rawts::classify_packet(&pat).unwrap();
         assert_eq!(sensitive_span(&pat, &info, true), None);
     }
 
@@ -1656,7 +1659,7 @@ pub(super) mod tests {
         assert!(stats.bytes_out - stats.bytes_in <= 300 * stats.injections);
         let wire: Vec<u8> = pushes.iter().flatten().copied().collect();
         // No inserted byte is 0x47 (garbage never fakes a sync).
-        let mut r = crate::rawts::Reader::new();
+        let mut r = tst_test_helpers::rawts::Reader::new();
         r.set_resync_mode(true);
         r.feed(&wire).unwrap();
         assert_eq!(r.resync_count(), stats.injections);
@@ -1718,7 +1721,7 @@ pub(super) mod tests {
         let (mut psi, mut af_only, mut with_payload) = (0, 0, 0);
         for i in &inj {
             let pkt: [u8; PKT] = i.before[..].try_into().expect("a whole packet is logged");
-            let info = crate::rawts::classify_packet(&pkt).unwrap();
+            let info = tst_test_helpers::rawts::classify_packet(&pkt).unwrap();
             let is_psi = matches!(i.pid, 0 | 0x1000);
             assert_eq!(
                 i.detectable,
@@ -1750,7 +1753,7 @@ pub(super) mod tests {
         for i in &inj {
             assert!(i.psi && i.detectable && matches!(i.pid, 0 | 0x1000));
             let pkt = &w[i.ordinal as usize * 188..][..188];
-            let info = crate::rawts::classify_packet(pkt.try_into().unwrap()).unwrap();
+            let info = tst_test_helpers::rawts::classify_packet(pkt.try_into().unwrap()).unwrap();
             // Section body = after pointer field + 3-byte header, excluding the 4 CRC bytes.
             let sec = info.payload_off + 1 + usize::from(pkt[info.payload_off]);
             let len = (usize::from(pkt[sec + 1] & 0x0F) << 8) | usize::from(pkt[sec + 2]);
@@ -1763,7 +1766,7 @@ pub(super) mod tests {
     fn psi_flip_drawn_on_a_media_packet_defers_to_the_next_psi_packet() {
         let b = baseline_bytes(60.0, "defer");
         let pid_at = |n: usize| -> u16 {
-            crate::rawts::classify_packet(b[n * 188..][..188].try_into().unwrap())
+            tst_test_helpers::rawts::classify_packet(b[n * 188..][..188].try_into().unwrap())
                 .unwrap()
                 .pid
         };
@@ -1822,7 +1825,8 @@ pub(super) mod tests {
     #[test]
     fn a_psi_body_flip_never_lands_on_the_section_header() {
         let pkt = resmoke_pmt_packet();
-        let info = crate::rawts::classify_packet(&pkt).expect("the reconstructed packet parses");
+        let info = tst_test_helpers::rawts::classify_packet(&pkt)
+            .expect("the reconstructed packet parses");
         assert!(info.pusi, "it carries a section start");
         let sec = info.payload_off + 1 + usize::from(pkt[info.payload_off]);
         assert_eq!(sec, 5, "pointer field 0, so the section starts at 5");
@@ -1848,7 +1852,7 @@ pub(super) mod tests {
             for i in inj.iter().filter(|i| i.psi) {
                 psi_flips += 1;
                 let pkt: [u8; PKT] = i.before[..].try_into().expect("a whole packet is logged");
-                let info = crate::rawts::classify_packet(&pkt).unwrap();
+                let info = tst_test_helpers::rawts::classify_packet(&pkt).unwrap();
                 let Some(body) = psi_section_body_start(&pkt, &info, true) else {
                     continue; // a section continuation, not a start
                 };
@@ -1875,7 +1879,7 @@ pub(super) mod tests {
     #[test]
     fn a_psi_body_flip_inside_the_crc_span_is_still_detectable() {
         let pkt = resmoke_pmt_packet();
-        let info = crate::rawts::classify_packet(&pkt).expect("parses");
+        let info = tst_test_helpers::rawts::classify_packet(&pkt).expect("parses");
         let span = sensitive_span(&pkt, &info, true).expect("a PSI sensitive span");
         assert!(
             (span.0..span.1).contains(&14),

@@ -31,7 +31,7 @@ access-unit sizes and the corruption tap were on, at rate 5 per 10 000 packets w
 
 ### The oracle's rule
 
-`tst-interop`'s raw reader (`crates/tst-interop/src/rawts.rs`, `Reader::pes`) stores the
+`tst-interop`'s raw reader (`crates/tst-test-helpers/src/rawts.rs`, `Reader::pes`) stores the
 first four payload bytes of the first PES on each PID. Every later PES on that PID whose
 first two payload bytes differ from them increments `PesShape::prefix_mismatches`. For an
 audio PID, `oracles::audio` (`crates/tst-interop/src/oracles.rs`) first checks that the
