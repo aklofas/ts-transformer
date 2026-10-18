@@ -50,6 +50,17 @@ jobs:
       label: ${{ steps.r.outputs.label }}
       slug: ${{ steps.r.outputs.slug }}
     steps:
+      - name: the sha input is the full 40-hex commit
+        # actions/checkout cannot resolve an abbreviated sha ("A branch or tag with
+        # the name '<short>' could not be found"); fail here with the reason instead.
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SHA: ${{ inputs.sha }}
+        run: |
+          case "$SHA" in
+            [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+            *) echo "::error::sha must be the full 40-hex commit (got '$SHA'); use git rev-parse <ref>"; exit 2 ;;
+          esac
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.sha || github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
