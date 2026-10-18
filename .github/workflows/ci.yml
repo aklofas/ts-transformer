@@ -581,7 +581,8 @@ jobs:
 
       - name: abi-compat self-test (abidiff verdicts on fixture libraries)
         # abi-compat.sh itself runs in the c-abi job; this exercises its
-        # verdicts on small compiled fixtures.
+        # verdicts on small compiled fixtures. ratchet-self-test.sh runs it
+        # too; the repeat costs a few seconds and keeps this step visible.
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/c/tests/abi-compat-selftest.sh
 
@@ -1311,6 +1312,9 @@ jobs:
     # carries one; until then it is built from source at the tag (cold build
     # about 15 minutes, then cached on the library file alone). Fails when
     # neither source yields a library, never passes without a comparison.
+    # 1.0 item: the rail is called without majors (both 0); at the 1.0 major
+    # pass the previous and current major like the minors, or the intended
+    # break fails the job.
     steps:
       - uses: actions/checkout@v5
         with:
@@ -1393,7 +1397,10 @@ jobs:
             old="$RUNNER_TEMP/prev-target/debug/libtstrans.so"; how="built from source"
           fi
           echo "previous tag $PREV, $how"
-          bash scripts/check/c/abi-compat.sh "$old" "$RUNNER_TEMP/pkg/lib/libtstrans.so" "$PREV_MINOR" "$HEAD_MINOR" --header "$RUNNER_TEMP/pkg/include/tstrans.h" 2>&1 | tee "$RUNNER_TEMP/abi-report.txt"
+          # The tag's committed header is what the previous package shipped; the
+          # rail needs it to see a struct that lost its body.
+          git show "$PREV:bindings/c/include/tstrans.h" > "$RUNNER_TEMP/prev-tstrans.h"
+          bash scripts/check/c/abi-compat.sh "$old" "$RUNNER_TEMP/pkg/lib/libtstrans.so" "$PREV_MINOR" "$HEAD_MINOR" --header "$RUNNER_TEMP/pkg/include/tstrans.h" --old-header "$RUNNER_TEMP/prev-tstrans.h" 2>&1 | tee "$RUNNER_TEMP/abi-report.txt"
           exit "${PIPESTATUS[0]}"
 
       - name: Upload the abidiff report
