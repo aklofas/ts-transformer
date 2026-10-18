@@ -18,7 +18,7 @@ The C ABI ships as the `tst-c` crate in the workspace; its build emits the artif
 |---|---|---|
 | `libtstrans.so` (Linux) / `libtstrans.dylib` (macOS) / `tstrans.dll` (Windows-MSVC) | `target/debug/` or `target/release/` | Shared library |
 | `libtstrans.a` (`tstrans.lib` on MSVC) | same | Static library — libsrt + mbedTLS embedded; link the C++ runtime yourself (`tstrans.pc` lists it) |
-| `tstrans.h` | `target/<profile>/include/` | Single-file C header (~450 KB), `cbindgen`-generated; it includes `tstrans_config.h`, so one header serves every feature set. The committed `bindings/c/include/tstrans.h` is the same file. The build renders each file into its own `OUT_DIR` first and copies it here only when tst-c's build script re-runs (a feature-set change, a change under `bindings/c`, or `touch bindings/c/cbindgen.toml`), so this copy can be stale beside a fresh library. |
+| `tstrans.h` | `target/<profile>/include/` | Single-file C header (~450 KB), `cbindgen`-generated; it includes `tstrans_config.h`, so one header serves every feature set. The committed `bindings/c/include/tstrans.h` is the same file. The build renders each file into its own `OUT_DIR` first and copies it here only when tst-c's build script re-runs (the first build of a feature set, or a change to the C sources or the cbindgen config), so this copy can be stale beside a fresh library. |
 | `tstrans_config.h` | same `include/` | Written by the build beside `tstrans.h`: `#define TST_HAS_<FEATURE> 1` for each feature you built. The committed `bindings/c/include/tstrans_config.h` is the bare flavour (no feature defined). The copy here is refreshed only when the build script re-runs, so it can lag the library; to compile against a coherent set, stage a package with `scripts/dev/c-package.sh` (below). |
 | `tstrans.pc` | `target/<profile>/` | pkg-config file (substituted by `build.rs` from `tstrans.pc.in`); `pkg-config --variable=features tstrans` lists the built features |
 
@@ -36,7 +36,7 @@ The build vendors libsrt 1.5.7 + mbedTLS 3.6.x statically — your `libtstrans.s
 
 ### A coherent set: `c-package.sh`
 
-`target/<profile>/include/tstrans_config.h` and `tstrans.pc` are refreshed only when tst-c's build script re-runs (a feature-set change, a change under `bindings/c`, or `touch bindings/c/cbindgen.toml`), not on every cargo build, so they can describe a different feature set than the library beside them. `scripts/dev/c-package.sh` builds `tst-c` and stages that one build's header, config, libraries, `tstrans.pc` (its `prefix` pointing at the package) and a `manifest.json` of SHA-256 hashes into a read-only directory:
+`target/<profile>/include/tstrans_config.h` and `tstrans.pc` are refreshed only when tst-c's build script re-runs (the first build of a feature set, or a change to the C sources or the cbindgen config), not on every cargo build, so they can describe a different feature set than the library beside them. `scripts/dev/c-package.sh` builds `tst-c` and stages that one build's header, config, libraries, `tstrans.pc` (its `prefix` pointing at the package) and a `manifest.json` of SHA-256 hashes into a read-only directory:
 
 ```sh
 bash scripts/dev/c-package.sh --features srt,rtp --out /tmp/tstrans-pkg

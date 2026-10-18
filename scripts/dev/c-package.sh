@@ -2,8 +2,8 @@
 # Stage ONE build of libtstrans into a self-contained, read-only directory.
 #
 # Why: `target/<profile>/include/tstrans_config.h` and `tstrans.pc` are
-# refreshed only when tst-c's build script re-runs (a feature-set change, a
-# change under bindings/c, or a touched cbindgen.toml), while the library next
+# refreshed only when tst-c's build script re-runs (the first build of a
+# feature set, or a change to the C sources or the cbindgen config), while the library next
 # to them is re-uplifted by every build and may be from a different feature
 # set. A consumer then compiles against one feature set and links another.
 # This script takes the files cargo's build-script and compiler messages name
