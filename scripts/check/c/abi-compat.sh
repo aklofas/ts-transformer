@@ -21,8 +21,9 @@
 # body) is a type whose layout C never sees; its changes are suppressed (also
 # under its Rust spelling: tst_sender_t is TstSender in the debug info). The
 # list is derived from --header on every run (default: bindings/c/include/
-# tstrans.h of this tree, which holds only the default feature set; pass the
-# header of the staged all-features package, as the c-abi job does).
+# tstrans.h of this tree, which declares every feature's handles under its
+# TST_HAS_* guards; the c-abi job passes the staged package's header, the same
+# file).
 #
 # Argument-driven: with no arguments it prints this usage and exits 2, with or
 # without abidiff. tests/abi-compat-selftest.sh is the entry point for sweeps.
