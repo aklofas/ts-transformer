@@ -543,7 +543,8 @@ jobs:
         # 16 such bodies accumulated as `dead_code` warnings on every
         # single-feature build until the 2026-09-05 sweep. Check mode reuses
         # this combo's build-script outputs, so it costs seconds per combo.
-        # `srt,rtp` is the committed header's flavour; `tcp,hls,rtp,tls`
+        # `srt,rtp` is the historical default pairing (the committed header is
+        # flavour-identical now); `tcp,hls,rtp,tls`
         # builds, lints and (nextest below) tests the C `tls` forwards
         # outside `--all-features`.
         # bash (not pwsh) so a failing combo stops the step on windows too.
