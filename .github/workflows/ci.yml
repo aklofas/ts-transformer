@@ -624,15 +624,17 @@ jobs:
       - name: C examples compile (every bindings/c/examples/**/*.c links)
         # scripts/check/c/examples-compile.sh compiles + links every C
         # teaching example with the flags their headers document
-        # (-Wall -Werror) against the all-features cdylib and the header
-        # build wrote for it (target/debug/include — the committed
+        # (-Wall -Werror) against a package staged by scripts/dev/c-package.sh
+        # (--all-features): header, tstrans_config.h and the library from one
+        # build, whatever tst-c builds ran before. The committed
         # bindings/c/include/tstrans_config.h is the bare flavour and would
-        # trip the udp/tcp/hls/rist examples' #error guards).
+        # trip the udp/tcp/hls/rist examples' #error guards.
         # Until 2026-09-06 only the scenario adapter above was ever
         # compiled; a header change could silently break the other
-        # examples. The script's own `cargo build -p tst-c --all-features`
-        # is a warm no-op after the all-features build above. Linux-only
-        # for the same reasons as the scenario adapter step.
+        # examples. The package's cargo build is a warm no-op after the
+        # all-features build above. Linux-only for the same reasons as the
+        # scenario adapter step, which keeps compiling against target/debug
+        # because it follows that build directly.
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/c/examples-compile.sh
 
