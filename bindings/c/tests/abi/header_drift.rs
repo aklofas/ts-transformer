@@ -1,15 +1,8 @@
 //! Verifies that the committed header matches what cbindgen would emit
-//! against the current source tree, plus the build.rs post-process step
-//! that inserts domain-grouping section dividers.
-//! Drift indicates a forgotten regenerate-and-commit step.
-
-// The committed header is generated with `srt` + `rtp` on. The feature
-// defines live in `tstrans_config.h`, not in the header, so the comparison no
-// longer depends on them; the test stays gated to that flavor until the
-// per-flavor `tst-c feature matrix` CI jobs (compile-level cfg-leak detection
-// via `scripts/check/c/header-conditional-sections.sh`) are the only check.
-// Regenerate with `cargo build -p tst-c --features srt,rtp`.
-#![cfg(all(feature = "srt", feature = "rtp"))]
+//! against the current source tree. The header is the same file for every
+//! feature set (the feature defines live in `tstrans_config.h`), so the test
+//! runs in every flavour. Drift indicates a forgotten regenerate-and-commit
+//! step: `cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -42,8 +35,6 @@ fn committed_header_matches_cbindgen_output() {
     generated.write(&mut buf);
     let generated = String::from_utf8(buf).expect("cbindgen output is utf-8");
 
-    let generated = header_post::add_section_dividers(&generated);
-
     // Normalize line endings before comparing: on Windows the committed header
     // is checked out with CRLF (default core.autocrlf, no .gitattributes pins
     // it to LF), while cbindgen emits LF — so a raw compare spuriously reports
@@ -54,7 +45,7 @@ fn committed_header_matches_cbindgen_output() {
     if generated != expected {
         eprintln!(
             "Drift between bindings/c/include/tstrans.h and cbindgen output. \
-             Run `cargo build -p tst-c --features srt,rtp && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h` \
+             Run `cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h` \
              and commit the diff."
         );
         // Compute a small diff hint: first differing line.
@@ -68,15 +59,6 @@ fn committed_header_matches_cbindgen_output() {
         }
         panic!("header drift");
     }
-}
-
-#[test]
-fn leading_space_decls_flags_only_indented_top_level_declarations() {
-    let header = " int tst_planted(void);\nint tst_ok(void);\n  int member;\n * `tst_doc(void)` in a comment\n";
-    assert_eq!(
-        header_post::leading_space_decls(header),
-        vec![" int tst_planted(void);"]
-    );
 }
 
 #[test]

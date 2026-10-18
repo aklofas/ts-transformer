@@ -557,6 +557,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Doc comments only: the demux receivers' `_recv_event` error lists name `TST_E_TOO_LARGE` (-6) for a pre-sync buffer that outgrew `sync_buf_cap`. No declaration, value or symbol changed.
 - `TST_ABI_VERSION_MINOR` is 24, the trailer defines `TST_HAS_TLS` (0 unless built with `tls`), and the TLS setters' docs describe the `tls` feature.
 - `tstrans.h` no longer defines the `TST_HAS_*` macros itself; it includes `tstrans_config.h`, so one header serves every feature set instead of one rendering per feature set (existing `#include <tstrans.h>` and `#if TST_HAS_*` code is unchanged).
+- Function declarations in `tstrans.h` follow cbindgen's name order without the domain section comments, and the file is byte-identical for every feature set; no declaration, guard or comment text changed (declaration order has no meaning to a C compiler), apart from cbindgen's one-space indent on some declarations. The header is now exactly what cbindgen renders, so the section-sorting pass and the two checks that policed it are gone and the drift test runs in every feature set.
 
 ### Added — tst-core
 

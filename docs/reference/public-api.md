@@ -109,8 +109,7 @@ The three binding crates — `bindings/c` (tst-c), `bindings/c/core`
   `cargo public-api` on a cdylib is not meaningful; the real ABI contract is
   the committed cbindgen-generated header `bindings/c/include/tstrans.h`, the
   `TST_ABI_VERSION_MAJOR` / `TST_ABI_VERSION_MINOR` macros it defines, and the
-  C-ABI ratchets under `scripts/check/c/` (especially
-  `header-conditional-sections.sh`) and the byte-for-byte drift test
+  C-ABI ratchets under `scripts/check/c/` and the byte-for-byte drift test
   `bindings/c/tests/abi/header_drift.rs`.
 - **tst-py.** The Rust surface is `#[pymodule]` / `#[pymethods]` PyO3 glue —
   not the Python contract. The Python consumer surface is gated by the

@@ -99,16 +99,23 @@ build_slice() {
 
 # stage_headers <dir> — copy the committed public header + modulemap into <dir>
 # so `xcodebuild -create-xcframework -headers <dir>` picks them up.
-# The committed header includes tstrans_config.h, and the committed copy of that
-# is the bare flavour, so the staged config defines the srt,rtp surface the
-# header used to carry. An `srt`-only slice contains the srt+core+st0601+codec symbols but not the
-# rtp ones (declared-but-absent). The SRT PoC never calls the rtp entry points;
-# rebuild with FEATURES="srt,rtp" once the rtp iOS build is exercised.
+# The committed header includes tstrans_config.h, whose committed copy is the bare
+# flavour, so the staged one is rendered from $FEATURES (the features the slice was
+# built with) in the shape the tst-c build writes: one `#define TST_HAS_<F> 1` per
+# active feature and nothing for the rest (the header's trailer defines those to 0).
 stage_headers() {
-  local dir="$1"
+  local dir="$1" f
   mkdir -p "$dir"
   cp "${WORKSPACE_ROOT}/bindings/c/include/tstrans.h"        "${dir}/tstrans.h"
-  printf '#ifndef TSTRANS_CONFIG_H\n#define TSTRANS_CONFIG_H\n#define TST_HAS_SRT 1\n#define TST_HAS_RTP 1\n#endif\n' \
-    > "${dir}/tstrans_config.h"
+  {
+    printf '#ifndef TSTRANS_CONFIG_H\n#define TSTRANS_CONFIG_H\n'
+    for f in $(echo "$FEATURES" | tr ',' ' '); do
+      case "$f" in
+        srt|rtp|udp|tcp|hls|rist|tls)
+          printf '#define TST_HAS_%s 1\n' "$(echo "$f" | tr '[:lower:]' '[:upper:]')" ;;
+      esac
+    done
+    printf '#endif /* TSTRANS_CONFIG_H */\n'
+  } > "${dir}/tstrans_config.h"
   cp "${WORKSPACE_ROOT}/bindings/c/include/module.modulemap" "${dir}/module.modulemap"
 }
