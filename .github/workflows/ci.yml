@@ -586,13 +586,9 @@ jobs:
 
       - name: C scenario adapter (cross-binding parity check)
         # C adapter for the cross-binding scenario harness. Compiles
-        # bindings/c/examples/scenarios/run_scenarios.c against the
-        # libtstrans.so produced by the "cargo build (all crate types,
-        # all-features)" step above (the last cdylib-producing build; the
-        # intervening "cargo test (all features)" step only rebuilds rlibs and
-        # leaves the cdylib intact). tst_demuxer_* is unconditional (not
-        # feature-gated), so any of the build steps would suffice, but this is
-        # the freshest. Then runs the adapter against the committed goldens.
+        # bindings/c/examples/scenarios/run_scenarios.c against
+        # a staged all-features libtstrans package (scripts/dev/c-package.sh).
+        # Then runs the adapter against the committed goldens.
         #
         # Exit 0 = all 3 scenarios matched committed goldens (C ABI parity).
         # Exit non-zero = C adapter output diverged from a golden — signals a
@@ -604,12 +600,13 @@ jobs:
         # one platform run is sufficient.
         if: matrix.name == 'linux-x86_64'
         run: |
-          # -I target/debug/include: the adapter uses the srt receiver surface, so it
-          # needs the tstrans_config.h this all-features build wrote (the committed
-          # bindings/c/include one is the bare flavour and defines no feature).
+          # Stage an all-features package so the header, config and library
+          # come from one build (the target/debug copy can be stale).
+          PKG="$RUNNER_TEMP/tstrans-pkg"
+          bash scripts/dev/c-package.sh --all-features --out "$PKG"
           gcc \
-            -I target/debug/include \
-            -L target/debug \
+            -I "$PKG/include" \
+            -L "$PKG/lib" -Wl,-rpath,"$PKG/lib" \
             -Wall -Werror \
             -o /tmp/run_scenarios_c_adapter \
             bindings/c/examples/scenarios/run_scenarios.c \
@@ -618,7 +615,7 @@ jobs:
           # terminate-after bounds the Rust tests — the C adapter is the one
           # test path that isn't a Rust test under nextest, so a hang here would
           # otherwise only be caught by the 75-min job cap.
-          LD_LIBRARY_PATH=target/debug timeout 60 /tmp/run_scenarios_c_adapter \
+          timeout 60 /tmp/run_scenarios_c_adapter \
             crates/tst-integration/tests/fixtures/scenarios
 
       - name: C examples compile (every bindings/c/examples/**/*.c links)

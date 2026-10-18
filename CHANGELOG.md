@@ -556,8 +556,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Doc comment only: the `tst_stream_end_reason` enum doc and the managed receiver's end-reason getter doc no longer name a Rust type.
 - Doc comments only: the demux receivers' `_recv_event` error lists name `TST_E_TOO_LARGE` (-6) for a pre-sync buffer that outgrew `sync_buf_cap`. No declaration, value or symbol changed.
 - `TST_ABI_VERSION_MINOR` is 24, the trailer defines `TST_HAS_TLS` (0 unless built with `tls`), and the TLS setters' docs describe the `tls` feature.
+- **BREAKING (packaging):** `tstrans.h` now includes `tstrans_config.h` and no longer compiles on its own; ship or copy both files (the package script stages them together). Reason: one flavour-neutral header per release instead of one rendering per feature set.
 - `tstrans.h` no longer defines the `TST_HAS_*` macros itself; it includes `tstrans_config.h`, so one header serves every feature set instead of one rendering per feature set (existing `#include <tstrans.h>` and `#if TST_HAS_*` code is unchanged).
-- Function declarations in `tstrans.h` follow cbindgen's name order without the domain section comments, and the file is byte-identical for every feature set; no declaration, guard or comment text changed (declaration order has no meaning to a C compiler), apart from cbindgen's one-space indent on some declarations. The header is now exactly what cbindgen renders, so the section-sorting pass and the two checks that policed it are gone and the drift test runs in every feature set.
+- Function declarations in `tstrans.h` follow cbindgen's name order without the domain section comments, and the file is byte-identical for every feature set; no declaration, guard or comment text changed by the reorder itself (declaration order has no meaning to a C compiler), apart from cbindgen's one-space indent on some declarations. The header is now exactly what cbindgen renders, so the section-sorting pass and the two checks that policed it are gone and the drift test runs in every feature set.
 
 ### Added — tst-core
 
@@ -610,11 +611,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   video access unit; a segmenting transport cuts its open segment there and
   returns `true` to have PAT/PMT re-emitted. Every other transport keeps the
   default, so a segmenting shell needs no second drain loop.
-- `scripts/dev/c-package.sh` stages the header, `tstrans_config.h`, the
-  libraries, `tstrans.pc` and a hash manifest of one build into a read-only
-  directory, so a consumer's header and library always come from the same
-  feature set. The `target/<profile>/include` copy is overwritten by every
-  build and could describe a different feature set than the library.
 
 ### Added — tst-pipeline
 
@@ -686,6 +682,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   feature's symbols; before, only the `TST_HAS_*` defines of the header it
   compiled against were available. ABI minor 25 (additive).
 - `tstrans_config.h`, written beside the generated `tstrans.h` and included by it, defines `TST_HAS_<FEATURE>` to 1 for each feature the library was built with; `pkg-config --variable=features tstrans` lists them. A consumer can now see the build's feature set without parsing the header.
+- `scripts/dev/c-package.sh` stages the header, `tstrans_config.h`, the
+  libraries, `tstrans.pc` and a hash manifest of one build into a read-only
+  directory, so a consumer's header and library always come from the same
+  feature set. The `target/<profile>/include` copy is refreshed only when
+  tst-c's build script re-runs and can describe a different feature set than
+  the library.
 
 ### Added — tst-py
 
@@ -890,6 +892,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tst_publisher_finish` from another thread was a data race; it now waits
   for the lock and reports `TST_E_HLS_FINISHED`, the code it always reported
   after a finish.
+- The `tst_rtsp_client_builder_tls_root_cert_pem` doc named
+  `TST_E_INVALID_CONFIG`; a malformed PEM returns `TST_E_RTSP_TLS`.
 
 ### Fixed — tst-rtp
 

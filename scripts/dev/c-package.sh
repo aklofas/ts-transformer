@@ -2,9 +2,10 @@
 # Stage ONE build of libtstrans into a self-contained, read-only directory.
 #
 # Why: `target/<profile>/include/tstrans_config.h` and `tstrans.pc` are
-# last-build-wins -- every `cargo build -p tst-c` with a different feature
-# set overwrites them, while the library next to them may be from an earlier
-# build. A consumer then compiles against one feature set and links another.
+# refreshed only when tst-c's build script re-runs (a feature-set change, a
+# change under bindings/c, or a touched cbindgen.toml), while the library next
+# to them is re-uplifted by every build and may be from a different feature
+# set. A consumer then compiles against one feature set and links another.
 # This script takes the files cargo's build-script and compiler messages name
 # for THIS build and copies them out, so the header, config, libraries and
 # pkg-config file in the package always come from the same feature set.
