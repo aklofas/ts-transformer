@@ -673,6 +673,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in-memory server certificate (`tst_rtsp_server_builder_tls_cert_pem`)
   work in a `tls` build; before, no tst-c build could reach TLS. The header
   defines `TST_HAS_TLS`; ABI minor 24 (additive).
+- `tst_has_feature(name)` returns whether the library was built with a cargo
+  feature (`srt`, `rtp`, `udp`, `tcp`, `hls`, `rist`, `tls`), so a program
+  that loads libtstrans at run time can check before resolving that
+  feature's symbols; before, only the `TST_HAS_*` defines of the header it
+  compiled against were available. ABI minor 25 (additive).
 
 ### Added — tst-py
 
