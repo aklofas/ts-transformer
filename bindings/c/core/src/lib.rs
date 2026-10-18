@@ -310,16 +310,16 @@ pub unsafe extern "C" fn tst_has_feature(
         }
         // SAFETY: non-NULL and NUL-terminated per the contract above.
         let name = unsafe { core::ffi::CStr::from_ptr(name) }.to_bytes();
-        let built = match name {
-            b"srt" => cfg!(feature = "srt"),
-            b"rtp" => cfg!(feature = "rtp"),
-            b"udp" => cfg!(feature = "udp"),
-            b"tcp" => cfg!(feature = "tcp"),
-            b"hls" => cfg!(feature = "hls"),
-            b"rist" => cfg!(feature = "rist"),
-            b"tls" => cfg!(feature = "tls"),
-            _ => false,
-        };
+        const FEATURES: [(&[u8], bool); 7] = [
+            (b"srt", cfg!(feature = "srt")),
+            (b"rtp", cfg!(feature = "rtp")),
+            (b"udp", cfg!(feature = "udp")),
+            (b"tcp", cfg!(feature = "tcp")),
+            (b"hls", cfg!(feature = "hls")),
+            (b"rist", cfg!(feature = "rist")),
+            (b"tls", cfg!(feature = "tls")),
+        ];
+        let built = FEATURES.iter().any(|&(n, on)| on && n == name);
         built as crate::c_types::c_int
     })
 }

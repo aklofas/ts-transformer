@@ -1,19 +1,23 @@
 /*
- * Compiled and run from tests/abi/has_feature.rs against the header the
- * build generated for the active cargo features. For every feature the
- * header's TST_HAS_* define and the runtime tst_has_feature() answer must
- * agree: that agreement is what lets a dlopen user trust the runtime query
- * in place of the compile-time define.
+ * Compiled and run from tests/abi/has_feature.rs. The driver passes the
+ * features the test binary was built with as -DEXPECT_<NAME>=0|1, so the
+ * check does not depend on which header rendering is on disk.
  */
 
 #include "tstrans.h"
 #include <stdio.h>
 
+#if !defined(EXPECT_SRT) || !defined(EXPECT_RTP) || !defined(EXPECT_UDP) || \
+    !defined(EXPECT_TCP) || !defined(EXPECT_HLS) || !defined(EXPECT_RIST) || \
+    !defined(EXPECT_TLS)
+#error "pass -DEXPECT_<NAME>=0|1 for every feature"
+#endif
+
 #define CHECK(name, define_value)                                          \
     do {                                                                   \
         int rt = tst_has_feature(name);                                    \
         if (rt != (define_value)) {                                        \
-            fprintf(stderr, "feature %s: header says %d, runtime says %d\n", \
+            fprintf(stderr, "feature %s: expected %d, runtime says %d\n", \
                     name, (define_value), rt);                             \
             failed = 1;                                                    \
         }                                                                  \
@@ -21,13 +25,13 @@
 
 int main(void) {
     int failed = 0;
-    CHECK("srt", TST_HAS_SRT);
-    CHECK("rtp", TST_HAS_RTP);
-    CHECK("udp", TST_HAS_UDP);
-    CHECK("tcp", TST_HAS_TCP);
-    CHECK("hls", TST_HAS_HLS);
-    CHECK("rist", TST_HAS_RIST);
-    CHECK("tls", TST_HAS_TLS);
+    CHECK("srt", EXPECT_SRT);
+    CHECK("rtp", EXPECT_RTP);
+    CHECK("udp", EXPECT_UDP);
+    CHECK("tcp", EXPECT_TCP);
+    CHECK("hls", EXPECT_HLS);
+    CHECK("rist", EXPECT_RIST);
+    CHECK("tls", EXPECT_TLS);
     /* Anything else, including NULL, is "not built with it". */
     CHECK("SRT", 0);
     CHECK("quic", 0);
