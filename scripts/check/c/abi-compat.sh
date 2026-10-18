@@ -10,26 +10,29 @@
 #
 # What it judges, over the exported tst_* functions and TST_*/tst_* variables
 # (bindings/c/abi.suppr drops everything else, e.g. the Rust runtime):
-#   - an INCOMPATIBLE change fails unless new-major > old-major. That is a
-#     removed or changed function/variable, and any layout change of a type
-#     they reach: struct size or member change, enumerator renumbered or
-#     removed. libabigail only sets its "incompatible" exit bit for removals,
-#     so the layout changes are recognised from the report text.
-#   - any other change, or an added exported symbol, needs new-minor > old-minor.
+#   - ANY change abidiff reports (exit bit 4 or 8: a removed or changed function,
+#     a struct that grew or moved, a renumbered enumerator) FAILS. Pre-1.0 a C
+#     library only grows, so this holds whatever the minor says. An intended
+#     change needs a commented suppression in bindings/c/abi.suppr. At
+#     new-major > old-major the check passes (the 1.0 break).
+#   - an added exported symbol (a separate symbol diff) needs new-minor > old-minor.
+#
+# Argument-driven: with no arguments it prints this usage and exits 2, with or
+# without abidiff. tests/abi-compat-selftest.sh is the entry point for sweeps.
 #
 # Exit: 0 compatible, 1 violates the rule (report printed), 2 tool/usage error
 # or a missing input. Without abidiff: `SKIP` (exit 0), except under CI (exit 1),
 # so a runner that lost the tool cannot pass silently.
 set -uo pipefail
 
+if [ $# -ne 4 ] && [ $# -ne 6 ]; then
+    sed -n '2,/^set -/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2
+    exit 2
+fi
 if ! command -v abidiff >/dev/null 2>&1; then
     if [ -n "${CI:-}" ]; then echo "FAIL: abidiff not installed (required under CI)" >&2; exit 1; fi
     echo "SKIP: abidiff not installed"
     exit 0
-fi
-if [ $# -ne 4 ] && [ $# -ne 6 ]; then
-    sed -n '2,/^set -/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2
-    exit 2
 fi
 OLD="$1" NEW="$2" OLD_MINOR="$3" NEW_MINOR="$4" OLD_MAJOR="${5:-0}" NEW_MAJOR="${6:-0}"
 for n in "$OLD_MINOR" "$NEW_MINOR" "$OLD_MAJOR" "$NEW_MAJOR"; do
@@ -67,17 +70,9 @@ symbols "$NEW" >"$tmp/new.sym" || true
 comm -13 "$tmp/old.sym" "$tmp/new.sym" >"$tmp/added"
 comm -23 "$tmp/old.sym" "$tmp/new.sym" >"$tmp/gone"
 
-incompatible=0
-[ $((rc & 8)) -ne 0 ] && incompatible=1
-[ -s "$tmp/gone" ] && incompatible=1
-if [ $((rc & 4)) -ne 0 ] && grep -Eq \
-    'type size changed|data member|enumerator (change|deletion)|offset|return type|parameter [0-9]+ of type .* changed' \
-    "$tmp/report"; then
-    incompatible=1
-fi
 changed=0
-[ $((rc & 4)) -ne 0 ] && changed=1
-[ -s "$tmp/added" ] && changed=1
+[ $((rc & 12)) -ne 0 ] && changed=1
+[ -s "$tmp/gone" ] && changed=1
 
 show() {
     cat "$tmp/report"
@@ -85,12 +80,12 @@ show() {
     if [ -s "$tmp/added" ]; then echo "Added exported symbols:"; sed 's/^/  /' "$tmp/added"; fi
 }
 
-if [ "$incompatible" -eq 1 ] && [ "$NEW_MAJOR" -le "$OLD_MAJOR" ]; then
+if [ "$changed" -eq 1 ] && [ "$NEW_MAJOR" -le "$OLD_MAJOR" ]; then
     show
-    echo "FAIL: incompatible C ABI change without a major bump (major $OLD_MAJOR -> $NEW_MAJOR)"
+    echo "FAIL: abidiff reports a change; a pre-1.0 C library only grows - an intended change needs a commented suppression in bindings/c/abi.suppr"
     exit 1
 fi
-if [ "$changed" -eq 1 ] && [ "$NEW_MAJOR" -le "$OLD_MAJOR" ] && [ "$NEW_MINOR" -le "$OLD_MINOR" ]; then
+if [ -s "$tmp/added" ] && [ "$NEW_MAJOR" -le "$OLD_MAJOR" ] && [ "$NEW_MINOR" -le "$OLD_MINOR" ]; then
     show
     echo "FAIL: the C ABI grew without a minor bump (minor $OLD_MINOR -> $NEW_MINOR)"
     exit 1

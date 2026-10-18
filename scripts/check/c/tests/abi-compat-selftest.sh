@@ -25,7 +25,7 @@ expect() { # <desc> <want_rc> <args...>
 }
 expect "unchanged library passes"                          0 "$tmp/v1.so" "$tmp/v1.so" 3 3
 expect "a removed function fails"                          1 "$tmp/v1.so" "$tmp/v2_removed.so" 3 4
-expect "a struct that grew fails, even with a minor bump"  1 "$tmp/v1.so" "$tmp/v2_struct.so" 3 4
+expect "a struct that grew fails, even with a minor bump (the bit, not the text)"  1 "$tmp/v1.so" "$tmp/v2_struct.so" 3 4
 expect "a renumbered enum constant fails"                  1 "$tmp/v1.so" "$tmp/v2_enum.so" 3 4
 expect "an added function without a minor bump fails"      1 "$tmp/v1.so" "$tmp/v2_added.so" 3 3
 expect "an added function with a minor bump passes"        0 "$tmp/v1.so" "$tmp/v2_added.so" 3 4
