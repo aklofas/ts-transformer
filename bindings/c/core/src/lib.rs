@@ -13,7 +13,7 @@
 //! transport surfaces are gated on the `rtp` cargo feature. The
 //! offline byte-feeding `tst_demuxer_*` surface is unconditional (no
 //! feature gate), as is the offline `tst_muxer_*` surface (un-gated from
-//! `srt` in ABI 0.9). ABI minor is `0.24` (see [`TST_ABI_VERSION_MINOR`]).
+//! `srt` in ABI 0.9). ABI minor is `0.25` (see [`TST_ABI_VERSION_MINOR`]).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 // every extern "C" fn has a /// header documenting the contract
