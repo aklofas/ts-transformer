@@ -39,6 +39,7 @@ for n in "$OLD_MINOR" "$NEW_MINOR" "$OLD_MAJOR" "$NEW_MAJOR"; do
     case "$n" in ''|*[!0-9]*) echo "abi-compat: version fields must be integers: '$n'" >&2; exit 2 ;; esac
 done
 
+command -v nm >/dev/null 2>&1 || { echo "abi-compat: nm not installed (binutils)" >&2; exit 2; }
 for f in "$OLD" "$NEW"; do
     [ -f "$f" ] || { echo "abi-compat: no such file: $f" >&2; exit 2; }
 done
@@ -49,12 +50,22 @@ SUPPR="$(cd "$(dirname "$0")/../../.." && pwd)/bindings/c/abi.suppr"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# Exported C symbols of a library or an abidw corpus, one per line.
-symbols() {
+# Exported C symbols of a library or an abidw corpus, one per line; a failing
+# listing is an error (exit 2), never an empty set.
+symbols() { # <file> <out>
+    local raw="$tmp/raw.$$"
     case "$1" in
-        *.abi|*.xml) grep -o "<elf-symbol name='[^']*'" "$1" | sed "s/.*name='//; s/'$//" ;;
-        *) nm -D --defined-only "$1" | awk '{print $3}' ;;
-    esac | grep -E '^(tst_|TST_)' | sort -u
+        *.abi|*.xml) grep -o "<elf-symbol name='[^']*'" "$1" | sed "s/.*name='//; s/'$//" >"$raw" || true ;;
+        *) nm -D --defined-only "$1" 2>"$tmp/nm.err" | awk '{print $3}' >"$raw"
+           if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+               echo "abi-compat: nm failed on $1" >&2; cat "$tmp/nm.err" >&2; exit 2
+           fi ;;
+    esac
+    grep -E '^(tst_|TST_)' "$raw" | sort -u >"$2" || true
+    if [ ! -s "$2" ]; then
+        echo "abi-compat: no tst_ symbols in $1: not a tstrans library, or a stripped/stale build" >&2
+        exit 2
+    fi
 }
 
 abidiff --no-added-syms --suppressions "$SUPPR" "$OLD" "$NEW" >"$tmp/report" 2>&1
@@ -65,11 +76,12 @@ if [ $((rc & 3)) -ne 0 ]; then
     exit 2
 fi
 
-symbols "$OLD" >"$tmp/old.sym" || true
-symbols "$NEW" >"$tmp/new.sym" || true
+symbols "$OLD" "$tmp/old.sym"
+symbols "$NEW" "$tmp/new.sym"
 comm -13 "$tmp/old.sym" "$tmp/new.sym" >"$tmp/added"
 comm -23 "$tmp/old.sym" "$tmp/new.sym" >"$tmp/gone"
 
+echo "abi-compat: $(wc -l <"$tmp/old.sym" | tr -d ' ') old / $(wc -l <"$tmp/new.sym" | tr -d ' ') new tst_ symbols, $(wc -l <"$tmp/added" | tr -d ' ') added, $(wc -l <"$tmp/gone" | tr -d ' ') removed"
 changed=0
 [ $((rc & 12)) -ne 0 ] && changed=1
 [ -s "$tmp/gone" ] && changed=1
@@ -90,4 +102,4 @@ if [ -s "$tmp/added" ] && [ "$NEW_MAJOR" -le "$OLD_MAJOR" ] && [ "$NEW_MINOR" -l
     echo "FAIL: the C ABI grew without a minor bump (minor $OLD_MINOR -> $NEW_MINOR)"
     exit 1
 fi
-echo "ok: C ABI compatible (minor $OLD_MINOR -> $NEW_MINOR, $(wc -l <"$tmp/added" | tr -d ' ') added symbols)"
+echo "ok: C ABI compatible (minor $OLD_MINOR -> $NEW_MINOR)"

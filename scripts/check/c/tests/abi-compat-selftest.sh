@@ -16,6 +16,8 @@ for v in v1 v2_removed v2_struct v2_enum v2_added; do
     cc -g -shared -fPIC -o "$tmp/$v.so" "$HERE/abi-fixtures/$v.c" || { echo "FAIL: cannot compile $v"; exit 1; }
 done
 
+printf 'int helper_not_tst(void) { return 0; }\n' >"$tmp/plain.c"
+cc -g -shared -fPIC -o "$tmp/plain.so" "$tmp/plain.c" || { echo "FAIL: cannot compile plain"; exit 1; }
 fail=0
 expect() { # <desc> <want_rc> <args...>
     local desc="$1" want="$2"; shift 2
@@ -31,6 +33,13 @@ expect "an added function without a minor bump fails"      1 "$tmp/v1.so" "$tmp/
 expect "an added function with a minor bump passes"        0 "$tmp/v1.so" "$tmp/v2_added.so" 3 4
 expect "an incompatible change passes with a major bump"   0 "$tmp/v1.so" "$tmp/v2_removed.so" 0 0 0 1
 expect "a missing old library is a tool error"             2 "$tmp/absent.so" "$tmp/v1.so" 3 3
+expect "an old library with no tst_ symbols is a tool error" 2 "$tmp/plain.so" "$tmp/v1.so" 3 4
+# nm hidden from PATH (a PATH of symlinks to everything but nm)
+mkdir "$tmp/nonm"
+for t in bash env dirname mktemp rm cat sed grep awk sort comm wc tr abidiff abidw cc; do
+    p="$(command -v "$t" 2>/dev/null)" && ln -s "$p" "$tmp/nonm/$t"
+done
+expect "nm missing is a tool error" 2 env PATH="$tmp/nonm" bash "$RAIL" "$tmp/v1.so" "$tmp/v2_added.so" 3 3
 if command -v abidw >/dev/null 2>&1; then
     abidw --out-file "$tmp/v1.abi" "$tmp/v1.so" >/dev/null 2>&1
     expect "an abidw corpus is accepted as the old side"   0 "$tmp/v1.abi" "$tmp/v1.so" 3 3
