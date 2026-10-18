@@ -21,5 +21,8 @@ sha2 = "0.10"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[dev-dependencies]
+proptest = { workspace = true }
+
 [lints]
 workspace = true
