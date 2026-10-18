@@ -49,7 +49,8 @@ fn c_program_sees_the_runtime_answers() {
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(manifest_dir).join("../../target"));
     let debug_dir = target_dir.join("debug");
-    let include_dir = PathBuf::from(manifest_dir).join("include");
+    // The build-generated include dir holds this build's tstrans_config.h.
+    let include_dir = debug_dir.join("include");
     let c_file = PathBuf::from(manifest_dir).join("tests/has_feature.c");
     let bin = std::env::temp_dir().join("tst_has_feature_check");
 

@@ -18,8 +18,9 @@ The C ABI ships as the `tst-c` crate in the workspace; its build emits the artif
 |---|---|---|
 | `libtstrans.so` (Linux) / `libtstrans.dylib` (macOS) / `tstrans.dll` (Windows-MSVC) | `target/debug/` or `target/release/` | Shared library |
 | `libtstrans.a` (`tstrans.lib` on MSVC) | same | Static library — libsrt + mbedTLS embedded; link the C++ runtime yourself (`tstrans.pc` lists it) |
-| `tstrans.h` | `target/<profile>/include/` | Single-file C header (~450 KB), `cbindgen`-generated for the features you built. The committed `bindings/c/include/tstrans.h` is the `srt,rtp` rendering. |
-| `tstrans.pc` | `target/<profile>/` | pkg-config file (substituted by `build.rs` from `tstrans.pc.in`) |
+| `tstrans.h` | `target/<profile>/include/` | Single-file C header (~450 KB), `cbindgen`-generated; it includes `tstrans_config.h`, so one header serves every feature set. The committed `bindings/c/include/tstrans.h` is the same file. |
+| `tstrans_config.h` | same `include/` | Written by the build beside `tstrans.h`: `#define TST_HAS_<FEATURE> 1` for each feature you built. The committed `bindings/c/include/tstrans_config.h` is the bare flavour (no feature defined). |
+| `tstrans.pc` | `target/<profile>/` | pkg-config file (substituted by `build.rs` from `tstrans.pc.in`); `pkg-config --variable=features tstrans` lists the built features |
 
 ### From source
 

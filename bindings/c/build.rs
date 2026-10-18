@@ -52,17 +52,22 @@ fn main() {
     // edit would skip header regen on incremental builds.
     println!("cargo:rerun-if-changed=core/Cargo.toml");
 
-    // Post-process: `#define TST_HAS_<F> 1` for each active feature, then the
-    // domain-grouping section dividers (symbol-prefix keyed, so a source-tree
-    // reorg does not move a declaration).
+    // Post-process: write `tstrans_config.h` (`#define TST_HAS_<F> 1` for each
+    // active feature) beside the header, then add the domain-grouping section
+    // dividers (symbol-prefix keyed, so a source-tree reorg does not move a
+    // declaration).
     let active: Vec<&str> = header_post::FEATURES
         .iter()
         .copied()
         .filter(|f| env::var(format!("CARGO_FEATURE_{f}")).is_ok())
         .collect();
     let rendered = std::fs::read_to_string(&header_path).expect("read tstrans.h");
-    let header =
-        header_post::add_section_dividers(&header_post::inject_feature_defines(&rendered, &active));
+    std::fs::write(
+        include_dir.join("tstrans_config.h"),
+        header_post::render_config(&active),
+    )
+    .expect("write tstrans_config.h");
+    let header = header_post::add_section_dividers(&rendered);
     let indented = header_post::leading_space_decls(&header);
     assert!(
         indented.is_empty(),
@@ -178,10 +183,16 @@ fn main() {
     } else {
         "-lstdc++ -ldl"
     };
+    let features = active
+        .iter()
+        .map(|f| f.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join(",");
     let pc = template
         .replace("@VERSION@", version)
         .replace("@PREFIX@", "/usr/local") // tarball install default; consumer can sed it
-        .replace("@PLATFORM_LIBS@", platform_libs);
+        .replace("@PLATFORM_LIBS@", platform_libs)
+        .replace("@FEATURES@", &features);
     let pc_path = profile_dir.join("tstrans.pc");
     std::fs::write(&pc_path, pc).expect("write tstrans.pc");
     println!("cargo:rerun-if-changed=tstrans.pc.in");

@@ -11,15 +11,13 @@
 #ifndef TSTRANS_H
 #define TSTRANS_H
 
-#define TST_HAS_SRT 1
-#define TST_HAS_RTP 1
-
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stddef.h>
+#include "tstrans_config.h"
 
 /**
  * Major version of the C ABI contract. Bumped only on **breaking
@@ -12343,11 +12341,10 @@ int tst_udp_sender_send_ts(struct TstUdpSender *p, const uint8_t *bytes, size_t 
 
 #endif  /* TSTRANS_H */
 
-/* Always emit TST_HAS_* defines so consumer C code can #if-test them
- * without prior knowledge of build flavor. cbindgen wraps cfg-gated
- * symbols in #ifdef TST_HAS_SRT / #ifdef TST_HAS_RTP blocks when the
- * corresponding feature is active; these fallback defines ensure the
- * macros are always defined (to 0) even in feature-stripped builds.
+/* tstrans_config.h (included above) defines TST_HAS_<FEATURE> to 1 for each
+ * feature the library was built with and leaves the rest undefined. These
+ * fallbacks define the absent ones to 0, so consumer C code can #if-test
+ * every macro without prior knowledge of the build flavor.
  */
 #if !defined(TST_HAS_SRT)
 #define TST_HAS_SRT 0
