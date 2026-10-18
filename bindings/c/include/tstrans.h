@@ -8872,7 +8872,7 @@ void tst_rtsp_client_builder_auth_digest_sha256(struct tst_rtsp_client_builder_t
  * Works in a build with the `tls` feature (`TST_HAS_TLS`). The setter stores
  * the raw PEM bytes either way; without the feature they are never used, and
  * `tst_rtsp_client_builder_connect` with an `rtsps://` URL fails with
- * `TST_E_INVALID_CONFIG`.
+ * `TST_E_RTSP_TLS`.
  *
  * # Safety
  *

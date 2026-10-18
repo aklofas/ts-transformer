@@ -35,7 +35,7 @@ OUT=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --features) [ $# -ge 2 ] || { usage >&2; exit 2; }
-                    FEATURE_ARGS=(--no-default-features --features "$2"); FEATURES_LABEL="$2"; shift 2 ;;
+                    FEATURE_ARGS=(--features "$2"); FEATURES_LABEL="$2"; shift 2 ;;
         --all-features) FEATURE_ARGS=(--all-features); FEATURES_LABEL="all"; shift ;;
         --profile) [ $# -ge 2 ] || { usage >&2; exit 2; }; PROFILE="$2"; shift 2 ;;
         --out) [ $# -ge 2 ] || { usage >&2; exit 2; }; OUT="$2"; shift 2 ;;
@@ -60,11 +60,6 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/../.."
 
-# --no-default-features drops mbedtls too; keep it, as a plain build has it
-# and it is inert without srt.
-if [ "${FEATURE_ARGS[0]:-}" = "--no-default-features" ]; then
-    FEATURE_ARGS=(--no-default-features --features "std,mbedtls,${FEATURES_LABEL}")
-fi
 PROFILE_ARGS=()
 [ "$PROFILE" = release ] && PROFILE_ARGS=(--release)
 
