@@ -11,9 +11,7 @@
 //! own definition inside a feature-gated module would make cbindgen wrap
 //! every variant in its own `#if defined(...)` — the doubled-guard shape
 //! the project deliberately avoids (see
-//! `crate::config::builders::TstReconnectMode` for the same pattern and
-//! `scripts/check/c/header-conditional-sections.sh`, which enforces
-//! module-level-cfg-only gating).
+//! `crate::config::builders::TstReconnectMode` for the same pattern).
 //!
 //! Every getter reads a recorded `EndReason` and converts it with
 //! `convert_end_reason`, so the mapping and the last-error contract live

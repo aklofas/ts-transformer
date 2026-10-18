@@ -52,28 +52,19 @@ fn main() {
     // edit would skip header regen on incremental builds.
     println!("cargo:rerun-if-changed=core/Cargo.toml");
 
-    // Post-process: write `tstrans_config.h` (`#define TST_HAS_<F> 1` for each
-    // active feature) beside the header, then add the domain-grouping section
-    // dividers (symbol-prefix keyed, so a source-tree reorg does not move a
-    // declaration).
+    // Write `tstrans_config.h` (`#define TST_HAS_<F> 1` for each active feature)
+    // beside the header. `tstrans.h` is cbindgen's output as it stands, so it is
+    // the same file for every feature set.
     let active: Vec<&str> = header_post::FEATURES
         .iter()
         .copied()
         .filter(|f| env::var(format!("CARGO_FEATURE_{f}")).is_ok())
         .collect();
-    let rendered = std::fs::read_to_string(&header_path).expect("read tstrans.h");
     std::fs::write(
         include_dir.join("tstrans_config.h"),
         header_post::render_config(&active),
     )
     .expect("write tstrans_config.h");
-    let header = header_post::add_section_dividers(&rendered);
-    let indented = header_post::leading_space_decls(&header);
-    assert!(
-        indented.is_empty(),
-        "declarations left indented after post-processing: {indented:?}"
-    );
-    std::fs::write(&header_path, header).expect("write tstrans.h");
 
     // ────────────────────────────────────────────────────────────────
     // Symbol hygiene: the libtstrans
