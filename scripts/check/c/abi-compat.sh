@@ -175,6 +175,7 @@ comm -13 "$tmp/old.sym" "$tmp/new.sym" >"$tmp/added"
 comm -23 "$tmp/old.sym" "$tmp/new.sym" >"$tmp/gone"
 
 count() { wc -l <"$1" | tr -d ' '; }
+echo "abi-compat: abidiff exit $rc"
 echo "abi-compat: $(count "$tmp/old.sym") old / $(count "$tmp/new.sym") new tst_ symbols," \
      "$(count "$tmp/added") added, $(count "$tmp/gone") removed"
 changed=0

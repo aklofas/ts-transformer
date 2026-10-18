@@ -1342,34 +1342,14 @@ jobs:
 
       - name: Select the previous release tag
         id: prev
-        run: |
-          git fetch --tags --depth=1 origin
-          prev="$(bash scripts/dev/prev-tag.sh)"
-          [ -n "$prev" ] || { echo "no vMAJOR.MINOR.PATCH tag in this clone" >&2; exit 1; }
-          pat='^pub const TST_ABI_VERSION_MINOR: [A-Za-z0-9_:]* = \([0-9][0-9]*\);.*'
-          prev_minor="$(git show "$prev:bindings/c/core/src/lib.rs" | sed -n "s/$pat/\1/p" | head -1)"
-          head_minor="$(sed -n "s/$pat/\1/p" bindings/c/core/src/lib.rs | head -1)"
-          [ -n "$prev_minor" ] && [ -n "$head_minor" ] || { echo "could not read the ABI minor ($prev_minor / $head_minor)" >&2; exit 1; }
-          echo "prev=$prev" >> "$GITHUB_OUTPUT"
-          echo "prev_minor=$prev_minor" >> "$GITHUB_OUTPUT"
-          echo "head_minor=$head_minor" >> "$GITHUB_OUTPUT"
-          echo "previous tag $prev (ABI minor $prev_minor), this tree ABI minor $head_minor"
+        run: bash scripts/dev/prev-c-library.sh select
 
       - name: Previous library from the tag's Release package
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
           PREV: ${{ steps.prev.outputs.prev }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/prev-release"
-          if gh release download "$PREV" -R "$GITHUB_REPOSITORY" -p 'tstrans-c-*-linux-x86_64.tar.gz' -D "$RUNNER_TEMP/prev-release" 2>/dev/null \
-             && tar -xzf "$RUNNER_TEMP"/prev-release/tstrans-c-*-linux-x86_64.tar.gz -C "$RUNNER_TEMP/prev-release" \
-             && abi="$(find "$RUNNER_TEMP/prev-release" -name tstrans.abi | head -1)" && [ -n "$abi" ]; then
-            echo "previous tag $PREV, taken from its Release package"
-            echo "lib=$abi" >> "$GITHUB_OUTPUT"
-          else
-            echo "the $PREV Release carries no C package"
-          fi
+        run: bash scripts/dev/prev-c-library.sh release
 
       - name: Previous library cache
         if: steps.release.outputs.lib == ''
@@ -1383,11 +1363,7 @@ jobs:
         if: steps.release.outputs.lib == '' && steps.cache.outputs.cache-hit != 'true'
         env:
           PREV: ${{ steps.prev.outputs.prev }}
-        run: |
-          git worktree add "$RUNNER_TEMP/prev" "$PREV"
-          git -C "$RUNNER_TEMP/prev" submodule update --init --recursive
-          (cd "$RUNNER_TEMP/prev" && CARGO_TARGET_DIR="$RUNNER_TEMP/prev-target" cargo build -p tst-c --all-features)
-          test -f "$RUNNER_TEMP/prev-target/debug/libtstrans.so"
+        run: bash scripts/dev/prev-c-library.sh build
 
       - name: Stage this tree's package
         run: bash scripts/dev/c-package.sh --all-features --out "$RUNNER_TEMP/pkg"
@@ -1399,15 +1375,8 @@ jobs:
           HEAD_MINOR: ${{ steps.prev.outputs.head_minor }}
           RELEASE_LIB: ${{ steps.release.outputs.lib }}
         run: |
-          if [ -n "$RELEASE_LIB" ]; then
-            old="$RELEASE_LIB"; how="from its Release package"
-          else
-            old="$RUNNER_TEMP/prev-target/debug/libtstrans.so"; how="built from source"
-          fi
-          echo "previous tag $PREV, $how"
-          # The tag's committed header is what the previous package shipped; the
-          # rail needs it to see a struct that lost its body.
-          git show "$PREV:bindings/c/include/tstrans.h" > "$RUNNER_TEMP/prev-tstrans.h"
+          old="$(bash scripts/dev/prev-c-library.sh resolve)"
+          bash scripts/dev/prev-c-library.sh header "$RUNNER_TEMP/prev-tstrans.h"
           bash scripts/check/c/abi-compat.sh "$old" "$RUNNER_TEMP/pkg/lib/libtstrans.so" "$PREV_MINOR" "$HEAD_MINOR" --header "$RUNNER_TEMP/pkg/include/tstrans.h" --old-header "$RUNNER_TEMP/prev-tstrans.h" 2>&1 | tee "$RUNNER_TEMP/abi-report.txt"
           exit "${PIPESTATUS[0]}"
 

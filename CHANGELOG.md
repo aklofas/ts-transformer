@@ -804,6 +804,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   optional durations as `-1`, `org.tstrans.rtp.RtspStats` and
   `org.tstrans.shells.TransportStats` stay hand-written.
 
+### Added — release tooling
+
+- Each release tag carries `qualification.json` (source and submodule commits,
+  toolchain, native and peer-tool versions, every test leg's result, the interop
+  census, the fuzz count, the C ABI comparison, the cited soak and stress
+  verdicts), a CycloneDX SBOM, `SHA256SUMS`, build-provenance attestations and
+  the C package, produced by one workflow run on the tagged commit. Before this
+  the evidence for a release was assembled by hand from several runs on several
+  commits, so a claim could quietly describe a different tree than the one
+  tagged.
+
 ### Deprecated — tst-core
 
 - `mpegts::mux::StreamKind` is renamed `MuxStreamKind`; the old name is a
