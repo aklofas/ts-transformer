@@ -30,6 +30,33 @@ pub fn render_config(active: &[&str]) -> String {
     out
 }
 
+/// Compares a freshly rendered header with the committed copy, ignoring line
+/// endings (a Windows checkout turns the committed LF into CRLF). Returns
+/// `None` when they match, else a message naming the first differing line.
+pub fn header_differs(rendered: &str, committed: &str) -> Option<String> {
+    let rendered = rendered.replace("\r\n", "\n");
+    let committed = committed.replace("\r\n", "\n");
+    if rendered == committed {
+        return None;
+    }
+    let mut r = rendered.lines();
+    let mut c = committed.lines();
+    let mut n = 0;
+    loop {
+        n += 1;
+        match (r.next(), c.next()) {
+            (Some(a), Some(b)) if a == b => {}
+            (a, b) => {
+                return Some(format!(
+                    "first difference at line {n}:\n  committed: {}\n  rendered:  {}",
+                    b.unwrap_or("<end of file>"),
+                    a.unwrap_or("<end of file>")
+                ));
+            }
+        }
+    }
+}
+
 /// Every `pub enum Tst*` declared at column 0 under `core_src`, sorted and
 /// de-duplicated. cbindgen drops an enum no signature references unless it is
 /// in `[export] include`; the build adds these so none can be forgotten.

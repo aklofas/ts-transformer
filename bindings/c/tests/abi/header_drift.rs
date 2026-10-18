@@ -35,30 +35,25 @@ fn committed_header_matches_cbindgen_output() {
     generated.write(&mut buf);
     let generated = String::from_utf8(buf).expect("cbindgen output is utf-8");
 
-    // Normalize line endings before comparing: on Windows the committed header
-    // is checked out with CRLF (default core.autocrlf, no .gitattributes pins
-    // it to LF), while cbindgen emits LF — so a raw compare spuriously reports
-    // drift. The drift check is about CONTENT, not EOL, so compare LF-normalized.
-    let expected = expected.replace("\r\n", "\n");
-    let generated = generated.replace("\r\n", "\n");
-
-    if generated != expected {
-        eprintln!(
-            "Drift between bindings/c/include/tstrans.h and cbindgen output. \
-             Run `cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h` \
-             and commit the diff."
+    // Line endings are normalised inside `header_differs`: on Windows the
+    // committed header is checked out with CRLF while cbindgen emits LF.
+    if let Some(diff) = header_post::header_differs(&generated, &expected) {
+        panic!(
+            "bindings/c/include/tstrans.h differs from cbindgen output. Run \
+             `cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h` \
+             and commit the diff.\n{diff}"
         );
-        // Compute a small diff hint: first differing line.
-        for (i, (g, e)) in generated.lines().zip(expected.lines()).enumerate() {
-            if g != e {
-                eprintln!("first diff at line {}:", i + 1);
-                eprintln!("  expected: {e}");
-                eprintln!("  generated: {g}");
-                break;
-            }
-        }
-        panic!("header drift");
     }
+}
+
+#[test]
+fn header_differs_ignores_line_endings_and_names_the_first_changed_line() {
+    assert_eq!(header_post::header_differs("a\nb\n", "a\nb\n"), None);
+    assert_eq!(header_post::header_differs("a\nb\n", "a\r\nb\r\n"), None);
+    let d = header_post::header_differs("a\nX\nc\n", "a\nb\nc\n").unwrap();
+    assert!(d.contains("line 2") && d.contains("committed: b") && d.contains("rendered:  X"));
+    let d = header_post::header_differs("a\n", "a\nb\n").unwrap();
+    assert!(d.contains("line 2") && d.contains("<end of file>"));
 }
 
 #[test]

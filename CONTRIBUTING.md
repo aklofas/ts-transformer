@@ -45,6 +45,8 @@ Read the rail output, not only the exit codes: a rail prints `SKIP:` or
 `scripts/check/python/stubtest.sh`, QEMU for the embedded gates) and that
 is not a pass.
 
+A change to the C API changes `bindings/c/include/tstrans.h`: regenerate it (`cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h`) and commit it in the same commit. A build with `CI` set refuses a stale committed copy.
+
 Three ratchets need a deliberate update when your change is intentional:
 
 - **Public API** — `cargo public-api` baselines for ten crates at
