@@ -44,6 +44,16 @@ const CHILD_DEADLINE: Duration = Duration::from_secs(12);
 /// How long the child waits for one of its own setup steps.
 const SETUP_DEADLINE: Duration = Duration::from_secs(5);
 
+/// The parent's `ASAN_OPTIONS` (if any) with `detect_leaks=0` appended, so
+/// a sanitized child keeps every other option and skips only the
+/// exit-time leak check (see the comment at the spawn site).
+fn child_asan_options() -> String {
+    match std::env::var("ASAN_OPTIONS") {
+        Ok(opts) if !opts.is_empty() => format!("{opts}:detect_leaks=0"),
+        _ => "detect_leaks=0".to_string(),
+    }
+}
+
 fn is_child() -> bool {
     std::env::var_os(CHILD_ENV).is_some()
 }
@@ -56,6 +66,15 @@ fn expect_child_exits_cleanly(test_name: &str) {
     let mut child = Command::new(exe)
         .args([test_name, "--exact", "--nocapture", "--test-threads=1"])
         .env(CHILD_ENV, "1")
+        // The child parks a thread inside libsrt and then exits without
+        // closing anything — that is the behaviour under test — so it
+        // leaks the receiver on purpose. Under AddressSanitizer the
+        // exit-time leak check stops the world to scan the heap and does
+        // not return while a thread sits in libsrt's blocking receive, so
+        // the child would hang at exit for a report nobody wants. Leak
+        // detection stays on for this (parent) process; only the child's
+        // exit skips it.
+        .env("ASAN_OPTIONS", child_asan_options())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
