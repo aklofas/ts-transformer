@@ -266,6 +266,13 @@ jobs:
           chmod -R u+w "$RUNNER_TEMP/pkg"
           abidw --out-file "$RUNNER_TEMP/pkg/tstrans.abi" "$RUNNER_TEMP/pkg/lib/libtstrans.so"
           cp bindings/c/abi-symbols.txt "$RUNNER_TEMP/pkg/"
+          # manifest.json was written before the two extra files existed: add
+          # their digests so it covers every file in the package.
+          for f in tstrans.abi abi-symbols.txt; do
+            h="$(sha256sum "$RUNNER_TEMP/pkg/$f" | cut -d' ' -f1)"
+            jq --arg k "$f" --arg v "$h" '.files[$k] = $v' "$RUNNER_TEMP/pkg/manifest.json" > "$RUNNER_TEMP/manifest.new"
+            cat "$RUNNER_TEMP/manifest.new" > "$RUNNER_TEMP/pkg/manifest.json"
+          done
           chmod -R a-w "$RUNNER_TEMP/pkg"
 
       - name: Compare with the previous tag and write abi.json
@@ -288,6 +295,8 @@ jobs:
           [ "$rc" -eq 0 ] && verdict=compatible
           symbols="$(sed -n 's/.* \/ \([0-9][0-9]*\) new tst_ symbols.*/\1/p' "$RUNNER_TEMP/abi-record/abi-report.txt" | head -1)"
           abidiff_exit="$(sed -n 's/^abi-compat: abidiff exit \([0-9][0-9]*\)$/\1/p' "$RUNNER_TEMP/abi-record/abi-report.txt" | head -1)"
+          # The rail ended before abidiff ran (a tool or input error): say so.
+          [ -n "$abidiff_exit" ] || verdict=error
           jq -n --slurpfile m "$RUNNER_TEMP/pkg/manifest.json" \
             --arg prev "$PREV" --arg how "$how" --arg verdict "$verdict" \
             --arg symbols "${symbols:-}" --arg ax "${abidiff_exit:-}" \
@@ -339,26 +348,36 @@ jobs:
     name: ci result on this commit
     needs: resolve
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 50
     permissions:
       contents: read
       actions: read
     steps:
-      - name: Read the ci workflow's conclusion for the SHA
-        # ci runs on every push to main and on every PR head, so this reads a
-        # result rather than starting one. No run for the SHA (a dispatch on an
-        # unpushed commit) is recorded as "missing", which is a NO-GO.
+      - name: Wait for the ci workflow's run on the SHA, then read its conclusion
+        # ci runs on every push to main and on every PR head, and on a tag push
+        # it runs in parallel with this workflow, so it may still be queued or
+        # running: wait for it (the job timeout bounds the wait). Nothing is
+        # re-run. No ci run at all on the first look (a dispatch on an unpushed
+        # commit) is recorded as "missing", which is a NO-GO.
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.resolve.outputs.ref }}
         run: |
           mkdir -p "$RUNNER_TEMP/ci-record"
-          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=50" > "$RUNNER_TEMP/ci-runs.json"
-          jq '[.workflow_runs[] | {status, conclusion, url:.html_url, created_at}] | sort_by(.created_at) | last // null
-              | if . == null then {conclusion:"missing", run_url:""}
-                elif .status != "completed" then {conclusion:.status, run_url:.url}
-                else {conclusion:(.conclusion // "missing"), run_url:.url} end' \
-            "$RUNNER_TEMP/ci-runs.json" > "$RUNNER_TEMP/ci-record/ci.json"
+          first=true
+          while :; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=50" > "$RUNNER_TEMP/ci-runs.json"
+            jq '[.workflow_runs[] | {status, conclusion, url:.html_url, created_at}] | sort_by(.created_at) | last // null
+                | if . == null then {status:"completed", conclusion:"missing", run_url:""}
+                  else {status, conclusion:(.conclusion // "missing"), run_url:.url} end' \
+              "$RUNNER_TEMP/ci-runs.json" > "$RUNNER_TEMP/ci-record/ci-state.json"
+            status="$(jq -r .status "$RUNNER_TEMP/ci-record/ci-state.json")"
+            if [ "$status" = completed ]; then break; fi
+            echo "ci on $SHA is $status; waiting 60 s"
+            sleep 60
+          done
+          jq '{conclusion, run_url}' "$RUNNER_TEMP/ci-record/ci-state.json" > "$RUNNER_TEMP/ci-record/ci.json"
+          rm "$RUNNER_TEMP/ci-record/ci-state.json"
           cat "$RUNNER_TEMP/ci-record/ci.json"
 
       - uses: actions/upload-artifact@v7
