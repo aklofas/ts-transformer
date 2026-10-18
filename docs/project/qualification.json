@@ -1,0 +1,273 @@
+{
+  "schema_version": 0,
+  "label": "main at 7ee7db98",
+  "source": {
+    "sha": "7ee7db98b5dcc9ecc538edb15974a47a8a3d23ac",
+    "ref": "refs/heads/main",
+    "dirty": false,
+    "submodules": {
+      "crates/srt-sys/vendor/srt": {
+        "sha": "899348d8318eb9a3c5a5b6ec43c4a1114288773a",
+        "describe": "v1.5.7"
+      },
+      "crates/rist-sys/vendor/librist": {
+        "sha": "4f45ef8f78983892d52ccd52d9f675435b23738f",
+        "describe": "v0.2.20"
+      },
+      "crates/mbedtls-src/vendor/mbedtls": {
+        "sha": "068ff080b369adfac81509f9b57b2afabaf82dc5",
+        "describe": "mbedtls-3.6.7"
+      }
+    }
+  },
+  "toolchain": {
+    "rust": "rustc 1.85.1",
+    "nightly_public_api": "nightly-2026-07-03",
+    "cbindgen": "0.29.2",
+    "tools": {
+      "abidiff": "2.4.0",
+      "cargo-semver-checks": "0.51.0",
+      "cargo-cyclonedx": "0.5.9"
+    }
+  },
+  "natives": {
+    "libsrt": "1.5.7",
+    "librist": "0.2.20",
+    "mbedtls": "3.6.7"
+  },
+  "host": {
+    "runner": "ubuntu-24.04",
+    "arch": "x86_64",
+    "kernel": "6.17.0"
+  },
+  "peers": {
+    "ffmpeg": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+    "tsp": "tsp: TSDuck - The MPEG Transport Stream Toolkit - version 3.44-4676",
+    "gst-launch-1.0": "gst-launch-1.0 version 1.24.2",
+    "vlc": "VLC version 3.0.20 Vetinari (3.0.20-0-g6f0d0ab126b)",
+    "mpv": "mpv 0.37.0 Copyright \u00a9 2000-2023 mpv/MPlayer/mplayer2 projects"
+  },
+  "legs": [
+    {
+      "name": "interop",
+      "required": true,
+      "conclusion": "success",
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+    },
+    {
+      "name": "sanitizers/asan",
+      "required": true,
+      "conclusion": "success",
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+    },
+    {
+      "name": "sanitizers/asan-native",
+      "required": true,
+      "conclusion": "success",
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+    },
+    {
+      "name": "sanitizers/tsan",
+      "required": true,
+      "conclusion": "success",
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+    },
+    {
+      "name": "sanitizers/tsan-native",
+      "required": true,
+      "conclusion": "success",
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+    },
+    {
+      "name": "fuzz",
+      "required": true,
+      "conclusion": "success",
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+    },
+    {
+      "name": "jvm-jar",
+      "required": true,
+      "conclusion": "success",
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+    },
+    {
+      "name": "python-wheels",
+      "required": true,
+      "conclusion": "success",
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+    },
+    {
+      "name": "c-abi",
+      "required": true,
+      "conclusion": "success",
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+    },
+    {
+      "name": "ci (on this sha)",
+      "required": true,
+      "conclusion": "success",
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39173975979"
+    },
+    {
+      "name": "semver-checks",
+      "required": false,
+      "conclusion": "success",
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+    }
+  ],
+  "interop": {
+    "shape": "full-159",
+    "total": 159,
+    "pass": 94,
+    "fail": 0,
+    "expected_unsupported": 65,
+    "skipped": 0,
+    "stale": 0,
+    "expected_full_cells": 159,
+    "au_sizes": "realistic"
+  },
+  "fuzz": {
+    "targets_declared": 37,
+    "targets_run": 37,
+    "seconds_per_target": 60,
+    "crashes": 0
+  },
+  "abi": {
+    "major": 0,
+    "minor": 25,
+    "symbols": 505,
+    "previous_tag": "v0.8.0",
+    "previous_source": "built",
+    "abidiff_exit": 0,
+    "verdict": "compatible",
+    "abidiff_version": "2.4.0"
+  },
+  "semver_checks": [
+    {
+      "crate": "tst-core",
+      "breaking": 7,
+      "exit": 100,
+      "analysed": true
+    },
+    {
+      "crate": "tst-hls",
+      "breaking": 5,
+      "exit": 100,
+      "analysed": true
+    },
+    {
+      "crate": "tst-pipeline",
+      "breaking": 9,
+      "exit": 100,
+      "analysed": true
+    },
+    {
+      "crate": "tst-rist",
+      "breaking": 4,
+      "exit": 100,
+      "analysed": true
+    },
+    {
+      "crate": "tst-rtp",
+      "breaking": 10,
+      "exit": 100,
+      "analysed": true
+    },
+    {
+      "crate": "tst-srt",
+      "breaking": 4,
+      "exit": 100,
+      "analysed": true
+    },
+    {
+      "crate": "tst-tcp",
+      "breaking": 5,
+      "exit": 100,
+      "analysed": true
+    },
+    {
+      "crate": "tst-udp",
+      "breaking": 5,
+      "exit": 100,
+      "analysed": true
+    },
+    {
+      "crate": "tstrans-mbedtls-src",
+      "breaking": 0,
+      "exit": 0,
+      "analysed": true
+    },
+    {
+      "crate": "tstrans-rist-sys",
+      "breaking": 0,
+      "exit": 0,
+      "analysed": true
+    }
+  ],
+  "archives": [
+    {
+      "id": "soak-rc070-2026-10-04",
+      "kind": "soak",
+      "tree": "e86dd9ea6d1a3ad8d24af20377b9d5317708f273",
+      "overall_pass": false,
+      "note": "The SRT leg passed every gating verdict; the RIST leg failed corruption attribution, and all eight of its unexplained events were harness attribution defects, not library defects.",
+      "date": "2026-10-04"
+    },
+    {
+      "id": "soak-rtsp-publish-2026-10-08",
+      "kind": "soak",
+      "tree": "b6545e6004ae2461893779e246938dc293b24e84",
+      "overall_pass": false,
+      "note": "The publisher leg passed every verdict it owns; the three failures were on the SRT leg's receiver and were harness defects.",
+      "date": "2026-10-09"
+    },
+    {
+      "id": "stress-2026-10-02",
+      "kind": "stress",
+      "tree": "a647024592990feb9a74e1cb26d72339e498b417",
+      "overall_pass": false,
+      "note": "The sweep ended early and the hold was refused for harness calibration findings; it is not a measurement and no ceiling is published from it.",
+      "date": "2026-10-02"
+    },
+    {
+      "id": "stress-2026-10-02b",
+      "kind": "stress",
+      "tree": "f86f4406b86e2c4434f714c6a84796dd33e76334",
+      "overall_pass": false,
+      "note": "The sweep completed; the hold was killed by the kernel for memory because it was sized from CPU alone, so the sweep is valid and the hold is not.",
+      "date": "2026-10-03"
+    },
+    {
+      "id": "stress-2026-10-03",
+      "kind": "stress",
+      "tree": "3a3f964f5c6b19c1841b7756493dbf73cc502dbb",
+      "overall_pass": false,
+      "note": "The sweep passed; the hold ended at 58 081 of 86 400 s on a harness artefact in the receiver restart path, not a library defect.",
+      "date": "2026-10-04"
+    },
+    {
+      "id": "stress-2026-10-06",
+      "kind": "stress",
+      "tree": "9bb728e1484b551802c44af6a736c24f69d157f2",
+      "overall_pass": false,
+      "note": "The sweep and the full 24 h hold ran; resource and liveness verdicts passed and the hold verdict is FAIL on corruption attribution gaps, a harness attribution artefact.",
+      "date": "2026-10-08"
+    },
+    {
+      "id": "2026-10-04-wp1-corpus-evidence",
+      "kind": "corpus",
+      "tree": "effc7f9c4d4d20bef0e9ad172b8ed80b60432318",
+      "overall_pass": true,
+      "note": "The demuxer output was byte-identical before and after the KLV classification change on all 260 real captures (41.5 GB); no real producer trips the reserved-nibble rule.",
+      "date": "2026-10-03"
+    }
+  ],
+  "maintainer_local": [
+    "real-capture corpus cross-check (cargo test -p tst-core --test mpegts mux_local)",
+    "long fuzz runs (10 min per target)",
+    "bench regression",
+    "one-hour synthetic soak"
+  ],
+  "verdict": "GO",
+  "verdict_reasons": []
+}
