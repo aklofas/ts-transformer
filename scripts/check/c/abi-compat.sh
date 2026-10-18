@@ -109,8 +109,12 @@ if [ -n "$OLD_HEADER" ]; then
     lost=0
     while IFS= read -r name; do
         if grep -qE "^(typedef )?struct $name \{" "$OLD_HEADER"; then
-            echo "FAIL: struct $name lost its body: a field-visible struct became opaque (repr(align/packed) renders bodiless)"
-            lost=1
+            if [ "$NEW_MAJOR" -gt "$OLD_MAJOR" ]; then
+                echo "abi-compat: struct $name lost its body (allowed: major $OLD_MAJOR -> $NEW_MAJOR)"
+            else
+                echo "FAIL: struct $name lost its body: a field-visible struct became opaque (repr(align/packed) renders bodiless)"
+                lost=1
+            fi
         fi
     done <"$tmp/new.bodiless"
     [ "$lost" -eq 0 ] || exit 1

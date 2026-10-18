@@ -43,9 +43,9 @@ expect "an old library with no tst_ symbols is a tool error" 2 "$tmp/plain.so" "
 expect "a changed opaque handle (bodiless in the header) passes" 0 --old-header "$HERE/abi-fixtures/opaque.h" --header "$HERE/abi-fixtures/opaque.h" "$tmp/v1_opaque.so" "$tmp/v2_opaque.so" 3 3
 expect "a changed struct with its body in the header fails"      1 --old-header "$HERE/abi-fixtures/open.h" --header "$HERE/abi-fixtures/open.h" "$tmp/v1_opaque.so" "$tmp/v2_opaque.so" 3 3
 # A struct that lost its body is a break even though the new header calls it
-# opaque; bodiless in both stays suppressed; bodied in both is judged.
+# opaque (a major bump allows it); bodiless in both stays suppressed (the row above); bodied in both is judged.
 expect "a struct that lost its body fails"                       1 --old-header "$HERE/abi-fixtures/open.h" --header "$HERE/abi-fixtures/opaque.h" "$tmp/v1_opaque.so" "$tmp/v2_opaque.so" 3 3
-expect "a handle bodiless in both headers passes"                0 --old-header "$HERE/abi-fixtures/opaque.h" --header "$HERE/abi-fixtures/opaque.h" "$tmp/v1_opaque.so" "$tmp/v2_opaque.so" 3 3
+expect "a struct that lost its body passes with a major bump"   0 --old-header "$HERE/abi-fixtures/open.h" --header "$HERE/abi-fixtures/opaque.h" "$tmp/v1_opaque.so" "$tmp/v2_opaque.so" 3 3 0 1
 expect "a struct bodied in both headers with a new layout fails" 1 --old-header "$HERE/abi-fixtures/open.h" --header "$HERE/abi-fixtures/open.h" "$tmp/v1_opaque.so" "$tmp/v2_opaque.so" 3 3
 expect "an unreadable old header is a tool error"                2 --old-header "$tmp/absent.h" "$tmp/v1.so" "$tmp/v1.so" 3 3
 CI=1 bash "$RAIL" --header "$HERE/abi-fixtures/opaque.h" "$tmp/v1.so" "$tmp/v1.so" 3 3 >"$tmp/out" 2>&1; got=$?
