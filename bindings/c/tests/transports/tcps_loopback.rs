@@ -38,14 +38,14 @@ impl Drop for Handles {
         if !rx.is_null() {
             unsafe { tst_tcp_receiver_cancel(rx) };
         }
+        if !self.sender.is_null() {
+            unsafe { tst_tcp_sender_close(self.sender) };
+        }
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
         if !rx.is_null() {
             unsafe { tst_tcp_receiver_close(rx) };
-        }
-        if !self.sender.is_null() {
-            unsafe { tst_tcp_sender_close(self.sender) };
         }
         unsafe { tst_tcp_listener_free(self.listener) };
     }
