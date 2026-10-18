@@ -160,6 +160,8 @@ pub struct Results {
 pub struct InventorySummary {
     pub shape: String,
     pub declared_cells: usize,
+    /// The `[census] full_cells` the expectations file declared.
+    pub expected_full_cells: usize,
     pub allowed_skips: Vec<String>,
 }
 
@@ -170,8 +172,8 @@ pub struct InventorySummary {
 mod csv;
 mod matrix;
 pub use matrix::{
-    ExpectVerdict, Expectation, FULL_SHAPE_CELL_COUNT, Inventory, InventoryCell, SHAPE_FULL,
-    SHAPE_SUBSET, append_github_summary, build_results, check_inventory, merge, parse_expectations,
+    ExpectVerdict, Expectation, Inventory, InventoryCell, SHAPE_FULL, SHAPE_SUBSET,
+    append_github_summary, build_results, check_inventory, merge, parse_census, parse_expectations,
     parse_inventory, render, render_markdown,
 };
 

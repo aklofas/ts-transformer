@@ -180,7 +180,7 @@ Before running any cell, `run-matrix.sh` makes a declare pass — every cell
 shape is invoked once per `--profiles` entry with `DECLARE_ONLY=1`, which
 records the id it would run and returns immediately without touching the
 network — and writes the resulting exact `{id, profile}` multiset to
-`inventory.json` in `--outdir`. That file's `shape` field is `full-159`
+`inventory.json` in `--outdir`. That file's `shape` field is `full`
 iff `--cells` is the default `*` and `--profiles` is the default full
 12-profile list; any narrowing of either flag makes it `subset`.
 `inventory.json` also carries `cells_glob`, `profiles`, `allowed_skips`,
@@ -191,7 +191,10 @@ duplicate, or extra cells, and any `SKIPPED_TOOL_MISSING` cell whose id
 isn't in `allowed_skips`, are all hard merge errors (exit 2, no
 `results.json` written), not silent absorption into a smaller census.
 The merged `results.json` records the inventory it was checked against
-under `.inventory` (`shape`, `declared_cells`, `allowed_skips`), and
+under `.inventory` (`shape` as `full-<n>` or `subset`, `declared_cells`,
+`expected_full_cells`, `allowed_skips`). The full cell count `<n>` is
+declared once, as `[census] full_cells` in `expectations.toml`, and a full
+inventory of any other size fails the merge, and
 `results.md` gets a matching `Inventory:` line. `--allowed-skips LIST`
 is a local escape hatch for a box missing a peer tool (a comma-separated
 list of exact cell ids or `prefix/*` globs); `interop.yml` never passes
