@@ -348,7 +348,7 @@ jobs:
     name: ci result on this commit
     needs: resolve
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 120
     permissions:
       contents: read
       actions: read
@@ -364,7 +364,6 @@ jobs:
           SHA: ${{ needs.resolve.outputs.ref }}
         run: |
           mkdir -p "$RUNNER_TEMP/ci-record"
-          first=true
           while :; do
             gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=50" > "$RUNNER_TEMP/ci-runs.json"
             jq '[.workflow_runs[] | {status, conclusion, url:.html_url, created_at}] | sort_by(.created_at) | last // null
