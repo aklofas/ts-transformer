@@ -10,7 +10,7 @@ use crate::rawts::{Reader, classify_packet};
 
 use super::coord::{Coord, Injection, LogHeader, LogLine, TAP_VERSION};
 
-pub(super) const PKT: usize = 188;
+const PKT: usize = 188;
 
 /// Mixed into the run seed so the tap's PRNG stream is independent of every
 /// other seeded component that shares the same run seed (the impairment
@@ -895,7 +895,7 @@ impl<T: Transport> Corrupter<T> {
 }
 
 /// PUSI set and the payload starting with a PES start code (§2.4.3.7).
-pub(super) fn pes_start(p: &[u8; PKT], info: &crate::rawts::PacketInfo) -> bool {
+fn pes_start(p: &[u8; PKT], info: &crate::rawts::PacketInfo) -> bool {
     info.pusi && info.has_payload && p[info.payload_off..].starts_with(&[0, 0, 1])
 }
 
@@ -946,7 +946,7 @@ pub(super) fn pes_start(p: &[u8; PKT], info: &crate::rawts::PacketInfo) -> bool 
 /// from the PAT), so the caller supplies it. `None` means "nothing here is
 /// required to be noticed", which is the honest answer for nearly every
 /// packet in a transport stream.
-pub(super) fn sensitive_span(
+fn sensitive_span(
     p: &[u8; PKT],
     info: &crate::rawts::PacketInfo,
     psi: bool,
@@ -981,7 +981,7 @@ pub(super) fn sensitive_span(
 /// [`sensitive_span`], which answers "would a flip here be noticed" and
 /// therefore spans the body AND the CRC: this one answers "may a flip
 /// land here at all".
-pub(super) fn psi_section_body_start(
+fn psi_section_body_start(
     p: &[u8; PKT],
     info: &crate::rawts::PacketInfo,
     psi: bool,
@@ -1056,5 +1056,834 @@ impl<T: Transport> Transport for Corrupter<T> {
 
     fn socket_stats(&self) -> Option<SocketStats> {
         self.inner.socket_stats()
+    }
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::*;
+    use crate::corrupt::testing;
+    use crate::corrupt::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tst_core::transport::{Transport, TransportError};
+
+    /// In-memory transport that records every `send_bytes` payload
+    /// separately — the per-push view the splitting test needs.
+    pub(in crate::corrupt) struct Capture(Arc<Mutex<Vec<Vec<u8>>>>);
+    impl Transport for Capture {
+        fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
+            self.0.lock().unwrap().push(msg.to_vec());
+            Ok(())
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn is_alive(&self) -> bool {
+            true
+        }
+        fn close(&mut self) {}
+    }
+
+    pub(in crate::corrupt) fn baseline_bytes(seconds: f64, tag: &str) -> Vec<u8> {
+        let p = crate::profiles::by_name("baseline").unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-corrupt-{tag}-{}.ts",
+            std::process::id()
+        ));
+        crate::r#gen::run(
+            p,
+            seconds,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
+        let b = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        b
+    }
+
+    /// Push `bytes` through a `Corrupter` in 1316-byte pushes; return (wire bytes, log text, stats).
+    pub(in crate::corrupt) fn run_tap(
+        bytes: &[u8],
+        cfg: CorruptConfig,
+    ) -> (Vec<u8>, String, CorruptionStats) {
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let mut tap = Corrupter::new(
+            Capture(Arc::clone(&sink)),
+            cfg,
+            Box::new(testing::VecWriter(Arc::clone(&log))),
+        )
+        .unwrap();
+        for chunk in bytes.chunks(1316) {
+            tap.send_bytes(chunk).unwrap();
+        }
+        let stats = tap.stats();
+        drop(tap);
+        let wire: Vec<u8> = sink.lock().unwrap().iter().flatten().copied().collect();
+        let text = String::from_utf8(log.lock().unwrap().clone()).unwrap();
+        (wire, text, stats)
+    }
+
+    pub(in crate::corrupt) fn cfg(classes: &[Class], rate: u32, min_gap: u64) -> CorruptConfig {
+        CorruptConfig {
+            rate_per_10k: rate,
+            min_gap,
+            classes: classes.to_vec(),
+            seed: 7,
+            geometry_scale: 1,
+        }
+    }
+
+    /// A log writer that refuses exactly one whole line: the `nth`
+    /// JSON write (1 = the header, 2 = the first injection). `write_line`
+    /// writes the JSON then the newline, so failing the JSON write drops
+    /// the whole line cleanly — no torn line, no trace in the file.
+    struct FailOneLine {
+        inner: testing::VecWriter,
+        nth: usize,
+        lines: usize,
+    }
+    impl Write for FailOneLine {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            if b != b"\n" {
+                self.lines += 1;
+                if self.lines == self.nth {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "disk full",
+                    ));
+                }
+            }
+            self.inner.write(b)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
+    /// A log writer whose WRITES always succeed and whose `flush` fails
+    /// only after `arm`ing — the close-time shape. `write_line` flushes
+    /// per line, so leaving it disarmed until the run is over is what
+    /// isolates `Corrupter::close`'s own flush.
+    struct FailFlushOnClose {
+        inner: testing::VecWriter,
+        armed: Arc<Mutex<bool>>,
+    }
+    impl Write for FailFlushOnClose {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.inner.write(b)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            if *self.armed.lock().unwrap() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "disk full",
+                ));
+            }
+            self.inner.flush()
+        }
+    }
+
+    /// Close-time half: a buffering writer can hold a whole
+    /// line until the final flush, so `Corrupter::close` discarding that
+    /// flush error loses evidence exactly like the per-line write arm
+    /// would. It must latch the same flag — and `report soak` must fail
+    /// `corruption_coverage` on it even though every line the receiver
+    /// DID read parses and resolves.
+    #[test]
+    fn a_close_time_flush_failure_is_latched_and_fails_coverage() {
+        let b = baseline_bytes(6.0, "close-flush");
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let armed = Arc::new(Mutex::new(false));
+        let mut tap = Corrupter::new(
+            Capture(Arc::clone(&sink)),
+            cfg(&[Class::Dup], 10_000, 1000),
+            Box::new(FailFlushOnClose {
+                inner: testing::VecWriter(Arc::clone(&log)),
+                armed: Arc::clone(&armed),
+            }),
+        )
+        .unwrap();
+        for chunk in b.chunks(1316) {
+            tap.send_bytes(chunk).unwrap();
+        }
+        // Every per-line flush succeeded, so nothing is latched yet.
+        assert!(
+            !tap.stats().log_write_failed,
+            "the run itself wrote cleanly: {:?}",
+            tap.stats()
+        );
+        let injections = tap.stats().injections;
+        assert!(injections >= 1, "6 s of baseline injects at least once");
+
+        *armed.lock().unwrap() = true;
+        tap.close();
+
+        let stats = tap.stats();
+        assert!(
+            stats.log_write_failed,
+            "the tap must record that the final flush failed: {stats:?}"
+        );
+        // …and the log on disk still looks complete, which is exactly why
+        // the latch has to carry the failure rather than the receiver
+        // tripping over a gap.
+        let text = String::from_utf8(log.lock().unwrap().clone()).unwrap();
+        let (_, logged) = parse_log(&text).expect("the written lines still parse");
+        assert_eq!(logged.len() as u64, injections);
+    }
+
+    /// A lost injection line is not necessarily an
+    /// unexplained event later — a `Dup` obliges the receiver to notice
+    /// nothing — so the tap must latch the failure into its own stats
+    /// rather than rely on the receiver to trip over the gap.
+    #[test]
+    fn corruption_log_write_failure_is_latched_in_the_stats() {
+        let b = baseline_bytes(6.0, "log-fail");
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let mut tap = Corrupter::new(
+            Capture(Arc::clone(&sink)),
+            cfg(&[Class::Dup], 10_000, 1000),
+            Box::new(FailOneLine {
+                inner: testing::VecWriter(Arc::clone(&log)),
+                nth: 2,
+                lines: 0,
+            }),
+        )
+        .unwrap();
+        for chunk in b.chunks(1316) {
+            tap.send_bytes(chunk).unwrap();
+        }
+        let stats = tap.stats();
+        // `garbage_inserts_1_to_300_non_sync_bytes…` proves 6 s of compact
+        // baseline yields at least one injection at this rate/min_gap;
+        // the failing line is the FIRST injection's (JSON write #2), so
+        // one injection is all the latch needs.
+        assert!(
+            stats.injections >= 1,
+            "6 s of baseline at min_gap 1000 injects at least once"
+        );
+        let text = String::from_utf8(log.lock().unwrap().clone()).unwrap();
+        let (_, logged) = parse_log(&text).expect("the surviving lines still parse");
+        assert_eq!(
+            logged.len() as u64,
+            stats.injections - 1,
+            "exactly one line is missing"
+        );
+        assert!(
+            stats.log_write_failed,
+            "the tap must record that a line was lost: {stats:?}"
+        );
+    }
+
+    /// On a PAT/PMT packet the `Header` class must use ONLY the sync-byte
+    /// sub-kind, because the other three are invisible to a receiver
+    /// there (see the `Class::Header` arm's own comment) and an
+    /// invisible-but-`detectable` injection makes the report fail a
+    /// conformant library.
+    ///
+    /// Driven over a stream of nothing but PAT packets rather than a
+    /// normal capture: PSI is ~1% of a real multiplex, so with `min_gap`
+    /// at its 1000-packet floor a normal stream would have to run for
+    /// minutes before an injection happened to land on one, and the test
+    /// would pass vacuously long before that.
+    #[test]
+    fn header_class_on_a_psi_packet_only_ever_kills_the_sync_byte() {
+        let b = baseline_bytes(2.0, "psihdr");
+        let pat: [u8; PKT] = b[..PKT].try_into().unwrap();
+        assert_eq!(
+            crate::rawts::classify_packet(&pat).unwrap().pid,
+            0,
+            "the generator emits the PAT first"
+        );
+        let mut stream = Vec::with_capacity(PKT * 5000);
+        for _ in 0..5000 {
+            stream.extend_from_slice(&pat);
+        }
+
+        let (_, text, _) = run_tap(&stream, cfg(&[Class::Header], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        assert!(inj.len() >= 4, "{} injection(s)", inj.len());
+        for i in &inj {
+            assert_eq!(i.pid, 0);
+            assert_eq!(
+                i.offsets,
+                vec![0],
+                "sub-kind {:?} on a PSI packet",
+                i.offsets
+            );
+            assert_ne!(i.after[0], 0x47, "the sync byte must actually be gone");
+        }
+    }
+
+    /// The flip side: on MEDIA PIDs all four sub-kinds stay in play, so
+    /// the PSI rule above cannot have quietly collapsed the class into
+    /// "always kill the sync byte" everywhere.
+    #[test]
+    fn header_class_on_media_packets_still_uses_every_sub_kind() {
+        let b = baseline_bytes(600.0, "mediahdr");
+        let (_, text, _) = run_tap(&b, cfg(&[Class::Header], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        let media: Vec<&Injection> = inj
+            .iter()
+            .filter(|i| !matches!(i.pid, 0 | 0x1000))
+            .collect();
+        assert!(media.len() >= 8, "{} media injection(s)", media.len());
+        let shapes: std::collections::BTreeSet<Vec<usize>> =
+            media.iter().map(|i| i.offsets.clone()).collect();
+        assert!(
+            shapes.len() >= 2,
+            "every media injection took the same sub-kind: {shapes:?}"
+        );
+    }
+
+    #[test]
+    fn parse_corrupt_accepts_the_documented_grammar_and_rejects_bad_gaps() {
+        let c = parse_corrupt("rate=5,min_gap=1000", 3, 1).unwrap();
+        assert_eq!(
+            c,
+            CorruptConfig {
+                rate_per_10k: 5,
+                min_gap: 1000,
+                classes: Class::ALL.to_vec(),
+                seed: 3,
+                geometry_scale: 1,
+            }
+        );
+        let c = parse_corrupt("rate=50,min_gap=1200,classes=header+psi_flip", 3, 1).unwrap();
+        assert_eq!(c.classes, vec![Class::Header, Class::PsiFlip]);
+        assert!(
+            parse_corrupt("rate=5,min_gap=999", 3, 1).is_err(),
+            "min_gap < 2*window"
+        );
+        assert!(parse_corrupt("rate=5,min_gap=1000,classes=bogus", 3, 1).is_err());
+        assert!(
+            parse_corrupt("rate=0,min_gap=1000", 3, 1).is_err(),
+            "rate 0 is 'disabled', reject"
+        );
+        assert!(
+            parse_corrupt("min_gap=1000", 3, 1).is_err(),
+            "rate required"
+        );
+        assert!(
+            parse_corrupt("rate=5,min_gap=1000,bogus=1", 3, 1).is_err(),
+            "unknown keys fail closed"
+        );
+    }
+
+    /// The packet geometry follows `--au-scale`: the phenomena it bounds
+    /// (next PES boundary, next PCR, next packet on a PID) are fixed in
+    /// time, so at scale F they are F× further apart in packets. An
+    /// omitted `min_gap` scales with it; an explicit one is held to the
+    /// scaled floor, so the soak's literal `min_gap=1000` cannot be
+    /// carried unchanged into a scaled run and silently make its
+    /// attribution ambiguous.
+    #[test]
+    fn parse_corrupt_scales_the_packet_geometry_with_the_au_scale() {
+        let c = parse_corrupt("rate=5", 3, 4).unwrap();
+        assert_eq!(c.geometry_scale, 4);
+        assert_eq!(c.min_gap, 4000, "default min_gap scales");
+        assert_eq!(c.attribution_window(), 2000);
+        assert_eq!(c.recovery_bound(), 2400);
+        assert_eq!(c.approx_slack(), 512);
+        assert_eq!(parse_corrupt("rate=5", 3, 1).unwrap().min_gap, 1000);
+        let e = parse_corrupt("rate=5,min_gap=1000", 3, 4).unwrap_err();
+        assert!(
+            e.contains("4000") && e.contains("2400") && e.contains("--au-scale 4"),
+            "the floor must name the scaled numbers: {e}"
+        );
+        assert!(parse_corrupt("rate=5,min_gap=4000", 3, 4).is_ok());
+        assert!(
+            parse_corrupt("rate=5", 3, 0).is_err(),
+            "scale 0 is not a geometry"
+        );
+    }
+
+    /// What the tap writes is what the receiver judges with: the header
+    /// carries the SCALED geometry, not the scale-1 constants.
+    #[test]
+    fn the_log_header_carries_the_scaled_geometry() {
+        let b = baseline_bytes(10.0, "geometry");
+        let mut c = cfg(&Class::ALL, 10_000, 4000);
+        c.geometry_scale = 4;
+        let (_, text, _) = run_tap(&b, c);
+        let first = text.lines().next().unwrap();
+        let LogLine::Header(h) = serde_json::from_str::<LogLine>(first).unwrap() else {
+            panic!("first line is not a header: {first}");
+        };
+        assert_eq!(
+            (
+                h.min_gap,
+                h.attribution_window,
+                h.recovery_bound,
+                h.approx_slack
+            ),
+            (4000, 2000, 2400, 512)
+        );
+        // Scale 1 is byte-for-byte the geometry every archived log used.
+        let (_, text, _) = run_tap(&b, cfg(&Class::ALL, 10_000, 1000));
+        let LogLine::Header(h) =
+            serde_json::from_str::<LogLine>(text.lines().next().unwrap()).unwrap()
+        else {
+            panic!("no header");
+        };
+        assert_eq!(
+            (
+                h.min_gap,
+                h.attribution_window,
+                h.recovery_bound,
+                h.approx_slack
+            ),
+            (1000, 500, 600, 128)
+        );
+    }
+
+    #[test]
+    fn same_seed_same_input_gives_byte_identical_wire_and_log() {
+        let b = baseline_bytes(6.0, "det");
+        let (w1, l1, _) = run_tap(&b, cfg(&Class::ALL, 200, 1000));
+        let (w2, l2, _) = run_tap(&b, cfg(&Class::ALL, 200, 1000));
+        assert_eq!(w1, w2);
+        assert_eq!(l1, l2);
+        let (w3, _, _) = run_tap(
+            &b,
+            CorruptConfig {
+                seed: 8,
+                ..cfg(&Class::ALL, 200, 1000)
+            },
+        );
+        assert_ne!(w1, w3);
+    }
+
+    #[test]
+    fn log_header_then_one_line_per_injection_and_min_gap_is_honored() {
+        // 60 s of baseline is 3600 packets (the profile muxes 60 packets
+        // per second — see `rawts`'s own 180-packets-in-3 s assertion), so
+        // a 5% rate with a 1000-packet floor lands ~3 injections.
+        let b = baseline_bytes(60.0, "gap");
+        let (_, text, stats) = run_tap(&b, cfg(&Class::ALL, 500, 1000));
+        let (hdr, inj) = parse_log(&text).unwrap();
+        assert_eq!(hdr.min_gap, 1000);
+        assert_eq!(inj.len() as u64, stats.injections);
+        assert!(
+            stats.injections >= 2,
+            "3600 packets at 5% -> expect >= 2 with gap 1000: {stats:?}"
+        );
+        for w in inj.windows(2) {
+            assert!(w[1].ordinal - w[0].ordinal >= 1000, "{:?}", w);
+        }
+    }
+
+    /// Each class, forced (rate 10_000 = every eligible packet, min_gap
+    /// 1000 so exactly one injection lands in the first ~1000 packets),
+    /// produces the documented wire mutation.
+    #[test]
+    fn body_flip_changes_only_bytes_past_the_header() {
+        let b = baseline_bytes(6.0, "bf");
+        let (w, text, _) = run_tap(&b, cfg(&[Class::BodyFlip], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        let i = &inj[0];
+        assert_eq!(i.class, Class::BodyFlip);
+        assert!(i.offsets.iter().all(|&o| (4..188).contains(&o)));
+        let orig = &b[i.ordinal as usize * 188..][..188];
+        let got = &w[i.ordinal as usize * 188..][..188];
+        assert_eq!(&orig[..4], &got[..4]);
+        assert_ne!(orig, got);
+        assert_eq!(w.len(), b.len());
+    }
+
+    /// A body flip must never land inside a PES header.
+    ///
+    /// The bytes there are undetectable by contract (tst-core's PES
+    /// parser accepts `stream_id`, `PES_packet_length`,
+    /// `header_data_length` and 33 of the 40 PTS bits as-is) but they are
+    /// read STRUCTURALLY by the wire oracles, so a flip that silently
+    /// rewrites a PTS or a stream_id fails the capture for damage the tap
+    /// itself declared nobody has to notice. Measured before this rule:
+    /// `pts_wrap_unexpected` on 5 seeds and `av1_carriage_wire` on 3,
+    /// across a 6-profile × 7-class × 40-seed sweep.
+    ///
+    /// Swept over 64 seeds rather than one because the offset is a PRNG
+    /// draw; the assertion that PES-start injections actually occurred is
+    /// what stops the sweep passing vacuously.
+    #[test]
+    fn a_body_flip_never_lands_in_a_pes_header() {
+        let b = baseline_bytes(300.0, "bfpes");
+        let mut pes_starts = 0;
+        for seed in 1..=64u64 {
+            let (_, text, _) = run_tap(
+                &b,
+                CorruptConfig {
+                    seed,
+                    ..cfg(&[Class::BodyFlip], 10_000, 1000)
+                },
+            );
+            let (_, inj) = parse_log(&text).unwrap();
+            for i in inj.iter().filter(|i| i.pes_start) {
+                pes_starts += 1;
+                let pkt: [u8; PKT] = i.before[..].try_into().expect("a whole packet is logged");
+                let info = crate::rawts::classify_packet(&pkt).unwrap();
+                // §2.4.3.7: the ES payload begins after the 9 fixed PES
+                // header bytes plus `header_data_length` optional ones.
+                let es = info.payload_off + 9 + usize::from(pkt[info.payload_off + 8]);
+                for &o in &i.offsets {
+                    assert!(
+                        o >= es,
+                        "seed {seed}: offset {o} is inside the PES header \
+                         (payload_off {}, ES payload starts at {es})",
+                        info.payload_off
+                    );
+                }
+            }
+        }
+        assert!(
+            pes_starts >= 8,
+            "only {pes_starts} PES-start injection(s) across 64 seeds — the rule above \
+             is barely exercised"
+        );
+    }
+
+    /// A body flip is only claimed detectable when it lands under a
+    /// section CRC. This pins the one span that decides that.
+    #[test]
+    fn sensitive_span_covers_the_psi_section_and_nothing_else() {
+        let b = baseline_bytes(2.0, "span");
+        let pkt_at = |n: usize| -> [u8; 188] { b[n * 188..][..188].try_into().unwrap() };
+
+        // The PAT: section body through the end of the CRC. Everything
+        // after it is 0xFF stuffing, where a flip is invisible — and
+        // everything BEFORE it (pointer field, table_id, section_length)
+        // is read to find the section, so a flip there makes the receiver
+        // discard it before the CRC is ever checked. See
+        // `sensitive_span`'s own doc comment for the measured evidence.
+        let pat = pkt_at(0);
+        let info = crate::rawts::classify_packet(&pat).unwrap();
+        assert_eq!(info.pid, 0, "first packet of a fresh mux is the PAT");
+        let (lo, hi) = sensitive_span(&pat, &info, true).unwrap();
+        // pointer field at payload_off (0 here), then the 3-byte section
+        // header, then the body.
+        assert_eq!(
+            lo,
+            info.payload_off + 1 + usize::from(pat[info.payload_off]) + 3
+        );
+        assert!(hi < 188, "a PAT section is far shorter than its payload");
+        assert!(
+            pat[hi..].iter().all(|&x| x == 0xFF),
+            "stuffing past the CRC"
+        );
+        // The three header bytes and the pointer field sit OUTSIDE the
+        // span: a flip there is not required to be noticed.
+        assert!(
+            (info.payload_off..lo).len() == 4,
+            "pointer field + 3-byte section header are excluded"
+        );
+
+        // No video packet has a required-to-notice span, PES start or
+        // not: tst-core's PES parser tolerates most of the header, and
+        // nothing at all checks the access-unit bytes after it.
+        let (mut starts, mut video) = (0, 0);
+        for n in 0..b.len() / 188 {
+            let pkt = pkt_at(n);
+            let info = crate::rawts::classify_packet(&pkt).unwrap();
+            if info.pid != 0x1011 {
+                continue;
+            }
+            video += 1;
+            starts += usize::from(pes_start(&pkt, &info));
+            assert_eq!(sensitive_span(&pkt, &info, false), None, "packet {n}");
+        }
+        assert!(
+            starts > 0,
+            "{starts} PES starts among {video} video packets"
+        );
+
+        // A PSI packet still needs PUSI: a section continuation carries no
+        // section header to locate.
+        let mut pat = pkt_at(0);
+        pat[1] &= !0x40;
+        let info = crate::rawts::classify_packet(&pat).unwrap();
+        assert_eq!(sensitive_span(&pat, &info, true), None);
+    }
+
+    #[test]
+    fn header_class_is_always_detectable_and_keeps_packet_length() {
+        let b = baseline_bytes(6.0, "hdr");
+        let (w, text, _) = run_tap(&b, cfg(&[Class::Header], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        assert!(inj[0].detectable);
+        assert!(inj[0].offsets.iter().all(|&o| o <= 4));
+        assert_eq!(w.len(), b.len());
+    }
+
+    #[test]
+    fn truncate_shortens_the_wire_by_the_cut() {
+        let b = baseline_bytes(6.0, "tr");
+        let (w, text, _) = run_tap(&b, cfg(&[Class::Truncate], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        let cut = 188 - inj[0].after.len();
+        assert!((1..=148).contains(&cut), "emit 40..=187 bytes");
+        assert_eq!(
+            w.len(),
+            b.len() - inj.iter().map(|i| 188 - i.after.len()).sum::<usize>()
+        );
+    }
+
+    #[test]
+    fn garbage_inserts_1_to_300_non_sync_bytes_and_splits_oversize_pushes() {
+        let b = baseline_bytes(6.0, "gb");
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let mut tap = Corrupter::new(
+            Capture(Arc::clone(&sink)),
+            cfg(&[Class::Garbage], 10_000, 1000),
+            Box::new(std::io::sink()),
+        )
+        .unwrap();
+        for chunk in b.chunks(1316) {
+            tap.send_bytes(chunk).unwrap();
+        }
+        let stats = tap.stats();
+        let pushes = sink.lock().unwrap().clone();
+        assert!(
+            pushes.iter().all(|p| p.len() <= 1316),
+            "every push <= max_payload"
+        );
+        assert!(stats.bytes_out > stats.bytes_in);
+        assert!(stats.bytes_out - stats.bytes_in <= 300 * stats.injections);
+        let wire: Vec<u8> = pushes.iter().flatten().copied().collect();
+        // No inserted byte is 0x47 (garbage never fakes a sync).
+        let mut r = crate::rawts::Reader::new();
+        r.set_resync_mode(true);
+        r.feed(&wire).unwrap();
+        assert_eq!(r.resync_count(), stats.injections);
+    }
+
+    #[test]
+    fn drop_removes_and_dup_repeats_a_packet() {
+        let b = baseline_bytes(6.0, "dd");
+        let (w, text, _) = run_tap(&b, cfg(&[Class::Drop], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        assert_eq!(w.len(), b.len() - 188 * inj.len());
+        // The forced first injection lands on packet 0, which is the PAT —
+        // where a drop is invisible. Detectability is
+        // `drop_is_detectable_only_on_a_payload_carrying_media_packet`'s
+        // subject; this test is about the wire arithmetic.
+        assert_eq!(inj[0].pid, 0);
+        assert!(!inj[0].detectable);
+        let (w, text, _) = run_tap(&b, cfg(&[Class::Dup], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        assert_eq!(w.len(), b.len() + 188 * inj.len());
+        assert!(!inj[0].detectable);
+        let o = inj[0].ordinal as usize;
+        assert_eq!(&w[o * 188..(o + 1) * 188], &w[(o + 1) * 188..(o + 2) * 188]);
+    }
+
+    /// A dropped packet is only ever noticed as a continuity jump, so it
+    /// is only `detectable` where a continuity jump can exist: on a media
+    /// PID, on a packet that carries payload. Claiming otherwise fails a
+    /// conformant receiver for staying silent about a lost PAT repetition
+    /// or a lost PCR-only catch-up packet, neither of which a receiver is
+    /// required — or in tst-core's case even able — to report.
+    ///
+    /// Driven over the `audio` profile because its third stream is what
+    /// makes the muxer emit adaptation-field-only catch-up packets on a
+    /// media PID (`mux/scheduling.rs`'s `pcr_only_due`); the assertion
+    /// below that all three shapes occurred is what keeps this from
+    /// passing vacuously.
+    #[test]
+    fn drop_is_detectable_only_on_a_payload_carrying_media_packet() {
+        let p = crate::profiles::by_name("audio").unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-corrupt-dropdet-{}.ts",
+            std::process::id()
+        ));
+        crate::r#gen::run(
+            p,
+            300.0,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
+        let b = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let (_, text, _) = run_tap(&b, cfg(&[Class::Drop], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        let (mut psi, mut af_only, mut with_payload) = (0, 0, 0);
+        for i in &inj {
+            let pkt: [u8; PKT] = i.before[..].try_into().expect("a whole packet is logged");
+            let info = crate::rawts::classify_packet(&pkt).unwrap();
+            let is_psi = matches!(i.pid, 0 | 0x1000);
+            assert_eq!(
+                i.detectable,
+                !is_psi && info.has_payload,
+                "pid {:#06x} has_payload {} -> detectable {}",
+                i.pid,
+                info.has_payload,
+                i.detectable
+            );
+            match (is_psi, info.has_payload) {
+                (true, _) => psi += 1,
+                (false, false) => af_only += 1,
+                (false, true) => with_payload += 1,
+            }
+        }
+        assert!(
+            psi > 0 && af_only > 0 && with_payload > 0,
+            "all three shapes must occur or the assertion above is vacuous: \
+             psi {psi}, af-only {af_only}, with-payload {with_payload}"
+        );
+    }
+
+    #[test]
+    fn psi_flip_defers_until_a_pat_or_pmt_packet_and_never_touches_the_crc() {
+        let b = baseline_bytes(6.0, "psi");
+        let (w, text, _) = run_tap(&b, cfg(&[Class::PsiFlip], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        assert!(!inj.is_empty());
+        for i in &inj {
+            assert!(i.psi && i.detectable && matches!(i.pid, 0 | 0x1000));
+            let pkt = &w[i.ordinal as usize * 188..][..188];
+            let info = crate::rawts::classify_packet(pkt.try_into().unwrap()).unwrap();
+            // Section body = after pointer field + 3-byte header, excluding the 4 CRC bytes.
+            let sec = info.payload_off + 1 + usize::from(pkt[info.payload_off]);
+            let len = (usize::from(pkt[sec + 1] & 0x0F) << 8) | usize::from(pkt[sec + 2]);
+            let body = sec + 3..sec + 3 + len - 4;
+            assert!(i.offsets.iter().all(|o| body.contains(o)), "{i:?}");
+        }
+    }
+
+    #[test]
+    fn psi_flip_drawn_on_a_media_packet_defers_to_the_next_psi_packet() {
+        let b = baseline_bytes(60.0, "defer");
+        let pid_at = |n: usize| -> u16 {
+            crate::rawts::classify_packet(b[n * 188..][..188].try_into().unwrap())
+                .unwrap()
+                .pid
+        };
+        let is_psi = |n: usize| matches!(pid_at(n), 0 | 0x1000);
+
+        let (_, text, _) = run_tap(&b, cfg(&[Class::PsiFlip], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        assert!(inj.len() >= 2, "{} injection(s)", inj.len());
+        // Whatever packet the draw fired on, every injection landed on a
+        // PAT or PMT packet.
+        for i in &inj {
+            assert!(i.psi && matches!(i.pid, 0 | 0x1000), "{i:?}");
+            assert!(is_psi(i.ordinal as usize), "ordinal {}", i.ordinal);
+        }
+        // The first draw fires at ordinal 0, which IS the PAT.
+        assert_eq!(inj[0].ordinal, 0);
+        // The second can only fire at ordinal >= min_gap, and that packet
+        // is media — so the class was held and landed on the next PAT/PMT
+        // instead of being re-drawn away.
+        assert!(!is_psi(1000), "vacuous unless packet 1000 carries media");
+        let next_psi = (1000..b.len() / 188)
+            .find(|&n| is_psi(n))
+            .expect("a PSI packet follows packet 1000");
+        assert!(next_psi > 1000);
+        assert_eq!(inj[1].ordinal as usize, next_psi);
+    }
+
+    /// The exact PMT packet that failed `corruption_detected` on the
+    /// 1-hour re-smoke of main `6f0fbeb7` — injection ordinal 2938545,
+    /// reconstructed byte for byte from that run's `corruption.jsonl`.
+    ///
+    /// 37 meaningful bytes then 151 of 0xFF stuffing: a 4-byte TS header,
+    /// a zero pointer field, and a 29-byte PMT section (`table_id` 0x02
+    /// at offset 5) carrying the video and KLV elementary streams.
+    fn resmoke_pmt_packet() -> [u8; PKT] {
+        let mut p = [0xffu8; PKT];
+        p[..37].copy_from_slice(&[
+            0x47, 0x50, 0x00, 0x14, 0x00, 0x02, 0xb0, 0x1d, 0x00, 0x01, 0xc1, 0x00, 0x00, 0xf0,
+            0x11, 0xf0, 0x00, 0x1b, 0xf0, 0x11, 0xf0, 0x00, 0x06, 0xf0, 0x31, 0xf0, 0x06, 0x05,
+            0x04, 0x4b, 0x4c, 0x56, 0x41, 0x44, 0x55, 0x53, 0x36,
+        ]);
+        p
+    }
+
+    /// A `body_flip` on a PSI packet must never touch the bytes a decoder
+    /// reads to FIND the section — the pointer field, the `table_id`, or
+    /// either `section_length` byte.
+    ///
+    /// The re-smoke's failing injection flipped offset 5, which is the
+    /// `table_id`. tst-core's `parse_pmt` rejects that before it ever
+    /// reaches the CRC, and `psi_topology.rs` drops such a rejection
+    /// silently (only `CrcMismatch` and `MultiSectionUnsupported` become
+    /// `NonConformant` events) — so the same injection's flip at offset
+    /// 14, inside the CRC'd span and therefore `detectable`, could never
+    /// be observed. The tap was over-claiming.
+    #[test]
+    fn a_psi_body_flip_never_lands_on_the_section_header() {
+        let pkt = resmoke_pmt_packet();
+        let info = crate::rawts::classify_packet(&pkt).expect("the reconstructed packet parses");
+        assert!(info.pusi, "it carries a section start");
+        let sec = info.payload_off + 1 + usize::from(pkt[info.payload_off]);
+        assert_eq!(sec, 5, "pointer field 0, so the section starts at 5");
+        assert_eq!(pkt[sec], 0x02, "and byte 5 really is the PMT table_id");
+
+        let body = psi_section_body_start(&pkt, &info, true).expect("a PSI section body");
+        assert_eq!(body, sec + 3, "one past table_id + section_length");
+
+        // And the same rule through the real tap, over 64 seeds of
+        // generated traffic, so the PSI PIDs are learned from the PAT the
+        // way a live run learns them.
+        let b = baseline_bytes(300.0, "bfpsi");
+        let mut psi_flips = 0;
+        for seed in 1..=64u64 {
+            let (_, text, _) = run_tap(
+                &b,
+                CorruptConfig {
+                    seed,
+                    ..cfg(&[Class::BodyFlip], 10_000, 1000)
+                },
+            );
+            let (_, inj) = parse_log(&text).unwrap();
+            for i in inj.iter().filter(|i| i.psi) {
+                psi_flips += 1;
+                let pkt: [u8; PKT] = i.before[..].try_into().expect("a whole packet is logged");
+                let info = crate::rawts::classify_packet(&pkt).unwrap();
+                let Some(body) = psi_section_body_start(&pkt, &info, true) else {
+                    continue; // a section continuation, not a start
+                };
+                for &o in &i.offsets {
+                    assert!(
+                        o >= body,
+                        "seed {seed}: offset {o} is in the section header \
+                         (section at {}, body at {body})",
+                        info.payload_off + 1 + usize::from(pkt[info.payload_off])
+                    );
+                }
+            }
+        }
+        assert!(
+            psi_flips >= 8,
+            "only {psi_flips} PSI body flips across 64 seeds — the sweep is too thin to mean much"
+        );
+    }
+
+    /// The other half: the flip is still DETECTABLE when it lands inside
+    /// the CRC'd span. Narrowing the draw range must not have narrowed
+    /// what the tap claims a receiver has to notice — offset 14, the very
+    /// byte the re-smoke's injection also hit, still counts.
+    #[test]
+    fn a_psi_body_flip_inside_the_crc_span_is_still_detectable() {
+        let pkt = resmoke_pmt_packet();
+        let info = crate::rawts::classify_packet(&pkt).expect("parses");
+        let span = sensitive_span(&pkt, &info, true).expect("a PSI sensitive span");
+        assert!(
+            (span.0..span.1).contains(&14),
+            "offset 14 is inside the CRC'd span {span:?}"
+        );
+        // …and the span still starts at the section body and ends past
+        // the CRC, unchanged by this fix.
+        assert_eq!(span.0, 8, "body start");
+        assert_eq!(span.1, 5 + 3 + 29, "through the end of the CRC");
     }
 }
