@@ -396,6 +396,14 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/doc-tables.sh
 
+      - name: check-qualification (the evidence page's qualification block matches docs/project/qualification.json)
+        # The block is written by scripts/gen/qualification.sh from the committed
+        # qualification.json. While no qualification.json is committed the step
+        # SKIPs cleanly: it checks that the page says none is recorded, prints one
+        # SKIP line and exits 0. It also validates tests/coverage/evidence-archives.toml.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/qualification.sh
+
       - name: check-roster-sync (workflow and rail lists agree with cargo metadata)
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/roster-sync.sh
