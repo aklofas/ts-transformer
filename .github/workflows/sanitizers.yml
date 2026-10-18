@@ -185,7 +185,7 @@ jobs:
         # transport features — the only configuration where the sanitized
         # dual-mbedTLS collapse (srt-sys + rist-sys each linking their own
         # static build of the same vendor/mbedtls sources) is continuously
-        # exercised. The -E filter excludes exactly the three tst-c tests
+        # exercised. The -E filter excludes exactly the four tst-c tests
         # that operate on the PREBUILT cdylib at target/debug/libtstrans.so:
         # nextest never builds a cdylib, `--target` moves the output dir out
         # from under their hardcoded path, and an uninstrumented `cc`-built
@@ -196,7 +196,7 @@ jobs:
           cargo +nightly nextest run --profile sanitizer \
             -p tst-srt -p tst-rist -p tst-c \
             --features tst-c/srt,tst-c/rtp,tst-c/udp,tst-c/tcp,tst-c/hls,tst-c/rist \
-            -E 'not (test(smoke_c_compiles_links_runs) | test(cdylib_exports_only_prefixed_symbols) | test(srt_symbols_not_exported))' \
+            -E 'not (test(smoke_c_compiles_links_runs) | test(cdylib_exports_only_prefixed_symbols) | test(srt_symbols_not_exported) | test(c_program_sees_the_runtime_answers))' \
             --no-fail-fast \
             -Z build-std=std,panic_abort \
             --target x86_64-unknown-linux-gnu
@@ -267,7 +267,7 @@ jobs:
           cargo +nightly nextest run --profile sanitizer \
             -p tst-srt -p tst-rist -p tst-c \
             --features tst-c/srt,tst-c/rtp,tst-c/udp,tst-c/tcp,tst-c/hls,tst-c/rist \
-            -E 'not (test(smoke_c_compiles_links_runs) | test(cdylib_exports_only_prefixed_symbols) | test(srt_symbols_not_exported))' \
+            -E 'not (test(smoke_c_compiles_links_runs) | test(cdylib_exports_only_prefixed_symbols) | test(srt_symbols_not_exported) | test(c_program_sees_the_runtime_answers))' \
             --no-fail-fast \
             -Z build-std=std,panic_abort \
             --target x86_64-unknown-linux-gnu

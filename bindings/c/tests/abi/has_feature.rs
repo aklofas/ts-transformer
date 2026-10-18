@@ -1,5 +1,4 @@
-//! `tst_has_feature`: the Rust-side answers, and the agreement between the
-//! generated header's `TST_HAS_*` defines and the runtime answer.
+//! `tst_has_feature`: the Rust-side answers, and a C program's view of them.
 
 use std::ffi::{CString, c_char};
 
@@ -34,12 +33,14 @@ fn unknown_wrong_case_empty_and_null_answer_zero() {
     );
 }
 
-/// Compiles `tests/has_feature.c` against the header the build generated for
-/// the active features and the cdylib next to it. The cdylib must have been
-/// built with the same features (`cargo build -p tst-c --features …`).
+/// Compiles `tests/has_feature.c` with this binary's own feature set passed as
+/// `-DEXPECT_<NAME>=0|1`, links the cdylib in `target/debug`, and runs it.
+/// The cdylib must have been built with the same features
+/// (`cargo build -p tst-c --features ...`); the header on disk is not consulted
+/// for the expectations, so build order cannot make the check vacuous.
 #[cfg(not(target_os = "windows"))]
 #[test]
-fn header_defines_agree_with_the_runtime_answer() {
+fn c_program_sees_the_runtime_answers() {
     use std::path::PathBuf;
     use std::process::Command;
 
@@ -48,12 +49,34 @@ fn header_defines_agree_with_the_runtime_answer() {
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(manifest_dir).join("../../target"));
     let debug_dir = target_dir.join("debug");
-    let include_dir = debug_dir.join("include");
+    let include_dir = PathBuf::from(manifest_dir).join("include");
     let c_file = PathBuf::from(manifest_dir).join("tests/has_feature.c");
     let bin = std::env::temp_dir().join("tst_has_feature_check");
 
+    let so = format!(
+        "{}tstrans{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    );
+    assert!(
+        debug_dir.join(&so).exists(),
+        "build tst-c first with the same features ({} missing)",
+        debug_dir.join(&so).display()
+    );
+
+    let expect = |name: &str, on: bool| format!("-DEXPECT_{name}={}", on as i32);
     let status = Command::new("cc")
-        .args(["-Wall", "-Wextra", "-Werror", "-I"])
+        .args(["-Wall", "-Wextra", "-Werror"])
+        .args([
+            expect("SRT", cfg!(feature = "srt")),
+            expect("RTP", cfg!(feature = "rtp")),
+            expect("UDP", cfg!(feature = "udp")),
+            expect("TCP", cfg!(feature = "tcp")),
+            expect("HLS", cfg!(feature = "hls")),
+            expect("RIST", cfg!(feature = "rist")),
+            expect("TLS", cfg!(feature = "tls")),
+        ])
+        .arg("-I")
         .arg(&include_dir)
         .arg("-L")
         .arg(&debug_dir)
