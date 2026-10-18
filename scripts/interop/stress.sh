@@ -777,7 +777,7 @@ write_provenance "$REPO_ROOT" "$OUTDIR/provenance.json" "$ARGV_JSON" "$ENV_JSON"
 
 # Fixed per-stream wiring, declared below. The corrupt spec names only the
 # rate: `send` derives min_gap / attribution window / recovery bound from
-# --au-scale (crates/tst-interop/src/corrupt.rs, ATTRIBUTION_WINDOW) and
+# --au-scale (crates/tst-interop/src/corrupt/tap.rs, ATTRIBUTION_WINDOW) and
 # records the resulting geometry in each stream's corruption.jsonl header.
 PROFILE=baseline
 KLV_SET=rich

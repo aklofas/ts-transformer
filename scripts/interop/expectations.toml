@@ -3,7 +3,7 @@
 # Each `[[expect]]` block declares a known outcome for a (cell, profile)
 # pair so `report merge` doesn't fail the whole interop matrix on a
 # documented, already-understood gap. Every FAIL that has no matching
-# block here stays fatal — see crates/tst-interop/src/report.rs's module
+# block here stays fatal — see crates/tst-interop/src/report/mod.rs's module
 # doc for why that's the load-bearing property of this file.
 #
 # Grammar (hand-parsed by `report::parse_expectations` — read that

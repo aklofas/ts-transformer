@@ -213,7 +213,7 @@ jobs:
         # the per-cell identity
         # multiset (missing/duplicate/extra cells, undeclared skips, and
         # stale expectation rows all fail the merge itself, before this
-        # step ever runs — see crates/tst-interop/src/report.rs); this
+        # step ever runs — see crates/tst-interop/src/report/matrix.rs); this
         # step is the second line, re-checking the merged report's own
         # numbers so a `report merge` that somehow wrote a truncated
         # census still can't slip through as green. The expected count

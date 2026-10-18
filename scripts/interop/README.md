@@ -71,7 +71,7 @@ Output layout under `--outdir`:
 DIR/
   meta.json        # host, date, seconds-per-cell, AU size mode, tool versions
   inventory.json    # declared {id, profile} multiset + shape (see "Inventory and shape" below)
-  cells/*.json      # one RawCell JSON per cell (see report.rs's doc comment)
+  cells/*.json      # one RawCell JSON per cell (see report/mod.rs's doc comment)
   logs/*.log        # combined (our side + peer side) log per cell
   work/*             # generated source .ts files, per-cell captures, intermediate metrics
   results.json      # `report merge`'s output (expectations-applied, inventory-checked)
@@ -84,7 +84,7 @@ every `FAIL` matched a row in `expectations.toml`. That file now carries a
 real row for every genuine gap this matrix has surfaced (65 so far,
 see "Known, already-evidenced gaps" below) — running the full matrix exits
 0. Any *new* `FAIL` an expectations row doesn't already cover still exits
-nonzero: see `report.rs`'s module doc for why an unmatched `FAIL` must
+nonzero: see `report/mod.rs`'s module doc for why an unmatched `FAIL` must
 never be silently absorbed. Two more ways `report merge` now fails
 nonzero: an `expected_unsupported` row
 whose (cell, profile) actually `PASS`ed this run — a *stale* row, reported
@@ -201,12 +201,12 @@ list of exact cell ids or `prefix/*` globs); `interop.yml` never passes
 it, so a CI run must produce every declared cell for real. Because
 `shape`, `declared_cells`, and `allowed_skips` are all part of the same
 fail-closed check as everything else, **the published evidence page may
-only cite a `full-159` run with an empty `allowed_skips`** — a `subset`
+only cite a full-shape run (`full-<n>`, with n from `[census] full_cells` in `expectations.toml`) with an empty `allowed_skips`** — a `subset`
 run (any `--cells`/`--profiles` narrowing) proves less than the
-advertised census and isn't evidence of it, and a `full-159` run that
+advertised census and isn't evidence of it, and a full-shape run that
 used `--allowed-skips` to tolerate a missing peer tool didn't actually
 produce the full census either (`interop.yml` enforces both: it asserts
-`allowed_skips | length == 0` alongside `shape == "full-159"`).
+`allowed_skips | length == 0` alongside a `full-*` shape and `declared_cells == expected_full_cells == summary.total`).
 
 ## Known, already-evidenced gaps (read before re-chasing these)
 
@@ -1780,7 +1780,7 @@ doc comments).
 **`metrics_only` is load-bearing** — `tst-interop recv`/`verify --json`
 both write a `VerifyReport` (`{pass, failures, metrics: {...}}`), one level
 of nesting deeper than the bare `CellMetrics` object `send --json` writes
-and than what a `RawCell.metrics` field expects (see `report.rs`). Every
+and than what a `RawCell.metrics` field expects (see `report/mod.rs`). Every
 call site that has a `recv`/`verify` JSON file must route it through
 `metrics_only` before handing it to `emit_pass`/`emit_fail` — passing the
 `VerifyReport` file straight through embeds the wrong shape and `report

@@ -77,7 +77,7 @@ pub struct PesShape {
 }
 
 /// Per-packet header facts, decoded statelessly — the classification the
-/// corruption tap (`corrupt.rs`) and the tee coordinate need without
+/// corruption tap (`corrupt/tap.rs`) and the tee coordinate need without
 /// owning a `Reader`. Mirrors exactly the header parsing `Reader::packet`
 /// does (§2.4.3.2 / §2.4.3.5); kept as one function so the two can never
 /// disagree.
@@ -1052,14 +1052,43 @@ pub struct ParsedStream {
     pub pcr_samples: Vec<(u16, u64)>,
 }
 
-/// Parse a whole buffer of muxer output. Panics on malformed input; this
-/// is a test helper.
+/// Parse a whole buffer of muxer output. Tolerances match the reader this
+/// replaced: a trailing partial packet is dropped, a PCR flag on an
+/// adaptation field too short to hold one is ignored, and the program
+/// reported is the one the PAT lists first. Any other malformed input
+/// panics; this is a test helper.
 pub fn parsed(buf: &[u8]) -> ParsedStream {
+    let mut buf = buf[..buf.len() - buf.len() % PKT].to_vec();
+    for pkt in buf.chunks_exact_mut(PKT) {
+        // PCR flag without room for the 6 PCR bytes: clear the flag.
+        if pkt[3] & 0x20 != 0 && pkt[4] > 0 && pkt[5] & 0x10 != 0 && pkt[4] < 7 {
+            pkt[5] &= !0x10;
+        }
+    }
+    let buf = &buf[..];
+    let first_pmt_pid = buf.chunks_exact(PKT).find_map(|p| {
+        let info = classify_packet(p.try_into().ok()?).ok()?;
+        if info.pid != PAT_PID || !info.pusi || !info.has_payload {
+            return None;
+        }
+        let body = p.get(info.payload_off + 1 + usize::from(p[info.payload_off])..)?;
+        // PAT entries start 8 bytes into the section, after the 3 header bytes.
+        let end = 3 + ((usize::from(body.get(1)? & 0x0F) << 8) | usize::from(*body.get(2)?)) - 4;
+        body.get(8..end.min(body.len()))?
+            .chunks_exact(4)
+            .find(|e| e[0] != 0 || e[1] != 0)
+            .map(|e| (u16::from(e[2] & 0x1F) << 8) | u16::from(e[3]))
+    });
     let mut reader = Reader::new();
     reader.feed(buf).expect("raw-TS reader accepts the buffer");
     let summary = reader.finish().expect("buffer ends on a packet boundary");
     let mut out = ParsedStream::default();
-    if let Some(prog) = summary.programs.values().next() {
+    if let Some(prog) = summary
+        .programs
+        .values()
+        .find(|p| Some(p.pmt_pid) == first_pmt_pid)
+        .or_else(|| summary.programs.values().next())
+    {
         out.pmt_pid = Some(prog.pmt_pid);
         out.pcr_pid = Some(prog.pcr_pid);
         out.streams = prog
@@ -1109,4 +1138,94 @@ pub fn parsed(buf: &[u8]) -> ParsedStream {
         out.pes_by_pid.entry(pid).or_default().push(done);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn section(table_id: u8, ext: u16, body: &[u8]) -> Vec<u8> {
+        let len = 5 + body.len() + 4;
+        let mut s = vec![
+            table_id,
+            0xB0 | (len >> 8) as u8,
+            len as u8,
+            (ext >> 8) as u8,
+            ext as u8,
+            0xC1,
+            0,
+            0,
+        ];
+        s.extend_from_slice(body);
+        let crc = crc32_mpeg2(&s);
+        s.extend_from_slice(&crc.to_be_bytes());
+        s
+    }
+
+    fn packet(pid: u16, payload: &[u8]) -> Vec<u8> {
+        let mut p = vec![SYNC, 0x40 | (pid >> 8) as u8, pid as u8, 0x10];
+        p.extend_from_slice(payload);
+        p.resize(PKT, 0xFF);
+        p
+    }
+
+    fn psi(pid: u16, sec: &[u8]) -> Vec<u8> {
+        let mut pl = vec![0];
+        pl.extend_from_slice(sec);
+        packet(pid, &pl)
+    }
+
+    fn pat(entries: &[(u16, u16)]) -> Vec<u8> {
+        let body: Vec<u8> = entries
+            .iter()
+            .flat_map(|&(n, pid)| [(n >> 8) as u8, n as u8, 0xE0 | (pid >> 8) as u8, pid as u8])
+            .collect();
+        psi(0, &section(0, 1, &body))
+    }
+
+    fn pmt(pid: u16, program: u16, es_pid: u16) -> Vec<u8> {
+        let body = [
+            0xE0 | (es_pid >> 8) as u8,
+            es_pid as u8,
+            0xF0,
+            0,
+            0x1B,
+            0xE0 | (es_pid >> 8) as u8,
+            es_pid as u8,
+            0xF0,
+            0,
+        ];
+        psi(pid, &section(2, program, &body))
+    }
+
+    #[test]
+    fn a_trailing_partial_packet_is_dropped() {
+        let mut b = pat(&[(1, 0x100)]);
+        b.extend(pmt(0x100, 1, 0x101));
+        b.extend([0x47; 100]);
+        assert_eq!(parsed(&b).pmt_pid, Some(0x100));
+    }
+
+    #[test]
+    fn a_pcr_flag_without_room_is_ignored() {
+        let mut b = pat(&[(1, 0x100)]);
+        b.extend(pmt(0x100, 1, 0x101));
+        // adaptation field of length 3 claiming a PCR.
+        let mut p = vec![SYNC, 0x01, 0x01, 0x30, 3, 0x10, 0, 0];
+        p.resize(PKT, 0xFF);
+        b.extend(p);
+        let out = parsed(&b);
+        assert!(out.pcr_samples.is_empty());
+        assert_eq!(out.streams.len(), 1);
+    }
+
+    #[test]
+    fn the_first_pat_entry_picks_the_program() {
+        let mut b = pat(&[(2, 0x200), (1, 0x100)]);
+        b.extend(pmt(0x200, 2, 0x201));
+        b.extend(pmt(0x100, 1, 0x101));
+        let out = parsed(&b);
+        assert_eq!(out.pmt_pid, Some(0x200));
+        assert_eq!(out.streams[0].pid, 0x201);
+    }
 }

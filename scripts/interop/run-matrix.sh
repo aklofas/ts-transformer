@@ -267,7 +267,7 @@ jq -n \
 # emit_* helpers) and ONE `$LOGS_DIR/<slug>.log` combining both sides'
 # output. `direction` in the emitted cell always names OUR role
 # (`send` = we push/serve, `recv` = we pull/listen) — matches
-# crates/tst-interop/src/report.rs's own test fixtures.
+# crates/tst-interop/src/report/matrix.rs's own test fixtures.
 
 # run_send_peer_recv <id> <peer> <tier> <our_url> <out_file> -- <peer_cmd...>
 #

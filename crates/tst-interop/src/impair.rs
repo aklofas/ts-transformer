@@ -221,7 +221,7 @@ impl Phase {
 ///
 /// Left uncorrected deliberately (archived seeds must reproduce).
 /// `report soak` computes its expectation from this same renewal process
-/// (`report.rs` `renewal_model`), so the bias never reaches a verdict;
+/// (`report/soak.rs` `renewal_model`), so the bias never reaches a verdict;
 /// correct `draw_pct` only if the engine's own rate is ever the number
 /// wanted: `q = L / (5.5 - 4.5L)` with `L` the loss FRACTION.
 pub fn generate_schedule(seed: u64, phases: u32) -> Vec<Phase> {
