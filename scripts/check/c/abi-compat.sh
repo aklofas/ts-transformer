@@ -78,7 +78,7 @@ sed -n 's/^typedef struct \([A-Za-z0-9_][A-Za-z0-9_]*\) \1;.*/\1/p' "$HEADER" \
 n_opaque="$(wc -l <"$tmp/opaque" | tr -d ' ')"
 cp "$SUPPR" "$tmp/suppr"
 if [ "$n_opaque" -gt 0 ]; then
-    { printf '\n[suppress_type]\n  name_regexp = (^|::)(%s)$\n' "$(paste -sd'|' "$tmp/opaque")"; } >>"$tmp/suppr"
+    { printf '\n[suppress_type]\n  type_kind = struct\n  name_regexp = (^|::)(%s)$\n' "$(paste -sd'|' "$tmp/opaque")"; } >>"$tmp/suppr"
 fi
 echo "abi-compat: $n_opaque opaque handle types suppressed (derived from $HEADER)"
 
