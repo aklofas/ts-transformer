@@ -27,9 +27,9 @@ from `bindings/c`, as in the `gcc -I` line above. It holds `tstrans.h` and the
 `tstrans_config.h` that defines `TST_HAS_*` for that build. The committed
 `include/tstrans_config.h` is the bare flavour: it defines no feature, so the
 udp / tcp / hls / rist examples stop at their `#error` guard against it.
-That generated header is refreshed only when tst-c's build script re-runs (a
-feature-set change, a change under `bindings/c`, or `touch
-bindings/c/cbindgen.toml`), so it can be stale beside a fresh library. To get a header, config, library
+That generated header is refreshed only when tst-c's build script re-runs (the
+first build of a feature set, or a change to the C sources or the cbindgen
+config), so it can be stale beside a fresh library. To get a header, config, library
 and `tstrans.pc` that are guaranteed to come from one feature set, stage a
 package and compile against it:
 

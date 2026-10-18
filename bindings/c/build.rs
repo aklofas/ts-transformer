@@ -3,8 +3,8 @@
 //! keeps apart for each feature set. The files are then copied to
 //! `target/<profile>/include` and `target/<profile>/tstrans.pc` as a
 //! convenience for local use. That location is shared by every build of the
-//! profile and is refreshed only when this build script re-runs (a feature-set
-//! change, a change under `bindings/c`, or a touched `cbindgen.toml`), so the
+//! profile and is refreshed only when this build script re-runs (the first build
+//! of a feature set, or a change to the C sources or the cbindgen config), so the
 //! copy can be stale beside a fresh library;
 //! `scripts/dev/c-package.sh` stages one build's files immutably.
 //!
