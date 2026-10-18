@@ -167,6 +167,7 @@ pub struct InventorySummary {
 // `report soak`
 // ---------------------------------------------------------------------
 
+mod csv;
 mod matrix;
 pub use matrix::{
     ExpectVerdict, Expectation, FULL_SHAPE_CELL_COUNT, Inventory, InventoryCell, SHAPE_FULL,
