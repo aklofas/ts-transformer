@@ -646,7 +646,8 @@ in this order, so a change is stopped by the earliest one that sees it:
 1. **The stale-header refusal**, in every CI build of `tst-c`. The build
    regenerates `tstrans.h` and refuses to continue when it differs from the
    committed `bindings/c/include/tstrans.h`. A declaration that leaves or
-   changes in the header fails the build here, before any library is judged.
+   changes in the header fails the build here until the regenerated header is
+   committed; the checks below judge the committed change.
 2. **`scripts/check/c/abi-symbols.sh`**, in the `build` CI job on every PR.
    It compares the library's exported names with `bindings/c/abi-symbols.txt`
    and with the previous release tag. It fails when an exported name differs
@@ -658,8 +659,10 @@ in this order, so a change is stopped by the earliest one that sees it:
    surface (`bindings/c/abi.suppr`). It fails when a function was removed or
    changed, when a struct the header shows grew or moved, when an enumerator
    was renumbered, and when a symbol was added without a minor bump. Opaque
-   handles, the types the header declares without a body, are suppressed: the
-   list is derived from the header on every run, so it cannot drift. At a
+   handles, the types both the previous and this header declare without a
+   body, are suppressed: the list is derived from the two headers on every
+   run, so it cannot drift. A struct the previous release showed with a body
+   must keep it: becoming opaque fails. Both libraries need debug info. At a
    higher major the incompatible-change check passes; that is the 1.0 break.
 
 `scripts/check/c/examples-compile.sh`, in the `build` CI job, additionally

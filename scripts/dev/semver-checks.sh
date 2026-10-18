@@ -70,7 +70,8 @@ import json, sys
 out = []
 for l in open(sys.argv[1]):
     c, rc, f, i, r = l.rstrip("\n").split("\t")
-    out.append({"crate": c, "exit": int(rc), "failed_checks": int(f), "items": int(i), "report": r})
+    out.append({"crate": c, "exit": int(rc), "failed_checks": int(f), "items": int(i), "report": r,
+                "analysed": int(rc) in (0, 100)})
 json.dump(out, open(sys.argv[2], "w"), indent=1)
 P
 exit 0
