@@ -118,7 +118,7 @@ each in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
    as `docs/project/qualification.json` (CI's `check-qualification` step verifies the page matches it) and render the evidence page's
    generated block:
    ```bash
-   bash scripts/gen/qualification.sh render --write
+   bash scripts/gen/qualification.sh --write
    ```
 6. **Maintainer-local checks.** Some validation needs inputs that are not on a
    CI runner, so the record lists them as `maintainer_local` and they stay
@@ -175,9 +175,14 @@ each in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
      the docs.rs builds are green (see the crates.io section below).
    Only **after** all three verify, announce the release.
 5. **GitHub Release.** The tag push also runs `release-qualify.yml` again.
-   On a GO it attaches the bundle and the C package to a **draft** Release for
-   the tag. Edit that draft's notes from the CHANGELOG highlights block and
-   publish it. Do not create a second Release by hand.
+   The publish workflows above do not wait for it: `jvm-jar.yml` and
+   `python-wheels.yml` publish on their own tag triggers, in parallel,
+   whatever that run's verdict. The pre-tag dispatch in step 4 of the
+   checklist is the real gate. On a GO the tag run attaches the bundle and
+   the C package to a **draft** Release for the tag. Edit that draft's notes
+   from the CHANGELOG highlights block and publish it; do not create a second
+   Release by hand. On a NO-GO no draft is created: triage the reasons, then
+   create the Release by hand.
 
 ## crates.io publish (Rust crates)
 

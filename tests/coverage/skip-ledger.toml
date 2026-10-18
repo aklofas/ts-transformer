@@ -48,8 +48,8 @@ as history; the prior ledger entry wrongly attributed it to tst-srt.
 """
 
 # --- External-tool tests (Tier B / C — need a decoder or muxer on PATH) -----
-# Family of #[ignore]d tests that shell out to ffprobe/ffmpeg/dav1d. Run in
-# the interop and qualification workflows, which install the tools first.
+# Family of #[ignore]d tests that shell out to ffprobe/ffmpeg/dav1d. Run by
+# hand with `-- --ignored` where the tools are installed.
 
 [[skip]]
 test = "ffprobe_validates_dvb_subtitling_round_trip"

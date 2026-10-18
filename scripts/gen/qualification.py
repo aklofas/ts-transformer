@@ -372,6 +372,10 @@ def cmd_render(args):
     with open(page) as f:
         text = f.read()
     rec = read_json(args.json)
+    if rec is not None and not args.write and (rec["verdict"] != "GO" or rec["label"].startswith("PR #")):
+        print("qualification: %s must hold a GO record of a main or tag commit, not %r (%s)"
+              % (args.json, rec["label"], rec["verdict"]), file=sys.stderr)
+        return 1
     block = wrapped(rec)
     new = replace_block(text, block)
     if args.write:

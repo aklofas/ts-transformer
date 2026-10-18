@@ -245,8 +245,8 @@ jobs:
     # reuse assemble's artifact. A non-tag push skips this (the `if` is false).
     needs: [build, assemble]
     # `inputs.dry_run` is unset (false) under the tag push, so the publish still
-    # runs on its own trigger. A call passes dry_run, and the caller is never a
-    # tag push, so a called run does not publish.
+    # runs on its own trigger. A call passes dry_run: true; under a tag-push call the
+    # event and ref match too, so `!inputs.dry_run` is what skips this job.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !inputs.dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 30
