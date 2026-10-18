@@ -445,6 +445,9 @@ jobs:
         # checkout and nothing this job adds.
         env:
           LABEL: ${{ needs.resolve.outputs.label }}
+          # On a pull request GITHUB_REF is the merge ref, but the tree under test
+          # is the PR head, so record the head ref.
+          REF: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/head', github.event.pull_request.number) || github.ref }}
         run: |
           mkdir -p "$RUNNER_TEMP/artifacts"
           dirty=false
@@ -458,7 +461,7 @@ jobs:
           nightly="$(sed -n 's/.*rustup toolchain install \(nightly-[0-9-]*\).*/\1/p' .github/workflows/ci.yml | head -1)"
           cbindgen="$(awk '/^name = "cbindgen"$/ {getline; gsub(/[^0-9.]/, "", $0); print; exit}' Cargo.lock)"
           . /etc/os-release
-          jq -n --arg label "$LABEL" --arg sha "$(git rev-parse HEAD)" --arg ref "${GITHUB_REF}" \
+          jq -n --arg label "$LABEL" --arg sha "$(git rev-parse HEAD)" --arg ref "$REF" \
             --argjson dirty "$dirty" --argjson subs "$subs" \
             --arg rust "$(rustc --version | awk '{print $1" "$2}')" --arg nightly "$nightly" --arg cbindgen "$cbindgen" \
             --arg runner "ubuntu-$VERSION_ID" --arg arch "$(uname -m)" --arg kernel "$(uname -r | cut -d- -f1)" \

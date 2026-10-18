@@ -1,5 +1,5 @@
 # The soak, stress and corpus archives the evidence page cites, with the verdict each
-# recorded. `note` is the page's own sentence; a false overall_pass is stated as it is.
+# recorded. `note` summarises what the page says; a false overall_pass is stated as it is.
 # Rendered into the qualification block by scripts/gen/qualification.sh.
 schema_version = 0
 

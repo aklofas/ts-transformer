@@ -287,6 +287,16 @@ class RenderTests(unittest.TestCase):
         rc, _, err = self.run_cli(["render", "--json", jf, "--root", tmp, "--check"])
         self.assertEqual(rc, 1)
 
+    def test_check_refuses_a_no_go_or_pr_labelled_record(self):
+        tmp = tempfile.mkdtemp()
+        self._page(tmp)
+        jf = os.path.join(tmp, "q.json")
+        for patch in ({"verdict": "NO-GO"}, {"label": "PR #376 at dab1a51a"}):
+            put(jf, dict(self.rec, **patch))
+            rc, _, err = self.run_cli(["render", "--json", jf, "--root", tmp, "--check"])
+            self.assertEqual(rc, 1)
+            self.assertIn("must hold a GO record", err)
+
     def test_check_on_empty_block_without_json_skips(self):
         tmp = tempfile.mkdtemp()
         self._page(tmp, q.EMPTY_BLOCK)
