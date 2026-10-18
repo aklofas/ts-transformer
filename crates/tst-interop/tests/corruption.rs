@@ -290,7 +290,7 @@ fn psi_framing_shapes(bytes: &[u8]) -> Vec<(&'static str, Vec<u8>)> {
         .chunks_exact(188)
         .position(|pk| {
             let pk: &[u8; 188] = pk.try_into().expect("188-byte chunk");
-            tst_interop::rawts::classify_packet(pk).is_ok_and(|i| i.pid == 0x1000 && i.pusi)
+            tst_test_helpers::rawts::classify_packet(pk).is_ok_and(|i| i.pid == 0x1000 && i.pusi)
         })
         .expect("the generator emits a PMT at the head of the capture");
     let (before, pmt, after) = (

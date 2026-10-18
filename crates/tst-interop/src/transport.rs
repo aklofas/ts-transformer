@@ -596,7 +596,7 @@ impl Transport for GracefulRistClose {
 /// `reader`/`reader_error` are only ever fed on the [`RecvTransport`]
 /// side (see that impl's `recv_bytes`) — a send-side `Teeing` (`send.rs`)
 /// never touches them, so [`tee_tally`]'s returned
-/// [`WireSummary`](crate::rawts::WireSummary) comes back empty (zero
+/// [`WireSummary`](tst_test_helpers::rawts::WireSummary) comes back empty (zero
 /// packets) for a send-side tap, which is fine: nothing reads it there.
 pub(crate) struct TeeState {
     bytes: u64,
@@ -605,12 +605,12 @@ pub(crate) struct TeeState {
     /// `TeeState`, rebuilt transports — see [`Teeing::with_tap`]'s own
     /// doc comment), so a broken connection's leftover partial-packet
     /// `carry` must never bleed into the replacement connection's bytes.
-    /// `recv.rs`'s managed factory calls [`crate::rawts::Reader::
+    /// `recv.rs`'s managed factory calls [`tst_test_helpers::rawts::Reader::
     /// resync`] on this field (and clears `reader_error` below) right
     /// after building each fresh transport, before its first byte is
     /// fed — the accumulated `WireSummary` and PAT-learned PID map carry
     /// forward untouched; only the in-flight carry is reset.
-    reader: crate::rawts::Reader,
+    reader: tst_test_helpers::rawts::Reader,
     /// First error `reader.feed` returned, if any — a captured stream
     /// that fell out of 188-byte packet alignment (sync loss) partway
     /// through. Recorded rather than propagated immediately so the tee
@@ -642,10 +642,12 @@ impl TeeState {
             // A tee only ever wraps a LIVE transport, and a live capture
             // can run for days — so its per-PID timestamp series keep a
             // bounded sample rather than every value
-            // (`crate::rawts::Retention`). Counts, wrap counts and the
+            // (`tst_test_helpers::rawts::Retention`). Counts, wrap counts and the
             // interval min/max stay exact; only a median becomes a
             // sample median, which no oracle's tolerance can tell apart.
-            reader: crate::rawts::Reader::with_retention(crate::rawts::Retention::Bounded),
+            reader: tst_test_helpers::rawts::Reader::with_retention(
+                tst_test_helpers::rawts::Retention::Bounded,
+            ),
             reader_error: None,
             reconnects: None,
             reconnects_seen: 0,
@@ -827,7 +829,7 @@ pub(crate) fn tee_take_chunk_start(tap: &Arc<Mutex<TeeState>>) -> Option<u64> {
 }
 
 /// Turn the tap reader's sync-recovery mode on or off — see
-/// [`crate::rawts::Reader::set_resync_mode`]. `recv.rs` turns it on for a
+/// [`tst_test_helpers::rawts::Reader::set_resync_mode`]. `recv.rs` turns it on for a
 /// capture being judged against a corruption log, BEFORE the first byte:
 /// deliberately-corrupted packets are exactly what would otherwise latch
 /// `reader_error` and fail the whole capture as `rawts_sync_loss`,
@@ -841,7 +843,7 @@ pub(crate) fn tee_set_resync_mode(tap: &Arc<Mutex<TeeState>>, on: bool) {
 
 /// PCR bases the tap's reader decoded since the last call, each with the
 /// packet ordinal it was carried at — see
-/// [`crate::rawts::Reader::take_pcr_events`]. Drained (not peeked), so a
+/// [`tst_test_helpers::rawts::Reader::take_pcr_events`]. Drained (not peeked), so a
 /// caller must fold every returned pair into its attribution.
 pub(crate) fn tee_drain_pcrs(tap: &Arc<Mutex<TeeState>>) -> Vec<(u64, u64)> {
     tap.lock()
@@ -854,7 +856,7 @@ pub(crate) fn tee_drain_pcrs(tap: &Arc<Mutex<TeeState>>) -> Vec<(u64, u64)> {
 /// only in resync mode (see [`tee_set_resync_mode`]). Drained, like
 /// [`tee_drain_pcrs`]; every returned event must be fed to the
 /// attribution exactly once.
-pub(crate) fn tee_take_resyncs(tap: &Arc<Mutex<TeeState>>) -> Vec<crate::rawts::Resync> {
+pub(crate) fn tee_take_resyncs(tap: &Arc<Mutex<TeeState>>) -> Vec<tst_test_helpers::rawts::Resync> {
     tap.lock()
         .expect("tee mutex poisoned")
         .reader
@@ -862,9 +864,11 @@ pub(crate) fn tee_take_resyncs(tap: &Arc<Mutex<TeeState>>) -> Vec<crate::rawts::
 }
 
 /// The tap reader's trailing-partial-packet recovery, if any — see
-/// [`crate::rawts::Reader::trailing_resync`]. Must be read BEFORE
+/// [`tst_test_helpers::rawts::Reader::trailing_resync`]. Must be read BEFORE
 /// [`tee_tally`], which consumes the reader.
-pub(crate) fn tee_trailing_resync(tap: &Arc<Mutex<TeeState>>) -> Option<crate::rawts::Resync> {
+pub(crate) fn tee_trailing_resync(
+    tap: &Arc<Mutex<TeeState>>,
+) -> Option<tst_test_helpers::rawts::Resync> {
     tap.lock()
         .expect("tee mutex poisoned")
         .reader
@@ -893,11 +897,11 @@ pub(crate) fn tee_resync(tap: &Arc<Mutex<TeeState>>) {
 /// its clone of the tap) — panics otherwise, since a live writer means
 /// the tally isn't final yet.
 ///
-/// `wire_result` is the [`crate::rawts::Reader`]'s summary of the same
+/// `wire_result` is the [`tst_test_helpers::rawts::Reader`]'s summary of the same
 /// bytes — `Ok` with an empty (zero-packet) summary for a send-side tap,
 /// which never feeds it (see [`TeeState`]'s doc comment); `Err` iff the
 /// capture ended with a trailing partial packet still in the reader's
-/// carry (`crate::rawts::Reader::finish`'s own contract). `reader_error`
+/// carry (`tst_test_helpers::rawts::Reader::finish`'s own contract). `reader_error`
 /// is `Some` iff that reader ever fell out of 188-byte packet alignment
 /// mid-capture — a distinct failure from a trailing partial packet, and
 /// the two can both be `Some`/`Err` at once (a feed error leaves
@@ -907,7 +911,7 @@ pub(crate) fn tee_tally(
 ) -> (
     u64,
     String,
-    Result<crate::rawts::WireSummary, String>,
+    Result<tst_test_helpers::rawts::WireSummary, String>,
     Option<String>,
 ) {
     let state = Arc::try_unwrap(tap)

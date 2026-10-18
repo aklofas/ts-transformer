@@ -27,8 +27,8 @@ use crate::corrupt::{self, AttributionReport, Injection, LogHeader};
 use crate::fixtures::{self, KlvSet};
 use crate::oracles::{self, Explained};
 use crate::profiles::{self, Profile};
-use crate::rawts::{self, WireSummary};
 use crate::report_types::{CellMetrics, KlvRichMetrics, SinceReconnect, VerifyReport};
+use tst_test_helpers::rawts::{self, WireSummary};
 
 /// Whether a captured cell may carry `Discontinuity` events and still
 /// pass. Both modes fail on `NonConformant` — that always indicates the

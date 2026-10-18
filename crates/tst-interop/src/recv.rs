@@ -19,10 +19,10 @@ use tst_pipeline::{
 use crate::cli::write_json;
 use crate::corrupt;
 use crate::profiles::{self, Profile};
-use crate::rawts::WireSummary;
 use crate::report_types::VerifyReport;
 use crate::transport::{self, Teeing};
 use crate::verify::{self, KlvExpect, Tally, VerifyMode, WireLayout};
+use tst_test_helpers::rawts::WireSummary;
 
 /// How long to wait for the FIRST demuxed event before giving up
 /// entirely — the sender never connected or never sent anything at all

@@ -4,8 +4,8 @@ use crate::common::mux_demux::drain_mux as drain_all;
 use proptest::prelude::*;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{Muxer, MuxerConfig};
+use tst_test_helpers::rawts;
 use tst_test_helpers::synthetic_nal;
-use tst_test_helpers::ts_parser;
 
 #[derive(Debug, Clone)]
 struct PushSpec {
@@ -110,7 +110,7 @@ proptest! {
             mux.push_klv(&blob, Pts90khz::new((i as i64 + 1) * 3000), 0x00).unwrap();
         }
         let bytes = drain_all(&mut mux);
-        let parsed = ts_parser::parse(&bytes);
+        let parsed = rawts::parsed(&bytes);
         let klv_pid = parsed.streams.iter().find(|s| s.klva).map(|s| s.pid)
             .expect("KLVA stream present");
         let recovered = parsed.pes_by_pid.get(&klv_pid).unwrap();

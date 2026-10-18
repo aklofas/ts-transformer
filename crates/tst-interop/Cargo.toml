@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 tst-core = { path = "../tst-core" }
+tst-test-helpers = { path = "../tst-test-helpers" }
 tst-pipeline = { path = "../tst-pipeline" }
 tst-srt = { path = "../tst-srt" }
 tst-udp = { path = "../tst-udp" }

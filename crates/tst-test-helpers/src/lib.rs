@@ -6,4 +6,4 @@
 pub mod errors;
 pub mod mock_transport;
 pub mod synthetic_nal;
-pub mod ts_parser;
+pub mod rawts;

@@ -9,8 +9,8 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, StreamSpec, VideoCodec,
 };
+use tst_test_helpers::rawts;
 use tst_test_helpers::synthetic_nal;
-use tst_test_helpers::ts_parser;
 
 #[test]
 fn h264_async_klv_roundtrip() {
@@ -22,7 +22,7 @@ fn h264_async_klv_roundtrip() {
     let bytes = drain_all(&mut mux);
     assert!(!bytes.is_empty());
 
-    let parsed = ts_parser::parse(&bytes);
+    let parsed = rawts::parsed(&bytes);
     assert_eq!(parsed.pmt_pid, Some(0x1000));
     assert_eq!(parsed.streams.len(), 2);
     let video_stream = parsed
@@ -63,7 +63,7 @@ fn h265_async_klv_roundtrip() {
     mux.push_klv(&klv, Pts90khz::new(0), 0x00).unwrap();
     let bytes = drain_all(&mut mux);
 
-    let parsed = ts_parser::parse(&bytes);
+    let parsed = rawts::parsed(&bytes);
     let video_stream = parsed
         .streams
         .iter()
@@ -92,7 +92,7 @@ fn h264_klv_with_pts_keeps_pts() {
     mux.push_klv(&klv, Pts90khz::new(90_000), 0x00).unwrap();
     let bytes = drain_all(&mut mux);
 
-    let parsed = ts_parser::parse(&bytes);
+    let parsed = rawts::parsed(&bytes);
     let klv_stream = parsed
         .streams
         .iter()
@@ -126,7 +126,7 @@ fn h264_sync_metadata_stream_type() {
         .unwrap();
     let bytes = drain_all(&mut mux);
 
-    let parsed = ts_parser::parse(&bytes);
+    let parsed = rawts::parsed(&bytes);
     let klv_stream = parsed
         .streams
         .iter()
@@ -150,7 +150,7 @@ fn multiple_video_aus_recovered_in_order() {
             .unwrap();
     }
     let bytes = drain_all(&mut mux);
-    let parsed = ts_parser::parse(&bytes);
+    let parsed = rawts::parsed(&bytes);
     let video_stream = parsed
         .streams
         .iter()
@@ -211,7 +211,7 @@ fn pcr_pid_pinned_to_video_is_declared_in_pmt() {
         .unwrap();
     let bytes = drain_all(&mut mux);
 
-    let parsed = ts_parser::parse(&bytes);
+    let parsed = rawts::parsed(&bytes);
     assert_eq!(
         parsed.pcr_pid,
         Some(video_pid),
@@ -259,7 +259,7 @@ fn pcr_is_carried_on_video_pid_packets_by_default() {
     }
     let bytes = drain_all(&mut mux);
 
-    let parsed = ts_parser::parse(&bytes);
+    let parsed = rawts::parsed(&bytes);
     let on_video = parsed
         .pcr_samples
         .iter()
@@ -326,7 +326,7 @@ fn pcr_injected_as_adaptation_only_packet_when_pcr_pid_has_no_payload() {
     }
     let bytes = drain_all(&mut mux);
 
-    let parsed = ts_parser::parse(&bytes);
+    let parsed = rawts::parsed(&bytes);
     let pcrs_on_video: Vec<u64> = parsed
         .pcr_samples
         .iter()
