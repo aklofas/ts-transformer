@@ -32,10 +32,16 @@ CRATES="$(bash scripts/lib/roster.sh api-stability)"
 
 # rows: "pkg<TAB>module" (module may be "(crate)")
 # -F'|' on `| Package | Module | Tier | Why |` gives $1="" (before the
-# first pipe), $2=Package, $3=Module, $4=Tier, $5=Why — verified against
+# first pipe), $2=Package, $3=Module, $4=Tier, $5=Why, $6=Before Stable — verified against
 # the real table before wiring this rail.
 rows=$(awk -F'|' '/^\|/ && $4 ~ /Stable|Provisional|Experimental|Internal/ {
   gsub(/ /,"",$2); gsub(/ /,"",$3); print $2 "\t" $3 }' "$TABLE")
+
+# Every Provisional row says what would let it move: its Before Stable cell
+# ($6, the column after Why) must not be empty.
+empty=$(awk -F'|' '/^\|/ && $4 ~ /Provisional/ && $6 ~ /^ *$/ {
+  gsub(/ /,"",$2); gsub(/ /,"",$3); print $2 "::" $3 }' "$TABLE")
+for r in $empty; do echo "FAIL: Provisional row $r has an empty Before Stable cell"; fail=1; done
 
 covered() { # covered <pkg> <modpath> → 0 only on an EXACT row match or (crate)
   # Strict on purpose: a prefix match here would let a level-1 row silently
