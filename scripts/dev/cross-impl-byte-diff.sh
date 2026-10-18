@@ -8,9 +8,9 @@
 # multi-program, H.265+KLV). Helps gauge how "normal-looking" our output
 # is to consumer libraries.
 #
-# How this differs from release-validation.sh's ffmpeg/tsduck steps:
-#   - `release-validation.sh` golden-diffs our OWN output against committed
-#     reference files (regression check: did our muxer change?).
+# What this harness is for:
+#   - The interop matrix's analyze cells check our OWN output against the
+#     tools' reading of it (regression check: did our muxer change?).
 #   - This harness compares ACROSS implementations (drift check: do we
 #     emit similar structure to ffmpeg / tsduck for the same logical
 #     content shape?).
@@ -20,7 +20,7 @@
 # ffmpeg can't synthesize KLV from null input, and our synthetic muxer
 # baselines use minimal parameter-set bytes that ffmpeg's H.264/H.265
 # parsers reject for re-extraction (a documented limitation, see
-# release-validation.sh step 6).
+# the interop matrix's generated input).
 #
 # Workaround: for ffmpeg references, we generate synthetic video via
 # lavfi (`testsrc2` source) and encode through ffmpeg's real codec. This

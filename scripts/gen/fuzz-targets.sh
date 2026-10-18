@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Generate (or --check) tests/coverage/fuzz-targets.toml from the actual
 # fuzz-target source files under crates/*/fuzz/fuzz_targets/*.rs. The
-# manifest is the single source of truth for the long-fuzz step in
-# release-validation.sh; --check fails CI when the manifest drifts from the
+# manifest is the single source of truth for the maintainer-local
+# long-fuzz step before a release; --check fails CI when the manifest drifts from the
 # tree (a target added/removed without regenerating).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

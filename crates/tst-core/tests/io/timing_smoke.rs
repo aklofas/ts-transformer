@@ -1,7 +1,7 @@
 //! Per-commit smoke test for the PTS-rollover and PCR-jitter tools.
 //!
 //! Both binaries already exist at crates/tst-core/tests/tools/ as
-//! [[bin]] targets for release-validation steps 8/9. Without this test
+//! [[bin]] targets for the maintainer-local PTS-rollover and PCR-jitter checks. Without this test
 //! they are unreachable from PR CI — a refactor breaking either main()
 //! would only surface at release-tag time.
 //!
