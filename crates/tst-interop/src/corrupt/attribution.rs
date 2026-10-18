@@ -714,7 +714,7 @@ struct PendingPcr {
 /// coordinate straddling a wrap; by the standard half-space convention a
 /// result below 2^32 means "ahead", and anything larger means `a` is
 /// really behind `b`.
-fn ticks_ahead(a: u64, b: u64) -> u64 {
+pub(super) fn ticks_ahead(a: u64, b: u64) -> u64 {
     a.wrapping_sub(b) & ((1 << 33) - 1)
 }
 
@@ -971,6 +971,15 @@ impl Attribution {
 
     fn state(&self, i: usize) -> &InjState {
         &self.st[i - self.base]
+    }
+
+    /// How the engine placed injection `i`: `(resolved_at, approx, stranded)`.
+    /// Test-only window onto the coordinate rules for the property tests
+    /// in `coord.rs`.
+    #[cfg(test)]
+    pub(super) fn placement(&self, i: usize) -> (Option<u64>, bool, bool) {
+        let st = self.state(i);
+        (st.resolved_at, st.approx, st.stranded)
     }
 
     fn state_mut(&mut self, i: usize) -> &mut InjState {
