@@ -41,9 +41,10 @@ fn smoke_c_compiles_links_runs() {
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(manifest_dir).join("../../target"));
     let cdylib_dir = target_dir.join("debug");
-    // The build-generated include dir: its tstrans_config.h carries this build's
-    // TST_HAS_* defines (the committed one is the bare flavour).
-    let header = cdylib_dir.join("include/tstrans.h");
+    // This build's own include dir (OUT_DIR): its tstrans_config.h carries this
+    // build's TST_HAS_* defines (the committed one is the bare flavour), and
+    // unlike target/debug/include it is not overwritten by another feature set.
+    let header = PathBuf::from(env!("OUT_DIR")).join("include/tstrans.h");
     let smoke_c = PathBuf::from(manifest_dir).join("tests/smoke.c");
 
     // Platform-correct cdylib filename: libtstrans.so on Linux,

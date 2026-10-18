@@ -1,4 +1,13 @@
-//! Runs cbindgen to generate `target/<profile>/include/tstrans.h`.
+//! Runs cbindgen and renders `tstrans.h`, `tstrans_config.h` and `tstrans.pc`
+//! into `OUT_DIR` (`OUT_DIR/include` and `OUT_DIR`), the per-build copy cargo
+//! keeps apart for each feature set. The files are then copied to
+//! `target/<profile>/include` and `target/<profile>/tstrans.pc` as a
+//! convenience for local use. That location is shared by every build of the
+//! profile, so `tstrans_config.h` and `tstrans.pc` there are last-build-wins;
+//! `scripts/dev/c-package.sh` stages one build's files immutably.
+//!
+//! When the `CI` environment variable is set and non-empty, the build fails if
+//! the committed `bindings/c/include/tstrans.h` differs from the rendering.
 
 use std::env;
 use std::path::PathBuf;
@@ -10,16 +19,16 @@ fn main() {
     let crate_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
 
-    // The header is emitted into target/<profile>/include/tstrans.h, which is a
-    // sibling-of-OUT_DIR layout suitable for downstream consumers to find on
-    // their include path. OUT_DIR is .../target/<profile>/build/tst-c-<hash>/out;
-    // walk three levels up to get .../target/<profile>.
-    let profile_dir = PathBuf::from(&out_dir)
+    // Rendered into OUT_DIR first; the copy to target/<profile> is at the end.
+    // OUT_DIR is .../target/<profile>/build/tst-c-<hash>/out; walk three levels
+    // up to get .../target/<profile>.
+    let out_path = PathBuf::from(&out_dir);
+    let profile_dir = out_path
         .ancestors()
         .nth(3)
         .expect("OUT_DIR ancestor walk failed")
         .to_path_buf();
-    let include_dir = profile_dir.join("include");
+    let include_dir = out_path.join("include");
     std::fs::create_dir_all(&include_dir).expect("create include dir");
     let header_path = include_dir.join("tstrans.h");
 
@@ -44,6 +53,8 @@ fn main() {
         .write_to_file(&header_path);
 
     println!("cargo:rerun-if-changed=cbindgen.toml");
+    println!("cargo:rerun-if-changed=include/tstrans.h");
+    println!("cargo:rerun-if-env-changed=CI");
     println!("cargo:rerun-if-changed=header_post.rs");
     println!("cargo:rerun-if-changed=core/src");
     // cbindgen scans tst-c-core (.with_crate above) including its Cargo.toml for
@@ -65,6 +76,22 @@ fn main() {
         header_post::render_config(&active),
     )
     .expect("write tstrans_config.h");
+
+    // Under CI a stale committed header fails the build, naming the first
+    // differing line (line endings are ignored).
+    if env::var("CI").is_ok_and(|v| !v.is_empty()) {
+        let committed =
+            std::fs::read_to_string(PathBuf::from(&crate_dir).join("include/tstrans.h"))
+                .expect("read committed include/tstrans.h");
+        let rendered = std::fs::read_to_string(&header_path).expect("read rendered tstrans.h");
+        if let Some(diff) = header_post::header_differs(&rendered, &committed) {
+            panic!(
+                "bindings/c/include/tstrans.h is stale. Regenerate it with \
+                 `cargo build -p tst-c && cp target/debug/include/tstrans.h bindings/c/include/tstrans.h` \
+                 and commit it.\n{diff}"
+            );
+        }
+    }
 
     // ────────────────────────────────────────────────────────────────
     // Symbol hygiene: the libtstrans
@@ -184,7 +211,15 @@ fn main() {
         .replace("@PREFIX@", "/usr/local") // tarball install default; consumer can sed it
         .replace("@PLATFORM_LIBS@", platform_libs)
         .replace("@FEATURES@", &features);
-    let pc_path = profile_dir.join("tstrans.pc");
-    std::fs::write(&pc_path, pc).expect("write tstrans.pc");
+    std::fs::write(out_path.join("tstrans.pc"), &pc).expect("write tstrans.pc");
+
+    // Convenience copies under target/<profile> (last build wins).
+    let profile_include = profile_dir.join("include");
+    std::fs::create_dir_all(&profile_include).expect("create target include dir");
+    for name in ["tstrans.h", "tstrans_config.h"] {
+        std::fs::copy(include_dir.join(name), profile_include.join(name))
+            .unwrap_or_else(|e| panic!("copy {name}: {e}"));
+    }
+    std::fs::write(profile_dir.join("tstrans.pc"), &pc).expect("write target tstrans.pc");
     println!("cargo:rerun-if-changed=tstrans.pc.in");
 }
