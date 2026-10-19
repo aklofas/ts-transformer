@@ -1,6 +1,6 @@
 """Runtime `inspect.signature` introspection of native constructors (v0.2.0 #8).
 
-PyO3 0.22 auto-generates class-level `__text_signature__` from `#[new]`
+PyO3 auto-generates class-level `__text_signature__` from `#[new]`
 (+ `#[pyo3(signature)]`), so `inspect.signature(cls)` matches the .pyi
 stubs with NO explicit text_signature attributes in src/*.rs. These
 tests lock that contract: they fail if a future `#[new]` rewrite or a

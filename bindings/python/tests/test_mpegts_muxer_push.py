@@ -1131,7 +1131,7 @@ def test_push_video_to_with_dts_signature_unchanged():
 # ---------------------------------------------------------------------------
 # Settling tests — bytearray and memoryview coercion
 #
-# PyO3 0.22 abi3 extracts `&[u8]` only from `bytes`; the shared
+# PyO3 extracts `&[u8]` only from `bytes`; the shared
 # `coerce_bytes_like` helper in `util.rs` routes `bytearray`/`memoryview`
 # through `bytes(arg)` so all byte-taking push_* methods accept
 # buffer-protocol objects.  These tests verify the fix is wired end-to-end:

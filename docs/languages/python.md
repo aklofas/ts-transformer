@@ -1490,11 +1490,12 @@ counters without touching demuxer stats.
   free functions `tstrans.codec.split_units(raw, codec)` and
   `tstrans.codec.parse_audio(raw, codec)` do the same split and additionally
   return the conformance-issue list.
-- **abi3 build limitation.** `bytes`-like extraction uses a two-path
-  approach (one for true `bytes`, one for `memoryview` / `bytearray`)
-  because PyO3's abi3 doesn't expose a unified buffer protocol. The
-  Python API is uniform — you can pass `bytes`, `bytearray`, or a
-  `memoryview` and it works.
+- **Bytes-like arguments.** `bytes`-like extraction uses a two-path
+  approach: a true `bytes` is borrowed as is, and a `memoryview` or
+  `bytearray` is first copied through `bytes()`. The second path predates
+  the 3.11 floor; the stable ABI exposes the buffer protocol from 3.11,
+  so the copy is no longer forced by the ABI. The Python API is uniform —
+  you can pass `bytes`, `bytearray`, or a `memoryview` and it works.
 - **`tstrans._native` is private.** Use `tstrans.X` (or `tstrans.mpegts.X`
   / `tstrans.klv.X` / ...) — never `tstrans._native.X`. The `_native`
   submodule may reorganize between versions.

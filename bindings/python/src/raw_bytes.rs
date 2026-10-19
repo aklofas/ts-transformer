@@ -20,7 +20,7 @@
 //! This holder is shared by `src/pipeline.rs` and the demux event types,
 //! hence the standalone module.
 
-// PyO3 0.22 + Rust 2024 edition: the #[pymethods] macro generates calls to
+// PyO3 under the Rust 2024 edition: the #[pymethods] macro generates calls to
 // internal unsafe functions inside unsafe fn bodies. The `unsafe_op_in_unsafe_fn`
 // lint (now a warning in edition 2024) fires on macro-generated code; suppress
 // here exactly as in the sibling modules (codec.rs, mpegts.rs, mux.rs).

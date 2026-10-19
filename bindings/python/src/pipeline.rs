@@ -15,8 +15,8 @@
 //! `VideoSample` projection is raw-first: `vs.raw` is wrapped in a
 //! `_native.RawBytes` holder (Arc clone; no copy at conversion time).
 //!
-//! `#![allow(...)]` mirrors `mpegts.rs` — PyO3 0.22 + Rust 2024 macro
-//! expansions trip these lints. Hand-written code here has no unsafe
+//! `#![allow(...)]` mirrors `mpegts.rs` — PyO3's macro expansions under
+//! Rust 2024 trip these lints. Hand-written code here has no unsafe
 //! blocks.
 #![expect(
     clippy::disallowed_methods,

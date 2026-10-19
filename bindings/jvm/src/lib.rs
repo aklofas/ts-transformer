@@ -96,6 +96,15 @@ fn warm_jni_type_caches(vm: *mut jni::sys::JavaVM) {
         // ClassLoader resolves itself with FindClass, never a context loader.
         let system = JClassLoader::get_system_class_loader(env)?;
         let ctx = LoaderContext::Loader(&system);
+        // The list mirrors the types jni 0.22.4 caches: the 18 exceptions bound
+        // by `bind_exception!` in its `src/exceptions.rs` (lines 62-171); the
+        // 11 types bound by `bind_java_type!` under `src/objects/` (`JThread`,
+        // `JClass` and `JClassLoader` are left out, their lookups use
+        // `FindClass`) plus the hand-written `JObject`; and the eight
+        // primitive arrays of `impl_ref_for_jprimitive_array!` in
+        // `src/objects/jprimitive_array.rs`. A type missing here stays cold
+        // without any warning, so re-check the list against those files on
+        // every jni bump, patch releases included.
         warm!(env, ctx; JThrowable, JObject, JString, JCharSequence, JStackTraceElement,
             JByteBuffer, JCollection, JList, JSet, JIterator, JMap, JMapEntry,
             JBooleanArray, JByteArray, JCharArray, JShortArray, JIntArray, JLongArray,
