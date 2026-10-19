@@ -1,0 +1,4 @@
+OPTIONS /cam1 HTTP/1.1
+Origin: https://ops
+Access-Control-Request-Method: POST
+

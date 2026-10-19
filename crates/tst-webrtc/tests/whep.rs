@@ -3,6 +3,10 @@
 
 #[path = "whep/binding.rs"]
 mod binding;
+#[path = "whep/http.rs"]
+mod http;
+#[path = "whep/negotiate.rs"]
+mod negotiate;
 #[path = "whep/packetize_h264.rs"]
 mod packetize_h264;
 #[path = "whep/packetize_h265.rs"]

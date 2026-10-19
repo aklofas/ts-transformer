@@ -1,0 +1,8 @@
+POST /cam1 HTTP/1.1
+Host: x
+Content-Type: application/sdp
+Content-Length: 5
+Authorization: Bearer s3cret
+Origin: https://ops
+
+v=0

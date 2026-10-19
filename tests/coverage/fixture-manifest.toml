@@ -56,6 +56,12 @@ origin = "synthetic"
 generator = "crates/tst-webrtc/tests/fixtures/regen.sh (one ffmpeg-synthesized test-pattern IDR access unit per codec)"
 no_private_corpus = true
 
+[[group]]
+root = "crates/tst-webrtc/tests/fixtures/offers"
+origin = "derived"
+generator = "browser createOffer() SDP: chrome-155.sdp captured from headless Google Chrome 155.0.8059.39; firefox-144.sdp and safari-26.sdp reconstructed from each browser's default offer shape, to be replaced by captures before 1.0 (see offers/README.md)"
+no_private_corpus = true
+
 # Generated inventory of fuzz targets (provenance: our fuzz harnesses).
 [[group]]
 root = "tests/coverage/fuzz-targets.toml"

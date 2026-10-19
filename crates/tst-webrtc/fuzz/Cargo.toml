@@ -18,6 +18,7 @@ non_kebab_case_bins = "allow"
 [dependencies]
 libfuzzer-sys = "0.4"
 tst-webrtc    = { path = ".." }
+str0m         = { version = "0.24", default-features = false, features = ["rust-crypto"] }
 
 [[bin]]
 name              = "klv_sei_parse"
@@ -28,3 +29,17 @@ bench             = false
 
 [workspace]
 members = []
+
+[[bin]]
+name              = "whep_http_request"
+path              = "fuzz_targets/whep_http_request.rs"
+test              = false
+doc               = false
+bench             = false
+
+[[bin]]
+name              = "whep_sdp_select"
+path              = "fuzz_targets/whep_sdp_select.rs"
+test              = false
+doc               = false
+bench             = false

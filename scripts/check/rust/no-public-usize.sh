@@ -48,6 +48,7 @@ ALLOWLIST_PATTERNS=(
     'pub max_unsynced_bytes: usize'                         # SenderConfig
     'pub length: usize'                                     # ImapbParams (1/2/4/8-byte mapping length)
     'pub (prefix_start|data_start): usize'                  # codec/annexb.rs StartCode: byte offsets into a slice, Rust-only (never crosses FFI)
+    'pub content_length: usize'                             # tst-webrtc server::http Request: a #[doc(hidden)] module, bounded by MAX_BODY, Rust-only (never crosses FFI)
 
     # Public fields inside pub(crate) / pub(super) parent structs — the
     # field uses `pub` so the strip-by-line filter can't see them, but the

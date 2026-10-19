@@ -4455,3 +4455,11 @@ reason = "#[doc(hidden)] test seam: a mount driven without a server, with the re
 [[exempt]]
 item = "tst_webrtc::mount::MountHandle::close_for_test"
 reason = "#[doc(hidden)] test seam: closes a mount built by for_test; not a supported API"
+
+[[exempt]]
+item = "tst_webrtc::server::http"
+reason = "#[doc(hidden)] test seam: the WHEP request parser and router, public for the integration tests and fuzz targets; not a supported API"
+
+[[exempt]]
+item = "tst_webrtc::server::negotiate"
+reason = "#[doc(hidden)] test seam: the video payload selection, public for the integration tests and fuzz targets; not a supported API"
