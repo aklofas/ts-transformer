@@ -6,15 +6,23 @@
 
 pub mod config;
 pub mod error;
+pub mod mount;
 pub mod packetize;
 pub mod sei;
+pub mod stats;
 pub mod url;
+
+pub(crate) mod server {
+    pub(crate) mod media;
+}
 
 #[cfg(feature = "tls")]
 mod tls;
 
 pub use config::{AudioPolicy, KlvCarriage, MountConfig, MountKind, VideoCodec};
 pub use error::{PushError, WhepServerError};
+pub use mount::MountHandle;
+pub use stats::{IceState, MountStats, ServerStats, SessionStats};
 
 /// Installs str0m's process-wide crypto provider. The first install wins and
 /// later calls are ignored, so calling this on every bind is safe.

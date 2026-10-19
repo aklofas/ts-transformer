@@ -773,7 +773,8 @@ jobs:
           # 196->202 (2026-10-19): the new tst-webrtc crate's WhepServerError, PushError,
           # MountKind, AudioPolicy, KlvCarriage and MountConfig.
           # 202->203 (2026-10-19): +tst-webrtc sei::KlvSei.
-          BASELINE=203
+          # 203->207 (2026-10-19): +tst-webrtc stats::{MountStats, ServerStats, SessionStats, IceState}.
+          BASELINE=207
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
             echo "non_exhaustive count regressed: expected >= $BASELINE, observed $OBSERVED" >&2

@@ -4321,3 +4321,137 @@ reason = "From<UrlError> impl introduced by thiserror #[from] on WhepServerError
 [[exempt]]
 item = "tst_webrtc::error::WhepServerError::source"
 reason = "Error::source impl introduced by thiserror #[from] on WhepServerError::InvalidUrl; error-enum trait method"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::MountHandle"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::mount::MountHandle"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::mount::MountHandle::config"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::mount::MountHandle::mount_path"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::mount::MountHandle::push_audio"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::mount::MountHandle::push_klv"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::mount::MountHandle::push_ts"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::mount::MountHandle::push_video"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::mount::MountHandle::sessions"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::mount::MountHandle::stats"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::stats::MountStats"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::stats::ServerStats"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::stats::SessionStats"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::stats::IceState"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[exempt]]
+item = "tst_webrtc::mount::MountHandle::for_test"
+reason = "#[doc(hidden)] test seam: a mount driven without a server, with the receiving end of its media queue; not a supported API"
+
+[[exempt]]
+item = "tst_webrtc::mount::MountHandle::close_for_test"
+reason = "#[doc(hidden)] test seam: closes a mount built by for_test; not a supported API"

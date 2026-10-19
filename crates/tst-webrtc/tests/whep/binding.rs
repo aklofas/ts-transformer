@@ -1,0 +1,243 @@
+//! A mount binds KLV records to video frames, carries them in SEI and on
+//! the data channel, caches parameter sets and keeps the RTP clock
+//! continuous. Driven through the mount's test constructor, with no server.
+
+use tst_core::mpegts::common::Pts90khz;
+use tst_webrtc::mount::MediaMsg;
+use tst_webrtc::{KlvCarriage, MountConfig, MountHandle, PushError, VideoCodec};
+
+const SPS: &[u8] = &[0, 0, 0, 1, 0x67, 0x42, 0xC0, 0x1E, 0xD9, 0x00];
+const PPS: &[u8] = &[0, 0, 0, 1, 0x68, 0xCE, 0x38, 0x80];
+const IDR: &[u8] = &[0, 0, 1, 0x65, 0x88, 0x84, 0x00];
+const P: &[u8] = &[0, 0, 1, 0x41, 0x9A, 0x01];
+
+fn au(parts: &[&[u8]]) -> Vec<u8> {
+    parts.concat()
+}
+
+fn next_frame(
+    rx: &std::sync::mpsc::Receiver<MediaMsg>,
+) -> std::sync::Arc<tst_webrtc::mount::FramePacket> {
+    loop {
+        match rx.try_recv().expect("message") {
+            MediaMsg::Frame { packet, .. } => return packet,
+            _ => continue,
+        }
+    }
+}
+
+/// The frame's payloads re-joined into an Annex-B access unit (every test
+/// AU is small enough to travel as single NAL unit payloads).
+fn rejoin(f: &tst_webrtc::mount::FramePacket) -> Vec<u8> {
+    f.payloads
+        .iter()
+        .flat_map(|p| [0u8, 0, 1].into_iter().chain(p.payload.iter().copied()))
+        .collect()
+}
+
+#[test]
+fn sync_klv_with_frame_pts_lands_in_that_frame_as_sei_and_dc() {
+    let (m, rx) = MountHandle::for_test(MountConfig::default());
+    m.push_klv(b"\x06\x0e\x2b\x34rec1", Pts90khz::new(9000), 0)
+        .unwrap();
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(9000), true)
+        .unwrap();
+    let f = next_frame(&rx);
+    assert!(f.keyframe);
+    let au_bytes = rejoin(&f);
+    assert_eq!(
+        tst_webrtc::sei::extract_klv_seis(&au_bytes, VideoCodec::H264).len(),
+        1
+    );
+    assert!(
+        matches!(rx.try_recv().unwrap(), MediaMsg::Klv { msg, .. } if msg.klv_pts_90k == 9000 && msg.rtp_ts == f.rtp_ts)
+    );
+    assert_eq!(m.stats().klv_sei_inserted, 1);
+}
+
+#[test]
+fn async_klv_binds_to_first_frame_at_or_after_its_pts() {
+    let (m, rx) = MountHandle::for_test(MountConfig::default());
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(0), true)
+        .unwrap();
+    let _ = next_frame(&rx);
+    m.push_klv(b"rec", Pts90khz::new(3500), 0).unwrap();
+    // 3000 < 3500: the record does not bind here.
+    m.push_video(&au(&[P]), Pts90khz::new(3000), false).unwrap();
+    let f1 = next_frame(&rx);
+    assert!(rx.try_recv().is_err());
+    // The first frame at or after 3500.
+    m.push_video(&au(&[P]), Pts90khz::new(6000), false).unwrap();
+    let f2 = next_frame(&rx);
+    assert!(matches!(rx.try_recv().unwrap(), MediaMsg::Klv { msg, .. } if msg.rtp_ts == f2.rtp_ts));
+    assert_ne!(f1.rtp_ts, f2.rtp_ts);
+}
+
+#[test]
+fn late_klv_binds_to_the_next_frame_never_dropped() {
+    let (m, rx) = MountHandle::for_test(MountConfig::default());
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(90_000), true)
+        .unwrap();
+    let _ = next_frame(&rx);
+    // Older than every frame.
+    m.push_klv(b"old", Pts90khz::new(1000), 0).unwrap();
+    m.push_video(&au(&[P]), Pts90khz::new(93_000), false)
+        .unwrap();
+    let f = next_frame(&rx);
+    assert!(
+        matches!(rx.try_recv().unwrap(), MediaMsg::Klv { msg, .. } if msg.klv_pts_90k == 1000 && msg.rtp_ts == f.rtp_ts)
+    );
+}
+
+#[test]
+fn oversize_record_skips_sei_but_rides_the_data_channel() {
+    let mut cfg = MountConfig::default();
+    cfg.sei_budget_bytes = 1024;
+    let (m, rx) = MountHandle::for_test(cfg);
+    m.push_klv(&vec![7u8; 100 * 1024], Pts90khz::new(0), 0)
+        .unwrap();
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(0), true)
+        .unwrap();
+    let f = next_frame(&rx);
+    let au_bytes = rejoin(&f);
+    assert!(tst_webrtc::sei::extract_klv_seis(&au_bytes, VideoCodec::H264).is_empty());
+    assert!(
+        matches!(rx.try_recv().unwrap(), MediaMsg::Klv { msg, .. } if msg.klv.len() == 100 * 1024)
+    );
+    assert_eq!(m.stats().klv_sei_dropped_oversize, 1);
+}
+
+#[test]
+fn record_over_data_channel_limit_is_refused() {
+    let (m, _rx) = MountHandle::for_test(MountConfig::default());
+    assert!(matches!(
+        m.push_klv(&vec![0u8; 256 * 1024 + 1], Pts90khz::new(0), 0),
+        Err(PushError::KlvTooLarge { .. })
+    ));
+}
+
+#[test]
+fn keyframe_without_parameter_sets_ever_is_not_an_error_and_not_a_keyframe() {
+    let (m, rx) = MountHandle::for_test(MountConfig::default());
+    m.push_video(&au(&[IDR]), Pts90khz::new(0), true).unwrap();
+    assert!(!next_frame(&rx).keyframe);
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(3000), true)
+        .unwrap();
+    assert!(next_frame(&rx).keyframe);
+}
+
+#[test]
+fn cached_parameter_sets_are_prepended_to_a_bare_idr() {
+    let (m, rx) = MountHandle::for_test(MountConfig::default());
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(0), true)
+        .unwrap();
+    let _ = next_frame(&rx);
+    m.push_video(&au(&[IDR]), Pts90khz::new(3000), true)
+        .unwrap();
+    let f = next_frame(&rx);
+    assert_eq!(f.payloads[0].payload[0], 0x67);
+    assert_eq!(f.payloads[1].payload[0], 0x68);
+    assert!(f.keyframe);
+}
+
+#[test]
+fn idr_nal_with_false_flag_counts_as_keyframe_and_mismatch() {
+    let (m, rx) = MountHandle::for_test(MountConfig::default());
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(0), false)
+        .unwrap();
+    assert!(next_frame(&rx).keyframe);
+    assert_eq!(m.stats().keyframe_flag_mismatch, 1);
+}
+
+#[test]
+fn pts_jump_backwards_rebases_the_rtp_clock_continuously() {
+    let (m, rx) = MountHandle::for_test(MountConfig::default());
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(8_000_000_000), true)
+        .unwrap();
+    let a = next_frame(&rx);
+    // The source wrapped or restarted.
+    m.push_video(&au(&[P]), Pts90khz::new(0), false).unwrap();
+    let b = next_frame(&rx);
+    assert_eq!(b.rtp_ts.wrapping_sub(a.rtp_ts), 3000);
+    assert_eq!(m.stats().rtp_clock_rebases, 1);
+}
+
+#[test]
+fn empty_au_is_invalid_and_closed_mount_refuses() {
+    let (m, _rx) = MountHandle::for_test(MountConfig::default());
+    assert!(matches!(
+        m.push_video(&[], Pts90khz::new(0), false),
+        Err(PushError::InvalidAccessUnit { .. })
+    ));
+    m.close_for_test();
+    assert!(matches!(
+        m.push_video(&au(&[P]), Pts90khz::new(0), false),
+        Err(PushError::Closed)
+    ));
+}
+
+#[test]
+fn elementary_mount_refuses_push_ts() {
+    let (m, _rx) = MountHandle::for_test(MountConfig::default());
+    assert!(matches!(
+        m.push_ts(&[0x47; 188]),
+        Err(PushError::WrongMountKind)
+    ));
+}
+
+#[test]
+fn misp_timestamp_sei_in_the_source_au_is_preserved_bytewise() {
+    use tst_core::codec::misp_time::{MispTimestamp, build_sei_nal, extract};
+    let (m, rx) = MountHandle::for_test(MountConfig::default());
+    let misp = build_sei_nal(
+        VideoCodec::H264,
+        &MispTimestamp::micros(1_700_000_000_000_000, 0x1F),
+    )
+    .unwrap();
+    let mut src = au(&[SPS, PPS]);
+    src.extend([0, 0, 1]);
+    src.extend(&misp);
+    src.extend(IDR);
+    m.push_klv(b"rec", Pts90khz::new(0), 0).unwrap();
+    m.push_video(&src, Pts90khz::new(0), true).unwrap();
+    let f = next_frame(&rx);
+    let au_bytes = rejoin(&f);
+    assert_eq!(
+        au_bytes
+            .windows(misp.len())
+            .filter(|w| *w == misp.as_slice())
+            .count(),
+        1
+    );
+    assert_eq!(
+        extract(&au_bytes, VideoCodec::H264).unwrap().unwrap().value,
+        1_700_000_000_000_000
+    );
+    assert_eq!(
+        tst_webrtc::sei::extract_klv_seis(&au_bytes, VideoCodec::H264).len(),
+        1
+    );
+}
+
+#[test]
+fn sei_only_carriage_sends_no_data_channel_message() {
+    let mut cfg = MountConfig::default();
+    cfg.klv = KlvCarriage::SeiOnly;
+    let (m, rx) = MountHandle::for_test(cfg);
+    m.push_klv(b"rec", Pts90khz::new(0), 0).unwrap();
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(0), true)
+        .unwrap();
+    let _ = next_frame(&rx);
+    assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn a_mount_without_a_server_has_no_sessions_and_drops_audio() {
+    let (m, _rx) = MountHandle::for_test(MountConfig::default());
+    assert_eq!(m.mount_path(), "test");
+    assert_eq!(m.config().video, VideoCodec::H264);
+    assert!(m.sessions().is_empty());
+    assert_eq!(m.stats(), tst_webrtc::MountStats::default());
+    m.push_audio(&[0xFC, 0xFF], Pts90khz::new(0)).unwrap();
+    assert_eq!(m.stats().audio_frames_dropped, 1);
+}
