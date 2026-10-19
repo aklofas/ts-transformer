@@ -21,7 +21,7 @@ python = []  # opt-in: exercises the Python adapter (needs the wheel) — later 
 tst-core = { path = "../tst-core" }
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml       = "0.8"
+toml       = "1"
 sha2       = "0.10"
 
 # Live-socket leg of the `cancelled-recv-kind` binding_contract scenario
