@@ -40,6 +40,7 @@
 //! the SAME value as `socketStats`, return type `SocketStats`, no throw) +
 //! `reconnectAttempts()` — NO combined `stats()`.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -216,7 +217,7 @@ jni_native! {
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -820,7 +821,7 @@ fn build_demux_from_url(
         Ok(s) => s,
         Err(e) => {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 JNIString::from(e.to_string()),
             );
             return 0;

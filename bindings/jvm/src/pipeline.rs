@@ -17,6 +17,7 @@
 //! `IllegalStateException`); `nClose` takes + drops via `REGISTRY.close` (atomic
 //! + idempotent, so a double `close()` is UAF/double-free-safe).
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use jni::Env;
 use jni::jni_sig;
@@ -207,7 +208,7 @@ fn build_output_list<'local>(
 ) -> Result<JObject<'local>, ()> {
     let list = env
         .new_object(
-            jni_str!("java/util/ArrayList"),
+            FindClass(jni_str!("java/util/ArrayList")),
             jni_sig!("(I)V"),
             &[JValue::Int(outs.len() as i32)],
         )
@@ -242,7 +243,7 @@ fn convert_output<'local>(
             let v = convert_video_sample(env, video)?;
             let k = convert_klv_sample(env, klv)?;
             env.new_object(
-                jni_str!("org/tstrans/pipeline/PairerOutput$Paired"),
+                FindClass(jni_str!("org/tstrans/pipeline/PairerOutput$Paired")),
                 jni_sig!("(Lorg/tstrans/pipeline/VideoSample;Lorg/tstrans/pipeline/KlvSample;)V"),
                 &[JValue::Object(&v), JValue::Object(&k)],
             )
@@ -251,7 +252,7 @@ fn convert_output<'local>(
         PairerOutput::UnpairedVideo(video) => {
             let v = convert_video_sample(env, video)?;
             env.new_object(
-                jni_str!("org/tstrans/pipeline/PairerOutput$UnpairedVideo"),
+                FindClass(jni_str!("org/tstrans/pipeline/PairerOutput$UnpairedVideo")),
                 jni_sig!("(Lorg/tstrans/pipeline/VideoSample;)V"),
                 &[JValue::Object(&v)],
             )
@@ -260,7 +261,7 @@ fn convert_output<'local>(
         PairerOutput::UnpairedKlv(klv) => {
             let k = convert_klv_sample(env, klv)?;
             env.new_object(
-                jni_str!("org/tstrans/pipeline/PairerOutput$UnpairedKlv"),
+                FindClass(jni_str!("org/tstrans/pipeline/PairerOutput$UnpairedKlv")),
                 jni_sig!("(Lorg/tstrans/pipeline/KlvSample;)V"),
                 &[JValue::Object(&k)],
             )
@@ -275,7 +276,7 @@ fn convert_output<'local>(
                 return Ok(None);
             };
             env.new_object(
-                jni_str!("org/tstrans/pipeline/PairerOutput$PassThrough"),
+                FindClass(jni_str!("org/tstrans/pipeline/PairerOutput$PassThrough")),
                 jni_sig!("(Lorg/tstrans/mpegts/DemuxEvent;)V"),
                 &[JValue::Object(&ev_obj)],
             )
@@ -304,7 +305,7 @@ fn convert_video_sample<'local>(
     let (payload, _issues) = vs.split_units();
     let payload_list = build_video_units(env, &payload)?;
     env.new_object(
-        jni_str!("org/tstrans/pipeline/VideoSample"),
+        FindClass(jni_str!("org/tstrans/pipeline/VideoSample")),
         jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;Lorg/tstrans/mpegts/VideoCodec;Ljava/util/List;)V"),
         &[
             JValue::Object(&stream),
@@ -331,7 +332,7 @@ fn convert_klv_sample<'local>(
     let (kind, _was_reassembled, _cell_count) = metadata_kind(env, &ks.kind)?;
     let payload = wrap_heap_byte_buffer(env, &ks.payload)?;
     env.new_object(
-        jni_str!("org/tstrans/pipeline/KlvSample"),
+        FindClass(jni_str!("org/tstrans/pipeline/KlvSample")),
         jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLorg/tstrans/mpegts/MetadataKind;Ljava/nio/ByteBuffer;)V"),
         &[
             JValue::Object(&stream),

@@ -12,7 +12,7 @@ pub(crate) fn build_muxer_stats<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(40)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/mpegts/MuxerStats"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/mpegts/MuxerStats")),
         jni_sig!("(JJJJ)V"),
         &[
             JValue::Long(r.ts_packets_emitted as i64),
@@ -30,7 +30,7 @@ pub(crate) fn build_demuxer_stats<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(44)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/mpegts/DemuxerStats"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/mpegts/DemuxerStats")),
         jni_sig!("(JJJJJJ)V"),
         &[
             JValue::Long(r.program_maps_seen as i64),

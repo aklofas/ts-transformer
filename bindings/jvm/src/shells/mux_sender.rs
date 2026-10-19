@@ -19,6 +19,7 @@
 //! Errors: a mux-sourced failure is a `MuxException`; every other source is
 //! thrown in the shell's transport domain.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 
@@ -473,7 +474,7 @@ pub(crate) fn build_transport_stats<'local>(
 ) -> jni::errors::Result<JObject<'local>> {
     env.ensure_local_capacity(4)?;
     env.new_object(
-        jni_str!("org/tstrans/shells/TransportStats"),
+        FindClass(jni_str!("org/tstrans/shells/TransportStats")),
         jni_sig!("(Lorg/tstrans/shells/SocketStats;Lorg/tstrans/mpegts/MuxerStats;)V"),
         &[JValue::Object(socket_stats), JValue::Object(muxer_stats)],
     )

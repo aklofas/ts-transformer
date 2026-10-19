@@ -13,7 +13,7 @@ pub(crate) fn build_wavelength_record<'l>(
     env.ensure_local_capacity(40)?;
     let name = env.new_string(&r.name)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/WavelengthRecord"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/WavelengthRecord")),
         jni_sig!("(JDDLjava/lang/String;)V"),
         &[
             JValue::Long(r.id as i64),
@@ -67,7 +67,7 @@ pub(crate) fn build_image_horizon_pixels<'l>(
         Some(v) => {
             let o1 = env
                 .call_static_method(
-                    jni_str!("java/lang/Double"),
+                    crate::jutil::FindClass(jni_str!("java/lang/Double")),
                     jni_str!("valueOf"),
                     jni_sig!("(D)Ljava/lang/Double;"),
                     &[JValue::Double(*v)],
@@ -81,7 +81,7 @@ pub(crate) fn build_image_horizon_pixels<'l>(
         Some(v) => {
             let o2 = env
                 .call_static_method(
-                    jni_str!("java/lang/Double"),
+                    crate::jutil::FindClass(jni_str!("java/lang/Double")),
                     jni_str!("valueOf"),
                     jni_sig!("(D)Ljava/lang/Double;"),
                     &[JValue::Double(*v)],
@@ -95,7 +95,7 @@ pub(crate) fn build_image_horizon_pixels<'l>(
         Some(v) => {
             let o3 = env
                 .call_static_method(
-                    jni_str!("java/lang/Double"),
+                    crate::jutil::FindClass(jni_str!("java/lang/Double")),
                     jni_str!("valueOf"),
                     jni_sig!("(D)Ljava/lang/Double;"),
                     &[JValue::Double(*v)],
@@ -109,7 +109,7 @@ pub(crate) fn build_image_horizon_pixels<'l>(
         Some(v) => {
             let o4 = env
                 .call_static_method(
-                    jni_str!("java/lang/Double"),
+                    crate::jutil::FindClass(jni_str!("java/lang/Double")),
                     jni_str!("valueOf"),
                     jni_sig!("(D)Ljava/lang/Double;"),
                     &[JValue::Double(*v)],
@@ -120,7 +120,7 @@ pub(crate) fn build_image_horizon_pixels<'l>(
         None => JObject::null(),
     };
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/ImageHorizonPixels"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/ImageHorizonPixels")),
         jni_sig!("(IIIILjava/lang/Double;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Double;)V"),
         &[
             JValue::Int(r.x0_pct as i32),
@@ -243,7 +243,7 @@ pub(crate) fn build_control_command<'l>(
         Some(v) => {
             let o1 = env
                 .call_static_method(
-                    jni_str!("java/lang/Long"),
+                    crate::jutil::FindClass(jni_str!("java/lang/Long")),
                     jni_str!("valueOf"),
                     jni_sig!("(J)Ljava/lang/Long;"),
                     &[JValue::Long(*v as i64)],
@@ -254,7 +254,7 @@ pub(crate) fn build_control_command<'l>(
         None => JObject::null(),
     };
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/ControlCommand"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/ControlCommand")),
         jni_sig!("(JLjava/lang/String;Ljava/lang/Long;)V"),
         &[
             JValue::Long(r.id as i64),
@@ -313,7 +313,7 @@ pub(crate) fn build_sensor_frame_rate<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(36)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/SensorFrameRate"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/SensorFrameRate")),
         jni_sig!("(JJ)V"),
         &[
             JValue::Long(r.numerator as i64),
@@ -349,7 +349,7 @@ pub(crate) fn build_metadata_substream_id<'l>(
     env.ensure_local_capacity(36)?;
     let uuid = crate::custom::build_metadata_substream_id_uuid(env, &r.uuid)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/MetadataSubstreamId"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/MetadataSubstreamId")),
         jni_sig!("(J[B)V"),
         &[JValue::Long(r.local_id as i64), JValue::Object(&uuid)],
     )?;
@@ -396,7 +396,7 @@ pub(crate) fn build_country_codes<'l>(
         None => JObject::null(),
     };
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/CountryCodes"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/CountryCodes")),
         jni_sig!("(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"),
         &[
             JValue::Long(r.coding_method as i64),
@@ -482,7 +482,7 @@ pub(crate) fn build_location<'l>(
         Some(v) => {
             let o1 = env
                 .call_static_method(
-                    jni_str!("java/lang/Double"),
+                    crate::jutil::FindClass(jni_str!("java/lang/Double")),
                     jni_str!("valueOf"),
                     jni_sig!("(D)Ljava/lang/Double;"),
                     &[JValue::Double(*v)],
@@ -496,7 +496,7 @@ pub(crate) fn build_location<'l>(
         Some(v) => {
             let o2 = env
                 .call_static_method(
-                    jni_str!("java/lang/Double"),
+                    crate::jutil::FindClass(jni_str!("java/lang/Double")),
                     jni_str!("valueOf"),
                     jni_sig!("(D)Ljava/lang/Double;"),
                     &[JValue::Double(*v)],
@@ -510,7 +510,7 @@ pub(crate) fn build_location<'l>(
         Some(v) => {
             let o3 = env
                 .call_static_method(
-                    jni_str!("java/lang/Double"),
+                    crate::jutil::FindClass(jni_str!("java/lang/Double")),
                     jni_str!("valueOf"),
                     jni_sig!("(D)Ljava/lang/Double;"),
                     &[JValue::Double(*v)],
@@ -521,7 +521,7 @@ pub(crate) fn build_location<'l>(
         None => JObject::null(),
     };
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/Location"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/Location")),
         jni_sig!("(Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Double;)V"),
         &[
             JValue::Object(&lat_deg),
@@ -613,7 +613,7 @@ pub(crate) fn build_airbase_locations<'l>(
         None => JObject::null(),
     };
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/AirbaseLocations"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/AirbaseLocations")),
         jni_sig!("(Lorg/tstrans/klv/Location;Lorg/tstrans/klv/Location;)V"),
         &[JValue::Object(&take_off), JValue::Object(&recovery)],
     )?;
@@ -662,7 +662,7 @@ pub(crate) fn build_payload_record<'l>(
     let payload_type = crate::custom::build_payload_record_payload_type(env, &r.payload_type)?;
     let name = env.new_string(&r.name)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/PayloadRecord"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/PayloadRecord")),
         jni_sig!("(JJLjava/lang/String;)V"),
         &[
             JValue::Long(r.id as i64),
@@ -707,7 +707,11 @@ pub(crate) fn build_payload_list<'l>(
     env.ensure_local_capacity(36)?;
     let records =
         env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
-            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+            let list = env.new_object(
+                crate::jutil::FindClass(jni_str!("java/util/ArrayList")),
+                jni_sig!("()V"),
+                &[],
+            )?;
             for item in r.records.iter() {
                 env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                     let o1 = env
@@ -727,7 +731,7 @@ pub(crate) fn build_payload_list<'l>(
             Ok(list)
         })?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/PayloadList"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/PayloadList")),
         jni_sig!("(JLjava/util/List;)V"),
         &[JValue::Long(r.count as i64), JValue::Object(&records)],
     )?;
@@ -782,7 +786,7 @@ pub(crate) fn build_weapons_store<'l>(
     env.ensure_local_capacity(44)?;
     let weapon_type = env.new_string(&r.weapon_type)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/WeaponsStore"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/WeaponsStore")),
         jni_sig!("(JJJJJLjava/lang/String;)V"),
         &[
             JValue::Long(r.station_id as i64),
@@ -855,7 +859,7 @@ pub(crate) fn build_waypoint<'l>(
         Some(v) => {
             let o1 = env
                 .call_static_method(
-                    jni_str!("java/lang/Long"),
+                    crate::jutil::FindClass(jni_str!("java/lang/Long")),
                     jni_str!("valueOf"),
                     jni_sig!("(J)Ljava/lang/Long;"),
                     &[JValue::Long(*v as i64)],
@@ -876,7 +880,7 @@ pub(crate) fn build_waypoint<'l>(
         None => JObject::null(),
     };
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/Waypoint"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/Waypoint")),
         jni_sig!("(JILjava/lang/Long;Lorg/tstrans/klv/Location;)V"),
         &[
             JValue::Long(r.id as i64),
@@ -943,7 +947,7 @@ pub(crate) fn build_view_domain_pair<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(36)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/ViewDomainPair"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/ViewDomainPair")),
         jni_sig!("(DD)V"),
         &[JValue::Double(r.start_deg), JValue::Double(r.range_deg)],
     )?;
@@ -1002,7 +1006,7 @@ pub(crate) fn build_view_domain<'l>(
         }
         None => JObject::null(),
     };
-    let obj = env.new_object(jni_str!("org/tstrans/klv/ViewDomain"), jni_sig!("(Lorg/tstrans/klv/ViewDomainPair;Lorg/tstrans/klv/ViewDomainPair;Lorg/tstrans/klv/ViewDomainPair;)V"), &[JValue::Object(&azimuth), JValue::Object(&elevation), JValue::Object(&roll)])?;
+    let obj = env.new_object(crate::jutil::FindClass(jni_str!("org/tstrans/klv/ViewDomain")), jni_sig!("(Lorg/tstrans/klv/ViewDomainPair;Lorg/tstrans/klv/ViewDomainPair;Lorg/tstrans/klv/ViewDomainPair;)V"), &[JValue::Object(&azimuth), JValue::Object(&elevation), JValue::Object(&roll)])?;
     Ok(obj)
 }
 
@@ -1064,12 +1068,16 @@ pub(crate) fn build_sdcc_flp_field<'l>(
     env.ensure_local_capacity(36)?;
     let preceding_tags =
         env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
-            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+            let list = env.new_object(
+                crate::jutil::FindClass(jni_str!("java/util/ArrayList")),
+                jni_sig!("()V"),
+                &[],
+            )?;
             for item in r.preceding_tags.iter() {
                 env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                     let o1 = env
                         .call_static_method(
-                            jni_str!("java/lang/Long"),
+                            crate::jutil::FindClass(jni_str!("java/lang/Long")),
                             jni_str!("valueOf"),
                             jni_sig!("(J)Ljava/lang/Long;"),
                             &[JValue::Long(*item as i64)],
@@ -1089,7 +1097,7 @@ pub(crate) fn build_sdcc_flp_field<'l>(
     let bytes = crate::jutil::wrap_heap_byte_buffer(env, &r.bytes)
         .map_err(|()| jni::errors::Error::JavaException)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/SdccFlpField"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/SdccFlpField")),
         jni_sig!("(Ljava/util/List;Ljava/nio/ByteBuffer;)V"),
         &[JValue::Object(&preceding_tags), JValue::Object(&bytes)],
     )?;
@@ -1156,7 +1164,7 @@ pub(crate) fn build_uas_datalink_ls<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(326)?;
     let b = env.new_object(
-        jni_str!("org/tstrans/klv/UasDatalinkLs$Builder"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/UasDatalinkLs$Builder")),
         jni_sig!("()V"),
         &[],
     )?;
@@ -2237,7 +2245,11 @@ pub(crate) fn build_uas_datalink_ls<'l>(
     }
     let control_commands =
         env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
-            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+            let list = env.new_object(
+                crate::jutil::FindClass(jni_str!("java/util/ArrayList")),
+                jni_sig!("()V"),
+                &[],
+            )?;
             for item in r.control_commands.iter() {
                 env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                     let o24 = env
@@ -2265,12 +2277,16 @@ pub(crate) fn build_uas_datalink_ls<'l>(
     if let Some(v) = &r.control_command_verification {
         let o25 =
             env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
-                let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+                let list = env.new_object(
+                    crate::jutil::FindClass(jni_str!("java/util/ArrayList")),
+                    jni_sig!("()V"),
+                    &[],
+                )?;
                 for item in v.iter() {
                     env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                         let o26 = env
                             .call_static_method(
-                                jni_str!("java/lang/Long"),
+                                crate::jutil::FindClass(jni_str!("java/lang/Long")),
                                 jni_str!("valueOf"),
                                 jni_sig!("(J)Ljava/lang/Long;"),
                                 &[JValue::Long(*item as i64)],
@@ -2297,12 +2313,16 @@ pub(crate) fn build_uas_datalink_ls<'l>(
     if let Some(v) = &r.active_wavelengths {
         let o27 =
             env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
-                let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+                let list = env.new_object(
+                    crate::jutil::FindClass(jni_str!("java/util/ArrayList")),
+                    jni_sig!("()V"),
+                    &[],
+                )?;
                 for item in v.iter() {
                     env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                         let o28 = env
                             .call_static_method(
-                                jni_str!("java/lang/Long"),
+                                crate::jutil::FindClass(jni_str!("java/lang/Long")),
                                 jni_str!("valueOf"),
                                 jni_sig!("(J)Ljava/lang/Long;"),
                                 &[JValue::Long(*item as i64)],
@@ -2367,7 +2387,11 @@ pub(crate) fn build_uas_datalink_ls<'l>(
     if let Some(v) = &r.wavelengths_list {
         let o32 =
             env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
-                let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+                let list = env.new_object(
+                    crate::jutil::FindClass(jni_str!("java/util/ArrayList")),
+                    jni_sig!("()V"),
+                    &[],
+                )?;
                 for item in v.iter() {
                     env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                         let o33 = env
@@ -2420,7 +2444,11 @@ pub(crate) fn build_uas_datalink_ls<'l>(
     if let Some(v) = &r.weapons_stores {
         let o36 =
             env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
-                let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+                let list = env.new_object(
+                    crate::jutil::FindClass(jni_str!("java/util/ArrayList")),
+                    jni_sig!("()V"),
+                    &[],
+                )?;
                 for item in v.iter() {
                     env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                         let o37 = env
@@ -2449,7 +2477,11 @@ pub(crate) fn build_uas_datalink_ls<'l>(
     if let Some(v) = &r.waypoint_list {
         let o38 =
             env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
-                let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+                let list = env.new_object(
+                    crate::jutil::FindClass(jni_str!("java/util/ArrayList")),
+                    jni_sig!("()V"),
+                    &[],
+                )?;
                 for item in v.iter() {
                     env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                         let o39 = env
@@ -2489,7 +2521,11 @@ pub(crate) fn build_uas_datalink_ls<'l>(
     }
     let sdcc_flps =
         env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
-            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+            let list = env.new_object(
+                crate::jutil::FindClass(jni_str!("java/util/ArrayList")),
+                jni_sig!("()V"),
+                &[],
+            )?;
             for item in r.sdcc_flps.iter() {
                 env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                     let o41 = env

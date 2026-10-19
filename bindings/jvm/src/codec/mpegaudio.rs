@@ -19,6 +19,7 @@
 //! `build_frame_owned`, which the demux audio-retype path reuses to surface
 //! typed frames on `Sample` payloads.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use jni::Env;
 use jni::jni_sig;
@@ -41,7 +42,7 @@ pub(crate) fn build_layer<'local>(env: &mut Env<'local>, l: Layer) -> Result<JOb
         Layer::III => "III",
     };
     env.get_static_field(
-        jni_str!("org/tstrans/codec/Layer"),
+        FindClass(jni_str!("org/tstrans/codec/Layer")),
         JNIString::from(name),
         jni_sig!("Lorg/tstrans/codec/Layer;"),
     )
@@ -61,7 +62,7 @@ pub(crate) fn build_version<'local>(
         Version::Mpeg2_5 => "MPEG2_5",
     };
     env.get_static_field(
-        jni_str!("org/tstrans/codec/Version"),
+        FindClass(jni_str!("org/tstrans/codec/Version")),
         JNIString::from(name),
         jni_sig!("Lorg/tstrans/codec/Version;"),
     )
@@ -82,7 +83,7 @@ pub(crate) fn build_channel_mode<'local>(
         ChannelMode::Mono => "MONO",
     };
     env.get_static_field(
-        jni_str!("org/tstrans/codec/ChannelMode"),
+        FindClass(jni_str!("org/tstrans/codec/ChannelMode")),
         JNIString::from(name),
         jni_sig!("Lorg/tstrans/codec/ChannelMode;"),
     )
@@ -98,7 +99,11 @@ fn build_frame_list<'local>(
     frames: &[FrameOwned],
 ) -> Result<JObject<'local>, ()> {
     let list = env
-        .new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])
+        .new_object(
+            FindClass(jni_str!("java/util/ArrayList")),
+            jni_sig!("()V"),
+            &[],
+        )
         .map_err(|_| ())?;
     for f in frames {
         env.with_local_frame(24, |inner| {

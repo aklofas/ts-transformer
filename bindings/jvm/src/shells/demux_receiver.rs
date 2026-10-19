@@ -26,6 +26,7 @@
 //! first-wins into `sink_error` (as a `Global`) and re-thrown from the next
 //! `nNext` after the slot is released.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -271,14 +272,14 @@ jni_native! {
         let vm = match env.get_java_vm() {
             Ok(vm) => vm,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return;
             }
         };
         let consumer = match env.new_global_ref(&consumer) {
             Ok(g) => g,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return;
             }
         };
@@ -295,7 +296,12 @@ jni_native! {
                 // because there is no GIL. Touches ONLY `consumer` + `slot`, never the
                 // receiver's `inner`.
                 // Scoped: the thread is detached again when the closure ends
-                // unless it was already attached, as with the 0.21 guard.
+                // unless it was already attached, as with the 0.21 guard. It
+                // also pushes a local frame per call (each packet's byte[]
+                // local is freed on return) and, under the default
+                // PreReThrowPostCatch policy, stashes a pending exception
+                // before the callback and re-throws it after; do not swap it
+                // for a permanent attach.
                 let _ = vm.attach_current_thread_for_scope(|env| -> jni::errors::Result<()> {
                     let arr = match env.byte_array_from_slice(pkt) {
                         Ok(a) => a,

@@ -20,6 +20,7 @@
 //! | `jobject` / `jstring` / `jbyteArray`| `std::ptr::null_mut()` |
 //! | `()` (void natives)                 | `()`                   |
 
+use crate::jutil::FindClass;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use jni::strings::JNIString;
@@ -50,7 +51,7 @@ where
                 if !env.exception_check() {
                     let detail = panic_payload_message(&*payload);
                     let _ = env.throw_new(
-                        jni_str!("java/lang/RuntimeException"),
+                        FindClass(jni_str!("java/lang/RuntimeException")),
                         JNIString::from(format!("native panic in tst-jni: {detail}")),
                     );
                 }

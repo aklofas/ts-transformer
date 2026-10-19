@@ -1,7 +1,7 @@
 pub(crate) fn build_wavelength_record<'l>(env: &mut Env<'l>, r: &tst_core::klv::st0601::WavelengthRecord) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(40)?;
     let name = env.new_string(&r.name)?;
-    let obj = env.new_object(jni_str!("org/tstrans/klv/WavelengthRecord"), jni_sig!("(JDDLjava/lang/String;)V"), &[JValue::Long(r.id as i64), JValue::Double(r.min_nm), JValue::Double(r.max_nm), JValue::Object(&name)])?;
+    let obj = env.new_object(crate::jutil::FindClass(jni_str!("org/tstrans/klv/WavelengthRecord")), jni_sig!("(JDDLjava/lang/String;)V"), &[JValue::Long(r.id as i64), JValue::Double(r.min_nm), JValue::Double(r.max_nm), JValue::Object(&name)])?;
     Ok(obj)
 }
 

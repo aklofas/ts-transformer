@@ -28,6 +28,7 @@
 //! array-read failures fail closed (a thrown `MuxException`/`RuntimeException` +
 //! a Rust default), never an `.unwrap()` panic across the FFI boundary.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 
@@ -820,7 +821,7 @@ jni_native! {
             Ok(a) => a,
             Err(_) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     jni_str!("failed to allocate long[] result"),
                 );
                 return JLongArray::null();
@@ -828,7 +829,7 @@ jni_native! {
         };
         if arr.set_region(env, 0, &raws).is_err() {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 jni_str!("failed to write long[] result"),
             );
             return JLongArray::null();
@@ -860,7 +861,7 @@ jni_native! {
             Ok(a) => a,
             Err(_) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     jni_str!("failed to allocate long[] result"),
                 );
                 return JLongArray::null();
@@ -868,7 +869,7 @@ jni_native! {
         };
         if arr.set_region(env, 0, &raws).is_err() {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 jni_str!("failed to write long[] result"),
             );
             return JLongArray::null();
@@ -900,7 +901,7 @@ jni_native! {
             Ok(a) => a,
             Err(_) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     jni_str!("failed to allocate long[] result"),
                 );
                 return JLongArray::null();
@@ -908,7 +909,7 @@ jni_native! {
         };
         if arr.set_region(env, 0, &raws).is_err() {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 jni_str!("failed to write long[] result"),
             );
             return JLongArray::null();
@@ -940,7 +941,7 @@ jni_native! {
             Ok(a) => a,
             Err(_) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     jni_str!("failed to allocate long[] result"),
                 );
                 return JLongArray::null();
@@ -948,7 +949,7 @@ jni_native! {
         };
         if arr.set_region(env, 0, &raws).is_err() {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 jni_str!("failed to write long[] result"),
             );
             return JLongArray::null();
@@ -980,7 +981,7 @@ jni_native! {
             Ok(a) => a,
             Err(_) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     jni_str!("failed to allocate long[] result"),
                 );
                 return JLongArray::null();
@@ -988,7 +989,7 @@ jni_native! {
         };
         if arr.set_region(env, 0, &raws).is_err() {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 jni_str!("failed to write long[] result"),
             );
             return JLongArray::null();
@@ -1010,7 +1011,7 @@ jni_native! {
         let out_len = match out.len(env) {
             Ok(l) => l,
             Err(_) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), jni_str!("failed to read byte[] length"));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), jni_str!("failed to read byte[] length"));
                 return 0;
             }
         };
@@ -1030,7 +1031,7 @@ jni_native! {
         let i8_view = unsafe { core::slice::from_raw_parts(scratch.as_ptr() as *const i8, n) };
         if out.set_region(env, 0, i8_view).is_err() {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 jni_str!("failed to write byte[] result"),
             );
             return 0;

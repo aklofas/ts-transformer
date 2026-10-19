@@ -7,6 +7,7 @@
 //! Each enum builder matches all `tst_core` variants plus a `_ =>` wildcard to
 //! the `RESERVED` / `INVALID` catch-all, exactly as the tst-py `From` impls do.
 
+use crate::jutil::FindClass;
 use jni::Env;
 use jni::jni_str;
 use jni::objects::{JObject, JValue};
@@ -179,7 +180,7 @@ pub(crate) fn build_nal_unit<'local>(
         ]
     };
     env.call_static_method(
-        jni_str!("org/tstrans/codec/NalUnit"),
+        FindClass(jni_str!("org/tstrans/codec/NalUnit")),
         JNIString::from(factory),
         RuntimeMethodSignature::from_str(sig)
             .map_err(|_| ())?

@@ -12,7 +12,7 @@ pub(crate) fn build_socket_stats<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(64)?;
     let b = env.new_object(
-        jni_str!("org/tstrans/shells/SocketStats$Builder"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/shells/SocketStats$Builder")),
         jni_sig!("()V"),
         &[],
     )?;

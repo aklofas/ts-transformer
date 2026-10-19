@@ -7,6 +7,7 @@
 //! an `Arc`, in a per-type leased [`HandleRegistry`] (not a raw box), and there
 //! is no JNI-side async handling.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
@@ -131,7 +132,7 @@ fn jstring_opt(env: &mut Env, s: &JString) -> Result<Option<String>, ()> {
         Ok(v) => Ok(Some(v)),
         Err(e) => {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 JNIString::from(e.to_string()),
             );
             Err(())
@@ -163,7 +164,7 @@ jni_native! {
         let bind: String = match bind_addr.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -509,7 +510,7 @@ jni_native! {
         let path_str: String = match path.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -588,14 +589,14 @@ jni_native! {
         let path_str: String = match path.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };
         let group_str: String = match group.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -631,7 +632,7 @@ fn read_path(env: &mut Env, path: &JString) -> Option<String> {
         Ok(s) => Some(s),
         Err(e) => {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 JNIString::from(e.to_string()),
             );
             None

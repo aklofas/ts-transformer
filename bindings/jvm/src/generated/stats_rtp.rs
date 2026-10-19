@@ -12,7 +12,7 @@ pub(crate) fn build_rtp_stats<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(36)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/rtp/RtpStats"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/rtp/RtpStats")),
         jni_sig!("(JJ)V"),
         &[
             JValue::Long(r.malformed_packets as i64),
@@ -28,7 +28,7 @@ pub(crate) fn build_depay_stats<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(50)?;
     let b = env.new_object(
-        jni_str!("org/tstrans/rtp/H264DepayStats$Builder"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/rtp/H264DepayStats$Builder")),
         jni_sig!("()V"),
         &[],
     )?;
@@ -103,7 +103,7 @@ pub(crate) fn build_server_stats<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(46)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/rtp/ServerStats"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/rtp/ServerStats")),
         jni_sig!("(JJJJJJJ)V"),
         &[
             JValue::Long(r.active_sessions as i64),
@@ -124,7 +124,7 @@ pub(crate) fn build_mount_stats<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(40)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/rtp/MountStats"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/rtp/MountStats")),
         jni_sig!("(JJJJ)V"),
         &[
             JValue::Long(r.bytes_pushed as i64),
@@ -142,7 +142,7 @@ pub(crate) fn build_publish_mount_stats<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(66)?;
     let b = env.new_object(
-        jni_str!("org/tstrans/rtp/PublishMountStats$Builder"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/rtp/PublishMountStats$Builder")),
         jni_sig!("()V"),
         &[],
     )?;

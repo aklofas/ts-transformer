@@ -11,6 +11,7 @@
 //! bytes as a Java `byte[]`. The nested `TimeStatus` is converted in
 //! `crate::custom`.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use jni::jni_str;
 use jni::objects::{JByteArray, JObject};
@@ -35,7 +36,7 @@ jni_native! {
             Ok(b) => b,
             Err(e) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     JNIString::from(format!("nDecodePrecisionTimestamp: byte[] read failed: {e}")),
                 );
                 return JObject::null().into_raw();
@@ -69,7 +70,7 @@ jni_native! {
             Err(e) => {
                 if !env.exception_check() {
                     let _ = env.throw_new(
-                        jni_str!("java/lang/RuntimeException"),
+                        FindClass(jni_str!("java/lang/RuntimeException")),
                         JNIString::from(format!("nEncodePrecisionTimestamp: field read failed: {e}")),
                     );
                 }
@@ -80,7 +81,7 @@ jni_native! {
             Ok(arr) => arr.into_raw(),
             Err(e) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     JNIString::from(format!("nEncodePrecisionTimestamp: byte_array_from_slice failed: {e}")),
                 );
                 JObject::null().into_raw()

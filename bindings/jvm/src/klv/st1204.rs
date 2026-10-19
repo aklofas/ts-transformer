@@ -20,6 +20,7 @@
 //! `validate_mismms`, and marshals the `Vec<MismmsViolation>` into an `ArrayList`
 //! of `MismmsViolation` Java records.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use jni::Env;
 use jni::jni_sig;
@@ -60,14 +61,14 @@ fn id_type_from_ordinal<'local>(
         2 => "MANAGED",
         _ => {
             let _ = env.throw_new(
-                jni_str!("java/lang/IllegalArgumentException"),
+                FindClass(jni_str!("java/lang/IllegalArgumentException")),
                 JNIString::from(format!("unknown IdType ordinal {ordinal}")),
             );
             return Err(jni::errors::Error::JavaException);
         }
     };
     env.get_static_field(
-        jni_str!("org/tstrans/klv/IdType"),
+        FindClass(jni_str!("org/tstrans/klv/IdType")),
         JNIString::from(name),
         jni_sig!("Lorg/tstrans/klv/IdType;"),
     )?
@@ -162,7 +163,7 @@ fn build_core_id(env: &mut Env<'_>, id: &CoreId) -> jni::errors::Result<jobject>
     //  IdType platformType, byte[] platformId,
     //  byte[] windowId, byte[] minorId)
     let record = env.new_object(
-        jni_str!("org/tstrans/klv/CoreId"),
+        FindClass(jni_str!("org/tstrans/klv/CoreId")),
         jni_sig!("(ILorg/tstrans/klv/IdType;[BLorg/tstrans/klv/IdType;[B[B[B)V"),
         &[
             JValue::Int(i32::from(id.version)),
@@ -252,7 +253,7 @@ fn read_core_id<'a>(env: &mut Env<'a>, obj: &JObject<'a>) -> jni::errors::Result
         (Some(ty), Some(bytes)) => {
             if bytes.len() != 16 {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/IllegalArgumentException"),
+                    FindClass(jni_str!("java/lang/IllegalArgumentException")),
                     JNIString::from(format!(
                         "CoreId.sensorId must be 16 bytes; got {}",
                         bytes.len()
@@ -267,7 +268,7 @@ fn read_core_id<'a>(env: &mut Env<'a>, obj: &JObject<'a>) -> jni::errors::Result
         (None, None) => None,
         _ => {
             let _ = env.throw_new(
-                jni_str!("java/lang/IllegalArgumentException"),
+                FindClass(jni_str!("java/lang/IllegalArgumentException")),
                 jni_str!("CoreId: sensorType and sensorId must both be present or both null"),
             );
             return Err(jni::errors::Error::JavaException);
@@ -279,7 +280,7 @@ fn read_core_id<'a>(env: &mut Env<'a>, obj: &JObject<'a>) -> jni::errors::Result
         (Some(ty), Some(bytes)) => {
             if bytes.len() != 16 {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/IllegalArgumentException"),
+                    FindClass(jni_str!("java/lang/IllegalArgumentException")),
                     JNIString::from(format!(
                         "CoreId.platformId must be 16 bytes; got {}",
                         bytes.len()
@@ -294,7 +295,7 @@ fn read_core_id<'a>(env: &mut Env<'a>, obj: &JObject<'a>) -> jni::errors::Result
         (None, None) => None,
         _ => {
             let _ = env.throw_new(
-                jni_str!("java/lang/IllegalArgumentException"),
+                FindClass(jni_str!("java/lang/IllegalArgumentException")),
                 jni_str!("CoreId: platformType and platformId must both be present or both null"),
             );
             return Err(jni::errors::Error::JavaException);
@@ -305,7 +306,7 @@ fn read_core_id<'a>(env: &mut Env<'a>, obj: &JObject<'a>) -> jni::errors::Result
         Some(bytes) => {
             if bytes.len() != 16 {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/IllegalArgumentException"),
+                    FindClass(jni_str!("java/lang/IllegalArgumentException")),
                     JNIString::from(format!(
                         "CoreId.windowId must be 16 bytes; got {}",
                         bytes.len()
@@ -324,7 +325,7 @@ fn read_core_id<'a>(env: &mut Env<'a>, obj: &JObject<'a>) -> jni::errors::Result
         Some(bytes) => {
             if bytes.len() != 16 {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/IllegalArgumentException"),
+                    FindClass(jni_str!("java/lang/IllegalArgumentException")),
                     JNIString::from(format!(
                         "CoreId.minorId must be 16 bytes; got {}",
                         bytes.len()
@@ -359,7 +360,7 @@ jni_native! {
             Ok(b) => b,
             Err(e) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     JNIString::from(format!("decodeCoreIdNative: byte[] read failed: {e}")),
                 );
                 return JObject::null().into_raw();
@@ -398,7 +399,7 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            jni_str!("java/lang/RuntimeException"),
+                            FindClass(jni_str!("java/lang/RuntimeException")),
                             JNIString::from(format!("encodeCoreIdNative: byte_array_from_slice failed: {e}")),
                         );
                         JObject::null().into_raw()
@@ -430,7 +431,7 @@ jni_native! {
                     Ok(s) => s.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            jni_str!("java/lang/RuntimeException"),
+                            FindClass(jni_str!("java/lang/RuntimeException")),
                             JNIString::from(format!("coreIdTextNative: new_string failed: {e}")),
                         );
                         JObject::null().into_raw()
@@ -476,7 +477,11 @@ fn build_violation_list(
     env: &mut Env<'_>,
     violations: &[MismmsViolation],
 ) -> jni::errors::Result<jobject> {
-    let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+    let list = env.new_object(
+        FindClass(jni_str!("java/util/ArrayList")),
+        jni_sig!("()V"),
+        &[],
+    )?;
     for v in violations {
         // 8 slots: kind_str + tag + name_str + tagB + record + JNI scratch.
         env.with_local_frame(8, |env| -> jni::errors::Result<()> {
@@ -527,7 +532,7 @@ fn build_violation<'local>(
     };
     // MismmsViolation(String kind, int tag, String name, int tagB)
     env.new_object(
-        jni_str!("org/tstrans/klv/MismmsViolation"),
+        FindClass(jni_str!("org/tstrans/klv/MismmsViolation")),
         jni_sig!("(Ljava/lang/String;ILjava/lang/String;I)V"),
         &[
             JValue::Object(&kind_jstr),

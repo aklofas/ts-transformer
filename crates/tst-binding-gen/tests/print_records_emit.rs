@@ -1430,12 +1430,12 @@ fn nested_records_are_built_in_frames_and_scalars_are_boxed_with_value_of() {
     let opt = emit_jvm_rs::record_pair(&reg, named(&reg, "OptFixture")).unwrap();
     assert!(
         opt.contains(
-            "env.call_static_method(jni_str!(\"java/lang/Long\"), jni_str!(\"valueOf\"), jni_sig!(\"(J)Ljava/lang/Long;\"), &["
+            "env.call_static_method(crate::jutil::FindClass(jni_str!(\"java/lang/Long\")), jni_str!(\"valueOf\"), jni_sig!(\"(J)Ljava/lang/Long;\"), &["
         ),
         "{opt}"
     );
     assert!(
-        !opt.contains("new_object(jni_str!(\"java/lang/Long\")"),
+        !opt.contains("java/lang/Long\")), jni_sig!(\"(J)V"),
         "{opt}"
     );
     // A Builder sets an optional scalar by its primitive, unboxed.

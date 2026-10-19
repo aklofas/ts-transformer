@@ -10,6 +10,7 @@
 //! needs no cancel hook: `close` frees the wrapper only, and the mount stays
 //! in the server's table until `RtspServer.removeMount` or the server stops.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
@@ -67,7 +68,7 @@ fn enum_const<'local>(
     member: &str,
 ) -> jni::errors::Result<JObject<'local>> {
     env.get_static_field(
-        JNIString::from(format!("org/tstrans/rtp/{class}")),
+        FindClass(JNIString::from(format!("org/tstrans/rtp/{class}"))),
         JNIString::from(member),
         RuntimeFieldSignature::from_str(format!("Lorg/tstrans/rtp/{class};"))?.field_signature(),
     )?
@@ -88,7 +89,7 @@ pub(crate) fn build_clock_alignment<'local>(
         RustClockAlignment::SenderReport => "SENDER_REPORT",
         _ => {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 jni_str!("ClockAlignment variant unknown to this build of tstrans"),
             );
             return Err(());
@@ -107,7 +108,7 @@ fn build_info<'local>(
         RustPublishShape::Elementary { klv } => ("ELEMENTARY", klv),
         _ => {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 jni_str!("PublishShape variant unknown to this build of tstrans"),
             );
             return Ok(JObject::null());
@@ -122,7 +123,7 @@ fn build_info<'local>(
     let peer = env.new_string(info.peer.to_string())?;
     let shape = enum_const(env, "PublishShape", shape)?;
     env.new_object(
-        jni_str!("org/tstrans/rtp/PublisherInfo"),
+        FindClass(jni_str!("org/tstrans/rtp/PublisherInfo")),
         jni_sig!("(Ljava/lang/String;Lorg/tstrans/rtp/PublishShape;ZJJ)V"),
         &[
             JValue::Object(&peer),
@@ -256,7 +257,7 @@ jni_native! {
         match demux_receiver_handle_from_transport(transport, opts) {
             Ok(h) => h,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.detail));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.detail));
                 0
             }
         }

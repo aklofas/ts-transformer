@@ -32,6 +32,7 @@
 //! consults the SPS for the POC bit width on the (deferred) non-IDR path; IDR
 //! POC stays implicit 0.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use jni::Env;
 use jni::jni_sig;
@@ -66,7 +67,7 @@ pub(crate) fn build_slice_type<'local>(
         _ => "UNKNOWN",
     };
     env.get_static_field(
-        jni_str!("org/tstrans/codec/H266SliceType"),
+        FindClass(jni_str!("org/tstrans/codec/H266SliceType")),
         JNIString::from(name),
         jni_sig!("Lorg/tstrans/codec/H266SliceType;"),
     )

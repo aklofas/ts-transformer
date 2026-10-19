@@ -24,6 +24,7 @@
 //! `St0601PacksTest.fullyPopulatedWpcFieldsRoundTrip` and the long-list tests
 //! exercise it.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use jni::Env;
 use jni::jni_str;
@@ -63,7 +64,7 @@ jni_native! {
             Ok(b) => b,
             Err(e) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     JNIString::from(format!("nDecodeUasDatalink: byte[] read failed: {e}")),
                 );
                 return JObject::null().into_raw();
@@ -121,7 +122,7 @@ jni_native! {
             1 => OutOfRangePolicy::Indicator,
             other => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/IllegalArgumentException"),
+                    FindClass(jni_str!("java/lang/IllegalArgumentException")),
                     JNIString::from(format!("unknown OutOfRangePolicy ordinal {other}")),
                 );
                 return JObject::null().into_raw();
@@ -135,7 +136,7 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            jni_str!("java/lang/RuntimeException"),
+                            FindClass(jni_str!("java/lang/RuntimeException")),
                             JNIString::from(format!(
                                 "nEncodeUasDatalinkWithPolicy: byte_array_from_slice failed: {e}"
                             )),
@@ -151,7 +152,7 @@ jni_native! {
             Err(e) => {
                 if !env.exception_check() {
                     let _ = env.throw_new(
-                        jni_str!("java/lang/RuntimeException"),
+                        FindClass(jni_str!("java/lang/RuntimeException")),
                         JNIString::from(format!("nEncodeUasDatalinkWithPolicy: field read failed: {e}")),
                     );
                 }
@@ -179,7 +180,7 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            jni_str!("java/lang/RuntimeException"),
+                            FindClass(jni_str!("java/lang/RuntimeException")),
                             JNIString::from(format!(
                                 "nEncodeUasDatalinkStrictCompliance: byte_array_from_slice failed: {e}"
                             )),
@@ -195,7 +196,7 @@ jni_native! {
             Err(e) => {
                 if !env.exception_check() {
                     let _ = env.throw_new(
-                        jni_str!("java/lang/RuntimeException"),
+                        FindClass(jni_str!("java/lang/RuntimeException")),
                         JNIString::from(format!("nEncodeUasDatalinkStrictCompliance: field read failed: {e}")),
                     );
                 }
@@ -236,7 +237,7 @@ jni_native! {
             Ok(s) => s.into_raw(),
             Err(e) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     JNIString::from(format!("nSt0601SentinelMeaning: new_string failed: {e}")),
                 );
                 std::ptr::null_mut()
@@ -304,7 +305,7 @@ jni_native! {
             Ok(b) => b,
             Err(e) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     JNIString::from(format!("decodeSdccFlpNative: byte[] read failed: {e}")),
                 );
                 return JObject::null().into_raw();
@@ -340,7 +341,7 @@ jni_native! {
             Ok(v) => v,
             Err(e) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     JNIString::from(format!("encodeSdccFlpMode2Native: stdDevs read failed: {e}")),
                 );
                 return JObject::null().into_raw();
@@ -350,7 +351,7 @@ jni_native! {
             Ok(v) => v,
             Err(e) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     JNIString::from(format!("encodeSdccFlpMode2Native: correlations read failed: {e}")),
                 );
                 return JObject::null().into_raw();
@@ -361,7 +362,7 @@ jni_native! {
                 Ok(arr) => arr.into_raw(),
                 Err(e) => {
                     let _ = env.throw_new(
-                        jni_str!("java/lang/RuntimeException"),
+                        FindClass(jni_str!("java/lang/RuntimeException")),
                         JNIString::from(format!("encodeSdccFlpMode2Native: byte_array_from_slice failed: {e}")),
                     );
                     JObject::null().into_raw()

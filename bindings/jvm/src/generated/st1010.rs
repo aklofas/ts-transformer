@@ -16,7 +16,7 @@ pub(crate) fn build_sdcc_flp<'l>(
     let correlation_present =
         crate::custom::build_sdcc_flp_correlation_present(env, &r.correlation_present)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/SdccFlp"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/SdccFlp")),
         jni_sig!("(J[D[D[Z)V"),
         &[
             JValue::Long(r.matrix_size as i64),

@@ -3,14 +3,38 @@
 //! originated; the klv module re-uses it for KLV byte payloads.
 
 use jni::Env;
+use jni::descriptors::Desc;
 use jni::jni_sig;
 use jni::jni_str;
-use jni::objects::{JByteArray, JObject, JValue};
+use jni::objects::{JByteArray, JClass, JObject, JValue};
+use jni::refs::{Auto, IntoAuto as _};
 use jni::signature::RuntimeFieldSignature;
-use jni::strings::JNIString;
+use jni::strings::{JNIStr, JNIString};
 use jni::sys::jlong;
 use tst_core::error::KlvFieldError as RustKlvFieldError;
 use tst_core::klv::OwnedRawField;
+
+/// A class named by its internal name (`org/tstrans/...`), resolved with a
+/// direct JNI `FindClass`, for every by-name lookup this binding makes.
+///
+/// jni 0.22 resolves a bare name through `LoaderContext::None`: it tries the
+/// thread's context class loader with `Class.forName` first and falls back to
+/// `FindClass` only on `NoClassDefFound`. That can pick another loader than
+/// the one that declared the calling native, which is the loader `FindClass`
+/// uses and the one 0.21 used. It also costs about five JNI calls and a
+/// local-frame push/pop per lookup, where `FindClass` is one call (plus the
+/// `DeleteLocalRef` of the result, as in 0.21).
+pub(crate) struct FindClass<S>(pub S);
+
+// SAFETY: `lookup` returns the class `FindClass` resolved for exactly the
+// requested name, never another class.
+unsafe impl<'local, S: AsRef<JNIStr>> Desc<'local, JClass<'local>> for FindClass<S> {
+    type Output = Auto<'local, JClass<'local>>;
+
+    fn lookup(self, env: &mut Env<'local>) -> jni::errors::Result<Self::Output> {
+        Ok(env.find_class(self.0)?.auto())
+    }
+}
 
 /// Decode a packed stream-handle `jlong` into a typed stream handle.
 ///
@@ -35,7 +59,7 @@ pub fn wrap_heap_byte_buffer<'local>(
 ) -> Result<JObject<'local>, ()> {
     let arr = env.byte_array_from_slice(bytes).map_err(|_| ())?;
     env.call_static_method(
-        jni_str!("java/nio/ByteBuffer"),
+        FindClass(jni_str!("java/nio/ByteBuffer")),
         jni_str!("wrap"),
         jni_sig!("([B)Ljava/nio/ByteBuffer;"),
         &[JValue::Object(&arr)],
@@ -74,21 +98,25 @@ pub fn build_field_errors<'local>(
     env: &mut Env<'local>,
     errs: &[RustKlvFieldError],
 ) -> jni::errors::Result<JObject<'local>> {
-    let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+    let list = env.new_object(
+        FindClass(jni_str!("java/util/ArrayList")),
+        jni_sig!("()V"),
+        &[],
+    )?;
     for fe in errs {
         // 8 slots: comfortably covers the 3 element refs + JNI scratch per entry.
         env.with_local_frame(8, |env| -> jni::errors::Result<()> {
             let (kind_name, tag) = field_error_kind_and_tag(fe);
             let kind_obj = env
                 .get_static_field(
-                    jni_str!("org/tstrans/klv/KlvFieldErrorKind"),
+                    FindClass(jni_str!("org/tstrans/klv/KlvFieldErrorKind")),
                     JNIString::from(kind_name),
                     jni_sig!("Lorg/tstrans/klv/KlvFieldErrorKind;"),
                 )?
                 .l()?;
             let msg = env.new_string(fe.to_string())?;
             let obj = env.new_object(
-                jni_str!("org/tstrans/klv/KlvFieldError"),
+                FindClass(jni_str!("org/tstrans/klv/KlvFieldError")),
                 jni_sig!("(Lorg/tstrans/klv/KlvFieldErrorKind;JLjava/lang/String;)V"),
                 &[
                     JValue::Object(&kind_obj),
@@ -121,21 +149,25 @@ pub fn build_unknown_list<'local>(
     env: &mut Env<'local>,
     fields: &[OwnedRawField],
 ) -> jni::errors::Result<JObject<'local>> {
-    let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+    let list = env.new_object(
+        FindClass(jni_str!("java/util/ArrayList")),
+        jni_sig!("()V"),
+        &[],
+    )?;
     for f in fields {
         // 8 slots: covers the byte[] + ByteBuffer + record refs + JNI scratch.
         env.with_local_frame(8, |env| -> jni::errors::Result<()> {
             let arr = env.byte_array_from_slice(&f.value)?;
             let buf = env
                 .call_static_method(
-                    jni_str!("java/nio/ByteBuffer"),
+                    FindClass(jni_str!("java/nio/ByteBuffer")),
                     jni_str!("wrap"),
                     jni_sig!("([B)Ljava/nio/ByteBuffer;"),
                     &[JValue::Object(&arr)],
                 )?
                 .l()?;
             let obj = env.new_object(
-                jni_str!("org/tstrans/klv/KlvUnknownField"),
+                FindClass(jni_str!("org/tstrans/klv/KlvUnknownField")),
                 jni_sig!("(JLjava/nio/ByteBuffer;)V"),
                 &[JValue::Long(i64::from(f.tag)), JValue::Object(&buf)],
             )?;
@@ -157,12 +189,16 @@ pub fn build_long_list<'local>(
     env: &mut Env<'local>,
     values: impl Iterator<Item = i64>,
 ) -> jni::errors::Result<JObject<'local>> {
-    let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+    let list = env.new_object(
+        FindClass(jni_str!("java/util/ArrayList")),
+        jni_sig!("()V"),
+        &[],
+    )?;
     for v in values {
         // Box the long into java.lang.Long, then add to the list.
         env.with_local_frame(4, |env| -> jni::errors::Result<()> {
             let boxed = env.new_object(
-                jni_str!("java/lang/Long"),
+                FindClass(jni_str!("java/lang/Long")),
                 jni_sig!("(J)V"),
                 &[JValue::Long(v)],
             )?;
@@ -330,7 +366,7 @@ pub fn read_byte_buffer(env: &mut Env, buf: &JObject) -> jni::errors::Result<Vec
 pub fn require_non_null(env: &mut Env, obj: &JObject, what: &str) -> jni::errors::Result<()> {
     if obj.is_null() {
         let _ = env.throw_new(
-            jni_str!("java/lang/NullPointerException"),
+            FindClass(jni_str!("java/lang/NullPointerException")),
             JNIString::from(format!("{what} must not be null")),
         );
         return Err(jni::errors::Error::JavaException);
@@ -348,7 +384,7 @@ pub fn require_non_null(env: &mut Env, obj: &JObject, what: &str) -> jni::errors
 pub fn checked_u8(env: &mut Env, value: i64, field: &str) -> jni::errors::Result<u8> {
     if !(0..=255).contains(&value) {
         let _ = env.throw_new(
-            jni_str!("java/lang/IllegalArgumentException"),
+            FindClass(jni_str!("java/lang/IllegalArgumentException")),
             JNIString::from(format!("{field} must be 0..=255, got {value}")),
         );
         return Err(jni::errors::Error::JavaException);
@@ -361,7 +397,7 @@ pub fn checked_u8(env: &mut Env, value: i64, field: &str) -> jni::errors::Result
 pub fn checked_u16(env: &mut Env, value: i64, field: &str) -> jni::errors::Result<u16> {
     if !(0..=65535).contains(&value) {
         let _ = env.throw_new(
-            jni_str!("java/lang/IllegalArgumentException"),
+            FindClass(jni_str!("java/lang/IllegalArgumentException")),
             JNIString::from(format!("{field} must be 0..=65535, got {value}")),
         );
         return Err(jni::errors::Error::JavaException);
@@ -374,7 +410,7 @@ pub fn checked_u16(env: &mut Env, value: i64, field: &str) -> jni::errors::Resul
 pub fn checked_i8(env: &mut Env, value: i64, field: &str) -> jni::errors::Result<i8> {
     if !(-128..=127).contains(&value) {
         let _ = env.throw_new(
-            jni_str!("java/lang/IllegalArgumentException"),
+            FindClass(jni_str!("java/lang/IllegalArgumentException")),
             JNIString::from(format!("{field} must be -128..=127, got {value}")),
         );
         return Err(jni::errors::Error::JavaException);
@@ -387,7 +423,7 @@ pub fn checked_i8(env: &mut Env, value: i64, field: &str) -> jni::errors::Result
 pub fn checked_i16(env: &mut Env, value: i64, field: &str) -> jni::errors::Result<i16> {
     if !(-32768..=32767).contains(&value) {
         let _ = env.throw_new(
-            jni_str!("java/lang/IllegalArgumentException"),
+            FindClass(jni_str!("java/lang/IllegalArgumentException")),
             JNIString::from(format!("{field} must be -32768..=32767, got {value}")),
         );
         return Err(jni::errors::Error::JavaException);
@@ -400,7 +436,7 @@ pub fn checked_i16(env: &mut Env, value: i64, field: &str) -> jni::errors::Resul
 pub fn checked_u32(env: &mut Env, value: i64, field: &str) -> jni::errors::Result<u32> {
     if !(0..=u32::MAX as i64).contains(&value) {
         let _ = env.throw_new(
-            jni_str!("java/lang/IllegalArgumentException"),
+            FindClass(jni_str!("java/lang/IllegalArgumentException")),
             JNIString::from(format!("{field} must be 0..=4294967295, got {value}")),
         );
         return Err(jni::errors::Error::JavaException);
@@ -412,7 +448,7 @@ pub fn checked_u32(env: &mut Env, value: i64, field: &str) -> jni::errors::Resul
 /// null, and returns the error that carries it.
 pub fn null_field(env: &mut Env, field: &str) -> jni::errors::Error {
     let _ = env.throw_new(
-        jni_str!("java/lang/IllegalArgumentException"),
+        FindClass(jni_str!("java/lang/IllegalArgumentException")),
         JNIString::from(format!("{field} must not be null")),
     );
     jni::errors::Error::JavaException
@@ -461,7 +497,7 @@ pub fn read_bytes(env: &mut Env, arr: &JByteArray) -> Option<Vec<u8>> {
         Ok(b) => Some(b),
         Err(e) => {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 JNIString::from(e.to_string()),
             );
             None
@@ -480,7 +516,7 @@ pub fn enum_const<'local>(
     let class_path = format!("org/tstrans/{package}/{class}");
     let descriptor = format!("Lorg/tstrans/{package}/{class};");
     env.get_static_field(
-        JNIString::from(&class_path),
+        FindClass(JNIString::from(&class_path)),
         JNIString::from(name),
         RuntimeFieldSignature::from_str(&descriptor)
             .map_err(|_| ())?

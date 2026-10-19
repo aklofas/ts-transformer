@@ -4,6 +4,7 @@
 //!
 //! The generator calls these by name: `build_<record>_<field>`.
 
+use crate::jutil::FindClass;
 use jni::Env;
 use jni::jni_sig;
 use jni::jni_str;
@@ -18,7 +19,7 @@ pub(crate) fn build_h264_slice_header_light_frame_num<'l>(
     match v {
         // At most 16 bits wide, so it always fits an `int`.
         Some(n) => env.new_object(
-            jni_str!("java/lang/Integer"),
+            FindClass(jni_str!("java/lang/Integer")),
             jni_sig!("(I)V"),
             &[JValue::Int(*n as i32)],
         ),
@@ -33,7 +34,7 @@ pub(crate) fn build_av1_frame_header_light_frame_size<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     match v {
         Some((w, h)) => env.new_object(
-            jni_str!("org/tstrans/codec/Av1FrameHeaderLight$FrameSize"),
+            FindClass(jni_str!("org/tstrans/codec/Av1FrameHeaderLight$FrameSize")),
             jni_sig!("(JJ)V"),
             &[JValue::Long(i64::from(*w)), JValue::Long(i64::from(*h))],
         ),
@@ -47,12 +48,16 @@ pub(crate) fn build_av1_obu_stream_unparseable<'l>(
     env: &mut Env<'l>,
     v: &[(u8, CodecParseError)],
 ) -> jni::errors::Result<JObject<'l>> {
-    let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+    let list = env.new_object(
+        FindClass(jni_str!("java/util/ArrayList")),
+        jni_sig!("()V"),
+        &[],
+    )?;
     for (obu_type, err) in v {
         env.with_local_frame(16, |inner| {
             let msg = inner.new_string(format!("{err}"))?;
             let val = inner.new_object(
-                jni_str!("org/tstrans/codec/Av1ObuStream$UnparseableObu"),
+                FindClass(jni_str!("org/tstrans/codec/Av1ObuStream$UnparseableObu")),
                 jni_sig!("(ILjava/lang/String;)V"),
                 &[JValue::Int(i32::from(*obu_type)), JValue::Object(&msg)],
             )?;

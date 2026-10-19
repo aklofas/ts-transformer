@@ -12,7 +12,7 @@ pub(crate) fn build_mux_publisher_stats<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(38)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/hls/MuxPublisherStats"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/hls/MuxPublisherStats")),
         jni_sig!("(JJJ)V"),
         &[
             JValue::Long(r.bytes_pushed as i64),
@@ -29,7 +29,7 @@ pub(crate) fn build_hls_stats<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(40)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/hls/HlsStats"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/hls/HlsStats")),
         jni_sig!("(JJJJ)V"),
         &[
             JValue::Long(r.segments_written as i64),

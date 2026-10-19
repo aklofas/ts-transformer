@@ -11,6 +11,7 @@
 //! `Transport`/`RecvTransport` trait methods — exactly as tst-py's
 //! `bindings/python/src/rtp/transport.rs` does.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -66,7 +67,7 @@ fn unbox_ssrc(env: &mut Env, obj: &JObject) -> Result<Option<u32>, ()> {
         Ok(jv) => jv.j().unwrap_or(-1),
         Err(e) => {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 JNIString::from(e.to_string()),
             );
             return Err(());
@@ -74,7 +75,7 @@ fn unbox_ssrc(env: &mut Env, obj: &JObject) -> Result<Option<u32>, ()> {
     };
     if v < 0 || v > i64::from(u32::MAX) {
         let _ = env.throw_new(
-            jni_str!("java/lang/IllegalArgumentException"),
+            FindClass(jni_str!("java/lang/IllegalArgumentException")),
             JNIString::from(format!("ssrc out of u32 range: {v}")),
         );
         return Err(());
@@ -98,7 +99,7 @@ jni_native! {
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -134,7 +135,7 @@ jni_native! {
                 // `Internal` is deliberately NOT an `RtpException.Kind` member:
                 // a transport with no cancel handle is a tst-rtp bug, not a
                 // transport outcome. Same shape as the receiver and mux sender.
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.detail));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.detail));
                 return 0;
             }
         };
@@ -153,7 +154,7 @@ jni_native! {
         let bytes: Vec<u8> = match env.convert_byte_array(&data) {
             Ok(b) => b,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return;
             }
         };
@@ -213,7 +214,7 @@ jni_native! {
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -237,7 +238,7 @@ jni_native! {
             Err(e) => {
                 // See `rtp_cancel`: `Internal` is not an `RtpException.Kind`
                 // member — a transport with no cancel handle is a tst-rtp bug.
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.detail));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.detail));
                 return 0;
             }
         };
@@ -291,7 +292,7 @@ jni_native! {
                     // A JVM allocation failure, not a transport outcome: the
                     // same shape every other JNI failure in this file uses.
                     let _ = env.throw_new(
-                        jni_str!("java/lang/RuntimeException"),
+                        FindClass(jni_str!("java/lang/RuntimeException")),
                         jni_str!("failed to allocate received packet"),
                     );
                     std::ptr::null_mut()
@@ -349,7 +350,7 @@ jni_native! {
                     // A JVM allocation failure, not a transport outcome: the
                     // same shape every other JNI failure in this file uses.
                     let _ = env.throw_new(
-                        jni_str!("java/lang/RuntimeException"),
+                        FindClass(jni_str!("java/lang/RuntimeException")),
                         jni_str!("failed to allocate received packet"),
                     );
                     std::ptr::null_mut()
