@@ -793,17 +793,27 @@ jobs:
           cache-restore-key: cargo-musl-${{ runner.os }}-
 
       # tst-core + tst-pipeline are pure Rust crates (no libsrt link),
-      # so rust-std-musl + rust-lld is sufficient — no musl-tools/musl-gcc
-      # needed. tst-srt and tst-c are out of scope here: vendored libsrt
-      # cmake build has glibc dependencies (NSS resolver, dynamic-load
-      # paths) that don't come up clean under musl without a deeper
-      # rework. Covering the MPEG-TS+KLV+codec work satisfies the need for
+      # so their library build needs only rust-std-musl + rust-lld — the
+      # build step below runs with no C compiler for the target. The test
+      # step builds dev-dependencies too, and criterion 0.8 pulls alloca,
+      # whose build script compiles a C shim for every unix target; that
+      # step gets musl-gcc. This job proves the no-libsrt build, not a
+      # no-C-compiler test build. tst-srt and tst-c are out of scope
+      # here: vendored libsrt cmake build has glibc dependencies (NSS
+      # resolver, dynamic-load paths) that don't come up clean under musl
+      # without a deeper rework. Covering the MPEG-TS+KLV+codec work satisfies the need for
       # a musl rail; libsrt-bound crates wait for musl-native libsrt support
       # if that is ever requested.
       - name: cargo build (tst-core + tst-pipeline, musl)
         run: cargo build -p tst-core -p tst-pipeline --target x86_64-unknown-linux-musl
 
+      - name: musl C compiler (criterion's alloca shim in the test build)
+        run: sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y musl-tools
+
       - name: cargo test (tst-core + tst-pipeline, musl)
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          AR_x86_64_unknown_linux_musl: ar
         run: cargo test -p tst-core -p tst-pipeline --target x86_64-unknown-linux-musl
 
   tst-rtp-client-only:
