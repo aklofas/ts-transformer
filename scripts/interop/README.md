@@ -612,7 +612,10 @@ these cells with the role's fuzz targets and the soak's `rtsp-publish` leg
 endurance run, judged by `tst-interop report soak` rather than by the
 cell-based matrix above. Two legs (SRT + RIST) run through an impaired proxy;
 a third, `rtsp-publish`, has an external RTSP publisher push into the
-receiver's publish mount and drop on a schedule (see "Publish leg" below).
+receiver's publish mount and drop on a schedule (see "Publish leg" below);
+a fourth, `rtsp-publish-es`, does the same with H.264 and KLV as two
+separate RTP tracks, which the mount re-muxes (see "Elementary publish leg"
+below).
 `bash scripts/interop/soak.sh --help` lists the flags, env knobs and exit
 codes; the topology, prerequisites and launch recipe follow below.
 
@@ -639,7 +642,8 @@ thread or descriptor leak is visible before anyone writes a verdict for it.
 - **`exits.json`** — one reaped exit status per worker role (`srt-send`,
   `srt-proxy`, `srt-recv`, `rist-send`, `rist-proxy`, `rist-recv`, plus
   `rtsp-publish-recv` and `rtsp-publish-publisher` unless the run passed
-  `--no-rtsp-publish`; the RSS sampler is killed by `soak.sh` itself on
+  `--no-rtsp-publish`, and `rtsp-publish-es-recv` and
+  `rtsp-publish-es-publisher` unless it passed `--no-rtsp-publish-es`; the RSS sampler is killed by `soak.sh` itself on
   schedule and is never recorded here), written at teardown, including any worker that
   died inside the supervisor's end-of-run grace window. `report soak
   --exits <file>` is likewise mandatory.
@@ -675,6 +679,11 @@ Those two files feed three new verdicts in `soak-results.json`:
   + RECORD, MP2T over TCP-interleaved RTP) into `tst-interop recv --url
   rtsp-publish://...`; no proxy, no tst-interop sender. See "Publish leg"
   below.
+- **`rtsp-publish-es` leg:** the same publisher and mount, but GStreamer
+  splits a generated klv-sync stream into its elementary streams (`tsdemux`,
+  `h264parse`) and pushes H.264 (RFC 6184) and KLV (RFC 6597) as two RTP
+  tracks into `recv --url rtsp-publish://.../soak-es`, which re-muxes them.
+  See "Elementary publish leg" below.
 
 ### Running a soak on a fresh host
 
@@ -682,7 +691,9 @@ Linux, validated on x86_64 (aarch64 has no arch-specific code in this path
 but is not yet validated). The build needs the vendored native
 dependencies' toolchains — cmake for libsrt and mbedTLS, meson + ninja for
 librist, clang / libclang for bindgen — and the rtsp-publish leg needs
-`gst-launch-1.0` with `rtspclientsink` (`--no-rtsp-publish` runs without it):
+`gst-launch-1.0` with `rtspclientsink` (`--no-rtsp-publish` runs without it);
+the rtsp-publish-es leg also needs `tsdemux` and `h264parse`, both in
+gstreamer1.0-plugins-bad (`--no-rtsp-publish-es` runs without it):
 
 ```bash
 git clone --recurse-submodules https://github.com/aklofas/ts-transformer.git
@@ -706,17 +717,31 @@ outdir at launch (about 1.7 GB per hour; exit 2 below 1.2 × that peak).
 `--hours 1` is the smoke: long enough for a real post-warm-up RSS window,
 too short for an outage, so it proves the managed receiver's steady state
 only. `--hours 0.05` runs launch, supervisor and report end to end in
-about three minutes.
+about three minutes. A run shorter than two `PUBLISHER_DROP_PERIOD_S`
+periods (600 s by default) exits 2 while either publish leg is on, so the
+three-minute drill sets a shorter period, which gives three publisher
+generations of 49 s:
+
+```bash
+PUBLISHER_DROP_PERIOD_S=60 SRT_RECONNECT_MODE=background bash scripts/interop/soak.sh \
+  --outdir "$(mktemp -d)/soak-drill" --hours 0.05 --seed 1
+```
+
+The rtsp-publish-es leg keeps one source of a single generation's length on
+disk for the whole run: about 0.85 GB per hour of `PUBLISHER_DROP_PERIOD_S`,
+so about 140 MB at the default (exit 2 below 1.2 × that).
 
 ### Outputs and the supervisor
 
 Under `--outdir`: `rss.csv` (`elapsed_s,leg,process,pid,rss_kb` for every
-worker, 8 PIDs, or 6 under `--no-rtsp-publish`; on rtsp-publish the
-`publisher` row is the restart loop's shell, not gst-launch-1.0, whose own
-memory is not sampled), `proc.csv`, `host.csv` and `provenance.json` (above),
+worker: 10 PIDs, 2 fewer for each of `--no-rtsp-publish` and
+`--no-rtsp-publish-es`; on both publish legs the `publisher` row is the
+restart loop's shell, not gst-launch-1.0, whose own memory is not
+sampled), `proc.csv`, `host.csv` and `provenance.json` (above),
 `soak-config.json` and `exits.json` (below), per leg
 `{srt,rist}/{proxy-stats,recv-report,send-report}.json` and
 `corruption.jsonl`, `rtsp-publish/recv-report.json` and `source.sha256`,
+`rtsp-publish-es/{source.ts,source-verify.json,recv-report.json}`,
 `logs/*.log` (each send / recv writes a one-line heartbeat every 60 s),
 `pids/*.pid`, `soak-events.log`, `soak-results.json` and `summary.txt`.
 `klv_set_sha256` is `null` in every report (`--no-klv-digest`).
@@ -725,7 +750,10 @@ memory is not sampled), `proc.csv`, `host.csv` and `provenance.json` (above),
 `reconnect_mode`): the SRT mode sits at `legs.srt.reconnect_mode`, and the
 rtsp-publish leg declares `publisher_drop_period_s`, `publisher_generations`
 and, once the source stream exists, `source_sha256`, which the receiver's
-`stream_sha256` must equal (`delivery_complete_rtsp-publish`).
+`stream_sha256` must equal (`delivery_complete_rtsp-publish`). The
+rtsp-publish-es leg declares the same period and generation count plus
+`remuxed`, `klv_records_per_generation` and `klv_placement` (see
+"Elementary publish leg").
 
 The supervisor polls every worker every 30 s. A death more than
 `SUPERVISOR_GRACE_S` (120 s) before the deadline kills the run at once,
@@ -752,13 +780,14 @@ it said it would.
 
 | flag | default | what it does |
 |---|---|---|
-| `--profile auto\|NAME` | `auto` | `auto` draws two DISTINCT profiles from the seed, one per transport leg, and runs the `rtsp-publish` leg on `baseline` (it is not part of the draw, so a seed's srt and rist profiles are unchanged). `NAME` pins every leg to one profile. |
+| `--profile auto\|NAME` | `auto` | `auto` draws two DISTINCT profiles from the seed, one per transport leg, and runs the `rtsp-publish` leg on `baseline` (it is not part of the draw, so a seed's srt and rist profiles are unchanged). `NAME` pins every leg to one profile, except `rtsp-publish-es`, which always runs `klv-sync`. |
 | `--schedule-phases K` | `12` | Phases in the seeded impairment schedule both proxies walk. |
 | `--schedule-phase-s S` | `TOTAL_SECONDS / K` (floor 1) | Seconds each phase stays in force. |
 | `--fixed-impairment` | off | Reverts both proxies to the old single fixed level (`--loss`/`--jitter`/`--delay`/`--reorder`). |
 | `--no-corrupt` | tap on | Turns off the per-leg sender corruption tap. |
-| `--no-rtsp-publish` | leg on | Runs without the `rtsp-publish` leg (no GStreamer needed, no pre-generated stream on disk). |
-| `PUBLISHER_DROP_PERIOD_S` | `600` | How often the `rtsp-publish` leg's publisher session ends and a new one ANNOUNCEs. The run must span at least two periods. |
+| `--no-rtsp-publish` | leg on | Runs without the `rtsp-publish` leg (no pre-generated segments on disk). |
+| `--no-rtsp-publish-es` | leg on | Runs without the `rtsp-publish-es` leg. With both publish flags, no GStreamer is needed. |
+| `PUBLISHER_DROP_PERIOD_S` | `600` | How often each publish leg's publisher session ends and a new one ANNOUNCEs. Both legs share it, so their publisher schedules coincide. The run must span at least two periods. |
 
 Corruption and rich ST 0601 KLV are **on by default** on both transport
 legs. The tap runs at `rate=5,min_gap=1000` with per-leg seed offsets
@@ -767,7 +796,8 @@ read back by that leg's own receiver. Rich KLV runs `--klv-set rich
 --klv-seed $SEED` on send AND recv of both transport legs. The
 `rtsp-publish` leg generates its stream with the same rich KLV and judges it
 with the same oracles, but has no corruption tap: the publisher is an
-external tool replaying a pristine stream.
+external tool replaying a pristine stream. The `rtsp-publish-es` leg runs
+compact KLV and no tap; "Elementary publish leg" says why.
 
 `--profile NAME` is the REPRODUCTION form (bisecting a failure a drawn
 profile exposed). `--no-corrupt` and `--fixed-impairment` are the two BISECT
@@ -977,9 +1007,77 @@ free.
   `summary.txt` prints the publisher count and the delivery verdict.
 - **Every declared leg is judged** — a leg in `soak-config.json`'s `legs`
   whose artefacts were not passed to `report soak` (a hand-run report that
-  forgets `--rtsp-publish-recv-report`, or the rist reports) gets a failing
+  forgets `--rtsp-publish-recv-report`, `--publish-leg rtsp-publish-es=…`, or
+  the rist reports) gets a failing
   `leg_evidence_<leg>` verdict, so `overall_pass` can never be true for a leg
   nobody looked at.
+
+#### Elementary publish leg (`rtsp-publish-es`)
+
+`recv --url rtsp-publish://127.0.0.1:<port>/soak-es` binds a second publish
+mount. Its publisher loop (the `rtsp-publish-es-publisher` worker) runs, once
+per generation:
+
+```
+gst-launch-1.0 filesrc location=rtsp-publish-es/source.ts ! tsdemux name=d \
+  d. ! queue ! h264parse ! s.sink_0 d. ! queue ! meta/x-klv ! s.sink_1 \
+  rtspclientsink name=s location=rtsp://127.0.0.1:<port>/soak-es protocols=tcp
+```
+
+`rtspclientsink` payloads H.264 (RFC 6184) and KLV (RFC 6597) as two RTP
+tracks on one session, and the mount re-muxes them onto its own PIDs (video
+0x100, KLV 0x101 as PrivateData with a PTS). This is the elementary path of
+the matrix's `rtsp-publish/gst-push-es-klv` cell, run for the whole soak. The
+source is `klv-sync`, because KLV over RTP needs a timestamp per unit, which
+only KLV in a PES with a PTS gives `tsdemux`. It is generated once before
+launch, one generation long (the run less the `30 + N` s tail, divided by the
+generation count, the same length as the MPEG-TS leg's segments), and
+replayed by every publisher session; it is never deleted.
+`PUBLISHER_DROP_PERIOD_S` is shared with the MPEG-TS publish leg, so both legs
+run the same number of generations on the same schedule.
+
+The receiver runs `--remuxed --expect klv-sync --klv-placement <generations>
+--klv-set compact --no-klv-digest`:
+
+- **`--remuxed`.** The oracles keyed on the generator's multiplex layout are
+  skipped and named in the report's `skipped_oracles`; every content oracle
+  runs. No byte digest can hold across a re-muxer.
+- **Compact KLV, not rich.** The rich oracles judge each record by its
+  position in one seeded schedule for the whole capture. Every generation
+  here replays the same source, so that position restarts each generation.
+  The count and placement oracles are this leg's KLV content check, and rich
+  content stays with the MPEG-TS publish leg.
+- **Not `--strict`.** Each generation restarts the source's PTS and PCR, a
+  backward step at every boundary by design. `--klv-placement N` declares up
+  to `N - 1` such boundaries. Within that budget the receiver excuses one
+  backward PTS step per PID per boundary the placement oracle accepted. It
+  also excuses the demuxer's timing anomalies that are that boundary's
+  signature: a `PtsAnomaly` whose delta is exactly the excused step, and a
+  backward `PcrAnomaly` within 1 s of the video's step. The report counts both
+  in `klv_placement.generation_resets_excused` and
+  `timing_anomalies_excused`. A step beyond the budget, or one on a PID with
+  no boundary behind it, fails as on any other leg.
+
+- **Declared** — `legs.rtsp-publish-es` carries `profile: "klv-sync"`,
+  `klv_set: "compact"`, the KLV seed, `schedule: null`, `reconnect_mode:
+  null`, the publisher command line, `publisher_drop_period_s`,
+  `publisher_generations` and `klv_placement: true`. Once the source exists,
+  `soak.sh` counts its KLV records with `tst-interop verify` (kept as
+  `rtsp-publish-es/source-verify.json`) and adds `remuxed: true` and
+  `klv_records_per_generation` together, before any worker launches. A
+  remuxed leg declares no `source_sha256`.
+- **Checked** — **`delivery_complete_rtsp-publish-es`**: recv counted exactly
+  `klv_records_per_generation × publisher_generations` KLV records, the
+  mount dropped none (`klv_units_dropped 0`) and emitted video. A lost or
+  short generation, the last one included, fails it.
+  **`klv_placement_rtsp-publish-es`**: every KLV record lands within 91
+  ticks of the video access unit it was generated with, and the capture
+  shows exactly the declared number of generations. Also judged, as on the
+  MPEG-TS publish leg: `publisher_generations_`, `recv_invariants_`, the
+  four declaration verdicts and the six `corruption_*_` verdicts ("not
+  applicable": the publisher replays a pristine file with no tap).
+  `report soak` takes the leg's report with `--publish-leg
+  rtsp-publish-es=<path>`.
 
 #### Lossy-mode transport loss
 
