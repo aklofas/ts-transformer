@@ -8,8 +8,11 @@
 mod codec;
 pub(crate) use codec::*;
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JValue};
+use jni::strings::JNIString;
 use tst_core::error::KlvFieldError;
 use tst_core::klv::ImapbSpecial;
 use tst_core::klv::UniversalLabel;
@@ -29,8 +32,11 @@ use crate::jutil::{
 };
 
 /// Throws `IllegalArgumentException` and returns the error that carries it.
-fn illegal_argument(env: &mut JNIEnv<'_>, msg: String) -> jni::errors::Error {
-    let _ = env.throw_new("java/lang/IllegalArgumentException", msg);
+fn illegal_argument(env: &mut Env<'_>, msg: String) -> jni::errors::Error {
+    let _ = env.throw_new(
+        jni_str!("java/lang/IllegalArgumentException"),
+        JNIString::from(msg),
+    );
     jni::errors::Error::JavaException
 }
 
@@ -39,7 +45,7 @@ fn illegal_argument(env: &mut JNIEnv<'_>, msg: String) -> jni::errors::Error {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn build_uas_datalink_ls_universal_label<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &UniversalLabel,
 ) -> jni::errors::Result<JObject<'l>> {
     wrap_heap_byte_buffer(env, &v.0).map_err(|()| jni::errors::Error::JavaException)
@@ -48,11 +54,16 @@ pub(crate) fn build_uas_datalink_ls_universal_label<'l>(
 /// Reads through `read_byte_buffer`, which honours position and limit and
 /// supports direct buffers.
 pub(crate) fn read_uas_datalink_ls_universal_label(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<UniversalLabel> {
     let buf = env
-        .call_method(obj, "universalLabel", "()Ljava/nio/ByteBuffer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("universalLabel"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
+            &[],
+        )?
         .l()?;
     let bytes = read_byte_buffer(env, &buf)?;
     let ul: [u8; 16] = bytes.as_slice().try_into().map_err(|_| {
@@ -66,7 +77,7 @@ pub(crate) fn read_uas_datalink_ls_universal_label(
 
 /// A byte string the Java record carries as `byte[]`.
 pub(crate) fn build_uas_datalink_ls_miis_core_id<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &Option<Vec<u8>>,
 ) -> jni::errors::Result<JObject<'l>> {
     Ok(match v {
@@ -76,26 +87,28 @@ pub(crate) fn build_uas_datalink_ls_miis_core_id<'l>(
 }
 
 pub(crate) fn read_uas_datalink_ls_miis_core_id(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<Option<Vec<u8>>> {
-    let arr = env.call_method(obj, "miisCoreId", "()[B", &[])?.l()?;
+    let arr = env
+        .call_method(obj, jni_str!("miisCoreId"), jni_sig!("()[B"), &[])?
+        .l()?;
     if arr.is_null() {
         return Ok(None);
     }
-    let arr: JByteArray<'_> = arr.into();
+    let arr = env.cast_local::<JByteArray>(arr)?;
     Ok(Some(env.convert_byte_array(&arr)?))
 }
 
 /// A coded enum crosses as its raw code point in a boxed `Integer`, `null`
 /// when absent. A wire-unknown `Other(code)` keeps its code.
-fn boxed_code<'l>(env: &mut JNIEnv<'l>, code: Option<u8>) -> jni::errors::Result<JObject<'l>> {
+fn boxed_code<'l>(env: &mut Env<'l>, code: Option<u8>) -> jni::errors::Result<JObject<'l>> {
     match code {
         Some(c) => env
             .call_static_method(
-                "java/lang/Integer",
-                "valueOf",
-                "(I)Ljava/lang/Integer;",
+                jni_str!("java/lang/Integer"),
+                jni_str!("valueOf"),
+                jni_sig!("(I)Ljava/lang/Integer;"),
                 &[JValue::Int(i32::from(c))],
             )?
             .l(),
@@ -104,11 +117,7 @@ fn boxed_code<'l>(env: &mut JNIEnv<'l>, code: Option<u8>) -> jni::errors::Result
 }
 
 /// The code point of a coded-enum accessor `name`, range-checked to a byte.
-fn read_code(
-    env: &mut JNIEnv<'_>,
-    obj: &JObject<'_>,
-    name: &str,
-) -> jni::errors::Result<Option<u8>> {
+fn read_code(env: &mut Env<'_>, obj: &JObject<'_>, name: &str) -> jni::errors::Result<Option<u8>> {
     match read_nullable_int(env, obj, name)? {
         Some(v) => Ok(Some(checked_u8(env, i64::from(v), name)?)),
         None => Ok(None),
@@ -116,84 +125,84 @@ fn read_code(
 }
 
 pub(crate) fn build_uas_datalink_ls_icing_detected<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &Option<IcingDetected>,
 ) -> jni::errors::Result<JObject<'l>> {
     boxed_code(env, v.map(|v| v.to_wire()))
 }
 
 pub(crate) fn read_uas_datalink_ls_icing_detected(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<Option<IcingDetected>> {
     Ok(read_code(env, obj, "icingDetectedCode")?.map(IcingDetected::from_wire))
 }
 
 pub(crate) fn build_uas_datalink_ls_sensor_fov_name<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &Option<SensorFovName>,
 ) -> jni::errors::Result<JObject<'l>> {
     boxed_code(env, v.map(|v| v.to_wire()))
 }
 
 pub(crate) fn read_uas_datalink_ls_sensor_fov_name(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<Option<SensorFovName>> {
     Ok(read_code(env, obj, "sensorFovNameCode")?.map(SensorFovName::from_wire))
 }
 
 pub(crate) fn build_uas_datalink_ls_operational_mode<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &Option<OperationalMode>,
 ) -> jni::errors::Result<JObject<'l>> {
     boxed_code(env, v.map(|v| v.to_wire()))
 }
 
 pub(crate) fn read_uas_datalink_ls_operational_mode(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<Option<OperationalMode>> {
     Ok(read_code(env, obj, "operationalModeCode")?.map(OperationalMode::from_wire))
 }
 
 pub(crate) fn build_uas_datalink_ls_platform_status<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &Option<PlatformStatus>,
 ) -> jni::errors::Result<JObject<'l>> {
     boxed_code(env, v.map(|v| v.to_wire()))
 }
 
 pub(crate) fn read_uas_datalink_ls_platform_status(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<Option<PlatformStatus>> {
     Ok(read_code(env, obj, "platformStatusCode")?.map(PlatformStatus::from_wire))
 }
 
 pub(crate) fn build_uas_datalink_ls_sensor_control_mode<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &Option<SensorControlMode>,
 ) -> jni::errors::Result<JObject<'l>> {
     boxed_code(env, v.map(|v| v.to_wire()))
 }
 
 pub(crate) fn read_uas_datalink_ls_sensor_control_mode(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<Option<SensorControlMode>> {
     Ok(read_code(env, obj, "sensorControlModeCode")?.map(SensorControlMode::from_wire))
 }
 
 pub(crate) fn build_uas_datalink_ls_sentinel_tags<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &[u32],
 ) -> jni::errors::Result<JObject<'l>> {
     build_long_list(env, v.iter().map(|&t| i64::from(t)))
 }
 
 pub(crate) fn read_uas_datalink_ls_sentinel_tags(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<Vec<u32>> {
     read_sentinel_tags(env, obj, "UasDatalinkLs")
@@ -203,18 +212,18 @@ pub(crate) fn read_uas_datalink_ls_sentinel_tags(
 /// `(tag, code, payload)`. `code` names the `ImapbSpecial` family; `payload`
 /// is the NaN id or signal (0 for the codes that carry none).
 pub(crate) fn build_uas_datalink_ls_imapb_specials<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &[(u32, ImapbSpecial)],
 ) -> jni::errors::Result<JObject<'l>> {
-    let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+    let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
     for &(tag, special) in v {
         let (code, payload) = imapb_special_to_code(env, special)?;
         // 8 slots: the code string, the entry and JNI scratch per entry.
         env.with_local_frame(8, |env| -> jni::errors::Result<()> {
             let code_str = env.new_string(code)?;
             let entry = env.new_object(
-                "org/tstrans/klv/ImapbSpecialEntry",
-                "(ILjava/lang/String;J)V",
+                jni_str!("org/tstrans/klv/ImapbSpecialEntry"),
+                jni_sig!("(ILjava/lang/String;J)V"),
                 &[
                     JValue::Int(tag as i32),
                     JValue::Object(&code_str),
@@ -223,8 +232,8 @@ pub(crate) fn build_uas_datalink_ls_imapb_specials<'l>(
             )?;
             env.call_method(
                 &list,
-                "add",
-                "(Ljava/lang/Object;)Z",
+                jni_str!("add"),
+                jni_sig!("(Ljava/lang/Object;)Z"),
                 &[JValue::Object(&entry)],
             )?;
             Ok(())
@@ -234,20 +243,34 @@ pub(crate) fn build_uas_datalink_ls_imapb_specials<'l>(
 }
 
 pub(crate) fn read_uas_datalink_ls_imapb_specials(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<Vec<(u32, ImapbSpecial)>> {
     let list = env
-        .call_method(obj, "imapbSpecials", "()Ljava/util/List;", &[])?
+        .call_method(
+            obj,
+            jni_str!("imapbSpecials"),
+            jni_sig!("()Ljava/util/List;"),
+            &[],
+        )?
         .l()?;
-    let size = env.call_method(&list, "size", "()I", &[])?.i()?;
+    let size = env
+        .call_method(&list, jni_str!("size"), jni_sig!("()I"), &[])?
+        .i()?;
     let mut out = Vec::with_capacity(size.max(0) as usize);
     for i in 0..size {
         let entry = env.with_local_frame(8, |env| -> jni::errors::Result<(u32, ImapbSpecial)> {
             let item = env
-                .call_method(&list, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                .call_method(
+                    &list,
+                    jni_str!("get"),
+                    jni_sig!("(I)Ljava/lang/Object;"),
+                    &[JValue::Int(i)],
+                )?
                 .l()?;
-            let tag_i = env.call_method(&item, "tag", "()I", &[])?.i()?;
+            let tag_i = env
+                .call_method(&item, jni_str!("tag"), jni_sig!("()I"), &[])?
+                .i()?;
             let tag = u32::try_from(tag_i).map_err(|_| {
                 illegal_argument(
                     env,
@@ -255,11 +278,18 @@ pub(crate) fn read_uas_datalink_ls_imapb_specials(
                 )
             })?;
             let code_obj = env
-                .call_method(&item, "code", "()Ljava/lang/String;", &[])?
+                .call_method(
+                    &item,
+                    jni_str!("code"),
+                    jni_sig!("()Ljava/lang/String;"),
+                    &[],
+                )?
                 .l()?;
-            let j_str: &jni::objects::JString = (&code_obj).into();
-            let code: String = env.get_string(j_str).map(Into::into)?;
-            let payload = env.call_method(&item, "payload", "()J", &[])?.j()?;
+            let j_str = env.as_cast::<jni::objects::JString>(&code_obj)?;
+            let code: String = j_str.try_to_string(env)?;
+            let payload = env
+                .call_method(&item, jni_str!("payload"), jni_sig!("()J"), &[])?
+                .j()?;
             Ok((tag, imapb_special_from_code(env, &code, payload as u64)?))
         })?;
         out.push(entry);
@@ -271,7 +301,7 @@ pub(crate) fn read_uas_datalink_ls_imapb_specials(
 /// later: `ImapbSpecial` has no tst-core wire-code helper, so this table must
 /// fail loudly when it goes stale.
 fn imapb_special_to_code(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     s: ImapbSpecial,
 ) -> jni::errors::Result<(&'static str, u64)> {
     Ok(match s {
@@ -297,7 +327,7 @@ fn imapb_special_to_code(
 /// A code outside the nine known ones throws `IllegalArgumentException`:
 /// validate, don't drop.
 fn imapb_special_from_code(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     code: &str,
     payload: u64,
 ) -> jni::errors::Result<ImapbSpecial> {
@@ -344,7 +374,7 @@ fn is_st0601_typed_tag(tag: u32) -> bool {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn build_metadata_substream_id_uuid<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &Option<[u8; 16]>,
 ) -> jni::errors::Result<JObject<'l>> {
     Ok(match v {
@@ -354,14 +384,16 @@ pub(crate) fn build_metadata_substream_id_uuid<'l>(
 }
 
 pub(crate) fn read_metadata_substream_id_uuid(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<Option<[u8; 16]>> {
-    let arr = env.call_method(obj, "uuid", "()[B", &[])?.l()?;
+    let arr = env
+        .call_method(obj, jni_str!("uuid"), jni_sig!("()[B"), &[])?
+        .l()?;
     if arr.is_null() {
         return Ok(None);
     }
-    let arr: JByteArray<'_> = arr.into();
+    let arr = env.cast_local::<JByteArray>(arr)?;
     let bytes = env.convert_byte_array(&arr)?;
     let uuid: [u8; 16] = bytes.as_slice().try_into().map_err(|_| {
         illegal_argument(
@@ -377,17 +409,19 @@ pub(crate) fn read_metadata_substream_id_uuid(
 
 /// The code point is a BER-OID, so it crosses as a full-range Java `long`.
 pub(crate) fn build_payload_record_payload_type(
-    _env: &mut JNIEnv<'_>,
+    _env: &mut Env<'_>,
     v: &PayloadType,
 ) -> jni::errors::Result<i64> {
     Ok(v.to_wire() as i64)
 }
 
 pub(crate) fn read_payload_record_payload_type(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<PayloadType> {
-    let code = env.call_method(obj, "payloadTypeCode", "()J", &[])?.j()?;
+    let code = env
+        .call_method(obj, jni_str!("payloadTypeCode"), jni_sig!("()J"), &[])?
+        .j()?;
     // Unsigned 64-bit values cross as the bit pattern of a `long`.
     Ok(PayloadType::from_wire(code as u64))
 }
@@ -424,24 +458,29 @@ fn is_st0806_poi_aoi_typed_tag(tag: u32) -> bool {
 macro_rules! unknown_and_field_errors {
     ($build_unknown:ident, $read_unknown:ident, $build_errors:ident, $read_errors:ident, $typed:ident) => {
         pub(crate) fn $build_unknown<'l>(
-            env: &mut JNIEnv<'l>,
+            env: &mut Env<'l>,
             v: &[OwnedRawField],
         ) -> jni::errors::Result<JObject<'l>> {
             build_unknown_list(env, v)
         }
 
         pub(crate) fn $read_unknown(
-            env: &mut JNIEnv<'_>,
+            env: &mut Env<'_>,
             obj: &JObject<'_>,
         ) -> jni::errors::Result<Vec<OwnedRawField>> {
             let list = env
-                .call_method(obj, "unknown", "()Ljava/util/List;", &[])?
+                .call_method(
+                    obj,
+                    jni_str!("unknown"),
+                    jni_sig!("()Ljava/util/List;"),
+                    &[],
+                )?
                 .l()?;
             read_unknown_list(env, &list, $typed)
         }
 
         pub(crate) fn $build_errors<'l>(
-            env: &mut JNIEnv<'l>,
+            env: &mut Env<'l>,
             v: &[KlvFieldError],
         ) -> jni::errors::Result<JObject<'l>> {
             build_field_errors(env, v)
@@ -449,7 +488,7 @@ macro_rules! unknown_and_field_errors {
 
         /// A parser diagnostic: it does not cross back.
         pub(crate) fn $read_errors(
-            _env: &mut JNIEnv<'_>,
+            _env: &mut Env<'_>,
             _obj: &JObject<'_>,
         ) -> jni::errors::Result<Vec<KlvFieldError>> {
             Ok(Vec::new())
@@ -470,14 +509,14 @@ unknown_and_field_errors!(
 macro_rules! coded_enum_fields {
     ($build:ident, $read:ident, $ty:ident, $accessor:literal) => {
         pub(crate) fn $build<'l>(
-            env: &mut JNIEnv<'l>,
+            env: &mut Env<'l>,
             v: &Option<$ty>,
         ) -> jni::errors::Result<JObject<'l>> {
             boxed_code(env, v.map(|v| v.to_wire()))
         }
 
         pub(crate) fn $read(
-            env: &mut JNIEnv<'_>,
+            env: &mut Env<'_>,
             obj: &JObject<'_>,
         ) -> jni::errors::Result<Option<$ty>> {
             Ok(read_code(env, obj, $accessor)?.map($ty::from_wire))
@@ -487,12 +526,17 @@ macro_rules! coded_enum_fields {
 
 /// The `sentinelTags` list of a nested ST 0806 set, each entry a `u32`.
 fn read_sentinel_tags(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
     record: &str,
 ) -> jni::errors::Result<Vec<u32>> {
     let list = env
-        .call_method(obj, "sentinelTags", "()Ljava/util/List;", &[])?
+        .call_method(
+            obj,
+            jni_str!("sentinelTags"),
+            jni_sig!("()Ljava/util/List;"),
+            &[],
+        )?
         .l()?;
     let mut out = Vec::new();
     for v in read_long_list(env, &list)? {
@@ -542,24 +586,31 @@ unknown_and_field_errors!(
 // ---------------------------------------------------------------------------
 
 pub(crate) fn build_precision_time_stamp_pack_time_status<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &TimeStatus,
 ) -> jni::errors::Result<JObject<'l>> {
     env.new_object(
-        "org/tstrans/klv/TimeStatus",
-        "(I)V",
+        jni_str!("org/tstrans/klv/TimeStatus"),
+        jni_sig!("(I)V"),
         &[JValue::Int(i32::from(v.0))],
     )
 }
 
 pub(crate) fn read_precision_time_stamp_pack_time_status(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<TimeStatus> {
     let status = env
-        .call_method(obj, "timeStatus", "()Lorg/tstrans/klv/TimeStatus;", &[])?
+        .call_method(
+            obj,
+            jni_str!("timeStatus"),
+            jni_sig!("()Lorg/tstrans/klv/TimeStatus;"),
+            &[],
+        )?
         .l()?;
-    let raw = env.call_method(&status, "raw", "()I", &[])?.i()?;
+    let raw = env
+        .call_method(&status, jni_str!("raw"), jni_sig!("()I"), &[])?
+        .i()?;
     Ok(TimeStatus(checked_u8(
         env,
         i64::from(raw),
@@ -573,13 +624,13 @@ pub(crate) fn read_precision_time_stamp_pack_time_status(
 
 /// The 3-byte colour crosses as the nested `VTargetPack.TargetColor` record.
 pub(crate) fn build_v_target_pack_target_color<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &Option<[u8; 3]>,
 ) -> jni::errors::Result<JObject<'l>> {
     match v {
         Some([r, g, b]) => env.new_object(
-            "org/tstrans/klv/VTargetPack$TargetColor",
-            "(III)V",
+            jni_str!("org/tstrans/klv/VTargetPack$TargetColor"),
+            jni_sig!("(III)V"),
             &[
                 JValue::Int(i32::from(*r)),
                 JValue::Int(i32::from(*g)),
@@ -591,14 +642,14 @@ pub(crate) fn build_v_target_pack_target_color<'l>(
 }
 
 pub(crate) fn read_v_target_pack_target_color(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<Option<[u8; 3]>> {
     let color = env
         .call_method(
             obj,
-            "targetColor",
-            "()Lorg/tstrans/klv/VTargetPack$TargetColor;",
+            jni_str!("targetColor"),
+            jni_sig!("()Lorg/tstrans/klv/VTargetPack$TargetColor;"),
             &[],
         )?
         .l()?;
@@ -611,7 +662,9 @@ pub(crate) fn read_v_target_pack_target_color(
         ("g", "targetColor.g"),
         ("b", "targetColor.b"),
     ]) {
-        let raw = env.call_method(&color, name, "()I", &[])?.i()?;
+        let raw = env
+            .call_method(&color, JNIString::from(name), jni_sig!("()I"), &[])?
+            .i()?;
         *slot = checked_u8(env, i64::from(raw), label)?;
     }
     Ok(Some(rgb))
@@ -650,28 +703,28 @@ coded_enum_fields!(
 );
 
 pub(crate) fn build_rvt_poi_sentinel_tags<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &[u32],
 ) -> jni::errors::Result<JObject<'l>> {
     build_long_list(env, v.iter().map(|&t| i64::from(t)))
 }
 
 pub(crate) fn read_rvt_poi_sentinel_tags(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<Vec<u32>> {
     read_sentinel_tags(env, obj, "RvtPoi")
 }
 
 pub(crate) fn build_rvt_aoi_sentinel_tags<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &[u32],
 ) -> jni::errors::Result<JObject<'l>> {
     build_long_list(env, v.iter().map(|&t| i64::from(t)))
 }
 
 pub(crate) fn read_rvt_aoi_sentinel_tags(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<Vec<u32>> {
     read_sentinel_tags(env, obj, "RvtAoi")
@@ -705,31 +758,30 @@ unknown_and_field_errors!(
 
 /// The matrices cross as primitive arrays.
 pub(crate) fn build_sdcc_flp_std_devs<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &[f64],
 ) -> jni::errors::Result<JObject<'l>> {
     build_double_array(env, v)
 }
 
 pub(crate) fn build_sdcc_flp_correlations<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &[f64],
 ) -> jni::errors::Result<JObject<'l>> {
     build_double_array(env, v)
 }
 
 pub(crate) fn build_sdcc_flp_correlation_present<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     v: &[bool],
 ) -> jni::errors::Result<JObject<'l>> {
-    let flags: Vec<u8> = v.iter().map(|&b| u8::from(b)).collect();
-    let arr = env.new_boolean_array(flags.len() as i32)?;
-    env.set_boolean_array_region(&arr, 0, &flags)?;
+    let arr = env.new_boolean_array(v.len())?;
+    arr.set_region(env, 0, v)?;
     Ok(arr.into())
 }
 
-fn build_double_array<'l>(env: &mut JNIEnv<'l>, v: &[f64]) -> jni::errors::Result<JObject<'l>> {
-    let arr = env.new_double_array(v.len() as i32)?;
-    env.set_double_array_region(&arr, 0, v)?;
+fn build_double_array<'l>(env: &mut Env<'l>, v: &[f64]) -> jni::errors::Result<JObject<'l>> {
+    let arr = env.new_double_array(v.len())?;
+    arr.set_region(env, 0, v)?;
     Ok(arr.into())
 }

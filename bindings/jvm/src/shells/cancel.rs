@@ -36,12 +36,12 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> jboolean = 0 => {
-        match REGISTRY_CANCEL.with(handle as u64, |c| u8::from(c.0.is_cancelled())) {
+    ) -> jboolean = false => {
+        match REGISTRY_CANCEL.with(handle as u64, |c| c.0.is_cancelled()) {
             Some(v) => v,
             None => {
                 crate::error::throw_closed(env, "CancelHandle");
-                0
+                false
             }
         }
     }

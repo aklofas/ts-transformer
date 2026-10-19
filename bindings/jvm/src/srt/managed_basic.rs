@@ -32,7 +32,9 @@ use std::sync::LazyLock;
 use std::sync::atomic::Ordering;
 use tst_pipeline::binding::view::BlockingReason;
 
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JString};
+use jni::strings::JNIString;
 use jni::sys::{jboolean, jbyteArray, jint, jlong};
 use tst_pipeline::binding::{BindingErrorKind, ManagedHandles, Owned};
 use tst_pipeline::{
@@ -83,10 +85,10 @@ jni_native! {
         overflow_policy: jint,
         mode: jint,
     ) -> jlong = 0 => {
-        let url_str: String = match env.get_string(&url) {
-            Ok(s) => s.into(),
+        let url_str: String = match url.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -113,7 +115,7 @@ jni_native! {
 
         let Some(policy) = super::build_reconnect_policy(
             env,
-            max_attempts_present != 0,
+            max_attempts_present,
             max_attempts,
             backoff_kind,
             backoff_base_ms,
@@ -163,7 +165,7 @@ jni_native! {
         let bytes: Vec<u8> = match env.convert_byte_array(&data) {
             Ok(b) => b,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return;
             }
         };
@@ -291,8 +293,8 @@ jni_native! {
 jni_native! {
     /// Return whether the managed sender holds a live transport. Non-blocking: a
     /// `sendBytes` parked on another thread holds the slot, and reads as alive.
-    fn Java_org_tstrans_srt_ManagedSender_nIsAlive(_env, _class, handle: jlong) -> jboolean = 0 => {
-        u8::from(REGISTRY_SENDER.is_alive(handle as u64, |jstruct| jstruct.inner.is_alive()))
+    fn Java_org_tstrans_srt_ManagedSender_nIsAlive(_env, _class, handle: jlong) -> jboolean = false => {
+        REGISTRY_SENDER.is_alive(handle as u64, |jstruct| jstruct.inner.is_alive())
     }
 }
 
@@ -332,10 +334,10 @@ jni_native! {
         overflow_policy: jint,
         mode: jint,
     ) -> jlong = 0 => {
-        let url_str: String = match env.get_string(&url) {
-            Ok(s) => s.into(),
+        let url_str: String = match url.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -358,7 +360,7 @@ jni_native! {
 
         let Some(policy) = super::build_reconnect_policy(
             env,
-            max_attempts_present != 0,
+            max_attempts_present,
             max_attempts,
             backoff_kind,
             backoff_base_ms,
@@ -516,7 +518,7 @@ jni_native! {
         _env,
         _class,
         handle: jlong,
-    ) -> jboolean = 0 => {
-        u8::from(REGISTRY_RECEIVER.is_alive(handle as u64, |jstruct| jstruct.inner.is_alive()))
+    ) -> jboolean = false => {
+        REGISTRY_RECEIVER.is_alive(handle as u64, |jstruct| jstruct.inner.is_alive())
     }
 }

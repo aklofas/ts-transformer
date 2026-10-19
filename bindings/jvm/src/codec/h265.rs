@@ -25,8 +25,11 @@
 //! inner SPS, originally produced from the same RBSP bytes).
 
 use crate::panic::jni_native;
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JValue};
+use jni::strings::JNIString;
 use jni::sys::{jint, jobject};
 use tst_core::codec::NalUnit;
 use tst_core::codec::h265::{
@@ -45,7 +48,7 @@ use crate::jutil::read_byte_buffer;
 /// constant. The `_ =>` arm maps any future marked-non-exhaustive variant to
 /// `UNKNOWN`, mirroring tst-py's `Unknown` catch-all.
 pub(crate) fn build_slice_type<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     v: H265SliceType,
 ) -> Result<JObject<'local>, ()> {
     let name = match v {
@@ -55,9 +58,9 @@ pub(crate) fn build_slice_type<'local>(
         _ => "UNKNOWN",
     };
     env.get_static_field(
-        "org/tstrans/codec/H265SliceType",
-        name,
-        "Lorg/tstrans/codec/H265SliceType;",
+        jni_str!("org/tstrans/codec/H265SliceType"),
+        JNIString::from(name),
+        jni_sig!("Lorg/tstrans/codec/H265SliceType;"),
     )
     .map_err(|_| ())?
     .l()
@@ -153,7 +156,7 @@ jni_native! {
         let sps_ctx: Option<H265Sps> = if sps.is_null() {
             None
         } else {
-            let buf = match env.call_method(&sps, "rawRbsp", "()Ljava/nio/ByteBuffer;", &[]) {
+            let buf = match env.call_method(&sps, jni_str!("rawRbsp"), jni_sig!("()Ljava/nio/ByteBuffer;"), &[]) {
                 Ok(v) => match v.l() {
                     Ok(o) => o,
                     Err(_) => return JObject::null().into_raw(),
@@ -196,7 +199,7 @@ jni_native! {
         // Read each Java NalUnit, filtering to the H265 variant (mirrors tst-py's
         // `parse_h265_parameter_sets_py`: non-H265 entries are dropped before
         // handing to the Rust parser).
-        let size = match env.call_method(&nals, "size", "()I", &[]) {
+        let size = match env.call_method(&nals, jni_str!("size"), jni_sig!("()I"), &[]) {
             Ok(v) => match v.i() {
                 Ok(n) => n,
                 Err(_) => return JObject::null().into_raw(),
@@ -208,43 +211,43 @@ jni_native! {
         for i in 0..size {
             let parsed = env.with_local_frame(16, |inner| {
                 let item = inner
-                    .call_method(&nals, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                    .call_method(&nals, jni_str!("get"), jni_sig!("(I)Ljava/lang/Object;"), &[JValue::Int(i)])?
                     .l()?;
                 let kind = inner
-                    .call_method(&item, "kind", "()Ljava/lang/String;", &[])?
+                    .call_method(&item, jni_str!("kind"), jni_sig!("()Ljava/lang/String;"), &[])?
                     .l()?;
-                let kind_jstr = jni::objects::JString::from(kind);
-                let kind_str: String = inner.get_string(&kind_jstr)?.into();
+                let kind_jstr = inner.cast_local::<jni::objects::JString>(kind)?;
+                let kind_str: String = kind_jstr.try_to_string(inner)?;
                 if kind_str != "H265" {
                     return Ok::<Option<NalUnit>, jni::errors::Error>(None);
                 }
-                let nal_type_raw = inner.call_method(&item, "nalType", "()I", &[])?.i()?;
+                let nal_type_raw = inner.call_method(&item, jni_str!("nalType"), jni_sig!("()I"), &[])?.i()?;
                 let nal_type = crate::jutil::checked_u8(inner, nal_type_raw as i64, "nalType")?;
                 // layerId / temporalIdPlus1 are (nullable) Integer; H265 NalUnits
                 // always carry them, but default to 0 / 1 if absent (mirrors tst-py
                 // `layer_id.unwrap_or(0)` / `temporal_id_plus1.unwrap_or(1)`).
                 let layer_id_obj = inner
-                    .call_method(&item, "layerId", "()Ljava/lang/Integer;", &[])?
+                    .call_method(&item, jni_str!("layerId"), jni_sig!("()Ljava/lang/Integer;"), &[])?
                     .l()?;
                 let layer_id = if layer_id_obj.is_null() {
                     0u8
                 } else {
                     let layer_id_raw = inner
-                        .call_method(&layer_id_obj, "intValue", "()I", &[])?
+                        .call_method(&layer_id_obj, jni_str!("intValue"), jni_sig!("()I"), &[])?
                         .i()?;
                     crate::jutil::checked_u8(inner, layer_id_raw as i64, "layerId")?
                 };
                 let tid_obj = inner
-                    .call_method(&item, "temporalIdPlus1", "()Ljava/lang/Integer;", &[])?
+                    .call_method(&item, jni_str!("temporalIdPlus1"), jni_sig!("()Ljava/lang/Integer;"), &[])?
                     .l()?;
                 let temporal_id_plus1 = if tid_obj.is_null() {
                     1u8
                 } else {
-                    let tid_raw = inner.call_method(&tid_obj, "intValue", "()I", &[])?.i()?;
+                    let tid_raw = inner.call_method(&tid_obj, jni_str!("intValue"), jni_sig!("()I"), &[])?.i()?;
                     crate::jutil::checked_u8(inner, tid_raw as i64, "temporalIdPlus1")?
                 };
                 let payload_buf = inner
-                    .call_method(&item, "payload", "()Ljava/nio/ByteBuffer;", &[])?
+                    .call_method(&item, jni_str!("payload"), jni_sig!("()Ljava/nio/ByteBuffer;"), &[])?
                     .l()?;
                 let payload = read_byte_buffer(inner, &payload_buf)?;
                 Ok(Some(NalUnit::H265 {

@@ -3,17 +3,17 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
+use jni::{Env, jni_sig, jni_str};
 
 pub(crate) fn build_rtp_stats<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_rtp::RtpStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(36)?;
     let obj = env.new_object(
-        "org/tstrans/rtp/RtpStats",
-        "(JJ)V",
+        jni_str!("org/tstrans/rtp/RtpStats"),
+        jni_sig!("(JJ)V"),
         &[
             JValue::Long(r.malformed_packets as i64),
             JValue::Long(r.source_rejected as i64),
@@ -23,79 +23,88 @@ pub(crate) fn build_rtp_stats<'l>(
 }
 
 pub(crate) fn build_depay_stats<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_rtp::H264DepayStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(50)?;
-    let b = env.new_object("org/tstrans/rtp/H264DepayStats$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/rtp/H264DepayStats$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     env.call_method(
         &b,
-        "ausEmitted",
-        "(J)Lorg/tstrans/rtp/H264DepayStats$Builder;",
+        jni_str!("ausEmitted"),
+        jni_sig!("(J)Lorg/tstrans/rtp/H264DepayStats$Builder;"),
         &[JValue::Long(r.aus_emitted as i64)],
     )?;
     env.call_method(
         &b,
-        "ausDropped",
-        "(J)Lorg/tstrans/rtp/H264DepayStats$Builder;",
+        jni_str!("ausDropped"),
+        jni_sig!("(J)Lorg/tstrans/rtp/H264DepayStats$Builder;"),
         &[JValue::Long(r.aus_dropped as i64)],
     )?;
     env.call_method(
         &b,
-        "ausDroppedOversize",
-        "(J)Lorg/tstrans/rtp/H264DepayStats$Builder;",
+        jni_str!("ausDroppedOversize"),
+        jni_sig!("(J)Lorg/tstrans/rtp/H264DepayStats$Builder;"),
         &[JValue::Long(r.aus_dropped_oversize as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsDiscarded",
-        "(J)Lorg/tstrans/rtp/H264DepayStats$Builder;",
+        jni_str!("packetsDiscarded"),
+        jni_sig!("(J)Lorg/tstrans/rtp/H264DepayStats$Builder;"),
         &[JValue::Long(r.packets_discarded as i64)],
     )?;
     env.call_method(
         &b,
-        "nalusDiscarded",
-        "(J)Lorg/tstrans/rtp/H264DepayStats$Builder;",
+        jni_str!("nalusDiscarded"),
+        jni_sig!("(J)Lorg/tstrans/rtp/H264DepayStats$Builder;"),
         &[JValue::Long(r.nalus_discarded as i64)],
     )?;
     env.call_method(
         &b,
-        "seqGaps",
-        "(J)Lorg/tstrans/rtp/H264DepayStats$Builder;",
+        jni_str!("seqGaps"),
+        jni_sig!("(J)Lorg/tstrans/rtp/H264DepayStats$Builder;"),
         &[JValue::Long(r.seq_gaps as i64)],
     )?;
     env.call_method(
         &b,
-        "duplicatePackets",
-        "(J)Lorg/tstrans/rtp/H264DepayStats$Builder;",
+        jni_str!("duplicatePackets"),
+        jni_sig!("(J)Lorg/tstrans/rtp/H264DepayStats$Builder;"),
         &[JValue::Long(r.duplicate_packets as i64)],
     )?;
     env.call_method(
         &b,
-        "parameterSetUpdates",
-        "(J)Lorg/tstrans/rtp/H264DepayStats$Builder;",
+        jni_str!("parameterSetUpdates"),
+        jni_sig!("(J)Lorg/tstrans/rtp/H264DepayStats$Builder;"),
         &[JValue::Long(r.parameter_set_updates as i64)],
     )?;
     env.call_method(
         &b,
-        "ssrcChanges",
-        "(J)Lorg/tstrans/rtp/H264DepayStats$Builder;",
+        jni_str!("ssrcChanges"),
+        jni_sig!("(J)Lorg/tstrans/rtp/H264DepayStats$Builder;"),
         &[JValue::Long(r.ssrc_changes as i64)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/rtp/H264DepayStats;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/rtp/H264DepayStats;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn build_server_stats<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_rtp::ServerStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(46)?;
     let obj = env.new_object(
-        "org/tstrans/rtp/ServerStats",
-        "(JJJJJJJ)V",
+        jni_str!("org/tstrans/rtp/ServerStats"),
+        jni_sig!("(JJJJJJJ)V"),
         &[
             JValue::Long(r.active_sessions as i64),
             JValue::Long(r.total_rtp_packets_sent as i64),
@@ -110,13 +119,13 @@ pub(crate) fn build_server_stats<'l>(
 }
 
 pub(crate) fn build_mount_stats<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_rtp::MountStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(40)?;
     let obj = env.new_object(
-        "org/tstrans/rtp/MountStats",
-        "(JJJJ)V",
+        jni_str!("org/tstrans/rtp/MountStats"),
+        jni_sig!("(JJJJ)V"),
         &[
             JValue::Long(r.bytes_pushed as i64),
             JValue::Long(r.packets_pushed as i64),
@@ -128,117 +137,126 @@ pub(crate) fn build_mount_stats<'l>(
 }
 
 pub(crate) fn build_publish_mount_stats<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_rtp::PublishMountStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(66)?;
-    let b = env.new_object("org/tstrans/rtp/PublishMountStats$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/rtp/PublishMountStats$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     env.call_method(
         &b,
-        "rtpPacketsReceived",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("rtpPacketsReceived"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.rtp_packets_received as i64)],
     )?;
     env.call_method(
         &b,
-        "bytesReceived",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("bytesReceived"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.bytes_received as i64)],
     )?;
     env.call_method(
         &b,
-        "malformedPackets",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("malformedPackets"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.malformed_packets as i64)],
     )?;
     env.call_method(
         &b,
-        "sourceRejected",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("sourceRejected"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.source_rejected as i64)],
     )?;
     env.call_method(
         &b,
-        "framesEmitted",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("framesEmitted"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.frames_emitted as i64)],
     )?;
     env.call_method(
         &b,
-        "framesDroppedApp",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("framesDroppedApp"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.frames_dropped_app as i64)],
     )?;
     env.call_method(
         &b,
-        "framesDroppedReaders",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("framesDroppedReaders"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.frames_dropped_readers as i64)],
     )?;
     env.call_method(
         &b,
-        "ausEmitted",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("ausEmitted"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.aus_emitted as i64)],
     )?;
     env.call_method(
         &b,
-        "ausDropped",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("ausDropped"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.aus_dropped as i64)],
     )?;
     env.call_method(
         &b,
-        "ausReordered",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("ausReordered"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.aus_reordered as i64)],
     )?;
     env.call_method(
         &b,
-        "klvUnitsEmitted",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("klvUnitsEmitted"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.klv_units_emitted as i64)],
     )?;
     env.call_method(
         &b,
-        "klvUnitsDropped",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("klvUnitsDropped"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.klv_units_dropped as i64)],
     )?;
     let alignment = crate::rtp::publish::build_clock_alignment(env, r.alignment)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "alignment",
-        "(Lorg/tstrans/rtp/ClockAlignment;)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("alignment"),
+        jni_sig!("(Lorg/tstrans/rtp/ClockAlignment;)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Object(&alignment)],
     )?;
     env.call_method(
         &b,
-        "alignmentSteps",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("alignmentSteps"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.alignment_steps as i64)],
     )?;
     env.call_method(
         &b,
-        "ssrcChanges",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("ssrcChanges"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.ssrc_changes as i64)],
     )?;
     env.call_method(
         &b,
-        "generation",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("generation"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.generation as i64)],
     )?;
     env.call_method(
         &b,
-        "peerCount",
-        "(J)Lorg/tstrans/rtp/PublishMountStats$Builder;",
+        jni_str!("peerCount"),
+        jni_sig!("(J)Lorg/tstrans/rtp/PublishMountStats$Builder;"),
         &[JValue::Long(r.peer_count as i64)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/rtp/PublishMountStats;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/rtp/PublishMountStats;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }

@@ -88,7 +88,7 @@ use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::{Arc, Mutex};
 
-use jni::JNIEnv;
+use jni::Env;
 use jni::sys::jlong;
 use tst_core::transport::EndReason;
 use tst_core::transport::TransportCancel;
@@ -583,7 +583,7 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
 /// closed/absent handle throws `IllegalStateException` naming `what` and
 /// returns `-1`.
 pub(crate) fn first_handle<T: Send + 'static, S: Send + Sync + 'static>(
-    env: &mut JNIEnv,
+    env: &mut Env,
     registry: &OwnedRegistry<T, S>,
     handle: jlong,
     what: &str,

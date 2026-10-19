@@ -3,145 +3,151 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
+use jni::{Env, jni_sig, jni_str};
 
 pub(crate) fn build_v_target_pack<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::klv::st0903::VTargetPack,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(92)?;
-    let b = env.new_object("org/tstrans/klv/VTargetPack$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/klv/VTargetPack$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     env.call_method(
         &b,
-        "targetId",
-        "(J)Lorg/tstrans/klv/VTargetPack$Builder;",
+        jni_str!("targetId"),
+        jni_sig!("(J)Lorg/tstrans/klv/VTargetPack$Builder;"),
         &[JValue::Long(r.target_id as i64)],
     )?;
     if let Some(v) = &r.centroid_pixel {
         env.call_method(
             &b,
-            "centroidPixel",
-            "(J)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("centroidPixel"),
+            jni_sig!("(J)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.bbox_top_left_pixel {
         env.call_method(
             &b,
-            "bboxTopLeftPixel",
-            "(J)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("bboxTopLeftPixel"),
+            jni_sig!("(J)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.bbox_bottom_right_pixel {
         env.call_method(
             &b,
-            "bboxBottomRightPixel",
-            "(J)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("bboxBottomRightPixel"),
+            jni_sig!("(J)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.priority {
         env.call_method(
             &b,
-            "priority",
-            "(I)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("priority"),
+            jni_sig!("(I)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
     if let Some(v) = &r.confidence_level {
         env.call_method(
             &b,
-            "confidenceLevel",
-            "(I)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("confidenceLevel"),
+            jni_sig!("(I)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
     if let Some(v) = &r.history {
         env.call_method(
             &b,
-            "history",
-            "(I)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("history"),
+            jni_sig!("(I)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
     if let Some(v) = &r.percentage_of_target_pixels {
         env.call_method(
             &b,
-            "percentageOfTargetPixels",
-            "(I)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("percentageOfTargetPixels"),
+            jni_sig!("(I)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
     let target_color = crate::custom::build_v_target_pack_target_color(env, &r.target_color)?;
     env.call_method(
         &b,
-        "targetColor",
-        "(Lorg/tstrans/klv/VTargetPack$TargetColor;)Lorg/tstrans/klv/VTargetPack$Builder;",
+        jni_str!("targetColor"),
+        jni_sig!(
+            "(Lorg/tstrans/klv/VTargetPack$TargetColor;)Lorg/tstrans/klv/VTargetPack$Builder;"
+        ),
         &[JValue::Object(&target_color)],
     )?;
     if let Some(v) = &r.target_intensity {
         env.call_method(
             &b,
-            "targetIntensity",
-            "(J)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("targetIntensity"),
+            jni_sig!("(J)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.centroid_lat_offset {
         env.call_method(
             &b,
-            "centroidLatOffset",
-            "(D)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("centroidLatOffset"),
+            jni_sig!("(D)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     if let Some(v) = &r.centroid_lon_offset {
         env.call_method(
             &b,
-            "centroidLonOffset",
-            "(D)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("centroidLonOffset"),
+            jni_sig!("(D)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     if let Some(v) = &r.centroid_hae {
         env.call_method(
             &b,
-            "centroidHae",
-            "(D)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("centroidHae"),
+            jni_sig!("(D)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     if let Some(v) = &r.bbox_top_left_lat_offset {
         env.call_method(
             &b,
-            "bboxTopLeftLatOffset",
-            "(D)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("bboxTopLeftLatOffset"),
+            jni_sig!("(D)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     if let Some(v) = &r.bbox_top_left_lon_offset {
         env.call_method(
             &b,
-            "bboxTopLeftLonOffset",
-            "(D)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("bboxTopLeftLonOffset"),
+            jni_sig!("(D)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     if let Some(v) = &r.bbox_bottom_right_lat_offset {
         env.call_method(
             &b,
-            "bboxBottomRightLatOffset",
-            "(D)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("bboxBottomRightLatOffset"),
+            jni_sig!("(D)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     if let Some(v) = &r.bbox_bottom_right_lon_offset {
         env.call_method(
             &b,
-            "bboxBottomRightLonOffset",
-            "(D)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("bboxBottomRightLonOffset"),
+            jni_sig!("(D)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
@@ -150,8 +156,8 @@ pub(crate) fn build_v_target_pack<'l>(
             .map_err(|()| jni::errors::Error::JavaException)?;
         env.call_method(
             &b,
-            "targetLocation",
-            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("targetLocation"),
+            jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Object(&o1)],
         )?;
     }
@@ -160,40 +166,40 @@ pub(crate) fn build_v_target_pack<'l>(
             .map_err(|()| jni::errors::Error::JavaException)?;
         env.call_method(
             &b,
-            "geospatialContourSeries",
-            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("geospatialContourSeries"),
+            jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Object(&o2)],
         )?;
     }
     if let Some(v) = &r.centroid_pix_row {
         env.call_method(
             &b,
-            "centroidPixRow",
-            "(J)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("centroidPixRow"),
+            jni_sig!("(J)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.centroid_pix_col {
         env.call_method(
             &b,
-            "centroidPixCol",
-            "(J)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("centroidPixCol"),
+            jni_sig!("(J)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.algorithm_id {
         env.call_method(
             &b,
-            "algorithmId",
-            "(J)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("algorithmId"),
+            jni_sig!("(J)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.detection_status {
         env.call_method(
             &b,
-            "detectionStatus",
-            "(I)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("detectionStatus"),
+            jni_sig!("(I)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
@@ -202,8 +208,8 @@ pub(crate) fn build_v_target_pack<'l>(
             .map_err(|()| jni::errors::Error::JavaException)?;
         env.call_method(
             &b,
-            "vmask",
-            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("vmask"),
+            jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Object(&o3)],
         )?;
     }
@@ -212,8 +218,8 @@ pub(crate) fn build_v_target_pack<'l>(
             .map_err(|()| jni::errors::Error::JavaException)?;
         env.call_method(
             &b,
-            "vtracker",
-            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("vtracker"),
+            jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Object(&o4)],
         )?;
     }
@@ -222,8 +228,8 @@ pub(crate) fn build_v_target_pack<'l>(
             .map_err(|()| jni::errors::Error::JavaException)?;
         env.call_method(
             &b,
-            "vchip",
-            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("vchip"),
+            jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Object(&o5)],
         )?;
     }
@@ -232,8 +238,8 @@ pub(crate) fn build_v_target_pack<'l>(
             .map_err(|()| jni::errors::Error::JavaException)?;
         env.call_method(
             &b,
-            "vchipSeries",
-            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("vchipSeries"),
+            jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Object(&o6)],
         )?;
     }
@@ -242,100 +248,152 @@ pub(crate) fn build_v_target_pack<'l>(
             .map_err(|()| jni::errors::Error::JavaException)?;
         env.call_method(
             &b,
-            "vobjectSeries",
-            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;",
+            jni_str!("vobjectSeries"),
+            jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VTargetPack$Builder;"),
             &[JValue::Object(&o7)],
         )?;
     }
     let unknown = crate::custom::build_v_target_pack_unknown(env, &r.unknown)?;
     env.call_method(
         &b,
-        "unknown",
-        "(Ljava/util/List;)Lorg/tstrans/klv/VTargetPack$Builder;",
+        jni_str!("unknown"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/VTargetPack$Builder;"),
         &[JValue::Object(&unknown)],
     )?;
     let field_errors = crate::custom::build_v_target_pack_field_errors(env, &r.field_errors)?;
     env.call_method(
         &b,
-        "fieldErrors",
-        "(Ljava/util/List;)Lorg/tstrans/klv/VTargetPack$Builder;",
+        jni_str!("fieldErrors"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/VTargetPack$Builder;"),
         &[JValue::Object(&field_errors)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/klv/VTargetPack;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/klv/VTargetPack;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn read_v_target_pack(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<tst_core::klv::st0903::VTargetPack> {
     env.ensure_local_capacity(92)?;
-    let target_id = env.call_method(obj, "targetId", "()J", &[])?.j()?;
+    let target_id = env
+        .call_method(obj, jni_str!("targetId"), jni_sig!("()J"), &[])?
+        .j()?;
     let target_id = target_id as u64;
     let o1 = env
-        .call_method(obj, "centroidPixel", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("centroidPixel"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let centroid_pixel = if o1.is_null() {
         None
     } else {
-        Some((env.call_method(&o1, "longValue", "()J", &[])?.j()?) as u64)
+        Some(
+            (env.call_method(&o1, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?) as u64,
+        )
     };
     let o2 = env
-        .call_method(obj, "bboxTopLeftPixel", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("bboxTopLeftPixel"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let bbox_top_left_pixel = if o2.is_null() {
         None
     } else {
-        Some((env.call_method(&o2, "longValue", "()J", &[])?.j()?) as u64)
+        Some(
+            (env.call_method(&o2, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?) as u64,
+        )
     };
     let o3 = env
-        .call_method(obj, "bboxBottomRightPixel", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("bboxBottomRightPixel"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let bbox_bottom_right_pixel = if o3.is_null() {
         None
     } else {
-        Some((env.call_method(&o3, "longValue", "()J", &[])?.j()?) as u64)
+        Some(
+            (env.call_method(&o3, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?) as u64,
+        )
     };
     let o4 = env
-        .call_method(obj, "priority", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("priority"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let priority = if o4.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o4, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o4, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u8(env, i64::from(n), "VTargetPack.priority")?
         })
     };
     let o5 = env
-        .call_method(obj, "confidenceLevel", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("confidenceLevel"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let confidence_level = if o5.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o5, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o5, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u8(env, i64::from(n), "VTargetPack.confidenceLevel")?
         })
     };
     let o6 = env
-        .call_method(obj, "history", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("history"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let history = if o6.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o6, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o6, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u16(env, i64::from(n), "VTargetPack.history")?
         })
     };
     let o7 = env
         .call_method(
             obj,
-            "percentageOfTargetPixels",
-            "()Ljava/lang/Integer;",
+            jni_str!("percentageOfTargetPixels"),
+            jni_sig!("()Ljava/lang/Integer;"),
             &[],
         )?
         .l()?;
@@ -343,80 +401,150 @@ pub(crate) fn read_v_target_pack(
         None
     } else {
         Some({
-            let n = env.call_method(&o7, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o7, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u8(env, i64::from(n), "VTargetPack.percentageOfTargetPixels")?
         })
     };
     let target_color = crate::custom::read_v_target_pack_target_color(env, obj)?;
     let o8 = env
-        .call_method(obj, "targetIntensity", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("targetIntensity"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let target_intensity = if o8.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o8, "longValue", "()J", &[])?.j()?;
+            let n = env
+                .call_method(&o8, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?;
             crate::jutil::checked_u32(env, n, "VTargetPack.targetIntensity")?
         })
     };
     let o9 = env
-        .call_method(obj, "centroidLatOffset", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("centroidLatOffset"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let centroid_lat_offset = if o9.is_null() {
         None
     } else {
-        Some(env.call_method(&o9, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o9, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o10 = env
-        .call_method(obj, "centroidLonOffset", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("centroidLonOffset"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let centroid_lon_offset = if o10.is_null() {
         None
     } else {
-        Some(env.call_method(&o10, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o10, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o11 = env
-        .call_method(obj, "centroidHae", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("centroidHae"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let centroid_hae = if o11.is_null() {
         None
     } else {
-        Some(env.call_method(&o11, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o11, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o12 = env
-        .call_method(obj, "bboxTopLeftLatOffset", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("bboxTopLeftLatOffset"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let bbox_top_left_lat_offset = if o12.is_null() {
         None
     } else {
-        Some(env.call_method(&o12, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o12, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o13 = env
-        .call_method(obj, "bboxTopLeftLonOffset", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("bboxTopLeftLonOffset"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let bbox_top_left_lon_offset = if o13.is_null() {
         None
     } else {
-        Some(env.call_method(&o13, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o13, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o14 = env
-        .call_method(obj, "bboxBottomRightLatOffset", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("bboxBottomRightLatOffset"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let bbox_bottom_right_lat_offset = if o14.is_null() {
         None
     } else {
-        Some(env.call_method(&o14, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o14, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o15 = env
-        .call_method(obj, "bboxBottomRightLonOffset", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("bboxBottomRightLonOffset"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let bbox_bottom_right_lon_offset = if o15.is_null() {
         None
     } else {
-        Some(env.call_method(&o15, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o15, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o16 = env
-        .call_method(obj, "targetLocation", "()Ljava/nio/ByteBuffer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("targetLocation"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
+            &[],
+        )?
         .l()?;
     let target_location = if o16.is_null() {
         None
@@ -426,8 +554,8 @@ pub(crate) fn read_v_target_pack(
     let o17 = env
         .call_method(
             obj,
-            "geospatialContourSeries",
-            "()Ljava/nio/ByteBuffer;",
+            jni_str!("geospatialContourSeries"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
             &[],
         )?
         .l()?;
@@ -437,45 +565,80 @@ pub(crate) fn read_v_target_pack(
         Some(crate::jutil::read_byte_buffer(env, &o17)?)
     };
     let o18 = env
-        .call_method(obj, "centroidPixRow", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("centroidPixRow"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let centroid_pix_row = if o18.is_null() {
         None
     } else {
-        Some((env.call_method(&o18, "longValue", "()J", &[])?.j()?) as u64)
+        Some(
+            (env.call_method(&o18, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?) as u64,
+        )
     };
     let o19 = env
-        .call_method(obj, "centroidPixCol", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("centroidPixCol"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let centroid_pix_col = if o19.is_null() {
         None
     } else {
-        Some((env.call_method(&o19, "longValue", "()J", &[])?.j()?) as u64)
+        Some(
+            (env.call_method(&o19, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?) as u64,
+        )
     };
     let o20 = env
-        .call_method(obj, "algorithmId", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("algorithmId"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let algorithm_id = if o20.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o20, "longValue", "()J", &[])?.j()?;
+            let n = env
+                .call_method(&o20, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?;
             crate::jutil::checked_u32(env, n, "VTargetPack.algorithmId")?
         })
     };
     let o21 = env
-        .call_method(obj, "detectionStatus", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("detectionStatus"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let detection_status = if o21.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o21, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o21, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u8(env, i64::from(n), "VTargetPack.detectionStatus")?
         })
     };
     let o22 = env
-        .call_method(obj, "vmask", "()Ljava/nio/ByteBuffer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("vmask"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
+            &[],
+        )?
         .l()?;
     let vmask = if o22.is_null() {
         None
@@ -483,7 +646,12 @@ pub(crate) fn read_v_target_pack(
         Some(crate::jutil::read_byte_buffer(env, &o22)?)
     };
     let o23 = env
-        .call_method(obj, "vtracker", "()Ljava/nio/ByteBuffer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("vtracker"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
+            &[],
+        )?
         .l()?;
     let vtracker = if o23.is_null() {
         None
@@ -491,7 +659,12 @@ pub(crate) fn read_v_target_pack(
         Some(crate::jutil::read_byte_buffer(env, &o23)?)
     };
     let o24 = env
-        .call_method(obj, "vchip", "()Ljava/nio/ByteBuffer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("vchip"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
+            &[],
+        )?
         .l()?;
     let vchip = if o24.is_null() {
         None
@@ -499,7 +672,12 @@ pub(crate) fn read_v_target_pack(
         Some(crate::jutil::read_byte_buffer(env, &o24)?)
     };
     let o25 = env
-        .call_method(obj, "vchipSeries", "()Ljava/nio/ByteBuffer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("vchipSeries"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
+            &[],
+        )?
         .l()?;
     let vchip_series = if o25.is_null() {
         None
@@ -507,7 +685,12 @@ pub(crate) fn read_v_target_pack(
         Some(crate::jutil::read_byte_buffer(env, &o25)?)
     };
     let o26 = env
-        .call_method(obj, "vobjectSeries", "()Ljava/nio/ByteBuffer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("vobjectSeries"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
+            &[],
+        )?
         .l()?;
     let vobject_series = if o26.is_null() {
         None
@@ -551,24 +734,28 @@ pub(crate) fn read_v_target_pack(
 }
 
 pub(crate) fn build_vmti_ls<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::klv::st0903::VmtiLs,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(66)?;
-    let b = env.new_object("org/tstrans/klv/VmtiLs$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/klv/VmtiLs$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     if let Some(v) = &r.checksum {
         env.call_method(
             &b,
-            "checksum",
-            "(I)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("checksum"),
+            jni_sig!("(I)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
     if let Some(v) = &r.precision_time_stamp {
         env.call_method(
             &b,
-            "precisionTimeStamp",
-            "(J)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("precisionTimeStamp"),
+            jni_sig!("(J)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
@@ -576,48 +763,48 @@ pub(crate) fn build_vmti_ls<'l>(
         let o1 = env.new_string(v)?;
         env.call_method(
             &b,
-            "vmtiSystemName",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("vmtiSystemName"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Object(&o1)],
         )?;
     }
     if let Some(v) = &r.version_number {
         env.call_method(
             &b,
-            "versionNumber",
-            "(I)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("versionNumber"),
+            jni_sig!("(I)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
     if let Some(v) = &r.total_targets_in_frame {
         env.call_method(
             &b,
-            "totalTargetsInFrame",
-            "(J)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("totalTargetsInFrame"),
+            jni_sig!("(J)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.num_targets_reported {
         env.call_method(
             &b,
-            "numTargetsReported",
-            "(J)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("numTargetsReported"),
+            jni_sig!("(J)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.frame_width {
         env.call_method(
             &b,
-            "frameWidth",
-            "(J)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("frameWidth"),
+            jni_sig!("(J)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.frame_height {
         env.call_method(
             &b,
-            "frameHeight",
-            "(J)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("frameHeight"),
+            jni_sig!("(J)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
@@ -625,24 +812,24 @@ pub(crate) fn build_vmti_ls<'l>(
         let o2 = env.new_string(v)?;
         env.call_method(
             &b,
-            "sourceSensor",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("sourceSensor"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Object(&o2)],
         )?;
     }
     if let Some(v) = &r.horizontal_fov {
         env.call_method(
             &b,
-            "horizontalFov",
-            "(D)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("horizontalFov"),
+            jni_sig!("(D)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     if let Some(v) = &r.vertical_fov {
         env.call_method(
             &b,
-            "verticalFov",
-            "(D)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("verticalFov"),
+            jni_sig!("(D)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
@@ -651,34 +838,36 @@ pub(crate) fn build_vmti_ls<'l>(
             .map_err(|()| jni::errors::Error::JavaException)?;
         env.call_method(
             &b,
-            "miisId",
-            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("miisId"),
+            jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Object(&o3)],
         )?;
     }
-    let targets = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-        let list = env.new_object("java/util/ArrayList", "()V", &[])?;
-        for item in r.targets.iter() {
-            env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
-                let o4 = env
-                    .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                        build_v_target_pack(env, item)
-                    })?;
-                env.call_method(
-                    &list,
-                    "add",
-                    "(Ljava/lang/Object;)Z",
-                    &[JValue::Object(&o4)],
-                )?;
-                Ok(())
-            })?;
-        }
-        Ok(list)
-    })?;
+    let targets =
+        env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+            for item in r.targets.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let o4 = env
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_v_target_pack(env, item),
+                        )?;
+                    env.call_method(
+                        &list,
+                        jni_str!("add"),
+                        jni_sig!("(Ljava/lang/Object;)Z"),
+                        &[JValue::Object(&o4)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(list)
+        })?;
     env.call_method(
         &b,
-        "targets",
-        "(Ljava/util/List;)Lorg/tstrans/klv/VmtiLs$Builder;",
+        jni_str!("targets"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/VmtiLs$Builder;"),
         &[JValue::Object(&targets)],
     )?;
     if let Some(v) = &r.algorithm_series {
@@ -686,8 +875,8 @@ pub(crate) fn build_vmti_ls<'l>(
             .map_err(|()| jni::errors::Error::JavaException)?;
         env.call_method(
             &b,
-            "algorithmSeries",
-            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("algorithmSeries"),
+            jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Object(&o5)],
         )?;
     }
@@ -696,150 +885,236 @@ pub(crate) fn build_vmti_ls<'l>(
             .map_err(|()| jni::errors::Error::JavaException)?;
         env.call_method(
             &b,
-            "ontologySeries",
-            "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VmtiLs$Builder;",
+            jni_str!("ontologySeries"),
+            jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/VmtiLs$Builder;"),
             &[JValue::Object(&o6)],
         )?;
     }
     let unknown = crate::custom::build_vmti_ls_unknown(env, &r.unknown)?;
     env.call_method(
         &b,
-        "unknown",
-        "(Ljava/util/List;)Lorg/tstrans/klv/VmtiLs$Builder;",
+        jni_str!("unknown"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/VmtiLs$Builder;"),
         &[JValue::Object(&unknown)],
     )?;
     let field_errors = crate::custom::build_vmti_ls_field_errors(env, &r.field_errors)?;
     env.call_method(
         &b,
-        "fieldErrors",
-        "(Ljava/util/List;)Lorg/tstrans/klv/VmtiLs$Builder;",
+        jni_str!("fieldErrors"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/VmtiLs$Builder;"),
         &[JValue::Object(&field_errors)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/klv/VmtiLs;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/klv/VmtiLs;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn read_vmti_ls(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<tst_core::klv::st0903::VmtiLs> {
     env.ensure_local_capacity(66)?;
     let o1 = env
-        .call_method(obj, "checksum", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("checksum"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let checksum = if o1.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o1, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o1, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u16(env, i64::from(n), "VmtiLs.checksum")?
         })
     };
     let o2 = env
-        .call_method(obj, "precisionTimeStamp", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("precisionTimeStamp"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let precision_time_stamp = if o2.is_null() {
         None
     } else {
-        Some((env.call_method(&o2, "longValue", "()J", &[])?.j()?) as u64)
+        Some(
+            (env.call_method(&o2, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?) as u64,
+        )
     };
     let o3 = env
-        .call_method(obj, "vmtiSystemName", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("vmtiSystemName"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let vmti_system_name = if o3.is_null() {
         None
     } else {
         Some({
-            let s4: &jni::objects::JString = (&o3).into();
-            String::from(env.get_string(s4)?)
+            let s4 = env.as_cast::<jni::objects::JString>(&o3)?;
+            s4.try_to_string(env)?
         })
     };
     let o5 = env
-        .call_method(obj, "versionNumber", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("versionNumber"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let version_number = if o5.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o5, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o5, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u16(env, i64::from(n), "VmtiLs.versionNumber")?
         })
     };
     let o6 = env
-        .call_method(obj, "totalTargetsInFrame", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("totalTargetsInFrame"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let total_targets_in_frame = if o6.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o6, "longValue", "()J", &[])?.j()?;
+            let n = env
+                .call_method(&o6, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?;
             crate::jutil::checked_u32(env, n, "VmtiLs.totalTargetsInFrame")?
         })
     };
     let o7 = env
-        .call_method(obj, "numTargetsReported", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("numTargetsReported"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let num_targets_reported = if o7.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o7, "longValue", "()J", &[])?.j()?;
+            let n = env
+                .call_method(&o7, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?;
             crate::jutil::checked_u32(env, n, "VmtiLs.numTargetsReported")?
         })
     };
     let o8 = env
-        .call_method(obj, "frameWidth", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("frameWidth"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let frame_width = if o8.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o8, "longValue", "()J", &[])?.j()?;
+            let n = env
+                .call_method(&o8, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?;
             crate::jutil::checked_u32(env, n, "VmtiLs.frameWidth")?
         })
     };
     let o9 = env
-        .call_method(obj, "frameHeight", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("frameHeight"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let frame_height = if o9.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o9, "longValue", "()J", &[])?.j()?;
+            let n = env
+                .call_method(&o9, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?;
             crate::jutil::checked_u32(env, n, "VmtiLs.frameHeight")?
         })
     };
     let o10 = env
-        .call_method(obj, "sourceSensor", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("sourceSensor"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let source_sensor = if o10.is_null() {
         None
     } else {
         Some({
-            let s11: &jni::objects::JString = (&o10).into();
-            String::from(env.get_string(s11)?)
+            let s11 = env.as_cast::<jni::objects::JString>(&o10)?;
+            s11.try_to_string(env)?
         })
     };
     let o12 = env
-        .call_method(obj, "horizontalFov", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("horizontalFov"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let horizontal_fov = if o12.is_null() {
         None
     } else {
-        Some(env.call_method(&o12, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o12, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o13 = env
-        .call_method(obj, "verticalFov", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("verticalFov"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let vertical_fov = if o13.is_null() {
         None
     } else {
-        Some(env.call_method(&o13, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o13, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o14 = env
-        .call_method(obj, "miisId", "()Ljava/nio/ByteBuffer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("miisId"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
+            &[],
+        )?
         .l()?;
     let miis_id = if o14.is_null() {
         None
@@ -847,15 +1122,27 @@ pub(crate) fn read_vmti_ls(
         Some(crate::jutil::read_byte_buffer(env, &o14)?)
     };
     let o15 = env
-        .call_method(obj, "targets", "()Ljava/util/List;", &[])?
+        .call_method(
+            obj,
+            jni_str!("targets"),
+            jni_sig!("()Ljava/util/List;"),
+            &[],
+        )?
         .l()?;
     let targets = {
-        let size = env.call_method(&o15, "size", "()I", &[])?.i()?;
+        let size = env
+            .call_method(&o15, jni_str!("size"), jni_sig!("()I"), &[])?
+            .i()?;
         let mut items = Vec::with_capacity(size.max(0) as usize);
         for i in 0..size {
             let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {
                 let e16 = env
-                    .call_method(&o15, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                    .call_method(
+                        &o15,
+                        jni_str!("get"),
+                        jni_sig!("(I)Ljava/lang/Object;"),
+                        &[JValue::Int(i)],
+                    )?
                     .l()?;
                 read_v_target_pack(env, &e16)
             })?;
@@ -864,7 +1151,12 @@ pub(crate) fn read_vmti_ls(
         items
     };
     let o17 = env
-        .call_method(obj, "algorithmSeries", "()Ljava/nio/ByteBuffer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("algorithmSeries"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
+            &[],
+        )?
         .l()?;
     let algorithm_series = if o17.is_null() {
         None
@@ -872,7 +1164,12 @@ pub(crate) fn read_vmti_ls(
         Some(crate::jutil::read_byte_buffer(env, &o17)?)
     };
     let o18 = env
-        .call_method(obj, "ontologySeries", "()Ljava/nio/ByteBuffer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("ontologySeries"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
+            &[],
+        )?
         .l()?;
     let ontology_series = if o18.is_null() {
         None

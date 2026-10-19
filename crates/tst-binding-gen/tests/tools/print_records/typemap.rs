@@ -374,7 +374,7 @@ pub struct HostRow {
     pub java: &'static str,
     /// The JNI signature of the Java type.
     pub sig: &'static str,
-    /// The JVM builder: `fn(&mut JNIEnv, Rust) -> Result<JObject, ()>`.
+    /// The JVM builder: `fn(&mut Env, Rust) -> Result<JObject, ()>`.
     pub jvm: &'static str,
 }
 

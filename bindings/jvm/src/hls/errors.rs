@@ -1,7 +1,7 @@
 //! `org.tstrans.hls` Rust→Java error mapping: the per-type plumbing that names
 //! `Domain::Hls` and picks the right shared `From` impl.
 
-use jni::JNIEnv;
+use jni::Env;
 use tst_hls::HlsError;
 use tst_pipeline::MuxPublisherError;
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
@@ -10,7 +10,7 @@ use crate::error::{Domain, throw_binding};
 
 /// `org.tstrans.HlsException(Kind.<kind.name()>, message)`.
 #[allow(dead_code)] // consumed by test_hooks.rs's HlsProbe.nRaise, built only under jni-test-hooks
-pub(crate) fn throw_hls(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
+pub(crate) fn throw_hls(env: &mut Env, kind: BindingErrorKind, message: &str) {
     throw_binding(
         env,
         Domain::Hls,
@@ -20,7 +20,7 @@ pub(crate) fn throw_hls(env: &mut JNIEnv, kind: BindingErrorKind, message: &str)
 
 /// Any `tst_hls::HlsError` through the shared
 /// `From<…> for BindingError`: the error's own kind.
-pub(crate) fn hls_error(env: &mut JNIEnv, e: impl Into<BindingError>) {
+pub(crate) fn hls_error(env: &mut Env, e: impl Into<BindingError>) {
     throw_binding(env, Domain::Hls, &e.into());
 }
 
@@ -29,7 +29,7 @@ pub(crate) fn hls_error(env: &mut JNIEnv, e: impl Into<BindingError>) {
 /// `MuxException` classifier; `Publisher(e)` is the inner HLS kind, `Closed`
 /// is `CLOSED`, `LockPoisoned` is `INTERNAL` — all via the shared
 /// `From<MuxPublisherError<E>>`.
-pub(crate) fn mux_publisher_error(env: &mut JNIEnv, e: MuxPublisherError<HlsError>) {
+pub(crate) fn mux_publisher_error(env: &mut Env, e: MuxPublisherError<HlsError>) {
     match e {
         MuxPublisherError::Mux(m) => crate::mpegts::muxer::throw_mux_error(env, &m),
         other => throw_binding(env, Domain::Hls, &BindingError::from(other)),

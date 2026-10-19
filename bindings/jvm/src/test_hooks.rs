@@ -4,6 +4,8 @@
 //! these symbols never reach Maven Central.
 
 use crate::panic::jni_native;
+use jni::jni_str;
+use jni::strings::JNIString;
 use jni::sys::jlong;
 
 jni_native! {
@@ -26,6 +28,7 @@ mod handle_probe {
     use crate::handle::HandleRegistry;
     use crate::panic::jni_native;
 
+    use jni::jni_str;
     use jni::sys::{jboolean, jlong};
     use std::sync::LazyLock;
 
@@ -51,7 +54,7 @@ mod handle_probe {
             handle: jlong,
             do_panic: jboolean,
         ) = () => {
-            let panic = do_panic != 0;
+            let panic = do_panic;
             let outcome = PROBE_REGISTRY.with_poisoning(handle as u64, |v| {
                 *v = v.wrapping_add(1); // begin a mutation
                 if panic {
@@ -60,8 +63,8 @@ mod handle_probe {
             });
             if outcome.is_none() {
                 let _ = env.throw_new(
-                    "java/lang/IllegalStateException",
-                    "probe handle is closed or poisoned",
+                    jni_str!("java/lang/IllegalStateException"),
+                    jni_str!("probe handle is closed or poisoned"),
                 );
             }
         }
@@ -92,17 +95,17 @@ jni_native! {
     ) = () => {
         use tst_pipeline::binding::BindingErrorKind as K;
 
-        let kind: String = match env.get_string(&kind) {
-            Ok(s) => s.into(),
+        let kind: String = match kind.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return;
             }
         };
-        let message: String = match env.get_string(&message) {
-            Ok(s) => s.into(),
+        let message: String = match message.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return;
             }
         };
@@ -119,8 +122,8 @@ jni_native! {
             "INTERNAL" => K::Internal,
             other => {
                 let _ = env.throw_new(
-                    "java/lang/IllegalArgumentException",
-                    format!("HlsProbe: unknown kind {other}"),
+                    jni_str!("java/lang/IllegalArgumentException"),
+                    JNIString::from(format!("HlsProbe: unknown kind {other}")),
                 );
                 return;
             }

@@ -3,17 +3,17 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
+use jni::{Env, jni_sig, jni_str};
 
 pub(crate) fn build_pairer_stats<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_pipeline::ext::pairing::PairerStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(40)?;
     let obj = env.new_object(
-        "org/tstrans/pipeline/PairerStats",
-        "(JJJJ)V",
+        jni_str!("org/tstrans/pipeline/PairerStats"),
+        jni_sig!("(JJJJ)V"),
         &[
             JValue::Long(r.paired as i64),
             JValue::Long(r.unpaired_video as i64),

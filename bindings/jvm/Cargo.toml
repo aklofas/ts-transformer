@@ -29,7 +29,7 @@ jni-test-hooks = []
 [dependencies]
 # jni-rs: self-contained JNI bindings. Compiling the cdylib needs no JDK/JVM;
 # the JVM is only present at runtime when Java `System.load`s the library.
-jni = "0.21"
+jni = "0.22"
 
 # tst-core (pure Rust, no libsrt) backs the mpegts-demux keystone (Demuxer +
 # DemuxEvent). tst-pipeline/tst-srt/tst-rtp are added by their respective module

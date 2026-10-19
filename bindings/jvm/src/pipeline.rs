@@ -18,7 +18,9 @@
 //! + idempotent, so a double `close()` is UAF/double-free-safe).
 
 use crate::panic::jni_native;
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::{jboolean, jint, jlong, jobject};
 use std::sync::LazyLock;
@@ -88,7 +90,7 @@ jni_native! {
         sync_buf_cap: jlong,
         unwrap_timestamps: jboolean,
     ) -> jlong = 0 => {
-        let mode = if buffered != 0 {
+        let mode = if buffered {
             PairerMode::Buffered {
                 max_lag: Duration::from_nanos(max_lag_nanos as u64),
             }
@@ -102,7 +104,7 @@ jni_native! {
         pairer.max_buffered_klv = max_buffered_klv as u64;
         pairer.max_buffered_video = max_buffered_video as u64;
 
-        let demuxer = if has_demuxer_config != 0 {
+        let demuxer = if has_demuxer_config {
             let Some(cfg) = build_demux_config_from_args(
                 env,
                 strict,
@@ -200,13 +202,13 @@ jni_native! {
 
 /// Build a `java.util.ArrayList<PairerOutput>` from a slice of outputs.
 fn build_output_list<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     outs: &[PairerOutput],
 ) -> Result<JObject<'local>, ()> {
     let list = env
         .new_object(
-            "java/util/ArrayList",
-            "(I)V",
+            jni_str!("java/util/ArrayList"),
+            jni_sig!("(I)V"),
             &[JValue::Int(outs.len() as i32)],
         )
         .map_err(|_| ())?;
@@ -217,8 +219,8 @@ fn build_output_list<'local>(
         if let Some(obj) = convert_output(env, o)? {
             env.call_method(
                 &list,
-                "add",
-                "(Ljava/lang/Object;)Z",
+                jni_str!("add"),
+                jni_sig!("(Ljava/lang/Object;)Z"),
                 &[JValue::Object(&obj)],
             )
             .map_err(|_| ())?;
@@ -232,7 +234,7 @@ fn build_output_list<'local>(
 /// output (a forward-compat unmapped `DemuxEvent` in a `PassThrough`; not
 /// produced today); `Err(())` = a JNI conversion failed (exception pending).
 fn convert_output<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     o: &PairerOutput,
 ) -> Result<Option<JObject<'local>>, ()> {
     let obj = match o {
@@ -240,8 +242,8 @@ fn convert_output<'local>(
             let v = convert_video_sample(env, video)?;
             let k = convert_klv_sample(env, klv)?;
             env.new_object(
-                "org/tstrans/pipeline/PairerOutput$Paired",
-                "(Lorg/tstrans/pipeline/VideoSample;Lorg/tstrans/pipeline/KlvSample;)V",
+                jni_str!("org/tstrans/pipeline/PairerOutput$Paired"),
+                jni_sig!("(Lorg/tstrans/pipeline/VideoSample;Lorg/tstrans/pipeline/KlvSample;)V"),
                 &[JValue::Object(&v), JValue::Object(&k)],
             )
             .map_err(|_| ())?
@@ -249,8 +251,8 @@ fn convert_output<'local>(
         PairerOutput::UnpairedVideo(video) => {
             let v = convert_video_sample(env, video)?;
             env.new_object(
-                "org/tstrans/pipeline/PairerOutput$UnpairedVideo",
-                "(Lorg/tstrans/pipeline/VideoSample;)V",
+                jni_str!("org/tstrans/pipeline/PairerOutput$UnpairedVideo"),
+                jni_sig!("(Lorg/tstrans/pipeline/VideoSample;)V"),
                 &[JValue::Object(&v)],
             )
             .map_err(|_| ())?
@@ -258,8 +260,8 @@ fn convert_output<'local>(
         PairerOutput::UnpairedKlv(klv) => {
             let k = convert_klv_sample(env, klv)?;
             env.new_object(
-                "org/tstrans/pipeline/PairerOutput$UnpairedKlv",
-                "(Lorg/tstrans/pipeline/KlvSample;)V",
+                jni_str!("org/tstrans/pipeline/PairerOutput$UnpairedKlv"),
+                jni_sig!("(Lorg/tstrans/pipeline/KlvSample;)V"),
                 &[JValue::Object(&k)],
             )
             .map_err(|_| ())?
@@ -273,8 +275,8 @@ fn convert_output<'local>(
                 return Ok(None);
             };
             env.new_object(
-                "org/tstrans/pipeline/PairerOutput$PassThrough",
-                "(Lorg/tstrans/mpegts/DemuxEvent;)V",
+                jni_str!("org/tstrans/pipeline/PairerOutput$PassThrough"),
+                jni_sig!("(Lorg/tstrans/mpegts/DemuxEvent;)V"),
                 &[JValue::Object(&ev_obj)],
             )
             .map_err(|_| ())?
@@ -293,7 +295,7 @@ fn convert_output<'local>(
 /// record / ctor signature, same `VideoPayload`). JVM `raw`/RAI parity is
 /// deferred to the design §5 fast-follow.
 fn convert_video_sample<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     vs: &VideoSample,
 ) -> Result<JObject<'local>, ()> {
     let stream = build_stream_id(env, &vs.stream)?;
@@ -302,8 +304,8 @@ fn convert_video_sample<'local>(
     let (payload, _issues) = vs.split_units();
     let payload_list = build_video_units(env, &payload)?;
     env.new_object(
-        "org/tstrans/pipeline/VideoSample",
-        "(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;Lorg/tstrans/mpegts/VideoCodec;Ljava/util/List;)V",
+        jni_str!("org/tstrans/pipeline/VideoSample"),
+        jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;Lorg/tstrans/mpegts/VideoCodec;Ljava/util/List;)V"),
         &[
             JValue::Object(&stream),
             JValue::Long(vs.pts.as_ticks()),
@@ -322,15 +324,15 @@ fn convert_video_sample<'local>(
 /// cell_count)` pair it also returns is carried on `DemuxEvent.Metadata`,
 /// not on the flat `KlvSample` projection.
 fn convert_klv_sample<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     ks: &KlvSample,
 ) -> Result<JObject<'local>, ()> {
     let stream = build_stream_id(env, &ks.stream)?;
     let (kind, _was_reassembled, _cell_count) = metadata_kind(env, &ks.kind)?;
     let payload = wrap_heap_byte_buffer(env, &ks.payload)?;
     env.new_object(
-        "org/tstrans/pipeline/KlvSample",
-        "(Lorg/tstrans/mpegts/StreamId;JLorg/tstrans/mpegts/MetadataKind;Ljava/nio/ByteBuffer;)V",
+        jni_str!("org/tstrans/pipeline/KlvSample"),
+        jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLorg/tstrans/mpegts/MetadataKind;Ljava/nio/ByteBuffer;)V"),
         &[
             JValue::Object(&stream),
             JValue::Long(ks.pts.as_ticks()),
@@ -407,6 +409,6 @@ jni_native! {
 
 /// Throw `IllegalStateException` for a leased call that found a closed/absent
 /// handle — the native-side mirror of the Java `ensureOpen()` check.
-fn closed(env: &mut JNIEnv) {
+fn closed(env: &mut Env) {
     crate::error::throw_closed(env, "Pairer");
 }

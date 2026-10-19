@@ -18,8 +18,11 @@
 //! (an invalid codec is a caller bug, surfaced as a parse error).
 
 use crate::panic::jni_native;
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject};
+use jni::strings::JNIString;
 use jni::sys::{jint, jobject};
 use tst_core::codec::misp_time::{MispTimeKind, extract};
 use tst_core::mpegts::mux::VideoCodec;
@@ -31,7 +34,7 @@ use tst_pipeline::binding::BindingErrorKind;
 /// Map the Java `VideoCodec` ordinal (0-3) to the mux-side `VideoCodec`.
 /// Returns `None` and throws `CodecParseException(ENGINE_ERROR)` for
 /// ordinals outside the valid range.
-fn java_video_codec_ordinal_to_rust(env: &mut JNIEnv, ordinal: jint) -> Option<VideoCodec> {
+fn java_video_codec_ordinal_to_rust(env: &mut Env, ordinal: jint) -> Option<VideoCodec> {
     match ordinal {
         0 => Some(VideoCodec::H264),
         1 => Some(VideoCodec::H265),
@@ -54,7 +57,7 @@ fn java_video_codec_ordinal_to_rust(env: &mut JNIEnv, ordinal: jint) -> Option<V
 /// Throws `CodecParseException(ENGINE_ERROR)` and returns `Err(())` for
 /// unrecognised variants (non_exhaustive guard); never returns silently.
 pub(crate) fn build_kind<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     kind: MispTimeKind,
 ) -> Result<JObject<'local>, ()> {
     let name = match kind {
@@ -74,9 +77,9 @@ pub(crate) fn build_kind<'local>(
         }
     };
     env.get_static_field(
-        "org/tstrans/codec/MispTimeKind",
-        name,
-        "Lorg/tstrans/codec/MispTimeKind;",
+        jni_str!("org/tstrans/codec/MispTimeKind"),
+        JNIString::from(name),
+        jni_sig!("Lorg/tstrans/codec/MispTimeKind;"),
     )
     .map_err(|_| ())?
     .l()

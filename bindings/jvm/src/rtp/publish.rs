@@ -14,8 +14,12 @@ use crate::panic::jni_native;
 use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JObject, JString, JValue};
+use jni::signature::RuntimeFieldSignature;
+use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong};
 
 use tst_core::mpegts::demux::DemuxerConfig;
@@ -43,7 +47,7 @@ pub(super) fn publish_mount_handle(h: RustPublishMountHandle) -> jlong {
 /// Lease the mount for `handle` and run `f` on it. `None` (absent/closed) →
 /// throw `IllegalStateException`.
 fn with_publish<R>(
-    env: &mut JNIEnv,
+    env: &mut Env,
     handle: jlong,
     f: impl FnOnce(&RustPublishMountHandle) -> R,
 ) -> Option<R> {
@@ -58,14 +62,14 @@ fn with_publish<R>(
 
 /// `org.tstrans.rtp.<class>.<member>` enum constant, looked up by name.
 fn enum_const<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     class: &str,
     member: &str,
 ) -> jni::errors::Result<JObject<'local>> {
     env.get_static_field(
-        format!("org/tstrans/rtp/{class}"),
-        member,
-        format!("Lorg/tstrans/rtp/{class};"),
+        JNIString::from(format!("org/tstrans/rtp/{class}")),
+        JNIString::from(member),
+        RuntimeFieldSignature::from_str(format!("Lorg/tstrans/rtp/{class};"))?.field_signature(),
     )?
     .l()
 }
@@ -74,7 +78,7 @@ fn enum_const<'local>(
 /// know throws `RuntimeException` and returns `Err(())`: the exception is
 /// already pending (the Rust enum is non-exhaustive).
 pub(crate) fn build_clock_alignment<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     a: RustClockAlignment,
 ) -> Result<JObject<'local>, ()> {
     let name = match a {
@@ -84,8 +88,8 @@ pub(crate) fn build_clock_alignment<'local>(
         RustClockAlignment::SenderReport => "SENDER_REPORT",
         _ => {
             let _ = env.throw_new(
-                "java/lang/RuntimeException",
-                "ClockAlignment variant unknown to this build of tstrans",
+                jni_str!("java/lang/RuntimeException"),
+                jni_str!("ClockAlignment variant unknown to this build of tstrans"),
             );
             return Err(());
         }
@@ -95,7 +99,7 @@ pub(crate) fn build_clock_alignment<'local>(
 
 /// Build `org.tstrans.rtp.PublisherInfo(String, PublishShape, boolean, long, long)`.
 fn build_info<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     info: &RustPublisherInfo,
 ) -> jni::errors::Result<JObject<'local>> {
     let (shape, klv) = match info.shape {
@@ -103,8 +107,8 @@ fn build_info<'local>(
         RustPublishShape::Elementary { klv } => ("ELEMENTARY", klv),
         _ => {
             let _ = env.throw_new(
-                "java/lang/RuntimeException",
-                "PublishShape variant unknown to this build of tstrans",
+                jni_str!("java/lang/RuntimeException"),
+                jni_str!("PublishShape variant unknown to this build of tstrans"),
             );
             return Ok(JObject::null());
         }
@@ -118,12 +122,12 @@ fn build_info<'local>(
     let peer = env.new_string(info.peer.to_string())?;
     let shape = enum_const(env, "PublishShape", shape)?;
     env.new_object(
-        "org/tstrans/rtp/PublisherInfo",
-        "(Ljava/lang/String;Lorg/tstrans/rtp/PublishShape;ZJJ)V",
+        jni_str!("org/tstrans/rtp/PublisherInfo"),
+        jni_sig!("(Ljava/lang/String;Lorg/tstrans/rtp/PublishShape;ZJJ)V"),
         &[
             JValue::Object(&peer),
             JValue::Object(&shape),
-            JValue::Bool(u8::from(klv)),
+            JValue::Bool(klv),
             JValue::Long(since_unix_ms),
             JValue::Long(info.generation as i64),
         ],
@@ -136,12 +140,12 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JString<'local> = JObject::null().into() => {
+    ) -> JString<'local> = JString::null() => {
         let Some(path) = with_publish(env, handle, |m| m.mount_path().to_owned()) else {
-            return JObject::null().into();
+            return JString::null();
         };
         env.new_string(path)
-            .unwrap_or_else(|_| JObject::null().into())
+            .unwrap_or_else(|_| JString::null())
     }
 }
 
@@ -220,7 +224,7 @@ jni_native! {
         sync_buf_cap: jlong,
         unwrap_timestamps: jboolean,
     ) -> jlong = 0 => {
-        let opts: Option<DemuxerConfig> = if with_config != 0 {
+        let opts: Option<DemuxerConfig> = if with_config {
             let Some(cfg) = build_demux_config_from_args(
                 env,
                 strict,
@@ -252,7 +256,7 @@ jni_native! {
         match demux_receiver_handle_from_transport(transport, opts) {
             Ok(h) => h,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.detail);
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.detail));
                 0
             }
         }

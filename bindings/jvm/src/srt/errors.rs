@@ -5,7 +5,7 @@
 //! [`crate::error::throw_binding`] path. What remains is the per-error-type
 //! plumbing that names `Domain::Srt` and picks the right `From` impl.
 
-use jni::JNIEnv;
+use jni::Env;
 use tst_core::transport::TransportError;
 use tst_pipeline::ShellErrorKind;
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
@@ -16,7 +16,7 @@ use tst_srt::{SrtError, SrtUrlError};
 use crate::error::{Domain, throw_binding};
 
 /// `org.tstrans.SrtException(Kind.<kind.name()>, message)`.
-pub(crate) fn throw_srt(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
+pub(crate) fn throw_srt(env: &mut Env, kind: BindingErrorKind, message: &str) {
     throw_binding(
         env,
         Domain::Srt,
@@ -30,13 +30,13 @@ pub(crate) fn throw_srt(env: &mut JNIEnv, kind: BindingErrorKind, message: &str)
 /// `InvalidAddress` / `InvalidOption` / `OptionError::*` → `CONFIG_INVALID`,
 /// `TimedOut` → `TIMEOUT`, `ListenerClosed` / `SocketClosed` → `CLOSED`, the
 /// rest → `CONNECT_FAILED` / `ACCEPT_FAILED` / `IO` — today's buckets exactly.
-pub(crate) fn srt_error(env: &mut JNIEnv, e: impl Into<SrtError>) {
+pub(crate) fn srt_error(env: &mut Env, e: impl Into<SrtError>) {
     throw_binding(env, Domain::Srt, &BindingError::from(e.into()));
 }
 
 /// `SrtUrl::parse` failures are caller misconfiguration by definition;
 /// `SrtUrlError` is not an `SrtError` arm, so it is mapped here, once.
-pub(crate) fn url_error(env: &mut JNIEnv, e: &SrtUrlError) {
+pub(crate) fn url_error(env: &mut Env, e: &SrtUrlError) {
     throw_srt(env, BindingErrorKind::ConfigInvalid, &e.to_string());
 }
 
@@ -45,7 +45,7 @@ pub(crate) fn url_error(env: &mut JNIEnv, e: &SrtUrlError) {
 /// `Closed → CLOSED`, `ExplicitClose → CLOSED` ("cancelled from another
 /// thread"), `TooLarge → TOO_LARGE`. No wildcard here — the mapping is
 /// exhaustive-before-wildcard and rail-pinned.
-pub(crate) fn transport_error(env: &mut JNIEnv, e: &TransportError) {
+pub(crate) fn transport_error(env: &mut Env, e: &TransportError) {
     throw_binding(env, Domain::Srt, &BindingError::from(e.clone()));
 }
 
@@ -58,7 +58,7 @@ pub(crate) fn transport_error(env: &mut JNIEnv, e: &TransportError) {
 /// that it reads as one rule with its receiver twin [`throw_receiver_error`];
 /// the two are equivalent on the send side (there is no direction-sensitive
 /// `Closed` on a sender — that stays `CLOSED`).
-pub(crate) fn throw_sender_error(env: &mut JNIEnv, e: &SenderError) {
+pub(crate) fn throw_sender_error(env: &mut Env, e: &SenderError) {
     match &e.source {
         SenderErrorSource::Transport(t) => transport_error(env, t),
         SenderErrorSource::Framing(f) => {
@@ -84,7 +84,7 @@ pub(crate) fn throw_sender_error(env: &mut JNIEnv, e: &SenderError) {
 ///
 /// Every other kind keeps the richer `From<TransportError>` detail (`msg` plus
 /// the wire errno), so only the end-of-stream case is special-cased here.
-fn throw_recv_transport(env: &mut JNIEnv, kind: ShellErrorKind, t: &TransportError) {
+fn throw_recv_transport(env: &mut Env, kind: ShellErrorKind, t: &TransportError) {
     if matches!(kind, ShellErrorKind::EndOfStream) {
         // The transport's OWN message, never a fixed sentence: the two
         // producers describe different events (a peer's clean hang-up vs a
@@ -102,7 +102,7 @@ fn throw_recv_transport(env: &mut JNIEnv, kind: ShellErrorKind, t: &TransportErr
 /// reach it: a peer's clean hang-up (`srt_recv` returns 0) and a MANAGED
 /// receiver whose reconnect budget is exhausted — both classify as
 /// `ShellErrorKind::EndOfStream` on the receive direction.
-pub(crate) fn throw_receiver_error(env: &mut JNIEnv, e: &ReceiverError) {
+pub(crate) fn throw_receiver_error(env: &mut Env, e: &ReceiverError) {
     match &e.source {
         ReceiverErrorSource::Transport(t) => throw_recv_transport(env, e.kind, t),
         // `ReceiverErrorSource` is #[non_exhaustive]; a future arm keeps its Display text.

@@ -3,24 +3,24 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
+use jni::{Env, jni_sig, jni_str};
 
 pub(crate) fn build_rational<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::Rational,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(36)?;
     let obj = env.new_object(
-        "org/tstrans/codec/Rational",
-        "(JJ)V",
+        jni_str!("org/tstrans/codec/Rational"),
+        jni_sig!("(JJ)V"),
         &[JValue::Long(r.num as i64), JValue::Long(r.den as i64)],
     )?;
     Ok(obj)
 }
 
 pub(crate) fn build_color_info<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::ColorInfo,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(40)?;
@@ -30,18 +30,18 @@ pub(crate) fn build_color_info<'l>(
         .map_err(|()| jni::errors::Error::JavaException)?;
     let matrix = crate::codec::shared::build_matrix(env, r.matrix)
         .map_err(|()| jni::errors::Error::JavaException)?;
-    let obj = env.new_object("org/tstrans/codec/ColorInfo", "(Lorg/tstrans/codec/ColourPrimaries;Lorg/tstrans/codec/TransferCharacteristics;Lorg/tstrans/codec/MatrixCoefficients;Z)V", &[JValue::Object(&primaries), JValue::Object(&transfer), JValue::Object(&matrix), JValue::Bool(u8::from(r.full_range))])?;
+    let obj = env.new_object(jni_str!("org/tstrans/codec/ColorInfo"), jni_sig!("(Lorg/tstrans/codec/ColourPrimaries;Lorg/tstrans/codec/TransferCharacteristics;Lorg/tstrans/codec/MatrixCoefficients;Z)V"), &[JValue::Object(&primaries), JValue::Object(&transfer), JValue::Object(&matrix), JValue::Bool(r.full_range)])?;
     Ok(obj)
 }
 
 pub(crate) fn build_obu_extension<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::ObuExtension,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(36)?;
     let obj = env.new_object(
-        "org/tstrans/codec/ObuExtension",
-        "(II)V",
+        jni_str!("org/tstrans/codec/ObuExtension"),
+        jni_sig!("(II)V"),
         &[
             JValue::Int(r.temporal_id as i32),
             JValue::Int(r.spatial_id as i32),
@@ -51,15 +51,16 @@ pub(crate) fn build_obu_extension<'l>(
 }
 
 pub(crate) fn build_obu<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::Obu,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(38)?;
     let extension = match &r.extension {
         Some(v) => {
-            let o1 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                build_obu_extension(env, v)
-            })?;
+            let o1 = env
+                .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+                    build_obu_extension(env, v)
+                })?;
             JObject::from(o1)
         }
         None => JObject::null(),
@@ -67,8 +68,8 @@ pub(crate) fn build_obu<'l>(
     let payload = crate::jutil::wrap_heap_byte_buffer(env, &r.payload)
         .map_err(|()| jni::errors::Error::JavaException)?;
     let obj = env.new_object(
-        "org/tstrans/codec/Obu",
-        "(ILorg/tstrans/codec/ObuExtension;Ljava/nio/ByteBuffer;)V",
+        jni_str!("org/tstrans/codec/Obu"),
+        jni_sig!("(ILorg/tstrans/codec/ObuExtension;Ljava/nio/ByteBuffer;)V"),
         &[
             JValue::Int(r.obu_type as i32),
             JValue::Object(&extension),
@@ -79,15 +80,15 @@ pub(crate) fn build_obu<'l>(
 }
 
 pub(crate) fn build_misp_timestamp<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::misp_time::MispTimestamp,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(38)?;
     let kind = crate::codec::misp_time::build_kind(env, r.kind)
         .map_err(|()| jni::errors::Error::JavaException)?;
     let obj = env.new_object(
-        "org/tstrans/codec/MispTimestamp",
-        "(Lorg/tstrans/codec/MispTimeKind;IJ)V",
+        jni_str!("org/tstrans/codec/MispTimestamp"),
+        jni_sig!("(Lorg/tstrans/codec/MispTimeKind;IJ)V"),
         &[
             JValue::Object(&kind),
             JValue::Int(r.time_status as i32),
@@ -98,153 +99,164 @@ pub(crate) fn build_misp_timestamp<'l>(
 }
 
 pub(crate) fn build_h264_sps<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h264::H264Sps,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(72)?;
-    let b = env.new_object("org/tstrans/codec/H264Sps$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/codec/H264Sps$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     env.call_method(
         &b,
-        "seqParameterSetId",
-        "(I)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("seqParameterSetId"),
+        jni_sig!("(I)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Int(r.seq_parameter_set_id as i32)],
     )?;
     env.call_method(
         &b,
-        "width",
-        "(J)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("width"),
+        jni_sig!("(J)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Long(r.width as i64)],
     )?;
     env.call_method(
         &b,
-        "height",
-        "(J)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("height"),
+        jni_sig!("(J)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Long(r.height as i64)],
     )?;
     env.call_method(
         &b,
-        "profileIdc",
-        "(I)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("profileIdc"),
+        jni_sig!("(I)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Int(r.profile_idc as i32)],
     )?;
     env.call_method(
         &b,
-        "levelIdc",
-        "(I)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("levelIdc"),
+        jni_sig!("(I)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Int(r.level_idc as i32)],
     )?;
     env.call_method(
         &b,
-        "constraintSetFlags",
-        "(I)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("constraintSetFlags"),
+        jni_sig!("(I)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Int(r.constraint_set_flags as i32)],
     )?;
     env.call_method(
         &b,
-        "bitDepthLuma",
-        "(I)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("bitDepthLuma"),
+        jni_sig!("(I)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Int(r.bit_depth_luma as i32)],
     )?;
     env.call_method(
         &b,
-        "bitDepthChroma",
-        "(I)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("bitDepthChroma"),
+        jni_sig!("(I)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Int(r.bit_depth_chroma as i32)],
     )?;
     let chroma_format = crate::codec::shared::build_chroma_format(env, r.chroma_format)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "chromaFormat",
-        "(Lorg/tstrans/codec/ChromaFormat;)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("chromaFormat"),
+        jni_sig!("(Lorg/tstrans/codec/ChromaFormat;)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Object(&chroma_format)],
     )?;
     env.call_method(
         &b,
-        "frameMbsOnly",
-        "(Z)Lorg/tstrans/codec/H264Sps$Builder;",
-        &[JValue::Bool(u8::from(r.frame_mbs_only))],
+        jni_str!("frameMbsOnly"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H264Sps$Builder;"),
+        &[JValue::Bool(r.frame_mbs_only)],
     )?;
     if let Some(v) = &r.frame_rate {
-        let o1 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            build_rational(env, v)
-        })?;
+        let o1 = env
+            .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+                build_rational(env, v)
+            })?;
         env.call_method(
             &b,
-            "frameRate",
-            "(Lorg/tstrans/codec/Rational;)Lorg/tstrans/codec/H264Sps$Builder;",
+            jni_str!("frameRate"),
+            jni_sig!("(Lorg/tstrans/codec/Rational;)Lorg/tstrans/codec/H264Sps$Builder;"),
             &[JValue::Object(&o1)],
         )?;
     }
     env.call_method(
         &b,
-        "fixedFrameRate",
-        "(Z)Lorg/tstrans/codec/H264Sps$Builder;",
-        &[JValue::Bool(u8::from(r.fixed_frame_rate))],
+        jni_str!("fixedFrameRate"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H264Sps$Builder;"),
+        &[JValue::Bool(r.fixed_frame_rate)],
     )?;
     env.call_method(
         &b,
-        "hasBFrames",
-        "(Z)Lorg/tstrans/codec/H264Sps$Builder;",
-        &[JValue::Bool(u8::from(r.has_b_frames))],
+        jni_str!("hasBFrames"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H264Sps$Builder;"),
+        &[JValue::Bool(r.has_b_frames)],
     )?;
     if let Some(v) = &r.color {
-        let o2 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            build_color_info(env, v)
-        })?;
+        let o2 = env
+            .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+                build_color_info(env, v)
+            })?;
         env.call_method(
             &b,
-            "color",
-            "(Lorg/tstrans/codec/ColorInfo;)Lorg/tstrans/codec/H264Sps$Builder;",
+            jni_str!("color"),
+            jni_sig!("(Lorg/tstrans/codec/ColorInfo;)Lorg/tstrans/codec/H264Sps$Builder;"),
             &[JValue::Object(&o2)],
         )?;
     }
     env.call_method(
         &b,
-        "cropLeft",
-        "(J)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("cropLeft"),
+        jni_sig!("(J)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Long(r.crop_left as i64)],
     )?;
     env.call_method(
         &b,
-        "cropRight",
-        "(J)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("cropRight"),
+        jni_sig!("(J)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Long(r.crop_right as i64)],
     )?;
     env.call_method(
         &b,
-        "cropTop",
-        "(J)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("cropTop"),
+        jni_sig!("(J)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Long(r.crop_top as i64)],
     )?;
     env.call_method(
         &b,
-        "cropBottom",
-        "(J)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("cropBottom"),
+        jni_sig!("(J)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Long(r.crop_bottom as i64)],
     )?;
     env.call_method(
         &b,
-        "log2MaxFrameNumMinus4",
-        "(I)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("log2MaxFrameNumMinus4"),
+        jni_sig!("(I)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Int(r.log2_max_frame_num_minus4 as i32)],
     )?;
     let raw_rbsp = crate::jutil::wrap_heap_byte_buffer(env, &r.raw_rbsp)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "rawRbsp",
-        "(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/H264Sps$Builder;",
+        jni_str!("rawRbsp"),
+        jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/H264Sps$Builder;"),
         &[JValue::Object(&raw_rbsp)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/codec/H264Sps;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/codec/H264Sps;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn build_h264_pps<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h264::H264Pps,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(40)?;
@@ -253,8 +265,8 @@ pub(crate) fn build_h264_pps<'l>(
     let raw_rbsp = crate::jutil::wrap_heap_byte_buffer(env, &r.raw_rbsp)
         .map_err(|()| jni::errors::Error::JavaException)?;
     let obj = env.new_object(
-        "org/tstrans/codec/H264Pps",
-        "(IILorg/tstrans/codec/EntropyCodingMode;Ljava/nio/ByteBuffer;)V",
+        jni_str!("org/tstrans/codec/H264Pps"),
+        jni_sig!("(IILorg/tstrans/codec/EntropyCodingMode;Ljava/nio/ByteBuffer;)V"),
         &[
             JValue::Int(r.pic_parameter_set_id as i32),
             JValue::Int(r.seq_parameter_set_id as i32),
@@ -266,7 +278,7 @@ pub(crate) fn build_h264_pps<'l>(
 }
 
 pub(crate) fn build_h264_slice_header_light<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h264::H264SliceHeaderLight,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(44)?;
@@ -276,14 +288,14 @@ pub(crate) fn build_h264_slice_header_light<'l>(
     let raw_rbsp = crate::jutil::wrap_heap_byte_buffer(env, &r.raw_rbsp)
         .map_err(|()| jni::errors::Error::JavaException)?;
     let obj = env.new_object(
-        "org/tstrans/codec/H264SliceHeaderLight",
-        "(ZLorg/tstrans/codec/H264SliceType;ILjava/lang/Integer;ZLjava/nio/ByteBuffer;)V",
+        jni_str!("org/tstrans/codec/H264SliceHeaderLight"),
+        jni_sig!("(ZLorg/tstrans/codec/H264SliceType;ILjava/lang/Integer;ZLjava/nio/ByteBuffer;)V"),
         &[
-            JValue::Bool(u8::from(r.first_in_pic)),
+            JValue::Bool(r.first_in_pic),
             JValue::Object(&slice_type),
             JValue::Int(r.pps_id as i32),
             JValue::Object(&frame_num),
-            JValue::Bool(u8::from(r.idr)),
+            JValue::Bool(r.idr),
             JValue::Object(&raw_rbsp),
         ],
     )?;
@@ -291,344 +303,368 @@ pub(crate) fn build_h264_slice_header_light<'l>(
 }
 
 pub(crate) fn build_h264_parameter_sets<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h264::H264ParameterSets,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(36)?;
-    let sps_by_id = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-        let map = env.new_object("java/util/HashMap", "()V", &[])?;
-        for (key, item) in r.sps_by_id.iter() {
-            env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
-                let k = env
-                    .call_static_method(
-                        "java/lang/Integer",
-                        "valueOf",
-                        "(I)Ljava/lang/Integer;",
-                        &[JValue::Int(i32::from(*key))],
-                    )?
-                    .l()?;
-                let o1 = env
-                    .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                        build_h264_sps(env, item)
-                    })?;
-                env.call_method(
-                    &map,
-                    "put",
-                    "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
-                    &[JValue::Object(&k), JValue::Object(&o1)],
-                )?;
-                Ok(())
-            })?;
-        }
-        Ok(map)
-    })?;
-    let pps_by_id = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-        let map = env.new_object("java/util/HashMap", "()V", &[])?;
-        for (key, item) in r.pps_by_id.iter() {
-            env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
-                let k = env
-                    .call_static_method(
-                        "java/lang/Integer",
-                        "valueOf",
-                        "(I)Ljava/lang/Integer;",
-                        &[JValue::Int(i32::from(*key))],
-                    )?
-                    .l()?;
-                let o2 = env
-                    .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                        build_h264_pps(env, item)
-                    })?;
-                env.call_method(
-                    &map,
-                    "put",
-                    "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
-                    &[JValue::Object(&k), JValue::Object(&o2)],
-                )?;
-                Ok(())
-            })?;
-        }
-        Ok(map)
-    })?;
+    let sps_by_id =
+        env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let map = env.new_object(jni_str!("java/util/HashMap"), jni_sig!("()V"), &[])?;
+            for (key, item) in r.sps_by_id.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let k = env
+                        .call_static_method(
+                            jni_str!("java/lang/Integer"),
+                            jni_str!("valueOf"),
+                            jni_sig!("(I)Ljava/lang/Integer;"),
+                            &[JValue::Int(i32::from(*key))],
+                        )?
+                        .l()?;
+                    let o1 = env
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_h264_sps(env, item),
+                        )?;
+                    env.call_method(
+                        &map,
+                        jni_str!("put"),
+                        jni_sig!("(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"),
+                        &[JValue::Object(&k), JValue::Object(&o1)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(map)
+        })?;
+    let pps_by_id =
+        env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let map = env.new_object(jni_str!("java/util/HashMap"), jni_sig!("()V"), &[])?;
+            for (key, item) in r.pps_by_id.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let k = env
+                        .call_static_method(
+                            jni_str!("java/lang/Integer"),
+                            jni_str!("valueOf"),
+                            jni_sig!("(I)Ljava/lang/Integer;"),
+                            &[JValue::Int(i32::from(*key))],
+                        )?
+                        .l()?;
+                    let o2 = env
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_h264_pps(env, item),
+                        )?;
+                    env.call_method(
+                        &map,
+                        jni_str!("put"),
+                        jni_sig!("(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"),
+                        &[JValue::Object(&k), JValue::Object(&o2)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(map)
+        })?;
     let obj = env.new_object(
-        "org/tstrans/codec/H264ParameterSets",
-        "(Ljava/util/Map;Ljava/util/Map;)V",
+        jni_str!("org/tstrans/codec/H264ParameterSets"),
+        jni_sig!("(Ljava/util/Map;Ljava/util/Map;)V"),
         &[JValue::Object(&sps_by_id), JValue::Object(&pps_by_id)],
     )?;
     Ok(obj)
 }
 
 pub(crate) fn build_h265_sps<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h265::H265Sps,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(80)?;
-    let b = env.new_object("org/tstrans/codec/H265Sps$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/codec/H265Sps$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     env.call_method(
         &b,
-        "spsSeqParameterSetId",
-        "(I)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("spsSeqParameterSetId"),
+        jni_sig!("(I)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Int(r.sps_seq_parameter_set_id as i32)],
     )?;
     env.call_method(
         &b,
-        "spsVideoParameterSetId",
-        "(I)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("spsVideoParameterSetId"),
+        jni_sig!("(I)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Int(r.sps_video_parameter_set_id as i32)],
     )?;
     env.call_method(
         &b,
-        "width",
-        "(J)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("width"),
+        jni_sig!("(J)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Long(r.width as i64)],
     )?;
     env.call_method(
         &b,
-        "height",
-        "(J)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("height"),
+        jni_sig!("(J)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Long(r.height as i64)],
     )?;
     env.call_method(
         &b,
-        "generalProfileIdc",
-        "(I)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("generalProfileIdc"),
+        jni_sig!("(I)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Int(r.general_profile_idc as i32)],
     )?;
     env.call_method(
         &b,
-        "generalTierFlag",
-        "(Z)Lorg/tstrans/codec/H265Sps$Builder;",
-        &[JValue::Bool(u8::from(r.general_tier_flag))],
+        jni_str!("generalTierFlag"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H265Sps$Builder;"),
+        &[JValue::Bool(r.general_tier_flag)],
     )?;
     env.call_method(
         &b,
-        "generalLevelIdc",
-        "(I)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("generalLevelIdc"),
+        jni_sig!("(I)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Int(r.general_level_idc as i32)],
     )?;
     env.call_method(
         &b,
-        "generalProfileCompatibilityFlags",
-        "(J)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("generalProfileCompatibilityFlags"),
+        jni_sig!("(J)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Long(r.general_profile_compatibility_flags as i64)],
     )?;
     env.call_method(
         &b,
-        "generalProgressiveSourceFlag",
-        "(Z)Lorg/tstrans/codec/H265Sps$Builder;",
-        &[JValue::Bool(u8::from(r.general_progressive_source_flag))],
+        jni_str!("generalProgressiveSourceFlag"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H265Sps$Builder;"),
+        &[JValue::Bool(r.general_progressive_source_flag)],
     )?;
     env.call_method(
         &b,
-        "generalInterlacedSourceFlag",
-        "(Z)Lorg/tstrans/codec/H265Sps$Builder;",
-        &[JValue::Bool(u8::from(r.general_interlaced_source_flag))],
+        jni_str!("generalInterlacedSourceFlag"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H265Sps$Builder;"),
+        &[JValue::Bool(r.general_interlaced_source_flag)],
     )?;
     env.call_method(
         &b,
-        "generalNonPackedConstraintFlag",
-        "(Z)Lorg/tstrans/codec/H265Sps$Builder;",
-        &[JValue::Bool(u8::from(r.general_non_packed_constraint_flag))],
+        jni_str!("generalNonPackedConstraintFlag"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H265Sps$Builder;"),
+        &[JValue::Bool(r.general_non_packed_constraint_flag)],
     )?;
     env.call_method(
         &b,
-        "generalFrameOnlyConstraintFlag",
-        "(Z)Lorg/tstrans/codec/H265Sps$Builder;",
-        &[JValue::Bool(u8::from(r.general_frame_only_constraint_flag))],
+        jni_str!("generalFrameOnlyConstraintFlag"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H265Sps$Builder;"),
+        &[JValue::Bool(r.general_frame_only_constraint_flag)],
     )?;
     env.call_method(
         &b,
-        "bitDepthLuma",
-        "(I)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("bitDepthLuma"),
+        jni_sig!("(I)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Int(r.bit_depth_luma as i32)],
     )?;
     env.call_method(
         &b,
-        "bitDepthChroma",
-        "(I)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("bitDepthChroma"),
+        jni_sig!("(I)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Int(r.bit_depth_chroma as i32)],
     )?;
     let chroma_format = crate::codec::shared::build_chroma_format(env, r.chroma_format)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "chromaFormat",
-        "(Lorg/tstrans/codec/ChromaFormat;)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("chromaFormat"),
+        jni_sig!("(Lorg/tstrans/codec/ChromaFormat;)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Object(&chroma_format)],
     )?;
     env.call_method(
         &b,
-        "maxSubLayersMinus1",
-        "(I)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("maxSubLayersMinus1"),
+        jni_sig!("(I)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Int(r.max_sub_layers_minus1 as i32)],
     )?;
     if let Some(v) = &r.frame_rate {
-        let o1 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            build_rational(env, v)
-        })?;
+        let o1 = env
+            .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+                build_rational(env, v)
+            })?;
         env.call_method(
             &b,
-            "frameRate",
-            "(Lorg/tstrans/codec/Rational;)Lorg/tstrans/codec/H265Sps$Builder;",
+            jni_str!("frameRate"),
+            jni_sig!("(Lorg/tstrans/codec/Rational;)Lorg/tstrans/codec/H265Sps$Builder;"),
             &[JValue::Object(&o1)],
         )?;
     }
     if let Some(v) = &r.color {
-        let o2 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            build_color_info(env, v)
-        })?;
+        let o2 = env
+            .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+                build_color_info(env, v)
+            })?;
         env.call_method(
             &b,
-            "color",
-            "(Lorg/tstrans/codec/ColorInfo;)Lorg/tstrans/codec/H265Sps$Builder;",
+            jni_str!("color"),
+            jni_sig!("(Lorg/tstrans/codec/ColorInfo;)Lorg/tstrans/codec/H265Sps$Builder;"),
             &[JValue::Object(&o2)],
         )?;
     }
     env.call_method(
         &b,
-        "cropLeft",
-        "(J)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("cropLeft"),
+        jni_sig!("(J)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Long(r.crop_left as i64)],
     )?;
     env.call_method(
         &b,
-        "cropRight",
-        "(J)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("cropRight"),
+        jni_sig!("(J)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Long(r.crop_right as i64)],
     )?;
     env.call_method(
         &b,
-        "cropTop",
-        "(J)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("cropTop"),
+        jni_sig!("(J)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Long(r.crop_top as i64)],
     )?;
     env.call_method(
         &b,
-        "cropBottom",
-        "(J)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("cropBottom"),
+        jni_sig!("(J)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Long(r.crop_bottom as i64)],
     )?;
     env.call_method(
         &b,
-        "log2MaxPicOrderCntLsbMinus4",
-        "(I)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("log2MaxPicOrderCntLsbMinus4"),
+        jni_sig!("(I)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Int(r.log2_max_pic_order_cnt_lsb_minus4 as i32)],
     )?;
     let raw_rbsp = crate::jutil::wrap_heap_byte_buffer(env, &r.raw_rbsp)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "rawRbsp",
-        "(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/H265Sps$Builder;",
+        jni_str!("rawRbsp"),
+        jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/H265Sps$Builder;"),
         &[JValue::Object(&raw_rbsp)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/codec/H265Sps;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/codec/H265Sps;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn build_h265_vps<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h265::H265Vps,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(58)?;
-    let b = env.new_object("org/tstrans/codec/H265Vps$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/codec/H265Vps$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     env.call_method(
         &b,
-        "vpsVideoParameterSetId",
-        "(I)Lorg/tstrans/codec/H265Vps$Builder;",
+        jni_str!("vpsVideoParameterSetId"),
+        jni_sig!("(I)Lorg/tstrans/codec/H265Vps$Builder;"),
         &[JValue::Int(r.vps_video_parameter_set_id as i32)],
     )?;
     env.call_method(
         &b,
-        "maxLayersMinus1",
-        "(I)Lorg/tstrans/codec/H265Vps$Builder;",
+        jni_str!("maxLayersMinus1"),
+        jni_sig!("(I)Lorg/tstrans/codec/H265Vps$Builder;"),
         &[JValue::Int(r.max_layers_minus1 as i32)],
     )?;
     env.call_method(
         &b,
-        "maxSubLayersMinus1",
-        "(I)Lorg/tstrans/codec/H265Vps$Builder;",
+        jni_str!("maxSubLayersMinus1"),
+        jni_sig!("(I)Lorg/tstrans/codec/H265Vps$Builder;"),
         &[JValue::Int(r.max_sub_layers_minus1 as i32)],
     )?;
     env.call_method(
         &b,
-        "temporalIdNestingFlag",
-        "(Z)Lorg/tstrans/codec/H265Vps$Builder;",
-        &[JValue::Bool(u8::from(r.temporal_id_nesting_flag))],
+        jni_str!("temporalIdNestingFlag"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H265Vps$Builder;"),
+        &[JValue::Bool(r.temporal_id_nesting_flag)],
     )?;
     env.call_method(
         &b,
-        "generalProfileIdc",
-        "(I)Lorg/tstrans/codec/H265Vps$Builder;",
+        jni_str!("generalProfileIdc"),
+        jni_sig!("(I)Lorg/tstrans/codec/H265Vps$Builder;"),
         &[JValue::Int(r.general_profile_idc as i32)],
     )?;
     env.call_method(
         &b,
-        "generalTierFlag",
-        "(Z)Lorg/tstrans/codec/H265Vps$Builder;",
-        &[JValue::Bool(u8::from(r.general_tier_flag))],
+        jni_str!("generalTierFlag"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H265Vps$Builder;"),
+        &[JValue::Bool(r.general_tier_flag)],
     )?;
     env.call_method(
         &b,
-        "generalLevelIdc",
-        "(I)Lorg/tstrans/codec/H265Vps$Builder;",
+        jni_str!("generalLevelIdc"),
+        jni_sig!("(I)Lorg/tstrans/codec/H265Vps$Builder;"),
         &[JValue::Int(r.general_level_idc as i32)],
     )?;
     env.call_method(
         &b,
-        "generalProfileCompatibilityFlags",
-        "(J)Lorg/tstrans/codec/H265Vps$Builder;",
+        jni_str!("generalProfileCompatibilityFlags"),
+        jni_sig!("(J)Lorg/tstrans/codec/H265Vps$Builder;"),
         &[JValue::Long(r.general_profile_compatibility_flags as i64)],
     )?;
     env.call_method(
         &b,
-        "generalProgressiveSourceFlag",
-        "(Z)Lorg/tstrans/codec/H265Vps$Builder;",
-        &[JValue::Bool(u8::from(r.general_progressive_source_flag))],
+        jni_str!("generalProgressiveSourceFlag"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H265Vps$Builder;"),
+        &[JValue::Bool(r.general_progressive_source_flag)],
     )?;
     env.call_method(
         &b,
-        "generalInterlacedSourceFlag",
-        "(Z)Lorg/tstrans/codec/H265Vps$Builder;",
-        &[JValue::Bool(u8::from(r.general_interlaced_source_flag))],
+        jni_str!("generalInterlacedSourceFlag"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H265Vps$Builder;"),
+        &[JValue::Bool(r.general_interlaced_source_flag)],
     )?;
     env.call_method(
         &b,
-        "generalNonPackedConstraintFlag",
-        "(Z)Lorg/tstrans/codec/H265Vps$Builder;",
-        &[JValue::Bool(u8::from(r.general_non_packed_constraint_flag))],
+        jni_str!("generalNonPackedConstraintFlag"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H265Vps$Builder;"),
+        &[JValue::Bool(r.general_non_packed_constraint_flag)],
     )?;
     env.call_method(
         &b,
-        "generalFrameOnlyConstraintFlag",
-        "(Z)Lorg/tstrans/codec/H265Vps$Builder;",
-        &[JValue::Bool(u8::from(r.general_frame_only_constraint_flag))],
+        jni_str!("generalFrameOnlyConstraintFlag"),
+        jni_sig!("(Z)Lorg/tstrans/codec/H265Vps$Builder;"),
+        &[JValue::Bool(r.general_frame_only_constraint_flag)],
     )?;
     let raw_rbsp = crate::jutil::wrap_heap_byte_buffer(env, &r.raw_rbsp)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "rawRbsp",
-        "(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/H265Vps$Builder;",
+        jni_str!("rawRbsp"),
+        jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/H265Vps$Builder;"),
         &[JValue::Object(&raw_rbsp)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/codec/H265Vps;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/codec/H265Vps;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn build_h265_pps<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h265::H265Pps,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(38)?;
     let raw_rbsp = crate::jutil::wrap_heap_byte_buffer(env, &r.raw_rbsp)
         .map_err(|()| jni::errors::Error::JavaException)?;
     let obj = env.new_object(
-        "org/tstrans/codec/H265Pps",
-        "(IILjava/nio/ByteBuffer;)V",
+        jni_str!("org/tstrans/codec/H265Pps"),
+        jni_sig!("(IILjava/nio/ByteBuffer;)V"),
         &[
             JValue::Int(r.pps_pic_parameter_set_id as i32),
             JValue::Int(r.pps_seq_parameter_set_id as i32),
@@ -639,7 +675,7 @@ pub(crate) fn build_h265_pps<'l>(
 }
 
 pub(crate) fn build_h265_slice_header_light<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h265::H265SliceHeaderLight,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(44)?;
@@ -649,9 +685,9 @@ pub(crate) fn build_h265_slice_header_light<'l>(
         Some(v) => {
             let o1 = env
                 .call_static_method(
-                    "java/lang/Integer",
-                    "valueOf",
-                    "(I)Ljava/lang/Integer;",
+                    jni_str!("java/lang/Integer"),
+                    jni_str!("valueOf"),
+                    jni_sig!("(I)Ljava/lang/Integer;"),
                     &[JValue::Int(*v as i32)],
                 )?
                 .l()?;
@@ -662,14 +698,14 @@ pub(crate) fn build_h265_slice_header_light<'l>(
     let raw_rbsp = crate::jutil::wrap_heap_byte_buffer(env, &r.raw_rbsp)
         .map_err(|()| jni::errors::Error::JavaException)?;
     let obj = env.new_object(
-        "org/tstrans/codec/H265SliceHeaderLight",
-        "(ZLorg/tstrans/codec/H265SliceType;ILjava/lang/Integer;ZLjava/nio/ByteBuffer;)V",
+        jni_str!("org/tstrans/codec/H265SliceHeaderLight"),
+        jni_sig!("(ZLorg/tstrans/codec/H265SliceType;ILjava/lang/Integer;ZLjava/nio/ByteBuffer;)V"),
         &[
-            JValue::Bool(u8::from(r.first_in_pic)),
+            JValue::Bool(r.first_in_pic),
             JValue::Object(&slice_type),
             JValue::Int(r.pps_id as i32),
             JValue::Object(&pic_order_cnt_lsb),
-            JValue::Bool(u8::from(r.idr)),
+            JValue::Bool(r.idr),
             JValue::Object(&raw_rbsp),
         ],
     )?;
@@ -677,94 +713,100 @@ pub(crate) fn build_h265_slice_header_light<'l>(
 }
 
 pub(crate) fn build_h265_parameter_sets<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h265::H265ParameterSets,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(38)?;
-    let vps_by_id = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-        let map = env.new_object("java/util/HashMap", "()V", &[])?;
-        for (key, item) in r.vps_by_id.iter() {
-            env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
-                let k = env
-                    .call_static_method(
-                        "java/lang/Integer",
-                        "valueOf",
-                        "(I)Ljava/lang/Integer;",
-                        &[JValue::Int(i32::from(*key))],
-                    )?
-                    .l()?;
-                let o1 = env
-                    .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                        build_h265_vps(env, item)
-                    })?;
-                env.call_method(
-                    &map,
-                    "put",
-                    "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
-                    &[JValue::Object(&k), JValue::Object(&o1)],
-                )?;
-                Ok(())
-            })?;
-        }
-        Ok(map)
-    })?;
-    let sps_by_id = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-        let map = env.new_object("java/util/HashMap", "()V", &[])?;
-        for (key, item) in r.sps_by_id.iter() {
-            env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
-                let k = env
-                    .call_static_method(
-                        "java/lang/Integer",
-                        "valueOf",
-                        "(I)Ljava/lang/Integer;",
-                        &[JValue::Int(i32::from(*key))],
-                    )?
-                    .l()?;
-                let o2 = env
-                    .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                        build_h265_sps(env, item)
-                    })?;
-                env.call_method(
-                    &map,
-                    "put",
-                    "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
-                    &[JValue::Object(&k), JValue::Object(&o2)],
-                )?;
-                Ok(())
-            })?;
-        }
-        Ok(map)
-    })?;
-    let pps_by_id = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-        let map = env.new_object("java/util/HashMap", "()V", &[])?;
-        for (key, item) in r.pps_by_id.iter() {
-            env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
-                let k = env
-                    .call_static_method(
-                        "java/lang/Integer",
-                        "valueOf",
-                        "(I)Ljava/lang/Integer;",
-                        &[JValue::Int(i32::from(*key))],
-                    )?
-                    .l()?;
-                let o3 = env
-                    .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                        build_h265_pps(env, item)
-                    })?;
-                env.call_method(
-                    &map,
-                    "put",
-                    "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
-                    &[JValue::Object(&k), JValue::Object(&o3)],
-                )?;
-                Ok(())
-            })?;
-        }
-        Ok(map)
-    })?;
+    let vps_by_id =
+        env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let map = env.new_object(jni_str!("java/util/HashMap"), jni_sig!("()V"), &[])?;
+            for (key, item) in r.vps_by_id.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let k = env
+                        .call_static_method(
+                            jni_str!("java/lang/Integer"),
+                            jni_str!("valueOf"),
+                            jni_sig!("(I)Ljava/lang/Integer;"),
+                            &[JValue::Int(i32::from(*key))],
+                        )?
+                        .l()?;
+                    let o1 = env
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_h265_vps(env, item),
+                        )?;
+                    env.call_method(
+                        &map,
+                        jni_str!("put"),
+                        jni_sig!("(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"),
+                        &[JValue::Object(&k), JValue::Object(&o1)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(map)
+        })?;
+    let sps_by_id =
+        env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let map = env.new_object(jni_str!("java/util/HashMap"), jni_sig!("()V"), &[])?;
+            for (key, item) in r.sps_by_id.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let k = env
+                        .call_static_method(
+                            jni_str!("java/lang/Integer"),
+                            jni_str!("valueOf"),
+                            jni_sig!("(I)Ljava/lang/Integer;"),
+                            &[JValue::Int(i32::from(*key))],
+                        )?
+                        .l()?;
+                    let o2 = env
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_h265_sps(env, item),
+                        )?;
+                    env.call_method(
+                        &map,
+                        jni_str!("put"),
+                        jni_sig!("(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"),
+                        &[JValue::Object(&k), JValue::Object(&o2)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(map)
+        })?;
+    let pps_by_id =
+        env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let map = env.new_object(jni_str!("java/util/HashMap"), jni_sig!("()V"), &[])?;
+            for (key, item) in r.pps_by_id.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let k = env
+                        .call_static_method(
+                            jni_str!("java/lang/Integer"),
+                            jni_str!("valueOf"),
+                            jni_sig!("(I)Ljava/lang/Integer;"),
+                            &[JValue::Int(i32::from(*key))],
+                        )?
+                        .l()?;
+                    let o3 = env
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_h265_pps(env, item),
+                        )?;
+                    env.call_method(
+                        &map,
+                        jni_str!("put"),
+                        jni_sig!("(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"),
+                        &[JValue::Object(&k), JValue::Object(&o3)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(map)
+        })?;
     let obj = env.new_object(
-        "org/tstrans/codec/H265ParameterSets",
-        "(Ljava/util/Map;Ljava/util/Map;Ljava/util/Map;)V",
+        jni_str!("org/tstrans/codec/H265ParameterSets"),
+        jni_sig!("(Ljava/util/Map;Ljava/util/Map;Ljava/util/Map;)V"),
         &[
             JValue::Object(&vps_by_id),
             JValue::Object(&sps_by_id),
@@ -775,16 +817,16 @@ pub(crate) fn build_h265_parameter_sets<'l>(
 }
 
 pub(crate) fn build_h266_profile_tier_level<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h266::H266ProfileTierLevel,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(38)?;
     let obj = env.new_object(
-        "org/tstrans/codec/H266ProfileTierLevel",
-        "(IZI)V",
+        jni_str!("org/tstrans/codec/H266ProfileTierLevel"),
+        jni_sig!("(IZI)V"),
         &[
             JValue::Int(r.general_profile_idc as i32),
-            JValue::Bool(u8::from(r.general_tier_flag)),
+            JValue::Bool(r.general_tier_flag),
             JValue::Int(r.general_level_idc as i32),
         ],
     )?;
@@ -792,135 +834,146 @@ pub(crate) fn build_h266_profile_tier_level<'l>(
 }
 
 pub(crate) fn build_h266_sps<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h266::H266Sps,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(62)?;
-    let b = env.new_object("org/tstrans/codec/H266Sps$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/codec/H266Sps$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     env.call_method(
         &b,
-        "spsId",
-        "(I)Lorg/tstrans/codec/H266Sps$Builder;",
+        jni_str!("spsId"),
+        jni_sig!("(I)Lorg/tstrans/codec/H266Sps$Builder;"),
         &[JValue::Int(r.sps_id as i32)],
     )?;
     env.call_method(
         &b,
-        "vpsId",
-        "(I)Lorg/tstrans/codec/H266Sps$Builder;",
+        jni_str!("vpsId"),
+        jni_sig!("(I)Lorg/tstrans/codec/H266Sps$Builder;"),
         &[JValue::Int(r.vps_id as i32)],
     )?;
     let profile_tier_level = env
-        .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
+        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
             build_h266_profile_tier_level(env, &r.profile_tier_level)
         })?;
     env.call_method(
         &b,
-        "profileTierLevel",
-        "(Lorg/tstrans/codec/H266ProfileTierLevel;)Lorg/tstrans/codec/H266Sps$Builder;",
+        jni_str!("profileTierLevel"),
+        jni_sig!("(Lorg/tstrans/codec/H266ProfileTierLevel;)Lorg/tstrans/codec/H266Sps$Builder;"),
         &[JValue::Object(&profile_tier_level)],
     )?;
     env.call_method(
         &b,
-        "width",
-        "(J)Lorg/tstrans/codec/H266Sps$Builder;",
+        jni_str!("width"),
+        jni_sig!("(J)Lorg/tstrans/codec/H266Sps$Builder;"),
         &[JValue::Long(r.width as i64)],
     )?;
     env.call_method(
         &b,
-        "height",
-        "(J)Lorg/tstrans/codec/H266Sps$Builder;",
+        jni_str!("height"),
+        jni_sig!("(J)Lorg/tstrans/codec/H266Sps$Builder;"),
         &[JValue::Long(r.height as i64)],
     )?;
     let chroma_format = crate::codec::shared::build_chroma_format(env, r.chroma_format)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "chromaFormat",
-        "(Lorg/tstrans/codec/ChromaFormat;)Lorg/tstrans/codec/H266Sps$Builder;",
+        jni_str!("chromaFormat"),
+        jni_sig!("(Lorg/tstrans/codec/ChromaFormat;)Lorg/tstrans/codec/H266Sps$Builder;"),
         &[JValue::Object(&chroma_format)],
     )?;
     env.call_method(
         &b,
-        "bitDepthLuma",
-        "(I)Lorg/tstrans/codec/H266Sps$Builder;",
+        jni_str!("bitDepthLuma"),
+        jni_sig!("(I)Lorg/tstrans/codec/H266Sps$Builder;"),
         &[JValue::Int(r.bit_depth_luma as i32)],
     )?;
     env.call_method(
         &b,
-        "bitDepthChroma",
-        "(I)Lorg/tstrans/codec/H266Sps$Builder;",
+        jni_str!("bitDepthChroma"),
+        jni_sig!("(I)Lorg/tstrans/codec/H266Sps$Builder;"),
         &[JValue::Int(r.bit_depth_chroma as i32)],
     )?;
     if let Some(v) = &r.color_info {
-        let o1 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            build_color_info(env, v)
-        })?;
+        let o1 = env
+            .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+                build_color_info(env, v)
+            })?;
         env.call_method(
             &b,
-            "color",
-            "(Lorg/tstrans/codec/ColorInfo;)Lorg/tstrans/codec/H266Sps$Builder;",
+            jni_str!("color"),
+            jni_sig!("(Lorg/tstrans/codec/ColorInfo;)Lorg/tstrans/codec/H266Sps$Builder;"),
             &[JValue::Object(&o1)],
         )?;
     }
     if let Some(v) = &r.frame_rate {
-        let o2 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            build_rational(env, v)
-        })?;
+        let o2 = env
+            .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+                build_rational(env, v)
+            })?;
         env.call_method(
             &b,
-            "frameRate",
-            "(Lorg/tstrans/codec/Rational;)Lorg/tstrans/codec/H266Sps$Builder;",
+            jni_str!("frameRate"),
+            jni_sig!("(Lorg/tstrans/codec/Rational;)Lorg/tstrans/codec/H266Sps$Builder;"),
             &[JValue::Object(&o2)],
         )?;
     }
     env.call_method(
         &b,
-        "cropLeft",
-        "(J)Lorg/tstrans/codec/H266Sps$Builder;",
+        jni_str!("cropLeft"),
+        jni_sig!("(J)Lorg/tstrans/codec/H266Sps$Builder;"),
         &[JValue::Long(r.crop_left as i64)],
     )?;
     env.call_method(
         &b,
-        "cropRight",
-        "(J)Lorg/tstrans/codec/H266Sps$Builder;",
+        jni_str!("cropRight"),
+        jni_sig!("(J)Lorg/tstrans/codec/H266Sps$Builder;"),
         &[JValue::Long(r.crop_right as i64)],
     )?;
     env.call_method(
         &b,
-        "cropTop",
-        "(J)Lorg/tstrans/codec/H266Sps$Builder;",
+        jni_str!("cropTop"),
+        jni_sig!("(J)Lorg/tstrans/codec/H266Sps$Builder;"),
         &[JValue::Long(r.crop_top as i64)],
     )?;
     env.call_method(
         &b,
-        "cropBottom",
-        "(J)Lorg/tstrans/codec/H266Sps$Builder;",
+        jni_str!("cropBottom"),
+        jni_sig!("(J)Lorg/tstrans/codec/H266Sps$Builder;"),
         &[JValue::Long(r.crop_bottom as i64)],
     )?;
     let raw_rbsp = crate::jutil::wrap_heap_byte_buffer(env, &r.raw_rbsp)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "rawRbsp",
-        "(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/H266Sps$Builder;",
+        jni_str!("rawRbsp"),
+        jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/H266Sps$Builder;"),
         &[JValue::Object(&raw_rbsp)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/codec/H266Sps;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/codec/H266Sps;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn build_h266_vps<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h266::H266Vps,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(40)?;
     let raw_rbsp = crate::jutil::wrap_heap_byte_buffer(env, &r.raw_rbsp)
         .map_err(|()| jni::errors::Error::JavaException)?;
     let obj = env.new_object(
-        "org/tstrans/codec/H266Vps",
-        "(IIILjava/nio/ByteBuffer;)V",
+        jni_str!("org/tstrans/codec/H266Vps"),
+        jni_sig!("(IIILjava/nio/ByteBuffer;)V"),
         &[
             JValue::Int(r.vps_id as i32),
             JValue::Int(r.max_layers as i32),
@@ -932,15 +985,15 @@ pub(crate) fn build_h266_vps<'l>(
 }
 
 pub(crate) fn build_h266_pps<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h266::H266Pps,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(38)?;
     let raw_rbsp = crate::jutil::wrap_heap_byte_buffer(env, &r.raw_rbsp)
         .map_err(|()| jni::errors::Error::JavaException)?;
     let obj = env.new_object(
-        "org/tstrans/codec/H266Pps",
-        "(IILjava/nio/ByteBuffer;)V",
+        jni_str!("org/tstrans/codec/H266Pps"),
+        jni_sig!("(IILjava/nio/ByteBuffer;)V"),
         &[
             JValue::Int(r.pps_id as i32),
             JValue::Int(r.sps_id as i32),
@@ -951,7 +1004,7 @@ pub(crate) fn build_h266_pps<'l>(
 }
 
 pub(crate) fn build_h266_slice_header_light<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h266::H266SliceHeaderLight,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(44)?;
@@ -961,9 +1014,9 @@ pub(crate) fn build_h266_slice_header_light<'l>(
         Some(v) => {
             let o1 = env
                 .call_static_method(
-                    "java/lang/Integer",
-                    "valueOf",
-                    "(I)Ljava/lang/Integer;",
+                    jni_str!("java/lang/Integer"),
+                    jni_str!("valueOf"),
+                    jni_sig!("(I)Ljava/lang/Integer;"),
                     &[JValue::Int(*v as i32)],
                 )?
                 .l()?;
@@ -974,14 +1027,14 @@ pub(crate) fn build_h266_slice_header_light<'l>(
     let raw_rbsp = crate::jutil::wrap_heap_byte_buffer(env, &r.raw_rbsp)
         .map_err(|()| jni::errors::Error::JavaException)?;
     let obj = env.new_object(
-        "org/tstrans/codec/H266SliceHeaderLight",
-        "(ZLorg/tstrans/codec/H266SliceType;ILjava/lang/Integer;ZLjava/nio/ByteBuffer;)V",
+        jni_str!("org/tstrans/codec/H266SliceHeaderLight"),
+        jni_sig!("(ZLorg/tstrans/codec/H266SliceType;ILjava/lang/Integer;ZLjava/nio/ByteBuffer;)V"),
         &[
-            JValue::Bool(u8::from(r.first_in_pic)),
+            JValue::Bool(r.first_in_pic),
             JValue::Object(&slice_type),
             JValue::Int(r.pps_id as i32),
             JValue::Object(&pic_order_cnt_lsb),
-            JValue::Bool(u8::from(r.idr)),
+            JValue::Bool(r.idr),
             JValue::Object(&raw_rbsp),
         ],
     )?;
@@ -989,70 +1042,76 @@ pub(crate) fn build_h266_slice_header_light<'l>(
 }
 
 pub(crate) fn build_h266_parameter_sets<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::h266::H266ParameterSets,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(38)?;
-    let vpses = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-        let list = env.new_object("java/util/ArrayList", "()V", &[])?;
-        for item in r.vpses.iter() {
-            env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
-                let o1 = env
-                    .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                        build_h266_vps(env, item)
-                    })?;
-                env.call_method(
-                    &list,
-                    "add",
-                    "(Ljava/lang/Object;)Z",
-                    &[JValue::Object(&o1)],
-                )?;
-                Ok(())
-            })?;
-        }
-        Ok(list)
-    })?;
-    let spses = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-        let list = env.new_object("java/util/ArrayList", "()V", &[])?;
-        for item in r.spses.iter() {
-            env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
-                let o2 = env
-                    .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                        build_h266_sps(env, item)
-                    })?;
-                env.call_method(
-                    &list,
-                    "add",
-                    "(Ljava/lang/Object;)Z",
-                    &[JValue::Object(&o2)],
-                )?;
-                Ok(())
-            })?;
-        }
-        Ok(list)
-    })?;
-    let ppses = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-        let list = env.new_object("java/util/ArrayList", "()V", &[])?;
-        for item in r.ppses.iter() {
-            env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
-                let o3 = env
-                    .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                        build_h266_pps(env, item)
-                    })?;
-                env.call_method(
-                    &list,
-                    "add",
-                    "(Ljava/lang/Object;)Z",
-                    &[JValue::Object(&o3)],
-                )?;
-                Ok(())
-            })?;
-        }
-        Ok(list)
-    })?;
+    let vpses =
+        env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+            for item in r.vpses.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let o1 = env
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_h266_vps(env, item),
+                        )?;
+                    env.call_method(
+                        &list,
+                        jni_str!("add"),
+                        jni_sig!("(Ljava/lang/Object;)Z"),
+                        &[JValue::Object(&o1)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(list)
+        })?;
+    let spses =
+        env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+            for item in r.spses.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let o2 = env
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_h266_sps(env, item),
+                        )?;
+                    env.call_method(
+                        &list,
+                        jni_str!("add"),
+                        jni_sig!("(Ljava/lang/Object;)Z"),
+                        &[JValue::Object(&o2)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(list)
+        })?;
+    let ppses =
+        env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+            for item in r.ppses.iter() {
+                env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
+                    let o3 = env
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_h266_pps(env, item),
+                        )?;
+                    env.call_method(
+                        &list,
+                        jni_str!("add"),
+                        jni_sig!("(Ljava/lang/Object;)Z"),
+                        &[JValue::Object(&o3)],
+                    )?;
+                    Ok(())
+                })?;
+            }
+            Ok(list)
+        })?;
     let obj = env.new_object(
-        "org/tstrans/codec/H266ParameterSets",
-        "(Ljava/util/List;Ljava/util/List;Ljava/util/List;)V",
+        jni_str!("org/tstrans/codec/H266ParameterSets"),
+        jni_sig!("(Ljava/util/List;Ljava/util/List;Ljava/util/List;)V"),
         &[
             JValue::Object(&vpses),
             JValue::Object(&spses),
@@ -1063,92 +1122,100 @@ pub(crate) fn build_h266_parameter_sets<'l>(
 }
 
 pub(crate) fn build_av1_sequence_header<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::av1::Av1SequenceHeader,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(58)?;
-    let b = env.new_object("org/tstrans/codec/Av1SequenceHeader$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/codec/Av1SequenceHeader$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     env.call_method(
         &b,
-        "profile",
-        "(I)Lorg/tstrans/codec/Av1SequenceHeader$Builder;",
+        jni_str!("profile"),
+        jni_sig!("(I)Lorg/tstrans/codec/Av1SequenceHeader$Builder;"),
         &[JValue::Int(r.profile as i32)],
     )?;
     env.call_method(
         &b,
-        "level",
-        "(I)Lorg/tstrans/codec/Av1SequenceHeader$Builder;",
+        jni_str!("level"),
+        jni_sig!("(I)Lorg/tstrans/codec/Av1SequenceHeader$Builder;"),
         &[JValue::Int(r.level as i32)],
     )?;
     env.call_method(
         &b,
-        "tier",
-        "(I)Lorg/tstrans/codec/Av1SequenceHeader$Builder;",
+        jni_str!("tier"),
+        jni_sig!("(I)Lorg/tstrans/codec/Av1SequenceHeader$Builder;"),
         &[JValue::Int(r.tier as i32)],
     )?;
     env.call_method(
         &b,
-        "maxFrameWidth",
-        "(J)Lorg/tstrans/codec/Av1SequenceHeader$Builder;",
+        jni_str!("maxFrameWidth"),
+        jni_sig!("(J)Lorg/tstrans/codec/Av1SequenceHeader$Builder;"),
         &[JValue::Long(r.max_frame_width as i64)],
     )?;
     env.call_method(
         &b,
-        "maxFrameHeight",
-        "(J)Lorg/tstrans/codec/Av1SequenceHeader$Builder;",
+        jni_str!("maxFrameHeight"),
+        jni_sig!("(J)Lorg/tstrans/codec/Av1SequenceHeader$Builder;"),
         &[JValue::Long(r.max_frame_height as i64)],
     )?;
     env.call_method(
         &b,
-        "bitDepth",
-        "(I)Lorg/tstrans/codec/Av1SequenceHeader$Builder;",
+        jni_str!("bitDepth"),
+        jni_sig!("(I)Lorg/tstrans/codec/Av1SequenceHeader$Builder;"),
         &[JValue::Int(r.bit_depth as i32)],
     )?;
     env.call_method(
         &b,
-        "monochrome",
-        "(Z)Lorg/tstrans/codec/Av1SequenceHeader$Builder;",
-        &[JValue::Bool(u8::from(r.monochrome))],
+        jni_str!("monochrome"),
+        jni_sig!("(Z)Lorg/tstrans/codec/Av1SequenceHeader$Builder;"),
+        &[JValue::Bool(r.monochrome)],
     )?;
     let chroma_format = crate::codec::shared::build_chroma_format(env, r.chroma_format)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "chromaFormat",
-        "(Lorg/tstrans/codec/ChromaFormat;)Lorg/tstrans/codec/Av1SequenceHeader$Builder;",
+        jni_str!("chromaFormat"),
+        jni_sig!("(Lorg/tstrans/codec/ChromaFormat;)Lorg/tstrans/codec/Av1SequenceHeader$Builder;"),
         &[JValue::Object(&chroma_format)],
     )?;
     env.call_method(
         &b,
-        "stillPicture",
-        "(Z)Lorg/tstrans/codec/Av1SequenceHeader$Builder;",
-        &[JValue::Bool(u8::from(r.still_picture))],
+        jni_str!("stillPicture"),
+        jni_sig!("(Z)Lorg/tstrans/codec/Av1SequenceHeader$Builder;"),
+        &[JValue::Bool(r.still_picture)],
     )?;
     env.call_method(
         &b,
-        "reducedStillPictureHeader",
-        "(Z)Lorg/tstrans/codec/Av1SequenceHeader$Builder;",
-        &[JValue::Bool(u8::from(r.reduced_still_picture_header))],
+        jni_str!("reducedStillPictureHeader"),
+        jni_sig!("(Z)Lorg/tstrans/codec/Av1SequenceHeader$Builder;"),
+        &[JValue::Bool(r.reduced_still_picture_header)],
     )?;
     if let Some(v) = &r.color_info {
-        let o1 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            build_color_info(env, v)
-        })?;
+        let o1 = env
+            .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+                build_color_info(env, v)
+            })?;
         env.call_method(
             &b,
-            "colorInfo",
-            "(Lorg/tstrans/codec/ColorInfo;)Lorg/tstrans/codec/Av1SequenceHeader$Builder;",
+            jni_str!("colorInfo"),
+            jni_sig!(
+                "(Lorg/tstrans/codec/ColorInfo;)Lorg/tstrans/codec/Av1SequenceHeader$Builder;"
+            ),
             &[JValue::Object(&o1)],
         )?;
     }
     if let Some(v) = &r.frame_rate {
-        let o2 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            build_rational(env, v)
-        })?;
+        let o2 = env
+            .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+                build_rational(env, v)
+            })?;
         env.call_method(
             &b,
-            "frameRate",
-            "(Lorg/tstrans/codec/Rational;)Lorg/tstrans/codec/Av1SequenceHeader$Builder;",
+            jni_str!("frameRate"),
+            jni_sig!("(Lorg/tstrans/codec/Rational;)Lorg/tstrans/codec/Av1SequenceHeader$Builder;"),
             &[JValue::Object(&o2)],
         )?;
     }
@@ -1156,18 +1223,23 @@ pub(crate) fn build_av1_sequence_header<'l>(
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "raw",
-        "(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/Av1SequenceHeader$Builder;",
+        jni_str!("raw"),
+        jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/Av1SequenceHeader$Builder;"),
         &[JValue::Object(&raw)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/codec/Av1SequenceHeader;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/codec/Av1SequenceHeader;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn build_av1_frame_header_light<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::av1::Av1FrameHeaderLight,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(42)?;
@@ -1175,12 +1247,12 @@ pub(crate) fn build_av1_frame_header_light<'l>(
     let raw = crate::jutil::wrap_heap_byte_buffer(env, &r.raw)
         .map_err(|()| jni::errors::Error::JavaException)?;
     let obj = env.new_object(
-        "org/tstrans/codec/Av1FrameHeaderLight",
-        "(IZZLorg/tstrans/codec/Av1FrameHeaderLight$FrameSize;Ljava/nio/ByteBuffer;)V",
+        jni_str!("org/tstrans/codec/Av1FrameHeaderLight"),
+        jni_sig!("(IZZLorg/tstrans/codec/Av1FrameHeaderLight$FrameSize;Ljava/nio/ByteBuffer;)V"),
         &[
             JValue::Int(r.frame_type as i32),
-            JValue::Bool(u8::from(r.show_frame)),
-            JValue::Bool(u8::from(r.show_existing_frame)),
+            JValue::Bool(r.show_frame),
+            JValue::Bool(r.show_existing_frame),
             JValue::Object(&frame_size),
             JValue::Object(&raw),
         ],
@@ -1189,23 +1261,24 @@ pub(crate) fn build_av1_frame_header_light<'l>(
 }
 
 pub(crate) fn build_av1_obu_stream<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::av1::Av1ObuStream,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(38)?;
     let sequence_headers =
-        env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+        env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
             for item in r.sequence_headers.iter() {
                 env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                     let o1 = env
-                        .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                            build_av1_sequence_header(env, item)
-                        })?;
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_av1_sequence_header(env, item),
+                        )?;
                     env.call_method(
                         &list,
-                        "add",
-                        "(Ljava/lang/Object;)Z",
+                        jni_str!("add"),
+                        jni_sig!("(Ljava/lang/Object;)Z"),
                         &[JValue::Object(&o1)],
                     )?;
                     Ok(())
@@ -1214,18 +1287,19 @@ pub(crate) fn build_av1_obu_stream<'l>(
             Ok(list)
         })?;
     let frame_headers =
-        env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+        env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
             for item in r.frame_headers.iter() {
                 env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                     let o2 = env
-                        .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                            build_av1_frame_header_light(env, item)
-                        })?;
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_av1_frame_header_light(env, item),
+                        )?;
                     env.call_method(
                         &list,
-                        "add",
-                        "(Ljava/lang/Object;)Z",
+                        jni_str!("add"),
+                        jni_sig!("(Ljava/lang/Object;)Z"),
                         &[JValue::Object(&o2)],
                     )?;
                     Ok(())
@@ -1235,8 +1309,8 @@ pub(crate) fn build_av1_obu_stream<'l>(
         })?;
     let unparseable = crate::custom::build_av1_obu_stream_unparseable(env, &r.unparseable)?;
     let obj = env.new_object(
-        "org/tstrans/codec/Av1ObuStream",
-        "(Ljava/util/List;Ljava/util/List;Ljava/util/List;)V",
+        jni_str!("org/tstrans/codec/Av1ObuStream"),
+        jni_sig!("(Ljava/util/List;Ljava/util/List;Ljava/util/List;)V"),
         &[
             JValue::Object(&sequence_headers),
             JValue::Object(&frame_headers),
@@ -1247,177 +1321,195 @@ pub(crate) fn build_av1_obu_stream<'l>(
 }
 
 pub(crate) fn build_adts_frame_owned<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::aac::AdtsFrameOwned,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(54)?;
-    let b = env.new_object("org/tstrans/codec/AdtsFrame$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/codec/AdtsFrame$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     let profile = crate::codec::aac::build_profile(env, r.profile)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "profile",
-        "(Lorg/tstrans/codec/AacProfile;)Lorg/tstrans/codec/AdtsFrame$Builder;",
+        jni_str!("profile"),
+        jni_sig!("(Lorg/tstrans/codec/AacProfile;)Lorg/tstrans/codec/AdtsFrame$Builder;"),
         &[JValue::Object(&profile)],
     )?;
     env.call_method(
         &b,
-        "sampleRateHz",
-        "(J)Lorg/tstrans/codec/AdtsFrame$Builder;",
+        jni_str!("sampleRateHz"),
+        jni_sig!("(J)Lorg/tstrans/codec/AdtsFrame$Builder;"),
         &[JValue::Long(r.sample_rate_hz as i64)],
     )?;
     env.call_method(
         &b,
-        "channelConfiguration",
-        "(I)Lorg/tstrans/codec/AdtsFrame$Builder;",
+        jni_str!("channelConfiguration"),
+        jni_sig!("(I)Lorg/tstrans/codec/AdtsFrame$Builder;"),
         &[JValue::Int(r.channel_configuration as i32)],
     )?;
     let channel_layout = crate::codec::aac::build_channel_layout(env, r.channel_layout)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "channelLayout",
-        "(Lorg/tstrans/codec/AacChannelLayout;)Lorg/tstrans/codec/AdtsFrame$Builder;",
+        jni_str!("channelLayout"),
+        jni_sig!("(Lorg/tstrans/codec/AacChannelLayout;)Lorg/tstrans/codec/AdtsFrame$Builder;"),
         &[JValue::Object(&channel_layout)],
     )?;
     env.call_method(
         &b,
-        "frameLengthBytes",
-        "(J)Lorg/tstrans/codec/AdtsFrame$Builder;",
+        jni_str!("frameLengthBytes"),
+        jni_sig!("(J)Lorg/tstrans/codec/AdtsFrame$Builder;"),
         &[JValue::Long(r.frame_length_bytes as i64)],
     )?;
     env.call_method(
         &b,
-        "samplesPerFrame",
-        "(I)Lorg/tstrans/codec/AdtsFrame$Builder;",
+        jni_str!("samplesPerFrame"),
+        jni_sig!("(I)Lorg/tstrans/codec/AdtsFrame$Builder;"),
         &[JValue::Int(r.samples_per_frame as i32)],
     )?;
     env.call_method(
         &b,
-        "numRawDataBlocks",
-        "(I)Lorg/tstrans/codec/AdtsFrame$Builder;",
+        jni_str!("numRawDataBlocks"),
+        jni_sig!("(I)Lorg/tstrans/codec/AdtsFrame$Builder;"),
         &[JValue::Int(r.num_raw_data_blocks as i32)],
     )?;
     env.call_method(
         &b,
-        "hasCrc",
-        "(Z)Lorg/tstrans/codec/AdtsFrame$Builder;",
-        &[JValue::Bool(u8::from(r.has_crc))],
+        jni_str!("hasCrc"),
+        jni_sig!("(Z)Lorg/tstrans/codec/AdtsFrame$Builder;"),
+        &[JValue::Bool(r.has_crc)],
     )?;
     let mpeg_version = crate::codec::aac::build_mpeg_version(env, r.mpeg_version)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "mpegVersion",
-        "(Lorg/tstrans/codec/MpegVersion;)Lorg/tstrans/codec/AdtsFrame$Builder;",
+        jni_str!("mpegVersion"),
+        jni_sig!("(Lorg/tstrans/codec/MpegVersion;)Lorg/tstrans/codec/AdtsFrame$Builder;"),
         &[JValue::Object(&mpeg_version)],
     )?;
     let raw_header = crate::jutil::wrap_heap_byte_buffer(env, &r.raw_header)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "rawHeader",
-        "(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/AdtsFrame$Builder;",
+        jni_str!("rawHeader"),
+        jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/AdtsFrame$Builder;"),
         &[JValue::Object(&raw_header)],
     )?;
     let body = crate::jutil::wrap_heap_byte_buffer(env, &r.body)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "payload",
-        "(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/AdtsFrame$Builder;",
+        jni_str!("payload"),
+        jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/AdtsFrame$Builder;"),
         &[JValue::Object(&body)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/codec/AdtsFrame;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/codec/AdtsFrame;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn build_frame_owned<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::codec::mpegaudio::FrameOwned,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(54)?;
-    let b = env.new_object("org/tstrans/codec/Mpeg2AudioFrame$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/codec/Mpeg2AudioFrame$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     let layer = crate::codec::mpegaudio::build_layer(env, r.layer)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "layer",
-        "(Lorg/tstrans/codec/Layer;)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;",
+        jni_str!("layer"),
+        jni_sig!("(Lorg/tstrans/codec/Layer;)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;"),
         &[JValue::Object(&layer)],
     )?;
     let version = crate::codec::mpegaudio::build_version(env, r.version)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "version",
-        "(Lorg/tstrans/codec/Version;)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;",
+        jni_str!("version"),
+        jni_sig!("(Lorg/tstrans/codec/Version;)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;"),
         &[JValue::Object(&version)],
     )?;
     env.call_method(
         &b,
-        "bitrateKbps",
-        "(J)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;",
+        jni_str!("bitrateKbps"),
+        jni_sig!("(J)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;"),
         &[JValue::Long(r.bitrate_kbps as i64)],
     )?;
     env.call_method(
         &b,
-        "sampleRateHz",
-        "(J)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;",
+        jni_str!("sampleRateHz"),
+        jni_sig!("(J)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;"),
         &[JValue::Long(r.sample_rate_hz as i64)],
     )?;
     let channel_mode = crate::codec::mpegaudio::build_channel_mode(env, r.channel_mode)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "channelMode",
-        "(Lorg/tstrans/codec/ChannelMode;)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;",
+        jni_str!("channelMode"),
+        jni_sig!("(Lorg/tstrans/codec/ChannelMode;)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;"),
         &[JValue::Object(&channel_mode)],
     )?;
     env.call_method(
         &b,
-        "channels",
-        "(I)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;",
+        jni_str!("channels"),
+        jni_sig!("(I)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;"),
         &[JValue::Int(r.channels as i32)],
     )?;
     env.call_method(
         &b,
-        "frameLengthBytes",
-        "(J)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;",
+        jni_str!("frameLengthBytes"),
+        jni_sig!("(J)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;"),
         &[JValue::Long(r.frame_length_bytes as i64)],
     )?;
     env.call_method(
         &b,
-        "samplesPerFrame",
-        "(I)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;",
+        jni_str!("samplesPerFrame"),
+        jni_sig!("(I)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;"),
         &[JValue::Int(r.samples_per_frame as i32)],
     )?;
     env.call_method(
         &b,
-        "hasCrc",
-        "(Z)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;",
-        &[JValue::Bool(u8::from(r.has_crc))],
+        jni_str!("hasCrc"),
+        jni_sig!("(Z)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;"),
+        &[JValue::Bool(r.has_crc)],
     )?;
     let raw_header = crate::jutil::wrap_heap_byte_buffer(env, &r.raw_header)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "rawHeader",
-        "(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;",
+        jni_str!("rawHeader"),
+        jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;"),
         &[JValue::Object(&raw_header)],
     )?;
     let body = crate::jutil::wrap_heap_byte_buffer(env, &r.body)
         .map_err(|()| jni::errors::Error::JavaException)?;
     env.call_method(
         &b,
-        "payload",
-        "(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;",
+        jni_str!("payload"),
+        jni_sig!("(Ljava/nio/ByteBuffer;)Lorg/tstrans/codec/Mpeg2AudioFrame$Builder;"),
         &[JValue::Object(&body)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/codec/Mpeg2AudioFrame;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/codec/Mpeg2AudioFrame;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }

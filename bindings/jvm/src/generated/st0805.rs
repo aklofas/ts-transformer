@@ -3,53 +3,73 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use jni::JNIEnv;
 use jni::objects::JObject;
+use jni::{Env, jni_sig, jni_str};
 
 pub(crate) fn read_cot_config(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<tst_core::klv::st0805::CotConfig> {
     env.ensure_local_capacity(42)?;
     let o1 = env
-        .call_method(obj, "platformType", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("platformType"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let platform_type = {
         if o1.is_null() {
             return Err(crate::jutil::null_field(env, "CotConfig.platformType"));
         }
-        let s2: &jni::objects::JString = (&o1).into();
-        String::from(env.get_string(s2)?)
+        let s2 = env.as_cast::<jni::objects::JString>(&o1)?;
+        s2.try_to_string(env)?
     };
-    let update_interval_us = env.call_method(obj, "updateIntervalUs", "()J", &[])?.j()?;
+    let update_interval_us = env
+        .call_method(obj, jni_str!("updateIntervalUs"), jni_sig!("()J"), &[])?
+        .j()?;
     let update_interval_us = update_interval_us as u64;
     let o3 = env
-        .call_method(obj, "producer", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("producer"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let producer = {
         if o3.is_null() {
             return Err(crate::jutil::null_field(env, "CotConfig.producer"));
         }
-        let s4: &jni::objects::JString = (&o3).into();
-        String::from(env.get_string(s4)?)
+        let s4 = env.as_cast::<jni::objects::JString>(&o3)?;
+        s4.try_to_string(env)?
     };
     let o5 = env
-        .call_method(obj, "geoidUndulationM", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("geoidUndulationM"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let geoid_undulation_m = if o5.is_null() {
         None
     } else {
-        Some(env.call_method(&o5, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o5, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o6 = env
-        .call_method(obj, "how", "()Ljava/lang/String;", &[])?
+        .call_method(obj, jni_str!("how"), jni_sig!("()Ljava/lang/String;"), &[])?
         .l()?;
     let how = {
         if o6.is_null() {
             return Err(crate::jutil::null_field(env, "CotConfig.how"));
         }
-        let s7: &jni::objects::JString = (&o6).into();
-        String::from(env.get_string(s7)?)
+        let s7 = env.as_cast::<jni::objects::JString>(&o6)?;
+        s7.try_to_string(env)?
     };
     Ok(tst_core::klv::st0805::CotConfig {
         platform_type,

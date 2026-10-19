@@ -3,113 +3,122 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
+use jni::{Env, jni_sig, jni_str};
 
 pub(crate) fn build_socket_stats<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::transport::SocketStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(64)?;
-    let b = env.new_object("org/tstrans/shells/SocketStats$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/shells/SocketStats$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     env.call_method(
         &b,
-        "rttUs",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("rttUs"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.rtt_us as i64)],
     )?;
     env.call_method(
         &b,
-        "sendBandwidthBps",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("sendBandwidthBps"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.send_bandwidth_bps as i64)],
     )?;
     env.call_method(
         &b,
-        "recvBandwidthBps",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("recvBandwidthBps"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.recv_bandwidth_bps as i64)],
     )?;
     env.call_method(
         &b,
-        "linkBandwidthBps",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("linkBandwidthBps"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.link_bandwidth_bps as i64)],
     )?;
     env.call_method(
         &b,
-        "bytesSent",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("bytesSent"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.bytes_sent as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsSent",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("packetsSent"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.packets_sent as i64)],
     )?;
     env.call_method(
         &b,
-        "bytesReceived",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("bytesReceived"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.bytes_received as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsReceived",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("packetsReceived"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.packets_received as i64)],
     )?;
     env.call_method(
         &b,
-        "bytesLostRecv",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("bytesLostRecv"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.bytes_lost_recv as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsLostRecv",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("packetsLostRecv"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.packets_lost_recv as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsLostSend",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("packetsLostSend"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.packets_lost_send as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsRetransmitted",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("packetsRetransmitted"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.packets_retransmitted as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsDroppedSend",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("packetsDroppedSend"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.packets_dropped_send as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsDroppedRecv",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("packetsDroppedRecv"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.packets_dropped_recv as i64)],
     )?;
     env.call_method(
         &b,
-        "sendBufferPackets",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("sendBufferPackets"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.send_buffer_packets as i64)],
     )?;
     env.call_method(
         &b,
-        "recvBufferPackets",
-        "(J)Lorg/tstrans/shells/SocketStats$Builder;",
+        jni_str!("recvBufferPackets"),
+        jni_sig!("(J)Lorg/tstrans/shells/SocketStats$Builder;"),
         &[JValue::Long(r.recv_buffer_packets as i64)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/shells/SocketStats;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/shells/SocketStats;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }

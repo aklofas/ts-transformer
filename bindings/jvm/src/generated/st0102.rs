@@ -3,21 +3,25 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
+use jni::{Env, jni_sig, jni_str};
 
 pub(crate) fn build_security_ls<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::klv::st0102::SecurityLs,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(70)?;
-    let b = env.new_object("org/tstrans/klv/SecurityLs$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/klv/SecurityLs$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     let security_classification =
         crate::custom::build_security_ls_security_classification(env, &r.security_classification)?;
     env.call_method(
         &b,
-        "securityClassificationCode",
-        "(Ljava/lang/Integer;)Lorg/tstrans/klv/SecurityLs$Builder;",
+        jni_str!("securityClassificationCode"),
+        jni_sig!("(Ljava/lang/Integer;)Lorg/tstrans/klv/SecurityLs$Builder;"),
         &[JValue::Object(&security_classification)],
     )?;
     let classifying_country_coding_method =
@@ -27,16 +31,16 @@ pub(crate) fn build_security_ls<'l>(
         )?;
     env.call_method(
         &b,
-        "classifyingCountryCodingMethodCode",
-        "(Ljava/lang/Integer;)Lorg/tstrans/klv/SecurityLs$Builder;",
+        jni_str!("classifyingCountryCodingMethodCode"),
+        jni_sig!("(Ljava/lang/Integer;)Lorg/tstrans/klv/SecurityLs$Builder;"),
         &[JValue::Object(&classifying_country_coding_method)],
     )?;
     if let Some(v) = &r.classifying_country {
         let o1 = env.new_string(v)?;
         env.call_method(
             &b,
-            "classifyingCountry",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("classifyingCountry"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Object(&o1)],
         )?;
     }
@@ -47,24 +51,24 @@ pub(crate) fn build_security_ls<'l>(
         )?;
     env.call_method(
         &b,
-        "objectCountryCodingMethodCode",
-        "(Ljava/lang/Integer;)Lorg/tstrans/klv/SecurityLs$Builder;",
+        jni_str!("objectCountryCodingMethodCode"),
+        jni_sig!("(Ljava/lang/Integer;)Lorg/tstrans/klv/SecurityLs$Builder;"),
         &[JValue::Object(&object_country_coding_method)],
     )?;
     if let Some(v) = &r.object_country_codes {
         let o2 = env.new_string(v)?;
         env.call_method(
             &b,
-            "objectCountryCodes",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("objectCountryCodes"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Object(&o2)],
         )?;
     }
     if let Some(v) = &r.version {
         env.call_method(
             &b,
-            "version",
-            "(I)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("version"),
+            jni_sig!("(I)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
@@ -72,8 +76,8 @@ pub(crate) fn build_security_ls<'l>(
         let o3 = env.new_string(v)?;
         env.call_method(
             &b,
-            "sciShiInfo",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("sciShiInfo"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Object(&o3)],
         )?;
     }
@@ -81,8 +85,8 @@ pub(crate) fn build_security_ls<'l>(
         let o4 = env.new_string(v)?;
         env.call_method(
             &b,
-            "caveats",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("caveats"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Object(&o4)],
         )?;
     }
@@ -90,8 +94,8 @@ pub(crate) fn build_security_ls<'l>(
         let o5 = env.new_string(v)?;
         env.call_method(
             &b,
-            "releasingInstructions",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("releasingInstructions"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Object(&o5)],
         )?;
     }
@@ -99,8 +103,8 @@ pub(crate) fn build_security_ls<'l>(
         let o6 = env.new_string(v)?;
         env.call_method(
             &b,
-            "classifiedBy",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("classifiedBy"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Object(&o6)],
         )?;
     }
@@ -108,8 +112,8 @@ pub(crate) fn build_security_ls<'l>(
         let o7 = env.new_string(v)?;
         env.call_method(
             &b,
-            "derivedFrom",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("derivedFrom"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Object(&o7)],
         )?;
     }
@@ -117,8 +121,8 @@ pub(crate) fn build_security_ls<'l>(
         let o8 = env.new_string(v)?;
         env.call_method(
             &b,
-            "classificationReason",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("classificationReason"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Object(&o8)],
         )?;
     }
@@ -126,8 +130,8 @@ pub(crate) fn build_security_ls<'l>(
         let o9 = env.new_string(v)?;
         env.call_method(
             &b,
-            "declassificationDate",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("declassificationDate"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Object(&o9)],
         )?;
     }
@@ -135,8 +139,8 @@ pub(crate) fn build_security_ls<'l>(
         let o10 = env.new_string(v)?;
         env.call_method(
             &b,
-            "classificationMarkingSystem",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("classificationMarkingSystem"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Object(&o10)],
         )?;
     }
@@ -144,8 +148,8 @@ pub(crate) fn build_security_ls<'l>(
         let o11 = env.new_string(v)?;
         env.call_method(
             &b,
-            "classificationComments",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("classificationComments"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Object(&o11)],
         )?;
     }
@@ -153,8 +157,8 @@ pub(crate) fn build_security_ls<'l>(
         let o12 = env.new_string(v)?;
         env.call_method(
             &b,
-            "classifyingCountryCodingMethodVersionDate",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("classifyingCountryCodingMethodVersionDate"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Object(&o12)],
         )?;
     }
@@ -162,33 +166,38 @@ pub(crate) fn build_security_ls<'l>(
         let o13 = env.new_string(v)?;
         env.call_method(
             &b,
-            "objectCountryCodingMethodVersionDate",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;",
+            jni_str!("objectCountryCodingMethodVersionDate"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/SecurityLs$Builder;"),
             &[JValue::Object(&o13)],
         )?;
     }
     let unknown = crate::custom::build_security_ls_unknown(env, &r.unknown)?;
     env.call_method(
         &b,
-        "unknown",
-        "(Ljava/util/List;)Lorg/tstrans/klv/SecurityLs$Builder;",
+        jni_str!("unknown"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/SecurityLs$Builder;"),
         &[JValue::Object(&unknown)],
     )?;
     let field_errors = crate::custom::build_security_ls_field_errors(env, &r.field_errors)?;
     env.call_method(
         &b,
-        "fieldErrors",
-        "(Ljava/util/List;)Lorg/tstrans/klv/SecurityLs$Builder;",
+        jni_str!("fieldErrors"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/SecurityLs$Builder;"),
         &[JValue::Object(&field_errors)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/klv/SecurityLs;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/klv/SecurityLs;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn read_security_ls(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<tst_core::klv::st0102::SecurityLs> {
     env.ensure_local_capacity(70)?;
@@ -197,122 +206,174 @@ pub(crate) fn read_security_ls(
     let classifying_country_coding_method =
         crate::custom::read_security_ls_classifying_country_coding_method(env, obj)?;
     let o1 = env
-        .call_method(obj, "classifyingCountry", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("classifyingCountry"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let classifying_country = if o1.is_null() {
         None
     } else {
         Some({
-            let s2: &jni::objects::JString = (&o1).into();
-            String::from(env.get_string(s2)?)
+            let s2 = env.as_cast::<jni::objects::JString>(&o1)?;
+            s2.try_to_string(env)?
         })
     };
     let object_country_coding_method =
         crate::custom::read_security_ls_object_country_coding_method(env, obj)?;
     let o3 = env
-        .call_method(obj, "objectCountryCodes", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("objectCountryCodes"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let object_country_codes = if o3.is_null() {
         None
     } else {
         Some({
-            let s4: &jni::objects::JString = (&o3).into();
-            String::from(env.get_string(s4)?)
+            let s4 = env.as_cast::<jni::objects::JString>(&o3)?;
+            s4.try_to_string(env)?
         })
     };
     let o5 = env
-        .call_method(obj, "version", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("version"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let version = if o5.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o5, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o5, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u16(env, i64::from(n), "SecurityLs.version")?
         })
     };
     let o6 = env
-        .call_method(obj, "sciShiInfo", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("sciShiInfo"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let sci_shi_info = if o6.is_null() {
         None
     } else {
         Some({
-            let s7: &jni::objects::JString = (&o6).into();
-            String::from(env.get_string(s7)?)
+            let s7 = env.as_cast::<jni::objects::JString>(&o6)?;
+            s7.try_to_string(env)?
         })
     };
     let o8 = env
-        .call_method(obj, "caveats", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("caveats"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let caveats = if o8.is_null() {
         None
     } else {
         Some({
-            let s9: &jni::objects::JString = (&o8).into();
-            String::from(env.get_string(s9)?)
+            let s9 = env.as_cast::<jni::objects::JString>(&o8)?;
+            s9.try_to_string(env)?
         })
     };
     let o10 = env
-        .call_method(obj, "releasingInstructions", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("releasingInstructions"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let releasing_instructions = if o10.is_null() {
         None
     } else {
         Some({
-            let s11: &jni::objects::JString = (&o10).into();
-            String::from(env.get_string(s11)?)
+            let s11 = env.as_cast::<jni::objects::JString>(&o10)?;
+            s11.try_to_string(env)?
         })
     };
     let o12 = env
-        .call_method(obj, "classifiedBy", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("classifiedBy"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let classified_by = if o12.is_null() {
         None
     } else {
         Some({
-            let s13: &jni::objects::JString = (&o12).into();
-            String::from(env.get_string(s13)?)
+            let s13 = env.as_cast::<jni::objects::JString>(&o12)?;
+            s13.try_to_string(env)?
         })
     };
     let o14 = env
-        .call_method(obj, "derivedFrom", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("derivedFrom"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let derived_from = if o14.is_null() {
         None
     } else {
         Some({
-            let s15: &jni::objects::JString = (&o14).into();
-            String::from(env.get_string(s15)?)
+            let s15 = env.as_cast::<jni::objects::JString>(&o14)?;
+            s15.try_to_string(env)?
         })
     };
     let o16 = env
-        .call_method(obj, "classificationReason", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("classificationReason"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let classification_reason = if o16.is_null() {
         None
     } else {
         Some({
-            let s17: &jni::objects::JString = (&o16).into();
-            String::from(env.get_string(s17)?)
+            let s17 = env.as_cast::<jni::objects::JString>(&o16)?;
+            s17.try_to_string(env)?
         })
     };
     let o18 = env
-        .call_method(obj, "declassificationDate", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("declassificationDate"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let declassification_date = if o18.is_null() {
         None
     } else {
         Some({
-            let s19: &jni::objects::JString = (&o18).into();
-            String::from(env.get_string(s19)?)
+            let s19 = env.as_cast::<jni::objects::JString>(&o18)?;
+            s19.try_to_string(env)?
         })
     };
     let o20 = env
         .call_method(
             obj,
-            "classificationMarkingSystem",
-            "()Ljava/lang/String;",
+            jni_str!("classificationMarkingSystem"),
+            jni_sig!("()Ljava/lang/String;"),
             &[],
         )?
         .l()?;
@@ -320,26 +381,31 @@ pub(crate) fn read_security_ls(
         None
     } else {
         Some({
-            let s21: &jni::objects::JString = (&o20).into();
-            String::from(env.get_string(s21)?)
+            let s21 = env.as_cast::<jni::objects::JString>(&o20)?;
+            s21.try_to_string(env)?
         })
     };
     let o22 = env
-        .call_method(obj, "classificationComments", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("classificationComments"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let classification_comments = if o22.is_null() {
         None
     } else {
         Some({
-            let s23: &jni::objects::JString = (&o22).into();
-            String::from(env.get_string(s23)?)
+            let s23 = env.as_cast::<jni::objects::JString>(&o22)?;
+            s23.try_to_string(env)?
         })
     };
     let o24 = env
         .call_method(
             obj,
-            "classifyingCountryCodingMethodVersionDate",
-            "()Ljava/lang/String;",
+            jni_str!("classifyingCountryCodingMethodVersionDate"),
+            jni_sig!("()Ljava/lang/String;"),
             &[],
         )?
         .l()?;
@@ -347,15 +413,15 @@ pub(crate) fn read_security_ls(
         None
     } else {
         Some({
-            let s25: &jni::objects::JString = (&o24).into();
-            String::from(env.get_string(s25)?)
+            let s25 = env.as_cast::<jni::objects::JString>(&o24)?;
+            s25.try_to_string(env)?
         })
     };
     let o26 = env
         .call_method(
             obj,
-            "objectCountryCodingMethodVersionDate",
-            "()Ljava/lang/String;",
+            jni_str!("objectCountryCodingMethodVersionDate"),
+            jni_sig!("()Ljava/lang/String;"),
             &[],
         )?
         .l()?;
@@ -363,8 +429,8 @@ pub(crate) fn read_security_ls(
         None
     } else {
         Some({
-            let s27: &jni::objects::JString = (&o26).into();
-            String::from(env.get_string(s27)?)
+            let s27 = env.as_cast::<jni::objects::JString>(&o26)?;
+            s27.try_to_string(env)?
         })
     };
     let unknown = crate::custom::read_security_ls_unknown(env, obj)?;

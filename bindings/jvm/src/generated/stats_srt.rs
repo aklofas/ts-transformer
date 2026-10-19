@@ -3,140 +3,149 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
+use jni::{Env, jni_sig, jni_str};
 
 pub(crate) fn build_srt_stats<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_srt::SrtStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(66)?;
-    let b = env.new_object("org/tstrans/srt/SrtStats$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/srt/SrtStats$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     env.call_method(
         &b,
-        "bytesSent",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("bytesSent"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.bytes_sent as i64)],
     )?;
     env.call_method(
         &b,
-        "bytesReceived",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("bytesReceived"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.bytes_received as i64)],
     )?;
     env.call_method(
         &b,
-        "bytesLostRecvSide",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("bytesLostRecvSide"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.bytes_lost_recv_side as i64)],
     )?;
     env.call_method(
         &b,
-        "bytesLostSendSide",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("bytesLostSendSide"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.bytes_lost_send_side as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsSent",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("packetsSent"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.packets_sent as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsReceived",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("packetsReceived"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.packets_received as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsLostRecvSide",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("packetsLostRecvSide"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.packets_lost_recv_side as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsLostSendSide",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("packetsLostSendSide"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.packets_lost_send_side as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsRetransmitted",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("packetsRetransmitted"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.packets_retransmitted as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsDroppedRecvSide",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("packetsDroppedRecvSide"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.packets_dropped_recv_side as i64)],
     )?;
     env.call_method(
         &b,
-        "packetsDroppedSendSide",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("packetsDroppedSendSide"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.packets_dropped_send_side as i64)],
     )?;
     env.call_method(
         &b,
-        "rttUs",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("rttUs"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(
             i64::try_from(r.rtt.as_micros()).unwrap_or(i64::MAX),
         )],
     )?;
     env.call_method(
         &b,
-        "sendBandwidthBps",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("sendBandwidthBps"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.send_bandwidth_bps as i64)],
     )?;
     env.call_method(
         &b,
-        "recvBandwidthBps",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("recvBandwidthBps"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.recv_bandwidth_bps as i64)],
     )?;
     env.call_method(
         &b,
-        "mbpsEstimatedBandwidth",
-        "(D)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("mbpsEstimatedBandwidth"),
+        jni_sig!("(D)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Double(r.mbps_estimated_bandwidth)],
     )?;
     env.call_method(
         &b,
-        "sendBufferPackets",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("sendBufferPackets"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.send_buffer_packets as i64)],
     )?;
     env.call_method(
         &b,
-        "recvBufferPackets",
-        "(J)Lorg/tstrans/srt/SrtStats$Builder;",
+        jni_str!("recvBufferPackets"),
+        jni_sig!("(J)Lorg/tstrans/srt/SrtStats$Builder;"),
         &[JValue::Long(r.recv_buffer_packets as i64)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/srt/SrtStats;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/srt/SrtStats;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn build_managed_transport_stats<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_pipeline::ManagedTransportStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(44)?;
     let obj = env.new_object(
-        "org/tstrans/srt/ManagedTransportStats",
-        "(JJJJJZ)V",
+        jni_str!("org/tstrans/srt/ManagedTransportStats"),
+        jni_sig!("(JJJJJZ)V"),
         &[
             JValue::Long(r.reconnect_attempts as i64),
             JValue::Long(r.reconnect_successes as i64),
             JValue::Long(r.gap_len as i64),
             JValue::Long(r.gap_messages_dropped as i64),
             JValue::Long(r.gap_bytes_dropped as i64),
-            JValue::Bool(u8::from(r.reconnecting)),
+            JValue::Bool(r.reconnecting),
         ],
     )?;
     Ok(obj)

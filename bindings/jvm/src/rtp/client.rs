@@ -8,8 +8,10 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_str;
 use jni::objects::{JByteArray, JString};
+use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong};
 
 use secrecy::SecretString;
@@ -36,7 +38,7 @@ use super::errors::{rtsp_error_to_jvm, throw_rtsp};
 /// Java array is a no-op (platform native trust roots). Returns None with
 /// a pending exception on failure.
 fn apply_tls_roots(
-    env: &mut JNIEnv,
+    env: &mut Env,
     builder: RtspClientBuilder,
     pem: &JByteArray<'_>,
 ) -> Option<RtspClientBuilder> {
@@ -46,7 +48,10 @@ fn apply_tls_roots(
     let bytes = match env.convert_byte_array(pem) {
         Ok(b) => b,
         Err(e) => {
-            let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+            let _ = env.throw_new(
+                jni_str!("java/lang/RuntimeException"),
+                JNIString::from(e.to_string()),
+            );
             return None;
         }
     };
@@ -110,12 +115,12 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> jboolean = 0 => {
-        match REGISTRY_CANCEL.try_with(handle as u64, |c| u8::from(c.inner.is_cancelled())) {
+    ) -> jboolean = false => {
+        match REGISTRY_CANCEL.try_with(handle as u64, |c| c.inner.is_cancelled()) {
             TryWith::Ran(v) => v,
             _ => {
                 crate::error::throw_closed(env, "RtspCancelHandle");
-                0
+                false
             }
         }
     }
@@ -161,10 +166,10 @@ jni_native! {
         keepalive: jboolean,
         tls_root_certs_pem: JByteArray<'_>,
     ) -> jlong = 0 => {
-        let url_str: String = match env.get_string(&url) {
-            Ok(s) => s.into(),
+        let url_str: String = match url.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -183,20 +188,20 @@ jni_native! {
         //    is NOT passed: tst-rtp's challenge handler picks it from the server's
         //    WWW-Authenticate header (matches tst-py).
         if !auth_user.is_null() {
-            let user: String = match env.get_string(&auth_user) {
-                Ok(s) => s.into(),
+            let user: String = match auth_user.try_to_string(env) {
+                Ok(s) => s,
                 Err(e) => {
-                    let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                    let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                     return 0;
                 }
             };
             let pw: String = if auth_password.is_null() {
                 String::new()
             } else {
-                match env.get_string(&auth_password) {
-                    Ok(s) => s.into(),
+                match auth_password.try_to_string(env) {
+                    Ok(s) => s,
                     Err(e) => {
-                        let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                        let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                         return 0;
                     }
                 }
@@ -205,7 +210,7 @@ jni_native! {
         }
 
         // 3. keepalive=false disables the auto-keepalive thread.
-        if keepalive == 0 {
+        if !keepalive {
             builder = builder.no_auto_keepalive(true);
         }
 
@@ -257,10 +262,10 @@ jni_native! {
         keepalive: jboolean,
         tls_root_certs_pem: JByteArray<'_>,
     ) -> jlong = 0 => {
-        let url_str: String = match env.get_string(&url) {
-            Ok(s) => s.into(),
+        let url_str: String = match url.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -274,20 +279,20 @@ jni_native! {
         };
 
         if !auth_user.is_null() {
-            let user: String = match env.get_string(&auth_user) {
-                Ok(s) => s.into(),
+            let user: String = match auth_user.try_to_string(env) {
+                Ok(s) => s,
                 Err(e) => {
-                    let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                    let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                     return 0;
                 }
             };
             let pw: String = if auth_password.is_null() {
                 String::new()
             } else {
-                match env.get_string(&auth_password) {
-                    Ok(s) => s.into(),
+                match auth_password.try_to_string(env) {
+                    Ok(s) => s,
                     Err(e) => {
-                        let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                        let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                         return 0;
                     }
                 }
@@ -295,7 +300,7 @@ jni_native! {
             builder = builder.auth(user, SecretString::from(pw));
         }
 
-        if keepalive == 0 {
+        if !keepalive {
             builder = builder.no_auto_keepalive(true);
         }
 
@@ -385,7 +390,7 @@ jni_native! {
 /// Shared control-call helper for pause/play. Clones the client Arc, locks, and
 /// runs `op`; maps any RtspError.
 fn session_control(
-    env: &mut JNIEnv,
+    env: &mut Env,
     handle: jlong,
     op: impl FnOnce(&mut RustRtspClient) -> Result<(), RtspError>,
 ) {
@@ -482,7 +487,7 @@ jni_native! {
             }
         };
         let transport = session.into_recv_transport();
-        let opts: Option<DemuxerConfig> = if with_config != 0 {
+        let opts: Option<DemuxerConfig> = if with_config {
             let Some(cfg) = build_demux_config_from_args(
                 env,
                 strict,
@@ -504,7 +509,7 @@ jni_native! {
         match demux_receiver_handle_from_transport(transport, opts) {
             Ok(h) => h,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.detail);
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.detail));
                 0
             }
         }
@@ -642,13 +647,13 @@ jni_native! {
         _env,
         _class,
         handle: jlong,
-    ) -> jboolean = 0 => {
-        // Absent/closed reads as torn down (1). A live session reads its atomic flag.
+    ) -> jboolean = false => {
+        // Absent/closed reads as torn down (true). A live session reads its atomic flag.
         REGISTRY_SESSION
             .with(handle as u64, |s| {
-                u8::from(s.torn_down.load(Ordering::Relaxed))
+                s.torn_down.load(Ordering::Relaxed)
             })
-            .unwrap_or(1)
+            .unwrap_or(true)
     }
 }
 

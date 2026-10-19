@@ -2,8 +2,12 @@
 //! binding modules. Extracted from `mpegts/mod.rs` where `wrap_heap_byte_buffer`
 //! originated; the klv module re-uses it for KLV byte payloads.
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JValue};
+use jni::signature::RuntimeFieldSignature;
+use jni::strings::JNIString;
 use jni::sys::jlong;
 use tst_core::error::KlvFieldError as RustKlvFieldError;
 use tst_core::klv::OwnedRawField;
@@ -26,14 +30,14 @@ pub fn decode_stream_handle<H, E>(
 /// memory, safe to retain past the next call / after `close()`. Used across
 /// the per-set KLV modules.
 pub fn wrap_heap_byte_buffer<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     bytes: &[u8],
 ) -> Result<JObject<'local>, ()> {
     let arr = env.byte_array_from_slice(bytes).map_err(|_| ())?;
     env.call_static_method(
-        "java/nio/ByteBuffer",
-        "wrap",
-        "([B)Ljava/nio/ByteBuffer;",
+        jni_str!("java/nio/ByteBuffer"),
+        jni_str!("wrap"),
+        jni_sig!("([B)Ljava/nio/ByteBuffer;"),
         &[JValue::Object(&arr)],
     )
     .map_err(|_| ())?
@@ -67,25 +71,25 @@ fn field_error_kind_and_tag(fe: &RustKlvFieldError) -> (&'static str, u32) {
 /// long-lived `list` ref (created in the outer frame) survives. Mirrors the
 /// forward-note on `build_pid_list` in `mpegts/mod.rs`.
 pub fn build_field_errors<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     errs: &[RustKlvFieldError],
 ) -> jni::errors::Result<JObject<'local>> {
-    let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+    let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
     for fe in errs {
         // 8 slots: comfortably covers the 3 element refs + JNI scratch per entry.
         env.with_local_frame(8, |env| -> jni::errors::Result<()> {
             let (kind_name, tag) = field_error_kind_and_tag(fe);
             let kind_obj = env
                 .get_static_field(
-                    "org/tstrans/klv/KlvFieldErrorKind",
-                    kind_name,
-                    "Lorg/tstrans/klv/KlvFieldErrorKind;",
+                    jni_str!("org/tstrans/klv/KlvFieldErrorKind"),
+                    JNIString::from(kind_name),
+                    jni_sig!("Lorg/tstrans/klv/KlvFieldErrorKind;"),
                 )?
                 .l()?;
             let msg = env.new_string(fe.to_string())?;
             let obj = env.new_object(
-                "org/tstrans/klv/KlvFieldError",
-                "(Lorg/tstrans/klv/KlvFieldErrorKind;JLjava/lang/String;)V",
+                jni_str!("org/tstrans/klv/KlvFieldError"),
+                jni_sig!("(Lorg/tstrans/klv/KlvFieldErrorKind;JLjava/lang/String;)V"),
                 &[
                     JValue::Object(&kind_obj),
                     JValue::Long(i64::from(tag)),
@@ -94,8 +98,8 @@ pub fn build_field_errors<'local>(
             )?;
             env.call_method(
                 &list,
-                "add",
-                "(Ljava/lang/Object;)Z",
+                jni_str!("add"),
+                jni_sig!("(Ljava/lang/Object;)Z"),
                 &[JValue::Object(&obj)],
             )?;
             Ok(())
@@ -114,31 +118,31 @@ pub fn build_field_errors<'local>(
 /// `with_local_frame` and reclaimed at the end of the iteration — only the
 /// long-lived `list` ref survives.
 pub fn build_unknown_list<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     fields: &[OwnedRawField],
 ) -> jni::errors::Result<JObject<'local>> {
-    let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+    let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
     for f in fields {
         // 8 slots: covers the byte[] + ByteBuffer + record refs + JNI scratch.
         env.with_local_frame(8, |env| -> jni::errors::Result<()> {
             let arr = env.byte_array_from_slice(&f.value)?;
             let buf = env
                 .call_static_method(
-                    "java/nio/ByteBuffer",
-                    "wrap",
-                    "([B)Ljava/nio/ByteBuffer;",
+                    jni_str!("java/nio/ByteBuffer"),
+                    jni_str!("wrap"),
+                    jni_sig!("([B)Ljava/nio/ByteBuffer;"),
                     &[JValue::Object(&arr)],
                 )?
                 .l()?;
             let obj = env.new_object(
-                "org/tstrans/klv/KlvUnknownField",
-                "(JLjava/nio/ByteBuffer;)V",
+                jni_str!("org/tstrans/klv/KlvUnknownField"),
+                jni_sig!("(JLjava/nio/ByteBuffer;)V"),
                 &[JValue::Long(i64::from(f.tag)), JValue::Object(&buf)],
             )?;
             env.call_method(
                 &list,
-                "add",
-                "(Ljava/lang/Object;)Z",
+                jni_str!("add"),
+                jni_sig!("(Ljava/lang/Object;)Z"),
                 &[JValue::Object(&obj)],
             )?;
             Ok(())
@@ -150,18 +154,22 @@ pub fn build_unknown_list<'local>(
 /// Build a `java.util.List<Long>` (an `ArrayList`) from an iterator of `i64`
 /// values. Used to expose `sentinel_tags` to callers.
 pub fn build_long_list<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     values: impl Iterator<Item = i64>,
 ) -> jni::errors::Result<JObject<'local>> {
-    let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+    let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
     for v in values {
         // Box the long into java.lang.Long, then add to the list.
         env.with_local_frame(4, |env| -> jni::errors::Result<()> {
-            let boxed = env.new_object("java/lang/Long", "(J)V", &[JValue::Long(v)])?;
+            let boxed = env.new_object(
+                jni_str!("java/lang/Long"),
+                jni_sig!("(J)V"),
+                &[JValue::Long(v)],
+            )?;
             env.call_method(
                 &list,
-                "add",
-                "(Ljava/lang/Object;)Z",
+                jni_str!("add"),
+                jni_sig!("(Ljava/lang/Object;)Z"),
                 &[JValue::Object(&boxed)],
             )?;
             Ok(())
@@ -184,15 +192,24 @@ pub fn build_long_list<'local>(
 /// aborts the JVM rather than throwing a catchable Java exception — the bug
 /// this helper closes. Callers narrow the raw `i64` values to their target
 /// width (`u32`, via `checked_u32`; a `u64` takes the bit pattern, `n as u64`) themselves.
-pub fn read_long_list(env: &mut JNIEnv, list: &JObject) -> jni::errors::Result<Vec<i64>> {
-    let size = env.call_method(list, "size", "()I", &[])?.i()?;
+pub fn read_long_list(env: &mut Env, list: &JObject) -> jni::errors::Result<Vec<i64>> {
+    let size = env
+        .call_method(list, jni_str!("size"), jni_sig!("()I"), &[])?
+        .i()?;
     let mut out = Vec::with_capacity(size.max(0) as usize);
     for i in 0..size {
         let v = env.with_local_frame(4, |inner_env| -> jni::errors::Result<i64> {
             let item = inner_env
-                .call_method(list, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                .call_method(
+                    list,
+                    jni_str!("get"),
+                    jni_sig!("(I)Ljava/lang/Object;"),
+                    &[JValue::Int(i)],
+                )?
                 .l()?;
-            inner_env.call_method(&item, "longValue", "()J", &[])?.j()
+            inner_env
+                .call_method(&item, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()
         })?;
         out.push(v);
     }
@@ -203,11 +220,13 @@ pub fn read_long_list(env: &mut JNIEnv, list: &JObject) -> jni::errors::Result<V
 /// dropping any entry whose tag collides with a typed tag (typed wins). Used by
 /// the per-set KLV modules (call sites assign the result back to `record.unknown`).
 pub fn read_unknown_list(
-    env: &mut JNIEnv,
+    env: &mut Env,
     list: &JObject,
     is_typed: impl Fn(u32) -> bool,
 ) -> jni::errors::Result<Vec<OwnedRawField>> {
-    let size = env.call_method(list, "size", "()I", &[])?.i()?;
+    let size = env
+        .call_method(list, jni_str!("size"), jni_sig!("()I"), &[])?
+        .i()?;
     let mut out = Vec::with_capacity(size.max(0) as usize);
     for i in 0..size {
         // Per-item local frame, like every other list reader in this module:
@@ -217,9 +236,16 @@ pub fn read_unknown_list(
         let field =
             env.with_local_frame(8, |env| -> jni::errors::Result<Option<OwnedRawField>> {
                 let item = env
-                    .call_method(list, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                    .call_method(
+                        list,
+                        jni_str!("get"),
+                        jni_sig!("(I)Ljava/lang/Object;"),
+                        &[JValue::Int(i)],
+                    )?
                     .l()?;
-                let tag_long = env.call_method(&item, "tag", "()J", &[])?.j()?;
+                let tag_long = env
+                    .call_method(&item, jni_str!("tag"), jni_sig!("()J"), &[])?
+                    .j()?;
                 // KLV BER-OID tags are u32; a Java `long` tag outside 0..=u32::MAX is
                 // out-of-range for a real field. Fail-closed (skip) rather than
                 // truncating it into a different tag value.
@@ -230,7 +256,12 @@ pub fn read_unknown_list(
                     return Ok(None); // typed field wins; drop this unknown entry
                 }
                 let buf_obj = env
-                    .call_method(&item, "value", "()Ljava/nio/ByteBuffer;", &[])?
+                    .call_method(
+                        &item,
+                        jni_str!("value"),
+                        jni_sig!("()Ljava/nio/ByteBuffer;"),
+                        &[],
+                    )?
                     .l()?;
                 // Use read_byte_buffer to honour position/limit and support direct buffers.
                 let value = read_byte_buffer(env, &buf_obj)?;
@@ -250,18 +281,26 @@ pub fn read_unknown_list(
 /// Read a `ByteBuffer`'s REMAINING bytes (honouring position/limit), without
 /// mutating the caller's buffer (operates on a duplicate). Works for heap AND
 /// direct buffers.
-pub fn read_byte_buffer(env: &mut JNIEnv, buf: &JObject) -> jni::errors::Result<Vec<u8>> {
+pub fn read_byte_buffer(env: &mut Env, buf: &JObject) -> jni::errors::Result<Vec<u8>> {
     // duplicate() gives us an independent position/limit view on the same data,
     // so we can call get([B) without advancing the caller's position.
     let dup = env
-        .call_method(buf, "duplicate", "()Ljava/nio/ByteBuffer;", &[])?
+        .call_method(
+            buf,
+            jni_str!("duplicate"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
+            &[],
+        )?
         .l()?;
-    let remaining = env.call_method(&dup, "remaining", "()I", &[])?.i()?;
-    let arr = env.new_byte_array(remaining)?;
+    let remaining = env
+        .call_method(&dup, jni_str!("remaining"), jni_sig!("()I"), &[])?
+        .i()?;
+    // `ByteBuffer.remaining()` is never negative.
+    let arr = env.new_byte_array(remaining.max(0) as usize)?;
     env.call_method(
         &dup,
-        "get",
-        "([B)Ljava/nio/ByteBuffer;",
+        jni_str!("get"),
+        jni_sig!("([B)Ljava/nio/ByteBuffer;"),
         &[JValue::Object(&arr)],
     )?;
     env.convert_byte_array(JByteArray::from(arr))
@@ -288,11 +327,11 @@ pub fn read_byte_buffer(env: &mut JNIEnv, buf: &JObject) -> jni::errors::Result<
 /// runs first in the entry point so nothing is pending. If the JNI env is
 /// that broken, a fallback throw would fail through the identical
 /// mechanism; `panic::jni_catch` remains the outer backstop.
-pub fn require_non_null(env: &mut JNIEnv, obj: &JObject, what: &str) -> jni::errors::Result<()> {
+pub fn require_non_null(env: &mut Env, obj: &JObject, what: &str) -> jni::errors::Result<()> {
     if obj.is_null() {
         let _ = env.throw_new(
-            "java/lang/NullPointerException",
-            format!("{what} must not be null"),
+            jni_str!("java/lang/NullPointerException"),
+            JNIString::from(format!("{what} must not be null")),
         );
         return Err(jni::errors::Error::JavaException);
     }
@@ -306,11 +345,11 @@ pub fn require_non_null(env: &mut JNIEnv, obj: &JObject, what: &str) -> jni::err
 /// Range-check a Java `int`/`long` value against the u8 range, then narrow.
 /// Throws `IllegalArgumentException` and returns `Err(JavaException)` on overflow
 /// (matches tst-py's `extract::<u8>()` fail-loud semantics).
-pub fn checked_u8(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Result<u8> {
+pub fn checked_u8(env: &mut Env, value: i64, field: &str) -> jni::errors::Result<u8> {
     if !(0..=255).contains(&value) {
         let _ = env.throw_new(
-            "java/lang/IllegalArgumentException",
-            format!("{field} must be 0..=255, got {value}"),
+            jni_str!("java/lang/IllegalArgumentException"),
+            JNIString::from(format!("{field} must be 0..=255, got {value}")),
         );
         return Err(jni::errors::Error::JavaException);
     }
@@ -319,11 +358,11 @@ pub fn checked_u8(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Res
 
 /// Range-check a Java `int`/`long` value against the u16 range, then narrow.
 /// Throws `IllegalArgumentException` and returns `Err(JavaException)` on overflow.
-pub fn checked_u16(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Result<u16> {
+pub fn checked_u16(env: &mut Env, value: i64, field: &str) -> jni::errors::Result<u16> {
     if !(0..=65535).contains(&value) {
         let _ = env.throw_new(
-            "java/lang/IllegalArgumentException",
-            format!("{field} must be 0..=65535, got {value}"),
+            jni_str!("java/lang/IllegalArgumentException"),
+            JNIString::from(format!("{field} must be 0..=65535, got {value}")),
         );
         return Err(jni::errors::Error::JavaException);
     }
@@ -332,11 +371,11 @@ pub fn checked_u16(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Re
 
 /// Range-check a Java `int` value against the i8 range, then narrow.
 /// Throws `IllegalArgumentException` and returns `Err(JavaException)` on overflow.
-pub fn checked_i8(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Result<i8> {
+pub fn checked_i8(env: &mut Env, value: i64, field: &str) -> jni::errors::Result<i8> {
     if !(-128..=127).contains(&value) {
         let _ = env.throw_new(
-            "java/lang/IllegalArgumentException",
-            format!("{field} must be -128..=127, got {value}"),
+            jni_str!("java/lang/IllegalArgumentException"),
+            JNIString::from(format!("{field} must be -128..=127, got {value}")),
         );
         return Err(jni::errors::Error::JavaException);
     }
@@ -345,11 +384,11 @@ pub fn checked_i8(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Res
 
 /// Range-check a Java `int` value against the i16 range, then narrow.
 /// Throws `IllegalArgumentException` and returns `Err(JavaException)` on overflow.
-pub fn checked_i16(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Result<i16> {
+pub fn checked_i16(env: &mut Env, value: i64, field: &str) -> jni::errors::Result<i16> {
     if !(-32768..=32767).contains(&value) {
         let _ = env.throw_new(
-            "java/lang/IllegalArgumentException",
-            format!("{field} must be -32768..=32767, got {value}"),
+            jni_str!("java/lang/IllegalArgumentException"),
+            JNIString::from(format!("{field} must be -32768..=32767, got {value}")),
         );
         return Err(jni::errors::Error::JavaException);
     }
@@ -358,11 +397,11 @@ pub fn checked_i16(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Re
 
 /// Range-check a Java `long` value against the u32 range, then narrow.
 /// Throws `IllegalArgumentException` and returns `Err(JavaException)` on overflow.
-pub fn checked_u32(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Result<u32> {
+pub fn checked_u32(env: &mut Env, value: i64, field: &str) -> jni::errors::Result<u32> {
     if !(0..=u32::MAX as i64).contains(&value) {
         let _ = env.throw_new(
-            "java/lang/IllegalArgumentException",
-            format!("{field} must be 0..=4294967295, got {value}"),
+            jni_str!("java/lang/IllegalArgumentException"),
+            JNIString::from(format!("{field} must be 0..=4294967295, got {value}")),
         );
         return Err(jni::errors::Error::JavaException);
     }
@@ -371,10 +410,10 @@ pub fn checked_u32(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Re
 
 /// Throws `IllegalArgumentException` for a required record component that is
 /// null, and returns the error that carries it.
-pub fn null_field(env: &mut JNIEnv, field: &str) -> jni::errors::Error {
+pub fn null_field(env: &mut Env, field: &str) -> jni::errors::Error {
     let _ = env.throw_new(
-        "java/lang/IllegalArgumentException",
-        format!("{field} must not be null"),
+        jni_str!("java/lang/IllegalArgumentException"),
+        JNIString::from(format!("{field} must not be null")),
     );
     jni::errors::Error::JavaException
 }
@@ -385,17 +424,24 @@ pub fn null_field(env: &mut JNIEnv, field: &str) -> jni::errors::Error {
 
 /// Read a nullable `Integer` accessor. Returns `None` for null.
 pub fn read_nullable_int(
-    env: &mut JNIEnv,
+    env: &mut Env,
     rec: &JObject,
     name: &str,
 ) -> jni::errors::Result<Option<i32>> {
     let obj = env
-        .call_method(rec, name, "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            rec,
+            JNIString::from(name),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     if obj.is_null() {
         return Ok(None);
     }
-    let v = env.call_method(&obj, "intValue", "()I", &[])?.i()?;
+    let v = env
+        .call_method(&obj, jni_str!("intValue"), jni_sig!("()I"), &[])?
+        .i()?;
     Ok(Some(v))
 }
 
@@ -410,11 +456,14 @@ pub fn join_host_port(host: &str, port: u16) -> String {
 }
 
 /// Read a Java `byte[]` argument, or throw `RuntimeException` + return `None`.
-pub fn read_bytes(env: &mut JNIEnv, arr: &JByteArray) -> Option<Vec<u8>> {
+pub fn read_bytes(env: &mut Env, arr: &JByteArray) -> Option<Vec<u8>> {
     match env.convert_byte_array(arr) {
         Ok(b) => Some(b),
         Err(e) => {
-            let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+            let _ = env.throw_new(
+                jni_str!("java/lang/RuntimeException"),
+                JNIString::from(e.to_string()),
+            );
             None
         }
     }
@@ -423,15 +472,21 @@ pub fn read_bytes(env: &mut JNIEnv, arr: &JByteArray) -> Option<Vec<u8>> {
 /// Fetch an `org.tstrans.<package>.<class>.<name>` enum constant via
 /// `get_static_field`.
 pub fn enum_const<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     package: &str,
     class: &str,
     name: &str,
 ) -> Result<JObject<'local>, ()> {
     let class_path = format!("org/tstrans/{package}/{class}");
     let descriptor = format!("Lorg/tstrans/{package}/{class};");
-    env.get_static_field(&class_path, name, &descriptor)
-        .map_err(|_| ())?
-        .l()
-        .map_err(|_| ())
+    env.get_static_field(
+        JNIString::from(&class_path),
+        JNIString::from(name),
+        RuntimeFieldSignature::from_str(&descriptor)
+            .map_err(|_| ())?
+            .field_signature(),
+    )
+    .map_err(|_| ())?
+    .l()
+    .map_err(|_| ())
 }

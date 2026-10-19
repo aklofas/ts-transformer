@@ -6,7 +6,7 @@
 //! This file holds no mapping tables of its own: the rtp and
 //! rtsp buckets are the shared `From` impls in `crates/tst-rtp/src/binding_kind.rs`.
 
-use jni::JNIEnv;
+use jni::Env;
 use tst_core::transport::TransportError;
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
 use tst_rtp::RtspError;
@@ -15,7 +15,7 @@ use tst_rtp::error::{MountError, RtspServerError};
 use crate::error::{Domain, throw_binding};
 
 /// `org.tstrans.RtpException(Kind.<kind.name()>, message)`.
-pub(crate) fn throw_rtp(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
+pub(crate) fn throw_rtp(env: &mut Env, kind: BindingErrorKind, message: &str) {
     throw_binding(env, Domain::Rtp, &BindingError::new(kind, message));
 }
 
@@ -24,14 +24,14 @@ pub(crate) fn throw_rtp(env: &mut JNIEnv, kind: BindingErrorKind, message: &str)
 /// `Backpressure → BACKPRESSURE` (the `?recv_timeout=` deadline; was `TIMEOUT`),
 /// `TooLarge → TOO_LARGE` (was `MALFORMED_PACKET`), `Broken → BROKEN`,
 /// `Closed → CLOSED` (both were `TRANSPORT`).
-pub(crate) fn transport_error(env: &mut JNIEnv, e: &TransportError) {
+pub(crate) fn transport_error(env: &mut Env, e: &TransportError) {
     throw_binding(env, Domain::Rtp, &BindingError::from(e.clone()));
 }
 
 /// `RtpUrl::parse` failures
 /// (`RtpUrlError`) — there is no bare `From<RtpUrlError>` (the type is shared with
 /// `rtsp://` parsing), so the bucket is fixed here: `URL` (was `TRANSPORT`).
-pub(crate) fn rtp_url_error(env: &mut JNIEnv, e: &tst_rtp::RtpUrlError) {
+pub(crate) fn rtp_url_error(env: &mut Env, e: &tst_rtp::RtpUrlError) {
     throw_rtp(env, BindingErrorKind::RtpUrl, &e.to_string());
 }
 
@@ -39,12 +39,12 @@ pub(crate) fn rtp_url_error(env: &mut JNIEnv, e: &tst_rtp::RtpUrlError) {
 /// failures — the shared `From<tst_rtp::RtpConnectError>`: one member per variant
 /// (`PAYLOAD_TYPE_PARAM` / `MISSING_PAYLOAD_TYPE_PARAM` / `URL` /
 /// `HOST_NOT_LITERAL` / `IO` / `IFACE_UNSUPPORTED`; all were `TRANSPORT`).
-pub(crate) fn connect_error(env: &mut JNIEnv, e: tst_rtp::RtpConnectError) {
+pub(crate) fn connect_error(env: &mut Env, e: tst_rtp::RtpConnectError) {
     throw_binding(env, Domain::Rtp, &BindingError::from(e));
 }
 
 /// `org.tstrans.RtspException(Kind.<kind.name()>, message)`.
-pub(crate) fn throw_rtsp(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
+pub(crate) fn throw_rtsp(env: &mut Env, kind: BindingErrorKind, message: &str) {
     throw_binding(env, Domain::Rtsp, &BindingError::new(kind, message));
 }
 
@@ -53,18 +53,18 @@ pub(crate) fn throw_rtsp(env: &mut JNIEnv, kind: BindingErrorKind, message: &str
 /// `AUTH_FAILED`) and the four SDP-media errors (`NoMp2tMedia` /
 /// `MultipleMp2tMedia` / `NoH264Media` / `MultipleH264Media`) → `NOT_FOUND`
 /// (was `MOUNT`). Everything else keeps its bucket.
-pub(crate) fn rtsp_error_to_jvm(env: &mut JNIEnv, e: RtspError) {
+pub(crate) fn rtsp_error_to_jvm(env: &mut Env, e: RtspError) {
     throw_binding(env, Domain::Rtsp, &BindingError::from(e));
 }
 
 /// RTSP server errors — the shared `From<RtspServerError>` (buckets unchanged).
-pub(crate) fn server_error_to_jvm(env: &mut JNIEnv, e: RtspServerError) {
+pub(crate) fn server_error_to_jvm(env: &mut Env, e: RtspServerError) {
     throw_binding(env, Domain::Rtsp, &BindingError::from(e));
 }
 
 /// Mount push errors — the shared `From<MountError>` (`Mux(_)` | `Closed` → `MOUNT`,
 /// as before). NOTE: this DIFFERS from the `MuxSender`, whose `Mux(...)` is a
 /// `MuxException` — `MountHandle` pushes are `MOUNT`.
-pub(crate) fn mount_error_to_jvm(env: &mut JNIEnv, e: MountError) {
+pub(crate) fn mount_error_to_jvm(env: &mut Env, e: MountError) {
     throw_binding(env, Domain::Rtsp, &BindingError::from(e));
 }

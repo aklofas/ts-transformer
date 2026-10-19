@@ -239,7 +239,7 @@ fn a_vec_of_records_is_built_and_read_inside_local_frames() {
     let reg = reg();
     let raw = emit_jvm_rs::record_pair(&reg, named(&reg, "ListFixture")).unwrap();
     assert!(
-        raw.contains("with_local_frame_returning_local::<_, jni::errors::Error>(16"),
+        raw.contains("with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16"),
         "{raw}"
     );
     assert!(
@@ -256,7 +256,7 @@ fn a_vec_of_records_is_built_and_read_inside_local_frames() {
     let want = concat!(
         "for item in r.bands.iter() { ",
         "env.with_local_frame::<_, (), jni::errors::Error>(16, |env| { ",
-        "let o1 = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| ",
+        "let o1 = env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| ",
         "crate::generated::st0601::build_wavelength_record(env, item))?;",
     );
     assert!(raw.contains(want), "{raw}");
@@ -302,7 +302,7 @@ fn a_wide_record_is_built_through_its_builder() {
     let want = concat!(
         "    if let Some(v) = &r.opt_text { ",
         "let o2 = env.new_string(v)?; ",
-        "env.call_method(&b, \"optText\", ",
+        "env.call_method(&b, jni_str!(\"optText\"), ",
     );
     assert!(raw.contains(want), "{raw}");
     let (build, read) = raw
@@ -1413,7 +1413,7 @@ fn nested_records_are_built_in_frames_and_scalars_are_boxed_with_value_of() {
     let reg = reg();
     // A record field and an optional record field, past the constructor limit.
     let rich = emit_jvm_rs::record_pair(&reg, named(&reg, "RichFixture")).unwrap();
-    let frame = "env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| ";
+    let frame = "env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| ";
     assert!(
         rich.contains(&format!(
             "let g = {frame}crate::generated::st0601::build_wavelength_record(env, &r.g))?;"
@@ -1430,14 +1430,19 @@ fn nested_records_are_built_in_frames_and_scalars_are_boxed_with_value_of() {
     let opt = emit_jvm_rs::record_pair(&reg, named(&reg, "OptFixture")).unwrap();
     assert!(
         opt.contains(
-            "env.call_static_method(\"java/lang/Long\", \"valueOf\", \"(J)Ljava/lang/Long;\", &["
+            "env.call_static_method(jni_str!(\"java/lang/Long\"), jni_str!(\"valueOf\"), jni_sig!(\"(J)Ljava/lang/Long;\"), &["
         ),
         "{opt}"
     );
-    assert!(!opt.contains("new_object(\"java/lang/Long\""), "{opt}");
+    assert!(
+        !opt.contains("new_object(jni_str!(\"java/lang/Long\")"),
+        "{opt}"
+    );
     // A Builder sets an optional scalar by its primitive, unboxed.
     assert!(
-        rich.contains("\"optCount\", \"(J)Lorg/tstrans/klv/RichFixture$Builder;\""),
+        rich.contains(
+            "jni_str!(\"optCount\"), jni_sig!(\"(J)Lorg/tstrans/klv/RichFixture$Builder;\")"
+        ),
         "{rich}"
     );
     let java = emit_java::block(&reg, named(&reg, "RichFixture")).unwrap();

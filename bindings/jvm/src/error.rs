@@ -4,8 +4,12 @@
 //! it. Call these, then return a Rust default from the JNI fn — the pending
 //! Java exception is raised when control returns to the JVM.
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JObject, JThrowable, JValue};
+use jni::signature::{RuntimeFieldSignature, RuntimeMethodSignature};
+use jni::strings::JNIString;
 use tst_core::codec::CodecParseError;
 use tst_core::error::{KlvDecodeError, KlvEncodeError};
 use tst_pipeline::binding::kind::{kind_of_klv_decode, kind_of_klv_field};
@@ -34,10 +38,10 @@ pub struct CodecErrFields {
 /// Shared helper for every JNI site that guards a closed/consumed handle.
 /// The exception class and message text are identical to what the inline sites
 /// used to emit; Java tests that assert on the message will see no difference.
-pub fn throw_closed(env: &mut JNIEnv, what: &str) {
+pub fn throw_closed(env: &mut Env, what: &str) {
     let _ = env.throw_new(
-        "java/lang/IllegalStateException",
-        format!("{what} is closed"),
+        jni_str!("java/lang/IllegalStateException"),
+        JNIString::from(format!("{what} is closed")),
     );
 }
 
@@ -53,6 +57,16 @@ pub(crate) use tst_pipeline::binding::Domain;
 
 /// JNI class of the domain's exception. A domain the JVM binding does not
 /// expose (`java_exception_class` is `None`) falls back to `RuntimeException`.
+/// `Env::throw` reports a successful throw as `Err(JavaException)` (jni
+/// 0.22); the throw helpers here keep returning `Ok(())` for it, so their
+/// callers' "throw failed" fallback still means only a real failure.
+fn thrown(r: jni::errors::Result<()>) -> jni::errors::Result<()> {
+    match r {
+        Err(jni::errors::Error::JavaException) => Ok(()),
+        other => other,
+    }
+}
+
 pub(crate) fn exc_class(domain: Domain) -> &'static str {
     domain
         .java_exception_class()
@@ -68,14 +82,17 @@ pub(crate) fn exc_class(domain: Domain) -> &'static str {
 /// Bails if an exception is already pending. A kind the domain does not
 /// declare is a programming error (a producer nobody listed) and throws a
 /// `RuntimeException` naming it — loud, never a wrong-kind exception.
-pub(crate) fn throw_binding(env: &mut JNIEnv, domain: Domain, e: &BindingError) {
-    if env.exception_check().unwrap_or(false) {
+pub(crate) fn throw_binding(env: &mut Env, domain: Domain, e: &BindingError) {
+    if env.exception_check() {
         return; // don't clobber an already-pending exception
     }
     if e.kind == BindingErrorKind::Internal && !domain.kinds().contains(&e.kind) {
         // As Python raises RuntimeError: an internal failure on a domain
         // whose Kind enum has no INTERNAL member (demux) is not a domain error.
-        let _ = env.throw_new("java/lang/RuntimeException", e.detail.as_str());
+        let _ = env.throw_new(
+            jni_str!("java/lang/RuntimeException"),
+            JNIString::from(e.detail.as_str()),
+        );
         return;
     }
     let class = exc_class(domain);
@@ -86,11 +103,11 @@ pub(crate) fn throw_binding(env: &mut JNIEnv, domain: Domain, e: &BindingError) 
     if let Err(err) = throw_kinded(env, class, &kind_sig, member, &e.detail) {
         let simple_name = class.rsplit('/').next().unwrap_or(class);
         let _ = env.throw_new(
-            "java/lang/RuntimeException",
-            format!(
+            jni_str!("java/lang/RuntimeException"),
+            JNIString::from(format!(
                 "{simple_name} throw failed ({}): {err}",
                 e.kind.variant_name()
-            ),
+            )),
         );
     }
 }
@@ -99,7 +116,7 @@ pub(crate) fn throw_binding(env: &mut JNIEnv, domain: Domain, e: &BindingError) 
 /// `RuntimeException` naming the undeclared kind (a producer nobody
 /// listed — loud, never a wrong-kind exception).
 pub(crate) fn declared_member(
-    env: &mut JNIEnv,
+    env: &mut Env,
     domain: Domain,
     kind: BindingErrorKind,
     detail: &str,
@@ -110,16 +127,16 @@ pub(crate) fn declared_member(
     // Callers that reach this directly (the `KlvEncodeException` /
     // `CodecParseException` throwers) have no `throw_binding`
     // wrapper above them, so guard here too: never clobber a pending exception.
-    if env.exception_check().unwrap_or(false) {
+    if env.exception_check() {
         return None;
     }
     let _ = env.throw_new(
-        "java/lang/RuntimeException",
-        format!(
+        jni_str!("java/lang/RuntimeException"),
+        JNIString::from(format!(
             "tst-jni: kind {} is not declared for {}$Kind (add it to `Domain::kinds` in kind.rs and regenerate the Java enum); detail: {detail}",
             kind.variant_name(),
             exc_class(domain)
-        ),
+        )),
     );
     None
 }
@@ -132,32 +149,32 @@ pub(crate) fn declared_member(
 /// `RuntimeException("native panic in tst-jni: …")` [`crate::panic::jni_catch`]
 /// already produces for an uncaught panic, so a panic reads the same whether
 /// `Owned::with_mut` or the outer boundary caught it.
-pub(crate) fn throw_handle_state(env: &mut JNIEnv, what: &str, state: &HandleState) {
-    if env.exception_check().unwrap_or(false) {
+pub(crate) fn throw_handle_state(env: &mut Env, what: &str, state: &HandleState) {
+    if env.exception_check() {
         return;
     }
     match state {
         HandleState::Closed => throw_closed(env, what),
         HandleState::Poisoned => {
             let _ = env.throw_new(
-                "java/lang/IllegalStateException",
-                format!(
+                jni_str!("java/lang/IllegalStateException"),
+                JNIString::from(format!(
                     "{what} is poisoned: a previous native call panicked while holding its lock"
-                ),
+                )),
             );
         }
         HandleState::Panicked { detail } => {
             let _ = env.throw_new(
-                "java/lang/RuntimeException",
-                format!("native panic in tst-jni: {detail}"),
+                jni_str!("java/lang/RuntimeException"),
+                JNIString::from(format!("native panic in tst-jni: {detail}")),
             );
         }
         // `HandleState` is #[non_exhaustive]: a future state is a closed
         // handle as far as the Java caller can act on it.
         other => {
             let _ = env.throw_new(
-                "java/lang/IllegalStateException",
-                format!("{what} is unusable: {other:?}"),
+                jni_str!("java/lang/IllegalStateException"),
+                JNIString::from(format!("{what} is unusable: {other:?}")),
             );
         }
     }
@@ -178,7 +195,7 @@ pub(crate) fn throw_handle_state(env: &mut JNIEnv, what: &str, state: &HandleSta
 /// does not report local-ref accumulation. The field ID
 /// lookup validates the member name AND its signature identically while
 /// minting no object reference at all.
-pub(crate) fn verify_kind_tables(env: &mut JNIEnv) {
+pub(crate) fn verify_kind_tables(env: &mut Env) {
     for domain in Domain::ALL
         .iter()
         .copied()
@@ -187,15 +204,21 @@ pub(crate) fn verify_kind_tables(env: &mut JNIEnv) {
         let kind_class = format!("{}$Kind", exc_class(domain));
         let kind_sig = format!("L{kind_class};");
         for kind in domain.kinds() {
-            let resolved = env.get_static_field_id(&kind_class, kind.name(), &kind_sig);
-            if resolved.is_err() || env.exception_check().unwrap_or(false) {
-                let _ = env.exception_clear();
+            let resolved = RuntimeFieldSignature::from_str(&kind_sig).and_then(|sig| {
+                env.get_static_field_id(
+                    JNIString::from(&kind_class),
+                    JNIString::from(kind.name()),
+                    sig.field_signature(),
+                )
+            });
+            if resolved.is_err() || env.exception_check() {
+                env.exception_clear();
                 let _ = env.throw_new(
-                    "java/lang/IllegalStateException",
-                    format!(
+                    jni_str!("java/lang/IllegalStateException"),
+                    JNIString::from(format!(
                         "tst-jni kind table mismatch: {kind_class} has no member {} (BindingErrorKind::{kind:?}); the JAR and libtstjni were built from different sources",
                         kind.name()
-                    ),
+                    )),
                 );
                 return;
             }
@@ -206,20 +229,20 @@ pub(crate) fn verify_kind_tables(env: &mut JNIEnv) {
 /// Construct + throw `org.tstrans.DemuxException(Kind.<kind>, message)`.
 /// `kind` MUST be one of the `DemuxException.Kind` enum constant names
 /// (SCREAMING_SNAKE_CASE), matching the Rust `DemuxError` variants 1:1.
-pub fn throw_demux(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
+pub fn throw_demux(env: &mut Env, kind: BindingErrorKind, message: &str) {
     throw_binding(env, Domain::Demux, &BindingError::new(kind, message));
 }
 
 /// Construct + throw `org.tstrans.MuxException(Kind.<kind>, message)`.
 /// `kind` MUST be one of the `MuxException.Kind` enum constant names
 /// (SCREAMING_SNAKE_CASE), matching the 5-variant `MuxErrorKind` buckets.
-pub fn throw_mux(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
+pub fn throw_mux(env: &mut Env, kind: BindingErrorKind, message: &str) {
     throw_binding(env, Domain::Mux, &BindingError::new(kind, message));
 }
 
 /// Construct + throw `org.tstrans.KlvDecodeException(Kind.<kind>, message)`.
 /// The kind is resolved to its Java member by [`declared_member`].
-pub fn throw_klv_decode(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
+pub fn throw_klv_decode(env: &mut Env, kind: BindingErrorKind, message: &str) {
     throw_binding(env, Domain::KlvDecode, &BindingError::new(kind, message));
 }
 
@@ -227,7 +250,7 @@ pub fn throw_klv_decode(env: &mut JNIEnv, kind: BindingErrorKind, message: &str)
 /// (`klv/mod.rs::nRaiseDecodeForTest`): the test names a Java member directly,
 /// so there is no `BindingErrorKind` to resolve. Never used on a real error
 /// path — those all go through [`throw_klv_decode`].
-pub fn throw_klv_decode_raw(env: &mut JNIEnv, member: &str, message: &str) {
+pub fn throw_klv_decode_raw(env: &mut Env, member: &str, message: &str) {
     throw_family(
         env,
         "org/tstrans/KlvDecodeException",
@@ -239,22 +262,22 @@ pub fn throw_klv_decode_raw(env: &mut JNIEnv, member: &str, message: &str) {
 
 /// [`throw_klv_decode_raw`]'s encode twin (`klv/mod.rs::nRaiseEncodeForTest`).
 /// `tag` = `None` → the `(Kind, String)` ctor; `Some(t)` → `(Kind, Long, String)`.
-pub fn throw_klv_encode_raw(env: &mut JNIEnv, member: &str, tag: Option<u64>, message: &str) {
-    if env.exception_check().unwrap_or(false) {
+pub fn throw_klv_encode_raw(env: &mut Env, member: &str, tag: Option<u64>, message: &str) {
+    if env.exception_check() {
         return;
     }
     if let Err(e) = throw_klv_encode_inner(env, member, tag, message) {
         let _ = env.throw_new(
-            "java/lang/RuntimeException",
-            format!("KlvEncodeException throw failed ({member}): {e}"),
+            jni_str!("java/lang/RuntimeException"),
+            JNIString::from(format!("KlvEncodeException throw failed ({member}): {e}")),
         );
     }
 }
 
 /// Construct + throw `org.tstrans.KlvEncodeException(Kind, [Long tag,] String)`.
 /// `tag` = `None` → the `(Kind, String)` ctor; `Some(t)` → `(Kind, Long, String)`.
-pub fn throw_klv_encode(env: &mut JNIEnv, kind: BindingErrorKind, tag: Option<u64>, message: &str) {
-    if env.exception_check().unwrap_or(false) {
+pub fn throw_klv_encode(env: &mut Env, kind: BindingErrorKind, tag: Option<u64>, message: &str) {
+    if env.exception_check() {
         return; // don't clobber an already-pending exception
     }
     // The wider (Kind, Long, String) ctor keeps its own builder; the kind check
@@ -265,32 +288,43 @@ pub fn throw_klv_encode(env: &mut JNIEnv, kind: BindingErrorKind, tag: Option<u6
     if let Err(e) = throw_klv_encode_inner(env, member, tag, message) {
         // Fallback: a plain RuntimeException so the failure is never silent.
         let _ = env.throw_new(
-            "java/lang/RuntimeException",
-            format!(
+            jni_str!("java/lang/RuntimeException"),
+            JNIString::from(format!(
                 "KlvEncodeException throw failed ({}): {e}",
                 kind.variant_name()
-            ),
+            )),
         );
     }
 }
 
 fn throw_klv_encode_inner(
-    env: &mut JNIEnv,
+    env: &mut Env,
     kind: &str,
     tag: Option<u64>,
     message: &str,
 ) -> jni::errors::Result<()> {
     let kind_sig = "Lorg/tstrans/KlvEncodeException$Kind;";
     let kind_val = env
-        .get_static_field("org/tstrans/KlvEncodeException$Kind", kind, kind_sig)?
+        .get_static_field(
+            jni_str!("org/tstrans/KlvEncodeException$Kind"),
+            JNIString::from(kind),
+            RuntimeFieldSignature::from_str(kind_sig)?.field_signature(),
+        )?
         .l()?;
     let msg = env.new_string(message)?;
     let exc = match tag {
         Some(t) => {
-            let boxed = env.new_object("java/lang/Long", "(J)V", &[JValue::Long(t as i64)])?;
+            let boxed = env.new_object(
+                jni_str!("java/lang/Long"),
+                jni_sig!("(J)V"),
+                &[JValue::Long(t as i64)],
+            )?;
             env.new_object(
-                "org/tstrans/KlvEncodeException",
-                format!("({kind_sig}Ljava/lang/Long;Ljava/lang/String;)V"),
+                jni_str!("org/tstrans/KlvEncodeException"),
+                RuntimeMethodSignature::from_str(format!(
+                    "({kind_sig}Ljava/lang/Long;Ljava/lang/String;)V"
+                ))?
+                .method_signature(),
                 &[
                     JValue::Object(&kind_val),
                     JValue::Object(&boxed),
@@ -299,12 +333,13 @@ fn throw_klv_encode_inner(
             )?
         }
         None => env.new_object(
-            "org/tstrans/KlvEncodeException",
-            format!("({kind_sig}Ljava/lang/String;)V"),
+            jni_str!("org/tstrans/KlvEncodeException"),
+            RuntimeMethodSignature::from_str(format!("({kind_sig}Ljava/lang/String;)V"))?
+                .method_signature(),
             &[JValue::Object(&kind_val), JValue::Object(&msg)],
         )?,
     };
-    env.throw(JThrowable::from(exc))
+    thrown(env.throw(env.cast_local::<JThrowable>(exc)?))
 }
 
 /// Map + throw a Rust `KlvDecodeError` through the shared classifier — one source of
@@ -312,7 +347,7 @@ fn throw_klv_encode_inner(
 /// carry is gone). `FieldError` routes through `kind_of_klv_field` so a field
 /// error keeps its own classification rather than collapsing into the
 /// enclosing-set bucket.
-pub fn map_klv_decode_error(env: &mut JNIEnv, e: &KlvDecodeError) {
+pub fn map_klv_decode_error(env: &mut Env, e: &KlvDecodeError) {
     let kind = match e {
         KlvDecodeError::FieldError(f) => kind_of_klv_field(f),
         other => kind_of_klv_decode(other),
@@ -323,7 +358,7 @@ pub fn map_klv_decode_error(env: &mut JNIEnv, e: &KlvDecodeError) {
 /// Map + throw a Rust `KlvEncodeError`. The kind and the exception's `tag`
 /// (a KLV tag, or a VTarget id) come from the binding envelope the error
 /// converts to. Used by the per-set JNI fns.
-pub fn map_klv_encode_error(env: &mut JNIEnv, e: KlvEncodeError) {
+pub fn map_klv_encode_error(env: &mut Env, e: KlvEncodeError) {
     let b = BindingError::from(e);
     throw_klv_encode(env, b.kind, b.diagnostics.tag, &b.detail);
 }
@@ -333,13 +368,13 @@ pub fn map_klv_encode_error(env: &mut JNIEnv, e: KlvEncodeError) {
 /// `message` (LAST arg) is the exception's
 /// `getMessage()` text — call sites pass the Rust `Display` string.
 pub fn throw_codec(
-    env: &mut JNIEnv,
+    env: &mut Env,
     kind: BindingErrorKind,
     codec: &str,
     fields: &CodecErrFields,
     message: &str,
 ) {
-    if env.exception_check().unwrap_or(false) {
+    if env.exception_check() {
         return; // don't clobber an already-pending exception
     }
     // The wider fielded ctor keeps its own builder; the kind check and member
@@ -350,28 +385,32 @@ pub fn throw_codec(
     if let Err(e) = throw_codec_inner(env, member, codec, fields, message) {
         // Fallback: a plain RuntimeException so the failure is never silent.
         let _ = env.throw_new(
-            "java/lang/RuntimeException",
-            format!(
+            jni_str!("java/lang/RuntimeException"),
+            JNIString::from(format!(
                 "CodecParseException throw failed ({}): {e}",
                 kind.variant_name()
-            ),
+            )),
         );
     }
 }
 
 /// Box an `Option<i32>` into a `java.lang.Integer` (or null) JNI argument.
 fn boxed_int<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     v: Option<i32>,
 ) -> jni::errors::Result<JObject<'local>> {
     match v {
-        Some(n) => env.new_object("java/lang/Integer", "(I)V", &[JValue::Int(n)]),
+        Some(n) => env.new_object(
+            jni_str!("java/lang/Integer"),
+            jni_sig!("(I)V"),
+            &[JValue::Int(n)],
+        ),
         None => Ok(JObject::null()),
     }
 }
 
 fn throw_codec_inner(
-    env: &mut JNIEnv,
+    env: &mut Env,
     kind: &str,
     codec: &str,
     fields: &CodecErrFields,
@@ -383,7 +422,11 @@ fn throw_codec_inner(
     env.ensure_local_capacity(20)?;
     let kind_sig = "Lorg/tstrans/CodecParseException$Kind;";
     let kind_val = env
-        .get_static_field("org/tstrans/CodecParseException$Kind", kind, kind_sig)?
+        .get_static_field(
+            jni_str!("org/tstrans/CodecParseException$Kind"),
+            JNIString::from(kind),
+            RuntimeFieldSignature::from_str(kind_sig)?.field_signature(),
+        )?
         .l()?;
     let codec_str = env.new_string(codec)?;
     let field_str = match &fields.field {
@@ -413,8 +456,8 @@ Ljava/lang/Integer;Ljava/lang/Integer;\
 Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;\
 Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)V";
     let exc = env.new_object(
-        "org/tstrans/CodecParseException",
-        ctor_sig,
+        jni_str!("org/tstrans/CodecParseException"),
+        RuntimeMethodSignature::from_str(ctor_sig)?.method_signature(),
         &[
             JValue::Object(&kind_val),
             JValue::Object(&codec_str),
@@ -432,7 +475,7 @@ Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)V";
             JValue::Object(&layer),
         ],
     )?;
-    env.throw(JThrowable::from(exc))
+    thrown(env.throw(env.cast_local::<JThrowable>(exc)?))
 }
 
 /// The exception's integer and string fields from a codec failure's
@@ -471,7 +514,7 @@ fn codec_fields(d: &Diagnostics) -> CodecErrFields {
 /// Map + throw a Rust `CodecParseError`. The kind and the exception's fields
 /// come from the binding envelope the error converts to. `codec` is a short
 /// lowercase codec name (e.g. `"h264"`).
-pub fn map_codec_parse_error(env: &mut JNIEnv, e: &CodecParseError, codec: &str) {
+pub fn map_codec_parse_error(env: &mut Env, e: &CodecParseError, codec: &str) {
     let b = BindingError::from(e.clone());
     throw_codec(env, b.kind, codec, &codec_fields(&b.diagnostics), &b.detail);
 }
@@ -479,22 +522,28 @@ pub fn map_codec_parse_error(env: &mut JNIEnv, e: &CodecParseError, codec: &str)
 /// Shared builder: looks up `Kind.<kind>` static field, calls the
 /// `(<kind_sig>, String)` constructor, throws the result.
 pub(crate) fn throw_kinded(
-    env: &mut JNIEnv,
+    env: &mut Env,
     exc_class: &str,
     kind_sig: &str,
     kind: &str,
     message: &str,
 ) -> jni::errors::Result<()> {
     let kind_class = format!("{exc_class}$Kind");
-    let kind_val = env.get_static_field(&kind_class, kind, kind_sig)?.l()?;
+    let kind_val = env
+        .get_static_field(
+            JNIString::from(&kind_class),
+            JNIString::from(kind),
+            RuntimeFieldSignature::from_str(kind_sig)?.field_signature(),
+        )?
+        .l()?;
     let msg = env.new_string(message)?;
     let ctor_sig = format!("({kind_sig}Ljava/lang/String;)V");
     let exc: JObject = env.new_object(
-        exc_class,
-        &ctor_sig,
+        JNIString::from(exc_class),
+        RuntimeMethodSignature::from_str(&ctor_sig)?.method_signature(),
         &[JValue::Object(&kind_val), JValue::Object(&msg)],
     )?;
-    env.throw(jni::objects::JThrowable::from(exc))
+    thrown(env.throw(env.cast_local::<jni::objects::JThrowable>(exc)?))
 }
 
 /// Shared per-family wrapper around [`throw_kinded`]: bails if an exception is
@@ -505,21 +554,21 @@ pub(crate) fn throw_kinded(
 /// `rtp::errors`) calls this — the per-family fn names stay because the jvm
 /// error-mapping ratchet greps for `throw_<family>(env, "<KIND>", ...)`.
 pub(crate) fn throw_family(
-    env: &mut JNIEnv,
+    env: &mut Env,
     exc_class: &str,
     kind_sig: &str,
     kind: &str,
     message: &str,
 ) {
-    if env.exception_check().unwrap_or(false) {
+    if env.exception_check() {
         return; // don't clobber an already-pending exception
     }
     if let Err(e) = throw_kinded(env, exc_class, kind_sig, kind, message) {
         // Fallback: a plain RuntimeException so the failure is never silent.
         let simple_name = exc_class.rsplit('/').next().unwrap_or(exc_class);
         let _ = env.throw_new(
-            "java/lang/RuntimeException",
-            format!("{simple_name} throw failed ({kind}): {e}"),
+            jni_str!("java/lang/RuntimeException"),
+            JNIString::from(format!("{simple_name} throw failed ({kind}): {e}")),
         );
     }
 }

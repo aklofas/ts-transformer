@@ -20,8 +20,11 @@
 //! typed frames on `Sample` payloads.
 
 use crate::panic::jni_native;
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JValue};
+use jni::strings::JNIString;
 use jni::sys::jobject;
 use tst_core::codec::mpegaudio::{
     ChannelMode, FrameOwned, Layer, Version, frames, frames_with_resync,
@@ -31,24 +34,25 @@ use crate::error::map_codec_parse_error;
 use crate::generated::codec::build_frame_owned;
 
 /// Build the Java `org.tstrans.codec.Layer` enum constant.
-pub(crate) fn build_layer<'local>(
-    env: &mut JNIEnv<'local>,
-    l: Layer,
-) -> Result<JObject<'local>, ()> {
+pub(crate) fn build_layer<'local>(env: &mut Env<'local>, l: Layer) -> Result<JObject<'local>, ()> {
     let name = match l {
         Layer::I => "I",
         Layer::II => "II",
         Layer::III => "III",
     };
-    env.get_static_field("org/tstrans/codec/Layer", name, "Lorg/tstrans/codec/Layer;")
-        .map_err(|_| ())?
-        .l()
-        .map_err(|_| ())
+    env.get_static_field(
+        jni_str!("org/tstrans/codec/Layer"),
+        JNIString::from(name),
+        jni_sig!("Lorg/tstrans/codec/Layer;"),
+    )
+    .map_err(|_| ())?
+    .l()
+    .map_err(|_| ())
 }
 
 /// Build the Java `org.tstrans.codec.Version` enum constant.
 pub(crate) fn build_version<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     v: Version,
 ) -> Result<JObject<'local>, ()> {
     let name = match v {
@@ -57,9 +61,9 @@ pub(crate) fn build_version<'local>(
         Version::Mpeg2_5 => "MPEG2_5",
     };
     env.get_static_field(
-        "org/tstrans/codec/Version",
-        name,
-        "Lorg/tstrans/codec/Version;",
+        jni_str!("org/tstrans/codec/Version"),
+        JNIString::from(name),
+        jni_sig!("Lorg/tstrans/codec/Version;"),
     )
     .map_err(|_| ())?
     .l()
@@ -68,7 +72,7 @@ pub(crate) fn build_version<'local>(
 
 /// Build the Java `org.tstrans.codec.ChannelMode` enum constant.
 pub(crate) fn build_channel_mode<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     m: ChannelMode,
 ) -> Result<JObject<'local>, ()> {
     let name = match m {
@@ -78,9 +82,9 @@ pub(crate) fn build_channel_mode<'local>(
         ChannelMode::Mono => "MONO",
     };
     env.get_static_field(
-        "org/tstrans/codec/ChannelMode",
-        name,
-        "Lorg/tstrans/codec/ChannelMode;",
+        jni_str!("org/tstrans/codec/ChannelMode"),
+        JNIString::from(name),
+        jni_sig!("Lorg/tstrans/codec/ChannelMode;"),
     )
     .map_err(|_| ())?
     .l()
@@ -90,19 +94,19 @@ pub(crate) fn build_channel_mode<'local>(
 /// Build a `java.util.ArrayList<Mpeg2AudioFrame>` from owned frames; each frame
 /// is constructed inside a per-element local frame so its refs are reclaimed.
 fn build_frame_list<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     frames: &[FrameOwned],
 ) -> Result<JObject<'local>, ()> {
     let list = env
-        .new_object("java/util/ArrayList", "()V", &[])
+        .new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])
         .map_err(|_| ())?;
     for f in frames {
         env.with_local_frame(24, |inner| {
             let val = build_frame_owned(inner, f)?;
             inner.call_method(
                 &list,
-                "add",
-                "(Ljava/lang/Object;)Z",
+                jni_str!("add"),
+                jni_sig!("(Ljava/lang/Object;)Z"),
                 &[JValue::Object(&val)],
             )?;
             Ok::<(), jni::errors::Error>(())

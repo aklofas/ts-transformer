@@ -2,8 +2,10 @@
 //! crate's opener; all six schemes are always built (the JVM binding has no
 //! transport features).
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_str;
 use jni::objects::JString;
+use jni::strings::JNIString;
 use tst_core::transport::{RecvTransport, Transport};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened};
 
@@ -15,23 +17,26 @@ fn domain_of(url: &str) -> Option<Domain> {
 }
 
 /// Read the Java `String`, throwing `RuntimeException` on a JNI failure.
-pub(super) fn read_url(env: &mut JNIEnv, url: &JString) -> Option<String> {
-    match env.get_string(url) {
-        Ok(s) => Some(s.into()),
+pub(super) fn read_url(env: &mut Env, url: &JString) -> Option<String> {
+    match url.try_to_string(env) {
+        Ok(s) => Some(s),
         Err(e) => {
-            let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+            let _ = env.throw_new(
+                jni_str!("java/lang/RuntimeException"),
+                JNIString::from(e.to_string()),
+            );
             None
         }
     }
 }
 
 /// `IllegalArgumentException` for a scheme no shell opens.
-fn unsupported(env: &mut JNIEnv, url: &str) {
+fn unsupported(env: &mut Env, url: &str) {
     let _ = env.throw_new(
-        "java/lang/IllegalArgumentException",
-        format!(
+        jni_str!("java/lang/IllegalArgumentException"),
+        JNIString::from(format!(
             "unsupported URL scheme in {url:?}; expected one of: srt, rtp, udp, tcp, tcps, rist"
-        ),
+        )),
     );
 }
 
@@ -46,7 +51,7 @@ fn unreachable_scheme<T>() -> Result<T, BindingError> {
 
 /// Open a send transport for a shell. `None` with an exception pending on a
 /// bad scheme or a failed open.
-pub(super) fn open_send(env: &mut JNIEnv, url: &str) -> Option<Opened<Box<dyn Transport>>> {
+pub(super) fn open_send(env: &mut Env, url: &str) -> Option<Opened<Box<dyn Transport>>> {
     let Some(domain) = domain_of(url) else {
         unsupported(env, url);
         return None;
@@ -71,7 +76,7 @@ pub(super) fn open_send(env: &mut JNIEnv, url: &str) -> Option<Opened<Box<dyn Tr
 /// Open a receive transport for a shell. An `srt://` open takes a fresh,
 /// never-fired accept slot: no cancel handle exists until the shell does, so
 /// the first accept inside a blocking open stays uncancellable.
-pub(super) fn open_recv(env: &mut JNIEnv, url: &str) -> Option<Opened<Box<dyn RecvTransport>>> {
+pub(super) fn open_recv(env: &mut Env, url: &str) -> Option<Opened<Box<dyn RecvTransport>>> {
     let Some(domain) = domain_of(url) else {
         unsupported(env, url);
         return None;

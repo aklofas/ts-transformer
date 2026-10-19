@@ -542,8 +542,8 @@ removed). The converters are hand-written functions with these signatures:
 |---|---|---|
 | Python | `<record>_<field>_to_py` | `(py: Python<'_>, &Rust) -> PyResult<PyObject>` |
 | Python | `<record>_<field>_from_py` | `(obj: &Bound<'_, PyAny>) -> PyResult<Rust>`; receives the record object and reads the field itself |
-| JVM | `build_<record>_<field>` | `(env: &mut JNIEnv<'l>, &Rust) -> jni::errors::Result<JObject<'l>>`; `null` for an absent value |
-| JVM | `read_<record>_<field>` | `(env: &mut JNIEnv<'_>, obj: &JObject<'_>) -> jni::errors::Result<Rust>`; receives the record object and reads the field itself |
+| JVM | `build_<record>_<field>` | `(env: &mut Env<'l>, &Rust) -> jni::errors::Result<JObject<'l>>`; `null` for an absent value |
+| JVM | `read_<record>_<field>` | `(env: &mut Env<'_>, obj: &JObject<'_>) -> jni::errors::Result<Rust>`; receives the record object and reads the field itself |
 
 A custom row whose Java type is a primitive (`PayloadType`, a Java `long`) is
 a required field only: its `build_<record>_<field>` returns that primitive

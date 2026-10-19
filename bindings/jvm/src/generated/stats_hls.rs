@@ -3,17 +3,17 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
+use jni::{Env, jni_sig, jni_str};
 
 pub(crate) fn build_mux_publisher_stats<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_pipeline::MuxPublisherStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(38)?;
     let obj = env.new_object(
-        "org/tstrans/hls/MuxPublisherStats",
-        "(JJJ)V",
+        jni_str!("org/tstrans/hls/MuxPublisherStats"),
+        jni_sig!("(JJJ)V"),
         &[
             JValue::Long(r.bytes_pushed as i64),
             JValue::Long(r.drain_calls as i64),
@@ -24,13 +24,13 @@ pub(crate) fn build_mux_publisher_stats<'l>(
 }
 
 pub(crate) fn build_hls_stats<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_hls::HlsStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(40)?;
     let obj = env.new_object(
-        "org/tstrans/hls/HlsStats",
-        "(JJJJ)V",
+        jni_str!("org/tstrans/hls/HlsStats"),
+        jni_sig!("(JJJJ)V"),
         &[
             JValue::Long(r.segments_written as i64),
             JValue::Long(r.bytes_pushed_total as i64),

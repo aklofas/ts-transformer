@@ -24,7 +24,7 @@ jni_native! {
         _class,
         kind: JString<'local>,
     ) = () => {
-        let k: String = env.get_string(&kind).map(Into::into).unwrap_or_default();
+        let k: String = kind.try_to_string(env).unwrap_or_default();
         crate::error::throw_klv_decode_raw(env, &k, "forced decode error for test");
     }
 }
@@ -38,7 +38,7 @@ jni_native! {
         _class,
         kind: JString<'local>,
     ) = () => {
-        let k: String = env.get_string(&kind).map(Into::into).unwrap_or_default();
+        let k: String = kind.try_to_string(env).unwrap_or_default();
         crate::error::throw_klv_encode_raw(env, &k, None, "forced encode error for test");
     }
 }

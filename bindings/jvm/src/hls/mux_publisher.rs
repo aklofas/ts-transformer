@@ -16,7 +16,7 @@
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 
-use jni::JNIEnv;
+use jni::Env;
 use jni::objects::{JBooleanArray, JByteArray, JIntArray};
 use jni::sys::{jboolean, jint, jlong, jobject};
 
@@ -37,7 +37,7 @@ type Inner = RustMuxPublisher<HlsPublisher>;
 static REGISTRY: LazyLock<HandleRegistry<Inner>> = LazyLock::new(HandleRegistry::new);
 
 fn with_shell(
-    env: &mut JNIEnv,
+    env: &mut Env,
     handle: jlong,
     op: impl FnOnce(&Inner) -> Result<(), MuxPublisherError<HlsError>>,
 ) {
@@ -126,7 +126,7 @@ jni_native! {
             return;
         };
         with_shell(env, handle, |s| {
-            s.push_video(&buf, Pts90khz::new(pts), key_frame != 0)
+            s.push_video(&buf, Pts90khz::new(pts), key_frame)
         });
     }
 }

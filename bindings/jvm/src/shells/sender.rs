@@ -18,7 +18,9 @@
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JString};
+use jni::strings::JNIString;
 use jni::sys::{jboolean, jlong};
 use tst_core::transport::Transport;
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
@@ -86,7 +88,7 @@ jni_native! {
         let bytes: Vec<u8> = match env.convert_byte_array(&data) {
             Ok(b) => b,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return;
             }
         };
@@ -187,8 +189,8 @@ jni_native! {
             }
             None => {
                 let _ = env.throw_new(
-                    "java/lang/UnsupportedOperationException",
-                    "srtStats() is only available on an srt:// shell",
+                    jni_str!("java/lang/UnsupportedOperationException"),
+                    jni_str!("srtStats() is only available on an srt:// shell"),
                 );
                 JObject::null()
             }
@@ -210,7 +212,7 @@ jni_native! {
 jni_native! {
     /// Whether the sender owns a live transport. Non-blocking: a `sendBytes`
     /// parked on another thread holds the slot, and reads as alive.
-    fn Java_org_tstrans_shells_Sender_nIsAlive(_env, _class, handle: jlong) -> jboolean = 0 => {
-        u8::from(REGISTRY.is_alive(handle as u64, |s| s.is_alive()))
+    fn Java_org_tstrans_shells_Sender_nIsAlive(_env, _class, handle: jlong) -> jboolean = false => {
+        REGISTRY.is_alive(handle as u64, |s| s.is_alive())
     }
 }
