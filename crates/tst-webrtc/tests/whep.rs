@@ -1,6 +1,8 @@
 //! Pure (socket-free) integration tests. Tests that open a socket live in
 //! the `net_whep` binary.
 
+#[path = "whep/binding.rs"]
+mod binding;
 #[path = "whep/packetize_h264.rs"]
 mod packetize_h264;
 #[path = "whep/packetize_h265.rs"]

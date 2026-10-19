@@ -132,6 +132,28 @@ impl core::marker::Unpin for tst_webrtc::error::WhepServerError
 impl core::marker::UnsafeUnpin for tst_webrtc::error::WhepServerError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::error::WhepServerError
 impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::error::WhepServerError
+pub mod tst_webrtc::mount
+pub struct tst_webrtc::mount::MountHandle
+impl tst_webrtc::mount::MountHandle
+pub fn tst_webrtc::mount::MountHandle::config(&self) -> &tst_webrtc::config::MountConfig
+pub fn tst_webrtc::mount::MountHandle::mount_path(&self) -> &str
+pub fn tst_webrtc::mount::MountHandle::push_audio(&self, &[u8], tst_core::mpegts::common::Pts90khz) -> core::result::Result<(), tst_webrtc::error::PushError>
+pub fn tst_webrtc::mount::MountHandle::push_klv(&self, &[u8], tst_core::mpegts::common::Pts90khz, u8) -> core::result::Result<(), tst_webrtc::error::PushError>
+pub fn tst_webrtc::mount::MountHandle::push_ts(&self, &[u8]) -> core::result::Result<(), tst_webrtc::error::PushError>
+pub fn tst_webrtc::mount::MountHandle::push_video(&self, &[u8], tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<(), tst_webrtc::error::PushError>
+pub fn tst_webrtc::mount::MountHandle::sessions(&self) -> alloc::vec::Vec<tst_webrtc::stats::SessionStats>
+pub fn tst_webrtc::mount::MountHandle::stats(&self) -> tst_webrtc::stats::MountStats
+impl core::clone::Clone for tst_webrtc::mount::MountHandle
+pub fn tst_webrtc::mount::MountHandle::clone(&self) -> tst_webrtc::mount::MountHandle
+impl core::fmt::Debug for tst_webrtc::mount::MountHandle
+pub fn tst_webrtc::mount::MountHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_webrtc::mount::MountHandle
+impl core::marker::Send for tst_webrtc::mount::MountHandle
+impl core::marker::Sync for tst_webrtc::mount::MountHandle
+impl core::marker::Unpin for tst_webrtc::mount::MountHandle
+impl core::marker::UnsafeUnpin for tst_webrtc::mount::MountHandle
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::mount::MountHandle
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::mount::MountHandle
 pub mod tst_webrtc::packetize
 pub use tst_webrtc::packetize::RtpPayload
 pub struct tst_webrtc::packetize::H264Packetizer
@@ -201,6 +223,122 @@ pub const tst_webrtc::sei::TST_KLV_SEI_UUID: [u8; 16]
 pub fn tst_webrtc::sei::build_klv_sei_nal(tst_core::codec::vocabulary::VideoCodec, u64, &[u8]) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::codec::misp_time::MispTimeError>
 pub fn tst_webrtc::sei::extract_klv_seis(&[u8], tst_core::codec::vocabulary::VideoCodec) -> alloc::vec::Vec<tst_webrtc::sei::KlvSei>
 pub fn tst_webrtc::sei::parse_klv_sei_rbsp(&[u8]) -> core::option::Option<tst_webrtc::sei::KlvSei>
+pub mod tst_webrtc::stats
+#[non_exhaustive] pub enum tst_webrtc::stats::IceState
+pub tst_webrtc::stats::IceState::Checking
+pub tst_webrtc::stats::IceState::Closed
+pub tst_webrtc::stats::IceState::Connected
+pub tst_webrtc::stats::IceState::Disconnected
+pub tst_webrtc::stats::IceState::Failed
+pub tst_webrtc::stats::IceState::New
+impl core::clone::Clone for tst_webrtc::stats::IceState
+pub fn tst_webrtc::stats::IceState::clone(&self) -> tst_webrtc::stats::IceState
+impl core::cmp::Eq for tst_webrtc::stats::IceState
+impl core::cmp::PartialEq for tst_webrtc::stats::IceState
+pub fn tst_webrtc::stats::IceState::eq(&self, &tst_webrtc::stats::IceState) -> bool
+impl core::fmt::Debug for tst_webrtc::stats::IceState
+pub fn tst_webrtc::stats::IceState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_webrtc::stats::IceState
+impl core::marker::StructuralPartialEq for tst_webrtc::stats::IceState
+impl core::marker::Freeze for tst_webrtc::stats::IceState
+impl core::marker::Send for tst_webrtc::stats::IceState
+impl core::marker::Sync for tst_webrtc::stats::IceState
+impl core::marker::Unpin for tst_webrtc::stats::IceState
+impl core::marker::UnsafeUnpin for tst_webrtc::stats::IceState
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::stats::IceState
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::stats::IceState
+#[non_exhaustive] pub struct tst_webrtc::stats::MountStats
+pub tst_webrtc::stats::MountStats::audio_frames_dropped: u64
+pub tst_webrtc::stats::MountStats::audio_frames_pushed: u64
+pub tst_webrtc::stats::MountStats::demux_nonconformant: u64
+pub tst_webrtc::stats::MountStats::frames_pushed: u64
+pub tst_webrtc::stats::MountStats::keyframe_flag_mismatch: u64
+pub tst_webrtc::stats::MountStats::keyframes_pushed: u64
+pub tst_webrtc::stats::MountStats::klv_dc_dropped_oversize: u64
+pub tst_webrtc::stats::MountStats::klv_dc_messages_sent: u64
+pub tst_webrtc::stats::MountStats::klv_records_dropped_unbound: u64
+pub tst_webrtc::stats::MountStats::klv_records_pushed: u64
+pub tst_webrtc::stats::MountStats::klv_sei_dropped_oversize: u64
+pub tst_webrtc::stats::MountStats::klv_sei_inserted: u64
+pub tst_webrtc::stats::MountStats::nacks_received: u64
+pub tst_webrtc::stats::MountStats::plis_received: u64
+pub tst_webrtc::stats::MountStats::rtp_clock_rebases: u64
+pub tst_webrtc::stats::MountStats::viewer_packets_dropped_queue_full: u64
+pub tst_webrtc::stats::MountStats::viewers: u64
+pub tst_webrtc::stats::MountStats::viewers_waiting_keyframe: u64
+impl core::clone::Clone for tst_webrtc::stats::MountStats
+pub fn tst_webrtc::stats::MountStats::clone(&self) -> tst_webrtc::stats::MountStats
+impl core::cmp::Eq for tst_webrtc::stats::MountStats
+impl core::cmp::PartialEq for tst_webrtc::stats::MountStats
+pub fn tst_webrtc::stats::MountStats::eq(&self, &tst_webrtc::stats::MountStats) -> bool
+impl core::default::Default for tst_webrtc::stats::MountStats
+pub fn tst_webrtc::stats::MountStats::default() -> tst_webrtc::stats::MountStats
+impl core::fmt::Debug for tst_webrtc::stats::MountStats
+pub fn tst_webrtc::stats::MountStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_webrtc::stats::MountStats
+impl core::marker::Freeze for tst_webrtc::stats::MountStats
+impl core::marker::Send for tst_webrtc::stats::MountStats
+impl core::marker::Sync for tst_webrtc::stats::MountStats
+impl core::marker::Unpin for tst_webrtc::stats::MountStats
+impl core::marker::UnsafeUnpin for tst_webrtc::stats::MountStats
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::stats::MountStats
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::stats::MountStats
+#[non_exhaustive] pub struct tst_webrtc::stats::ServerStats
+pub tst_webrtc::stats::ServerStats::active_sessions: u64
+pub tst_webrtc::stats::ServerStats::datagrams_unrouted: u64
+pub tst_webrtc::stats::ServerStats::mounts: u64
+pub tst_webrtc::stats::ServerStats::rtp_bytes_sent: u64
+pub tst_webrtc::stats::ServerStats::rtp_packets_sent: u64
+pub tst_webrtc::stats::ServerStats::sessions_reaped_disconnected: u64
+pub tst_webrtc::stats::ServerStats::sessions_reaped_ice_timeout: u64
+pub tst_webrtc::stats::ServerStats::sessions_rejected_auth: u64
+pub tst_webrtc::stats::ServerStats::sessions_rejected_cap: u64
+pub tst_webrtc::stats::ServerStats::sessions_rejected_codec: u64
+pub tst_webrtc::stats::ServerStats::sessions_total: u64
+impl core::clone::Clone for tst_webrtc::stats::ServerStats
+pub fn tst_webrtc::stats::ServerStats::clone(&self) -> tst_webrtc::stats::ServerStats
+impl core::cmp::Eq for tst_webrtc::stats::ServerStats
+impl core::cmp::PartialEq for tst_webrtc::stats::ServerStats
+pub fn tst_webrtc::stats::ServerStats::eq(&self, &tst_webrtc::stats::ServerStats) -> bool
+impl core::default::Default for tst_webrtc::stats::ServerStats
+pub fn tst_webrtc::stats::ServerStats::default() -> tst_webrtc::stats::ServerStats
+impl core::fmt::Debug for tst_webrtc::stats::ServerStats
+pub fn tst_webrtc::stats::ServerStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_webrtc::stats::ServerStats
+impl core::marker::Freeze for tst_webrtc::stats::ServerStats
+impl core::marker::Send for tst_webrtc::stats::ServerStats
+impl core::marker::Sync for tst_webrtc::stats::ServerStats
+impl core::marker::Unpin for tst_webrtc::stats::ServerStats
+impl core::marker::UnsafeUnpin for tst_webrtc::stats::ServerStats
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::stats::ServerStats
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::stats::ServerStats
+#[non_exhaustive] pub struct tst_webrtc::stats::SessionStats
+pub tst_webrtc::stats::SessionStats::connected_for: core::option::Option<core::time::Duration>
+pub tst_webrtc::stats::SessionStats::dc_messages: u64
+pub tst_webrtc::stats::SessionStats::ice_state: tst_webrtc::stats::IceState
+pub tst_webrtc::stats::SessionStats::id: alloc::string::String
+pub tst_webrtc::stats::SessionStats::mount_path: alloc::string::String
+pub tst_webrtc::stats::SessionStats::nacks: u64
+pub tst_webrtc::stats::SessionStats::packets_dropped_queue_full: u64
+pub tst_webrtc::stats::SessionStats::plis: u64
+pub tst_webrtc::stats::SessionStats::remote_addr: core::option::Option<core::net::socket_addr::SocketAddr>
+pub tst_webrtc::stats::SessionStats::rtp_bytes: u64
+pub tst_webrtc::stats::SessionStats::rtp_packets: u64
+impl core::clone::Clone for tst_webrtc::stats::SessionStats
+pub fn tst_webrtc::stats::SessionStats::clone(&self) -> tst_webrtc::stats::SessionStats
+impl core::cmp::Eq for tst_webrtc::stats::SessionStats
+impl core::cmp::PartialEq for tst_webrtc::stats::SessionStats
+pub fn tst_webrtc::stats::SessionStats::eq(&self, &tst_webrtc::stats::SessionStats) -> bool
+impl core::fmt::Debug for tst_webrtc::stats::SessionStats
+pub fn tst_webrtc::stats::SessionStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_webrtc::stats::SessionStats
+impl core::marker::Freeze for tst_webrtc::stats::SessionStats
+impl core::marker::Send for tst_webrtc::stats::SessionStats
+impl core::marker::Sync for tst_webrtc::stats::SessionStats
+impl core::marker::Unpin for tst_webrtc::stats::SessionStats
+impl core::marker::UnsafeUnpin for tst_webrtc::stats::SessionStats
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::stats::SessionStats
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::stats::SessionStats
 pub mod tst_webrtc::url
 pub struct tst_webrtc::url::WhepUrl
 pub tst_webrtc::url::WhepUrl::addr: core::net::ip_addr::IpAddr
@@ -249,6 +387,29 @@ impl core::marker::Unpin for tst_webrtc::config::AudioPolicy
 impl core::marker::UnsafeUnpin for tst_webrtc::config::AudioPolicy
 impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::config::AudioPolicy
 impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::config::AudioPolicy
+#[non_exhaustive] pub enum tst_webrtc::IceState
+pub tst_webrtc::IceState::Checking
+pub tst_webrtc::IceState::Closed
+pub tst_webrtc::IceState::Connected
+pub tst_webrtc::IceState::Disconnected
+pub tst_webrtc::IceState::Failed
+pub tst_webrtc::IceState::New
+impl core::clone::Clone for tst_webrtc::stats::IceState
+pub fn tst_webrtc::stats::IceState::clone(&self) -> tst_webrtc::stats::IceState
+impl core::cmp::Eq for tst_webrtc::stats::IceState
+impl core::cmp::PartialEq for tst_webrtc::stats::IceState
+pub fn tst_webrtc::stats::IceState::eq(&self, &tst_webrtc::stats::IceState) -> bool
+impl core::fmt::Debug for tst_webrtc::stats::IceState
+pub fn tst_webrtc::stats::IceState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_webrtc::stats::IceState
+impl core::marker::StructuralPartialEq for tst_webrtc::stats::IceState
+impl core::marker::Freeze for tst_webrtc::stats::IceState
+impl core::marker::Send for tst_webrtc::stats::IceState
+impl core::marker::Sync for tst_webrtc::stats::IceState
+impl core::marker::Unpin for tst_webrtc::stats::IceState
+impl core::marker::UnsafeUnpin for tst_webrtc::stats::IceState
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::stats::IceState
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::stats::IceState
 #[non_exhaustive] pub enum tst_webrtc::KlvCarriage
 pub tst_webrtc::KlvCarriage::DataChannelOnly
 pub tst_webrtc::KlvCarriage::SeiAndDataChannel
@@ -359,3 +520,116 @@ impl core::marker::Unpin for tst_webrtc::config::MountConfig
 impl core::marker::UnsafeUnpin for tst_webrtc::config::MountConfig
 impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::config::MountConfig
 impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::config::MountConfig
+pub struct tst_webrtc::MountHandle
+impl tst_webrtc::mount::MountHandle
+pub fn tst_webrtc::mount::MountHandle::config(&self) -> &tst_webrtc::config::MountConfig
+pub fn tst_webrtc::mount::MountHandle::mount_path(&self) -> &str
+pub fn tst_webrtc::mount::MountHandle::push_audio(&self, &[u8], tst_core::mpegts::common::Pts90khz) -> core::result::Result<(), tst_webrtc::error::PushError>
+pub fn tst_webrtc::mount::MountHandle::push_klv(&self, &[u8], tst_core::mpegts::common::Pts90khz, u8) -> core::result::Result<(), tst_webrtc::error::PushError>
+pub fn tst_webrtc::mount::MountHandle::push_ts(&self, &[u8]) -> core::result::Result<(), tst_webrtc::error::PushError>
+pub fn tst_webrtc::mount::MountHandle::push_video(&self, &[u8], tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<(), tst_webrtc::error::PushError>
+pub fn tst_webrtc::mount::MountHandle::sessions(&self) -> alloc::vec::Vec<tst_webrtc::stats::SessionStats>
+pub fn tst_webrtc::mount::MountHandle::stats(&self) -> tst_webrtc::stats::MountStats
+impl core::clone::Clone for tst_webrtc::mount::MountHandle
+pub fn tst_webrtc::mount::MountHandle::clone(&self) -> tst_webrtc::mount::MountHandle
+impl core::fmt::Debug for tst_webrtc::mount::MountHandle
+pub fn tst_webrtc::mount::MountHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_webrtc::mount::MountHandle
+impl core::marker::Send for tst_webrtc::mount::MountHandle
+impl core::marker::Sync for tst_webrtc::mount::MountHandle
+impl core::marker::Unpin for tst_webrtc::mount::MountHandle
+impl core::marker::UnsafeUnpin for tst_webrtc::mount::MountHandle
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::mount::MountHandle
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::mount::MountHandle
+#[non_exhaustive] pub struct tst_webrtc::MountStats
+pub tst_webrtc::MountStats::audio_frames_dropped: u64
+pub tst_webrtc::MountStats::audio_frames_pushed: u64
+pub tst_webrtc::MountStats::demux_nonconformant: u64
+pub tst_webrtc::MountStats::frames_pushed: u64
+pub tst_webrtc::MountStats::keyframe_flag_mismatch: u64
+pub tst_webrtc::MountStats::keyframes_pushed: u64
+pub tst_webrtc::MountStats::klv_dc_dropped_oversize: u64
+pub tst_webrtc::MountStats::klv_dc_messages_sent: u64
+pub tst_webrtc::MountStats::klv_records_dropped_unbound: u64
+pub tst_webrtc::MountStats::klv_records_pushed: u64
+pub tst_webrtc::MountStats::klv_sei_dropped_oversize: u64
+pub tst_webrtc::MountStats::klv_sei_inserted: u64
+pub tst_webrtc::MountStats::nacks_received: u64
+pub tst_webrtc::MountStats::plis_received: u64
+pub tst_webrtc::MountStats::rtp_clock_rebases: u64
+pub tst_webrtc::MountStats::viewer_packets_dropped_queue_full: u64
+pub tst_webrtc::MountStats::viewers: u64
+pub tst_webrtc::MountStats::viewers_waiting_keyframe: u64
+impl core::clone::Clone for tst_webrtc::stats::MountStats
+pub fn tst_webrtc::stats::MountStats::clone(&self) -> tst_webrtc::stats::MountStats
+impl core::cmp::Eq for tst_webrtc::stats::MountStats
+impl core::cmp::PartialEq for tst_webrtc::stats::MountStats
+pub fn tst_webrtc::stats::MountStats::eq(&self, &tst_webrtc::stats::MountStats) -> bool
+impl core::default::Default for tst_webrtc::stats::MountStats
+pub fn tst_webrtc::stats::MountStats::default() -> tst_webrtc::stats::MountStats
+impl core::fmt::Debug for tst_webrtc::stats::MountStats
+pub fn tst_webrtc::stats::MountStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_webrtc::stats::MountStats
+impl core::marker::Freeze for tst_webrtc::stats::MountStats
+impl core::marker::Send for tst_webrtc::stats::MountStats
+impl core::marker::Sync for tst_webrtc::stats::MountStats
+impl core::marker::Unpin for tst_webrtc::stats::MountStats
+impl core::marker::UnsafeUnpin for tst_webrtc::stats::MountStats
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::stats::MountStats
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::stats::MountStats
+#[non_exhaustive] pub struct tst_webrtc::ServerStats
+pub tst_webrtc::ServerStats::active_sessions: u64
+pub tst_webrtc::ServerStats::datagrams_unrouted: u64
+pub tst_webrtc::ServerStats::mounts: u64
+pub tst_webrtc::ServerStats::rtp_bytes_sent: u64
+pub tst_webrtc::ServerStats::rtp_packets_sent: u64
+pub tst_webrtc::ServerStats::sessions_reaped_disconnected: u64
+pub tst_webrtc::ServerStats::sessions_reaped_ice_timeout: u64
+pub tst_webrtc::ServerStats::sessions_rejected_auth: u64
+pub tst_webrtc::ServerStats::sessions_rejected_cap: u64
+pub tst_webrtc::ServerStats::sessions_rejected_codec: u64
+pub tst_webrtc::ServerStats::sessions_total: u64
+impl core::clone::Clone for tst_webrtc::stats::ServerStats
+pub fn tst_webrtc::stats::ServerStats::clone(&self) -> tst_webrtc::stats::ServerStats
+impl core::cmp::Eq for tst_webrtc::stats::ServerStats
+impl core::cmp::PartialEq for tst_webrtc::stats::ServerStats
+pub fn tst_webrtc::stats::ServerStats::eq(&self, &tst_webrtc::stats::ServerStats) -> bool
+impl core::default::Default for tst_webrtc::stats::ServerStats
+pub fn tst_webrtc::stats::ServerStats::default() -> tst_webrtc::stats::ServerStats
+impl core::fmt::Debug for tst_webrtc::stats::ServerStats
+pub fn tst_webrtc::stats::ServerStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_webrtc::stats::ServerStats
+impl core::marker::Freeze for tst_webrtc::stats::ServerStats
+impl core::marker::Send for tst_webrtc::stats::ServerStats
+impl core::marker::Sync for tst_webrtc::stats::ServerStats
+impl core::marker::Unpin for tst_webrtc::stats::ServerStats
+impl core::marker::UnsafeUnpin for tst_webrtc::stats::ServerStats
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::stats::ServerStats
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::stats::ServerStats
+#[non_exhaustive] pub struct tst_webrtc::SessionStats
+pub tst_webrtc::SessionStats::connected_for: core::option::Option<core::time::Duration>
+pub tst_webrtc::SessionStats::dc_messages: u64
+pub tst_webrtc::SessionStats::ice_state: tst_webrtc::stats::IceState
+pub tst_webrtc::SessionStats::id: alloc::string::String
+pub tst_webrtc::SessionStats::mount_path: alloc::string::String
+pub tst_webrtc::SessionStats::nacks: u64
+pub tst_webrtc::SessionStats::packets_dropped_queue_full: u64
+pub tst_webrtc::SessionStats::plis: u64
+pub tst_webrtc::SessionStats::remote_addr: core::option::Option<core::net::socket_addr::SocketAddr>
+pub tst_webrtc::SessionStats::rtp_bytes: u64
+pub tst_webrtc::SessionStats::rtp_packets: u64
+impl core::clone::Clone for tst_webrtc::stats::SessionStats
+pub fn tst_webrtc::stats::SessionStats::clone(&self) -> tst_webrtc::stats::SessionStats
+impl core::cmp::Eq for tst_webrtc::stats::SessionStats
+impl core::cmp::PartialEq for tst_webrtc::stats::SessionStats
+pub fn tst_webrtc::stats::SessionStats::eq(&self, &tst_webrtc::stats::SessionStats) -> bool
+impl core::fmt::Debug for tst_webrtc::stats::SessionStats
+pub fn tst_webrtc::stats::SessionStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_webrtc::stats::SessionStats
+impl core::marker::Freeze for tst_webrtc::stats::SessionStats
+impl core::marker::Send for tst_webrtc::stats::SessionStats
+impl core::marker::Sync for tst_webrtc::stats::SessionStats
+impl core::marker::Unpin for tst_webrtc::stats::SessionStats
+impl core::marker::UnsafeUnpin for tst_webrtc::stats::SessionStats
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::stats::SessionStats
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::stats::SessionStats

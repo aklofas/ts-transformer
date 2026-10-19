@@ -1,0 +1,198 @@
+//! Statistics for the server, its mounts and their viewer sessions.
+
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+/// Counters of one mount, read with
+/// [`MountHandle::stats`](crate::MountHandle::stats).
+///
+/// The push calls write the frame, KLV, audio and RTP-clock counters. The
+/// viewer counts and the PLI, NACK, data-channel and per-viewer queue
+/// counters are written by the server's media thread, and the demuxer
+/// counter by an MP2T mount's demuxer; a mount without those writers
+/// reports them as 0.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MountStats {
+    /// Access units accepted by `push_video`.
+    pub frames_pushed: u64,
+    /// Accepted access units forwarded as keyframes: an IDR picture with
+    /// parameter sets in the access unit or cached from an earlier one.
+    pub keyframes_pushed: u64,
+    /// Access units whose `key_frame` flag disagreed with the presence of
+    /// an IDR NAL unit. The NAL units decide; the flag is advisory.
+    pub keyframe_flag_mismatch: u64,
+    /// Viewer sessions currently attached to the mount.
+    pub viewers: u64,
+    /// Attached viewers that have not received a keyframe yet.
+    pub viewers_waiting_keyframe: u64,
+    /// KLV records accepted by `push_klv`.
+    pub klv_records_pushed: u64,
+    /// KLV records dropped before any frame carried them, because the
+    /// queue of records waiting for a frame was full.
+    pub klv_records_dropped_unbound: u64,
+    /// KLV records carried in an SEI message.
+    pub klv_sei_inserted: u64,
+    /// KLV records left out of the SEI because they did not fit the
+    /// access unit's SEI budget.
+    pub klv_sei_dropped_oversize: u64,
+    /// KLV messages sent on viewers' data channels.
+    pub klv_dc_messages_sent: u64,
+    /// KLV records refused because they exceed the data-channel message
+    /// limit.
+    pub klv_dc_dropped_oversize: u64,
+    /// Audio frames forwarded to viewers.
+    pub audio_frames_pushed: u64,
+    /// Audio frames discarded by the mount's audio policy.
+    pub audio_frames_dropped: u64,
+    /// Picture loss indications received from viewers.
+    pub plis_received: u64,
+    /// NACKs received from viewers.
+    pub nacks_received: u64,
+    /// Frames and KLV messages dropped because the server's media queue
+    /// or a viewer's packet queue was full.
+    pub viewer_packets_dropped_queue_full: u64,
+    /// Times the RTP clock was rebased after a PTS jump.
+    pub rtp_clock_rebases: u64,
+    /// Non-conformances reported by an MP2T mount's demuxer.
+    pub demux_nonconformant: u64,
+}
+
+/// Counters of the whole server.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ServerStats {
+    /// Mounts currently registered.
+    pub mounts: u64,
+    /// Viewer sessions currently open.
+    pub active_sessions: u64,
+    /// Viewer sessions opened since the server started.
+    pub sessions_total: u64,
+    /// Session offers refused because a viewer cap was reached.
+    pub sessions_rejected_cap: u64,
+    /// Session offers refused because no offered codec matched the mount.
+    pub sessions_rejected_codec: u64,
+    /// Session offers refused by authentication.
+    pub sessions_rejected_auth: u64,
+    /// Sessions closed because ICE did not connect in time.
+    pub sessions_reaped_ice_timeout: u64,
+    /// Sessions closed after the viewer disconnected.
+    pub sessions_reaped_disconnected: u64,
+    /// RTP packets sent to all viewers.
+    pub rtp_packets_sent: u64,
+    /// RTP bytes sent to all viewers.
+    pub rtp_bytes_sent: u64,
+    /// Datagrams that matched no session.
+    pub datagrams_unrouted: u64,
+}
+
+/// Statistics of one viewer session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SessionStats {
+    /// The session's identifier, the last segment of its resource URL.
+    pub id: String,
+    /// The path of the mount the session plays.
+    pub mount_path: String,
+    /// The viewer's address once ICE has selected one.
+    pub remote_addr: Option<SocketAddr>,
+    /// The session's ICE connection state.
+    pub ice_state: IceState,
+    /// How long the session has been connected, once it is.
+    pub connected_for: Option<Duration>,
+    /// RTP packets sent to the viewer.
+    pub rtp_packets: u64,
+    /// RTP bytes sent to the viewer.
+    pub rtp_bytes: u64,
+    /// NACKs received from the viewer.
+    pub nacks: u64,
+    /// Picture loss indications received from the viewer.
+    pub plis: u64,
+    /// KLV messages sent on the viewer's data channel.
+    pub dc_messages: u64,
+    /// Packets dropped because the viewer's queue was full.
+    pub packets_dropped_queue_full: u64,
+}
+
+/// The ICE connection state of a viewer session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IceState {
+    /// No connectivity check has run yet.
+    New,
+    /// Connectivity checks are running.
+    Checking,
+    /// A candidate pair is selected and media flows.
+    Connected,
+    /// Consent was lost; the session may recover.
+    Disconnected,
+    /// ICE failed; the session will be closed.
+    Failed,
+    /// The session is closed.
+    Closed,
+}
+
+/// The live counters behind [`MountStats`], one atomic per field.
+#[derive(Debug, Default)]
+pub(crate) struct MountCounters {
+    pub(crate) frames_pushed: AtomicU64,
+    pub(crate) keyframes_pushed: AtomicU64,
+    pub(crate) keyframe_flag_mismatch: AtomicU64,
+    /// Written by the media thread.
+    pub(crate) viewers: AtomicU64,
+    /// Written by the media thread.
+    pub(crate) viewers_waiting_keyframe: AtomicU64,
+    pub(crate) klv_records_pushed: AtomicU64,
+    pub(crate) klv_records_dropped_unbound: AtomicU64,
+    pub(crate) klv_sei_inserted: AtomicU64,
+    pub(crate) klv_sei_dropped_oversize: AtomicU64,
+    /// Written by the media thread.
+    pub(crate) klv_dc_messages_sent: AtomicU64,
+    pub(crate) klv_dc_dropped_oversize: AtomicU64,
+    /// Written once audio passthrough forwards frames.
+    pub(crate) audio_frames_pushed: AtomicU64,
+    pub(crate) audio_frames_dropped: AtomicU64,
+    /// Written by the media thread.
+    pub(crate) plis_received: AtomicU64,
+    /// Written by the media thread.
+    pub(crate) nacks_received: AtomicU64,
+    /// Written by the push calls (media queue full) and by the media
+    /// thread (a viewer's queue full).
+    pub(crate) viewer_packets_dropped_queue_full: AtomicU64,
+    pub(crate) rtp_clock_rebases: AtomicU64,
+    /// Written by an MP2T mount's demuxer.
+    pub(crate) demux_nonconformant: AtomicU64,
+}
+
+/// Adds one to a counter.
+pub(crate) fn bump(counter: &AtomicU64) {
+    counter.fetch_add(1, Ordering::Relaxed);
+}
+
+impl MountCounters {
+    /// A consistent-enough copy: each counter is read once, relaxed.
+    pub(crate) fn snapshot(&self) -> MountStats {
+        let r = |c: &AtomicU64| c.load(Ordering::Relaxed);
+        MountStats {
+            frames_pushed: r(&self.frames_pushed),
+            keyframes_pushed: r(&self.keyframes_pushed),
+            keyframe_flag_mismatch: r(&self.keyframe_flag_mismatch),
+            viewers: r(&self.viewers),
+            viewers_waiting_keyframe: r(&self.viewers_waiting_keyframe),
+            klv_records_pushed: r(&self.klv_records_pushed),
+            klv_records_dropped_unbound: r(&self.klv_records_dropped_unbound),
+            klv_sei_inserted: r(&self.klv_sei_inserted),
+            klv_sei_dropped_oversize: r(&self.klv_sei_dropped_oversize),
+            klv_dc_messages_sent: r(&self.klv_dc_messages_sent),
+            klv_dc_dropped_oversize: r(&self.klv_dc_dropped_oversize),
+            audio_frames_pushed: r(&self.audio_frames_pushed),
+            audio_frames_dropped: r(&self.audio_frames_dropped),
+            plis_received: r(&self.plis_received),
+            nacks_received: r(&self.nacks_received),
+            viewer_packets_dropped_queue_full: r(&self.viewer_packets_dropped_queue_full),
+            rtp_clock_rebases: r(&self.rtp_clock_rebases),
+            demux_nonconformant: r(&self.demux_nonconformant),
+        }
+    }
+}
