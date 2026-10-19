@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod error;
+pub mod sei;
 pub mod url;
 
 #[cfg(feature = "tls")]

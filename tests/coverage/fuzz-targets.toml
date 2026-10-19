@@ -150,3 +150,7 @@ name = "sdp_announce_classify"
 crate = "tst-srt"
 name = "url_parse"
 
+[[target]]
+crate = "tst-webrtc"
+name = "klv_sei_parse"
+

@@ -132,6 +132,30 @@ impl core::marker::Unpin for tst_webrtc::error::WhepServerError
 impl core::marker::UnsafeUnpin for tst_webrtc::error::WhepServerError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::error::WhepServerError
 impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::error::WhepServerError
+pub mod tst_webrtc::sei
+#[non_exhaustive] pub struct tst_webrtc::sei::KlvSei
+pub tst_webrtc::sei::KlvSei::klv: alloc::vec::Vec<u8>
+pub tst_webrtc::sei::KlvSei::klv_pts_90k: u64
+impl core::clone::Clone for tst_webrtc::sei::KlvSei
+pub fn tst_webrtc::sei::KlvSei::clone(&self) -> tst_webrtc::sei::KlvSei
+impl core::cmp::Eq for tst_webrtc::sei::KlvSei
+impl core::cmp::PartialEq for tst_webrtc::sei::KlvSei
+pub fn tst_webrtc::sei::KlvSei::eq(&self, &tst_webrtc::sei::KlvSei) -> bool
+impl core::fmt::Debug for tst_webrtc::sei::KlvSei
+pub fn tst_webrtc::sei::KlvSei::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_webrtc::sei::KlvSei
+impl core::marker::Freeze for tst_webrtc::sei::KlvSei
+impl core::marker::Send for tst_webrtc::sei::KlvSei
+impl core::marker::Sync for tst_webrtc::sei::KlvSei
+impl core::marker::Unpin for tst_webrtc::sei::KlvSei
+impl core::marker::UnsafeUnpin for tst_webrtc::sei::KlvSei
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::sei::KlvSei
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::sei::KlvSei
+pub const tst_webrtc::sei::SEI_VERSION: u8
+pub const tst_webrtc::sei::TST_KLV_SEI_UUID: [u8; 16]
+pub fn tst_webrtc::sei::build_klv_sei_nal(tst_core::codec::vocabulary::VideoCodec, u64, &[u8]) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::codec::misp_time::MispTimeError>
+pub fn tst_webrtc::sei::extract_klv_seis(&[u8], tst_core::codec::vocabulary::VideoCodec) -> alloc::vec::Vec<tst_webrtc::sei::KlvSei>
+pub fn tst_webrtc::sei::parse_klv_sei_rbsp(&[u8]) -> core::option::Option<tst_webrtc::sei::KlvSei>
 pub mod tst_webrtc::url
 pub struct tst_webrtc::url::WhepUrl
 pub tst_webrtc::url::WhepUrl::addr: core::net::ip_addr::IpAddr

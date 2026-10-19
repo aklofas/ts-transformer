@@ -22,7 +22,7 @@
 #
 # Responsibilities:
 #   1. Build every cargo-fuzz harness in the tree (tst-core, tst-rtp,
-#      tst-srt — the count is asserted against the fuzz_targets/*.rs
+#      tst-srt, tst-webrtc — the count is asserted against the fuzz_targets/*.rs
 #      inventory at the end of this script, so it cannot silently drift)
 #      under libFuzzer with the SANITIZER env-var honored by cargo-fuzz.
 #   2. Copy each driver binary to $OUT/<target_name>.
@@ -91,12 +91,17 @@ pushd crates/tst-srt
 cargo fuzz build --release
 popd
 
+# Build tst-webrtc fuzz targets.
+pushd crates/tst-webrtc
+cargo fuzz build --release
+popd
+
 # Copy fuzz drivers to $OUT/, counting executable drivers only (corpora,
 # dictionaries, and .options are packaged separately below and must not
 # inflate the driver count).
 shipped_drivers=0
 expected_drivers=0
-for crate_dir in crates/tst-core crates/tst-rtp crates/tst-srt; do
+for crate_dir in crates/tst-core crates/tst-rtp crates/tst-srt crates/tst-webrtc; do
   for target_src in "$crate_dir"/fuzz/fuzz_targets/*.rs; do
     expected_drivers=$((expected_drivers + 1))
     target_name=$(basename "$target_src" .rs)
@@ -162,6 +167,7 @@ zip_seeds mux_push_klv              crates/tst-core/fuzz/seeds/mux_push_klv
 zip_seeds mux_push_video            crates/tst-core/fuzz/seeds/mux_push_video
 zip_seeds parse_parameter_sets      crates/tst-core/fuzz/seeds/parse_parameter_sets
 zip_seeds parse_av1_sequence_header crates/tst-core/fuzz/seeds/parse_av1_sequence_header
+zip_seeds klv_sei_parse             crates/tst-webrtc/fuzz/seeds/klv_sei_parse
 
 # Assert every declared harness shipped as an executable driver. This
 # counts drivers only — NOT the corpora/dict/options files above — so a
