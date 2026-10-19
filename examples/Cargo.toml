@@ -15,6 +15,7 @@ tst-srt = { path = "../crates/tst-srt" }
 tst-tcp = { path = "../crates/tst-tcp" }
 tst-hls = { path = "../crates/tst-hls" }
 tst-udp = { path = "../crates/tst-udp" }
+tst-webrtc = { path = "../crates/tst-webrtc" }
 
 # [[example]] blocks added in subsequent tasks as files arrive in subfolders.
 

@@ -42,7 +42,7 @@ other crates' submodules are covered by their top-level module's row.
 `(crate)` in the Module column means every top-level module in that crate
 shares the row's tier — matching that crate's README whole-crate
 stability line (`tst-srt`, `tst-udp`, `tst-tcp`, `tst-hls`, `tst-rist`,
-and the three `tstrans-*-sys`/`-src` crates). Where a narrower row exists
+`tst-webrtc`, and the three `tstrans-*-sys`/`-src` crates). Where a narrower row exists
 for a path inside a crate that also has a broader row (`mpegts` vs.
 `mpegts::demux::low_level`; the fully-enumerated `tst-rtp` modules vs.
 its `rtsp` row), the more specific row wins for that path.
@@ -126,6 +126,7 @@ needs is in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 | tst-hls | (crate) | Provisional | crate split out of `tst-tcp` in 0.3.0 | the segment and playlist contract unchanged for one minor, with low-latency HLS either added or confirmed out of the surface |
 | tst-rist | (crate) | Provisional | profile coverage still evolving | the supported profiles and URL keys fixed, and one minor with no signature change |
 | tst-rist | opener | Provisional | URL → type-erased transport for the language bindings' shells | the opener signature unchanged while a second binding family adopts it |
+| tst-webrtc | (crate) | Provisional | new in 0.9.0: WebRTC (WHEP) playback server; the mount, push and statistics surface is still settling | the WHEP endpoint, mount configuration and push calls unchanged for one minor, with browser playback proven by the interop and soak evidence |
 | tstrans-srt-sys | (crate) | Internal | raw FFI, no direct-consumer promise; documentation-only row — no `public-api.txt` baseline exists for this crate | — |
 | tstrans-rist-sys | (crate) | Internal | raw FFI, no direct-consumer promise | — |
 | tstrans-mbedtls-src | (crate) | Internal | build-time source provider | — |

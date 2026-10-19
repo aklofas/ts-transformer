@@ -53,6 +53,7 @@ on:
       - "crates/tst-rist/**"
       - "crates/tst-tcp/**"
       - "crates/tst-udp/**"
+      - "crates/tst-webrtc/**"
       - "vendor/**"
 
 permissions:

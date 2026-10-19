@@ -80,7 +80,7 @@ _SYNTAX = {
     "markdown": dict(line=None, doc_line=(), block=("<!--", "-->"), doc_block_open=()),
 }
 
-_TRANSPORTS = ["tst-srt", "tst-rtp", "tst-udp", "tst-tcp", "tst-hls", "tst-rist"]
+_TRANSPORTS = ["tst-srt", "tst-rtp", "tst-udp", "tst-tcp", "tst-hls", "tst-rist", "tst-webrtc"]
 
 # Vendored C libraries counted as their own section: submodule path -> name.
 # Only the two transport libraries; mbedTLS and the embedded RTOS trees are

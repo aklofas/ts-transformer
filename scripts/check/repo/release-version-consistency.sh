@@ -59,12 +59,12 @@ RVC_C_LIB="${RVC_C_LIB:-$ROOT/bindings/c/core/src/lib.rs}"
 RVC_C_HEADER="${RVC_C_HEADER:-$ROOT/bindings/c/include/tstrans.h}"
 RVC_PY_TEST="${RVC_PY_TEST:-$ROOT/bindings/python/tests/test_version.py}"
 
-# The 9 Cargo.toml files that carry an internal path-dependency `version =`
+# The 10 Cargo.toml files that carry an internal path-dependency `version =`
 # key. The number of keys is not written down here: it moves whenever a crate
 # gains a dependency (dev-dependencies count), so the check counts what it
 # compared and the OK line prints it. Not every crates/*/Cargo.toml has one —
 # e.g. tst-core has no internal path deps with a `version` key.
-RVC_DEP_TOMLS="${RVC_DEP_TOMLS:-$ROOT/crates/srt-sys/Cargo.toml $ROOT/crates/rist-sys/Cargo.toml $ROOT/crates/tst-pipeline/Cargo.toml $ROOT/crates/tst-srt/Cargo.toml $ROOT/crates/tst-rist/Cargo.toml $ROOT/crates/tst-udp/Cargo.toml $ROOT/crates/tst-tcp/Cargo.toml $ROOT/crates/tst-hls/Cargo.toml $ROOT/crates/tst-rtp/Cargo.toml}"
+RVC_DEP_TOMLS="${RVC_DEP_TOMLS:-$ROOT/crates/srt-sys/Cargo.toml $ROOT/crates/rist-sys/Cargo.toml $ROOT/crates/tst-pipeline/Cargo.toml $ROOT/crates/tst-srt/Cargo.toml $ROOT/crates/tst-rist/Cargo.toml $ROOT/crates/tst-udp/Cargo.toml $ROOT/crates/tst-tcp/Cargo.toml $ROOT/crates/tst-hls/Cargo.toml $ROOT/crates/tst-rtp/Cargo.toml $ROOT/crates/tst-webrtc/Cargo.toml}"
 
 # ---------------------------------------------------------------------------
 # extractors — each echoes the version (or empty on no-match)

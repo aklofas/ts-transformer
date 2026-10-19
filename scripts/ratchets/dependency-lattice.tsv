@@ -10,6 +10,8 @@ tst-rtp	--no-default-features --features tls	rustls	tokio,tokio-util,tokio-rustl
 tst-rtp	(default)	tokio	rustls
 tst-hls	--no-default-features	-	tokio,hyper,rustls
 tst-udp	(default)	-	tokio,rustls
+tst-webrtc	(default)	-	tokio
+tst-webrtc	--no-default-features	-	tokio,rustls
 tst-tcp	--no-default-features	-	rustls,tokio
 tst-c	--no-default-features	-	tst-srt,tst-rtp,tst-udp,tst-tcp,tst-hls,tst-rist,rustls
 tst-c	--no-default-features --features tcp	tst-tcp	rustls-native-certs,rustls
