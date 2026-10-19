@@ -105,7 +105,12 @@ fn digest_md5_auth_hashes_the_announce_and_record_method_tokens() {
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
     let uri = format!("rtsp://127.0.0.1:{port}/pub");
-    let md5 = |s: &str| format!("{:x}", Md5::digest(s.as_bytes()));
+    let md5 = |s: &str| -> String {
+        Md5::digest(s.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
     let mut tcp = connect(port);
 
     let r = announce(&mut tcp, &uri, 1, "");
