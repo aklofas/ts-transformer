@@ -29,7 +29,7 @@ thiserror = { workspace = true }
 tracing   = { version = "0.1", default-features = false }
 # no_std lock backend (single-core embedded sender never contends). Referenced
 # only under cfg(not(feature = "std")) via crate::mutex.
-spin      = { version = "0.9", default-features = false, features = ["spin_mutex"] }
+spin      = { version = "0.12", default-features = false, features = ["spin_mutex"] }
 
 [dev-dependencies]
 criterion       = { workspace = true }
