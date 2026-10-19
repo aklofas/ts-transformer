@@ -110,15 +110,7 @@ pub fn connect_tls(url: &TcpUrl, cfg: &TcpConfig) -> Result<TcpTransport, TcpErr
         let pem = std::fs::read(ca_path).map_err(TcpError::Io)?;
         tst_core::net::tls::load_root_store(&pem).map_err(tls_load_error)?
     } else {
-        let mut roots = rustls::RootCertStore::empty();
-        let native = rustls_native_certs::load_native_certs()
-            .map_err(|e| TcpError::Tls(format!("load native certs: {e:?}")))?;
-        for cert in native {
-            roots
-                .add(cert)
-                .map_err(|e| TcpError::Tls(format!("add native cert: {e}")))?;
-        }
-        roots
+        native_roots(rustls_native_certs::load_native_certs())?.0
     };
 
     let client_config = ClientConfig::builder()
@@ -140,6 +132,33 @@ pub fn connect_tls(url: &TcpUrl, cfg: &TcpConfig) -> Result<TcpTransport, TcpErr
     complete_client_handshake(&mut stream.conn, &mut stream.sock, cfg)?;
     let tls = TlsStream::Client(stream);
     Ok(TcpTransport::from_tls(tls, peer, cfg))
+}
+
+/// Build the root store from the OS trust store's load result, returning it
+/// with the number of load errors. Errors beside at least one loaded
+/// certificate are logged and counted; errors with no certificate at all fail
+/// the connect, as a failed load did before rustls-native-certs 0.8 reported
+/// partial results.
+fn native_roots(
+    native: rustls_native_certs::CertificateResult,
+) -> Result<(rustls::RootCertStore, usize), TcpError> {
+    if native.certs.is_empty() && !native.errors.is_empty() {
+        return Err(TcpError::Tls(format!(
+            "load native certs: {:?}",
+            native.errors
+        )));
+    }
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in native.certs {
+        roots
+            .add(cert)
+            .map_err(|e| TcpError::Tls(format!("add native cert: {e}")))?;
+    }
+    let errors = native.errors.len();
+    if let Some(first) = native.errors.first() {
+        tracing::warn!(errors, first = %first, "some native certificates failed to load");
+    }
+    Ok((roots, errors))
 }
 
 /// Drive the client half of the TLS handshake to completion inside
@@ -261,4 +280,37 @@ pub fn accept_tls(
     let stream = StreamOwned::new(conn, socket);
     let tls = TlsStream::Server(stream);
     Ok(TcpTransport::from_tls(tls, peer, cfg))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load_error() -> rustls_native_certs::Error {
+        rustls_native_certs::Error {
+            context: "test",
+            kind: rustls_native_certs::ErrorKind::Io {
+                inner: io::Error::other("unreadable"),
+                path: "/nonexistent/cert.pem".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn native_roots_partial_load_counts_errors() {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let mut partial = rustls_native_certs::CertificateResult::default();
+        partial.certs.push(cert.cert.der().clone());
+        partial.errors.push(load_error());
+        let (roots, errors) = native_roots(partial).expect("a partial load keeps its certs");
+        assert_eq!(roots.len(), 1);
+        assert_eq!(errors, 1);
+
+        let mut failed = rustls_native_certs::CertificateResult::default();
+        failed.errors.push(load_error());
+        match native_roots(failed) {
+            Err(TcpError::Tls(msg)) => assert!(msg.starts_with("load native certs: "), "{msg}"),
+            other => panic!("expected TcpError::Tls, got {other:?}"),
+        }
+    }
 }

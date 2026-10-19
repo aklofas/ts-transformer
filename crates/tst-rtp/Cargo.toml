@@ -86,7 +86,7 @@ features         = ["std", "ring"]
 # Pulls trust roots from the OS / native cert store so `rtsps://` works
 # out-of-the-box without webpki-roots being baked into the binary.
 [dependencies.rustls-native-certs]
-version  = "0.7"
+version  = "0.8"
 optional = true
 
 # Server-side TLS. tokio-rustls 0.26 wraps rustls 0.23
