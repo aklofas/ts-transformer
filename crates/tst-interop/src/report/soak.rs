@@ -5658,6 +5658,8 @@ pub(crate) mod tests {
                 unexpected_resets: 0,
                 tolerance_ticks: 3003,
                 first_problem: None,
+                generation_resets_excused: 0,
+                timing_anomalies_excused: 0,
             });
             recv_report.publish_mount = generation.map(|generation| PublishMountReport {
                 generation,
