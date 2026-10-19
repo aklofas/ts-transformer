@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tst_core::codec::annexb;
 use tst_core::codec::misp_time::insert_sei_before_first_vcl;
-use tst_core::codec::nal::{is_idr, is_vcl, nal_unit_type};
+use tst_core::codec::nal::{is_vcl, nal_unit_type};
 use tst_core::codec::nal_framing::{ParameterSets, extract_parameter_sets};
 use tst_core::mpegts::common::Pts90khz;
 
@@ -99,8 +99,8 @@ pub enum MediaMsg {
 pub struct FramePacket {
     /// The frame's RTP timestamp (90 kHz).
     pub rtp_ts: u32,
-    /// `true` when a viewer can start decoding at this frame: an IDR
-    /// picture with its parameter sets.
+    /// `true` when a viewer can start decoding at this frame: an
+    /// IDR/CRA/BLA (IRAP) picture with its parameter sets.
     pub keyframe: bool,
     /// The video codec.
     pub codec: VideoCodec,
@@ -241,6 +241,18 @@ impl MountState {
             self.wake.wake();
         }
         Ok(())
+    }
+}
+
+/// `true` for a picture a viewer can start decoding at: an H.264 IDR
+/// (type 5) or an H.265 IRAP picture (BLA, IDR or CRA, types 16-21,
+/// H.265 §7.4.2.2). Local because tst-core's `is_idr` leaves out CRA and
+/// BLA and it has no public IRAP predicate.
+fn is_random_access(codec: VideoCodec, nal_type: u8) -> bool {
+    match codec {
+        VideoCodec::H264 => nal_type == 5,
+        VideoCodec::H265 => matches!(nal_type, 16..=21),
+        _ => false,
     }
 }
 
@@ -386,11 +398,11 @@ impl MountHandle {
 
     /// Push one Annex-B video access unit with its 90 kHz PTS.
     ///
-    /// The NAL units decide whether the frame is a keyframe: an IDR
-    /// picture with its parameter sets, carried in the access unit or
+    /// The NAL units decide whether the frame is a keyframe: an
+    /// IDR/CRA/BLA (IRAP) picture with its parameter sets, carried in the access unit or
     /// cached from an earlier one and prepended. `key_frame` is advisory;
     /// a disagreement is counted in
-    /// [`MountStats::keyframe_flag_mismatch`]. An IDR picture before any
+    /// [`MountStats::keyframe_flag_mismatch`]. An IRAP picture before any
     /// parameter set was seen is forwarded as a plain frame, so viewers
     /// keep waiting for a decodable start.
     ///
@@ -424,9 +436,9 @@ impl MountHandle {
         }
         let has = |f: fn(VideoCodec, u8) -> bool| types.iter().flatten().any(|&t| f(codec, t));
         let has_vcl = has(is_vcl);
-        let has_idr = has(is_idr);
+        let has_irap = has(is_random_access);
         bump(&s.stats.frames_pushed);
-        if key_frame != has_idr {
+        if key_frame != has_irap {
             bump(&s.stats.keyframe_flag_mismatch);
         }
         let own = extract_parameter_sets(au, codec);
@@ -438,7 +450,7 @@ impl MountHandle {
             if !has_vcl {
                 return Ok(());
             }
-            let keyframe = has_idr && is_complete(codec, &inner.ps);
+            let keyframe = has_irap && is_complete(codec, &inner.ps);
             let (mut buf, parameter_sets) = if !keyframe {
                 (au.to_vec(), None)
             } else if is_complete(codec, &own) {
@@ -542,6 +554,8 @@ impl MountHandle {
     ///
     /// The record waits for the first frame whose PTS is at or after its
     /// own; a record older than every later frame binds to the next one.
+    /// A clock rebase (a PTS jump of more than 10 s back or 1 h ahead)
+    /// binds every waiting record to the rebasing frame.
     /// At most 1024 records wait; beyond that the oldest is dropped and
     /// counted in [`MountStats::klv_records_dropped_unbound`].
     /// `metadata_service_id` is accepted for parity with the RTSP mount's

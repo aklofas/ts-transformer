@@ -112,8 +112,12 @@ fn record_over_data_channel_limit_is_refused() {
     let (m, _rx) = MountHandle::for_test(MountConfig::default());
     assert!(matches!(
         m.push_klv(&vec![0u8; 256 * 1024 + 1], Pts90khz::new(0), 0),
-        Err(PushError::KlvTooLarge { .. })
+        Err(PushError::KlvTooLarge {
+            len: 262_145,
+            limit: 262_144
+        })
     ));
+    assert_eq!(m.stats().klv_dc_dropped_oversize, 1);
 }
 
 #[test]
@@ -240,4 +244,86 @@ fn a_mount_without_a_server_has_no_sessions_and_drops_audio() {
     assert_eq!(m.stats(), tst_webrtc::MountStats::default());
     m.push_audio(&[0xFC, 0xFF], Pts90khz::new(0)).unwrap();
     assert_eq!(m.stats().audio_frames_dropped, 1);
+}
+
+const PPS2: &[u8] = &[0, 0, 0, 1, 0x68, 0xCE, 0x3C, 0x80];
+
+#[test]
+fn a_partial_parameter_set_replaces_only_its_own_kind() {
+    let (m, rx) = MountHandle::for_test(MountConfig::default());
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(0), true)
+        .unwrap();
+    let _ = next_frame(&rx);
+    // Only a new PPS: the cached SPS is prepended, the new PPS kept once.
+    m.push_video(&au(&[PPS2, IDR]), Pts90khz::new(3000), true)
+        .unwrap();
+    let f = next_frame(&rx);
+    assert!(f.keyframe);
+    let firsts: Vec<&[u8]> = f.payloads.iter().map(|p| p.payload.as_slice()).collect();
+    assert_eq!(firsts, vec![&SPS[4..], &PPS2[4..], &IDR[3..]]);
+    // A bare IDR now gets the SPS and the new PPS.
+    m.push_video(&au(&[IDR]), Pts90khz::new(6000), true)
+        .unwrap();
+    let f = next_frame(&rx);
+    let firsts: Vec<&[u8]> = f.payloads.iter().map(|p| p.payload.as_slice()).collect();
+    assert_eq!(firsts, vec![&SPS[4..], &PPS2[4..], &IDR[3..]]);
+}
+
+#[test]
+fn the_1025th_waiting_record_drops_the_oldest() {
+    let (m, rx) = MountHandle::for_test(MountConfig::default());
+    for i in 0..1025u32 {
+        m.push_klv(&i.to_be_bytes(), Pts90khz::new(0), 0).unwrap();
+    }
+    assert_eq!(m.stats().klv_records_dropped_unbound, 1);
+    assert_eq!(m.stats().klv_records_pushed, 1025);
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(0), true)
+        .unwrap();
+    let _ = next_frame(&rx);
+    let klvs: Vec<Vec<u8>> = rx
+        .try_iter()
+        .filter_map(|msg| match msg {
+            MediaMsg::Klv { msg, .. } => Some(msg.klv.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(klvs.len(), 1024);
+    assert_eq!(klvs[0], 1u32.to_be_bytes());
+    assert_eq!(klvs[1023], 1024u32.to_be_bytes());
+}
+
+const H265_VPS: &[u8] = &[0, 0, 0, 1, 0x40, 0x01, 0x0C, 0x01];
+const H265_SPS: &[u8] = &[0, 0, 0, 1, 0x42, 0x01, 0x01, 0x01];
+const H265_PPS: &[u8] = &[0, 0, 0, 1, 0x44, 0x01, 0xC1, 0x72];
+/// A CRA picture (nal_unit_type 21), an IRAP picture that is not an IDR.
+const H265_CRA: &[u8] = &[0, 0, 1, 0x2A, 0x01, 0xAF, 0x05];
+
+#[test]
+fn h265_cra_is_a_keyframe_and_a_bare_cra_gets_cached_parameter_sets() {
+    let mut cfg = MountConfig::default();
+    cfg.video = VideoCodec::H265;
+    let (m, rx) = MountHandle::for_test(cfg);
+    m.push_video(
+        &au(&[H265_VPS, H265_SPS, H265_PPS, H265_CRA]),
+        Pts90khz::new(0),
+        true,
+    )
+    .unwrap();
+    let f = next_frame(&rx);
+    assert!(f.keyframe);
+    assert_eq!(m.stats().keyframe_flag_mismatch, 0);
+    m.push_video(&au(&[H265_CRA]), Pts90khz::new(3000), true)
+        .unwrap();
+    let f = next_frame(&rx);
+    assert!(f.keyframe);
+    let firsts: Vec<&[u8]> = f.payloads.iter().map(|p| p.payload.as_slice()).collect();
+    assert_eq!(
+        firsts,
+        vec![
+            &H265_VPS[4..],
+            &H265_SPS[4..],
+            &H265_PPS[4..],
+            &H265_CRA[3..]
+        ]
+    );
 }

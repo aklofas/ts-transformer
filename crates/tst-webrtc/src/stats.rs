@@ -17,11 +17,13 @@ use std::time::Duration;
 pub struct MountStats {
     /// Access units accepted by `push_video`.
     pub frames_pushed: u64,
-    /// Accepted access units forwarded as keyframes: an IDR picture with
-    /// parameter sets in the access unit or cached from an earlier one.
+    /// Accepted access units forwarded as keyframes: an IDR/CRA/BLA (IRAP)
+    /// picture with parameter sets in the access unit or cached from an
+    /// earlier one.
     pub keyframes_pushed: u64,
     /// Access units whose `key_frame` flag disagreed with the presence of
-    /// an IDR NAL unit. The NAL units decide; the flag is advisory.
+    /// an IDR/CRA/BLA (IRAP) NAL unit. The NAL units decide; the flag is
+    /// advisory.
     pub keyframe_flag_mismatch: u64,
     /// Viewer sessions currently attached to the mount.
     pub viewers: u64,
