@@ -11,7 +11,8 @@
 //! Run: `cargo bench -p tst-core --bench klv_decode`.
 //! Quick mode (shorter warmup): add `-- --quick` at the end.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use tst_core::klv::st0102::{
     ClassifyingCountryCodingMethod, ObjectCountryCodingMethod, SecurityClassification,
 };

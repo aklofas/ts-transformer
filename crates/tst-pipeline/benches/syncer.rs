@@ -7,7 +7,8 @@
 //!   SRT_FORCE_VENDORED=1 RUSTFLAGS="-C target-cpu=native" \
 //!     cargo bench -p tst-pipeline --bench syncer
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use tst_pipeline::{Receiver, ReceiverConfig, RecvTransport, TransportError};
 
 // ---------------------------------------------------------------------------

@@ -32,7 +32,8 @@
 //! Run: `cargo bench -p tst-core --bench codec_parsers`.
 //! Quick mode (shorter warmup): add `-- --quick` at the end.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use tst_core::codec::{aac, av1, h264, h265, h266, mpegaudio};
 
 // ---------------------------------------------------------------------------
