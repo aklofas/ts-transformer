@@ -79,9 +79,7 @@ pub(crate) fn klv_stream_type_to_py(
     py: Python<'_>,
     t: RustKlvStreamType,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let cls = py
-        .import_bound("tstrans.mpegts")?
-        .getattr("KlvStreamType")?;
+    let cls = py.import("tstrans.mpegts")?.getattr("KlvStreamType")?;
     let name = match t {
         RustKlvStreamType::SynchronousMetadata => "SYNCHRONOUS_METADATA",
         RustKlvStreamType::PrivateData => "PRIVATE_DATA",
@@ -96,9 +94,7 @@ pub(crate) fn av1_carriage_to_py(
     py: Python<'_>,
     m: RustAv1CarriageMode,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let cls = py
-        .import_bound("tstrans.mpegts")?
-        .getattr("Av1CarriageMode")?;
+    let cls = py.import("tstrans.mpegts")?.getattr("Av1CarriageMode")?;
     let name = match m {
         RustAv1CarriageMode::Mpeg2TsBinding => "MPEG2_TS_BINDING",
         RustAv1CarriageMode::InteropRawObu => "INTEROP_RAW_OBU",
@@ -359,7 +355,7 @@ fn py_audio_codec(v: &Bound<'_, PyAny>) -> PyResult<RustAudioCodec> {
 
 /// Look up `tstrans.mpegts.VideoCodec.<NAME>` for a mux-side Rust variant.
 fn video_codec_to_py(py: Python<'_>, c: RustVideoCodec) -> PyResult<Bound<'_, PyAny>> {
-    let cls = py.import_bound("tstrans.mpegts")?.getattr("VideoCodec")?;
+    let cls = py.import("tstrans.mpegts")?.getattr("VideoCodec")?;
     let name = match c {
         RustVideoCodec::H264 => "H264",
         RustVideoCodec::H265 => "H265",
@@ -371,7 +367,7 @@ fn video_codec_to_py(py: Python<'_>, c: RustVideoCodec) -> PyResult<Bound<'_, Py
 
 /// Look up `tstrans.mpegts.AudioCodec.<NAME>` for a mux-side Rust variant.
 fn audio_codec_to_py(py: Python<'_>, c: RustAudioCodec) -> PyResult<Bound<'_, PyAny>> {
-    let cls = py.import_bound("tstrans.mpegts")?.getattr("AudioCodec")?;
+    let cls = py.import("tstrans.mpegts")?.getattr("AudioCodec")?;
     let name = match c {
         RustAudioCodec::Mp2 => "MP2",
         RustAudioCodec::Aac => "AAC",
@@ -389,9 +385,7 @@ fn subtitle_codec_to_py<'py>(
     py: Python<'py>,
     c: &RustSubtitleCodec,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let cls = py
-        .import_bound("tstrans.mpegts")?
-        .getattr("SubtitleCodec")?;
+    let cls = py.import("tstrans.mpegts")?.getattr("SubtitleCodec")?;
     let name = match c {
         RustSubtitleCodec::DvbSubtitling { .. } => "DVB_SUBTITLING",
         RustSubtitleCodec::DvbTeletext { .. } => "DVB_TELETEXT",
@@ -505,9 +499,9 @@ impl PyMuxerProgramConfig {
     /// SubtitleStreamSpec / DataStreamSpec` dataclasses from
     /// `tstrans.mpegts`.
     #[getter]
-    pub fn streams(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let mpegts_mod = py.import_bound("tstrans.mpegts")?;
-        let mut items: Vec<PyObject> = Vec::with_capacity(self.inner.streams.len());
+    pub fn streams(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let mpegts_mod = py.import("tstrans.mpegts")?;
+        let mut items: Vec<Py<PyAny>> = Vec::with_capacity(self.inner.streams.len());
         for s in &self.inner.streams {
             let obj = match s {
                 RustStreamSpec::Video { pid, codec } => {
@@ -531,8 +525,8 @@ impl PyMuxerProgramConfig {
                 } => {
                     let cls = mpegts_mod.getattr("AudioStreamSpec")?;
                     let codec_obj = audio_codec_to_py(py, *codec)?;
-                    let lang_obj: PyObject = match language {
-                        Some(l) => PyBytes::new_bound(py, l).unbind().into(),
+                    let lang_obj: Py<PyAny> = match language {
+                        Some(l) => PyBytes::new(py, l).unbind().into(),
                         None => py.None(),
                     };
                     cls.call1((*pid, codec_obj, lang_obj))?.unbind()
@@ -553,40 +547,40 @@ impl PyMuxerProgramConfig {
             };
             items.push(obj);
         }
-        Ok(PyTuple::new_bound(py, items).unbind().into())
+        Ok(PyTuple::new(py, items)?.unbind().into())
     }
 
     /// Tuple of program-level descriptor TLV bytes (PMT program info
     /// loop, before per-stream entries).
     #[getter]
-    pub fn program_descriptors(&self, py: Python<'_>) -> PyObject {
-        let items: Vec<PyObject> = self
+    pub fn program_descriptors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let items: Vec<Py<PyAny>> = self
             .inner
             .program_descriptors
             .iter()
-            .map(|d| PyBytes::new_bound(py, d).unbind().into())
+            .map(|d| PyBytes::new(py, d).unbind().into())
             .collect();
-        PyTuple::new_bound(py, items).unbind().into()
+        Ok(PyTuple::new(py, items)?.unbind().into())
     }
 
     /// Tuple-of-tuples of per-stream descriptor TLVs. Outer indexed
     /// parallel to `streams`; inner is the descriptor list for that
     /// stream.
     #[getter]
-    pub fn stream_descriptors(&self, py: Python<'_>) -> PyObject {
-        let outer: Vec<PyObject> = self
+    pub fn stream_descriptors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let outer: Vec<Py<PyAny>> = self
             .inner
             .stream_descriptors
             .iter()
             .map(|descs| {
-                let inner: Vec<PyObject> = descs
+                let inner: Vec<Py<PyAny>> = descs
                     .iter()
-                    .map(|d| PyBytes::new_bound(py, d).unbind().into())
+                    .map(|d| PyBytes::new(py, d).unbind().into())
                     .collect();
-                PyTuple::new_bound(py, inner).unbind().into()
+                Ok(PyTuple::new(py, inner)?.unbind().into())
             })
-            .collect();
-        PyTuple::new_bound(py, outer).unbind().into()
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(PyTuple::new(py, outer)?.unbind().into())
     }
 }
 
@@ -848,8 +842,8 @@ impl PyMuxerProgramConfigBuilder {
 /// `OverflowError` on `pid=70000` stays an `OverflowError` but names
 /// the offending field and stream.
 fn err_context(py: Python<'_>, ctx: &str, e: PyErr) -> PyErr {
-    let msg = format!("{ctx}: {}", e.value_bound(py));
-    PyErr::from_type_bound(e.get_type_bound(py), msg)
+    let msg = format!("{ctx}: {}", e.value(py));
+    PyErr::from_type(e.get_type(py), msg)
 }
 
 /// Reconstruct a Rust demux `ProgramMap` from the Python `ProgramMap`
@@ -863,7 +857,7 @@ fn py_program_map(pm: &Bound<'_, PyAny>) -> PyResult<DemuxProgramMap> {
     let pcr_pid: u16 = pm.getattr(intern!(py, "pcr_pid"))?.extract()?;
     let pmt_pid: u16 = pm.getattr(intern!(py, "pmt_pid"))?.extract()?;
     let mut streams = Vec::new();
-    for (i, s) in pm.getattr(intern!(py, "streams"))?.iter()?.enumerate() {
+    for (i, s) in pm.getattr(intern!(py, "streams"))?.try_iter()?.enumerate() {
         let s = s?;
         // The stream has no pid to be identified by until this very
         // extract succeeds, so it reports the stream by index instead.
@@ -886,7 +880,7 @@ fn py_program_map(pm: &Bound<'_, PyAny>) -> PyResult<DemuxProgramMap> {
         )
         .map_err(|e| err_context(py, &format!("stream pid 0x{pid:04X}"), e))?;
         let mut raw_descriptors = Vec::new();
-        for d in s.getattr(intern!(py, "raw_descriptors"))?.iter()? {
+        for d in s.getattr(intern!(py, "raw_descriptors"))?.try_iter()? {
             let d = d?;
             raw_descriptors.push(RustRawDescriptor {
                 tag: d.getattr(intern!(py, "tag"))?.extract().map_err(|e| {
@@ -998,7 +992,7 @@ impl PyMuxerConfig {
             None => Vec::new(),
             Some(seq) => {
                 let mut tags = Vec::new();
-                for item in seq.iter()? {
+                for item in seq.try_iter()? {
                     tags.push(crate::mpegts::py_stream_kind_tag(&item?)?);
                 }
                 tags
@@ -1017,18 +1011,18 @@ impl PyMuxerConfig {
     /// Tuple of [`MuxerProgramConfig`] entries — one per program in
     /// this multiplex, in add-order.
     #[getter]
-    pub fn programs(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let items: Vec<PyObject> = self
+    pub fn programs(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let items: Vec<Py<PyAny>> = self
             .inner
             .programs
             .iter()
-            .map(|p| -> PyResult<PyObject> {
+            .map(|p| -> PyResult<Py<PyAny>> {
                 let py_obj = PyMuxerProgramConfig { inner: p.clone() };
                 let bound = Py::new(py, py_obj)?;
                 Ok(bound.into_any())
             })
             .collect::<PyResult<Vec<_>>>()?;
-        Ok(PyTuple::new_bound(py, items).unbind().into())
+        Ok(PyTuple::new(py, items)?.unbind().into())
     }
 
     /// PCR re-emission interval in milliseconds (per program).
@@ -1183,7 +1177,7 @@ impl PyMuxer {
         // Python cannot mutate or resize the bytearray concurrently.
         //
         // GIL release: `pull` is NOT wrapped in
-        // `py.allow_threads` even though the rest of the `push_*`
+        // `py.detach` even though the rest of the `push_*`
         // family is. Rationale: `PyByteArray` is mutable + resizable
         // from any Python thread that holds a reference, so releasing
         // the GIL while holding `&mut [u8]` into it would violate
@@ -1245,7 +1239,7 @@ impl PyMuxer {
         // the duration of this call. Python GC cannot collect it while
         // we hold a strong reference. `push_video` is pure computation
         // — no Python object construction.
-        let res = py.allow_threads(|| self.inner.push_video(nal_slice, rust_pts, key_frame));
+        let res = py.detach(|| self.inner.push_video(nal_slice, rust_pts, key_frame));
         res.map_err(|e| crate::errors::mux_error_to_pyerr(py, e))
     }
 
@@ -1285,7 +1279,7 @@ impl PyMuxer {
         // is a `Copy` u32 newtype; capturing it does not retain the
         // `PyRef`. `nal_slice` is GIL-safe per the `push_video` argument.
         let handle_inner = handle.0;
-        let res = py.allow_threads(|| {
+        let res = py.detach(|| {
             self.inner
                 .push_video_to(handle_inner, nal_slice, rust_pts, key_frame)
         });
@@ -1340,7 +1334,7 @@ impl PyMuxer {
         // GIL release: see `push_video`. `handle.0`
         // copied out before release; `nal_slice` is GIL-safe.
         let handle_inner = handle.0;
-        let res = py.allow_threads(|| match rust_dts {
+        let res = py.detach(|| match rust_dts {
             None => self
                 .inner
                 .push_video_to(handle_inner, nal_slice, rust_pts, key_frame),
@@ -1391,7 +1385,7 @@ impl PyMuxer {
         // GIL-bound PyRef.
         let rust_misp = MispTimestamp::from(*misp);
         let handle_inner = handle.0;
-        let res = py.allow_threads(|| match rust_dts {
+        let res = py.detach(|| match rust_dts {
             None => self.inner.push_video_misp_to(
                 handle_inner,
                 nal_slice,
@@ -1445,7 +1439,7 @@ impl PyMuxer {
         let coerced = crate::util::coerce_bytes_like(py, wire)?;
         let wire_slice = coerced.as_bytes();
         let handle_inner = handle.0;
-        let res = py.allow_threads(|| match rust_dts {
+        let res = py.detach(|| match rust_dts {
             None => self
                 .inner
                 .push_video_wire_to(handle_inner, wire_slice, rust_pts, key_frame),
@@ -1498,7 +1492,7 @@ impl PyMuxer {
         let frames_slice = coerced.as_bytes();
         // GIL release: see `push_video` — `frames_slice`
         // borrows from `coerced`, a `Bound<'_, PyBytes>` on the Rust stack.
-        let res = py.allow_threads(|| self.inner.push_audio(frames_slice, rust_pts));
+        let res = py.detach(|| self.inner.push_audio(frames_slice, rust_pts));
         res.map_err(|e| crate::errors::mux_error_to_pyerr(py, e))
     }
 
@@ -1528,7 +1522,7 @@ impl PyMuxer {
         let frames_slice = coerced.as_bytes();
         // GIL release: see `push_video`.
         let handle_inner = handle.0;
-        let res = py.allow_threads(|| {
+        let res = py.detach(|| {
             self.inner
                 .push_audio_to(handle_inner, rust_pts, frames_slice)
         });
@@ -1568,7 +1562,7 @@ impl PyMuxer {
         let klv_slice = coerced.as_bytes();
         // GIL release: see `push_video` — `klv_slice`
         // borrows from `coerced`, a `Bound<'_, PyBytes>` on the Rust stack.
-        let res = py.allow_threads(|| {
+        let res = py.detach(|| {
             self.inner
                 .push_klv(klv_slice, rust_pts, metadata_service_id)
         });
@@ -1602,7 +1596,7 @@ impl PyMuxer {
         let klv_slice = coerced.as_bytes();
         // GIL release: see `push_video`.
         let handle_inner = handle.0;
-        let res = py.allow_threads(|| {
+        let res = py.detach(|| {
             self.inner
                 .push_klv_to(handle_inner, klv_slice, rust_pts, metadata_service_id)
         });
@@ -1640,7 +1634,7 @@ impl PyMuxer {
         let payload_slice = coerced.as_bytes();
         // GIL release: see `push_video` — `payload_slice`
         // borrows from `coerced`, a `Bound<'_, PyBytes>` on the Rust stack.
-        let res = py.allow_threads(|| self.inner.push_subtitle(rust_pts, payload_slice));
+        let res = py.detach(|| self.inner.push_subtitle(rust_pts, payload_slice));
         res.map_err(|e| crate::errors::mux_error_to_pyerr(py, e))
     }
 
@@ -1668,7 +1662,7 @@ impl PyMuxer {
         let payload_slice = coerced.as_bytes();
         // GIL release: see `push_video`.
         let handle_inner = handle.0;
-        let res = py.allow_threads(|| {
+        let res = py.detach(|| {
             self.inner
                 .push_subtitle_to(handle_inner, rust_pts, payload_slice)
         });
@@ -1713,7 +1707,7 @@ impl PyMuxer {
         let data_slice = coerced.as_bytes();
         // GIL release: see `push_video` — `data_slice`
         // borrows from `coerced`, a `Bound<'_, PyBytes>` on the Rust stack.
-        let res = py.allow_threads(|| self.inner.push_data(data_slice, rust_pts));
+        let res = py.detach(|| self.inner.push_data(data_slice, rust_pts));
         res.map_err(|e| crate::errors::mux_error_to_pyerr(py, e))
     }
 
@@ -1745,7 +1739,7 @@ impl PyMuxer {
         let data_slice = coerced.as_bytes();
         // GIL release: see `push_video`.
         let handle_inner = handle.0;
-        let res = py.allow_threads(|| self.inner.push_data_to(handle_inner, data_slice, rust_pts));
+        let res = py.detach(|| self.inner.push_data_to(handle_inner, data_slice, rust_pts));
         res.map_err(|e| crate::errors::mux_error_to_pyerr(py, e))
     }
 
@@ -1948,11 +1942,11 @@ impl PyMuxer {
     /// / AC-3 — Rust returns `Some(StreamCodecStats::Unknown)` for
     /// those, which this wrap collapses to `None` so Python callers
     /// only see `None` vs a typed `*StreamCodecStats` subclass).
-    pub fn stream_codec_stats(&self, py: Python<'_>, pid: u16) -> PyResult<Option<PyObject>> {
+    pub fn stream_codec_stats(&self, py: Python<'_>, pid: u16) -> PyResult<Option<Py<PyAny>>> {
         let Some(rs) = self.inner.stream_codec_stats(pid) else {
             return Ok(None);
         };
-        let mpegts_mod = py.import_bound("tstrans.mpegts")?;
+        let mpegts_mod = py.import("tstrans.mpegts")?;
         // Each variant uses `..` because the Rust enum *variants* are
         // `#[non_exhaustive]` (see tst_core::mpegts::stats) — additive
         // counter fields land without a major bump.
@@ -1962,18 +1956,18 @@ impl PyMuxer {
                 random_access_aus,
                 ..
             } => {
-                let kw = PyDict::new_bound(py);
+                let kw = PyDict::new(py);
                 kw.set_item("nals_or_obus", nals_or_obus)?;
                 kw.set_item("random_access_aus", random_access_aus)?;
                 ("VideoStreamCodecStats", kw)
             }
             RustStreamCodecStats::Klv { records, .. } => {
-                let kw = PyDict::new_bound(py);
+                let kw = PyDict::new(py);
                 kw.set_item("records", records)?;
                 ("KlvStreamCodecStats", kw)
             }
             RustStreamCodecStats::Audio { frames, .. } => {
-                let kw = PyDict::new_bound(py);
+                let kw = PyDict::new(py);
                 kw.set_item("frames", frames)?;
                 ("AudioStreamCodecStats", kw)
             }

@@ -14,9 +14,9 @@
 //!   `write_file` breadcrumb); every other source is raised in the
 //!   shell's transport domain.
 //! - Bytes-like extraction: fast `bytes` downcast, fallback through
-//!   Python's `bytes()` builtin coercion (abi3-py310 two-path pattern).
+//!   Python's `bytes()` builtin coercion (the two-path pattern).
 //! - GIL release: every push method and `open` run the underlying I/O
-//!   under `py.allow_threads`.
+//!   under `py.detach`.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -77,7 +77,7 @@ pub(crate) fn mux_sender_err(py: Python<'_>, domain: &Domain, e: MuxSenderError)
 #[pyclass(name = "MuxSender", module = "tstrans.shells")]
 pub(crate) struct PyMuxSender {
     /// The binding layer's handle state machine: a push holds the slot
-    /// only inside `with_mut`, always under `py.allow_threads`, so a push
+    /// only inside `with_mut`, always under `py.detach`, so a push
     /// in flight on another thread never trips PyO3's borrow check and
     /// `close()` (cancel-first) ends it instead of waiting behind it.
     owned: Owned<RustMuxSender<Box<dyn Transport>>, Snapshot<StreamHandles>>,

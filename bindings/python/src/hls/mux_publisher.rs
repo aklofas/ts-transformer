@@ -21,7 +21,7 @@
 //! `local_addr()` it.
 //!
 //! GIL: every method that needs the shell takes the mutex inside
-//! `py.allow_threads` (`with_inner`), never while holding the GIL — a
+//! `py.detach` (`with_inner`), never while holding the GIL — a
 //! `push_*` on another thread holds that mutex with the GIL released and
 //! needs the GIL back to let go of it. `__repr__` takes no lock.
 

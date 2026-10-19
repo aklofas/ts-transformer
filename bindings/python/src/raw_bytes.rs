@@ -31,8 +31,8 @@ use std::hash::{Hash, Hasher};
 
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
-use pyo3::sync::GILOnceCell;
-use pyo3::types::PyBytes;
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{PyBool, PyBytes};
 
 use tst_core::shared::SharedBytes;
 
@@ -42,7 +42,7 @@ use tst_core::shared::SharedBytes;
 #[pyclass(name = "RawBytes", module = "tstrans._native", frozen)]
 pub struct RawBytes {
     shared: SharedBytes,
-    cache: GILOnceCell<Py<PyBytes>>,
+    cache: PyOnceLock<Py<PyBytes>>,
 }
 
 impl RawBytes {
@@ -51,7 +51,7 @@ impl RawBytes {
     pub(crate) fn from_shared(shared: SharedBytes) -> Self {
         Self {
             shared,
-            cache: GILOnceCell::new(),
+            cache: PyOnceLock::new(),
         }
     }
 }
@@ -65,7 +65,7 @@ impl RawBytes {
     fn new(data: &[u8]) -> Self {
         Self {
             shared: SharedBytes::from_vec(data.to_vec()),
-            cache: GILOnceCell::new(),
+            cache: PyOnceLock::new(),
         }
     }
 
@@ -74,7 +74,7 @@ impl RawBytes {
     #[getter]
     fn value(&self, py: Python<'_>) -> Py<PyBytes> {
         self.cache
-            .get_or_init(py, || PyBytes::new_bound(py, &self.shared).unbind())
+            .get_or_init(py, || PyBytes::new(py, &self.shared).unbind())
             .clone_ref(py)
     }
 
@@ -86,8 +86,8 @@ impl RawBytes {
     /// `!=` are defined; ordering is `NotImplemented`. (A `bytearray` argument
     /// yields `NotImplemented` here; callers compare the materialized `.raw`
     /// `bytes`, where `bytes == bytearray` works via Python's own protocol.)
-    fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> PyObject {
-        let eq = if let Ok(other_holder) = other.downcast::<RawBytes>() {
+    fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
+        let eq = if let Ok(other_holder) = other.cast::<RawBytes>() {
             self.shared.as_slice() == other_holder.get().shared.as_slice()
         } else if let Ok(other_bytes) = other.extract::<&[u8]>() {
             self.shared.as_slice() == other_bytes
@@ -95,8 +95,8 @@ impl RawBytes {
             return py.NotImplemented();
         };
         match op {
-            CompareOp::Eq => eq.into_py(py),
-            CompareOp::Ne => (!eq).into_py(py),
+            CompareOp::Eq => PyBool::new(py, eq).to_owned().into_any().unbind(),
+            CompareOp::Ne => PyBool::new(py, !eq).to_owned().into_any().unbind(),
             _ => py.NotImplemented(),
         }
     }

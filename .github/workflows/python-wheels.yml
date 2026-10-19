@@ -11,8 +11,8 @@ name: python-wheels
 #   build wheels but skip the publish job. Catches workflow regressions
 #   without burning CI on every commit.
 #
-# abi3 wheels: pyo3 is built with `abi3-py310` so each platform produces
-# ONE wheel valid for Python 3.10+ instead of one per Python minor
+# abi3 wheels: pyo3 is built with `abi3-py311` so each platform produces
+# ONE wheel valid for Python 3.11+ instead of one per Python minor
 # version. The matrix is therefore (platform × target) only, not
 # (platform × python × target).
 #
@@ -299,6 +299,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python -c "import sys; assert sys.version_info >= (3, 11)"
           python -m pip install --no-index --find-links bindings/python/dist tstrans
           python -c "import tstrans, tstrans.rist, tstrans.srt; print(tstrans.__version__)"
 
@@ -382,8 +383,8 @@ jobs:
       # required. A bare count threshold is deliberately NOT used.
       #
       # HOW TO UPDATE WHEN THE BUILD MATRIX CHANGES (jobs above):
-      #   - Wheels are abi3 (`abi3-py310` in bindings/python/Cargo.toml), so
-      #     there is ONE wheel per platform tagged `cp310-abi3` — NOT one per
+      #   - Wheels are abi3 (`abi3-py311` in bindings/python/Cargo.toml), so
+      #     there is ONE wheel per platform tagged `cp311-abi3` — NOT one per
       #     Python minor. Each entry below is a unique platform tag.
       #   - REQUIRED  = the matrix legs with `continue-on-error: false`
       #                 (linux x86_64 + macos arm64) + the sdist.
@@ -417,7 +418,7 @@ jobs:
           BEST_EFFORT_PLATFORM_TAGS = ["manylinux_2_28_aarch64", "win_amd64"]
 
           def wheel_re(tag):
-              return re.compile(r"^tstrans-" + re.escape(EXPECTED) + r"-cp310-abi3-" + re.escape(tag) + r"\.whl$")
+              return re.compile(r"^tstrans-" + re.escape(EXPECTED) + r"-cp311-abi3-" + re.escape(tag) + r"\.whl$")
           SDIST_RE = re.compile(r"^tstrans-" + re.escape(EXPECTED) + r"\.tar\.gz$")
 
           def wheel_metadata_version(path):
@@ -449,7 +450,7 @@ jobs:
               rx = wheel_re(tag)
               matches = [f for f in files if rx.match(f)]
               if len(matches) == 0:
-                  errors.append(f"MISSING required wheel: tstrans-{EXPECTED}-cp310-abi3-{tag}.whl")
+                  errors.append(f"MISSING required wheel: tstrans-{EXPECTED}-cp311-abi3-{tag}.whl")
               elif len(matches) > 1:
                   errors.append(f"DUPLICATE required wheel {tag}: {matches}")
               else:
@@ -470,7 +471,7 @@ jobs:
           # Best-effort wheels: absence is OK, but a PRESENT one must be the right
           # version (a stale/misversioned best-effort wheel must not slip through).
           for tag in BEST_EFFORT_PLATFORM_TAGS:
-              anyrx = re.compile(r"^tstrans-[^-]+-cp310-abi3-" + re.escape(tag) + r"\.whl$")
+              anyrx = re.compile(r"^tstrans-[^-]+-cp311-abi3-" + re.escape(tag) + r"\.whl$")
               present = [f for f in files if anyrx.match(f)]
               if not present:
                   print(f"best-effort {tag}: absent (allowed)")

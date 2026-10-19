@@ -8,7 +8,7 @@
 //!   underlying `tst_rtp::RtspClient` and returns a Python
 //!   `RtspSession` wrapping the now-PLAYing client.
 //! - `RtspSession` owns the live `RtspClient`. Methods `play` / `pause`
-//!   / `teardown` delegate to it under `py.allow_threads`.
+//!   / `teardown` delegate to it under `py.detach`.
 //! - `into_demux_receiver` converts the session into a demux-capable
 //!   receiver; calling it before the session is playing raises
 //!   `NotImplementedError`.
@@ -19,7 +19,7 @@
 //!
 //! GIL release boundaries:
 //!
-//! - `py.allow_threads`: `connect`, `play`, `pause`, `teardown`.
+//! - `py.detach`: `connect`, `play`, `pause`, `teardown`.
 //! - **Not** wrapped: `cancel_handle()`, `stats()`, dataclass ctors,
 //!   `__enter__` / `__exit__` (these are non-blocking).
 //!
@@ -54,7 +54,13 @@ use tst_pipeline::binding::{BindingError, BindingErrorKind};
 
 /// Wire-time RTSP version preference. Mirrors `tst_rtp::RtspVersion` —
 /// only the 1.0 / 2.0 split matters at the SETUP / PLAY layer.
-#[pyclass(eq, eq_int, name = "RtspVersion", module = "tstrans.rtp")]
+#[pyclass(
+    from_py_object,
+    eq,
+    eq_int,
+    name = "RtspVersion",
+    module = "tstrans.rtp"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyRtspVersion {
     /// `RTSP/1.0` per RFC 2326 — the default for maximum interop with
@@ -81,7 +87,13 @@ impl PyRtspVersion {
 /// Variant names are SHOUTY_SNAKE to match the Python-side convention
 /// for IntEnum-shaped pyclasses; `#[allow(clippy::upper_case_acronyms)]`
 /// covers the lint that would otherwise demand `Udp` / `Tcp`.
-#[pyclass(eq, eq_int, name = "TransportPref", module = "tstrans.rtp")]
+#[pyclass(
+    from_py_object,
+    eq,
+    eq_int,
+    name = "TransportPref",
+    module = "tstrans.rtp"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum PyTransportPref {
@@ -105,7 +117,13 @@ impl PyTransportPref {
 /// `*-sess` variants are parsed from server challenges but not
 /// selectable by the caller; tst-rtp's challenge handler picks them
 /// automatically when the server demands them.
-#[pyclass(eq, eq_int, name = "DigestAlgorithm", module = "tstrans.rtp")]
+#[pyclass(
+    from_py_object,
+    eq,
+    eq_int,
+    name = "DigestAlgorithm",
+    module = "tstrans.rtp"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyDigestAlgorithm {
     /// RFC 7616 §3.4 with `algorithm=MD5` (also the RFC 2617 default).
@@ -250,9 +268,9 @@ impl PyDigestAuth {
 #[derive(Debug)]
 pub struct PyRtspClientConfig {
     url: String,
-    /// Stored as `PyObject` so we can hand it back through the getter
+    /// Stored as `Py<PyAny>` so we can hand it back through the getter
     /// while preserving its concrete Python class identity.
-    auth: Option<PyObject>,
+    auth: Option<Py<PyAny>>,
     transport_pref: PyTransportPref,
     tls_root_certs_pem: Option<Vec<u8>>,
     keepalive: bool,
@@ -317,7 +335,7 @@ impl PyRtspClientConfig {
     }
 
     #[getter]
-    fn auth(&self, py: Python<'_>) -> Option<PyObject> {
+    fn auth(&self, py: Python<'_>) -> Option<Py<PyAny>> {
         self.auth.as_ref().map(|p| p.clone_ref(py))
     }
 
@@ -533,7 +551,7 @@ impl PyRtspClient {
         builder = apply_tls_roots(py, builder, config)?;
 
         // 6. Drive the RTSP state machine to PLAY. Wrap in
-        //    py.allow_threads for the full network exchange.
+        //    py.detach for the full network exchange.
         //    Retain the `RtspSession` so
         //    `RtspSession.into_demux_receiver` can consume its
         //    UDP-socket-pair (or TCP-interleaved mpsc rx) downstream.
@@ -719,7 +737,7 @@ pub struct PyRtspSession {
     /// are a no-op rather than a "session_id is None" surface from
     /// `RtspClient::teardown`. `Arc<AtomicBool>` so `__exit__` can
     /// observe it across the GIL boundary inside the
-    /// `py.allow_threads` closure without holding the python ref.
+    /// `py.detach` closure without holding the python ref.
     torn_down: Arc<AtomicBool>,
     /// H.264 depacketizer config stashed at `connect_h264` time. `None`
     /// when this session was created via `connect()` (MP2T path) or when
@@ -1001,9 +1019,9 @@ impl PyRtspSession {
 
 /// `raise` needs a `Python` token; this helper serves the sites that have
 /// none in scope (e.g. `cancel_handle` returning a typed error inside a
-/// `?` chain before `Python::with_gil`) by re-acquiring the GIL.
+/// `?` chain before `Python::attach`) by re-acquiring the GIL.
 fn rtsp_err_no_gil(kind: BindingErrorKind, message: &str) -> PyErr {
-    Python::with_gil(|py| raise(py, &RTSP, BindingError::new(kind, message)))
+    Python::attach(|py| raise(py, &RTSP, BindingError::new(kind, message)))
 }
 
 // ---------------------------------------------------------------------------

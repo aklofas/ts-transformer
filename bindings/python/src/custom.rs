@@ -8,6 +8,7 @@
 mod codec;
 pub(crate) use codec::*;
 
+use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::PyValueError;
 use pyo3::intern;
 use pyo3::prelude::*;
@@ -38,8 +39,8 @@ use crate::klv::{
 pub(crate) fn uas_datalink_ls_universal_label_to_py(
     py: Python<'_>,
     v: &UniversalLabel,
-) -> PyResult<PyObject> {
-    Ok(PyBytes::new_bound(py, &v.0).into_py(py))
+) -> PyResult<Py<PyAny>> {
+    Ok(PyBytes::new(py, &v.0).into_any().unbind())
 }
 
 /// Any length other than 16 is a caller bug: it raises instead of silently
@@ -63,9 +64,9 @@ pub(crate) fn uas_datalink_ls_universal_label_from_py(
 pub(crate) fn uas_datalink_ls_miis_core_id_to_py(
     py: Python<'_>,
     v: &Option<Vec<u8>>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     Ok(match v {
-        Some(b) => PyBytes::new_bound(py, b).into_py(py),
+        Some(b) => PyBytes::new(py, b).into_any().unbind(),
         None => py.None(),
     })
 }
@@ -83,18 +84,18 @@ fn coded_enum(
     class: &'static str,
     other: Option<u64>,
     code: u64,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     if let Some(raw) = other {
-        return Ok(raw.into_py(py));
+        return raw.into_py_any(py);
     }
-    let cls = py.import_bound("tstrans.klv")?.getattr(class)?;
+    let cls = py.import("tstrans.klv")?.getattr(class)?;
     Ok(cls.call1((code,))?.unbind())
 }
 
 pub(crate) fn uas_datalink_ls_icing_detected_to_py(
     py: Python<'_>,
     v: &Option<IcingDetected>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let Some(v) = v else { return Ok(py.None()) };
     let other = match v {
         IcingDetected::Other(b) => Some(u64::from(*b)),
@@ -117,7 +118,7 @@ pub(crate) fn uas_datalink_ls_icing_detected_from_py(
 pub(crate) fn uas_datalink_ls_sensor_fov_name_to_py(
     py: Python<'_>,
     v: &Option<SensorFovName>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let Some(v) = v else { return Ok(py.None()) };
     let other = match v {
         SensorFovName::Other(b) => Some(u64::from(*b)),
@@ -140,7 +141,7 @@ pub(crate) fn uas_datalink_ls_sensor_fov_name_from_py(
 pub(crate) fn uas_datalink_ls_operational_mode_to_py(
     py: Python<'_>,
     v: &Option<OperationalMode>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let Some(v) = v else { return Ok(py.None()) };
     let other = match v {
         OperationalMode::Other(b) => Some(u64::from(*b)),
@@ -163,7 +164,7 @@ pub(crate) fn uas_datalink_ls_operational_mode_from_py(
 pub(crate) fn uas_datalink_ls_platform_status_to_py(
     py: Python<'_>,
     v: &Option<PlatformStatus>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let Some(v) = v else { return Ok(py.None()) };
     let other = match v {
         PlatformStatus::Other(b) => Some(u64::from(*b)),
@@ -186,7 +187,7 @@ pub(crate) fn uas_datalink_ls_platform_status_from_py(
 pub(crate) fn uas_datalink_ls_sensor_control_mode_to_py(
     py: Python<'_>,
     v: &Option<SensorControlMode>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let Some(v) = v else { return Ok(py.None()) };
     let other = match v {
         SensorControlMode::Other(b) => Some(u64::from(*b)),
@@ -209,7 +210,7 @@ pub(crate) fn uas_datalink_ls_sensor_control_mode_from_py(
 pub(crate) fn uas_datalink_ls_unknown_to_py(
     py: Python<'_>,
     v: &[OwnedRawField],
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     convert_unknown(py, v)
 }
 
@@ -223,7 +224,7 @@ pub(crate) fn uas_datalink_ls_unknown_from_py(
 pub(crate) fn uas_datalink_ls_field_errors_to_py(
     py: Python<'_>,
     v: &[KlvFieldError],
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     convert_field_errors(py, v)
 }
 
@@ -234,8 +235,13 @@ pub(crate) fn uas_datalink_ls_field_errors_from_py(
     Ok(Vec::new())
 }
 
-pub(crate) fn uas_datalink_ls_sentinel_tags_to_py(py: Python<'_>, v: &[u32]) -> PyResult<PyObject> {
-    Ok(PyTuple::new_bound(py, v.iter().map(|&t| u64::from(t))).into_py(py))
+pub(crate) fn uas_datalink_ls_sentinel_tags_to_py(
+    py: Python<'_>,
+    v: &[u32],
+) -> PyResult<Py<PyAny>> {
+    Ok(PyTuple::new(py, v.iter().map(|&t| u64::from(t)))?
+        .into_any()
+        .unbind())
 }
 
 /// Extracting a `u32` raises `OverflowError` on an out-of-range value instead
@@ -250,27 +256,34 @@ pub(crate) fn uas_datalink_ls_sentinel_tags_from_py(obj: &Bound<'_, PyAny>) -> P
 pub(crate) fn uas_datalink_ls_imapb_specials_to_py(
     py: Python<'_>,
     v: &[(u32, ImapbSpecial)],
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let items = v
         .iter()
         .map(|&(tag, special)| {
             let (code, payload) = imapb_special_to_code(special)?;
-            Ok(PyTuple::new_bound(
+            Ok(PyTuple::new(
                 py,
-                &[tag.into_py(py), code.into_py(py), payload.into_py(py)],
-            )
-            .unbind()
-            .into_py(py))
+                &[
+                    tag.into_py_any(py)?,
+                    code.into_py_any(py)?,
+                    payload.into_py_any(py)?,
+                ],
+            )?
+            .into_any()
+            .unbind())
         })
-        .collect::<PyResult<Vec<PyObject>>>()?;
-    Ok(PyTuple::new_bound(py, items).into_py(py))
+        .collect::<PyResult<Vec<Py<PyAny>>>>()?;
+    Ok(PyTuple::new(py, items)?.into_any().unbind())
 }
 
 pub(crate) fn uas_datalink_ls_imapb_specials_from_py(
     obj: &Bound<'_, PyAny>,
 ) -> PyResult<Vec<(u32, ImapbSpecial)>> {
     let mut out = Vec::new();
-    for item in obj.getattr(intern!(obj.py(), "imapb_specials"))?.iter()? {
+    for item in obj
+        .getattr(intern!(obj.py(), "imapb_specials"))?
+        .try_iter()?
+    {
         let (tag, code, payload): (u32, String, u64) = item?.extract()?;
         out.push((tag, imapb_special_from_code(&code, payload)?));
     }
@@ -327,9 +340,9 @@ fn imapb_special_from_code(code: &str, payload: u64) -> PyResult<ImapbSpecial> {
 pub(crate) fn metadata_substream_id_uuid_to_py(
     py: Python<'_>,
     v: &Option<[u8; 16]>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     Ok(match v {
-        Some(u) => PyBytes::new_bound(py, u).into_py(py),
+        Some(u) => PyBytes::new(py, u).into_any().unbind(),
         None => py.None(),
     })
 }
@@ -354,7 +367,7 @@ pub(crate) fn metadata_substream_id_uuid_from_py(
 pub(crate) fn payload_record_payload_type_to_py(
     py: Python<'_>,
     v: &PayloadType,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let other = match v {
         PayloadType::Other(c) => Some(*c),
         _ => None,
@@ -408,7 +421,7 @@ fn is_st0806_poi_aoi_typed_tag(tag: u32) -> bool {
 /// is a parser diagnostic that does not cross back.
 macro_rules! unknown_and_field_errors {
     ($unknown_to:ident, $unknown_from:ident, $errors_to:ident, $errors_from:ident, $typed:ident) => {
-        pub(crate) fn $unknown_to(py: Python<'_>, v: &[OwnedRawField]) -> PyResult<PyObject> {
+        pub(crate) fn $unknown_to(py: Python<'_>, v: &[OwnedRawField]) -> PyResult<Py<PyAny>> {
             convert_unknown(py, v)
         }
 
@@ -417,7 +430,7 @@ macro_rules! unknown_and_field_errors {
             py_to_unknown(obj, $typed)
         }
 
-        pub(crate) fn $errors_to(py: Python<'_>, v: &[KlvFieldError]) -> PyResult<PyObject> {
+        pub(crate) fn $errors_to(py: Python<'_>, v: &[KlvFieldError]) -> PyResult<Py<PyAny>> {
             convert_field_errors(py, v)
         }
 
@@ -432,7 +445,7 @@ macro_rules! unknown_and_field_errors {
 /// raw `int` for the enum's wire-unknown variant.
 macro_rules! coded_enum_fields {
     ($to:ident, $from:ident, $ty:ident, $unknown:ident, $field:literal) => {
-        pub(crate) fn $to(py: Python<'_>, v: &Option<$ty>) -> PyResult<PyObject> {
+        pub(crate) fn $to(py: Python<'_>, v: &Option<$ty>) -> PyResult<Py<PyAny>> {
             let Some(v) = v else { return Ok(py.None()) };
             let other = match v {
                 $ty::$unknown(b) => Some(u64::from(*b)),
@@ -492,8 +505,8 @@ unknown_and_field_errors!(
 pub(crate) fn precision_time_stamp_pack_time_status_to_py(
     py: Python<'_>,
     v: &TimeStatus,
-) -> PyResult<PyObject> {
-    let cls = py.import_bound("tstrans.klv")?.getattr("TimeStatus")?;
+) -> PyResult<Py<PyAny>> {
+    let cls = py.import("tstrans.klv")?.getattr("TimeStatus")?;
     Ok(cls.call1((v.0,))?.unbind())
 }
 
@@ -515,9 +528,9 @@ pub(crate) fn precision_time_stamp_pack_time_status_from_py(
 pub(crate) fn v_target_pack_target_color_to_py(
     py: Python<'_>,
     v: &Option<[u8; 3]>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     Ok(match v {
-        Some(rgb) => PyTuple::new_bound(py, rgb).into_py(py),
+        Some(rgb) => PyTuple::new(py, rgb)?.into_any().unbind(),
         None => py.None(),
     })
 }
@@ -575,15 +588,17 @@ coded_enum_fields!(
     "aoi_type"
 );
 
-pub(crate) fn rvt_poi_sentinel_tags_to_py(py: Python<'_>, v: &[u32]) -> PyResult<PyObject> {
-    Ok(PyTuple::new_bound(py, v.iter().map(|&t| u64::from(t))).into_py(py))
+pub(crate) fn rvt_poi_sentinel_tags_to_py(py: Python<'_>, v: &[u32]) -> PyResult<Py<PyAny>> {
+    Ok(PyTuple::new(py, v.iter().map(|&t| u64::from(t)))?
+        .into_any()
+        .unbind())
 }
 
 pub(crate) fn rvt_poi_sentinel_tags_from_py(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u32>> {
     obj.getattr(intern!(obj.py(), "sentinel_tags"))?.extract()
 }
 
-pub(crate) fn rvt_aoi_sentinel_tags_to_py(py: Python<'_>, v: &[u32]) -> PyResult<PyObject> {
+pub(crate) fn rvt_aoi_sentinel_tags_to_py(py: Python<'_>, v: &[u32]) -> PyResult<Py<PyAny>> {
     rvt_poi_sentinel_tags_to_py(py, v)
 }
 
@@ -617,16 +632,19 @@ unknown_and_field_errors!(
 // ST 1010 — SdccFlp
 // ---------------------------------------------------------------------------
 
-pub(crate) fn sdcc_flp_std_devs_to_py(py: Python<'_>, v: &[f64]) -> PyResult<PyObject> {
-    Ok(PyTuple::new_bound(py, v).into_py(py))
+pub(crate) fn sdcc_flp_std_devs_to_py(py: Python<'_>, v: &[f64]) -> PyResult<Py<PyAny>> {
+    Ok(PyTuple::new(py, v)?.into_any().unbind())
 }
 
-pub(crate) fn sdcc_flp_correlations_to_py(py: Python<'_>, v: &[f64]) -> PyResult<PyObject> {
-    Ok(PyTuple::new_bound(py, v).into_py(py))
+pub(crate) fn sdcc_flp_correlations_to_py(py: Python<'_>, v: &[f64]) -> PyResult<Py<PyAny>> {
+    Ok(PyTuple::new(py, v)?.into_any().unbind())
 }
 
-pub(crate) fn sdcc_flp_correlation_present_to_py(py: Python<'_>, v: &[bool]) -> PyResult<PyObject> {
-    Ok(PyTuple::new_bound(py, v).into_py(py))
+pub(crate) fn sdcc_flp_correlation_present_to_py(
+    py: Python<'_>,
+    v: &[bool],
+) -> PyResult<Py<PyAny>> {
+    Ok(PyTuple::new(py, v)?.into_any().unbind())
 }
 
 // ---------------------------------------------------------------------------
@@ -634,7 +652,7 @@ pub(crate) fn sdcc_flp_correlation_present_to_py(py: Python<'_>, v: &[bool]) -> 
 // ---------------------------------------------------------------------------
 
 /// The `tstrans.klv.IdType` member of the same name.
-fn id_type_to_py(py: Python<'_>, ty: IdType) -> PyResult<PyObject> {
+fn id_type_to_py(py: Python<'_>, ty: IdType) -> PyResult<Py<PyAny>> {
     let name = match ty {
         IdType::Physical => "PHYSICAL",
         IdType::Virtual => "VIRTUAL",
@@ -645,7 +663,7 @@ fn id_type_to_py(py: Python<'_>, ty: IdType) -> PyResult<PyObject> {
             ));
         }
     };
-    let cls = py.import_bound("tstrans.klv")?.getattr("IdType")?;
+    let cls = py.import("tstrans.klv")?.getattr("IdType")?;
     Ok(cls.getattr(name)?.unbind())
 }
 
@@ -672,12 +690,12 @@ fn uuid_from_bytes(field: &str, bytes: &[u8]) -> PyResult<[u8; 16]> {
 }
 
 /// A typed UUID crosses as a `(IdType, bytes)` tuple.
-fn typed_uuid_to_py(py: Python<'_>, v: &Option<(IdType, [u8; 16])>) -> PyResult<PyObject> {
+fn typed_uuid_to_py(py: Python<'_>, v: &Option<(IdType, [u8; 16])>) -> PyResult<Py<PyAny>> {
     Ok(match v {
         Some((ty, uuid)) => {
             let ty = id_type_to_py(py, *ty)?;
-            let bytes: PyObject = PyBytes::new_bound(py, uuid).into_py(py);
-            PyTuple::new_bound(py, [ty, bytes]).into_py(py)
+            let bytes: Py<PyAny> = PyBytes::new(py, uuid).into_any().unbind();
+            PyTuple::new(py, [ty, bytes])?.into_any().unbind()
         }
         None => py.None(),
     })
@@ -698,9 +716,9 @@ fn typed_uuid_from_py(
     )))
 }
 
-fn plain_uuid_to_py(py: Python<'_>, v: &Option<[u8; 16]>) -> PyObject {
+fn plain_uuid_to_py(py: Python<'_>, v: &Option<[u8; 16]>) -> Py<PyAny> {
     match v {
-        Some(uuid) => PyBytes::new_bound(py, uuid).into_py(py),
+        Some(uuid) => PyBytes::new(py, uuid).into_any().unbind(),
         None => py.None(),
     }
 }
@@ -717,7 +735,7 @@ fn plain_uuid_from_py(obj: &Bound<'_, PyAny>, field: &'static str) -> PyResult<O
 pub(crate) fn core_id_sensor_to_py(
     py: Python<'_>,
     v: &Option<(IdType, [u8; 16])>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     typed_uuid_to_py(py, v)
 }
 
@@ -730,7 +748,7 @@ pub(crate) fn core_id_sensor_from_py(
 pub(crate) fn core_id_platform_to_py(
     py: Python<'_>,
     v: &Option<(IdType, [u8; 16])>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     typed_uuid_to_py(py, v)
 }
 
@@ -740,7 +758,7 @@ pub(crate) fn core_id_platform_from_py(
     typed_uuid_from_py(obj, "platform")
 }
 
-pub(crate) fn core_id_window_to_py(py: Python<'_>, v: &Option<[u8; 16]>) -> PyResult<PyObject> {
+pub(crate) fn core_id_window_to_py(py: Python<'_>, v: &Option<[u8; 16]>) -> PyResult<Py<PyAny>> {
     Ok(plain_uuid_to_py(py, v))
 }
 
@@ -748,7 +766,7 @@ pub(crate) fn core_id_window_from_py(obj: &Bound<'_, PyAny>) -> PyResult<Option<
     plain_uuid_from_py(obj, "window")
 }
 
-pub(crate) fn core_id_minor_to_py(py: Python<'_>, v: &Option<[u8; 16]>) -> PyResult<PyObject> {
+pub(crate) fn core_id_minor_to_py(py: Python<'_>, v: &Option<[u8; 16]>) -> PyResult<Py<PyAny>> {
     Ok(plain_uuid_to_py(py, v))
 }
 

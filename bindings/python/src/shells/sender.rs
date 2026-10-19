@@ -5,7 +5,7 @@
 //! - GIL released around connect / send / flush.
 //! - The handle is a `tst_pipeline::binding::Owned`: the slot is taken only
 //!   inside `with_mut` / `with_ref_blocking`, always under
-//!   `py.allow_threads`, and `close()` is `Owned::close` (cancel first, then
+//!   `py.detach`, and `close()` is `Owned::close` (cancel first, then
 //!   take, then close). A call parked on another thread therefore ends
 //!   promptly instead of blocking the close or tripping PyO3's borrow check.
 //! - The transport's error domain rides in the snapshot, which stays

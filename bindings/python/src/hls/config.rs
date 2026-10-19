@@ -25,7 +25,14 @@ use pyo3::prelude::*;
 /// - `EVENT` — playlist monotone-grows; `#EXT-X-ENDLIST` on `finish()`.
 /// - `VOD` — like EVENT but the playlist is written all-at-once at
 ///   `finish()`.
-#[pyclass(name = "HlsMode", module = "tstrans.hls", eq, eq_int, frozen)]
+#[pyclass(
+    from_py_object,
+    name = "HlsMode",
+    module = "tstrans.hls",
+    eq,
+    eq_int,
+    frozen
+)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 // SHOUTY_SNAKE variant names match the tst-py IntEnum-pyclass convention
 // (cf. rtp's TransportPref); this allow covers the lint that would demand

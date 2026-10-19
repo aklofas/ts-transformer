@@ -48,7 +48,12 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// inspect-side accessors (`kind`, `base_ms`, `max_ms`) work uniformly
 /// across both variants — for the constant variant, `base_ms == max_ms`
 /// equals the fixed wait.
-#[pyclass(name = "BackoffStrategy", module = "tstrans.srt", frozen)]
+#[pyclass(
+    from_py_object,
+    name = "BackoffStrategy",
+    module = "tstrans.srt",
+    frozen
+)]
 #[derive(Clone)]
 pub struct PyBackoffStrategy {
     pub(crate) inner: RustBackoff,
@@ -140,7 +145,13 @@ fn duration_to_ms(d: Duration) -> u64 {
 /// - `DROP_OLDEST` (default): evict the front of the queue to make room.
 /// - `REJECT`: refuse to enqueue; surface an error to the caller.
 #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
-#[pyclass(name = "OverflowPolicy", module = "tstrans.srt", eq, eq_int)]
+#[pyclass(
+    from_py_object,
+    name = "OverflowPolicy",
+    module = "tstrans.srt",
+    eq,
+    eq_int
+)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PyOverflowPolicy {
     DROP_OLDEST = 0,
@@ -182,7 +193,13 @@ impl From<RustOverflow> for PyOverflowPolicy {
 ///   worker is active. Pair with `reconnect_stats()` for drop/reconnect
 ///   visibility — `Ok` in this mode means *accepted*, not *delivered*.
 #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
-#[pyclass(name = "ReconnectMode", module = "tstrans.srt", eq, eq_int)]
+#[pyclass(
+    from_py_object,
+    name = "ReconnectMode",
+    module = "tstrans.srt",
+    eq,
+    eq_int
+)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PyReconnectMode {
     BLOCKING = 0,
@@ -225,7 +242,12 @@ impl From<RustReconnectMode> for PyReconnectMode {
 /// - `mode = ReconnectMode.BLOCKING`
 ///
 /// Raises `ValueError` if `gap_buffer_capacity == 0`.
-#[pyclass(name = "ReconnectPolicy", module = "tstrans.srt", frozen)]
+#[pyclass(
+    from_py_object,
+    name = "ReconnectPolicy",
+    module = "tstrans.srt",
+    frozen
+)]
 #[derive(Clone)]
 pub struct PyReconnectPolicy {
     pub(crate) inner: RustPolicy,

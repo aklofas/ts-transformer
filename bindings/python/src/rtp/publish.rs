@@ -41,8 +41,8 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 /// Look up `tstrans.rtp.<enum_name>.<member>` (a pure-Python `IntEnum`).
-fn rtp_enum_member(py: Python<'_>, enum_name: &str, member: &str) -> PyResult<PyObject> {
-    let rtp = py.import_bound("tstrans.rtp")?;
+fn rtp_enum_member(py: Python<'_>, enum_name: &str, member: &str) -> PyResult<Py<PyAny>> {
+    let rtp = py.import("tstrans.rtp")?;
     Ok(rtp.getattr(enum_name)?.getattr(member)?.into())
 }
 
@@ -82,9 +82,15 @@ impl ClockAlignmentPy {
     }
 }
 
-impl IntoPy<PyObject> for ClockAlignmentPy {
-    fn into_py(self, py: Python<'_>) -> PyObject {
-        rtp_enum_member(py, "ClockAlignment", self.name()).unwrap_or_else(|_| py.None())
+impl<'py> IntoPyObject<'py> for ClockAlignmentPy {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = std::convert::Infallible;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        Ok(rtp_enum_member(py, "ClockAlignment", self.name())
+            .unwrap_or_else(|_| py.None())
+            .into_bound(py))
     }
 }
 
@@ -141,7 +147,7 @@ impl PyPublisherInfo {
 
     /// Wire shape the publisher's ANNOUNCE declared (`PublishShape`).
     #[getter]
-    pub fn shape(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn shape(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         rtp_enum_member(py, "PublishShape", self.shape)
     }
 
@@ -226,7 +232,7 @@ impl PyPublishMount {
         reason = "clones PublisherInfo under a short in-memory mutex"
     )]
     pub fn publisher(&self, py: Python<'_>) -> PyResult<Option<PyPublisherInfo>> {
-        let info = py.allow_threads(|| self.inner.publisher());
+        let info = py.detach(|| self.inner.publisher());
         info.as_ref().map(PyPublisherInfo::from_rust).transpose()
     }
 
@@ -236,7 +242,7 @@ impl PyPublishMount {
         reason = "snapshots counters under a short in-memory mutex"
     )]
     pub fn stats(&self, py: Python<'_>) -> PyResult<PublishMountStats> {
-        PublishMountStats::try_from(&py.allow_threads(|| self.inner.stats()))
+        PublishMountStats::try_from(&py.detach(|| self.inner.stats()))
     }
 
     /// End the application side only: a `DemuxReceiver` taken from this
@@ -247,7 +253,7 @@ impl PyPublishMount {
         reason = "sets the shared cancel flag; no lock held across I/O"
     )]
     pub fn cancel(&self, py: Python<'_>) {
-        py.allow_threads(|| self.inner.cancel());
+        py.detach(|| self.inner.cancel());
     }
 
     /// Take the mount's received MPEG-TS as a `tstrans.shells.DemuxReceiver`.

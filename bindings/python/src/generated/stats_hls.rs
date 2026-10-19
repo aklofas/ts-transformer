@@ -6,7 +6,13 @@
 use pyo3::prelude::*;
 
 /// Cumulative stats of a mux-publisher shell.
-#[pyclass(frozen, get_all, name = "MuxPublisherStats", module = "tstrans.hls")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "MuxPublisherStats",
+    module = "tstrans.hls"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct MuxPublisherStats {
     /// Total TS bytes drained from the muxer and handed to the publisher.
@@ -39,7 +45,13 @@ impl From<&tst_pipeline::MuxPublisherStats> for MuxPublisherStats {
 
 /// Richer HLS-specific stats snapshot. For cross-publisher metrics use the
 /// publisher's own stats, which carry the universal counters instead.
-#[pyclass(frozen, get_all, name = "HlsStats", module = "tstrans.hls")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "HlsStats",
+    module = "tstrans.hls"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct HlsStats {
     /// Total completed segments (history + current run).

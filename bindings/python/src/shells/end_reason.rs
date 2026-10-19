@@ -16,7 +16,7 @@ use tst_core::transport::EndReason;
 /// `EndReason` is `#[non_exhaustive]`; a future variant this binding does
 /// not know yet returns `Ok(None)` rather than erroring, the "ended through
 /// a path this type does not instrument" contract of `EndReasonHandle::get`.
-pub(crate) fn end_reason_to_py(py: Python<'_>, r: &EndReason) -> PyResult<Option<PyObject>> {
+pub(crate) fn end_reason_to_py(py: Python<'_>, r: &EndReason) -> PyResult<Option<Py<PyAny>>> {
     let name = match r {
         EndReason::CleanTeardown => "CLEAN_TEARDOWN",
         EndReason::SessionExpired => "SESSION_EXPIRED",
@@ -28,7 +28,7 @@ pub(crate) fn end_reason_to_py(py: Python<'_>, r: &EndReason) -> PyResult<Option
         EndReason::ReconnectExhausted => "RECONNECT_EXHAUSTED",
         _ => return Ok(None),
     };
-    let shells = py.import_bound(intern!(py, "tstrans.shells"))?;
+    let shells = py.import(intern!(py, "tstrans.shells"))?;
     let enum_cls = shells.getattr(intern!(py, "EndReason"))?;
     Ok(Some(enum_cls.getattr(name)?.unbind()))
 }

@@ -2,7 +2,7 @@
 # Proves the lint table enforces what used to be grep rails: a planted
 # `.expect(` or `unreachable!` in binding production code (outside a local
 # macro body, which stays with no-unreachable-expect-in-bindings.sh), a raw
-# `slice::from_raw_parts` in tst-c-core and a bare `Python::allow_threads` in
+# `slice::from_raw_parts` in tst-c-core and a bare `Python::detach` in
 # tst-py each fail clippy. The planted code lives in
 # scripts/ratchets/tests/lint_fixtures/ and is compiled only under
 # `--cfg tst_lint_fixture`. A pass requires clippy to FAIL and to name every

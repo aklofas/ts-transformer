@@ -11,7 +11,7 @@
 //!
 //! GIL boundaries:
 //! - `send`, `recv`, builder `build` / `connect`, `close`, `stats` — the
-//!   slot lock is taken inside `py.allow_threads(...)`, so concurrent
+//!   slot lock is taken inside `py.detach(...)`, so concurrent
 //!   Python threads keep running during network I/O and while a getter
 //!   waits for a parked call.
 //!
@@ -135,7 +135,14 @@ fn extract_secret_string(secret: &Bound<'_, PyAny>) -> PyResult<String> {
 ///
 /// The default profile for new builders is `MAIN`. Setting `.encryption(key)`
 /// on a builder forces the profile to `MAIN` regardless of this setting.
-#[pyclass(eq, hash, frozen, name = "RistProfile", module = "tstrans.rist")]
+#[pyclass(
+    from_py_object,
+    eq,
+    hash,
+    frozen,
+    name = "RistProfile",
+    module = "tstrans.rist"
+)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(clippy::upper_case_acronyms)]
 pub(crate) enum PyRistProfile {
@@ -203,7 +210,7 @@ impl PyRistTransport {
     /// Releases the GIL during the underlying socket send call.
     fn send(&self, py: Python<'_>, payload: &Bound<'_, PyAny>) -> PyResult<()> {
         // Zero-copy for `bytes`; one C copy through `bytes()` otherwise
-        // (PyBuffer is unavailable under abi3-py310).
+        // (see `util::coerce_bytes_like`).
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice: &[u8] = coerced.as_bytes();
         pyres(
@@ -281,7 +288,7 @@ pub(crate) struct PyRistTransportBuilder {
     bandwidth_kbps: Option<u32>,
     buffer_ms: Option<u64>,
     cname: Option<String>,
-    encryption: Option<PyObject>,
+    encryption: Option<Py<PyAny>>,
     recovery_maxbitrate_kbps: Option<u32>,
     pkt_size: Option<usize>,
     compression: Option<bool>,
@@ -368,7 +375,7 @@ impl PyRistTransportBuilder {
             b.cname(cname.as_str());
         }
         if let Some(ref key_obj) = self.encryption {
-            let key_ref = key_obj.bind(py).downcast::<PyEncryptionKey>()?.clone();
+            let key_ref = key_obj.bind(py).cast::<PyEncryptionKey>()?.clone();
             let inner_key = key_ref.borrow().inner.clone();
             b.encryption(inner_key);
         }
@@ -509,7 +516,7 @@ impl PyRistRecvTransport {
             })
         });
         let bytes = pyres(py, &RIST, res)?;
-        Ok(PyBytes::new_bound(py, &bytes).unbind())
+        Ok(PyBytes::new(py, &bytes).unbind())
     }
 
     /// Close the receiver. Cancel-first (`Owned::close` latches the shared
@@ -578,7 +585,7 @@ pub(crate) struct PyRistRecvTransportBuilder {
     profile: Option<PyRistProfile>,
     buffer_ms: Option<u64>,
     cname: Option<String>,
-    encryption: Option<PyObject>,
+    encryption: Option<Py<PyAny>>,
     session_timeout_ms: Option<u64>,
 }
 
@@ -643,7 +650,7 @@ impl PyRistRecvTransportBuilder {
             b.cname(cname.as_str());
         }
         if let Some(ref key_obj) = self.encryption {
-            let key_ref = key_obj.bind(py).downcast::<PyEncryptionKey>()?.clone();
+            let key_ref = key_obj.bind(py).cast::<PyEncryptionKey>()?.clone();
             let inner_key = key_ref.borrow().inner.clone();
             b.encryption(inner_key);
         }
@@ -679,7 +686,7 @@ impl PyRistRecvTransportBuilder {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new_bound(parent.py(), "rist")?;
+    let m = PyModule::new(parent.py(), "rist")?;
     m.add_class::<PyRistProfile>()?;
     crate::generated::stats_rist::register(&m)?;
     m.add_class::<PyEncryptionKey>()?;

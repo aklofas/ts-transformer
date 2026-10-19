@@ -10,12 +10,12 @@ use pyo3::types::{PyBytes, PyDict, PyTuple};
 pub(crate) fn rvt_user_data_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0806::RvtUserData,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "RvtUserData"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "numeric_id_raw"), r.numeric_id_raw)?;
-    kwargs.set_item(intern!(py, "data"), PyBytes::new_bound(py, &r.data))?;
+    kwargs.set_item(intern!(py, "data"), PyBytes::new(py, &r.data))?;
     Ok(cls.call((), Some(&kwargs))?.unbind())
 }
 
@@ -32,10 +32,10 @@ pub(crate) fn rvt_user_data_from_py(
 pub(crate) fn rvt_poi_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0806::RvtPoi,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "RvtPoi"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     if let Some(v) = &r.number {
         kwargs.set_item(intern!(py, "number"), *v)?;
     }
@@ -167,10 +167,10 @@ pub(crate) fn rvt_poi_from_py(obj: &Bound<'_, PyAny>) -> PyResult<tst_core::klv:
 pub(crate) fn rvt_aoi_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0806::RvtAoi,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "RvtAoi"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     if let Some(v) = &r.number {
         kwargs.set_item(intern!(py, "number"), *v)?;
     }
@@ -299,10 +299,13 @@ pub(crate) fn rvt_aoi_from_py(obj: &Bound<'_, PyAny>) -> PyResult<tst_core::klv:
     })
 }
 
-pub(crate) fn rvt_ls_to_py(py: Python<'_>, r: &tst_core::klv::st0806::RvtLs) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+pub(crate) fn rvt_ls_to_py(
+    py: Python<'_>,
+    r: &tst_core::klv::st0806::RvtLs,
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "RvtLs"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     if let Some(v) = &r.crc32 {
         kwargs.set_item(intern!(py, "crc32"), *v)?;
     }
@@ -340,7 +343,7 @@ pub(crate) fn rvt_ls_to_py(py: Python<'_>, r: &tst_core::klv::st0806::RvtLs) -> 
         .collect::<PyResult<Vec<_>>>()?;
     kwargs.set_item(
         intern!(py, "user_defined"),
-        PyTuple::new_bound(py, r_user_defined_items),
+        PyTuple::new(py, r_user_defined_items)?,
     )?;
     let r_points_of_interest_items = r
         .points_of_interest
@@ -349,7 +352,7 @@ pub(crate) fn rvt_ls_to_py(py: Python<'_>, r: &tst_core::klv::st0806::RvtLs) -> 
         .collect::<PyResult<Vec<_>>>()?;
     kwargs.set_item(
         intern!(py, "points_of_interest"),
-        PyTuple::new_bound(py, r_points_of_interest_items),
+        PyTuple::new(py, r_points_of_interest_items)?,
     )?;
     let r_areas_of_interest_items = r
         .areas_of_interest
@@ -358,7 +361,7 @@ pub(crate) fn rvt_ls_to_py(py: Python<'_>, r: &tst_core::klv::st0806::RvtLs) -> 
         .collect::<PyResult<Vec<_>>>()?;
     kwargs.set_item(
         intern!(py, "areas_of_interest"),
-        PyTuple::new_bound(py, r_areas_of_interest_items),
+        PyTuple::new(py, r_areas_of_interest_items)?,
     )?;
     if let Some(v) = &r.aircraft_mgrs_zone {
         kwargs.set_item(intern!(py, "aircraft_mgrs_zone"), *v)?;
@@ -480,19 +483,19 @@ pub(crate) fn rvt_ls_from_py(obj: &Bound<'_, PyAny>) -> PyResult<tst_core::klv::
         },
         user_defined: {
             let v = obj.getattr(intern!(py, "user_defined"))?;
-            v.iter()?
+            v.try_iter()?
                 .map(|x| x.and_then(|x| rvt_user_data_from_py(&x)))
                 .collect::<PyResult<Vec<_>>>()?
         },
         points_of_interest: {
             let v = obj.getattr(intern!(py, "points_of_interest"))?;
-            v.iter()?
+            v.try_iter()?
                 .map(|x| x.and_then(|x| rvt_poi_from_py(&x)))
                 .collect::<PyResult<Vec<_>>>()?
         },
         areas_of_interest: {
             let v = obj.getattr(intern!(py, "areas_of_interest"))?;
-            v.iter()?
+            v.try_iter()?
                 .map(|x| x.and_then(|x| rvt_aoi_from_py(&x)))
                 .collect::<PyResult<Vec<_>>>()?
         },

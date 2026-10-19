@@ -6,7 +6,13 @@
 use pyo3::prelude::*;
 
 /// Numerator/denominator pair (no implicit reduction).
-#[pyclass(frozen, get_all, name = "Rational", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "Rational",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct Rational {
     /// Numerator.
@@ -45,7 +51,13 @@ impl From<&tst_core::codec::Rational> for Rational {
 /// VUI / video signal type metadata. All fields decoded per ITU-T H.273 /
 /// ISO/IEC 23091-2 (the codec-independent registry referenced by both H.264
 /// §E.2.1 and H.265 §E.2.1).
-#[pyclass(frozen, get_all, name = "ColorInfo", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "ColorInfo",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct ColorInfo {
     /// Colour primaries.
@@ -98,7 +110,13 @@ impl From<&tst_core::codec::ColorInfo> for ColorInfo {
 
 /// AV1 OBU extension header. Present when `obu_extension_flag = 1`. Per AV1
 /// Bitstream Spec §5.3.3.
-#[pyclass(frozen, get_all, name = "ObuExtension", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "ObuExtension",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct ObuExtension {
     /// 3-bit `temporal_id` (AV1 §5.3.3).
@@ -141,7 +159,13 @@ impl From<&tst_core::codec::ObuExtension> for ObuExtension {
 /// obu_has_size_field | obu_reserved_1bit`) and any extension byte are
 /// parsed during split; the LEB128 `obu_size` field is consumed and
 /// stripped. `payload` carries only the OBU body bytes.
-#[pyclass(frozen, get_all, name = "Obu", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "Obu",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct Obu {
     /// 4-bit `obu_type` (AV1 §5.3.2). 1=SequenceHeader,
@@ -192,7 +216,14 @@ impl From<&tst_core::codec::Obu> for Obu {
 /// time_status)` or the nanosecond constructor `nanos(value_ns,
 /// time_status)`; direct construction from a kind, a time status and a
 /// value is also accepted.
-#[pyclass(frozen, get_all, eq, name = "MispTimestamp", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    eq,
+    name = "MispTimestamp",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MispTimestamp {
     /// Which time base the value carries: microseconds or nanoseconds since
@@ -252,7 +283,13 @@ impl From<&tst_core::codec::misp_time::MispTimestamp> for MispTimestamp {
 }
 
 /// Parsed H.264 Sequence Parameter Set.
-#[pyclass(frozen, get_all, name = "H264Sps", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "H264Sps",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct H264Sps {
     /// `seq_parameter_set_id` — identifies this SPS (H.264 §7.4.2.1.1).
@@ -361,7 +398,13 @@ impl From<&tst_core::codec::h264::H264Sps> for H264Sps {
 }
 
 /// Parsed H.264 Picture Parameter Set.
-#[pyclass(frozen, get_all, name = "H264Pps", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "H264Pps",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct H264Pps {
     /// `pic_parameter_set_id` ∈ [0, 255].
@@ -399,6 +442,7 @@ impl From<&tst_core::codec::h264::H264Pps> for H264Pps {
 /// and frame-type classification without walking into slice data.
 #[pyclass(
     frozen,
+    from_py_object,
     get_all,
     name = "H264SliceHeaderLight",
     module = "tstrans.codec"
@@ -448,7 +492,13 @@ impl From<&tst_core::codec::h264::H264SliceHeaderLight> for H264SliceHeaderLight
 }
 
 /// All SPS and PPS NAL units parsed from a single access unit.
-#[pyclass(frozen, get_all, name = "H264ParameterSets", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "H264ParameterSets",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct H264ParameterSets {
     /// The parsed SPS NAL units, keyed by `seq_parameter_set_id`.
@@ -496,6 +546,7 @@ impl From<&tst_core::codec::h264::H264ParameterSets> for H264ParameterSets {
 /// profiles).
 #[pyclass(
     frozen,
+    from_py_object,
     get_all,
     name = "H265ProfileTierLevel",
     module = "tstrans.codec"
@@ -560,7 +611,13 @@ impl From<&tst_core::codec::h265::H265ProfileTierLevel> for H265ProfileTierLevel
 }
 
 /// Parsed H.265 Sequence Parameter Set.
-#[pyclass(frozen, get_all, name = "H265Sps", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "H265Sps",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct H265Sps {
     /// `sps_seq_parameter_set_id` — identifies this SPS (H.265 §7.4.3.2.1).
@@ -694,7 +751,13 @@ impl From<&tst_core::codec::h265::H265Sps> for H265Sps {
 }
 
 /// Parsed H.265 Video Parameter Set.
-#[pyclass(frozen, get_all, name = "H265Vps", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "H265Vps",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct H265Vps {
     /// 4-bit `vps_video_parameter_set_id` — identifies this VPS.
@@ -765,7 +828,13 @@ impl From<&tst_core::codec::h265::H265Vps> for H265Vps {
 }
 
 /// Parsed H.265 Picture Parameter Set.
-#[pyclass(frozen, get_all, name = "H265Pps", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "H265Pps",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct H265Pps {
     /// `pps_pic_parameter_set_id` ∈ [0, 63].
@@ -800,6 +869,7 @@ impl From<&tst_core::codec::h265::H265Pps> for H265Pps {
 /// detection and frame-type classification without walking into slice data.
 #[pyclass(
     frozen,
+    from_py_object,
     get_all,
     name = "H265SliceHeaderLight",
     module = "tstrans.codec"
@@ -850,7 +920,13 @@ impl From<&tst_core::codec::h265::H265SliceHeaderLight> for H265SliceHeaderLight
 }
 
 /// All VPS, SPS, and PPS NAL units parsed from a slice.
-#[pyclass(frozen, get_all, name = "H265ParameterSets", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "H265ParameterSets",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct H265ParameterSets {
     /// The parsed VPS NAL units, keyed by `vps_video_parameter_set_id`.
@@ -903,6 +979,7 @@ impl From<&tst_core::codec::h265::H265ParameterSets> for H265ParameterSets {
 /// `profile_tier_level` member.
 #[pyclass(
     frozen,
+    from_py_object,
     get_all,
     name = "H266ProfileTierLevel",
     module = "tstrans.codec"
@@ -940,7 +1017,13 @@ impl From<&tst_core::codec::h266::H266ProfileTierLevel> for H266ProfileTierLevel
 }
 
 /// Parsed H.266 Sequence Parameter Set.
-#[pyclass(frozen, get_all, name = "H266Sps", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "H266Sps",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct H266Sps {
     /// `sps_seq_parameter_set_id` (4-bit) — identifies this SPS (H.266
@@ -1036,7 +1119,13 @@ impl From<&tst_core::codec::h266::H266Sps> for H266Sps {
 }
 
 /// Parsed H.266 Video Parameter Set.
-#[pyclass(frozen, get_all, name = "H266Vps", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "H266Vps",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct H266Vps {
     /// 4-bit `vps_id` — identifies this VPS (H.266 V4 §7.3.2.3).
@@ -1072,7 +1161,13 @@ impl From<&tst_core::codec::h266::H266Vps> for H266Vps {
 }
 
 /// Parsed H.266 Picture Parameter Set.
-#[pyclass(frozen, get_all, name = "H266Pps", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "H266Pps",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct H266Pps {
     /// `pps_id` (6-bit) ∈ [0, 63] — H.266 V4 §7.3.2.5.
@@ -1120,6 +1215,7 @@ impl From<&tst_core::codec::h266::H266Pps> for H266Pps {
 /// `sps_log2_max_pic_order_cnt_lsb_minus4` field, which is deferred.
 #[pyclass(
     frozen,
+    from_py_object,
     get_all,
     name = "H266SliceHeaderLight",
     module = "tstrans.codec"
@@ -1180,7 +1276,13 @@ impl From<&tst_core::codec::h266::H266SliceHeaderLight> for H266SliceHeaderLight
 /// Unlike the H.265 version, which is keyed by id, H.266 parameter sets are
 /// ordered lists: look one up by its own id field (`vps_id`, `sps_id`,
 /// `pps_id`).
-#[pyclass(frozen, get_all, name = "H266ParameterSets", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "H266ParameterSets",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct H266ParameterSets {
     /// The parsed VPS NAL units, in the order they were parsed.
@@ -1214,7 +1316,13 @@ impl From<&tst_core::codec::h266::H266ParameterSets> for H266ParameterSets {
 }
 
 /// Parsed AV1 Sequence Header OBU.
-#[pyclass(frozen, get_all, name = "Av1SequenceHeader", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "Av1SequenceHeader",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct Av1SequenceHeader {
     /// `seq_profile` — 0=Main, 1=High, 2=Professional.
@@ -1290,6 +1398,7 @@ impl From<&tst_core::codec::av1::Av1SequenceHeader> for Av1SequenceHeader {
 /// reference-frame management beyond this parser's scope.
 #[pyclass(
     frozen,
+    from_py_object,
     get_all,
     name = "Av1FrameHeaderLight",
     module = "tstrans.codec"
@@ -1340,7 +1449,13 @@ impl From<&tst_core::codec::av1::Av1FrameHeaderLight> for Av1FrameHeaderLight {
 /// Build a list of OBUs, then call the OBU-stream parser to populate the
 /// three fields. Partial-success-tolerant: OBUs that fail to parse
 /// accumulate in `unparseable` rather than aborting the walk.
-#[pyclass(frozen, get_all, name = "Av1ObuStream", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "Av1ObuStream",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct Av1ObuStream {
     /// All successfully parsed Sequence Header OBUs in encounter order.
@@ -1383,7 +1498,13 @@ impl From<&tst_core::codec::av1::Av1ObuStream> for Av1ObuStream {
 
 /// One decoded ADTS frame: the parsed header fields, the raw header bytes
 /// and the full frame bytes.
-#[pyclass(frozen, get_all, name = "AdtsFrame", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "AdtsFrame",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct AdtsFrame {
     /// AAC profile (Main / LC / SSR / LTP).
@@ -1443,7 +1564,13 @@ impl From<&tst_core::codec::aac::AdtsFrameOwned> for AdtsFrame {
 
 /// One decoded MPEG audio frame: the parsed header fields, the raw header
 /// bytes and the full frame bytes.
-#[pyclass(frozen, get_all, name = "Mpeg2AudioFrame", module = "tstrans.codec")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "Mpeg2AudioFrame",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone)]
 pub struct Mpeg2AudioFrame {
     /// MPEG audio layer (I, II, or III).

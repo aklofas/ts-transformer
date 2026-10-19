@@ -77,7 +77,7 @@ tst-udp      = { path = "../../crates/tst-udp", default-features = false, option
 tst-tcp      = { path = "../../crates/tst-tcp", default-features = false, optional = true }
 tst-hls      = { path = "../../crates/tst-hls", default-features = false, optional = true }
 tst-rist     = { path = "../../crates/tst-rist", default-features = false, optional = true }
-pyo3         = { version = "0.22", features = ["extension-module", "abi3-py310"] }
+pyo3         = { version = "0.30", features = ["extension-module", "abi3-py311"] }
 # Used by the `rtp` feature path — both RtspClientBuilder::auth and
 # server-side auth wrap user-passed passwords in `SecretString`
 # before handing them to the Rust builder. Optional + gated on
@@ -100,7 +100,7 @@ tracing = { workspace = true }
 # interpreter at link time. `cargo:rustc-cdylib-link-arg` only takes effect
 # from the cdylib package's own build script, so PyO3 itself can't do this
 # for us. `add_extension_module_link_args()` is the documented helper.
-pyo3-build-config = "0.22"
+pyo3-build-config = "0.30"
 
 [lints]
 workspace = true

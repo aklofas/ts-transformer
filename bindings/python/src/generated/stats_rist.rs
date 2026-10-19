@@ -10,7 +10,13 @@ use pyo3::prelude::*;
 /// Send-side counters are zero on a receive-only handle and vice-versa. The
 /// round-trip time is a smoothed value that stays 0 until the first RTCP
 /// exchange.
-#[pyclass(frozen, get_all, name = "RistStats", module = "tstrans.rist")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "RistStats",
+    module = "tstrans.rist"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct RistStats {
     /// Payload packets successfully sent (sender only).

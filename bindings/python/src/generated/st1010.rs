@@ -10,10 +10,10 @@ use pyo3::types::PyDict;
 pub(crate) fn sdcc_flp_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st1010::SdccFlp,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "SdccFlp"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "matrix_size"), r.matrix_size)?;
     kwargs.set_item(
         intern!(py, "std_devs"),

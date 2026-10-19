@@ -10,10 +10,10 @@ use pyo3::types::PyDict;
 pub(crate) fn core_id_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st1204::CoreId,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "CoreId"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "version"), r.version)?;
     kwargs.set_item(
         intern!(py, "sensor"),

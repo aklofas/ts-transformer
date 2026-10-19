@@ -13,7 +13,13 @@ use pyo3::prelude::*;
 /// particular value reports `0`. For the SRT-specific extras (estimated
 /// bandwidth, the symmetric send/recv-side loss split) read the SRT stats
 /// of an `srt://` shell.
-#[pyclass(frozen, get_all, name = "SocketStats", module = "tstrans.shells")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "SocketStats",
+    module = "tstrans.shells"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct SocketStats {
     /// Smoothed round-trip time in microseconds. `0` means "not yet

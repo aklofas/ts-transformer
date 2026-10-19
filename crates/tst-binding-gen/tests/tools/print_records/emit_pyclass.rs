@@ -220,7 +220,7 @@ pub fn class(reg: &[Entry], e: &Entry) -> Result<String, String> {
     let mut o = doc_comment(s.doc, "");
     let eq = if e.py_eq { ", eq" } else { "" };
     o.push_str(&format!(
-        "#[pyclass(frozen, get_all{eq}, name = \"{name}\", module = \"{}\")]\n",
+        "#[pyclass(frozen, from_py_object, get_all{eq}, name = \"{name}\", module = \"{}\")]\n",
         e.py_module
     ));
     o.push_str(&format!("#[derive({})]\n", derives.join(", ")));

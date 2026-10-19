@@ -15,6 +15,7 @@
 // here exactly as in the sibling modules (errors.rs, klv.rs, mpegts.rs, mux.rs).
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -64,7 +65,13 @@ impl From<RustChromaFormat> for ChromaFormatPy {
 /// ITU-T H.273 V4 §8.1 Table 2 — colour primaries.
 /// Mirrors `tst_core::codec::ColourPrimaries`.
 /// `Reserved(u8)` is collapsed to `RESERVED` (raw value not preserved in v1).
-#[pyclass(eq, eq_int, name = "ColourPrimaries", module = "tstrans.codec")]
+#[pyclass(
+    from_py_object,
+    eq,
+    eq_int,
+    name = "ColourPrimaries",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColourPrimariesPy {
     #[pyo3(name = "BT709")]
@@ -119,7 +126,13 @@ impl From<RustColourPrimaries> for ColourPrimariesPy {
 
 /// ITU-T H.273 V4 §8.2 Table 3 — transfer characteristics.
 /// Mirrors `tst_core::codec::TransferCharacteristics`.
-#[pyclass(eq, eq_int, name = "TransferCharacteristics", module = "tstrans.codec")]
+#[pyclass(
+    from_py_object,
+    eq,
+    eq_int,
+    name = "TransferCharacteristics",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferCharacteristicsPy {
     #[pyo3(name = "BT709")]
@@ -191,7 +204,13 @@ impl From<RustTransferCharacteristics> for TransferCharacteristicsPy {
 
 /// ITU-T H.273 V4 §8.3 Table 4 — matrix coefficients.
 /// Mirrors `tst_core::codec::MatrixCoefficients`.
-#[pyclass(eq, eq_int, name = "MatrixCoefficients", module = "tstrans.codec")]
+#[pyclass(
+    from_py_object,
+    eq,
+    eq_int,
+    name = "MatrixCoefficients",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatrixCoefficientsPy {
     #[pyo3(name = "IDENTITY")]
@@ -373,7 +392,7 @@ impl NalUnitPy {
     /// bytes preserved (consumer's decoder removes 0x03 escapes).
     #[getter]
     fn payload<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new_bound(py, &self.payload)
+        PyBytes::new(py, &self.payload)
     }
 
     fn __repr__(&self) -> String {
@@ -1161,7 +1180,7 @@ fn iter_aac_frames_py(py: Python<'_>, bytes_buf: &[u8]) -> PyResult<AdtsFrameIte
     // Vec. `bytes_buf` borrows from a `Py<PyBytes>` held by the caller's
     // frame, safe to access without the GIL. Per-iter `__next__` stays
     // inside the GIL (overhead of release per element exceeds benefit).
-    let frames = py.allow_threads(|| {
+    let frames = py.detach(|| {
         rust_aac_frames(bytes_buf)
             .map(|res| res.map(|f| f.to_owned()))
             .collect::<Result<Vec<_>, _>>()
@@ -1184,7 +1203,7 @@ fn iter_aac_frames_py(py: Python<'_>, bytes_buf: &[u8]) -> PyResult<AdtsFrameIte
 #[pyo3(name = "iter_aac_frames_with_resync")]
 fn iter_aac_frames_with_resync_py(py: Python<'_>, bytes_buf: &[u8]) -> AdtsFrameIterPy {
     // GIL-release rationale: see `iter_aac_frames_py`.
-    let frames: Vec<_> = py.allow_threads(|| {
+    let frames: Vec<_> = py.detach(|| {
         rust_aac_frames_with_resync(bytes_buf)
             .filter_map(|res| res.ok())
             .map(|f| f.to_owned())
@@ -1203,7 +1222,7 @@ fn iter_aac_frames_with_resync_py(py: Python<'_>, bytes_buf: &[u8]) -> AdtsFrame
 fn parse_aac_frames_py(py: Python<'_>, bytes_buf: &[u8]) -> PyResult<Vec<AdtsFrame>> {
     // GIL-release rationale: see `iter_aac_frames_py`. Parse + own-copy
     // off-thread, then map errors to PyErr inside the GIL (cheap).
-    let frames = py.allow_threads(|| {
+    let frames = py.detach(|| {
         rust_aac_frames(bytes_buf)
             .map(|res| res.map(|f| f.to_owned()))
             .collect::<Result<Vec<_>, _>>()
@@ -1222,7 +1241,7 @@ fn parse_aac_frames_py(py: Python<'_>, bytes_buf: &[u8]) -> PyResult<Vec<AdtsFra
 #[pyo3(name = "parse_aac_frames_with_resync")]
 fn parse_aac_frames_with_resync_py(py: Python<'_>, bytes_buf: &[u8]) -> Vec<AdtsFrame> {
     // GIL-release rationale: see `iter_aac_frames_py`.
-    let frames: Vec<_> = py.allow_threads(|| {
+    let frames: Vec<_> = py.detach(|| {
         rust_aac_frames_with_resync(bytes_buf)
             .filter_map(|res| res.ok())
             .map(|f| f.to_owned())
@@ -1361,7 +1380,7 @@ impl Mpeg2AudioFrameIterPy {
 #[pyo3(name = "iter_mpeg2_audio_frames")]
 fn iter_mpeg2_audio_frames_py(py: Python<'_>, bytes_buf: &[u8]) -> PyResult<Mpeg2AudioFrameIterPy> {
     // GIL-release rationale: see `iter_aac_frames_py`.
-    let frames = py.allow_threads(|| {
+    let frames = py.detach(|| {
         rust_mpeg2audio_frames(bytes_buf)
             .map(|res| res.map(|f| f.to_owned()))
             .collect::<Result<Vec<_>, _>>()
@@ -1388,7 +1407,7 @@ fn iter_mpeg2_audio_frames_with_resync_py(
     bytes_buf: &[u8],
 ) -> Mpeg2AudioFrameIterPy {
     // GIL-release rationale: see `iter_aac_frames_py`.
-    let frames: Vec<_> = py.allow_threads(|| {
+    let frames: Vec<_> = py.detach(|| {
         rust_mpeg2audio_frames_with_resync(bytes_buf)
             .filter_map(|res| res.ok())
             .map(|f| f.to_owned())
@@ -1406,7 +1425,7 @@ fn iter_mpeg2_audio_frames_with_resync_py(
 #[pyo3(name = "parse_mpeg2_audio_frames")]
 fn parse_mpeg2_audio_frames_py(py: Python<'_>, bytes_buf: &[u8]) -> PyResult<Vec<Mpeg2AudioFrame>> {
     // GIL-release rationale: see `iter_aac_frames_py`.
-    let frames = py.allow_threads(|| {
+    let frames = py.detach(|| {
         rust_mpeg2audio_frames(bytes_buf)
             .map(|res| res.map(|f| f.to_owned()))
             .collect::<Result<Vec<_>, _>>()
@@ -1432,7 +1451,7 @@ fn parse_mpeg2_audio_frames_with_resync_py(
     bytes_buf: &[u8],
 ) -> Vec<Mpeg2AudioFrame> {
     // GIL-release rationale: see `iter_aac_frames_py`.
-    let frames: Vec<_> = py.allow_threads(|| {
+    let frames: Vec<_> = py.detach(|| {
         rust_mpeg2audio_frames_with_resync(bytes_buf)
             .filter_map(|res| res.ok())
             .map(|f| f.to_owned())
@@ -1487,7 +1506,7 @@ fn split_units(
     codec: &Bound<'_, PyAny>,
     strict: bool,
     carriage: Option<&Bound<'_, PyAny>>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     use tst_core::mpegts::demux::{split_video, split_video_strict};
     use tst_core::mpegts::mux::Av1CarriageMode;
     use tst_core::shared::SharedBytes;
@@ -1506,7 +1525,7 @@ fn split_units(
         let (vp, issues) = split_video(&shared, rust_codec, rust_carriage);
         let units = crate::mpegts::convert_video_payload(py, &vp)?;
         let issue_strs: Vec<String> = issues.iter().map(|i| format!("{i}")).collect();
-        Ok((units, issue_strs).into_py(py))
+        (units, issue_strs).into_py_any(py)
     }
 }
 
@@ -1527,13 +1546,13 @@ fn parse_audio(
     raw: &[u8],
     codec: &Bound<'_, PyAny>,
     strict: bool,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let name: String = codec.getattr(pyo3::intern!(py, "name"))?.extract()?;
-    let list = pyo3::types::PyList::empty_bound(py);
+    let list = pyo3::types::PyList::empty(py);
     match name.as_str() {
         "AAC" => {
             if strict {
-                let frames = py.allow_threads(|| {
+                let frames = py.detach(|| {
                     rust_aac_frames(raw)
                         .map(|res| res.map(|f| f.to_owned()))
                         .collect::<Result<Vec<_>, _>>()
@@ -1544,7 +1563,7 @@ fn parse_audio(
                     list.append(Py::new(py, AdtsFrame::from(&f))?)?;
                 }
             } else {
-                let frames: Vec<_> = py.allow_threads(|| {
+                let frames: Vec<_> = py.detach(|| {
                     rust_aac_frames_with_resync(raw)
                         .filter_map(|res| res.ok())
                         .map(|f| f.to_owned())
@@ -1557,7 +1576,7 @@ fn parse_audio(
         }
         "MP2" => {
             if strict {
-                let frames = py.allow_threads(|| {
+                let frames = py.detach(|| {
                     rust_mpeg2audio_frames(raw)
                         .map(|res| res.map(|f| f.to_owned()))
                         .collect::<Result<Vec<_>, _>>()
@@ -1568,7 +1587,7 @@ fn parse_audio(
                     list.append(Py::new(py, Mpeg2AudioFrame::from(&f))?)?;
                 }
             } else {
-                let frames: Vec<_> = py.allow_threads(|| {
+                let frames: Vec<_> = py.detach(|| {
                     rust_mpeg2audio_frames_with_resync(raw)
                         .filter_map(|res| res.ok())
                         .map(|f| f.to_owned())
@@ -1581,7 +1600,7 @@ fn parse_audio(
         }
         _ => {} // AAC_LATM, AC3, unknown → empty list (no typed parser)
     }
-    Ok(list.into_py(py))
+    Ok(list.into_any().unbind())
 }
 
 // === MISP timestamp (ST 0604) ===
@@ -1590,7 +1609,13 @@ fn parse_audio(
 ///
 /// `MICRO` — microseconds since the MISP epoch (valid for H.264 + H.265).
 /// `NANO`  — nanoseconds since the MISP epoch (H.265-only, ST 0604.6 §12.2).
-#[pyclass(eq, eq_int, name = "MispTimeKind", module = "tstrans.codec")]
+#[pyclass(
+    from_py_object,
+    eq,
+    eq_int,
+    name = "MispTimeKind",
+    module = "tstrans.codec"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MispTimeKindPy {
     #[pyo3(name = "MICRO")]
@@ -1642,7 +1667,7 @@ fn extract_misp_timestamp(
     let coerced = crate::util::coerce_bytes_like(py, au)?;
     let au_bytes = coerced.as_bytes();
     let mux_codec = py_video_codec_to_rust(py, codec)?;
-    let result = py.allow_threads(|| extract(au_bytes, mux_codec));
+    let result = py.detach(|| extract(au_bytes, mux_codec));
     match result {
         Ok(None) => Ok(None),
         Ok(Some(ts)) => Ok(Some(MispTimestamp::from(&ts))),

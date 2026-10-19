@@ -46,7 +46,7 @@ fn py_val(
             }
         }
         Ty::Str => format!("{place}.as_str()"),
-        Ty::Bytes => format!("PyBytes::new_bound(py, {r})"),
+        Ty::Bytes => format!("PyBytes::new(py, {r})"),
         Ty::Record(n) => format!("{}(py, {r})?", conv_fn(reg, e, n, "to_py")),
         Ty::List(inner) => {
             let var = place.replace(['.', '*'], "_");
@@ -58,7 +58,7 @@ fn py_val(
                 _ => format!("let {var}_items = {place}.iter().collect::<Vec<_>>();"),
             };
             pre.push(items);
-            format!("PyTuple::new_bound(py, {var}_items)")
+            format!("PyTuple::new(py, {var}_items)?")
         }
         Ty::Opt(_) | Ty::Custom(_) | Ty::Map(_) | Ty::Host(_) => {
             unreachable!("refused or handled by the caller")
@@ -72,17 +72,15 @@ fn to_py(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
     let mut o = fn_sig(
         &format!("{}_to_py", snake(s.name)),
         &["py: Python<'_>".into(), format!("r: &{}", e.rust_path)],
-        "PyResult<PyObject>",
+        "PyResult<Py<PyAny>>",
     );
     o.push('\n');
-    o.push_str(&format!(
-        "    let module = py.import_bound(\"{module}\")?;\n"
-    ));
+    o.push_str(&format!("    let module = py.import(\"{module}\")?;\n"));
     o.push_str(&format!(
         "    let cls = module.getattr(intern!(py, \"{}\"))?;\n",
         e.name()
     ));
-    o.push_str("    let kwargs = PyDict::new_bound(py);\n");
+    o.push_str("    let kwargs = PyDict::new(py);\n");
     for f in flds.iter().filter(|f| f.ty.is_some()) {
         let name = f.spec.name;
         let ty = f.ty.as_ref().expect("crossing");
@@ -129,7 +127,7 @@ fn py_read(reg: &[Entry], e: &Entry, ty: &Ty, v: &str) -> String {
                 unreachable!()
             };
             format!(
-                "{v}.iter()?.map(|x| x.and_then(|x| {}(&x))).collect::<PyResult<Vec<_>>>()?",
+                "{v}.try_iter()?.map(|x| x.and_then(|x| {}(&x))).collect::<PyResult<Vec<_>>>()?",
                 conv_fn(reg, e, n, "from_py")
             )
         }
