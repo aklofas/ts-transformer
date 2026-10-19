@@ -16,13 +16,14 @@
 //! | Native return type                  | Default to pass        |
 //! |-------------------------------------|------------------------|
 //! | `jlong` / `jint`                    | `0`                    |
-//! | `jboolean`                          | `0` (`JNI_FALSE`)      |
+//! | `jboolean`                          | `false` (`JNI_FALSE`)  |
 //! | `jobject` / `jstring` / `jbyteArray`| `std::ptr::null_mut()` |
 //! | `()` (void natives)                 | `()`                   |
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use jni::JNIEnv;
+use jni::strings::JNIString;
+use jni::{Env, EnvUnowned, Outcome, jni_str};
 
 /// Run `f` inside a panic boundary. On panic, throw a `RuntimeException`
 /// (unless a Java exception is already pending) and return `default`. On
@@ -30,39 +31,48 @@ use jni::JNIEnv;
 ///
 /// `AssertUnwindSafe` is sound here for the same reason as `tst-c`'s
 /// `ffi_catch`: the panic arm only *throws + returns a default*; it never
-/// observes potentially-broken state behind the `&mut JNIEnv` or any captured
+/// observes potentially-broken state behind the `&mut Env` or any captured
 /// handle. A panic mid-body either drops an in-progress `Box` (leaking
 /// nothing) or leaves the registry entry usable — the lock simply unlocks
 /// (poison-tolerated) on unwind; any partial mutation persists.
-pub(crate) fn jni_catch<'local, R, F>(env: &mut JNIEnv<'local>, default: R, f: F) -> R
+pub(crate) fn jni_catch<'local, R, F>(env: &mut EnvUnowned<'local>, default: R, f: F) -> R
 where
-    F: FnOnce(&mut JNIEnv<'local>) -> R,
+    F: FnOnce(&mut Env<'local>) -> R,
 {
-    match catch_unwind(AssertUnwindSafe(|| f(env))) {
-        Ok(value) => value,
-        Err(payload) => {
-            // Do not clobber an exception the body already raised before panicking.
-            if !env.exception_check().unwrap_or(false) {
-                let detail = panic_payload_message(&*payload);
-                let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    format!("native panic in tst-jni: {detail}"),
-                );
+    // `with_env_no_catch`: this function keeps its own panic boundary (below)
+    // so the thrown message stays what it was. The closure never returns
+    // `Err`; `None` means the body panicked and the exception is thrown.
+    let outcome = env.with_env_no_catch(|env| -> jni::errors::Result<Option<R>> {
+        match catch_unwind(AssertUnwindSafe(|| f(env))) {
+            Ok(value) => Ok(Some(value)),
+            Err(payload) => {
+                // Do not clobber an exception the body already raised before panicking.
+                if !env.exception_check() {
+                    let detail = panic_payload_message(&*payload);
+                    let _ = env.throw_new(
+                        jni_str!("java/lang/RuntimeException"),
+                        JNIString::from(format!("native panic in tst-jni: {detail}")),
+                    );
+                }
+                Ok(None)
             }
-            default
         }
+    });
+    match outcome.into_outcome() {
+        Outcome::Ok(Some(value)) => value,
+        Outcome::Ok(None) | Outcome::Err(_) | Outcome::Panic(_) => default,
     }
 }
 
 /// Declares JNI entry points. Each block emits the `#[unsafe(no_mangle)] pub
-/// extern "system"` function with its `JNIEnv`/`JClass` parameters and runs
+/// extern "system"` function with its `EnvUnowned`/`JClass` parameters and runs
 /// the body under [`jni_catch`] with the given default, so a Rust panic becomes
 /// a Java `RuntimeException` and never unwinds into the JVM.
 ///
 /// ```ignore
 /// jni_native! {
-///     fn Java_org_tstrans_X_nY<'local>(env, _class, handle: jlong) -> jboolean = 0 => {
-///         /* body, with `env: &mut JNIEnv` */
+///     fn Java_org_tstrans_X_nY<'local>(env, _class, handle: jlong) -> jboolean = false => {
+///         /* body, with `env: &mut Env` */
 ///     }
 /// }
 /// ```
@@ -76,7 +86,7 @@ where
 /// The environment parameter is always bound `mut`, because [`jni_catch`]
 /// borrows it mutably; a native that does not use it still names it `_env`
 /// and gets a `mut _env` binding, which is harmless. Inside the body the
-/// same name is the closure's `&mut JNIEnv`.
+/// same name is the closure's `&mut Env`.
 macro_rules! jni_native {
     () => {};
     (
@@ -88,7 +98,7 @@ macro_rules! jni_native {
         $(#[$meta])*
         #[unsafe(no_mangle)]
         pub extern "system" fn $name<$lt>(
-            mut $env: ::jni::JNIEnv<$lt>,
+            mut $env: ::jni::EnvUnowned<$lt>,
             $class: ::jni::objects::JClass<$lt>,
             $( $arg: $aty ),*
         ) $(-> $ret)? {
@@ -105,7 +115,7 @@ macro_rules! jni_native {
         $(#[$meta])*
         #[unsafe(no_mangle)]
         pub extern "system" fn $name(
-            mut $env: ::jni::JNIEnv<'_>,
+            mut $env: ::jni::EnvUnowned<'_>,
             $class: ::jni::objects::JClass<'_>,
             $( $arg: $aty ),*
         ) $(-> $ret)? {

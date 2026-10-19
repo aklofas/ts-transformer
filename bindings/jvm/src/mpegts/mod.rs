@@ -30,8 +30,11 @@ pub mod muxer;
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JValue};
+use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject};
 
 use tst_core::error::DemuxError;
@@ -113,7 +116,7 @@ jni_native! {
 /// `Socket.nIntoDemuxReceiverWithConfig` paths so the config assembly is DRY.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_demux_config_from_args(
-    env: &mut jni::JNIEnv,
+    env: &mut jni::Env,
     strict: jint,
     pes_cap_per_pid: jlong,
     pes_cap_total: jlong,
@@ -162,12 +165,12 @@ pub(crate) fn build_demux_config_from_args(
     if au_cell_cap > 0 {
         opts.au_cell_cap_per_pid = Some(au_cell_cap as usize);
     }
-    opts.cfi_tolerance = cfi != 0;
-    opts.lenient_psi_reassembly = lenient_psi != 0;
+    opts.cfi_tolerance = cfi;
+    opts.lenient_psi_reassembly = lenient_psi;
     if sync_buf_cap > 0 {
         opts.sync_buf_cap = Some(sync_buf_cap as usize);
     }
-    opts.unwrap_timestamps = unwrap_timestamps != 0;
+    opts.unwrap_timestamps = unwrap_timestamps;
     Some(opts)
 }
 
@@ -221,7 +224,7 @@ jni_native! {
 /// rather than at the `nFeed` call site keeps coverage intact).
 ///
 /// Shared by `nFeed` and the srt `DemuxReceiver.nNext` demux-error arm.
-pub(crate) fn throw_demux_error(env: &mut JNIEnv, e: &DemuxError) {
+pub(crate) fn throw_demux_error(env: &mut Env, e: &DemuxError) {
     // The shared classifier, not a local table: `UNRECOVERABLE` /
     // `MALFORMED_PES` / `SYNC_BUF_EXHAUSTED` each get their own member (they
     // were `INTERNAL` / `BAD_PMT` / `BAD_PES` / `SYNC_LOSS`); `STRICT_REJECTION`
@@ -253,7 +256,7 @@ jni_native! {
         handle: jlong,
     ) -> jobject = std::ptr::null_mut() => {
         // Lease + drive the pull loop under the resource lock. `with` runs the
-        // closure synchronously, so capturing `env` (`&mut JNIEnv`) to build the
+        // closure synchronously, so capturing `env` (`&mut Env`) to build the
         // Java record in-place is sound. `None` (closed/absent) → IllegalStateException.
         let result = REGISTRY.with_poisoning(handle as u64, |dx| {
             loop {
@@ -385,7 +388,6 @@ jni_native! {
                 return std::ptr::null_mut();
             }
         };
-        let strict = strict != 0;
         // Exact ordinal validation, mirroring nSplitVideo: an out-of-range value
         // means AudioCodec enum drift (a Java variant added without updating this
         // mapping) or a reflective misuse — fail loudly.
@@ -465,7 +467,7 @@ jni_native! {
             }
             // AAC-LATM + AC-3 typed parsing is deferred — empty list (no typed
             // parser). Matches tst-py's `_ =>` arm.
-            _ => match env.new_object("java/util/ArrayList", "()V", &[]) {
+            _ => match env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[]) {
                 Ok(list) => list.into_raw(),
                 Err(_) => std::ptr::null_mut(),
             },
@@ -477,7 +479,7 @@ jni_native! {
 /// handle — the native-side enforcement of the same closed-handle contract the
 /// Java `ensureOpen()` already checks, so the JNI boundary fails closed even if a
 /// private native method is reached by reflection.
-fn closed(env: &mut JNIEnv) {
+fn closed(env: &mut Env) {
     crate::error::throw_closed(env, "Demuxer");
 }
 
@@ -489,7 +491,7 @@ fn closed(env: &mut JNIEnv) {
 /// guard (see `nNextEvent`) but is not produced today. `Err(())` — a JNI call
 /// failed.
 pub(crate) fn convert_event<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     ev: &DemuxEvent,
 ) -> Result<Option<JObject<'local>>, ()> {
     match ev {
@@ -497,8 +499,8 @@ pub(crate) fn convert_event<'local>(
             let pids = build_pid_list(env, pm.streams.iter().map(|s| s.pid))?;
             let obj = env
                 .new_object(
-                    "org/tstrans/mpegts/DemuxEvent$ProgramMap",
-                    "(IIILjava/util/List;)V",
+                    jni_str!("org/tstrans/mpegts/DemuxEvent$ProgramMap"),
+                    jni_sig!("(IIILjava/util/List;)V"),
                     &[
                         JValue::Int(pm.program_number as i32),
                         JValue::Int(pm.pcr_pid as i32),
@@ -546,15 +548,15 @@ pub(crate) fn convert_event<'local>(
                         None => JObject::null(),
                     };
                     env.new_object(
-                        "org/tstrans/mpegts/DemuxEvent$Video",
-                        "(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;Lorg/tstrans/mpegts/VideoCodec;Ljava/nio/ByteBuffer;ZLorg/tstrans/mpegts/Av1CarriageMode;)V",
+                        jni_str!("org/tstrans/mpegts/DemuxEvent$Video"),
+                        jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;Lorg/tstrans/mpegts/VideoCodec;Ljava/nio/ByteBuffer;ZLorg/tstrans/mpegts/Av1CarriageMode;)V"),
                         &[
                             JValue::Object(&stream_obj),
                             JValue::Long(pts_ticks),
                             JValue::Object(&dts_obj),
                             JValue::Object(&codec_obj),
                             JValue::Object(&raw_buf),
-                            JValue::Bool(*random_access_indicator as u8),
+                            JValue::Bool(*random_access_indicator),
                             JValue::Object(&av1_carriage_obj),
                         ],
                     )
@@ -569,8 +571,8 @@ pub(crate) fn convert_event<'local>(
                         enum_const(env, "mpegts", "AudioCodec", audio_codec_name(*codec))?;
                     let raw_buf = wrap_heap_byte_buffer(env, frames.as_slice())?;
                     env.new_object(
-                        "org/tstrans/mpegts/DemuxEvent$Audio",
-                        "(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;Lorg/tstrans/mpegts/AudioCodec;Ljava/nio/ByteBuffer;)V",
+                        jni_str!("org/tstrans/mpegts/DemuxEvent$Audio"),
+                        jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;Lorg/tstrans/mpegts/AudioCodec;Ljava/nio/ByteBuffer;)V"),
                         &[
                             JValue::Object(&stream_obj),
                             JValue::Long(pts_ticks),
@@ -586,8 +588,8 @@ pub(crate) fn convert_event<'local>(
                     let codec_obj =
                         enum_const(env, "mpegts", "SubtitleCodec", subtitle_codec_name(*codec))?;
                     env.new_object(
-                        "org/tstrans/mpegts/DemuxEvent$Subtitle",
-                        "(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;Lorg/tstrans/mpegts/SubtitleCodec;Ljava/nio/ByteBuffer;)V",
+                        jni_str!("org/tstrans/mpegts/DemuxEvent$Subtitle"),
+                        jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;Lorg/tstrans/mpegts/SubtitleCodec;Ljava/nio/ByteBuffer;)V"),
                         &[
                             JValue::Object(&stream_obj),
                             JValue::Long(pts_ticks),
@@ -601,8 +603,8 @@ pub(crate) fn convert_event<'local>(
                 SamplePayload::Unknown { stream_type, raw } => {
                     let buf = wrap_heap_byte_buffer(env, raw.as_slice())?;
                     env.new_object(
-                        "org/tstrans/mpegts/DemuxEvent$UnknownSample",
-                        "(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;ILjava/nio/ByteBuffer;)V",
+                        jni_str!("org/tstrans/mpegts/DemuxEvent$UnknownSample"),
+                        jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;ILjava/nio/ByteBuffer;)V"),
                         &[
                             JValue::Object(&stream_obj),
                             JValue::Long(pts_ticks),
@@ -629,14 +631,14 @@ pub(crate) fn convert_event<'local>(
             let buf = wrap_heap_byte_buffer(env, payload)?;
             let obj = env
                 .new_object(
-                    "org/tstrans/mpegts/DemuxEvent$Metadata",
-                    "(Lorg/tstrans/mpegts/StreamId;JLorg/tstrans/mpegts/MetadataKind;Ljava/nio/ByteBuffer;ZI)V",
+                    jni_str!("org/tstrans/mpegts/DemuxEvent$Metadata"),
+                    jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLorg/tstrans/mpegts/MetadataKind;Ljava/nio/ByteBuffer;ZI)V"),
                     &[
                         JValue::Object(&stream_obj),
                         JValue::Long(pts.as_ticks()),
                         JValue::Object(&kind_obj),
                         JValue::Object(&buf),
-                        JValue::Bool(was_reassembled as u8),
+                        JValue::Bool(was_reassembled),
                         JValue::Int(cell_count as i32),
                     ],
                 )
@@ -648,8 +650,10 @@ pub(crate) fn convert_event<'local>(
             let kind_obj = discontinuity_kind(env, kind)?;
             let obj = env
                 .new_object(
-                    "org/tstrans/mpegts/DemuxEvent$Discontinuity",
-                    "(Lorg/tstrans/mpegts/StreamId;Lorg/tstrans/mpegts/DiscontinuityKind;)V",
+                    jni_str!("org/tstrans/mpegts/DemuxEvent$Discontinuity"),
+                    jni_sig!(
+                        "(Lorg/tstrans/mpegts/StreamId;Lorg/tstrans/mpegts/DiscontinuityKind;)V"
+                    ),
                     &[JValue::Object(&stream_obj), JValue::Object(&kind_obj)],
                 )
                 .map_err(|_| ())?;
@@ -666,8 +670,8 @@ pub(crate) fn convert_event<'local>(
             let (observed_obj, treated_obj) = nonconformant_cfi(env, issue)?;
             let obj = env
                 .new_object(
-                    "org/tstrans/mpegts/DemuxEvent$NonConformant",
-                    "(Lorg/tstrans/mpegts/StreamId;Ljava/lang/String;Lorg/tstrans/mpegts/NonConformantKind;Lorg/tstrans/mpegts/MultiCellAuReason;Lorg/tstrans/mpegts/CellFragmentIndication;Lorg/tstrans/mpegts/CellFragmentIndication;)V",
+                    jni_str!("org/tstrans/mpegts/DemuxEvent$NonConformant"),
+                    jni_sig!("(Lorg/tstrans/mpegts/StreamId;Ljava/lang/String;Lorg/tstrans/mpegts/NonConformantKind;Lorg/tstrans/mpegts/MultiCellAuReason;Lorg/tstrans/mpegts/CellFragmentIndication;Lorg/tstrans/mpegts/CellFragmentIndication;)V"),
                     &[
                         JValue::Object(&stream_obj),
                         JValue::Object(&issue_str),
@@ -683,8 +687,8 @@ pub(crate) fn convert_event<'local>(
         DemuxEvent::ReconnectDiscontinuity => {
             let obj = env
                 .new_object(
-                    "org/tstrans/mpegts/DemuxEvent$ReconnectDiscontinuity",
-                    "()V",
+                    jni_str!("org/tstrans/mpegts/DemuxEvent$ReconnectDiscontinuity"),
+                    jni_sig!("()V"),
                     &[],
                 )
                 .map_err(|_| ())?;
@@ -698,7 +702,7 @@ pub(crate) fn convert_event<'local>(
 /// `DiscontinuityKindTag` mapping. [`DiscontinuityKind`] is not marked
 /// non-exhaustive, so this match is exhaustive (no catch-all).
 fn discontinuity_kind<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     kind: &DiscontinuityKind,
 ) -> Result<JObject<'local>, ()> {
     let name = match kind {
@@ -717,7 +721,7 @@ fn discontinuity_kind<'local>(
 /// [`NonConformantIssue`] is not marked non-exhaustive, so this match is
 /// exhaustive (no catch-all) — a new Rust variant breaks the build here.
 fn nonconformant_kind<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     issue: &NonConformantIssue,
 ) -> Result<JObject<'local>, ()> {
     use NonConformantIssue::*;
@@ -769,7 +773,7 @@ fn nonconformant_kind<'local>(
 /// or Java `null` for every other issue kind. Mirrors tst-py: only `MultiCellAu`
 /// surfaces a typed reason.
 fn nonconformant_reason<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     issue: &NonConformantIssue,
 ) -> Result<JObject<'local>, ()> {
     match issue {
@@ -795,7 +799,7 @@ fn nonconformant_reason<'local>(
 /// constants for a `CfiTolerated` issue, or `(null, null)` for every other issue
 /// kind. Mirrors tst-py: only `CfiTolerated` surfaces the typed CFI bits.
 fn nonconformant_cfi<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     issue: &NonConformantIssue,
 ) -> Result<(JObject<'local>, JObject<'local>), ()> {
     match issue {
@@ -812,7 +816,7 @@ fn nonconformant_cfi<'local>(
 /// `tst_core` [`CellFragmentIndication`]. The enum is not marked non-exhaustive,
 /// so this match is exhaustive (no catch-all).
 fn cfi_const<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     cfi: CellFragmentIndication,
 ) -> Result<JObject<'local>, ()> {
     let name = match cfi {
@@ -829,7 +833,7 @@ fn cfi_const<'local>(
 /// `DemuxEvent.Metadata` record. Mirrors tst-py's `convert` for the metadata event:
 /// async / unknown collapse to `(false, 1)`.
 pub(crate) fn metadata_kind<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     kind: &MetadataKind,
 ) -> Result<(JObject<'local>, bool, u32), ()> {
     let (name, wr, cc) = match kind {
@@ -843,9 +847,9 @@ pub(crate) fn metadata_kind<'local>(
     };
     let obj = env
         .get_static_field(
-            "org/tstrans/mpegts/MetadataKind",
-            name,
-            "Lorg/tstrans/mpegts/MetadataKind;",
+            jni_str!("org/tstrans/mpegts/MetadataKind"),
+            JNIString::from(name),
+            jni_sig!("Lorg/tstrans/mpegts/MetadataKind;"),
         )
         .map_err(|_| ())?
         .l()
@@ -856,15 +860,15 @@ pub(crate) fn metadata_kind<'local>(
 /// Box an `Option<Pts90khz>` as a `java.lang.Long` (`Long.valueOf`) or Java
 /// `null`. Used for the nullable `dts` field of every sample record.
 pub(crate) fn opt_long<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     v: Option<Pts90khz>,
 ) -> Result<JObject<'local>, ()> {
     match v {
         Some(p) => env
             .call_static_method(
-                "java/lang/Long",
-                "valueOf",
-                "(J)Ljava/lang/Long;",
+                jni_str!("java/lang/Long"),
+                jni_str!("valueOf"),
+                jni_sig!("(J)Ljava/lang/Long;"),
                 &[JValue::Long(p.as_ticks())],
             )
             .map_err(|_| ())?
@@ -878,14 +882,14 @@ pub(crate) fn opt_long<'local>(
 /// (`java.nio.ByteBuffer.wrap`). The returned buffer is backed by JVM-owned
 /// memory, so it is safe to retain past the next pull / after `close()`.
 pub(crate) fn wrap_heap_byte_buffer<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     bytes: &[u8],
 ) -> Result<JObject<'local>, ()> {
     let arr = env.byte_array_from_slice(bytes).map_err(|_| ())?;
     env.call_static_method(
-        "java/nio/ByteBuffer",
-        "wrap",
-        "([B)Ljava/nio/ByteBuffer;",
+        jni_str!("java/nio/ByteBuffer"),
+        jni_str!("wrap"),
+        jni_sig!("([B)Ljava/nio/ByteBuffer;"),
         &[JValue::Object(&arr)],
     )
     .map_err(|_| ())?
@@ -895,11 +899,11 @@ pub(crate) fn wrap_heap_byte_buffer<'local>(
 
 /// Build a `java.util.List<Integer>` (an `ArrayList`) of boxed PIDs.
 fn build_pid_list<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     pids: impl Iterator<Item = u16>,
 ) -> Result<JObject<'local>, ()> {
     let list = env
-        .new_object("java/util/ArrayList", "()V", &[])
+        .new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])
         .map_err(|_| ())?;
     // Forward-note: this loop mints per-iteration local refs (the boxed
     // Integer + the static-method result). Fine here — PMT stream counts are
@@ -909,9 +913,9 @@ fn build_pid_list<'local>(
     for pid in pids {
         let boxed = env
             .call_static_method(
-                "java/lang/Integer",
-                "valueOf",
-                "(I)Ljava/lang/Integer;",
+                jni_str!("java/lang/Integer"),
+                jni_str!("valueOf"),
+                jni_sig!("(I)Ljava/lang/Integer;"),
                 &[JValue::Int(pid as i32)],
             )
             .map_err(|_| ())?
@@ -919,8 +923,8 @@ fn build_pid_list<'local>(
             .map_err(|_| ())?;
         env.call_method(
             &list,
-            "add",
-            "(Ljava/lang/Object;)Z",
+            jni_str!("add"),
+            jni_sig!("(Ljava/lang/Object;)Z"),
             &[JValue::Object(&boxed)],
         )
         .map_err(|_| ())?;
@@ -934,11 +938,11 @@ fn build_pid_list<'local>(
 /// AU unit counts are unbounded, so a flat loop would risk local-ref-table
 /// overflow. Mirrors tst-py's `convert_sample_event` video arm.
 pub(crate) fn build_video_units<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     payload: &VideoPayload,
 ) -> Result<JObject<'local>, ()> {
     let list = env
-        .new_object("java/util/ArrayList", "()V", &[])
+        .new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])
         .map_err(|_| ())?;
     match payload {
         VideoPayload::Nals(nals) => {
@@ -948,8 +952,8 @@ pub(crate) fn build_video_units<'local>(
                         .map_err(|()| jni::errors::Error::JavaException)?;
                     inner.call_method(
                         &list,
-                        "add",
-                        "(Ljava/lang/Object;)Z",
+                        jni_str!("add"),
+                        jni_sig!("(Ljava/lang/Object;)Z"),
                         &[JValue::Object(&val)],
                     )?;
                     Ok::<(), jni::errors::Error>(())
@@ -963,8 +967,8 @@ pub(crate) fn build_video_units<'local>(
                     let val = build_obu(inner, obu)?;
                     inner.call_method(
                         &list,
-                        "add",
-                        "(Ljava/lang/Object;)Z",
+                        jni_str!("add"),
+                        jni_sig!("(Ljava/lang/Object;)Z"),
                         &[JValue::Object(&val)],
                     )?;
                     Ok::<(), jni::errors::Error>(())
@@ -982,19 +986,19 @@ pub(crate) fn build_video_units<'local>(
 /// frame→jobject construction the eager audio path used. Backs
 /// [`DemuxEvent.Audio.parse()`] for AAC.
 fn build_adts_frame_list<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     frames: &[tst_core::codec::aac::AdtsFrameOwned],
 ) -> Result<JObject<'local>, ()> {
     let list = env
-        .new_object("java/util/ArrayList", "()V", &[])
+        .new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])
         .map_err(|_| ())?;
     for f in frames {
         env.with_local_frame(24, |inner| {
             let val = build_adts_frame_owned(inner, f)?;
             inner.call_method(
                 &list,
-                "add",
-                "(Ljava/lang/Object;)Z",
+                jni_str!("add"),
+                jni_sig!("(Ljava/lang/Object;)Z"),
                 &[JValue::Object(&val)],
             )?;
             Ok::<(), jni::errors::Error>(())
@@ -1008,19 +1012,19 @@ fn build_adts_frame_list<'local>(
 /// twin of [`build_adts_frame_list`]; reuses [`build_frame_owned`]. Backs
 /// [`DemuxEvent.Audio.parse()`] for MP2.
 fn build_mpeg2_frame_list<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     frames: &[tst_core::codec::mpegaudio::FrameOwned],
 ) -> Result<JObject<'local>, ()> {
     let list = env
-        .new_object("java/util/ArrayList", "()V", &[])
+        .new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])
         .map_err(|_| ())?;
     for f in frames {
         env.with_local_frame(24, |inner| {
             let val = build_frame_owned(inner, f)?;
             inner.call_method(
                 &list,
-                "add",
-                "(Ljava/lang/Object;)Z",
+                jni_str!("add"),
+                jni_sig!("(Ljava/lang/Object;)Z"),
                 &[JValue::Object(&val)],
             )?;
             Ok::<(), jni::errors::Error>(())
@@ -1033,13 +1037,13 @@ fn build_mpeg2_frame_list<'local>(
 /// Build the Java `org.tstrans.mpegts.StreamId` record from a `tst_core`
 /// [`StreamId`], constructing its nested [`StreamKind`] via [`build_stream_kind`].
 pub(crate) fn build_stream_id<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     s: &StreamId,
 ) -> Result<JObject<'local>, ()> {
     let kind = build_stream_kind(env, &s.kind)?;
     env.new_object(
-        "org/tstrans/mpegts/StreamId",
-        "(ILorg/tstrans/mpegts/StreamKind;I)V",
+        jni_str!("org/tstrans/mpegts/StreamId"),
+        jni_sig!("(ILorg/tstrans/mpegts/StreamKind;I)V"),
         &[
             JValue::Int(s.pid as i32),
             JValue::Object(&kind),
@@ -1054,15 +1058,15 @@ pub(crate) fn build_stream_id<'local>(
 /// names use `$`). `KlvSync`'s `declared_link: Option<u16>` boxes to a
 /// `java.lang.Integer` or Java `null`.
 fn build_stream_kind<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     kind: &StreamKind,
 ) -> Result<JObject<'local>, ()> {
     match kind {
         StreamKind::Video(c) => {
             let codec = enum_const(env, "mpegts", "VideoCodec", video_codec_name(*c))?;
             env.new_object(
-                "org/tstrans/mpegts/StreamKind$Video",
-                "(Lorg/tstrans/mpegts/VideoCodec;)V",
+                jni_str!("org/tstrans/mpegts/StreamKind$Video"),
+                jni_sig!("(Lorg/tstrans/mpegts/VideoCodec;)V"),
                 &[JValue::Object(&codec)],
             )
             .map_err(|_| ())
@@ -1070,8 +1074,8 @@ fn build_stream_kind<'local>(
         StreamKind::Audio(c) => {
             let codec = enum_const(env, "mpegts", "AudioCodec", audio_codec_name(*c))?;
             env.new_object(
-                "org/tstrans/mpegts/StreamKind$Audio",
-                "(Lorg/tstrans/mpegts/AudioCodec;)V",
+                jni_str!("org/tstrans/mpegts/StreamKind$Audio"),
+                jni_sig!("(Lorg/tstrans/mpegts/AudioCodec;)V"),
                 &[JValue::Object(&codec)],
             )
             .map_err(|_| ())
@@ -1079,8 +1083,8 @@ fn build_stream_kind<'local>(
         StreamKind::Subtitle(c) => {
             let codec = enum_const(env, "mpegts", "SubtitleCodec", subtitle_codec_name(*c))?;
             env.new_object(
-                "org/tstrans/mpegts/StreamKind$Subtitle",
-                "(Lorg/tstrans/mpegts/SubtitleCodec;)V",
+                jni_str!("org/tstrans/mpegts/StreamKind$Subtitle"),
+                jni_sig!("(Lorg/tstrans/mpegts/SubtitleCodec;)V"),
                 &[JValue::Object(&codec)],
             )
             .map_err(|_| ())
@@ -1088,19 +1092,23 @@ fn build_stream_kind<'local>(
         StreamKind::KlvSync { declared_link } => {
             let boxed = opt_boxed_int(env, *declared_link)?;
             env.new_object(
-                "org/tstrans/mpegts/StreamKind$KlvSync",
-                "(Ljava/lang/Integer;)V",
+                jni_str!("org/tstrans/mpegts/StreamKind$KlvSync"),
+                jni_sig!("(Ljava/lang/Integer;)V"),
                 &[JValue::Object(&boxed)],
             )
             .map_err(|_| ())
         }
         StreamKind::KlvAsync => env
-            .new_object("org/tstrans/mpegts/StreamKind$KlvAsync", "()V", &[])
+            .new_object(
+                jni_str!("org/tstrans/mpegts/StreamKind$KlvAsync"),
+                jni_sig!("()V"),
+                &[],
+            )
             .map_err(|_| ()),
         StreamKind::Unknown(b) => env
             .new_object(
-                "org/tstrans/mpegts/StreamKind$Unknown",
-                "(I)V",
+                jni_str!("org/tstrans/mpegts/StreamKind$Unknown"),
+                jni_sig!("(I)V"),
                 &[JValue::Int(*b as i32)],
             )
             .map_err(|_| ()),
@@ -1109,16 +1117,13 @@ fn build_stream_kind<'local>(
 
 /// Box an `Option<u16>` as a `java.lang.Integer` (`Integer.valueOf`) or Java
 /// `null`. Used for `StreamKind$KlvSync`'s nullable `declaredLink`.
-fn opt_boxed_int<'local>(
-    env: &mut JNIEnv<'local>,
-    value: Option<u16>,
-) -> Result<JObject<'local>, ()> {
+fn opt_boxed_int<'local>(env: &mut Env<'local>, value: Option<u16>) -> Result<JObject<'local>, ()> {
     match value {
         Some(v) => env
             .call_static_method(
-                "java/lang/Integer",
-                "valueOf",
-                "(I)Ljava/lang/Integer;",
+                jni_str!("java/lang/Integer"),
+                jni_str!("valueOf"),
+                jni_sig!("(I)Ljava/lang/Integer;"),
                 &[JValue::Int(v as i32)],
             )
             .map_err(|_| ())?

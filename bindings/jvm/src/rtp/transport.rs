@@ -16,8 +16,11 @@ use std::sync::LazyLock;
 use std::time::Duration;
 use tst_pipeline::binding::view::BlockingReason;
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JString};
+use jni::strings::JNIString;
 use jni::sys::{jbyteArray, jint, jlong, jobject};
 use tst_core::transport::EndReasonHandle;
 use tst_core::transport::{RecvTransport, Transport};
@@ -55,21 +58,24 @@ static REGISTRY_RECEIVER: LazyLock<OwnedRegistry<JniRtpReceiver, EndReasonHandle
 
 /// Unbox a nullable `java.lang.Long` SSRC arg into `Option<u32>`. Returns
 /// `Err(())` (after throwing IllegalArgumentException) on out-of-range values.
-fn unbox_ssrc(env: &mut JNIEnv, obj: &JObject) -> Result<Option<u32>, ()> {
+fn unbox_ssrc(env: &mut Env, obj: &JObject) -> Result<Option<u32>, ()> {
     if obj.is_null() {
         return Ok(None);
     }
-    let v = match env.call_method(obj, "longValue", "()J", &[]) {
+    let v = match env.call_method(obj, jni_str!("longValue"), jni_sig!("()J"), &[]) {
         Ok(jv) => jv.j().unwrap_or(-1),
         Err(e) => {
-            let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+            let _ = env.throw_new(
+                jni_str!("java/lang/RuntimeException"),
+                JNIString::from(e.to_string()),
+            );
             return Err(());
         }
     };
     if v < 0 || v > i64::from(u32::MAX) {
         let _ = env.throw_new(
-            "java/lang/IllegalArgumentException",
-            format!("ssrc out of u32 range: {v}"),
+            jni_str!("java/lang/IllegalArgumentException"),
+            JNIString::from(format!("ssrc out of u32 range: {v}")),
         );
         return Err(());
     }
@@ -89,10 +95,10 @@ jni_native! {
         pkt_size: jint,
         ssrc_boxed: JObject<'_>,
     ) -> jlong = 0 => {
-        let url_str: String = match env.get_string(&url) {
-            Ok(s) => s.into(),
+        let url_str: String = match url.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -128,7 +134,7 @@ jni_native! {
                 // `Internal` is deliberately NOT an `RtpException.Kind` member:
                 // a transport with no cancel handle is a tst-rtp bug, not a
                 // transport outcome. Same shape as the receiver and mux sender.
-                let _ = env.throw_new("java/lang/RuntimeException", e.detail);
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.detail));
                 return 0;
             }
         };
@@ -147,7 +153,7 @@ jni_native! {
         let bytes: Vec<u8> = match env.convert_byte_array(&data) {
             Ok(b) => b,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return;
             }
         };
@@ -204,10 +210,10 @@ jni_native! {
     /// Allocate a `Receiver` bound to an `rtp://host:port` URL. Returns a `jlong`
     /// handle; throws `RtpException` and returns 0 on error.
     fn Java_org_tstrans_rtp_RecvTransport_nFromUrl(env, _class, url: JString<'_>) -> jlong = 0 => {
-        let url_str: String = match env.get_string(&url) {
-            Ok(s) => s.into(),
+        let url_str: String = match url.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -231,7 +237,7 @@ jni_native! {
             Err(e) => {
                 // See `rtp_cancel`: `Internal` is not an `RtpException.Kind`
                 // member — a transport with no cancel handle is a tst-rtp bug.
-                let _ = env.throw_new("java/lang/RuntimeException", e.detail);
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.detail));
                 return 0;
             }
         };
@@ -285,8 +291,8 @@ jni_native! {
                     // A JVM allocation failure, not a transport outcome: the
                     // same shape every other JNI failure in this file uses.
                     let _ = env.throw_new(
-                        "java/lang/RuntimeException",
-                        "failed to allocate received packet",
+                        jni_str!("java/lang/RuntimeException"),
+                        jni_str!("failed to allocate received packet"),
                     );
                     std::ptr::null_mut()
                 }
@@ -343,8 +349,8 @@ jni_native! {
                     // A JVM allocation failure, not a transport outcome: the
                     // same shape every other JNI failure in this file uses.
                     let _ = env.throw_new(
-                        "java/lang/RuntimeException",
-                        "failed to allocate received packet",
+                        jni_str!("java/lang/RuntimeException"),
+                        jni_str!("failed to allocate received packet"),
                     );
                     std::ptr::null_mut()
                 }

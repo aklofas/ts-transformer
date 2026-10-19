@@ -18,8 +18,11 @@ use std::net::SocketAddr;
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JString, JValue};
+use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 
 use tst_core::publisher::{Publisher, PublisherStats};
@@ -44,7 +47,7 @@ pub(crate) fn register(p: HlsPublisher) -> jlong {
 /// Lease + run a fallible op. Closed/absent → `IllegalStateException`;
 /// `Err(HlsError)` → `HlsException`. Returns `default` on either failure.
 fn with_pub<R>(
-    env: &mut JNIEnv,
+    env: &mut Env,
     handle: jlong,
     default: R,
     op: impl FnOnce(&mut HlsPublisher) -> Result<R, HlsError>,
@@ -63,14 +66,17 @@ fn with_pub<R>(
 }
 
 /// A nullable Java string. `None` = JNI failure (exception pending).
-fn opt_string(env: &mut JNIEnv, s: &JString) -> Option<Option<String>> {
+fn opt_string(env: &mut Env, s: &JString) -> Option<Option<String>> {
     if s.is_null() {
         return Some(None);
     }
-    match env.get_string(s) {
-        Ok(js) => Some(Some(js.into())),
+    match s.try_to_string(env) {
+        Ok(js) => Some(Some(js)),
         Err(e) => {
-            let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+            let _ = env.throw_new(
+                jni_str!("java/lang/RuntimeException"),
+                JNIString::from(e.to_string()),
+            );
             None
         }
     }
@@ -78,14 +84,14 @@ fn opt_string(env: &mut JNIEnv, s: &JString) -> Option<Option<String>> {
 
 /// `org.tstrans.hls.PublisherStats(JJJJ)` — optional durations as `-1`.
 pub(crate) fn build_publisher_stats<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     s: &PublisherStats,
 ) -> jni::errors::Result<JObject<'local>> {
     env.ensure_local_capacity(4)?;
     let opt = |d: Option<Duration>| d.map(|d| d.as_micros() as i64).unwrap_or(-1);
     env.new_object(
-        "org/tstrans/hls/PublisherStats",
-        "(JJJJ)V",
+        jni_str!("org/tstrans/hls/PublisherStats"),
+        jni_sig!("(JJJJ)V"),
         &[
             JValue::Long(s.segments_written as i64),
             JValue::Long(s.bytes_written as i64),
@@ -155,8 +161,8 @@ jni_native! {
                 }
                 Err(e) => {
                     let _ = env.throw_new(
-                        "java/lang/IllegalArgumentException",
-                        format!("invalid bind address {addr:?}: {e}"),
+                        jni_str!("java/lang/IllegalArgumentException"),
+                        JNIString::from(format!("invalid bind address {addr:?}: {e}")),
                     );
                     return 0;
                 }
@@ -187,8 +193,8 @@ jni_native! {
             }
             other => {
                 let _ = env.throw_new(
-                    "java/lang/IllegalArgumentException",
-                    format!("invalid HlsMode ordinal {other}"),
+                    jni_str!("java/lang/IllegalArgumentException"),
+                    JNIString::from(format!("invalid HlsMode ordinal {other}")),
                 );
                 return 0;
             }
@@ -259,8 +265,8 @@ jni_native! {
     ) = () => {
         if media_duration_us < 0 {
             let _ = env.throw_new(
-                "java/lang/IllegalArgumentException",
-                "mediaDurationUs must be >= 0",
+                jni_str!("java/lang/IllegalArgumentException"),
+                jni_str!("mediaDurationUs must be >= 0"),
             );
             return;
         }
@@ -329,7 +335,7 @@ jni_native! {
         handle: jlong,
         is_event: jboolean,
     ) -> jstring = std::ptr::null_mut() => {
-        match REGISTRY.with(handle as u64, |p| p.render_playlist(is_event != 0)) {
+        match REGISTRY.with(handle as u64, |p| p.render_playlist(is_event)) {
             Some(text) => env
                 .new_string(text)
                 .map(|s| s.into_raw())

@@ -3,19 +3,19 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
+use jni::{Env, jni_sig, jni_str};
 
 pub(crate) fn build_precision_time_stamp_pack<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::klv::st0605::PrecisionTimeStampPack,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(36)?;
     let time_status =
         crate::custom::build_precision_time_stamp_pack_time_status(env, &r.time_status)?;
     let obj = env.new_object(
-        "org/tstrans/klv/PrecisionTimeStampPack",
-        "(Lorg/tstrans/klv/TimeStatus;J)V",
+        jni_str!("org/tstrans/klv/PrecisionTimeStampPack"),
+        jni_sig!("(Lorg/tstrans/klv/TimeStatus;J)V"),
         &[
             JValue::Object(&time_status),
             JValue::Long(r.timestamp_us as i64),
@@ -25,12 +25,14 @@ pub(crate) fn build_precision_time_stamp_pack<'l>(
 }
 
 pub(crate) fn read_precision_time_stamp_pack(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<tst_core::klv::st0605::PrecisionTimeStampPack> {
     env.ensure_local_capacity(36)?;
     let time_status = crate::custom::read_precision_time_stamp_pack_time_status(env, obj)?;
-    let timestamp_us = env.call_method(obj, "timestampUs", "()J", &[])?.j()?;
+    let timestamp_us = env
+        .call_method(obj, jni_str!("timestampUs"), jni_sig!("()J"), &[])?
+        .j()?;
     let timestamp_us = timestamp_us as u64;
     Ok(tst_core::klv::st0605::PrecisionTimeStampPack {
         time_status,

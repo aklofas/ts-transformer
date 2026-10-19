@@ -31,8 +31,9 @@
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 
-use jni::JNIEnv;
-use jni::objects::{JBooleanArray, JByteArray, JIntArray, JLongArray, JObject};
+use jni::Env;
+use jni::jni_str;
+use jni::objects::{JBooleanArray, JByteArray, JIntArray, JLongArray};
 use jni::sys::{jboolean, jint, jlong};
 
 use tst_core::error::MuxError;
@@ -135,7 +136,7 @@ jni_native! {
 /// `MuxRoundtripScenarioTest` golden.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_muxer_config_from_arrays<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     program_number: jint,
     pmt_pid: jint,
     pcr_pid: jint,
@@ -206,7 +207,7 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
                 let Some(ktype) = klv_type(env, type_codes[i]) else {
                     return Err(());
                 };
-                prog.add_klv(pid, ktype, carries[i] != 0);
+                prog.add_klv(pid, ktype, carries[i]);
             }
             2 => {
                 let Some(codec) = audio_codec(env, codecs[i]) else {
@@ -237,7 +238,7 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
                 }
             }
             4 => {
-                prog.add_data(pid, type_codes[i] as u8, carries[i] != 0);
+                prog.add_data(pid, type_codes[i] as u8, carries[i]);
                 // Fail closed on a negative length (a sign-cast would turn it
                 // into a huge usize) and on offset overflow — never panic
                 // across the FFI boundary, in any build profile.
@@ -324,7 +325,7 @@ jni_native! {
             return;
         };
         with_mux_push(env, handle, |mux| {
-            mux.push_video(&buf, Pts90khz::new(pts), key_frame != 0)
+            mux.push_video(&buf, Pts90khz::new(pts), key_frame)
         });
     }
 }
@@ -351,7 +352,7 @@ jni_native! {
             // C ABI's tst_muxer_push_video_wire.
             let handles = mux.video_handles();
             match handles.as_slice() {
-                [h] => mux.push_video_wire_to(*h, &buf, Pts90khz::new(pts), key_frame != 0),
+                [h] => mux.push_video_wire_to(*h, &buf, Pts90khz::new(pts), key_frame),
                 _ => Err(MuxError::AmbiguousTarget {
                     kind: MuxStreamKind::Video,
                     count: handles.len(),
@@ -497,7 +498,7 @@ jni_native! {
             return;
         };
         with_mux_push(env, handle, |mux| {
-            mux.push_video_to(h, &buf, Pts90khz::new(pts), key_frame != 0)
+            mux.push_video_to(h, &buf, Pts90khz::new(pts), key_frame)
         });
     }
 }
@@ -529,7 +530,7 @@ jni_native! {
             return;
         };
         with_mux_push(env, handle, |mux| {
-            mux.push_video_wire_to(h, &buf, Pts90khz::new(pts), key_frame != 0)
+            mux.push_video_wire_to(h, &buf, Pts90khz::new(pts), key_frame)
         });
     }
 }
@@ -569,7 +570,7 @@ jni_native! {
                 &buf,
                 Pts90khz::new(pts),
                 Pts90khz::new(dts),
-                key_frame != 0,
+                key_frame,
             )
         });
     }
@@ -608,7 +609,7 @@ jni_native! {
                 &buf,
                 Pts90khz::new(pts),
                 Pts90khz::new(dts),
-                key_frame != 0,
+                key_frame,
             )
         });
     }
@@ -650,7 +651,7 @@ jni_native! {
             return;
         };
         with_mux_push(env, handle, |mux| {
-            mux.push_video_misp_to(h, &buf, Pts90khz::new(pts), key_frame != 0, &misp)
+            mux.push_video_misp_to(h, &buf, Pts90khz::new(pts), key_frame, &misp)
         });
     }
 }
@@ -693,7 +694,7 @@ jni_native! {
                 &buf,
                 Pts90khz::new(pts),
                 Pts90khz::new(dts),
-                key_frame != 0,
+                key_frame,
                 &misp,
             )
         });
@@ -805,7 +806,7 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JLongArray<'local> = JObject::null().into() => {
+    ) -> JLongArray<'local> = JLongArray::null() => {
         let Some(raws) = REGISTRY.with(handle as u64, |mux| {
             mux.data_handles()
                 .into_iter()
@@ -813,24 +814,24 @@ jni_native! {
                 .collect::<Vec<i64>>()
         }) else {
             closed(env);
-            return JObject::null().into();
+            return JLongArray::null();
         };
-        let arr = match env.new_long_array(raws.len() as i32) {
+        let arr = match env.new_long_array(raws.len()) {
             Ok(a) => a,
             Err(_) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    "failed to allocate long[] result",
+                    jni_str!("java/lang/RuntimeException"),
+                    jni_str!("failed to allocate long[] result"),
                 );
-                return JObject::null().into();
+                return JLongArray::null();
             }
         };
-        if env.set_long_array_region(&arr, 0, &raws).is_err() {
+        if arr.set_region(env, 0, &raws).is_err() {
             let _ = env.throw_new(
-                "java/lang/RuntimeException",
-                "failed to write long[] result",
+                jni_str!("java/lang/RuntimeException"),
+                jni_str!("failed to write long[] result"),
             );
-            return JObject::null().into();
+            return JLongArray::null();
         }
         arr
     }
@@ -845,7 +846,7 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JLongArray<'local> = JObject::null().into() => {
+    ) -> JLongArray<'local> = JLongArray::null() => {
         let Some(raws) = REGISTRY.with(handle as u64, |mux| {
             mux.video_handles()
                 .into_iter()
@@ -853,24 +854,24 @@ jni_native! {
                 .collect::<Vec<i64>>()
         }) else {
             closed(env);
-            return JObject::null().into();
+            return JLongArray::null();
         };
-        let arr = match env.new_long_array(raws.len() as i32) {
+        let arr = match env.new_long_array(raws.len()) {
             Ok(a) => a,
             Err(_) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    "failed to allocate long[] result",
+                    jni_str!("java/lang/RuntimeException"),
+                    jni_str!("failed to allocate long[] result"),
                 );
-                return JObject::null().into();
+                return JLongArray::null();
             }
         };
-        if env.set_long_array_region(&arr, 0, &raws).is_err() {
+        if arr.set_region(env, 0, &raws).is_err() {
             let _ = env.throw_new(
-                "java/lang/RuntimeException",
-                "failed to write long[] result",
+                jni_str!("java/lang/RuntimeException"),
+                jni_str!("failed to write long[] result"),
             );
-            return JObject::null().into();
+            return JLongArray::null();
         }
         arr
     }
@@ -885,7 +886,7 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JLongArray<'local> = JObject::null().into() => {
+    ) -> JLongArray<'local> = JLongArray::null() => {
         let Some(raws) = REGISTRY.with(handle as u64, |mux| {
             mux.audio_handles()
                 .into_iter()
@@ -893,24 +894,24 @@ jni_native! {
                 .collect::<Vec<i64>>()
         }) else {
             closed(env);
-            return JObject::null().into();
+            return JLongArray::null();
         };
-        let arr = match env.new_long_array(raws.len() as i32) {
+        let arr = match env.new_long_array(raws.len()) {
             Ok(a) => a,
             Err(_) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    "failed to allocate long[] result",
+                    jni_str!("java/lang/RuntimeException"),
+                    jni_str!("failed to allocate long[] result"),
                 );
-                return JObject::null().into();
+                return JLongArray::null();
             }
         };
-        if env.set_long_array_region(&arr, 0, &raws).is_err() {
+        if arr.set_region(env, 0, &raws).is_err() {
             let _ = env.throw_new(
-                "java/lang/RuntimeException",
-                "failed to write long[] result",
+                jni_str!("java/lang/RuntimeException"),
+                jni_str!("failed to write long[] result"),
             );
-            return JObject::null().into();
+            return JLongArray::null();
         }
         arr
     }
@@ -925,7 +926,7 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JLongArray<'local> = JObject::null().into() => {
+    ) -> JLongArray<'local> = JLongArray::null() => {
         let Some(raws) = REGISTRY.with(handle as u64, |mux| {
             mux.klv_handles()
                 .into_iter()
@@ -933,24 +934,24 @@ jni_native! {
                 .collect::<Vec<i64>>()
         }) else {
             closed(env);
-            return JObject::null().into();
+            return JLongArray::null();
         };
-        let arr = match env.new_long_array(raws.len() as i32) {
+        let arr = match env.new_long_array(raws.len()) {
             Ok(a) => a,
             Err(_) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    "failed to allocate long[] result",
+                    jni_str!("java/lang/RuntimeException"),
+                    jni_str!("failed to allocate long[] result"),
                 );
-                return JObject::null().into();
+                return JLongArray::null();
             }
         };
-        if env.set_long_array_region(&arr, 0, &raws).is_err() {
+        if arr.set_region(env, 0, &raws).is_err() {
             let _ = env.throw_new(
-                "java/lang/RuntimeException",
-                "failed to write long[] result",
+                jni_str!("java/lang/RuntimeException"),
+                jni_str!("failed to write long[] result"),
             );
-            return JObject::null().into();
+            return JLongArray::null();
         }
         arr
     }
@@ -965,7 +966,7 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JLongArray<'local> = JObject::null().into() => {
+    ) -> JLongArray<'local> = JLongArray::null() => {
         let Some(raws) = REGISTRY.with(handle as u64, |mux| {
             mux.subtitle_handles()
                 .into_iter()
@@ -973,24 +974,24 @@ jni_native! {
                 .collect::<Vec<i64>>()
         }) else {
             closed(env);
-            return JObject::null().into();
+            return JLongArray::null();
         };
-        let arr = match env.new_long_array(raws.len() as i32) {
+        let arr = match env.new_long_array(raws.len()) {
             Ok(a) => a,
             Err(_) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    "failed to allocate long[] result",
+                    jni_str!("java/lang/RuntimeException"),
+                    jni_str!("failed to allocate long[] result"),
                 );
-                return JObject::null().into();
+                return JLongArray::null();
             }
         };
-        if env.set_long_array_region(&arr, 0, &raws).is_err() {
+        if arr.set_region(env, 0, &raws).is_err() {
             let _ = env.throw_new(
-                "java/lang/RuntimeException",
-                "failed to write long[] result",
+                jni_str!("java/lang/RuntimeException"),
+                jni_str!("failed to write long[] result"),
             );
-            return JObject::null().into();
+            return JLongArray::null();
         }
         arr
     }
@@ -1006,10 +1007,10 @@ jni_native! {
         handle: jlong,
         out: JByteArray<'local>,
     ) -> jint = 0 => {
-        let out_len = match env.get_array_length(&out) {
-            Ok(l) => l as usize,
+        let out_len = match out.len(env) {
+            Ok(l) => l,
             Err(_) => {
-                let _ = env.throw_new("java/lang/RuntimeException", "failed to read byte[] length");
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), jni_str!("failed to read byte[] length"));
                 return 0;
             }
         };
@@ -1027,10 +1028,10 @@ jni_native! {
         // i8 view aliases the same bytes (identical size/alignment) and is only
         // read by `set_byte_array_region`.
         let i8_view = unsafe { core::slice::from_raw_parts(scratch.as_ptr() as *const i8, n) };
-        if env.set_byte_array_region(&out, 0, i8_view).is_err() {
+        if out.set_region(env, 0, i8_view).is_err() {
             let _ = env.throw_new(
-                "java/lang/RuntimeException",
-                "failed to write byte[] result",
+                jni_str!("java/lang/RuntimeException"),
+                jni_str!("failed to write byte[] result"),
             );
             return 0;
         }
@@ -1079,7 +1080,7 @@ jni_native! {
 /// timeStatus as low byte, value as unsigned reinterpret). Returns `None`
 /// (with a `MuxException(INVALID_USAGE)` thrown) when `kind` is out of range.
 fn build_misp(
-    env: &mut JNIEnv,
+    env: &mut Env,
     kind: jint,
     time_status: jint,
     value: jlong,
@@ -1104,7 +1105,7 @@ fn build_misp(
 /// Read a Java `byte[]`, throwing `MuxException(INTERNAL)` on failure.
 /// Returns `None` when the read fails (exception already thrown); callers
 /// should return early in that case.
-fn read_mux_bytes(env: &mut JNIEnv, arr: &JByteArray) -> Option<Vec<u8>> {
+fn read_mux_bytes(env: &mut Env, arr: &JByteArray) -> Option<Vec<u8>> {
     match env.convert_byte_array(arr) {
         Ok(b) => Some(b),
         Err(_) => {
@@ -1120,7 +1121,7 @@ fn read_mux_bytes(env: &mut JNIEnv, arr: &JByteArray) -> Option<Vec<u8>> {
 
 /// Lease the muxer handle, run `op`, and map the outcome to thrown exceptions.
 fn with_mux_push(
-    env: &mut JNIEnv,
+    env: &mut Env,
     handle: jlong,
     op: impl FnOnce(&mut Muxer) -> Result<(), MuxError>,
 ) {
@@ -1134,14 +1135,14 @@ fn with_mux_push(
 /// Throw `IllegalStateException` for a leased call that found a
 /// closed/absent handle — the native-side enforcement of the Java
 /// `ensureOpen()` contract.
-fn closed(env: &mut JNIEnv) {
+fn closed(env: &mut Env) {
     crate::error::throw_closed(env, "Muxer");
 }
 
 /// Map a `MuxError` to a thrown `org.tstrans.MuxException`, mirroring tst-py's
 /// `mux_error_to_pyerr` (route via the 5-variant `MuxErrorKind`). Each
 /// inline literal is what the error-mapping ratchet greps for.
-pub(crate) fn throw_mux_error(env: &mut JNIEnv, e: &MuxError) {
+pub(crate) fn throw_mux_error(env: &mut Env, e: &MuxError) {
     // The shared classifier, not the coarse `MuxErrorKind` bucket: `InvalidNal`,
     // `KlvTooLarge`, `InvalidAv1Obu` and `MispTime` now get their own members
     // (all four were `INPUT_MALFORMED`); everything else keeps its bucket.
@@ -1150,9 +1151,9 @@ pub(crate) fn throw_mux_error(env: &mut JNIEnv, e: &MuxError) {
 
 /// Read a Java `int[]` into a `Vec<i32>`, or throw INTERNAL + return `None` on a
 /// JNI read failure.
-fn read_int_array(env: &mut JNIEnv, arr: &JIntArray) -> Option<Vec<i32>> {
-    let len = match env.get_array_length(arr) {
-        Ok(l) => l as usize,
+fn read_int_array(env: &mut Env, arr: &JIntArray) -> Option<Vec<i32>> {
+    let len = match arr.len(env) {
+        Ok(l) => l,
         Err(_) => {
             throw_mux(
                 env,
@@ -1163,7 +1164,7 @@ fn read_int_array(env: &mut JNIEnv, arr: &JIntArray) -> Option<Vec<i32>> {
         }
     };
     let mut v = vec![0i32; len];
-    if env.get_int_array_region(arr, 0, &mut v).is_err() {
+    if arr.get_region(env, 0, &mut v).is_err() {
         throw_mux(
             env,
             BindingErrorKind::Internal,
@@ -1174,11 +1175,11 @@ fn read_int_array(env: &mut JNIEnv, arr: &JIntArray) -> Option<Vec<i32>> {
     Some(v)
 }
 
-/// Read a Java `boolean[]` into a `Vec<u8>` (`jboolean` = `u8`; `!= 0` is
-/// true), or throw INTERNAL + return `None` on a JNI read failure.
-fn read_boolean_array(env: &mut JNIEnv, arr: &JBooleanArray) -> Option<Vec<u8>> {
-    let len = match env.get_array_length(arr) {
-        Ok(l) => l as usize,
+/// Read a Java `boolean[]` into a `Vec<bool>` (`jboolean` = `bool`), or throw
+/// INTERNAL + return `None` on a JNI read failure.
+fn read_boolean_array(env: &mut Env, arr: &JBooleanArray) -> Option<Vec<bool>> {
+    let len = match arr.len(env) {
+        Ok(l) => l,
         Err(_) => {
             throw_mux(
                 env,
@@ -1188,8 +1189,8 @@ fn read_boolean_array(env: &mut JNIEnv, arr: &JBooleanArray) -> Option<Vec<u8>> 
             return None;
         }
     };
-    let mut v = vec![0u8; len];
-    if env.get_boolean_array_region(arr, 0, &mut v).is_err() {
+    let mut v = vec![false; len];
+    if arr.get_region(env, 0, &mut v).is_err() {
         throw_mux(
             env,
             BindingErrorKind::Internal,
@@ -1204,7 +1205,7 @@ fn read_boolean_array(env: &mut JNIEnv, arr: &JBooleanArray) -> Option<Vec<u8>> 
 /// Matches the Java `VideoCodec` enum declaration order. Throws CONFIG_INVALID
 /// and returns `None` on any ordinal outside the valid range (0-3); this
 /// catches enum drift across binding versions.
-fn video_codec(env: &mut JNIEnv, ordinal: i32) -> Option<VideoCodec> {
+fn video_codec(env: &mut Env, ordinal: i32) -> Option<VideoCodec> {
     match ordinal {
         0 => Some(VideoCodec::H264),
         1 => Some(VideoCodec::H265),
@@ -1224,7 +1225,7 @@ fn video_codec(env: &mut JNIEnv, ordinal: i32) -> Option<VideoCodec> {
 /// Audio codec ordinal (`stream_codecs[i]` when kind=audio) → [`AudioCodec`].
 /// Matches the Java `AudioCodec` enum declaration order. Throws CONFIG_INVALID
 /// and returns `None` on any ordinal outside the valid range (0-3).
-fn audio_codec(env: &mut JNIEnv, ordinal: i32) -> Option<AudioCodec> {
+fn audio_codec(env: &mut Env, ordinal: i32) -> Option<AudioCodec> {
     match ordinal {
         0 => Some(AudioCodec::Mp2),
         1 => Some(AudioCodec::Aac),
@@ -1260,7 +1261,7 @@ fn split_descriptor_tlvs(blob: &[u8]) -> Option<Vec<Vec<u8>>> {
 /// 0 = SynchronousMetadata, 1 = PrivateData. Throws CONFIG_INVALID and returns
 /// `None` on ordinals outside 0-1 (ordinal 1 IS valid PrivateData — only
 /// truly out-of-range values indicate enum drift).
-fn klv_type(env: &mut JNIEnv, ordinal: i32) -> Option<KlvStreamType> {
+fn klv_type(env: &mut Env, ordinal: i32) -> Option<KlvStreamType> {
     match ordinal {
         0 => Some(KlvStreamType::SynchronousMetadata),
         1 => Some(KlvStreamType::PrivateData),
@@ -1279,7 +1280,7 @@ fn klv_type(env: &mut JNIEnv, ordinal: i32) -> Option<KlvStreamType> {
 /// `Av1CarriageMode` enum declaration order: 0 = Mpeg2TsBinding,
 /// 1 = InteropRawObu. Throws CONFIG_INVALID and returns `None` on ordinals
 /// outside 0-1; mirrors the demux path hardened in commit 38d51690.
-fn av1_mode(env: &mut JNIEnv, ordinal: i32) -> Option<Av1CarriageMode> {
+fn av1_mode(env: &mut Env, ordinal: i32) -> Option<Av1CarriageMode> {
     match ordinal {
         0 => Some(Av1CarriageMode::Mpeg2TsBinding),
         1 => Some(Av1CarriageMode::InteropRawObu),

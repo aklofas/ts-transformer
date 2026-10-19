@@ -14,7 +14,9 @@
 //! capacity.
 
 use crate::panic::jni_native;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject};
+use jni::strings::JNIString;
 use jni::sys::jobject;
 use tst_core::klv::st0102::{
     decode as decode_lenient, decode_strict, encode_strict_compliance, encode_to_vec,
@@ -39,13 +41,13 @@ jni_native! {
             Ok(b) => b,
             Err(e) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    format!("nDecodeSecurity: byte[] read failed: {e}"),
+                    jni_str!("java/lang/RuntimeException"),
+                    JNIString::from(format!("nDecodeSecurity: byte[] read failed: {e}")),
                 );
                 return JObject::null().into_raw();
             }
         };
-        let result = if strict != 0 {
+        let result = if strict {
             decode_strict(&bytes)
         } else {
             decode_lenient(&bytes)
@@ -90,8 +92,8 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            "java/lang/RuntimeException",
-                            format!("nEncodeSecurity: byte_array_from_slice failed: {e}"),
+                            jni_str!("java/lang/RuntimeException"),
+                            JNIString::from(format!("nEncodeSecurity: byte_array_from_slice failed: {e}")),
                         );
                         JObject::null().into_raw()
                     }
@@ -102,10 +104,10 @@ jni_native! {
                 }
             },
             Err(e) => {
-                if !env.exception_check().unwrap_or(false) {
+                if !env.exception_check() {
                     let _ = env.throw_new(
-                        "java/lang/RuntimeException",
-                        format!("nEncodeSecurity: field read failed: {e}"),
+                        jni_str!("java/lang/RuntimeException"),
+                        JNIString::from(format!("nEncodeSecurity: field read failed: {e}")),
                     );
                 }
                 JObject::null().into_raw()
@@ -132,10 +134,10 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            "java/lang/RuntimeException",
-                            format!(
+                            jni_str!("java/lang/RuntimeException"),
+                            JNIString::from(format!(
                                 "nEncodeSecurityStrictCompliance: byte_array_from_slice failed: {e}"
-                            ),
+                            )),
                         );
                         JObject::null().into_raw()
                     }
@@ -146,10 +148,10 @@ jni_native! {
                 }
             },
             Err(e) => {
-                if !env.exception_check().unwrap_or(false) {
+                if !env.exception_check() {
                     let _ = env.throw_new(
-                        "java/lang/RuntimeException",
-                        format!("nEncodeSecurityStrictCompliance: field read failed: {e}"),
+                        jni_str!("java/lang/RuntimeException"),
+                        JNIString::from(format!("nEncodeSecurityStrictCompliance: field read failed: {e}")),
                     );
                 }
                 JObject::null().into_raw()

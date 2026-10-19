@@ -7,7 +7,7 @@ mod managed_convenience;
 
 use std::time::Duration;
 
-use jni::JNIEnv;
+use jni::Env;
 use tst_pipeline::binding::ManagedHandles;
 use tst_pipeline::{BackoffStrategy, OverflowPolicy, ReconnectMode, ReconnectPolicy};
 
@@ -45,7 +45,7 @@ pub(crate) struct ManagedSenderSnapshot {
 /// callers must propagate the `None` as a `return 0` early-exit.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_reconnect_policy(
-    env: &mut JNIEnv,
+    env: &mut Env,
     max_attempts_present: bool,
     max_attempts: i32,
     backoff_kind: i32,

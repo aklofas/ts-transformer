@@ -3,34 +3,41 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
+use jni::{Env, jni_sig, jni_str};
 
 pub(crate) fn build_rvt_user_data<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::klv::st0806::RvtUserData,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(36)?;
     let data = crate::jutil::wrap_heap_byte_buffer(env, &r.data)
         .map_err(|()| jni::errors::Error::JavaException)?;
     let obj = env.new_object(
-        "org/tstrans/klv/RvtUserData",
-        "(ILjava/nio/ByteBuffer;)V",
+        jni_str!("org/tstrans/klv/RvtUserData"),
+        jni_sig!("(ILjava/nio/ByteBuffer;)V"),
         &[JValue::Int(r.numeric_id_raw as i32), JValue::Object(&data)],
     )?;
     Ok(obj)
 }
 
 pub(crate) fn read_rvt_user_data(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<tst_core::klv::st0806::RvtUserData> {
     env.ensure_local_capacity(36)?;
-    let numeric_id_raw = env.call_method(obj, "numericIdRaw", "()I", &[])?.i()?;
+    let numeric_id_raw = env
+        .call_method(obj, jni_str!("numericIdRaw"), jni_sig!("()I"), &[])?
+        .i()?;
     let numeric_id_raw =
         crate::jutil::checked_u8(env, i64::from(numeric_id_raw), "RvtUserData.numericIdRaw")?;
     let o1 = env
-        .call_method(obj, "data", "()Ljava/nio/ByteBuffer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("data"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
+            &[],
+        )?
         .l()?;
     let data = crate::jutil::read_byte_buffer(env, &o1)?;
     Ok(tst_core::klv::st0806::RvtUserData {
@@ -40,56 +47,60 @@ pub(crate) fn read_rvt_user_data(
 }
 
 pub(crate) fn build_rvt_poi<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::klv::st0806::RvtPoi,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(58)?;
-    let b = env.new_object("org/tstrans/klv/RvtPoi$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/klv/RvtPoi$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     if let Some(v) = &r.number {
         env.call_method(
             &b,
-            "number",
-            "(I)Lorg/tstrans/klv/RvtPoi$Builder;",
+            jni_str!("number"),
+            jni_sig!("(I)Lorg/tstrans/klv/RvtPoi$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
     if let Some(v) = &r.lat_deg {
         env.call_method(
             &b,
-            "latDeg",
-            "(D)Lorg/tstrans/klv/RvtPoi$Builder;",
+            jni_str!("latDeg"),
+            jni_sig!("(D)Lorg/tstrans/klv/RvtPoi$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     if let Some(v) = &r.lon_deg {
         env.call_method(
             &b,
-            "lonDeg",
-            "(D)Lorg/tstrans/klv/RvtPoi$Builder;",
+            jni_str!("lonDeg"),
+            jni_sig!("(D)Lorg/tstrans/klv/RvtPoi$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     if let Some(v) = &r.alt_m {
         env.call_method(
             &b,
-            "altM",
-            "(D)Lorg/tstrans/klv/RvtPoi$Builder;",
+            jni_str!("altM"),
+            jni_sig!("(D)Lorg/tstrans/klv/RvtPoi$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     let poi_type = crate::custom::build_rvt_poi_poi_type(env, &r.poi_type)?;
     env.call_method(
         &b,
-        "poiTypeCode",
-        "(Ljava/lang/Integer;)Lorg/tstrans/klv/RvtPoi$Builder;",
+        jni_str!("poiTypeCode"),
+        jni_sig!("(Ljava/lang/Integer;)Lorg/tstrans/klv/RvtPoi$Builder;"),
         &[JValue::Object(&poi_type)],
     )?;
     if let Some(v) = &r.text {
         let o1 = env.new_string(v)?;
         env.call_method(
             &b,
-            "text",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/RvtPoi$Builder;",
+            jni_str!("text"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/RvtPoi$Builder;"),
             &[JValue::Object(&o1)],
         )?;
     }
@@ -97,8 +108,8 @@ pub(crate) fn build_rvt_poi<'l>(
         let o2 = env.new_string(v)?;
         env.call_method(
             &b,
-            "sourceIcon",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/RvtPoi$Builder;",
+            jni_str!("sourceIcon"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/RvtPoi$Builder;"),
             &[JValue::Object(&o2)],
         )?;
     }
@@ -106,8 +117,8 @@ pub(crate) fn build_rvt_poi<'l>(
         let o3 = env.new_string(v)?;
         env.call_method(
             &b,
-            "sourceId",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/RvtPoi$Builder;",
+            jni_str!("sourceId"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/RvtPoi$Builder;"),
             &[JValue::Object(&o3)],
         )?;
     }
@@ -115,8 +126,8 @@ pub(crate) fn build_rvt_poi<'l>(
         let o4 = env.new_string(v)?;
         env.call_method(
             &b,
-            "label",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/RvtPoi$Builder;",
+            jni_str!("label"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/RvtPoi$Builder;"),
             &[JValue::Object(&o4)],
         )?;
     }
@@ -124,132 +135,183 @@ pub(crate) fn build_rvt_poi<'l>(
         let o5 = env.new_string(v)?;
         env.call_method(
             &b,
-            "operationId",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/RvtPoi$Builder;",
+            jni_str!("operationId"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/RvtPoi$Builder;"),
             &[JValue::Object(&o5)],
         )?;
     }
     let sentinel_tags = crate::custom::build_rvt_poi_sentinel_tags(env, &r.sentinel_tags)?;
     env.call_method(
         &b,
-        "sentinelTags",
-        "(Ljava/util/List;)Lorg/tstrans/klv/RvtPoi$Builder;",
+        jni_str!("sentinelTags"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/RvtPoi$Builder;"),
         &[JValue::Object(&sentinel_tags)],
     )?;
     let unknown = crate::custom::build_rvt_poi_unknown(env, &r.unknown)?;
     env.call_method(
         &b,
-        "unknown",
-        "(Ljava/util/List;)Lorg/tstrans/klv/RvtPoi$Builder;",
+        jni_str!("unknown"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/RvtPoi$Builder;"),
         &[JValue::Object(&unknown)],
     )?;
     let field_errors = crate::custom::build_rvt_poi_field_errors(env, &r.field_errors)?;
     env.call_method(
         &b,
-        "fieldErrors",
-        "(Ljava/util/List;)Lorg/tstrans/klv/RvtPoi$Builder;",
+        jni_str!("fieldErrors"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/RvtPoi$Builder;"),
         &[JValue::Object(&field_errors)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/klv/RvtPoi;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/klv/RvtPoi;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn read_rvt_poi(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<tst_core::klv::st0806::RvtPoi> {
     env.ensure_local_capacity(58)?;
     let o1 = env
-        .call_method(obj, "number", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("number"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let number = if o1.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o1, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o1, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u16(env, i64::from(n), "RvtPoi.number")?
         })
     };
     let o2 = env
-        .call_method(obj, "latDeg", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("latDeg"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let lat_deg = if o2.is_null() {
         None
     } else {
-        Some(env.call_method(&o2, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o2, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o3 = env
-        .call_method(obj, "lonDeg", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("lonDeg"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let lon_deg = if o3.is_null() {
         None
     } else {
-        Some(env.call_method(&o3, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o3, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o4 = env
-        .call_method(obj, "altM", "()Ljava/lang/Double;", &[])?
+        .call_method(obj, jni_str!("altM"), jni_sig!("()Ljava/lang/Double;"), &[])?
         .l()?;
     let alt_m = if o4.is_null() {
         None
     } else {
-        Some(env.call_method(&o4, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o4, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let poi_type = crate::custom::read_rvt_poi_poi_type(env, obj)?;
     let o5 = env
-        .call_method(obj, "text", "()Ljava/lang/String;", &[])?
+        .call_method(obj, jni_str!("text"), jni_sig!("()Ljava/lang/String;"), &[])?
         .l()?;
     let text = if o5.is_null() {
         None
     } else {
         Some({
-            let s6: &jni::objects::JString = (&o5).into();
-            String::from(env.get_string(s6)?)
+            let s6 = env.as_cast::<jni::objects::JString>(&o5)?;
+            s6.try_to_string(env)?
         })
     };
     let o7 = env
-        .call_method(obj, "sourceIcon", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("sourceIcon"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let source_icon = if o7.is_null() {
         None
     } else {
         Some({
-            let s8: &jni::objects::JString = (&o7).into();
-            String::from(env.get_string(s8)?)
+            let s8 = env.as_cast::<jni::objects::JString>(&o7)?;
+            s8.try_to_string(env)?
         })
     };
     let o9 = env
-        .call_method(obj, "sourceId", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("sourceId"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let source_id = if o9.is_null() {
         None
     } else {
         Some({
-            let s10: &jni::objects::JString = (&o9).into();
-            String::from(env.get_string(s10)?)
+            let s10 = env.as_cast::<jni::objects::JString>(&o9)?;
+            s10.try_to_string(env)?
         })
     };
     let o11 = env
-        .call_method(obj, "label", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("label"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let label = if o11.is_null() {
         None
     } else {
         Some({
-            let s12: &jni::objects::JString = (&o11).into();
-            String::from(env.get_string(s12)?)
+            let s12 = env.as_cast::<jni::objects::JString>(&o11)?;
+            s12.try_to_string(env)?
         })
     };
     let o13 = env
-        .call_method(obj, "operationId", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("operationId"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let operation_id = if o13.is_null() {
         None
     } else {
         Some({
-            let s14: &jni::objects::JString = (&o13).into();
-            String::from(env.get_string(s14)?)
+            let s14 = env.as_cast::<jni::objects::JString>(&o13)?;
+            s14.try_to_string(env)?
         })
     };
     let sentinel_tags = crate::custom::read_rvt_poi_sentinel_tags(env, obj)?;
@@ -273,64 +335,68 @@ pub(crate) fn read_rvt_poi(
 }
 
 pub(crate) fn build_rvt_aoi<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::klv::st0806::RvtAoi,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(58)?;
-    let b = env.new_object("org/tstrans/klv/RvtAoi$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/klv/RvtAoi$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     if let Some(v) = &r.number {
         env.call_method(
             &b,
-            "number",
-            "(I)Lorg/tstrans/klv/RvtAoi$Builder;",
+            jni_str!("number"),
+            jni_sig!("(I)Lorg/tstrans/klv/RvtAoi$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
     if let Some(v) = &r.corner_lat_p1_deg {
         env.call_method(
             &b,
-            "cornerLatP1Deg",
-            "(D)Lorg/tstrans/klv/RvtAoi$Builder;",
+            jni_str!("cornerLatP1Deg"),
+            jni_sig!("(D)Lorg/tstrans/klv/RvtAoi$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     if let Some(v) = &r.corner_lon_p1_deg {
         env.call_method(
             &b,
-            "cornerLonP1Deg",
-            "(D)Lorg/tstrans/klv/RvtAoi$Builder;",
+            jni_str!("cornerLonP1Deg"),
+            jni_sig!("(D)Lorg/tstrans/klv/RvtAoi$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     if let Some(v) = &r.corner_lat_p3_deg {
         env.call_method(
             &b,
-            "cornerLatP3Deg",
-            "(D)Lorg/tstrans/klv/RvtAoi$Builder;",
+            jni_str!("cornerLatP3Deg"),
+            jni_sig!("(D)Lorg/tstrans/klv/RvtAoi$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     if let Some(v) = &r.corner_lon_p3_deg {
         env.call_method(
             &b,
-            "cornerLonP3Deg",
-            "(D)Lorg/tstrans/klv/RvtAoi$Builder;",
+            jni_str!("cornerLonP3Deg"),
+            jni_sig!("(D)Lorg/tstrans/klv/RvtAoi$Builder;"),
             &[JValue::Double(*v)],
         )?;
     }
     let aoi_type = crate::custom::build_rvt_aoi_aoi_type(env, &r.aoi_type)?;
     env.call_method(
         &b,
-        "aoiTypeCode",
-        "(Ljava/lang/Integer;)Lorg/tstrans/klv/RvtAoi$Builder;",
+        jni_str!("aoiTypeCode"),
+        jni_sig!("(Ljava/lang/Integer;)Lorg/tstrans/klv/RvtAoi$Builder;"),
         &[JValue::Object(&aoi_type)],
     )?;
     if let Some(v) = &r.text {
         let o1 = env.new_string(v)?;
         env.call_method(
             &b,
-            "text",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/RvtAoi$Builder;",
+            jni_str!("text"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/RvtAoi$Builder;"),
             &[JValue::Object(&o1)],
         )?;
     }
@@ -338,8 +404,8 @@ pub(crate) fn build_rvt_aoi<'l>(
         let o2 = env.new_string(v)?;
         env.call_method(
             &b,
-            "sourceId",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/RvtAoi$Builder;",
+            jni_str!("sourceId"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/RvtAoi$Builder;"),
             &[JValue::Object(&o2)],
         )?;
     }
@@ -347,8 +413,8 @@ pub(crate) fn build_rvt_aoi<'l>(
         let o3 = env.new_string(v)?;
         env.call_method(
             &b,
-            "label",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/RvtAoi$Builder;",
+            jni_str!("label"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/RvtAoi$Builder;"),
             &[JValue::Object(&o3)],
         )?;
     }
@@ -356,129 +422,188 @@ pub(crate) fn build_rvt_aoi<'l>(
         let o4 = env.new_string(v)?;
         env.call_method(
             &b,
-            "operationId",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/RvtAoi$Builder;",
+            jni_str!("operationId"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/RvtAoi$Builder;"),
             &[JValue::Object(&o4)],
         )?;
     }
     let sentinel_tags = crate::custom::build_rvt_aoi_sentinel_tags(env, &r.sentinel_tags)?;
     env.call_method(
         &b,
-        "sentinelTags",
-        "(Ljava/util/List;)Lorg/tstrans/klv/RvtAoi$Builder;",
+        jni_str!("sentinelTags"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/RvtAoi$Builder;"),
         &[JValue::Object(&sentinel_tags)],
     )?;
     let unknown = crate::custom::build_rvt_aoi_unknown(env, &r.unknown)?;
     env.call_method(
         &b,
-        "unknown",
-        "(Ljava/util/List;)Lorg/tstrans/klv/RvtAoi$Builder;",
+        jni_str!("unknown"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/RvtAoi$Builder;"),
         &[JValue::Object(&unknown)],
     )?;
     let field_errors = crate::custom::build_rvt_aoi_field_errors(env, &r.field_errors)?;
     env.call_method(
         &b,
-        "fieldErrors",
-        "(Ljava/util/List;)Lorg/tstrans/klv/RvtAoi$Builder;",
+        jni_str!("fieldErrors"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/RvtAoi$Builder;"),
         &[JValue::Object(&field_errors)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/klv/RvtAoi;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/klv/RvtAoi;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn read_rvt_aoi(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<tst_core::klv::st0806::RvtAoi> {
     env.ensure_local_capacity(58)?;
     let o1 = env
-        .call_method(obj, "number", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("number"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let number = if o1.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o1, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o1, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u16(env, i64::from(n), "RvtAoi.number")?
         })
     };
     let o2 = env
-        .call_method(obj, "cornerLatP1Deg", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("cornerLatP1Deg"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let corner_lat_p1_deg = if o2.is_null() {
         None
     } else {
-        Some(env.call_method(&o2, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o2, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o3 = env
-        .call_method(obj, "cornerLonP1Deg", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("cornerLonP1Deg"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let corner_lon_p1_deg = if o3.is_null() {
         None
     } else {
-        Some(env.call_method(&o3, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o3, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o4 = env
-        .call_method(obj, "cornerLatP3Deg", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("cornerLatP3Deg"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let corner_lat_p3_deg = if o4.is_null() {
         None
     } else {
-        Some(env.call_method(&o4, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o4, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let o5 = env
-        .call_method(obj, "cornerLonP3Deg", "()Ljava/lang/Double;", &[])?
+        .call_method(
+            obj,
+            jni_str!("cornerLonP3Deg"),
+            jni_sig!("()Ljava/lang/Double;"),
+            &[],
+        )?
         .l()?;
     let corner_lon_p3_deg = if o5.is_null() {
         None
     } else {
-        Some(env.call_method(&o5, "doubleValue", "()D", &[])?.d()?)
+        Some(
+            env.call_method(&o5, jni_str!("doubleValue"), jni_sig!("()D"), &[])?
+                .d()?,
+        )
     };
     let aoi_type = crate::custom::read_rvt_aoi_aoi_type(env, obj)?;
     let o6 = env
-        .call_method(obj, "text", "()Ljava/lang/String;", &[])?
+        .call_method(obj, jni_str!("text"), jni_sig!("()Ljava/lang/String;"), &[])?
         .l()?;
     let text = if o6.is_null() {
         None
     } else {
         Some({
-            let s7: &jni::objects::JString = (&o6).into();
-            String::from(env.get_string(s7)?)
+            let s7 = env.as_cast::<jni::objects::JString>(&o6)?;
+            s7.try_to_string(env)?
         })
     };
     let o8 = env
-        .call_method(obj, "sourceId", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("sourceId"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let source_id = if o8.is_null() {
         None
     } else {
         Some({
-            let s9: &jni::objects::JString = (&o8).into();
-            String::from(env.get_string(s9)?)
+            let s9 = env.as_cast::<jni::objects::JString>(&o8)?;
+            s9.try_to_string(env)?
         })
     };
     let o10 = env
-        .call_method(obj, "label", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("label"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let label = if o10.is_null() {
         None
     } else {
         Some({
-            let s11: &jni::objects::JString = (&o10).into();
-            String::from(env.get_string(s11)?)
+            let s11 = env.as_cast::<jni::objects::JString>(&o10)?;
+            s11.try_to_string(env)?
         })
     };
     let o12 = env
-        .call_method(obj, "operationId", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("operationId"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let operation_id = if o12.is_null() {
         None
     } else {
         Some({
-            let s13: &jni::objects::JString = (&o12).into();
-            String::from(env.get_string(s13)?)
+            let s13 = env.as_cast::<jni::objects::JString>(&o12)?;
+            s13.try_to_string(env)?
         })
     };
     let sentinel_tags = crate::custom::read_rvt_aoi_sentinel_tags(env, obj)?;
@@ -502,80 +627,84 @@ pub(crate) fn read_rvt_aoi(
 }
 
 pub(crate) fn build_rvt_ls<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::klv::st0806::RvtLs,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(78)?;
-    let b = env.new_object("org/tstrans/klv/RvtLs$Builder", "()V", &[])?;
+    let b = env.new_object(
+        jni_str!("org/tstrans/klv/RvtLs$Builder"),
+        jni_sig!("()V"),
+        &[],
+    )?;
     if let Some(v) = &r.crc32 {
         env.call_method(
             &b,
-            "crc32",
-            "(J)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("crc32"),
+            jni_sig!("(J)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.timestamp_us {
         env.call_method(
             &b,
-            "timestampUs",
-            "(J)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("timestampUs"),
+            jni_sig!("(J)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.platform_true_airspeed {
         env.call_method(
             &b,
-            "platformTrueAirspeed",
-            "(I)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("platformTrueAirspeed"),
+            jni_sig!("(I)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
     if let Some(v) = &r.platform_indicated_airspeed {
         env.call_method(
             &b,
-            "platformIndicatedAirspeed",
-            "(I)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("platformIndicatedAirspeed"),
+            jni_sig!("(I)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
     if let Some(v) = &r.telemetry_accuracy_indicator {
         env.call_method(
             &b,
-            "telemetryAccuracyIndicator",
-            "(I)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("telemetryAccuracyIndicator"),
+            jni_sig!("(I)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
     if let Some(v) = &r.frag_circle_radius_m {
         env.call_method(
             &b,
-            "fragCircleRadiusM",
-            "(I)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("fragCircleRadiusM"),
+            jni_sig!("(I)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
     if let Some(v) = &r.frame_code {
         env.call_method(
             &b,
-            "frameCode",
-            "(J)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("frameCode"),
+            jni_sig!("(J)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.rvt_ls_version {
         env.call_method(
             &b,
-            "rvtLsVersion",
-            "(I)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("rvtLsVersion"),
+            jni_sig!("(I)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
     if let Some(v) = &r.video_data_rate {
         env.call_method(
             &b,
-            "videoDataRate",
-            "(J)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("videoDataRate"),
+            jni_sig!("(J)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
@@ -583,24 +712,25 @@ pub(crate) fn build_rvt_ls<'l>(
         let o1 = env.new_string(v)?;
         env.call_method(
             &b,
-            "digitalVideoFileFormat",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("digitalVideoFileFormat"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Object(&o1)],
         )?;
     }
     let user_defined =
-        env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+        env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
             for item in r.user_defined.iter() {
                 env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                     let o2 = env
-                        .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                            build_rvt_user_data(env, item)
-                        })?;
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_rvt_user_data(env, item),
+                        )?;
                     env.call_method(
                         &list,
-                        "add",
-                        "(Ljava/lang/Object;)Z",
+                        jni_str!("add"),
+                        jni_sig!("(Ljava/lang/Object;)Z"),
                         &[JValue::Object(&o2)],
                     )?;
                     Ok(())
@@ -610,23 +740,24 @@ pub(crate) fn build_rvt_ls<'l>(
         })?;
     env.call_method(
         &b,
-        "userDefined",
-        "(Ljava/util/List;)Lorg/tstrans/klv/RvtLs$Builder;",
+        jni_str!("userDefined"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/RvtLs$Builder;"),
         &[JValue::Object(&user_defined)],
     )?;
-    let points_of_interest =
-        env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+    let points_of_interest = env
+        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
             for item in r.points_of_interest.iter() {
                 env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                     let o3 = env
-                        .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                            build_rvt_poi(env, item)
-                        })?;
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_rvt_poi(env, item),
+                        )?;
                     env.call_method(
                         &list,
-                        "add",
-                        "(Ljava/lang/Object;)Z",
+                        jni_str!("add"),
+                        jni_sig!("(Ljava/lang/Object;)Z"),
                         &[JValue::Object(&o3)],
                     )?;
                     Ok(())
@@ -636,23 +767,24 @@ pub(crate) fn build_rvt_ls<'l>(
         })?;
     env.call_method(
         &b,
-        "pointsOfInterest",
-        "(Ljava/util/List;)Lorg/tstrans/klv/RvtLs$Builder;",
+        jni_str!("pointsOfInterest"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/RvtLs$Builder;"),
         &[JValue::Object(&points_of_interest)],
     )?;
-    let areas_of_interest =
-        env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-            let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+    let areas_of_interest = env
+        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
+            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
             for item in r.areas_of_interest.iter() {
                 env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                     let o4 = env
-                        .with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {
-                            build_rvt_aoi(env, item)
-                        })?;
+                        .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(
+                            16,
+                            |env| build_rvt_aoi(env, item),
+                        )?;
                     env.call_method(
                         &list,
-                        "add",
-                        "(Ljava/lang/Object;)Z",
+                        jni_str!("add"),
+                        jni_sig!("(Ljava/lang/Object;)Z"),
                         &[JValue::Object(&o4)],
                     )?;
                     Ok(())
@@ -662,15 +794,15 @@ pub(crate) fn build_rvt_ls<'l>(
         })?;
     env.call_method(
         &b,
-        "areasOfInterest",
-        "(Ljava/util/List;)Lorg/tstrans/klv/RvtLs$Builder;",
+        jni_str!("areasOfInterest"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/RvtLs$Builder;"),
         &[JValue::Object(&areas_of_interest)],
     )?;
     if let Some(v) = &r.aircraft_mgrs_zone {
         env.call_method(
             &b,
-            "aircraftMgrsZone",
-            "(I)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("aircraftMgrsZone"),
+            jni_sig!("(I)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
@@ -678,32 +810,32 @@ pub(crate) fn build_rvt_ls<'l>(
         let o5 = env.new_string(v)?;
         env.call_method(
             &b,
-            "aircraftMgrsBandGrid",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("aircraftMgrsBandGrid"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Object(&o5)],
         )?;
     }
     if let Some(v) = &r.aircraft_mgrs_easting_m {
         env.call_method(
             &b,
-            "aircraftMgrsEastingM",
-            "(J)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("aircraftMgrsEastingM"),
+            jni_sig!("(J)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.aircraft_mgrs_northing_m {
         env.call_method(
             &b,
-            "aircraftMgrsNorthingM",
-            "(J)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("aircraftMgrsNorthingM"),
+            jni_sig!("(J)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.frame_center_mgrs_zone {
         env.call_method(
             &b,
-            "frameCenterMgrsZone",
-            "(I)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("frameCenterMgrsZone"),
+            jni_sig!("(I)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Int(*v as i32)],
         )?;
     }
@@ -711,87 +843,109 @@ pub(crate) fn build_rvt_ls<'l>(
         let o6 = env.new_string(v)?;
         env.call_method(
             &b,
-            "frameCenterMgrsBandGrid",
-            "(Ljava/lang/String;)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("frameCenterMgrsBandGrid"),
+            jni_sig!("(Ljava/lang/String;)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Object(&o6)],
         )?;
     }
     if let Some(v) = &r.frame_center_mgrs_easting_m {
         env.call_method(
             &b,
-            "frameCenterMgrsEastingM",
-            "(J)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("frameCenterMgrsEastingM"),
+            jni_sig!("(J)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     if let Some(v) = &r.frame_center_mgrs_northing_m {
         env.call_method(
             &b,
-            "frameCenterMgrsNorthingM",
-            "(J)Lorg/tstrans/klv/RvtLs$Builder;",
+            jni_str!("frameCenterMgrsNorthingM"),
+            jni_sig!("(J)Lorg/tstrans/klv/RvtLs$Builder;"),
             &[JValue::Long(*v as i64)],
         )?;
     }
     let unknown = crate::custom::build_rvt_ls_unknown(env, &r.unknown)?;
     env.call_method(
         &b,
-        "unknown",
-        "(Ljava/util/List;)Lorg/tstrans/klv/RvtLs$Builder;",
+        jni_str!("unknown"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/RvtLs$Builder;"),
         &[JValue::Object(&unknown)],
     )?;
     let field_errors = crate::custom::build_rvt_ls_field_errors(env, &r.field_errors)?;
     env.call_method(
         &b,
-        "fieldErrors",
-        "(Ljava/util/List;)Lorg/tstrans/klv/RvtLs$Builder;",
+        jni_str!("fieldErrors"),
+        jni_sig!("(Ljava/util/List;)Lorg/tstrans/klv/RvtLs$Builder;"),
         &[JValue::Object(&field_errors)],
     )?;
     let obj = env
-        .call_method(&b, "build", "()Lorg/tstrans/klv/RvtLs;", &[])?
+        .call_method(
+            &b,
+            jni_str!("build"),
+            jni_sig!("()Lorg/tstrans/klv/RvtLs;"),
+            &[],
+        )?
         .l()?;
     Ok(obj)
 }
 
 pub(crate) fn read_rvt_ls(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
 ) -> jni::errors::Result<tst_core::klv::st0806::RvtLs> {
     env.ensure_local_capacity(78)?;
     let o1 = env
-        .call_method(obj, "crc32", "()Ljava/lang/Long;", &[])?
+        .call_method(obj, jni_str!("crc32"), jni_sig!("()Ljava/lang/Long;"), &[])?
         .l()?;
     let crc32 = if o1.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o1, "longValue", "()J", &[])?.j()?;
+            let n = env
+                .call_method(&o1, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?;
             crate::jutil::checked_u32(env, n, "RvtLs.crc32")?
         })
     };
     let o2 = env
-        .call_method(obj, "timestampUs", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("timestampUs"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let timestamp_us = if o2.is_null() {
         None
     } else {
-        Some((env.call_method(&o2, "longValue", "()J", &[])?.j()?) as u64)
+        Some(
+            (env.call_method(&o2, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?) as u64,
+        )
     };
     let o3 = env
-        .call_method(obj, "platformTrueAirspeed", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("platformTrueAirspeed"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let platform_true_airspeed = if o3.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o3, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o3, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u16(env, i64::from(n), "RvtLs.platformTrueAirspeed")?
         })
     };
     let o4 = env
         .call_method(
             obj,
-            "platformIndicatedAirspeed",
-            "()Ljava/lang/Integer;",
+            jni_str!("platformIndicatedAirspeed"),
+            jni_sig!("()Ljava/lang/Integer;"),
             &[],
         )?
         .l()?;
@@ -799,15 +953,17 @@ pub(crate) fn read_rvt_ls(
         None
     } else {
         Some({
-            let n = env.call_method(&o4, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o4, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u16(env, i64::from(n), "RvtLs.platformIndicatedAirspeed")?
         })
     };
     let o5 = env
         .call_method(
             obj,
-            "telemetryAccuracyIndicator",
-            "()Ljava/lang/Integer;",
+            jni_str!("telemetryAccuracyIndicator"),
+            jni_sig!("()Ljava/lang/Integer;"),
             &[],
         )?
         .l()?;
@@ -815,75 +971,122 @@ pub(crate) fn read_rvt_ls(
         None
     } else {
         Some({
-            let n = env.call_method(&o5, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o5, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u8(env, i64::from(n), "RvtLs.telemetryAccuracyIndicator")?
         })
     };
     let o6 = env
-        .call_method(obj, "fragCircleRadiusM", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("fragCircleRadiusM"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let frag_circle_radius_m = if o6.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o6, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o6, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u16(env, i64::from(n), "RvtLs.fragCircleRadiusM")?
         })
     };
     let o7 = env
-        .call_method(obj, "frameCode", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("frameCode"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let frame_code = if o7.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o7, "longValue", "()J", &[])?.j()?;
+            let n = env
+                .call_method(&o7, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?;
             crate::jutil::checked_u32(env, n, "RvtLs.frameCode")?
         })
     };
     let o8 = env
-        .call_method(obj, "rvtLsVersion", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("rvtLsVersion"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let rvt_ls_version = if o8.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o8, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o8, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u8(env, i64::from(n), "RvtLs.rvtLsVersion")?
         })
     };
     let o9 = env
-        .call_method(obj, "videoDataRate", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("videoDataRate"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let video_data_rate = if o9.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o9, "longValue", "()J", &[])?.j()?;
+            let n = env
+                .call_method(&o9, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?;
             crate::jutil::checked_u32(env, n, "RvtLs.videoDataRate")?
         })
     };
     let o10 = env
-        .call_method(obj, "digitalVideoFileFormat", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("digitalVideoFileFormat"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let digital_video_file_format = if o10.is_null() {
         None
     } else {
         Some({
-            let s11: &jni::objects::JString = (&o10).into();
-            String::from(env.get_string(s11)?)
+            let s11 = env.as_cast::<jni::objects::JString>(&o10)?;
+            s11.try_to_string(env)?
         })
     };
     let o12 = env
-        .call_method(obj, "userDefined", "()Ljava/util/List;", &[])?
+        .call_method(
+            obj,
+            jni_str!("userDefined"),
+            jni_sig!("()Ljava/util/List;"),
+            &[],
+        )?
         .l()?;
     let user_defined = {
-        let size = env.call_method(&o12, "size", "()I", &[])?.i()?;
+        let size = env
+            .call_method(&o12, jni_str!("size"), jni_sig!("()I"), &[])?
+            .i()?;
         let mut items = Vec::with_capacity(size.max(0) as usize);
         for i in 0..size {
             let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {
                 let e13 = env
-                    .call_method(&o12, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                    .call_method(
+                        &o12,
+                        jni_str!("get"),
+                        jni_sig!("(I)Ljava/lang/Object;"),
+                        &[JValue::Int(i)],
+                    )?
                     .l()?;
                 read_rvt_user_data(env, &e13)
             })?;
@@ -892,15 +1095,27 @@ pub(crate) fn read_rvt_ls(
         items
     };
     let o14 = env
-        .call_method(obj, "pointsOfInterest", "()Ljava/util/List;", &[])?
+        .call_method(
+            obj,
+            jni_str!("pointsOfInterest"),
+            jni_sig!("()Ljava/util/List;"),
+            &[],
+        )?
         .l()?;
     let points_of_interest = {
-        let size = env.call_method(&o14, "size", "()I", &[])?.i()?;
+        let size = env
+            .call_method(&o14, jni_str!("size"), jni_sig!("()I"), &[])?
+            .i()?;
         let mut items = Vec::with_capacity(size.max(0) as usize);
         for i in 0..size {
             let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {
                 let e15 = env
-                    .call_method(&o14, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                    .call_method(
+                        &o14,
+                        jni_str!("get"),
+                        jni_sig!("(I)Ljava/lang/Object;"),
+                        &[JValue::Int(i)],
+                    )?
                     .l()?;
                 read_rvt_poi(env, &e15)
             })?;
@@ -909,15 +1124,27 @@ pub(crate) fn read_rvt_ls(
         items
     };
     let o16 = env
-        .call_method(obj, "areasOfInterest", "()Ljava/util/List;", &[])?
+        .call_method(
+            obj,
+            jni_str!("areasOfInterest"),
+            jni_sig!("()Ljava/util/List;"),
+            &[],
+        )?
         .l()?;
     let areas_of_interest = {
-        let size = env.call_method(&o16, "size", "()I", &[])?.i()?;
+        let size = env
+            .call_method(&o16, jni_str!("size"), jni_sig!("()I"), &[])?
+            .i()?;
         let mut items = Vec::with_capacity(size.max(0) as usize);
         for i in 0..size {
             let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {
                 let e17 = env
-                    .call_method(&o16, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                    .call_method(
+                        &o16,
+                        jni_str!("get"),
+                        jni_sig!("(I)Ljava/lang/Object;"),
+                        &[JValue::Int(i)],
+                    )?
                     .l()?;
                 read_rvt_aoi(env, &e17)
             })?;
@@ -926,90 +1153,142 @@ pub(crate) fn read_rvt_ls(
         items
     };
     let o18 = env
-        .call_method(obj, "aircraftMgrsZone", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("aircraftMgrsZone"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let aircraft_mgrs_zone = if o18.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o18, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o18, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u8(env, i64::from(n), "RvtLs.aircraftMgrsZone")?
         })
     };
     let o19 = env
-        .call_method(obj, "aircraftMgrsBandGrid", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("aircraftMgrsBandGrid"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let aircraft_mgrs_band_grid = if o19.is_null() {
         None
     } else {
         Some({
-            let s20: &jni::objects::JString = (&o19).into();
-            String::from(env.get_string(s20)?)
+            let s20 = env.as_cast::<jni::objects::JString>(&o19)?;
+            s20.try_to_string(env)?
         })
     };
     let o21 = env
-        .call_method(obj, "aircraftMgrsEastingM", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("aircraftMgrsEastingM"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let aircraft_mgrs_easting_m = if o21.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o21, "longValue", "()J", &[])?.j()?;
+            let n = env
+                .call_method(&o21, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?;
             crate::jutil::checked_u32(env, n, "RvtLs.aircraftMgrsEastingM")?
         })
     };
     let o22 = env
-        .call_method(obj, "aircraftMgrsNorthingM", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("aircraftMgrsNorthingM"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let aircraft_mgrs_northing_m = if o22.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o22, "longValue", "()J", &[])?.j()?;
+            let n = env
+                .call_method(&o22, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?;
             crate::jutil::checked_u32(env, n, "RvtLs.aircraftMgrsNorthingM")?
         })
     };
     let o23 = env
-        .call_method(obj, "frameCenterMgrsZone", "()Ljava/lang/Integer;", &[])?
+        .call_method(
+            obj,
+            jni_str!("frameCenterMgrsZone"),
+            jni_sig!("()Ljava/lang/Integer;"),
+            &[],
+        )?
         .l()?;
     let frame_center_mgrs_zone = if o23.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o23, "intValue", "()I", &[])?.i()?;
+            let n = env
+                .call_method(&o23, jni_str!("intValue"), jni_sig!("()I"), &[])?
+                .i()?;
             crate::jutil::checked_u8(env, i64::from(n), "RvtLs.frameCenterMgrsZone")?
         })
     };
     let o24 = env
-        .call_method(obj, "frameCenterMgrsBandGrid", "()Ljava/lang/String;", &[])?
+        .call_method(
+            obj,
+            jni_str!("frameCenterMgrsBandGrid"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
         .l()?;
     let frame_center_mgrs_band_grid = if o24.is_null() {
         None
     } else {
         Some({
-            let s25: &jni::objects::JString = (&o24).into();
-            String::from(env.get_string(s25)?)
+            let s25 = env.as_cast::<jni::objects::JString>(&o24)?;
+            s25.try_to_string(env)?
         })
     };
     let o26 = env
-        .call_method(obj, "frameCenterMgrsEastingM", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("frameCenterMgrsEastingM"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let frame_center_mgrs_easting_m = if o26.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o26, "longValue", "()J", &[])?.j()?;
+            let n = env
+                .call_method(&o26, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?;
             crate::jutil::checked_u32(env, n, "RvtLs.frameCenterMgrsEastingM")?
         })
     };
     let o27 = env
-        .call_method(obj, "frameCenterMgrsNorthingM", "()Ljava/lang/Long;", &[])?
+        .call_method(
+            obj,
+            jni_str!("frameCenterMgrsNorthingM"),
+            jni_sig!("()Ljava/lang/Long;"),
+            &[],
+        )?
         .l()?;
     let frame_center_mgrs_northing_m = if o27.is_null() {
         None
     } else {
         Some({
-            let n = env.call_method(&o27, "longValue", "()J", &[])?.j()?;
+            let n = env
+                .call_method(&o27, jni_str!("longValue"), jni_sig!("()J"), &[])?
+                .j()?;
             crate::jutil::checked_u32(env, n, "RvtLs.frameCenterMgrsNorthingM")?
         })
     };

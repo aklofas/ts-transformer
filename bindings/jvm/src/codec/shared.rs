@@ -7,8 +7,11 @@
 //! Each enum builder matches all `tst_core` variants plus a `_ =>` wildcard to
 //! the `RESERVED` / `INVALID` catch-all, exactly as the tst-py `From` impls do.
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_str;
 use jni::objects::{JObject, JValue};
+use jni::signature::RuntimeMethodSignature;
+use jni::strings::JNIString;
 use tst_core::codec::NalUnit;
 use tst_core::codec::{ChromaFormat, ColourPrimaries, MatrixCoefficients, TransferCharacteristics};
 
@@ -19,7 +22,7 @@ use crate::jutil::enum_const;
 /// constant exists for the open-enum mirror but is unreachable from this path
 /// (matches tst-py's `ChromaFormatPy::from`, which is likewise exhaustive).
 pub(crate) fn build_chroma_format<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     v: ChromaFormat,
 ) -> Result<JObject<'local>, ()> {
     let name = match v {
@@ -33,7 +36,7 @@ pub(crate) fn build_chroma_format<'local>(
 
 /// Map `ColourPrimaries` → `org.tstrans.codec.ColourPrimaries`. Wildcard → `RESERVED`.
 pub(crate) fn build_colour_primaries<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     v: ColourPrimaries,
 ) -> Result<JObject<'local>, ()> {
     let name = match v {
@@ -56,7 +59,7 @@ pub(crate) fn build_colour_primaries<'local>(
 
 /// Map `TransferCharacteristics` → Java. Wildcard → `RESERVED`.
 pub(crate) fn build_transfer<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     v: TransferCharacteristics,
 ) -> Result<JObject<'local>, ()> {
     let name = match v {
@@ -84,7 +87,7 @@ pub(crate) fn build_transfer<'local>(
 
 /// Map `MatrixCoefficients` → Java. Wildcard → `RESERVED`.
 pub(crate) fn build_matrix<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     v: MatrixCoefficients,
 ) -> Result<JObject<'local>, ()> {
     let name = match v {
@@ -114,7 +117,7 @@ pub(crate) fn build_matrix<'local>(
 /// calling the matching Java static factory (`h264`/`h265`/`h266`), mirroring
 /// `NalUnitPy::make_h264/h265/h266`.
 pub(crate) fn build_nal_unit<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     n: &NalUnit,
 ) -> Result<JObject<'local>, ()> {
     let (factory, sig, nal_type, a, b, payload): (&str, &str, u8, u8, u8, &[u8]) = match n {
@@ -175,8 +178,15 @@ pub(crate) fn build_nal_unit<'local>(
             JValue::Object(&arr),
         ]
     };
-    env.call_static_method("org/tstrans/codec/NalUnit", factory, sig, &args)
-        .map_err(|_| ())?
-        .l()
-        .map_err(|_| ())
+    env.call_static_method(
+        jni_str!("org/tstrans/codec/NalUnit"),
+        JNIString::from(factory),
+        RuntimeMethodSignature::from_str(sig)
+            .map_err(|_| ())?
+            .method_signature(),
+        &args,
+    )
+    .map_err(|_| ())?
+    .l()
+    .map_err(|_| ())
 }

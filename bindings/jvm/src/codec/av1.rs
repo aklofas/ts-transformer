@@ -27,7 +27,9 @@
 //! Rust seq directly; this binding reconstructs it from `raw`.
 
 use crate::panic::jni_native;
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JValue};
 use jni::sys::jobject;
 use tst_core::codec::av1::{parse_frame_header_light, parse_obu_stream, parse_sequence_header};
@@ -43,19 +45,30 @@ use crate::jutil::read_byte_buffer;
 /// `obuType` + nullable `ObuExtension(temporalId, spatialId)` + the payload
 /// `ByteBuffer`. Reverse of `shared::build_obu`. Errors propagate as
 /// `jni::errors::Error` (a pending Java exception may be left).
-fn read_obu(env: &mut JNIEnv, item: &JObject) -> jni::errors::Result<Obu> {
-    let obu_type_raw = env.call_method(item, "obuType", "()I", &[])?.i()?;
+fn read_obu(env: &mut Env, item: &JObject) -> jni::errors::Result<Obu> {
+    let obu_type_raw = env
+        .call_method(item, jni_str!("obuType"), jni_sig!("()I"), &[])?
+        .i()?;
     let obu_type = crate::jutil::checked_u8(env, obu_type_raw as i64, "obuType")?;
 
     let ext_obj = env
-        .call_method(item, "extension", "()Lorg/tstrans/codec/ObuExtension;", &[])?
+        .call_method(
+            item,
+            jni_str!("extension"),
+            jni_sig!("()Lorg/tstrans/codec/ObuExtension;"),
+            &[],
+        )?
         .l()?;
     let extension = if ext_obj.is_null() {
         None
     } else {
-        let temporal_id_raw = env.call_method(&ext_obj, "temporalId", "()I", &[])?.i()?;
+        let temporal_id_raw = env
+            .call_method(&ext_obj, jni_str!("temporalId"), jni_sig!("()I"), &[])?
+            .i()?;
         let temporal_id = crate::jutil::checked_u8(env, temporal_id_raw as i64, "temporalId")?;
-        let spatial_id_raw = env.call_method(&ext_obj, "spatialId", "()I", &[])?.i()?;
+        let spatial_id_raw = env
+            .call_method(&ext_obj, jni_str!("spatialId"), jni_sig!("()I"), &[])?
+            .i()?;
         let spatial_id = crate::jutil::checked_u8(env, spatial_id_raw as i64, "spatialId")?;
         Some(ObuExtension {
             temporal_id,
@@ -64,7 +77,12 @@ fn read_obu(env: &mut JNIEnv, item: &JObject) -> jni::errors::Result<Obu> {
     };
 
     let payload_buf = env
-        .call_method(item, "payload", "()Ljava/nio/ByteBuffer;", &[])?
+        .call_method(
+            item,
+            jni_str!("payload"),
+            jni_sig!("()Ljava/nio/ByteBuffer;"),
+            &[],
+        )?
         .l()?;
     let payload = read_byte_buffer(env, &payload_buf)?;
 
@@ -112,7 +130,7 @@ jni_native! {
 
         // SPS context is REQUIRED. Recover the Rust seq by re-parsing the Java
         // seq's `raw()` ByteBuffer (the Java record can't hold the Rust struct).
-        let raw_buf = match env.call_method(&seq, "raw", "()Ljava/nio/ByteBuffer;", &[]) {
+        let raw_buf = match env.call_method(&seq, jni_str!("raw"), jni_sig!("()Ljava/nio/ByteBuffer;"), &[]) {
             Ok(v) => match v.l() {
                 Ok(o) => o,
                 Err(_) => return JObject::null().into_raw(),
@@ -152,7 +170,7 @@ jni_native! {
     ) -> jobject = std::ptr::null_mut() => {
         // INFALLIBLE: failures are collected into the result's `unparseable` list,
         // never thrown. Read each Java Obu inside a per-element local frame.
-        let size = match env.call_method(&obus, "size", "()I", &[]) {
+        let size = match env.call_method(&obus, jni_str!("size"), jni_sig!("()I"), &[]) {
             Ok(v) => match v.i() {
                 Ok(n) => n,
                 Err(_) => return JObject::null().into_raw(),
@@ -164,7 +182,7 @@ jni_native! {
         for i in 0..size {
             let parsed = env.with_local_frame(16, |inner| {
                 let item = inner
-                    .call_method(&obus, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                    .call_method(&obus, jni_str!("get"), jni_sig!("(I)Ljava/lang/Object;"), &[JValue::Int(i)])?
                     .l()?;
                 read_obu(inner, &item)
             });

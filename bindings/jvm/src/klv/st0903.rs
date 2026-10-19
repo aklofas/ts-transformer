@@ -18,7 +18,9 @@
 //! targets a record holds.
 
 use crate::panic::jni_native;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject};
+use jni::strings::JNIString;
 use jni::sys::jobject;
 use tst_core::klv::st0903::{
     decode as decode_lenient, decode_strict, encode_standalone_strict_compliance,
@@ -48,13 +50,13 @@ jni_native! {
             Ok(b) => b,
             Err(e) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    format!("nDecodeVmti: byte[] read failed: {e}"),
+                    jni_str!("java/lang/RuntimeException"),
+                    JNIString::from(format!("nDecodeVmti: byte[] read failed: {e}")),
                 );
                 return JObject::null().into_raw();
             }
         };
-        let result = if strict != 0 {
+        let result = if strict {
             decode_strict(&bytes)
         } else {
             decode_lenient(&bytes)
@@ -93,8 +95,8 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            "java/lang/RuntimeException",
-                            format!("nEncodeVmti: byte_array_from_slice failed: {e}"),
+                            jni_str!("java/lang/RuntimeException"),
+                            JNIString::from(format!("nEncodeVmti: byte_array_from_slice failed: {e}")),
                         );
                         JObject::null().into_raw()
                     }
@@ -105,10 +107,10 @@ jni_native! {
                 }
             },
             Err(e) => {
-                if !env.exception_check().unwrap_or(false) {
+                if !env.exception_check() {
                     let _ = env.throw_new(
-                        "java/lang/RuntimeException",
-                        format!("nEncodeVmti: field read failed: {e}"),
+                        jni_str!("java/lang/RuntimeException"),
+                        JNIString::from(format!("nEncodeVmti: field read failed: {e}")),
                     );
                 }
                 JObject::null().into_raw()
@@ -135,8 +137,8 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            "java/lang/RuntimeException",
-                            format!("nEncodeVmtiStandalone: byte_array_from_slice failed: {e}"),
+                            jni_str!("java/lang/RuntimeException"),
+                            JNIString::from(format!("nEncodeVmtiStandalone: byte_array_from_slice failed: {e}")),
                         );
                         JObject::null().into_raw()
                     }
@@ -147,10 +149,10 @@ jni_native! {
                 }
             },
             Err(e) => {
-                if !env.exception_check().unwrap_or(false) {
+                if !env.exception_check() {
                     let _ = env.throw_new(
-                        "java/lang/RuntimeException",
-                        format!("nEncodeVmtiStandalone: field read failed: {e}"),
+                        jni_str!("java/lang/RuntimeException"),
+                        JNIString::from(format!("nEncodeVmtiStandalone: field read failed: {e}")),
                     );
                 }
                 JObject::null().into_raw()
@@ -177,10 +179,10 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            "java/lang/RuntimeException",
-                            format!(
+                            jni_str!("java/lang/RuntimeException"),
+                            JNIString::from(format!(
                                 "nEncodeVmtiStrictCompliance: byte_array_from_slice failed: {e}"
-                            ),
+                            )),
                         );
                         JObject::null().into_raw()
                     }
@@ -191,10 +193,10 @@ jni_native! {
                 }
             },
             Err(e) => {
-                if !env.exception_check().unwrap_or(false) {
+                if !env.exception_check() {
                     let _ = env.throw_new(
-                        "java/lang/RuntimeException",
-                        format!("nEncodeVmtiStrictCompliance: field read failed: {e}"),
+                        jni_str!("java/lang/RuntimeException"),
+                        JNIString::from(format!("nEncodeVmtiStrictCompliance: field read failed: {e}")),
                     );
                 }
                 JObject::null().into_raw()
@@ -221,10 +223,10 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            "java/lang/RuntimeException",
-                            format!(
+                            jni_str!("java/lang/RuntimeException"),
+                            JNIString::from(format!(
                                 "nEncodeVmtiStandaloneStrictCompliance: byte_array_from_slice failed: {e}"
-                            ),
+                            )),
                         );
                         JObject::null().into_raw()
                     }
@@ -235,10 +237,10 @@ jni_native! {
                 }
             },
             Err(e) => {
-                if !env.exception_check().unwrap_or(false) {
+                if !env.exception_check() {
                     let _ = env.throw_new(
-                        "java/lang/RuntimeException",
-                        format!("nEncodeVmtiStandaloneStrictCompliance: field read failed: {e}"),
+                        jni_str!("java/lang/RuntimeException"),
+                        JNIString::from(format!("nEncodeVmtiStandaloneStrictCompliance: field read failed: {e}")),
                     );
                 }
                 JObject::null().into_raw()

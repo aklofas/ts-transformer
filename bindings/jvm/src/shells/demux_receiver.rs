@@ -23,14 +23,17 @@
 //! load-bearing. `cancelHandle()` / `isAlive()` / `endReason()` stay lock-free
 //! and `close()` cancels before it takes the slot, so OTHER threads can still
 //! stop a receiver whose sink is running. A callback exception is captured
-//! first-wins into `sink_error` (as a `GlobalRef`) and re-thrown from the next
+//! first-wins into `sink_error` (as a `Global`) and re-thrown from the next
 //! `nNext` after the slot is released.
 
 use crate::panic::jni_native;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use jni::JNIEnv;
-use jni::objects::{GlobalRef, JObject, JString, JThrowable, JValue};
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
+use jni::objects::{Global, JObject, JString, JThrowable, JValue};
+use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 
 use tst_core::transport::RecvTransport;
@@ -55,11 +58,11 @@ use crate::mpegts::{
 
 /// Native backing for `org.tstrans.shells.DemuxReceiver`. Only `sink_error` is
 /// shared: the `FnMut`+`Send` byte-sink closure needs owned `Send` capture, and
-/// it stashes the first byte-sink exception here as a `GlobalRef` for
+/// it stashes the first byte-sink exception here as a `Global` for
 /// fail-loud re-raise from `nNext`.
 struct JniDemuxReceiver {
     inner: RustDemuxReceiver<Box<dyn RecvTransport>>,
-    sink_error: Arc<Mutex<Option<GlobalRef>>>,
+    sink_error: Arc<Mutex<Option<Global<JThrowable<'static>>>>>,
 }
 
 static REGISTRY: LazyLock<OwnedRegistry<JniDemuxReceiver, Snapshot<()>>> =
@@ -70,7 +73,7 @@ static REGISTRY: LazyLock<OwnedRegistry<JniDemuxReceiver, Snapshot<()>>> =
 /// a receiver shell's `TransportError::Closed` is `EndOfStream`, which an
 /// iterator reports as the clean end of iteration, never as an exception, so
 /// nothing is thrown and `nNext` returns null.
-fn throw_demux_recv_error(env: &mut JNIEnv, domain: Domain, e: DemuxReceiverError) {
+fn throw_demux_recv_error(env: &mut Env, domain: Domain, e: DemuxReceiverError) {
     match e.source {
         DemuxReceiverErrorSource::Demux(d) => throw_demux_error(env, &d),
         _ => {
@@ -86,7 +89,7 @@ fn throw_demux_recv_error(env: &mut JNIEnv, domain: Domain, e: DemuxReceiverErro
 /// URL's scheme and wrap it in a `DemuxReceiver` (with or without explicit
 /// demux options). Returns the key, or `0` with an exception pending.
 fn open_with(
-    env: &mut JNIEnv,
+    env: &mut Env,
     url: &JString,
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
 ) -> jlong {
@@ -219,7 +222,7 @@ jni_native! {
         let captured = sink_error.lock().ok().and_then(|mut s| s.take());
         if let Some(global) = captured {
             if let Ok(local) = env.new_local_ref(&global) {
-                let _ = env.throw(JThrowable::from(local));
+                let _ = env.throw(local);
             }
             return JObject::null().into_raw();
         }
@@ -263,19 +266,19 @@ jni_native! {
         consumer: JObject<'local>,
     ) = () => {
         // Capture owned `Send` state for the closure: a cached `JavaVM` (to attach
-        // the receiver thread per packet), a `GlobalRef` to the consumer (local refs
+        // the receiver thread per packet), a `Global` to the consumer (local refs
         // can't cross the call). These touch `env`, so build them BEFORE leasing.
         let vm = match env.get_java_vm() {
             Ok(vm) => vm,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return;
             }
         };
         let consumer = match env.new_global_ref(&consumer) {
             Ok(g) => g,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return;
             }
         };
@@ -291,35 +294,37 @@ jni_native! {
                 // analogue of tst-py's allow-threads-before-lock fix, trivial here
                 // because there is no GIL. Touches ONLY `consumer` + `slot`, never the
                 // receiver's `inner`.
-                let Ok(mut env) = vm.attach_current_thread() else {
-                    return;
-                };
-                let arr = match env.byte_array_from_slice(pkt) {
-                    Ok(a) => a,
-                    // OOM-only: clear the pending JavaException before bailing so the
-                    // next packet's fanout doesn't run JNI calls under a stale exception.
-                    Err(_) => {
-                        let _ = env.exception_clear();
-                        return;
-                    }
-                };
-                let _ = env.call_method(
-                    &consumer,
-                    "accept",
-                    "(Ljava/lang/Object;)V",
-                    &[JValue::Object(&arr.into())],
-                );
-                // Fail-loud: capture the first callback exception as a GlobalRef; later
-                // per-packet errors are dropped. `nNext` drains + re-throws it.
-                if env.exception_check().unwrap_or(false)
-                    && let Ok(exc) = env.exception_occurred() {
-                        let _ = env.exception_clear();
-                        if let Ok(mut s) = slot.lock()
-                            && s.is_none()
-                                && let Ok(g) = env.new_global_ref(&exc) {
-                                    *s = Some(g);
-                                }
-                    }
+                // Scoped: the thread is detached again when the closure ends
+                // unless it was already attached, as with the 0.21 guard.
+                let _ = vm.attach_current_thread_for_scope(|env| -> jni::errors::Result<()> {
+                    let arr = match env.byte_array_from_slice(pkt) {
+                        Ok(a) => a,
+                        // OOM-only: clear the pending JavaException before bailing so the
+                        // next packet's fanout doesn't run JNI calls under a stale exception.
+                        Err(_) => {
+                            env.exception_clear();
+                            return Ok(());
+                        }
+                    };
+                    let _ = env.call_method(
+                        &consumer,
+                        jni_str!("accept"),
+                        jni_sig!("(Ljava/lang/Object;)V"),
+                        &[JValue::Object(&arr.into())],
+                    );
+                    // Fail-loud: capture the first callback exception as a Global; later
+                    // per-packet errors are dropped. `nNext` drains + re-throws it.
+                    if env.exception_check()
+                        && let Some(exc) = env.exception_occurred() {
+                            env.exception_clear();
+                            if let Ok(mut s) = slot.lock()
+                                && s.is_none()
+                                    && let Ok(g) = env.new_global_ref(&exc) {
+                                        *s = Some(g);
+                                    }
+                        }
+                    Ok(())
+                });
             }));
         });
         if let Err(state) = registered {
@@ -509,13 +514,13 @@ jni_native! {
         _env,
         _class,
         handle: jlong,
-    ) -> jboolean = 0 => {
-        match REGISTRY.try_with_ref(handle as u64, |jdr| u8::from(jdr.inner.is_alive())) {
+    ) -> jboolean = false => {
+        match REGISTRY.try_with_ref(handle as u64, |jdr| jdr.inner.is_alive()) {
             Ok(Some(v)) => v,
             // A parked next() holds the slot: the receiver is live.
-            Ok(None) => 1,
+            Ok(None) => true,
             // Taken/absent: closed.
-            Err(_) => 0,
+            Err(_) => false,
         }
     }
 }

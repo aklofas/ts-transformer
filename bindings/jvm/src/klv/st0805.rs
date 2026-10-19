@@ -31,8 +31,10 @@
 //! value cannot satisfy" errors, not codec/decode failures.
 
 use crate::panic::jni_native;
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_str;
 use jni::objects::JObject;
+use jni::strings::JNIString;
 use jni::sys::{jlong, jobject};
 use tst_core::error::CotError;
 use tst_core::klv::st0805::{
@@ -48,19 +50,22 @@ use crate::jutil::require_non_null;
 /// Throw `IllegalArgumentException` with `e`'s `Display` message. See the
 /// module doc's "Error mapping" section for why this does not route through
 /// `throw_klv_decode`.
-fn throw_cot_error(env: &mut JNIEnv, e: &CotError) {
-    let _ = env.throw_new("java/lang/IllegalArgumentException", e.to_string());
+fn throw_cot_error(env: &mut Env, e: &CotError) {
+    let _ = env.throw_new(
+        jni_str!("java/lang/IllegalArgumentException"),
+        JNIString::from(e.to_string()),
+    );
 }
 
 /// Allocate a Java `String` from `s`, or throw `RuntimeException` naming
 /// `caller` on a JNI-level allocation failure.
-fn new_string_or_throw(env: &mut JNIEnv<'_>, s: &str, caller: &str) -> jobject {
+fn new_string_or_throw(env: &mut Env<'_>, s: &str, caller: &str) -> jobject {
     match env.new_string(s) {
         Ok(js) => js.into_raw(),
         Err(e) => {
             let _ = env.throw_new(
-                "java/lang/RuntimeException",
-                format!("{caller}: new_string failed: {e}"),
+                jni_str!("java/lang/RuntimeException"),
+                JNIString::from(format!("{caller}: new_string failed: {e}")),
             );
             std::ptr::null_mut()
         }

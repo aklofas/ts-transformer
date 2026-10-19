@@ -11,8 +11,10 @@ use crate::panic::jni_native;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_str;
 use jni::objects::{JBooleanArray, JByteArray, JIntArray, JLongArray, JObject, JString};
+use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong};
 use secrecy::SecretString;
 
@@ -69,14 +71,14 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> jboolean = 0 => {
+    ) -> jboolean = false => {
         // A cancel target is never "parked", so `try_with` never reports `Locked`;
         // treat `Locked`/`Taken` as closed.
-        match REGISTRY_CANCEL.try_with(handle as u64, |c| u8::from(c.inner.is_cancelled())) {
+        match REGISTRY_CANCEL.try_with(handle as u64, |c| c.inner.is_cancelled()) {
             crate::handle::TryWith::Ran(v) => v,
             _ => {
                 crate::error::throw_closed(env, "RtspServerCancelHandle");
-                0
+                false
             }
         }
     }
@@ -109,11 +111,11 @@ type ServerInner = Arc<RustRtspServer>;
 static REGISTRY_SERVER: LazyLock<HandleRegistry<ServerInner>> = LazyLock::new(HandleRegistry::new);
 
 /// Read a JString, returning "" for null/error (auth fields).
-fn jstring_or_empty(env: &mut JNIEnv, s: &JString) -> String {
+fn jstring_or_empty(env: &mut Env, s: &JString) -> String {
     if s.is_null() {
         return String::new();
     }
-    env.get_string(s).map(Into::into).unwrap_or_default()
+    s.try_to_string(env).unwrap_or_default()
 }
 
 /// Read a nullable JString → Ok(None) for null, Ok(Some) for a read
@@ -121,14 +123,17 @@ fn jstring_or_empty(env: &mut JNIEnv, s: &JString) -> String {
 /// null) throws RuntimeException and returns Err so the native aborts
 /// instead of treating the value as unset (which for the TLS paths
 /// would silently start a plaintext server).
-fn jstring_opt(env: &mut JNIEnv, s: &JString) -> Result<Option<String>, ()> {
+fn jstring_opt(env: &mut Env, s: &JString) -> Result<Option<String>, ()> {
     if s.is_null() {
         return Ok(None);
     }
-    match env.get_string(s) {
-        Ok(v) => Ok(Some(v.into())),
+    match s.try_to_string(env) {
+        Ok(v) => Ok(Some(v)),
         Err(e) => {
-            let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+            let _ = env.throw_new(
+                jni_str!("java/lang/RuntimeException"),
+                JNIString::from(e.to_string()),
+            );
             Err(())
         }
     }
@@ -155,10 +160,10 @@ jni_native! {
         tls_key: JString<'local>,
         accept_unregistered_publishers: jboolean,
     ) -> jlong = 0 => {
-        let bind: String = match env.get_string(&bind_addr) {
-            Ok(s) => s.into(),
+        let bind: String = match bind_addr.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -226,7 +231,7 @@ jni_native! {
                 .graceful_shutdown_drain(Duration::from_millis(
                     graceful_shutdown_drain_ms.max(0) as u64
                 ))
-                .accept_unregistered_publishers(accept_unregistered_publishers != 0);
+                .accept_unregistered_publishers(accept_unregistered_publishers);
             if let Some((scheme, realm, user, pass)) = auth.as_ref() {
                 let secret = SecretString::from(pass.clone());
                 match scheme {
@@ -273,7 +278,7 @@ jni_native! {
 /// Lease the server for `handle` and run `f` on it under the entry's resource
 /// lock. `None` (absent/closed) → throw `IllegalStateException` (the caller maps
 /// `None` to its own default return). Every server method takes `&self`.
-fn with_server<R>(env: &mut JNIEnv, handle: jlong, f: impl FnOnce(&ServerInner) -> R) -> Option<R> {
+fn with_server<R>(env: &mut Env, handle: jlong, f: impl FnOnce(&ServerInner) -> R) -> Option<R> {
     match REGISTRY_SERVER.with(handle as u64, |s| f(s)) {
         Some(r) => Some(r),
         None => {
@@ -308,7 +313,7 @@ fn with_server<R>(env: &mut JNIEnv, handle: jlong, f: impl FnOnce(&ServerInner) 
 /// internal panic mid-mutation, which is rare in normal operation. The gap is
 /// documented here and in the Java Javadoc on `RtspServer` / `MountHandle`.
 fn with_server_poisoning<R>(
-    env: &mut JNIEnv,
+    env: &mut Env,
     handle: jlong,
     f: impl FnOnce(&ServerInner) -> R,
 ) -> Option<R> {
@@ -342,15 +347,15 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JString<'local> = JObject::null().into() => {
+    ) -> JString<'local> = JString::null() => {
         let Some(addr) = with_server(env, handle, |server| server.local_addr()) else {
-            return JObject::null().into();
+            return JString::null();
         };
         match addr {
             Some(addr) => env
                 .new_string(addr.to_string())
-                .unwrap_or_else(|_| JObject::null().into()),
-            None => JObject::null().into(),
+                .unwrap_or_else(|_| JString::null()),
+            None => JString::null(),
         }
     }
 }
@@ -419,7 +424,7 @@ static REGISTRY_MOUNT: LazyLock<HandleRegistry<MountInner>> = LazyLock::new(Hand
 /// `None` to its own default return). Every `MountHandle` method takes `&self`
 /// (Arc-shared internally), so concurrent leases from multiple Java threads are
 /// sound.
-fn with_mount<R>(env: &mut JNIEnv, handle: jlong, f: impl FnOnce(&MountInner) -> R) -> Option<R> {
+fn with_mount<R>(env: &mut Env, handle: jlong, f: impl FnOnce(&MountInner) -> R) -> Option<R> {
     match REGISTRY_MOUNT.with(handle as u64, |m| f(m)) {
         Some(r) => Some(r),
         None => {
@@ -438,7 +443,7 @@ fn with_mount<R>(env: &mut JNIEnv, handle: jlong, f: impl FnOnce(&MountInner) ->
 /// server until stop()), so poisoning a torn push just invalidates the Java
 /// `MountHandle` wrapper.
 fn with_mount_poisoning<R>(
-    env: &mut JNIEnv,
+    env: &mut Env,
     handle: jlong,
     f: impl FnOnce(&MountInner) -> R,
 ) -> Option<R> {
@@ -501,10 +506,10 @@ jni_native! {
             Ok(c) => c,
             Err(()) => return 0, // pending MuxException
         };
-        let path_str: String = match env.get_string(&path) {
-            Ok(s) => s.into(),
+        let path_str: String = match path.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -580,25 +585,24 @@ jni_native! {
             Ok(c) => c,
             Err(()) => return 0, // pending MuxException
         };
-        let path_str: String = match env.get_string(&path) {
-            Ok(s) => s.into(),
+        let path_str: String = match path.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return 0;
             }
         };
-        let group_str: String = match env.get_string(&group) {
-            Ok(s) => s.into(),
+        let group_str: String = match group.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return 0;
             }
         };
         // Build the `rtp://<group>:<port>?ttl=N[&iface=...]` URL (mirror tst-py).
         let mut url = format!("rtp://{group_str}:{port}?ttl={ttl}");
         if !iface.is_null()
-            && let Ok(i) = env.get_string(&iface) {
-                let i: String = i.into();
+            && let Ok(i) = iface.try_to_string(env) {
                 url.push_str("&iface=");
                 url.push_str(&i);
             }
@@ -622,11 +626,14 @@ jni_native! {
 // ── Publisher role: addPublishMount / nextPublisher / removeMount ───────────
 
 /// Read a non-null `JString`; on failure throw `RuntimeException` and return `None`.
-fn read_path(env: &mut JNIEnv, path: &JString) -> Option<String> {
-    match env.get_string(path) {
-        Ok(s) => Some(s.into()),
+fn read_path(env: &mut Env, path: &JString) -> Option<String> {
+    match path.try_to_string(env) {
+        Ok(s) => Some(s),
         Err(e) => {
-            let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+            let _ = env.throw_new(
+                jni_str!("java/lang/RuntimeException"),
+                JNIString::from(e.to_string()),
+            );
             None
         }
     }
@@ -759,12 +766,12 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JString<'local> = JObject::null().into() => {
+    ) -> JString<'local> = JString::null() => {
         let Some(path) = with_mount(env, handle, |inner| inner.mount_path().to_owned()) else {
-            return JObject::null().into();
+            return JString::null();
         };
         env.new_string(path)
-            .unwrap_or_else(|_| JObject::null().into())
+            .unwrap_or_else(|_| JString::null())
     }
 }
 
@@ -781,16 +788,16 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JString<'local> = JObject::null().into() => {
+    ) -> JString<'local> = JString::null() => {
         let Some(kind) = with_mount(env, handle, |inner| match inner.mount_kind() {
             MountKind::Unicast => "unicast",
             MountKind::Multicast { .. } => "multicast",
             _ => "unknown",
         }) else {
-            return JObject::null().into();
+            return JString::null();
         };
         env.new_string(kind)
-            .unwrap_or_else(|_| JObject::null().into())
+            .unwrap_or_else(|_| JString::null())
     }
 }
 
@@ -824,7 +831,7 @@ jni_native! {
             return;
         };
         let Some(res) = with_mount_poisoning(env, handle, |inner| {
-            inner.push_video(&buf, Pts90khz::new(pts), key_frame != 0)
+            inner.push_video(&buf, Pts90khz::new(pts), key_frame)
         }) else {
             return;
         };
@@ -957,7 +964,7 @@ jni_native! {
             return;
         };
         let Some(res) = with_mount_poisoning(env, handle, |inner| {
-            inner.push_video_to(h, &buf, Pts90khz::new(pts), key_frame != 0)
+            inner.push_video_to(h, &buf, Pts90khz::new(pts), key_frame)
         }) else {
             return;
         };
@@ -1189,7 +1196,7 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JLongArray<'local> = JObject::null().into() => {
+    ) -> JLongArray<'local> = JLongArray::null() => {
         let Some(raws) = with_mount(env, handle, |inner| {
             inner
                 .video_handles()
@@ -1197,13 +1204,13 @@ jni_native! {
                 .map(|h| i64::from(h.raw()))
                 .collect::<Vec<i64>>()
         }) else {
-            return JObject::null().into();
+            return JLongArray::null();
         };
-        let arr = match env.new_long_array(raws.len() as i32) {
+        let arr = match env.new_long_array(raws.len()) {
             Ok(a) => a,
-            Err(_) => return JObject::null().into(),
+            Err(_) => return JLongArray::null(),
         };
-        let _ = env.set_long_array_region(&arr, 0, &raws);
+        let _ = arr.set_region(env, 0, &raws);
         arr
     }
 }
@@ -1214,7 +1221,7 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JLongArray<'local> = JObject::null().into() => {
+    ) -> JLongArray<'local> = JLongArray::null() => {
         let Some(raws) = with_mount(env, handle, |inner| {
             inner
                 .klv_handles()
@@ -1222,13 +1229,13 @@ jni_native! {
                 .map(|h| i64::from(h.raw()))
                 .collect::<Vec<i64>>()
         }) else {
-            return JObject::null().into();
+            return JLongArray::null();
         };
-        let arr = match env.new_long_array(raws.len() as i32) {
+        let arr = match env.new_long_array(raws.len()) {
             Ok(a) => a,
-            Err(_) => return JObject::null().into(),
+            Err(_) => return JLongArray::null(),
         };
-        let _ = env.set_long_array_region(&arr, 0, &raws);
+        let _ = arr.set_region(env, 0, &raws);
         arr
     }
 }
@@ -1239,7 +1246,7 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JLongArray<'local> = JObject::null().into() => {
+    ) -> JLongArray<'local> = JLongArray::null() => {
         let Some(raws) = with_mount(env, handle, |inner| {
             inner
                 .audio_handles()
@@ -1247,13 +1254,13 @@ jni_native! {
                 .map(|h| i64::from(h.raw()))
                 .collect::<Vec<i64>>()
         }) else {
-            return JObject::null().into();
+            return JLongArray::null();
         };
-        let arr = match env.new_long_array(raws.len() as i32) {
+        let arr = match env.new_long_array(raws.len()) {
             Ok(a) => a,
-            Err(_) => return JObject::null().into(),
+            Err(_) => return JLongArray::null(),
         };
-        let _ = env.set_long_array_region(&arr, 0, &raws);
+        let _ = arr.set_region(env, 0, &raws);
         arr
     }
 }
@@ -1264,7 +1271,7 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JLongArray<'local> = JObject::null().into() => {
+    ) -> JLongArray<'local> = JLongArray::null() => {
         let Some(raws) = with_mount(env, handle, |inner| {
             inner
                 .subtitle_handles()
@@ -1272,13 +1279,13 @@ jni_native! {
                 .map(|h| i64::from(h.raw()))
                 .collect::<Vec<i64>>()
         }) else {
-            return JObject::null().into();
+            return JLongArray::null();
         };
-        let arr = match env.new_long_array(raws.len() as i32) {
+        let arr = match env.new_long_array(raws.len()) {
             Ok(a) => a,
-            Err(_) => return JObject::null().into(),
+            Err(_) => return JLongArray::null(),
         };
-        let _ = env.set_long_array_region(&arr, 0, &raws);
+        let _ = arr.set_region(env, 0, &raws);
         arr
     }
 }
@@ -1289,7 +1296,7 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> JLongArray<'local> = JObject::null().into() => {
+    ) -> JLongArray<'local> = JLongArray::null() => {
         let Some(raws) = with_mount(env, handle, |inner| {
             inner
                 .data_handles()
@@ -1297,13 +1304,13 @@ jni_native! {
                 .map(|h| i64::from(h.raw()))
                 .collect::<Vec<i64>>()
         }) else {
-            return JObject::null().into();
+            return JLongArray::null();
         };
-        let arr = match env.new_long_array(raws.len() as i32) {
+        let arr = match env.new_long_array(raws.len()) {
             Ok(a) => a,
-            Err(_) => return JObject::null().into(),
+            Err(_) => return JLongArray::null(),
         };
-        let _ = env.set_long_array_region(&arr, 0, &raws);
+        let _ = arr.set_region(env, 0, &raws);
         arr
     }
 }

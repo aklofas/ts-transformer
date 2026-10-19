@@ -22,7 +22,7 @@ mod open;
 pub(crate) mod receiver;
 pub(crate) mod sender;
 
-use jni::JNIEnv;
+use jni::Env;
 use jni::sys::jlong;
 use tst_pipeline::binding::view::Snapshot;
 use tst_pipeline::binding::{BindingError, Domain, HandleState};
@@ -36,7 +36,7 @@ use crate::handle::OwnedRegistry;
 /// into an `IllegalStateException`. An absent key is a closed Java handle:
 /// `IllegalStateException` naming `what`, and `None`.
 fn domain_or_closed<T: Send + 'static, H: Send + Sync + 'static>(
-    env: &mut JNIEnv,
+    env: &mut Env,
     registry: &OwnedRegistry<T, Snapshot<H>>,
     handle: jlong,
     what: &str,
@@ -55,7 +55,7 @@ fn domain_or_closed<T: Send + 'static, H: Send + Sync + 'static>(
 /// Only the operations that can park (send, receive, iterate, finish) use this;
 /// the stats and accessor natives throw `IllegalStateException` for a closed
 /// handle through `throw_handle_state`, the established JVM idiom.
-fn throw_state(env: &mut JNIEnv, domain: Domain, what: &str, state: &HandleState) {
+fn throw_state(env: &mut Env, domain: Domain, what: &str, state: &HandleState) {
     if matches!(state, HandleState::Closed) {
         throw_binding(env, domain, &BindingError::from(state.clone()));
     } else {

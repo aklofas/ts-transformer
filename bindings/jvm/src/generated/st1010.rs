@@ -3,11 +3,11 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
+use jni::{Env, jni_sig, jni_str};
 
 pub(crate) fn build_sdcc_flp<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::klv::st1010::SdccFlp,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(40)?;
@@ -16,8 +16,8 @@ pub(crate) fn build_sdcc_flp<'l>(
     let correlation_present =
         crate::custom::build_sdcc_flp_correlation_present(env, &r.correlation_present)?;
     let obj = env.new_object(
-        "org/tstrans/klv/SdccFlp",
-        "(J[D[D[Z)V",
+        jni_str!("org/tstrans/klv/SdccFlp"),
+        jni_sig!("(J[D[D[Z)V"),
         &[
             JValue::Long(r.matrix_size as i64),
             JValue::Object(&std_devs),

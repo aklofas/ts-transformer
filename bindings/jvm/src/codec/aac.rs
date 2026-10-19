@@ -18,8 +18,11 @@
 //! `Sample` payloads.
 
 use crate::panic::jni_native;
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JValue};
+use jni::strings::JNIString;
 use jni::sys::jobject;
 use tst_core::codec::aac::{
     AacChannelLayout, AacProfile, AdtsFrameOwned, MpegVersion, frames, frames_with_resync,
@@ -30,7 +33,7 @@ use crate::generated::codec::build_adts_frame_owned;
 
 /// Build the Java `org.tstrans.codec.AacProfile` enum constant.
 pub(crate) fn build_profile<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     p: AacProfile,
 ) -> Result<JObject<'local>, ()> {
     let name = match p {
@@ -40,9 +43,9 @@ pub(crate) fn build_profile<'local>(
         AacProfile::LongTermPrediction => "LTP",
     };
     env.get_static_field(
-        "org/tstrans/codec/AacProfile",
-        name,
-        "Lorg/tstrans/codec/AacProfile;",
+        jni_str!("org/tstrans/codec/AacProfile"),
+        JNIString::from(name),
+        jni_sig!("Lorg/tstrans/codec/AacProfile;"),
     )
     .map_err(|_| ())?
     .l()
@@ -51,7 +54,7 @@ pub(crate) fn build_profile<'local>(
 
 /// Build the Java `org.tstrans.codec.MpegVersion` enum constant.
 pub(crate) fn build_mpeg_version<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     v: MpegVersion,
 ) -> Result<JObject<'local>, ()> {
     let name = match v {
@@ -59,9 +62,9 @@ pub(crate) fn build_mpeg_version<'local>(
         MpegVersion::Mpeg4 => "MPEG4",
     };
     env.get_static_field(
-        "org/tstrans/codec/MpegVersion",
-        name,
-        "Lorg/tstrans/codec/MpegVersion;",
+        jni_str!("org/tstrans/codec/MpegVersion"),
+        JNIString::from(name),
+        jni_sig!("Lorg/tstrans/codec/MpegVersion;"),
     )
     .map_err(|_| ())?
     .l()
@@ -72,7 +75,7 @@ pub(crate) fn build_mpeg_version<'local>(
 /// constructor `(boolean pceDefined, Integer channels)`, mirroring tst-py's
 /// flattened `is_pce_defined` + nullable `channels` shape.
 pub(crate) fn build_channel_layout<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     layout: AacChannelLayout,
 ) -> Result<JObject<'local>, ()> {
     // Channels(n) → (false, Integer(n)); PceDefined (+ the non-exhaustive-enum
@@ -80,18 +83,19 @@ pub(crate) fn build_channel_layout<'local>(
     let (pce_defined, channels) = match layout {
         AacChannelLayout::Channels(n) => (
             false,
-            env.new_object("java/lang/Integer", "(I)V", &[JValue::Int(i32::from(n))])
-                .map_err(|_| ())?,
+            env.new_object(
+                jni_str!("java/lang/Integer"),
+                jni_sig!("(I)V"),
+                &[JValue::Int(i32::from(n))],
+            )
+            .map_err(|_| ())?,
         ),
         _ => (true, JObject::null()),
     };
     env.new_object(
-        "org/tstrans/codec/AacChannelLayout",
-        "(ZLjava/lang/Integer;)V",
-        &[
-            JValue::Bool(u8::from(pce_defined)),
-            JValue::Object(&channels),
-        ],
+        jni_str!("org/tstrans/codec/AacChannelLayout"),
+        jni_sig!("(ZLjava/lang/Integer;)V"),
+        &[JValue::Bool(pce_defined), JValue::Object(&channels)],
     )
     .map_err(|_| ())
 }
@@ -99,19 +103,19 @@ pub(crate) fn build_channel_layout<'local>(
 /// Build a `java.util.ArrayList<AdtsFrame>` from owned frames; each frame is
 /// constructed inside a per-element local frame so its refs are reclaimed.
 fn build_frame_list<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     frames: &[AdtsFrameOwned],
 ) -> Result<JObject<'local>, ()> {
     let list = env
-        .new_object("java/util/ArrayList", "()V", &[])
+        .new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])
         .map_err(|_| ())?;
     for f in frames {
         env.with_local_frame(24, |inner| {
             let val = build_adts_frame_owned(inner, f)?;
             inner.call_method(
                 &list,
-                "add",
-                "(Ljava/lang/Object;)Z",
+                jni_str!("add"),
+                jni_sig!("(Ljava/lang/Object;)Z"),
                 &[JValue::Object(&val)],
             )?;
             Ok::<(), jni::errors::Error>(())

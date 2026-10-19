@@ -20,8 +20,11 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JString, JValue};
+use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject};
 use tst_core::transport::{RecvTransport, Transport, TransportCancel};
 use tst_pipeline::binding::{BindingErrorKind, Domain, Opened, Owned};
@@ -86,7 +89,7 @@ fn register_listener(listener: SrtListener) -> u64 {
 // ---------------------------------------------------------------------------
 
 fn build_host_port<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     addr: std::net::SocketAddr,
 ) -> jni::errors::Result<JObject<'local>> {
     // Ensure capacity for: HostPort ctor arg (String) + local refs.
@@ -94,8 +97,8 @@ fn build_host_port<'local>(
     let host_str = addr.ip().to_string();
     let host = env.new_string(&host_str)?;
     env.new_object(
-        "org/tstrans/srt/HostPort",
-        "(Ljava/lang/String;I)V",
+        jni_str!("org/tstrans/srt/HostPort"),
+        jni_sig!("(Ljava/lang/String;I)V"),
         &[JValue::Object(&host), JValue::Int(addr.port() as i32)],
     )
 }
@@ -105,20 +108,24 @@ fn build_host_port<'local>(
 // ---------------------------------------------------------------------------
 
 /// Unbox a nullable `java.lang.Integer` JNI argument. Returns `None` for null.
-fn unbox_nullable_int(env: &mut JNIEnv, obj: &JObject) -> jni::errors::Result<Option<i32>> {
+fn unbox_nullable_int(env: &mut Env, obj: &JObject) -> jni::errors::Result<Option<i32>> {
     if obj.is_null() {
         return Ok(None);
     }
-    let v = env.call_method(obj, "intValue", "()I", &[])?.i()?;
+    let v = env
+        .call_method(obj, jni_str!("intValue"), jni_sig!("()I"), &[])?
+        .i()?;
     Ok(Some(v))
 }
 
 /// Unbox a nullable `java.lang.Long` JNI argument. Returns `None` for null.
-fn unbox_nullable_long(env: &mut JNIEnv, obj: &JObject) -> jni::errors::Result<Option<i64>> {
+fn unbox_nullable_long(env: &mut Env, obj: &JObject) -> jni::errors::Result<Option<i64>> {
     if obj.is_null() {
         return Ok(None);
     }
-    let v = env.call_method(obj, "longValue", "()J", &[])?.j()?;
+    let v = env
+        .call_method(obj, jni_str!("longValue"), jni_sig!("()J"), &[])?
+        .j()?;
     Ok(Some(v))
 }
 
@@ -136,7 +143,7 @@ fn unbox_nullable_long(env: &mut JNIEnv, obj: &JObject) -> jni::errors::Result<O
 /// Does NOT apply the URL's keys — the caller does that after this returns.
 #[allow(clippy::cast_sign_loss)]
 fn build_socket_config(
-    env: &mut JNIEnv,
+    env: &mut Env,
     latency_ms: &JObject,
     passphrase: &JString,
     stream_id: &JString,
@@ -159,7 +166,7 @@ fn build_socket_config(
 
     // passphrase
     if !passphrase.is_null() {
-        let s: String = env.get_string(passphrase).map(Into::into)?;
+        let s: String = passphrase.try_to_string(env)?;
         match Passphrase::new(s) {
             Ok(pp) => cfg.passphrase = Some(pp),
             Err(e) => {
@@ -171,7 +178,7 @@ fn build_socket_config(
 
     // stream_id (caller-side only; not in SrtListenerConfig)
     if !stream_id.is_null() {
-        let s: String = env.get_string(stream_id).map(Into::into)?;
+        let s: String = stream_id.try_to_string(env)?;
         match StreamId::new(s) {
             Ok(id) => cfg.stream_id = Some(id),
             Err(e) => {
@@ -183,7 +190,7 @@ fn build_socket_config(
 
     // congestion
     if !congestion.is_null() {
-        let s: String = env.get_string(congestion).map(Into::into)?;
+        let s: String = congestion.try_to_string(env)?;
         match Congestion::from_str_strict(&s) {
             Ok(c) => cfg.congestion = Some(c),
             Err(e) => {
@@ -241,7 +248,7 @@ fn build_socket_config(
 /// `connect_timeout_ms` (not present on `SrtListenerConfig`).
 #[allow(clippy::cast_sign_loss)]
 fn build_listener_config(
-    env: &mut JNIEnv,
+    env: &mut Env,
     latency_ms: &JObject,
     passphrase: &JString,
     congestion: &JString,
@@ -259,7 +266,7 @@ fn build_listener_config(
     }
 
     if !passphrase.is_null() {
-        let s: String = env.get_string(passphrase).map(Into::into)?;
+        let s: String = passphrase.try_to_string(env)?;
         match Passphrase::new(s) {
             Ok(pp) => cfg.socket.passphrase = Some(pp),
             Err(e) => {
@@ -270,7 +277,7 @@ fn build_listener_config(
     }
 
     if !congestion.is_null() {
-        let s: String = env.get_string(congestion).map(Into::into)?;
+        let s: String = congestion.try_to_string(env)?;
         match Congestion::from_str_strict(&s) {
             Ok(c) => cfg.socket.congestion = Some(c),
             Err(e) => {
@@ -355,10 +362,10 @@ jni_native! {
             return 0;
         }
 
-        let url_str: String = match env.get_string(&url) {
-            Ok(s) => s.into(),
+        let url_str: String = match url.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -465,10 +472,10 @@ jni_native! {
             return 0;
         }
 
-        let url_str: String = match env.get_string(&url) {
-            Ok(s) => s.into(),
+        let url_str: String = match url.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return 0;
             }
         };

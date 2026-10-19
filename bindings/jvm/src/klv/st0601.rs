@@ -25,8 +25,10 @@
 //! exercise it.
 
 use crate::panic::jni_native;
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject};
+use jni::strings::JNIString;
 use jni::sys::{jint, jlong, jobject, jstring};
 use tst_core::error::KlvFieldError;
 use tst_core::klv::st0601::{
@@ -61,15 +63,15 @@ jni_native! {
             Ok(b) => b,
             Err(e) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    format!("nDecodeUasDatalink: byte[] read failed: {e}"),
+                    jni_str!("java/lang/RuntimeException"),
+                    JNIString::from(format!("nDecodeUasDatalink: byte[] read failed: {e}")),
                 );
                 return JObject::null().into_raw();
             }
         };
-        let result = if compliance != 0 {
+        let result = if compliance {
             decode_strict_compliance(&bytes)
-        } else if strict != 0 {
+        } else if strict {
             decode_strict(&bytes)
         } else {
             decode_lenient(&bytes)
@@ -119,8 +121,8 @@ jni_native! {
             1 => OutOfRangePolicy::Indicator,
             other => {
                 let _ = env.throw_new(
-                    "java/lang/IllegalArgumentException",
-                    format!("unknown OutOfRangePolicy ordinal {other}"),
+                    jni_str!("java/lang/IllegalArgumentException"),
+                    JNIString::from(format!("unknown OutOfRangePolicy ordinal {other}")),
                 );
                 return JObject::null().into_raw();
             }
@@ -133,10 +135,10 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            "java/lang/RuntimeException",
-                            format!(
+                            jni_str!("java/lang/RuntimeException"),
+                            JNIString::from(format!(
                                 "nEncodeUasDatalinkWithPolicy: byte_array_from_slice failed: {e}"
-                            ),
+                            )),
                         );
                         JObject::null().into_raw()
                     }
@@ -147,10 +149,10 @@ jni_native! {
                 }
             },
             Err(e) => {
-                if !env.exception_check().unwrap_or(false) {
+                if !env.exception_check() {
                     let _ = env.throw_new(
-                        "java/lang/RuntimeException",
-                        format!("nEncodeUasDatalinkWithPolicy: field read failed: {e}"),
+                        jni_str!("java/lang/RuntimeException"),
+                        JNIString::from(format!("nEncodeUasDatalinkWithPolicy: field read failed: {e}")),
                     );
                 }
                 JObject::null().into_raw()
@@ -177,10 +179,10 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            "java/lang/RuntimeException",
-                            format!(
+                            jni_str!("java/lang/RuntimeException"),
+                            JNIString::from(format!(
                                 "nEncodeUasDatalinkStrictCompliance: byte_array_from_slice failed: {e}"
-                            ),
+                            )),
                         );
                         JObject::null().into_raw()
                     }
@@ -191,10 +193,10 @@ jni_native! {
                 }
             },
             Err(e) => {
-                if !env.exception_check().unwrap_or(false) {
+                if !env.exception_check() {
                     let _ = env.throw_new(
-                        "java/lang/RuntimeException",
-                        format!("nEncodeUasDatalinkStrictCompliance: field read failed: {e}"),
+                        jni_str!("java/lang/RuntimeException"),
+                        JNIString::from(format!("nEncodeUasDatalinkStrictCompliance: field read failed: {e}")),
                     );
                 }
                 JObject::null().into_raw()
@@ -234,8 +236,8 @@ jni_native! {
             Ok(s) => s.into_raw(),
             Err(e) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    format!("nSt0601SentinelMeaning: new_string failed: {e}"),
+                    jni_str!("java/lang/RuntimeException"),
+                    JNIString::from(format!("nSt0601SentinelMeaning: new_string failed: {e}")),
                 );
                 std::ptr::null_mut()
             }
@@ -246,7 +248,7 @@ jni_native! {
 /// Thin public wrapper so `st1204::validateMismmsNative` can call the shared
 /// reader without duplicating it. All the real logic lives in the generated `read_uas_datalink_ls`.
 pub fn read_uas_datalink_for_validate(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     rec: &JObject<'_>,
 ) -> jni::errors::Result<UasDatalinkLs> {
     crate::generated::st0601::read_uas_datalink_ls(env, rec)
@@ -266,7 +268,7 @@ pub fn read_uas_datalink_for_validate(
 /// exactly one field-level failure with no surrounding local-set context, so
 /// every variant folds to that bucket except the substrate-framing one.
 /// Mirrors tst-py's `klv_field_error_to_pyerr`.
-fn map_sdcc_field_error(env: &mut JNIEnv, e: &KlvFieldError) {
+fn map_sdcc_field_error(env: &mut Env, e: &KlvFieldError) {
     let msg = e.to_string();
     let kind = match e {
         KlvFieldError::TruncatedField { .. } => BindingErrorKind::KlvDecodeTruncatedSet,
@@ -277,12 +279,12 @@ fn map_sdcc_field_error(env: &mut JNIEnv, e: &KlvFieldError) {
 
 /// Read a Java `double[]` into a `Vec<f64>`.
 fn read_double_array(
-    env: &mut JNIEnv,
+    env: &mut Env,
     arr: &jni::objects::JDoubleArray,
 ) -> jni::errors::Result<Vec<f64>> {
-    let len = env.get_array_length(arr)?;
-    let mut buf = vec![0.0f64; len as usize];
-    env.get_double_array_region(arr, 0, &mut buf)?;
+    let len = arr.len(env)?;
+    let mut buf = vec![0.0f64; len];
+    arr.get_region(env, 0, &mut buf)?;
     Ok(buf)
 }
 
@@ -302,8 +304,8 @@ jni_native! {
             Ok(b) => b,
             Err(e) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    format!("decodeSdccFlpNative: byte[] read failed: {e}"),
+                    jni_str!("java/lang/RuntimeException"),
+                    JNIString::from(format!("decodeSdccFlpNative: byte[] read failed: {e}")),
                 );
                 return JObject::null().into_raw();
             }
@@ -338,8 +340,8 @@ jni_native! {
             Ok(v) => v,
             Err(e) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    format!("encodeSdccFlpMode2Native: stdDevs read failed: {e}"),
+                    jni_str!("java/lang/RuntimeException"),
+                    JNIString::from(format!("encodeSdccFlpMode2Native: stdDevs read failed: {e}")),
                 );
                 return JObject::null().into_raw();
             }
@@ -348,8 +350,8 @@ jni_native! {
             Ok(v) => v,
             Err(e) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    format!("encodeSdccFlpMode2Native: correlations read failed: {e}"),
+                    jni_str!("java/lang/RuntimeException"),
+                    JNIString::from(format!("encodeSdccFlpMode2Native: correlations read failed: {e}")),
                 );
                 return JObject::null().into_raw();
             }
@@ -359,8 +361,8 @@ jni_native! {
                 Ok(arr) => arr.into_raw(),
                 Err(e) => {
                     let _ = env.throw_new(
-                        "java/lang/RuntimeException",
-                        format!("encodeSdccFlpMode2Native: byte_array_from_slice failed: {e}"),
+                        jni_str!("java/lang/RuntimeException"),
+                        JNIString::from(format!("encodeSdccFlpMode2Native: byte_array_from_slice failed: {e}")),
                     );
                     JObject::null().into_raw()
                 }

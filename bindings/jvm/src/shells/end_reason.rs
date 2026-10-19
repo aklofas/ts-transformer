@@ -20,7 +20,9 @@
 //! teardown recorded `Cancelled`, and returns it as an `EndReason$Snapshot`
 //! the Java class caches.
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JObject, JValue};
 use jni::sys::jint;
 use tst_core::transport::EndReason;
@@ -53,7 +55,7 @@ pub(crate) fn detail(r: &EndReason) -> Option<&str> {
 
 /// Build the package-private `EndReason$Snapshot` `nClose` returns.
 pub(crate) fn build_close_snapshot<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     reason: Option<EndReason>,
 ) -> jni::errors::Result<JObject<'local>> {
     let wire = wire_value(reason.as_ref());
@@ -62,8 +64,8 @@ pub(crate) fn build_close_snapshot<'local>(
         None => JObject::null(),
     };
     env.new_object(
-        "org/tstrans/shells/EndReason$Snapshot",
-        "(ILjava/lang/String;)V",
+        jni_str!("org/tstrans/shells/EndReason$Snapshot"),
+        jni_sig!("(ILjava/lang/String;)V"),
         &[JValue::Int(wire), JValue::Object(&detail_obj)],
     )
 }

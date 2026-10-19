@@ -3,17 +3,17 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
+use jni::{Env, jni_sig, jni_str};
 
 pub(crate) fn build_muxer_stats<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::mpegts::mux::MuxerStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(40)?;
     let obj = env.new_object(
-        "org/tstrans/mpegts/MuxerStats",
-        "(JJJJ)V",
+        jni_str!("org/tstrans/mpegts/MuxerStats"),
+        jni_sig!("(JJJJ)V"),
         &[
             JValue::Long(r.ts_packets_emitted as i64),
             JValue::Long(r.ts_bytes_emitted as i64),
@@ -25,13 +25,13 @@ pub(crate) fn build_muxer_stats<'l>(
 }
 
 pub(crate) fn build_demuxer_stats<'l>(
-    env: &mut JNIEnv<'l>,
+    env: &mut Env<'l>,
     r: &tst_core::mpegts::demux::DemuxerStats,
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(44)?;
     let obj = env.new_object(
-        "org/tstrans/mpegts/DemuxerStats",
-        "(JJJJJJ)V",
+        jni_str!("org/tstrans/mpegts/DemuxerStats"),
+        jni_sig!("(JJJJJJ)V"),
         &[
             JValue::Long(r.program_maps_seen as i64),
             JValue::Long(r.pmt_versions_seen as i64),

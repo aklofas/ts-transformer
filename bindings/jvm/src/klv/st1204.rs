@@ -21,8 +21,11 @@
 //! of `MismmsViolation` Java records.
 
 use crate::panic::jni_native;
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JValue};
+use jni::strings::JNIString;
 use jni::sys::jobject;
 use tst_core::klv::st0601::{MismmsViolation, validate_mismms};
 use tst_core::klv::st1204::{CoreId, IdType, St1204Error, decode, encode_to_vec};
@@ -48,7 +51,7 @@ fn id_type_ordinal(ty: &IdType) -> i32 {
 /// Fetch the Java `IdType` enum constant by ordinal (0=PHYSICAL, 1=VIRTUAL, 2=MANAGED).
 /// Returns an error if the ordinal is out of range.
 fn id_type_from_ordinal<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     ordinal: i32,
 ) -> jni::errors::Result<JObject<'local>> {
     let name = match ordinal {
@@ -57,19 +60,23 @@ fn id_type_from_ordinal<'local>(
         2 => "MANAGED",
         _ => {
             let _ = env.throw_new(
-                "java/lang/IllegalArgumentException",
-                format!("unknown IdType ordinal {ordinal}"),
+                jni_str!("java/lang/IllegalArgumentException"),
+                JNIString::from(format!("unknown IdType ordinal {ordinal}")),
             );
             return Err(jni::errors::Error::JavaException);
         }
     };
-    env.get_static_field("org/tstrans/klv/IdType", name, "Lorg/tstrans/klv/IdType;")?
-        .l()
+    env.get_static_field(
+        jni_str!("org/tstrans/klv/IdType"),
+        JNIString::from(name),
+        jni_sig!("Lorg/tstrans/klv/IdType;"),
+    )?
+    .l()
 }
 
 // ── Map St1204Error → KlvDecodeException ─────────────────────────────────────
 
-fn map_st1204_error(env: &mut JNIEnv, e: &St1204Error) {
+fn map_st1204_error(env: &mut Env, e: &St1204Error) {
     let msg = e.to_string();
     match e {
         St1204Error::Truncated => {
@@ -95,7 +102,7 @@ const _: () = assert!(CoreId::BINDING_SCHEMA.fields.len() == 5);
 ///
 /// Returns `Err` with a pending JVM exception if any JNI call fails or if an
 /// IdType ordinal cannot be mapped.
-fn build_core_id(env: &mut JNIEnv<'_>, id: &CoreId) -> jni::errors::Result<jobject> {
+fn build_core_id(env: &mut Env<'_>, id: &CoreId) -> jni::errors::Result<jobject> {
     // 16 local refs: version + sensorType + sensorId + platformType + platformId
     //                + windowId + minorId + record + JNI scratch = comfortably fits.
     env.ensure_local_capacity(16)?;
@@ -155,8 +162,8 @@ fn build_core_id(env: &mut JNIEnv<'_>, id: &CoreId) -> jni::errors::Result<jobje
     //  IdType platformType, byte[] platformId,
     //  byte[] windowId, byte[] minorId)
     let record = env.new_object(
-        "org/tstrans/klv/CoreId",
-        "(ILorg/tstrans/klv/IdType;[BLorg/tstrans/klv/IdType;[B[B[B)V",
+        jni_str!("org/tstrans/klv/CoreId"),
+        jni_sig!("(ILorg/tstrans/klv/IdType;[BLorg/tstrans/klv/IdType;[B[B[B)V"),
         &[
             JValue::Int(i32::from(id.version)),
             JValue::Object(&sensor_type_obj),
@@ -175,32 +182,41 @@ fn build_core_id(env: &mut JNIEnv<'_>, id: &CoreId) -> jni::errors::Result<jobje
 /// Helper: read a nullable `byte[]` field from a Java record via accessor name.
 /// Returns `Ok(None)` if the field is null, `Ok(Some(bytes))` otherwise.
 fn read_nullable_bytes<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     obj: &JObject<'local>,
     method: &str,
 ) -> jni::errors::Result<Option<Vec<u8>>> {
-    let val = env.call_method(obj, method, "()[B", &[])?.l()?;
+    let val = env
+        .call_method(obj, JNIString::from(method), jni_sig!("()[B"), &[])?
+        .l()?;
     if val.is_null() {
         return Ok(None);
     }
-    let arr: JByteArray<'_> = val.into();
+    let arr = env.cast_local::<JByteArray>(val)?;
     Ok(Some(env.convert_byte_array(&arr)?))
 }
 
 /// Helper: read a nullable `IdType` enum field, returning its Rust equivalent.
 /// Throws `KlvDecodeException(MALFORMED_BYTES)` for unknown ordinals.
 fn read_nullable_id_type(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     obj: &JObject<'_>,
     method: &str,
 ) -> jni::errors::Result<Option<IdType>> {
     let val = env
-        .call_method(obj, method, "()Lorg/tstrans/klv/IdType;", &[])?
+        .call_method(
+            obj,
+            JNIString::from(method),
+            jni_sig!("()Lorg/tstrans/klv/IdType;"),
+            &[],
+        )?
         .l()?;
     if val.is_null() {
         return Ok(None);
     }
-    let ordinal = env.call_method(&val, "ordinal", "()I", &[])?.i()?;
+    let ordinal = env
+        .call_method(&val, jni_str!("ordinal"), jni_sig!("()I"), &[])?
+        .i()?;
     let ty = match ordinal {
         0 => IdType::Physical,
         1 => IdType::Virtual,
@@ -218,8 +234,10 @@ fn read_nullable_id_type(
 }
 
 /// Read a Java `CoreId` record into a Rust `CoreId`.
-fn read_core_id<'a>(env: &mut JNIEnv<'a>, obj: &JObject<'a>) -> jni::errors::Result<CoreId> {
-    let version = env.call_method(obj, "version", "()I", &[])?.i()?;
+fn read_core_id<'a>(env: &mut Env<'a>, obj: &JObject<'a>) -> jni::errors::Result<CoreId> {
+    let version = env
+        .call_method(obj, jni_str!("version"), jni_sig!("()I"), &[])?
+        .i()?;
     let version = version as u8;
 
     let sensor_type = read_nullable_id_type(env, obj, "sensorType")?;
@@ -234,8 +252,11 @@ fn read_core_id<'a>(env: &mut JNIEnv<'a>, obj: &JObject<'a>) -> jni::errors::Res
         (Some(ty), Some(bytes)) => {
             if bytes.len() != 16 {
                 let _ = env.throw_new(
-                    "java/lang/IllegalArgumentException",
-                    format!("CoreId.sensorId must be 16 bytes; got {}", bytes.len()),
+                    jni_str!("java/lang/IllegalArgumentException"),
+                    JNIString::from(format!(
+                        "CoreId.sensorId must be 16 bytes; got {}",
+                        bytes.len()
+                    )),
                 );
                 return Err(jni::errors::Error::JavaException);
             }
@@ -246,8 +267,8 @@ fn read_core_id<'a>(env: &mut JNIEnv<'a>, obj: &JObject<'a>) -> jni::errors::Res
         (None, None) => None,
         _ => {
             let _ = env.throw_new(
-                "java/lang/IllegalArgumentException",
-                "CoreId: sensorType and sensorId must both be present or both null",
+                jni_str!("java/lang/IllegalArgumentException"),
+                jni_str!("CoreId: sensorType and sensorId must both be present or both null"),
             );
             return Err(jni::errors::Error::JavaException);
         }
@@ -258,8 +279,11 @@ fn read_core_id<'a>(env: &mut JNIEnv<'a>, obj: &JObject<'a>) -> jni::errors::Res
         (Some(ty), Some(bytes)) => {
             if bytes.len() != 16 {
                 let _ = env.throw_new(
-                    "java/lang/IllegalArgumentException",
-                    format!("CoreId.platformId must be 16 bytes; got {}", bytes.len()),
+                    jni_str!("java/lang/IllegalArgumentException"),
+                    JNIString::from(format!(
+                        "CoreId.platformId must be 16 bytes; got {}",
+                        bytes.len()
+                    )),
                 );
                 return Err(jni::errors::Error::JavaException);
             }
@@ -270,8 +294,8 @@ fn read_core_id<'a>(env: &mut JNIEnv<'a>, obj: &JObject<'a>) -> jni::errors::Res
         (None, None) => None,
         _ => {
             let _ = env.throw_new(
-                "java/lang/IllegalArgumentException",
-                "CoreId: platformType and platformId must both be present or both null",
+                jni_str!("java/lang/IllegalArgumentException"),
+                jni_str!("CoreId: platformType and platformId must both be present or both null"),
             );
             return Err(jni::errors::Error::JavaException);
         }
@@ -281,8 +305,11 @@ fn read_core_id<'a>(env: &mut JNIEnv<'a>, obj: &JObject<'a>) -> jni::errors::Res
         Some(bytes) => {
             if bytes.len() != 16 {
                 let _ = env.throw_new(
-                    "java/lang/IllegalArgumentException",
-                    format!("CoreId.windowId must be 16 bytes; got {}", bytes.len()),
+                    jni_str!("java/lang/IllegalArgumentException"),
+                    JNIString::from(format!(
+                        "CoreId.windowId must be 16 bytes; got {}",
+                        bytes.len()
+                    )),
                 );
                 return Err(jni::errors::Error::JavaException);
             }
@@ -297,8 +324,11 @@ fn read_core_id<'a>(env: &mut JNIEnv<'a>, obj: &JObject<'a>) -> jni::errors::Res
         Some(bytes) => {
             if bytes.len() != 16 {
                 let _ = env.throw_new(
-                    "java/lang/IllegalArgumentException",
-                    format!("CoreId.minorId must be 16 bytes; got {}", bytes.len()),
+                    jni_str!("java/lang/IllegalArgumentException"),
+                    JNIString::from(format!(
+                        "CoreId.minorId must be 16 bytes; got {}",
+                        bytes.len()
+                    )),
                 );
                 return Err(jni::errors::Error::JavaException);
             }
@@ -329,8 +359,8 @@ jni_native! {
             Ok(b) => b,
             Err(e) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    format!("decodeCoreIdNative: byte[] read failed: {e}"),
+                    jni_str!("java/lang/RuntimeException"),
+                    JNIString::from(format!("decodeCoreIdNative: byte[] read failed: {e}")),
                 );
                 return JObject::null().into_raw();
             }
@@ -368,8 +398,8 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            "java/lang/RuntimeException",
-                            format!("encodeCoreIdNative: byte_array_from_slice failed: {e}"),
+                            jni_str!("java/lang/RuntimeException"),
+                            JNIString::from(format!("encodeCoreIdNative: byte_array_from_slice failed: {e}")),
                         );
                         JObject::null().into_raw()
                     }
@@ -400,8 +430,8 @@ jni_native! {
                     Ok(s) => s.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            "java/lang/RuntimeException",
-                            format!("coreIdTextNative: new_string failed: {e}"),
+                            jni_str!("java/lang/RuntimeException"),
+                            JNIString::from(format!("coreIdTextNative: new_string failed: {e}")),
                         );
                         JObject::null().into_raw()
                     }
@@ -443,18 +473,18 @@ jni_native! {
 /// Build a `java.util.List<MismmsViolation>` (an `ArrayList`) from a slice of
 /// Rust `MismmsViolation`s.
 fn build_violation_list(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     violations: &[MismmsViolation],
 ) -> jni::errors::Result<jobject> {
-    let list = env.new_object("java/util/ArrayList", "()V", &[])?;
+    let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
     for v in violations {
         // 8 slots: kind_str + tag + name_str + tagB + record + JNI scratch.
         env.with_local_frame(8, |env| -> jni::errors::Result<()> {
             let obj = build_violation(env, v)?;
             env.call_method(
                 &list,
-                "add",
-                "(Ljava/lang/Object;)Z",
+                jni_str!("add"),
+                jni_sig!("(Ljava/lang/Object;)Z"),
                 &[JValue::Object(&obj)],
             )?;
             Ok(())
@@ -465,7 +495,7 @@ fn build_violation_list(
 
 /// Build a single `org.tstrans.klv.MismmsViolation` record from a Rust variant.
 fn build_violation<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     v: &MismmsViolation,
 ) -> jni::errors::Result<JObject<'local>> {
     // Map variant to (kind, tag, name, tagB).
@@ -497,8 +527,8 @@ fn build_violation<'local>(
     };
     // MismmsViolation(String kind, int tag, String name, int tagB)
     env.new_object(
-        "org/tstrans/klv/MismmsViolation",
-        "(Ljava/lang/String;ILjava/lang/String;I)V",
+        jni_str!("org/tstrans/klv/MismmsViolation"),
+        jni_sig!("(Ljava/lang/String;ILjava/lang/String;I)V"),
         &[
             JValue::Object(&kind_jstr),
             JValue::Int(i32::from(tag)),

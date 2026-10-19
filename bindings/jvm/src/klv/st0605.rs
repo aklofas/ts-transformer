@@ -12,7 +12,9 @@
 //! `crate::custom`.
 
 use crate::panic::jni_native;
+use jni::jni_str;
 use jni::objects::{JByteArray, JObject};
+use jni::strings::JNIString;
 use jni::sys::jobject;
 use tst_core::klv::st0605::{decode, encode};
 
@@ -33,8 +35,8 @@ jni_native! {
             Ok(b) => b,
             Err(e) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    format!("nDecodePrecisionTimestamp: byte[] read failed: {e}"),
+                    jni_str!("java/lang/RuntimeException"),
+                    JNIString::from(format!("nDecodePrecisionTimestamp: byte[] read failed: {e}")),
                 );
                 return JObject::null().into_raw();
             }
@@ -65,10 +67,10 @@ jni_native! {
         let rust_pack = match crate::generated::st0605::read_precision_time_stamp_pack(env, &pack) {
             Ok(p) => p,
             Err(e) => {
-                if !env.exception_check().unwrap_or(false) {
+                if !env.exception_check() {
                     let _ = env.throw_new(
-                        "java/lang/RuntimeException",
-                        format!("nEncodePrecisionTimestamp: field read failed: {e}"),
+                        jni_str!("java/lang/RuntimeException"),
+                        JNIString::from(format!("nEncodePrecisionTimestamp: field read failed: {e}")),
                     );
                 }
                 return JObject::null().into_raw();
@@ -78,8 +80,8 @@ jni_native! {
             Ok(arr) => arr.into_raw(),
             Err(e) => {
                 let _ = env.throw_new(
-                    "java/lang/RuntimeException",
-                    format!("nEncodePrecisionTimestamp: byte_array_from_slice failed: {e}"),
+                    jni_str!("java/lang/RuntimeException"),
+                    JNIString::from(format!("nEncodePrecisionTimestamp: byte_array_from_slice failed: {e}")),
                 );
                 JObject::null().into_raw()
             }

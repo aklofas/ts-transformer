@@ -10,6 +10,7 @@
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 
+use jni::jni_str;
 use jni::objects::{JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring};
 use tst_core::transport::RecvTransport;
@@ -176,8 +177,8 @@ jni_native! {
             }
             None => {
                 let _ = env.throw_new(
-                    "java/lang/UnsupportedOperationException",
-                    "srtStats() is only available on an srt:// shell",
+                    jni_str!("java/lang/UnsupportedOperationException"),
+                    jni_str!("srtStats() is only available on an srt:// shell"),
                 );
                 JObject::null()
             }
@@ -228,7 +229,7 @@ jni_native! {
 jni_native! {
     /// Whether the receiver owns a live transport. Non-blocking: a parked
     /// `recvBytes` holds the slot, and reads as alive.
-    fn Java_org_tstrans_shells_Receiver_nIsAlive(_env, _class, handle: jlong) -> jboolean = 0 => {
-        u8::from(REGISTRY.is_alive(handle as u64, |r| r.is_alive()))
+    fn Java_org_tstrans_shells_Receiver_nIsAlive(_env, _class, handle: jlong) -> jboolean = false => {
+        REGISTRY.is_alive(handle as u64, |r| r.is_alive())
     }
 }

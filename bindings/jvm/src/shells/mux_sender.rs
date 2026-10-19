@@ -22,7 +22,9 @@
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_sig;
+use jni::jni_str;
 use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jlong};
 
@@ -54,7 +56,7 @@ static REGISTRY: LazyLock<OwnedRegistry<Inner, Snapshot<StreamHandles>>> =
 /// Map a `MuxSenderError` (from any `send_*`) to a thrown Java exception.
 /// `Mux(...)` keeps `MuxException`; every other source is a `BindingError`
 /// thrown in the shell's `domain`.
-fn throw_mux_sender_error(env: &mut JNIEnv, domain: Domain, e: MuxSenderError) {
+fn throw_mux_sender_error(env: &mut Env, domain: Domain, e: MuxSenderError) {
     match e.source {
         MuxSenderErrorSource::Mux(m) => throw_mux_error(env, &m),
         _ => throw_binding(env, domain, &BindingError::from(e)),
@@ -64,7 +66,7 @@ fn throw_mux_sender_error(env: &mut JNIEnv, domain: Domain, e: MuxSenderError) {
 /// Throw for a raw stream handle outside `u32` / not issued by this binding:
 /// `CONFIG_INVALID` in the shell's transport domain, as the per-transport
 /// senders reported it. A closed Java handle is `IllegalStateException`.
-fn throw_invalid_stream_handle(env: &mut JNIEnv, handle: jlong) {
+fn throw_invalid_stream_handle(env: &mut Env, handle: jlong) {
     let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "MuxSender") else {
         return;
     };
@@ -78,11 +80,7 @@ fn throw_invalid_stream_handle(env: &mut JNIEnv, handle: jlong) {
 /// Lease the sender and run a push op under the slot. A closed/absent handle
 /// throws `IllegalStateException`; otherwise any `MuxSenderError` from the op
 /// is thrown in the right domain. `send_*` take `&self`.
-fn with_push(
-    env: &mut JNIEnv,
-    handle: jlong,
-    op: impl FnOnce(&Inner) -> Result<(), MuxSenderError>,
-) {
+fn with_push(env: &mut Env, handle: jlong, op: impl FnOnce(&Inner) -> Result<(), MuxSenderError>) {
     let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "MuxSender") else {
         return;
     };
@@ -96,7 +94,7 @@ fn with_push(
 /// Return the first handle-of-kind from the construction-time snapshot (`-1`
 /// if none). A closed handle throws `IllegalStateException` and returns `-1`.
 fn first_handle(
-    env: &mut JNIEnv,
+    env: &mut Env,
     handle: jlong,
     pick: impl FnOnce(&StreamHandles) -> Option<u32>,
 ) -> jlong {
@@ -161,7 +159,7 @@ jni_native! {
 /// `0` with a `MuxException` pending when the muxer rejects the configuration.
 /// Shared by `nOpen` and by `srt.Socket.intoMuxSender`.
 pub(crate) fn register(
-    env: &mut JNIEnv,
+    env: &mut Env,
     opened: Opened<Box<dyn Transport>>,
     cfg: tst_core::mpegts::mux::MuxerConfig,
 ) -> jlong {
@@ -201,7 +199,7 @@ jni_native! {
             return;
         };
         with_push(env, handle, |inner| {
-            inner.send_video(&buf, Pts90khz::new(pts), key_frame != 0)
+            inner.send_video(&buf, Pts90khz::new(pts), key_frame)
         });
     }
 }
@@ -311,7 +309,7 @@ jni_native! {
             return;
         };
         with_push(env, handle, |inner| {
-            inner.send_video_to(h, &buf, Pts90khz::new(pts), key_frame != 0)
+            inner.send_video_to(h, &buf, Pts90khz::new(pts), key_frame)
         });
     }
 }
@@ -469,14 +467,14 @@ jni_native! {
 /// Build an `org.tstrans.shells.TransportStats` record from a `SocketStats` +
 /// `MuxerStats` pair.
 pub(crate) fn build_transport_stats<'local>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     socket_stats: &JObject<'local>,
     muxer_stats: &JObject<'local>,
 ) -> jni::errors::Result<JObject<'local>> {
     env.ensure_local_capacity(4)?;
     env.new_object(
-        "org/tstrans/shells/TransportStats",
-        "(Lorg/tstrans/shells/SocketStats;Lorg/tstrans/mpegts/MuxerStats;)V",
+        jni_str!("org/tstrans/shells/TransportStats"),
+        jni_sig!("(Lorg/tstrans/shells/SocketStats;Lorg/tstrans/mpegts/MuxerStats;)V"),
         &[JValue::Object(socket_stats), JValue::Object(muxer_stats)],
     )
 }
@@ -577,7 +575,7 @@ jni_native! {
 jni_native! {
     /// `nIsAlive(handle)` — whether the sender owns a live transport. Non-blocking:
     /// a `send*` parked on another thread holds the slot, and reads as alive.
-    fn Java_org_tstrans_shells_MuxSender_nIsAlive(_env, _class, handle: jlong) -> jboolean = 0 => {
-        u8::from(REGISTRY.is_alive(handle as u64, |inner| inner.is_alive()))
+    fn Java_org_tstrans_shells_MuxSender_nIsAlive(_env, _class, handle: jlong) -> jboolean = false => {
+        REGISTRY.is_alive(handle as u64, |inner| inner.is_alive())
     }
 }

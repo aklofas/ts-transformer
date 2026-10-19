@@ -33,7 +33,6 @@ mod srt;
 mod test_hooks;
 
 use crate::panic::jni_native;
-use jni::JavaVM;
 use jni::sys::{JNI_VERSION_1_8, jint, jstring};
 use std::os::raw::c_void;
 
@@ -71,7 +70,7 @@ fn init_tracing_bridge() {
 /// the one guaranteed one-time entry point, so it is where the
 /// `TSTRANS_LOG` bridge installs itself.
 #[unsafe(no_mangle)]
-pub extern "system" fn JNI_OnLoad(_vm: JavaVM, _reserved: *mut c_void) -> jint {
+pub extern "system" fn JNI_OnLoad(_vm: *mut jni::sys::JavaVM, _reserved: *mut c_void) -> jint {
     init_tracing_bridge();
     JNI_VERSION_1_8
 }

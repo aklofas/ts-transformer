@@ -23,7 +23,6 @@ fn scalar_jvalue(sc: Sc, val: &str) -> String {
         Sc::U8 | Sc::U16 | Sc::I8 | Sc::I16 => format!("{val} as i32"),
         Sc::U32 | Sc::U64 | Sc::Usize => format!("{val} as i64"),
         Sc::Duration => format!("i64::try_from({val}.as_micros()).unwrap_or(i64::MAX)"),
-        Sc::Bool => format!("u8::from({val})"),
         _ => val.to_string(),
     };
     format!("JValue::{}({arg})", i.jvalue)
@@ -80,13 +79,13 @@ impl Gen<'_> {
             // The nested record mints its own temporaries; the frame frees them
             // and keeps one reference.
             Ty::Record(n) => pre.push(format!(
-                "let {var} = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {}(env, {src}))?;",
+                "let {var} = env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {}(env, {src}))?;",
                 conv_fn(self.reg, self.e, n, "build")
             )),
             Ty::Scalar(sc) => {
                 let i = sc.info();
                 pre.push(format!(
-                    "let {var} = env.call_static_method(\"java/lang/{b}\", \"valueOf\", \"({})Ljava/lang/{b};\", &[{}])?.l()?;",
+                    "let {var} = env.call_static_method(jni_str!(\"java/lang/{b}\"), jni_str!(\"valueOf\"), jni_sig!(\"({})Ljava/lang/{b};\"), &[{}])?.l()?;",
                     i.sig,
                     scalar_jvalue(*sc, &deref(src)),
                     b = i.boxed
@@ -109,11 +108,11 @@ impl Gen<'_> {
                 let x = self.build_obj(inner, "item", None, &mut item_pre);
                 let seq = src.strip_prefix('&').unwrap_or(src);
                 pre.push(format!(
-                    "let {var} = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {{ \
-                     let list = env.new_object(\"java/util/ArrayList\", \"()V\", &[])?; \
+                    "let {var} = env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {{ \
+                     let list = env.new_object(jni_str!(\"java/util/ArrayList\"), jni_sig!(\"()V\"), &[])?; \
                      for item in {seq}.iter() {{ \
                      env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {{ \
-                     {} env.call_method(&list, \"add\", \"(Ljava/lang/Object;)Z\", &[JValue::Object(&{x})])?; Ok(()) }})?; }} \
+                     {} env.call_method(&list, jni_str!(\"add\"), jni_sig!(\"(Ljava/lang/Object;)Z\"), &[JValue::Object(&{x})])?; Ok(()) }})?; }} \
                      Ok(list) }})?;",
                     item_pre.join(" ")
                 ));
@@ -128,12 +127,12 @@ impl Gen<'_> {
                 let x = self.build_obj(inner, "item", None, &mut item_pre);
                 let seq = src.strip_prefix('&').unwrap_or(src);
                 pre.push(format!(
-                    "let {var} = env.with_local_frame_returning_local::<_, jni::errors::Error>(16, |env| {{ \
-                     let map = env.new_object(\"java/util/HashMap\", \"()V\", &[])?; \
+                    "let {var} = env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {{ \
+                     let map = env.new_object(jni_str!(\"java/util/HashMap\"), jni_sig!(\"()V\"), &[])?; \
                      for (key, item) in {seq}.iter() {{ \
                      env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {{ \
-                     let k = env.call_static_method(\"java/lang/Integer\", \"valueOf\", \"(I)Ljava/lang/Integer;\", &[JValue::Int(i32::from(*key))])?.l()?; \
-                     {} env.call_method(&map, \"put\", \"(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;\", &[JValue::Object(&k), JValue::Object(&{x})])?; Ok(()) }})?; }} \
+                     let k = env.call_static_method(jni_str!(\"java/lang/Integer\"), jni_str!(\"valueOf\"), jni_sig!(\"(I)Ljava/lang/Integer;\"), &[JValue::Int(i32::from(*key))])?.l()?; \
+                     {} env.call_method(&map, jni_str!(\"put\"), jni_sig!(\"(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;\"), &[JValue::Object(&k), JValue::Object(&{x})])?; Ok(()) }})?; }} \
                      Ok(map) }})?;",
                     item_pre.join(" ")
                 ));
@@ -152,7 +151,7 @@ impl Gen<'_> {
             Ty::Scalar(sc) => {
                 let i = sc.info();
                 let raw = format!(
-                    "env.call_method(&{o}, \"{}\", \"(){}\", &[])?.{}()?",
+                    "env.call_method(&{o}, jni_str!(\"{}\"), jni_sig!(\"(){}\"), &[])?.{}()?",
                     i.unbox, i.sig, i.extract
                 );
                 self.narrow(*sc, &raw, path)
@@ -176,11 +175,11 @@ impl Gen<'_> {
                     _ => format!("Ok({item})"),
                 };
                 format!(
-                    "{{ let size = env.call_method(&{o}, \"size\", \"()I\", &[])?.i()?; \
+                    "{{ let size = env.call_method(&{o}, jni_str!(\"size\"), jni_sig!(\"()I\"), &[])?.i()?; \
                      let mut items = Vec::with_capacity(size.max(0) as usize); \
                      for i in 0..size {{ \
                      let item = env.with_local_frame(16, |env| -> jni::errors::Result<_> {{ \
-                     let {e} = env.call_method(&{o}, \"get\", \"(I)Ljava/lang/Object;\", &[JValue::Int(i)])?.l()?; \
+                     let {e} = env.call_method(&{o}, jni_str!(\"get\"), jni_sig!(\"(I)Ljava/lang/Object;\"), &[JValue::Int(i)])?.l()?; \
                      {tail} }})?; items.push(item); }} items }}"
                 )
             }
@@ -201,7 +200,7 @@ impl Gen<'_> {
             None => String::new(),
         };
         format!(
-            "{{ {guard}let {s}: &jni::objects::JString = (&{o}).into(); String::from(env.get_string({s})?) }}"
+            "{{ {guard}let {s} = env.as_cast::<jni::objects::JString>(&{o})?; {s}.try_to_string(env)? }}"
         )
     }
 
@@ -242,7 +241,7 @@ fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
     let crossing: Vec<&Fld> = flds.iter().filter(|f| f.ty.is_some()).collect();
     let mut g = Gen { reg, e, n: 0 };
     let mut o = format!(
-        "pub(crate) fn build_{}<'l>(env: &mut JNIEnv<'l>, r: &{path}) -> jni::errors::Result<JObject<'l>> {{\n",
+        "pub(crate) fn build_{}<'l>(env: &mut Env<'l>, r: &{path}) -> jni::errors::Result<JObject<'l>> {{\n",
         snake(s.name)
     );
     o.push_str(&format!(
@@ -287,7 +286,7 @@ fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
         };
         if builder {
             let call = format!(
-                "env.call_method(&b, \"{}\", \"({})L{bclass};\", &[{val}])?;",
+                "env.call_method(&b, jni_str!(\"{}\"), jni_sig!(\"({})L{bclass};\"), &[{val}])?;",
                 f.java,
                 ty.setter_sig(reg)
             );
@@ -311,17 +310,17 @@ fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
     }
     if builder {
         o.push_str(&format!(
-            "    let b = env.new_object(\"{bclass}\", \"()V\", &[])?;\n"
+            "    let b = env.new_object(jni_str!(\"{bclass}\"), jni_sig!(\"()V\"), &[])?;\n"
         ));
         o.push_str(&setters);
         o.push_str(&format!(
-            "    let obj = env.call_method(&b, \"build\", \"()L{class};\", &[])?.l()?;\n"
+            "    let obj = env.call_method(&b, jni_str!(\"build\"), jni_sig!(\"()L{class};\"), &[])?.l()?;\n"
         ));
     } else {
         let desc: String = vals.iter().map(|(s, _)| s.as_str()).collect();
         let args: Vec<&str> = vals.iter().map(|(_, v)| v.as_str()).collect();
         o.push_str(&format!(
-            "    let obj = env.new_object(\"{class}\", \"({desc})V\", &[{}])?;\n",
+            "    let obj = env.new_object(jni_str!(\"{class}\"), jni_sig!(\"({desc})V\"), &[{}])?;\n",
             args.join(", ")
         ));
     }
@@ -334,7 +333,7 @@ fn read(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
     let path = e.rust_path;
     let mut g = Gen { reg, e, n: 0 };
     let mut o = format!(
-        "pub(crate) fn read_{}(env: &mut JNIEnv<'_>, obj: &JObject<'_>) -> jni::errors::Result<{path}> {{\n",
+        "pub(crate) fn read_{}(env: &mut Env<'_>, obj: &JObject<'_>) -> jni::errors::Result<{path}> {{\n",
         snake(s.name)
     );
     // Every object-valued getter mints a local reference that lives until
@@ -356,7 +355,7 @@ fn read(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
         } else if let Ty::Scalar(sc) = ty {
             let i = sc.info();
             let raw = format!(
-                "env.call_method(obj, \"{}\", \"(){}\", &[])?.{}()?",
+                "env.call_method(obj, jni_str!(\"{}\"), jni_sig!(\"(){}\"), &[])?.{}()?",
                 f.java, i.sig, i.extract
             );
             o.push_str(&format!("    let {var} = {raw};\n"));
@@ -374,7 +373,7 @@ fn read(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
         } else {
             let obj = g.fresh("o");
             o.push_str(&format!(
-                "    let {obj} = env.call_method(obj, \"{}\", \"(){}\", &[])?.l()?;\n",
+                "    let {obj} = env.call_method(obj, jni_str!(\"{}\"), jni_sig!(\"(){}\"), &[])?.l()?;\n",
                 f.java,
                 ty.sig(reg)
             ));
@@ -446,7 +445,7 @@ pub fn file(reg: &[Entry], family: &str) -> Result<String, String> {
     let body = body.join("\n");
     let mut out = String::from(HEADER);
     out.push_str("\n#![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]\n\n");
-    out.push_str("use jni::JNIEnv;\n");
+    out.push_str("use jni::{Env, jni_sig, jni_str};\n");
     if body.contains("JValue::") {
         out.push_str("use jni::objects::{JObject, JValue};\n");
     } else {

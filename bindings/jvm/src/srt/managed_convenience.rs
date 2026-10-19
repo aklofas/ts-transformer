@@ -46,8 +46,10 @@ use std::sync::LazyLock;
 use std::sync::atomic::Ordering;
 use tst_pipeline::binding::view::BlockingReason;
 
-use jni::JNIEnv;
+use jni::Env;
+use jni::jni_str;
 use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JString};
+use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject};
 
 use tst_core::mpegts::common::Pts90khz;
@@ -80,7 +82,7 @@ use crate::shells::mux_sender::build_transport_stats;
 /// exception: transport-side errors become `SrtException` (via
 /// `transport_error`), demux-side errors `DemuxException`. No end-of-stream
 /// arm: `recv_event` swallows a clean end of stream, returning `Ok(None)`.
-fn throw_demux_recv_error(env: &mut JNIEnv, e: &DemuxReceiverError) {
+fn throw_demux_recv_error(env: &mut Env, e: &DemuxReceiverError) {
     match &e.source {
         DemuxReceiverErrorSource::Transport(t) => transport_error(env, t),
         DemuxReceiverErrorSource::Demux(d) => crate::mpegts::throw_demux_error(env, d),
@@ -120,7 +122,7 @@ struct ManagedMuxSenderSnapshot {
 /// Map a `MuxSenderError` (from any `send_*`) to a thrown Java exception.
 /// `Mux(...)` → `MuxException`; `Transport(...)` → `SrtException` per
 /// `TransportError` variant. Mirrors tst-py's `mux_sender_error_to_pyerr`.
-fn throw_managed_mux_sender_error(env: &mut JNIEnv, e: &MuxSenderError) {
+fn throw_managed_mux_sender_error(env: &mut Env, e: &MuxSenderError) {
     match &e.source {
         MuxSenderErrorSource::Mux(m) => throw_mux_error(env, m),
         MuxSenderErrorSource::Transport(t) => transport_error(env, t),
@@ -133,7 +135,7 @@ fn throw_managed_mux_sender_error(env: &mut JNIEnv, e: &MuxSenderError) {
 /// Lease the managed sender and run a push op under the resource lock. A closed
 /// handle throws `IllegalStateException`; any `MuxSenderError` is mapped.
 fn with_mux_push(
-    env: &mut JNIEnv,
+    env: &mut Env,
     handle: jlong,
     op: impl FnOnce(&RustMuxSender<ManagedTransport<SrtTransport>>) -> Result<(), MuxSenderError>,
 ) {
@@ -147,7 +149,7 @@ fn with_mux_push(
 /// Return the first handle-of-kind from the construction-time snapshot (`-1`
 /// if none). A closed handle throws `IllegalStateException` and returns `-1`.
 fn mux_first_handle(
-    env: &mut JNIEnv,
+    env: &mut Env,
     handle: jlong,
     pick: impl FnOnce(&StreamHandles) -> Option<u32>,
 ) -> jlong {
@@ -211,10 +213,10 @@ jni_native! {
             Err(()) => return 0,
         };
 
-        let url_str: String = match env.get_string(&url) {
-            Ok(s) => s.into(),
+        let url_str: String = match url.try_to_string(env) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -237,7 +239,7 @@ jni_native! {
 
         let Some(policy) = super::build_reconnect_policy(
             env,
-            max_attempts_present != 0,
+            max_attempts_present,
             max_attempts,
             backoff_kind,
             backoff_base_ms,
@@ -295,7 +297,7 @@ jni_native! {
             return;
         };
         with_mux_push(env, handle, |inner| {
-            inner.send_video(&buf, Pts90khz::new(pts), key_frame != 0)
+            inner.send_video(&buf, Pts90khz::new(pts), key_frame)
         });
     }
 }
@@ -405,7 +407,7 @@ jni_native! {
             return;
         };
         with_mux_push(env, handle, |inner| {
-            inner.send_video_to(h, &buf, Pts90khz::new(pts), key_frame != 0)
+            inner.send_video_to(h, &buf, Pts90khz::new(pts), key_frame)
         });
     }
 }
@@ -768,8 +770,8 @@ jni_native! {
         _env,
         _class,
         handle: jlong,
-    ) -> jboolean = 0 => {
-        u8::from(REGISTRY_MUX.is_alive(handle as u64, |jstruct| jstruct.inner.is_alive()))
+    ) -> jboolean = false => {
+        REGISTRY_MUX.is_alive(handle as u64, |jstruct| jstruct.inner.is_alive())
     }
 }
 
@@ -802,7 +804,7 @@ static REGISTRY_DEMUX: LazyLock<OwnedRegistry<JniManagedDemuxReceiver, ManagedHa
 /// Returns the boxed handle as `jlong`, or `0` with a pending exception.
 #[allow(clippy::too_many_arguments)]
 fn build_demux_from_url(
-    env: &mut JNIEnv,
+    env: &mut Env,
     url: &JString,
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
     max_attempts_present: jboolean,
@@ -814,10 +816,13 @@ fn build_demux_from_url(
     overflow_policy: jint,
     mode: jint,
 ) -> jlong {
-    let url_str: String = match env.get_string(url) {
-        Ok(s) => s.into(),
+    let url_str: String = match url.try_to_string(env) {
+        Ok(s) => s,
         Err(e) => {
-            let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+            let _ = env.throw_new(
+                jni_str!("java/lang/RuntimeException"),
+                JNIString::from(e.to_string()),
+            );
             return 0;
         }
     };
@@ -831,7 +836,7 @@ fn build_demux_from_url(
     };
     let Some(policy) = super::build_reconnect_policy(
         env,
-        max_attempts_present != 0,
+        max_attempts_present,
         max_attempts,
         backoff_kind,
         backoff_base_ms,
@@ -1205,7 +1210,7 @@ jni_native! {
         _env,
         _class,
         handle: jlong,
-    ) -> jboolean = 0 => {
-        u8::from(REGISTRY_DEMUX.is_alive(handle as u64, |jstruct| jstruct.inner.is_alive()))
+    ) -> jboolean = false => {
+        REGISTRY_DEMUX.is_alive(handle as u64, |jstruct| jstruct.inner.is_alive())
     }
 }
