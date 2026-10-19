@@ -253,10 +253,10 @@ impl PyDemuxReceiver {
                         let b = PyBytes::new_bound(py, pkt);
                         if let Err(e) = callback.call1(py, (b,)) {
                             // First error wins; later packet errors are dropped.
-                            if let Ok(mut slot) = sink_error.lock() {
-                                if slot.is_none() {
-                                    *slot = Some(e);
-                                }
+                            if let Ok(mut slot) = sink_error.lock()
+                                && slot.is_none()
+                            {
+                                *slot = Some(e);
                             }
                         }
                     });
@@ -281,10 +281,10 @@ impl PyDemuxReceiver {
         // `recv_event` (the slot guard has been dropped above, so touching
         // `sink_error` here can't nest under it). Take it so a resumed
         // iteration after a caught error isn't permanently poisoned.
-        if let Ok(mut slot) = self.sink_error.lock() {
-            if let Some(err) = slot.take() {
-                return Err(err);
-            }
+        if let Ok(mut slot) = self.sink_error.lock()
+            && let Some(err) = slot.take()
+        {
+            return Err(err);
         }
         match res {
             Err(state) => Err(raise(

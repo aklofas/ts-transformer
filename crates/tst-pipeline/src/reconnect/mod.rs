@@ -118,10 +118,10 @@ impl ReconnectPolicy {
     /// `ManagedRecvTransport` (receive side) so the backoff math lives in
     /// one place.
     pub fn next_delay(&self, attempt: u32) -> Option<Duration> {
-        if let Some(max) = self.max_attempts {
-            if attempt > max {
-                return None;
-            }
+        if let Some(max) = self.max_attempts
+            && attempt > max
+        {
+            return None;
         }
         let wait = match &self.backoff {
             BackoffStrategy::Constant(d) => *d,
@@ -1112,10 +1112,10 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
         // Join an active worker. Bounded: it exits at its next shutdown
         // check; an in-flight factory() call must return first — connect
         // timeouts are the factory's own knob.
-        if let Ok(mut slot) = self.bg_thread.lock() {
-            if let Some(h) = slot.take() {
-                let _ = h.join();
-            }
+        if let Ok(mut slot) = self.bg_thread.lock()
+            && let Some(h) = slot.take()
+        {
+            let _ = h.join();
         }
         // DELIBERATE ASYMMETRY with `ManagedRecvTransport::close`
         // (`managed_receive.rs`), which DOES `self.active.clear()`: it closes
@@ -1133,10 +1133,10 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
         // unknown state and close-attempt would compound the problem. The
         // closed flag is already latched above so subsequent operations exit
         // cleanly via the existing poll-the-flag paths.
-        if let Ok(mut guard) = self.inner.lock() {
-            if let Some(t) = guard.as_mut() {
-                t.close();
-            }
+        if let Ok(mut guard) = self.inner.lock()
+            && let Some(t) = guard.as_mut()
+        {
+            t.close();
         }
     }
 

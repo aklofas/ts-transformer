@@ -190,17 +190,17 @@ pub(crate) fn spawn(
                             None => None,
                         }
                     };
-                    if let Some((www, nc)) = snapshot {
-                        if let Ok(authz) = crate::rtsp::auth::build_authorization(
+                    if let Some((www, nc)) = snapshot
+                        && let Ok(authz) = crate::rtsp::auth::build_authorization(
                             RtspMethod::Options,
                             &url,
                             &www,
                             user,
                             pass,
                             nc,
-                        ) {
-                            req = req.header("authorization", authz);
-                        }
+                        )
+                    {
+                        req = req.header("authorization", authz);
                     }
                 }
                 // Validate against header injection before writing. The

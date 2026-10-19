@@ -1442,7 +1442,7 @@ fn parse_view_domain_pair(
     start_max: f64,
     tag: u32,
 ) -> Result<ViewDomainPair, KlvFieldError> {
-    if bytes.is_empty() || bytes.len() % 2 != 0 {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(2) {
         return Err(KlvFieldError::InvalidLength {
             tag,
             expected: bytes.len() + 1,

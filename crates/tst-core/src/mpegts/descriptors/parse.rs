@@ -46,7 +46,7 @@ pub fn parse_subtitling_descriptor(
     if payload.is_empty() {
         return Err(DescriptorParseError::EmptyInput);
     }
-    if payload.len() % SUBTITLING_ENTRY_BYTES != 0 {
+    if !payload.len().is_multiple_of(SUBTITLING_ENTRY_BYTES) {
         return Err(DescriptorParseError::Truncated);
     }
     let mut out = Vec::with_capacity(payload.len() / SUBTITLING_ENTRY_BYTES);
@@ -67,7 +67,7 @@ pub fn parse_teletext_descriptor(
     if payload.is_empty() {
         return Err(DescriptorParseError::EmptyInput);
     }
-    if payload.len() % TELETEXT_ENTRY_BYTES != 0 {
+    if !payload.len().is_multiple_of(TELETEXT_ENTRY_BYTES) {
         return Err(DescriptorParseError::Truncated);
     }
     let mut out = Vec::with_capacity(payload.len() / TELETEXT_ENTRY_BYTES);

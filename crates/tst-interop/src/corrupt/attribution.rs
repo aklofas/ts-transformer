@@ -1054,25 +1054,25 @@ impl Attribution {
         let near = |x: u64, y: u64| {
             ticks_ahead(x, y) <= MAX_ANCHOR_JUMP_TICKS || ticks_ahead(y, x) <= MAX_ANCHOR_JUMP_TICKS
         };
-        if let Some((prev, _)) = self.last_anchor {
-            if !near(pcr_base, prev) {
-                match self.candidate_anchor.take() {
-                    Some((cand_base, cand_at)) if near(pcr_base, cand_base) => {
-                        // Two consecutive samples agree on a clock far from
-                        // the last anchor: the clock really moved.
-                        self.accept_anchor(cand_base, cand_at);
-                        self.accept_anchor(pcr_base, at);
-                    }
-                    Some(_) => {
-                        self.anchors_rejected += 1;
-                        self.candidate_anchor = Some((pcr_base, at));
-                    }
-                    None => {
-                        self.candidate_anchor = Some((pcr_base, at));
-                    }
+        if let Some((prev, _)) = self.last_anchor
+            && !near(pcr_base, prev)
+        {
+            match self.candidate_anchor.take() {
+                Some((cand_base, cand_at)) if near(pcr_base, cand_base) => {
+                    // Two consecutive samples agree on a clock far from
+                    // the last anchor: the clock really moved.
+                    self.accept_anchor(cand_base, cand_at);
+                    self.accept_anchor(pcr_base, at);
                 }
-                return;
+                Some(_) => {
+                    self.anchors_rejected += 1;
+                    self.candidate_anchor = Some((pcr_base, at));
+                }
+                None => {
+                    self.candidate_anchor = Some((pcr_base, at));
+                }
             }
+            return;
         }
         if self.candidate_anchor.take().is_some() {
             // The sample after a wild one is back on the old clock: the
@@ -1525,27 +1525,27 @@ impl Attribution {
     /// window position is proximity, not causation.
     pub fn on_signal(&mut self, at: u64, pid: Option<u16>, sig: Signal) {
         self.settle_pending_pcr(at);
-        if sig == Signal::ContinuityJump {
-            if let Some(p) = pid {
-                // A pending PCR jump on this PID at this very packet: the
-                // gap it was waiting for. It takes the gap with it — one
-                // gap, one anomaly (see `CcGap::claimed`) — so a second
-                // anomaly pending on the same packet stays pending and is
-                // charged.
-                let claimed = match self
-                    .pending_pcr
-                    .iter()
-                    .position(|q| q.pid == p && q.at == at)
-                {
-                    Some(k) => {
-                        self.pending_pcr.swap_remove(k);
-                        self.excuse_pcr_anomaly();
-                        true
-                    }
-                    None => false,
-                };
-                self.last_cc_jump_by_pid.insert(p, CcGap { at, claimed });
-            }
+        if sig == Signal::ContinuityJump
+            && let Some(p) = pid
+        {
+            // A pending PCR jump on this PID at this very packet: the
+            // gap it was waiting for. It takes the gap with it — one
+            // gap, one anomaly (see `CcGap::claimed`) — so a second
+            // anomaly pending on the same packet stays pending and is
+            // charged.
+            let claimed = match self
+                .pending_pcr
+                .iter()
+                .position(|q| q.pid == p && q.at == at)
+            {
+                Some(k) => {
+                    self.pending_pcr.swap_remove(k);
+                    self.excuse_pcr_anomaly();
+                    true
+                }
+                None => false,
+            };
+            self.last_cc_jump_by_pid.insert(p, CcGap { at, claimed });
         }
         self.events += 1;
         if sig == Signal::Resync {

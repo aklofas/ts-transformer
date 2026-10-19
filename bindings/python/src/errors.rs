@@ -318,10 +318,10 @@ pub(crate) fn klv_encode_error_to_pyerr(py: Python<'_>, e: tst_core::KlvEncodeEr
     if let Err(err) = kwargs.set_item("kind", kind_value) {
         return err;
     }
-    if let Some(t) = tag {
-        if let Err(err) = kwargs.set_item("tag", t) {
-            return err;
-        }
+    if let Some(t) = tag
+        && let Err(err) = kwargs.set_item("tag", t)
+    {
+        return err;
     }
     match cls.call((msg,), Some(&kwargs)) {
         Ok(instance) => PyErr::from_value_bound(instance),

@@ -425,12 +425,13 @@ pub struct PublisherInfo {
 /// How a publish mount aligns the timestamps of its announced tracks to
 /// one clock. Only elementary shapes with a metadata (KLV) track need it;
 /// an MP2T or video-only mount reads `NotApplicable`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum ClockAlignment {
     /// Nothing to align: the mount's shape carries its own timing (MP2T),
     /// the publisher announced video only, or no publisher has announced
     /// yet.
+    #[default]
     NotApplicable,
     /// The publisher announced a KLV track, but its clock is not yet
     /// related to the video clock: KLV units are held (not emitted) until
@@ -444,12 +445,6 @@ pub enum ClockAlignment {
     Provisional,
     /// Tracks are aligned through RTCP sender reports (RFC 3550 §6.4.1).
     SenderReport,
-}
-
-impl Default for ClockAlignment {
-    fn default() -> Self {
-        Self::NotApplicable
-    }
 }
 
 /// Internal stats accumulator. Public [`PublishMountStats`] snapshot

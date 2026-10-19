@@ -900,11 +900,11 @@ fn run_verify(args: &[String]) -> ! {
         eprintln!("verify: FAIL ({expect}): {}", report.failures.join("; "));
     }
 
-    if let Some(target) = json_out {
-        if let Err(e) = cli::write_json(&target, &report) {
-            eprintln!("verify: {e}");
-            std::process::exit(2);
-        }
+    if let Some(target) = json_out
+        && let Err(e) = cli::write_json(&target, &report)
+    {
+        eprintln!("verify: {e}");
+        std::process::exit(2);
     }
 
     std::process::exit(if report.pass { 0 } else { 1 });

@@ -389,10 +389,10 @@ fn challenge_for(auth: AuthMode) -> String {
 fn extract_header(req: &str, name: &str) -> Option<String> {
     let lname = name.to_ascii_lowercase();
     for line in req.split("\r\n") {
-        if let Some(colon) = line.find(':') {
-            if line[..colon].trim().to_ascii_lowercase() == lname {
-                return Some(line[colon + 1..].trim().to_string());
-            }
+        if let Some(colon) = line.find(':')
+            && line[..colon].trim().to_ascii_lowercase() == lname
+        {
+            return Some(line[colon + 1..].trim().to_string());
         }
     }
     None

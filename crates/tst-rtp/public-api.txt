@@ -30,7 +30,7 @@ impl core::cmp::Eq for tst_rtp::depay::ParameterSetInjection
 impl core::cmp::PartialEq for tst_rtp::depay::ParameterSetInjection
 pub fn tst_rtp::depay::ParameterSetInjection::eq(&self, &tst_rtp::depay::ParameterSetInjection) -> bool
 impl core::default::Default for tst_rtp::depay::ParameterSetInjection
-pub fn tst_rtp::depay::ParameterSetInjection::default() -> Self
+pub fn tst_rtp::depay::ParameterSetInjection::default() -> tst_rtp::depay::ParameterSetInjection
 impl core::fmt::Debug for tst_rtp::depay::ParameterSetInjection
 pub fn tst_rtp::depay::ParameterSetInjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for tst_rtp::depay::ParameterSetInjection
@@ -263,7 +263,7 @@ impl core::cmp::Eq for tst_rtp::depay::ParameterSetInjection
 impl core::cmp::PartialEq for tst_rtp::depay::ParameterSetInjection
 pub fn tst_rtp::depay::ParameterSetInjection::eq(&self, &tst_rtp::depay::ParameterSetInjection) -> bool
 impl core::default::Default for tst_rtp::depay::ParameterSetInjection
-pub fn tst_rtp::depay::ParameterSetInjection::default() -> Self
+pub fn tst_rtp::depay::ParameterSetInjection::default() -> tst_rtp::depay::ParameterSetInjection
 impl core::fmt::Debug for tst_rtp::depay::ParameterSetInjection
 pub fn tst_rtp::depay::ParameterSetInjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for tst_rtp::depay::ParameterSetInjection
@@ -838,7 +838,7 @@ impl core::cmp::Eq for tst_rtp::ClockAlignment
 impl core::cmp::PartialEq for tst_rtp::ClockAlignment
 pub fn tst_rtp::ClockAlignment::eq(&self, &tst_rtp::ClockAlignment) -> bool
 impl core::default::Default for tst_rtp::ClockAlignment
-pub fn tst_rtp::ClockAlignment::default() -> Self
+pub fn tst_rtp::ClockAlignment::default() -> tst_rtp::ClockAlignment
 impl core::fmt::Debug for tst_rtp::ClockAlignment
 pub fn tst_rtp::ClockAlignment::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for tst_rtp::ClockAlignment
@@ -1316,7 +1316,7 @@ impl core::cmp::Eq for tst_rtp::ClockAlignment
 impl core::cmp::PartialEq for tst_rtp::ClockAlignment
 pub fn tst_rtp::ClockAlignment::eq(&self, &tst_rtp::ClockAlignment) -> bool
 impl core::default::Default for tst_rtp::ClockAlignment
-pub fn tst_rtp::ClockAlignment::default() -> Self
+pub fn tst_rtp::ClockAlignment::default() -> tst_rtp::ClockAlignment
 impl core::fmt::Debug for tst_rtp::ClockAlignment
 pub fn tst_rtp::ClockAlignment::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for tst_rtp::ClockAlignment
@@ -1374,7 +1374,7 @@ impl core::cmp::Eq for tst_rtp::depay::ParameterSetInjection
 impl core::cmp::PartialEq for tst_rtp::depay::ParameterSetInjection
 pub fn tst_rtp::depay::ParameterSetInjection::eq(&self, &tst_rtp::depay::ParameterSetInjection) -> bool
 impl core::default::Default for tst_rtp::depay::ParameterSetInjection
-pub fn tst_rtp::depay::ParameterSetInjection::default() -> Self
+pub fn tst_rtp::depay::ParameterSetInjection::default() -> tst_rtp::depay::ParameterSetInjection
 impl core::fmt::Debug for tst_rtp::depay::ParameterSetInjection
 pub fn tst_rtp::depay::ParameterSetInjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for tst_rtp::depay::ParameterSetInjection

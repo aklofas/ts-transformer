@@ -589,11 +589,11 @@ fn drain_and_broadcast(
         // No subscribers → Err, suppressed.
         let _ = state.fanout.send(Bytes::copy_from_slice(&buf[..n]));
     }
-    if bytes_total != 0 {
-        if let Ok(mut s) = state.stats.lock() {
-            s.bytes_pushed = s.bytes_pushed.saturating_add(bytes_total);
-            s.packets_pushed = s.packets_pushed.saturating_add(packets_total);
-        }
+    if bytes_total != 0
+        && let Ok(mut s) = state.stats.lock()
+    {
+        s.bytes_pushed = s.bytes_pushed.saturating_add(bytes_total);
+        s.packets_pushed = s.packets_pushed.saturating_add(packets_total);
     }
 }
 

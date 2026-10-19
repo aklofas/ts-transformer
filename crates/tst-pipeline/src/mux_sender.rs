@@ -1124,11 +1124,11 @@ impl<T: Transport> Drop for MuxSender<T> {
         // a prior explicit close() already drained + closed, so close-then-drop
         // would otherwise call transport.close() twice. Idempotent in practice,
         // but the gate keeps the contract consistent across the three shells.
-        if let Ok(mut inner) = self.inner.lock() {
-            if !inner.closed {
-                let _ = inner.drain_pending();
-                inner.transport.close();
-            }
+        if let Ok(mut inner) = self.inner.lock()
+            && !inner.closed
+        {
+            let _ = inner.drain_pending();
+            inner.transport.close();
         }
         tracing::info!("MuxSender closed");
     }
@@ -2744,7 +2744,7 @@ mod cancel_tests {
             total > 0,
             "pending tail lost: finish() failed to drain before closing"
         );
-        assert!(total % 188 == 0);
+        assert!(total.is_multiple_of(188));
         // finish() must not cancel — the drain needs the live transport.
         assert!(!s.cancelled);
     }
@@ -2762,7 +2762,7 @@ mod cancel_tests {
         let _t: TailLossTransport = sender.into_inner();
         let s = state.lock().unwrap();
         let total: usize = s.sent.iter().map(|c| c.len()).sum();
-        assert!(total > 0 && total % 188 == 0);
+        assert!(total > 0 && total.is_multiple_of(188));
         assert!(
             !s.cancelled,
             "into_inner must not cancel/close the transport"

@@ -497,26 +497,26 @@ pub fn parse_soak_config(text: &str) -> Result<SoakConfig, String> {
                 decl.profile
             ));
         }
-        if let Some(set) = &decl.klv_set {
-            if crate::fixtures::KlvSet::parse(set).is_none() {
-                return Err(format!(
-                    "soak-config.json: legs.{leg}.klv_set {set:?} is not a known KLV set \
+        if let Some(set) = &decl.klv_set
+            && crate::fixtures::KlvSet::parse(set).is_none()
+        {
+            return Err(format!(
+                "soak-config.json: legs.{leg}.klv_set {set:?} is not a known KLV set \
                      (want \"compact\" or \"rich\")"
-                ));
-            }
+            ));
         }
         // Exact, lowercase names only: the verdict compares this
         // string with the one the sender wrote, so a spelling the
         // sender can never write is a declaration that can never be
         // met.
-        if let Some(mode) = &decl.reconnect_mode {
-            if !RECONNECT_MODES.contains(&mode.as_str()) {
-                return Err(format!(
-                    "soak-config.json: legs.{leg}.reconnect_mode {mode:?} is not a known \
+        if let Some(mode) = &decl.reconnect_mode
+            && !RECONNECT_MODES.contains(&mode.as_str())
+        {
+            return Err(format!(
+                "soak-config.json: legs.{leg}.reconnect_mode {mode:?} is not a known \
                      reconnect mode (want one of {RECONNECT_MODES:?}, or null for a leg whose \
                      sender is not managed)"
-                ));
-            }
+            ));
         }
         // A publish leg must declare at least two generations, so
         // `publisher_generations_<leg>` requires at least one
@@ -536,13 +536,13 @@ pub fn parse_soak_config(text: &str) -> Result<SoakConfig, String> {
                      publisher_generations >= 2 — one generation drops nothing"
                 ));
             }
-            if let Some(sha) = &decl.source_sha256 {
-                if !is_sha256_hex(sha) {
-                    return Err(format!(
-                        "soak-config.json: legs.{leg}.source_sha256 {sha:?} is not a \
+            if let Some(sha) = &decl.source_sha256
+                && !is_sha256_hex(sha)
+            {
+                return Err(format!(
+                    "soak-config.json: legs.{leg}.source_sha256 {sha:?} is not a \
                          lowercase hex sha256 digest"
-                    ));
-                }
+                ));
             }
         } else if decl.publisher.is_some()
             || decl.publisher_drop_period_s.is_some()

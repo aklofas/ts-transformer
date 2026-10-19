@@ -128,7 +128,7 @@ fn make_sps_rbsp_with_vui(vui_payload_size_minus1: u32, write_epilogue: bool) ->
     // vui_payload_size_minus1
     bw.write_ue(vui_payload_size_minus1);
     // §7.3.2.4 alignment: zero-pad to byte boundary before vui_parameters().
-    while bw.pos % 8 != 0 {
+    while !bw.pos.is_multiple_of(8) {
         bw.write(0, 1);
     }
     // Minimal vui_parameters() body — all flags off (8 bits / 1 byte):

@@ -903,12 +903,12 @@ mod tests {
                     // Lease + operate. Either the resource is still live (we read its
                     // value — must equal the stamp, proving no dangling/torn read) or
                     // it's been taken by the closer (with() → None). Both are safe.
-                    if let Some(entry) = reg.lease(id) {
-                        if let Some(v) = entry.with(|c| c.value) {
-                            // A dangling/UAF read would yield a value != the stamp (or
-                            // segfault). This assert is the race detector.
-                            assert_eq!(v, expected, "leased a live but wrong/torn resource");
-                        }
+                    if let Some(entry) = reg.lease(id)
+                        && let Some(v) = entry.with(|c| c.value)
+                    {
+                        // A dangling/UAF read would yield a value != the stamp (or
+                        // segfault). This assert is the race detector.
+                        assert_eq!(v, expected, "leased a live but wrong/torn resource");
                     }
                 }
             }));
@@ -924,11 +924,11 @@ mod tests {
             thread::spawn(move || {
                 while !done.load(Ordering::Acquire) {
                     let id = current_id.load(Ordering::Acquire);
-                    if id != 0 {
-                        if let Some(r) = reg.close(id) {
-                            let _ = r.value; // type-specific teardown would go here
-                            drop(r);
-                        }
+                    if id != 0
+                        && let Some(r) = reg.close(id)
+                    {
+                        let _ = r.value; // type-specific teardown would go here
+                        drop(r);
                     }
                     std::hint::spin_loop();
                 }

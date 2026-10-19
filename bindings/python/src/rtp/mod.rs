@@ -5,7 +5,7 @@
 //! - `client`          — `RtspClient` + `RtspSession` + auth dataclasses
 //! - `server`          — `RtspServer` + `MountHandle` (16 push methods)
 //! - `publish`         — `PublishMount` + `PublishMountStats` +
-//!                        `PublisherInfo` (the RTSP publisher role)
+//!   `PublisherInfo` (the RTSP publisher role)
 //! - `h264_receiver`   — RFC 6184 H.264 receiver + depacketizer config/stats
 //!
 //! All submodules are fully implemented.

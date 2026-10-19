@@ -358,11 +358,11 @@ fn build_vendored(want_mbedtls: bool, sanitizer: Option<&str>) -> Vec<PathBuf> {
         for (k, v) in cl.env() {
             let key = k.to_string_lossy().into_owned();
             let mut val = v.to_string_lossy().into_owned();
-            if key.eq_ignore_ascii_case("path") {
-                if let Some(existing) = env::var_os(&key) {
-                    val.push(';');
-                    val.push_str(&existing.to_string_lossy());
-                }
+            if key.eq_ignore_ascii_case("path")
+                && let Some(existing) = env::var_os(&key)
+            {
+                val.push(';');
+                val.push_str(&existing.to_string_lossy());
             }
             meson_envs.push((key, val));
         }

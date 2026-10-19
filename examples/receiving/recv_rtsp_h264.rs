@@ -224,7 +224,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         mux.push_video(&au.annexb, au.pts, au.key_frame)
             .expect("push_video");
 
-        if au_count % 100 == 0 {
+        if au_count.is_multiple_of(100) {
             eprintln!(
                 "  {au_count} AUs received, key_frame={}, pts={}",
                 au.key_frame,

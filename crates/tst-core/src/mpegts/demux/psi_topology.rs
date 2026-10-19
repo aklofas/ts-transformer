@@ -472,10 +472,10 @@ impl super::demuxer::Demuxer {
         // Validate fixed/reserved PSI syntax fields.
         self.check_psi_syntax(pmt_pid, 0x02, section);
         // Dedup: re-emit only if version changed or first ever.
-        if let Some(tracker) = self.programs.get(&pmt_pid) {
-            if Some(pmt.version) == tracker.pmt_version {
-                return;
-            }
+        if let Some(tracker) = self.programs.get(&pmt_pid)
+            && Some(pmt.version) == tracker.pmt_version
+        {
+            return;
         }
 
         // Fresh PMT version — clear the per-PID guard for SubtitleMissingDescriptor

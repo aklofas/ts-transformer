@@ -145,10 +145,10 @@ fn flip_pes_stream_id(bytes: &[u8], pid: u16, from: u8, to: u8) -> Vec<u8> {
         if pid_of(chunk) != pid {
             continue;
         }
-        if let Some(off) = pes_payload_start(chunk) {
-            if chunk[off + 3] == from {
-                chunk[off + 3] = to;
-            }
+        if let Some(off) = pes_payload_start(chunk)
+            && chunk[off + 3] == from
+        {
+            chunk[off + 3] = to;
         }
     }
     out

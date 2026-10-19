@@ -238,14 +238,15 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
                             }));
                         }
                     };
-                    if let Encoding::FixedAscii { expected_len } = spec.encoding {
-                        if strict && parsed.len() != expected_len {
-                            return Err(KlvDecodeError::FieldError(KlvFieldError::InvalidLength {
-                                tag: f.tag,
-                                expected: expected_len,
-                                got: parsed.len(),
-                            }));
-                        }
+                    if let Encoding::FixedAscii { expected_len } = spec.encoding
+                        && strict
+                        && parsed.len() != expected_len
+                    {
+                        return Err(KlvDecodeError::FieldError(KlvFieldError::InvalidLength {
+                            tag: f.tag,
+                            expected: expected_len,
+                            got: parsed.len(),
+                        }));
                     }
                     parsed
                 };

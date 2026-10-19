@@ -217,7 +217,7 @@ fn build_dvb_teletext_eng() -> Vec<u8> {
         let pts = 90_000 * (i as i64 + 1);
         let mut payload = vec![0x10]; // data_identifier
         payload.extend_from_slice(&[0x02, 0x2C]); // data_unit_id=0x02, length=0x2C
-        payload.extend(std::iter::repeat(0x00).take(0x2C));
+        payload.extend(std::iter::repeat_n(0x00, 0x2C));
         mux.push_subtitle_to(h, Pts90khz::new(pts), &payload)
             .unwrap();
     }

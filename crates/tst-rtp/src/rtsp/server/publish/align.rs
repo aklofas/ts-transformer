@@ -596,36 +596,37 @@ impl Aligner {
     /// arrival, and only [`Self::evict_stale`] (when nothing is left held)
     /// and [`Self::forget_mapping`] (which also discards the hold) clear it.
     fn place_held(&mut self, now: Instant) {
-        if self.mode == ClockAlignment::SenderReport && !self.offset_validated {
-            if let (Some(origin), Some(offset), Some(vmax), Some(newest)) = (
+        if self.mode == ClockAlignment::SenderReport
+            && !self.offset_validated
+            && let (Some(origin), Some(offset), Some(vmax), Some(newest)) = (
                 self.video_origin,
                 self.offset,
                 self.video_pts_max,
                 self.hold.back(),
-            ) {
-                let implied = placed_pts(newest.t_k, offset, origin.unwrapped);
-                let window = SR_PLAUSIBILITY_TICKS;
-                if implied > vmax.saturating_add(window) || implied < vmax.saturating_sub(window) {
-                    tracing::debug!(
-                        target: "tst_rtp::server::publish",
-                        implied_pts = implied,
-                        video_pts_max = vmax,
-                        "sender-report mapping places KLV outside the plausibility window; \
-                         abandoning it"
-                    );
-                    self.rejected_offset = Some(offset);
-                    if let Some(last) = self.last_validated_offset {
-                        self.offset = Some(last);
-                        self.offset_validated = true;
-                    } else {
-                        self.offset = None;
-                        self.steps += 1;
-                        self.engage_fallback();
-                    }
-                } else {
+            )
+        {
+            let implied = placed_pts(newest.t_k, offset, origin.unwrapped);
+            let window = SR_PLAUSIBILITY_TICKS;
+            if implied > vmax.saturating_add(window) || implied < vmax.saturating_sub(window) {
+                tracing::debug!(
+                    target: "tst_rtp::server::publish",
+                    implied_pts = implied,
+                    video_pts_max = vmax,
+                    "sender-report mapping places KLV outside the plausibility window; \
+                     abandoning it"
+                );
+                self.rejected_offset = Some(offset);
+                if let Some(last) = self.last_validated_offset {
+                    self.offset = Some(last);
                     self.offset_validated = true;
-                    self.last_validated_offset = Some(offset);
+                } else {
+                    self.offset = None;
+                    self.steps += 1;
+                    self.engage_fallback();
                 }
+            } else {
+                self.offset_validated = true;
+                self.last_validated_offset = Some(offset);
             }
         }
         let (Some(origin), Some(offset)) = (self.video_origin, self.offset) else {

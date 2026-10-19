@@ -52,10 +52,10 @@ fn run(scheme: &str, table: &[Row], adapter: fn(&str) -> Effective) {
         if !ok {
             bad.push(format!("  {scheme} row {url}\n    got {got:?}"));
         }
-        if std::env::var_os("URL_VOCABULARY_FILL").is_some() {
-            if let (R("?"), Err(have)) = (expect, &got) {
-                println!("FILL\t{url}\t{have}");
-            }
+        if std::env::var_os("URL_VOCABULARY_FILL").is_some()
+            && let (R("?"), Err(have)) = (expect, &got)
+        {
+            println!("FILL\t{url}\t{have}");
         }
     }
     assert!(

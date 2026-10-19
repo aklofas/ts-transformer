@@ -288,11 +288,11 @@ fn tcp_listener_bind_and_accept_sender_round_trip() {
     unsafe { tst_tcp_listener_free(listener_ptr) };
 
     // Recover the connecting sender handle (as usize) and close it.
-    if let Ok(ptr_usize) = connect_handle.join() {
-        if ptr_usize != 0 {
-            let sender_ptr = ptr_usize as *mut tstrans::tcp::TstTcpSender;
-            unsafe { tst_tcp_sender_close(sender_ptr) };
-        }
+    if let Ok(ptr_usize) = connect_handle.join()
+        && ptr_usize != 0
+    {
+        let sender_ptr = ptr_usize as *mut tstrans::tcp::TstTcpSender;
+        unsafe { tst_tcp_sender_close(sender_ptr) };
     }
 }
 

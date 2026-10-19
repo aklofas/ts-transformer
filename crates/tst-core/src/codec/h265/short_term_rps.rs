@@ -180,7 +180,7 @@ mod tests {
         let leading_zeros = 31 - code_num.leading_zeros();
         let total_bits = (leading_zeros * 2 + 1) as usize;
         let mut bits: Vec<u8> = Vec::with_capacity(total_bits);
-        bits.extend(core::iter::repeat(0).take(leading_zeros as usize));
+        bits.extend(core::iter::repeat_n(0, leading_zeros as usize));
         for i in (0..=leading_zeros).rev() {
             bits.push(((code_num >> i) & 1) as u8);
         }

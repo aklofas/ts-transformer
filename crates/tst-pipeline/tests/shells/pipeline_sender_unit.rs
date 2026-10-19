@@ -11,7 +11,7 @@ fn synthetic_h264_au() -> Vec<u8> {
     // 4-byte start code + IDR NAL header + 64 bytes of payload.
     // Just enough to look Annex-B framed; no semantic validity required.
     let mut buf = vec![0x00, 0x00, 0x00, 0x01, 0x65];
-    buf.extend(std::iter::repeat(0xAA).take(64));
+    buf.extend(std::iter::repeat_n(0xAA, 64));
     buf
 }
 

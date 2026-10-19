@@ -103,7 +103,7 @@ impl Publisher for HlsPublisher {
         if self.finished {
             return Err(HlsError::Finished);
         }
-        if ts_bytes.len() % 188 != 0 {
+        if !ts_bytes.len().is_multiple_of(188) {
             return Err(HlsError::UnalignedPushTs {
                 len: ts_bytes.len(),
             });

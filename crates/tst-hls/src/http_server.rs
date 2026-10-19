@@ -150,20 +150,18 @@ impl ServerHandle {
                         tokio::spawn(async move {
                             #[cfg(feature = "tls")]
                             if let Some(acc) = &acceptor_clone {
-                                match acc.accept(sock).await {
-                                    Ok(tls_sock) => {
-                                        let io = TokioIo::new(tls_sock);
-                                        let svc = service_fn(move |req| {
-                                            let state = state.clone();
-                                            let auth = auth.clone();
-                                            async move { Ok::<_, Infallible>(serve(req, state, auth).await) }
-                                        });
-                                        let _ = tokio::select! {
-                                            _ = conn_cancel.cancelled() => Ok(()),
-                                            r = http1::Builder::new().serve_connection(io, svc) => r,
-                                        };
-                                    }
-                                    Err(_) => {} // bad TLS handshake — drop
+                                // A bad TLS handshake drops the connection.
+                                if let Ok(tls_sock) = acc.accept(sock).await {
+                                    let io = TokioIo::new(tls_sock);
+                                    let svc = service_fn(move |req| {
+                                        let state = state.clone();
+                                        let auth = auth.clone();
+                                        async move { Ok::<_, Infallible>(serve(req, state, auth).await) }
+                                    });
+                                    let _ = tokio::select! {
+                                        _ = conn_cancel.cancelled() => Ok(()),
+                                        r = http1::Builder::new().serve_connection(io, svc) => r,
+                                    };
                                 }
                                 return;
                             }

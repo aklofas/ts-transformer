@@ -741,12 +741,12 @@ impl<T: RecvTransport> RecvTransport for Teeing<T> {
         // read. Locked and released before the inner call, which can park.
         {
             let mut s = self.tap.lock().expect("tee mutex poisoned");
-            if let Some(now) = s.reconnects.as_ref().map(|c| c.load(Ordering::Acquire)) {
-                if now > s.reconnects_seen {
-                    s.reconnects_seen = now;
-                    if s.chunk_start.is_none() {
-                        s.chunk_start = Some(s.reader.packets());
-                    }
+            if let Some(now) = s.reconnects.as_ref().map(|c| c.load(Ordering::Acquire))
+                && now > s.reconnects_seen
+            {
+                s.reconnects_seen = now;
+                if s.chunk_start.is_none() {
+                    s.chunk_start = Some(s.reader.packets());
                 }
             }
         }
@@ -754,10 +754,10 @@ impl<T: RecvTransport> RecvTransport for Teeing<T> {
         let mut s = self.tap.lock().expect("tee mutex poisoned");
         s.bytes += n as u64;
         s.hasher.update(&buf[..n]);
-        if s.reader_error.is_none() {
-            if let Err(e) = s.reader.feed(&buf[..n]) {
-                s.reader_error = Some(e);
-            }
+        if s.reader_error.is_none()
+            && let Err(e) = s.reader.feed(&buf[..n])
+        {
+            s.reader_error = Some(e);
         }
         Ok(n)
     }

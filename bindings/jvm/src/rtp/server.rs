@@ -596,13 +596,12 @@ jni_native! {
         };
         // Build the `rtp://<group>:<port>?ttl=N[&iface=...]` URL (mirror tst-py).
         let mut url = format!("rtp://{group_str}:{port}?ttl={ttl}");
-        if !iface.is_null() {
-            if let Ok(i) = env.get_string(&iface) {
+        if !iface.is_null()
+            && let Ok(i) = env.get_string(&iface) {
                 let i: String = i.into();
                 url.push_str("&iface=");
                 url.push_str(&i);
             }
-        }
         // add_multicast_mount takes &self; lease the server again and run it under the
         // lock. A server closed between leases yields None → IllegalStateException.
         let Some(res) = with_server_poisoning(env, server_handle, |server| {

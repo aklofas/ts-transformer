@@ -650,40 +650,38 @@ pub(super) fn build_pmt_descriptor_cache(prog: &MuxerProgramConfig) -> Vec<Vec<u
         // VBI teletext 0x46 / Registration with VTTC or GA94
         // format_identifier), the auto-emit is suppressed — caller's
         // takes precedence and we don't double-emit.
-        if let StreamSpec::Subtitle { codec, .. } = spec {
-            if !caller_has_recognized_subtitle_descriptor(caller_descs) {
-                let auto = match codec {
-                    SubtitleCodec::DvbSubtitling {
-                        language,
-                        subtitling_type,
-                        composition_page_id,
-                        ancillary_page_id,
-                    } => crate::mpegts::descriptors::subtitling_descriptor(
-                        *language,
-                        *subtitling_type,
-                        *composition_page_id,
-                        *ancillary_page_id,
-                    ),
-                    SubtitleCodec::DvbTeletext {
-                        language,
-                        teletext_type,
-                        magazine_number,
-                        page_number,
-                    } => crate::mpegts::descriptors::teletext_descriptor(
-                        *language,
-                        *teletext_type,
-                        *magazine_number,
-                        *page_number,
-                    ),
-                    SubtitleCodec::Cea708Standalone => {
-                        crate::mpegts::descriptors::format_identifier_ga94()
-                    }
-                    SubtitleCodec::WebVttInTs => {
-                        crate::mpegts::descriptors::format_identifier_vttc()
-                    }
-                };
-                bytes.extend_from_slice(&auto);
-            }
+        if let StreamSpec::Subtitle { codec, .. } = spec
+            && !caller_has_recognized_subtitle_descriptor(caller_descs)
+        {
+            let auto = match codec {
+                SubtitleCodec::DvbSubtitling {
+                    language,
+                    subtitling_type,
+                    composition_page_id,
+                    ancillary_page_id,
+                } => crate::mpegts::descriptors::subtitling_descriptor(
+                    *language,
+                    *subtitling_type,
+                    *composition_page_id,
+                    *ancillary_page_id,
+                ),
+                SubtitleCodec::DvbTeletext {
+                    language,
+                    teletext_type,
+                    magazine_number,
+                    page_number,
+                } => crate::mpegts::descriptors::teletext_descriptor(
+                    *language,
+                    *teletext_type,
+                    *magazine_number,
+                    *page_number,
+                ),
+                SubtitleCodec::Cea708Standalone => {
+                    crate::mpegts::descriptors::format_identifier_ga94()
+                }
+                SubtitleCodec::WebVttInTs => crate::mpegts::descriptors::format_identifier_vttc(),
+            };
+            bytes.extend_from_slice(&auto);
         }
         // AV1-in-MPEG-2-TS binding §2.1 — AV01 registration_descriptor
         // MUST be the FIRST descriptor in the per-stream PMT loop.

@@ -333,7 +333,7 @@ pub fn unlink(doc: &str) -> String {
 /// Each `` `a::b::Name` `` span of `doc` as `` `Name` ``.
 fn plain_paths(doc: &str) -> String {
     let parts: Vec<&str> = doc.split('`').collect();
-    if parts.len() % 2 == 0 {
+    if parts.len().is_multiple_of(2) {
         return doc.to_string(); // an unpaired backtick stays as written
     }
     let mut out = String::new();

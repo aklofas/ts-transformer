@@ -878,15 +878,14 @@ impl Tally {
     /// this to one class.
     fn record_pts(&mut self, pid: u16, pts: Pts90khz, at: u64) {
         let now = pts.as_ticks() as u64;
-        if let Some(&last) = self.last_pts_by_pid.get(&pid) {
-            if !pts_is_monotonic_step(now, last)
-                && !self
-                    .attribution
-                    .as_mut()
-                    .is_some_and(|a| a.truncation_explains(at))
-            {
-                self.pts_monotonic = false;
-            }
+        if let Some(&last) = self.last_pts_by_pid.get(&pid)
+            && !pts_is_monotonic_step(now, last)
+            && !self
+                .attribution
+                .as_mut()
+                .is_some_and(|a| a.truncation_explains(at))
+        {
+            self.pts_monotonic = false;
         }
         self.last_pts_by_pid.insert(pid, now);
     }

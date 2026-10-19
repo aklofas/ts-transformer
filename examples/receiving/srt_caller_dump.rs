@@ -188,7 +188,7 @@ fn handle_event(event: &DemuxEvent, args: &Args, stats: &mut Stats) {
         } => {
             stats.samples += 1;
             stats.sample_bytes += payload_size(payload) as u64;
-            let should_print = args.verbose || (stats.samples % args.every == 0);
+            let should_print = args.verbose || stats.samples.is_multiple_of(args.every);
             if should_print {
                 print_sample(stream, pts.as_ticks(), payload);
             }
@@ -201,7 +201,7 @@ fn handle_event(event: &DemuxEvent, args: &Args, stats: &mut Stats) {
         } => {
             stats.metas += 1;
             stats.meta_bytes += payload.len() as u64;
-            let should_print = args.verbose || (stats.metas % args.every == 0);
+            let should_print = args.verbose || stats.metas.is_multiple_of(args.every);
             if should_print {
                 print_metadata(stream, pts.as_ticks(), kind, payload, args.decode_klv);
             }

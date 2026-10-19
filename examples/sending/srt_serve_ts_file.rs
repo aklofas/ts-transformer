@@ -310,12 +310,13 @@ impl PcrPacer {
                 // a rollover and re-anchor wall time so playback
                 // resumes against the new origin instead of pausing
                 // for hours. Rare on real captures but cheap to guard.
-                if let Some(prev) = self.last_pcr_27mhz {
-                    if pcr < prev && (prev - pcr) > 27_000_000 {
-                        // Re-anchor on this PCR.
-                        self.first_pcr_27mhz = Some(pcr);
-                        self.start_wall = Some(Instant::now());
-                    }
+                if let Some(prev) = self.last_pcr_27mhz
+                    && pcr < prev
+                    && (prev - pcr) > 27_000_000
+                {
+                    // Re-anchor on this PCR.
+                    self.first_pcr_27mhz = Some(pcr);
+                    self.start_wall = Some(Instant::now());
                 }
 
                 // First-PCR anchor.

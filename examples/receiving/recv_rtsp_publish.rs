@@ -138,10 +138,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         let stop = stop.clone();
         thread::spawn(move || {
             let mut line = String::new();
-            if let Ok(n) = std::io::stdin().lock().read_line(&mut line) {
-                if n > 0 {
-                    stop.store(true, Ordering::SeqCst);
-                }
+            if let Ok(n) = std::io::stdin().lock().read_line(&mut line)
+                && n > 0
+            {
+                stop.store(true, Ordering::SeqCst);
             }
         });
     }
@@ -259,7 +259,7 @@ fn spawn_demux_thread(mount: PublishMountHandle) -> thread::JoinHandle<()> {
                     ..
                 } => {
                     video_aus += 1;
-                    if video_aus == 1 || video_aus % 30 == 0 {
+                    if video_aus == 1 || video_aus.is_multiple_of(30) {
                         println!(
                             "[{path}] video AU #{video_aus} PID=0x{:04X} {codec:?} pts={} bytes={} rai={random_access_indicator}",
                             stream.pid,

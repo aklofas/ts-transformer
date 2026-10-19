@@ -231,24 +231,24 @@ impl Reassembler {
         // PES start, if it landed in the residual, is reacquired then.
         let mut completed_now = None;
         let mut completed_rai = false;
-        if let Some(total) = part.declared_total_len {
-            if part.buf.len() >= total {
-                // Avoid the intermediate Vec allocation from
-                // `drain(..total).collect()`. Capture the residual count
-                // before truncating so the total_buffered accounting is
-                // correct, then take ownership of the (now-truncated) buf
-                // via mem::take — the buf becomes an empty Vec in-place,
-                // which is free to drop. NLL ends the borrow on `part` at
-                // the mem::take call, allowing the remove below to proceed.
-                let residual = part.buf.len() - total;
-                part.buf.truncate(total);
-                completed_rai = part.random_access_indicator;
-                // Decrement by `total` (body) + `residual` (discarded tail).
-                self.total_buffered = self.total_buffered.saturating_sub(total + residual);
-                let body = core::mem::take(&mut part.buf);
-                completed_now = Some(body);
-                self.by_pid.remove(&pid);
-            }
+        if let Some(total) = part.declared_total_len
+            && part.buf.len() >= total
+        {
+            // Avoid the intermediate Vec allocation from
+            // `drain(..total).collect()`. Capture the residual count
+            // before truncating so the total_buffered accounting is
+            // correct, then take ownership of the (now-truncated) buf
+            // via mem::take — the buf becomes an empty Vec in-place,
+            // which is free to drop. NLL ends the borrow on `part` at
+            // the mem::take call, allowing the remove below to proceed.
+            let residual = part.buf.len() - total;
+            part.buf.truncate(total);
+            completed_rai = part.random_access_indicator;
+            // Decrement by `total` (body) + `residual` (discarded tail).
+            self.total_buffered = self.total_buffered.saturating_sub(total + residual);
+            let body = core::mem::take(&mut part.buf);
+            completed_now = Some(body);
+            self.by_pid.remove(&pid);
         }
         if let Some(buf) = completed_now {
             match parse_complete(pid, &buf, completed_rai) {

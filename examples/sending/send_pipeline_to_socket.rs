@@ -98,7 +98,7 @@ fn synthetic_nal_au(payload_size: usize) -> Vec<u8> {
     // Annex-B IDR: start code 0x00000001 + NAL header byte 0x65 (forbidden=0,
     // nal_ref_idc=3, nal_unit_type=5 = IDR slice). Filler bytes after.
     let mut buf = vec![0x00, 0x00, 0x00, 0x01, 0x65];
-    buf.extend(std::iter::repeat(0xAA).take(payload_size));
+    buf.extend(std::iter::repeat_n(0xAA, payload_size));
     buf
 }
 
@@ -112,6 +112,6 @@ fn synthetic_klv(size: usize, seq: i64) -> Vec<u8> {
         0x00,
     ];
     buf.push(size as u8); // BER short-form length (≤127)
-    buf.extend(std::iter::repeat(seq as u8).take(size));
+    buf.extend(std::iter::repeat_n(seq as u8, size));
     buf
 }

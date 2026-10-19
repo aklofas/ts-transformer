@@ -17,7 +17,7 @@ pub fn escape_docstring(doc: &str) -> String {
 /// unpaired backtick stays as written.
 pub fn rst_code(doc: &str) -> String {
     let parts: Vec<&str> = doc.split('`').collect();
-    if parts.len() % 2 == 0 {
+    if parts.len().is_multiple_of(2) {
         return doc.to_string();
     }
     parts.join("``")

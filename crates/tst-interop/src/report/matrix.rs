@@ -128,13 +128,13 @@ impl ExpectBuilder {
 /// like `decode/*/foo` fails loudly here rather than silently matching
 /// nothing (or everything) at merge time.
 fn validate_cell_pattern(value: &str, line_no: usize) -> Result<(), String> {
-    if let Some(pos) = value.find('*') {
-        if pos != value.len() - 1 {
-            return Err(format!(
-                "expectations line {line_no}: `*` only allowed as the final character of \
+    if let Some(pos) = value.find('*')
+        && pos != value.len() - 1
+    {
+        return Err(format!(
+            "expectations line {line_no}: `*` only allowed as the final character of \
                  `cell`, got: {value:?}"
-            ));
-        }
+        ));
     }
     Ok(())
 }
@@ -375,29 +375,29 @@ pub fn build_results(
                 // `failure_contains` never applies here (see
                 // find_expectation's doc comment).
                 let matched = find_expectation(expectations, &raw.id, &raw.profile, None);
-                if let Some(exp) = matched {
-                    if exp.verdict == ExpectVerdict::ExpectedUnsupported {
-                        // A glob row (e.g. "decode/*") can match more
-                        // than one raw cell id at the same profile — if
-                        // several of them PASS, that's the same
-                        // expectations-file ROW going stale once, not
-                        // once per matching cell. Dedupe by the row's
-                        // own (cell pattern, profile) identity.
-                        let already_flagged = stale.iter().any(|s: &StaleExpectation| {
-                            s.cell == exp.cell && s.profile == exp.profile
+                if let Some(exp) = matched
+                    && exp.verdict == ExpectVerdict::ExpectedUnsupported
+                {
+                    // A glob row (e.g. "decode/*") can match more
+                    // than one raw cell id at the same profile — if
+                    // several of them PASS, that's the same
+                    // expectations-file ROW going stale once, not
+                    // once per matching cell. Dedupe by the row's
+                    // own (cell pattern, profile) identity.
+                    let already_flagged = stale
+                        .iter()
+                        .any(|s: &StaleExpectation| s.cell == exp.cell && s.profile == exp.profile);
+                    if !already_flagged {
+                        stale.push(StaleExpectation {
+                            cell: exp.cell.clone(),
+                            profile: exp.profile.clone(),
+                            reason: exp.reason.clone(),
                         });
-                        if !already_flagged {
-                            stale.push(StaleExpectation {
-                                cell: exp.cell.clone(),
-                                profile: exp.profile.clone(),
-                                reason: exp.reason.clone(),
-                            });
-                        }
                     }
-                    // A `known_flaky` expectation matching a PASS is
-                    // normal (see the module + type docs) — no stale
-                    // entry either way.
                 }
+                // A `known_flaky` expectation matching a PASS is
+                // normal (see the module + type docs) — no stale
+                // entry either way.
                 (Verdict::Pass, false, None, None)
             }
             RawVerdict::Fail => {

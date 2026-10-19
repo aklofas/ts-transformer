@@ -548,7 +548,7 @@ mod tests {
         let mut buf = Vec::with_capacity(2 * 417);
         for _ in 0..2 {
             buf.extend_from_slice(&header);
-            buf.extend(core::iter::repeat(0u8).take(417 - 4));
+            buf.extend(core::iter::repeat_n(0u8, 417 - 4));
         }
         let mut it = frames(&buf);
         let f1 = it.next().unwrap().unwrap();
@@ -564,7 +564,7 @@ mod tests {
         // 4-byte header says 417 but we only give 100 bytes total.
         let header: [u8; 4] = [0xFF, 0xFB, 0x90, 0x40];
         let mut buf = Vec::from(header);
-        buf.extend(core::iter::repeat(0u8).take(96));
+        buf.extend(core::iter::repeat_n(0u8, 96));
         let mut it = frames(&buf);
         match it.next() {
             Some(Err(CodecParseError::Truncated { .. })) => {}
@@ -583,7 +583,7 @@ mod tests {
         let mut buf = vec![0x00, 0x00, 0x00, 0x00];
         let header: [u8; 4] = [0xFF, 0xFB, 0x90, 0x40];
         buf.extend_from_slice(&header);
-        buf.extend(core::iter::repeat(0u8).take(417 - 4));
+        buf.extend(core::iter::repeat_n(0u8, 417 - 4));
 
         let mut it = frames(&buf);
         match it.next() {
@@ -605,7 +605,7 @@ mod tests {
         let mut buf = vec![0x00, 0x00, 0x00, 0x00];
         let header: [u8; 4] = [0xFF, 0xFB, 0x90, 0x40];
         buf.extend_from_slice(&header);
-        buf.extend(core::iter::repeat(0u8).take(417 - 4));
+        buf.extend(core::iter::repeat_n(0u8, 417 - 4));
 
         let mut it = frames_with_resync(&buf);
 
@@ -663,13 +663,13 @@ mod tests {
         let mut buf = Vec::with_capacity(417 + 8 + 417);
         // Frame 1: full 417-byte V1L3 128k frame.
         buf.extend_from_slice(&header);
-        buf.extend(core::iter::repeat(0u8).take(417 - 4));
+        buf.extend(core::iter::repeat_n(0u8, 417 - 4));
         // 8 bytes of garbage between frames — no 0xFF, so parse_header
         // fails BadSyncWord at cursor=417 and resync must scan past these.
         buf.extend_from_slice(&[0x00u8; 8]);
         // Frame 2: another full 417-byte V1L3 128k frame.
         buf.extend_from_slice(&header);
-        buf.extend(core::iter::repeat(0u8).take(417 - 4));
+        buf.extend(core::iter::repeat_n(0u8, 417 - 4));
 
         // Strict iterator: gets the first valid frame, then terminates on
         // the garbage — undercount.

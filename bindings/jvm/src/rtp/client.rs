@@ -517,10 +517,10 @@ jni_native! {
 /// consuming `nIntoH264Receiver` failure paths.
 fn teardown_best_effort(slot: &JniRtspSession) {
     if !slot.torn_down.load(Ordering::Relaxed) {
-        if let Ok(mut guard) = slot.client.lock() {
-            if let Some(c) = guard.as_mut() {
-                let _ = c.teardown();
-            }
+        if let Ok(mut guard) = slot.client.lock()
+            && let Some(c) = guard.as_mut()
+        {
+            let _ = c.teardown();
         }
         slot.torn_down.store(true, Ordering::Relaxed);
     }
@@ -662,11 +662,10 @@ jni_native! {
         // stop routes through RtspCancelHandle, not close).
         if let Some(b) = REGISTRY_SESSION.close(handle as u64) {
             if !b.torn_down.load(Ordering::Relaxed) {
-                if let Ok(mut guard) = b.client.lock() {
-                    if let Some(c) = guard.as_mut() {
+                if let Ok(mut guard) = b.client.lock()
+                    && let Some(c) = guard.as_mut() {
                         let _ = c.teardown(); // best-effort
                     }
-                }
                 b.torn_down.store(true, Ordering::Relaxed);
             }
             drop(b);

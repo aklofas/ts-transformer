@@ -83,19 +83,19 @@ impl PsiSectionAssembler {
             self.declared_total = Some(total);
         }
 
-        if let Some(total) = self.declared_total {
-            if self.buf.len() >= total {
-                // Split off [0..total] as the completed section. Any
-                // trailing bytes ([total..]) are bytes of the NEXT
-                // section that arrived in the same payload chunk (per
-                // H.222.0 §2.4.4.1 section-mapped layout); they remain
-                // buffered for the next `try_complete_section` call.
-                let leftover = self.buf.split_off(total);
-                let complete = core::mem::take(&mut self.buf);
-                self.buf = leftover;
-                self.declared_total = None;
-                return Ok(Some(complete));
-            }
+        if let Some(total) = self.declared_total
+            && self.buf.len() >= total
+        {
+            // Split off [0..total] as the completed section. Any
+            // trailing bytes ([total..]) are bytes of the NEXT
+            // section that arrived in the same payload chunk (per
+            // H.222.0 §2.4.4.1 section-mapped layout); they remain
+            // buffered for the next `try_complete_section` call.
+            let leftover = self.buf.split_off(total);
+            let complete = core::mem::take(&mut self.buf);
+            self.buf = leftover;
+            self.declared_total = None;
+            return Ok(Some(complete));
         }
         Ok(None)
     }

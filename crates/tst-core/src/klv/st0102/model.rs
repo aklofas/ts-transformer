@@ -123,7 +123,7 @@ pub(super) fn decode_utf16_bom(bytes: &[u8]) -> Result<String, ()> {
 }
 
 fn parse_u16_pairs(bytes: &[u8], big_endian: bool) -> Result<Vec<u16>, ()> {
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(());
     }
     let mut out = Vec::with_capacity(bytes.len() / 2);

@@ -29,8 +29,8 @@ When you only need to inspect or build `.ts` bytes (no live transport),
 `tst-core` alone is enough — it has no SRT dependency and skips the
 libsrt / mbedTLS compile step entirely.
 
-**MSRV:** Rust **1.85** (workspace-pinned via `rust-toolchain.toml`).
-Running `cargo` inside the workspace auto-uses 1.85 via rustup.
+**MSRV:** Rust **1.93** (workspace-pinned via `rust-toolchain.toml`).
+Running `cargo` inside the workspace auto-uses 1.93 via rustup.
 
 **Feature flags worth knowing:**
 

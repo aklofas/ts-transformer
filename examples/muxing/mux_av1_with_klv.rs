@@ -199,9 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // would need a real LEB128 encoder. Instead, emit one
         // bounded-size TileGroup; the muxer concatenates everything
         // into the PES payload regardless.
-        let tile_body: Vec<u8> = std::iter::repeat(0xA5)
-            .take(100 + (i as usize % 27))
-            .collect();
+        let tile_body: Vec<u8> = std::iter::repeat_n(0xA5, 100 + (i as usize % 27)).collect();
         au.extend(build_av1_obu(4, &tile_body));
 
         // One AU = one PES packet by construction. The `key` flag

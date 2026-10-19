@@ -752,7 +752,7 @@ pub(crate) mod test_util {
         /// rbsp_trailing_bits(): one '1' bit + zero-pad to byte boundary.
         pub(crate) fn end_rbsp(&mut self) {
             self.write(1, 1);
-            while self.pos % 8 != 0 {
+            while !self.pos.is_multiple_of(8) {
                 self.write(0, 1);
             }
         }

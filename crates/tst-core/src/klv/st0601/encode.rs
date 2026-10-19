@@ -772,13 +772,13 @@ fn str_to_bytes(s: &str) -> Vec<u8> {
 }
 
 fn check_string(tag: u32, s: &str, enc: &Encoding) -> Result<(), KlvEncodeError> {
-    if let Encoding::Utf8 { max_bytes } = enc {
-        if s.len() > *max_bytes {
-            return Err(KlvEncodeError::StringTooLong {
-                tag,
-                max: *max_bytes,
-            });
-        }
+    if let Encoding::Utf8 { max_bytes } = enc
+        && s.len() > *max_bytes
+    {
+        return Err(KlvEncodeError::StringTooLong {
+            tag,
+            max: *max_bytes,
+        });
     }
     Ok(())
 }

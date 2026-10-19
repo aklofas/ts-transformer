@@ -80,7 +80,7 @@ pub const RIST: Pacing = Pacing {
 fn synthetic_h264_au() -> Vec<u8> {
     let mut v = vec![0x00, 0x00, 0x00, 0x01, 0x09, 0x10];
     v.extend([0x00, 0x00, 0x00, 0x01, 0x65]);
-    v.extend(std::iter::repeat(0xab).take(200));
+    v.extend(std::iter::repeat_n(0xab, 200));
     v
 }
 

@@ -233,11 +233,11 @@ impl<F: Format> Core<F> {
         // only differences matter (`pts_base` is taken from the same chain).
         let ts_ext = self.ts_unwrap.unwrap(header.timestamp);
 
-        if let Some(open_ts) = self.au_ts {
-            if header.timestamp != open_ts {
-                // Different timestamp → complete the open AU first.
-                self.complete_au();
-            }
+        if let Some(open_ts) = self.au_ts
+            && header.timestamp != open_ts
+        {
+            // Different timestamp → complete the open AU first.
+            self.complete_au();
         }
 
         // Adopt this timestamp for the current AU.

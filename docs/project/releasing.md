@@ -91,6 +91,9 @@ each in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
      Mbed TLS release (e.g. `0.4.0+3.6.7`) — bump the base number on every
      workspace version sweep, and bump the suffix independently whenever the
      vendored `crates/mbedtls-src/vendor/mbedtls` submodule itself advances.
+   - Re-pin `rust-toolchain.toml` and `rust-version` to stable minus six
+     releases (check `rustup check` for current stable); update the sites
+     `msrv-consistency.sh` lists.
 2. **`main` is green** — `ci`, `jvm-jar`, and `python-wheels` all passing on
    the commit you intend to tag. Every rerun on that commit matches a row of
    the [CI flake ledger](/docs/project/ci-flakes.md), and the latest
