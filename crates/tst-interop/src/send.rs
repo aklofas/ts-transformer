@@ -316,6 +316,7 @@ pub fn send_over_transport(
         // records; the sender builds the records and has nothing to
         // judge.
         klv_rich: None,
+        klv_placement: None,
         // A receiver-side bucketing of demux events against reconnect
         // markers — the sender feeds no demuxer and sees no markers.
         since_reconnect: None,
