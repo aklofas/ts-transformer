@@ -78,7 +78,7 @@ pub(super) fn random_u32() -> u32 {
     // `getrandom` Result type cannot fail on a healthy system; if it
     // somehow does, fall back to a process-stable default (0). Logging
     // a tracing event preserves the diagnostic.
-    if let Err(e) = getrandom::getrandom(&mut buf) {
+    if let Err(e) = getrandom::fill(&mut buf) {
         tracing::warn!(error = %e, "getrandom failed; using zero for RTP randomness field");
     }
     u32::from_be_bytes(buf)

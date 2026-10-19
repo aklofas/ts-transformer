@@ -425,6 +425,6 @@ fn validate_auth(cfg: &FixtureConfig, _method: &str, header: &str) -> bool {
 
 fn rand_session_id() -> u32 {
     let mut bytes = [0u8; 4];
-    getrandom::getrandom(&mut bytes).unwrap();
+    getrandom::fill(&mut bytes).unwrap();
     u32::from_le_bytes(bytes)
 }

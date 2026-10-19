@@ -21,7 +21,7 @@ base64       = { version = "0.23", default-features = false, features = ["std"] 
 bytes        = "1"
 # Random SSRC + initial RTP sequence number per RFC 3550 §5.1.
 # getrandom is the minimal dep — sized for one-shot construction-time use.
-getrandom    = "0.2"
+getrandom    = "0.4"
 md-5         = { version = "0.11", default-features = false }
 sdp-types    = "0.2"
 secrecy      = { workspace = true }

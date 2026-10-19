@@ -281,9 +281,15 @@ pub(crate) fn validate_mount_path(path: &str) -> Result<(), RtspServerError> {
 /// `pub(crate)` so that `handle_play` can seed a fresh per-peer SSRC
 /// for each unicast subscriber.
 pub(crate) fn rand_ssrc() -> u32 {
+    ssrc_from(getrandom::fill)
+}
+
+fn ssrc_from(fill: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>) -> u32 {
     let mut buf = [0u8; 4];
-    let _ = getrandom::getrandom(&mut buf);
-    u32::from_be_bytes(buf)
+    match fill(&mut buf) {
+        Ok(()) => u32::from_be_bytes(buf),
+        Err(_) => 0,
+    }
 }
 
 /// Random initial RTP sequence per RFC 3550 §5.1.
@@ -292,7 +298,7 @@ pub(crate) fn rand_ssrc() -> u32 {
 /// sequence number for each unicast subscriber.
 pub(crate) fn rand_seq() -> u16 {
     let mut buf = [0u8; 2];
-    let _ = getrandom::getrandom(&mut buf);
+    let _ = getrandom::fill(&mut buf);
     u16::from_be_bytes(buf)
 }
 
@@ -1532,5 +1538,26 @@ mod graceful_shutdown_tests {
             crate::rtsp::server::session::session_writer(tokio::io::sink()),
         );
         assert_eq!(entry.peer, peer);
+    }
+}
+
+#[cfg(test)]
+mod rand_ssrc_tests {
+    use super::*;
+
+    #[test]
+    fn ssrc_generation_error_is_not_a_panic() {
+        // A failed fill leaves the buffer unspecified; the documented fallback
+        // is zero whatever it wrote before failing.
+        let failing = |buf: &mut [u8]| {
+            buf.fill(0xff);
+            Err(getrandom::Error::UNSUPPORTED)
+        };
+        assert_eq!(ssrc_from(failing), 0);
+        let ok = |buf: &mut [u8]| {
+            buf.copy_from_slice(&[1, 2, 3, 4]);
+            Ok(())
+        };
+        assert_eq!(ssrc_from(ok), 0x0102_0304);
     }
 }
