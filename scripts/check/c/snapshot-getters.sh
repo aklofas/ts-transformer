@@ -66,8 +66,8 @@ set -euo pipefail
 # Byte semantics for every awk/sort below: BSD awk on the macOS legs runs
 # under the runner's UTF-8 locale and dies ("towc: multibyte conversion
 # failure") when a regex test meets a non-ASCII byte of a scanned file (the
-# Python sources carry em dashes and arrows). The patterns are ASCII, so
-# the C locale changes no match.
+# Python binding's Rust sources carry em dashes and arrows). The patterns are
+# ASCII, so the C locale changes no match.
 export LC_ALL=C
 cd "$(dirname "$0")/../../.."
 
