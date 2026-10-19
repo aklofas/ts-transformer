@@ -13,6 +13,7 @@
 
 set -euo pipefail
 cd "$(dirname "$0")"
+mkdir -p h264 h265
 
 INPUT=(-f lavfi -i 'testsrc=size=320x240:rate=1' -frames:v 1 -pix_fmt yuv420p)
 

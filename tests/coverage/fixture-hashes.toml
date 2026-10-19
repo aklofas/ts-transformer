@@ -451,8 +451,12 @@ path = "crates/tst-webrtc/tests/fixtures/h264/idr_with_sps_pps.h264"
 sha256 = "8934b1672b96957ac018a5c6a8219ee21cfc8c34376d479a74505430e7231237"
 
 [[file]]
+path = "crates/tst-webrtc/tests/fixtures/h265/idr_with_vps_sps_pps.h265"
+sha256 = "b9a81ea4c0218d1bea728bf41bf71beb1430443c1e52e5f7b5141e2038aec4ab"
+
+[[file]]
 path = "crates/tst-webrtc/tests/fixtures/regen.sh"
-sha256 = "298ac1a30a44a51166c73877a3bb079b109fef41759df773d301f50439bab7b0"
+sha256 = "6efb58451405c6cba053b49e356456412e5c4daee41f4fac5e992d020510206a"
 
 [[file]]
 path = "tests/coverage/fuzz-targets.toml"

@@ -1,14 +1,16 @@
 //! Access unit → RTP payloads, for the video track of a WebRTC session.
 //!
-//! The packetization itself is tst-rtp's (RFC 6184 for H.264, without
-//! aggregation packets); this module adapts it to the
+//! The packetization itself is tst-rtp's (RFC 6184 for H.264, RFC 7798 for
+//! H.265, both without aggregation packets); this module adapts it to the
 //! server's per-codec dispatch and keeps the payload size workable. The RTP
 //! header (sequence number, timestamp, SSRC, payload type) is written by the
 //! WebRTC stack, so a payload carries only its bytes and its marker bit.
 
 mod h264;
+mod h265;
 
 pub use h264::H264Packetizer;
+pub use h265::H265Packetizer;
 
 /// One RTP payload of an access unit with its marker bit, which is set on
 /// the access unit's last payload.
@@ -39,14 +41,15 @@ pub trait Packetizer: Send {
     fn packetize(&self, nals: &[&[u8]], mtu_payload: usize) -> Vec<RtpPayload>;
 }
 
-/// The packetizer for `codec`: [`H264Packetizer`].
+/// The packetizer for `codec`: [`H264Packetizer`] or [`H265Packetizer`].
 ///
-/// `None` for a codec WebRTC playback does not carry yet (H.265, H.266, AV1); a mount
+/// `None` for a codec WebRTC playback does not carry (H.266, AV1); a mount
 /// with such a codec is already refused by
 /// [`MountConfig::validate`](crate::MountConfig::validate).
 pub fn packetizer_for(codec: VideoCodec) -> Option<Box<dyn Packetizer>> {
     match codec {
         VideoCodec::H264 => Some(Box::new(H264Packetizer)),
+        VideoCodec::H265 => Some(Box::new(H265Packetizer)),
         _ => None,
     }
 }
