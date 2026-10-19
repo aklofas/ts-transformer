@@ -155,23 +155,57 @@ impl Write for TlsStream {
 /// Best-effort: silently skips certs that rustls rejects, which mirrors
 /// the rustls-native-certs README pattern.
 fn default_roots() -> rustls::RootCertStore {
+    roots_from(rustls_native_certs::load_native_certs()).0
+}
+
+/// The root store built from the OS trust store's load result, with the
+/// number of load errors. Load errors are logged and counted, and every
+/// certificate that did load is kept; with none, the store is empty, as a
+/// failed load gave before rustls-native-certs 0.8 reported partial results.
+fn roots_from(native: rustls_native_certs::CertificateResult) -> (rustls::RootCertStore, usize) {
     let mut roots = rustls::RootCertStore::empty();
-    match rustls_native_certs::load_native_certs() {
-        Ok(certs) => {
-            for cert in certs {
-                let _ = roots.add(cert);
-            }
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "rustls-native-certs: load_native_certs failed");
-        }
+    for cert in native.certs {
+        let _ = roots.add(cert);
     }
-    roots
+    let errors = native.errors.len();
+    if let Some(first) = native.errors.first() {
+        tracing::warn!(errors, error = %first, "rustls-native-certs: load_native_certs failed");
+    }
+    (roots, errors)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn load_error() -> rustls_native_certs::Error {
+        rustls_native_certs::Error {
+            context: "test",
+            kind: rustls_native_certs::ErrorKind::Io {
+                inner: std::io::Error::other("unreadable"),
+                path: "/nonexistent/cert.pem".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn native_roots_partial_load_counts_errors() {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let mut partial = rustls_native_certs::CertificateResult::default();
+        partial.certs.push(cert.cert.der().clone());
+        partial.errors.push(load_error());
+        let (roots, errors) = roots_from(partial);
+        assert_eq!(roots.len(), 1);
+        assert_eq!(errors, 1);
+
+        // No certificate at all: an empty store with a warning, as a failed
+        // load gave before.
+        let mut failed = rustls_native_certs::CertificateResult::default();
+        failed.errors.push(load_error());
+        let (roots, errors) = roots_from(failed);
+        assert!(roots.is_empty());
+        assert_eq!(errors, 1);
+    }
 
     /// The stream wrapper moves to the keepalive and pump threads, so it
     /// must stay `Send`.
