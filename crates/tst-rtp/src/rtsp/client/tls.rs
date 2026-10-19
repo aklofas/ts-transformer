@@ -169,7 +169,7 @@ fn roots_from(native: rustls_native_certs::CertificateResult) -> (rustls::RootCe
     }
     let errors = native.errors.len();
     if let Some(first) = native.errors.first() {
-        tracing::warn!(errors, error = %first, "rustls-native-certs: load_native_certs failed");
+        tracing::warn!(errors, first = %first, "some native certificates failed to load");
     }
     (roots, errors)
 }

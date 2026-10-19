@@ -215,6 +215,35 @@ printf '%s\t%s\t%s\n' "$tmp/gl/ufcs-paren/shell.rs" Publisher::outside "fixture"
 expect "gil locks: a UFCS lock immediately followed by another, both inside detach, is never a finding (only the outside one is)" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/ufcs-paren" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv" bash "$SG"
 expect "gil locks: allowlisting only the outside UFCS lock passes"                                                                      0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/ufcs-paren" SG_LOCK_ALLOWLIST="$tmp/gl/ufcs-paren-allow.tsv" bash "$SG"
 
+# ---- gil locks: detach( / attach( match only as whole names -------------
+# `py.detach(` and `Python::attach(` are the GIL release and re-acquire;
+# `foo_detach(` is not a release (its lock is GIL-held, a finding) and
+# `reattach(` inside a detach block is not a re-acquire (its lock stays
+# released, not a finding). The exact pair below passes; dropping
+# fake_release from it fails, and adding reattach_inside to it fails stale.
+mkdir -p "$tmp/gl/anchor"
+cat > "$tmp/gl/anchor/shell.rs" <<'EOF'
+impl Publisher {
+    fn fake_release(&self) -> u64 {
+        self.foo_detach(|| self.x.lock().unwrap().count)
+    }
+    fn reattach_inside(&self, py: Python<'_>) -> u64 {
+        py.detach(|| self.reattach(|| self.x.lock().unwrap().count))
+    }
+    fn real_attach(&self, py: Python<'_>) {
+        py.detach(|| Python::attach(|_py| { self.x.lock().unwrap(); }))
+    }
+}
+EOF
+GLA="$tmp/gl/anchor/shell.rs"
+printf '%s\t%s\t%s\n' "$GLA" Publisher::fake_release "fixture" "$GLA" Publisher::real_attach "fixture" > "$tmp/gl/anchor-allow.tsv"
+printf '%s\t%s\t%s\n' "$GLA" Publisher::real_attach "fixture" > "$tmp/gl/anchor-nofake.tsv"
+{ cat "$tmp/gl/anchor-allow.tsv"; printf '%s\t%s\t%s\n' "$GLA" Publisher::reattach_inside "fixture"; } > "$tmp/gl/anchor-stale.tsv"
+
+expect "gil locks: py.detach( and Python::attach( still match as whole names" 0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/anchor" SG_LOCK_ALLOWLIST="$tmp/gl/anchor-allow.tsv"  bash "$SG"
+expect "gil locks: foo_detach( is not a GIL release"                         1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/anchor" SG_LOCK_ALLOWLIST="$tmp/gl/anchor-nofake.tsv" bash "$SG"
+expect "gil locks: reattach( is not a GIL re-acquire (stale row fails)"      1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/anchor" SG_LOCK_ALLOWLIST="$tmp/gl/anchor-stale.tsv"  bash "$SG"
+
 # ---- duplicate test helpers (scripts/check/repo/no-duplicate-test-helpers.sh) ----
 # One helper body in two test files is caught (renamed copies too) unless it
 # is allowlisted with a reason; a stale row, a row without a reason and an
