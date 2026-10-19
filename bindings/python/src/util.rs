@@ -374,7 +374,11 @@ pub(crate) fn with_query(url: &str, key: &str, value: impl core::fmt::Display) -
 }
 
 /// Bytes a generated native class holds. A getter on the class hands out a
-/// Python `bytes`, where a plain `Vec<u8>` field would become a `list`.
+/// Python `bytes`. Under PyO3 0.23 and later a plain `Vec<u8>` field would
+/// convert to `bytes` too; the newtype stays because the binding
+/// generator's type map names it and it builds the `PyBytes` explicitly,
+/// so the getter's Python type does not rest on PyO3's `u8` sequence
+/// specialisation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostBytes(pub Vec<u8>);
 

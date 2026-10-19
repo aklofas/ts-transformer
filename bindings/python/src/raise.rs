@@ -170,7 +170,7 @@ pub(crate) fn check_error_kinds(py: Python<'_>) -> PyResult<()> {
 /// `tstrans._native._check_error_kinds()` — the same walk `_native`'s init
 /// performs, exposed so the pytest suite can mutate one enum and watch it
 /// refuse without re-importing the extension.
-// PyO3 0.22's `#[pyfunction]` expansion emits a `PyErr -> PyErr` `.into()`
+// PyO3's `#[pyfunction]` expansion emits a `PyErr -> PyErr` `.into()`
 // on the wrapped result; the lint fires on the generated code, not on
 // anything written here. Scoped to this one item (`errors.rs` carries the
 // same suppression module-wide for the same reason).

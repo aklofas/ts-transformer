@@ -23,8 +23,8 @@
 //! - **Not** wrapped: `cancel_handle()`, `stats()`, dataclass ctors,
 //!   `__enter__` / `__exit__` (these are non-blocking).
 //!
-//! `#![allow(...)]` mirrors `errors.rs` / `mpegts.rs` — PyO3 0.22 +
-//! Rust 2024 macro expansions trip these lints. Hand-written code in
+//! `#![allow(...)]` mirrors `errors.rs` / `mpegts.rs` — PyO3's macro
+//! expansions under Rust 2024 trip these lints. Hand-written code in
 //! this module has no unsafe blocks.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]

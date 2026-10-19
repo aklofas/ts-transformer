@@ -11,8 +11,8 @@
 //! for video, ADTS / MPEG-2 audio frame lists for audio, bytes
 //! fallback for the rest).
 //!
-//! `#![allow(...)]` mirrors the pattern in `errors.rs` — PyO3 0.22 +
-//! Rust 2024 macro expansions trip these lints. Hand-written code in
+//! `#![allow(...)]` mirrors the pattern in `errors.rs` — PyO3's macro
+//! expansions under Rust 2024 trip these lints. Hand-written code in
 //! this module has no unsafe blocks.
 #![expect(
     clippy::disallowed_methods,
