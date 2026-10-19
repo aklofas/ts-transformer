@@ -2464,7 +2464,8 @@ fn klv_placement_verdict(
         detail: format!(
             "{leg_name}: {} record(s) placed, {} out of tolerance (max error {} ticks, \
              tolerance {} ticks), {} unexpected reset(s), {} generation(s) seen against {} \
-             declared{}",
+             declared; the generation budget excused {} backward PTS step(s) and {} timing \
+             anomaly event(s){}",
             m.records,
             m.out_of_tolerance,
             m.max_abs_error_ticks,
@@ -2472,6 +2473,8 @@ fn klv_placement_verdict(
             m.unexpected_resets,
             m.generations,
             generations.map_or_else(|| "none".to_string(), |n| n.to_string()),
+            m.generation_resets_excused,
+            m.timing_anomalies_excused,
             m.first_problem
                 .as_deref()
                 .map_or_else(String::new, |p| format!("; first problem: {p}"))
@@ -5658,8 +5661,10 @@ pub(crate) mod tests {
                 unexpected_resets: 0,
                 tolerance_ticks: 3003,
                 first_problem: None,
-                generation_resets_excused: 0,
-                timing_anomalies_excused: 0,
+                // Video and KLV reset at every boundary, with the PCR jump
+                // and the two PTS anomalies the demuxer raises there.
+                generation_resets_excused: 2 * generations.saturating_sub(1),
+                timing_anomalies_excused: 3 * generations.saturating_sub(1),
             });
             recv_report.publish_mount = generation.map(|generation| PublishMountReport {
                 generation,
@@ -5754,6 +5759,13 @@ pub(crate) mod tests {
         assert!(v.detail.contains("3600"), "{}", v.detail);
         let v = verdict(&r, "klv_placement_rtsp-publish-es");
         assert!(!v.provisional, "{}", v.detail);
+        assert!(
+            v.detail.contains(
+                "the generation budget excused 10 backward PTS step(s) and 15 timing anomaly event(s)"
+            ),
+            "{}",
+            v.detail
+        );
         assert!(verdict(&r, "worker_exits").pass);
         assert!(r.overall_pass, "{:?}", r.verdicts);
     }
