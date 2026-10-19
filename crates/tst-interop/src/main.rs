@@ -133,7 +133,7 @@ fn apply_au_scale(au_sizes: AuSizeMode, au_scale: Option<u32>, context: &str) ->
     }
 }
 
-/// Parse a `--klv-seed N` value, or exit 2 naming the subcommand.
+/// Parse a `--klv-placement N` value (N >= 1), or exit 2 naming the subcommand.
 fn parse_klv_placement(raw: &str, context: &str) -> u64 {
     match raw.parse::<u64>() {
         Ok(n) if n >= 1 => n,
@@ -161,6 +161,7 @@ fn placement_expect(
     })
 }
 
+/// Parse a `--klv-seed N` value, or exit 2 naming the subcommand.
 fn parse_klv_seed(raw: &str, context: &str) -> u64 {
     raw.parse::<u64>().unwrap_or_else(|e| {
         eprintln!("{context}: --klv-seed must be a non-negative integer, got '{raw}': {e}");
