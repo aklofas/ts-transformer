@@ -599,6 +599,7 @@ fn healthy_cell_metrics(video_aus: u64) -> CellMetrics {
         corruption: None,
         corruption_attribution: None,
         klv_rich: None,
+        klv_placement: None,
         since_reconnect: None,
         managed_send: None,
         judged_profile: None,

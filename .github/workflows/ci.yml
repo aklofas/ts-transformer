@@ -768,7 +768,8 @@ jobs:
           # 197->194 (2026-10-17): -UdpUrlError, -TcpUrlError, -RistUrlError, -HlsUrlError (the four
           # small transports report URL errors through tst_core::url::UrlError); +url::query::QueryKey
           # (hidden). The renamed enums/structs keep their attribute.
-          BASELINE=194
+          # 194->195 (2026-10-19): +KlvPlacementMetrics, the KLV placement oracle's report block.
+          BASELINE=195
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
             echo "non_exhaustive count regressed: expected >= $BASELINE, observed $OBSERVED" >&2

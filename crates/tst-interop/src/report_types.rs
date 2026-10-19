@@ -82,6 +82,11 @@ pub struct CellMetrics {
     /// [`KlvRichMetrics`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub klv_rich: Option<KlvRichMetrics>,
+    /// What the KLV placement oracle made of a synchronous-KLV capture's
+    /// record timing, or `None` when the receiver was not asked to judge
+    /// placement. See [`KlvPlacementMetrics`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub klv_placement: Option<KlvPlacementMetrics>,
     /// See [`SinceReconnect`]. `None` until the first reconnect marker,
     /// so an offline `verify` report serializes exactly as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -207,6 +212,33 @@ pub struct KlvRichMetrics {
     #[serde(default)]
     pub damaged_by_injection: u64,
     /// The first record to trip any of the three oracles, described.
+    pub first_problem: Option<String>,
+}
+
+/// Where each synchronous KLV record landed against the video it rides
+/// with, filled in only when the receiver judges placement.
+///
+/// The first video access unit of a generation fixes its origin; the
+/// record with index `k` in that generation is expected `k` KLV periods
+/// later. A generation ends where the video PTS steps backwards, as it
+/// does when a source loops its input.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct KlvPlacementMetrics {
+    /// KLV records judged (every one received).
+    pub records: u64,
+    /// Records whose placement error exceeded `tolerance_ticks`.
+    pub out_of_tolerance: u64,
+    /// Largest absolute placement error seen, in 90 kHz ticks.
+    pub max_abs_error_ticks: i64,
+    /// Generations seen: the first, plus each backward video PTS step
+    /// taken as a generation boundary.
+    pub generations: u64,
+    /// Backward video PTS steps beyond the declared boundaries (each is a failure).
+    pub unexpected_resets: u64,
+    /// The tolerance applied, in ticks.
+    pub tolerance_ticks: i64,
+    /// Index and error of the first out-of-tolerance record, for the failure line.
     pub first_problem: Option<String>,
 }
 

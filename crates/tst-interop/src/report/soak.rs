@@ -2457,6 +2457,7 @@ pub(crate) mod tests {
             corruption: None,
             corruption_attribution: None,
             klv_rich: None,
+            klv_placement: None,
             since_reconnect: None,
             managed_send: None,
             judged_profile: None,
