@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Multi-day endurance ("soak") run: tst-interop legs pushing synthetic
-# MPEG-TS/KLV through impaired UDP proxies (srt, rist) and an external RTSP
-# publisher (rtsp-publish) for hours, sampled for RSS / CPU / descriptors and
-# judged by `tst-interop report soak`. Topology, realism knobs, outputs,
+# MPEG-TS/KLV through impaired UDP proxies (srt, rist) and two external RTSP
+# publishers (rtsp-publish: MP2T; rtsp-publish-es: H.264 + KLV elementary
+# tracks) for hours, sampled for RSS / CPU / descriptors and judged by
+# `tst-interop report soak`. Topology, realism knobs, outputs,
 # verdicts and the fresh-host recipe: scripts/interop/README.md, "Multi-day
 # soak".
 #
@@ -10,7 +11,7 @@
 #   SRT_RECONNECT_MODE=blocking|background bash scripts/interop/soak.sh
 #       [--outdir DIR] [--hours 72] [--seed 1] [--profile auto|NAME]
 #       [--no-corrupt] [--fixed-impairment] [--schedule-phases 12]
-#       [--schedule-phase-s S] [--no-rtsp-publish]
+#       [--schedule-phase-s S] [--no-rtsp-publish] [--no-rtsp-publish-es]
 #       [--rss-slope-threshold-kb-per-hour N]
 #
 #   --outdir DIR        where every artefact lands (default
@@ -29,6 +30,10 @@
 #   --no-rtsp-publish   drop the rtsp-publish leg (no GStreamer needed; the
 #                       leg needs ~1.7 GB free per hour of run, checked at
 #                       launch)
+#   --no-rtsp-publish-es
+#                       drop the rtsp-publish-es leg (H.264 + KLV pushed as
+#                       separate RTP tracks; needs ~0.85 GB free per hour of
+#                       one publisher generation, checked at launch)
 #   --rss-slope-threshold-kb-per-hour N
 #                       RSS-slope gate (default 200 for runs of 72 h or
 #                       more; shorter runs are provisional unless set)
@@ -39,14 +44,16 @@
 #   OUTAGE_PERIOD_S=21600      srt leg: full-drop outage every 6 h,
 #   OUTAGE_DUR_S=90              90 s long
 #   LOSS_PCT=2                 loss under --fixed-impairment (0 isolates outages)
-#   PUBLISHER_DROP_PERIOD_S=600  rtsp-publish leg: publisher drop / re-ANNOUNCE
-#                              period (the run must span at least two)
+#   PUBLISHER_DROP_PERIOD_S=600  rtsp-publish and rtsp-publish-es legs:
+#                              publisher drop / re-ANNOUNCE period, shared
+#                              (the run must span at least two)
 #   RUST_LOG=info              passed to every tst-interop process
 #
 # Prerequisites: Linux; a Rust toolchain via rustup; jq, python3,
 # build-essential, cmake, meson, ninja-build, clang, libclang-dev; for the
 # rtsp-publish leg gst-launch-1.0 with rtspclientsink (gstreamer1.0-tools,
-# -plugins-bad, -rtsp).
+# -plugins-bad, -rtsp); the rtsp-publish-es leg additionally tsdemux and
+# h264parse (gstreamer1.0-plugins-bad).
 #
 # Exit status: `report soak`'s (0 = overall pass); 2 = bad argument, missing
 # prerequisite or setup error. A worker death mid-run writes soak-FAILED
@@ -94,6 +101,7 @@ SCHEDULE_PHASES=12
 # known (both are parsed below, in either order).
 SCHEDULE_PHASE_S=""
 RTSP_PUBLISH=1
+RTSP_PUBLISH_ES=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -123,6 +131,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-rtsp-publish)
       RTSP_PUBLISH=0
+      shift
+      ;;
+    --no-rtsp-publish-es)
+      RTSP_PUBLISH_ES=0
       shift
       ;;
     --schedule-phases)
@@ -269,9 +281,22 @@ if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
     exit 2
   }
 fi
+# The rtsp-publish-es leg's publisher splits the generated TS back into
+# its elementary streams (tsdemux, h264parse) and pushes them as two RTP
+# tracks through the same rtspclientsink.
+if [[ "$RTSP_PUBLISH_ES" -eq 1 ]]; then
+  { have gst-launch-1.0 && gst-inspect-1.0 rtspclientsink >/dev/null 2>&1 &&
+    gst-inspect-1.0 tsdemux >/dev/null 2>&1 && gst-inspect-1.0 h264parse >/dev/null 2>&1; } || {
+    echo "soak.sh: the rtsp-publish-es leg needs gst-launch-1.0 with the rtspclientsink, tsdemux and \
+h264parse elements (gstreamer1.0-tools + gstreamer1.0-rtsp + gstreamer1.0-plugins-bad) — install them, \
+or pass --no-rtsp-publish-es to run without that leg" >&2
+    exit 2
+  }
+fi
 
 mkdir -p "$OUTDIR/srt" "$OUTDIR/rist" "$OUTDIR/logs" "$OUTDIR/pids"
 [[ "$RTSP_PUBLISH" -eq 0 ]] || mkdir -p "$OUTDIR/rtsp-publish/segments"
+[[ "$RTSP_PUBLISH_ES" -eq 0 ]] || mkdir -p "$OUTDIR/rtsp-publish-es"
 RSS_CSV="$OUTDIR/rss.csv"
 printf 'elapsed_s,leg,process,pid,rss_kb\n' >"$RSS_CSV"
 # Two more time series from the same sampler tick — see README.md's
@@ -348,9 +373,12 @@ PUBLISHER_DROP_PERIOD_S=$(canon_int "$PUBLISHER_DROP_PERIOD_S" 92233720368547758
   exit 2
 }
 PUBLISH_GENERATIONS=$((TOTAL_SECONDS / PUBLISHER_DROP_PERIOD_S))
-if [[ "$RTSP_PUBLISH" -eq 1 && "$PUBLISH_GENERATIONS" -lt 2 ]]; then
+# Either publish leg on: both share this generation count.
+ANY_PUBLISH=0
+[[ "$RTSP_PUBLISH" -eq 0 && "$RTSP_PUBLISH_ES" -eq 0 ]] || ANY_PUBLISH=1
+if [[ "$ANY_PUBLISH" -eq 1 && "$PUBLISH_GENERATIONS" -lt 2 ]]; then
   echo "soak.sh: PUBLISHER_DROP_PERIOD_S ($PUBLISHER_DROP_PERIOD_S) leaves fewer than two publisher \
-generations in a ${TOTAL_SECONDS}s run — lower it, or pass --no-rtsp-publish" >&2
+generations in a ${TOTAL_SECONDS}s run — lower it, or pass --no-rtsp-publish --no-rtsp-publish-es" >&2
   exit 2
 fi
 # The four FIXED-impairment knobs. Used only under --fixed-impairment:
@@ -528,7 +556,13 @@ if [[ "$PROFILE" == "auto" ]]; then
 else
   PUBLISH_PROFILE=$PROFILE
 fi
-echo "soak: profiles — srt=$SRT_PROFILE rist=$RIST_PROFILE rtsp-publish=$PUBLISH_PROFILE (--profile $PROFILE, seed $SEED)" >&2
+# The rtsp-publish-es leg always runs klv-sync, whatever --profile says:
+# KLV over RTP needs a timestamp per unit, which only synchronous KLV (PES
+# with a PTS) gives tsdemux to hand on; see the matrix's
+# rtsp-publish/gst-push-es-klv cell.
+PUBLISH_ES_PROFILE=klv-sync
+echo "soak: profiles — srt=$SRT_PROFILE rist=$RIST_PROFILE rtsp-publish=$PUBLISH_PROFILE \
+rtsp-publish-es=$PUBLISH_ES_PROFILE (--profile $PROFILE, seed $SEED)" >&2
 
 # rtsp-publish leg geometry (see that leg's block below). The publisher
 # pushes PUBLISH_CONTENT_S seconds of generated stream, cut into
@@ -540,14 +574,16 @@ echo "soak: profiles — srt=$SRT_PROFILE rist=$RIST_PROFILE rtsp-publish=$PUBLI
 # on loopback), and the last segment has to be fully delivered before
 # `recv`'s own deadline, `--seconds` after its first event. So the tail
 # is 30 s plus a full second per generation, which covers the measured
-# worst case at any period.
+# worst case at any period. The rtsp-publish-es leg replays one
+# PUBLISH_SEGMENT_S source per generation, so it spans the same content
+# and shares the tail.
 PUBLISH_TAIL_S=$((30 + PUBLISH_GENERATIONS))
 PUBLISH_CONTENT_S=$((TOTAL_SECONDS - PUBLISH_TAIL_S))
 PUBLISH_SEGMENT_S=0
-if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
+if [[ "$ANY_PUBLISH" -eq 1 ]]; then
   [[ "$PUBLISH_CONTENT_S" -ge "$PUBLISH_GENERATIONS" ]] || {
-    echo "soak.sh: a ${TOTAL_SECONDS}s run is too short for the rtsp-publish leg's ${PUBLISH_TAIL_S}s tail — \
-lengthen --hours, or pass --no-rtsp-publish" >&2
+    echo "soak.sh: a ${TOTAL_SECONDS}s run is too short for the publish legs' ${PUBLISH_TAIL_S}s tail — \
+lengthen --hours, or pass --no-rtsp-publish --no-rtsp-publish-es" >&2
     exit 2
   }
   PUBLISH_SEGMENT_S=$((PUBLISH_CONTENT_S / PUBLISH_GENERATIONS))
@@ -597,6 +633,24 @@ if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
 else
   PUBLISH_LEG_DECL=null
 fi
+# The rtsp-publish-es leg's declaration, or null for --no-rtsp-publish-es.
+# Same shape as the MPEG-TS leg's, plus `klv_placement`: the receiver
+# judges every KLV record against the video access unit it was generated
+# with. `remuxed` and `klv_records_per_generation` are added together once
+# the source exists (below): validation refuses a remuxed leg with no
+# count, and the count is read from the generated source.
+PUBLISHER_ES_DECL="gst-launch-1.0 filesrc location=rtsp-publish-es/source.ts ! tsdemux name=d d. ! queue ! h264parse ! s.sink_0 d. ! queue ! meta/x-klv ! s.sink_1 rtspclientsink name=s location=rtsp://127.0.0.1:<port>/soak-es protocols=tcp"
+PUBLISH_ES_KLV_SET=compact
+if [[ "$RTSP_PUBLISH_ES" -eq 1 ]]; then
+  PUBLISH_ES_LEG_DECL=$(jq -n --arg profile "$PUBLISH_ES_PROFILE" --arg klv_set "$PUBLISH_ES_KLV_SET" \
+    --argjson klv_seed "$SEED" --arg publisher "$PUBLISHER_ES_DECL" \
+    --argjson period "$PUBLISH_SEGMENT_S" --argjson generations "$PUBLISH_GENERATIONS" \
+    '{profile: $profile, schedule: null, klv_set: $klv_set, klv_seed: $klv_seed,
+      reconnect_mode: null, publisher: $publisher, publisher_drop_period_s: $period,
+      publisher_generations: $generations, klv_placement: true}')
+else
+  PUBLISH_ES_LEG_DECL=null
+fi
 jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
   --argjson slack "$SAMPLER_END_SLACK_S" \
   --argjson corruption "$CORRUPTION_DECL" \
@@ -606,6 +660,7 @@ jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
   --arg klv_set "$KLV_SET" --argjson klv_seed "$SEED" \
   --arg srt_reconnect_mode "$SRT_RECONNECT_MODE" \
   --argjson publish_leg "$PUBLISH_LEG_DECL" \
+  --argjson publish_es_leg "$PUBLISH_ES_LEG_DECL" \
   '{expected_duration_s: $dur, rss_cadence_s: $cad, warmup_fraction: 0.1667,
     sampler_end_slack_s: $slack, expected_worker_exits: {},
     corruption: $corruption, corruption_spec: $corruption_spec,
@@ -615,7 +670,8 @@ jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
            rist: {profile: $rist_profile, schedule: $schedule,
                   klv_set: $klv_set, klv_seed: $klv_seed,
                   reconnect_mode: null}}
-          + (if $publish_leg == null then {} else {"rtsp-publish": $publish_leg} end))}' \
+          + (if $publish_leg == null then {} else {"rtsp-publish": $publish_leg} end)
+          + (if $publish_es_leg == null then {} else {"rtsp-publish-es": $publish_es_leg} end))}' \
   >"$OUTDIR/soak-config.json"
 
 # Fail fast on a declared config that could never pass its own
@@ -711,6 +767,58 @@ PY
   for ((k = 1; k <= PUBLISH_GENERATIONS; k++)); do
     PUBLISH_SEGMENTS+=("$OUTDIR/rtsp-publish/segments/gen-$k.ts")
   done
+fi
+
+# The rtsp-publish-es leg's source: ONE generation (PUBLISH_SEGMENT_S
+# seconds) of klv-sync with compact KLV and realistic AU sizes, replayed
+# by every publisher session and kept for the whole run. Compact, not
+# rich: the rich oracles judge each record by its position in one seeded
+# schedule for the whole capture, and this leg restarts that position
+# every generation; the count and placement oracles are this leg's KLV
+# content check, and rich content stays with the MPEG-TS leg. The server
+# re-muxes the push onto its own PIDs, so no byte digest can hold;
+# instead `verify` counts the source's KLV records, and
+# `delivery_complete_rtsp-publish-es` requires recv to see exactly that
+# many per declared generation.
+#
+# Disk: the source alone, about 0.85 GB per hour of generation length
+# (~140 MB for the default 600 s), checked like the MPEG-TS leg's: a 10 s
+# sample gives the byte rate, and less than 1.2 x the source free exits 2
+# naming --no-rtsp-publish-es.
+if [[ "$RTSP_PUBLISH_ES" -eq 1 ]]; then
+  PUBLISH_ES_GEN_ARGS=(--profile "$PUBLISH_ES_PROFILE" --klv-set "$PUBLISH_ES_KLV_SET" --klv-seed "$SEED"
+    --au-sizes realistic)
+  PUBLISH_ES_SAMPLE="$OUTDIR/rtsp-publish-es/rate-sample.ts"
+  "$BIN" gen --seconds 10 --out "$PUBLISH_ES_SAMPLE" "${PUBLISH_ES_GEN_ARGS[@]}" ||
+    { echo "soak.sh: rtsp-publish-es rate sample gen failed (see above)" >&2; exit 2; }
+  PUBLISH_ES_PEAK_KB=$(awk -v b="$(wc -c <"$PUBLISH_ES_SAMPLE")" -v s="$PUBLISH_SEGMENT_S" \
+    'BEGIN{printf "%d", b / 10 * s / 1024 + 1}')
+  rm -f "$PUBLISH_ES_SAMPLE"
+  PUBLISH_ES_FREE_KB=$(df -Pk "$OUTDIR" | awk 'NR==2{print $4}')
+  if awk -v f="$PUBLISH_ES_FREE_KB" -v p="$PUBLISH_ES_PEAK_KB" 'BEGIN{exit !(f < 1.2 * p)}'; then
+    echo "soak.sh: the rtsp-publish-es leg pre-generates its ${PUBLISH_SEGMENT_S}s source: ~$PUBLISH_ES_PEAK_KB KiB \
+in $OUTDIR, which has $PUBLISH_ES_FREE_KB KiB free (< 1.2 x that) — free space, lower PUBLISHER_DROP_PERIOD_S, \
+or pass --no-rtsp-publish-es" >&2
+    exit 2
+  fi
+  echo "soak: generating the rtsp-publish-es leg's ${PUBLISH_SEGMENT_S}s source (replayed $PUBLISH_GENERATIONS times)..." >&2
+  PUBLISH_ES_SOURCE="$OUTDIR/rtsp-publish-es/source.ts"
+  "$BIN" gen --seconds "$PUBLISH_SEGMENT_S" --out "$PUBLISH_ES_SOURCE" "${PUBLISH_ES_GEN_ARGS[@]}" ||
+    { echo "soak.sh: rtsp-publish-es source gen failed (see above)" >&2; exit 2; }
+  "$BIN" verify --file "$PUBLISH_ES_SOURCE" --expect "$PUBLISH_ES_PROFILE" --seconds "$PUBLISH_SEGMENT_S" \
+    --klv-set "$PUBLISH_ES_KLV_SET" --klv-seed "$SEED" --json "$OUTDIR/rtsp-publish-es/source-verify.json" ||
+    { echo "soak.sh: the rtsp-publish-es source failed its own verify (see above)" >&2; exit 2; }
+  PUBLISH_ES_KLV_PER_GEN=$(jq -r '.metrics.klv_records' "$OUTDIR/rtsp-publish-es/source-verify.json")
+  [[ "$PUBLISH_ES_KLV_PER_GEN" =~ ^[1-9][0-9]*$ ]] || {
+    echo "soak.sh: the rtsp-publish-es source has no KLV records to count (metrics.klv_records: $PUBLISH_ES_KLV_PER_GEN)" >&2
+    exit 2
+  }
+  jq --argjson n "$PUBLISH_ES_KLV_PER_GEN" \
+    '.legs["rtsp-publish-es"].remuxed = true | .legs["rtsp-publish-es"].klv_records_per_generation = $n' \
+    "$OUTDIR/soak-config.json" >"$OUTDIR/soak-config.json.tmp" &&
+    mv "$OUTDIR/soak-config.json.tmp" "$OUTDIR/soak-config.json" &&
+    "$BIN" report soak --config "$OUTDIR/soak-config.json" --validate-only ||
+    { echo "soak.sh: could not declare the rtsp-publish-es KLV count in soak-config.json" >&2; exit 2; }
 fi
 
 declare -A PIDS
@@ -993,6 +1101,74 @@ if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
 fi
 
 # ---------------------------------------------------------------------
+# rtsp-publish-es leg: elementary publisher loop -> recv's publish mount
+# ---------------------------------------------------------------------
+#
+# The same shape as the rtsp-publish leg, but the publisher splits the
+# source back into its elementary streams and rtspclientsink pushes them
+# as two RTP tracks: H.264 (RFC 6184) and KLV (RFC 6597). The mount
+# re-muxes them onto its own PIDs, so recv judges the capture --remuxed
+# (the generator-layout oracles are skipped, every content oracle runs)
+# and --klv-placement holds each KLV record to the video access unit it
+# was generated with, across PUBLISH_GENERATIONS replays of one source.
+#
+# NOT --strict: every generation restarts the source's PTS and PCR, a
+# legitimate backward step on this leg. --klv-placement declares the
+# budget: the placement oracle accepts at most generations - 1 boundaries,
+# and the receiver's invariants excuse one backward PTS step per PID per
+# accepted boundary, plus the demuxer's PTS / PCR anomalies that are that
+# boundary's signature (counted in the report's klv_placement block).
+# Anything beyond the budget fails as on any other leg, and the generation
+# count is held to the declaration by `publisher_generations_rtsp-publish-es`.
+#
+# Worker roles `rtsp-publish-es-recv` and `rtsp-publish-es-publisher`,
+# with the MPEG-TS leg's lifecycle: one gst-launch-1.0 per generation, a
+# failed or overrun generation makes the loop exit 1 at the end of the
+# run, and the loop idles to TOTAL_SECONDS. The source is never deleted:
+# every generation replays it.
+if [[ "$RTSP_PUBLISH_ES" -eq 1 ]]; then
+  RTSP_PUBLISH_ES_PORT=$(free_port tcp)
+  RTSP_PUBLISH_ES_URL="rtsp://127.0.0.1:$RTSP_PUBLISH_ES_PORT/soak-es"
+  "$BIN" recv --url "rtsp-publish://127.0.0.1:$RTSP_PUBLISH_ES_PORT/soak-es" --expect "$PUBLISH_ES_PROFILE" \
+    --seconds "$TOTAL_SECONDS" --json "$OUTDIR/rtsp-publish-es/recv-report.json" --no-klv-digest \
+    --remuxed --klv-placement "$PUBLISH_GENERATIONS" --klv-set "$PUBLISH_ES_KLV_SET" --klv-seed "$SEED" \
+    >"$OUTDIR/logs/rtsp-publish-es-recv.log" 2>&1 &
+  record_pid rtsp-publish-es-recv $!
+  sleep "$SETTLE"
+
+  publisher_es_loop() {
+    local end=$(($(date +%s) + TOTAL_SECONDS)) k=0 failed=0 rc gst_pid=""
+    trap '[[ -z "$gst_pid" ]] || kill "$gst_pid" 2>/dev/null; exit 143' TERM
+    echo "publisher: $PUBLISH_GENERATIONS generation(s) of ${PUBLISH_SEGMENT_S}s, each replaying $PUBLISH_ES_SOURCE, into $RTSP_PUBLISH_ES_URL"
+    for ((k = 1; k <= PUBLISH_GENERATIONS; k++)); do
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) publisher: generation $k ANNOUNCE"
+      timeout --kill-after=5 "$((PUBLISH_SEGMENT_S + 60))" \
+        gst-launch-1.0 filesrc "location=$PUBLISH_ES_SOURCE" ! tsdemux name=d \
+        d. ! queue ! h264parse ! s.sink_0 \
+        d. ! queue ! meta/x-klv ! s.sink_1 \
+        rtspclientsink name=s "location=$RTSP_PUBLISH_ES_URL" protocols=tcp &
+      gst_pid=$!
+      rc=0
+      wait "$gst_pid" || rc=$?
+      gst_pid=""
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) publisher: generation $k ended rc=$rc"
+      [[ "$rc" -eq 0 ]] || failed=$((failed + 1))
+    done
+    k=$((k - 1))
+    until [[ $(date +%s) -ge $end ]]; do
+      sleep 5 &
+      gst_pid=$!
+      wait "$gst_pid" || true
+      gst_pid=""
+    done
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) publisher: done, $failed of $k generation(s) failed"
+    [[ "$failed" -eq 0 ]]
+  }
+  publisher_es_loop >"$OUTDIR/logs/rtsp-publish-es-publisher.log" 2>&1 &
+  record_pid rtsp-publish-es-publisher $!
+fi
+
+# ---------------------------------------------------------------------
 # Sampler: every 30s, VmRSS of every worker PID -> rss.csv; on the same
 # tick, CPU ticks/threads/fds per PID -> proc.csv and host load/memory ->
 # host.csv
@@ -1028,6 +1204,7 @@ record_pid sampler $!
 # the ordinary waits below.
 ALL_ROLES=(srt-recv srt-proxy srt-send rist-recv rist-proxy rist-send)
 [[ "$RTSP_PUBLISH" -eq 0 ]] || ALL_ROLES+=(rtsp-publish-recv rtsp-publish-publisher)
+[[ "$RTSP_PUBLISH_ES" -eq 0 ]] || ALL_ROLES+=(rtsp-publish-es-recv rtsp-publish-es-publisher)
 PREMATURE_DEATH=""
 until [[ $(date +%s) -ge $((DEADLINE - SUPERVISOR_GRACE_S)) || -n "$PREMATURE_DEATH" ]]; do
   for role in "${ALL_ROLES[@]}" sampler; do
@@ -1127,6 +1304,7 @@ REPORT_ARGS=(
   --out "$OUTDIR/soak-results.json"
 )
 [[ "$RTSP_PUBLISH" -eq 0 ]] || REPORT_ARGS+=(--rtsp-publish-recv-report "$OUTDIR/rtsp-publish/recv-report.json")
+[[ "$RTSP_PUBLISH_ES" -eq 0 ]] || REPORT_ARGS+=(--publish-leg "rtsp-publish-es=$OUTDIR/rtsp-publish-es/recv-report.json")
 [[ -z "$RSS_SLOPE_THRESHOLD" ]] || REPORT_ARGS+=(--rss-slope-threshold-kb-per-hour "$RSS_SLOPE_THRESHOLD")
 
 REPORT_RC=0
@@ -1136,11 +1314,16 @@ REPORT_RC=0
   echo "=== soak summary ==="
   echo "outdir: $OUTDIR"
   echo "hours: $HOURS  seed: $SEED  outage_period_s: $OUTAGE_PERIOD_S  outage_dur_s: $OUTAGE_DUR_S"
-  echo "profiles: srt=$SRT_PROFILE rist=$RIST_PROFILE rtsp-publish=$PUBLISH_PROFILE (--profile $PROFILE)  klv_set: rich  au_sizes: realistic"
+  echo "profiles: srt=$SRT_PROFILE rist=$RIST_PROFILE rtsp-publish=$PUBLISH_PROFILE rtsp-publish-es=$PUBLISH_ES_PROFILE (--profile $PROFILE)  klv_set: rich (rtsp-publish-es: compact)  au_sizes: realistic"
   if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
     echo "rtsp-publish: $PUBLISH_GENERATIONS publisher generation(s) of ~${PUBLISH_SEGMENT_S}s (PUBLISHER_DROP_PERIOD_S=$PUBLISHER_DROP_PERIOD_S), source sha256 $(cat "$OUTDIR/rtsp-publish/source.sha256")"
   else
     echo "rtsp-publish: leg disabled (--no-rtsp-publish)"
+  fi
+  if [[ "$RTSP_PUBLISH_ES" -eq 1 ]]; then
+    echo "rtsp-publish-es: $PUBLISH_GENERATIONS publisher generation(s), each replaying one ${PUBLISH_SEGMENT_S}s source (PUBLISHER_DROP_PERIOD_S=$PUBLISHER_DROP_PERIOD_S), $PUBLISH_ES_KLV_PER_GEN KLV record(s) per generation"
+  else
+    echo "rtsp-publish-es: leg disabled (--no-rtsp-publish-es)"
   fi
   echo "reconnect_mode (declared): srt=$SRT_RECONNECT_MODE  rist=none (sender not managed)"
   if [[ "$FIXED_IMPAIRMENT" -eq 1 ]]; then
@@ -1181,7 +1364,7 @@ REPORT_RC=0
     jq -r '(.verdicts | map({(.name): .pass}) | add) as $v
       | .publish_legs[]
       | "\(.leg): video AUs received=\(.recv_video_aus)  publishers ended=\(.publish_mount.generation // "unrecorded")"
-        + " (floor \(.min_generations // "none"))  delivery_complete (recv stream_sha256 = source): "
+        + " (floor \(.min_generations // "none"))  delivery_complete: "
         + ($v["delivery_complete_" + .leg] | if . == null then "not judged" else tostring end)' \
       "$OUTDIR/soak-results.json"
     echo
