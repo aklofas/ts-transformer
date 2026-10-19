@@ -772,7 +772,8 @@ jobs:
           # 195->196 (2026-10-19): +report::soak::MemoryGate, the soak's declared launch-time memory gate.
           # 196->202 (2026-10-19): the new tst-webrtc crate's WhepServerError, PushError,
           # MountKind, AudioPolicy, KlvCarriage and MountConfig.
-          BASELINE=202
+          # 202->203 (2026-10-19): +tst-webrtc sei::KlvSei.
+          BASELINE=203
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
             echo "non_exhaustive count regressed: expected >= $BASELINE, observed $OBSERVED" >&2
@@ -1098,7 +1099,7 @@ jobs:
       - name: check-fuzz-targets (manifest matches fuzz dirs)
         run: bash scripts/check/repo/fuzz-targets.sh
 
-      # The three fuzz crates are separate workspaces, so the root
+      # The four fuzz crates are separate workspaces, so the root
       # `cargo fmt --all -- --check` in the build job never sees them; two of
       # them had drifted unformatted before this step existed. Formats with
       # the pinned toolchain the setup step installed (RUSTUP_TOOLCHAIN), not
@@ -1107,7 +1108,7 @@ jobs:
       # drift over time. Only the fuzz COMPILE needs nightly.
       - name: cargo fmt --check (fuzz workspaces, pinned toolchain)
         run: |
-          for d in crates/tst-core/fuzz crates/tst-srt/fuzz crates/tst-rtp/fuzz; do
+          for d in crates/tst-core/fuzz crates/tst-srt/fuzz crates/tst-rtp/fuzz crates/tst-webrtc/fuzz; do
             (cd "$d" && cargo fmt --all -- --check)
           done
 
@@ -1128,6 +1129,11 @@ jobs:
       - name: Compile-check tst-rtp fuzz targets
         run: |
           cd crates/tst-rtp/fuzz
+          cargo +nightly fuzz check
+
+      - name: Compile-check tst-webrtc fuzz targets
+        run: |
+          cd crates/tst-webrtc/fuzz
           cargo +nightly fuzz check
 
   python-core:

@@ -144,7 +144,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crate: [tst-core, tst-rtp, tst-srt]
+        crate: [tst-core, tst-rtp, tst-srt, tst-webrtc]
     steps:
       - uses: actions/checkout@v5
         with:
