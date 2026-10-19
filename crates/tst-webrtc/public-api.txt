@@ -1,5 +1,27 @@
 pub mod tst_webrtc
 pub use tst_webrtc::VideoCodec
+pub mod tst_webrtc::clock
+pub struct tst_webrtc::clock::SystemClock
+impl core::clone::Clone for tst_webrtc::clock::SystemClock
+pub fn tst_webrtc::clock::SystemClock::clone(&self) -> tst_webrtc::clock::SystemClock
+impl core::default::Default for tst_webrtc::clock::SystemClock
+pub fn tst_webrtc::clock::SystemClock::default() -> tst_webrtc::clock::SystemClock
+impl core::fmt::Debug for tst_webrtc::clock::SystemClock
+pub fn tst_webrtc::clock::SystemClock::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_webrtc::clock::SystemClock
+impl tst_webrtc::clock::Clock for tst_webrtc::clock::SystemClock
+pub fn tst_webrtc::clock::SystemClock::now(&self) -> std::time::Instant
+impl core::marker::Freeze for tst_webrtc::clock::SystemClock
+impl core::marker::Send for tst_webrtc::clock::SystemClock
+impl core::marker::Sync for tst_webrtc::clock::SystemClock
+impl core::marker::Unpin for tst_webrtc::clock::SystemClock
+impl core::marker::UnsafeUnpin for tst_webrtc::clock::SystemClock
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::clock::SystemClock
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::clock::SystemClock
+pub trait tst_webrtc::clock::Clock: core::marker::Send + core::marker::Sync + 'static
+pub fn tst_webrtc::clock::Clock::now(&self) -> std::time::Instant
+impl tst_webrtc::clock::Clock for tst_webrtc::clock::SystemClock
+pub fn tst_webrtc::clock::SystemClock::now(&self) -> std::time::Instant
 pub mod tst_webrtc::config
 pub use tst_webrtc::config::VideoCodec
 #[non_exhaustive] pub enum tst_webrtc::config::AudioPolicy
@@ -633,3 +655,24 @@ impl core::marker::Unpin for tst_webrtc::stats::SessionStats
 impl core::marker::UnsafeUnpin for tst_webrtc::stats::SessionStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::stats::SessionStats
 impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::stats::SessionStats
+pub struct tst_webrtc::SystemClock
+impl core::clone::Clone for tst_webrtc::clock::SystemClock
+pub fn tst_webrtc::clock::SystemClock::clone(&self) -> tst_webrtc::clock::SystemClock
+impl core::default::Default for tst_webrtc::clock::SystemClock
+pub fn tst_webrtc::clock::SystemClock::default() -> tst_webrtc::clock::SystemClock
+impl core::fmt::Debug for tst_webrtc::clock::SystemClock
+pub fn tst_webrtc::clock::SystemClock::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_webrtc::clock::SystemClock
+impl tst_webrtc::clock::Clock for tst_webrtc::clock::SystemClock
+pub fn tst_webrtc::clock::SystemClock::now(&self) -> std::time::Instant
+impl core::marker::Freeze for tst_webrtc::clock::SystemClock
+impl core::marker::Send for tst_webrtc::clock::SystemClock
+impl core::marker::Sync for tst_webrtc::clock::SystemClock
+impl core::marker::Unpin for tst_webrtc::clock::SystemClock
+impl core::marker::UnsafeUnpin for tst_webrtc::clock::SystemClock
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::clock::SystemClock
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::clock::SystemClock
+pub trait tst_webrtc::Clock: core::marker::Send + core::marker::Sync + 'static
+pub fn tst_webrtc::Clock::now(&self) -> std::time::Instant
+impl tst_webrtc::clock::Clock for tst_webrtc::clock::SystemClock
+pub fn tst_webrtc::clock::SystemClock::now(&self) -> std::time::Instant

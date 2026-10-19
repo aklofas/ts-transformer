@@ -4,6 +4,7 @@
 //! heading of the server type.
 #![forbid(unsafe_code)]
 
+pub mod clock;
 pub mod config;
 pub mod error;
 pub mod mount;
@@ -17,13 +18,25 @@ pub mod url;
 #[doc(hidden)]
 pub mod server {
     pub mod http;
+    #[expect(
+        dead_code,
+        reason = "the server's bind spawns the media thread; until then only the waker is used"
+    )]
     pub(crate) mod media;
     pub mod negotiate;
+    #[expect(
+        dead_code,
+        reason = "the media thread's sessions; spawned by the server's bind"
+    )]
+    pub(crate) mod session;
 }
 
 #[cfg(feature = "tls")]
 mod tls;
 
+#[doc(hidden)]
+pub use clock::ManualClock;
+pub use clock::{Clock, SystemClock};
 pub use config::{AudioPolicy, KlvCarriage, MountConfig, MountKind, VideoCodec};
 pub use error::{PushError, WhepServerError};
 pub use mount::MountHandle;
