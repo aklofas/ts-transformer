@@ -455,10 +455,26 @@ path = "crates/tst-webrtc/tests/fixtures/h265/idr_with_vps_sps_pps.h265"
 sha256 = "b9a81ea4c0218d1bea728bf41bf71beb1430443c1e52e5f7b5141e2038aec4ab"
 
 [[file]]
+path = "crates/tst-webrtc/tests/fixtures/offers/README.md"
+sha256 = "a360ae8472d5cee2f16ed6bf9c04ccd8e759b4c159c6e8c1cec18fd64aad6c88"
+
+[[file]]
+path = "crates/tst-webrtc/tests/fixtures/offers/chrome-155.sdp"
+sha256 = "9f1fa4546c7e57bb9370f6a7f48b8442f355cb6d42d3e01f0c4fa3eae63ae0b6"
+
+[[file]]
+path = "crates/tst-webrtc/tests/fixtures/offers/firefox-144.sdp"
+sha256 = "df0f97d9877abee03875bc710bb7ce0734bd12cc198bff68f6b62a3870906e4a"
+
+[[file]]
+path = "crates/tst-webrtc/tests/fixtures/offers/safari-26.sdp"
+sha256 = "dae1927f1180dfe4e4878160be7029747bd2010e79a8674cba840a4fa7233f0e"
+
+[[file]]
 path = "crates/tst-webrtc/tests/fixtures/regen.sh"
 sha256 = "6efb58451405c6cba053b49e356456412e5c4daee41f4fac5e992d020510206a"
 
 [[file]]
 path = "tests/coverage/fuzz-targets.toml"
-sha256 = "fc1ab5fae697823295282bbcac59b52042581b3dbf2b62a946b06dd03f706331"
+sha256 = "c66362959362a7263d6ba3c11fa00b13104f098c7fd0b02f5fd379cad321c09b"
 

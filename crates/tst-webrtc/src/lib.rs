@@ -12,8 +12,13 @@ pub mod sei;
 pub mod stats;
 pub mod url;
 
-pub(crate) mod server {
+/// The server's internals. Public only for the crate's integration tests
+/// and fuzz targets; not a supported API.
+#[doc(hidden)]
+pub mod server {
+    pub mod http;
     pub(crate) mod media;
+    pub mod negotiate;
 }
 
 #[cfg(feature = "tls")]

@@ -159,15 +159,24 @@ zip_seeds demux_pes_reassembly   crates/tst-core/tests/fixtures/regression
 zip_seeds ts_parser              crates/tst-core/tests/fixtures/regression
 
 # Committed synthetic seeds — canonical under crates/<crate>/fuzz/seeds/<target>/.
-zip_seeds mpegts_au_cell_read       crates/tst-core/fuzz/seeds/mpegts_au_cell_read
-zip_seeds audio_frame_iter          crates/tst-core/fuzz/seeds/audio_frame_iter
-zip_seeds url_parse                 crates/tst-srt/fuzz/seeds/url_parse
-zip_seeds mux_pull                  crates/tst-core/fuzz/seeds/mux_pull
-zip_seeds mux_push_klv              crates/tst-core/fuzz/seeds/mux_push_klv
-zip_seeds mux_push_video            crates/tst-core/fuzz/seeds/mux_push_video
-zip_seeds parse_parameter_sets      crates/tst-core/fuzz/seeds/parse_parameter_sets
-zip_seeds parse_av1_sequence_header crates/tst-core/fuzz/seeds/parse_av1_sequence_header
-zip_seeds klv_sei_parse             crates/tst-webrtc/fuzz/seeds/klv_sei_parse
+# Every seeds directory is zipped for the target it is named after, so a new
+# seeds directory ships without editing this file (a hand-written list here
+# once skipped seven of them). A directory whose name is not a fuzz target of
+# its crate fails the build, and so does a non-empty one that yields no zip.
+for seeds_dir in crates/*/fuzz/seeds/*/; do
+  seeds_dir="${seeds_dir%/}"
+  target_name=$(basename "$seeds_dir")
+  crate_fuzz_dir="${seeds_dir%/seeds/*}"
+  if [ ! -f "$crate_fuzz_dir/fuzz_targets/$target_name.rs" ]; then
+    echo "ERROR: seeds directory $seeds_dir names no fuzz target ($crate_fuzz_dir/fuzz_targets/$target_name.rs)"
+    exit 1
+  fi
+  zip_seeds "$target_name" "$seeds_dir"
+  if ls "$seeds_dir"/* >/dev/null 2>&1 && [ ! -f "$OUT/${target_name}_seed_corpus.zip" ]; then
+    echo "ERROR: seeds directory $seeds_dir produced no $OUT/${target_name}_seed_corpus.zip"
+    exit 1
+  fi
+done
 
 # Assert every declared harness shipped as an executable driver. This
 # counts drivers only — NOT the corpora/dict/options files above — so a

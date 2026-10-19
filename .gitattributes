@@ -15,3 +15,7 @@ bindings/jvm/src/main/java/org/tstrans/mpegts/*.java text eol=lf
 bindings/jvm/src/main/java/org/tstrans/shells/*.java text eol=lf
 bindings/jvm/src/main/java/org/tstrans/hls/*.java text eol=lf
 bindings/jvm/src/main/java/org/tstrans/pipeline/*.java text eol=lf
+# SDP fixtures keep the CRLF line ends a browser emits, on every platform.
+crates/tst-webrtc/tests/fixtures/offers/*.sdp -text
+crates/tst-webrtc/fuzz/seeds/whep_sdp_select/*.sdp -text
+crates/tst-webrtc/fuzz/seeds/whep_http_request/*.http -text

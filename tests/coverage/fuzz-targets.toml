@@ -154,3 +154,11 @@ name = "url_parse"
 crate = "tst-webrtc"
 name = "klv_sei_parse"
 
+[[target]]
+crate = "tst-webrtc"
+name = "whep_http_request"
+
+[[target]]
+crate = "tst-webrtc"
+name = "whep_sdp_select"
+
