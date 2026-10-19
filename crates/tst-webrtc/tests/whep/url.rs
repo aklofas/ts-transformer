@@ -40,9 +40,9 @@ fn full_query() {
 #[test]
 fn wheps_without_keys_is_refused() {
     for s in [
-        "wheps://127.0.0.1:8443",
-        "wheps://127.0.0.1:8443?cert=/c.pem",
-        "wheps://127.0.0.1:8443?key=/k.pem",
+        "wheps://192.0.2.10:8443",
+        "wheps://192.0.2.10:8443?cert=/c.pem",
+        "wheps://192.0.2.10:8443?key=/k.pem",
     ] {
         match WhepUrl::parse(s) {
             Err(UrlError::BadQueryValue { key, .. }) => assert_eq!(key, "cert", "{s}"),
@@ -62,7 +62,7 @@ fn hostname_is_refused() {
 #[test]
 fn unknown_key_is_refused() {
     assert!(matches!(
-        WhepUrl::parse("whep://127.0.0.1:8889?stun=x"),
+        WhepUrl::parse("whep://192.0.2.10:8889?stun=x"),
         Err(UrlError::UnknownQueryKey { key }) if key == "stun"
     ));
 }
@@ -71,12 +71,12 @@ fn unknown_key_is_refused() {
 fn max_viewers_bounds() {
     for v in ["0", "65", "x"] {
         assert!(matches!(
-            WhepUrl::parse(&format!("whep://127.0.0.1:1?max_viewers={v}")),
+            WhepUrl::parse(&format!("whep://192.0.2.10:1?max_viewers={v}")),
             Err(UrlError::BadQueryValue { key, .. }) if key == "max_viewers"
         ));
     }
     assert_eq!(
-        WhepUrl::parse("whep://127.0.0.1:1?max_viewers=64")
+        WhepUrl::parse("whep://192.0.2.10:1?max_viewers=64")
             .unwrap()
             .max_viewers,
         64
@@ -86,8 +86,8 @@ fn max_viewers_bounds() {
 #[test]
 fn a_mount_path_in_the_bind_url_is_refused() {
     assert!(matches!(
-        WhepUrl::parse("whep://127.0.0.1:1/cam"),
+        WhepUrl::parse("whep://192.0.2.10:1/cam"),
         Err(UrlError::BadQueryValue { key, .. }) if key == "path"
     ));
-    assert!(WhepUrl::parse("whep://127.0.0.1:1/").is_ok());
+    assert!(WhepUrl::parse("whep://192.0.2.10:1/").is_ok());
 }
