@@ -68,7 +68,7 @@ fn tcps_loopback_carries_ts_packets() {
     let dir = tempfile::tempdir().unwrap();
     let (cert_path, key_path) = (dir.path().join("cert.pem"), dir.path().join("key.pem"));
     std::fs::write(&cert_path, cert.cert.pem()).unwrap();
-    std::fs::write(&key_path, cert.key_pair.serialize_pem()).unwrap();
+    std::fs::write(&key_path, cert.signing_key.serialize_pem()).unwrap();
     // The listener has no local-address getter; take a free port first.
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()

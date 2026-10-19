@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn tls_cert_pem_on_rtsps_bind_starts() {
         let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
-        let (cert_pem, key_pem) = (cert.cert.pem(), cert.key_pair.serialize_pem());
+        let (cert_pem, key_pem) = (cert.cert.pem(), cert.signing_key.serialize_pem());
         let b = TstRtspServerBuilder::from_url("rtsps://127.0.0.1:0").expect("test url parses");
         let raw = TstRtspServerBuilder::into_raw(Box::new(b));
         unsafe {

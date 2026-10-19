@@ -38,7 +38,7 @@ impl SelfSignedCert {
         ])
         .expect("rcgen self-signed cert generation");
         let cert_pem = cert.cert.pem();
-        let key_pem = cert.key_pair.serialize_pem();
+        let key_pem = cert.signing_key.serialize_pem();
 
         let dir = tempfile::tempdir().expect("create tempdir for TLS fixture");
         let cert_path = dir.path().join("cert.pem");
