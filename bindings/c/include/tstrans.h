@@ -207,9 +207,9 @@ typedef enum tst_stream_end_reason {
 } tst_stream_end_reason;
 
 enum tst_video_codec
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   TST_VIDEO_CODEC_H264 = 0,
   TST_VIDEO_CODEC_H265 = 1,
@@ -217,7 +217,11 @@ enum tst_video_codec
   TST_VIDEO_CODEC_AV1 = 3,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_video_codec tst_video_codec;
+#else
 typedef int32_t tst_video_codec;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -226,9 +230,9 @@ typedef int32_t tst_video_codec;
  * and on `tst_stream_info_t.codec`.
  */
 enum tst_audio_codec
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   TST_AUDIO_CODEC_MP2 = 0,
   TST_AUDIO_CODEC_AAC = 1,
@@ -236,7 +240,11 @@ enum tst_audio_codec
   TST_AUDIO_CODEC_AC3 = 3,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_audio_codec tst_audio_codec;
+#else
 typedef int32_t tst_audio_codec;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 typedef enum tst_klv_stream_type {
@@ -386,15 +394,19 @@ typedef enum tst_st0601_field_state {
  * `TST_NONCONFORMANT_CODE_AV1_MISSING_TS_OBU_FRAMING` issues.
  */
 enum tst_av1_carriage_mode
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   TST_AV1_CARRIAGE_MODE_MPEG2_TS_BINDING = 0,
   TST_AV1_CARRIAGE_MODE_INTEROP_RAW_OBU = 1,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_av1_carriage_mode tst_av1_carriage_mode;
+#else
 typedef int32_t tst_av1_carriage_mode;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -408,9 +420,9 @@ typedef int32_t tst_av1_carriage_mode;
  * `Complete = 3` (0b11).
  */
 enum tst_cell_fragment_indication
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   TST_CELL_FRAGMENT_INDICATION_MIDDLE = 0,
   TST_CELL_FRAGMENT_INDICATION_LAST = 1,
@@ -418,7 +430,11 @@ enum tst_cell_fragment_indication
   TST_CELL_FRAGMENT_INDICATION_COMPLETE = 3,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_cell_fragment_indication tst_cell_fragment_indication;
+#else
 typedef int32_t tst_cell_fragment_indication;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -427,9 +443,9 @@ typedef int32_t tst_cell_fragment_indication;
  * PesOversize's `pid` live on the union fields.
  */
 enum tst_discontinuity_kind
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   TST_DISCONTINUITY_KIND_CONTINUITY_JUMP = 0,
   TST_DISCONTINUITY_KIND_PES_OVERSIZE = 1,
@@ -437,7 +453,11 @@ enum tst_discontinuity_kind
   TST_DISCONTINUITY_KIND_ADAPTATION_FIELD_FLAG = 3,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_discontinuity_kind tst_discontinuity_kind;
+#else
 typedef int32_t tst_discontinuity_kind;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -447,9 +467,9 @@ typedef int32_t tst_discontinuity_kind;
  * across tst-c versions; new codes append at the end.
  */
 enum tst_e
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   TST_E_SUCCESS = 0,
   TST_E_INVALID_CONFIG = -1,
@@ -708,7 +728,11 @@ enum tst_e
   TST_E_KLV_DECODE = -48,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_e tst_e;
+#else
 typedef int32_t tst_e;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -716,9 +740,9 @@ typedef int32_t tst_e;
  * `#define TST_EVENT_*` blocks.
  */
 enum tst_event_kind
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   TST_EVENT_KIND_PROGRAM_MAP = 1,
   TST_EVENT_KIND_SAMPLE = 2,
@@ -740,7 +764,11 @@ enum tst_event_kind
   TST_EVENT_KIND_RECONNECT_DISCONTINUITY = 6,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_event_kind tst_event_kind;
+#else
 typedef int32_t tst_event_kind;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -748,16 +776,20 @@ typedef int32_t tst_event_kind;
  * On `tst_klv_link_t.source` and on synthetic KLV-link inference.
  */
 enum tst_link_source
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   TST_LINK_SOURCE_DECLARED = 0,
   TST_LINK_SOURCE_INFERRED = 1,
   TST_LINK_SOURCE_OVERRIDE = 2,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_link_source tst_link_source;
+#else
 typedef int32_t tst_link_source;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -766,16 +798,20 @@ typedef int32_t tst_link_source;
  * on `tst_event_t.u.metadata` fields, zero/false for other kinds.
  */
 enum tst_metadata_kind
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   TST_METADATA_KIND_KLV_SYNC_AU_CELL = 0,
   TST_METADATA_KIND_KLV_ASYNC = 1,
   TST_METADATA_KIND_UNKNOWN = 2,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_metadata_kind tst_metadata_kind;
+#else
 typedef int32_t tst_metadata_kind;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -784,9 +820,9 @@ typedef int32_t tst_metadata_kind;
  * `issue_code == TST_NONCONFORMANT_CODE_MULTI_CELL_AU`.
  */
 enum tst_multi_cell_au_reason
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   /**
    * A continuation cell (`Middle` or `Last`) arrived without a prior
@@ -830,7 +866,11 @@ enum tst_multi_cell_au_reason
   TST_MULTI_CELL_AU_REASON_TOO_MANY_PIDS = 5,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_multi_cell_au_reason tst_multi_cell_au_reason;
+#else
 typedef int32_t tst_multi_cell_au_reason;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -839,9 +879,9 @@ typedef int32_t tst_multi_cell_au_reason;
  * (zero/null for variants that don't carry them).
  */
 enum tst_nonconformant_code
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   TST_NONCONFORMANT_CODE_STREAM_TYPE_MISMATCH_SYNC_ON_ASYNC_PID = 0,
   TST_NONCONFORMANT_CODE_STREAM_TYPE_MISMATCH_ASYNC_ON_SYNC_PID = 1,
@@ -992,7 +1032,11 @@ enum tst_nonconformant_code
   TST_NONCONFORMANT_CODE_PSI_SYNTAX = 37,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_nonconformant_code tst_nonconformant_code;
+#else
 typedef int32_t tst_nonconformant_code;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -1001,9 +1045,9 @@ typedef int32_t tst_nonconformant_code;
  * `issue_code == TST_NONCONFORMANT_CODE_PCR_MALFORMED`.
  */
 enum tst_pcr_malformed_kind
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   /**
    * Six reserved bits of PCR byte 4 (mask `0x7E`) were not all 1.
@@ -1015,7 +1059,11 @@ enum tst_pcr_malformed_kind
   TST_PCR_MALFORMED_KIND_EXTENSION_OUT_OF_RANGE = 1,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_pcr_malformed_kind tst_pcr_malformed_kind;
+#else
 typedef int32_t tst_pcr_malformed_kind;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 #if defined(TST_HAS_HLS)
@@ -1024,9 +1072,9 @@ typedef int32_t tst_pcr_malformed_kind;
  * returned by [`tst_publisher_get_kind`].
  */
 enum tst_publisher_kind
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
 #if defined(TST_HAS_HLS)
   /**
@@ -1036,7 +1084,11 @@ enum tst_publisher_kind
 #endif
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_publisher_kind tst_publisher_kind;
+#else
 typedef uint32_t tst_publisher_kind;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 #endif
 
@@ -1046,9 +1098,9 @@ typedef uint32_t tst_publisher_kind;
  * stream_type) live on the per-event union fields, not on this enum.
  */
 enum tst_stream_kind
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   TST_STREAM_KIND_VIDEO = 0,
   TST_STREAM_KIND_AUDIO = 1,
@@ -1058,7 +1110,11 @@ enum tst_stream_kind
   TST_STREAM_KIND_UNKNOWN = 5,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_stream_kind tst_stream_kind;
+#else
 typedef int32_t tst_stream_kind;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -1073,9 +1129,9 @@ typedef int32_t tst_stream_kind;
  * is 4-valued; this mapping is the truth.
  */
 enum tst_strict_mode
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   TST_STRICT_MODE_OFF = 0,
   TST_STRICT_MODE_TIMING_ONLY = 1,
@@ -1083,7 +1139,11 @@ enum tst_strict_mode
   TST_STRICT_MODE_FULL = 3,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_strict_mode tst_strict_mode;
+#else
 typedef int32_t tst_strict_mode;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -1092,9 +1152,9 @@ typedef int32_t tst_strict_mode;
  * and on `tst_stream_info_t.codec`.
  */
 enum tst_subtitle_codec
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   TST_SUBTITLE_CODEC_DVB_SUBTITLING = 0,
   TST_SUBTITLE_CODEC_DVB_TELETEXT = 1,
@@ -1102,7 +1162,11 @@ enum tst_subtitle_codec
   TST_SUBTITLE_CODEC_WEB_VTT_IN_TS = 3,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum tst_subtitle_codec tst_subtitle_codec;
+#else
 typedef int32_t tst_subtitle_codec;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -1566,6 +1630,8 @@ typedef struct TstUdpReceiver TstUdpReceiver;
  */
 typedef struct TstUdpSender TstUdpSender;
 #endif
+
+typedef struct UniversalLabel UniversalLabel;
 
 /**
  * `repr(C)` mirror of `tst_core::transport::SocketStats`. Size 120 B.
@@ -2454,6 +2520,12 @@ typedef struct tst_st0601_geometry_t {
   double corner_lon_p4_deg;
   uint8_t corner_lon_p4_state;
 } tst_st0601_geometry_t;
+
+
+
+
+
+
 
 /**
  * Sentinel returned by `tst_mux_config_add_program` on failure (null cfg
