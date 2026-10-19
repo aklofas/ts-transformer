@@ -769,7 +769,8 @@ jobs:
           # small transports report URL errors through tst_core::url::UrlError); +url::query::QueryKey
           # (hidden). The renamed enums/structs keep their attribute.
           # 194->195 (2026-10-19): +KlvPlacementMetrics, the KLV placement oracle's report block.
-          BASELINE=195
+          # 195->196 (2026-10-19): +report::soak::MemoryGate, the soak's declared launch-time memory gate.
+          BASELINE=196
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
             echo "non_exhaustive count regressed: expected >= $BASELINE, observed $OBSERVED" >&2

@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +20,7 @@ use crate::report_types::{
 /// also shrink its own warmup exclusion.
 const MAX_WARMUP_S: f64 = 30.0 * 60.0;
 
-const KNOWN_LEGS: [&str; 3] = ["srt", "rist", "rtsp-publish"];
+const KNOWN_LEGS: [&str; 4] = ["srt", "rist", "rtsp-publish", "rtsp-publish-es"];
 
 /// Legs fed by an external publisher RECORDing into `recv`'s publish
 /// mount instead of by a `tst-interop send` through an impairment
@@ -29,7 +29,12 @@ const KNOWN_LEGS: [&str; 3] = ["srt", "rist", "rtsp-publish"];
 /// end of every generation by design), they have no proxy-stats or
 /// send report, and they are judged by [`build_soak_results`]'s
 /// publish-leg verdicts rather than the transport-leg ones.
-const PUBLISH_LEGS: [&str; 1] = ["rtsp-publish"];
+///
+/// `rtsp-publish` pushes an MP2T stream the mount forwards byte for
+/// byte; `rtsp-publish-es` pushes elementary H.264 + KLV tracks the
+/// mount re-muxes, so its bytes change in flight and it declares
+/// [`LegDeclaration::remuxed`].
+pub const PUBLISH_LEGS: [&str; 2] = ["rtsp-publish", "rtsp-publish-es"];
 
 /// The per-leg corruption verdict family, in the order it is
 /// emitted. Named once so the tap-disabled and no-attribution arms
@@ -160,7 +165,7 @@ fn leg_processes(leg: &str) -> &'static [&'static str] {
 /// local smoke test, never launches the `rist-*` three) — but a key
 /// outside this whole set, for ANY run, is always an unconditional
 /// failure, never silently ignored.
-const WORKER_ROLES: [&str; 8] = [
+const WORKER_ROLES: [&str; 10] = [
     "srt-send",
     "srt-proxy",
     "srt-recv",
@@ -169,6 +174,8 @@ const WORKER_ROLES: [&str; 8] = [
     "rist-recv",
     "rtsp-publish-recv",
     "rtsp-publish-publisher",
+    "rtsp-publish-es-recv",
+    "rtsp-publish-es-publisher",
 ];
 /// Fraction of the cadence-implied post-warmup sample count a
 /// process must actually have.
@@ -300,6 +307,28 @@ pub struct SoakConfig {
     /// declaration.
     #[serde(default)]
     pub legs: BTreeMap<String, LegDeclaration>,
+    /// The memory prediction `soak.sh` checked before launching any
+    /// worker. Recorded into [`SoakResults::limitations`] for
+    /// provenance; no verdict judges it. `#[serde(default)]` so a
+    /// config written before the gate existed still parses.
+    #[serde(default)]
+    pub memory_gate: Option<MemoryGate>,
+}
+
+/// The launch-time memory gate as `soak.sh` declared it: the run's
+/// predicted resident memory against its budget. Validated at parse
+/// time (`predicted_kb <= budget_kb`, `headroom >= 1.0`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct MemoryGate {
+    /// Summed expected RSS of the roles the run launches, in KiB.
+    pub predicted_kb: u64,
+    /// The memory the run may use, in KiB (a fraction of `mem_total_kb`).
+    pub budget_kb: u64,
+    /// The factor the prediction is scaled by before it is held to the budget.
+    pub headroom: f64,
+    /// The host's `MemTotal` from `/proc/meminfo`, in KiB.
+    pub mem_total_kb: u64,
 }
 
 /// What one leg of a soak run was DECLARED to be — written before the
@@ -375,6 +404,17 @@ pub struct LegDeclaration {
     /// other leg.
     #[serde(default)]
     pub source_sha256: Option<String>,
+    /// A publish leg whose bytes legitimately change in flight (the mount re-muxes
+    /// elementary tracks). `delivery_complete_<leg>` then judges KLV completeness,
+    /// not the stream digest, and `source_sha256` must be absent.
+    #[serde(default)]
+    pub remuxed: Option<bool>,
+    /// KLV records in one publisher generation's source; required when `remuxed`.
+    #[serde(default)]
+    pub klv_records_per_generation: Option<u64>,
+    /// The leg's receiver ran `--klv-placement`; `klv_placement_<leg>` is required to pass.
+    #[serde(default)]
+    pub klv_placement: Option<bool>,
 }
 
 /// The declared half of the corruption tap's configuration, compared
@@ -544,10 +584,31 @@ pub fn parse_soak_config(text: &str) -> Result<SoakConfig, String> {
                          lowercase hex sha256 digest"
                 ));
             }
+            // A re-muxed stream's bytes are not the source's, so a
+            // digest could never match; KLV completeness is judged
+            // against a per-generation count instead, which must be
+            // declared and nonzero for that check to mean anything.
+            if decl.remuxed == Some(true) {
+                if decl.source_sha256.is_some() {
+                    return Err(format!(
+                        "soak-config.json: legs.{leg} is remuxed, so its bytes change in \
+                         flight and source_sha256 must be absent"
+                    ));
+                }
+                if decl.klv_records_per_generation.is_none_or(|n| n == 0) {
+                    return Err(format!(
+                        "soak-config.json: legs.{leg} is remuxed and must declare \
+                         klv_records_per_generation > 0"
+                    ));
+                }
+            }
         } else if decl.publisher.is_some()
             || decl.publisher_drop_period_s.is_some()
             || decl.publisher_generations.is_some()
             || decl.source_sha256.is_some()
+            || decl.remuxed.is_some()
+            || decl.klv_records_per_generation.is_some()
+            || decl.klv_placement.is_some()
         {
             return Err(format!(
                 "soak-config.json: legs.{leg} declares a publisher, but only a publish leg \
@@ -570,6 +631,20 @@ pub fn parse_soak_config(text: &str) -> Result<SoakConfig, String> {
         }
         .validate()
         .map_err(|e| format!("soak-config.json: corruption_spec: {e}"))?;
+    }
+    if let Some(gate) = &cfg.memory_gate {
+        if gate.predicted_kb > gate.budget_kb {
+            return Err(format!(
+                "soak-config.json: memory_gate: predicted_kb {} exceeds budget_kb {}",
+                gate.predicted_kb, gate.budget_kb
+            ));
+        }
+        if !(gate.headroom.is_finite() && gate.headroom >= 1.0) {
+            return Err(format!(
+                "soak-config.json: memory_gate: headroom must be finite and >= 1.0, got {}",
+                gate.headroom
+            ));
+        }
     }
     Ok(cfg)
 }
@@ -2128,6 +2203,12 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         // floors in `recv_invariants` cannot see a lost LAST
         // generation (no discontinuity follows it, and the rest still
         // clears the floor); this can.
+        //
+        // A remuxed leg's bytes change in flight, so its digest says
+        // nothing; what must survive the re-mux is every KLV record of
+        // every generation, with the mount itself reporting no KLV
+        // unit dropped and some access unit emitted.
+        let remuxed = declared.and_then(|d| d.remuxed) == Some(true);
         let got = &recv.metrics.stream_sha256;
         let source = match declared.and_then(|d| d.source_sha256.as_deref()) {
             Some(d) => Some((d, "declared in soak-config.json")),
@@ -2137,6 +2218,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
                 .map(|d| (d, "declared via the source.sha256 artefact")),
         };
         verdicts.push(match source {
+            _ if remuxed => remuxed_delivery_verdict(leg_name, declared, recv),
             Some((want, how)) => SoakVerdict {
                 name: format!("delivery_complete_{leg_name}"),
                 pass: got == want,
@@ -2162,6 +2244,8 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
                 ),
             },
         });
+
+        verdicts.push(klv_placement_verdict(leg_name, declared, recv));
 
         publish_leg_results.push(PublishLegResult {
             leg: leg_name.clone(),
@@ -2207,8 +2291,10 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         publish_legs: publish_leg_results,
         verdicts,
         overall_pass,
-        limitations: vec![
-            "A managed sender's own reconnect counters (legs[].managed_send's \
+        limitations: limitations_with_gate(
+            config.memory_gate.as_ref(),
+            vec![
+                "A managed sender's own reconnect counters (legs[].managed_send's \
              reconnect_attempts / reconnect_successes) are recorded, not gated. \
              recv --managed's ManagedRecvTransport::reconnects_count IS a real observed \
              count, but a single outage window has not been confirmed to always drive \
@@ -2217,26 +2303,26 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
              established over enough runs), so reconnect_count_matches_outage_count_* \
              verdicts stay provisional and never gate the run even when a real count is \
              present."
-                .to_string(),
-            "recv's VerifyReport carries no per-event delivery-gap timestamps; \
+                    .to_string(),
+                "recv's VerifyReport carries no per-event delivery-gap timestamps; \
              drop_rate_consistent_with_impairment_* verdicts approximate 'gaps confined to \
              outage windows' via an aggregate drop-rate check against the proxy's cumulative \
              counters instead of a per-event ±30s timestamp localization."
-                .to_string(),
-            "Outage-window drops (including reconnect handshake attempts that land while \
+                    .to_string(),
+                "Outage-window drops (including reconnect handshake attempts that land while \
              the window is still active) are counted apart by the proxy \
              (PhaseCounters::outage_dropped) and excluded from both sides of the \
              drop_rate_consistent_with_impairment_* comparison, so an outage-bearing leg is \
              held to the same continuous-loss expectation as one without. A stats file \
              written before that counter existed reports 0 of them and is judged the old \
              way, with the ~0.02-0.2 percentage-point outage excess it never modelled."
-                .to_string(),
-            "A worker killed before it writes its own per-leg report artifact (send-report/\
+                    .to_string(),
+                "A worker killed before it writes its own per-leg report artifact (send-report/\
              recv-report/proxy-stats) makes report soak hard-error (exit 2) instead of \
              reaching this function and producing a worker_exits verdict at all — both \
              outcomes are nonzero, but only the latter names which role and status failed."
-                .to_string(),
-            "legs[].managed_send's gap_messages_dropped / gap_bytes_dropped are recorded, \
+                    .to_string(),
+                "legs[].managed_send's gap_messages_dropped / gap_bytes_dropped are recorded, \
              not gated, and are not the whole of what an outage cost: they count what the \
              managed sender's gap buffer evicted once it knew the link was down. What the \
              transport had already accepted and never delivered in the seconds before it \
@@ -2244,9 +2330,141 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
              outage's loss. The difference between send_video_aus and recv_video_aus is \
              the fuller figure. gap_len_at_exit is the backlog stranded at exit, recorded \
              beside the drop counters and not gated."
-                .to_string(),
-        ],
+                    .to_string(),
+            ],
+        ),
     })
+}
+
+/// [`build_soak_results`]'s fixed limitations, plus the declared
+/// memory gate's line when the config carries one.
+fn limitations_with_gate(gate: Option<&MemoryGate>, mut limitations: Vec<String>) -> Vec<String> {
+    if let Some(g) = gate {
+        limitations.push(format!(
+            "memory gate: predicted {} MB x headroom {} <= budget {} MB (MemTotal {} MB); \
+             checked by soak.sh at launch, recorded here for provenance, not a verdict",
+            g.predicted_kb / 1024,
+            g.headroom,
+            g.budget_kb / 1024,
+            g.mem_total_kb / 1024
+        ));
+    }
+    limitations
+}
+
+/// `delivery_complete_<leg>` for a [`LegDeclaration::remuxed`] publish
+/// leg: the receiver counted every KLV record of every declared
+/// generation, and the mount dropped none and emitted access units.
+fn remuxed_delivery_verdict(
+    leg_name: &str,
+    declared: Option<&LegDeclaration>,
+    recv: &VerifyReport,
+) -> SoakVerdict {
+    let name = format!("delivery_complete_{leg_name}");
+    let per = declared.and_then(|d| d.klv_records_per_generation);
+    let generations = declared.and_then(|d| d.publisher_generations);
+    let (Some(per), Some(generations)) = (per, generations) else {
+        return SoakVerdict {
+            name,
+            pass: false,
+            provisional: false,
+            detail: format!(
+                "{leg_name}: remuxed, but klv_records_per_generation or \
+                 publisher_generations is not declared, so there is no KLV count to judge \
+                 delivery against"
+            ),
+        };
+    };
+    let Some(mount) = recv.publish_mount.as_ref() else {
+        return SoakVerdict {
+            name,
+            pass: false,
+            provisional: false,
+            detail: format!(
+                "{leg_name}: the recv report carries no publish_mount block, so nothing \
+                 says whether the mount dropped KLV units"
+            ),
+        };
+    };
+    let want = per.saturating_mul(generations);
+    let got = recv.metrics.klv_records;
+    let pass = got == want && mount.klv_units_dropped == 0 && mount.aus_emitted > 0;
+    SoakVerdict {
+        name,
+        pass,
+        provisional: false,
+        detail: format!(
+            "{leg_name}: recv counted {got} KLV record(s) against {want} = {per} per \
+             generation x {generations} declared generation(s); the mount reported \
+             klv_units_dropped {} and aus_emitted {} (remuxed: the stream digest is not \
+             judged){}",
+            mount.klv_units_dropped,
+            mount.aus_emitted,
+            if pass {
+                ""
+            } else {
+                " — KLV records were lost, duplicated or dropped by the mount, or no \
+                 access unit was emitted"
+            }
+        ),
+    }
+}
+
+/// `klv_placement_<leg>` for a publish leg: when the leg declares
+/// [`LegDeclaration::klv_placement`], its receiver's placement block
+/// shows every record within tolerance, no unexpected reset, and one
+/// generation per declared publisher generation. A leg that does not
+/// declare the oracle passes as not applicable.
+fn klv_placement_verdict(
+    leg_name: &str,
+    declared: Option<&LegDeclaration>,
+    recv: &VerifyReport,
+) -> SoakVerdict {
+    let name = format!("klv_placement_{leg_name}");
+    if declared.and_then(|d| d.klv_placement) != Some(true) {
+        return SoakVerdict {
+            name,
+            pass: true,
+            provisional: false,
+            detail: format!(
+                "{leg_name}: not applicable — this leg does not declare the placement oracle"
+            ),
+        };
+    }
+    let Some(m) = recv.metrics.klv_placement.as_ref() else {
+        return SoakVerdict {
+            name,
+            pass: false,
+            provisional: false,
+            detail: format!(
+                "{leg_name}: the recv report carries no klv_placement block (recv ran \
+                 without --klv-placement)"
+            ),
+        };
+    };
+    let generations = declared.and_then(|d| d.publisher_generations);
+    let pass =
+        m.out_of_tolerance == 0 && m.unexpected_resets == 0 && Some(m.generations) == generations;
+    SoakVerdict {
+        name,
+        pass,
+        provisional: false,
+        detail: format!(
+            "{leg_name}: {} record(s) placed, {} out of tolerance (max error {} ticks, \
+             tolerance {} ticks), {} unexpected reset(s), {} generation(s) seen against {} \
+             declared{}",
+            m.records,
+            m.out_of_tolerance,
+            m.max_abs_error_ticks,
+            m.tolerance_ticks,
+            m.unexpected_resets,
+            m.generations,
+            generations.map_or_else(|| "none".to_string(), |n| n.to_string()),
+            m.first_problem
+                .as_deref()
+                .map_or_else(String::new, |p| format!("; first problem: {p}"))
+        ),
+    }
 }
 
 fn read_to_string(path: &Path) -> Result<String, String> {
@@ -2277,8 +2495,14 @@ fn read_leg_artifacts(
 /// path, build [`SoakInputs`], and write [`build_soak_results`]'s
 /// output to `out_path`. The `rist` leg is entirely optional — pass
 /// `None` to omit it (the `srt` leg alone is enough for a local
-/// smoke run; the full 72h run supplies both). So is the
-/// `rtsp-publish` leg, whose only artifact is its recv report.
+/// smoke run; the full 72h run supplies both). So are the publish
+/// legs: `publish_legs` maps each one run (a [`PUBLISH_LEGS`] name,
+/// at most once) to its recv report, the only artifact it has.
+///
+/// # Errors
+///
+/// Errors on an unreadable or unparsable artifact, and on a publish
+/// leg name outside [`PUBLISH_LEGS`] or given twice.
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     rss_path: &Path,
@@ -2289,7 +2513,7 @@ pub fn run(
     srt_send_report_path: &Path,
     srt_outage_period_s: u64,
     rist: Option<(&Path, &Path, &Path)>,
-    rtsp_publish_recv_report: Option<&Path>,
+    publish_legs: &[(String, PathBuf)],
     rss_slope_threshold_kb_per_hour: Option<f64>,
     out_path: &Path,
 ) -> Result<SoakResults, String> {
@@ -2314,8 +2538,17 @@ pub fn run(
         ));
     }
 
-    let mut publish_legs = Vec::new();
-    if let Some(path) = rtsp_publish_recv_report {
+    let publish_leg_reports = publish_legs;
+    let mut publish_legs: Vec<(String, PublishLegArtifacts)> = Vec::new();
+    for (leg, path) in publish_leg_reports {
+        if !PUBLISH_LEGS.contains(&leg.as_str()) {
+            return Err(format!(
+                "publish leg {leg:?} is not a publish leg (want one of {PUBLISH_LEGS:?})"
+            ));
+        }
+        if publish_legs.iter().any(|(seen, _)| seen == leg) {
+            return Err(format!("publish leg {leg:?} given more than once"));
+        }
         let recv_report: VerifyReport = serde_json::from_str(&read_to_string(path)?)
             .map_err(|e| format!("parse {}: {e}", path.display()))?;
         // `soak.sh` writes the source digest beside the recv report.
@@ -2326,7 +2559,7 @@ pub fn run(
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
         publish_legs.push((
-            "rtsp-publish".to_string(),
+            leg.clone(),
             PublishLegArtifacts {
                 recv_report,
                 source_sha256_file,
@@ -2351,6 +2584,7 @@ pub fn run(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::report_types::KlvPlacementMetrics;
 
     pub(crate) fn proxy_stats(
         forwarded: u64,
@@ -2504,6 +2738,7 @@ pub(crate) mod tests {
             corruption: false,
             corruption_spec: None,
             legs: BTreeMap::new(),
+            memory_gate: None,
         }
     }
 
@@ -3579,7 +3814,7 @@ pub(crate) mod tests {
             &send_path,
             0,
             None,
-            None,
+            &[],
             None,
             &out_path,
         )
@@ -3658,7 +3893,7 @@ pub(crate) mod tests {
             &send_path,
             0,
             None,
-            None,
+            &[],
             None,
             &out_path,
         )
@@ -3734,7 +3969,7 @@ pub(crate) mod tests {
             &send_path,
             21600,
             None,
-            None,
+            &[],
             None,
             &out_path,
         )
@@ -3808,7 +4043,7 @@ pub(crate) mod tests {
             &send_path,
             21600,
             None,
-            None,
+            &[],
             None,
             &out_path,
         )
@@ -4882,6 +5117,9 @@ pub(crate) mod tests {
                 publisher_drop_period_s: None,
                 publisher_generations: None,
                 source_sha256: None,
+                remuxed: None,
+                klv_records_per_generation: None,
+                klv_placement: None,
             },
         );
     }
@@ -5309,8 +5547,19 @@ pub(crate) mod tests {
 
     /// The `rtsp-publish` leg's declaration as `soak.sh` writes it.
     fn publish_declaration(generations: Option<u64>) -> LegDeclaration {
+        publish_declaration_as(generations, false)
+    }
+
+    /// KLV records in one generation of the `rtsp-publish-es` source.
+    const ES_RECORDS_PER_GENERATION: u64 = 600;
+
+    /// A publish leg's declaration as `soak.sh` writes it: the MP2T
+    /// `rtsp-publish` leg, or (`es`) the elementary `rtsp-publish-es`
+    /// leg, whose mount re-muxes and so declares a KLV count and the
+    /// placement oracle instead of a source digest.
+    fn publish_declaration_as(generations: Option<u64>, es: bool) -> LegDeclaration {
         LegDeclaration {
-            profile: "baseline".to_string(),
+            profile: if es { "klv-sync" } else { "baseline" }.to_string(),
             schedule: None,
             klv_set: None,
             klv_seed: None,
@@ -5318,7 +5567,10 @@ pub(crate) mod tests {
             publisher: Some("gst-launch-1.0 filesrc ! tsparse ! rtspclientsink".to_string()),
             publisher_drop_period_s: Some(600),
             publisher_generations: generations,
-            source_sha256: Some(SOURCE_SHA.to_string()),
+            source_sha256: (!es).then(|| SOURCE_SHA.to_string()),
+            remuxed: es.then_some(true),
+            klv_records_per_generation: es.then_some(ES_RECORDS_PER_GENERATION),
+            klv_placement: es.then_some(true),
         }
     }
 
@@ -5333,37 +5585,89 @@ pub(crate) mod tests {
     /// block at all).
     fn publish_inputs(generation: Option<u64>, launched: Option<u64>) -> SoakInputs {
         let mut inputs = healthy_inputs();
+        add_publish_leg(&mut inputs, "rtsp-publish", generation, launched);
+        inputs
+    }
+
+    /// [`healthy_inputs`] plus a healthy `rtsp-publish-es` leg: the
+    /// elementary publisher's mount counted `generation` ended
+    /// publishers, and the receiver got every one of the
+    /// `ES_RECORDS_PER_GENERATION x generation` KLV records, each in
+    /// place.
+    fn es_inputs(generation: u64) -> SoakInputs {
+        let mut inputs = healthy_inputs();
+        add_publish_leg(
+            &mut inputs,
+            "rtsp-publish-es",
+            Some(generation),
+            Some(generation),
+        );
+        inputs
+    }
+
+    /// The healthy publish leg `leg` (`"rtsp-publish"` or
+    /// `"rtsp-publish-es"`) added to `inputs`: RSS for its two
+    /// processes, clean exits for its two roles, its declaration, and
+    /// a passing recv report.
+    fn add_publish_leg(
+        inputs: &mut SoakInputs,
+        leg: &str,
+        generation: Option<u64>,
+        launched: Option<u64>,
+    ) {
+        let es = leg == "rtsp-publish-es";
         for i in 0..121 {
             let t = i as f64 * 30.0;
             inputs
                 .rss_samples
-                .push(rss_row("rtsp-publish", "recv", t, Some(40_000)));
+                .push(rss_row(leg, "recv", t, Some(40_000)));
             inputs
                 .rss_samples
-                .push(rss_row("rtsp-publish", "publisher", t, Some(4_000)));
+                .push(rss_row(leg, "publisher", t, Some(4_000)));
         }
-        for role in ["rtsp-publish-recv", "rtsp-publish-publisher"] {
-            inputs.worker_exits.insert(role.to_string(), 0);
+        for process in ["recv", "publisher"] {
+            inputs.worker_exits.insert(format!("{leg}-{process}"), 0);
         }
         inputs
             .config
             .legs
-            .insert("rtsp-publish".to_string(), publish_declaration(launched));
+            .insert(leg.to_string(), publish_declaration_as(launched, es));
         let mut recv_report = passing_recv_report(1000);
-        recv_report.profile = Some("baseline".to_string());
-        recv_report.metrics.stream_sha256 = SOURCE_SHA.to_string();
-        recv_report.publish_mount = generation.map(|generation| PublishMountReport {
-            generation,
-            ..PublishMountReport::default()
-        });
+        if es {
+            let generations = generation.unwrap_or(0);
+            let records = ES_RECORDS_PER_GENERATION * generations;
+            recv_report.profile = Some("klv-sync".to_string());
+            recv_report.metrics.klv_records = records;
+            recv_report.metrics.klv_placement = Some(KlvPlacementMetrics {
+                records,
+                out_of_tolerance: 0,
+                max_abs_error_ticks: 90,
+                generations,
+                unexpected_resets: 0,
+                tolerance_ticks: 3003,
+                first_problem: None,
+            });
+            recv_report.publish_mount = generation.map(|generation| PublishMountReport {
+                generation,
+                aus_emitted: 1,
+                klv_units_dropped: 0,
+                ..PublishMountReport::default()
+            });
+        } else {
+            recv_report.profile = Some("baseline".to_string());
+            recv_report.metrics.stream_sha256 = SOURCE_SHA.to_string();
+            recv_report.publish_mount = generation.map(|generation| PublishMountReport {
+                generation,
+                ..PublishMountReport::default()
+            });
+        }
         inputs.publish_legs.push((
-            "rtsp-publish".to_string(),
+            leg.to_string(),
             PublishLegArtifacts {
                 recv_report,
                 source_sha256_file: None,
             },
         ));
-        inputs
     }
 
     /// Six generations declared: a floor of all six. A mount that
@@ -5401,6 +5705,247 @@ pub(crate) mod tests {
             v.detail
         );
         assert!(r.overall_pass, "{:?}", r.verdicts);
+    }
+
+    /// The `rtsp-publish-es` leg's three own numbers.
+    fn es_mut(inputs: &mut SoakInputs) -> &mut VerifyReport {
+        &mut inputs
+            .publish_legs
+            .iter_mut()
+            .find(|(leg, _)| leg == "rtsp-publish-es")
+            .expect("es_inputs adds the leg")
+            .1
+            .recv_report
+    }
+
+    /// Every verdict the elementary leg emits passes when the KLV
+    /// count, the mount's counters and the placement block agree with
+    /// the declaration — the digest oracle never runs on it.
+    #[test]
+    fn es_leg_passes_when_counts_match_and_placement_is_clean() {
+        let r = build_soak_results(es_inputs(6)).unwrap();
+        let es: Vec<_> = r
+            .verdicts
+            .iter()
+            .filter(|v| v.name.ends_with("_rtsp-publish-es"))
+            .collect();
+        assert!(es.len() >= 10, "{es:?}");
+        for v in &es {
+            assert!(v.pass, "{}: {}", v.name, v.detail);
+        }
+        let v = verdict(&r, "delivery_complete_rtsp-publish-es");
+        assert!(v.detail.contains("3600"), "{}", v.detail);
+        let v = verdict(&r, "klv_placement_rtsp-publish-es");
+        assert!(!v.provisional, "{}", v.detail);
+        assert!(verdict(&r, "worker_exits").pass);
+        assert!(r.overall_pass, "{:?}", r.verdicts);
+    }
+
+    #[test]
+    fn es_leg_delivery_fails_on_a_short_klv_count() {
+        let mut inputs = es_inputs(6);
+        es_mut(&mut inputs).metrics.klv_records = ES_RECORDS_PER_GENERATION * 6 - 1;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "delivery_complete_rtsp-publish-es");
+        assert!(!v.pass && !v.provisional, "{}", v.detail);
+        assert!(v.detail.contains("3599"), "{}", v.detail);
+        assert!(v.detail.contains("3600"), "{}", v.detail);
+        assert!(!r.overall_pass);
+    }
+
+    #[test]
+    fn es_leg_delivery_fails_on_a_dropped_klv_unit() {
+        let mut inputs = es_inputs(6);
+        es_mut(&mut inputs)
+            .publish_mount
+            .as_mut()
+            .unwrap()
+            .klv_units_dropped = 1;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "delivery_complete_rtsp-publish-es");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(v.detail.contains("klv_units_dropped 1"), "{}", v.detail);
+        assert!(!r.overall_pass);
+
+        // A mount that emitted no access unit delivered nothing either.
+        let mut inputs = es_inputs(6);
+        es_mut(&mut inputs)
+            .publish_mount
+            .as_mut()
+            .unwrap()
+            .aus_emitted = 0;
+        let r = build_soak_results(inputs).unwrap();
+        assert!(!verdict(&r, "delivery_complete_rtsp-publish-es").pass);
+    }
+
+    #[test]
+    fn es_leg_placement_fails_on_out_of_tolerance() {
+        let mut inputs = es_inputs(6);
+        es_mut(&mut inputs)
+            .metrics
+            .klv_placement
+            .as_mut()
+            .unwrap()
+            .out_of_tolerance = 2;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "klv_placement_rtsp-publish-es");
+        assert!(!v.pass && !v.provisional, "{}", v.detail);
+        assert!(v.detail.contains("2 out of tolerance"), "{}", v.detail);
+        assert!(!r.overall_pass);
+    }
+
+    #[test]
+    fn es_leg_placement_fails_without_the_block() {
+        let mut inputs = es_inputs(6);
+        es_mut(&mut inputs).metrics.klv_placement = None;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "klv_placement_rtsp-publish-es");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(v.detail.contains("--klv-placement"), "{}", v.detail);
+        assert!(!r.overall_pass);
+    }
+
+    #[test]
+    fn es_leg_placement_fails_when_generations_disagree() {
+        let mut inputs = es_inputs(6);
+        es_mut(&mut inputs)
+            .metrics
+            .klv_placement
+            .as_mut()
+            .unwrap()
+            .generations = 5;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "klv_placement_rtsp-publish-es");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(!r.overall_pass);
+
+        // An unexpected reset fails it as well.
+        let mut inputs = es_inputs(6);
+        es_mut(&mut inputs)
+            .metrics
+            .klv_placement
+            .as_mut()
+            .unwrap()
+            .unexpected_resets = 1;
+        let r = build_soak_results(inputs).unwrap();
+        assert!(!verdict(&r, "klv_placement_rtsp-publish-es").pass);
+    }
+
+    /// A remuxed leg's bytes change in flight, so a source digest
+    /// would be a promise the leg cannot keep, and without a per-
+    /// generation count there is nothing to judge delivery against.
+    /// The three fields mean nothing on a transport leg.
+    #[test]
+    fn remuxed_declaration_rejects_a_source_digest_and_needs_a_count() {
+        let ok = publish_declaration_as(Some(6), true);
+        parse_soak_config(&config_with_publish_leg("rtsp-publish-es", ok.clone()))
+            .expect("a soak.sh-shaped elementary leg must validate");
+
+        let mut with_digest = ok.clone();
+        with_digest.source_sha256 = Some(SOURCE_SHA.to_string());
+        let err = parse_soak_config(&config_with_publish_leg("rtsp-publish-es", with_digest))
+            .expect_err("a remuxed leg with a source digest must be rejected");
+        assert!(err.contains("source_sha256"), "{err}");
+
+        for count in [None, Some(0)] {
+            let mut no_count = ok.clone();
+            no_count.klv_records_per_generation = count;
+            let err = parse_soak_config(&config_with_publish_leg("rtsp-publish-es", no_count))
+                .expect_err("a remuxed leg without a KLV count must be rejected");
+            assert!(err.contains("klv_records_per_generation"), "{err}");
+        }
+
+        let transport = |edit: fn(&mut LegDeclaration)| {
+            let mut decl = publish_declaration(None);
+            decl.publisher = None;
+            decl.publisher_drop_period_s = None;
+            decl.source_sha256 = None;
+            edit(&mut decl);
+            parse_soak_config(&config_with_publish_leg("srt", decl))
+        };
+        assert!(transport(|_| {}).is_ok());
+        for edit in [
+            (|d: &mut LegDeclaration| d.remuxed = Some(true)) as fn(&mut LegDeclaration),
+            |d| d.klv_records_per_generation = Some(600),
+            |d| d.klv_placement = Some(true),
+        ] {
+            let err = transport(edit).expect_err("a transport leg cannot declare these");
+            assert!(err.contains("only a publish leg"), "{err}");
+        }
+    }
+
+    /// The MP2T leg declares no placement oracle: its verdict is
+    /// emitted and passes, saying why.
+    #[test]
+    fn mp2t_leg_placement_verdict_is_not_applicable() {
+        let r = build_soak_results(publish_inputs(Some(6), Some(6))).unwrap();
+        let v = verdict(&r, "klv_placement_rtsp-publish");
+        assert!(v.pass && !v.provisional, "{}", v.detail);
+        assert!(v.detail.contains("not applicable"), "{}", v.detail);
+        // The digest oracle still judges it.
+        assert!(
+            verdict(&r, "delivery_complete_rtsp-publish")
+                .detail
+                .contains("stream_sha256")
+        );
+    }
+
+    #[test]
+    fn memory_gate_is_validated_and_recorded() {
+        let with_gate = |gate: serde_json::Value| {
+            let mut v: serde_json::Value = serde_json::from_str(&config_with_publish_leg(
+                "rtsp-publish",
+                publish_declaration(Some(6)),
+            ))
+            .unwrap();
+            v["memory_gate"] = gate;
+            parse_soak_config(&v.to_string())
+        };
+        let err = with_gate(serde_json::json!({
+            "predicted_kb": 2_000_000, "budget_kb": 1_000_000,
+            "headroom": 1.5, "mem_total_kb": 4_000_000
+        }))
+        .expect_err("a prediction over the budget must be rejected");
+        assert!(err.contains("memory_gate"), "{err}");
+        let err = with_gate(serde_json::json!({
+            "predicted_kb": 500_000, "budget_kb": 1_000_000,
+            "headroom": 0.9, "mem_total_kb": 4_000_000
+        }))
+        .expect_err("a headroom under 1 must be rejected");
+        assert!(err.contains("headroom"), "{err}");
+
+        let cfg = with_gate(serde_json::json!({
+            "predicted_kb": 512_000, "budget_kb": 1_024_000,
+            "headroom": 1.5, "mem_total_kb": 4_000_000
+        }))
+        .expect("a gate inside its budget must validate");
+        let gate = cfg.memory_gate.clone().expect("the block must parse");
+        assert_eq!(gate.predicted_kb, 512_000);
+
+        let mut inputs = publish_inputs(Some(6), Some(6));
+        inputs.config.memory_gate = Some(gate);
+        let r = build_soak_results(inputs).unwrap();
+        let line = r
+            .limitations
+            .iter()
+            .find(|l| l.starts_with("memory gate:"))
+            .unwrap_or_else(|| panic!("{:?}", r.limitations));
+        assert!(line.contains("500 MB"), "{line}");
+        assert!(line.contains("1000 MB"), "{line}");
+        assert!(line.contains("1.5"), "{line}");
+        assert!(r.overall_pass, "{:?}", r.verdicts);
+
+        // No block: no line, and an older config still parses.
+        let r = build_soak_results(publish_inputs(Some(6), Some(6))).unwrap();
+        assert!(!r.limitations.iter().any(|l| l.starts_with("memory gate:")));
+    }
+
+    #[test]
+    fn worker_roles_cover_both_publish_legs() {
+        assert!(WORKER_ROLES.contains(&"rtsp-publish-es-recv"));
+        assert!(WORKER_ROLES.contains(&"rtsp-publish-es-publisher"));
+        assert!(PUBLISH_LEGS.contains(&"rtsp-publish-es"));
+        assert!(KNOWN_LEGS.contains(&"rtsp-publish-es"));
     }
 
     #[test]
@@ -5700,6 +6245,9 @@ pub(crate) mod tests {
                 publisher_drop_period_s: None,
                 publisher_generations: None,
                 source_sha256: None,
+                remuxed: None,
+                klv_records_per_generation: None,
+                klv_placement: None,
             },
         );
         let r = build_soak_results(inputs).unwrap();
