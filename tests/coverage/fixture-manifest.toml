@@ -50,6 +50,12 @@ origin = "derived"
 generator = "cargo run -p tst-core --bin strip-conformance-parameter-sets (RBSP bodies stripped from official ITU-T JVT/JCT-VC/JVET + AOMedia conformance bitstreams; see conformance/manifest.toml for upstream URLs + sha256)"
 no_private_corpus = true
 
+[[group]]
+root = "crates/tst-webrtc/tests/fixtures"
+origin = "synthetic"
+generator = "crates/tst-webrtc/tests/fixtures/regen.sh (one ffmpeg-synthesized test-pattern IDR access unit per codec)"
+no_private_corpus = true
+
 # Generated inventory of fuzz targets (provenance: our fuzz harnesses).
 [[group]]
 root = "tests/coverage/fuzz-targets.toml"

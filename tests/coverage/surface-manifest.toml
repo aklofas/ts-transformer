@@ -4233,6 +4233,69 @@ bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC 
 scenario_ids = []
 tier = "A"
 
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::packetize::DEFAULT_MTU_PAYLOAD"
+owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::packetize::H264Packetizer"
+owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::packetize::H264Packetizer::packetize"
+owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::packetize::MIN_MTU_PAYLOAD"
+owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::packetize::Packetizer"
+owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::packetize::Packetizer::packetize"
+owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::packetize::packetizer_for"
+owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 [[exempt]]
 item = "tst_webrtc::error::WhepServerError::from"
 reason = "From<UrlError> impl introduced by thiserror #[from] on WhepServerError::InvalidUrl; error-enum trait method"
