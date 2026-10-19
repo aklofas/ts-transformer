@@ -111,24 +111,26 @@ jobs:
 
       - name: Install build prerequisites (Windows)
         # Same meson + ninja requirement as macOS. windows-latest ships cmake
-        # + MSVC + Strawberry Perl. ninja + ripgrep install via choco and land
-        # on PATH for the running job. meson, however, must come via pip: the
-        # choco meson package runs an MSI that updates only the *registry* PATH,
-        # which the already-running job never re-reads — so a later step's
-        # rist-sys build.rs couldn't find `meson` on $PATH and panicked (CI red
-        # 2026-05-29). pip drops meson.exe into the Python Scripts dir that is
-        # already on PATH, sidestepping the MSI PATH-refresh problem entirely.
+        # + MSVC + Strawberry Perl. Nothing here comes from Chocolatey any
+        # more: its community feed answered 503 for ripgrep on four runs in
+        # one morning (2026-10-19, runs 39221903221 / 39216292373 /
+        # 39284237561) after the 504 of 2026-06-08 and the sourceforge 522 of
+        # 2026-10-01 — a third external single point of failure removed. The
+        # job now relies only on PyPI and GitHub, which every other leg already
+        # needs. meson, pkgconf and ninja are pip wheels dropped into the
+        # Python Scripts dir that is already on PATH (the choco meson MSI
+        # updated only the *registry* PATH the running job never re-reads, CI
+        # red 2026-05-29). ripgrep is the pinned upstream release zip, fetched
+        # through the GitHub API and checked against its published SHA-256
+        # before it is unpacked onto PATH.
         if: startsWith(matrix.name, 'windows-')
-        # Run under bash with `set -euo pipefail`, NOT the default pwsh. pwsh
-        # only checks the LAST command's exit code, so a choco failure followed
-        # by a successful `pip install` was marked success — and choco can even
-        # exit 0 when a package fetch 504s (community feed flake, CI red
-        # 2026-06-08: ripgrep silently not installed, only caught downstream by
-        # the fail-closed ratchet). bash `set -e` fails fast on a non-zero
-        # command; the explicit per-tool `command -v` check below additionally
-        # catches choco's exit-0-but-didn't-install case (which `set -e` alone
-        # would miss).
+        # Run under bash with `set -euo pipefail`, NOT the default pwsh (pwsh
+        # only checks the LAST command's exit code). The explicit per-tool
+        # `command -v` check below reds THIS step when a tool is missing
+        # instead of a confusing later one.
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # pkg-config comes from the PyPI `pkgconf` wheel (a real pkgconf
@@ -142,13 +144,24 @@ jobs:
           # package fetched its zip from sourceforge, which 404/522'd on
           # 2026-10-01 and failed this step twice (run 36819765562) — one
           # external single point of failure removed.
-          choco install -y --no-progress ninja ripgrep
-          python -m pip install --upgrade meson pkgconf
-          # Verify each prerequisite is actually on PATH — choco can return 0
-          # without installing a package (feed 504), and a silently-missing tool
-          # must red THIS step, not a confusing later one.
+          python -m pip install --upgrade meson pkgconf ninja
+          # ripgrep: the pinned upstream release, checksum-verified. `gh` and
+          # GITHUB_TOKEN are present on every hosted runner.
+          RG_VERSION=15.2.0
+          RG_SHA256=71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5
+          RG_DIR="$RUNNER_TEMP/ripgrep"
+          mkdir -p "$RG_DIR"
+          gh release download "$RG_VERSION" -R BurntSushi/ripgrep \
+            -p "ripgrep-$RG_VERSION-x86_64-pc-windows-msvc.zip" -D "$RG_DIR" --clobber
+          echo "$RG_SHA256 *$RG_DIR/ripgrep-$RG_VERSION-x86_64-pc-windows-msvc.zip" | sha256sum -c -
+          python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" \
+            "$RG_DIR/ripgrep-$RG_VERSION-x86_64-pc-windows-msvc.zip" "$RG_DIR"
+          echo "$RG_DIR/ripgrep-$RG_VERSION-x86_64-pc-windows-msvc" >> "$GITHUB_PATH"
+          export PATH="$RG_DIR/ripgrep-$RG_VERSION-x86_64-pc-windows-msvc:$PATH"
+          # Verify each prerequisite is actually on PATH — a silently-missing
+          # tool must red THIS step, not a confusing later one.
           for tool in rg ninja meson pkg-config; do
-            command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: '$tool' not on PATH after prereq install (choco/pip fetch likely failed)"; exit 1; }
+            command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: '$tool' not on PATH after prereq install (pip/GitHub fetch likely failed)"; exit 1; }
           done
           rg --version | head -1
           pkg-config --version | head -1

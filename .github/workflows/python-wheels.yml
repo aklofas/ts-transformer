@@ -269,16 +269,15 @@ jobs:
       # librist's vendored build is meson + ninja-driven (NOT cmake) and
       # finds the shared mbedTLS tree through pkg-config — the same
       # prerequisites as the gating ci.yml Windows leg, installed the same
-      # way: ninja via choco, meson + pkgconf via pip (pip drops them into the
-      # Python Scripts dir already on PATH; choco's meson MSI updates only the
-      # registry PATH the running job never re-reads). bash with `set -e` plus
-      # a per-tool PATH check, because choco can exit 0 without installing.
+      # way: all three as pip wheels dropped into the Python Scripts dir
+      # already on PATH (no Chocolatey: its feed is an outage class in
+      # docs/project/ci-flakes.md). bash with `set -e` plus a per-tool PATH
+      # check so a missing tool reds this step.
       - name: Install librist build prerequisites (meson + ninja + pkg-config)
         shell: bash
         run: |
           set -euo pipefail
-          choco install -y --no-progress ninja
-          python -m pip install --upgrade meson pkgconf
+          python -m pip install --upgrade meson pkgconf ninja
           for tool in ninja meson pkg-config; do
             command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: '$tool' not on PATH after prereq install"; exit 1; }
           done
