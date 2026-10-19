@@ -30,8 +30,23 @@ use crate::packetize::{DEFAULT_MTU_PAYLOAD, Packetizer, RtpPayload, packetizer_f
 use crate::server::media::Waker;
 use crate::stats::{MountCounters, MountStats, SessionStats, bump};
 
-/// The largest KLV record a data-channel message carries (256 KiB).
-const KLV_DC_LIMIT: usize = 256 * 1024;
+/// The bytes a data-channel message adds before the KLV record: the
+/// format version (1), the frame's RTP timestamp (4) and the record's PTS
+/// (8).
+pub(crate) const KLV_DC_HEADER_BYTES: usize = 13;
+
+/// The largest KLV record a mount accepts: 128 KiB less the 13-byte
+/// data-channel message header, 131 059 bytes.
+///
+/// 128 KiB is the most str0m (the WebRTC stack) buffers for a session's
+/// data channels, and it refuses a message larger than its free buffer,
+/// so a larger record could never be sent. Browsers advertise how large a
+/// message they accept (`max-message-size`, 64 KiB when unstated, more in
+/// current browsers); a record between that size and this limit is
+/// accepted here but may be dropped for that viewer, and the drop is
+/// counted in [`MountStats::klv_dc_dropped_viewer`] and
+/// [`SessionStats::dc_messages_dropped`](crate::SessionStats::dc_messages_dropped).
+pub const KLV_DC_LIMIT: u64 = 128 * 1024 - KLV_DC_HEADER_BYTES as u64;
 
 /// KLV records waiting for a frame; when full the oldest is dropped.
 const PENDING_KLV_CAP: usize = 1024;
@@ -573,7 +588,13 @@ impl MountHandle {
     ///
     /// [`PushError::Closed`] after the mount closed,
     /// [`PushError::WrongMountKind`] on an MP2T mount, and
-    /// [`PushError::KlvTooLarge`] for a record over 256 KiB.
+    /// [`PushError::KlvTooLarge`] for a record over [`KLV_DC_LIMIT`]
+    /// (131 059 bytes).
+    ///
+    /// A record above the viewer's advertised `max-message-size` (64 KiB
+    /// when the browser states none) depends on the browser: it may be
+    /// dropped for that viewer, and is then counted in
+    /// [`MountStats::klv_dc_dropped_viewer`].
     pub fn push_klv(
         &self,
         record: &[u8],
@@ -583,11 +604,12 @@ impl MountHandle {
         let _ = metadata_service_id;
         let s = &*self.state;
         s.check(MountKind::Elementary)?;
-        if record.len() > KLV_DC_LIMIT {
+        let len = record.len() as u64;
+        if len > KLV_DC_LIMIT {
             bump(&s.stats.klv_dc_dropped_oversize);
             return Err(PushError::KlvTooLarge {
-                len: record.len() as u64,
-                limit: KLV_DC_LIMIT as u64,
+                len,
+                limit: KLV_DC_LIMIT,
             });
         }
         let mut inner = s.lock();

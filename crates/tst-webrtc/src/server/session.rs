@@ -30,6 +30,9 @@ pub(crate) struct SessionCounters {
     pub(crate) dc_messages: u64,
     /// RTP payloads dropped because the viewer's queue was full.
     pub(crate) packets_dropped_queue_full: u64,
+    /// KLV messages dropped: the queue was full, or the data channel
+    /// refused or failed the write.
+    pub(crate) dc_messages_dropped: u64,
 }
 
 /// One queued write for a viewer.
@@ -178,14 +181,14 @@ impl Viewer {
 
     /// Queues a KLV message for the data channel. Skipped when the channel
     /// is not open or the viewer has not started on a keyframe yet;
-    /// dropped and counted when the queue is full.
+    /// dropped and counted in `dc_messages_dropped` when the queue is full.
     pub(crate) fn enqueue_klv(&mut self, msg: &Arc<KlvMessage>, now: Instant) -> Enqueued {
         if self.dc.is_none() || self.waiting_keyframe {
             return Enqueued::Skipped;
         }
         if self.queue.len() >= self.queue_cap {
             self.queue_full_since.get_or_insert(now);
-            self.stats.packets_dropped_queue_full += 1;
+            self.stats.dc_messages_dropped += 1;
             return Enqueued::Dropped(1);
         }
         self.queue.push_back(Queued::Dc(Arc::clone(msg)));
@@ -216,6 +219,7 @@ impl Viewer {
             plis: self.stats.plis,
             dc_messages: self.stats.dc_messages,
             packets_dropped_queue_full: self.stats.packets_dropped_queue_full,
+            dc_messages_dropped: self.stats.dc_messages_dropped,
         }
     }
 }
@@ -225,8 +229,9 @@ impl Viewer {
 /// - [`ReapCause::Ice`]: not connected within `cfg.ice_timeout` of its
 ///   creation.
 /// - [`ReapCause::Disconnected`]: the session's `Rtc` is no longer alive,
-///   or its ICE state has been Disconnected or Failed for
-///   `cfg.disconnect_timeout`.
+///   or, once connected, its ICE state has been anything but Connected
+///   (Disconnected, Checking, Failed) for `cfg.disconnect_timeout` since
+///   it was last connected.
 /// - [`ReapCause::QueueStuck`]: frames have been dropped for lack of room
 ///   for `cfg.disconnect_timeout` without the queue draining.
 pub(crate) fn reap_decision(v: &Viewer, now: Instant, cfg: &MediaConfig) -> Option<ReapCause> {
@@ -236,9 +241,10 @@ pub(crate) fn reap_decision(v: &Viewer, now: Instant, cfg: &MediaConfig) -> Opti
     if !v.connected {
         return (elapsed(v.created, now) >= cfg.ice_timeout).then_some(ReapCause::Ice);
     }
-    if matches!(v.ice, IceState::Disconnected | IceState::Failed)
-        && elapsed(v.last_connected, now) >= cfg.disconnect_timeout
-    {
+    // Any state but Connected counts: str0m's agent moves Disconnected to
+    // Checking whenever a new candidate pair turns up, and a viewer can
+    // sit there indefinitely.
+    if v.ice != IceState::Connected && elapsed(v.last_connected, now) >= cfg.disconnect_timeout {
         return Some(ReapCause::Disconnected);
     }
     v.queue_full_since
@@ -330,6 +336,54 @@ mod tests {
             reap_decision(&v, clock.now(), &cfg()),
             Some(ReapCause::Disconnected)
         );
+    }
+
+    #[test]
+    fn a_session_stuck_checking_after_connecting_is_reaped() {
+        let clock = ManualClock::new();
+        let mut v = viewer(&clock, 8);
+        clock.advance(Duration::from_secs(1));
+        connect(&mut v, clock.now());
+        clock.advance(Duration::from_secs(60));
+        v.set_ice(IceState::Disconnected, clock.now());
+        // str0m's agent moves Disconnected to Checking on a new candidate
+        // pair; the clock keeps running from the last connected instant.
+        clock.advance(Duration::from_secs(5));
+        v.set_ice(IceState::Checking, clock.now());
+        clock.advance(Duration::from_millis(24_900));
+        assert_eq!(reap_decision(&v, clock.now(), &cfg()), None);
+        clock.advance(Duration::from_millis(100));
+        assert_eq!(
+            reap_decision(&v, clock.now(), &cfg()),
+            Some(ReapCause::Disconnected)
+        );
+    }
+
+    #[test]
+    fn a_klv_message_that_does_not_fit_counts_as_a_data_channel_drop() {
+        let clock = ManualClock::new();
+        let mut v = viewer(&clock, 2);
+        connect(&mut v, clock.now());
+        let mut api = v.rtc.sdp_api();
+        let cid = api.add_channel_with_config(str0m::channel::ChannelConfig {
+            label: "klv".into(),
+            negotiated: Some(0),
+            ..Default::default()
+        });
+        let _ = api.apply();
+        v.dc = Some(cid);
+        assert_eq!(
+            v.enqueue_frame(&frame(2, true), clock.now()),
+            Enqueued::Queued
+        );
+        let msg = Arc::new(KlvMessage {
+            rtp_ts: 9000,
+            klv_pts_90k: 0,
+            klv: vec![1, 2, 3],
+        });
+        assert_eq!(v.enqueue_klv(&msg, clock.now()), Enqueued::Dropped(1));
+        assert_eq!(v.stats.dc_messages_dropped, 1);
+        assert_eq!(v.stats.packets_dropped_queue_full, 0);
     }
 
     #[test]

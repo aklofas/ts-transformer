@@ -30,7 +30,7 @@ use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
 use tracing::debug;
 
 use crate::clock::Clock;
-use crate::mount::{FramePacket, KlvMessage, MediaMsg, MountId, MountState};
+use crate::mount::{FramePacket, KLV_DC_HEADER_BYTES, KlvMessage, MediaMsg, MountId, MountState};
 use crate::server::negotiate::{Negotiated, select_video};
 use crate::server::session::{Enqueued, Queued, ReapCause, Viewer, reap_decision};
 use crate::stats::{IceState, ServerStats, SessionStats, bump};
@@ -57,6 +57,11 @@ const KLV_LABEL: &str = "klv";
 
 /// The data-channel message format version (the body's first byte).
 const KLV_DC_VERSION: u8 = 1;
+
+const _: () = assert!(
+    KLV_DC_HEADER_BYTES == 1 + 4 + 8,
+    "the header is the version, the RTP timestamp and the PTS"
+);
 
 /// Constrained High, level 3.1: the H.264 profile Safari offers first. str0m
 /// matches profiles exactly and has no Constrained High entry of its own.
@@ -405,7 +410,7 @@ fn random_seq() -> u64 {
 /// The data-channel body of a KLV message: version, the frame's RTP
 /// timestamp, the record's PTS (both big-endian), the record.
 fn klv_body(msg: &KlvMessage) -> Vec<u8> {
-    let mut body = Vec::with_capacity(13 + msg.klv.len());
+    let mut body = Vec::with_capacity(KLV_DC_HEADER_BYTES + msg.klv.len());
     body.push(KLV_DC_VERSION);
     body.extend_from_slice(&msg.rtp_ts.to_be_bytes());
     body.extend_from_slice(&msg.klv_pts_90k.to_be_bytes());
@@ -417,9 +422,10 @@ fn klv_body(msg: &KlvMessage) -> Vec<u8> {
 enum Write {
     /// str0m took it.
     Written,
-    /// str0m cannot take it now; it stays at the head of the queue.
+    /// str0m cannot take it now; it stays at the head of the queue. Only
+    /// an RTP write is ever refused (no send stream yet).
     Refused,
-    /// It can never be written (its channel closed); it is discarded.
+    /// It was dropped (and counted); the flush goes on with the next entry.
     Discarded,
 }
 
@@ -632,7 +638,12 @@ impl Media {
             negotiated: Some(0),
             ..Default::default()
         });
-        let _ = api.apply();
+        if let Some((renegotiation, _)) = api.apply() {
+            // A pre-negotiated channel needs no SDP change; str0m offering
+            // one means the session has no SCTP transport (the browser
+            // offered no data channel), so the channel never opens.
+            debug!(offer = %renegotiation.to_sdp_string(), "unexpected renegotiation for the klv channel; ignored");
+        }
         let id = session_id().ok_or(RejectReason::Internal)?;
         let mut v = Viewer::new(id.clone(), state, rtc, random_seq(), now);
         v.mid = Some(mid);
@@ -697,7 +708,7 @@ impl Media {
                     if let Enqueued::Dropped(n) = v.enqueue_klv(&msg, now) {
                         v.mount_state
                             .stats
-                            .viewer_packets_dropped_queue_full
+                            .klv_dc_dropped_viewer
                             .fetch_add(n, Ordering::Relaxed);
                     }
                 }
@@ -774,9 +785,24 @@ impl Media {
     }
 }
 
+/// Where a session's datagrams go: the media socket, or a test's sink.
+trait DatagramSink {
+    /// Sends one datagram; a failure is logged and the datagram is lost,
+    /// as on any UDP path.
+    fn send(&self, contents: &[u8], to: SocketAddr);
+}
+
+impl DatagramSink for UdpSocket {
+    fn send(&self, contents: &[u8], to: SocketAddr) {
+        if let Err(e) = self.send_to(contents, to) {
+            debug!(%to, error = %e, "send_to failed");
+        }
+    }
+}
+
 /// Polls `v` until str0m reports its next timeout, sending every datagram
 /// it emits and applying every event.
-fn drain_rtc(v: &mut Viewer, socket: &UdpSocket, now: Instant) {
+fn drain_rtc(v: &mut Viewer, socket: &dyn DatagramSink, now: Instant) {
     loop {
         match v.rtc.poll_output() {
             Ok(Output::Timeout(t)) => {
@@ -785,9 +811,7 @@ fn drain_rtc(v: &mut Viewer, socket: &UdpSocket, now: Instant) {
             }
             Ok(Output::Transmit(t)) => {
                 v.remote = Some(t.destination);
-                if let Err(e) = socket.send_to(&t.contents, t.destination) {
-                    debug!(session = %v.id, error = %e, "send_to failed");
-                }
+                socket.send(&t.contents, t.destination);
             }
             Ok(Output::Event(ev)) => handle_event(v, ev, now),
             Err(e) => {
@@ -841,7 +865,12 @@ fn ice_state(s: IceConnectionState) -> IceState {
 
 /// Writes `v`'s queue to str0m until str0m refuses or the queue is empty,
 /// draining str0m's output after each write.
-fn flush_viewer(v: &mut Viewer, socket: &UdpSocket, now: Instant, counters: &mut ServerCounters) {
+fn flush_viewer(
+    v: &mut Viewer,
+    socket: &dyn DatagramSink,
+    now: Instant,
+    counters: &mut ServerCounters,
+) {
     if !v.connected {
         return;
     }
@@ -902,19 +931,29 @@ fn write_rtp(
     Write::Written
 }
 
+/// Writes one KLV message. A message str0m does not take is dropped and
+/// counted, never re-queued: the video queued behind it must not wait on
+/// the data channel. str0m refuses a body larger than its free SCTP send
+/// buffer and fails one above the browser's `max-message-size`.
 fn write_dc(v: &mut Viewer, msg: &KlvMessage) -> Write {
-    let Some(mut channel) = v.dc.and_then(|cid| v.rtc.channel(cid)) else {
-        return Write::Discarded;
+    let outcome = match v.dc.and_then(|cid| v.rtc.channel(cid)) {
+        None => Err("the data channel is not open".to_string()),
+        Some(mut channel) => match channel.write(true, &klv_body(msg)) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("the send buffer is full".to_string()),
+            Err(e) => Err(e.to_string()),
+        },
     };
-    match channel.write(true, &klv_body(msg)) {
-        Ok(true) => {
+    match outcome {
+        Ok(()) => {
             v.stats.dc_messages += 1;
             bump(&v.mount_state.stats.klv_dc_messages_sent);
             Write::Written
         }
-        Ok(false) => Write::Refused,
-        Err(e) => {
-            debug!(session = %v.id, error = %e, "data channel write failed");
+        Err(reason) => {
+            debug!(session = %v.id, reason, len = msg.klv.len(), "klv message dropped");
+            v.stats.dc_messages_dropped += 1;
+            bump(&v.mount_state.stats.klv_dc_dropped_viewer);
             Write::Discarded
         }
     }
@@ -964,6 +1003,69 @@ mod tests {
         };
         // `a=fmtp:98 ...packetization-mode=1;profile-level-id=42e01f`.
         assert_eq!(*pt, 98);
+    }
+
+    /// Counts datagrams instead of sending them.
+    #[derive(Default)]
+    struct CountingSink(std::cell::Cell<usize>);
+
+    impl DatagramSink for CountingSink {
+        fn send(&self, _contents: &[u8], _to: SocketAddr) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    #[test]
+    fn an_unwritable_data_channel_message_never_blocks_the_video_behind_it() {
+        use crate::MountConfig;
+        use crate::mount::MountHandle;
+        use crate::packetize::{DEFAULT_MTU_PAYLOAD, H264Packetizer, Packetizer};
+
+        let now = Instant::now();
+        let mut rtc = accept(server_rtc(now), SAFARI);
+        let Negotiated::Video { mid, pt, .. } = select_video(&rtc, SAFARI, VideoCodec::H264, None)
+        else {
+            panic!("no H.264 payload");
+        };
+        let mut api = rtc.sdp_api();
+        let cid = api.add_channel_with_config(ChannelConfig {
+            label: KLV_LABEL.into(),
+            negotiated: Some(0),
+            ..Default::default()
+        });
+        let _ = api.apply();
+        let (handle, _rx) = MountHandle::for_test(MountConfig::default());
+        let mut v = Viewer::new("0".repeat(32), Arc::clone(&handle.state), rtc, 0, now);
+        v.mid = Some(mid);
+        v.pt = Some(pt);
+        v.connected = true;
+        // The channel id exists but SCTP never came up: str0m cannot take
+        // the message, as it cannot when its send buffer is full.
+        v.dc = Some(cid);
+        let frame = Arc::new(FramePacket {
+            rtp_ts: 9000,
+            keyframe: true,
+            codec: VideoCodec::H264,
+            payloads: H264Packetizer.packetize(&[&[0x65, 1], &[0x65, 2]], DEFAULT_MTU_PAYLOAD),
+            parameter_sets: None,
+        });
+        v.queue.push_back(Queued::Dc(Arc::new(KlvMessage {
+            rtp_ts: 9000,
+            klv_pts_90k: 0,
+            klv: vec![1, 2, 3],
+        })));
+        v.queue.push_back(Queued::Rtp(Arc::clone(&frame), 0));
+        v.queue.push_back(Queued::Rtp(frame, 1));
+
+        let mut counters = ServerCounters::default();
+        flush_viewer(&mut v, &CountingSink::default(), now, &mut counters);
+
+        assert!(v.queue.is_empty(), "the queue drained: {:?}", v.queue);
+        assert_eq!(v.stats.rtp_packets, 2);
+        assert_eq!(counters.rtp_packets_sent, 2);
+        assert_eq!(v.stats.dc_messages_dropped, 1);
+        assert_eq!(handle.stats().klv_dc_dropped_viewer, 1);
+        assert_eq!(v.snapshot(now).dc_messages_dropped, 1);
     }
 
     #[test]

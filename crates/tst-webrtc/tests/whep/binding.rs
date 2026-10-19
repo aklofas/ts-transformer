@@ -109,15 +109,20 @@ fn oversize_record_skips_sei_but_rides_the_data_channel() {
 
 #[test]
 fn record_over_data_channel_limit_is_refused() {
+    // 128 KiB (str0m's SCTP send buffer) less the 13-byte message header.
+    assert_eq!(tst_webrtc::KLV_DC_LIMIT, 131_059);
     let (m, _rx) = MountHandle::for_test(MountConfig::default());
     assert!(matches!(
-        m.push_klv(&vec![0u8; 256 * 1024 + 1], Pts90khz::new(0), 0),
+        m.push_klv(&vec![0u8; 131_060], Pts90khz::new(0), 0),
         Err(PushError::KlvTooLarge {
-            len: 262_145,
-            limit: 262_144
+            len: 131_060,
+            limit: 131_059
         })
     ));
     assert_eq!(m.stats().klv_dc_dropped_oversize, 1);
+    m.push_klv(&vec![0u8; 131_059], Pts90khz::new(0), 0)
+        .expect("a record at the limit is accepted");
+    assert_eq!(m.stats().klv_records_pushed, 1);
 }
 
 #[test]
