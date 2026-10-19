@@ -18,7 +18,7 @@ tst-hls = { path = "../tst-hls" }
 socket2 = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
-sha2 = "0.10"
+sha2 = "0.11"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
