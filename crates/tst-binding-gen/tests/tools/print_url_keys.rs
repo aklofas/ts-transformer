@@ -1,5 +1,5 @@
 //! Maintainer tool: writes the URL key table in `docs/reference/conventions.md`
-//! from the key tables that drive the seven URL parsers.
+//! from the key tables that drive the eight URL parsers.
 //!
 //!   print-url-keys --list       the rendered block on stdout
 //!   print-url-keys --write      rewrite the block in the document
@@ -32,6 +32,7 @@ fn all_docs() -> Vec<KeyDoc> {
     v.extend(docs("tcp(s)", tst_tcp::url::URL_KEYS));
     v.extend(docs("hls(s)", tst_hls::url::URL_KEYS));
     v.extend(docs("rist", tst_rist::url::URL_KEYS));
+    v.extend(docs("whep(s)", tst_webrtc::url::URL_KEYS));
     v.extend(docs("srt", tst_srt::url::URL_KEYS));
     v.extend(tst_srt::url::URL_LEVEL_KEYS.iter().cloned());
     v

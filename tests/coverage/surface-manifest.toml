@@ -4161,6 +4161,24 @@ bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC 
 scenario_ids = []
 tier = "A"
 
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::url::WhepUrl"
+owning_tests = ["crates/tst-webrtc/tests/whep/url.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::url::WhepUrl::parse"
+owning_tests = ["crates/tst-webrtc/tests/whep/url.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 [[exempt]]
 item = "tst_webrtc::error::WhepServerError::from"
 reason = "From<UrlError> impl introduced by thiserror #[from] on WhepServerError::InvalidUrl; error-enum trait method"
