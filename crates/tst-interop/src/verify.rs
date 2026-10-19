@@ -216,7 +216,11 @@ impl PlacementState {
                 if self.boundary_allowed() {
                     self.metrics.generations += 1;
                     if !self.awaiting_video {
+                        // Video first: the new generation has no KLV
+                        // history yet, so its first record must not read
+                        // as a backward step from the old generation's.
                         self.next_index = 0;
+                        self.last_klv = None;
                     }
                     self.start_generation(pts);
                 } else {
@@ -4033,7 +4037,7 @@ mod tests {
     }
 
     #[test]
-    fn klv_before_first_video_is_out_of_tolerance() {
+    fn klv_placement_before_first_video_is_out_of_tolerance() {
         // A KLV at PTS 0 arrives before the generation's first video at
         // 9_000: it is held, then judged against v0 = 9_000.
         let mut t = Tally::new();
@@ -4058,6 +4062,31 @@ mod tests {
         let r = finish_baseline(t, VerifyMode::Lossy, &WireSummary::default());
         let m = r.metrics.klv_placement.expect("placement block");
         assert_eq!((m.records, m.out_of_tolerance, m.generations), (1, 1, 0));
+    }
+
+    #[test]
+    fn klv_placement_video_first_boundaries_with_three_generations_pass() {
+        // Each generation's first video arrives before its first record, and
+        // a boundary is still open after the first one: the new generation's
+        // records must be judged against it, not held as if they announced
+        // yet another generation.
+        let mut t = Tally::new();
+        t.set_klv_placement(placement_expect(3));
+        for _ in 0..3 {
+            feed_placement_generation(&mut t, 0, 30, &[]);
+        }
+        let r = finish_baseline(t, VerifyMode::Lossy, &WireSummary::default());
+        assert!(placement_failures(&r).is_empty(), "{:?}", r.failures);
+        let m = r.metrics.klv_placement.expect("placement block");
+        assert_eq!(
+            (
+                m.records,
+                m.out_of_tolerance,
+                m.generations,
+                m.unexpected_resets
+            ),
+            (30, 0, 3, 0)
+        );
     }
 
     #[test]
