@@ -25,7 +25,7 @@ tst-pipeline = { path = "../../crates/tst-pipeline", default-features = false }
 # no_std lock backend for the in-memory `Sink` Transport. `Transport: Send`
 # (unconditional), so the single-threaded sink must use a Send/Sync cell:
 # `Arc<spin::Mutex<_>>`, not `Rc<RefCell<_>>` (which is !Send).
-spin = { version = "0.9", default-features = false, features = ["spin_mutex"] }
+spin = { version = "0.12", default-features = false, features = ["spin_mutex"] }
 # no_std UDP/IP stack for the off-MCU transport proof (Check 3). 0.12.0 has
 # MSRV 1.80 (fits the repo's pinned 1.93; 0.13+ needs 1.91, which now fits too). `alloc` is
 # required for the phy::Loopback VecDeque and the owned packet buffers, and
