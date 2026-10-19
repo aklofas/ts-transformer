@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod error;
+pub mod packetize;
 pub mod sei;
 pub mod url;
 

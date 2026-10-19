@@ -447,6 +447,14 @@ path = "crates/tst-integration/tests/fixtures/scenarios/webvtt-in-ts/input.ts"
 sha256 = "f301c06541cddfd763700ba9962c89331b80b5f6494ddbd14792ec760d97a72c"
 
 [[file]]
+path = "crates/tst-webrtc/tests/fixtures/h264/idr_with_sps_pps.h264"
+sha256 = "8934b1672b96957ac018a5c6a8219ee21cfc8c34376d479a74505430e7231237"
+
+[[file]]
+path = "crates/tst-webrtc/tests/fixtures/regen.sh"
+sha256 = "298ac1a30a44a51166c73877a3bb079b109fef41759df773d301f50439bab7b0"
+
+[[file]]
 path = "tests/coverage/fuzz-targets.toml"
 sha256 = "fc1ab5fae697823295282bbcac59b52042581b3dbf2b62a946b06dd03f706331"
 
