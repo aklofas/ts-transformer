@@ -36,8 +36,11 @@ repository   = "https://github.com/aklofas/ts-transformer"
 libc          = "0.2"
 os_socketaddr = "0.2"
 bindgen       = "0.73"
+# bindgen 0.73 accepts prettyplease 0.2-0.3 and syn 2-3 but builds only with prettyplease 0.3 + syn 3; pin the pair
+prettyplease  = "0.3"
+syn           = "3"
 cbindgen      = "0.29"
-cc            = "1.0"
+cc            = "1.9"
 cmake         = "0.1"
 pkg-config    = "0.3"
 thiserror     = { version = "2", default-features = false }

@@ -30,17 +30,6 @@ unmaintained = "workspace"
 # Ignore entries must carry a reason + date, e.g.
 #   { id = "RUSTSEC-YYYY-NNNN", reason = "…", }   # added 2026-MM-DD
 ignore = [
-    # pyo3 0.22.6 (tst-py). Both fixes are BREAKING for a 0.x crate (0.22 ->
-    # 0.24.1 / 0.29.0): the whole tst-py binding is pinned to PyO3 0.22 by
-    # deliberate design (abi3-py310, Rust-2024 patterns), and a binding-crate
-    # major-version bump is out of scope for a rails/CI-hygiene change that
-    # touches no Rust code. Neither advisory is reachable from this crate's
-    # own usage: `PyString::from_object` (RUSTSEC-2025-0020) is never called on
-    # attacker-controlled, non-UTF8-terminated input here, and
-    # `PyCFunction::new_closure` (RUSTSEC-2026-0177) is not used at all —
-    # tst-py exposes functions via `#[pyfunction]`, not runtime closures.
-    { id = "RUSTSEC-2025-0020", reason = "pyo3 0.22.6 is a deliberate pin (abi3-py310); fix requires an unreleased-here 0.24+ major bump; tst-py never calls PyString::from_object on untrusted non-UTF8-terminated input" },   # added 2026-09-15
-    { id = "RUSTSEC-2026-0177", reason = "pyo3 0.22.6 is a deliberate pin (abi3-py310); fix requires an unreleased-here 0.29+ major bump; tst-py never calls PyCFunction::new_closure" },   # added 2026-09-15
     # rustls-pemfile 2.2.0 (direct dep of tst-hls/tst-jni/tst-py/tst-rtp/tst-tcp,
     # for loading TLS cert/key PEM files). Unmaintained advisory, no CVE — the
     # advisory's own text says "No safe upgrade is available!"; migrating to
@@ -48,16 +37,6 @@ ignore = [
     # crates, out of scope for a rails/CI-hygiene change that touches no
     # Rust code.
     { id = "RUSTSEC-2025-0134", reason = "no safe upgrade exists (per the advisory); the rustls-pki-types::PemObject migration is a source change across 5 crates, out of scope for a rails/CI-hygiene WP" },   # added 2026-09-15
-    # time 0.3.41 (dev-dependency only, via rcgen — self-signed test cert
-    # generation in tst-rtp/tst-tcp dev-deps, never shipped). The fix (>=0.3.47)
-    # requires rustc 1.88 (`cargo update` reports "requires Rust 1.88.0"),
-    # breaking the pinned MSRV (rust-toolchain.toml) — bumping
-    # the toolchain is its own decision, out of scope for a rails/CI-hygiene
-    # WP. The advisory's DoS is a stack-exhaustion bug in RFC 2822 DATE
-    # parsing; rcgen only ever calls time's formatting/construction path to
-    # generate certificate validity fields, never the RFC 2822 parser, and
-    # never on attacker-controlled input.
-    { id = "RUSTSEC-2026-0009", reason = "fix requires rustc 1.88, breaking the pinned 1.85 MSRV; dev-dependency only (rcgen test-cert generation), never exercises the affected RFC 2822 parse path" },   # added 2026-09-15
 ]
 
 [licenses]

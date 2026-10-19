@@ -350,12 +350,12 @@ fn build_vendored(want_mbedtls: bool, sanitizer: Option<&str>) -> Vec<PathBuf> {
                  ensure Visual Studio Build Tools (VC++) are installed."
             )
         });
-        // Tool::env() yields the INCLUDE/LIB/PATH (and friends) the MSVC
+        // Tool::get_envs() yields the INCLUDE/LIB/PATH (and friends) the MSVC
         // compiler needs; forward each into the meson subprocess env. For PATH
         // we APPEND the discovered MSVC dirs to the inherited PATH rather than
         // replacing it, so meson + ninja (installed on the original PATH) stay
         // findable by the `meson compile` step.
-        for (k, v) in cl.env() {
+        for (k, v) in cl.get_envs() {
             let key = k.to_string_lossy().into_owned();
             let mut val = v.to_string_lossy().into_owned();
             if key.eq_ignore_ascii_case("path")
