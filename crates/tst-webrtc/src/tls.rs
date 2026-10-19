@@ -8,7 +8,10 @@ use rustls::ServerConfig;
 use crate::error::WhepServerError;
 
 /// Load a server certificate and key from PEM files.
-#[allow(dead_code)] // the server that calls it is not in the crate yet
+#[expect(
+    dead_code,
+    reason = "called by the server's bind, which is not in the crate yet"
+)]
 pub(crate) fn load_server_config(
     cert: &Path,
     key: &Path,

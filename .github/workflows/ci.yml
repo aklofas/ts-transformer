@@ -714,7 +714,7 @@ jobs:
           # cargo-public-api's internal rustdoc render — this job also carries a
           # rolling nightly (doc lints), so a bare +nightly would silently unpin.
           # To bump: pick a new date,
-          # re-render all 10 baselines with it, and land both together.
+          # re-render all 11 baselines with it, and land both together.
           rustup toolchain install nightly-2026-07-03 --profile minimal --no-self-update
           cargo +stable install cargo-public-api --locked --quiet
           # Assigned first: a roster.sh failure inside the loop's command

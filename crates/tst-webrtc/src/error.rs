@@ -68,8 +68,8 @@ pub enum PushError {
     #[error("KLV record of {len} bytes exceeds the {limit}-byte data-channel limit")]
     KlvTooLarge {
         /// The record's length in bytes.
-        len: usize,
+        len: u64,
         /// The largest record a data-channel message carries.
-        limit: usize,
+        limit: u64,
     },
 }
