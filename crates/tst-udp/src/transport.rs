@@ -154,9 +154,9 @@ impl UdpTransport {
 fn apply_socket2_knobs(socket: &UdpSocket, cfg: &UdpConfig) -> std::io::Result<()> {
     set_socket_buffers(socket, cfg.rcvbuf, cfg.sndbuf)?;
     if let Some(tos) = cfg.tos {
-        // socket2 0.5 set_tos for IPv4. IPv6 traffic-class would need IPV6_TCLASS
+        // socket2 set_tos_v4 for IPv4. IPv6 traffic-class would need IPV6_TCLASS
         // via libc directly; deferred (low-priority knob).
-        let _ = socket2::SockRef::from(socket).set_tos(tos as u32);
+        let _ = socket2::SockRef::from(socket).set_tos_v4(tos as u32);
     }
     Ok(())
 }
