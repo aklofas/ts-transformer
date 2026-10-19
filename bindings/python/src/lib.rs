@@ -79,7 +79,11 @@ fn init_tracing_bridge() {
 // `_py` is prefixed because it is not used directly in this
 // registration shell. CI runs `clippy -D warnings` so an unprefixed
 // unused parameter would fail the workspace.
-#[pymodule]
+//
+// `gil_used = true`: the binding's locking rules (gil-held-locks.tsv) assume
+// the GIL serialises Python threads, so a free-threaded interpreter keeps the
+// GIL enabled for this module. PyO3 0.28 flipped the default to `false`.
+#[pymodule(gil_used = true)]
 fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     init_tracing_bridge();
     // A kind member the Python enum lacks fails `import tstrans`.
@@ -93,9 +97,7 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // teardown complete. See `util::fire_cancel_sources_at_exit`.
     let hook = wrap_pyfunction!(util::fire_cancel_sources_at_exit, m)?;
     m.add_function(hook.clone())?;
-    _py.import_bound("atexit")?
-        .getattr("register")?
-        .call1((hook,))?;
+    _py.import("atexit")?.getattr("register")?.call1((hook,))?;
     m.add_function(wrap_pyfunction!(errors::raise_mux_error_for_test, m)?)?;
     #[cfg(feature = "srt")]
     {

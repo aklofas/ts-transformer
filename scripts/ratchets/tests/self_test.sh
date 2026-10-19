@@ -45,10 +45,10 @@ plant() { sed "s|$2|$3|g" "$1" > "$1.new" && mv "$1.new" "$1"; }
 SG="$DIR/../check/c/snapshot-getters.sh"
 
 # ---- locks taken with the GIL held (same script, check 2) ------------------
-# A `.lock()` outside `allow_threads(` must be caught unless its function is
+# A `.lock()` outside `detach(` must be caught unless its function is
 # allowlisted with a reason — per TYPE, so allowlisting one class's getter
 # does not excuse another's of the same name. A lock taken inside
-# `allow_threads(` must not be reported, one inside a `with_gil(` nested in
+# `detach(` must not be reported, one inside an `attach(` nested in
 # it must; a stale row, a row without a reason and an empty scan all fail.
 mkdir -p "$tmp/gl/held" "$tmp/gl/clean"
 cat > "$tmp/gl/held/shell.rs" <<'EOF'
@@ -59,22 +59,22 @@ impl Publisher {
             .inner
             .lock()
             .map_err(|_| poisoned())?;
-        py.allow_threads(|| guard.push(data)).map_err(to_py)
+        py.detach(|| guard.push(data)).map_err(to_py)
     }
     fn local_addr(&self) -> String {
         self.inner.lock().unwrap().local_addr()
     }
     fn stats(&self, py: Python<'_>) -> Stats {
-        py.allow_threads(|| self.inner.lock().unwrap().stats())
+        py.detach(|| self.inner.lock().unwrap().stats())
     }
     fn recv(&self, py: Python<'_>) -> Vec<u8> {
         crate::util::allow_threads_parking(py, || self.inner.lock().unwrap().recv())
     }
     fn add_sink(&self, py: Python<'_>, cb: Py<PyAny>) {
         let errors = self.errors.clone();
-        py.allow_threads(move || {
+        py.detach(move || {
             self.inner.lock().unwrap().add_sink(Box::new(move |pkt: &[u8]| {
-                Python::with_gil(|py| {
+                Python::attach(|py| {
                     if let Err(e) = cb.call1(py, (pkt,)) {
                         *errors.lock().unwrap() = Some(e);
                     }
@@ -97,7 +97,7 @@ EOF
 cat > "$tmp/gl/clean/shell.rs" <<'EOF'
 impl Publisher {
     fn stats(&self, py: Python<'_>) -> Stats {
-        py.allow_threads(|| self.inner.lock().unwrap().stats())
+        py.detach(|| self.inner.lock().unwrap().stats())
     }
     fn local_addr(&self) -> String { self.local_addr.to_string() }
 }
@@ -115,7 +115,7 @@ printf '%s\t%s\t%s\n' "$GLF" Publisher::push "fixture" "$GLF" Publisher::local_a
 expect "gil locks: a .lock() taken with the GIL held is caught"         1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held"  SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv"     bash "$SG"
 expect "gil locks: the same functions, allowlisted, pass"               0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held"  SG_LOCK_ALLOWLIST="$tmp/gl/listed.tsv"    bash "$SG"
 expect "gil locks: a row for one type does not excuse another's getter" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held"  SG_LOCK_ALLOWLIST="$tmp/gl/othertype.tsv" bash "$SG"
-expect "gil locks: a lock inside allow_threads is not a finding (stale row fails)" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held" SG_LOCK_ALLOWLIST="$tmp/gl/stale.tsv" bash "$SG"
+expect "gil locks: a lock inside detach is not a finding (stale row fails)" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held" SG_LOCK_ALLOWLIST="$tmp/gl/stale.tsv" bash "$SG"
 expect "gil locks: a lock inside allow_threads_parking is not a finding (stale row fails)" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held" SG_LOCK_ALLOWLIST="$tmp/gl/stale_parking.tsv" bash "$SG"
 expect "gil locks: an allowlist row without a reason fails"             1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held"  SG_LOCK_ALLOWLIST="$tmp/gl/noreason.tsv"  bash "$SG"
 expect "gil locks: a scan that matches nothing fails closed"            1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/clean" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv"     bash "$SG"
@@ -153,7 +153,7 @@ macro_rules! held_guard {
 impl Publisher {
     fn push(&self, py: Python<'_>) {
         let guard = held_guard!(self.inner);
-        py.allow_threads(|| std::thread::yield_now());
+        py.detach(|| std::thread::yield_now());
         drop(guard);
     }
 }
@@ -191,15 +191,15 @@ expect "gil locks: a macro body AFTER an allowlisted fn is not excused by that f
 # The UFCS forms end in "(" with an
 # argument following, not a balanced "()" like the dotted spellings. Skipping
 # that "(" without counting it under-closes `at`/`wg` when its matching ")"
-# is later seen, so a second lock later in the SAME allow_threads block was
+# is later seen, so a second lock later in the SAME detach block was
 # misclassified as GIL-held. `inside` (two UFCS/dotted locks back to back,
-# both inside allow_threads) must never be flagged; `outside` (a bare UFCS
+# both inside detach) must never be flagged; `outside` (a bare UFCS
 # lock with the GIL held) must.
 mkdir -p "$tmp/gl/ufcs-paren"
 cat > "$tmp/gl/ufcs-paren/shell.rs" <<'EOF'
 impl Publisher {
     fn inside(&self, py: Python<'_>) -> u64 {
-        py.allow_threads(|| {
+        py.detach(|| {
             let a = Mutex::lock(&self.x).unwrap().count;
             let b = self.y.lock().unwrap().count;
             a + b
@@ -212,7 +212,7 @@ impl Publisher {
 EOF
 printf '%s\t%s\t%s\n' "$tmp/gl/ufcs-paren/shell.rs" Publisher::outside "fixture" > "$tmp/gl/ufcs-paren-allow.tsv"
 
-expect "gil locks: a UFCS lock immediately followed by another, both inside allow_threads, is never a finding (only the outside one is)" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/ufcs-paren" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv" bash "$SG"
+expect "gil locks: a UFCS lock immediately followed by another, both inside detach, is never a finding (only the outside one is)" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/ufcs-paren" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv" bash "$SG"
 expect "gil locks: allowlisting only the outside UFCS lock passes"                                                                      0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/ufcs-paren" SG_LOCK_ALLOWLIST="$tmp/gl/ufcs-paren-allow.tsv" bash "$SG"
 
 # ---- duplicate test helpers (scripts/check/repo/no-duplicate-test-helpers.sh) ----

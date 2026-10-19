@@ -7,7 +7,13 @@ use pyo3::prelude::*;
 
 /// Cumulative stats snapshot for a UDP transport handle. Send-side counters
 /// are zero on a receive-only handle and vice-versa.
-#[pyclass(frozen, get_all, name = "SocketStats", module = "tstrans.udp")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "SocketStats",
+    module = "tstrans.udp"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct SocketStats {
     /// Datagrams successfully sent (sender only).

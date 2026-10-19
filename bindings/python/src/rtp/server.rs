@@ -9,7 +9,7 @@
 //! GIL release boundaries:
 //! - `start`, `stop`, `add_unicast_mount`, `add_multicast_mount`,
 //!   `add_publish_mount`, `next_publisher`, `remove_mount`, every
-//!   `MountHandle.push_*` — wrap Rust work in `py.allow_threads`.
+//!   `MountHandle.push_*` — wrap Rust work in `py.detach`.
 //! - Dataclass construction, `__enter__`/`__exit__`, `cancel_handle`,
 //!   `stats`, handle getters — no release (pure Python or sub-microsecond).
 
@@ -95,7 +95,7 @@ impl PyRtspServerCancelHandle {
 /// [`RtspServer.add_multicast_mount`]. Cloning is cheap (clones the
 /// internal `Arc`); multiple holders can push from different threads.
 ///
-/// All `push_*` methods release the GIL via `py.allow_threads()` so
+/// All `push_*` methods release the GIL via `py.detach()` so
 /// concurrent Python threads can run while the muxer/fanout work
 /// proceeds.
 #[pyclass(name = "MountHandle", module = "tstrans.rtp", frozen)]
@@ -136,7 +136,7 @@ impl PyMountHandle {
     // ── Push surface — single stream variants ──────────────────────────────
     //
     // `pts` is keyword-only on every push method. Each method wraps the Rust call in
-    // `py.allow_threads(|| ...)` so other Python threads can run while
+    // `py.detach(|| ...)` so other Python threads can run while
     // the muxer + broadcast fanout proceed.
 
     /// Push one video access unit onto the lone configured video stream.
@@ -451,7 +451,7 @@ impl PyMountHandle {
         reason = "zeroes counters under short in-memory mutexes"
     )]
     pub fn reset_stats(&self, py: Python<'_>) {
-        py.allow_threads(|| self.inner.reset_stats());
+        py.detach(|| self.inner.reset_stats());
     }
 
     fn __repr__(&self) -> String {
@@ -935,8 +935,8 @@ fn extract_auth(obj: &Bound<'_, PyAny>) -> PyResult<AuthExtract> {
     // Prefer Rust-side downcasting over Python-level getattr so we can
     // read the password without exposing it via a Python-visible getter.
     // The PyBasicAuth + PyDigestAuth pyclasses are `frozen`, so
-    // `obj.downcast::<...>()` + `.borrow()` is sound and cheap.
-    if let Ok(basic) = obj.downcast::<PyBasicAuth>() {
+    // `obj.cast::<...>()` + `.borrow()` is sound and cheap.
+    if let Ok(basic) = obj.cast::<PyBasicAuth>() {
         let g = basic.borrow();
         let realm = g.realm.clone().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(
@@ -950,7 +950,7 @@ fn extract_auth(obj: &Bound<'_, PyAny>) -> PyResult<AuthExtract> {
             password: g.password.clone(),
         });
     }
-    if let Ok(digest) = obj.downcast::<PyDigestAuth>() {
+    if let Ok(digest) = obj.cast::<PyDigestAuth>() {
         let g = digest.borrow();
         let realm = g.realm.clone().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(

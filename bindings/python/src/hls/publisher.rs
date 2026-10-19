@@ -17,7 +17,7 @@
 //!   handle closed.
 //!
 //! GIL: every `HlsPublisher` method that needs the inner publisher takes
-//! the mutex inside `py.allow_threads`, never while holding the GIL — a
+//! the mutex inside `py.detach`, never while holding the GIL — a
 //! `push_ts` on another thread holds that mutex with the GIL released and
 //! needs the GIL back to let go of it. `local_addr` / `local_port` /
 //! `__repr__` read construction-time state and take no lock.
@@ -443,7 +443,7 @@ pub(crate) struct PyHlsServerHandle {
     /// `shutdown(self)` consumes by value) while leaving the PyClass
     /// addressable; `Mutex` to allow the `&self` methods plus a `take()` on
     /// shutdown. Locked with the GIL held, which is sound because no
-    /// method keeps the guard across `py.allow_threads` (`shutdown` moves
+    /// method keeps the guard across `py.detach` (`shutdown` moves
     /// the handle out and drops the guard first).
     inner: Mutex<Option<HlsServerHandle>>,
 }
@@ -521,9 +521,9 @@ impl PyHlsServerHandle {
     fn __exit__(
         &self,
         py: Python<'_>,
-        _exc_type: Option<PyObject>,
-        _exc_value: Option<PyObject>,
-        _traceback: Option<PyObject>,
+        _exc_type: Option<Py<PyAny>>,
+        _exc_value: Option<Py<PyAny>>,
+        _traceback: Option<Py<PyAny>>,
     ) -> PyResult<bool> {
         self.shutdown(py)?;
         // Return false so any in-context exception propagates.

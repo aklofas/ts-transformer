@@ -11,7 +11,7 @@
 //!
 //! # GIL release discipline
 //!
-//! `recv_au` releases the GIL via `py.allow_threads(|| ...)`: the blocking
+//! `recv_au` releases the GIL via `py.detach(|| ...)`: the blocking
 //! Rust call parks the calling thread on a kernel
 //! read timeout and must not hold the GIL, or all other Python threads
 //! freeze.  All other methods are fast (stat reads, flag flips) and do
@@ -21,7 +21,7 @@
 //!
 //! `H264Receiver` holds `tst_rtp::H264Receiver` in a
 //! `tst_pipeline::binding::Owned`, which takes the slot only inside
-//! `with_mut` / `with_ref_blocking` under `py.allow_threads`, so a parked
+//! `with_mut` / `with_ref_blocking` under `py.detach`, so a parked
 //! `recv_au` on one thread never blocks a `close()` or a getter on
 //! another (a `&mut self` receive made PyO3 raise `RuntimeError: Already
 //! borrowed` there). Methods raise `RtpError(CLOSED)` once the slot is
@@ -74,7 +74,13 @@ use crate::util::{CancelSource, close_owned};
 ///
 /// `NONE`       — pass NALUs through as-is.
 /// `BEFORE_IDR` — inject cached SPS/PPS before every IDR frame (the default).
-#[pyclass(eq, eq_int, name = "ParameterSetInjection", module = "tstrans.rtp")]
+#[pyclass(
+    from_py_object,
+    eq,
+    eq_int,
+    name = "ParameterSetInjection",
+    module = "tstrans.rtp"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::upper_case_acronyms, non_camel_case_types)]
 pub enum PyParameterSetInjection {
@@ -178,7 +184,7 @@ impl PyH264DepayConfig {
         self.inner
             .initial_parameter_sets
             .iter()
-            .map(|b| PyBytes::new_bound(py, b))
+            .map(|b| PyBytes::new(py, b))
             .collect()
     }
 
@@ -260,7 +266,7 @@ impl PyH264AccessUnit {
     /// new Python `bytes` object.
     pub(crate) fn from_rust(py: Python<'_>, au: H264Au) -> PyResult<Self> {
         Ok(Self {
-            annexb: PyBytes::new_bound(py, &au.annexb).unbind(),
+            annexb: PyBytes::new(py, &au.annexb).unbind(),
             annexb_len: au.annexb.len(),
             pts: au.pts.as_ticks(),
             key_frame: au.key_frame,
@@ -295,7 +301,7 @@ impl PyH264AccessUnit {
 /// stays open, call again to keep waiting. `None` return stays EOS-only
 /// and is never used to signal a timeout.
 ///
-/// The GIL is released via `py.allow_threads()` during the blocking recv so
+/// The GIL is released via `py.detach()` during the blocking recv so
 /// other Python threads continue to run while this thread waits for packets.
 ///
 /// # Iterator protocol
@@ -557,7 +563,7 @@ impl PyH264Receiver {
     /// (or ended through a path this type doesn't instrument, or a
     /// `recv_au` is in flight on another thread — see
     /// `current_end_reason`). Still readable after `close()`.
-    fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn end_reason(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         match self.current_end_reason() {
             Some(r) => crate::shells::end_reason::end_reason_to_py(py, &r),
             None => Ok(None),

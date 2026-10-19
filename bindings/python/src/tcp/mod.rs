@@ -21,7 +21,7 @@
 //!
 //! GIL boundaries:
 //! - `send`, `recv`, `build()` (both builders), `accept_blocking` ->
-//!   `py.allow_threads(...)` so concurrent Python threads remain live.
+//!   `py.detach(...)` so concurrent Python threads remain live.
 //! - `close`, `stats` -> also release the GIL during mutex acquisition;
 //!   `close` fires the cancel handle first so a parked `recv` unblocks
 //!   within ≤100 ms, making the lock promptly available.
@@ -31,7 +31,7 @@
 //!   around the lock, and `Listener.close` fires the listener's own cancel
 //!   handle first so a parked `accept_blocking` returns within ≤100 ms.
 //!
-//! Bytes-like extraction in `Transport.send(payload)` follows the abi3-py310
+//! Bytes-like extraction in `Transport.send(payload)` follows the
 //! two-path pattern from udp/mod.rs: fast zero-copy `&[u8]` for `bytes`,
 //! fallback through Python `bytes()` builtin for `bytearray`/`memoryview`.
 //!
@@ -120,19 +120,19 @@ impl PyTcpTransport {
     ///
     /// Releases the GIL during the kernel send.
     fn send(&self, py: Python<'_>, payload: &Bound<'_, PyAny>) -> PyResult<()> {
-        // Coerce to owned bytes before crossing the allow_threads boundary.
+        // Coerce to owned bytes before crossing the detach boundary.
         // `Python<'_>` is `!Send` so nothing involving it can enter the closure.
         let owned: Vec<u8> = if let Ok(slice) = payload.extract::<&[u8]>() {
             slice.to_vec()
         } else {
             // Fallback: bytearray / memoryview / etc. -- coerce through Python
-            // `bytes()` builtin (one C copy). Required under abi3-py310 since
-            // PyBuffer is gated on not(Py_LIMITED_API) in PyO3 0.22.
+            // `bytes()` builtin (one C copy). Written before the 3.11 floor
+            // put PyBuffer in the stable ABI; see `util::coerce_bytes_like`.
             let coerced: Bound<'_, PyBytes> = py
-                .import_bound("builtins")?
+                .import("builtins")?
                 .getattr(intern!(py, "bytes"))?
                 .call1((payload,))?
-                .downcast_into::<PyBytes>()?;
+                .cast_into::<PyBytes>()?;
             coerced.as_bytes().to_vec()
         };
         pyres(
@@ -173,11 +173,11 @@ impl PyTcpTransport {
         // over the bytearray holds a buffer export, and CPython refuses to
         // resize an exported bytearray (`BufferError: Existing exports of
         // data: object cannot be re-sized`). `pyo3::buffer::PyBuffer` would
-        // be the direct export, but it is compiled out under abi3-py310
-        // (`any(not(Py_LIMITED_API), Py_3_11)`); `PyMemoryView_FromObject`
-        // is in the stable ABI.
-        let export = PyMemoryView::from_bound(buf.as_any())?;
-        // We need an owned buffer to cross the allow_threads boundary --
+        // be the direct export (stable ABI from the 3.11 floor,
+        // `any(not(Py_LIMITED_API), Py_3_11)`); this predates that floor and
+        // `PyMemoryView_FromObject` is in the stable ABI too.
+        let export = PyMemoryView::from(buf.as_any())?;
+        // We need an owned buffer to cross the detach boundary --
         // `PyByteArray` is a Python object and is !Send.
         let mut owned = vec![0u8; buf_len];
         let res = crate::util::allow_threads_parking(py, || {
@@ -483,7 +483,7 @@ impl PyTcpListener {
     ///
     /// Releases the GIL while waiting.
     fn accept_blocking(&self, py: Python<'_>) -> PyResult<PyTcpTransport> {
-        // Two-step: accept inside allow_threads (returns Result<TcpTransport, TcpError>
+        // Two-step: accept inside detach (returns Result<TcpTransport, TcpError>
         // where TcpError is Send), then map to PyErr after re-acquiring the GIL.
         let res = crate::util::allow_threads_parking(py, || {
             // the accept itself; Listener methods take &self so it holds the slot through with_ref_blocking
@@ -749,7 +749,7 @@ impl PyTlsConfig {
     // would expose the `Vec<u8>` as `list[int]`, mismatching the stub + tests).
     #[getter]
     fn ca_pem<'py>(&self, py: Python<'py>) -> pyo3::Bound<'py, pyo3::types::PyBytes> {
-        pyo3::types::PyBytes::new_bound(py, &self.ca_pem)
+        pyo3::types::PyBytes::new(py, &self.ca_pem)
     }
     #[getter]
     fn verify_hostname(&self) -> bool {
@@ -770,7 +770,7 @@ impl PyTlsConfig {
 }
 
 /// Client certificate for mutual TLS authentication.
-#[pyclass(name = "ClientCert", module = "tstrans.tcp", frozen)]
+#[pyclass(from_py_object, name = "ClientCert", module = "tstrans.tcp", frozen)]
 #[derive(Clone)]
 pub(crate) struct PyClientCert {
     /// PEM-encoded client certificate.
@@ -793,11 +793,11 @@ impl PyClientCert {
     // auto-getter would expose for a `Vec<u8>` field).
     #[getter]
     fn cert_pem<'py>(&self, py: Python<'py>) -> pyo3::Bound<'py, pyo3::types::PyBytes> {
-        pyo3::types::PyBytes::new_bound(py, &self.cert_pem)
+        pyo3::types::PyBytes::new(py, &self.cert_pem)
     }
     #[getter]
     fn key_pem<'py>(&self, py: Python<'py>) -> pyo3::Bound<'py, pyo3::types::PyBytes> {
-        pyo3::types::PyBytes::new_bound(py, &self.key_pem)
+        pyo3::types::PyBytes::new(py, &self.key_pem)
     }
 
     fn __repr__(&self) -> String {
@@ -814,7 +814,7 @@ impl PyClientCert {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new_bound(parent.py(), "tcp")?;
+    let m = PyModule::new(parent.py(), "tcp")?;
     crate::generated::stats_tcp::register(&m)?;
     m.add_class::<PyTcpTransport>()?;
     m.add_class::<PyTcpTransportBuilder>()?;

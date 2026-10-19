@@ -19,7 +19,7 @@ pub(crate) mod server;
 pub(crate) mod transport;
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new_bound(parent.py(), "rtp")?;
+    let m = PyModule::new(parent.py(), "rtp")?;
     transport::register(&m)?;
     client::register(&m)?;
     server::register(&m)?;

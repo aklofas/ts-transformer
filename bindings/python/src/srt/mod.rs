@@ -22,7 +22,7 @@ pub(crate) mod policy;
 use pyo3::prelude::*;
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new_bound(parent.py(), "srt")?;
+    let m = PyModule::new(parent.py(), "srt")?;
     crate::generated::stats_srt::register(&m)?;
     lowlevel::register(&m)?;
     policy::register(&m)?;

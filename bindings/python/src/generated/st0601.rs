@@ -10,10 +10,10 @@ use pyo3::types::{PyBytes, PyDict, PyTuple};
 pub(crate) fn wavelength_record_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::WavelengthRecord,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "WavelengthRecord"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "id"), r.id)?;
     kwargs.set_item(intern!(py, "min_nm"), r.min_nm)?;
     kwargs.set_item(intern!(py, "max_nm"), r.max_nm)?;
@@ -36,10 +36,10 @@ pub(crate) fn wavelength_record_from_py(
 pub(crate) fn image_horizon_pixels_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::ImageHorizonPixels,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "ImageHorizonPixels"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "x0_pct"), r.x0_pct)?;
     kwargs.set_item(intern!(py, "y0_pct"), r.y0_pct)?;
     kwargs.set_item(intern!(py, "x1_pct"), r.x1_pct)?;
@@ -106,10 +106,10 @@ pub(crate) fn image_horizon_pixels_from_py(
 pub(crate) fn control_command_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::ControlCommand,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "ControlCommand"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "id"), r.id)?;
     kwargs.set_item(intern!(py, "command"), r.command.as_str())?;
     if let Some(v) = &r.time_us {
@@ -139,10 +139,10 @@ pub(crate) fn control_command_from_py(
 pub(crate) fn sensor_frame_rate_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::SensorFrameRate,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "SensorFrameRate"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "numerator"), r.numerator)?;
     kwargs.set_item(intern!(py, "denominator"), r.denominator)?;
     Ok(cls.call((), Some(&kwargs))?.unbind())
@@ -161,10 +161,10 @@ pub(crate) fn sensor_frame_rate_from_py(
 pub(crate) fn metadata_substream_id_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::MetadataSubstreamId,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "MetadataSubstreamId"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "local_id"), r.local_id)?;
     kwargs.set_item(
         intern!(py, "uuid"),
@@ -186,10 +186,10 @@ pub(crate) fn metadata_substream_id_from_py(
 pub(crate) fn country_codes_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::CountryCodes,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "CountryCodes"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "coding_method"), r.coding_method)?;
     if let Some(v) = &r.overflight {
         kwargs.set_item(intern!(py, "overflight"), v.as_str())?;
@@ -239,10 +239,10 @@ pub(crate) fn country_codes_from_py(
 pub(crate) fn location_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::Location,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "Location"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     if let Some(v) = &r.lat_deg {
         kwargs.set_item(intern!(py, "lat_deg"), *v)?;
     }
@@ -290,10 +290,10 @@ pub(crate) fn location_from_py(
 pub(crate) fn airbase_locations_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::AirbaseLocations,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "AirbaseLocations"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     if let Some(v) = &r.take_off {
         kwargs.set_item(intern!(py, "take_off"), location_to_py(py, v)?)?;
     }
@@ -330,10 +330,10 @@ pub(crate) fn airbase_locations_from_py(
 pub(crate) fn payload_record_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::PayloadRecord,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "PayloadRecord"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "id"), r.id)?;
     kwargs.set_item(
         intern!(py, "payload_type"),
@@ -357,20 +357,17 @@ pub(crate) fn payload_record_from_py(
 pub(crate) fn payload_list_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::PayloadList,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "PayloadList"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "count"), r.count)?;
     let r_records_items = r
         .records
         .iter()
         .map(|x| payload_record_to_py(py, x))
         .collect::<PyResult<Vec<_>>>()?;
-    kwargs.set_item(
-        intern!(py, "records"),
-        PyTuple::new_bound(py, r_records_items),
-    )?;
+    kwargs.set_item(intern!(py, "records"), PyTuple::new(py, r_records_items)?)?;
     Ok(cls.call((), Some(&kwargs))?.unbind())
 }
 
@@ -382,7 +379,7 @@ pub(crate) fn payload_list_from_py(
         count: obj.getattr(intern!(py, "count"))?.extract()?,
         records: {
             let v = obj.getattr(intern!(py, "records"))?;
-            v.iter()?
+            v.try_iter()?
                 .map(|x| x.and_then(|x| payload_record_from_py(&x)))
                 .collect::<PyResult<Vec<_>>>()?
         },
@@ -392,10 +389,10 @@ pub(crate) fn payload_list_from_py(
 pub(crate) fn weapons_store_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::WeaponsStore,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "WeaponsStore"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "station_id"), r.station_id)?;
     kwargs.set_item(intern!(py, "hardpoint_id"), r.hardpoint_id)?;
     kwargs.set_item(intern!(py, "carriage_id"), r.carriage_id)?;
@@ -422,10 +419,10 @@ pub(crate) fn weapons_store_from_py(
 pub(crate) fn waypoint_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::Waypoint,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "Waypoint"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "id"), r.id)?;
     kwargs.set_item(intern!(py, "prosecution_order"), r.prosecution_order)?;
     if let Some(v) = &r.info {
@@ -466,10 +463,10 @@ pub(crate) fn waypoint_from_py(
 pub(crate) fn view_domain_pair_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::ViewDomainPair,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "ViewDomainPair"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "start_deg"), r.start_deg)?;
     kwargs.set_item(intern!(py, "range_deg"), r.range_deg)?;
     Ok(cls.call((), Some(&kwargs))?.unbind())
@@ -488,10 +485,10 @@ pub(crate) fn view_domain_pair_from_py(
 pub(crate) fn view_domain_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::ViewDomain,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "ViewDomain"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     if let Some(v) = &r.azimuth {
         kwargs.set_item(intern!(py, "azimuth"), view_domain_pair_to_py(py, v)?)?;
     }
@@ -539,16 +536,16 @@ pub(crate) fn view_domain_from_py(
 pub(crate) fn sdcc_flp_field_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::SdccFlpField,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "SdccFlpField"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     let r_preceding_tags_items = r.preceding_tags.iter().collect::<Vec<_>>();
     kwargs.set_item(
         intern!(py, "preceding_tags"),
-        PyTuple::new_bound(py, r_preceding_tags_items),
+        PyTuple::new(py, r_preceding_tags_items)?,
     )?;
-    kwargs.set_item(intern!(py, "bytes"), PyBytes::new_bound(py, &r.bytes))?;
+    kwargs.set_item(intern!(py, "bytes"), PyBytes::new(py, &r.bytes))?;
     Ok(cls.call((), Some(&kwargs))?.unbind())
 }
 
@@ -565,10 +562,10 @@ pub(crate) fn sdcc_flp_field_from_py(
 pub(crate) fn uas_datalink_ls_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0601::UasDatalinkLs,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "UasDatalinkLs"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(
         intern!(py, "universal_label"),
         crate::custom::uas_datalink_ls_universal_label_to_py(py, &r.universal_label)?,
@@ -887,46 +884,43 @@ pub(crate) fn uas_datalink_ls_to_py(
         kwargs.set_item(intern!(py, "correction_offset_us"), *v)?;
     }
     if let Some(v) = &r.active_payloads {
-        kwargs.set_item(intern!(py, "active_payloads"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "active_payloads"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.generic_flag_data {
         kwargs.set_item(intern!(py, "generic_flag_data"), *v)?;
     }
     if let Some(v) = &r.security_local_set {
-        kwargs.set_item(intern!(py, "security_local_set"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "security_local_set"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.rvt {
-        kwargs.set_item(intern!(py, "rvt"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "rvt"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.vmti {
-        kwargs.set_item(intern!(py, "vmti"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "vmti"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.sar_mi_local_set {
-        kwargs.set_item(intern!(py, "sar_mi_local_set"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "sar_mi_local_set"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.range_image_local_set {
-        kwargs.set_item(
-            intern!(py, "range_image_local_set"),
-            PyBytes::new_bound(py, v),
-        )?;
+        kwargs.set_item(intern!(py, "range_image_local_set"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.geo_registration_local_set {
         kwargs.set_item(
             intern!(py, "geo_registration_local_set"),
-            PyBytes::new_bound(py, v),
+            PyBytes::new(py, v),
         )?;
     }
     if let Some(v) = &r.composite_imaging_local_set {
         kwargs.set_item(
             intern!(py, "composite_imaging_local_set"),
-            PyBytes::new_bound(py, v),
+            PyBytes::new(py, v),
         )?;
     }
     if let Some(v) = &r.segment_local_set {
-        kwargs.set_item(intern!(py, "segment_local_set"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "segment_local_set"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.amend_local_set {
-        kwargs.set_item(intern!(py, "amend_local_set"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "amend_local_set"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.outside_air_temp_c {
         kwargs.set_item(intern!(py, "outside_air_temp_c"), *v)?;
@@ -986,20 +980,20 @@ pub(crate) fn uas_datalink_ls_to_py(
         .collect::<PyResult<Vec<_>>>()?;
     kwargs.set_item(
         intern!(py, "control_commands"),
-        PyTuple::new_bound(py, r_control_commands_items),
+        PyTuple::new(py, r_control_commands_items)?,
     )?;
     if let Some(v) = &r.control_command_verification {
         let v_items = v.iter().collect::<Vec<_>>();
         kwargs.set_item(
             intern!(py, "control_command_verification"),
-            PyTuple::new_bound(py, v_items),
+            PyTuple::new(py, v_items)?,
         )?;
     }
     if let Some(v) = &r.active_wavelengths {
         let v_items = v.iter().collect::<Vec<_>>();
         kwargs.set_item(
             intern!(py, "active_wavelengths"),
-            PyTuple::new_bound(py, v_items),
+            PyTuple::new(py, v_items)?,
         )?;
     }
     if let Some(v) = &r.sensor_frame_rate {
@@ -1022,10 +1016,7 @@ pub(crate) fn uas_datalink_ls_to_py(
             .iter()
             .map(|x| wavelength_record_to_py(py, x))
             .collect::<PyResult<Vec<_>>>()?;
-        kwargs.set_item(
-            intern!(py, "wavelengths_list"),
-            PyTuple::new_bound(py, v_items),
-        )?;
+        kwargs.set_item(intern!(py, "wavelengths_list"), PyTuple::new(py, v_items)?)?;
     }
     if let Some(v) = &r.airbase_locations {
         kwargs.set_item(
@@ -1041,20 +1032,14 @@ pub(crate) fn uas_datalink_ls_to_py(
             .iter()
             .map(|x| weapons_store_to_py(py, x))
             .collect::<PyResult<Vec<_>>>()?;
-        kwargs.set_item(
-            intern!(py, "weapons_stores"),
-            PyTuple::new_bound(py, v_items),
-        )?;
+        kwargs.set_item(intern!(py, "weapons_stores"), PyTuple::new(py, v_items)?)?;
     }
     if let Some(v) = &r.waypoint_list {
         let v_items = v
             .iter()
             .map(|x| waypoint_to_py(py, x))
             .collect::<PyResult<Vec<_>>>()?;
-        kwargs.set_item(
-            intern!(py, "waypoint_list"),
-            PyTuple::new_bound(py, v_items),
-        )?;
+        kwargs.set_item(intern!(py, "waypoint_list"), PyTuple::new(py, v_items)?)?;
     }
     if let Some(v) = &r.view_domain {
         kwargs.set_item(intern!(py, "view_domain"), view_domain_to_py(py, v)?)?;
@@ -1066,7 +1051,7 @@ pub(crate) fn uas_datalink_ls_to_py(
         .collect::<PyResult<Vec<_>>>()?;
     kwargs.set_item(
         intern!(py, "sdcc_flps"),
-        PyTuple::new_bound(py, r_sdcc_flps_items),
+        PyTuple::new(py, r_sdcc_flps_items)?,
     )?;
     kwargs.set_item(
         intern!(py, "unknown"),
@@ -2081,7 +2066,7 @@ pub(crate) fn uas_datalink_ls_from_py(
         },
         control_commands: {
             let v = obj.getattr(intern!(py, "control_commands"))?;
-            v.iter()?
+            v.try_iter()?
                 .map(|x| x.and_then(|x| control_command_from_py(&x)))
                 .collect::<PyResult<Vec<_>>>()?
         },
@@ -2131,7 +2116,7 @@ pub(crate) fn uas_datalink_ls_from_py(
                 None
             } else {
                 Some(
-                    v.iter()?
+                    v.try_iter()?
                         .map(|x| x.and_then(|x| wavelength_record_from_py(&x)))
                         .collect::<PyResult<Vec<_>>>()?,
                 )
@@ -2159,7 +2144,7 @@ pub(crate) fn uas_datalink_ls_from_py(
                 None
             } else {
                 Some(
-                    v.iter()?
+                    v.try_iter()?
                         .map(|x| x.and_then(|x| weapons_store_from_py(&x)))
                         .collect::<PyResult<Vec<_>>>()?,
                 )
@@ -2171,7 +2156,7 @@ pub(crate) fn uas_datalink_ls_from_py(
                 None
             } else {
                 Some(
-                    v.iter()?
+                    v.try_iter()?
                         .map(|x| x.and_then(|x| waypoint_from_py(&x)))
                         .collect::<PyResult<Vec<_>>>()?,
                 )
@@ -2187,7 +2172,7 @@ pub(crate) fn uas_datalink_ls_from_py(
         },
         sdcc_flps: {
             let v = obj.getattr(intern!(py, "sdcc_flps"))?;
-            v.iter()?
+            v.try_iter()?
                 .map(|x| x.and_then(|x| sdcc_flp_field_from_py(&x)))
                 .collect::<PyResult<Vec<_>>>()?
         },

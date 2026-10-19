@@ -444,7 +444,7 @@ impl PyManagedMuxSender {
     /// transport is mid-reconnect (the inner socket is `None`).
     ///
     /// Waits (GIL released) for a push in flight on another thread: the
-    /// slot lock is taken inside `allow_threads`, so holding the GIL while
+    /// slot lock is taken inside `detach`, so holding the GIL while
     /// waiting for it can never freeze the interpreter.
     fn stats(&self, py: Python<'_>) -> PyResult<(Py<SocketStats>, Py<MuxerStats>)> {
         let (sock, pipe) = pyok(
@@ -711,7 +711,7 @@ impl PyManagedDemuxReceiver {
     /// `EndReason.RECONNECT_EXHAUSTED`. Raises `SrtError` on a
     /// transport-side failure the decorator did not absorb (a cancel arrives
     /// as `SrtError(CLOSED)`); `DemuxError` on demuxer failure.
-    fn __next__(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn __next__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let res =
             crate::util::allow_threads_parking(py, || self.owned.with_mut(|rx| rx.recv_event()));
         match res {
@@ -733,11 +733,11 @@ impl PyManagedDemuxReceiver {
     ///
     /// Releases the GIL while taking the `Owned` slot, so a concurrent
     /// `__next__` parked in `recv_event` (which holds that same slot
-    /// inside `allow_threads`) cannot freeze the interpreter.
+    /// inside `detach`) cannot freeze the interpreter.
     fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
-        // Two-step: acquire the outer mutex inside allow_threads so the GIL
+        // Two-step: acquire the outer mutex inside detach so the GIL
         // is free while waiting. Without this, a parked __next__ holding the
-        // mutex inside allow_threads would freeze all Python threads.
+        // mutex inside detach would freeze all Python threads.
         let core = pyok(
             py,
             &SRT,
@@ -782,7 +782,7 @@ impl PyManagedDemuxReceiver {
     ///
     /// Same access pattern as `socket_stats`: releases the GIL before
     /// taking the `Owned` slot, so a concurrent `__next__` parked in
-    /// `recv_event` (holding that same slot inside `allow_threads`)
+    /// `recv_event` (holding that same slot inside `detach`)
     /// can't freeze the interpreter. Raises
     /// `SrtError(CLOSED)` if the receiver has been closed.
     fn last_seen_micros(&self, py: Python<'_>, pid: u16) -> PyResult<Option<u64>> {
@@ -811,7 +811,7 @@ impl PyManagedDemuxReceiver {
     /// the handle was captured at construction, independent of `inner`.
     /// Reads a lock-free `OnceLock` cell — it never touches the `inner`
     /// mutex, so it is safe to call from a watchdog thread while another
-    /// thread is parked in `__next__` (no `allow_threads` needed, and no
+    /// thread is parked in `__next__` (no `detach` needed, and no
     /// GIL↔Mutex ordering to respect).
     ///
     /// Only two of the three variants are reachable on the managed-SRT
@@ -821,7 +821,7 @@ impl PyManagedDemuxReceiver {
     /// (caller fired `cancel_handle()` or `close()`). `END_OF_STREAM` is
     /// reserved for a future transport that can signal a clean EOS
     /// distinct from budget exhaustion.
-    fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn end_reason(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         match self.owned.end_reason() {
             Some(r) => crate::shells::end_reason::end_reason_to_py(py, &r),
             None => Ok(None),

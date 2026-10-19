@@ -6,7 +6,7 @@
 //!
 //! GIL boundaries:
 //! - `send`, `recv`, builder `build`, `close`, `stats` → the slot lock is
-//!   taken inside `py.allow_threads(...)`, so concurrent Python threads
+//!   taken inside `py.detach(...)`, so concurrent Python threads
 //!   keep running while UDP I/O blocks on the kernel and while a getter
 //!   waits for a parked call.
 //!
@@ -23,7 +23,7 @@
 //! cancel-first. A cancel is NOT a close: the object stays open until
 //! `close()`, which is quiet afterwards.
 //!
-//! Bytes-like extraction in `Transport.send(payload)` follows the abi3-py310
+//! Bytes-like extraction in `Transport.send(payload)` follows the
 //! two-path pattern from rtp/transport.rs: fast zero-copy `&[u8]` extract
 //! for `bytes`, fallback through Python `bytes()` builtin for
 //! `bytearray`/`memoryview`.
@@ -102,7 +102,7 @@ impl PyUdpTransport {
     /// Releases the GIL during the kernel send call.
     fn send(&self, py: Python<'_>, payload: &Bound<'_, PyAny>) -> PyResult<()> {
         // Zero-copy for `bytes`; one C copy through `bytes()` otherwise
-        // (PyBuffer is unavailable under abi3-py310).
+        // (see `util::coerce_bytes_like`).
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice: &[u8] = coerced.as_bytes();
         pyres(
@@ -281,7 +281,7 @@ impl tst_pipeline::binding::Close for UdpRecvInner {
 const RECV_POLL_SLICE: Duration = Duration::from_millis(100);
 
 /// Outcome of the polled receive loop, mapped to a `PyErr` once the GIL
-/// is back (nothing Python-typed may cross `allow_threads`).
+/// is back (nothing Python-typed may cross `detach`).
 enum UdpRecvOutcome {
     Data(Vec<u8>),
     Closed,
@@ -394,7 +394,7 @@ impl PyUdpRecvTransport {
         };
         // recv_bytes doesn't expose the sender address; callers that need
         // the source addr should use a raw socket or filter at the IP layer.
-        Ok((PyBytes::new_bound(py, &bytes).unbind(), String::new()))
+        Ok((PyBytes::new(py, &bytes).unbind(), String::new()))
     }
 
     /// Local bound port. Useful when the transport was bound to port 0
@@ -546,7 +546,7 @@ impl PyUdpRecvTransportBuilder {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new_bound(parent.py(), "udp")?;
+    let m = PyModule::new(parent.py(), "udp")?;
     crate::generated::stats_udp::register(&m)?;
     m.add_class::<PyUdpTransport>()?;
     m.add_class::<PyUdpTransportBuilder>()?;

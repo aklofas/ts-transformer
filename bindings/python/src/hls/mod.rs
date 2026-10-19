@@ -17,7 +17,7 @@
 //! thread that waited for that mutex while holding the GIL would freeze the
 //! interpreter (the push needs the GIL back before its guard can drop), so
 //! every method of both classes takes, uses and releases the mutex inside
-//! `py.allow_threads` and raises once the GIL is back — see [`Locked`]. The
+//! `py.detach` and raises once the GIL is back — see [`Locked`]. The
 //! construction constants (`local_addr`, `local_port`, `repr`) take no lock.
 //!
 //! Error mapping goes through `crate::raise`:
@@ -51,7 +51,7 @@ pub(crate) mod publisher_abc;
 // ---------------------------------------------------------------------------
 
 /// Why a call that takes a publisher's mutex produced no value. Built
-/// inside `py.allow_threads`, where nothing can be raised, and turned into
+/// inside `py.detach`, where nothing can be raised, and turned into
 /// the exception after the GIL is back.
 pub(crate) enum Locked<E> {
     /// The mutex is poisoned.
@@ -82,7 +82,7 @@ pub(crate) fn map_mux_publisher_error(py: Python<'_>, e: MuxPublisherError<HlsEr
 // ---------------------------------------------------------------------------
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new_bound(parent.py(), "hls")?;
+    let m = PyModule::new(parent.py(), "hls")?;
     // PublisherStats. The `Publisher` ABC itself is a pure-Python
     // `abc.ABC` defined in `tstrans/hls.py` (see the NOTE below).
     m.add_class::<publisher_abc::PyPublisherStats>()?;

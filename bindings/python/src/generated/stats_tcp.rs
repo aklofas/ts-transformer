@@ -7,7 +7,13 @@ use pyo3::prelude::*;
 
 /// Cumulative stats snapshot for a TCP transport handle. Both send and
 /// receive counters are populated on the same handle (TCP is full-duplex).
-#[pyclass(frozen, get_all, name = "SocketStats", module = "tstrans.tcp")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "SocketStats",
+    module = "tstrans.tcp"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct SocketStats {
     /// Bytes successfully sent.

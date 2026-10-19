@@ -406,7 +406,7 @@ class WebVttInTsConfig:
 
 
 # Discriminated union accepted by `MuxerProgramConfigBuilder.add_subtitle`.
-# PEP 604 union syntax — requires Python 3.10+ (the project floor).
+# PEP 604 union syntax, available at the project floor.
 SubtitleCodecConfig = (
     DvbSubtitlingConfig
     | DvbTeletextConfig
@@ -507,7 +507,7 @@ class LinkSource(enum.Enum):
 
 # Type alias for "any codec enum or None". Used on StreamId / StreamInfo
 # where the kind determines which codec enum (if any) is meaningful.
-# PEP 604 union syntax — requires Python 3.10+ (the project floor).
+# PEP 604 union syntax, available at the project floor.
 Codec = VideoCodec | AudioCodec | SubtitleCodec | None
 
 

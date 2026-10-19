@@ -25,25 +25,26 @@ use tst_pipeline::binding::{BindingError, BindingErrorKind, Close, CloseFailure,
 /// `Muxer.push_*` reject inputs its wrapping senders accept. The stubs'
 /// `_BytesLike` annotation is the static-analysis guard against misuse.
 ///
-/// PyO3 0.22 abi3-py310 cannot extract `&[u8]` from `bytearray` or
-/// `memoryview` — only from `bytes`. This helper bridges that gap by
+/// PyO3 cannot extract `&[u8]` from `bytearray` or `memoryview` — only
+/// from `bytes`; `PyBuffer`, in the stable ABI from the 3.11 floor, is the
+/// zero-copy alternative this helper predates. This helper bridges that gap by
 /// accepting any bytes-like and returning a `PyBytes` whose `.as_bytes()`
 /// borrow lives for as long as the returned value is on the stack. That
 /// makes it safe to pass the resulting `&[u8]` across a subsequent
-/// `py.allow_threads()` call.
+/// `py.detach()` call.
 ///
 /// Raises `TypeError` if `arg` cannot be passed to `bytes()`.
 pub(crate) fn coerce_bytes_like<'py>(
     py: Python<'py>,
     arg: &Bound<'py, PyAny>,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    if let Ok(b) = arg.downcast::<PyBytes>() {
+    if let Ok(b) = arg.cast::<PyBytes>() {
         return Ok(b.clone());
     }
-    py.import_bound("builtins")?
+    py.import("builtins")?
         .getattr(intern!(py, "bytes"))?
         .call1((arg,))?
-        .downcast_into::<PyBytes>()
+        .cast_into::<PyBytes>()
         .map_err(|e| e.into())
 }
 
@@ -98,7 +99,7 @@ static INTERPRETER_EXITING: AtomicBool = AtomicBool::new(false);
 static EXIT_HOOK_THREAD: OnceLock<std::thread::ThreadId> = OnceLock::new();
 
 /// `true` once the exit hook has run on another thread. Byte-sink
-/// callbacks check it before `Python::with_gil`.
+/// callbacks check it before `Python::attach`.
 #[allow(dead_code)] // byte-sink callers are srt/rtp-feature-gated.
 pub(crate) fn exiting() -> bool {
     INTERPRETER_EXITING.load(Ordering::Acquire)
@@ -120,7 +121,7 @@ pub(crate) fn exiting() -> bool {
 ///   deadline: milliseconds against seconds.
 const EXIT_PARK_MAX: std::time::Duration = std::time::Duration::from_secs(3);
 
-/// `py.allow_threads(f)` for a native call that can park (network I/O, a
+/// `py.detach(f)` for a native call that can park (network I/O, a
 /// wait, a join, or a lock another thread can hold across one). If the
 /// interpreter began exiting while `f` ran, this thread parks for up to
 /// [`EXIT_PARK_MAX`] instead of re-taking the GIL at once — see
@@ -138,7 +139,7 @@ where
     F: Send + FnOnce() -> T,
     T: Send,
 {
-    py.allow_threads(move || {
+    py.detach(move || {
         let r = f();
         if exiting() {
             // `park_timeout` may return early (spuriously or on an
@@ -234,7 +235,7 @@ pub(crate) fn close_owned<T, S>(
 ) -> PyResult<()>
 where
     T: Close + Send,
-    // `CloseFailure<T::Error>` is carried back across `allow_threads`.
+    // `CloseFailure<T::Error>` is carried back across `detach`.
     T::Error: Send,
     S: Send + Sync,
 {
@@ -306,7 +307,7 @@ pub(crate) fn fire_cancel_sources_at_exit(py: Python<'_>) -> usize {
         return 0;
     }
     let fired = live.len();
-    py.allow_threads(move || {
+    py.detach(move || {
         for src in live {
             TransportCancel::cancel(&*src);
         }
@@ -357,10 +358,10 @@ pub(crate) fn register_accept_slot(slot: &Arc<tst_core::cancel::CancelSlot>) -> 
 // transport-less `--no-default-features` build.
 #[allow(dead_code)]
 pub(crate) fn deprecated(py: Python<'_>, msg: &str) -> PyResult<()> {
-    PyErr::warn_bound(
+    PyErr::warn(
         py,
-        &py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>(),
-        msg,
+        &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+        &std::ffi::CString::new(msg)?,
         1,
     )
 }
@@ -377,14 +378,22 @@ pub(crate) fn with_query(url: &str, key: &str, value: impl core::fmt::Display) -
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostBytes(pub Vec<u8>);
 
-impl ToPyObject for HostBytes {
-    fn to_object(&self, py: Python<'_>) -> PyObject {
-        PyBytes::new_bound(py, &self.0).into_any().unbind()
+impl<'py> IntoPyObject<'py> for &HostBytes {
+    type Target = PyBytes;
+    type Output = Bound<'py, PyBytes>;
+    type Error = std::convert::Infallible;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        Ok(PyBytes::new(py, &self.0))
     }
 }
 
-impl IntoPy<PyObject> for HostBytes {
-    fn into_py(self, py: Python<'_>) -> PyObject {
-        self.to_object(py)
+impl<'py> IntoPyObject<'py> for HostBytes {
+    type Target = PyBytes;
+    type Output = Bound<'py, PyBytes>;
+    type Error = std::convert::Infallible;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        (&self).into_pyobject(py)
     }
 }

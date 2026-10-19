@@ -19,6 +19,7 @@
 //! written code in this module has no unsafe blocks.
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
+use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::PyValueError;
 use pyo3::intern;
 use pyo3::prelude::*;
@@ -125,8 +126,8 @@ fn st1204_error_to_pyerr(py: Python<'_>, e: St1204Error) -> PyErr {
 /// TimeStatus + 8-byte BE microsecond timestamp).
 #[pyfunction]
 #[pyo3(name = "decode_precision_timestamp")]
-fn decode_precision_timestamp_py(py: Python<'_>, buf: &[u8]) -> PyResult<PyObject> {
-    // GIL release: NOT wrapped in `py.allow_threads`.
+fn decode_precision_timestamp_py(py: Python<'_>, buf: &[u8]) -> PyResult<Py<PyAny>> {
+    // GIL release: NOT wrapped in `py.detach`.
     // The Rust `decode_st0605` call is ~1us for the 26-byte spec pack;
     // GIL transition overhead exceeds the decode time for any realistic
     // payload size at this entry point (the measured breakeven is ~50us
@@ -146,8 +147,8 @@ fn decode_precision_timestamp_py(py: Python<'_>, buf: &[u8]) -> PyResult<PyObjec
 /// current Rust enum; the wildcard arm covers future non-exhaustive
 /// attribute additions by routing to `INVALID_LENGTH` (consumers should
 /// treat unrecognized kinds as best-effort diagnostic only).
-fn convert_field_error(py: Python<'_>, fe: &RustKlvFieldError) -> PyResult<PyObject> {
-    let klv_mod = py.import_bound("tstrans.klv")?;
+fn convert_field_error(py: Python<'_>, fe: &RustKlvFieldError) -> PyResult<Py<PyAny>> {
+    let klv_mod = py.import("tstrans.klv")?;
     let kind_enum = klv_mod.getattr(intern!(py, "KlvFieldErrorKind"))?;
     let cls = klv_mod.getattr(intern!(py, "KlvFieldError"))?;
     let (variant, tag): (&str, u32) = match fe {
@@ -162,7 +163,7 @@ fn convert_field_error(py: Python<'_>, fe: &RustKlvFieldError) -> PyResult<PyObj
         _ => ("INVALID_LENGTH", 0),
     };
     let kind_value = kind_enum.getattr(variant)?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item("kind", kind_value)?;
     kwargs.set_item("tag", tag)?;
     kwargs.set_item("message", format!("{fe}"))?;
@@ -174,33 +175,33 @@ fn convert_field_error(py: Python<'_>, fe: &RustKlvFieldError) -> PyResult<PyObj
 pub(crate) fn convert_field_errors(
     py: Python<'_>,
     errs: &[RustKlvFieldError],
-) -> PyResult<PyObject> {
-    let items: Vec<PyObject> = errs
+) -> PyResult<Py<PyAny>> {
+    let items: Vec<Py<PyAny>> = errs
         .iter()
         .map(|e| convert_field_error(py, e))
         .collect::<PyResult<Vec<_>>>()?;
-    Ok(pyo3::types::PyTuple::new_bound(py, items).unbind().into())
+    Ok(pyo3::types::PyTuple::new(py, items)?.unbind().into())
 }
 
 /// Translate a list of `OwnedRawField` to a Python tuple of `(tag, bytes)`
 /// 2-tuples. The shape matches `SecurityLs.unknown` / `UasDatalinkLs.unknown`
 /// in the Python typed-set dataclasses.
-pub(crate) fn convert_unknown(py: Python<'_>, unknown: &[OwnedRawField]) -> PyResult<PyObject> {
-    let items: Vec<PyObject> = unknown
+pub(crate) fn convert_unknown(py: Python<'_>, unknown: &[OwnedRawField]) -> PyResult<Py<PyAny>> {
+    let items: Vec<Py<PyAny>> = unknown
         .iter()
         .map(|f| {
-            pyo3::types::PyTuple::new_bound(
+            Ok(pyo3::types::PyTuple::new(
                 py,
                 &[
-                    f.tag.into_py(py),
-                    pyo3::types::PyBytes::new_bound(py, &f.value).into_py(py),
+                    f.tag.into_py_any(py)?,
+                    pyo3::types::PyBytes::new(py, &f.value).into_any().unbind(),
                 ],
-            )
+            )?
             .unbind()
-            .into()
+            .into())
         })
-        .collect();
-    Ok(pyo3::types::PyTuple::new_bound(py, items).unbind().into())
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok(pyo3::types::PyTuple::new(py, items)?.unbind().into())
 }
 
 /// Inverse of `convert_unknown`: extracts the `unknown` field from a
@@ -229,7 +230,7 @@ pub(crate) fn py_to_unknown(
     let py = p.py();
     let unknown_obj = p.getattr(intern!(py, "unknown"))?;
     let mut out = Vec::new();
-    for item in unknown_obj.iter()? {
+    for item in unknown_obj.try_iter()? {
         let item = item?;
         // Each entry must be a 2-tuple. We rely on tuple-shaped extraction
         // via `(u32, Vec<u8>)` — PyO3 enforces the 2-arity + element types.
@@ -263,7 +264,7 @@ pub(crate) fn py_to_unknown(
 /// tags + unknown codepoints + non-canonical BER + malformed UTF-16.
 #[pyfunction]
 #[pyo3(name = "decode_security", signature = (buf, *, strict = false))]
-fn decode_security_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<PyObject> {
+fn decode_security_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<Py<PyAny>> {
     // GIL release: NOT wrapped — same rationale as
     // `decode_precision_timestamp_py`. ST 0102 records are typically
     // 20-200 bytes, well under the GIL-transition breakeven.
@@ -314,10 +315,10 @@ pub(crate) fn enum_field_to_u64(p: &Bound<'_, PyAny>) -> PyResult<u64> {
 /// containing the ST 0102 body (no outer UL / BER length wrapper).
 #[pyfunction]
 #[pyo3(name = "encode_security")]
-fn encode_security_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+fn encode_security_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let rust_rec = crate::generated::st0102::security_ls_from_py(record)?;
     let bytes = encode_st0102(&rust_rec).map_err(|e| klv_encode_error_to_pyerr(py, e))?;
-    Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into())
+    Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 
 // ---------------------------------------------------------------------------
@@ -329,10 +330,10 @@ fn encode_security_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<PyO
 /// microsecond timestamp). Returns `bytes`.
 #[pyfunction]
 #[pyo3(name = "encode_precision_timestamp")]
-fn encode_precision_timestamp_py(py: Python<'_>, pack: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+fn encode_precision_timestamp_py(py: Python<'_>, pack: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let rust_pack = crate::generated::st0605::precision_time_stamp_pack_from_py(pack)?;
     let bytes = encode_st0605(&rust_pack);
-    Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into())
+    Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +349,7 @@ fn encode_precision_timestamp_py(py: Python<'_>, pack: &Bound<'_, PyAny>) -> PyR
 /// tags per ST 0903.6 §6 Table 1, duplicate tags, malformed UTF-8.
 #[pyfunction]
 #[pyo3(name = "decode_vmti", signature = (buf, *, strict = false))]
-fn decode_vmti_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<PyObject> {
+fn decode_vmti_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<Py<PyAny>> {
     // GIL release: NOT wrapped — same rationale as
     // `decode_precision_timestamp_py`. VMTI records can be large with
     // many targets, but the per-target convert step (which builds Py
@@ -376,10 +377,10 @@ fn decode_vmti_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<PyObject
 /// `bytes`.
 #[pyfunction]
 #[pyo3(name = "encode_vmti")]
-fn encode_vmti_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+fn encode_vmti_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let rust_rec = crate::generated::st0903::vmti_ls_from_py(record)?;
     let bytes = encode_st0903(&rust_rec).map_err(|e| klv_encode_error_to_pyerr(py, e))?;
-    Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into())
+    Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 
 /// Encode a Python `VmtiLs` as a **standalone-VMTI** wire record:
@@ -389,11 +390,11 @@ fn encode_vmti_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<PyObjec
 /// Returns `bytes`.
 #[pyfunction]
 #[pyo3(name = "encode_vmti_standalone")]
-fn encode_vmti_standalone_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+fn encode_vmti_standalone_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let rust_rec = crate::generated::st0903::vmti_ls_from_py(record)?;
     let bytes =
         encode_st0903_standalone(&rust_rec).map_err(|e| klv_encode_error_to_pyerr(py, e))?;
-    Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into())
+    Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 
 /// Encode a Python `SecurityLs` to wire bytes with strict compliance per
@@ -406,11 +407,11 @@ fn encode_vmti_standalone_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyRes
 fn encode_security_strict_compliance_py(
     py: Python<'_>,
     record: &Bound<'_, PyAny>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let rust_rec = crate::generated::st0102::security_ls_from_py(record)?;
     let bytes =
         encode_st0102_strict_compliance(&rust_rec).map_err(|e| klv_encode_error_to_pyerr(py, e))?;
-    Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into())
+    Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 
 /// Encode a Python `VmtiLs` to wire bytes with strict compliance for
@@ -422,11 +423,11 @@ fn encode_security_strict_compliance_py(
 fn encode_vmti_strict_compliance_py(
     py: Python<'_>,
     record: &Bound<'_, PyAny>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let rust_rec = crate::generated::st0903::vmti_ls_from_py(record)?;
     let bytes =
         encode_st0903_strict_compliance(&rust_rec).map_err(|e| klv_encode_error_to_pyerr(py, e))?;
-    Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into())
+    Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 
 /// Encode a Python `VmtiLs` as a **standalone** wire record with strict
@@ -439,11 +440,11 @@ fn encode_vmti_strict_compliance_py(
 fn encode_vmti_standalone_strict_compliance_py(
     py: Python<'_>,
     record: &Bound<'_, PyAny>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let rust_rec = crate::generated::st0903::vmti_ls_from_py(record)?;
     let bytes = encode_st0903_standalone_strict_compliance(&rust_rec)
         .map_err(|e| klv_encode_error_to_pyerr(py, e))?;
-    Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into())
+    Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 
 // ---------------------------------------------------------------------------
@@ -461,7 +462,7 @@ fn encode_vmti_standalone_strict_compliance_py(
 /// in `UasDatalinkLs.sdcc_flps` / `SdccFlpField`).
 #[pyfunction]
 #[pyo3(name = "decode_sdcc_flp")]
-fn decode_sdcc_flp_py(py: Python<'_>, buf: &[u8]) -> PyResult<PyObject> {
+fn decode_sdcc_flp_py(py: Python<'_>, buf: &[u8]) -> PyResult<Py<PyAny>> {
     match decode_st1010_sdcc_flp(buf) {
         Ok(m) => crate::generated::st1010::sdcc_flp_to_py(py, &m),
         Err(e) => Err(klv_field_error_to_pyerr(py, e)),
@@ -481,10 +482,10 @@ fn encode_sdcc_flp_mode2_py(
     std_devs: Vec<f64>,
     correlations: Vec<f64>,
     clen: usize,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let bytes = encode_st1010_sdcc_flp_mode2(&std_devs, &correlations, clen)
         .map_err(|e| klv_encode_error_to_pyerr(py, e))?;
-    Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into())
+    Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 
 // ---------------------------------------------------------------------------
@@ -510,7 +511,7 @@ fn decode_uas_datalink_py(
     buf: &[u8],
     strict: bool,
     compliance: bool,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     // GIL release: NOT wrapped — same rationale as
     // `decode_precision_timestamp_py`. Even at the upper end (~10 KB
     // record with 100 unknown TLVs), Rust decode is ~10us per call,
@@ -555,7 +556,14 @@ fn decode_uas_datalink_py(
 ///   full-range pitch / roll / angle-of-attack / sideslip twins). All other
 ///   fields, and any non-finite value, still raise even under ``INDICATOR``.
 #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
-#[pyclass(name = "OutOfRangePolicy", module = "tstrans.klv", eq, eq_int, frozen)]
+#[pyclass(
+    from_py_object,
+    name = "OutOfRangePolicy",
+    module = "tstrans.klv",
+    eq,
+    eq_int,
+    frozen
+)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PyOutOfRangePolicy {
     ERROR = 0,
@@ -584,7 +592,7 @@ fn encode_uas_datalink_py(
     py: Python<'_>,
     record: &Bound<'_, PyAny>,
     out_of_range_policy: Option<PyOutOfRangePolicy>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let rust_rec = crate::generated::st0601::uas_datalink_ls_from_py(record)?;
     let mut opts = St0601EncodeConfig::default();
     if let Some(p) = out_of_range_policy {
@@ -592,7 +600,7 @@ fn encode_uas_datalink_py(
     }
     let bytes =
         encode_st0601_with(&rust_rec, &opts).map_err(|e| klv_encode_error_to_pyerr(py, e))?;
-    Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into())
+    Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 
 /// Encode a Python `UasDatalinkLs` to wire bytes with strict compliance
@@ -604,11 +612,11 @@ fn encode_uas_datalink_py(
 fn encode_uas_datalink_strict_compliance_py(
     py: Python<'_>,
     record: &Bound<'_, PyAny>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let rust_rec = crate::generated::st0601::uas_datalink_ls_from_py(record)?;
     let bytes =
         encode_st0601_strict_compliance(&rust_rec).map_err(|e| klv_encode_error_to_pyerr(py, e))?;
-    Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into())
+    Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 
 /// Byte-faithful tag-level patch of a raw ST 0601 local set: edited
@@ -616,7 +624,7 @@ fn encode_uas_datalink_strict_compliance_py(
 /// recomputed. See `tstrans.klv.patch_uas_datalink` for the
 /// dict-accepting user-facing wrapper.
 ///
-/// No `allow_threads` for the same reason as `decode_uas_datalink`:
+/// No `detach` for the same reason as `decode_uas_datalink`:
 /// the per-call Rust work is small; releasing the GIL produces
 /// ping-pong under hot batch loops.
 #[pyfunction]
@@ -625,10 +633,10 @@ fn patch_uas_datalink_py(
     py: Python<'_>,
     raw: &[u8],
     edits: &Bound<'_, PyAny>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let rust_edits = crate::generated::st0601::uas_datalink_ls_from_py(edits)?;
     match patch_st0601(raw, &rust_edits) {
-        Ok(bytes) => Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into()),
+        Ok(bytes) => Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into()),
         Err(KlvPatchError::Decode(e)) => Err(klv_decode_error_to_pyerr(py, e)),
         Err(KlvPatchError::Encode(e)) => Err(klv_encode_error_to_pyerr(py, e)),
         // KlvPatchError is #[non_exhaustive] in tst-core, so a wildcard
@@ -667,7 +675,7 @@ fn st0601_sentinel_meaning_py(tag: u32) -> Option<&'static str> {
 /// Raises `KlvError` on any decode failure.
 #[pyfunction]
 #[pyo3(name = "decode_core_id")]
-fn decode_core_id_py(py: Python<'_>, buf: &[u8]) -> PyResult<PyObject> {
+fn decode_core_id_py(py: Python<'_>, buf: &[u8]) -> PyResult<Py<PyAny>> {
     match decode_st1204(buf) {
         Ok(id) => crate::generated::st1204::core_id_to_py(py, &id),
         Err(e) => Err(st1204_error_to_pyerr(py, e)),
@@ -677,10 +685,10 @@ fn decode_core_id_py(py: Python<'_>, buf: &[u8]) -> PyResult<PyObject> {
 /// Encode a Python `CoreId` to its binary wire form. Returns `bytes`.
 #[pyfunction]
 #[pyo3(name = "encode_core_id")]
-fn encode_core_id_py(py: Python<'_>, core_id: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+fn encode_core_id_py(py: Python<'_>, core_id: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let rust_id = crate::generated::st1204::core_id_from_py(core_id)?;
     let bytes = encode_st1204(&rust_id);
-    Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into())
+    Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 
 /// Return the ST 1204.3 §7.4.2 textual representation of a `CoreId`.
@@ -697,10 +705,10 @@ fn core_id_text_py(_py: Python<'_>, core_id: &Bound<'_, PyAny>) -> PyResult<Stri
 
 /// Translate a Rust `MismmsViolation` to a Python `tstrans.klv.MismmsViolation`
 /// dataclass instance.
-fn convert_mismms_violation(py: Python<'_>, v: &RustMismmsViolation) -> PyResult<PyObject> {
-    let klv_mod = py.import_bound("tstrans.klv")?;
+fn convert_mismms_violation(py: Python<'_>, v: &RustMismmsViolation) -> PyResult<Py<PyAny>> {
+    let klv_mod = py.import("tstrans.klv")?;
     let cls = klv_mod.getattr(intern!(py, "MismmsViolation"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
 
     match v {
         RustMismmsViolation::MissingItem { tag, name } => {
@@ -740,14 +748,14 @@ fn convert_mismms_violation(py: Python<'_>, v: &RustMismmsViolation) -> PyResult
 /// `encode_uas_datalink` — so the Rust-side check sees an identical record.
 #[pyfunction]
 #[pyo3(name = "validate_mismms")]
-fn validate_mismms_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+fn validate_mismms_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let rust_rec = crate::generated::st0601::uas_datalink_ls_from_py(record)?;
     let violations = rust_validate_mismms(&rust_rec);
-    let items: Vec<PyObject> = violations
+    let items: Vec<Py<PyAny>> = violations
         .iter()
         .map(|v| convert_mismms_violation(py, v))
         .collect::<PyResult<Vec<_>>>()?;
-    Ok(pyo3::types::PyList::new_bound(py, items).unbind().into())
+    Ok(pyo3::types::PyList::new(py, items)?.unbind().into())
 }
 
 // ---------------------------------------------------------------------------
@@ -759,7 +767,7 @@ fn validate_mismms_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<PyO
 /// BER length wrapper).
 #[pyfunction]
 #[pyo3(name = "decode_rvt")]
-fn decode_rvt_py(py: Python<'_>, buf: &[u8]) -> PyResult<PyObject> {
+fn decode_rvt_py(py: Python<'_>, buf: &[u8]) -> PyResult<Py<PyAny>> {
     match decode_st0806(buf) {
         Ok(ls) => crate::generated::st0806::rvt_ls_to_py(py, &ls),
         Err(e) => Err(klv_decode_error_to_pyerr(py, e)),
@@ -772,7 +780,7 @@ fn decode_rvt_py(py: Python<'_>, buf: &[u8]) -> PyResult<PyObject> {
 /// (BAD_UNIVERSAL_LABEL)` on a mismatched UL.
 #[pyfunction]
 #[pyo3(name = "decode_rvt_standalone")]
-fn decode_rvt_standalone_py(py: Python<'_>, buf: &[u8]) -> PyResult<PyObject> {
+fn decode_rvt_standalone_py(py: Python<'_>, buf: &[u8]) -> PyResult<Py<PyAny>> {
     match decode_st0806_standalone(buf) {
         Ok(ls) => crate::generated::st0806::rvt_ls_to_py(py, &ls),
         Err(e) => Err(klv_decode_error_to_pyerr(py, e)),
@@ -784,10 +792,10 @@ fn decode_rvt_standalone_py(py: Python<'_>, buf: &[u8]) -> PyResult<PyObject> {
 /// in ST 0601 Tag 73. Returns `bytes`.
 #[pyfunction]
 #[pyo3(name = "encode_rvt")]
-fn encode_rvt_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+fn encode_rvt_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let rust_rec = crate::generated::st0806::rvt_ls_from_py(record)?;
     let bytes = encode_st0806(&rust_rec).map_err(|e| klv_encode_error_to_pyerr(py, e))?;
-    Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into())
+    Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 
 /// Encode a Python `RvtLs` as a standalone RVT record:
@@ -796,11 +804,11 @@ fn encode_rvt_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<PyObject
 /// with `tag=2` if `timestamp_us` is unset. Returns `bytes`.
 #[pyfunction]
 #[pyo3(name = "encode_rvt_standalone")]
-fn encode_rvt_standalone_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+fn encode_rvt_standalone_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let rust_rec = crate::generated::st0806::rvt_ls_from_py(record)?;
     let bytes =
         encode_st0806_standalone(&rust_rec).map_err(|e| klv_encode_error_to_pyerr(py, e))?;
-    Ok(pyo3::types::PyBytes::new_bound(py, &bytes).unbind().into())
+    Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 
 // ---------------------------------------------------------------------------

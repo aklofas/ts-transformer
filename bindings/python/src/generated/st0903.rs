@@ -10,10 +10,10 @@ use pyo3::types::{PyBytes, PyDict, PyTuple};
 pub(crate) fn v_target_pack_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0903::VTargetPack,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "VTargetPack"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "target_id"), r.target_id)?;
     if let Some(v) = &r.centroid_pixel {
         kwargs.set_item(intern!(py, "centroid_pixel"), *v)?;
@@ -65,12 +65,12 @@ pub(crate) fn v_target_pack_to_py(
         kwargs.set_item(intern!(py, "bbox_bottom_right_lon_offset"), *v)?;
     }
     if let Some(v) = &r.target_location {
-        kwargs.set_item(intern!(py, "target_location"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "target_location"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.geospatial_contour_series {
         kwargs.set_item(
             intern!(py, "geospatial_contour_series"),
-            PyBytes::new_bound(py, v),
+            PyBytes::new(py, v),
         )?;
     }
     if let Some(v) = &r.centroid_pix_row {
@@ -86,19 +86,19 @@ pub(crate) fn v_target_pack_to_py(
         kwargs.set_item(intern!(py, "detection_status"), *v)?;
     }
     if let Some(v) = &r.vmask {
-        kwargs.set_item(intern!(py, "vmask"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "vmask"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.vtracker {
-        kwargs.set_item(intern!(py, "vtracker"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "vtracker"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.vchip {
-        kwargs.set_item(intern!(py, "vchip"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "vchip"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.vchip_series {
-        kwargs.set_item(intern!(py, "vchip_series"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "vchip_series"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.vobject_series {
-        kwargs.set_item(intern!(py, "vobject_series"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "vobject_series"), PyBytes::new(py, v))?;
     }
     kwargs.set_item(
         intern!(py, "unknown"),
@@ -334,10 +334,10 @@ pub(crate) fn v_target_pack_from_py(
 pub(crate) fn vmti_ls_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0903::VmtiLs,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "VmtiLs"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     if let Some(v) = &r.checksum {
         kwargs.set_item(intern!(py, "checksum"), *v)?;
     }
@@ -372,22 +372,19 @@ pub(crate) fn vmti_ls_to_py(
         kwargs.set_item(intern!(py, "vertical_fov"), *v)?;
     }
     if let Some(v) = &r.miis_id {
-        kwargs.set_item(intern!(py, "miis_id"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "miis_id"), PyBytes::new(py, v))?;
     }
     let r_targets_items = r
         .targets
         .iter()
         .map(|x| v_target_pack_to_py(py, x))
         .collect::<PyResult<Vec<_>>>()?;
-    kwargs.set_item(
-        intern!(py, "targets"),
-        PyTuple::new_bound(py, r_targets_items),
-    )?;
+    kwargs.set_item(intern!(py, "targets"), PyTuple::new(py, r_targets_items)?)?;
     if let Some(v) = &r.algorithm_series {
-        kwargs.set_item(intern!(py, "algorithm_series"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "algorithm_series"), PyBytes::new(py, v))?;
     }
     if let Some(v) = &r.ontology_series {
-        kwargs.set_item(intern!(py, "ontology_series"), PyBytes::new_bound(py, v))?;
+        kwargs.set_item(intern!(py, "ontology_series"), PyBytes::new(py, v))?;
     }
     kwargs.set_item(
         intern!(py, "unknown"),
@@ -501,7 +498,7 @@ pub(crate) fn vmti_ls_from_py(obj: &Bound<'_, PyAny>) -> PyResult<tst_core::klv:
         },
         targets: {
             let v = obj.getattr(intern!(py, "targets"))?;
-            v.iter()?
+            v.try_iter()?
                 .map(|x| x.and_then(|x| v_target_pack_from_py(&x)))
                 .collect::<PyResult<Vec<_>>>()?
         },

@@ -80,14 +80,14 @@ pub(crate) fn demux_recv_err(py: Python<'_>, domain: &Domain, e: DemuxReceiverEr
 pub(crate) struct PyDemuxReceiver {
     /// The binding layer's handle state machine: a `__next__` parked in
     /// `recv_event` holds the slot only inside `with_mut`, under
-    /// `py.allow_threads`; `close()` (cancel-first) ends it instead of
+    /// `py.detach`; `close()` (cancel-first) ends it instead of
     /// waiting behind it.
     owned: Owned<RustDemuxReceiver<Box<dyn RecvTransport>>, Snapshot<()>>,
     /// Shared cancel state — see `crate::util::CancelSource`.
     cancel: Arc<CancelSource>,
     /// First exception raised by a registered byte sink (see
     /// `add_byte_sink`). The sink closure runs inside `recv_event` (under
-    /// `allow_threads`) where it can't return a `PyResult` to the
+    /// `detach`) where it can't return a `PyResult` to the
     /// iterator, so on error it stashes the `PyErr` here (first error
     /// wins). `__next__` drains this slot AFTER `recv_event` returns and
     /// re-raises fail-loud. Separate from the slot so the closure never
@@ -229,7 +229,7 @@ impl PyDemuxReceiver {
     ///
     /// Raises the transport's `CLOSED` kind if the receiver is already closed.
     fn add_byte_sink(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<()> {
-        // The closure runs inside `recv_event` (under `allow_threads`),
+        // The closure runs inside `recv_event` (under `detach`),
         // re-acquires the GIL per packet, and only ever touches
         // `callback` + `sink_error` — never `inner` (whose guard is held
         // by the parked `__next__`), so it cannot deadlock.
@@ -249,8 +249,8 @@ impl PyDemuxReceiver {
                     if crate::util::exiting() {
                         return;
                     }
-                    Python::with_gil(|py| {
-                        let b = PyBytes::new_bound(py, pkt);
+                    Python::attach(|py| {
+                        let b = PyBytes::new(py, pkt);
                         if let Err(e) = callback.call1(py, (b,)) {
                             // First error wins; later packet errors are dropped.
                             if let Ok(mut slot) = sink_error.lock()
@@ -274,7 +274,7 @@ impl PyDemuxReceiver {
     /// `DemuxError` on demuxer-side failure (strict-mode rejection,
     /// malformed PMT/PES); or any exception raised by a registered
     /// byte sink (see `add_byte_sink`), re-raised fail-loud.
-    fn __next__(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn __next__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let res =
             crate::util::allow_threads_parking(py, || self.owned.with_mut(|rx| rx.recv_event()));
         // Fail-loud: surface any sink exception captured during this
@@ -307,7 +307,7 @@ impl PyDemuxReceiver {
     /// Snapshot of the scheme-neutral 16-field wire stats.
     fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
         // Release the GIL before taking the inner lock. A registered byte
-        // sink fires `Python::with_gil` inside `recv_event` while holding
+        // sink fires `Python::attach` inside `recv_event` while holding
         // this same lock; if we held the GIL here we would deadlock
         // (ABBA: iterator holds lock + blocks on GIL; this call holds GIL
         // + blocks on lock). Matches the `close()` / `add_byte_sink()`
@@ -399,7 +399,7 @@ impl PyDemuxReceiver {
     /// Why the receive session ended, as an `EndReason`, or `None` while it
     /// has not ended (or the transport records no end reason). Lock-free
     /// and readable after `close()`.
-    fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn end_reason(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         match self.owned.end_reason() {
             Some(r) => end_reason_to_py(py, &r),
             None => Ok(None),

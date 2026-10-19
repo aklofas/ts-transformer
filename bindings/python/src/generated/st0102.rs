@@ -10,10 +10,10 @@ use pyo3::types::PyDict;
 pub(crate) fn security_ls_to_py(
     py: Python<'_>,
     r: &tst_core::klv::st0102::SecurityLs,
-) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "SecurityLs"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(
         intern!(py, "security_classification"),
         crate::custom::security_ls_security_classification_to_py(py, &r.security_classification)?,

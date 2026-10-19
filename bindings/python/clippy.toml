@@ -3,5 +3,5 @@
 # util::allow_threads_parking, so a thread that wakes after interpreter
 # finalisation parks instead of aborting the process.
 disallowed-methods = [
-    { path = "pyo3::marker::Python::allow_threads", reason = "use crate::util::allow_threads_parking; a bounded in-memory call states why with #[expect]" },
+    { path = "pyo3::marker::Python::detach", reason = "use crate::util::allow_threads_parking; a bounded in-memory call states why with #[expect]" },
 ]

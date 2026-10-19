@@ -9,7 +9,13 @@ use pyo3::prelude::*;
 ///
 /// All counters are cumulative since construction (or the last stats
 /// reset). The per-stream push counters are not surfaced to the hosts.
-#[pyclass(frozen, get_all, name = "MuxerStats", module = "tstrans.mpegts")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "MuxerStats",
+    module = "tstrans.mpegts"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct MuxerStats {
     /// Total 188-byte TS packets drained from the muxer.

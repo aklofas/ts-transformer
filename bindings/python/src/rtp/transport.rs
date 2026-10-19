@@ -8,7 +8,7 @@
 //! tst-c (handles concrete per-transport).
 //!
 //! GIL boundaries:
-//! - `send`, `recv` → wrapped in `py.allow_threads(|| ...)` so concurrent
+//! - `send`, `recv` → wrapped in `py.detach(|| ...)` so concurrent
 //!   Python threads can keep working while UDP I/O blocks on the kernel.
 //! - `stats` → also releases the GIL: it waits for the slot a parked
 //!   `recv` / in-flight `send` on another thread holds.
@@ -98,7 +98,7 @@ pub(crate) fn opened_recv(
 pub(crate) struct PyRtpTransport {
     /// The binding layer's handle state machine: a `send` in flight
     /// on another thread holds the slot only inside `with_mut`, under
-    /// `py.allow_threads`; `close()` (cancel-first) ends it instead of
+    /// `py.detach`; `close()` (cancel-first) ends it instead of
     /// waiting behind it or tripping PyO3's borrow check.
     owned: Owned<SendHalf<RtpTransport>>,
     /// Shared cancel state — see `crate::util::CancelSource`.
@@ -147,8 +147,7 @@ impl PyRtpTransport {
     /// Python threads can run while this thread blocks on the kernel.
     fn send(&self, py: Python<'_>, ts_bytes: &Bound<'_, PyAny>) -> PyResult<()> {
         // Zero-copy for real `bytes`; one C copy through `bytes()` for
-        // bytearray / memoryview / numpy (PyBuffer is unavailable under
-        // abi3-py310).
+        // bytearray / memoryview / numpy (see `util::coerce_bytes_like`).
         let coerced = crate::util::coerce_bytes_like(py, ts_bytes)?;
         let slice: &[u8] = coerced.as_bytes();
         pyres(
@@ -249,7 +248,7 @@ impl tst_pipeline::binding::Close for RtpRecvInner {
 #[pyclass(name = "RecvTransport", module = "tstrans.rtp")]
 pub(crate) struct PyRtpRecvTransport {
     /// The binding layer's handle state machine: a parked `recv`
-    /// holds the slot only inside `with_mut`, under `py.allow_threads`;
+    /// holds the slot only inside `with_mut`, under `py.detach`;
     /// `close()` (cancel-first) ends it instead of waiting behind it.
     owned: Owned<RtpRecvInner>,
     /// Shared cancel state — see `crate::util::CancelSource`.
@@ -351,7 +350,7 @@ impl PyRtpRecvTransport {
             })
         });
         match pyres(py, &RTP, res)? {
-            Some(bytes) => Ok(PyBytes::new_bound(py, &bytes).unbind()),
+            Some(bytes) => Ok(PyBytes::new(py, &bytes).unbind()),
             // One-shot deadline expiry (`recv_timeout` -> Ok(None)): the
             // transport is alive — BACKPRESSURE, retryable. Same member the
             // JVM raises, so the cross-binding golden sees ONE kind.
@@ -396,9 +395,9 @@ impl PyRtpRecvTransport {
     /// the slot's lifetime.
     ///
     /// `EndReasonHandle::get` is a lock-free `Arc<OnceLock<_>>`
-    /// read — no blocking, so no `py.allow_threads` is needed here even
+    /// read — no blocking, so no `py.detach` is needed here even
     /// though this touches Rust-owned shared state.
-    fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn end_reason(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         match self.end_reason.get() {
             Some(r) => crate::shells::end_reason::end_reason_to_py(py, &r),
             None => Ok(None),

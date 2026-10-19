@@ -1679,7 +1679,7 @@ fn a_native_class_is_a_frozen_get_all_struct_of_host_copies() {
     // The small value: constructor, comparison, hand-written methods, repr.
     assert!(
         raw.contains(
-            r#"#[pyclass(frozen, get_all, eq, name = "LeafFixture", module = "tstrans.codec")]"#
+            r#"#[pyclass(frozen, from_py_object, get_all, eq, name = "LeafFixture", module = "tstrans.codec")]"#
         ),
         "{raw}"
     );
@@ -1706,7 +1706,7 @@ fn a_native_class_is_a_frozen_get_all_struct_of_host_copies() {
     // The big one: the host name, host types, no constructor, no Copy.
     assert!(
         raw.contains(
-            r#"#[pyclass(frozen, get_all, name = "NativeHost", module = "tstrans.codec")]"#
+            r#"#[pyclass(frozen, from_py_object, get_all, name = "NativeHost", module = "tstrans.codec")]"#
         ),
         "{raw}"
     );

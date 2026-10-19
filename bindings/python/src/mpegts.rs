@@ -76,10 +76,9 @@ impl PyDemuxer {
     /// safely under the GIL; the demuxer itself then parses without
     /// further copying.
     ///
-    /// `PyBuffer` would let us skip the Python-side coercion, but it
-    /// is gated behind `not(Py_LIMITED_API)` in PyO3 0.22, and
-    /// `tst-py` builds with the `abi3-py310` stable-ABI feature so
-    /// one wheel covers Python 3.10+.
+    /// `PyBuffer` would let us skip the Python-side coercion; it joined
+    /// the stable ABI at the 3.11 floor (`abi3-py311`, one wheel for
+    /// Python 3.11+), after this path was written.
     ///
     /// May produce events available via `next_event` / `__iter__`.
     /// Raises `tstrans.exceptions.DemuxError` in strict mode on
@@ -93,26 +92,26 @@ impl PyDemuxer {
         // Python frame for the duration of this call. Python's GC cannot
         // collect a referenced object, so the slice remains valid without
         // the GIL held. `feed` does pure-Rust parsing (no Python object
-        // construction inside), so it is safe to wrap in `allow_threads`.
+        // construction inside), so it is safe to wrap in `detach`.
         if let Ok(slice) = bytes.extract::<&[u8]>() {
-            let res = py.allow_threads(|| self.inner.feed(slice));
+            let res = py.detach(|| self.inner.feed(slice));
             return res.map_err(|e| demux_error_to_pyerr(py, &e));
         }
         // Fallback: coerce via the Python `bytes()` builtin. Accepts
         // `bytearray`, `memoryview`, and any object exposing the
         // buffer protocol; raises `TypeError` if not bytes-like.
         let coerced: Bound<'_, PyBytes> = py
-            .import_bound("builtins")?
+            .import("builtins")?
             .getattr(intern!(py, "bytes"))?
             .call1((bytes,))?
-            .downcast_into::<PyBytes>()?;
+            .cast_into::<PyBytes>()?;
         // `coerced` is `!Ungil` (contains `Python<'_>`), but the
         // underlying `&[u8]` is — extract the slice first and let
         // `coerced` (the strong `Py<PyBytes>` reference) keep it alive
         // on the stack across the GIL drop. Python's GC cannot collect
         // a referenced object.
         let slice: &[u8] = coerced.as_bytes();
-        let res = py.allow_threads(|| self.inner.feed(slice));
+        let res = py.detach(|| self.inner.feed(slice));
         res.map_err(|e| demux_error_to_pyerr(py, &e))
     }
 
@@ -124,7 +123,7 @@ impl PyDemuxer {
 
     /// Return the next available event, or `None` when the queue is
     /// empty.
-    fn next_event(&mut self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn next_event(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         match self.inner.next_event() {
             None => Ok(None),
             Some(rust_event) => Ok(Some(convert_event(py, &rust_event)?)),
@@ -137,7 +136,7 @@ impl PyDemuxer {
         slf
     }
 
-    fn __next__(&mut self, py: Python<'_>) -> PyResult<PyObject> {
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match self.inner.next_event() {
             None => Err(pyo3::exceptions::PyStopIteration::new_err(())),
             Some(rust_event) => convert_event(py, &rust_event),
@@ -146,7 +145,7 @@ impl PyDemuxer {
 
     /// Stats snapshot as a dict. Returns a flat `field_name: value`
     /// view of `DemuxerStats`.
-    fn stats(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         // A new Rust field must fail the build until this dict carries it (the
         // count includes the two skipped fields).
         const _: () = assert!(
@@ -156,7 +155,7 @@ impl PyDemuxer {
                 == 8
         );
         let s = self.inner.stats();
-        let d = PyDict::new_bound(py);
+        let d = PyDict::new(py);
         d.set_item("program_maps_seen", s.program_maps_seen)?;
         d.set_item("pmt_versions_seen", s.pmt_versions_seen)?;
         d.set_item("discontinuities", s.discontinuities)?;
@@ -248,8 +247,8 @@ pub(crate) fn build_demuxer_config(
 // Event conversion: Rust DemuxEvent → Python DemuxEvent.* instance
 // ---------------------------------------------------------------------------
 
-pub(crate) fn convert_event(py: Python<'_>, ev: &DemuxEvent) -> PyResult<PyObject> {
-    let mpegts = py.import_bound("tstrans.mpegts")?;
+pub(crate) fn convert_event(py: Python<'_>, ev: &DemuxEvent) -> PyResult<Py<PyAny>> {
+    let mpegts = py.import("tstrans.mpegts")?;
     match ev {
         DemuxEvent::ProgramMap(pm) => convert_program_map_event(py, &mpegts, pm),
         DemuxEvent::Sample {
@@ -283,13 +282,13 @@ fn convert_program_map_event(
     py: Python<'_>,
     mpegts: &Bound<'_, PyModule>,
     pm: &ProgramMap,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let pm_py = build_program_map(py, mpegts, pm)?;
     let cls = mpegts
         .getattr(intern!(py, "DemuxEvent"))?
         .getattr(intern!(py, "ProgramMap"))?;
-    let kwargs = PyDict::new_bound(py);
-    kwargs.set_item("programs", PyTuple::new_bound(py, &[pm_py]))?;
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("programs", PyTuple::new(py, &[pm_py])?)?;
     Ok(cls.call((), Some(&kwargs))?.into())
 }
 
@@ -297,29 +296,29 @@ fn build_program_map(
     py: Python<'_>,
     mpegts: &Bound<'_, PyModule>,
     pm: &ProgramMap,
-) -> PyResult<PyObject> {
-    let streams = PyList::empty_bound(py);
+) -> PyResult<Py<PyAny>> {
+    let streams = PyList::empty(py);
     for s in &pm.streams {
         streams.append(build_stream_info(py, mpegts, s)?)?;
     }
-    let links = PyList::empty_bound(py);
+    let links = PyList::empty(py);
     for l in &pm.klv_links {
         let link_cls = mpegts.getattr(intern!(py, "KlvLink"))?;
-        let kwargs = PyDict::new_bound(py);
+        let kwargs = PyDict::new(py);
         kwargs.set_item("klv_pid", l.klv_pid)?;
         kwargs.set_item("video_pid", l.video_pid)?;
         kwargs.set_item("source", link_source_to_py(py, mpegts, &l.source)?)?;
         links.append(link_cls.call((), Some(&kwargs))?)?;
     }
     let cls = mpegts.getattr(intern!(py, "ProgramMap"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item("program_number", pm.program_number)?;
     kwargs.set_item("pcr_pid", pm.pcr_pid)?;
     kwargs.set_item("pmt_pid", pm.pmt_pid)?;
     let streams_vec: Vec<_> = streams.iter().collect();
     let links_vec: Vec<_> = links.iter().collect();
-    kwargs.set_item("streams", PyTuple::new_bound(py, &streams_vec))?;
-    kwargs.set_item("klv_links", PyTuple::new_bound(py, &links_vec))?;
+    kwargs.set_item("streams", PyTuple::new(py, &streams_vec)?)?;
+    kwargs.set_item("klv_links", PyTuple::new(py, &links_vec)?)?;
     Ok(cls.call((), Some(&kwargs))?.into())
 }
 
@@ -327,24 +326,24 @@ fn build_stream_info(
     py: Python<'_>,
     mpegts: &Bound<'_, PyModule>,
     s: &StreamInfo,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let (kind_tag, codec_py) = stream_kind_to_py(py, mpegts, &s.kind)?;
     let desc_cls = mpegts.getattr(intern!(py, "RawDescriptor"))?;
-    let mut descs: Vec<PyObject> = Vec::with_capacity(s.raw_descriptors.len());
+    let mut descs: Vec<Py<PyAny>> = Vec::with_capacity(s.raw_descriptors.len());
     for d in &s.raw_descriptors {
-        let dkwargs = PyDict::new_bound(py);
+        let dkwargs = PyDict::new(py);
         dkwargs.set_item("tag", d.tag)?;
-        dkwargs.set_item("data", PyBytes::new_bound(py, &d.data))?;
+        dkwargs.set_item("data", PyBytes::new(py, &d.data))?;
         descs.push(desc_cls.call((), Some(&dkwargs))?.into());
     }
     let cls = mpegts.getattr(intern!(py, "StreamInfo"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item("pid", s.pid)?;
     kwargs.set_item("stream_type", s.stream_type.as_byte())?;
     kwargs.set_item("kind", kind_tag)?;
     kwargs.set_item("codec", codec_py)?;
     kwargs.set_item("program_number", s.program_number)?;
-    kwargs.set_item("raw_descriptors", PyTuple::new_bound(py, &descs))?;
+    kwargs.set_item("raw_descriptors", PyTuple::new(py, &descs)?)?;
     Ok(cls.call((), Some(&kwargs))?.into())
 }
 
@@ -352,10 +351,10 @@ pub(crate) fn build_stream_id(
     py: Python<'_>,
     mpegts: &Bound<'_, PyModule>,
     s: &StreamId,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let (kind_tag, codec_py) = stream_kind_to_py(py, mpegts, &s.kind)?;
     let cls = mpegts.getattr(intern!(py, "StreamId"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item("pid", s.pid)?;
     kwargs.set_item("kind", kind_tag)?;
     kwargs.set_item("codec", codec_py)?;
@@ -367,7 +366,7 @@ fn stream_kind_to_py(
     py: Python<'_>,
     mpegts: &Bound<'_, PyModule>,
     kind: &StreamKind,
-) -> PyResult<(PyObject, PyObject)> {
+) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
     let kind_enum = mpegts.getattr(intern!(py, "StreamKindTag"))?;
     let none = py.None();
     match kind {
@@ -395,7 +394,7 @@ pub(crate) fn video_codec_to_py(
     py: Python<'_>,
     mpegts: &Bound<'_, PyModule>,
     c: &VideoCodec,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let e = mpegts.getattr(intern!(py, "VideoCodec"))?;
     let name = match c {
         VideoCodec::H264 => "H264",
@@ -410,7 +409,7 @@ fn audio_codec_to_py(
     py: Python<'_>,
     mpegts: &Bound<'_, PyModule>,
     c: &AudioCodec,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let e = mpegts.getattr(intern!(py, "AudioCodec"))?;
     let name = match c {
         AudioCodec::Mp2 => "MP2",
@@ -425,7 +424,7 @@ fn subtitle_codec_to_py(
     py: Python<'_>,
     mpegts: &Bound<'_, PyModule>,
     c: &SubtitleCodec,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let e = mpegts.getattr(intern!(py, "SubtitleCodec"))?;
     let name = match c {
         SubtitleCodec::DvbSubtitling => "DVB_SUBTITLING",
@@ -590,7 +589,7 @@ fn link_source_to_py(
     py: Python<'_>,
     mpegts: &Bound<'_, PyModule>,
     src: &LinkSource,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let e = mpegts.getattr(intern!(py, "LinkSource"))?;
     let name = match src {
         LinkSource::Declared => "DECLARED",
@@ -604,7 +603,7 @@ pub(crate) fn pts_to_py(
     py: Python<'_>,
     mpegts: &Bound<'_, PyModule>,
     p: Pts90khz,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let cls = mpegts.getattr(intern!(py, "Pts90khz"))?;
     Ok(cls
         .call_method1(intern!(py, "from_raw"), (p.as_ticks(),))?
@@ -615,7 +614,7 @@ pub(crate) fn opt_pts_to_py(
     py: Python<'_>,
     mpegts: &Bound<'_, PyModule>,
     p: Option<Pts90khz>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     match p {
         Some(p) => pts_to_py(py, mpegts, p),
         None => Ok(py.None()),
@@ -629,10 +628,10 @@ pub(crate) fn opt_pts_to_py(
 pub(crate) fn convert_video_payload(
     py: Python<'_>,
     payload: &tst_core::mpegts::demux::VideoPayload,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     match payload {
         VideoPayload::Nals(nals) => {
-            let list = pyo3::types::PyList::empty_bound(py);
+            let list = pyo3::types::PyList::empty(py);
             for nal in nals {
                 let nal_py = match nal {
                     tst_core::mpegts::demux::NalUnit::H264 {
@@ -674,15 +673,15 @@ pub(crate) fn convert_video_payload(
                 };
                 list.append(nal_py)?;
             }
-            Ok(list.into_py(py))
+            Ok(list.into_any().unbind())
         }
         VideoPayload::Obus(obus) => {
-            let list = pyo3::types::PyList::empty_bound(py);
+            let list = pyo3::types::PyList::empty(py);
             for obu in obus {
                 let obu_py = Py::new(py, crate::generated::codec::Obu::from(obu))?;
                 list.append(obu_py)?;
             }
-            Ok(list.into_py(py))
+            Ok(list.into_any().unbind())
         }
     }
 }
@@ -694,7 +693,7 @@ fn convert_sample_event(
     pts: Pts90khz,
     dts: Option<Pts90khz>,
     payload: &SamplePayload,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let stream_py = build_stream_id(py, mpegts, stream)?;
     let pts_py = pts_to_py(py, mpegts, pts)?;
     let dts_py = opt_pts_to_py(py, mpegts, dts)?;
@@ -710,7 +709,7 @@ fn convert_sample_event(
             // verbatim as `.raw`. Typed NAL/OBU splitting is opt-in Python-side
             // via `DemuxEvent.Video.parse()` (→ `tstrans.codec.split_units`).
             let cls = de.getattr(intern!(py, "Video"))?;
-            let kwargs = PyDict::new_bound(py);
+            let kwargs = PyDict::new(py);
             kwargs.set_item("stream", stream_py)?;
             kwargs.set_item("pts", pts_py)?;
             kwargs.set_item("dts", dts_py)?;
@@ -723,7 +722,7 @@ fn convert_sample_event(
                 Py::new(py, crate::raw_bytes::RawBytes::from_shared(raw.clone()))?,
             )?;
             kwargs.set_item("random_access_indicator", *random_access_indicator)?;
-            let av1_carriage_py: pyo3::PyObject = match av1_carriage {
+            let av1_carriage_py: pyo3::Py<pyo3::PyAny> = match av1_carriage {
                 Some(mode) => crate::mux::av1_carriage_to_py(py, *mode)?
                     .into_any()
                     .unbind(),
@@ -737,7 +736,7 @@ fn convert_sample_event(
             // as `.raw`. Typed frame parsing is opt-in Python-side via
             // `DemuxEvent.Audio.parse()` (→ `tstrans.codec.parse_audio`).
             let cls = de.getattr(intern!(py, "Audio"))?;
-            let kwargs = PyDict::new_bound(py);
+            let kwargs = PyDict::new(py);
             kwargs.set_item("stream", stream_py)?;
             kwargs.set_item("pts", pts_py)?;
             kwargs.set_item("dts", dts_py)?;
@@ -752,7 +751,7 @@ fn convert_sample_event(
         }
         SamplePayload::Subtitle { codec, payload } => {
             let cls = de.getattr(intern!(py, "Subtitle"))?;
-            let kwargs = PyDict::new_bound(py);
+            let kwargs = PyDict::new(py);
             kwargs.set_item("stream", stream_py)?;
             kwargs.set_item("pts", pts_py)?;
             kwargs.set_item("dts", dts_py)?;
@@ -769,7 +768,7 @@ fn convert_sample_event(
             // Preserve raw bytes + stream_type instead of
             // collapsing to a NonConformant diagnostic.
             let cls = de.getattr(intern!(py, "UnknownSample"))?;
-            let kwargs = PyDict::new_bound(py);
+            let kwargs = PyDict::new(py);
             kwargs.set_item("stream", stream_py)?;
             kwargs.set_item("pts", pts_py)?;
             kwargs.set_item("dts", dts_py)?;
@@ -792,7 +791,7 @@ pub(crate) fn metadata_kind_to_py(
     py: Python<'_>,
     mpegts: &Bound<'_, PyModule>,
     kind: &tst_core::mpegts::demux::MetadataKind,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let kind_enum = mpegts.getattr(intern!(py, "MetadataKindTag"))?;
     match kind {
         MetadataKind::KlvSyncAuCell { .. } => {
@@ -810,7 +809,7 @@ fn convert_metadata_event(
     pts: Pts90khz,
     kind: &MetadataKind,
     payload: &[u8],
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let stream_py = build_stream_id(py, mpegts, stream)?;
     let pts_py = pts_to_py(py, mpegts, pts)?;
     let kind_py = metadata_kind_to_py(py, mpegts, kind)?;
@@ -828,11 +827,11 @@ fn convert_metadata_event(
     let cls = mpegts
         .getattr(intern!(py, "DemuxEvent"))?
         .getattr(intern!(py, "Metadata"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item("stream", stream_py)?;
     kwargs.set_item("pts", pts_py)?;
     kwargs.set_item("kind", kind_py)?;
-    kwargs.set_item("payload", PyBytes::new_bound(py, payload))?;
+    kwargs.set_item("payload", PyBytes::new(py, payload))?;
     kwargs.set_item("was_reassembled", was_reassembled)?;
     kwargs.set_item("cell_count", cell_count)?;
     Ok(cls.call((), Some(&kwargs))?.into())
@@ -843,7 +842,7 @@ fn convert_discontinuity_event(
     mpegts: &Bound<'_, PyModule>,
     stream: &StreamId,
     kind: &DiscontinuityKind,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let stream_py = build_stream_id(py, mpegts, stream)?;
     let kind_enum = mpegts.getattr(intern!(py, "DiscontinuityKindTag"))?;
     let kind_name = match kind {
@@ -855,7 +854,7 @@ fn convert_discontinuity_event(
     let cls = mpegts
         .getattr(intern!(py, "DemuxEvent"))?
         .getattr(intern!(py, "Discontinuity"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item("stream", stream_py)?;
     kwargs.set_item("kind", kind_enum.getattr(kind_name)?)?;
     Ok(cls.call((), Some(&kwargs))?.into())
@@ -866,7 +865,7 @@ fn convert_non_conformant_event(
     mpegts: &Bound<'_, PyModule>,
     stream: &StreamId,
     issue: &NonConformantIssue,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let stream_py = build_stream_id(py, mpegts, stream)?;
     let kind_name = non_conformant_kind_name(issue);
     let issue_str = format!("{issue}");
@@ -874,15 +873,15 @@ fn convert_non_conformant_event(
     let cls = mpegts
         .getattr(intern!(py, "DemuxEvent"))?
         .getattr(intern!(py, "NonConformant"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item("stream", stream_py)?;
     kwargs.set_item("issue", issue_str)?;
     kwargs.set_item("kind", kind_enum.getattr(kind_name)?)?;
     // Surface the typed multi-cell reason only on MultiCellAu issues; all
     // other issue kinds get None (Python-side default).
-    let reason_py: PyObject = match issue {
+    let reason_py: Py<PyAny> = match issue {
         NonConformantIssue::MultiCellAu { reason, .. } => {
-            Py::new(py, PyMultiCellAuReason::from(*reason))?.into_py(py)
+            Py::new(py, PyMultiCellAuReason::from(*reason))?.into_any()
         }
         _ => py.None(),
     };
@@ -890,14 +889,14 @@ fn convert_non_conformant_event(
 
     // Surface the typed CFI bits only on CfiTolerated;
     // None on every other issue kind (Python-side default).
-    let (observed_py, treated_py): (PyObject, PyObject) = match issue {
+    let (observed_py, treated_py): (Py<PyAny>, Py<PyAny>) = match issue {
         NonConformantIssue::CfiTolerated {
             observed_cfi,
             treated_as,
             ..
         } => (
-            Py::new(py, PyCellFragmentIndication::from(*observed_cfi))?.into_py(py),
-            Py::new(py, PyCellFragmentIndication::from(*treated_as))?.into_py(py),
+            Py::new(py, PyCellFragmentIndication::from(*observed_cfi))?.into_any(),
+            Py::new(py, PyCellFragmentIndication::from(*treated_as))?.into_any(),
         ),
         _ => (py.None(), py.None()),
     };

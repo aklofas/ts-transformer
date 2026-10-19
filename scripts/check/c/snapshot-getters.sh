@@ -21,18 +21,18 @@
 #    `.write()`, `.try_lock()`, or the UFCS `Mutex::lock(` / `RwLock::read(`
 #    / `RwLock::write(` forms while it holds the GIL and is not listed in
 #    scripts/ratchets/gil-held-locks.tsv. A mutex or rwlock whose holder
-#    releases the GIL (`py.allow_threads`) while it holds the guard needs
+#    releases the GIL (`py.detach`) while it holds the guard needs
 #    the GIL back before the guard can drop; a second thread that waits
 #    for that lock with the GIL held never lets it have it, and the
 #    interpreter is frozen. The rule:
-#      - take, use and release the lock inside `py.allow_threads`, and raise
+#      - take, use and release the lock inside `py.detach`, and raise
 #        after the GIL is back;
 #      - or read a construction-time snapshot / an atomic latch instead;
 #      - only a lock that NO holder keeps across a GIL release may be taken
 #        with the GIL held — and the function says so, with its reason, in
 #        the allowlist.
 #    "Holds the GIL" is lexical: a lock is exempt when it sits inside the
-#    parentheses of an `allow_threads(` call and not inside a `with_gil(`
+#    parentheses of a `detach(` call and not inside an `attach(`
 #    nested in it. A lock taken outside any function (a `macro_rules!`
 #    body, or other module-level code) has no `fn` the scanner can
 #    attribute it to — that is a hard failure (`<unattributed:…>`), never a
@@ -42,9 +42,9 @@
 #
 #    What a line scanner cannot see, so review has to:
 #      - a function that locks and is only ever CALLED from inside an
-#        `allow_threads` closure is reported (it is lexically outside one);
+#        `detach` closure is reported (it is lexically outside one);
 #        it gets a row saying where it runs;
-#      - a guard taken inside `allow_threads` and returned out of the
+#      - a guard taken inside `detach` and returned out of the
 #        closure is not reported;
 #      - whether the other holders of an allowlisted lock release the GIL is
 #        the judgement the row's reason records — the scan does not prove it;
@@ -112,7 +112,7 @@ if [ ! -f "$LOCK_ALLOWLIST" ]; then
 fi
 
 # One line per (file, Type::function) with a `.lock()` outside an
-# `allow_threads(` call, or inside a `with_gil(` nested in one. `at` and
+# `detach(` call, or inside an `attach(` nested in one. `at` and
 # `wg` are the open-parenthesis depths of those two calls; both reset at
 # every `fn`. Comment lines and `#[cfg(test)]` items are skipped.
 # shellcheck disable=SC2086  # LOCK_ROOTS is a deliberate word list
@@ -189,16 +189,16 @@ find $LOCK_ROOTS -type f -name '*.rs' | LC_ALL=C sort | while IFS= read -r f; do
                 if (matched) continue
                 if (at == 0 && index(rest, "allow_threads_parking(") == 1) {
                     # util::allow_threads_parking(py, f): the same
-                    # GIL release as py.allow_threads(f).
+                    # GIL release as py.detach(f).
                     at = 1
                     i += 22
-                } else if (at == 0 && index(rest, "allow_threads(") == 1) {
+                } else if (at == 0 && index(rest, "detach(") == 1) {
                     at = 1
-                    i += 14
-                } else if (at > 0 && wg == 0 && index(rest, "with_gil(") == 1) {
+                    i += 7
+                } else if (at > 0 && wg == 0 && index(rest, "attach(") == 1) {
                     wg = 1
                     at++
-                    i += 9
+                    i += 7
                 } else {
                     c = substr(line, i, 1)
                     if (c == "(") {
@@ -254,7 +254,7 @@ if [ -s "$tmp/lock_unlisted" ]; then
     echo "FAIL: these functions wait for a lock while holding the GIL:"
     sed 's/^/    /' "$tmp/lock_unlisted"
     echo "      if any holder of that lock releases the GIL while it holds the guard, this"
-    echo "      freezes the interpreter. Take the lock inside py.allow_threads and raise"
+    echo "      freezes the interpreter. Take the lock inside py.detach and raise"
     echo "      afterwards, or read a construction snapshot / an atomic latch instead."
     echo "      No holder keeps the guard across a GIL release -> add a row, with the"
     echo "      reason, to $LOCK_ALLOWLIST."

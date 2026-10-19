@@ -8,7 +8,13 @@ use pyo3::prelude::*;
 /// RTP protocol-level statistics snapshot, separate from the socket stats.
 ///
 /// Exposes the malformed-packet and source-rejected counters.
-#[pyclass(frozen, get_all, name = "RtpStats", module = "tstrans.rtp")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "RtpStats",
+    module = "tstrans.rtp"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct RtpStats {
     /// Number of UDP datagrams received whose RTP header was invalid (wrong
@@ -45,7 +51,13 @@ impl From<&tst_rtp::RtpStats> for RtpStats {
 /// RFC 6184 depacketizer counters: a frozen snapshot. All counters are
 /// cumulative since the receiver started listening (or since the RTSP
 /// session started).
-#[pyclass(frozen, get_all, name = "H264DepayStats", module = "tstrans.rtp")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "H264DepayStats",
+    module = "tstrans.rtp"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct H264DepayStats {
     /// Number of complete, unpoisoned AUs emitted.
@@ -106,7 +118,13 @@ impl From<&tst_rtp::H264DepayStats> for H264DepayStats {
 }
 
 /// Aggregate server stats snapshot.
-#[pyclass(frozen, get_all, name = "ServerStats", module = "tstrans.rtp")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "ServerStats",
+    module = "tstrans.rtp"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct ServerStats {
     /// Live count of accepted, not yet closed client sessions.
@@ -168,7 +186,13 @@ impl From<&tst_rtp::ServerStats> for ServerStats {
 /// added. `peer_count` reflects the live subscriber count on the broadcast
 /// channel. `frames_dropped_total` sums per-peer dropped-frame counters
 /// reported by lagging subscribers.
-#[pyclass(frozen, get_all, name = "MountStats", module = "tstrans.rtp")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "MountStats",
+    module = "tstrans.rtp"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct MountStats {
     /// Cumulative TS bytes pushed through this mount's fan-out.
@@ -205,7 +229,13 @@ impl From<&tst_rtp::MountStats> for MountStats {
 
 /// Frozen snapshot of a publish mount's stats. Counters are cumulative over
 /// the mount's life, across publishers.
-#[pyclass(frozen, get_all, name = "PublishMountStats", module = "tstrans.rtp")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "PublishMountStats",
+    module = "tstrans.rtp"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct PublishMountStats {
     /// RTP packets received from publishers, counted before validation.

@@ -16,7 +16,7 @@
 //! Users need `isinstance(err, tstrans.exceptions.MuxError)` to work
 //! whether the error comes from Python or Rust — so the Rust side
 //! must *call into* the Python-defined classes, which is what
-//! `py.import_bound("tstrans.exceptions").getattr("MuxError")?` does.
+//! `py.import("tstrans.exceptions").getattr("MuxError")?` does.
 //! This is slower than `create_exception!` (per-raise dict lookup +
 //! Python call) but the tradeoff is required for the contract.
 
@@ -58,7 +58,7 @@ pub(crate) fn make_kinded_error(
     kind_variant: &str,
     message: &str,
 ) -> PyErr {
-    let exceptions = match py.import_bound("tstrans.exceptions") {
+    let exceptions = match py.import("tstrans.exceptions") {
         Ok(m) => m,
         Err(e) => return e,
     };
@@ -74,7 +74,7 @@ pub(crate) fn make_kinded_error(
         Ok(c) => c,
         Err(e) => return e,
     };
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     if let Err(e) = kwargs.set_item("kind", kind_value) {
         return e;
     }
@@ -82,7 +82,7 @@ pub(crate) fn make_kinded_error(
         return e;
     }
     match cls.call((), Some(&kwargs)) {
-        Ok(instance) => PyErr::from_value_bound(instance),
+        Ok(instance) => PyErr::from_value(instance),
         Err(e) => e,
     }
 }
@@ -233,7 +233,7 @@ pub(crate) fn codec_parse_error_to_pyerr(
     err: &tst_core::codec::CodecParseError,
     codec: &str,
 ) -> PyErr {
-    let exceptions = match py.import_bound("tstrans.exceptions") {
+    let exceptions = match py.import("tstrans.exceptions") {
         Ok(m) => m,
         Err(e) => return e,
     };
@@ -253,7 +253,7 @@ pub(crate) fn codec_parse_error_to_pyerr(
         Err(e) => return e,
     };
     let message = format!("{err}");
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     if let Err(e) = kwargs.set_item("kind", kind) {
         return e;
     }
@@ -272,9 +272,9 @@ pub(crate) fn codec_parse_error_to_pyerr(
             return e;
         }
     }
-    let positional_args = pyo3::types::PyTuple::empty_bound(py);
+    let positional_args = pyo3::types::PyTuple::empty(py);
     match codec_error_class.call(positional_args, Some(&kwargs)) {
-        Ok(instance) => PyErr::from_value_bound(instance),
+        Ok(instance) => PyErr::from_value(instance),
         Err(e) => e,
     }
 }
@@ -298,7 +298,7 @@ pub(crate) fn klv_encode_error_to_pyerr(py: Python<'_>, e: tst_core::KlvEncodeEr
     let kind_str = envelope.kind.name();
     let tag: Option<u64> = envelope.diagnostics.tag;
     let msg = envelope.detail;
-    let exceptions = match py.import_bound("tstrans.exceptions") {
+    let exceptions = match py.import("tstrans.exceptions") {
         Ok(m) => m,
         Err(err) => return err,
     };
@@ -314,7 +314,7 @@ pub(crate) fn klv_encode_error_to_pyerr(py: Python<'_>, e: tst_core::KlvEncodeEr
         Ok(c) => c,
         Err(err) => return err,
     };
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     if let Err(err) = kwargs.set_item("kind", kind_value) {
         return err;
     }
@@ -324,7 +324,7 @@ pub(crate) fn klv_encode_error_to_pyerr(py: Python<'_>, e: tst_core::KlvEncodeEr
         return err;
     }
     match cls.call((msg,), Some(&kwargs)) {
-        Ok(instance) => PyErr::from_value_bound(instance),
+        Ok(instance) => PyErr::from_value(instance),
         Err(err) => err,
     }
 }

@@ -89,7 +89,7 @@ pub(crate) fn raise(py: Python<'_>, d: &Domain, e: BindingError) -> PyErr {
     }
     let name = e.kind.name();
     let built: PyResult<PyErr> = (|| {
-        let exceptions = py.import_bound(intern!(py, "tstrans.exceptions"))?;
+        let exceptions = py.import(intern!(py, "tstrans.exceptions"))?;
         let kind_enum = exceptions.getattr(d.python_kind_enum())?;
         let value = kind_enum.getattr(name).map_err(|_| {
             PyRuntimeError::new_err(format!(
@@ -101,10 +101,10 @@ pub(crate) fn raise(py: Python<'_>, d: &Domain, e: BindingError) -> PyErr {
             ))
         })?;
         let cls = exceptions.getattr(d.python_error_class())?;
-        let kwargs = PyDict::new_bound(py);
+        let kwargs = PyDict::new(py);
         kwargs.set_item(intern!(py, "kind"), value)?;
         kwargs.set_item(intern!(py, "message"), e.detail.as_str())?;
-        Ok(PyErr::from_value_bound(cls.call((), Some(&kwargs))?))
+        Ok(PyErr::from_value(cls.call((), Some(&kwargs))?))
     })();
     built.unwrap_or_else(|err| err)
 }
@@ -149,7 +149,7 @@ pub(crate) fn kind_by_name(d: &Domain, name: &str) -> Option<K> {
 
 /// Startup check: every member of every domain must resolve.
 pub(crate) fn check_error_kinds(py: Python<'_>) -> PyResult<()> {
-    let exceptions = py.import_bound(intern!(py, "tstrans.exceptions"))?;
+    let exceptions = py.import(intern!(py, "tstrans.exceptions"))?;
     for d in DOMAINS {
         let kind_enum = exceptions.getattr(d.python_kind_enum())?;
         for k in d.kinds() {

@@ -18,7 +18,7 @@ pub(crate) mod sender;
 use pyo3::prelude::*;
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new_bound(parent.py(), "shells")?;
+    let m = PyModule::new(parent.py(), "shells")?;
     crate::generated::stats_shells::register(&m)?;
     m.add_class::<cancel::PyCancelHandle>()?;
     m.add_class::<sender::PySender>()?;

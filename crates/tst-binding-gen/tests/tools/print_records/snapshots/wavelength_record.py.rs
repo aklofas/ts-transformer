@@ -1,7 +1,7 @@
-pub(crate) fn wavelength_record_to_py(py: Python<'_>, r: &tst_core::klv::st0601::WavelengthRecord) -> PyResult<PyObject> {
-    let module = py.import_bound("tstrans.klv")?;
+pub(crate) fn wavelength_record_to_py(py: Python<'_>, r: &tst_core::klv::st0601::WavelengthRecord) -> PyResult<Py<PyAny>> {
+    let module = py.import("tstrans.klv")?;
     let cls = module.getattr(intern!(py, "WavelengthRecord"))?;
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item(intern!(py, "id"), r.id)?;
     kwargs.set_item(intern!(py, "min_nm"), r.min_nm)?;
     kwargs.set_item(intern!(py, "max_nm"), r.max_nm)?;

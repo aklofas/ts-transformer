@@ -16,7 +16,13 @@ use pyo3::prelude::*;
 /// too-late drops on the incoming path); read them on a receiver.
 ///
 /// For the abstract transport view shared with RTP use the socket stats.
-#[pyclass(frozen, get_all, name = "SrtStats", module = "tstrans.srt")]
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "SrtStats",
+    module = "tstrans.srt"
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct SrtStats {
     /// Bytes sent, cumulative.
@@ -104,6 +110,7 @@ impl From<&tst_srt::SrtStats> for SrtStats {
 /// on a separate worker this flag could observe as active.
 #[pyclass(
     frozen,
+    from_py_object,
     get_all,
     name = "ManagedTransportStats",
     module = "tstrans.srt"

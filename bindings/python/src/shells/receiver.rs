@@ -2,7 +2,7 @@
 //!
 //! Wraps `tst_pipeline::Receiver<Box<dyn RecvTransport>>`, opened from a URL
 //! by `Receiver.open(url)`. Same handle model as `Sender`: an `Owned` slot
-//! taken only under `py.allow_threads`, cancel-first `close()`, and the
+//! taken only under `py.detach`, cancel-first `close()`, and the
 //! transport's error domain in the snapshot. The transport's end-reason
 //! handle is attached to the `Owned`, so `end_reason()` keeps answering
 //! after `close()`.
@@ -102,7 +102,7 @@ impl PyReceiver {
         let pkt =
             crate::util::allow_threads_parking(py, || self.owned.with_mut(|r| r.next_packet()));
         let bytes = pyres(py, &self.owned.snapshot().domain, pkt)?;
-        Ok(PyBytes::new_bound(py, &bytes).unbind())
+        Ok(PyBytes::new(py, &bytes).unbind())
     }
 
     /// Shareable cancel handle (shared state, see `CancelHandle`).
@@ -159,7 +159,7 @@ impl PyReceiver {
     /// Why the receive session ended, as an `EndReason`, or `None` while
     /// it has not ended (or the transport records no end reason). Lock-free
     /// and readable after `close()`.
-    fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn end_reason(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         match self.owned.end_reason() {
             Some(r) => end_reason_to_py(py, &r),
             None => Ok(None),

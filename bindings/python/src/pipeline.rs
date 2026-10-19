@@ -9,7 +9,7 @@
 //!
 //! Config + output value classes live Python-side in
 //! `tstrans/pipeline.py`; this module constructs them by name
-//! (`import_bound("tstrans.pipeline")`, `getattr(...)`), and reuses the
+//! (`import("tstrans.pipeline")`, `getattr(...)`), and reuses the
 //! `crate::mpegts` projection helpers (`build_stream_id`, `pts_to_py`,
 //! `video_codec_to_py`, `metadata_kind_to_py`, `convert_event`). The
 //! `VideoSample` projection is raw-first: `vs.raw` is wrapped in a
@@ -92,7 +92,7 @@ impl PyPairer {
     /// order. Raises `tstrans.exceptions.DemuxError` on
     /// non-conformance (strict mode). Raises `TypeError` if the
     /// argument is not bytes-like.
-    fn feed(&mut self, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+    fn feed(&mut self, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         // Fast path: real `bytes` extracts to a borrowed &[u8].
         //
         // GIL-release rationale (mirrors mpegts::PyDemuxer::feed): the
@@ -101,25 +101,25 @@ impl PyPairer {
         // Python's GC cannot collect a referenced object, so the slice
         // remains valid without the GIL held. `feed` does pure-Rust
         // demux + pairing (no Python object construction inside), so it
-        // is safe to wrap in `allow_threads`.
+        // is safe to wrap in `detach`.
         let outputs = if let Ok(slice) = data.extract::<&[u8]>() {
-            py.allow_threads(|| self.inner.feed(slice))
+            py.detach(|| self.inner.feed(slice))
                 .map_err(|e| demux_error_to_pyerr(py, &e))?
         } else {
             // Fallback: coerce via the Python `bytes()` builtin. Accepts
             // `bytearray`, `memoryview`, and any object exposing the
             // buffer protocol; raises `TypeError` if not bytes-like.
             let coerced: Bound<'_, PyBytes> = py
-                .import_bound("builtins")?
+                .import("builtins")?
                 .getattr(intern!(py, "bytes"))?
                 .call1((data,))?
-                .downcast_into::<PyBytes>()?;
+                .cast_into::<PyBytes>()?;
             // `coerced` is `!Ungil` (contains `Python<'_>`), but the
             // underlying `&[u8]` is — extract the slice first and let
             // `coerced` (the strong `Py<PyBytes>` reference) keep it
             // alive on the stack across the GIL drop.
             let slice: &[u8] = coerced.as_bytes();
-            py.allow_threads(|| self.inner.feed(slice))
+            py.detach(|| self.inner.feed(slice))
                 .map_err(|e| demux_error_to_pyerr(py, &e))?
         };
         convert_outputs(py, &outputs)
@@ -128,13 +128,13 @@ impl PyPairer {
     /// Drain remaining state at end-of-stream: flush the demuxer, pair
     /// any trailing events, then flush the pairer. Idempotent. Returns
     /// the list of trailing `PairerOutput`s.
-    fn flush(&mut self, py: Python<'_>) -> PyResult<PyObject> {
-        let outputs = py.allow_threads(|| self.inner.flush());
+    fn flush(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let outputs = py.detach(|| self.inner.flush());
         convert_outputs(py, &outputs)
     }
 
     /// Pairing counter snapshot as a dict (`PairerStats` fields).
-    fn stats(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         // A new Rust field must fail the build until this dict carries it.
         const _: () = assert!(
             tst_pipeline::ext::pairing::PairerStats::BINDING_SCHEMA
@@ -143,7 +143,7 @@ impl PyPairer {
                 == 4
         );
         let s = self.inner.stats();
-        let d = PyDict::new_bound(py);
+        let d = PyDict::new(py);
         d.set_item("paired", s.paired)?;
         d.set_item("unpaired_video", s.unpaired_video)?;
         d.set_item("unpaired_klv", s.unpaired_klv)?;
@@ -153,7 +153,7 @@ impl PyPairer {
 
     /// Underlying demuxer counter snapshot as a dict. Matches the
     /// `tstrans.mpegts.Demuxer.stats()` field set.
-    fn demuxer_stats(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn demuxer_stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         // A new Rust field must fail the build until this dict carries it (the
         // count includes the two skipped fields).
         const _: () = assert!(
@@ -163,7 +163,7 @@ impl PyPairer {
                 == 8
         );
         let s = self.inner.demuxer_stats();
-        let d = PyDict::new_bound(py);
+        let d = PyDict::new(py);
         d.set_item("program_maps_seen", s.program_maps_seen)?;
         d.set_item("pmt_versions_seen", s.pmt_versions_seen)?;
         d.set_item("discontinuities", s.discontinuities)?;
@@ -184,8 +184,8 @@ impl PyPairer {
 // ---------------------------------------------------------------------------
 
 /// Convert a slice of `PairerOutput` to a Python `list`.
-fn convert_outputs(py: Python<'_>, outputs: &[PairerOutput]) -> PyResult<PyObject> {
-    let list = PyList::empty_bound(py);
+fn convert_outputs(py: Python<'_>, outputs: &[PairerOutput]) -> PyResult<Py<PyAny>> {
+    let list = PyList::empty(py);
     for out in outputs {
         list.append(convert_output(py, out)?)?;
     }
@@ -194,12 +194,12 @@ fn convert_outputs(py: Python<'_>, outputs: &[PairerOutput]) -> PyResult<PyObjec
 
 /// Convert a single `PairerOutput` to the matching Python subclass
 /// instance under `tstrans.pipeline.PairerOutput.*`.
-fn convert_output(py: Python<'_>, out: &PairerOutput) -> PyResult<PyObject> {
-    let pipeline = py.import_bound("tstrans.pipeline")?;
+fn convert_output(py: Python<'_>, out: &PairerOutput) -> PyResult<Py<PyAny>> {
+    let pipeline = py.import("tstrans.pipeline")?;
     let base = pipeline.getattr(intern!(py, "PairerOutput"))?;
     match out {
         PairerOutput::Paired { video, klv } => {
-            let kwargs = PyDict::new_bound(py);
+            let kwargs = PyDict::new(py);
             kwargs.set_item("video", convert_video_sample(py, video)?)?;
             kwargs.set_item("klv", convert_klv_sample(py, klv)?)?;
             Ok(base
@@ -208,7 +208,7 @@ fn convert_output(py: Python<'_>, out: &PairerOutput) -> PyResult<PyObject> {
                 .into())
         }
         PairerOutput::UnpairedVideo(v) => {
-            let kwargs = PyDict::new_bound(py);
+            let kwargs = PyDict::new(py);
             kwargs.set_item("video", convert_video_sample(py, v)?)?;
             Ok(base
                 .getattr(intern!(py, "UnpairedVideo"))?
@@ -216,7 +216,7 @@ fn convert_output(py: Python<'_>, out: &PairerOutput) -> PyResult<PyObject> {
                 .into())
         }
         PairerOutput::UnpairedKlv(k) => {
-            let kwargs = PyDict::new_bound(py);
+            let kwargs = PyDict::new(py);
             kwargs.set_item("klv", convert_klv_sample(py, k)?)?;
             Ok(base
                 .getattr(intern!(py, "UnpairedKlv"))?
@@ -224,7 +224,7 @@ fn convert_output(py: Python<'_>, out: &PairerOutput) -> PyResult<PyObject> {
                 .into())
         }
         PairerOutput::PassThrough(ev) => {
-            let kwargs = PyDict::new_bound(py);
+            let kwargs = PyDict::new(py);
             kwargs.set_item("event", convert_event(py, ev)?)?;
             Ok(base
                 .getattr(intern!(py, "PassThrough"))?
@@ -239,17 +239,17 @@ fn convert_output(py: Python<'_>, out: &PairerOutput) -> PyResult<PyObject> {
 /// Raw-first: wraps `vs.raw` in a `_native.RawBytes` holder (Arc clone; no
 /// payload copy at conversion time). The Python `.raw` property materializes
 /// the bytes lazily on first access.
-fn convert_video_sample(py: Python<'_>, vs: &VideoSample) -> PyResult<PyObject> {
-    let mpegts = py.import_bound("tstrans.mpegts")?;
-    let pipeline = py.import_bound("tstrans.pipeline")?;
+fn convert_video_sample(py: Python<'_>, vs: &VideoSample) -> PyResult<Py<PyAny>> {
+    let mpegts = py.import("tstrans.mpegts")?;
+    let pipeline = py.import("tstrans.pipeline")?;
     let raw_holder = crate::raw_bytes::RawBytes::from_shared(vs.raw.clone());
-    let av1_carriage_py: PyObject = match vs.av1_carriage {
+    let av1_carriage_py: Py<PyAny> = match vs.av1_carriage {
         None => py.None(),
         Some(mode) => crate::mux::av1_carriage_to_py(py, mode)?
             .into_any()
             .unbind(),
     };
-    let kwargs = PyDict::new_bound(py);
+    let kwargs = PyDict::new(py);
     kwargs.set_item("stream", build_stream_id(py, &mpegts, &vs.stream)?)?;
     kwargs.set_item("pts", pts_to_py(py, &mpegts, vs.pts)?)?;
     kwargs.set_item("dts", opt_pts_to_py(py, &mpegts, vs.dts)?)?;
@@ -264,14 +264,14 @@ fn convert_video_sample(py: Python<'_>, vs: &VideoSample) -> PyResult<PyObject> 
 }
 
 /// Project a `KlvSample` to a `tstrans.pipeline.KlvSample` instance.
-fn convert_klv_sample(py: Python<'_>, ks: &KlvSample) -> PyResult<PyObject> {
-    let mpegts = py.import_bound("tstrans.mpegts")?;
-    let pipeline = py.import_bound("tstrans.pipeline")?;
-    let kwargs = PyDict::new_bound(py);
+fn convert_klv_sample(py: Python<'_>, ks: &KlvSample) -> PyResult<Py<PyAny>> {
+    let mpegts = py.import("tstrans.mpegts")?;
+    let pipeline = py.import("tstrans.pipeline")?;
+    let kwargs = PyDict::new(py);
     kwargs.set_item("stream", build_stream_id(py, &mpegts, &ks.stream)?)?;
     kwargs.set_item("pts", pts_to_py(py, &mpegts, ks.pts)?)?;
     kwargs.set_item("kind", metadata_kind_to_py(py, &mpegts, &ks.kind)?)?;
-    kwargs.set_item("payload", PyBytes::new_bound(py, &ks.payload))?;
+    kwargs.set_item("payload", PyBytes::new(py, &ks.payload))?;
     Ok(pipeline
         .getattr(intern!(py, "KlvSample"))?
         .call((), Some(&kwargs))?

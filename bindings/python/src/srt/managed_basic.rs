@@ -110,7 +110,7 @@ pub(crate) struct PyManagedSender {
 impl PyManagedSender {
     /// Construct a managed sender from a `srt://...?mode=caller` URL.
     ///
-    /// Performs the initial connect under `py.allow_threads`. On any
+    /// Performs the initial connect under `py.detach`. On any
     /// subsequent transport break, `send_bytes` triggers an in-line
     /// reconnect under the policy. Default `policy = ReconnectPolicy()`
     /// applies the policy defaults (10 attempts, 100ms..=10s exponential
@@ -326,7 +326,7 @@ pub(crate) struct PyManagedReceiver {
 #[pymethods]
 impl PyManagedReceiver {
     /// Bind + accept a managed receiver from a `srt://...?mode=listener`
-    /// URL. Performs the initial bind+accept under `py.allow_threads`;
+    /// URL. Performs the initial bind+accept under `py.detach`;
     /// every subsequent reconnect re-runs the same path.
     ///
     /// Raises `SrtError(CONFIG_INVALID)` for a bad URL and
@@ -390,7 +390,7 @@ impl PyManagedReceiver {
             &SRT,
             crate::util::allow_threads_parking(py, || self.owned.with_mut(|r| r.next_packet())),
         )?;
-        Ok(PyBytes::new_bound(py, &bytes).unbind())
+        Ok(PyBytes::new(py, &bytes).unbind())
     }
 
     /// Total number of successful reconnect rebuilds. Does NOT include
