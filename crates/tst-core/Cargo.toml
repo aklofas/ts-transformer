@@ -157,4 +157,4 @@ workspace = true
 # which needs a C compiler for the target; the musl CI leg builds tst-core as
 # a C-free crate, so the dev-dependency (and those tests) stay off there.
 [target.'cfg(not(target_env = "musl"))'.dev-dependencies]
-rcgen = "0.13"
+rcgen = "0.14"

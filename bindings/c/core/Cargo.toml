@@ -57,7 +57,7 @@ critical-section = "1"
 # MCU builds stay implementation-free.
 critical-section = { version = "1", features = ["std"] }
 # Self-signed certificate for the `tls`-build server start test.
-rcgen = "0.13"
+rcgen = "0.14"
 
 [lints]
 workspace = true

@@ -106,10 +106,9 @@ proptest         = { workspace = true }
 # `tempfile = "3"` pattern from tst-core.
 tempfile         = "3"
 # Self-signed cert + key generator for the TLS integration
-# test fixture (`tests/fixtures/tls_certs.rs`). 0.13 is the highest
-# version verified against Rust 1.85 (workspace MSRV); 0.14 was released
-# 2025-09 and might also work but 0.13 is sufficient for our needs.
-rcgen            = "0.13"
+# test fixture (`tests/fixtures/tls_certs.rs`). Matches the version used
+# in tst-tcp.
+rcgen            = "0.14"
 # tokio is an optional production dependency (behind `rtsp-server`) so
 # client-only builds get a tokio-free tree.
 # Declared again here, unconditionally: `tests/fixtures/rtsp_loopback_server.rs`
