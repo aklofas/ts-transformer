@@ -15,7 +15,7 @@ default = ["std", "file"]
 # `std` pulls in everything that needs the standard library: file I/O,
 # the net helpers, the thread/Barrier cancel path, and the std-only
 # serialization deps. Without it the crate is #![no_std] + alloc.
-std  = ["file", "serde/std", "tracing/std", "sha2/std", "dep:serde_json", "dep:toml", "portable-atomic/std", "dep:socket2"]
+std  = ["file", "serde/std", "tracing/std", "dep:serde_json", "dep:toml", "portable-atomic/std", "dep:socket2"]
 file = ["std"]  # std::fs-using helpers in io_file (must imply std)
 # The transport conformance kit (`transport::conformance`): test
 # infrastructure the transport crates enable from their dev-dependencies.
@@ -32,7 +32,7 @@ tracing      = { version = "0.1", default-features = false }
 serde        = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json   = { version = "1", optional = true }
 toml         = { version = "1", optional = true }
-sha2         = { version = "0.10", default-features = false }
+sha2         = { version = "0.11", default-features = false }
 hashbrown    = { version = "0.17", default-features = false, features = ["default-hasher"] }
 # Float math (log2/ceil/powf/floor/round) used by KLV IMAPB / ST 0601 mapping.
 # core has no float intrinsics, so the no_std build routes through libm; under
