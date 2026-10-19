@@ -91,6 +91,66 @@ fn klv_sync_roundtrips() {
     assert_profile_roundtrips("klv-sync", SECONDS);
 }
 
+/// Run the `verify` subcommand of the built binary on `file`.
+fn run_verify_cli(file: &std::path::Path, profile: &str, extra: &[&str]) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_tst-interop"))
+        .args(["verify", "--file"])
+        .arg(file)
+        .args(["--expect", profile, "--seconds", "3"])
+        .args(extra)
+        .output()
+        .expect("spawn tst-interop verify")
+}
+
+#[test]
+fn klv_sync_placement_is_exact_on_a_generated_file() {
+    let name = "klv-sync";
+    let p = profiles::by_name(name).expect("profile");
+    let dir = std::env::temp_dir();
+    let ts = dir.join(format!("tst-interop-placement-{}.ts", std::process::id()));
+    let js = dir.join(format!("tst-interop-placement-{}.json", std::process::id()));
+    r#gen::run(p, SECONDS, &ts, KlvSet::Compact, 0, AuSizeMode::Compact).expect("gen");
+    let out = run_verify_cli(
+        &ts,
+        name,
+        &["--klv-placement", "1", "--json", js.to_str().unwrap()],
+    );
+    let json = std::fs::read_to_string(&js);
+    let _ = std::fs::remove_file(&ts);
+    let _ = std::fs::remove_file(&js);
+    assert!(
+        out.status.success(),
+        "verify failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_str(&json.expect("json report")).unwrap();
+    assert_eq!(v["pass"], true);
+    let m = &v["metrics"]["klv_placement"];
+    assert_eq!(m["records"], 30, "{m}");
+    assert_eq!(m["out_of_tolerance"], 0, "{m}");
+    assert_eq!(m["max_abs_error_ticks"], 0, "{m}");
+}
+
+#[test]
+fn klv_placement_refuses_an_async_profile() {
+    let p = profiles::by_name("baseline").expect("profile");
+    let ts = std::env::temp_dir().join(format!(
+        "tst-interop-placement-async-{}.ts",
+        std::process::id()
+    ));
+    r#gen::run(p, SECONDS, &ts, KlvSet::Compact, 0, AuSizeMode::Compact).expect("gen");
+    let out = run_verify_cli(&ts, "baseline", &["--klv-placement", "1"]);
+    let _ = std::fs::remove_file(&ts);
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains(
+            "verify: --klv-placement needs a profile with synchronous KLV (got \"baseline\")"
+        ),
+        "{err}"
+    );
+}
+
 #[test]
 fn misp_roundtrips() {
     assert_profile_roundtrips("misp", SECONDS);

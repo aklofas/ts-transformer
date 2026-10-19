@@ -580,7 +580,7 @@ digest checked against its source file. Locally (GStreamer
 1.24.2, `--seconds 8`) the elementary cell received 240 of 240 video AUs
 and 80 of 80 KLV records with a KLV set digest equal to the source's, and
 0 non-conformant events.
-The elementary cell judges KLV content (count floor + set digest), not KLV timing; see the evidence page's publisher section.
+The elementary cell judges KLV content (count floor and set digest) and KLV timing. Its receiver runs with `--klv-placement 1`, which holds every KLV record to the video access unit it was generated with, within 91 ticks of the 90 kHz clock (1 ms plus one tick of sender-report rounding). The report carries `metrics.klv_placement` with the records judged, the largest error seen and the count outside the window, and the first record outside the window is named in the failure. The flag is refused, with exit 2, for a profile whose KLV is asynchronous, because those records share no time base with the video. Locally (`--seconds 10`) all 100 records landed within 3 ticks.
 `docs/project/validation-evidence.md`'s "Publisher role" section collects
 these cells with the role's fuzz targets and the soak's `rtsp-publish` leg
 (see "Publish leg" below).

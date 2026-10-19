@@ -1582,6 +1582,22 @@ pub fn verify_bytes_with_layout(
     log: Option<&(LogHeader, Vec<Injection>)>,
     layout: WireLayout,
 ) -> VerifyReport {
+    verify_bytes_placed(bytes, p, seconds, mode, klv, log, layout, None)
+}
+
+/// [`verify_bytes_with_layout`], additionally holding every KLV record to
+/// the video access unit it was generated with when `placement` is set.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_bytes_placed(
+    bytes: &[u8],
+    p: &Profile,
+    seconds: f64,
+    mode: VerifyMode,
+    klv: KlvExpect,
+    log: Option<&(LogHeader, Vec<Injection>)>,
+    layout: WireLayout,
+    placement: Option<KlvPlacementExpect>,
+) -> VerifyReport {
     // Built per-profile (never `Demuxer::new()`/`DemuxerConfig::default()`)
     // — see `profiles::demuxer_config`'s doc comment for the av1-klv-a
     // finding this closes.
@@ -1589,6 +1605,9 @@ pub fn verify_bytes_with_layout(
     let mut tally = Tally::new();
     tally.set_klv_expect(klv);
     tally.set_wire_layout(layout);
+    if let Some(expect) = placement {
+        tally.set_klv_placement(expect);
+    }
     // Independent wire-level reader, fed the exact same bytes as the
     // demuxer — see `rawts`'s module doc for why it shares no code with
     // `Demuxer`.
@@ -1677,14 +1696,28 @@ pub fn verify_file_with(
     seconds: f64,
     klv: KlvExpect,
 ) -> io::Result<VerifyReport> {
+    verify_file_placed(path, p, seconds, klv, None)
+}
+
+/// [`verify_file_with`], additionally judging KLV placement when
+/// `placement` is set — see [`KlvPlacementExpect`].
+pub fn verify_file_placed(
+    path: &Path,
+    p: &Profile,
+    seconds: f64,
+    klv: KlvExpect,
+    placement: Option<KlvPlacementExpect>,
+) -> io::Result<VerifyReport> {
     let bytes = std::fs::read(path)?;
-    Ok(verify_bytes_with_corruption(
+    Ok(verify_bytes_placed(
         &bytes,
         p,
         seconds,
         VerifyMode::Strict,
         klv,
         None,
+        WireLayout::Generator,
+        placement,
     ))
 }
 
