@@ -59,11 +59,8 @@ impl core::marker::UnsafeUnpin for rist_sys::_IO_FILE
 impl core::panic::unwind_safe::RefUnwindSafe for rist_sys::_IO_FILE
 impl core::panic::unwind_safe::UnwindSafe for rist_sys::_IO_FILE
 #[repr(C)] pub struct rist_sys::_IO_codecvt
-impl core::clone::Clone for rist_sys::_IO_codecvt
-pub fn rist_sys::_IO_codecvt::clone(&self) -> rist_sys::_IO_codecvt
 impl core::fmt::Debug for rist_sys::_IO_codecvt
 pub fn rist_sys::_IO_codecvt::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for rist_sys::_IO_codecvt
 impl core::marker::Freeze for rist_sys::_IO_codecvt
 impl core::marker::Send for rist_sys::_IO_codecvt
 impl core::marker::Sync for rist_sys::_IO_codecvt
@@ -72,11 +69,8 @@ impl core::marker::UnsafeUnpin for rist_sys::_IO_codecvt
 impl core::panic::unwind_safe::RefUnwindSafe for rist_sys::_IO_codecvt
 impl core::panic::unwind_safe::UnwindSafe for rist_sys::_IO_codecvt
 #[repr(C)] pub struct rist_sys::_IO_marker
-impl core::clone::Clone for rist_sys::_IO_marker
-pub fn rist_sys::_IO_marker::clone(&self) -> rist_sys::_IO_marker
 impl core::fmt::Debug for rist_sys::_IO_marker
 pub fn rist_sys::_IO_marker::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for rist_sys::_IO_marker
 impl core::marker::Freeze for rist_sys::_IO_marker
 impl core::marker::Send for rist_sys::_IO_marker
 impl core::marker::Sync for rist_sys::_IO_marker
@@ -85,11 +79,8 @@ impl core::marker::UnsafeUnpin for rist_sys::_IO_marker
 impl core::panic::unwind_safe::RefUnwindSafe for rist_sys::_IO_marker
 impl core::panic::unwind_safe::UnwindSafe for rist_sys::_IO_marker
 #[repr(C)] pub struct rist_sys::_IO_wide_data
-impl core::clone::Clone for rist_sys::_IO_wide_data
-pub fn rist_sys::_IO_wide_data::clone(&self) -> rist_sys::_IO_wide_data
 impl core::fmt::Debug for rist_sys::_IO_wide_data
 pub fn rist_sys::_IO_wide_data::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for rist_sys::_IO_wide_data
 impl core::marker::Freeze for rist_sys::_IO_wide_data
 impl core::marker::Send for rist_sys::_IO_wide_data
 impl core::marker::Sync for rist_sys::_IO_wide_data
@@ -177,11 +168,8 @@ impl core::marker::UnsafeUnpin for rist_sys::pollfd
 impl core::panic::unwind_safe::RefUnwindSafe for rist_sys::pollfd
 impl core::panic::unwind_safe::UnwindSafe for rist_sys::pollfd
 #[repr(C)] pub struct rist_sys::rist_ctx
-impl core::clone::Clone for rist_sys::rist_ctx
-pub fn rist_sys::rist_ctx::clone(&self) -> rist_sys::rist_ctx
 impl core::fmt::Debug for rist_sys::rist_ctx
 pub fn rist_sys::rist_ctx::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for rist_sys::rist_ctx
 impl core::marker::Freeze for rist_sys::rist_ctx
 impl core::marker::Send for rist_sys::rist_ctx
 impl core::marker::Sync for rist_sys::rist_ctx
@@ -273,11 +261,8 @@ impl core::marker::UnsafeUnpin for rist_sys::rist_oob_block
 impl core::panic::unwind_safe::RefUnwindSafe for rist_sys::rist_oob_block
 impl core::panic::unwind_safe::UnwindSafe for rist_sys::rist_oob_block
 #[repr(C)] pub struct rist_sys::rist_peer
-impl core::clone::Clone for rist_sys::rist_peer
-pub fn rist_sys::rist_peer::clone(&self) -> rist_sys::rist_peer
 impl core::fmt::Debug for rist_sys::rist_peer
 pub fn rist_sys::rist_peer::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for rist_sys::rist_peer
 impl core::marker::Freeze for rist_sys::rist_peer
 impl core::marker::Send for rist_sys::rist_peer
 impl core::marker::Sync for rist_sys::rist_peer

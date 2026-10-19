@@ -35,7 +35,7 @@ repository   = "https://github.com/aklofas/ts-transformer"
 [workspace.dependencies]
 libc          = "0.2"
 os_socketaddr = "0.2"
-bindgen       = "0.72"
+bindgen       = "0.73"
 cbindgen      = "0.29"
 cc            = "1.0"
 cmake         = "0.1"
