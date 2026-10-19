@@ -74,14 +74,21 @@ pub type ConnectError = RtpConnectError;
 
 /// Helper: 4 random bytes from `getrandom`.
 pub(super) fn random_u32() -> u32 {
+    u32_from(getrandom::fill)
+}
+
+fn u32_from(fill: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>) -> u32 {
     let mut buf = [0u8; 4];
-    // `getrandom` Result type cannot fail on a healthy system; if it
-    // somehow does, fall back to a process-stable default (0). Logging
-    // a tracing event preserves the diagnostic.
-    if let Err(e) = getrandom::fill(&mut buf) {
-        tracing::warn!(error = %e, "getrandom failed; using zero for RTP randomness field");
+    // `getrandom` cannot fail on a healthy system; if it somehow does, the
+    // buffer is unspecified, so fall back to a process-stable default (0).
+    // Logging a tracing event preserves the diagnostic.
+    match fill(&mut buf) {
+        Ok(()) => u32::from_be_bytes(buf),
+        Err(e) => {
+            tracing::warn!(error = %e, "getrandom failed; using zero for RTP randomness field");
+            0
+        }
     }
-    u32::from_be_bytes(buf)
 }
 
 #[cfg(test)]
@@ -95,6 +102,22 @@ mod tests {
     use super::*;
     use crate::packet::{RTP_HEADER_LEN, RTP_PT_MP2T};
     use crate::url::RtpUrl;
+
+    #[test]
+    fn random_u32_is_zero_on_a_failed_fill() {
+        // A failed fill leaves the buffer unspecified; the documented fallback
+        // is zero whatever it wrote before failing.
+        let failing = |buf: &mut [u8]| {
+            buf.fill(0xff);
+            Err(getrandom::Error::UNSUPPORTED)
+        };
+        assert_eq!(u32_from(failing), 0);
+        let ok = |buf: &mut [u8]| {
+            buf.copy_from_slice(&[1, 2, 3, 4]);
+            Ok(())
+        };
+        assert_eq!(u32_from(ok), 0x0102_0304);
+    }
 
     /// Build a minimal valid RTP packet (V=2, P=0, X=0, CC=0, PT=33)
     /// wrapping `payload`. Used by mpsc-path tests that feed whole RTP

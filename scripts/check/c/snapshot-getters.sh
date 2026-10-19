@@ -187,15 +187,20 @@ find $LOCK_ROOTS -type f -name '*.rs' | LC_ALL=C sort | while IFS= read -r f; do
                     }
                 }
                 if (matched) continue
+                # detach( / attach( count only as a whole name: the char
+                # before must not continue an identifier, so foo_detach( or
+                # reattach( is not a GIL release or re-acquire.
+                prev = (i > 1) ? substr(line, i - 1, 1) : ""
+                whole = (prev !~ /[A-Za-z0-9_]/)
                 if (at == 0 && index(rest, "allow_threads_parking(") == 1) {
                     # util::allow_threads_parking(py, f): the same
                     # GIL release as py.detach(f).
                     at = 1
                     i += 22
-                } else if (at == 0 && index(rest, "detach(") == 1) {
+                } else if (at == 0 && whole && index(rest, "detach(") == 1) {
                     at = 1
                     i += 7
-                } else if (at > 0 && wg == 0 && index(rest, "attach(") == 1) {
+                } else if (at > 0 && wg == 0 && whole && index(rest, "attach(") == 1) {
                     wg = 1
                     at++
                     i += 7
