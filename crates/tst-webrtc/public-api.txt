@@ -151,12 +151,31 @@ impl core::marker::Unpin for tst_webrtc::packetize::H264Packetizer
 impl core::marker::UnsafeUnpin for tst_webrtc::packetize::H264Packetizer
 impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::packetize::H264Packetizer
 impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::packetize::H264Packetizer
+pub struct tst_webrtc::packetize::H265Packetizer
+impl core::clone::Clone for tst_webrtc::packetize::H265Packetizer
+pub fn tst_webrtc::packetize::H265Packetizer::clone(&self) -> tst_webrtc::packetize::H265Packetizer
+impl core::default::Default for tst_webrtc::packetize::H265Packetizer
+pub fn tst_webrtc::packetize::H265Packetizer::default() -> tst_webrtc::packetize::H265Packetizer
+impl core::fmt::Debug for tst_webrtc::packetize::H265Packetizer
+pub fn tst_webrtc::packetize::H265Packetizer::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_webrtc::packetize::H265Packetizer
+impl tst_webrtc::packetize::Packetizer for tst_webrtc::packetize::H265Packetizer
+pub fn tst_webrtc::packetize::H265Packetizer::packetize(&self, &[&[u8]], usize) -> alloc::vec::Vec<tst_rtp::packet::Chunk>
+impl core::marker::Freeze for tst_webrtc::packetize::H265Packetizer
+impl core::marker::Send for tst_webrtc::packetize::H265Packetizer
+impl core::marker::Sync for tst_webrtc::packetize::H265Packetizer
+impl core::marker::Unpin for tst_webrtc::packetize::H265Packetizer
+impl core::marker::UnsafeUnpin for tst_webrtc::packetize::H265Packetizer
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::packetize::H265Packetizer
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::packetize::H265Packetizer
 pub const tst_webrtc::packetize::DEFAULT_MTU_PAYLOAD: usize
 pub const tst_webrtc::packetize::MIN_MTU_PAYLOAD: usize
 pub trait tst_webrtc::packetize::Packetizer: core::marker::Send
 pub fn tst_webrtc::packetize::Packetizer::packetize(&self, &[&[u8]], usize) -> alloc::vec::Vec<tst_rtp::packet::Chunk>
 impl tst_webrtc::packetize::Packetizer for tst_webrtc::packetize::H264Packetizer
 pub fn tst_webrtc::packetize::H264Packetizer::packetize(&self, &[&[u8]], usize) -> alloc::vec::Vec<tst_rtp::packet::Chunk>
+impl tst_webrtc::packetize::Packetizer for tst_webrtc::packetize::H265Packetizer
+pub fn tst_webrtc::packetize::H265Packetizer::packetize(&self, &[&[u8]], usize) -> alloc::vec::Vec<tst_rtp::packet::Chunk>
 pub fn tst_webrtc::packetize::packetizer_for(tst_core::codec::vocabulary::VideoCodec) -> core::option::Option<alloc::boxed::Box<dyn tst_webrtc::packetize::Packetizer>>
 pub mod tst_webrtc::sei
 #[non_exhaustive] pub struct tst_webrtc::sei::KlvSei
