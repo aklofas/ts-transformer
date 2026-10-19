@@ -15,6 +15,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -97,7 +98,7 @@ fn build_host_port<'local>(
     let host_str = addr.ip().to_string();
     let host = env.new_string(&host_str)?;
     env.new_object(
-        jni_str!("org/tstrans/srt/HostPort"),
+        FindClass(jni_str!("org/tstrans/srt/HostPort")),
         jni_sig!("(Ljava/lang/String;I)V"),
         &[JValue::Object(&host), JValue::Int(addr.port() as i32)],
     )
@@ -365,7 +366,7 @@ jni_native! {
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -475,7 +476,7 @@ jni_native! {
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };

@@ -30,6 +30,7 @@
 //! keeping cross-binding symmetry: both are "caller passed something the
 //! value cannot satisfy" errors, not codec/decode failures.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use jni::Env;
 use jni::jni_str;
@@ -52,7 +53,7 @@ use crate::jutil::require_non_null;
 /// `throw_klv_decode`.
 fn throw_cot_error(env: &mut Env, e: &CotError) {
     let _ = env.throw_new(
-        jni_str!("java/lang/IllegalArgumentException"),
+        FindClass(jni_str!("java/lang/IllegalArgumentException")),
         JNIString::from(e.to_string()),
     );
 }
@@ -64,7 +65,7 @@ fn new_string_or_throw(env: &mut Env<'_>, s: &str, caller: &str) -> jobject {
         Ok(js) => js.into_raw(),
         Err(e) => {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 JNIString::from(format!("{caller}: new_string failed: {e}")),
             );
             std::ptr::null_mut()

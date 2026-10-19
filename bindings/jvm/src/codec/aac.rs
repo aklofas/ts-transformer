@@ -17,6 +17,7 @@
 //! which the demux audio-retype path reuses to surface typed frames on
 //! `Sample` payloads.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use jni::Env;
 use jni::jni_sig;
@@ -43,7 +44,7 @@ pub(crate) fn build_profile<'local>(
         AacProfile::LongTermPrediction => "LTP",
     };
     env.get_static_field(
-        jni_str!("org/tstrans/codec/AacProfile"),
+        FindClass(jni_str!("org/tstrans/codec/AacProfile")),
         JNIString::from(name),
         jni_sig!("Lorg/tstrans/codec/AacProfile;"),
     )
@@ -62,7 +63,7 @@ pub(crate) fn build_mpeg_version<'local>(
         MpegVersion::Mpeg4 => "MPEG4",
     };
     env.get_static_field(
-        jni_str!("org/tstrans/codec/MpegVersion"),
+        FindClass(jni_str!("org/tstrans/codec/MpegVersion")),
         JNIString::from(name),
         jni_sig!("Lorg/tstrans/codec/MpegVersion;"),
     )
@@ -84,7 +85,7 @@ pub(crate) fn build_channel_layout<'local>(
         AacChannelLayout::Channels(n) => (
             false,
             env.new_object(
-                jni_str!("java/lang/Integer"),
+                FindClass(jni_str!("java/lang/Integer")),
                 jni_sig!("(I)V"),
                 &[JValue::Int(i32::from(n))],
             )
@@ -93,7 +94,7 @@ pub(crate) fn build_channel_layout<'local>(
         _ => (true, JObject::null()),
     };
     env.new_object(
-        jni_str!("org/tstrans/codec/AacChannelLayout"),
+        FindClass(jni_str!("org/tstrans/codec/AacChannelLayout")),
         jni_sig!("(ZLjava/lang/Integer;)V"),
         &[JValue::Bool(pce_defined), JValue::Object(&channels)],
     )
@@ -107,7 +108,11 @@ fn build_frame_list<'local>(
     frames: &[AdtsFrameOwned],
 ) -> Result<JObject<'local>, ()> {
     let list = env
-        .new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])
+        .new_object(
+            FindClass(jni_str!("java/util/ArrayList")),
+            jni_sig!("()V"),
+            &[],
+        )
         .map_err(|_| ())?;
     for f in frames {
         env.with_local_frame(24, |inner| {

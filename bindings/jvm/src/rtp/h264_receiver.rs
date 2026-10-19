@@ -24,6 +24,7 @@
 //! - other `TransportError`           → `RtpException(IO)`
 //! - `RtpConnectError`                   → `RtpException(IO)`
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -129,7 +130,7 @@ jni_native! {
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -168,7 +169,7 @@ jni_native! {
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -187,7 +188,7 @@ jni_native! {
             let len = match initial_parameter_sets.len(env) {
                 Ok(n) => n,
                 Err(e) => {
-                    let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                    let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                     return 0;
                 }
             };
@@ -195,7 +196,7 @@ jni_native! {
                 let elem_obj = match initial_parameter_sets.get_element(env, i) {
                     Ok(o) => o,
                     Err(e) => {
-                        let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                        let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                         return 0;
                     }
                 };
@@ -205,14 +206,14 @@ jni_native! {
                 let arr = match env.cast_local::<JByteArray>(elem_obj) {
                     Ok(a) => a,
                     Err(e) => {
-                        let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                        let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                         return 0;
                     }
                 };
                 let bytes = match env.convert_byte_array(&arr) {
                     Ok(b) => b,
                     Err(e) => {
-                        let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                        let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                         return 0;
                     }
                 };
@@ -354,7 +355,7 @@ fn build_h264_access_unit(env: &mut Env, au: &H264Au) -> jobject {
         Ok(a) => a,
         Err(e) => {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 JNIString::from(e.to_string()),
             );
             return JObject::null().into_raw();
@@ -367,13 +368,13 @@ fn build_h264_access_unit(env: &mut Env, au: &H264Au) -> jobject {
     // Construct `new H264AccessUnit(byte[], long, boolean, long)`.
     if let Err(e) = env.ensure_local_capacity(4) {
         let _ = env.throw_new(
-            jni_str!("java/lang/RuntimeException"),
+            FindClass(jni_str!("java/lang/RuntimeException")),
             JNIString::from(e.to_string()),
         );
         return JObject::null().into_raw();
     }
     match env.new_object(
-        jni_str!("org/tstrans/rtp/H264AccessUnit"),
+        FindClass(jni_str!("org/tstrans/rtp/H264AccessUnit")),
         jni_sig!("([BJZJ)V"),
         &[
             JValue::Object(&annexb_arr.into()),
@@ -385,7 +386,7 @@ fn build_h264_access_unit(env: &mut Env, au: &H264Au) -> jobject {
         Ok(o) => o.into_raw(),
         Err(e) => {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 JNIString::from(e.to_string()),
             );
             JObject::null().into_raw()
@@ -423,7 +424,7 @@ jni_native! {
         match crate::generated::stats_rtp::build_depay_stats(env, &s) {
             Ok(o) => o.into_raw(),
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 JObject::null().into_raw()
             }
         }
@@ -456,7 +457,7 @@ jni_native! {
         match crate::generated::stats_rtp::build_rtp_stats(env, &s) {
             Ok(o) => o.into_raw(),
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 JObject::null().into_raw()
             }
         }
@@ -490,7 +491,7 @@ jni_native! {
         match build_socket_stats(env, &s) {
             Ok(o) => o.into_raw(),
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 JObject::null().into_raw()
             }
         }
@@ -522,7 +523,7 @@ jni_native! {
                 match env.new_string(&s) {
                     Ok(js) => JObject::from(js).into_raw(),
                     Err(e) => {
-                        let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                        let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                         JObject::null().into_raw()
                     }
                 }

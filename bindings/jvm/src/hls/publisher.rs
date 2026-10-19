@@ -13,6 +13,7 @@
 //! address cannot change, and a cached value answers while another thread is
 //! inside a push (the snapshot-read rule, without an `OwnedRegistry`).
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::net::SocketAddr;
 use std::sync::LazyLock;
@@ -74,7 +75,7 @@ fn opt_string(env: &mut Env, s: &JString) -> Option<Option<String>> {
         Ok(js) => Some(Some(js)),
         Err(e) => {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 JNIString::from(e.to_string()),
             );
             None
@@ -90,7 +91,7 @@ pub(crate) fn build_publisher_stats<'local>(
     env.ensure_local_capacity(4)?;
     let opt = |d: Option<Duration>| d.map(|d| d.as_micros() as i64).unwrap_or(-1);
     env.new_object(
-        jni_str!("org/tstrans/hls/PublisherStats"),
+        FindClass(jni_str!("org/tstrans/hls/PublisherStats")),
         jni_sig!("(JJJJ)V"),
         &[
             JValue::Long(s.segments_written as i64),
@@ -161,7 +162,7 @@ jni_native! {
                 }
                 Err(e) => {
                     let _ = env.throw_new(
-                        jni_str!("java/lang/IllegalArgumentException"),
+                        FindClass(jni_str!("java/lang/IllegalArgumentException")),
                         JNIString::from(format!("invalid bind address {addr:?}: {e}")),
                     );
                     return 0;
@@ -193,7 +194,7 @@ jni_native! {
             }
             other => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/IllegalArgumentException"),
+                    FindClass(jni_str!("java/lang/IllegalArgumentException")),
                     JNIString::from(format!("invalid HlsMode ordinal {other}")),
                 );
                 return 0;
@@ -265,7 +266,7 @@ jni_native! {
     ) = () => {
         if media_duration_us < 0 {
             let _ = env.throw_new(
-                jni_str!("java/lang/IllegalArgumentException"),
+                FindClass(jni_str!("java/lang/IllegalArgumentException")),
                 jni_str!("mediaDurationUs must be >= 0"),
             );
             return;

@@ -2,6 +2,7 @@
 //! crate's opener; all six schemes are always built (the JVM binding has no
 //! transport features).
 
+use crate::jutil::FindClass;
 use jni::Env;
 use jni::jni_str;
 use jni::objects::JString;
@@ -22,7 +23,7 @@ pub(super) fn read_url(env: &mut Env, url: &JString) -> Option<String> {
         Ok(s) => Some(s),
         Err(e) => {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 JNIString::from(e.to_string()),
             );
             None
@@ -33,7 +34,7 @@ pub(super) fn read_url(env: &mut Env, url: &JString) -> Option<String> {
 /// `IllegalArgumentException` for a scheme no shell opens.
 fn unsupported(env: &mut Env, url: &str) {
     let _ = env.throw_new(
-        jni_str!("java/lang/IllegalArgumentException"),
+        FindClass(jni_str!("java/lang/IllegalArgumentException")),
         JNIString::from(format!(
             "unsupported URL scheme in {url:?}; expected one of: srt, rtp, udp, tcp, tcps, rist"
         )),

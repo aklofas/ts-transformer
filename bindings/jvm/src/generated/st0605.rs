@@ -14,7 +14,7 @@ pub(crate) fn build_precision_time_stamp_pack<'l>(
     let time_status =
         crate::custom::build_precision_time_stamp_pack_time_status(env, &r.time_status)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/PrecisionTimeStampPack"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/PrecisionTimeStampPack")),
         jni_sig!("(Lorg/tstrans/klv/TimeStatus;J)V"),
         &[
             JValue::Object(&time_status),

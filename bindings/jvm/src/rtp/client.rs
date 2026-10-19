@@ -3,6 +3,7 @@
 //! Ports tst-py's `bindings/python/src/rtp/client.rs`, including
 //! `nConnectH264` (RtspClient) + `nIntoH264Receiver` (RtspSession).
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,7 +50,7 @@ fn apply_tls_roots(
         Ok(b) => b,
         Err(e) => {
             let _ = env.throw_new(
-                jni_str!("java/lang/RuntimeException"),
+                FindClass(jni_str!("java/lang/RuntimeException")),
                 JNIString::from(e.to_string()),
             );
             return None;
@@ -169,7 +170,7 @@ jni_native! {
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -191,7 +192,7 @@ jni_native! {
             let user: String = match auth_user.try_to_string(env) {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                    let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                     return 0;
                 }
             };
@@ -201,7 +202,7 @@ jni_native! {
                 match auth_password.try_to_string(env) {
                     Ok(s) => s,
                     Err(e) => {
-                        let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                        let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                         return 0;
                     }
                 }
@@ -265,7 +266,7 @@ jni_native! {
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -282,7 +283,7 @@ jni_native! {
             let user: String = match auth_user.try_to_string(env) {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                    let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                     return 0;
                 }
             };
@@ -292,7 +293,7 @@ jni_native! {
                 match auth_password.try_to_string(env) {
                     Ok(s) => s,
                     Err(e) => {
-                        let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                        let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                         return 0;
                     }
                 }
@@ -509,7 +510,7 @@ jni_native! {
         match demux_receiver_handle_from_transport(transport, opts) {
             Ok(h) => h,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.detail));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.detail));
                 0
             }
         }

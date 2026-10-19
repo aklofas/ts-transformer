@@ -27,6 +27,7 @@
 
 pub mod muxer;
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 
@@ -467,7 +468,7 @@ jni_native! {
             }
             // AAC-LATM + AC-3 typed parsing is deferred — empty list (no typed
             // parser). Matches tst-py's `_ =>` arm.
-            _ => match env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[]) {
+            _ => match env.new_object(FindClass(jni_str!("java/util/ArrayList")), jni_sig!("()V"), &[]) {
                 Ok(list) => list.into_raw(),
                 Err(_) => std::ptr::null_mut(),
             },
@@ -499,7 +500,7 @@ pub(crate) fn convert_event<'local>(
             let pids = build_pid_list(env, pm.streams.iter().map(|s| s.pid))?;
             let obj = env
                 .new_object(
-                    jni_str!("org/tstrans/mpegts/DemuxEvent$ProgramMap"),
+                    FindClass(jni_str!("org/tstrans/mpegts/DemuxEvent$ProgramMap")),
                     jni_sig!("(IIILjava/util/List;)V"),
                     &[
                         JValue::Int(pm.program_number as i32),
@@ -548,7 +549,7 @@ pub(crate) fn convert_event<'local>(
                         None => JObject::null(),
                     };
                     env.new_object(
-                        jni_str!("org/tstrans/mpegts/DemuxEvent$Video"),
+                        FindClass(jni_str!("org/tstrans/mpegts/DemuxEvent$Video")),
                         jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;Lorg/tstrans/mpegts/VideoCodec;Ljava/nio/ByteBuffer;ZLorg/tstrans/mpegts/Av1CarriageMode;)V"),
                         &[
                             JValue::Object(&stream_obj),
@@ -571,7 +572,7 @@ pub(crate) fn convert_event<'local>(
                         enum_const(env, "mpegts", "AudioCodec", audio_codec_name(*codec))?;
                     let raw_buf = wrap_heap_byte_buffer(env, frames.as_slice())?;
                     env.new_object(
-                        jni_str!("org/tstrans/mpegts/DemuxEvent$Audio"),
+                        FindClass(jni_str!("org/tstrans/mpegts/DemuxEvent$Audio")),
                         jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;Lorg/tstrans/mpegts/AudioCodec;Ljava/nio/ByteBuffer;)V"),
                         &[
                             JValue::Object(&stream_obj),
@@ -588,7 +589,7 @@ pub(crate) fn convert_event<'local>(
                     let codec_obj =
                         enum_const(env, "mpegts", "SubtitleCodec", subtitle_codec_name(*codec))?;
                     env.new_object(
-                        jni_str!("org/tstrans/mpegts/DemuxEvent$Subtitle"),
+                        FindClass(jni_str!("org/tstrans/mpegts/DemuxEvent$Subtitle")),
                         jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;Lorg/tstrans/mpegts/SubtitleCodec;Ljava/nio/ByteBuffer;)V"),
                         &[
                             JValue::Object(&stream_obj),
@@ -603,7 +604,7 @@ pub(crate) fn convert_event<'local>(
                 SamplePayload::Unknown { stream_type, raw } => {
                     let buf = wrap_heap_byte_buffer(env, raw.as_slice())?;
                     env.new_object(
-                        jni_str!("org/tstrans/mpegts/DemuxEvent$UnknownSample"),
+                        FindClass(jni_str!("org/tstrans/mpegts/DemuxEvent$UnknownSample")),
                         jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLjava/lang/Long;ILjava/nio/ByteBuffer;)V"),
                         &[
                             JValue::Object(&stream_obj),
@@ -631,7 +632,7 @@ pub(crate) fn convert_event<'local>(
             let buf = wrap_heap_byte_buffer(env, payload)?;
             let obj = env
                 .new_object(
-                    jni_str!("org/tstrans/mpegts/DemuxEvent$Metadata"),
+                    FindClass(jni_str!("org/tstrans/mpegts/DemuxEvent$Metadata")),
                     jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLorg/tstrans/mpegts/MetadataKind;Ljava/nio/ByteBuffer;ZI)V"),
                     &[
                         JValue::Object(&stream_obj),
@@ -650,7 +651,7 @@ pub(crate) fn convert_event<'local>(
             let kind_obj = discontinuity_kind(env, kind)?;
             let obj = env
                 .new_object(
-                    jni_str!("org/tstrans/mpegts/DemuxEvent$Discontinuity"),
+                    FindClass(jni_str!("org/tstrans/mpegts/DemuxEvent$Discontinuity")),
                     jni_sig!(
                         "(Lorg/tstrans/mpegts/StreamId;Lorg/tstrans/mpegts/DiscontinuityKind;)V"
                     ),
@@ -670,7 +671,7 @@ pub(crate) fn convert_event<'local>(
             let (observed_obj, treated_obj) = nonconformant_cfi(env, issue)?;
             let obj = env
                 .new_object(
-                    jni_str!("org/tstrans/mpegts/DemuxEvent$NonConformant"),
+                    FindClass(jni_str!("org/tstrans/mpegts/DemuxEvent$NonConformant")),
                     jni_sig!("(Lorg/tstrans/mpegts/StreamId;Ljava/lang/String;Lorg/tstrans/mpegts/NonConformantKind;Lorg/tstrans/mpegts/MultiCellAuReason;Lorg/tstrans/mpegts/CellFragmentIndication;Lorg/tstrans/mpegts/CellFragmentIndication;)V"),
                     &[
                         JValue::Object(&stream_obj),
@@ -687,7 +688,9 @@ pub(crate) fn convert_event<'local>(
         DemuxEvent::ReconnectDiscontinuity => {
             let obj = env
                 .new_object(
-                    jni_str!("org/tstrans/mpegts/DemuxEvent$ReconnectDiscontinuity"),
+                    FindClass(jni_str!(
+                        "org/tstrans/mpegts/DemuxEvent$ReconnectDiscontinuity"
+                    )),
                     jni_sig!("()V"),
                     &[],
                 )
@@ -847,7 +850,7 @@ pub(crate) fn metadata_kind<'local>(
     };
     let obj = env
         .get_static_field(
-            jni_str!("org/tstrans/mpegts/MetadataKind"),
+            FindClass(jni_str!("org/tstrans/mpegts/MetadataKind")),
             JNIString::from(name),
             jni_sig!("Lorg/tstrans/mpegts/MetadataKind;"),
         )
@@ -866,7 +869,7 @@ pub(crate) fn opt_long<'local>(
     match v {
         Some(p) => env
             .call_static_method(
-                jni_str!("java/lang/Long"),
+                FindClass(jni_str!("java/lang/Long")),
                 jni_str!("valueOf"),
                 jni_sig!("(J)Ljava/lang/Long;"),
                 &[JValue::Long(p.as_ticks())],
@@ -887,7 +890,7 @@ pub(crate) fn wrap_heap_byte_buffer<'local>(
 ) -> Result<JObject<'local>, ()> {
     let arr = env.byte_array_from_slice(bytes).map_err(|_| ())?;
     env.call_static_method(
-        jni_str!("java/nio/ByteBuffer"),
+        FindClass(jni_str!("java/nio/ByteBuffer")),
         jni_str!("wrap"),
         jni_sig!("([B)Ljava/nio/ByteBuffer;"),
         &[JValue::Object(&arr)],
@@ -903,7 +906,11 @@ fn build_pid_list<'local>(
     pids: impl Iterator<Item = u16>,
 ) -> Result<JObject<'local>, ()> {
     let list = env
-        .new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])
+        .new_object(
+            FindClass(jni_str!("java/util/ArrayList")),
+            jni_sig!("()V"),
+            &[],
+        )
         .map_err(|_| ())?;
     // Forward-note: this loop mints per-iteration local refs (the boxed
     // Integer + the static-method result). Fine here — PMT stream counts are
@@ -913,7 +920,7 @@ fn build_pid_list<'local>(
     for pid in pids {
         let boxed = env
             .call_static_method(
-                jni_str!("java/lang/Integer"),
+                FindClass(jni_str!("java/lang/Integer")),
                 jni_str!("valueOf"),
                 jni_sig!("(I)Ljava/lang/Integer;"),
                 &[JValue::Int(pid as i32)],
@@ -942,7 +949,11 @@ pub(crate) fn build_video_units<'local>(
     payload: &VideoPayload,
 ) -> Result<JObject<'local>, ()> {
     let list = env
-        .new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])
+        .new_object(
+            FindClass(jni_str!("java/util/ArrayList")),
+            jni_sig!("()V"),
+            &[],
+        )
         .map_err(|_| ())?;
     match payload {
         VideoPayload::Nals(nals) => {
@@ -990,7 +1001,11 @@ fn build_adts_frame_list<'local>(
     frames: &[tst_core::codec::aac::AdtsFrameOwned],
 ) -> Result<JObject<'local>, ()> {
     let list = env
-        .new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])
+        .new_object(
+            FindClass(jni_str!("java/util/ArrayList")),
+            jni_sig!("()V"),
+            &[],
+        )
         .map_err(|_| ())?;
     for f in frames {
         env.with_local_frame(24, |inner| {
@@ -1016,7 +1031,11 @@ fn build_mpeg2_frame_list<'local>(
     frames: &[tst_core::codec::mpegaudio::FrameOwned],
 ) -> Result<JObject<'local>, ()> {
     let list = env
-        .new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])
+        .new_object(
+            FindClass(jni_str!("java/util/ArrayList")),
+            jni_sig!("()V"),
+            &[],
+        )
         .map_err(|_| ())?;
     for f in frames {
         env.with_local_frame(24, |inner| {
@@ -1042,7 +1061,7 @@ pub(crate) fn build_stream_id<'local>(
 ) -> Result<JObject<'local>, ()> {
     let kind = build_stream_kind(env, &s.kind)?;
     env.new_object(
-        jni_str!("org/tstrans/mpegts/StreamId"),
+        FindClass(jni_str!("org/tstrans/mpegts/StreamId")),
         jni_sig!("(ILorg/tstrans/mpegts/StreamKind;I)V"),
         &[
             JValue::Int(s.pid as i32),
@@ -1065,7 +1084,7 @@ fn build_stream_kind<'local>(
         StreamKind::Video(c) => {
             let codec = enum_const(env, "mpegts", "VideoCodec", video_codec_name(*c))?;
             env.new_object(
-                jni_str!("org/tstrans/mpegts/StreamKind$Video"),
+                FindClass(jni_str!("org/tstrans/mpegts/StreamKind$Video")),
                 jni_sig!("(Lorg/tstrans/mpegts/VideoCodec;)V"),
                 &[JValue::Object(&codec)],
             )
@@ -1074,7 +1093,7 @@ fn build_stream_kind<'local>(
         StreamKind::Audio(c) => {
             let codec = enum_const(env, "mpegts", "AudioCodec", audio_codec_name(*c))?;
             env.new_object(
-                jni_str!("org/tstrans/mpegts/StreamKind$Audio"),
+                FindClass(jni_str!("org/tstrans/mpegts/StreamKind$Audio")),
                 jni_sig!("(Lorg/tstrans/mpegts/AudioCodec;)V"),
                 &[JValue::Object(&codec)],
             )
@@ -1083,7 +1102,7 @@ fn build_stream_kind<'local>(
         StreamKind::Subtitle(c) => {
             let codec = enum_const(env, "mpegts", "SubtitleCodec", subtitle_codec_name(*c))?;
             env.new_object(
-                jni_str!("org/tstrans/mpegts/StreamKind$Subtitle"),
+                FindClass(jni_str!("org/tstrans/mpegts/StreamKind$Subtitle")),
                 jni_sig!("(Lorg/tstrans/mpegts/SubtitleCodec;)V"),
                 &[JValue::Object(&codec)],
             )
@@ -1092,7 +1111,7 @@ fn build_stream_kind<'local>(
         StreamKind::KlvSync { declared_link } => {
             let boxed = opt_boxed_int(env, *declared_link)?;
             env.new_object(
-                jni_str!("org/tstrans/mpegts/StreamKind$KlvSync"),
+                FindClass(jni_str!("org/tstrans/mpegts/StreamKind$KlvSync")),
                 jni_sig!("(Ljava/lang/Integer;)V"),
                 &[JValue::Object(&boxed)],
             )
@@ -1100,14 +1119,14 @@ fn build_stream_kind<'local>(
         }
         StreamKind::KlvAsync => env
             .new_object(
-                jni_str!("org/tstrans/mpegts/StreamKind$KlvAsync"),
+                FindClass(jni_str!("org/tstrans/mpegts/StreamKind$KlvAsync")),
                 jni_sig!("()V"),
                 &[],
             )
             .map_err(|_| ()),
         StreamKind::Unknown(b) => env
             .new_object(
-                jni_str!("org/tstrans/mpegts/StreamKind$Unknown"),
+                FindClass(jni_str!("org/tstrans/mpegts/StreamKind$Unknown")),
                 jni_sig!("(I)V"),
                 &[JValue::Int(*b as i32)],
             )
@@ -1121,7 +1140,7 @@ fn opt_boxed_int<'local>(env: &mut Env<'local>, value: Option<u16>) -> Result<JO
     match value {
         Some(v) => env
             .call_static_method(
-                jni_str!("java/lang/Integer"),
+                FindClass(jni_str!("java/lang/Integer")),
                 jni_str!("valueOf"),
                 jni_sig!("(I)Ljava/lang/Integer;"),
                 &[JValue::Int(v as i32)],

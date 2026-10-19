@@ -12,7 +12,7 @@ pub(crate) fn build_srt_stats<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(66)?;
     let b = env.new_object(
-        jni_str!("org/tstrans/srt/SrtStats$Builder"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/srt/SrtStats$Builder")),
         jni_sig!("()V"),
         &[],
     )?;
@@ -137,7 +137,7 @@ pub(crate) fn build_managed_transport_stats<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(44)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/srt/ManagedTransportStats"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/srt/ManagedTransportStats")),
         jni_sig!("(JJJJJZ)V"),
         &[
             JValue::Long(r.reconnect_attempts as i64),

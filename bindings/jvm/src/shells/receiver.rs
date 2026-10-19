@@ -7,6 +7,7 @@
 //! reason it reads after the teardown so the Java object can keep answering
 //! once its handle is zeroed.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 
@@ -177,7 +178,7 @@ jni_native! {
             }
             None => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/UnsupportedOperationException"),
+                    FindClass(jni_str!("java/lang/UnsupportedOperationException")),
                     jni_str!("srtStats() is only available on an srt:// shell"),
                 );
                 JObject::null()

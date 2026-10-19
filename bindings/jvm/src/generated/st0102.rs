@@ -12,7 +12,7 @@ pub(crate) fn build_security_ls<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(70)?;
     let b = env.new_object(
-        jni_str!("org/tstrans/klv/SecurityLs$Builder"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/SecurityLs$Builder")),
         jni_sig!("()V"),
         &[],
     )?;

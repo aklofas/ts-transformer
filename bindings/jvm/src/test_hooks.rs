@@ -3,6 +3,7 @@
 //! before staging the shipped lib — see `.github/workflows/jvm-jar.yml`), so
 //! these symbols never reach Maven Central.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use jni::jni_str;
 use jni::strings::JNIString;
@@ -28,6 +29,7 @@ mod handle_probe {
     use crate::handle::HandleRegistry;
     use crate::panic::jni_native;
 
+    use crate::jutil::FindClass;
     use jni::jni_str;
     use jni::sys::{jboolean, jlong};
     use std::sync::LazyLock;
@@ -63,7 +65,7 @@ mod handle_probe {
             });
             if outcome.is_none() {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/IllegalStateException"),
+                    FindClass(jni_str!("java/lang/IllegalStateException")),
                     jni_str!("probe handle is closed or poisoned"),
                 );
             }
@@ -98,14 +100,14 @@ jni_native! {
         let kind: String = match kind.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return;
             }
         };
         let message: String = match message.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return;
             }
         };
@@ -122,7 +124,7 @@ jni_native! {
             "INTERNAL" => K::Internal,
             other => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/IllegalArgumentException"),
+                    FindClass(jni_str!("java/lang/IllegalArgumentException")),
                     JNIString::from(format!("HlsProbe: unknown kind {other}")),
                 );
                 return;

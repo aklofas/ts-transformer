@@ -14,7 +14,7 @@ pub(crate) fn build_rvt_user_data<'l>(
     let data = crate::jutil::wrap_heap_byte_buffer(env, &r.data)
         .map_err(|()| jni::errors::Error::JavaException)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/klv/RvtUserData"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/RvtUserData")),
         jni_sig!("(ILjava/nio/ByteBuffer;)V"),
         &[JValue::Int(r.numeric_id_raw as i32), JValue::Object(&data)],
     )?;
@@ -52,7 +52,7 @@ pub(crate) fn build_rvt_poi<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(58)?;
     let b = env.new_object(
-        jni_str!("org/tstrans/klv/RvtPoi$Builder"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/RvtPoi$Builder")),
         jni_sig!("()V"),
         &[],
     )?;
@@ -340,7 +340,7 @@ pub(crate) fn build_rvt_aoi<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(58)?;
     let b = env.new_object(
-        jni_str!("org/tstrans/klv/RvtAoi$Builder"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/RvtAoi$Builder")),
         jni_sig!("()V"),
         &[],
     )?;
@@ -632,7 +632,7 @@ pub(crate) fn build_rvt_ls<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(78)?;
     let b = env.new_object(
-        jni_str!("org/tstrans/klv/RvtLs$Builder"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/RvtLs$Builder")),
         jni_sig!("()V"),
         &[],
     )?;
@@ -719,7 +719,11 @@ pub(crate) fn build_rvt_ls<'l>(
     }
     let user_defined =
         env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
-            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+            let list = env.new_object(
+                crate::jutil::FindClass(jni_str!("java/util/ArrayList")),
+                jni_sig!("()V"),
+                &[],
+            )?;
             for item in r.user_defined.iter() {
                 env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                     let o2 = env
@@ -746,7 +750,11 @@ pub(crate) fn build_rvt_ls<'l>(
     )?;
     let points_of_interest = env
         .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
-            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+            let list = env.new_object(
+                crate::jutil::FindClass(jni_str!("java/util/ArrayList")),
+                jni_sig!("()V"),
+                &[],
+            )?;
             for item in r.points_of_interest.iter() {
                 env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                     let o3 = env
@@ -773,7 +781,11 @@ pub(crate) fn build_rvt_ls<'l>(
     )?;
     let areas_of_interest = env
         .with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
-            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+            let list = env.new_object(
+                crate::jutil::FindClass(jni_str!("java/util/ArrayList")),
+                jni_sig!("()V"),
+                &[],
+            )?;
             for item in r.areas_of_interest.iter() {
                 env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                     let o4 = env

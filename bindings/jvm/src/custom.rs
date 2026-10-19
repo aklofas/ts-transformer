@@ -8,6 +8,7 @@
 mod codec;
 pub(crate) use codec::*;
 
+use crate::jutil::FindClass;
 use jni::Env;
 use jni::jni_sig;
 use jni::jni_str;
@@ -34,7 +35,7 @@ use crate::jutil::{
 /// Throws `IllegalArgumentException` and returns the error that carries it.
 fn illegal_argument(env: &mut Env<'_>, msg: String) -> jni::errors::Error {
     let _ = env.throw_new(
-        jni_str!("java/lang/IllegalArgumentException"),
+        FindClass(jni_str!("java/lang/IllegalArgumentException")),
         JNIString::from(msg),
     );
     jni::errors::Error::JavaException
@@ -106,7 +107,7 @@ fn boxed_code<'l>(env: &mut Env<'l>, code: Option<u8>) -> jni::errors::Result<JO
     match code {
         Some(c) => env
             .call_static_method(
-                jni_str!("java/lang/Integer"),
+                FindClass(jni_str!("java/lang/Integer")),
                 jni_str!("valueOf"),
                 jni_sig!("(I)Ljava/lang/Integer;"),
                 &[JValue::Int(i32::from(c))],
@@ -215,14 +216,18 @@ pub(crate) fn build_uas_datalink_ls_imapb_specials<'l>(
     env: &mut Env<'l>,
     v: &[(u32, ImapbSpecial)],
 ) -> jni::errors::Result<JObject<'l>> {
-    let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+    let list = env.new_object(
+        FindClass(jni_str!("java/util/ArrayList")),
+        jni_sig!("()V"),
+        &[],
+    )?;
     for &(tag, special) in v {
         let (code, payload) = imapb_special_to_code(env, special)?;
         // 8 slots: the code string, the entry and JNI scratch per entry.
         env.with_local_frame(8, |env| -> jni::errors::Result<()> {
             let code_str = env.new_string(code)?;
             let entry = env.new_object(
-                jni_str!("org/tstrans/klv/ImapbSpecialEntry"),
+                FindClass(jni_str!("org/tstrans/klv/ImapbSpecialEntry")),
                 jni_sig!("(ILjava/lang/String;J)V"),
                 &[
                     JValue::Int(tag as i32),
@@ -590,7 +595,7 @@ pub(crate) fn build_precision_time_stamp_pack_time_status<'l>(
     v: &TimeStatus,
 ) -> jni::errors::Result<JObject<'l>> {
     env.new_object(
-        jni_str!("org/tstrans/klv/TimeStatus"),
+        FindClass(jni_str!("org/tstrans/klv/TimeStatus")),
         jni_sig!("(I)V"),
         &[JValue::Int(i32::from(v.0))],
     )
@@ -629,7 +634,7 @@ pub(crate) fn build_v_target_pack_target_color<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     match v {
         Some([r, g, b]) => env.new_object(
-            jni_str!("org/tstrans/klv/VTargetPack$TargetColor"),
+            FindClass(jni_str!("org/tstrans/klv/VTargetPack$TargetColor")),
             jni_sig!("(III)V"),
             &[
                 JValue::Int(i32::from(*r)),

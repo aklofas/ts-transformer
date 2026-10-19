@@ -12,7 +12,7 @@ pub(crate) fn build_pairer_stats<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(40)?;
     let obj = env.new_object(
-        jni_str!("org/tstrans/pipeline/PairerStats"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/pipeline/PairerStats")),
         jni_sig!("(JJJJ)V"),
         &[
             JValue::Long(r.paired as i64),

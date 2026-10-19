@@ -20,6 +20,7 @@
 //! teardown recorded `Cancelled`, and returns it as an `EndReason$Snapshot`
 //! the Java class caches.
 
+use crate::jutil::FindClass;
 use jni::Env;
 use jni::jni_sig;
 use jni::jni_str;
@@ -64,7 +65,7 @@ pub(crate) fn build_close_snapshot<'local>(
         None => JObject::null(),
     };
     env.new_object(
-        jni_str!("org/tstrans/shells/EndReason$Snapshot"),
+        FindClass(jni_str!("org/tstrans/shells/EndReason$Snapshot")),
         jni_sig!("(ILjava/lang/String;)V"),
         &[JValue::Int(wire), JValue::Object(&detail_obj)],
     )

@@ -26,6 +26,7 @@
 //! `ManagedTransport` / `ManagedRecvTransport` do not expose the SRT-rich
 //! 17-field shape (no accessor in tst-pipeline). Callers use `nSocketStats`.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -88,7 +89,7 @@ jni_native! {
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };
@@ -165,7 +166,7 @@ jni_native! {
         let bytes: Vec<u8> = match env.convert_byte_array(&data) {
             Ok(b) => b,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return;
             }
         };
@@ -337,7 +338,7 @@ jni_native! {
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(jni_str!("java/lang/RuntimeException"), JNIString::from(e.to_string()));
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                 return 0;
             }
         };

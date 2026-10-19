@@ -12,7 +12,7 @@ pub(crate) fn build_v_target_pack<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(92)?;
     let b = env.new_object(
-        jni_str!("org/tstrans/klv/VTargetPack$Builder"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/VTargetPack$Builder")),
         jni_sig!("()V"),
         &[],
     )?;
@@ -739,7 +739,7 @@ pub(crate) fn build_vmti_ls<'l>(
 ) -> jni::errors::Result<JObject<'l>> {
     env.ensure_local_capacity(66)?;
     let b = env.new_object(
-        jni_str!("org/tstrans/klv/VmtiLs$Builder"),
+        crate::jutil::FindClass(jni_str!("org/tstrans/klv/VmtiLs$Builder")),
         jni_sig!("()V"),
         &[],
     )?;
@@ -845,7 +845,11 @@ pub(crate) fn build_vmti_ls<'l>(
     }
     let targets =
         env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {
-            let list = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+            let list = env.new_object(
+                crate::jutil::FindClass(jni_str!("java/util/ArrayList")),
+                jni_sig!("()V"),
+                &[],
+            )?;
             for item in r.targets.iter() {
                 env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {
                     let o4 = env

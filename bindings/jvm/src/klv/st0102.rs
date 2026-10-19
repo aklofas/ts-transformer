@@ -13,6 +13,7 @@
 //! generated builder and reader reserve their own JNI local-reference
 //! capacity.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use jni::jni_str;
 use jni::objects::{JByteArray, JObject};
@@ -41,7 +42,7 @@ jni_native! {
             Ok(b) => b,
             Err(e) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     JNIString::from(format!("nDecodeSecurity: byte[] read failed: {e}")),
                 );
                 return JObject::null().into_raw();
@@ -92,7 +93,7 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            jni_str!("java/lang/RuntimeException"),
+                            FindClass(jni_str!("java/lang/RuntimeException")),
                             JNIString::from(format!("nEncodeSecurity: byte_array_from_slice failed: {e}")),
                         );
                         JObject::null().into_raw()
@@ -106,7 +107,7 @@ jni_native! {
             Err(e) => {
                 if !env.exception_check() {
                     let _ = env.throw_new(
-                        jni_str!("java/lang/RuntimeException"),
+                        FindClass(jni_str!("java/lang/RuntimeException")),
                         JNIString::from(format!("nEncodeSecurity: field read failed: {e}")),
                     );
                 }
@@ -134,7 +135,7 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            jni_str!("java/lang/RuntimeException"),
+                            FindClass(jni_str!("java/lang/RuntimeException")),
                             JNIString::from(format!(
                                 "nEncodeSecurityStrictCompliance: byte_array_from_slice failed: {e}"
                             )),
@@ -150,7 +151,7 @@ jni_native! {
             Err(e) => {
                 if !env.exception_check() {
                     let _ = env.throw_new(
-                        jni_str!("java/lang/RuntimeException"),
+                        FindClass(jni_str!("java/lang/RuntimeException")),
                         JNIString::from(format!("nEncodeSecurityStrictCompliance: field read failed: {e}")),
                     );
                 }

@@ -17,6 +17,7 @@
 //! local frame, so the live reference count stays bounded however many
 //! targets a record holds.
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use jni::jni_str;
 use jni::objects::{JByteArray, JObject};
@@ -50,7 +51,7 @@ jni_native! {
             Ok(b) => b,
             Err(e) => {
                 let _ = env.throw_new(
-                    jni_str!("java/lang/RuntimeException"),
+                    FindClass(jni_str!("java/lang/RuntimeException")),
                     JNIString::from(format!("nDecodeVmti: byte[] read failed: {e}")),
                 );
                 return JObject::null().into_raw();
@@ -95,7 +96,7 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            jni_str!("java/lang/RuntimeException"),
+                            FindClass(jni_str!("java/lang/RuntimeException")),
                             JNIString::from(format!("nEncodeVmti: byte_array_from_slice failed: {e}")),
                         );
                         JObject::null().into_raw()
@@ -109,7 +110,7 @@ jni_native! {
             Err(e) => {
                 if !env.exception_check() {
                     let _ = env.throw_new(
-                        jni_str!("java/lang/RuntimeException"),
+                        FindClass(jni_str!("java/lang/RuntimeException")),
                         JNIString::from(format!("nEncodeVmti: field read failed: {e}")),
                     );
                 }
@@ -137,7 +138,7 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            jni_str!("java/lang/RuntimeException"),
+                            FindClass(jni_str!("java/lang/RuntimeException")),
                             JNIString::from(format!("nEncodeVmtiStandalone: byte_array_from_slice failed: {e}")),
                         );
                         JObject::null().into_raw()
@@ -151,7 +152,7 @@ jni_native! {
             Err(e) => {
                 if !env.exception_check() {
                     let _ = env.throw_new(
-                        jni_str!("java/lang/RuntimeException"),
+                        FindClass(jni_str!("java/lang/RuntimeException")),
                         JNIString::from(format!("nEncodeVmtiStandalone: field read failed: {e}")),
                     );
                 }
@@ -179,7 +180,7 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            jni_str!("java/lang/RuntimeException"),
+                            FindClass(jni_str!("java/lang/RuntimeException")),
                             JNIString::from(format!(
                                 "nEncodeVmtiStrictCompliance: byte_array_from_slice failed: {e}"
                             )),
@@ -195,7 +196,7 @@ jni_native! {
             Err(e) => {
                 if !env.exception_check() {
                     let _ = env.throw_new(
-                        jni_str!("java/lang/RuntimeException"),
+                        FindClass(jni_str!("java/lang/RuntimeException")),
                         JNIString::from(format!("nEncodeVmtiStrictCompliance: field read failed: {e}")),
                     );
                 }
@@ -223,7 +224,7 @@ jni_native! {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {
                         let _ = env.throw_new(
-                            jni_str!("java/lang/RuntimeException"),
+                            FindClass(jni_str!("java/lang/RuntimeException")),
                             JNIString::from(format!(
                                 "nEncodeVmtiStandaloneStrictCompliance: byte_array_from_slice failed: {e}"
                             )),
@@ -239,7 +240,7 @@ jni_native! {
             Err(e) => {
                 if !env.exception_check() {
                     let _ = env.throw_new(
-                        jni_str!("java/lang/RuntimeException"),
+                        FindClass(jni_str!("java/lang/RuntimeException")),
                         JNIString::from(format!("nEncodeVmtiStandaloneStrictCompliance: field read failed: {e}")),
                     );
                 }

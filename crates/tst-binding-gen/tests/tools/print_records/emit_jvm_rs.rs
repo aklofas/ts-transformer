@@ -85,7 +85,7 @@ impl Gen<'_> {
             Ty::Scalar(sc) => {
                 let i = sc.info();
                 pre.push(format!(
-                    "let {var} = env.call_static_method(jni_str!(\"java/lang/{b}\"), jni_str!(\"valueOf\"), jni_sig!(\"({})Ljava/lang/{b};\"), &[{}])?.l()?;",
+                    "let {var} = env.call_static_method(crate::jutil::FindClass(jni_str!(\"java/lang/{b}\")), jni_str!(\"valueOf\"), jni_sig!(\"({})Ljava/lang/{b};\"), &[{}])?.l()?;",
                     i.sig,
                     scalar_jvalue(*sc, &deref(src)),
                     b = i.boxed
@@ -109,7 +109,7 @@ impl Gen<'_> {
                 let seq = src.strip_prefix('&').unwrap_or(src);
                 pre.push(format!(
                     "let {var} = env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {{ \
-                     let list = env.new_object(jni_str!(\"java/util/ArrayList\"), jni_sig!(\"()V\"), &[])?; \
+                     let list = env.new_object(crate::jutil::FindClass(jni_str!(\"java/util/ArrayList\")), jni_sig!(\"()V\"), &[])?; \
                      for item in {seq}.iter() {{ \
                      env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {{ \
                      {} env.call_method(&list, jni_str!(\"add\"), jni_sig!(\"(Ljava/lang/Object;)Z\"), &[JValue::Object(&{x})])?; Ok(()) }})?; }} \
@@ -128,10 +128,10 @@ impl Gen<'_> {
                 let seq = src.strip_prefix('&').unwrap_or(src);
                 pre.push(format!(
                     "let {var} = env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(16, |env| {{ \
-                     let map = env.new_object(jni_str!(\"java/util/HashMap\"), jni_sig!(\"()V\"), &[])?; \
+                     let map = env.new_object(crate::jutil::FindClass(jni_str!(\"java/util/HashMap\")), jni_sig!(\"()V\"), &[])?; \
                      for (key, item) in {seq}.iter() {{ \
                      env.with_local_frame::<_, (), jni::errors::Error>(16, |env| {{ \
-                     let k = env.call_static_method(jni_str!(\"java/lang/Integer\"), jni_str!(\"valueOf\"), jni_sig!(\"(I)Ljava/lang/Integer;\"), &[JValue::Int(i32::from(*key))])?.l()?; \
+                     let k = env.call_static_method(crate::jutil::FindClass(jni_str!(\"java/lang/Integer\")), jni_str!(\"valueOf\"), jni_sig!(\"(I)Ljava/lang/Integer;\"), &[JValue::Int(i32::from(*key))])?.l()?; \
                      {} env.call_method(&map, jni_str!(\"put\"), jni_sig!(\"(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;\"), &[JValue::Object(&k), JValue::Object(&{x})])?; Ok(()) }})?; }} \
                      Ok(map) }})?;",
                     item_pre.join(" ")
@@ -310,7 +310,7 @@ fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
     }
     if builder {
         o.push_str(&format!(
-            "    let b = env.new_object(jni_str!(\"{bclass}\"), jni_sig!(\"()V\"), &[])?;\n"
+            "    let b = env.new_object(crate::jutil::FindClass(jni_str!(\"{bclass}\")), jni_sig!(\"()V\"), &[])?;\n"
         ));
         o.push_str(&setters);
         o.push_str(&format!(
@@ -320,7 +320,7 @@ fn build(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
         let desc: String = vals.iter().map(|(s, _)| s.as_str()).collect();
         let args: Vec<&str> = vals.iter().map(|(_, v)| v.as_str()).collect();
         o.push_str(&format!(
-            "    let obj = env.new_object(jni_str!(\"{class}\"), jni_sig!(\"({desc})V\"), &[{}])?;\n",
+            "    let obj = env.new_object(crate::jutil::FindClass(jni_str!(\"{class}\")), jni_sig!(\"({desc})V\"), &[{}])?;\n",
             args.join(", ")
         ));
     }

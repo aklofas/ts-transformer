@@ -17,6 +17,7 @@
 //! `mpegts/muxer.rs` — ordinals outside 0–3 surface as `CodecParseException`
 //! (an invalid codec is a caller bug, surfaced as a parse error).
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use jni::Env;
 use jni::jni_sig;
@@ -77,7 +78,7 @@ pub(crate) fn build_kind<'local>(
         }
     };
     env.get_static_field(
-        jni_str!("org/tstrans/codec/MispTimeKind"),
+        FindClass(jni_str!("org/tstrans/codec/MispTimeKind")),
         JNIString::from(name),
         jni_sig!("Lorg/tstrans/codec/MispTimeKind;"),
     )

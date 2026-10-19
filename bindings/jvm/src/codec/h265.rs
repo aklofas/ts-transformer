@@ -24,6 +24,7 @@
 //! equivalent Rust SPS context. This matches what tst-py passes (its stored
 //! inner SPS, originally produced from the same RBSP bytes).
 
+use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use jni::Env;
 use jni::jni_sig;
@@ -58,7 +59,7 @@ pub(crate) fn build_slice_type<'local>(
         _ => "UNKNOWN",
     };
     env.get_static_field(
-        jni_str!("org/tstrans/codec/H265SliceType"),
+        FindClass(jni_str!("org/tstrans/codec/H265SliceType")),
         JNIString::from(name),
         jni_sig!("Lorg/tstrans/codec/H265SliceType;"),
     )
