@@ -12,7 +12,7 @@
 #                   an item the tool prints twice counts twice)
 #
 # Crates: the public-api roster (scripts/lib/roster.sh public-api), the one list
-#   the public-api baselines and CI use; fails if it is not 10.
+#   the public-api baselines and CI use; fails if it is not 11.
 # Baseline: scripts/dev/prev-tag.sh (the c-abi rail's selection).
 # --release-type minor: for a 0.x crate the tool otherwise assumes a patch bump
 #   or only reports what the declared bump forbids; "minor" makes it list every
@@ -41,7 +41,7 @@ fi
 prev="$(bash scripts/dev/prev-tag.sh)"
 [ -n "$prev" ] || { echo "semver-checks: no previous release tag (git fetch --tags)" >&2; exit 2; }
 pairs="$(bash scripts/lib/roster.sh public-api)" || exit 2
-[ "$(printf '%s\n' "$pairs" | grep -c .)" -eq 10 ] || { echo "semver-checks: public-api roster is not 10 crates: $pairs" >&2; exit 2; }
+[ "$(printf '%s\n' "$pairs" | grep -c .)" -eq 11 ] || { echo "semver-checks: public-api roster is not 11 crates: $pairs" >&2; exit 2; }
 
 mkdir -p "$OUT"
 base="$OUT/baseline"

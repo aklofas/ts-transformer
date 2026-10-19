@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT="${ROSTER_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 
 # Every workspace member, exactly once: pure | native | none.
-SANITIZE="tst-core:pure tst-pipeline:pure tst-rtp:pure tst-udp:pure tst-tcp:pure tst-hls:pure tst-srt:native tst-rist:native tst-c:native tst-c-core:none tstrans-srt-sys:none tstrans-rist-sys:none tstrans-mbedtls-src:none tst-py:none tst-jni:none tst-integration:none tst-interop:none tst-binding-gen:none tst-test-helpers:none tst-examples:none"
+SANITIZE="tst-core:pure tst-pipeline:pure tst-rtp:pure tst-udp:pure tst-tcp:pure tst-hls:pure tst-webrtc:pure tst-srt:native tst-rist:native tst-c:native tst-c-core:none tstrans-srt-sys:none tstrans-rist-sys:none tstrans-mbedtls-src:none tst-py:none tst-jni:none tst-integration:none tst-interop:none tst-binding-gen:none tst-test-helpers:none tst-examples:none"
 
 usage="usage: roster.sh members|manifests|publishable|public-api|api-stability|surface|dep-tomls|publish-deps|test-targets|sanitize-pure|sanitize-native|check-sanitize"
 list="${1:?$usage}"

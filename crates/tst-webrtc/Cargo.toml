@@ -1,0 +1,43 @@
+[package]
+name = "tst-webrtc"
+description = "WebRTC (WHEP) playback server for tstrans — H.264/H.265 pass-through with frame-locked KLV in SEI and a data channel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["webrtc", "whep", "klv", "mpeg-ts", "streaming"]
+categories = ["multimedia::video", "network-programming"]
+
+[features]
+# tls: HTTPS (`wheps://`) for the signalling endpoint. The PEM loader lives in
+# tst-core behind its own `tls` feature.
+default = ["tls"]
+tls = ["dep:rustls", "tst-core/tls"]
+
+[dependencies]
+tst-core = { path = "../tst-core", version = "0.8.0" }
+tst-pipeline = { path = "../tst-pipeline", version = "0.8.0" }
+# The RFC 6184 / RFC 7798 packetizers. Without default features the crate is
+# tokio-free (no RTSP client or server), which keeps this crate's tree free of
+# tokio too; scripts/ratchets/dependency-lattice.tsv holds that line.
+tst-rtp = { path = "../tst-rtp", version = "0.8.0", default-features = false }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+# str0m's DTLS certificate path builds aws-lc-sys under every crypto backend.
+# Its aws-lc-rs dependency already enables prebuilt NASM objects, so the MSVC
+# legs need no NASM install; if they ever fail on NASM, setting
+# AWS_LC_SYS_PREBUILT_NASM=1 in the CI environment is the fallback.
+str0m = { version = "0.24", default-features = false, features = ["rust-crypto"] }
+getrandom = "0.4"
+
+[dependencies.rustls]
+version          = "0.23"
+optional         = true
+default-features = false
+features         = ["std", "ring"]
+
+[lints]
+workspace = true

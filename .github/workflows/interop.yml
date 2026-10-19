@@ -50,6 +50,8 @@ on:
       - 'crates/tst-rtp/src/sdp/**'
       - 'crates/tst-rtp/src/h264/**'
       - 'crates/tst-rtp/src/rtcp/**'
+      # The WebRTC server runs the interop matrix on its changes too.
+      - 'crates/tst-webrtc/**'
 
 permissions:
   contents: read

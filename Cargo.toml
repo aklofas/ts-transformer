@@ -20,6 +20,7 @@ members = [
     "crates/tst-tcp",
     "crates/tst-test-helpers",
     "crates/tst-udp",
+    "crates/tst-webrtc",
     "examples",
 ]
 exclude = ["embedded/baremetal-qemu", "embedded/baremetal-qemu-c"]

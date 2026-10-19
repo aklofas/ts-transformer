@@ -197,6 +197,7 @@ class FileLevelRules(unittest.TestCase):
             "crates/tst-pipeline/src/lib.rs": "tst-pipeline",
             "crates/tst-srt/src/lib.rs": "tst-srt",
             "crates/tst-hls/src/lib.rs": "tst-hls",
+            "crates/tst-webrtc/src/lib.rs": "tst-webrtc",
             "crates/srt-sys/vendor/srt/srtcore/core.cpp": "vendor/libsrt",
             "crates/rist-sys/vendor/librist/src/rist.c": "vendor/librist",
             "crates/srt-sys/build.rs": "sys",
@@ -239,6 +240,7 @@ class FileLevelRules(unittest.TestCase):
 
     def test_group_of_component(self):
         self.assertEqual(lr.group_of("tst-srt"), "transports")
+        self.assertEqual(lr.group_of("tst-webrtc"), "transports")
         self.assertEqual(lr.group_of("tst-core"), "tst-core")
         self.assertEqual(lr.group_of("vendor/librist"), "vendor")
 

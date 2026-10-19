@@ -720,7 +720,7 @@ jobs:
           # Assigned first: a roster.sh failure inside the loop's command
           # substitution would otherwise leave an empty loop and a green step.
           pairs="$(bash scripts/lib/roster.sh public-api)"
-          test "$(printf '%s\n' $pairs | grep -c .)" -eq 10 || { echo "public-api roster is not the 10 baselined crates: $pairs" >&2; exit 1; }
+          test "$(printf '%s\n' $pairs | grep -c .)" -eq 11 || { echo "public-api roster is not the 11 baselined crates: $pairs" >&2; exit 1; }
           for pair in $pairs; do
             pkg="${pair%%:*}"
             dir="${pair##*:}"
@@ -770,7 +770,9 @@ jobs:
           # (hidden). The renamed enums/structs keep their attribute.
           # 194->195 (2026-10-19): +KlvPlacementMetrics, the KLV placement oracle's report block.
           # 195->196 (2026-10-19): +report::soak::MemoryGate, the soak's declared launch-time memory gate.
-          BASELINE=196
+          # 196->202 (2026-10-19): the new tst-webrtc crate's WhepServerError, PushError,
+          # MountKind, AudioPolicy, KlvCarriage and MountConfig.
+          BASELINE=202
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
             echo "non_exhaustive count regressed: expected >= $BASELINE, observed $OBSERVED" >&2

@@ -1,0 +1,263 @@
+pub mod tst_webrtc
+pub use tst_webrtc::VideoCodec
+pub mod tst_webrtc::config
+pub use tst_webrtc::config::VideoCodec
+#[non_exhaustive] pub enum tst_webrtc::config::AudioPolicy
+pub tst_webrtc::config::AudioPolicy::Drop
+pub tst_webrtc::config::AudioPolicy::PassthroughOpus
+impl core::clone::Clone for tst_webrtc::config::AudioPolicy
+pub fn tst_webrtc::config::AudioPolicy::clone(&self) -> tst_webrtc::config::AudioPolicy
+impl core::cmp::Eq for tst_webrtc::config::AudioPolicy
+impl core::cmp::PartialEq for tst_webrtc::config::AudioPolicy
+pub fn tst_webrtc::config::AudioPolicy::eq(&self, &tst_webrtc::config::AudioPolicy) -> bool
+impl core::fmt::Debug for tst_webrtc::config::AudioPolicy
+pub fn tst_webrtc::config::AudioPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_webrtc::config::AudioPolicy
+impl core::marker::StructuralPartialEq for tst_webrtc::config::AudioPolicy
+impl core::marker::Freeze for tst_webrtc::config::AudioPolicy
+impl core::marker::Send for tst_webrtc::config::AudioPolicy
+impl core::marker::Sync for tst_webrtc::config::AudioPolicy
+impl core::marker::Unpin for tst_webrtc::config::AudioPolicy
+impl core::marker::UnsafeUnpin for tst_webrtc::config::AudioPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::config::AudioPolicy
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::config::AudioPolicy
+#[non_exhaustive] pub enum tst_webrtc::config::KlvCarriage
+pub tst_webrtc::config::KlvCarriage::DataChannelOnly
+pub tst_webrtc::config::KlvCarriage::SeiAndDataChannel
+pub tst_webrtc::config::KlvCarriage::SeiOnly
+impl core::clone::Clone for tst_webrtc::config::KlvCarriage
+pub fn tst_webrtc::config::KlvCarriage::clone(&self) -> tst_webrtc::config::KlvCarriage
+impl core::cmp::Eq for tst_webrtc::config::KlvCarriage
+impl core::cmp::PartialEq for tst_webrtc::config::KlvCarriage
+pub fn tst_webrtc::config::KlvCarriage::eq(&self, &tst_webrtc::config::KlvCarriage) -> bool
+impl core::fmt::Debug for tst_webrtc::config::KlvCarriage
+pub fn tst_webrtc::config::KlvCarriage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_webrtc::config::KlvCarriage
+impl core::marker::StructuralPartialEq for tst_webrtc::config::KlvCarriage
+impl core::marker::Freeze for tst_webrtc::config::KlvCarriage
+impl core::marker::Send for tst_webrtc::config::KlvCarriage
+impl core::marker::Sync for tst_webrtc::config::KlvCarriage
+impl core::marker::Unpin for tst_webrtc::config::KlvCarriage
+impl core::marker::UnsafeUnpin for tst_webrtc::config::KlvCarriage
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::config::KlvCarriage
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::config::KlvCarriage
+#[non_exhaustive] pub enum tst_webrtc::config::MountKind
+pub tst_webrtc::config::MountKind::Elementary
+pub tst_webrtc::config::MountKind::Mp2t
+impl core::clone::Clone for tst_webrtc::config::MountKind
+pub fn tst_webrtc::config::MountKind::clone(&self) -> tst_webrtc::config::MountKind
+impl core::cmp::Eq for tst_webrtc::config::MountKind
+impl core::cmp::PartialEq for tst_webrtc::config::MountKind
+pub fn tst_webrtc::config::MountKind::eq(&self, &tst_webrtc::config::MountKind) -> bool
+impl core::fmt::Debug for tst_webrtc::config::MountKind
+pub fn tst_webrtc::config::MountKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_webrtc::config::MountKind
+impl core::marker::StructuralPartialEq for tst_webrtc::config::MountKind
+impl core::marker::Freeze for tst_webrtc::config::MountKind
+impl core::marker::Send for tst_webrtc::config::MountKind
+impl core::marker::Sync for tst_webrtc::config::MountKind
+impl core::marker::Unpin for tst_webrtc::config::MountKind
+impl core::marker::UnsafeUnpin for tst_webrtc::config::MountKind
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::config::MountKind
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::config::MountKind
+#[non_exhaustive] pub struct tst_webrtc::config::MountConfig
+pub tst_webrtc::config::MountConfig::audio: tst_webrtc::config::AudioPolicy
+pub tst_webrtc::config::MountConfig::kind: tst_webrtc::config::MountKind
+pub tst_webrtc::config::MountConfig::klv: tst_webrtc::config::KlvCarriage
+pub tst_webrtc::config::MountConfig::sei_budget_bytes: u32
+pub tst_webrtc::config::MountConfig::video: tst_core::codec::vocabulary::VideoCodec
+pub tst_webrtc::config::MountConfig::viewer_queue_packets: u32
+impl tst_webrtc::config::MountConfig
+pub fn tst_webrtc::config::MountConfig::validate(&self) -> core::result::Result<(), tst_webrtc::error::WhepServerError>
+impl core::clone::Clone for tst_webrtc::config::MountConfig
+pub fn tst_webrtc::config::MountConfig::clone(&self) -> tst_webrtc::config::MountConfig
+impl core::default::Default for tst_webrtc::config::MountConfig
+pub fn tst_webrtc::config::MountConfig::default() -> Self
+impl core::fmt::Debug for tst_webrtc::config::MountConfig
+pub fn tst_webrtc::config::MountConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_webrtc::config::MountConfig
+impl core::marker::Send for tst_webrtc::config::MountConfig
+impl core::marker::Sync for tst_webrtc::config::MountConfig
+impl core::marker::Unpin for tst_webrtc::config::MountConfig
+impl core::marker::UnsafeUnpin for tst_webrtc::config::MountConfig
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::config::MountConfig
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::config::MountConfig
+pub mod tst_webrtc::error
+#[non_exhaustive] pub enum tst_webrtc::error::PushError
+pub tst_webrtc::error::PushError::Closed
+pub tst_webrtc::error::PushError::InvalidAccessUnit
+pub tst_webrtc::error::PushError::InvalidAccessUnit::detail: alloc::string::String
+pub tst_webrtc::error::PushError::InvalidAudioFrame
+pub tst_webrtc::error::PushError::KlvTooLarge
+pub tst_webrtc::error::PushError::KlvTooLarge::len: usize
+pub tst_webrtc::error::PushError::KlvTooLarge::limit: usize
+pub tst_webrtc::error::PushError::WrongMountKind
+impl core::error::Error for tst_webrtc::error::PushError
+impl core::fmt::Debug for tst_webrtc::error::PushError
+pub fn tst_webrtc::error::PushError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_webrtc::error::PushError
+pub fn tst_webrtc::error::PushError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_webrtc::error::PushError
+impl core::marker::Send for tst_webrtc::error::PushError
+impl core::marker::Sync for tst_webrtc::error::PushError
+impl core::marker::Unpin for tst_webrtc::error::PushError
+impl core::marker::UnsafeUnpin for tst_webrtc::error::PushError
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::error::PushError
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::error::PushError
+#[non_exhaustive] pub enum tst_webrtc::error::WhepServerError
+pub tst_webrtc::error::WhepServerError::Bind(core::io::error::ErrorKind)
+pub tst_webrtc::error::WhepServerError::InvalidConfig
+pub tst_webrtc::error::WhepServerError::InvalidConfig::detail: alloc::string::String
+pub tst_webrtc::error::WhepServerError::InvalidMountPath
+pub tst_webrtc::error::WhepServerError::InvalidMountPath::detail: alloc::string::String
+pub tst_webrtc::error::WhepServerError::InvalidUrl(tst_core::url::common::UrlError)
+pub tst_webrtc::error::WhepServerError::MountExists
+pub tst_webrtc::error::WhepServerError::MountExists::path: alloc::string::String
+pub tst_webrtc::error::WhepServerError::MountNotFound
+pub tst_webrtc::error::WhepServerError::MountNotFound::path: alloc::string::String
+pub tst_webrtc::error::WhepServerError::Shutdown
+pub tst_webrtc::error::WhepServerError::Tls(alloc::string::String)
+impl core::convert::From<tst_core::url::common::UrlError> for tst_webrtc::error::WhepServerError
+pub fn tst_webrtc::error::WhepServerError::from(tst_core::url::common::UrlError) -> Self
+impl core::error::Error for tst_webrtc::error::WhepServerError
+pub fn tst_webrtc::error::WhepServerError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for tst_webrtc::error::WhepServerError
+pub fn tst_webrtc::error::WhepServerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_webrtc::error::WhepServerError
+pub fn tst_webrtc::error::WhepServerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_webrtc::error::WhepServerError
+impl core::marker::Send for tst_webrtc::error::WhepServerError
+impl core::marker::Sync for tst_webrtc::error::WhepServerError
+impl core::marker::Unpin for tst_webrtc::error::WhepServerError
+impl core::marker::UnsafeUnpin for tst_webrtc::error::WhepServerError
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::error::WhepServerError
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::error::WhepServerError
+#[non_exhaustive] pub enum tst_webrtc::AudioPolicy
+pub tst_webrtc::AudioPolicy::Drop
+pub tst_webrtc::AudioPolicy::PassthroughOpus
+impl core::clone::Clone for tst_webrtc::config::AudioPolicy
+pub fn tst_webrtc::config::AudioPolicy::clone(&self) -> tst_webrtc::config::AudioPolicy
+impl core::cmp::Eq for tst_webrtc::config::AudioPolicy
+impl core::cmp::PartialEq for tst_webrtc::config::AudioPolicy
+pub fn tst_webrtc::config::AudioPolicy::eq(&self, &tst_webrtc::config::AudioPolicy) -> bool
+impl core::fmt::Debug for tst_webrtc::config::AudioPolicy
+pub fn tst_webrtc::config::AudioPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_webrtc::config::AudioPolicy
+impl core::marker::StructuralPartialEq for tst_webrtc::config::AudioPolicy
+impl core::marker::Freeze for tst_webrtc::config::AudioPolicy
+impl core::marker::Send for tst_webrtc::config::AudioPolicy
+impl core::marker::Sync for tst_webrtc::config::AudioPolicy
+impl core::marker::Unpin for tst_webrtc::config::AudioPolicy
+impl core::marker::UnsafeUnpin for tst_webrtc::config::AudioPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::config::AudioPolicy
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::config::AudioPolicy
+#[non_exhaustive] pub enum tst_webrtc::KlvCarriage
+pub tst_webrtc::KlvCarriage::DataChannelOnly
+pub tst_webrtc::KlvCarriage::SeiAndDataChannel
+pub tst_webrtc::KlvCarriage::SeiOnly
+impl core::clone::Clone for tst_webrtc::config::KlvCarriage
+pub fn tst_webrtc::config::KlvCarriage::clone(&self) -> tst_webrtc::config::KlvCarriage
+impl core::cmp::Eq for tst_webrtc::config::KlvCarriage
+impl core::cmp::PartialEq for tst_webrtc::config::KlvCarriage
+pub fn tst_webrtc::config::KlvCarriage::eq(&self, &tst_webrtc::config::KlvCarriage) -> bool
+impl core::fmt::Debug for tst_webrtc::config::KlvCarriage
+pub fn tst_webrtc::config::KlvCarriage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_webrtc::config::KlvCarriage
+impl core::marker::StructuralPartialEq for tst_webrtc::config::KlvCarriage
+impl core::marker::Freeze for tst_webrtc::config::KlvCarriage
+impl core::marker::Send for tst_webrtc::config::KlvCarriage
+impl core::marker::Sync for tst_webrtc::config::KlvCarriage
+impl core::marker::Unpin for tst_webrtc::config::KlvCarriage
+impl core::marker::UnsafeUnpin for tst_webrtc::config::KlvCarriage
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::config::KlvCarriage
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::config::KlvCarriage
+#[non_exhaustive] pub enum tst_webrtc::MountKind
+pub tst_webrtc::MountKind::Elementary
+pub tst_webrtc::MountKind::Mp2t
+impl core::clone::Clone for tst_webrtc::config::MountKind
+pub fn tst_webrtc::config::MountKind::clone(&self) -> tst_webrtc::config::MountKind
+impl core::cmp::Eq for tst_webrtc::config::MountKind
+impl core::cmp::PartialEq for tst_webrtc::config::MountKind
+pub fn tst_webrtc::config::MountKind::eq(&self, &tst_webrtc::config::MountKind) -> bool
+impl core::fmt::Debug for tst_webrtc::config::MountKind
+pub fn tst_webrtc::config::MountKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_webrtc::config::MountKind
+impl core::marker::StructuralPartialEq for tst_webrtc::config::MountKind
+impl core::marker::Freeze for tst_webrtc::config::MountKind
+impl core::marker::Send for tst_webrtc::config::MountKind
+impl core::marker::Sync for tst_webrtc::config::MountKind
+impl core::marker::Unpin for tst_webrtc::config::MountKind
+impl core::marker::UnsafeUnpin for tst_webrtc::config::MountKind
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::config::MountKind
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::config::MountKind
+#[non_exhaustive] pub enum tst_webrtc::PushError
+pub tst_webrtc::PushError::Closed
+pub tst_webrtc::PushError::InvalidAccessUnit
+pub tst_webrtc::PushError::InvalidAccessUnit::detail: alloc::string::String
+pub tst_webrtc::PushError::InvalidAudioFrame
+pub tst_webrtc::PushError::KlvTooLarge
+pub tst_webrtc::PushError::KlvTooLarge::len: usize
+pub tst_webrtc::PushError::KlvTooLarge::limit: usize
+pub tst_webrtc::PushError::WrongMountKind
+impl core::error::Error for tst_webrtc::error::PushError
+impl core::fmt::Debug for tst_webrtc::error::PushError
+pub fn tst_webrtc::error::PushError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_webrtc::error::PushError
+pub fn tst_webrtc::error::PushError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_webrtc::error::PushError
+impl core::marker::Send for tst_webrtc::error::PushError
+impl core::marker::Sync for tst_webrtc::error::PushError
+impl core::marker::Unpin for tst_webrtc::error::PushError
+impl core::marker::UnsafeUnpin for tst_webrtc::error::PushError
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::error::PushError
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::error::PushError
+#[non_exhaustive] pub enum tst_webrtc::WhepServerError
+pub tst_webrtc::WhepServerError::Bind(core::io::error::ErrorKind)
+pub tst_webrtc::WhepServerError::InvalidConfig
+pub tst_webrtc::WhepServerError::InvalidConfig::detail: alloc::string::String
+pub tst_webrtc::WhepServerError::InvalidMountPath
+pub tst_webrtc::WhepServerError::InvalidMountPath::detail: alloc::string::String
+pub tst_webrtc::WhepServerError::InvalidUrl(tst_core::url::common::UrlError)
+pub tst_webrtc::WhepServerError::MountExists
+pub tst_webrtc::WhepServerError::MountExists::path: alloc::string::String
+pub tst_webrtc::WhepServerError::MountNotFound
+pub tst_webrtc::WhepServerError::MountNotFound::path: alloc::string::String
+pub tst_webrtc::WhepServerError::Shutdown
+pub tst_webrtc::WhepServerError::Tls(alloc::string::String)
+impl core::convert::From<tst_core::url::common::UrlError> for tst_webrtc::error::WhepServerError
+pub fn tst_webrtc::error::WhepServerError::from(tst_core::url::common::UrlError) -> Self
+impl core::error::Error for tst_webrtc::error::WhepServerError
+pub fn tst_webrtc::error::WhepServerError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for tst_webrtc::error::WhepServerError
+pub fn tst_webrtc::error::WhepServerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_webrtc::error::WhepServerError
+pub fn tst_webrtc::error::WhepServerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_webrtc::error::WhepServerError
+impl core::marker::Send for tst_webrtc::error::WhepServerError
+impl core::marker::Sync for tst_webrtc::error::WhepServerError
+impl core::marker::Unpin for tst_webrtc::error::WhepServerError
+impl core::marker::UnsafeUnpin for tst_webrtc::error::WhepServerError
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::error::WhepServerError
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::error::WhepServerError
+#[non_exhaustive] pub struct tst_webrtc::MountConfig
+pub tst_webrtc::MountConfig::audio: tst_webrtc::config::AudioPolicy
+pub tst_webrtc::MountConfig::kind: tst_webrtc::config::MountKind
+pub tst_webrtc::MountConfig::klv: tst_webrtc::config::KlvCarriage
+pub tst_webrtc::MountConfig::sei_budget_bytes: u32
+pub tst_webrtc::MountConfig::video: tst_core::codec::vocabulary::VideoCodec
+pub tst_webrtc::MountConfig::viewer_queue_packets: u32
+impl tst_webrtc::config::MountConfig
+pub fn tst_webrtc::config::MountConfig::validate(&self) -> core::result::Result<(), tst_webrtc::error::WhepServerError>
+impl core::clone::Clone for tst_webrtc::config::MountConfig
+pub fn tst_webrtc::config::MountConfig::clone(&self) -> tst_webrtc::config::MountConfig
+impl core::default::Default for tst_webrtc::config::MountConfig
+pub fn tst_webrtc::config::MountConfig::default() -> Self
+impl core::fmt::Debug for tst_webrtc::config::MountConfig
+pub fn tst_webrtc::config::MountConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_webrtc::config::MountConfig
+impl core::marker::Send for tst_webrtc::config::MountConfig
+impl core::marker::Sync for tst_webrtc::config::MountConfig
+impl core::marker::Unpin for tst_webrtc::config::MountConfig
+impl core::marker::UnsafeUnpin for tst_webrtc::config::MountConfig
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::config::MountConfig
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::config::MountConfig

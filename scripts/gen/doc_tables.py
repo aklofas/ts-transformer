@@ -38,6 +38,7 @@ FEATURE_ROWS = [
     ("tst-core", "std"),
     ("tst-core", "file"),
     ("tst-core", "tls"),
+    ("tst-webrtc", "tls"),
 ]
 
 # The Effect column: what a feature does cannot be derived from Cargo.toml.
@@ -47,6 +48,7 @@ FEATURE_NOTES = {
     "tst-core/std": "Standard library: file I/O, net helpers, JSON/TOML. Off = `#![no_std]` + `alloc` (see [embedded](/docs/languages/embedded.md)).",
     "tst-core/file": "File I/O helpers. `file` and `std` imply each other, so they switch on and off together.",
     "tst-core/tls": "PEM loading for the rustls-based transports (`net::tls`). The transport crates' `tls` features turn it on.",
+    "tst-webrtc/tls": "HTTPS (`wheps://`) for the WHEP signalling endpoint. Turns on `tst-core/tls`.",
 }
 
 # (document, block name) in the order they are written.
