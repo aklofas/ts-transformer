@@ -384,7 +384,7 @@ pub(crate) fn build_authorization(
             // Random cnonce — used only by the qop=auth path; ignored by the
             // RFC 2617 no-qop variant gortsplib/MediaMTX send.
             let mut cnonce_bytes = [0u8; 16];
-            getrandom::getrandom(&mut cnonce_bytes)
+            getrandom::fill(&mut cnonce_bytes)
                 .map_err(|_| RtspError::Io(std::io::ErrorKind::Other))?;
             let mut cnonce = String::with_capacity(32);
             for b in &cnonce_bytes {

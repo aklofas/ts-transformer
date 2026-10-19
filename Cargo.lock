@@ -2243,7 +2243,7 @@ version = "0.8.0"
 dependencies = [
  "base64",
  "bytes",
- "getrandom 0.2.17",
+ "getrandom 0.4.2",
  "libc",
  "md-5",
  "proptest",

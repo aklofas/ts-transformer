@@ -36,7 +36,7 @@ pub(crate) enum AuthVerifyError {
 /// `nonce=` parameter. Rotated per session.
 pub(crate) fn generate_nonce() -> String {
     let mut buf = [0u8; 16];
-    if let Err(e) = getrandom::getrandom(&mut buf) {
+    if let Err(e) = getrandom::fill(&mut buf) {
         tracing::warn!(error = %e, "getrandom failed during nonce generation");
         // Fallback to a counter-based nonce; not great but won't allow
         // replay attacks within a session because we change it per-session.

@@ -600,7 +600,7 @@ pub(crate) fn handle_setup(
 /// collisions across concurrent SETUPs.
 pub(crate) fn generate_session_id() -> String {
     let mut buf = [0u8; 8];
-    if getrandom::getrandom(&mut buf).is_err() {
+    if getrandom::fill(&mut buf).is_err() {
         // Fallback: timestamp-based. getrandom only fails on platforms
         // without an OS RNG, which we don't target.
         use std::time::{SystemTime, UNIX_EPOCH};
