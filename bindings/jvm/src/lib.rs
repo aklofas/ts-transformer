@@ -70,9 +70,43 @@ fn init_tracing_bridge() {
 /// the one guaranteed one-time entry point, so it is where the
 /// `TSTRANS_LOG` bridge installs itself.
 #[unsafe(no_mangle)]
-pub extern "system" fn JNI_OnLoad(_vm: *mut jni::sys::JavaVM, _reserved: *mut c_void) -> jint {
+pub extern "system" fn JNI_OnLoad(vm: *mut jni::sys::JavaVM, _reserved: *mut c_void) -> jint {
     init_tracing_bridge();
+    // No panic may unwind into the JVM; a failed warm-up only leaves a cache cold.
+    let _ = std::panic::catch_unwind(|| warm_jni_type_caches(vm));
     JNI_VERSION_1_8
+}
+
+/// Fill jni 0.22's per-type class caches once, through the system class loader.
+/// jni fills each cache on first use through the calling thread's context class
+/// loader, and a context loader that throws on every lookup sends that path into
+/// recursion until the JVM dies with SIGSEGV; a filled cache is never looked up again.
+fn warm_jni_type_caches(vm: *mut jni::sys::JavaVM) {
+    use jni::exceptions::*;
+    use jni::objects::*;
+    use jni::refs::{LoaderContext, Reference};
+    macro_rules! warm {
+        ($env:ident, $ctx:ident; $($t:ty),* $(,)?) => {
+            $( let _ = <$t as Reference>::lookup_class($env, &$ctx); )*
+        };
+    }
+    // SAFETY: the JVM passes JNI_OnLoad a valid JavaVM pointer.
+    let vm = unsafe { jni::JavaVM::from_raw(vm) };
+    let _ = vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        // ClassLoader resolves itself with FindClass, never a context loader.
+        let system = JClassLoader::get_system_class_loader(env)?;
+        let ctx = LoaderContext::Loader(&system);
+        warm!(env, ctx; JThrowable, JObject, JString, JCharSequence, JStackTraceElement,
+            JByteBuffer, JCollection, JList, JSet, JIterator, JMap, JMapEntry,
+            JBooleanArray, JByteArray, JCharArray, JShortArray, JIntArray, JLongArray,
+            JFloatArray, JDoubleArray, JArrayIndexOutOfBoundsException, JArrayStoreException,
+            JClassCircularityError, JClassFormatError, JExceptionInInitializerError,
+            JClassNotFoundException, JIllegalArgumentException, JIllegalMonitorStateException,
+            JInstantiationException, JLinkageError, JNoClassDefFoundError, JNoSuchFieldError,
+            JNoSuchMethodError, JNumberFormatException, JOutOfMemoryError, JRuntimeException,
+            JSecurityException, JStringIndexOutOfBoundsException);
+        Ok(())
+    });
 }
 
 jni_native! {

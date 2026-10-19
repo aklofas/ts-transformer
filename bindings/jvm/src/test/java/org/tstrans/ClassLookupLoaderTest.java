@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.tstrans.codec.Codec;
@@ -14,6 +17,12 @@ import org.tstrans.codec.H264Sps;
  * uses the loader of the class that declared the native. The thread's context
  * class loader must not take part: here it refuses every load, and the
  * returned object graph must still build.
+ *
+ * <p>jni also fills its own per-type class caches (Throwable, String, the
+ * exception types) on first use through the context loader; a refusing loader
+ * there used to kill the JVM. The library warms those caches when it loads, so
+ * a typed exception thrown on such a thread arrives as an exception. That case
+ * runs in a fresh JVM, because in this one the caches may already be warm.
  */
 class ClassLookupLoaderTest {
     // Real 1080p High@4.0 SPS, the same bytes as H264Test.
@@ -58,5 +67,39 @@ class ClassLookupLoaderTest {
         assertNull(failure);
         assertEquals(1920L, sps.get().width());
         assertEquals(1080L, sps.get().height());
+    }
+
+    @Test
+    void typedExceptionArrivesInAFreshJvmWhoseFirstThreadRefuses() throws Exception {
+        String java = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java";
+        Process p = new ProcessBuilder(java, "-Xcheck:jni", "-cp", System.getProperty("java.class.path"),
+                        FreshJvm.class.getName())
+                .redirectErrorStream(true)
+                .start();
+        assertTrue(p.waitFor(60, TimeUnit.SECONDS), "child JVM did not finish");
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertEquals(0, p.exitValue(), out);
+        assertTrue(out.contains("TYPED TRUNCATED_RBSP"), out);
+    }
+
+    /**
+     * The child JVM: its first native call, and so the library load itself,
+     * happens on a thread whose context loader refuses every class.
+     */
+    public static final class FreshJvm {
+        public static void main(String[] args) throws Exception {
+            Throwable failure = onRefusingThread(() -> {
+                try {
+                    Codec.parseH264Sps(new byte[0]);
+                    System.out.println("NO EXCEPTION");
+                } catch (CodecParseException e) {
+                    System.out.println("TYPED " + e.kind());
+                }
+            });
+            if (failure != null) {
+                failure.printStackTrace(System.out);
+                System.exit(1);
+            }
+        }
     }
 }
