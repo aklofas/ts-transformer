@@ -240,6 +240,16 @@ pub struct KlvPlacementMetrics {
     pub tolerance_ticks: i64,
     /// Index and error of the first out-of-tolerance record, for the failure line.
     pub first_problem: Option<String>,
+    /// Backward PTS steps, on any PID, that the declared generation budget
+    /// absorbed: each PID may step back once per generation boundary seen,
+    /// at most `generations - 1` times. Not failures.
+    #[serde(default)]
+    pub generation_resets_excused: u64,
+    /// `NonConformant` timing events (`PtsAnomaly`, `PcrAnomaly`) that were
+    /// the signature of an excused generation reset, so not failures. The
+    /// raw `CellMetrics::nonconformant` count still includes them.
+    #[serde(default)]
+    pub timing_anomalies_excused: u64,
 }
 
 /// Where a leg's error events sit relative to its reconnects — the
