@@ -298,7 +298,8 @@ pub struct SoakConfig {
     pub corruption_spec: Option<CorruptionDeclaration>,
     /// Per-leg declaration of what `soak.sh` launched that leg with:
     /// which stream profile, and which impairment schedule (if any).
-    /// Keyed by leg name (`"srt"`/`"rist"`).
+    /// Keyed by leg name: a transport leg (`"srt"`/`"rist"`) or a
+    /// publish leg ([`PUBLISH_LEGS`]).
     ///
     /// `#[serde(default)]` so an archived pre-realism config still
     /// parses; a leg with no entry yields passing
@@ -317,11 +318,13 @@ pub struct SoakConfig {
 
 /// The launch-time memory gate as `soak.sh` declared it: the run's
 /// predicted resident memory against its budget. Validated at parse
-/// time (`predicted_kb <= budget_kb`, `headroom >= 1.0`).
+/// time: `headroom` is finite and `>= 1.0`, and
+/// `predicted_kb x headroom <= budget_kb`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryGate {
-    /// Summed expected RSS of the roles the run launches, in KiB.
+    /// Summed expected RSS of the roles the run launches, in KiB, before
+    /// `headroom` is applied.
     pub predicted_kb: u64,
     /// The memory the run may use, in KiB (a fraction of `mem_total_kb`).
     pub budget_kb: u64,
@@ -588,6 +591,14 @@ pub fn parse_soak_config(text: &str) -> Result<SoakConfig, String> {
             // digest could never match; KLV completeness is judged
             // against a per-generation count instead, which must be
             // declared and nonzero for that check to mean anything.
+            // The count is only ever judged on a remuxed leg; anywhere
+            // else it would be silently ignored.
+            if decl.klv_records_per_generation.is_some() && decl.remuxed != Some(true) {
+                return Err(format!(
+                    "soak-config.json: legs.{leg} declares klv_records_per_generation \
+                     without remuxed: true; the count is judged only on a remuxed leg"
+                ));
+            }
             if decl.remuxed == Some(true) {
                 if decl.source_sha256.is_some() {
                     return Err(format!(
@@ -633,16 +644,17 @@ pub fn parse_soak_config(text: &str) -> Result<SoakConfig, String> {
         .map_err(|e| format!("soak-config.json: corruption_spec: {e}"))?;
     }
     if let Some(gate) = &cfg.memory_gate {
-        if gate.predicted_kb > gate.budget_kb {
-            return Err(format!(
-                "soak-config.json: memory_gate: predicted_kb {} exceeds budget_kb {}",
-                gate.predicted_kb, gate.budget_kb
-            ));
-        }
         if !(gate.headroom.is_finite() && gate.headroom >= 1.0) {
             return Err(format!(
                 "soak-config.json: memory_gate: headroom must be finite and >= 1.0, got {}",
                 gate.headroom
+            ));
+        }
+        if gate.predicted_kb as f64 * gate.headroom > gate.budget_kb as f64 {
+            return Err(format!(
+                "soak-config.json: memory_gate: predicted_kb {} x headroom {} exceeds \
+                 budget_kb {}",
+                gate.predicted_kb, gate.headroom, gate.budget_kb
             ));
         }
     }
@@ -5729,7 +5741,10 @@ pub(crate) mod tests {
             .iter()
             .filter(|v| v.name.ends_with("_rtsp-publish-es"))
             .collect();
-        assert!(es.len() >= 10, "{es:?}");
+        // recv_invariants, profile/klv/schedule/reconnect_mode_declared,
+        // the six corruption verdicts, publisher_generations,
+        // delivery_complete and klv_placement.
+        assert_eq!(es.len(), 14, "{es:?}");
         for v in &es {
             assert!(v.pass, "{}: {}", v.name, v.detail);
         }
@@ -5874,6 +5889,64 @@ pub(crate) mod tests {
         }
     }
 
+    /// A KLV count is what a remuxed leg's delivery is judged
+    /// against; declared on a leg that is not remuxed it would be
+    /// silently ignored, so it is rejected. The placement oracle does
+    /// not depend on the re-mux and stays allowed.
+    #[test]
+    fn a_klv_count_without_remuxed_is_rejected() {
+        let mut decl = publish_declaration(Some(6));
+        decl.klv_records_per_generation = Some(600);
+        let err = parse_soak_config(&config_with_publish_leg("rtsp-publish", decl))
+            .expect_err("a KLV count on a leg that is not remuxed must be rejected");
+        assert!(err.contains("klv_records_per_generation"), "{err}");
+        assert!(err.contains("remuxed"), "{err}");
+
+        let mut decl = publish_declaration(Some(6));
+        decl.klv_placement = Some(true);
+        assert!(parse_soak_config(&config_with_publish_leg("rtsp-publish", decl)).is_ok());
+    }
+
+    #[test]
+    fn es_leg_delivery_fails_without_a_publish_mount_block() {
+        let mut inputs = es_inputs(6);
+        es_mut(&mut inputs).publish_mount = None;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "delivery_complete_rtsp-publish-es");
+        assert!(!v.pass && !v.provisional, "{}", v.detail);
+        assert!(v.detail.contains("no publish_mount block"), "{}", v.detail);
+    }
+
+    #[test]
+    fn es_leg_delivery_fails_without_declared_generations() {
+        let mut inputs = es_inputs(6);
+        inputs
+            .config
+            .legs
+            .get_mut("rtsp-publish-es")
+            .unwrap()
+            .publisher_generations = None;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "delivery_complete_rtsp-publish-es");
+        assert!(!v.pass && !v.provisional, "{}", v.detail);
+        assert!(v.detail.contains("publisher_generations"), "{}", v.detail);
+    }
+
+    #[test]
+    fn es_leg_placement_fails_without_declared_generations() {
+        let mut inputs = es_inputs(6);
+        inputs
+            .config
+            .legs
+            .get_mut("rtsp-publish-es")
+            .unwrap()
+            .publisher_generations = None;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "klv_placement_rtsp-publish-es");
+        assert!(!v.pass && !v.provisional, "{}", v.detail);
+        assert!(v.detail.contains("against none declared"), "{}", v.detail);
+    }
+
     /// The MP2T leg declares no placement oracle: its verdict is
     /// emitted and passes, saying why.
     #[test]
@@ -5912,6 +5985,15 @@ pub(crate) mod tests {
             "headroom": 0.9, "mem_total_kb": 4_000_000
         }))
         .expect_err("a headroom under 1 must be rejected");
+        assert!(err.contains("headroom"), "{err}");
+
+        // Inside the budget on its own, over it once the headroom is applied.
+        let err = with_gate(serde_json::json!({
+            "predicted_kb": 800_000, "budget_kb": 1_000_000,
+            "headroom": 1.5, "mem_total_kb": 4_000_000
+        }))
+        .expect_err("a prediction over the budget after headroom must be rejected");
+        assert!(err.contains("predicted_kb"), "{err}");
         assert!(err.contains("headroom"), "{err}");
 
         let cfg = with_gate(serde_json::json!({
