@@ -3,6 +3,8 @@
 
 #[path = "whep/binding.rs"]
 mod binding;
+#[path = "whep/clock.rs"]
+mod clock;
 #[path = "whep/http.rs"]
 mod http;
 #[path = "whep/negotiate.rs"]

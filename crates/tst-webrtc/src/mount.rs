@@ -198,6 +198,14 @@ impl MountState {
         })
     }
 
+    /// The `profile-level-id` bytes of the latest cached H.264 SPS, which
+    /// steer the payload choice when a viewer's offer is negotiated.
+    pub(crate) fn sps_profile_level_id(&self) -> Option<[u8; 3]> {
+        let inner = self.lock();
+        let sps = inner.ps.sps.last()?;
+        crate::server::negotiate::profile_level_id_from_sps(self.cfg.video, sps)
+    }
+
     fn lock(&self) -> MutexGuard<'_, MountInner> {
         // The state stays consistent between statements, so a panic in
         // another push leaves nothing half-written worth refusing over.
