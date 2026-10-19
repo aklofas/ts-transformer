@@ -176,6 +176,7 @@ impl core::marker::Unpin for tst_webrtc::mount::MountHandle
 impl core::marker::UnsafeUnpin for tst_webrtc::mount::MountHandle
 impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::mount::MountHandle
 impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::mount::MountHandle
+pub const tst_webrtc::mount::KLV_DC_LIMIT: u64
 pub mod tst_webrtc::packetize
 pub use tst_webrtc::packetize::RtpPayload
 pub struct tst_webrtc::packetize::H264Packetizer
@@ -277,6 +278,7 @@ pub tst_webrtc::stats::MountStats::frames_pushed: u64
 pub tst_webrtc::stats::MountStats::keyframe_flag_mismatch: u64
 pub tst_webrtc::stats::MountStats::keyframes_pushed: u64
 pub tst_webrtc::stats::MountStats::klv_dc_dropped_oversize: u64
+pub tst_webrtc::stats::MountStats::klv_dc_dropped_viewer: u64
 pub tst_webrtc::stats::MountStats::klv_dc_messages_sent: u64
 pub tst_webrtc::stats::MountStats::klv_records_dropped_unbound: u64
 pub tst_webrtc::stats::MountStats::klv_records_pushed: u64
@@ -337,6 +339,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::stats::ServerStats
 #[non_exhaustive] pub struct tst_webrtc::stats::SessionStats
 pub tst_webrtc::stats::SessionStats::connected_for: core::option::Option<core::time::Duration>
 pub tst_webrtc::stats::SessionStats::dc_messages: u64
+pub tst_webrtc::stats::SessionStats::dc_messages_dropped: u64
 pub tst_webrtc::stats::SessionStats::ice_state: tst_webrtc::stats::IceState
 pub tst_webrtc::stats::SessionStats::id: alloc::string::String
 pub tst_webrtc::stats::SessionStats::mount_path: alloc::string::String
@@ -571,6 +574,7 @@ pub tst_webrtc::MountStats::frames_pushed: u64
 pub tst_webrtc::MountStats::keyframe_flag_mismatch: u64
 pub tst_webrtc::MountStats::keyframes_pushed: u64
 pub tst_webrtc::MountStats::klv_dc_dropped_oversize: u64
+pub tst_webrtc::MountStats::klv_dc_dropped_viewer: u64
 pub tst_webrtc::MountStats::klv_dc_messages_sent: u64
 pub tst_webrtc::MountStats::klv_records_dropped_unbound: u64
 pub tst_webrtc::MountStats::klv_records_pushed: u64
@@ -631,6 +635,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::stats::ServerStats
 #[non_exhaustive] pub struct tst_webrtc::SessionStats
 pub tst_webrtc::SessionStats::connected_for: core::option::Option<core::time::Duration>
 pub tst_webrtc::SessionStats::dc_messages: u64
+pub tst_webrtc::SessionStats::dc_messages_dropped: u64
 pub tst_webrtc::SessionStats::ice_state: tst_webrtc::stats::IceState
 pub tst_webrtc::SessionStats::id: alloc::string::String
 pub tst_webrtc::SessionStats::mount_path: alloc::string::String
@@ -672,6 +677,7 @@ impl core::marker::Unpin for tst_webrtc::clock::SystemClock
 impl core::marker::UnsafeUnpin for tst_webrtc::clock::SystemClock
 impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::clock::SystemClock
 impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::clock::SystemClock
+pub const tst_webrtc::KLV_DC_LIMIT: u64
 pub trait tst_webrtc::Clock: core::marker::Send + core::marker::Sync + 'static
 pub fn tst_webrtc::Clock::now(&self) -> std::time::Instant
 impl tst_webrtc::clock::Clock for tst_webrtc::clock::SystemClock

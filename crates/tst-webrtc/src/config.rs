@@ -54,6 +54,12 @@ pub struct MountConfig {
     /// What happens to audio.
     pub audio: AudioPolicy,
     /// Where KLV records travel.
+    ///
+    /// A data-channel record is at most
+    /// [`KLV_DC_LIMIT`](crate::KLV_DC_LIMIT) bytes (131 059). A record
+    /// above the viewer's advertised `max-message-size` (64 KiB when the
+    /// browser states none) is browser-dependent: it may be dropped for
+    /// that viewer, and the drop is counted.
     pub klv: KlvCarriage,
     /// The most KLV bytes carried in SEI per access unit (1 to 1 MiB).
     pub sei_budget_bytes: u32,

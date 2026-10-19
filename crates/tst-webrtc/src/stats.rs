@@ -42,8 +42,13 @@ pub struct MountStats {
     /// KLV messages sent on viewers' data channels.
     pub klv_dc_messages_sent: u64,
     /// KLV records refused because they exceed the data-channel message
-    /// limit.
+    /// limit ([`KLV_DC_LIMIT`](crate::KLV_DC_LIMIT)).
     pub klv_dc_dropped_oversize: u64,
+    /// KLV messages dropped for one viewer: its queue was full, or its data
+    /// channel refused or failed the write (a full send buffer, a message
+    /// above the browser's `max-message-size`, a closed channel). The video
+    /// behind such a message is sent regardless.
+    pub klv_dc_dropped_viewer: u64,
     /// Audio frames forwarded to viewers.
     pub audio_frames_pushed: u64,
     /// Audio frames discarded by the mount's audio policy.
@@ -113,8 +118,11 @@ pub struct SessionStats {
     pub plis: u64,
     /// KLV messages sent on the viewer's data channel.
     pub dc_messages: u64,
-    /// Packets dropped because the viewer's queue was full.
+    /// RTP payloads dropped because the viewer's queue was full.
     pub packets_dropped_queue_full: u64,
+    /// KLV messages dropped for the viewer: its queue was full, or its data
+    /// channel refused or failed the write.
+    pub dc_messages_dropped: u64,
 }
 
 /// The ICE connection state of a viewer session.
@@ -152,6 +160,8 @@ pub(crate) struct MountCounters {
     /// Written by the media thread.
     pub(crate) klv_dc_messages_sent: AtomicU64,
     pub(crate) klv_dc_dropped_oversize: AtomicU64,
+    /// Written by the media thread.
+    pub(crate) klv_dc_dropped_viewer: AtomicU64,
     /// Written once audio passthrough forwards frames.
     pub(crate) audio_frames_pushed: AtomicU64,
     pub(crate) audio_frames_dropped: AtomicU64,
@@ -188,6 +198,7 @@ impl MountCounters {
             klv_sei_dropped_oversize: r(&self.klv_sei_dropped_oversize),
             klv_dc_messages_sent: r(&self.klv_dc_messages_sent),
             klv_dc_dropped_oversize: r(&self.klv_dc_dropped_oversize),
+            klv_dc_dropped_viewer: r(&self.klv_dc_dropped_viewer),
             audio_frames_pushed: r(&self.audio_frames_pushed),
             audio_frames_dropped: r(&self.audio_frames_dropped),
             plis_received: r(&self.plis_received),

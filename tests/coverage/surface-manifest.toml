@@ -4511,6 +4511,24 @@ bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC 
 scenario_ids = []
 tier = "A"
 
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::KLV_DC_LIMIT"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
+item = "tst_webrtc::mount::KLV_DC_LIMIT"
+owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 [[exempt]]
 item = "tst_webrtc::mount::MountHandle::for_test"
 reason = "#[doc(hidden)] test seam: a mount driven without a server, with the receiving end of its media queue; not a supported API"
