@@ -3,8 +3,8 @@
 The classes of CI failure the project currently tolerates with a rerun, so
 that a rerun on a release candidate can be checked against a published list
 rather than taken on trust. A failure that matches no row is a finding,
-never a rerun. A class leaves this table when its fix lands; the fixing PR
-is the CHANGELOG's record and a recurrence after it is a regression.
+never a rerun. A class leaves this table when its fix lands; the CHANGELOG
+is the record of the fix and a recurrence after it is a regression.
 
 **How a row is used.** Before rerunning a red job, confirm two things: the
 failure matches the row's symptom, and the change under test cannot reach
@@ -38,22 +38,22 @@ and `environmental` entries in `tests/coverage/skip-ledger.toml`
 
 ## Closed classes
 
-A recurrence of any of these is a regression. Read the fixing PR before
-touching the test.
+A recurrence of any of these is a regression. Read the CHANGELOG entry of
+the release that shipped the fix before touching the test.
 
-| Class | Fixed by | What changed |
+| Class | Shipped in | What changed |
 |---|---|---|
-| Windows `tcps://` close ends the peer read `Broken` instead of `CleanEof` | PR #287 | `tst-tcp` drains unread TLS records before the `close_notify` |
-| macOS transparent-proxy order test and `tst-rtp oom_guard` | PR #184 | the harness and the test's guard, root-caused |
-| Interop `rtsp-serve` "bind address in use" | PR #246 | `free_port` probes the protocol the cell binds |
-| macOS keepalive count, `accept_timeout` upper bound, tst-c reconnect `conntimeo` | PR #329 | the assertions measure the right quantity with a margin |
-| Interop `es-klv` KLV digest mismatch | PR #342 | an aligner tick-rounding defect; a mismatch now names the loss site |
-| Python exit code 134 after a passing suite | PR #346 | a worker re-taking the GIL after finalisation; the job dumps a core on recurrence |
-| `raw_rtsp` fixture read timeout under a sanitizer | PR #365 | the fixture's timeouts scale with `TST_TEST_TIMEOUT_SCALE` |
-| Windows `client_relearns_after_a_genuine_quiet_period` recv deadline | PR #366 | a bounded retry of the reconnect datagram |
-| Python GIL-probe workload and throughput floors | PR #368 | every probe's workload is three times the minimum |
-| Linux thread-count probe right after `join()` | PR #370 | the probe polls the task directory for up to 2 s |
-| ASan leg hangs with a thread parked in libsrt's receive | PR #373 | the exit test's child runs with `detect_leaks=0`; LeakSanitizer's stop-the-world does not return past a parked receive |
+| Windows `tcps://` close ends the peer read `Broken` instead of `CleanEof` | 0.7.0 | `tst-tcp` drains unread TLS records before the `close_notify` |
+| macOS transparent-proxy order test and `tst-rtp oom_guard` | 0.7.0 | the harness and the test's guard, root-caused |
+| Interop `rtsp-serve` "bind address in use" | 0.7.0 | `free_port` probes the protocol the cell binds |
+| macOS keepalive count, `accept_timeout` upper bound, tst-c reconnect `conntimeo` | 0.8.0 | the assertions measure the right quantity with a margin |
+| Interop `es-klv` KLV digest mismatch | 0.8.0 | an aligner tick-rounding defect; a mismatch now names the loss site |
+| Python exit code 134 after a passing suite | 0.8.0 | a worker re-taking the GIL after finalisation; the job dumps a core on recurrence |
+| `raw_rtsp` fixture read timeout under a sanitizer | unreleased (0.9.0) | the fixture's timeouts scale with `TST_TEST_TIMEOUT_SCALE` |
+| Windows `client_relearns_after_a_genuine_quiet_period` recv deadline | unreleased (0.9.0) | a bounded retry of the reconnect datagram |
+| Python GIL-probe workload and throughput floors | unreleased (0.9.0) | every probe's workload is three times the minimum |
+| Linux thread-count probe right after `join()` | unreleased (0.9.0) | the probe polls the task directory for up to 2 s |
+| ASan leg hangs with a thread parked in libsrt's receive | unreleased (0.9.0) | the exit test's child runs with `detect_leaks=0`; LeakSanitizer's stop-the-world does not return past a parked receive |
 
 A sanitizer-job red whose tree has not changed is compared against the
 nightly toolchain hash of the last green run before any code bisect; the
