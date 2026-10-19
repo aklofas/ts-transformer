@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # url-keys: the URL key table in docs/reference/conventions.md is written from
-# the key tables that drive the seven URL parsers (tst_udp, tst_tcp, tst_rist,
-# tst_hls, tst_srt, tst_rtp). This rail fails, with a unified diff, when the
+# the key tables that drive the eight URL parsers (tst_udp, tst_tcp, tst_rist,
+# tst_hls, tst_srt, tst_rtp, tst_webrtc). This rail fails, with a unified diff, when the
 # block between the print-url-keys markers differs from a fresh render.
 #
 # Regenerate: cargo run -p tst-binding-gen --bin print-url-keys -- --write

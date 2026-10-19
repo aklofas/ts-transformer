@@ -19,6 +19,7 @@ tst-tcp      = { path = "../tst-tcp" }
 tst-rist     = { path = "../tst-rist" }
 tst-rtp      = { path = "../tst-rtp" }
 tst-hls      = { path = "../tst-hls" }
+tst-webrtc   = { path = "../tst-webrtc" }
 
 [dev-dependencies]
 secrecy = { workspace = true }

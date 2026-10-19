@@ -132,6 +132,35 @@ impl core::marker::Unpin for tst_webrtc::error::WhepServerError
 impl core::marker::UnsafeUnpin for tst_webrtc::error::WhepServerError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::error::WhepServerError
 impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::error::WhepServerError
+pub mod tst_webrtc::url
+pub struct tst_webrtc::url::WhepUrl
+pub tst_webrtc::url::WhepUrl::addr: core::net::ip_addr::IpAddr
+pub tst_webrtc::url::WhepUrl::advertise: core::option::Option<core::net::ip_addr::IpAddr>
+pub tst_webrtc::url::WhepUrl::cert: core::option::Option<alloc::string::String>
+pub tst_webrtc::url::WhepUrl::cors_origin: alloc::string::String
+pub tst_webrtc::url::WhepUrl::key: core::option::Option<alloc::string::String>
+pub tst_webrtc::url::WhepUrl::max_viewers: u64
+pub tst_webrtc::url::WhepUrl::media_port: u16
+pub tst_webrtc::url::WhepUrl::port: u16
+pub tst_webrtc::url::WhepUrl::tls: bool
+pub tst_webrtc::url::WhepUrl::token: core::option::Option<alloc::string::String>
+impl tst_webrtc::url::WhepUrl
+pub fn tst_webrtc::url::WhepUrl::parse(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
+impl core::clone::Clone for tst_webrtc::url::WhepUrl
+pub fn tst_webrtc::url::WhepUrl::clone(&self) -> tst_webrtc::url::WhepUrl
+impl core::cmp::Eq for tst_webrtc::url::WhepUrl
+impl core::cmp::PartialEq for tst_webrtc::url::WhepUrl
+pub fn tst_webrtc::url::WhepUrl::eq(&self, &tst_webrtc::url::WhepUrl) -> bool
+impl core::fmt::Debug for tst_webrtc::url::WhepUrl
+pub fn tst_webrtc::url::WhepUrl::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_webrtc::url::WhepUrl
+impl core::marker::Freeze for tst_webrtc::url::WhepUrl
+impl core::marker::Send for tst_webrtc::url::WhepUrl
+impl core::marker::Sync for tst_webrtc::url::WhepUrl
+impl core::marker::Unpin for tst_webrtc::url::WhepUrl
+impl core::marker::UnsafeUnpin for tst_webrtc::url::WhepUrl
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::url::WhepUrl
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::url::WhepUrl
 #[non_exhaustive] pub enum tst_webrtc::AudioPolicy
 pub tst_webrtc::AudioPolicy::Drop
 pub tst_webrtc::AudioPolicy::PassthroughOpus

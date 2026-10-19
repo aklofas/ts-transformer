@@ -2758,6 +2758,7 @@ dependencies = [
  "tst-srt",
  "tst-tcp",
  "tst-udp",
+ "tst-webrtc",
 ]
 
 [[package]]
