@@ -35,11 +35,43 @@ set -euo pipefail
 export SRT_FORCE_VENDORED=1
 
 # The OSS-Fuzz base image pins its nightly through RUSTUP_TOOLCHAIN, which
-# takes precedence over the workspace's rust-toolchain.toml (the workspace's pinned stable
-# toolchain — no -Zsanitizer). Outside the image fall back to the local `nightly`. A
-# literal `cargo +nightly` would ignore the image's pin and auto-install
-# whatever nightly is current, so the toolchain is selected here instead.
+# takes precedence over the workspace's rust-toolchain.toml (the workspace's
+# pinned stable toolchain — no -Zsanitizer). Outside the image fall back to
+# the local `nightly`. A literal `cargo +nightly` would ignore the image's
+# pin and auto-install whatever nightly is current, so the toolchain is
+# selected here instead, and the image's pin is kept whenever it is new
+# enough.
 export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-nightly}"
+
+# rustc_older_than "<rustc --version line>" "<rust-version>": succeeds when
+# the toolchain's major.minor is below the required one, fails when it is
+# not, and exits 2 when either string does not parse.
+rustc_older_than() {
+  local have want
+  have=$(printf '%s\n' "$1" | sed -nE 's/^rustc ([0-9]+)\.([0-9]+)\..*/\1 \2/p')
+  want=$(printf '%s\n' "$2" | sed -nE 's/^([0-9]+)\.([0-9]+)(\.[0-9]+)?$/\1 \2/p')
+  if [ -z "$have" ] || [ -z "$want" ]; then
+    echo "ERROR: cannot compare rustc '$1' with rust-version '$2'" >&2
+    exit 2
+  fi
+  set -- $have $want
+  [ "$1" -lt "$3" ] || { [ "$1" -eq "$3" ] && [ "$2" -lt "$4" ]; }
+}
+
+# The image's nightly can fall behind the workspace's rolling rust-version,
+# and cargo then refuses every workspace crate. Only in that case switch to
+# the current nightly (cargo-fuzz builds no std, so the minimal profile is
+# enough); the switch is logged with both versions.
+required_rust=$(sed -nE 's/^rust-version[[:space:]]*=[[:space:]]*"([0-9.]+)".*/\1/p' Cargo.toml | head -1)
+selected_rustc=$(rustc --version)
+if rustc_older_than "$selected_rustc" "$required_rust"; then
+  echo "INFO: $RUSTUP_TOOLCHAIN is $selected_rustc, older than the workspace rust-version $required_rust; installing the current nightly"
+  rustup toolchain install nightly --profile minimal
+  export RUSTUP_TOOLCHAIN=nightly
+  echo "INFO: fuzz toolchain is now $(rustc --version)"
+else
+  echo "INFO: fuzz toolchain $RUSTUP_TOOLCHAIN is $selected_rustc (workspace rust-version $required_rust)"
+fi
 
 # cargo-fuzz target dir (per cargo-fuzz convention).
 TARGET_DIR=target/x86_64-unknown-linux-gnu/release
