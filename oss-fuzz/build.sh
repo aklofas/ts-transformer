@@ -35,8 +35,8 @@ set -euo pipefail
 export SRT_FORCE_VENDORED=1
 
 # The OSS-Fuzz base image pins its nightly through RUSTUP_TOOLCHAIN, which
-# takes precedence over the workspace's rust-toolchain.toml (stable 1.85 —
-# no -Zsanitizer). Outside the image fall back to the local `nightly`. A
+# takes precedence over the workspace's rust-toolchain.toml (the workspace's pinned stable
+# toolchain — no -Zsanitizer). Outside the image fall back to the local `nightly`. A
 # literal `cargo +nightly` would ignore the image's pin and auto-install
 # whatever nightly is current, so the toolchain is selected here instead.
 export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-nightly}"

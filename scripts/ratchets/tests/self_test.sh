@@ -683,8 +683,8 @@ ntb_meta net_loopy; printf 'filter = "binary(/^net_/)"\n' > "$tmp/ntb/nextest.to
 # ---- MSRV consistency (scripts/check/repo/msrv-consistency.sh) ----
 MSRV="$DIR/../check/repo/msrv-consistency.sh"; v=9.99
 ms_copy() {
-    rm -rf "$tmp/ms"; mkdir -p "$tmp/ms/docs/languages" "$tmp/ms/docs/reference" "$tmp/ms/docs/start" "$tmp/ms/.github/workflows" "$tmp/ms/embedded/scripts/check" "$tmp/ms/scripts" "$tmp/ms/crates/foo"
-    for p in rust-toolchain.toml Cargo.toml README.md docs/languages/rust.md docs/reference/compatibility.md docs/start/quickstart.md .github/workflows/ci.yml; do cp "$REPO/$p" "$tmp/ms/$p"; done
+    rm -rf "$tmp/ms"; mkdir -p "$tmp/ms/docs/languages" "$tmp/ms/docs/reference" "$tmp/ms/docs/start" "$tmp/ms/.github/workflows" "$tmp/ms/embedded/scripts/check" "$tmp/ms/scripts/interop" "$tmp/ms/crates/foo"
+    for p in rust-toolchain.toml Cargo.toml CONTRIBUTING.md README.md docs/languages/rust.md docs/reference/compatibility.md docs/start/quickstart.md scripts/interop/README.md .github/workflows/ci.yml; do cp "$REPO/$p" "$tmp/ms/$p"; done
     printf '[package]\nname = "foo"\nrust-version.workspace = true\n' > "$tmp/ms/crates/foo/Cargo.toml"
 }
 ms() { MSRV_ROOT="$tmp/ms" bash "$MSRV"; }

@@ -687,7 +687,7 @@ librist, clang / libclang for bindgen — and the rtsp-publish leg needs
 ```bash
 git clone --recurse-submodules https://github.com/aklofas/ts-transformer.git
 cd ts-transformer
-curl https://sh.rustup.rs -sSf | sh -s -- -y   # if rustup is missing; the repo pins 1.85
+curl https://sh.rustup.rs -sSf | sh -s -- -y   # if rustup is missing; the repo pins 1.93
 sudo apt install -y jq python3 build-essential cmake meson ninja-build clang libclang-dev \
   gstreamer1.0-tools gstreamer1.0-plugins-bad gstreamer1.0-rtsp
 SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop

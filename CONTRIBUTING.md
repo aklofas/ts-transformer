@@ -9,8 +9,9 @@ the per-module stability tiers. Security reports go through
 
 ## Toolchain
 
-`rust-toolchain.toml` pins Rust 1.85; `cargo` inside the workspace picks it
-up via rustup. The native libraries build from vendored submodules
+`rust-toolchain.toml` pins Rust 1.93; `cargo` inside the workspace picks it
+up via rustup. The pin follows a rolling rule: stable minus six releases,
+re-pinned at each minor release. The native libraries build from vendored submodules
 (`git submodule update --init --recursive`): libsrt and mbedTLS via
 `cmake`, librist via `meson` + `ninja`. `SRT_FORCE_VENDORED=1
 RIST_FORCE_VENDORED=1` skips the `pkg-config` probe so the build matches

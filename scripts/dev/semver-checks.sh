@@ -18,7 +18,7 @@
 #   or only reports what the declared bump forbids; "minor" makes it list every
 #   break since the tag.
 # +stable: cargo-semver-checks 0.51 needs rustdoc JSON newer than the pinned
-#   1.85 toolchain produces, so it runs under the stable toolchain (the tag's
+#   toolchain produces, so it runs under the stable toolchain (the tag's
 #   tree is compiled with it too). Fine for an informational report.
 #
 # Baseline tree: a detached worktree of the tag under <out-dir>/baseline with the

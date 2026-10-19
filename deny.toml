@@ -51,7 +51,7 @@ ignore = [
     # time 0.3.41 (dev-dependency only, via rcgen — self-signed test cert
     # generation in tst-rtp/tst-tcp dev-deps, never shipped). The fix (>=0.3.47)
     # requires rustc 1.88 (`cargo update` reports "requires Rust 1.88.0"),
-    # breaking the workspace's pinned 1.85 MSRV (rust-toolchain.toml) — bumping
+    # breaking the pinned MSRV (rust-toolchain.toml) — bumping
     # the toolchain is its own decision, out of scope for a rails/CI-hygiene
     # WP. The advisory's DoS is a stack-exhaustion bug in RFC 2822 DATE
     # parsing; rcgen only ever calls time's formatting/construction path to

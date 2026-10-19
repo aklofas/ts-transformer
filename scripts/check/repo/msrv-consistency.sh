@@ -15,10 +15,12 @@ ROOT="${MSRV_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 stated() { # <path> TAB <ERE with @V@ for the version> TAB <min occurrences>
   printf '%s\t%s\t%s\n' \
     'Cargo.toml'                      '^rust-version[[:space:]]*=[[:space:]]*"@V@"' 1 \
+    'CONTRIBUTING.md'                 'pins Rust @V@;'                              1 \
     'README.md'                       'MSRV(: |-)@V@'                               2 \
     'docs/languages/rust.md'          '(Rust \*\*@V@\*\*|auto-uses @V@ via rustup)'   2 \
     'docs/reference/compatibility.md' 'MSRV \*\*@V@\*\*'                            1 \
-    'docs/start/quickstart.md'        '(Rust @V@\+|pins to @V@ )'                   2
+    'docs/start/quickstart.md'        '(Rust @V@\+|pins to @V@ )'                   2 \
+    'scripts/interop/README.md'       'the repo pins @V@'                           1
 }
 # A toolchain version written where the channel must be read instead.
 FORBIDDEN='(RUSTUP_TOOLCHAIN|toolchain|rust-version):[[:space:]]*"?[0-9]+\.[0-9]+|--toolchain [0-9]+\.[0-9]+|toolchain install [0-9]+\.[0-9]+|cargo \+[0-9]+\.[0-9]+|Install Rust [0-9]+\.[0-9]+|dtolnay/rust-toolchain@[0-9]+\.[0-9]+'

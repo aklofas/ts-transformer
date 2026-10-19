@@ -90,8 +90,8 @@ pub(crate) async fn build_multicast_send_socket(
             })?;
         }
         SocketAddr::V6(_) => {
-            // Tokio's UdpSocket doesn't expose set_multicast_hops_v6 on
-            // Rust 1.85 stable. The std-socket UDP path uses libc::setsockopt for this;
+            // Tokio's UdpSocket doesn't expose set_multicast_hops_v6 at
+            // the workspace MSRV. The std-socket UDP path uses libc::setsockopt for this;
             // we replicate via std::os::fd::AsRawFd.
             #[cfg(unix)]
             {
@@ -129,8 +129,8 @@ pub(crate) async fn build_multicast_send_socket(
     }
 
     // Optional interface binding. IPv4 only for v1. Stable std/tokio
-    // don't expose `set_multicast_if_v4` on tokio's UdpSocket in Rust
-    // 1.85 (tracking issue rust-lang/rust#92517) — the std-socket UDP path uses libc
+    // don't expose `set_multicast_if_v4` on tokio's UdpSocket at the
+    // workspace MSRV (tracking issue rust-lang/rust#92517) — the std-socket UDP path uses libc
     // setsockopt for the same knob on std::net::UdpSocket; we mirror it
     // here on tokio's wrapper via AsRawFd.
     if let Some(iface_str) = iface {
