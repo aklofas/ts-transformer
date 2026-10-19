@@ -643,9 +643,10 @@ thread or descriptor leak is visible before anyone writes a verdict for it.
   `srt-proxy`, `srt-recv`, `rist-send`, `rist-proxy`, `rist-recv`, plus
   `rtsp-publish-recv` and `rtsp-publish-publisher` unless the run passed
   `--no-rtsp-publish`, and `rtsp-publish-es-recv` and
-  `rtsp-publish-es-publisher` unless it passed `--no-rtsp-publish-es`; the RSS sampler is killed by `soak.sh` itself on
-  schedule and is never recorded here), written at teardown, including any worker that
-  died inside the supervisor's end-of-run grace window. `report soak
+  `rtsp-publish-es-publisher` unless it passed `--no-rtsp-publish-es`; the
+  RSS sampler is killed by `soak.sh` itself on schedule and is never
+  recorded here), written at teardown, including any worker that died
+  inside the supervisor's end-of-run grace window. `report soak
   --exits <file>` is likewise mandatory.
 
 Those two files feed three new verdicts in `soak-results.json`:

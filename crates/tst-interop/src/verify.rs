@@ -189,9 +189,11 @@ struct PlacementState {
     awaiting_video: bool,
     /// Records (index, PTS) seen before any video of their generation.
     held: Vec<(u64, i64)>,
-    /// Backward PTS steps excused so far, per PID — each PID may spend
-    /// one per boundary seen ([`PlacementState::boundaries_seen`]).
-    resets_excused_by_pid: BTreeMap<u16, u64>,
+    /// Per PID, the [`PlacementState::boundaries_seen`] value its last
+    /// sample was judged under. A PID's first sample after a boundary
+    /// (mark below the current count) either spends that boundary's reset
+    /// credit, by stepping back, or forfeits it, by stepping forward.
+    boundary_judged: BTreeMap<u16, u64>,
     /// A `PtsAnomaly` per PID, waiting for the sample it was queued ahead
     /// of: (delta, the issue's text for a failure line).
     pending_pts: BTreeMap<u16, (i64, String)>,
@@ -239,7 +241,7 @@ impl PlacementState {
             last_klv: None,
             awaiting_video: false,
             held: Vec::new(),
-            resets_excused_by_pid: BTreeMap::new(),
+            boundary_judged: BTreeMap::new(),
             pending_pts: BTreeMap::new(),
             pending_pcr: None,
             rejected: None,
@@ -263,18 +265,35 @@ impl PlacementState {
         self.metrics.generations.saturating_sub(1) + u64::from(self.awaiting_video)
     }
 
-    /// A backward PTS step on `pid`: excused when `pid` has stepped back
-    /// fewer times than the oracle has seen boundaries.
-    fn excuse_reset(&mut self, pid: u16) -> bool {
+    /// Judge one sample on `pid` (`backward` = it stepped back from the
+    /// PID's last PTS) and say whether the step is an excused reset. The
+    /// credit belongs to the boundary that granted it: only the PID's
+    /// FIRST sample after a boundary may spend it, and a forward step there
+    /// forfeits it. A PID first seen after a boundary never had one, so
+    /// every later backward step on it fails, as does a second step back
+    /// before the next boundary.
+    fn excuse_reset(&mut self, pid: u16, backward: bool) -> bool {
         let boundaries = self.boundaries_seen();
-        let used = self.resets_excused_by_pid.entry(pid).or_insert(0);
-        if *used < boundaries {
-            *used += 1;
+        let first_after_boundary = self
+            .boundary_judged
+            .insert(pid, boundaries)
+            .is_some_and(|judged| judged < boundaries);
+        if backward && first_after_boundary {
             self.metrics.generation_resets_excused += 1;
             true
         } else {
             false
         }
+    }
+
+    /// Whether a backward step on `pid` could still be excused: its first
+    /// sample after an accepted boundary is still to come, or the oracle
+    /// can still accept another boundary.
+    fn reset_possible(&self, pid: u16) -> bool {
+        self.boundary_judged
+            .get(&pid)
+            .is_some_and(|&judged| judged < self.boundaries_seen())
+            || self.boundary_allowed()
     }
 
     fn reject(&mut self, text: String) {
@@ -285,8 +304,8 @@ impl PlacementState {
     /// failing it at once. Held only while the budget could still excuse
     /// it, and only:
     ///
-    /// - a `PtsAnomaly` on a PID that has stepped back fewer than
-    ///   `expected_generations - 1` times, judged when that PID's next sample
+    /// - a `PtsAnomaly` on a PID whose step back could still be excused
+    ///   ([`PlacementState::reset_possible`]), judged when that PID's next sample
     ///   arrives (the demuxer queues it just ahead): excused iff that
     ///   sample is an excused backward step whose signed 33-bit size is
     ///   exactly the anomaly's delta;
@@ -300,10 +319,8 @@ impl PlacementState {
     /// A second issue of the same kind while one is held displaces it, and
     /// the displaced one fails. Returns whether `issue` was held.
     fn hold_timing_issue(&mut self, pid: u16, issue: &NonConformantIssue) -> bool {
-        let pid_budget_left = self.resets_excused_by_pid.get(&pid).copied().unwrap_or(0) + 1
-            < self.expect.expected_generations;
         match *issue {
-            NonConformantIssue::PtsAnomaly { delta } if pid_budget_left => {
+            NonConformantIssue::PtsAnomaly { delta } if self.reset_possible(pid) => {
                 if let Some((_, old)) = self.pending_pts.insert(pid, (delta, issue.to_string())) {
                     self.reject(old);
                 }
@@ -1235,22 +1252,26 @@ impl Tally {
     ///
     /// Under a KLV placement budget of two or more generations, a backward
     /// step the budget absorbs is a declared generation reset, not a
-    /// failure — see [`PlacementState::excuse_reset`]: every PID may step
-    /// back once per boundary the placement oracle has accepted, so a PID
-    /// stepping back with no boundary behind it still fails. The
+    /// failure — see [`PlacementState::excuse_reset`]: a PID's first sample
+    /// after a boundary the placement oracle accepted may step back once,
+    /// so a PID that did not reset at that boundary still fails. The
     /// `PtsAnomaly` the demuxer queued for that same step is settled here
     /// too ([`PlacementState::hold_timing_issue`]).
     fn record_pts(&mut self, pid: u16, pts: Pts90khz, at: u64) {
         let now = pts.as_ticks() as u64;
+        let last = self.last_pts_by_pid.get(&pid).copied();
+        let backward = last.is_some_and(|last| !pts_is_monotonic_step(now, last));
+        // Every sample is judged, forward ones included: a forward first
+        // sample after a boundary forfeits that boundary's credit.
+        let excused = self
+            .placement
+            .as_mut()
+            .is_some_and(|pl| pl.excuse_reset(pid, backward));
         let mut excused_step = None;
-        if let Some(&last) = self.last_pts_by_pid.get(&pid)
-            && !pts_is_monotonic_step(now, last)
+        if let Some(last) = last
+            && backward
         {
-            if self
-                .placement
-                .as_mut()
-                .is_some_and(|pl| pl.excuse_reset(pid))
-            {
+            if excused {
                 excused_step = Some(pts_signed_step(now, last));
             } else if !self
                 .attribution
@@ -4472,37 +4493,47 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_backward_step_on_a_pid_without_a_reset_is_not_excused() {
-        // Video and KLV run on; an audio PID steps back by 2 s. A budget
-        // of two generations leaves it a failure: no boundary was seen.
-        const AUDIO_PID: u16 = 0x0102;
-        let audio = |pts: i64| DemuxEvent::Sample {
-            stream: StreamId {
-                pid: AUDIO_PID,
-                kind: StreamKind::Audio(AudioCodec::Aac),
-                program_number: PROGRAM,
-            },
+    const AUDIO_PID: u16 = 0x0102;
+
+    fn audio_stream() -> StreamId {
+        StreamId {
+            pid: AUDIO_PID,
+            kind: StreamKind::Audio(AudioCodec::Aac),
+            program_number: PROGRAM,
+        }
+    }
+
+    fn audio_event(pts: i64) -> DemuxEvent {
+        DemuxEvent::Sample {
+            stream: audio_stream(),
             pts: Pts90khz::new(pts),
             dts: None,
             payload: SamplePayload::Audio {
                 codec: AudioCodec::Aac,
                 frames: SharedBytes::from(vec![0u8; 4]),
             },
-        };
+        }
+    }
+
+    /// An audio access unit at `pts` that steps back `step` ticks from
+    /// the PID's last one, with the `PtsAnomaly` the demuxer queues ahead.
+    fn audio_step_back(t: &mut Tally, pts: i64, step: i64) {
+        t.feed(&DemuxEvent::NonConformant {
+            stream: audio_stream(),
+            issue: NonConformantIssue::PtsAnomaly { delta: -step },
+        });
+        t.feed(&audio_event(pts));
+    }
+
+    #[test]
+    fn a_backward_step_on_a_pid_without_a_reset_is_not_excused() {
+        // Video and KLV run on; an audio PID steps back by 2 s. A budget
+        // of two generations leaves it a failure: no boundary was seen.
         let mut t = Tally::new();
         t.set_klv_placement(placement_expect(2));
         feed_replayed_generations(&mut t, 1, 60);
-        t.feed(&audio(180_000));
-        t.feed(&DemuxEvent::NonConformant {
-            stream: StreamId {
-                pid: AUDIO_PID,
-                kind: StreamKind::Audio(AudioCodec::Aac),
-                program_number: PROGRAM,
-            },
-            issue: NonConformantIssue::PtsAnomaly { delta: -180_000 },
-        });
-        t.feed(&audio(0));
+        t.feed(&audio_event(180_000));
+        audio_step_back(&mut t, 0, 180_000);
         let r = finish_baseline(t, VerifyMode::Lossy, &WireSummary::default());
         assert!(!r.metrics.pts_monotonic, "{:?}", r.failures);
         assert!(nonconformant_failure(&r).is_some(), "{:?}", r.failures);
@@ -4511,6 +4542,43 @@ mod tests {
             (m.generation_resets_excused, m.timing_anomalies_excused),
             (0, 0)
         );
+    }
+
+    #[test]
+    fn a_reset_credit_belongs_to_the_boundary_that_granted_it() {
+        // An accepted boundary resets video and KLV. An audio PID that ran
+        // forward across it (its first sample after the boundary steps
+        // forward), or that first appears after it, did not reset there:
+        // a later 2 s step back mid-generation must fail.
+        for audio_before_boundary in [true, false] {
+            let mut t = Tally::new();
+            t.set_klv_placement(placement_expect(2));
+            if audio_before_boundary {
+                t.feed(&audio_event(1_000_000));
+            }
+            feed_replayed_generations(&mut t, 2, 60);
+            t.feed(&audio_event(1_100_000));
+            t.feed(&audio_event(1_103_000));
+            audio_step_back(&mut t, 923_000, 180_000);
+            let r = finish_baseline(t, VerifyMode::Lossy, &WireSummary::default());
+            let case = format!("audio_before_boundary={audio_before_boundary}");
+            assert!(!r.metrics.pts_monotonic, "{case}: {:?}", r.failures);
+            assert_eq!(
+                nonconformant_failure(&r).map(String::as_str),
+                Some(
+                    "nonconformant_event: 1 event(s), first: PTS anomaly: delta=-180000 (90 kHz ticks)"
+                ),
+                "{case}: {:?}",
+                r.failures
+            );
+            // The boundary's own video + KLV steps and anomalies stay excused.
+            let m = r.metrics.klv_placement.expect("placement block");
+            assert_eq!(
+                (m.generation_resets_excused, m.timing_anomalies_excused),
+                (2, 3),
+                "{case}"
+            );
+        }
     }
 
     #[test]
