@@ -11,34 +11,19 @@ independent) and exposes two helpers:
   given scenario id; calls pytest.skip with a clear message if the id is not
   in the manifest or the directory is missing.
 
-TOML parsing: uses `tomllib` (stdlib since Python 3.11).  The project CI
-uses Python 3.12, and the project minimum is Python 3.10.  Python 3.10 does
-not have `tomllib`; users on 3.10 must `pip install tomli` separately.  The
-import below falls back to `tomli` on 3.10/3.11-pre, and skips all scenario
-tests cleanly if neither is available, so the test suite never hard-fails
-on a missing optional dep.
+TOML parsing: uses `tomllib`, which is in the standard library on every
+supported Python (the minimum is 3.11).
 """
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 # ── TOML parser ──────────────────────────────────────────────────────────────
-# tomllib is stdlib in 3.11+; on 3.10 fall back to the third-party tomli.
-# If neither is available the fixture functions below raise a pytest.skip so
-# the scenario tests are skipped without failing the suite.
-try:
-    if sys.version_info >= (3, 11):
-        import tomllib as _toml
-    else:
-        import tomli as _toml  # type: ignore[import-not-found]
-    _TOML_AVAILABLE = True
-except ImportError:
-    _TOML_AVAILABLE = False
+import tomllib as _toml
 
 
 # ── Path resolution ───────────────────────────────────────────────────────────
@@ -69,13 +54,8 @@ def scenarios_dir() -> Path:
 def _load_manifest() -> list[dict[str, Any]]:
     """Parse scenarios.toml and return the list of scenario entries.
 
-    Raises pytest.skip if tomllib/tomli is unavailable or the file is missing.
+    Raises pytest.skip if the file is missing.
     """
-    if not _TOML_AVAILABLE:
-        pytest.skip(
-            "TOML parser unavailable: Python 3.11+ tomllib is built-in; "
-            "on Python 3.10 run `pip install tomli`."
-        )
     manifest_path = scenarios_dir() / "scenarios.toml"
     if not manifest_path.is_file():
         pytest.skip(f"scenarios.toml not found at {manifest_path}")

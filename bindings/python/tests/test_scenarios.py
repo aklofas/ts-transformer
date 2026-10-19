@@ -80,7 +80,7 @@ from __future__ import annotations
 from tstrans import shells
 import hashlib
 import json
-import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -103,7 +103,7 @@ from tstrans.mpegts import (
     VideoCodec,
 )
 
-from conftest import _TOML_AVAILABLE, require_scenario, scenarios_dir
+from conftest import require_scenario, scenarios_dir
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -840,18 +840,12 @@ def _scenario_ids() -> list[str]:
     Deliberately does NOT delegate to conftest's ``_load_manifest``: that helper
     calls ``pytest.skip`` on failure, which would silently empty the
     parametrization rather than emit a loud sentinel."""
-    if not _TOML_AVAILABLE:
-        return ["__error__:toml-parser-unavailable"]
     manifest_path = scenarios_dir() / "scenarios.toml"
     if not manifest_path.is_file():
         return [f"__error__:manifest-not-found:{manifest_path}"]
     try:
-        if sys.version_info >= (3, 11):
-            import tomllib as _toml
-        else:
-            import tomli as _toml  # type: ignore[import-not-found]
         with open(manifest_path, "rb") as fh:
-            data = _toml.load(fh)
+            data = tomllib.load(fh)
         ids = [e["id"] for e in data.get("scenario", [])]
     except Exception as exc:  # noqa: BLE001 — surfaced as a loud test failure below
         return [f"__error__:manifest-parse-failed:{exc!r}"]
