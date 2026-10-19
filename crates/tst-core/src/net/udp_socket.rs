@@ -29,8 +29,8 @@ pub fn bind_udp_socket(local: SocketAddr) -> io::Result<UdpSocket> {
 /// `SO_REUSEPORT` on macOS/BSD) before bind so that multiple receivers on the
 /// same host can both join the same `group:port`.
 ///
-/// Uses `socket2` for the reuse options (not available on stable std in Rust
-/// 1.85). The resulting socket has the same cancel-poll read/write timeouts as
+/// Uses `socket2` for the reuse options (not available on stable
+/// std at the workspace MSRV). The resulting socket has the same cancel-poll read/write timeouts as
 /// [`bind_udp_socket`].
 pub fn bind_udp_socket_multicast(local: SocketAddr) -> io::Result<UdpSocket> {
     use socket2::{Domain, Protocol, SockAddr, Socket, Type};
@@ -146,7 +146,7 @@ fn warn_if_clamped(opt: &str, sysctl: &str, requested: usize, effective: usize) 
 ///
 /// IPv4 TTL uses stable `std::net::UdpSocket::set_multicast_ttl_v4`.
 /// IPv6 hop limit and IPv4 `IP_MULTICAST_IF` are not exposed on stable
-/// std as of Rust 1.85 — we drop to `libc::setsockopt` on Unix and
+/// std at the workspace MSRV — we drop to `libc::setsockopt` on Unix and
 /// surface `io::ErrorKind::Unsupported` on non-Unix platforms when an
 /// IPv6 mcast hop or `iface=` knob is requested.
 pub fn apply_multicast_send_knobs(
@@ -172,7 +172,7 @@ pub fn apply_multicast_send_knobs(
 pub const MCAST_DEFAULT_TTL: u8 = 8;
 
 /// Set `IPV6_MULTICAST_HOPS` via raw `setsockopt`. Stable std::net does
-/// not expose this in Rust 1.85 (tracking issue rust-lang/rust#92517).
+/// not expose this at the workspace MSRV (tracking issue rust-lang/rust#92517).
 #[cfg(unix)]
 pub fn set_multicast_hops_v6(socket: &UdpSocket, hops: u8) -> io::Result<()> {
     use std::os::fd::AsRawFd;
@@ -241,7 +241,7 @@ pub fn apply_multicast_iface(socket: &UdpSocket, group: IpAddr, iface: &str) -> 
 }
 
 /// Set `IP_MULTICAST_IF` via raw `setsockopt`. Stable std::net does not
-/// expose this in Rust 1.85 (tracking issue rust-lang/rust#92517).
+/// expose this at the workspace MSRV (tracking issue rust-lang/rust#92517).
 #[cfg(unix)]
 pub fn set_multicast_if_v4(socket: &UdpSocket, addr: Ipv4Addr) -> io::Result<()> {
     use std::os::fd::AsRawFd;

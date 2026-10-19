@@ -118,7 +118,7 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
                         // in-session `fetch_sub` couldn't cover).
                         // Hand-rolled compare-exchange loop rather than
                         // `fetch_update`: that helper is deprecated on nightly in
-                        // favor of `try_update`, which the pinned 1.85 toolchain
+                        // favor of `try_update`, which the pinned toolchain
                         // does not have, and the loop is all `fetch_update` does.
                         let mut n = state.active_sessions.load(Ordering::Relaxed);
                         let reserved = loop {

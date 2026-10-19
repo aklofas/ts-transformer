@@ -39,7 +39,7 @@ tokio-util   = { version = "0.7", optional = true }
 # Single facade for diagnostics workspace-wide.
 tracing      = { version = "0.1", default-features = false, features = ["std"] }
 
-# Cross-platform setsockopt paths std doesn't expose on 1.85: SO_KEEPALIVE
+# Cross-platform setsockopt paths std doesn't expose at the workspace MSRV: SO_KEEPALIVE
 # with an idle time on the RTSP client's control socket (`?tcp_keepalive=`),
 # and IP_MULTICAST_IF on Windows for the RTSP multicast-mount send socket
 # (Unix multicast uses the libc path below). Kept unconditional — it's a
@@ -47,7 +47,7 @@ tracing      = { version = "0.1", default-features = false, features = ["std"] }
 socket2      = { workspace = true }
 
 # Raw setsockopt for multicast knobs not exposed on stable std::net::UdpSocket
-# in Rust 1.85: IPV6_MULTICAST_HOPS and IP_MULTICAST_IF. Unix-only; the RTP
+# at the workspace MSRV: IPV6_MULTICAST_HOPS and IP_MULTICAST_IF. Unix-only; the RTP
 # transport returns IfaceUnsupported on non-Unix platforms.
 [target.'cfg(unix)'.dependencies]
 libc       = { workspace = true }
