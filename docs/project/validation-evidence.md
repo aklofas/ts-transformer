@@ -932,9 +932,8 @@ leg's receiver and are harness defects:
   receiver at 1350 s. Its CPU counters kept advancing on that tick, and it
   ran to the end of the run.
 
-[The analysis of both](/docs/project/2026-10-09-soak-rtsp-publish-srt-audio-attribution.md)
-covers the injection, the sampler rows and the fix shape for each. The
-RIST leg passed every gating verdict.
+The maintainer's analysis of both covers the injection, the sampler rows
+and the fix shape for each. The RIST leg passed every gating verdict.
 
 The `rtsp-publish` leg's figures:
 

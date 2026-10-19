@@ -923,6 +923,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   streaming the old one, which left that fanout orphaned: the session and the
   shutdown registry named a mount the stream was not serving.
 
+### Docs — project pages
+
+- `docs/project/1.0-exit-criteria.md` records the maintainer's answers to its
+  seven open questions (Provisional modules, WebRTC and UniFFI, `DemuxFromFile`,
+  the soak tree, the flake ledger, the surface manifest, severity) in a
+  Decisions section and folds them into the criteria; the page is no longer
+  marked a draft.
+- `docs/project/` holds evergreen pages only: the one-hour publisher soak
+  attribution note (a dated investigation) moved to the maintainer's notes,
+  and the one-row `ci-health.csv` ledger, which nothing read, is removed
+  (the weekly `ci-health` workflow's artifact is the record).
+- `docs/project/benchmarks.md`'s introduction describes the 2026-10-06 run,
+  whose 24-hour hold completed, instead of the earlier run whose hold did
+  not.
+
 ---
 
 ## [0.8.0] — 2026-10-14
@@ -1013,8 +1028,8 @@ The integrator-facing changes at a glance (full detail in the sections below):
   and all four sanitizer jobs are green on the same tree
   ([run 38505046089](https://github.com/aklofas/ts-transformer/actions/runs/38505046089)).
   The publisher role's one-hour `rtsp-publish` soak leg passed every verdict
-  it owns (the run's three FAILs are the SRT leg's harness oracles, analysed
-  in `docs/project/2026-10-09-soak-rtsp-publish-srt-audio-attribution.md`).
+  it owns (the run's three FAILs are the SRT leg's harness oracles; the
+  attribution is in the maintainer's notes).
   ClusterFuzzLite's first one-hour batch over the 36 fuzz targets found no
   crash, after its first pull-request run had found and we had fixed a
   harness oracle defect. Full figures in
@@ -1416,8 +1431,8 @@ The integrator-facing changes at a glance (full detail in the sections below):
   - The three FAILs are the SRT receiver's and are harness defects. Its
     audio prefix oracle cannot excuse an ADTS byte the corruption tap
     flipped, which fails its verify and its exit status. One empty RSS
-    sample was counted as a process exit. The analysis is in
-    `docs/project/2026-10-09-soak-rtsp-publish-srt-audio-attribution.md`.
+    sample was counted as a process exit. The attribution is in the
+    maintainer's notes.
 
   Full figures are in `docs/project/validation-evidence.md`.
 

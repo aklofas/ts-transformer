@@ -14,7 +14,7 @@
 #
 # Usage:
 #   scripts/dev/ci-health.sh                              # report to stdout
-#   scripts/dev/ci-health.sh --append docs/project/ci-health.csv
+#   scripts/dev/ci-health.sh --append ci-health-week.csv        # the weekly workflow's artifact
 #   CI_HEALTH_DAYS=30 scripts/dev/ci-health.sh
 #   CI_HEALTH_RUNS_JSON=fixture.json scripts/dev/ci-health.sh   # no API
 #
@@ -82,7 +82,7 @@ rerun_jobs="$(sort "$tmp/rerun-jobs.txt" | uniq -c | sort -rn | awk '{c=$1; $1="
 # endpoint is never queried, so an empty $rerun_jobs means "not computed", not
 # "zero reruns" — say so instead of printing "none".
 # The CSV field itself stays the raw (possibly empty) $rerun_jobs — a prose
-# string there would break machine parsing of docs/project/ci-health.csv.
+# string there would break machine parsing of the appended CSV.
 if [ -n "${CI_HEALTH_RUNS_JSON:-}" ]; then
   rerun_jobs_display="unavailable (offline mode — no jobs API query)"
 else

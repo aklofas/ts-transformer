@@ -3,9 +3,9 @@ name: ci-health
 # Weekly CI health snapshot: rerun rate per job,
 # wedges, first-attempt failures over the last 7 days, from the Actions
 # REST API. Output = step summary + a CSV artifact (90-day retention). The
-# in-tree ledger docs/project/ci-health.csv is appended by the maintainer
-# (`bash scripts/dev/ci-health.sh --append docs/project/ci-health.csv`) at
-# closeouts — this workflow deliberately keeps `contents: read` (no bot
+# CSV artifact is the only record (no in-tree copy: the one-row ledger
+# docs/project/ci-health.csv was removed 2026-10-19 as unread) — this
+# workflow deliberately keeps `contents: read` (no bot
 # commits to main; deps-advisory.yml is the only workflow with a write scope,
 # `issues: write`, and it never commits either).
 

@@ -1,11 +1,11 @@
 # Benchmarks + ceilings
 
-This page publishes the measured sweep of the stress run of 2026-10-03
-(tree `3a3f964f`, one AWS `c7i.2xlarge`) and the steady-state figures of
-the 72-hour 0.7.0 release-candidate soak (tree `e86dd9ea`). The stress
-run's 24-hour hold did not finish, so no 24-hour hold verdict is published
-yet. The figures are from one host each; use measured results from your
-target system when choosing a deployment size.
+This page publishes the measured sweep and the 24-hour hold of the stress
+run of 2026-10-06 (tree `9bb728e1`, one AWS `c7i.2xlarge`), the sweep of
+the earlier 2026-10-03 run (tree `3a3f964f`, whose hold ended early), and
+the steady-state figures of the 72-hour 0.7.0 release-candidate soak (tree
+`e86dd9ea`). The figures are from one host each; use measured results from
+your target system when choosing a deployment size.
 
 This page answers a deployment-planning question the interop matrix and the
 soak evidence don't: how big a system can I build on one machine before
