@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -72,14 +74,27 @@ class ClassLookupLoaderTest {
     @Test
     void typedExceptionArrivesInAFreshJvmWhoseFirstThreadRefuses() throws Exception {
         String java = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java";
-        Process p = new ProcessBuilder(java, "-Xcheck:jni", "-cp", System.getProperty("java.class.path"),
-                        FreshJvm.class.getName())
-                .redirectErrorStream(true)
-                .start();
-        assertTrue(p.waitFor(60, TimeUnit.SECONDS), "child JVM did not finish");
-        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertEquals(0, p.exitValue(), out);
-        assertTrue(out.contains("TYPED TRUNCATED_RBSP"), out);
+        // The child writes to a file, not a pipe, so its output can never
+        // block it while this side waits.
+        Path log = Files.createTempFile("tstrans-fresh-jvm", ".log");
+        try {
+            Process p = new ProcessBuilder(java, "-Xcheck:jni", "-cp", System.getProperty("java.class.path"),
+                            FreshJvm.class.getName())
+                    .redirectErrorStream(true)
+                    .redirectOutput(log.toFile())
+                    .start();
+            boolean finished = p.waitFor(60, TimeUnit.SECONDS);
+            if (!finished) {
+                // Never leave the child running on the runner.
+                p.destroyForcibly().waitFor(10, TimeUnit.SECONDS);
+            }
+            String out = new String(Files.readAllBytes(log), StandardCharsets.UTF_8);
+            assertTrue(finished, "child JVM did not finish: " + out);
+            assertEquals(0, p.exitValue(), out);
+            assertTrue(out.contains("TYPED TRUNCATED_RBSP"), out);
+        } finally {
+            Files.deleteIfExists(log);
+        }
     }
 
     /**

@@ -288,18 +288,31 @@ fn ssrc_from(fill: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>) -> u3
     let mut buf = [0u8; 4];
     match fill(&mut buf) {
         Ok(()) => u32::from_be_bytes(buf),
-        Err(_) => 0,
+        Err(e) => {
+            tracing::warn!(error = %e, "getrandom failed; using zero for RTP randomness field");
+            0
+        }
     }
 }
 
-/// Random initial RTP sequence per RFC 3550 §5.1.
+/// Random initial RTP sequence per RFC 3550 §5.1. Falls back to zero,
+/// like [`rand_ssrc`], when the fill fails.
 ///
 /// `pub(crate)` so that `handle_play` can seed a fresh per-peer initial
 /// sequence number for each unicast subscriber.
 pub(crate) fn rand_seq() -> u16 {
+    seq_from(getrandom::fill)
+}
+
+fn seq_from(fill: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>) -> u16 {
     let mut buf = [0u8; 2];
-    let _ = getrandom::fill(&mut buf);
-    u16::from_be_bytes(buf)
+    match fill(&mut buf) {
+        Ok(()) => u16::from_be_bytes(buf),
+        Err(e) => {
+            tracing::warn!(error = %e, "getrandom failed; using zero for RTP randomness field");
+            0
+        }
+    }
 }
 
 /// Build the wire bytes for a server-initiated `ANNOUNCE` request
@@ -1559,5 +1572,19 @@ mod rand_ssrc_tests {
             Ok(())
         };
         assert_eq!(ssrc_from(ok), 0x0102_0304);
+    }
+
+    #[test]
+    fn seq_is_zero_on_a_failed_fill() {
+        let failing = |buf: &mut [u8]| {
+            buf.fill(0xff);
+            Err(getrandom::Error::UNSUPPORTED)
+        };
+        assert_eq!(seq_from(failing), 0);
+        let ok = |buf: &mut [u8]| {
+            buf.copy_from_slice(&[1, 2]);
+            Ok(())
+        };
+        assert_eq!(seq_from(ok), 0x0102);
     }
 }
