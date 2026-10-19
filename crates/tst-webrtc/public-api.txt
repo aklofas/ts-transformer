@@ -89,8 +89,8 @@ pub tst_webrtc::error::PushError::InvalidAccessUnit
 pub tst_webrtc::error::PushError::InvalidAccessUnit::detail: alloc::string::String
 pub tst_webrtc::error::PushError::InvalidAudioFrame
 pub tst_webrtc::error::PushError::KlvTooLarge
-pub tst_webrtc::error::PushError::KlvTooLarge::len: usize
-pub tst_webrtc::error::PushError::KlvTooLarge::limit: usize
+pub tst_webrtc::error::PushError::KlvTooLarge::len: u64
+pub tst_webrtc::error::PushError::KlvTooLarge::limit: u64
 pub tst_webrtc::error::PushError::WrongMountKind
 impl core::error::Error for tst_webrtc::error::PushError
 impl core::fmt::Debug for tst_webrtc::error::PushError
@@ -196,8 +196,8 @@ pub tst_webrtc::PushError::InvalidAccessUnit
 pub tst_webrtc::PushError::InvalidAccessUnit::detail: alloc::string::String
 pub tst_webrtc::PushError::InvalidAudioFrame
 pub tst_webrtc::PushError::KlvTooLarge
-pub tst_webrtc::PushError::KlvTooLarge::len: usize
-pub tst_webrtc::PushError::KlvTooLarge::limit: usize
+pub tst_webrtc::PushError::KlvTooLarge::len: u64
+pub tst_webrtc::PushError::KlvTooLarge::limit: u64
 pub tst_webrtc::PushError::WrongMountKind
 impl core::error::Error for tst_webrtc::error::PushError
 impl core::fmt::Debug for tst_webrtc::error::PushError

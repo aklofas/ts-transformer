@@ -21,6 +21,7 @@ SRC_DIRS=(
     "crates/tst-core/src"
     "crates/tst-pipeline/src"
     "crates/tst-srt/src"
+    "crates/tst-webrtc/src"
 )
 
 # Allow patterns (these are OK to use usize in public surface).
