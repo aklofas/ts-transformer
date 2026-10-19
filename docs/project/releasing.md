@@ -92,7 +92,10 @@ each in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
      workspace version sweep, and bump the suffix independently whenever the
      vendored `crates/mbedtls-src/vendor/mbedtls` submodule itself advances.
 2. **`main` is green** — `ci`, `jvm-jar`, and `python-wheels` all passing on
-   the commit you intend to tag.
+   the commit you intend to tag. Every rerun on that commit matches a row of
+   the [CI flake ledger](/docs/project/ci-flakes.md), and the latest
+   `ci-health` run's `ALERT` lines all have a row there; one that does not is
+   a finding to settle before the tag.
 3. **Dry-run the wheels** (recommended):
    `gh workflow run python-wheels.yml` builds every wheel + sdist and skips
    publish (publish is tag-gated). Confirm all legs are green, and watch for a

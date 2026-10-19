@@ -937,6 +937,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `docs/project/benchmarks.md`'s introduction describes the 2026-10-06 run,
   whose 24-hour hold completed, instead of the earlier run whose hold did
   not.
+- New `docs/project/ci-flakes.md`: the CI failure classes a rerun is allowed
+  for (job, symptom, cause, first and last sighting, the rule for the next
+  sighting) and the closed classes whose recurrence is a regression. The
+  pre-tag checklist requires every rerun on the candidate and every weekly
+  `ci-health` `ALERT` to match a row.
 
 ---
 
