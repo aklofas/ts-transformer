@@ -45,7 +45,7 @@ secrecy       = "0.10"
 socket2       = "0.6"
 tracing       = { version = "0.1", default-features = false, features = ["std"] }
 proptest      = "1"
-criterion     = "0.5"
+criterion     = "0.8"
 
 # The lint floor every member inherits (`[lints] workspace = true`). Stricter
 # lints are listed at "allow" and are raised one per change.

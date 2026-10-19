@@ -8,7 +8,8 @@
 //! Run: `cargo bench -p tst-core`. Locks current numbers as baseline; later
 //! runs report regressions.
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{Muxer, MuxerConfig};
 

@@ -9,7 +9,8 @@
 //! - `pairer_realtime_1000`: eager emission; no lookahead buffer.
 //! - `pairer_buffered_1000`: 100 ms buffered window; bidirectional match.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use std::time::Duration;
 use tst_core::mpegts::au_cell::CellFragmentIndication;
 use tst_core::mpegts::common::Pts90khz;

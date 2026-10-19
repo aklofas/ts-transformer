@@ -15,7 +15,8 @@
 //! Run: `cargo bench -p tst-core --bench demuxer_ingest`
 //!      `RUSTFLAGS="-C target-cpu=native" cargo bench -p tst-core --bench demuxer_ingest -- --quick`
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::Demuxer;
 use tst_core::mpegts::mux::{Muxer, MuxerConfig};
