@@ -40,7 +40,7 @@ Optional extras:
 pip install 'tstrans[pandas]'   # pandas DataFrame adapters + NumPy snapshot views
 ```
 
-**Python 3.10 or later is required.** To work from a source checkout,
+**Python 3.11 or later is required.** To work from a source checkout,
 build the wheel with `maturin` or run `maturin develop` in `bindings/python/`.
 
 The compiled extension is imported as `tstrans._native`. Public API lives

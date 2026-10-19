@@ -106,9 +106,9 @@ against the same bare-metal targets. The `Managed*` reconnect wrappers,
 | Rust edition | 2024, MSRV **1.93** (`rust-toolchain.toml`). The pin follows a rolling rule: the stable release six behind current at the time of each minor release, re-pinned in that release's version sweep. |
 | `libsrt` (Haivision) | **v1.5.7** (`crates/srt-sys/vendor/srt`, git submodule) |
 | `mbedTLS` | **v3.6.7** LTS (`crates/mbedtls-src/vendor/mbedtls`, git submodule) |
-| `bindgen` | 0.72 (FFI; `srt-sys` build, published as `tstrans-srt-sys`) |
-| `cbindgen` | 0.29 (C header generation; `tst-c` build) |
-| `cc` | 1.0 (compiles + links the C smoke test in `tst-c` integration tests) |
+| `bindgen` | 0.73 (FFI; the `tstrans-srt-sys` and `tstrans-rist-sys` builds) |
+| `cbindgen` | 0.29.2 (C header generation; `tst-c` build; held below 0.29.3, whose C23 enum syntax would leave the C11 header) |
+| `cc` | 1.9 (the `tstrans-rist-sys` build) |
 | `cmake` | upstream-compatible; `pkg-config` discovery first, vendored fallback |
 
 The vendored builds disable libsrt's `ENABLE_HEAVY_LOGGING` (Debug+static
