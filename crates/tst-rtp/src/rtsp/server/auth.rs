@@ -299,14 +299,14 @@ fn unescape_quoted_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
-        if c == '\\' {
-            if let Some(escaped) = chars.next() {
-                out.push(escaped);
-                continue;
-            }
-            // Trailing lone backslash (malformed input) — keep it as-is
-            // rather than silently dropping a byte.
+        if c == '\\'
+            && let Some(escaped) = chars.next()
+        {
+            out.push(escaped);
+            continue;
         }
+        // Trailing lone backslash (malformed input) — keep it as-is
+        // rather than silently dropping a byte.
         out.push(c);
     }
     out

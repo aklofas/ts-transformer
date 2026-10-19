@@ -1095,22 +1095,21 @@ pub fn resolve<'a>(reg: &[Entry], schema: &'a RecordSchema) -> Result<Vec<Fld<'a
             FieldMark::Custom => (Some(map_custom(f.ty).map_err(ctx)?), true),
             _ => (Some(map(f.ty, &names).map_err(ctx)?), false),
         };
-        if let Some(t) = &ty {
-            if let Some(n) = renamed_record(reg, t) {
-                return Err(ctx(format!(
-                    "`{n}` has another name in the hosts, so no record can hold it"
-                )));
-            }
+        if let Some(t) = &ty
+            && let Some(n) = renamed_record(reg, t)
+        {
+            return Err(ctx(format!(
+                "`{n}` has another name in the hosts, so no record can hold it"
+            )));
         }
         let mut py_default = None;
         let mut java_default = None;
-        if let Some(Ty::Opt(inner)) = &ty {
-            if inner.custom_prim().is_some() {
-                return Err(ctx(
-                    "a primitive custom type cannot be optional: a Java primitive has no null"
-                        .into(),
-                ));
-            }
+        if let Some(Ty::Opt(inner)) = &ty
+            && inner.custom_prim().is_some()
+        {
+            return Err(ctx(
+                "a primitive custom type cannot be optional: a Java primitive has no null".into(),
+            ));
         }
         if let Some(t) = ty.as_ref().filter(|_| !native) {
             if t.is_opt() {

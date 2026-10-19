@@ -292,7 +292,7 @@ fn rtsp_publish_mount_end_to_end() {
     assert_eq!(test_last_error_code(), TstError::RtspMount as i32);
 
     // The on-demand queue is empty (the flag is off): a timeout, not an error.
-    let mut out: *mut tstrans::TstRtspPublishMount = 0x1 as *mut _;
+    let mut out: *mut tstrans::TstRtspPublishMount = std::ptr::dangling_mut();
     let rc = unsafe { tst_rtsp_server_next_publisher(server, 100, &mut out) };
     assert_eq!(
         rc,
@@ -505,7 +505,7 @@ fn rtsp_publish_next_publisher_on_demand_and_stop_wakes_parked_call() {
     let (tx, rx) = std::sync::mpsc::channel();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let parked = std::thread::spawn(move || {
-        let mut out: *mut tstrans::TstRtspPublishMount = 0x1 as *mut _;
+        let mut out: *mut tstrans::TstRtspPublishMount = std::ptr::dangling_mut();
         ready_tx.send(()).unwrap();
         let rc = unsafe { tst_rtsp_server_next_publisher(addr as *mut _, 30_000, &mut out) };
         // The last error is per thread: read it here, where the call ran.

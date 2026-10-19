@@ -105,7 +105,6 @@ impl super::demuxer::Demuxer {
             let stream = self.pcr_stream_id(pkt.pid);
             self.queue_nonconformant(stream, NonConformantIssue::PcrMalformed { kind });
         }
-        // Nested if-let (not let-chain) for MSRV 1.85 — let-chains require 1.88.
         if let Some(now) = pkt.pcr_27mhz {
             // A time base belongs to a program, and a program names the ONE
             // PID that carries it (`PCR_PID`, H.222.0 §2.4.4.9). A PCR on any
@@ -272,10 +271,10 @@ impl super::demuxer::Demuxer {
             // check possible. A duplicate flag cannot be set without a cc
             // (they clear together), so there is nothing to clear.
         }
-        if pkt.discontinuity_indicator {
-            if let Some(stream) = self.lookup_stream(pkt.pid) {
-                self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
-            }
+        if pkt.discontinuity_indicator
+            && let Some(stream) = self.lookup_stream(pkt.pid)
+        {
+            self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
         }
         let state = self.pid_state_mut(pkt.pid);
         state.cc = Some(pkt.continuity_counter);

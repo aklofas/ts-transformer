@@ -13,7 +13,7 @@ Rust core; C, Python, and JVM bindings; `no_std` embedded support.
 [![PyPI](https://img.shields.io/pypi/v/tstrans.svg)](https://pypi.org/project/tstrans/)
 [![Maven Central](https://img.shields.io/maven-central/v/org.tstrans/tstrans-jvm.svg)](https://central.sonatype.com/artifact/org.tstrans/tstrans-jvm)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![MSRV: 1.85](https://img.shields.io/badge/MSRV-1.85-blue.svg)](rust-toolchain.toml)
+[![MSRV: 1.93](https://img.shields.io/badge/MSRV-1.93-blue.svg)](rust-toolchain.toml)
 
 | Language | Status | Start here |
 |---|---|---|

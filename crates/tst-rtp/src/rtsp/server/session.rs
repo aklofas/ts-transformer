@@ -336,13 +336,12 @@ impl ServerSessionState {
     /// token afterwards.
     pub(crate) fn retire_fanout(&mut self) {
         self.peer_cancel.cancel();
-        if let Role::Reader(r) = &mut self.role {
-            if let Playback::Playing { fanout, .. } =
+        if let Role::Reader(r) = &mut self.role
+            && let Playback::Playing { fanout, .. } =
                 std::mem::replace(&mut r.playback, Playback::Paused)
-            {
-                self.retired_fanouts.retain(|h| !h.is_finished());
-                self.retired_fanouts.push(fanout);
-            }
+        {
+            self.retired_fanouts.retain(|h| !h.is_finished());
+            self.retired_fanouts.push(fanout);
         }
     }
 }

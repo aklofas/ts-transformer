@@ -679,7 +679,7 @@ fn resync_mode_hunts_forward_and_records_each_resync() {
             bad.extend_from_slice(pkt);
         }
         if i == 20 {
-            bad.extend(std::iter::repeat(0x55u8).take(37));
+            bad.extend(std::iter::repeat_n(0x55u8, 37));
         }
     }
     let mut r = Reader::new();

@@ -129,13 +129,13 @@ impl Source {
                 if cancel.is_cancelled() {
                     return Err(TransportError::ExplicitClose);
                 }
-                if let Some(d) = deadline {
-                    if Instant::now() >= d {
-                        return Err(TransportError::Backpressure {
-                            msg: "recv deadline elapsed".to_string(),
-                            errno_code: None,
-                        });
-                    }
+                if let Some(d) = deadline
+                    && Instant::now() >= d
+                {
+                    return Err(TransportError::Backpressure {
+                        msg: "recv deadline elapsed".to_string(),
+                        errno_code: None,
+                    });
                 }
                 let received = match source_pin.as_mut() {
                     None => socket.recv(scratch),
@@ -170,13 +170,13 @@ impl Source {
                 if cancel.is_cancelled() {
                     return Err(TransportError::ExplicitClose);
                 }
-                if let Some(d) = deadline {
-                    if Instant::now() >= d {
-                        return Err(TransportError::Backpressure {
-                            msg: "recv deadline elapsed".to_string(),
-                            errno_code: None,
-                        });
-                    }
+                if let Some(d) = deadline
+                    && Instant::now() >= d
+                {
+                    return Err(TransportError::Backpressure {
+                        msg: "recv deadline elapsed".to_string(),
+                        errno_code: None,
+                    });
                 }
                 // Same cancel-poll cadence as the UDP path. recv_timeout
                 // wakes on either a value arriving or the timeout
@@ -868,5 +868,5 @@ impl Drop for RtpRecvTransport {
 /// reach the demuxer. A failed check ticks `malformed_packets`.
 #[inline]
 pub(crate) fn is_valid_mp2t_payload(payload: &[u8]) -> bool {
-    !payload.is_empty() && payload.len() % 188 == 0 && payload[0] == 0x47
+    !payload.is_empty() && payload.len().is_multiple_of(188) && payload[0] == 0x47
 }

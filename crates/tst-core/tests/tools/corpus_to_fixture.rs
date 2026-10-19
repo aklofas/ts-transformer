@@ -158,10 +158,10 @@ fn run(args: &Args) -> Result<(), String> {
         if i < range_start || i >= range_end {
             continue;
         }
-        if let Some(filter_pid) = args.pid {
-            if extract_pid(chunk) != filter_pid {
-                continue;
-            }
+        if let Some(filter_pid) = args.pid
+            && extract_pid(chunk) != filter_pid
+        {
+            continue;
         }
         out_buf.extend_from_slice(chunk);
         copied += 1;
@@ -346,7 +346,7 @@ mod tests {
         for i in 0..packets {
             buf.push(0x47); // sync
             buf.extend_from_slice(&(i as u32).to_be_bytes());
-            buf.extend(std::iter::repeat(0xFF).take(TS_PACKET_SIZE - 5));
+            buf.extend(std::iter::repeat_n(0xFF, TS_PACKET_SIZE - 5));
         }
         let path = std::env::temp_dir().join(format!(
             "corpus_to_fixture_test_{}_{}.ts",
@@ -388,7 +388,7 @@ mod tests {
             buf.push((pid & 0xFF) as u8);
             // byte 3: scrambling=0, adaptation=01 (payload only), cc=0
             buf.push(0x10);
-            buf.extend(std::iter::repeat(0xFF).take(TS_PACKET_SIZE - 4));
+            buf.extend(std::iter::repeat_n(0xFF, TS_PACKET_SIZE - 4));
         }
         let path =
             std::env::temp_dir().join(format!("c2f_pid_test_{}_{}.ts", std::process::id(), tag));

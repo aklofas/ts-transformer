@@ -225,17 +225,16 @@ impl RistUrl {
         if let (Some(bw), Some(rm)) = (
             url.config.bandwidth_kbps,
             url.config.recovery_maxbitrate_kbps,
-        ) {
-            if bw != rm {
-                return Err(UrlError::BadQueryValue {
-                    key: "bandwidth".to_string(),
-                    value: bw.to_string(),
-                    detail: format!(
-                        "conflicts with recovery_maxbitrate={rm}; `bandwidth` is an alias of \
+        ) && bw != rm
+        {
+            return Err(UrlError::BadQueryValue {
+                key: "bandwidth".to_string(),
+                value: bw.to_string(),
+                detail: format!(
+                    "conflicts with recovery_maxbitrate={rm}; `bandwidth` is an alias of \
                          `recovery_maxbitrate` (librist recovery_maxbitrate) — give one, or equal values"
-                    ),
-                });
-            }
+                ),
+            });
         }
 
         match (url.aes_bits.take(), &mut url.config.encryption) {

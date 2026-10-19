@@ -206,7 +206,7 @@ fn build_pmt_section_at_least_3_ts_packets() -> Vec<u8> {
     for _ in 0..num_descs {
         sec.push(0xFF); // descriptor_tag (private)
         sec.push(desc_payload_len as u8); // descriptor_length
-        sec.extend(std::iter::repeat(0x00).take(desc_payload_len));
+        sec.extend(std::iter::repeat_n(0x00, desc_payload_len));
     }
 
     // CRC32 over the section body (table_id through last descriptor byte).

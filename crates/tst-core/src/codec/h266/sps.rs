@@ -529,15 +529,14 @@ fn walk_sps_body(
     let mut frame_rate: Option<Rational> = None;
     if ptl_dpb_hrd_present {
         let timing_hrd_params_present_flag = br.read_bool()?;
-        if timing_hrd_params_present_flag {
-            if let Some((num_units, time_scale)) =
+        if timing_hrd_params_present_flag
+            && let Some((num_units, time_scale)) =
                 walk_timing_hrd_parameters(br, max_sublayers_minus1)?
-            {
-                frame_rate = Some(Rational {
-                    num: time_scale,
-                    den: num_units,
-                });
-            }
+        {
+            frame_rate = Some(Rational {
+                num: time_scale,
+                den: num_units,
+            });
         }
     }
 
@@ -551,7 +550,7 @@ fn walk_sps_body(
         let payload_size_bytes = vui_payload_size_minus1 + 1;
         // §7.3.2.4: "while( !byte_aligned() ) sps_vui_alignment_zero_bit f(1)"
         // Consume zero-padding bits to reach the next byte boundary before VUI.
-        while br.position() % 8 != 0 {
+        while !br.position().is_multiple_of(8) {
             br.read_u(1)?;
         }
         // §7.3.2.21 vui_payload(payloadSize) reserves exactly 8 * payloadSize

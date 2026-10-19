@@ -64,7 +64,7 @@ pub fn build_adts_frame(sample_rate_index: u8, channel_config: u8, total_len: u3
     h[6] = 0b11_1111 << 2;
     let pad = total_len as usize - 7;
     let mut out = h;
-    out.extend(std::iter::repeat(0u8).take(pad));
+    out.extend(std::iter::repeat_n(0u8, pad));
     out
 }
 

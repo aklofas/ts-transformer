@@ -185,7 +185,7 @@ fn h265_sps_with_bit_depth_luma_minus8(bit_depth_luma_minus8: u32) -> Vec<u8> {
 
     // rbsp_trailing_bits: one '1' bit + zero padding to byte align
     bw.write(1, 1);
-    while bw.pos % 8 != 0 {
+    while !bw.pos.is_multiple_of(8) {
         bw.write(0, 1);
     }
 

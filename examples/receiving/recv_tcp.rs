@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(n) => {
                 file.write_all(&buf[..n])?;
                 total += n as u64;
-                if total % (1024 * 1024) == 0 {
+                if total.is_multiple_of(1024 * 1024) {
                     eprintln!("received {} MiB", total / (1024 * 1024));
                 }
             }

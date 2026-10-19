@@ -708,15 +708,15 @@ impl Drop for RtspClient {
         if let Some(t) = self.keepalive_thread.take() {
             let _ = t.join();
         }
-        if let Some(mut pump) = self.pump_state.take() {
-            if let Some(t) = pump.thread.take() {
-                let _ = t.join();
-            }
-            // The pump's RTCP `mpsc::Sender` is dropped along with the
-            // pump thread that just exited; the rtcp_rx end was returned
-            // upward at activate time and consumed by
-            // `RtpRecvTransport::from_mpsc_with_rtcp`.
+        if let Some(mut pump) = self.pump_state.take()
+            && let Some(t) = pump.thread.take()
+        {
+            let _ = t.join();
         }
+        // The pump's RTCP `mpsc::Sender` is dropped along with the
+        // pump thread that just exited; the rtcp_rx end was returned
+        // upward at activate time and consumed by
+        // `RtpRecvTransport::from_mpsc_with_rtcp`.
     }
 }
 

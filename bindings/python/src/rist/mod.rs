@@ -493,13 +493,13 @@ impl PyRistRecvTransport {
                         Err(TransportError::Backpressure { .. }) => {
                             // 100 ms poll window expired with no data.
                             // Check deadline if one is set; otherwise retry.
-                            if let Some(dl) = deadline {
-                                if std::time::Instant::now() >= dl {
-                                    return Err(TransportError::Backpressure {
-                                        msg: "recv timed out".into(),
-                                        errno_code: None,
-                                    });
-                                }
+                            if let Some(dl) = deadline
+                                && std::time::Instant::now() >= dl
+                            {
+                                return Err(TransportError::Backpressure {
+                                    msg: "recv timed out".into(),
+                                    errno_code: None,
+                                });
                             }
                             continue;
                         }

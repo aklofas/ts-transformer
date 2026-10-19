@@ -768,7 +768,7 @@ impl<T: Transport> Corrupter<T> {
     /// Mutate a whole push and return the bytes to put on the wire.
     fn transform(&mut self, msg: &[u8]) -> Vec<u8> {
         debug_assert!(
-            msg.len() % PKT == 0,
+            msg.len().is_multiple_of(PKT),
             "corruption tap expects whole TS packets, got {} bytes",
             msg.len()
         );

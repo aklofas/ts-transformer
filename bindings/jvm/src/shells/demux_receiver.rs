@@ -311,18 +311,15 @@ jni_native! {
                 );
                 // Fail-loud: capture the first callback exception as a GlobalRef; later
                 // per-packet errors are dropped. `nNext` drains + re-throws it.
-                if env.exception_check().unwrap_or(false) {
-                    if let Ok(exc) = env.exception_occurred() {
+                if env.exception_check().unwrap_or(false)
+                    && let Ok(exc) = env.exception_occurred() {
                         let _ = env.exception_clear();
-                        if let Ok(mut s) = slot.lock() {
-                            if s.is_none() {
-                                if let Ok(g) = env.new_global_ref(&exc) {
+                        if let Ok(mut s) = slot.lock()
+                            && s.is_none()
+                                && let Ok(g) = env.new_global_ref(&exc) {
                                     *s = Some(g);
                                 }
-                            }
-                        }
                     }
-                }
             }));
         });
         if let Err(state) = registered {

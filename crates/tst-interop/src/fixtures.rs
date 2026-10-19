@@ -116,7 +116,7 @@ pub fn video_au(codec: VideoCodec, frame_idx: u32) -> (Vec<u8>, bool) {
 /// private `realistic_slice_payload`) to the slice/tile-group NAL/OBU,
 /// giving the AU stream a real encoder's GOP size structure.
 pub fn video_au_sized(codec: VideoCodec, frame_idx: u32, mode: AuSizeMode) -> (Vec<u8>, bool) {
-    let keyframe = frame_idx % KEYFRAME_INTERVAL == 0;
+    let keyframe = frame_idx.is_multiple_of(KEYFRAME_INTERVAL);
     let extra = match mode {
         AuSizeMode::Compact => Vec::new(),
         AuSizeMode::Realistic { scale } => realistic_slice_payload(frame_idx, keyframe, scale),

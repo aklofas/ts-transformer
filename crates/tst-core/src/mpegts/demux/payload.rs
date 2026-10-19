@@ -40,12 +40,11 @@ pub fn split_nals(
             out.push(unit);
         }
     }
-    if let Some(&last) = starts.last() {
-        if let Some(unit) =
+    if let Some(&last) = starts.last()
+        && let Some(unit) =
             parse_one_nal(es_payload, last.data_start, bytes.len(), codec, &mut issues)
-        {
-            out.push(unit);
-        }
+    {
+        out.push(unit);
     }
     (out, issues)
 }

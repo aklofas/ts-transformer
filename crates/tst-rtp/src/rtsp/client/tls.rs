@@ -125,7 +125,7 @@ impl Read for TlsStream {
             self.conn.read_tls(&mut self.sock)?;
             self.conn
                 .process_new_packets()
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                .map_err(std::io::Error::other)?;
             pulled = true;
         }
     }

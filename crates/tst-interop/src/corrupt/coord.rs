@@ -111,13 +111,13 @@ fn parse_line(n: usize, line: &str) -> Result<Option<LogLine>, String> {
         return Ok(None);
     }
     let parsed: LogLine = serde_json::from_str(line).map_err(|e| format!("line {n}: {e}"))?;
-    if let LogLine::Header(h) = &parsed {
-        if h.tap_version != TAP_VERSION {
-            return Err(format!(
-                "line {n}: tap_version {} (this build reads {TAP_VERSION})",
-                h.tap_version
-            ));
-        }
+    if let LogLine::Header(h) = &parsed
+        && h.tap_version != TAP_VERSION
+    {
+        return Err(format!(
+            "line {n}: tap_version {} (this build reads {TAP_VERSION})",
+            h.tap_version
+        ));
     }
     Ok(Some(parsed))
 }

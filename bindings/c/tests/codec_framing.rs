@@ -149,7 +149,7 @@ fn annexb_to_length_prefixed_nal_too_large_for_prefix_leaves_out_len_untouched()
     // One 70,001-byte NAL: fine for a 4-byte length prefix, far too large
     // for a 2-byte one (max 65,535).
     let mut annexb = vec![0x00, 0x00, 0x00, 0x01, 0x65];
-    annexb.extend(std::iter::repeat(0xAA).take(70_000));
+    annexb.extend(std::iter::repeat_n(0xAA, 70_000));
 
     unsafe {
         let mut out_len: usize = 0xDEAD_BEEF; // sentinel — must survive

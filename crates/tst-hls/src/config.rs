@@ -123,14 +123,14 @@ impl HlsConfig {
         if self.segment_duration.is_zero() {
             return Some("segment_duration must be > 0".into());
         }
-        if let Some(cap) = self.max_segment_duration {
-            if cap < self.segment_duration {
-                return Some(format!(
-                    "max_segment_duration ({:.3}s) must be >= segment_duration ({:.3}s)",
-                    cap.as_secs_f64(),
-                    self.segment_duration.as_secs_f64(),
-                ));
-            }
+        if let Some(cap) = self.max_segment_duration
+            && cap < self.segment_duration
+        {
+            return Some(format!(
+                "max_segment_duration ({:.3}s) must be >= segment_duration ({:.3}s)",
+                cap.as_secs_f64(),
+                self.segment_duration.as_secs_f64(),
+            ));
         }
         if matches!(self.mode, HlsMode::Live) {
             if self.playlist_window == 0 {

@@ -380,10 +380,10 @@ fn drain_ready(
             break;
         }
         let Reverse(pkt) = heap.pop().expect("just peeked Some");
-        if let Some(high_water) = *max_sent_order {
-            if pkt.order_key < high_water {
-                stats.reordered += 1;
-            }
+        if let Some(high_water) = *max_sent_order
+            && pkt.order_key < high_water
+        {
+            stats.reordered += 1;
         }
         *max_sent_order = Some(max_sent_order.map_or(pkt.order_key, |m| m.max(pkt.order_key)));
         // Best-effort: a send failure here (e.g. destination
@@ -533,10 +533,10 @@ pub fn run(
     let mut buf = vec![0u8; BUF_SIZE];
 
     loop {
-        if let Some(dl) = deadline {
-            if Instant::now() >= dl {
-                break;
-            }
+        if let Some(dl) = deadline
+            && Instant::now() >= dl
+        {
+            break;
         }
         if stop
             .as_ref()
@@ -690,20 +690,20 @@ pub fn run(
             &mut max_sent_order,
         );
 
-        if let Some(path) = &stats_json {
-            if last_stats_write.elapsed() >= STATS_INTERVAL {
-                // A transient write failure (e.g. the containing
-                // directory got removed mid-soak) must not abort the
-                // relay itself — that would silently stop forwarding
-                // real traffic over a problem with an evidence
-                // side-channel. Log and keep relaying; the next
-                // interval (or the unconditional write at exit) gets
-                // another chance.
-                if let Err(e) = write_stats_atomic(path, &stats) {
-                    eprintln!("proxy: periodic stats write failed (continuing to relay): {e}");
-                }
-                last_stats_write = Instant::now();
+        if let Some(path) = &stats_json
+            && last_stats_write.elapsed() >= STATS_INTERVAL
+        {
+            // A transient write failure (e.g. the containing
+            // directory got removed mid-soak) must not abort the
+            // relay itself — that would silently stop forwarding
+            // real traffic over a problem with an evidence
+            // side-channel. Log and keep relaying; the next
+            // interval (or the unconditional write at exit) gets
+            // another chance.
+            if let Err(e) = write_stats_atomic(path, &stats) {
+                eprintln!("proxy: periodic stats write failed (continuing to relay): {e}");
             }
+            last_stats_write = Instant::now();
         }
     }
 

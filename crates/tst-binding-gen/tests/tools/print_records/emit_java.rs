@@ -17,7 +17,7 @@ use crate::typemap::{Fld, Sc, Ty, resolve};
 pub fn escape_javadoc(doc: &str, rename: &[(&str, &str)]) -> String {
     let doc = unlink(doc);
     let parts: Vec<&str> = doc.split('`').collect();
-    let out = if parts.len() % 2 == 0 {
+    let out = if parts.len().is_multiple_of(2) {
         html(&doc) // an unpaired backtick stays as written
     } else {
         let mut out = String::new();

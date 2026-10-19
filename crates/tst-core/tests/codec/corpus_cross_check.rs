@@ -85,11 +85,11 @@ fn ffprobe_video_stream(path: &Path) -> Option<(u32, u32, String, String)> {
 }
 
 fn run(case: &CorpusCase) {
-    if let Some(var) = case.env_gate {
-        if std::env::var(var).is_err() {
-            eprintln!("skipping (set {var}=1 to enable)");
-            return;
-        }
+    if let Some(var) = case.env_gate
+        && std::env::var(var).is_err()
+    {
+        eprintln!("skipping (set {var}=1 to enable)");
+        return;
     }
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(case.dir);
     if !dir.is_dir() {
@@ -171,12 +171,10 @@ fn parse_av1(dx: &mut Demuxer) -> Option<Parsed> {
                 },
             ..
         } = ev
-        {
-            if let VideoPayload::Obus(obus) =
+            && let VideoPayload::Obus(obus) =
                 split_video(&raw, VideoCodec::Av1, Av1CarriageMode::Mpeg2TsBinding).0
-            {
-                all_obus.extend(obus);
-            }
+        {
+            all_obus.extend(obus);
         }
     }
     if all_obus.is_empty() {
@@ -210,15 +208,15 @@ fn parse_h266(dx: &mut Demuxer) -> Option<Parsed> {
             else {
                 continue;
             };
-            if let Ok(sets) = h266::parse_parameter_sets(&nals) {
-                if let Some(sps) = sets.spses.first() {
-                    return Some(Parsed {
-                        width: sps.width,
-                        height: sps.height,
-                        profile: sps.profile_tier_level.general_profile_idc,
-                        level: Some(sps.profile_tier_level.general_level_idc),
-                    });
-                }
+            if let Ok(sets) = h266::parse_parameter_sets(&nals)
+                && let Some(sps) = sets.spses.first()
+            {
+                return Some(Parsed {
+                    width: sps.width,
+                    height: sps.height,
+                    profile: sps.profile_tier_level.general_profile_idc,
+                    level: Some(sps.profile_tier_level.general_level_idc),
+                });
             }
         }
     }
@@ -241,27 +239,27 @@ fn parse_local(dx: &mut Demuxer) -> Option<Parsed> {
         };
         match codec {
             VideoCodec::H264 => {
-                if let Ok(ps) = h264::parse_parameter_sets(&nals) {
-                    if let Some(sps) = ps.sps_by_id.values().next() {
-                        return Some(Parsed {
-                            width: sps.width,
-                            height: sps.height,
-                            profile: sps.profile_idc,
-                            level: Some(sps.level_idc),
-                        });
-                    }
+                if let Ok(ps) = h264::parse_parameter_sets(&nals)
+                    && let Some(sps) = ps.sps_by_id.values().next()
+                {
+                    return Some(Parsed {
+                        width: sps.width,
+                        height: sps.height,
+                        profile: sps.profile_idc,
+                        level: Some(sps.level_idc),
+                    });
                 }
             }
             VideoCodec::H265 => {
-                if let Ok(ps) = h265::parse_parameter_sets(&nals) {
-                    if let Some(sps) = ps.sps_by_id.values().next() {
-                        return Some(Parsed {
-                            width: sps.width,
-                            height: sps.height,
-                            profile: sps.general_profile_idc,
-                            level: Some(sps.general_level_idc),
-                        });
-                    }
+                if let Ok(ps) = h265::parse_parameter_sets(&nals)
+                    && let Some(sps) = ps.sps_by_id.values().next()
+                {
+                    return Some(Parsed {
+                        width: sps.width,
+                        height: sps.height,
+                        profile: sps.general_profile_idc,
+                        level: Some(sps.general_level_idc),
+                    });
                 }
             }
             // H.266 and AV1 have their own cases above.

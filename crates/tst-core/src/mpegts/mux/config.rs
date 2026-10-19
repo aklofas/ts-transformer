@@ -536,12 +536,12 @@ impl MuxerConfig {
                     carries_pts,
                     ..
                 } = s
+                    && *stream_type == KlvStreamType::SynchronousMetadata
+                    && !*carries_pts
                 {
-                    if *stream_type == KlvStreamType::SynchronousMetadata && !*carries_pts {
-                        return Err(MuxError::InvalidConfig(
-                            "klv stream_type=SynchronousMetadata requires carries_pts=true",
-                        ));
-                    }
+                    return Err(MuxError::InvalidConfig(
+                        "klv stream_type=SynchronousMetadata requires carries_pts=true",
+                    ));
                 }
             }
 
@@ -565,12 +565,12 @@ impl MuxerConfig {
             }
 
             // pcr_pid (if specified) must equal a configured stream's PID.
-            if let Some(pcr) = prog.pcr_pid {
-                if !prog.streams.iter().any(|s| s.pid() == pcr) {
-                    return Err(MuxError::InvalidConfig(
-                        "pcr_pid must equal a configured stream PID in the same program",
-                    ));
-                }
+            if let Some(pcr) = prog.pcr_pid
+                && !prog.streams.iter().any(|s| s.pid() == pcr)
+            {
+                return Err(MuxError::InvalidConfig(
+                    "pcr_pid must equal a configured stream PID in the same program",
+                ));
             }
 
             // Resolve effective PCR PID and reject if the caller explicitly
@@ -632,10 +632,10 @@ impl MuxerConfig {
             // Only the explicit pin needs checking — the effective-PCR
             // fallback chain (video > audio) never lands on data.
             for s in &prog.streams {
-                if let StreamSpec::Data { pid, .. } = s {
-                    if prog.pcr_pid == Some(*pid) {
-                        return Err(MuxError::DataPidUsedAsPcrPid { pid: *pid });
-                    }
+                if let StreamSpec::Data { pid, .. } = s
+                    && prog.pcr_pid == Some(*pid)
+                {
+                    return Err(MuxError::DataPidUsedAsPcrPid { pid: *pid });
                 }
             }
 

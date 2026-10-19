@@ -482,7 +482,7 @@ fn process_cpu_seconds(samples: &[&ProcSample], clk_tck: u64) -> Option<f64> {
             _ => None,
         });
     let first = usable.next()?;
-    let last = usable.last()?;
+    let last = usable.next_back()?;
     Some(last.saturating_sub(first) as f64 / clk_tck as f64)
 }
 
@@ -1823,8 +1823,7 @@ fn verdict_peer_restart_recovery(
         }
         let before = hbs
             .iter()
-            .filter(|h| h.elapsed_s as f64 <= ev.elapsed_s)
-            .next_back()
+            .rfind(|h| h.elapsed_s as f64 <= ev.elapsed_s)
             .and_then(|h| h.reconnects)
             .unwrap_or(0);
         let recovered = hbs.iter().any(|h| {
@@ -2053,15 +2052,14 @@ pub fn run_hold(
             queue_depth_fraction: thresholds.queue_depth_fraction,
         },
     );
-    if capacities.iter().any(|&c| c != gap_capacity) {
-        if let Some(q) = hold_verdicts
+    if capacities.iter().any(|&c| c != gap_capacity)
+        && let Some(q) = hold_verdicts
             .iter_mut()
             .find(|v| v.name == "queue_depth_p99")
-        {
-            q.detail.push_str(&format!(
-                "; managed streams declared differing gap capacities {capacities:?}, judged against the minimum"
-            ));
-        }
+    {
+        q.detail.push_str(&format!(
+            "; managed streams declared differing gap capacities {capacities:?}, judged against the minimum"
+        ));
     }
     let pass = step.pass && hold_verdicts.iter().all(|v| v.pass);
     let results = HoldResults {

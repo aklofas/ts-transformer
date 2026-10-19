@@ -605,7 +605,7 @@ fn ffprobe_validates_dvb_teletext_round_trip() {
         // data unit. Real-content shape doesn't matter for ffprobe codec ID.
         let mut payload = vec![0x10];
         payload.extend_from_slice(&[0x02, 0x10]);
-        payload.extend(std::iter::repeat(0x00).take(0x10));
+        payload.extend(std::iter::repeat_n(0x00, 0x10));
         mux.push_subtitle_to(h, Pts90khz::new(90_000 * (i as i64 + 1)), &payload)
             .unwrap();
     }
@@ -730,14 +730,12 @@ fn ffprobe_agrees_on_mp2_sample_rate_and_channels() {
             payload: tst_core::mpegts::demux::SamplePayload::Audio { frames, .. },
             ..
         } = ev
-        {
-            if let Some(f) = tst_core::codec::mpegaudio::frames(&frames)
+            && let Some(f) = tst_core::codec::mpegaudio::frames(&frames)
                 .next()
                 .and_then(|r| r.ok())
-            {
-                parsed_sr = Some(f.sample_rate_hz);
-                parsed_ch = Some(f.channels);
-            }
+        {
+            parsed_sr = Some(f.sample_rate_hz);
+            parsed_ch = Some(f.channels);
         }
         if parsed_sr.is_some() {
             break;
@@ -779,19 +777,17 @@ fn ffprobe_agrees_on_aac_adts_sample_rate_and_channels() {
             payload: tst_core::mpegts::demux::SamplePayload::Audio { frames, .. },
             ..
         } = ev
-        {
-            if let Some(f) = tst_core::codec::aac::frames(&frames)
+            && let Some(f) = tst_core::codec::aac::frames(&frames)
                 .next()
                 .and_then(|r| r.ok())
-            {
-                parsed_sr = Some(f.sample_rate_hz);
-                // `.channels()` returns `None` for PCE-defined
-                // layouts (`channel_configuration == 0`). The aac-adts
-                // fixture uses canonical stereo (config 2), so we expect
-                // `Some(2)`; assertion against ffprobe-derived count
-                // would still hold for any canonical-layout encoder.
-                parsed_ch = f.channels();
-            }
+        {
+            parsed_sr = Some(f.sample_rate_hz);
+            // `.channels()` returns `None` for PCE-defined
+            // layouts (`channel_configuration == 0`). The aac-adts
+            // fixture uses canonical stereo (config 2), so we expect
+            // `Some(2)`; assertion against ffprobe-derived count
+            // would still hold for any canonical-layout encoder.
+            parsed_ch = f.channels();
         }
         if parsed_sr.is_some() {
             break;

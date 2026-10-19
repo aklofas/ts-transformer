@@ -42,10 +42,10 @@ fn build_clean_stream() -> Vec<u8> {
     let mut m = Muxer::new(cfg).unwrap();
     // ~400-byte AU with AUD prefix + filler — produces 3 video TS packets.
     let mut au1 = vec![0x00, 0x00, 0x00, 0x01, 0x09, 0x10];
-    au1.extend(std::iter::repeat(0xAB).take(400));
+    au1.extend(std::iter::repeat_n(0xAB, 400));
     m.push_video(&au1, Pts90khz::new(0), true).unwrap();
     let mut au2 = vec![0x00, 0x00, 0x00, 0x01, 0x09, 0x10];
-    au2.extend(std::iter::repeat(0xCD).take(400));
+    au2.extend(std::iter::repeat_n(0xCD, 400));
     m.push_video(&au2, Pts90khz::new(90_000), false).unwrap();
     drain(&mut m)
 }
@@ -127,10 +127,10 @@ fn corrupted_pat_surfaces_psi_checksum_event() {
 
     let mut saw_checksum_issue = false;
     while let Some(e) = d.next_event() {
-        if let DemuxEvent::NonConformant { issue, .. } = e {
-            if format!("{issue:?}").contains("PsiChecksumMismatch") {
-                saw_checksum_issue = true;
-            }
+        if let DemuxEvent::NonConformant { issue, .. } = e
+            && format!("{issue:?}").contains("PsiChecksumMismatch")
+        {
+            saw_checksum_issue = true;
         }
     }
     assert!(
@@ -335,10 +335,10 @@ fn pusi_pointer_field_preserves_prior_section_continuation() {
 
     let mut saw_program_map = false;
     while let Some(e) = d.next_event() {
-        if let DemuxEvent::ProgramMap(pm) = e {
-            if pm.pcr_pid == 0x101 {
-                saw_program_map = true;
-            }
+        if let DemuxEvent::ProgramMap(pm) = e
+            && pm.pcr_pid == 0x101
+        {
+            saw_program_map = true;
         }
     }
     assert!(
@@ -441,10 +441,10 @@ fn pusi_pointer_field_mid_stream_join_starts_new_section() {
 
     let mut saw_program_map = false;
     while let Some(e) = d.next_event() {
-        if let DemuxEvent::ProgramMap(pm) = e {
-            if pm.pcr_pid == 0x101 {
-                saw_program_map = true;
-            }
+        if let DemuxEvent::ProgramMap(pm) = e
+            && pm.pcr_pid == 0x101
+        {
+            saw_program_map = true;
         }
     }
     assert!(

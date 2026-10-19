@@ -507,13 +507,13 @@ pub fn send_is_cancelled_flips<T: Transport>(t: T) {
     if !h.is_cancelled() {
         fail(ROW, "is_cancelled() stayed false after cancel()");
     }
-    if let Some(again) = t.cancel_handle() {
-        if !again.is_cancelled() {
-            fail(
-                ROW,
-                "a handle obtained after cancel() does not read the shared latch",
-            );
-        }
+    if let Some(again) = t.cancel_handle()
+        && !again.is_cancelled()
+    {
+        fail(
+            ROW,
+            "a handle obtained after cancel() does not read the shared latch",
+        );
     }
 }
 
@@ -676,13 +676,13 @@ pub fn recv_is_cancelled_flips<R: RecvTransport>(r: R) {
     if !h.is_cancelled() {
         fail(ROW, "is_cancelled() stayed false after cancel()");
     }
-    if let Some(again) = r.cancel_handle() {
-        if !again.is_cancelled() {
-            fail(
-                ROW,
-                "a handle obtained after cancel() does not read the shared latch",
-            );
-        }
+    if let Some(again) = r.cancel_handle()
+        && !again.is_cancelled()
+    {
+        fail(
+            ROW,
+            "a handle obtained after cancel() does not read the shared latch",
+        );
     }
 }
 
@@ -787,13 +787,13 @@ pub fn recv_peer_eof_is_not_a_cancel<R: RecvTransport + 'static>(
             ),
         );
     }
-    if let Some(again) = r.cancel_handle() {
-        if again.is_cancelled() {
-            fail(
-                ROW,
-                "a handle obtained after a peer-side break reads cancelled",
-            );
-        }
+    if let Some(again) = r.cancel_handle()
+        && again.is_cancelled()
+    {
+        fail(
+            ROW,
+            "a handle obtained after a peer-side break reads cancelled",
+        );
     }
 }
 

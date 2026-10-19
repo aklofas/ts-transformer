@@ -20,8 +20,8 @@ are ready to configure a passphrase on both peers.
 
 ## Prerequisites
 
-- Rust 1.85+ via rustup. Check: `rustc --version`. The repo's
-  `rust-toolchain.toml` pins to 1.85 for local development.
+- Rust 1.93+ via rustup. Check: `rustc --version`. The repo's
+  `rust-toolchain.toml` pins to 1.93 for local development.
 - C/C++ toolchain (`cmake`, `pkg-config`, `python3`, `build-essential`).
   Required because the SRT snippets below pull in `tst-srt`, which
   depends on `srt-sys` (published as `tstrans-srt-sys`) — it builds

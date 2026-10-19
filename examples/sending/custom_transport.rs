@@ -220,7 +220,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 //                         opaque to NAL contents)
 fn synthetic_nal_au(n: usize) -> Vec<u8> {
     let mut buf = vec![0x00, 0x00, 0x00, 0x01, 0x65];
-    buf.extend(std::iter::repeat(0xAA).take(n));
+    buf.extend(std::iter::repeat_n(0xAA, n));
     buf
 }
 
@@ -240,6 +240,6 @@ fn synthetic_klv(n: usize, seq: i64) -> Vec<u8> {
         0x00,
     ];
     buf.push(n as u8);
-    buf.extend(std::iter::repeat(seq as u8).take(n));
+    buf.extend(std::iter::repeat_n(seq as u8, n));
     buf
 }

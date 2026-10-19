@@ -232,7 +232,7 @@ fn minimal_sps_rbsp_full(
         let total_bytes = 1 + vui_extra_padding_bytes;
         bw.write_ue((total_bytes - 1) as u32);
         // §7.3.2.4: while(!byte_aligned()) sps_vui_alignment_zero_bit f(1).
-        while bw.pos % 8 != 0 {
+        while !bw.pos.is_multiple_of(8) {
             bw.write(0, 1);
         }
         // vui_parameters(): 8 flag bits (all zero) — see H.274 §7.2.

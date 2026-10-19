@@ -381,7 +381,7 @@ mod tests {
     /// and `_into` refuse exactly what the `Vec` path refuses.
     fn agreement_corpus() -> Vec<(&'static str, Vec<u8>, u8)> {
         let mut big_nal = vec![0x00, 0x00, 0x00, 0x01, 0x65];
-        big_nal.extend(core::iter::repeat(0xAA).take(70_000));
+        big_nal.extend(core::iter::repeat_n(0xAA, 70_000));
 
         let mut leading_garbage = vec![0xDE, 0xAD, 0xBE, 0xEF];
         leading_garbage.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x67, 0x01]);
@@ -507,7 +507,7 @@ mod tests {
     #[test]
     fn nal_exceeding_two_byte_length_size_overflows() {
         let mut annexb = vec![0x00, 0x00, 0x00, 0x01, 0x65];
-        annexb.extend(core::iter::repeat(0xAA).take(70_000));
+        annexb.extend(core::iter::repeat_n(0xAA, 70_000));
         assert_eq!(
             annexb_to_length_prefixed_len(&annexb, 2).unwrap_err(),
             CodecParseError::NalLengthOverflow {
@@ -581,7 +581,7 @@ mod tests {
     fn nal_exceeding_one_byte_length_size_overflows() {
         // 256 payload bytes -> NAL length 257, too large for a 1-byte prefix.
         let mut annexb = vec![0x00, 0x00, 0x00, 0x01, 0x67];
-        annexb.extend(core::iter::repeat(0xAA).take(256));
+        annexb.extend(core::iter::repeat_n(0xAA, 256));
         let err = annexb_to_length_prefixed(&annexb, 1).unwrap_err();
         assert_eq!(
             err,

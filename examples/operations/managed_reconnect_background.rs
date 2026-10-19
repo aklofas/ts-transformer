@@ -327,20 +327,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // worker trying to rebuild one) — so don't read `is_alive() ==
         // false` here as "the link is up"; read `is_alive() == true` as
         // "either connected, or recovering, but not abandoned."
-        if i % 10 == 0 {
-            if let Some(s) = stats.stats() {
-                eprintln!(
-                    "sender: frame {i} alive={} reconnecting={} gap_len={} \
+        if i % 10 == 0
+            && let Some(s) = stats.stats()
+        {
+            eprintln!(
+                "sender: frame {i} alive={} reconnecting={} gap_len={} \
                      attempts={} successes={} dropped_msgs={} dropped_bytes={}",
-                    sender.is_alive(),
-                    s.reconnecting,
-                    s.gap_len,
-                    s.reconnect_attempts,
-                    s.reconnect_successes,
-                    s.gap_messages_dropped,
-                    s.gap_bytes_dropped,
-                );
-            }
+                sender.is_alive(),
+                s.reconnecting,
+                s.gap_len,
+                s.reconnect_attempts,
+                s.reconnect_successes,
+                s.gap_messages_dropped,
+                s.gap_bytes_dropped,
+            );
         }
 
         // 10ms cadence — fast enough that the outage produces meaningfully
@@ -375,7 +375,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 // layout rationale (Annex-B start code + IDR NAL header + filler).
 fn synthetic_nal_au(n: usize) -> Vec<u8> {
     let mut buf = vec![0x00, 0x00, 0x00, 0x01, 0x65];
-    buf.extend(std::iter::repeat(0xAA).take(n));
+    buf.extend(std::iter::repeat_n(0xAA, n));
     buf
 }
 
@@ -387,6 +387,6 @@ fn synthetic_klv(n: usize, seq: i64) -> Vec<u8> {
         0x00,
     ];
     buf.push(n as u8);
-    buf.extend(std::iter::repeat(seq as u8).take(n));
+    buf.extend(std::iter::repeat_n(seq as u8, n));
     buf
 }

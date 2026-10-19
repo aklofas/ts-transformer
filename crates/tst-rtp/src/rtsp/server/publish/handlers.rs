@@ -275,12 +275,11 @@ pub(crate) fn handle_setup_record(
     // on the first SETUP (no id exists yet) but must match once one does.
     // The comparison is on the id token before any `;timeout=` parameter
     // (RFC 2326 §12.37), which a client may echo back.
-    if let Some(sid) = session.session_id() {
-        if let Some(hdr) = req.headers.get("session") {
-            if hdr.split(';').next().unwrap_or("").trim() != sid {
-                return error_response(req, 454, "Session Not Found");
-            }
-        }
+    if let Some(sid) = session.session_id()
+        && let Some(hdr) = req.headers.get("session")
+        && hdr.split(';').next().unwrap_or("").trim() != sid
+    {
+        return error_response(req, 454, "Session Not Found");
     }
     // Resolve the track: first by an exact match against whatever the
     // SDP actually announced as `a=control` (handles any convention,

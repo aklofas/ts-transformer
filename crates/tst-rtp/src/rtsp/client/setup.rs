@@ -162,12 +162,11 @@ impl RtspClient {
         if let Some(cell) = &self.session_id_shared {
             *crate::rtsp::client::lock_unpoisoned(cell) = Some(sid.clone());
         }
-        if !self.keepalive_interval_overridden {
-            if let Some(iv) = &self.keepalive_interval_shared {
-                let ms =
-                    crate::rtsp::client::duration_ms_saturating(self.session_timeout / 2).max(100);
-                iv.store(ms, std::sync::atomic::Ordering::Relaxed);
-            }
+        if !self.keepalive_interval_overridden
+            && let Some(iv) = &self.keepalive_interval_shared
+        {
+            let ms = crate::rtsp::client::duration_ms_saturating(self.session_timeout / 2).max(100);
+            iv.store(ms, std::sync::atomic::Ordering::Relaxed);
         }
 
         // Construct RtspSession with the negotiated transport.

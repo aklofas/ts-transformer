@@ -768,7 +768,7 @@ mod tests {
                 tst_mux_config_set_stream_descriptors_for_video(cfg, v, two.as_ptr(), 5, 2),
                 0
             );
-            let got = &(*cfg).programs[0].stream_descriptors;
+            let got = &(&*cfg).programs[0].stream_descriptors;
             let b = |tag: u8| alloc::vec![tag, 2, 0xAA, 0xBB];
             assert_eq!(got.len(), 5);
             assert_eq!(
@@ -830,7 +830,7 @@ mod tests {
                 tst_mux_config_set_stream_descriptors_for_video(cfg, k, tlv.as_ptr(), 3, 1),
                 0
             );
-            let got = &(*cfg).programs[0].stream_descriptors;
+            let got = &(&*cfg).programs[0].stream_descriptors;
             assert!(got[0].is_empty());
             assert_eq!(got[1], alloc::vec![tlv.to_vec()]);
             assert_eq!(
@@ -838,7 +838,7 @@ mod tests {
                 0
             );
             assert_eq!(
-                (*cfg).programs[0].stream_descriptors[0],
+                (&*cfg).programs[0].stream_descriptors[0],
                 alloc::vec![tlv.to_vec()]
             );
             tst_mux_config_free(cfg);

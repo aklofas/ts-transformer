@@ -672,7 +672,7 @@ mod tests {
         // key_frame *bool* (not the NAL type) drives the segment cut.
         let mut v = vec![0x00, 0x00, 0x00, 0x01, 0x09, 0x10];
         v.extend([0x00, 0x00, 0x00, 0x01, 0x65]);
-        v.extend(std::iter::repeat(0xab).take(64));
+        v.extend(std::iter::repeat_n(0xab, 64));
         v
     }
 

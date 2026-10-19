@@ -1558,10 +1558,10 @@ mod tests {
                 payload: SamplePayload::Subtitle { codec, .. },
                 ..
             } = ev
+                && stream.pid == 0x200
+                && codec == DemuxSubtitleCodec::WebVttInTs
             {
-                if stream.pid == 0x200 && codec == DemuxSubtitleCodec::WebVttInTs {
-                    got_subtitle = true;
-                }
+                got_subtitle = true;
             }
         }
         assert!(
@@ -1610,11 +1610,10 @@ mod tests {
                 issue: NonConformantIssue::SubtitleMissingDescriptor { pid },
                 ..
             } = ev
+                && pid == 0x200
             {
-                if pid == 0x200 {
-                    got_missing_descriptor = true;
-                    count += 1;
-                }
+                got_missing_descriptor = true;
+                count += 1;
             }
         }
         assert!(
@@ -1674,13 +1673,12 @@ mod tests {
                 issue: NonConformantIssue::SubtitleDescriptorAmbiguous { pid, tags },
                 ..
             } = ev
+                && pid == 0x200
             {
-                if pid == 0x200 {
-                    got_ambiguous = true;
-                    count += 1;
-                    // 0x59 (subtitling) priority before 0xF0 (synthetic VTTC).
-                    assert_eq!(tags, vec![0x59, 0xF0]);
-                }
+                got_ambiguous = true;
+                count += 1;
+                // 0x59 (subtitling) priority before 0xF0 (synthetic VTTC).
+                assert_eq!(tags, vec![0x59, 0xF0]);
             }
         }
         assert!(
@@ -2086,7 +2084,7 @@ mod tests {
         };
         let mut mux = crate::mpegts::mux::Muxer::new(cfg).unwrap();
         let mut au = vec![0x00, 0x00, 0x00, 0x01, 0x09, 0x10];
-        au.extend(core::iter::repeat(0xAB).take(64));
+        au.extend(core::iter::repeat_n(0xAB, 64));
         mux.push_video(&au, Pts90khz::new(9_000), true).unwrap();
         let mut buf = vec![0u8; 188 * 64];
         let n = mux.pull(&mut buf);

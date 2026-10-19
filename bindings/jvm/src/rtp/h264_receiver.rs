@@ -605,16 +605,14 @@ jni_native! {
         // lock (blocking briefly until the woken recv releases it). Atomic +
         // idempotent: a double close finds the id gone → no-op.
         let reason = if let Some(mut slot) = REGISTRY.close(handle as u64) {
-            if let Some(ctrl) = slot.rtsp.take() {
-                if !ctrl.torn_down.load(Ordering::Relaxed) {
-                    if let Ok(mut guard) = ctrl.client.lock() {
-                        if let Some(c) = guard.as_mut() {
+            if let Some(ctrl) = slot.rtsp.take()
+                && !ctrl.torn_down.load(Ordering::Relaxed) {
+                    if let Ok(mut guard) = ctrl.client.lock()
+                        && let Some(c) = guard.as_mut() {
                             let _ = c.teardown(); // best-effort
                         }
-                    }
                     ctrl.torn_down.store(true, Ordering::Relaxed);
                 }
-            }
             slot.inner.close();
             slot.inner.end_reason()
         } else {

@@ -260,7 +260,7 @@ fn parse_pkt_size(v: &str) -> Result<usize, String> {
     let n: usize = v
         .parse()
         .map_err(|e: std::num::ParseIntError| e.to_string())?;
-    if n == 0 || n % TS_PACKET_SIZE != 0 {
+    if n == 0 || !n.is_multiple_of(TS_PACKET_SIZE) {
         return Err(format!("must be a positive multiple of {TS_PACKET_SIZE}"));
     }
     Ok(n)

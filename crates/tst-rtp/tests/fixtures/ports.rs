@@ -21,12 +21,12 @@ pub fn free_rtp_port_base() -> u16 {
     for _ in 0..1000 {
         let s = UdpSocket::bind("127.0.0.1:0").expect("bind ephemeral udp");
         let base = s.local_addr().unwrap().port();
-        if base < u16::MAX {
-            if let Ok(companion) = UdpSocket::bind(("127.0.0.1", base + 1)) {
-                drop(companion);
-                drop(s);
-                return base;
-            }
+        if base < u16::MAX
+            && let Ok(companion) = UdpSocket::bind(("127.0.0.1", base + 1))
+        {
+            drop(companion);
+            drop(s);
+            return base;
         }
         drop(s); // base + 1 was taken (or base == u16::MAX); retry.
         std::thread::yield_now();

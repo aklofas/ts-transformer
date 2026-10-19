@@ -103,7 +103,7 @@ against the same bare-metal targets. The `Managed*` reconnect wrappers,
 
 | Component | Pinned at |
 | --- | --- |
-| Rust edition | 2024, MSRV **1.85** (`rust-toolchain.toml`) |
+| Rust edition | 2024, MSRV **1.93** (`rust-toolchain.toml`). The pin follows a rolling rule: the stable release six behind current at the time of each minor release, re-pinned in that release's version sweep. |
 | `libsrt` (Haivision) | **v1.5.7** (`crates/srt-sys/vendor/srt`, git submodule) |
 | `mbedTLS` | **v3.6.7** LTS (`crates/mbedtls-src/vendor/mbedtls`, git submodule) |
 | `bindgen` | 0.72 (FFI; `srt-sys` build, published as `tstrans-srt-sys`) |

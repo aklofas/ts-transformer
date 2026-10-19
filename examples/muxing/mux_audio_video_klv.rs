@@ -211,6 +211,6 @@ fn build_mp2_silent_frame() -> Vec<u8> {
     //   private=0
     // Then 140 bytes of silence (zero payload for this example).
     let mut frame = vec![0xFF, 0xFD, 0xB0, 0xC4];
-    frame.extend(std::iter::repeat(0u8).take(140));
+    frame.extend(std::iter::repeat_n(0u8, 140));
     frame
 }

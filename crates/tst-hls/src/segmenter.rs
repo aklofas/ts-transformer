@@ -106,7 +106,7 @@ impl Segmenter {
 
     /// Append TS bytes to the current segment (opens one if none).
     pub(crate) fn push_ts(&mut self, ts_bytes: &[u8]) -> Result<(), HlsError> {
-        if ts_bytes.len() % 188 != 0 {
+        if !ts_bytes.len().is_multiple_of(188) {
             return Err(HlsError::UnalignedPushTs {
                 len: ts_bytes.len(),
             });

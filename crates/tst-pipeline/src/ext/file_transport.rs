@@ -149,7 +149,7 @@ mod tests {
         // leak it into the temp dir. Nothing below touches the path
         // (post-close send_bytes never reaches the filesystem).
         let _ = std::fs::remove_file(&path);
-        assert!(!bytes.is_empty() && bytes.len() % 188 == 0 && bytes[0] == 0x47);
+        assert!(!bytes.is_empty() && bytes.len().is_multiple_of(188) && bytes[0] == 0x47);
         // Post-close contract from the Transport trait rustdoc:
         assert!(matches!(
             t.send_bytes(&[0u8; 188]),

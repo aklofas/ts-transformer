@@ -53,7 +53,7 @@ fn dvb_teletext_pes_uses_45_byte_header_with_stuffing() {
     // Synthetic teletext data: data_identifier(0x10) + data_unit_id(0x02) +
     // length(0x2C=44) + 44 bytes of line data. Total = 47 bytes.
     let mut payload = vec![0x10, 0x02, 0x2C];
-    payload.extend(std::iter::repeat(0x00).take(0x2C));
+    payload.extend(std::iter::repeat_n(0x00, 0x2C));
     assert_eq!(payload.len(), 47);
 
     let h = mux.subtitle_handles()[0];
@@ -145,7 +145,7 @@ fn dvb_teletext_pes_grows_to_next_ts_packet_boundary_for_large_payload() {
     let mut payload = vec![0x10];
     for _ in 0..2 {
         payload.extend_from_slice(&[0x02, 0x2C]);
-        payload.extend(std::iter::repeat(0x00).take(0x2C));
+        payload.extend(std::iter::repeat_n(0x00, 0x2C));
     }
     assert_eq!(payload.len(), 1 + 2 * (2 + 0x2C));
 

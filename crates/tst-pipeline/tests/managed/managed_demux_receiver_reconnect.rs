@@ -179,7 +179,7 @@ fn reconnect_event_is_observable_via_public_api() {
     // synthetic stream has no PMT (so no Sample events) and the
     // event count is dominated by the reconnect itself.
     assert!(
-        events.iter().any(|e| *e == "reconnect"),
+        events.contains(&"reconnect"),
         "ReconnectDiscontinuity event was not surfaced: events = {events:?}"
     );
 }

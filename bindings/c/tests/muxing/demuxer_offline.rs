@@ -145,15 +145,11 @@ fn demuxer_feed_flush_produces_events() {
         // at least one ProgramMap event.
         #[cfg(feature = "srt")]
         {
-            let has_pmt = event_kinds
-                .iter()
-                .any(|k| *k == TstEventKind::ProgramMap as i32);
+            let has_pmt = event_kinds.contains(&(TstEventKind::ProgramMap as i32));
             assert!(has_pmt, "expected a ProgramMap event; got {event_kinds:?}");
 
             // Also expect at least one Sample (the IDR AU).
-            let has_sample = event_kinds
-                .iter()
-                .any(|k| *k == TstEventKind::Sample as i32);
+            let has_sample = event_kinds.contains(&(TstEventKind::Sample as i32));
             assert!(has_sample, "expected a Sample event; got {event_kinds:?}");
         }
 

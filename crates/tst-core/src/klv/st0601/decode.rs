@@ -223,16 +223,18 @@ fn strict_body_walk(body: &[u8], body_offset_in_buf: usize) -> Result<Vec<u32>, 
         // rule. (Tag 102 is typed via `UasDatalinkLs::sdcc_flps` —
         // see `decode_inner`'s running tag-list capture in
         // `apply_tag`.)
-        if let Ok(tag_u8) = u8::try_from(tag) {
-            if lookup(tag_u8).is_some() && tag_u8 != 115 && tag_u8 != 102 {
-                if seen[tag_u8 as usize] {
-                    return Err(KlvDecodeError::DuplicateTag {
-                        tag,
-                        offset: body_offset_in_buf + item_start,
-                    });
-                }
-                seen[tag_u8 as usize] = true;
+        if let Ok(tag_u8) = u8::try_from(tag)
+            && lookup(tag_u8).is_some()
+            && tag_u8 != 115
+            && tag_u8 != 102
+        {
+            if seen[tag_u8 as usize] {
+                return Err(KlvDecodeError::DuplicateTag {
+                    tag,
+                    offset: body_offset_in_buf + item_start,
+                });
             }
+            seen[tag_u8 as usize] = true;
         }
         tag_order.push(tag);
         offset = item_start + consumed + len;

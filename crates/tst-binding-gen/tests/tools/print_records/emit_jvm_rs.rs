@@ -414,16 +414,15 @@ fn read(reg: &[Entry], e: &Entry, flds: &[Fld]) -> String {
 /// The builder and reader text for one record, per its direction.
 pub fn record_pair(reg: &[Entry], e: &Entry) -> Result<String, String> {
     let flds = resolve(reg, &e.schema)?;
-    if e.direction.crosses_in() {
-        if let Some(f) = flds
+    if e.direction.crosses_in()
+        && let Some(f) = flds
             .iter()
             .find(|f| f.ty.as_ref().is_some_and(|t| t.is_to_host_only()) && !f.custom)
-        {
-            return Err(format!(
-                "{}.{}: a map or a host-typed field only crosses to the host; register the record ToHost",
-                e.schema.name, f.spec.name
-            ));
-        }
+    {
+        return Err(format!(
+            "{}.{}: a map or a host-typed field only crosses to the host; register the record ToHost",
+            e.schema.name, f.spec.name
+        ));
     }
     let mut parts = Vec::new();
     if e.direction.crosses_out() {

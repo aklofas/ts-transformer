@@ -199,12 +199,12 @@ impl UdpUrl {
         // here rather than failing the first send with an opaque OS error.
         let addr: IpAddr = match host_str.parse::<IpAddr>() {
             Ok(a) => {
-                if let Some(la) = localaddr {
-                    if a.is_ipv4() != la.is_ipv4() {
-                        return Err(UrlError::Rejected(format!(
-                            "peer address {a} and ?localaddr={la} are different IP families"
-                        )));
-                    }
+                if let Some(la) = localaddr
+                    && a.is_ipv4() != la.is_ipv4()
+                {
+                    return Err(UrlError::Rejected(format!(
+                        "peer address {a} and ?localaddr={la} are different IP families"
+                    )));
                 }
                 a
             }

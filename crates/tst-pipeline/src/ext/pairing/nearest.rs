@@ -107,12 +107,11 @@ impl NearestState {
             sample: k,
             used: false,
         });
-        if self.klv_history.len() > self.max_klv_history {
-            if let Some(evicted) = self.klv_history.pop_front() {
-                if !evicted.used {
-                    out.push(PairerOutput::UnpairedKlv(evicted.sample));
-                }
-            }
+        if self.klv_history.len() > self.max_klv_history
+            && let Some(evicted) = self.klv_history.pop_front()
+            && !evicted.used
+        {
+            out.push(PairerOutput::UnpairedKlv(evicted.sample));
         }
         // In Buffered mode, the new KLV may complete a buffered video.
         if matches!(self.mode, InternalMode::Buffered { .. }) {

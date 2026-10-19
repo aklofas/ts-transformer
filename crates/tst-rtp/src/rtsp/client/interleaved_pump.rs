@@ -436,18 +436,18 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                         // clean EOS. A parse failure falls through to the
                         // normal routing (e.g. a server→client REQUEST is not
                         // an `RtspResponse` and keeps its current handling).
-                        if let Ok((resp, _)) = RtspResponse::parse(&buf[..msg_end]) {
-                            if resp.cseq().is_some_and(|c| c >= KEEPALIVE_CSEQ_BASE) {
-                                stats.keepalive_responses.fetch_add(1, Ordering::Relaxed);
-                                crate::rtsp::client::keepalive::handle_keepalive_response(
-                                    &resp,
-                                    &auth,
-                                    session_dead.as_deref(),
-                                    &end_reason,
-                                );
-                                buf.drain(..msg_end);
-                                continue;
-                            }
+                        if let Ok((resp, _)) = RtspResponse::parse(&buf[..msg_end])
+                            && resp.cseq().is_some_and(|c| c >= KEEPALIVE_CSEQ_BASE)
+                        {
+                            stats.keepalive_responses.fetch_add(1, Ordering::Relaxed);
+                            crate::rtsp::client::keepalive::handle_keepalive_response(
+                                &resp,
+                                &auth,
+                                session_dead.as_deref(),
+                                &end_reason,
+                            );
+                            buf.drain(..msg_end);
+                            continue;
                         }
                         stats.rtsp_messages_received.fetch_add(1, Ordering::Relaxed);
                         let msg = Bytes::copy_from_slice(&buf[..msg_end]);
@@ -536,7 +536,7 @@ impl Read for SharedStreamReader {
         let mut g = self
             .stream
             .lock()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "stream mutex poisoned"))?;
+            .map_err(|_| std::io::Error::other("stream mutex poisoned"))?;
         g.read(buf)
     }
 }

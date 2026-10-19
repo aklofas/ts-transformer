@@ -734,7 +734,7 @@ mod tests {
     fn send_and_read_rejects_unterminated_headers() {
         // 128 KiB of header-junk, never a CRLFCRLF.
         let mut response = b"RTSP/1.0 200 OK\r\nX-Junk: ".to_vec();
-        response.extend(std::iter::repeat(b'A').take(128 * 1024));
+        response.extend(std::iter::repeat_n(b'A', 128 * 1024));
         let (port, h) = serve_then_close(response);
         let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{}/test", port)).unwrap();
         let err = client.options().unwrap_err();

@@ -250,10 +250,9 @@ jni_native! {
     /// `nClose(handle)` — quiet: finish the shell AND the inner publisher, errors
     /// dropped, idempotent.
     fn Java_org_tstrans_hls_MuxPublisher_nClose<'local>(_env, _class, handle: jlong) = () => {
-        if let Some(shell) = REGISTRY.close(handle as u64) {
-            if let Ok(publisher) = shell.finish() {
+        if let Some(shell) = REGISTRY.close(handle as u64)
+            && let Ok(publisher) = shell.finish() {
                 let _ = tst_core::publisher::Publisher::finish(publisher);
             }
-        }
     }
 }

@@ -368,47 +368,46 @@ pub fn has_klva_registration(descs: &[RawDescriptor]) -> bool {
 /// malformed bodies fall through to the next descriptor.
 pub fn extract_user_label(descs: &[RawDescriptor]) -> Option<String> {
     // 1. Component descriptor — UTF-8 free text after the 6-byte header.
-    if let Some(d) = descs.iter().find(|d| d.tag == 0x50) {
-        if d.data.len() > 6 {
-            let raw = &d.data[6..];
-            if let Ok(s) = core::str::from_utf8(raw) {
-                let trimmed = s.trim_end_matches('\0').trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
+    if let Some(d) = descs.iter().find(|d| d.tag == 0x50)
+        && d.data.len() > 6
+    {
+        let raw = &d.data[6..];
+        if let Ok(s) = core::str::from_utf8(raw) {
+            let trimmed = s.trim_end_matches('\0').trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
             }
         }
     }
     // 2. Stream Identifier — single component_tag byte.
-    if let Some(d) = descs.iter().find(|d| d.tag == 0x52) {
-        if let Some(&t) = d.data.first() {
-            return Some(format!("tag={t}"));
-        }
+    if let Some(d) = descs.iter().find(|d| d.tag == 0x52)
+        && let Some(&t) = d.data.first()
+    {
+        return Some(format!("tag={t}"));
     }
     // 3. Metadata descriptor — generic "KLV" label.
     if descs.iter().any(|d| d.tag == 0x26) {
         return Some("KLV".to_string());
     }
     // 4. ISO 639 Language — first 3 bytes.
-    if let Some(d) = descs.iter().find(|d| d.tag == 0x0A) {
-        if d.data.len() >= 3 {
-            if let Ok(s) = core::str::from_utf8(&d.data[..3]) {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
+    if let Some(d) = descs.iter().find(|d| d.tag == 0x0A)
+        && d.data.len() >= 3
+        && let Ok(s) = core::str::from_utf8(&d.data[..3])
+    {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
         }
     }
     // 5. User-private descriptor (tag 0xFF) — Family B (ARS) corpus
     // shape; reserved per ISO/IEC 13818-1 but used in practice as the
     // de-facto label slot. Best-effort UTF-8.
-    if let Some(d) = descs.iter().find(|d| d.tag == 0xFF) {
-        if let Ok(s) = core::str::from_utf8(&d.data) {
-            let trimmed = s.trim_end_matches('\0').trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
+    if let Some(d) = descs.iter().find(|d| d.tag == 0xFF)
+        && let Ok(s) = core::str::from_utf8(&d.data)
+    {
+        let trimmed = s.trim_end_matches('\0').trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
         }
     }
     None

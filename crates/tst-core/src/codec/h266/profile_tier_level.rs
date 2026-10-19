@@ -64,7 +64,7 @@ pub(crate) fn parse_into(
         }
     }
     // Byte-align via ptl_reserved_zero_bit u(1) padding.
-    while br.position() % 8 != 0 {
+    while !br.position().is_multiple_of(8) {
         let _ = br.read_bool()?;
     }
     // sublayer_level_idc[i] u(8) for any present sublayer (loop also
@@ -121,7 +121,7 @@ fn parse_general_constraints_info(br: &mut BitReader<'_>) -> Result<(), CodecPar
         br.skip(gci_num_additional_bits)?;
     }
     // Byte-align via gci_alignment_zero_bit f(1) padding.
-    while br.position() % 8 != 0 {
+    while !br.position().is_multiple_of(8) {
         let _ = br.read_bool()?;
     }
     Ok(())

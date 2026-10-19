@@ -82,10 +82,10 @@ pub fn parse_sequence_header(payload: &[u8]) -> Result<Av1SequenceHeader, CodecP
                     let den = den_u64 / g;
                     // Surface only when the reduced rational fits u32 Rational;
                     // otherwise leave None rather than truncate silently.
-                    if let (Ok(num), Ok(den)) = (u32::try_from(num), u32::try_from(den)) {
-                        if den != 0 {
-                            frame_rate = Some(Rational { num, den });
-                        }
+                    if let (Ok(num), Ok(den)) = (u32::try_from(num), u32::try_from(den))
+                        && den != 0
+                    {
+                        frame_rate = Some(Rational { num, den });
                     }
                 }
             }

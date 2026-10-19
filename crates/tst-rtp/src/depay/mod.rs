@@ -48,20 +48,15 @@ pub struct AccessUnit {
 /// See the parameter-set cache section of the
 /// [`H264Depacketizer`](crate::h264::H264Depacketizer) docs for the full
 /// cache-and-injection contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum ParameterSetInjection {
     /// No injection — pass NALUs through exactly as received.
     None,
     /// Inject cached parameter sets (H.264: SPS, PPS; H.265: VPS, SPS, PPS)
     /// before every IDR access unit that lacks them.
+    #[default]
     BeforeIdr,
-}
-
-impl Default for ParameterSetInjection {
-    fn default() -> Self {
-        Self::BeforeIdr
-    }
 }
 
 /// Configuration for a depacketizer ([`H264Depacketizer`](crate::h264::H264Depacketizer)).

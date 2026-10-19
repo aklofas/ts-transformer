@@ -44,11 +44,15 @@ fn make_video_event(frame_index: usize) -> DemuxEvent {
             // per-event split cost the pairer incurs in the new pipeline.
             raw: {
                 let mut au = vec![0x00, 0x00, 0x00, 0x01]; // Annex-B start code
-                au.push(if frame_index % 30 == 0 { 0x65 } else { 0x41 }); // IDR vs P NAL header
+                au.push(if frame_index.is_multiple_of(30) {
+                    0x65
+                } else {
+                    0x41
+                }); // IDR vs P NAL header
                 au.extend(std::iter::repeat_n(0xA5u8, 5_000)); // body
                 SharedBytes::from_vec(au)
             },
-            random_access_indicator: frame_index % 30 == 0,
+            random_access_indicator: frame_index.is_multiple_of(30),
             av1_carriage: None,
         },
     }

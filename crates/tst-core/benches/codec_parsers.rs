@@ -83,7 +83,7 @@ fn make_mp3_buf(count: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(count * FRAME_LEN);
     for _ in 0..count {
         buf.extend_from_slice(&HEADER);
-        buf.extend(std::iter::repeat(0u8).take(FRAME_LEN - 4));
+        buf.extend(std::iter::repeat_n(0u8, FRAME_LEN - 4));
     }
     buf
 }
@@ -133,7 +133,7 @@ fn make_adts_buf(count: usize) -> Vec<u8> {
         h[6] = 0b11_1111 << 2;
 
         buf.extend_from_slice(&h);
-        buf.extend(std::iter::repeat(0u8).take(FRAME_LEN_USIZE - 7));
+        buf.extend(std::iter::repeat_n(0u8, FRAME_LEN_USIZE - 7));
     }
     buf
 }

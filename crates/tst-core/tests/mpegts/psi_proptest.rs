@@ -68,14 +68,13 @@ proptest! {
 
         let mut found = false;
         while let Some(evt) = demux.next_event() {
-            if let DemuxEvent::ProgramMap(pm) = evt {
-                if pm.program_number == program_number
+            if let DemuxEvent::ProgramMap(pm) = evt
+                && pm.program_number == program_number
                     && pm.streams.iter().any(|s| s.pid == video_pid)
                 {
                     found = true;
                     break;
                 }
-            }
         }
         prop_assert!(found, "PMT round-trip lost program/stream identity");
     }

@@ -360,7 +360,7 @@ fn scan_sei_nal(
         // Compute the end index with overflow protection: an enormous
         // payload_size from a saturating-accumulated 0xFF chain must not
         // wrap p + payload_size before .get() can return None.
-        let payload_end = p.checked_add(payload_size).unwrap_or(usize::MAX);
+        let payload_end = p.saturating_add(payload_size);
         let Some(payload) = rbsp.get(p..payload_end) else {
             // The declared payload_size runs past the RBSP end. Check
             // whether this truncated message is a MISP one: if
@@ -370,14 +370,13 @@ fn scan_sei_nal(
             // available bytes means the identifier is unconfirmable,
             // so we fall through to Ok(None) (no confirmed MISP match).
             if payload_type == 5 {
-                let id_end = p.checked_add(16).unwrap_or(usize::MAX);
-                if let Some(head) = rbsp.get(p..id_end) {
-                    if head == MISP_MICROSEC_ID_H264
+                let id_end = p.saturating_add(16);
+                if let Some(head) = rbsp.get(p..id_end)
+                    && (head == MISP_MICROSEC_ID_H264
                         || head == MISP_MICROSEC_ID_H265
-                        || head == MISP_NANOSEC_ID_H265
-                    {
-                        return Err(MispTimeExtractError::TruncatedSei);
-                    }
+                        || head == MISP_NANOSEC_ID_H265)
+                {
+                    return Err(MispTimeExtractError::TruncatedSei);
                 }
             }
             return Ok(None);
@@ -815,7 +814,7 @@ mod tests {
         nal.push(0x06); // H.264 SEI NAL header (nal_unit_type=6)
         // RBSP body (no emulation prevention bytes needed here — 0xFF is never escaped):
         nal.push(0x05); // payload_type = 5 (user_data_unregistered)
-        nal.extend(core::iter::repeat(0xFF).take(64)); // 64-byte 0xFF size chain
+        nal.extend(core::iter::repeat_n(0xFF, 64)); // 64-byte 0xFF size chain
         nal.push(0x00); // terminator byte (size accumulation ends, adds 0)
         nal.extend_from_slice(&MISP_MICROSEC_ID_H264); // 16 identifier bytes at "payload start"
         // Wrap as an Annex-B NAL (3-byte start code).
@@ -832,7 +831,7 @@ mod tests {
         let mut nal2: Vec<u8> = Vec::new();
         nal2.push(0x06);
         nal2.push(0x05);
-        nal2.extend(core::iter::repeat(0xFF).take(64));
+        nal2.extend(core::iter::repeat_n(0xFF, 64));
         nal2.push(0x00);
         nal2.extend_from_slice(&MISP_MICROSEC_ID_H264[..8]); // only 8 bytes — < 16
         let mut au2: Vec<u8> = vec![0, 0, 1];
