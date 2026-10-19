@@ -21,7 +21,7 @@ use crate::corrupt;
 use crate::profiles::{self, Profile};
 use crate::report_types::VerifyReport;
 use crate::transport::{self, Teeing};
-use crate::verify::{self, KlvExpect, Tally, VerifyMode, WireLayout};
+use crate::verify::{self, KlvExpect, KlvPlacementExpect, Tally, VerifyMode, WireLayout};
 use tst_test_helpers::rawts::WireSummary;
 
 /// How long to wait for the FIRST demuxed event before giving up
@@ -299,6 +299,7 @@ pub fn run(
     klv: KlvExpect,
     corruption_log: Option<&Path>,
     layout: WireLayout,
+    placement: Option<KlvPlacementExpect>,
 ) -> Result<VerifyReport, String> {
     let (transport, publish_mount) = transport::make_recv_probed(url)?;
     let mut report = recv_over_transport_with_layout(
@@ -310,6 +311,7 @@ pub fn run(
         klv,
         corruption_log,
         layout,
+        placement,
     )?;
     // The transport is gone by now, so its listener has filled the probe.
     report.publish_mount =
@@ -364,6 +366,7 @@ pub fn recv_over_transport(
         klv,
         corruption_log,
         WireLayout::Generator,
+        None,
     )
 }
 
@@ -378,6 +381,7 @@ pub fn recv_over_transport_with_layout(
     klv: KlvExpect,
     corruption_log: Option<&Path>,
     layout: WireLayout,
+    placement: Option<KlvPlacementExpect>,
 ) -> Result<VerifyReport, String> {
     let (teeing, tap) = Teeing::new(transport);
     // Built per-profile, not `DemuxReceiver::new` — see
@@ -390,6 +394,9 @@ pub fn recv_over_transport_with_layout(
     let mut tally = Tally::new();
     tally.set_klv_expect(klv);
     tally.set_wire_layout(layout);
+    if let Some(expect) = placement {
+        tally.set_klv_placement(expect);
+    }
     if no_klv_digest {
         tally.disable_klv_digest_tracking();
     }
@@ -573,6 +580,7 @@ pub fn run_managed(
     strict: bool,
     klv: KlvExpect,
     corruption_log: Option<&Path>,
+    placement: Option<KlvPlacementExpect>,
 ) -> Result<VerifyReport, String> {
     let initial_raw = transport::make_recv(url)?;
     let dial_url = url.to_string();
@@ -593,6 +601,9 @@ pub fn run_managed(
     let mut streaming = false;
     let mut tally = Tally::new();
     tally.set_klv_expect(klv);
+    if let Some(expect) = placement {
+        tally.set_klv_placement(expect);
+    }
     if no_klv_digest {
         tally.disable_klv_digest_tracking();
     }

@@ -382,6 +382,8 @@ run_send_peer_recv() {
 # set digest with `verify` and fails with "KLV set digest mismatch"
 # unless the recv report's `metrics.klv_set_sha256` equals it. For a
 # remux cell, whose recv verdict holds KLV only to a count floor.
+# --klv-placement N passes `recv --klv-placement N`: every KLV record is
+# held to the video access unit it was generated with (N generations).
 run_peer_send_recv() {
   local id=$1 peer=$2 tier=$3 our_url=$4
   shift 4
@@ -399,6 +401,10 @@ run_peer_send_recv() {
         ;;
       --klv-digest-of)
         klv_src=$2
+        shift 2
+        ;;
+      --klv-placement)
+        recv_extra+=(--klv-placement "$2")
         shift 2
         ;;
       *)
@@ -1168,7 +1174,7 @@ rtsp_publish_cells() {
   fi
   port=$(free_port tcp)
   run_peer_send_recv "rtsp-publish/gst-push-es-klv" gst-launch-1.0 remux \
-    "rtsp-publish://127.0.0.1:$port/mount" --remuxed --expect klv-sync --klv-digest-of "$es_src" -- \
+    "rtsp-publish://127.0.0.1:$port/mount" --remuxed --expect klv-sync --klv-digest-of "$es_src" --klv-placement 1 -- \
     gst-launch-1.0 filesrc "location=$es_src" ! tsdemux name=d \
     d. ! queue ! h264parse ! s.sink_0 \
     d. ! queue ! meta/x-klv ! s.sink_1 \

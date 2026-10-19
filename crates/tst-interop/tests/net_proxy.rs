@@ -1068,6 +1068,7 @@ fn srt_round_trip_through_lossy_proxy_recovers_via_retransmission() {
                 KlvExpect::compact(),
                 None,
                 WireLayout::Generator,
+                None,
             )
         })
     };
@@ -1481,6 +1482,7 @@ fn srt_background_reconnect_keeps_producing_through_an_outage() {
             false,
             false,
             KlvExpect::compact(),
+            None,
             None,
         )
     });

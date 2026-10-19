@@ -27,8 +27,10 @@ Subcommands:
             realistic [--au-scale N] scales the realistic AU payload sizes)
   recv      Receive test data from endpoint (--corruption-log PATH judges the
             capture against a `send --corrupt` peer's log — start recv FIRST;
-            --remuxed skips the generator-layout oracles for a re-muxed capture)
-  verify    Verify interop test results
+            --remuxed skips the generator-layout oracles for a re-muxed capture;
+            --klv-placement N judges KLV placement against the video)
+  verify    Verify interop test results (--klv-placement N judges KLV
+            placement against the video)
   proxy     UDP impairment relay (loss/dup/reorder/jitter/scheduled outage;
             --schedule seed=N,phases=K,phase_s=DUR walks a seeded phase
             table instead of one fixed impairment level)
@@ -132,6 +134,33 @@ fn apply_au_scale(au_sizes: AuSizeMode, au_scale: Option<u32>, context: &str) ->
 }
 
 /// Parse a `--klv-seed N` value, or exit 2 naming the subcommand.
+fn parse_klv_placement(raw: &str, context: &str) -> u64 {
+    match raw.parse::<u64>() {
+        Ok(n) if n >= 1 => n,
+        _ => {
+            eprintln!("{context}: --klv-placement must be an integer >= 1, got '{raw}'");
+            std::process::exit(2);
+        }
+    }
+}
+
+/// Build the placement expectation for `--klv-placement N`, or exit 2.
+fn placement_expect(
+    n: Option<u64>,
+    profile: &profiles::Profile,
+    context: &str,
+) -> Option<verify::KlvPlacementExpect> {
+    n.map(|n| {
+        verify::KlvPlacementExpect::for_profile(profile, n).unwrap_or_else(|_| {
+            eprintln!(
+                "{context}: --klv-placement needs a profile with synchronous KLV (got \"{}\")",
+                profile.name
+            );
+            std::process::exit(2);
+        })
+    })
+}
+
 fn parse_klv_seed(raw: &str, context: &str) -> u64 {
     raw.parse::<u64>().unwrap_or_else(|e| {
         eprintln!("{context}: --klv-seed must be a non-negative integer, got '{raw}': {e}");
@@ -604,7 +633,8 @@ fn run_send(args: &[String]) -> ! {
 
 /// `recv --url URL --expect PROFILE --seconds N [--json OUT]
 /// [--managed] [--no-klv-digest] [--strict] [--remuxed]
-/// [--klv-set compact|rich] [--klv-seed N] [--corruption-log PATH]`
+/// [--klv-set compact|rich] [--klv-seed N] [--klv-placement N]
+/// [--corruption-log PATH]`
 ///
 /// Builds a live transport from `URL` and receives `N` seconds of
 /// traffic from it, checking the result against `PROFILE`'s invariants.
@@ -643,6 +673,11 @@ fn run_send(args: &[String]) -> ! {
 /// wire-vs-demux per PID — the list is `verify::REMUXED_SKIPPED_ORACLES`);
 /// every content oracle still runs, and the report names what it skipped
 /// in `skipped_oracles`. Not combinable with `--managed`.
+///
+/// `--klv-placement N` holds every KLV record to the video access unit it
+/// was generated with (N = how many generations the capture may span, `1`
+/// for a single capture) and adds `metrics.klv_placement`; exit 2 on a
+/// profile without synchronous KLV.
 ///
 /// `--klv-set rich` / `--klv-seed N` must MATCH what the sender's
 /// `gen`/`send` used: the report then gains `metrics.klv_rich` plus the
@@ -683,6 +718,7 @@ fn run_recv(args: &[String]) -> ! {
     let mut klv_set = KlvSet::Compact;
     let mut klv_seed: u64 = 0;
     let mut corruption_log: Option<PathBuf> = None;
+    let mut klv_placement: Option<u64> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -727,6 +763,13 @@ fn run_recv(args: &[String]) -> ! {
                 klv_seed = parse_klv_seed(&require_value(args, i, "recv: --klv-seed"), "recv");
                 i += 2;
             }
+            "--klv-placement" => {
+                klv_placement = Some(parse_klv_placement(
+                    &require_value(args, i, "recv: --klv-placement"),
+                    "recv",
+                ));
+                i += 2;
+            }
             "--corruption-log" => {
                 corruption_log = Some(PathBuf::from(require_value(
                     args,
@@ -759,6 +802,8 @@ fn run_recv(args: &[String]) -> ! {
         std::process::exit(2);
     });
 
+    let placement = placement_expect(klv_placement, profile, "recv");
+
     if remuxed && managed {
         eprintln!("recv: --remuxed cannot be combined with --managed");
         std::process::exit(2);
@@ -783,6 +828,7 @@ fn run_recv(args: &[String]) -> ! {
             strict,
             klv,
             corruption_log.as_deref(),
+            placement,
         )
     } else {
         recv::run(
@@ -795,6 +841,7 @@ fn run_recv(args: &[String]) -> ! {
             klv,
             corruption_log.as_deref(),
             layout,
+            placement,
         )
     }
     .unwrap_or_else(|e| {
@@ -812,7 +859,7 @@ fn run_recv(args: &[String]) -> ! {
 }
 
 /// `verify --file F --expect PROFILE --seconds N [--json OUT]
-/// [--klv-set compact|rich] [--klv-seed N]`
+/// [--klv-set compact|rich] [--klv-seed N] [--klv-placement N]`
 ///
 /// Demuxes `F` and checks it against `PROFILE`'s invariants for an
 /// `N`-second capture. Exits 0 on pass, 1 on fail, 2 on usage/IO error.
@@ -820,7 +867,8 @@ fn run_recv(args: &[String]) -> ! {
 /// `OUT` (or stdout, if `OUT` is `-`).
 ///
 /// `--klv-set rich` / `--klv-seed N` must match what generated `F` — see
-/// `recv`'s own doc comment for what the rich verdicts check.
+/// `recv`'s own doc comment for what the rich verdicts check, and for
+/// `--klv-placement N`.
 fn run_verify(args: &[String]) -> ! {
     let mut file: Option<PathBuf> = None;
     let mut expect: Option<String> = None;
@@ -828,6 +876,7 @@ fn run_verify(args: &[String]) -> ! {
     let mut json_out: Option<String> = None;
     let mut klv_set = KlvSet::Compact;
     let mut klv_seed: u64 = 0;
+    let mut klv_placement: Option<u64> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -856,6 +905,13 @@ fn run_verify(args: &[String]) -> ! {
                 klv_seed = parse_klv_seed(&require_value(args, i, "verify: --klv-seed"), "verify");
                 i += 2;
             }
+            "--klv-placement" => {
+                klv_placement = Some(parse_klv_placement(
+                    &require_value(args, i, "verify: --klv-placement"),
+                    "verify",
+                ));
+                i += 2;
+            }
             other => {
                 eprintln!("verify: unknown argument: {other}");
                 std::process::exit(2);
@@ -880,7 +936,8 @@ fn run_verify(args: &[String]) -> ! {
         std::process::exit(2);
     });
 
-    let report = verify::verify_file_with(
+    let placement = placement_expect(klv_placement, profile, "verify");
+    let report = verify::verify_file_placed(
         &file,
         profile,
         seconds,
@@ -888,6 +945,7 @@ fn run_verify(args: &[String]) -> ! {
             set: klv_set,
             seed: klv_seed,
         },
+        placement,
     )
     .unwrap_or_else(|e| {
         eprintln!("verify: {e}");

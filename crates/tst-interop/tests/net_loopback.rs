@@ -740,6 +740,7 @@ fn srt_baseline_loopback_round_trips_and_matches() {
                 KlvExpect::compact(),
                 None,
                 WireLayout::Generator,
+                None,
             )
         })
     };
@@ -791,6 +792,7 @@ fn srt_realistic_au_sizes_round_trip_and_match() {
                 KlvExpect::compact(),
                 None,
                 WireLayout::Generator,
+                None,
             )
         })
     };
@@ -890,6 +892,7 @@ fn srt_managed_recv_returns_after_peer_never_reconnects() {
                 false,
                 false,
                 KlvExpect::compact(),
+                None,
                 None,
             )
         })
