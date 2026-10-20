@@ -24,13 +24,14 @@ fn value(args: &[String], i: usize, flag: &str) -> String {
 /// sweep or a replay does not pass, 2 on a usage or I/O error.
 pub fn run(args: &[String]) -> ! {
     let Some(sub) = args.first() else {
-        fail("a subcommand is required: inventory | sweep | replay");
+        fail("a subcommand is required: inventory | sweep | replay | report");
     };
     let rest = &args[1..];
     match sub.as_str() {
         "inventory" => run_inventory(rest),
         "sweep" => run_sweep(rest),
         "replay" => run_replay(rest),
+        "report" => run_report(rest),
         // Internal: the replay stage's child process, not in the usage text.
         "receive" => run_receive(rest),
         other => fail(&format!("unknown subcommand '{other}'")),
@@ -238,6 +239,38 @@ fn run_replay(args: &[String]) -> ! {
         Ok(s) => {
             print_replay_summary(&s);
             std::process::exit(if s.pass { 0 } else { 1 });
+        }
+        Err(e) => fail(&e),
+    }
+}
+
+fn run_report(args: &[String]) -> ! {
+    let (mut run, mut markdown, mut archive) = (None, None, None);
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--markdown" => markdown = Some(PathBuf::from(value(args, i, "--markdown"))),
+            "--archive-row" => archive = Some(PathBuf::from(value(args, i, "--archive-row"))),
+            a if a.starts_with("--") => fail("unknown option"),
+            _ => {
+                if run.is_some() {
+                    fail("only one run directory is accepted");
+                }
+                run = Some(PathBuf::from(&args[i]));
+                i += 1;
+                continue;
+            }
+        }
+        i += 2;
+    }
+    let run = RunDir {
+        root: run.unwrap_or_else(|| fail("a run directory is required")),
+    };
+    // A failed run is still reported: this exits 0 or 2 only.
+    match super::report::run(&run, markdown.as_deref(), archive.as_deref()) {
+        Ok(row) => {
+            println!("{}", row.note);
+            std::process::exit(0);
         }
         Err(e) => fail(&e),
     }
