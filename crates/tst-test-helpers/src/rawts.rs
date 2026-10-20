@@ -453,6 +453,12 @@ pub struct Reader {
     /// see that method's doc comment for why the ordinal is kept here
     /// rather than re-derived by a caller watching the latest base.
     pcr_events: Vec<(u64, u64)>,
+    /// `(pid, packet ordinal)` of every PES start whose payload prefix
+    /// differed from its PID's first, since the last
+    /// [`Reader::take_prefix_mismatches`]. Recorded only in resync mode,
+    /// the mode a corruption-judged capture runs in, so an unattributed
+    /// offline read never accumulates it.
+    prefix_events: Vec<(u16, u64)>,
     /// Last payload-carrying packet seen per PID, kept whole (not just its
     /// CC) so a duplicate can be told from a same-CC packet whose other
     /// bytes differ — see [`WireSummary::pes_starts_per_pid`] and
@@ -487,6 +493,7 @@ impl Reader {
             pending_skipped: 0,
             retention,
             pcr_events: Vec::new(),
+            prefix_events: Vec::new(),
             last_pkt: BTreeMap::new(),
         }
     }
@@ -518,6 +525,16 @@ impl Reader {
     /// moment the PCR is decoded instead.
     pub fn take_pcr_events(&mut self) -> Vec<(u64, u64)> {
         std::mem::take(&mut self.pcr_events)
+    }
+
+    /// Take every `(pid, at)` PES start whose first payload bytes did not
+    /// match its PID's first PES since the previous call, `at` being the
+    /// 0-based ordinal of the packet that started it. Populated only in
+    /// resync mode; each entry is counted in
+    /// [`PesShape::prefix_mismatches`] too, so a caller that excuses an
+    /// entry subtracts it from that total.
+    pub fn take_prefix_mismatches(&mut self) -> Vec<(u16, u64)> {
+        std::mem::take(&mut self.prefix_events)
     }
 
     /// Whether `pid` is a PMT PID — learned from the PAT.
@@ -993,6 +1010,10 @@ impl Reader {
     fn pes(&mut self, pid: u16, payload: &[u8]) -> Result<(), String> {
         let stream_id = payload[3];
         let retention = self.retention;
+        // `packets` was already incremented for this packet, so its own
+        // 0-based ordinal is one less.
+        let at = self.summary.packets.saturating_sub(1);
+        let record = self.resync_mode;
         let shape = self.summary.pes.entry(pid).or_default();
         shape.stream_ids.insert(stream_id);
         // §2.4.3.7: byte 6 = '10' + flags, byte 7 = PTS_DTS_flags.., byte 8 = header_data_length.
@@ -1014,7 +1035,12 @@ impl Reader {
         if let Some(d) = payload.get(9 + hdr_len..9 + hdr_len + 4) {
             match shape.first_payload_prefix {
                 None => shape.first_payload_prefix = Some([d[0], d[1], d[2], d[3]]),
-                Some(first) if first[..2] != d[..2] => shape.prefix_mismatches += 1,
+                Some(first) if first[..2] != d[..2] => {
+                    shape.prefix_mismatches += 1;
+                    if record {
+                        self.prefix_events.push((pid, at));
+                    }
+                }
                 Some(_) => {}
             }
         }

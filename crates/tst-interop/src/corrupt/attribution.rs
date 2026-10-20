@@ -290,6 +290,12 @@ pub struct AttributionReport {
     /// mis-framed packets.
     #[serde(default)]
     pub anchors_rejected: u64,
+    /// Later audio PES payloads whose ADTS prefix no longer matched the
+    /// first, excused because their PES start lay inside an attributed
+    /// corruption window (`Tally::note_prefix_mismatches`). Set by the
+    /// verifier, not the attribution; zero without corruption.
+    #[serde(default)]
+    pub adts_prefix_excused: u64,
 }
 
 impl AttributionReport {
@@ -1917,6 +1923,7 @@ impl Attribution {
             classes: self.classes,
             approx_slack: self.approx_slack,
             anchors_rejected: self.anchors_rejected,
+            adts_prefix_excused: 0,
         }
     }
 }

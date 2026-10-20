@@ -232,8 +232,10 @@ pub(crate) const MAX_GAP_CADENCES: f64 = 3.0;
 /// budgets, sized from their own, earlier launch instants, can
 /// otherwise elapse a few real seconds before the sampler's next
 /// tick — confirmed empirically, ~6.5s for the srt leg, ~2.5s for
-/// rist). A `None` here means a process died UNEXPECTEDLY, mid-run,
-/// not that the run reached its end.
+/// rist). A `None` that the same pid never follows with a sample means a
+/// process died UNEXPECTEDLY, mid-run, not that the run reached its end;
+/// one it does follow is a missed read (the sampler writes no row at all
+/// for a live pid it could not read, so this arises only in older data).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RssSample {
     pub elapsed_s: f64,
@@ -1216,9 +1218,25 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         });
     }
 
+    // An empty `rss_kb` is an exit only when the same pid never reports
+    // again. One followed by a later sample of that pid is a missed read
+    // (the pid was alive), recorded as a limitation and never judged.
+    let resumed = |s: &RssSample| {
+        rss_samples.iter().any(|t| {
+            t.rss_kb.is_some()
+                && t.pid == s.pid
+                && t.leg == s.leg
+                && t.process == s.process
+                && t.elapsed_s > s.elapsed_s
+        })
+    };
+    let sample_misses: Vec<&RssSample> = rss_samples
+        .iter()
+        .filter(|s| s.rss_kb.is_none() && resumed(s))
+        .collect();
     let process_exits: Vec<ProcessExit> = rss_samples
         .iter()
-        .filter(|s| s.rss_kb.is_none())
+        .filter(|s| s.rss_kb.is_none() && !resumed(s))
         .map(|s| ProcessExit {
             leg: s.leg.clone(),
             process: s.process.clone(),
@@ -2336,9 +2354,11 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         publish_legs: publish_leg_results,
         verdicts,
         overall_pass,
-        limitations: limitations_with_gate(
-            config.memory_gate.as_ref(),
-            vec![
+        limitations: sample_miss_limitations(&sample_misses)
+            .into_iter()
+            .chain(limitations_with_gate(
+                config.memory_gate.as_ref(),
+                vec![
                 "A managed sender's own reconnect counters (legs[].managed_send's \
              reconnect_attempts / reconnect_successes) are recorded, not gated. \
              recv --managed's ManagedRecvTransport::reconnects_count IS a real observed \
@@ -2377,8 +2397,32 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
              beside the drop counters and not gated."
                     .to_string(),
             ],
-        ),
+            ))
+            .collect(),
     })
+}
+
+/// The `sample_misses` limitation: empty RSS reads of a pid that reported
+/// again afterwards. Absent when there were none.
+fn sample_miss_limitations(misses: &[&RssSample]) -> Option<String> {
+    if misses.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = misses
+        .iter()
+        .map(|s| {
+            format!(
+                "{}/{} pid {} at {:.0} s",
+                s.leg, s.process, s.pid, s.elapsed_s
+            )
+        })
+        .collect();
+    Some(format!(
+        "sample_misses: {} empty RSS read(s) of a process that reported again afterwards, \
+         so not exits and not judged: {}",
+        misses.len(),
+        list.join(", ")
+    ))
 }
 
 /// [`build_soak_results`]'s fixed limitations, plus the declared
@@ -3796,6 +3840,70 @@ pub(crate) mod tests {
             .find(|v| v.name == "zero_process_exits")
             .unwrap();
         assert!(!v.pass);
+        assert!(!results.overall_pass);
+    }
+
+    /// One empty read between live samples of the same pid is a missed
+    /// read: no exit, the verdict passes, and the miss is a limitation.
+    #[test]
+    fn a_lone_empty_rss_sample_followed_by_live_rows_is_a_limitation_not_an_exit() {
+        let samples = vec![
+            rss_row("rist", "send", 420.0, Some(1000)),
+            rss_row("rist", "send", 450.0, None),
+            rss_row("rist", "send", 480.0, Some(1000)),
+        ];
+        let results = build_soak_results(SoakInputs {
+            publish_legs: Vec::new(),
+            rss_samples: samples,
+            legs: Vec::new(),
+            rss_slope_threshold_kb_per_hour: None,
+            config: cfg(30.0, 30.0),
+            worker_exits: six_clean_exits(),
+        })
+        .expect("non-empty rss_samples must not error");
+        assert!(
+            results.process_exits.is_empty(),
+            "{:?}",
+            results.process_exits
+        );
+        let v = results
+            .verdicts
+            .iter()
+            .find(|v| v.name == "zero_process_exits")
+            .unwrap();
+        assert!(v.pass, "{}", v.detail);
+        assert!(
+            results
+                .limitations
+                .iter()
+                .any(|l| l.starts_with("sample_misses: 1 ")
+                    && l.contains("rist/send pid 1000 at 450 s")),
+            "{:?}",
+            results.limitations
+        );
+    }
+
+    /// A pid that goes empty and never reports again is an exit, even
+    /// when another pid of the same process name keeps reporting.
+    #[test]
+    fn a_pid_that_stops_reporting_is_an_exit_while_a_restarted_pid_reports() {
+        let mut gone = rss_row("srt", "send", 60.0, None);
+        gone.pid = 7;
+        let mut before = rss_row("srt", "send", 30.0, Some(1000));
+        before.pid = 7;
+        let mut restarted = rss_row("srt", "send", 90.0, Some(1000));
+        restarted.pid = 8;
+        let results = build_soak_results(SoakInputs {
+            publish_legs: Vec::new(),
+            rss_samples: vec![before, gone, restarted],
+            legs: Vec::new(),
+            rss_slope_threshold_kb_per_hour: None,
+            config: cfg(30.0, 30.0),
+            worker_exits: six_clean_exits(),
+        })
+        .expect("non-empty rss_samples must not error");
+        assert_eq!(results.process_exits.len(), 1);
+        assert_eq!(results.process_exits[0].pid, 7);
         assert!(!results.overall_pass);
     }
 
