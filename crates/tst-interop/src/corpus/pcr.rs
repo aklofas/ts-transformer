@@ -21,7 +21,7 @@ pub const PCR_BASE_HZ: u64 = 90_000;
 /// Whether a packet starts at `k`: a sync byte, confirmed by sync bytes at
 /// +188 and +376 (the demuxer's own rule needs several strides). With fewer
 /// than three whole packets left in `buf`, the strides that exist must hold.
-fn starts_packet(buf: &[u8], k: usize) -> bool {
+pub(crate) fn starts_packet(buf: &[u8], k: usize) -> bool {
     if buf.get(k) != Some(&SYNC) {
         return false;
     }
@@ -56,13 +56,13 @@ pub fn parse_prefix(buf: &[u8]) -> Result<ParsedStream, String> {
 /// The inventory's duration and the prefix cut both read it this way, so a
 /// capture with a PCR reset reports the time of its continuous parts.
 #[derive(Default)]
-struct PcrSpan {
-    last: u64,
-    ticks: u64,
+pub(crate) struct PcrSpan {
+    pub(crate) last: u64,
+    pub(crate) ticks: u64,
 }
 
 impl PcrSpan {
-    fn advance(&mut self, base: u64) {
+    pub(crate) fn advance(&mut self, base: u64) {
         let step = if base >= self.last {
             base - self.last
         } else if self.last - base >= PCR_BASE_WRAP / 2 {

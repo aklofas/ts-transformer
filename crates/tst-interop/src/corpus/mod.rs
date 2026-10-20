@@ -12,6 +12,7 @@ pub mod digest;
 pub mod cli;
 pub mod invariants;
 pub mod inventory;
+pub mod pace;
 pub mod pcr;
 pub mod shape;
 pub mod subset;
