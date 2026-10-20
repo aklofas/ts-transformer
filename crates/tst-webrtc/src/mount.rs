@@ -23,6 +23,7 @@ use tst_core::codec::misp_time::insert_sei_before_first_vcl;
 use tst_core::codec::nal::{is_vcl, nal_unit_type};
 use tst_core::codec::nal_framing::{ParameterSets, extract_parameter_sets};
 use tst_core::mpegts::common::Pts90khz;
+use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig, MetadataKind, SamplePayload};
 
 use crate::config::{AudioPolicy, KlvCarriage, MountConfig, MountKind, VideoCodec};
 use crate::error::{PushError, WhepServerError};
@@ -63,15 +64,6 @@ const _: () = assert!(KLV_DC_LIMIT as usize + KLV_DC_HEADER_BYTES <= SCTP_SEND_B
 
 /// KLV records waiting for a frame; when full the oldest is dropped.
 const PENDING_KLV_CAP: usize = 1024;
-
-/// The fixed SEI bytes around each record's KLV: the 16-byte UUID, the
-/// version byte and the 8-byte PTS.
-const SEI_RECORD_PREFIX: usize = 25;
-
-/// The SEI message and NAL framing around one record: NAL header,
-/// payload type and size, the trailing bits and the start code, with
-/// room for emulation-prevention bytes.
-const SEI_RECORD_FRAMING: usize = 8;
 
 /// A PTS more than this far behind the previous frame rebases the RTP
 /// clock (10 s).
@@ -180,6 +172,9 @@ pub(crate) struct MountState {
     video_gap: AtomicBool,
     /// Never held across a queue send.
     inner: Mutex<MountInner>,
+    /// The demuxer behind `push_ts`; `Some` on an MP2T mount. Held while
+    /// its events are dispatched, which takes `inner` and never blocks.
+    demuxer: Mutex<Option<Demuxer>>,
     pub(crate) tx: SyncSender<MediaMsg>,
     pub(crate) wake: Waker,
     pub(crate) stats: MountCounters,
@@ -212,6 +207,7 @@ impl MountState {
         control: Option<ControlLink>,
     ) -> Result<Self, WhepServerError> {
         cfg.validate()?;
+        let cfg_kind = cfg.kind;
         let packetizer =
             packetizer_for(cfg.video).ok_or_else(|| WhepServerError::InvalidConfig {
                 detail: format!("no packetizer for {:?}", cfg.video),
@@ -228,6 +224,10 @@ impl MountState {
                 pending_klv: VecDeque::new(),
                 rtp_base: 0,
                 last: None,
+            }),
+            demuxer: Mutex::new(match cfg_kind {
+                MountKind::Mp2t => Some(Demuxer::with_config(DemuxerConfig::default())),
+                _ => None,
             }),
             tx,
             wake,
@@ -507,8 +507,13 @@ impl MountHandle {
     /// [`PushError::Closed`] after the mount closed, and
     /// [`PushError::InvalidAccessUnit`] when `au` holds no NAL unit.
     pub fn push_video(&self, au: &[u8], pts: Pts90khz, key_frame: bool) -> Result<(), PushError> {
+        self.state.check(MountKind::Elementary)?;
+        self.video(au, pts, key_frame)
+    }
+
+    /// The video path shared by `push_video` and the MP2T demuxer.
+    fn video(&self, au: &[u8], pts: Pts90khz, key_frame: bool) -> Result<(), PushError> {
         let s = &*self.state;
-        s.check(MountKind::Elementary)?;
         let codec = s.cfg.video;
         let types: Vec<Option<u8>> = annexb::nals(au)
             .filter(|nal| !nal.is_empty())
@@ -584,21 +589,33 @@ impl MountHandle {
             if to_sei {
                 let budget = s.cfg.sei_budget_bytes as usize;
                 let mut used = 0usize;
+                // The SEI NAL units that fit, joined by start codes, spliced
+                // into the access unit once.
+                let mut seis: Vec<u8> = Vec::new();
                 for (klv_pts, klv) in &bound {
-                    let cost = SEI_RECORD_PREFIX + klv.len() + SEI_RECORD_FRAMING;
+                    // Fails only for a codec validate() refuses.
+                    let Ok(sei) = crate::sei::build_klv_sei_nal(codec, pts_u64(*klv_pts), klv)
+                    else {
+                        continue;
+                    };
+                    // The escaped NAL's real size plus its start code.
+                    let cost = sei.len() + 3;
                     if used + cost > budget {
                         bump(&s.stats.klv_sei_dropped_oversize);
                         continue;
                     }
-                    // Both steps fail only for a codec validate() refuses
-                    // or an access unit without a slice, excluded above.
-                    let spliced = crate::sei::build_klv_sei_nal(codec, pts_u64(*klv_pts), klv)
-                        .ok()
-                        .and_then(|sei| insert_sei_before_first_vcl(&buf, &sei, codec).ok());
-                    if let Some(spliced) = spliced {
+                    if !seis.is_empty() {
+                        seis.extend_from_slice(&[0, 0, 1]);
+                    }
+                    seis.extend_from_slice(&sei);
+                    used += cost;
+                    bump(&s.stats.klv_sei_inserted);
+                }
+                if !seis.is_empty() {
+                    // Fails only for an access unit without a slice,
+                    // excluded above.
+                    if let Ok(spliced) = insert_sei_before_first_vcl(&buf, &seis, codec) {
                         buf = spliced;
-                        used += cost;
-                        bump(&s.stats.klv_sei_inserted);
                     }
                 }
             }
@@ -667,9 +684,14 @@ impl MountHandle {
         pts: Pts90khz,
         metadata_service_id: u8,
     ) -> Result<(), PushError> {
+        self.state.check(MountKind::Elementary)?;
+        self.klv(record, pts, metadata_service_id)
+    }
+
+    /// The KLV path shared by `push_klv` and the MP2T demuxer.
+    fn klv(&self, record: &[u8], pts: Pts90khz, metadata_service_id: u8) -> Result<(), PushError> {
         let _ = metadata_service_id;
         let s = &*self.state;
-        s.check(MountKind::Elementary)?;
         let len = record.len() as u64;
         if len > KLV_DC_LIMIT {
             bump(&s.stats.klv_dc_dropped_oversize);
@@ -702,33 +724,125 @@ impl MountHandle {
     ///
     /// [`PushError::Closed`] after the mount closed.
     pub fn push_audio(&self, frames: &[u8], pts: Pts90khz) -> Result<(), PushError> {
+        self.state.check(MountKind::Elementary)?;
+        self.audio(frames, pts);
+        Ok(())
+    }
+
+    /// The audio path shared by `push_audio` and the MP2T demuxer.
+    fn audio(&self, frames: &[u8], pts: Pts90khz) {
         let _ = (frames, pts);
         let s = &*self.state;
-        s.check(MountKind::Elementary)?;
         match s.cfg.audio {
             AudioPolicy::Drop | AudioPolicy::PassthroughOpus => {
                 bump(&s.stats.audio_frames_dropped);
             }
         }
-        Ok(())
     }
 
     /// Push MPEG-TS bytes into an MP2T mount.
     ///
-    /// MP2T mounts are not served in this release
-    /// ([`MountConfig::validate`] refuses [`MountKind::Mp2t`]), so the call
-    /// is refused on every mount.
+    /// The bytes go through the mount's demuxer, in slices of any size (a
+    /// packet may span two calls). Each video access unit of the mount's
+    /// codec takes the [`push_video`](Self::push_video) path with the TS
+    /// random-access flag as `key_frame`; each KLV record takes the
+    /// [`push_klv`](Self::push_klv) path (the Metadata_AU_cell header is
+    /// already removed by the demuxer); audio takes the
+    /// [`push_audio`](Self::push_audio) path. A KLV record belongs before
+    /// the access unit it describes in the stream: it binds to the first
+    /// frame whose PTS it does not exceed.
+    ///
+    /// Stream damage never fails the call: a demuxer error, a
+    /// non-conformance report, a video access unit of another codec or one
+    /// without a NAL unit, and an oversize KLV record are counted
+    /// ([`MountStats::demux_nonconformant`], and the KLV counters) and
+    /// skipped.
     ///
     /// # Errors
     ///
     /// [`PushError::Closed`] after the mount closed, and
-    /// [`PushError::WrongMountKind`] otherwise.
+    /// [`PushError::WrongMountKind`] on an elementary mount.
     pub fn push_ts(&self, bytes: &[u8]) -> Result<(), PushError> {
-        let _ = bytes;
         let s = &*self.state;
         s.check(MountKind::Mp2t)?;
-        // MP2T mounts arrive with the demuxer integration.
-        Err(PushError::WrongMountKind)
+        // The demuxer stays locked through the dispatch so concurrent
+        // callers' events keep their order. Nothing below blocks: every
+        // push path ends in `try_send`.
+        let mut guard = s.demuxer.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(demuxer) = guard.as_mut() else {
+            return Err(PushError::WrongMountKind);
+        };
+        if let Err(e) = demuxer.feed(bytes) {
+            tracing::debug!(mount = %s.path, error = %e, "MP2T demux error");
+            bump(&s.stats.demux_nonconformant);
+        }
+        while let Some(event) = demuxer.next_event() {
+            self.dispatch(event)?;
+        }
+        Ok(())
+    }
+
+    /// Routes one demuxed event into the elementary push paths.
+    fn dispatch(&self, event: DemuxEvent) -> Result<(), PushError> {
+        let s = &*self.state;
+        let skipped = |r: Result<(), PushError>| match r {
+            Err(PushError::Closed) => Err(PushError::Closed),
+            Err(e) => {
+                tracing::debug!(mount = %s.path, error = %e, "MP2T unit skipped");
+                bump(&s.stats.demux_nonconformant);
+                Ok(())
+            }
+            Ok(()) => Ok(()),
+        };
+        match event {
+            DemuxEvent::Sample {
+                pts,
+                payload:
+                    SamplePayload::Video {
+                        codec,
+                        raw,
+                        random_access_indicator,
+                        ..
+                    },
+                ..
+            } => {
+                if codec != s.cfg.video {
+                    tracing::debug!(mount = %s.path, ?codec, "MP2T video codec differs from the mount's");
+                    bump(&s.stats.demux_nonconformant);
+                    return Ok(());
+                }
+                skipped(self.video(&raw, pts, random_access_indicator))
+            }
+            DemuxEvent::Sample {
+                pts,
+                payload: SamplePayload::Audio { frames, .. },
+                ..
+            } => {
+                self.audio(&frames, pts);
+                Ok(())
+            }
+            DemuxEvent::Metadata {
+                pts, kind, payload, ..
+            } => {
+                let service_id = match kind {
+                    MetadataKind::KlvSyncAuCell {
+                        metadata_service_id,
+                        ..
+                    } => metadata_service_id,
+                    _ => 0,
+                };
+                // An oversize record is counted by `klv` itself.
+                match self.klv(&payload, pts, service_id) {
+                    Err(PushError::Closed) => Err(PushError::Closed),
+                    _ => Ok(()),
+                }
+            }
+            DemuxEvent::NonConformant { .. } => {
+                bump(&s.stats.demux_nonconformant);
+                Ok(())
+            }
+            _ => Ok(()),
+        }
     }
 
     /// A snapshot of the mount's counters.

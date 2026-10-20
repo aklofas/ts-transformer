@@ -59,12 +59,10 @@ fn refusal(cfg: &MountConfig) -> String {
 }
 
 #[test]
-fn an_mp2t_mount_is_refused_until_it_is_served() {
+fn an_mp2t_mount_is_accepted() {
     let mut cfg = MountConfig::default();
     cfg.kind = MountKind::Mp2t;
-    let detail = refusal(&cfg);
-    assert!(detail.contains("Mp2t"), "{detail}");
-    assert!(detail.contains("not served in this release"), "{detail}");
+    cfg.validate().unwrap();
 }
 
 #[test]

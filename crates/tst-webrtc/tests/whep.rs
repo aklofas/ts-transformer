@@ -7,6 +7,8 @@ mod binding;
 mod clock;
 #[path = "whep/http.rs"]
 mod http;
+#[path = "whep/mp2t.rs"]
+mod mp2t;
 #[path = "whep/negotiate.rs"]
 mod negotiate;
 #[path = "whep/packetize_h264.rs"]
