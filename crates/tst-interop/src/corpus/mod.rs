@@ -8,9 +8,12 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 pub mod digest;
+pub mod cli;
+pub mod invariants;
 pub mod inventory;
 pub mod pcr;
 pub mod shape;
+pub mod sweep;
 
 /// A SHA-256 digest as 64 lowercase hex characters. `Display` prints the hex.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -13,6 +13,8 @@ mod digest;
 mod inventory;
 #[path = "corpus/shape.rs"]
 mod shape;
+#[path = "corpus/sweep.rs"]
+mod sweep;
 
 /// A fresh, empty directory unique to this test process and `name`.
 pub fn temp_dir_named(name: &str) -> PathBuf {
