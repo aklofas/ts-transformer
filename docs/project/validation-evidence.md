@@ -332,7 +332,9 @@ same stream. `tst-interop report soak` renders a pass/fail verdict plus
 RSS-growth slopes per process. Since 2026-10-08 a third leg, `rtsp-publish`,
 runs beside them: an external RTSP publisher pushing into the RTSP server's
 publish mount, ending and re-ANNOUNCEing on a schedule. It is described
-under "Publisher role" below, with the rest of that role's evidence.
+under "Publisher role" below, with the rest of that role's evidence. A
+fourth leg, `rtsp-publish-es`, publishes elementary streams into a second
+mount; it is described after the runs table below.
 
 The impairment itself changed shape on 2026-09-14 (see "The current soak
 shape" below), and the 0.7.0 release soak below runs it. The earlier
@@ -421,6 +423,43 @@ killed inside the end-grace window leaves no report artifact, so `report
 soak` refuses to write `soak-results.json` and the run exits 2; a sender
 killed earlier trips the supervisor's fail-fast (`soak-FAILED`) with every
 worker's status recorded in `exits.json`.
+
+### Runs
+
+Every soak run this page cites, oldest first. The tree is the commit the
+run was built from. A release soak declares 259 200 seconds (72 hours);
+the release qualification accepts no shorter run.
+
+| Id | Dates (UTC) | Tree | Declared duration | Verdict | Note |
+| --- | --- | --- | --- | --- | --- |
+| `soak-run2-2026-08-05` | 2026-08-05 → 2026-08-08 | not recorded | none (it predates `soak-config.json`); ran 72 h | PASS | Fixed-impairment shape, Blocking mode; no source commit was recorded. Described under "The previous run" below. |
+| `soak-rc070-2026-10-04` | 2026-10-01 → 2026-10-04 | `e86dd9ea6d1a` | 259 200 s | `overall_pass=false` | The 0.7.0 release soak. The SRT leg passed every gating verdict; the RIST leg failed corruption attribution on harness defects. |
+| `soak-rtsp-publish-2026-10-08` | 2026-10-09 | `b6545e6004ae` | 3 600 s | `overall_pass=false` | The first one-hour run with the `rtsp-publish` leg, which passed every verdict it owns; the three failures were harness defects on the SRT leg's receiver. |
+
+The release qualification reads the same runs from
+`tests/coverage/evidence-archives.toml`.
+
+### The elementary publish leg (`rtsp-publish-es`)
+
+GStreamer's `rtspclientsink` publishes H.264 and KLV as two separate RTP
+tracks into a publish mount, and the mount re-muxes them into MPEG-TS for
+`tst-interop recv`. The leg runs the `klv-sync` profile with compact KLV,
+because each publisher generation replays the same one-generation source
+and the rich KLV oracle's positional schedule cannot survive a replay. The
+stream is re-muxed, so its digest is not judged. The weekly
+`rtsp-publish/gst-push-es-klv` interop cell holds the received KLV set's
+digest to its source's, so an altered record fails there. Two
+verdicts judge the leg. `delivery_complete_rtsp-publish-es` requires the
+received KLV record count to equal the declared count per generation times
+the declared generations, with no KLV unit dropped by the mount and at
+least one access unit emitted. `klv_placement_rtsp-publish-es` requires
+every record to sit within 91 ticks of the video access unit it was
+generated with, no unexpected timeline reset, and one generation seen per
+declared publisher generation. Each new publisher restarts the timeline,
+so the receiver excuses one backward timestamp step per PID at each
+declared generation boundary, and the timing anomalies that coincide with
+it; any other backward step fails. The verdict detail gives the excused
+counts. No archived run has carried this leg yet.
 
 ### The current soak shape (2026-09-14)
 
@@ -567,9 +606,10 @@ RIST leg failed corruption attribution: all three gating FAILs
 (`worker_exits`, `recv_invariants_rist`, `corruption_attributed_rist`)
 are that one finding, explained below. No process grew past the RSS gate.
 This is the latest 72-hour SRT / RIST endurance run; the two harness
-defects behind the RIST failure were fixed in 0.8.0.
+defects behind the RIST failure were fixed in 0.8.0. Its tree, dates and
+declared duration are in the runs table above.
 
-The tree was `e86dd9ea`, clean at launch (`provenance.json`:
+The tree was clean at launch (`provenance.json`:
 `dirty=false`, 10 submodules pinned), built `--release` with the vendored
 libsrt / librist / mbedTLS on a dedicated 2-vCPU / 3.9 GB cloud VM, and run
 as `SRT_RECONNECT_MODE=background bash scripts/interop/soak.sh --hours 72

@@ -710,7 +710,7 @@ if ! gate_fits "$GATE_PREDICTED_KB"; then
   done
   GATE_FIT_MSG="no combination of --no-rtsp-publish* flags fits this host"
   [[ -z "$GATE_FIT_FLAGS" ]] || GATE_FIT_MSG="would fit: $GATE_FIT_FLAGS"
-  echo "soak: memory gate: predicted $((GATE_PREDICTED_KB / 1000)) MB x$SOAK_MEM_HEADROOM > budget $((GATE_BUDGET_KB / 1000)) MB ($SOAK_MEM_BUDGET of $((MEM_TOTAL_KB / 1000)) MB MemTotal); $GATE_FIT_MSG" >&2
+  echo "soak: memory gate: predicted $((GATE_PREDICTED_KB / 1024)) MB x$SOAK_MEM_HEADROOM > budget $((GATE_BUDGET_KB / 1024)) MB ($SOAK_MEM_BUDGET of $((MEM_TOTAL_KB / 1024)) MB MemTotal); $GATE_FIT_MSG" >&2
   exit 2
 fi
 MEMORY_GATE_DECL=$(jq -n --argjson p "$GATE_PREDICTED_KB" --argjson b "$GATE_BUDGET_KB" \
