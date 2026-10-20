@@ -23,3 +23,5 @@ mod sei;
 mod smoke;
 #[path = "whep/url.rs"]
 mod url;
+#[path = "fixtures/ts.rs"]
+mod ts;

@@ -5,73 +5,16 @@ use std::sync::mpsc::Receiver;
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
-    KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,
+    Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,
 };
 use tst_webrtc::mount::MediaMsg;
 use tst_webrtc::{KlvCarriage, MountConfig, MountHandle, MountKind, PushError, VideoCodec};
 
-/// The 30-frame GOP: IDR first, then 29 P frames, each opened by an AUD.
-const GOP: &[u8] = include_bytes!("../fixtures/h264/gop.h264");
+use crate::ts::{
+    FIRST_PTS, SECOND_PROGRAM_OFFSET, TICKS_PER_FRAME, build_ts, build_two_program_ts, record,
+};
 
 const AU_COUNT: usize = 10;
-const TICKS_PER_FRAME: i64 = 3000;
-
-/// The first `n` access units of the GOP, split at each access unit
-/// delimiter (NAL type 9).
-fn access_units(n: usize) -> Vec<Vec<u8>> {
-    let mut starts = Vec::new();
-    let mut i = 0;
-    while i + 4 < GOP.len() {
-        let sc = if GOP[i..].starts_with(&[0, 0, 0, 1]) {
-            4
-        } else if GOP[i..].starts_with(&[0, 0, 1]) {
-            3
-        } else {
-            i += 1;
-            continue;
-        };
-        if GOP[i + sc] & 0x1F == 9 {
-            starts.push(i);
-        }
-        i += sc;
-    }
-    starts.push(GOP.len());
-    starts
-        .windows(2)
-        .take(n)
-        .map(|w| GOP[w[0]..w[1]].to_vec())
-        .collect()
-}
-
-fn record(i: usize) -> Vec<u8> {
-    format!("klv-record-{i:03}").into_bytes()
-}
-
-/// A TS of `n` access units, each preceded by its KLV record at the access
-/// unit's PTS.
-fn build_ts(n: usize) -> Vec<u8> {
-    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-    prog.add_video(0x1011, MuxVideoCodec::H264);
-    prog.add_klv(0x1031, KlvStreamType::SynchronousMetadata, true);
-    let mut cfg = MuxerConfig::builder();
-    cfg.add_program(prog.build());
-    let mut mux = Muxer::new(cfg.build().unwrap()).unwrap();
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; 188 * 64];
-    for (i, au) in access_units(n).iter().enumerate() {
-        let pts = Pts90khz::new(90_000 + i as i64 * TICKS_PER_FRAME);
-        mux.push_klv(&record(i), pts, 0).unwrap();
-        mux.push_video(au, pts, i == 0).unwrap();
-        loop {
-            let got = mux.pull(&mut buf);
-            if got == 0 {
-                break;
-            }
-            out.extend_from_slice(&buf[..got]);
-        }
-    }
-    out
-}
 
 fn mp2t_config() -> MountConfig {
     let mut cfg = MountConfig::default();
@@ -130,7 +73,7 @@ fn ts_bytes_become_frames_with_their_klv_bound() {
         assert_eq!(seis[0].klv, record(i));
         assert_eq!(
             seis[0].klv_pts_90k,
-            90_000 + i as u64 * TICKS_PER_FRAME as u64
+            (FIRST_PTS + i as i64 * TICKS_PER_FRAME) as u64
         );
     }
     let rtp: Vec<u32> = d.frames.iter().map(|f| f.0).collect();
@@ -186,9 +129,46 @@ fn a_video_codec_other_than_the_mounts_is_counted_and_skipped() {
     let (m, rx) = MountHandle::for_test(cfg);
     m.push_ts(&ts).unwrap();
     let d = drain(&rx);
-    assert!(d.frames.is_empty());
-    assert_eq!(m.stats().frames_pushed, 0);
-    assert_eq!(m.stats().demux_nonconformant, AU_COUNT as u64);
+    assert!(d.frames.is_empty() && d.klvs.is_empty());
+    let stats = m.stats();
+    assert_eq!(stats.frames_pushed, 0);
+    // No stream is played, so the KLV has no frames to bind to: the
+    // records are counted with the access units.
+    assert_eq!(stats.klv_records_pushed, 0);
+    assert_eq!(stats.demux_nonconformant, 2 * AU_COUNT as u64 + 1);
+}
+
+#[test]
+fn a_two_program_ts_plays_the_first_video_stream_and_its_programs_klv() {
+    // Two sensors in one multiplex: the mount plays program 1 only.
+    let ts = build_two_program_ts(AU_COUNT + 1);
+    let (m, rx) = MountHandle::for_test(mp2t_config());
+    for slice in ts.chunks(1316) {
+        m.push_ts(slice).unwrap();
+    }
+    let d = drain(&rx);
+    assert_eq!(d.frames.len(), AU_COUNT);
+    let rtp: Vec<u32> = d.frames.iter().map(|f| f.0).collect();
+    // A frame of program 2 would sit SECOND_PROGRAM_OFFSET after one of
+    // program 1, which is not a frame step.
+    const { assert!(SECOND_PROGRAM_OFFSET % TICKS_PER_FRAME != 0) };
+    assert!(
+        rtp.windows(2)
+            .all(|w| w[1].wrapping_sub(w[0]) == TICKS_PER_FRAME as u32),
+        "{rtp:?}"
+    );
+    let klvs: Vec<Vec<u8>> = d.klvs.iter().map(|(_, k)| k.clone()).collect();
+    let want: Vec<Vec<u8>> = (0..AU_COUNT).map(record).collect();
+    assert_eq!(klvs, want);
+    for (i, (_, _, au)) in d.frames.iter().enumerate() {
+        let seis = tst_webrtc::sei::extract_klv_seis(au, VideoCodec::H264);
+        assert_eq!(seis.len(), 1, "frame {i}");
+        assert_eq!(seis[0].klv, record(i));
+    }
+    let stats = m.stats();
+    assert_eq!(stats.frames_pushed, AU_COUNT as u64);
+    // Program 2's emitted access units and all of its records.
+    assert_eq!(stats.demux_nonconformant, 2 * AU_COUNT as u64 + 1);
 }
 
 #[test]

@@ -73,7 +73,9 @@ pub struct MountStats {
     pub viewer_packets_dropped_queue_full: u64,
     /// Times the RTP clock was rebased after a PTS jump.
     pub rtp_clock_rebases: u64,
-    /// Non-conformances reported by an MP2T mount's demuxer.
+    /// Non-conformances reported by an MP2T mount's demuxer, and the units
+    /// it skips: damaged ones, those of another video codec, and the
+    /// access units and KLV records of streams the mount does not play.
     pub demux_nonconformant: u64,
 }
 

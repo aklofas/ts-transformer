@@ -23,7 +23,10 @@ use tst_core::codec::misp_time::insert_sei_before_first_vcl;
 use tst_core::codec::nal::{is_vcl, nal_unit_type};
 use tst_core::codec::nal_framing::{ParameterSets, extract_parameter_sets};
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig, MetadataKind, SamplePayload};
+use tst_core::mpegts::demux::{
+    DemuxEvent, Demuxer, DemuxerConfig, MetadataKind, ProgramMap, SamplePayload, StreamId,
+    StreamKind,
+};
 
 use crate::config::{AudioPolicy, KlvCarriage, MountConfig, MountKind, VideoCodec};
 use crate::error::{PushError, WhepServerError};
@@ -191,7 +194,7 @@ pub(crate) struct MountState {
     inner: Mutex<MountInner>,
     /// The demuxer behind `push_ts`; `Some` on an MP2T mount. Held while
     /// its events are dispatched, which takes `inner` and never blocks.
-    demuxer: Mutex<Option<Demuxer>>,
+    demuxer: Mutex<Option<Mp2tInput>>,
     pub(crate) tx: SyncSender<MediaMsg>,
     pub(crate) wake: Waker,
     pub(crate) stats: MountCounters,
@@ -201,6 +204,65 @@ pub(crate) struct MountState {
 }
 
 /// The state a push call changes.
+/// An MP2T mount's demuxer and the stream it plays.
+struct Mp2tInput {
+    demuxer: Demuxer,
+    /// The video stream the mount plays, once one of the mount's codec is
+    /// seen. One packetizer and one parameter-set cache serve the mount,
+    /// so a second video stream (a second sensor in the multiplex) would
+    /// interleave two pictures into one track.
+    playing: Option<Playing>,
+}
+
+/// The video stream an MP2T mount plays; KLV binds to its frames only
+/// from the same program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Playing {
+    pid: u16,
+    program_number: u16,
+}
+
+impl Mp2tInput {
+    /// Picks the stream to play from `map` when none is chosen yet, and
+    /// follows a PMT update of the playing program (its video may move to
+    /// another PID).
+    fn on_program_map(&mut self, map: &ProgramMap, codec: VideoCodec) {
+        if self
+            .playing
+            .is_some_and(|p| p.program_number != map.program_number)
+        {
+            return;
+        }
+        let first = map
+            .streams
+            .iter()
+            .find(|st| st.kind == StreamKind::Video(codec))
+            .map(|st| Playing {
+                pid: st.pid,
+                program_number: map.program_number,
+            });
+        if first.is_some() || self.playing.is_some() {
+            self.playing = first;
+        }
+    }
+
+    /// Whether a video access unit of the mount's codec on `stream` is
+    /// played; the first one seen chooses the stream when no PMT has.
+    fn plays_video(&mut self, stream: StreamId) -> bool {
+        let this = Playing {
+            pid: stream.pid,
+            program_number: stream.program_number,
+        };
+        *self.playing.get_or_insert(this) == this
+    }
+
+    /// Whether KLV on `stream` binds to the played frames.
+    fn plays_klv(&self, stream: StreamId) -> bool {
+        self.playing
+            .is_some_and(|p| p.program_number == stream.program_number)
+    }
+}
+
 struct MountInner {
     packetizer: Box<dyn Packetizer>,
     /// The latest parameter set of each kind seen in any access unit.
@@ -275,7 +337,10 @@ impl MountState {
                 audio_clock: RtpClock::default(),
             }),
             demuxer: Mutex::new(match cfg_kind {
-                MountKind::Mp2t => Some(Demuxer::with_config(DemuxerConfig::default())),
+                MountKind::Mp2t => Some(Mp2tInput {
+                    demuxer: Demuxer::with_config(DemuxerConfig::default()),
+                    playing: None,
+                }),
                 _ => None,
             }),
             tx,
@@ -816,9 +881,13 @@ impl MountHandle {
     /// Push MPEG-TS bytes into an MP2T mount.
     ///
     /// The bytes go through the mount's demuxer, in slices of any size (a
-    /// packet may span two calls). Each video access unit of the mount's
-    /// codec takes the [`push_video`](Self::push_video) path with the TS
-    /// random-access flag as `key_frame`; each KLV record takes the
+    /// packet may span two calls). The mount plays one video stream: the
+    /// first of the mount's codec the TS declares (or, without a PMT
+    /// naming one, carries), with the KLV of that stream's program; access
+    /// units and KLV records of every other stream are counted in
+    /// [`MountStats::demux_nonconformant`] and dropped. Each played access
+    /// unit takes the [`push_video`](Self::push_video) path with the TS
+    /// random-access flag as `key_frame`; each played KLV record takes the
     /// [`push_klv`](Self::push_klv) path (the Metadata_AU_cell header is
     /// already removed by the demuxer). Audio is discarded and counted in
     /// [`MountStats::audio_frames_dropped`] whatever the mount's
@@ -849,21 +918,21 @@ impl MountHandle {
         // callers' events keep their order. Nothing below blocks: every
         // push path ends in `try_send`.
         let mut guard = s.demuxer.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(demuxer) = guard.as_mut() else {
+        let Some(input) = guard.as_mut() else {
             return Err(PushError::WrongMountKind);
         };
-        if let Err(e) = demuxer.feed(bytes) {
+        if let Err(e) = input.demuxer.feed(bytes) {
             tracing::debug!(mount = %s.path, error = %e, "MP2T demux error");
             bump(&s.stats.demux_nonconformant);
         }
-        while let Some(event) = demuxer.next_event() {
-            self.dispatch(event)?;
+        while let Some(event) = input.demuxer.next_event() {
+            self.dispatch(event, input)?;
         }
         Ok(())
     }
 
     /// Routes one demuxed event into the elementary push paths.
-    fn dispatch(&self, event: DemuxEvent) -> Result<(), PushError> {
+    fn dispatch(&self, event: DemuxEvent, input: &mut Mp2tInput) -> Result<(), PushError> {
         let s = &*self.state;
         let skipped = |r: Result<(), PushError>| match r {
             Err(PushError::Closed) => Err(PushError::Closed),
@@ -875,7 +944,12 @@ impl MountHandle {
             Ok(()) => Ok(()),
         };
         match event {
+            DemuxEvent::ProgramMap(map) => {
+                input.on_program_map(&map, s.cfg.video);
+                Ok(())
+            }
             DemuxEvent::Sample {
+                stream,
                 pts,
                 payload:
                     SamplePayload::Video {
@@ -888,6 +962,11 @@ impl MountHandle {
             } => {
                 if codec != s.cfg.video {
                     tracing::debug!(mount = %s.path, ?codec, "MP2T video codec differs from the mount's");
+                    bump(&s.stats.demux_nonconformant);
+                    return Ok(());
+                }
+                if !input.plays_video(stream) {
+                    tracing::debug!(mount = %s.path, pid = stream.pid, "MP2T video stream not played");
                     bump(&s.stats.demux_nonconformant);
                     return Ok(());
                 }
@@ -906,8 +985,16 @@ impl MountHandle {
                 Ok(())
             }
             DemuxEvent::Metadata {
-                pts, kind, payload, ..
+                stream,
+                pts,
+                kind,
+                payload,
             } => {
+                if !input.plays_klv(stream) {
+                    tracing::debug!(mount = %s.path, pid = stream.pid, "MP2T KLV outside the played program");
+                    bump(&s.stats.demux_nonconformant);
+                    return Ok(());
+                }
                 let service_id = match kind {
                     MetadataKind::KlvSyncAuCell {
                         metadata_service_id,
