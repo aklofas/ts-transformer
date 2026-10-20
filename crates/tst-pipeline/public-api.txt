@@ -121,6 +121,12 @@ pub tst_pipeline::binding::kind::BindingErrorKind::TooLarge = -6
 pub tst_pipeline::binding::kind::BindingErrorKind::UdpInvalidConfig = -27
 pub tst_pipeline::binding::kind::BindingErrorKind::UdpIo = -26
 pub tst_pipeline::binding::kind::BindingErrorKind::UdpUrl = -53
+pub tst_pipeline::binding::kind::BindingErrorKind::WebrtcIo = -107
+pub tst_pipeline::binding::kind::BindingErrorKind::WebrtcMount = -109
+pub tst_pipeline::binding::kind::BindingErrorKind::WebrtcPush = -111
+pub tst_pipeline::binding::kind::BindingErrorKind::WebrtcServer = -110
+pub tst_pipeline::binding::kind::BindingErrorKind::WebrtcTls = -108
+pub tst_pipeline::binding::kind::BindingErrorKind::WebrtcUrl = -106
 pub tst_pipeline::binding::kind::BindingErrorKind::WrongType = -47
 impl tst_pipeline::binding::kind::BindingErrorKind
 pub const tst_pipeline::binding::kind::BindingErrorKind::ALL: &'static [tst_pipeline::binding::kind::BindingErrorKind]
@@ -183,6 +189,7 @@ pub tst_pipeline::binding::kind::Domain::Rtsp
 pub tst_pipeline::binding::kind::Domain::Srt
 pub tst_pipeline::binding::kind::Domain::Tcp
 pub tst_pipeline::binding::kind::Domain::Udp
+pub tst_pipeline::binding::kind::Domain::Webrtc
 impl tst_pipeline::binding::kind::Domain
 pub const tst_pipeline::binding::kind::Domain::ALL: &'static [tst_pipeline::binding::kind::Domain]
 pub fn tst_pipeline::binding::kind::Domain::java_exception_class(self) -> core::option::Option<&'static str>
@@ -598,6 +605,12 @@ pub tst_pipeline::binding::BindingErrorKind::TooLarge = -6
 pub tst_pipeline::binding::BindingErrorKind::UdpInvalidConfig = -27
 pub tst_pipeline::binding::BindingErrorKind::UdpIo = -26
 pub tst_pipeline::binding::BindingErrorKind::UdpUrl = -53
+pub tst_pipeline::binding::BindingErrorKind::WebrtcIo = -107
+pub tst_pipeline::binding::BindingErrorKind::WebrtcMount = -109
+pub tst_pipeline::binding::BindingErrorKind::WebrtcPush = -111
+pub tst_pipeline::binding::BindingErrorKind::WebrtcServer = -110
+pub tst_pipeline::binding::BindingErrorKind::WebrtcTls = -108
+pub tst_pipeline::binding::BindingErrorKind::WebrtcUrl = -106
 pub tst_pipeline::binding::BindingErrorKind::WrongType = -47
 impl tst_pipeline::binding::kind::BindingErrorKind
 pub const tst_pipeline::binding::kind::BindingErrorKind::ALL: &'static [tst_pipeline::binding::kind::BindingErrorKind]
@@ -675,6 +688,7 @@ pub tst_pipeline::binding::Domain::Rtsp
 pub tst_pipeline::binding::Domain::Srt
 pub tst_pipeline::binding::Domain::Tcp
 pub tst_pipeline::binding::Domain::Udp
+pub tst_pipeline::binding::Domain::Webrtc
 impl tst_pipeline::binding::kind::Domain
 pub const tst_pipeline::binding::kind::Domain::ALL: &'static [tst_pipeline::binding::kind::Domain]
 pub fn tst_pipeline::binding::kind::Domain::java_exception_class(self) -> core::option::Option<&'static str>

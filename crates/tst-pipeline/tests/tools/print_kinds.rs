@@ -164,6 +164,16 @@ fn py_values(d: Domain) -> Option<&'static [(BindingErrorKind, i64)]> {
             (K::KlvEncodeDuplicateTargetId, 9),
             (K::KlvEncodeForbiddenStandaloneOffset, 10),
         ],
+        Domain::Webrtc => &[
+            (K::WebrtcUrl, 0),
+            (K::WebrtcIo, 1),
+            (K::WebrtcTls, 2),
+            (K::WebrtcMount, 3),
+            (K::WebrtcServer, 4),
+            (K::WebrtcPush, 5),
+            (K::Internal, 6),
+            (K::Closed, 7),
+        ],
         Domain::Demux | Domain::KlvDecode => return None,
         other => panic!("print-kinds: no Python value table for {other:?}; add one to py_values"),
     })

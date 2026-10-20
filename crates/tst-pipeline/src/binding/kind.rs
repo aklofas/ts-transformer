@@ -15,7 +15,7 @@
 //!
 //! Naming rule: cross-domain kinds are unprefixed; domain kinds carry their domain
 //! (`Srt`, `Udp`, `Tcp`, `Hls`, `Rist`, `Rtp`, `Rtsp`, `Demux`, `KlvDecode`,
-//! `KlvEncode`, `Codec`) in [`BindingErrorKind::variant_name`]; [`BindingErrorKind::name`]
+//! `KlvEncode`, `Codec`, `Webrtc`) in [`BindingErrorKind::variant_name`]; [`BindingErrorKind::name`]
 //! strips it, because the per-domain binding enums spell the unprefixed member
 //! (`UdpErrorKind.IO`).
 
@@ -437,6 +437,36 @@ kinds! {
     ///
     /// `CodecParseError::BufferTooSmall` (C: -4, the two-call size-query idiom).
     CodecBufferTooSmall = -105 => "CODEC_BUFFER_TOO_SMALL", "BUFFER_TOO_SMALL", -4;
+    /// The `whep://` / `wheps://` bind URL did not parse.
+    ///
+    /// `WhepServerError::InvalidUrl` (C projection: `HlsUrl`'s, -35).
+    WebrtcUrl = -106 => "WEBRTC_URL", "URL", -35;
+    /// The server's socket could not be bound.
+    ///
+    /// `WhepServerError::Bind` (C projection: `HlsIo`'s, -34).
+    WebrtcIo = -107 => "WEBRTC_IO", "IO", -34;
+    /// The certificate or key could not be loaded, or TLS setup failed.
+    ///
+    /// `WhepServerError::Tls` (C projection: `HlsTls`'s, -37).
+    WebrtcTls = -108 => "WEBRTC_TLS", "TLS", -37;
+    /// A mount call was refused: a duplicate or unknown path, an invalid
+    /// path, or an invalid mount configuration.
+    ///
+    /// `WhepServerError::{MountExists, MountNotFound, InvalidMountPath,
+    /// InvalidConfig}` (C projection: `HlsInvalidConfig`'s, -35).
+    WebrtcMount = -109 => "WEBRTC_MOUNT", "MOUNT", -35;
+    /// The WHEP server itself failed.
+    ///
+    /// No `WhepServerError` variant maps here yet (C projection:
+    /// `HlsBindFailed`'s, -34).
+    WebrtcServer = -110 => "WEBRTC_SERVER", "SERVER", -34;
+    /// A push into a mount was refused: the wrong push family, an unusable
+    /// access unit or audio frame, or a KLV record over the data-channel
+    /// limit.
+    ///
+    /// `PushError::{WrongMountKind, InvalidAccessUnit, InvalidAudioFrame,
+    /// KlvTooLarge}` (C projection: `HlsInvalidConfig`'s, -35).
+    WebrtcPush = -111 => "WEBRTC_PUSH", "PUSH", -35;
 }
 
 impl BindingErrorKind {
@@ -489,6 +519,8 @@ pub enum Domain {
     KlvEncode,
     /// Host classes: `CodecError` / `CodecErrorKind`, `CodecParseException`.
     Codec,
+    /// Host classes: `WebrtcError` / `WebrtcErrorKind` (Python only).
+    Webrtc,
 }
 
 impl Domain {
@@ -506,6 +538,7 @@ impl Domain {
         Domain::KlvDecode,
         Domain::KlvEncode,
         Domain::Codec,
+        Domain::Webrtc,
     ];
 
     /// The domain of the transport a URL scheme opens: `srt`, `rtp`, `udp`,
@@ -676,6 +709,16 @@ impl Domain {
                 K::CodecNalLengthOverflow,
                 K::CodecBufferTooSmall,
             ],
+            Domain::Webrtc => &[
+                K::WebrtcUrl,
+                K::WebrtcIo,
+                K::WebrtcTls,
+                K::WebrtcMount,
+                K::WebrtcServer,
+                K::WebrtcPush,
+                K::Internal,
+                K::Closed,
+            ],
         }
     }
 
@@ -694,6 +737,7 @@ impl Domain {
             Domain::KlvDecode => "KlvError",
             Domain::KlvEncode => "KlvEncodeError",
             Domain::Codec => "CodecError",
+            Domain::Webrtc => "WebrtcError",
         }
     }
 
@@ -712,6 +756,7 @@ impl Domain {
             Domain::KlvDecode => "KlvErrorKind",
             Domain::KlvEncode => "KlvEncodeErrorKind",
             Domain::Codec => "CodecErrorKind",
+            Domain::Webrtc => "WebrtcErrorKind",
         }
     }
 
@@ -731,6 +776,7 @@ impl Domain {
             Domain::Udp => Some("org/tstrans/UdpException"),
             Domain::Tcp => Some("org/tstrans/TcpException"),
             Domain::Rist => Some("org/tstrans/RistException"),
+            Domain::Webrtc => None,
         }
     }
 }
@@ -1346,7 +1392,13 @@ pub(crate) fn coarsen(k: BindingErrorKind) -> ShellErrorKind {
         | K::RtpUrl
         | K::RtpHostNotLiteral
         | K::RtpIo
-        | K::RtpIfaceUnsupported => S::TransportBroken,
+        | K::RtpIfaceUnsupported
+        | K::WebrtcUrl
+        | K::WebrtcIo
+        | K::WebrtcTls
+        | K::WebrtcMount
+        | K::WebrtcServer
+        | K::WebrtcPush => S::TransportBroken,
     }
 }
 
@@ -1833,6 +1885,7 @@ mod tests {
             "KLV_DECODE_",
             "KLV_ENCODE_",
             "CODEC_",
+            "WEBRTC_",
         ];
         for k in BindingErrorKind::ALL {
             let stripped = PREFIXES
@@ -1946,7 +1999,7 @@ mod tests {
             .iter()
             .filter(|k| !k.is_c_frozen())
             .collect();
-        assert_eq!(new.len(), 54);
+        assert_eq!(new.len(), 60);
         // Codes of removed kinds are never reused: -71 (DemuxMalformedPsi),
         // -95 and -96 (CodecDangling{Sps,Vps}Reference) stay as gaps.
         const RETIRED: [i32; 3] = [-71, -95, -96];
@@ -1963,7 +2016,7 @@ mod tests {
                 k.name()
             );
         }
-        assert_eq!(BindingErrorKind::ALL.len(), 95);
+        assert_eq!(BindingErrorKind::ALL.len(), 101);
     }
 
     #[test]
