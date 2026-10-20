@@ -50,14 +50,6 @@ fn viewer_queue_bounds() {
     assert!(cfg.validate().is_ok());
 }
 
-/// The refusal's text, for a configuration `validate` refuses.
-fn refusal(cfg: &MountConfig) -> String {
-    match cfg.validate() {
-        Err(WhepServerError::InvalidConfig { detail }) => detail,
-        other => panic!("expected InvalidConfig, got {other:?}"),
-    }
-}
-
 #[test]
 fn an_mp2t_mount_is_accepted() {
     let mut cfg = MountConfig::default();
@@ -66,10 +58,8 @@ fn an_mp2t_mount_is_accepted() {
 }
 
 #[test]
-fn opus_passthrough_is_refused_until_it_is_served() {
+fn an_opus_passthrough_mount_is_accepted() {
     let mut cfg = MountConfig::default();
     cfg.audio = AudioPolicy::PassthroughOpus;
-    let detail = refusal(&cfg);
-    assert!(detail.contains("PassthroughOpus"), "{detail}");
-    assert!(detail.contains("not served in this release"), "{detail}");
+    cfg.validate().unwrap();
 }

@@ -171,7 +171,7 @@ pub(crate) struct MountCounters {
     /// Written by the push calls (media queue full) and by the media
     /// thread.
     pub(crate) klv_dc_dropped_viewer: AtomicU64,
-    /// Written once audio passthrough forwards frames.
+    /// Written by `push_audio` under `AudioPolicy::PassthroughOpus`.
     pub(crate) audio_frames_pushed: AtomicU64,
     pub(crate) audio_frames_dropped: AtomicU64,
     /// Written by the media thread.

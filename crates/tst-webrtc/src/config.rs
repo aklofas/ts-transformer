@@ -21,8 +21,10 @@ pub enum MountKind {
 pub enum AudioPolicy {
     /// Audio is discarded; viewers get video and KLV only.
     Drop,
-    /// Opus frames are forwarded to viewers unchanged. Not served in this
-    /// release: [`MountConfig::validate`] refuses it.
+    /// Each pushed buffer is one Opus packet (RFC 6716), forwarded to
+    /// viewers that offered Opus unchanged, one RTP payload per packet at
+    /// the 48 kHz clock (RFC 7587). Viewers that offered no Opus get video
+    /// and KLV only.
     PassthroughOpus,
 }
 
@@ -94,21 +96,14 @@ impl MountConfig {
     ///
     /// [`WhepServerError::InvalidConfig`] for an H.266 or AV1 video codec, a
     /// `sei_budget_bytes` of 0 or above 1 MiB, or a `viewer_queue_packets`
-    /// below 16. Also for [`AudioPolicy::PassthroughOpus`], which this
-    /// release does not serve yet: no audio track is negotiated with
-    /// viewers.
+    /// below 16.
     pub fn validate(&self) -> Result<(), WhepServerError> {
         let invalid = |detail: String| Err(WhepServerError::InvalidConfig { detail });
         match self.kind {
             MountKind::Elementary | MountKind::Mp2t => {}
         }
         match self.audio {
-            AudioPolicy::Drop => {}
-            AudioPolicy::PassthroughOpus => {
-                return invalid(
-                    "AudioPolicy::PassthroughOpus is not served in this release".into(),
-                );
-            }
+            AudioPolicy::Drop | AudioPolicy::PassthroughOpus => {}
         }
         match self.video {
             VideoCodec::H264 | VideoCodec::H265 => {}

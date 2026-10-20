@@ -30,11 +30,12 @@ use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
 use tracing::debug;
 
 use crate::clock::Clock;
+use crate::config::AudioPolicy;
 use crate::mount::{
-    FramePacket, KLV_DC_HEADER_BYTES, KlvMessage, MediaMsg, MountId, MountState,
+    AudioPacket, FramePacket, KLV_DC_HEADER_BYTES, KlvMessage, MediaMsg, MountId, MountState,
     SCTP_SEND_BUFFER_BYTES,
 };
-use crate::server::negotiate::{Negotiated, select_video};
+use crate::server::negotiate::{Negotiated, repair_rejected_media, select_audio, select_video};
 use crate::server::session::{Enqueued, Queued, ReapCause, Viewer, reap_decision};
 use crate::stats::{IceState, ServerStats, SessionStats, bump};
 
@@ -330,14 +331,26 @@ impl MediaThread {
 /// The server's `Rtc` for one session: ice-lite, RTP mode, egress
 /// statistics every second (for the NACK count), an SCTP send buffer
 /// sized for the largest KLV record ([`SCTP_SEND_BUFFER_BYTES`]), str0m's
-/// default codecs plus a mode-1 Constrained High H.264 payload.
-pub(crate) fn server_rtc(now: Instant) -> Rtc {
+/// default video codecs plus a mode-1 Constrained High H.264 payload.
+///
+/// The audio codecs are the ones the mount's `audio` policy serves: Opus
+/// under [`AudioPolicy::PassthroughOpus`], none under
+/// [`AudioPolicy::Drop`]. str0m rejects (port 0) an audio section of an
+/// offer with no codec in common, so a dropping mount answers a viewer's
+/// audio section as rejected rather than as a stream that never carries
+/// anything (see [`repair_rejected_media`] for its format list).
+pub(crate) fn server_rtc(now: Instant, audio: AudioPolicy) -> Rtc {
     let mut builder = Rtc::builder()
         .set_ice_lite(true)
         .set_rtp_mode(true)
         .set_stats_interval(Some(Duration::from_secs(1)))
         .set_sctp_max_buffered_amount(SCTP_SEND_BUFFER_BYTES);
     let codecs = builder.codec_config();
+    codecs.enable_opus(audio == AudioPolicy::PassthroughOpus, false);
+    codecs.enable_pcmu(false, false);
+    codecs.enable_pcma(false, false);
+    codecs.enable_g722(false, false);
+    codecs.enable_comfort_noise(false);
     let used: Vec<u8> = codecs
         .params()
         .iter()
@@ -611,7 +624,7 @@ impl Media {
             .cloned()
             .ok_or(RejectReason::Internal)?;
         let now = self.clock.now();
-        let mut rtc = server_rtc(now);
+        let mut rtc = server_rtc(now, state.cfg.audio);
         for addr in &self.candidates {
             match Candidate::host(*addr, "udp") {
                 Ok(c) => {
@@ -638,6 +651,12 @@ impl Media {
                 return Err(RejectReason::Codec);
             }
         };
+        // Audio never decides whether an offer is served: no Opus in the
+        // offer, or a mount that drops audio, means a video-only session.
+        let audio = match state.cfg.audio {
+            AudioPolicy::PassthroughOpus => select_audio(&rtc, &offer_sdp),
+            AudioPolicy::Drop => None,
+        };
         // Both sides open the channel as id 0, so no renegotiation follows
         // and apply() has no offer to return.
         let mut api = rtc.sdp_api();
@@ -656,12 +675,14 @@ impl Media {
         let mut v = Viewer::new(id.clone(), state, rtc, random_seq(), now);
         v.mid = Some(mid);
         v.pt = Some(pt);
+        v.audio = audio;
+        v.audio_seq = random_seq();
         drain_rtc(&mut v, &self.socket, now);
         self.viewers.push(v);
         self.gauges_dirty = true;
         Ok(CreatedSession {
             id,
-            answer: answer.to_sdp_string(),
+            answer: repair_rejected_media(&answer.to_sdp_string()),
         })
     }
 
@@ -722,9 +743,20 @@ impl Media {
                     }
                 }
             }
-            // No session carries an audio track; the mount counts the
-            // frames it discards.
-            MediaMsg::Audio { .. } => {}
+            MediaMsg::Audio { mount, packet } => {
+                for v in self
+                    .viewers
+                    .iter_mut()
+                    .filter(|v| v.mount == mount && v.connected)
+                {
+                    if let Enqueued::Dropped(n) = v.enqueue_audio(&packet, now) {
+                        v.mount_state
+                            .stats
+                            .viewer_packets_dropped_queue_full
+                            .fetch_add(n, Ordering::Relaxed);
+                    }
+                }
+            }
             MediaMsg::MountRemoved(id) => {
                 let before = self.viewers.len();
                 self.viewers.retain(|v| v.mount != id);
@@ -892,6 +924,7 @@ fn flush_viewer(
         let outcome = match &item {
             Queued::Rtp(packet, i) => write_rtp(v, packet, *i, now, counters),
             Queued::Dc(msg) => write_dc(v, msg),
+            Queued::Audio(packet) => write_audio(v, packet, now, counters),
         };
         match outcome {
             Write::Written => {
@@ -938,6 +971,42 @@ fn write_rtp(
     v.ssrc_known = true;
     v.seq += 1;
     let len = chunk.payload.len() as u64;
+    v.stats.rtp_packets += 1;
+    v.stats.rtp_bytes += len;
+    counters.rtp_packets_sent += 1;
+    counters.rtp_bytes_sent += len;
+    Write::Written
+}
+
+/// Writes one Opus packet on the viewer's audio stream: its own sequence
+/// numbers, no marker (RFC 7587 sets it after silence only), not
+/// retransmittable (browsers do not NACK Opus).
+fn write_audio(
+    v: &mut Viewer,
+    packet: &AudioPacket,
+    now: Instant,
+    counters: &mut ServerCounters,
+) -> Write {
+    let Some((mid, pt)) = v.audio else {
+        return Write::Discarded;
+    };
+    let mut api = v.rtc.direct_api();
+    let Some(tx) = api.stream_tx_by_mid(mid, None) else {
+        return Write::Refused;
+    };
+    tx.write_rtp(
+        RtpWrite::new(
+            pt,
+            SeqNo::from(v.audio_seq),
+            packet.rtp_ts,
+            now,
+            packet.payload.as_slice(),
+        )
+        .marker(false)
+        .nackable(false),
+    );
+    v.audio_seq += 1;
+    let len = packet.payload.len() as u64;
     v.stats.rtp_packets += 1;
     v.stats.rtp_bytes += len;
     counters.rtp_packets_sent += 1;
@@ -996,7 +1065,7 @@ mod tests {
 
     #[test]
     fn a_constrained_high_mode_1_offer_selects_that_payload() {
-        let rtc = accept(server_rtc(Instant::now()), SAFARI);
+        let rtc = accept(server_rtc(Instant::now(), AudioPolicy::Drop), SAFARI);
         let got = select_video(&rtc, SAFARI, VideoCodec::H264, Some(CONSTRAINED_HIGH_SPS));
         let Negotiated::Video { pt, .. } = got else {
             panic!("no H.264 payload: {got:?}");
@@ -1037,7 +1106,7 @@ mod tests {
         use crate::packetize::{DEFAULT_MTU_PAYLOAD, H264Packetizer, Packetizer};
 
         let now = Instant::now();
-        let mut rtc = accept(server_rtc(now), SAFARI);
+        let mut rtc = accept(server_rtc(now, AudioPolicy::Drop), SAFARI);
         let Negotiated::Video { mid, pt, .. } = select_video(&rtc, SAFARI, VideoCodec::H264, None)
         else {
             panic!("no H.264 payload");
@@ -1081,6 +1150,68 @@ mod tests {
         assert_eq!(v.stats.dc_messages_dropped, 1);
         assert_eq!(handle.stats().klv_dc_dropped_viewer, 1);
         assert_eq!(v.snapshot(now).dc_messages_dropped, 1);
+    }
+
+    /// The offer of a str0m client asking for video and audio.
+    fn audio_offer() -> String {
+        use str0m::media::{Direction, MediaKind};
+        let mut client = Rtc::builder().build(Instant::now());
+        let mut api = client.sdp_api();
+        api.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
+        api.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
+        let (offer, _pending) = api.apply().expect("an offer");
+        offer.to_sdp_string()
+    }
+
+    /// The answer `server_rtc(.., audio)` gives to `offer`, with the
+    /// rtc that gave it.
+    fn answer_to(offer: &str, audio: AudioPolicy) -> (Rtc, String) {
+        let mut rtc = server_rtc(Instant::now(), audio);
+        let candidate = Candidate::host("192.0.2.1:40000".parse().unwrap(), "udp").unwrap();
+        rtc.add_local_candidate(candidate);
+        let parsed = SdpOffer::from_sdp_string(offer).expect("the offer parses");
+        let answer = rtc.sdp_api().accept_offer(parsed).expect("accepted");
+        let text = repair_rejected_media(&answer.to_sdp_string());
+        (rtc, text)
+    }
+
+    /// The answer's `m=audio` line.
+    fn audio_line(answer: &str) -> &str {
+        answer
+            .lines()
+            .find(|l| l.starts_with("m=audio"))
+            .expect("an audio section")
+            .trim_end()
+    }
+
+    #[test]
+    fn a_dropping_server_rejects_audio_with_a_valid_format_list() {
+        let offer = audio_offer();
+        let (rtc, answer) = answer_to(&offer, AudioPolicy::Drop);
+        assert!(select_audio(&rtc, &offer).is_none());
+        let line = audio_line(&answer);
+        let fields: Vec<&str> = line.split(' ').collect();
+        assert_eq!(fields, ["m=audio", "0", "UDP/TLS/RTP/SAVPF", "0"], "{line}");
+        // The repaired answer parses, which str0m's own parser enforces.
+        str0m::change::SdpAnswer::from_sdp_string(&answer).expect("the answer parses");
+    }
+
+    #[test]
+    fn a_passthrough_server_answers_audio_with_opus_only() {
+        let offer = audio_offer();
+        let (rtc, answer) = answer_to(&offer, AudioPolicy::PassthroughOpus);
+        assert!(select_audio(&rtc, &offer).is_some());
+        let line = audio_line(&answer);
+        assert!(!line.contains(" 0 UDP"), "{line}");
+        let rtpmaps: Vec<&str> = answer
+            .lines()
+            .filter(|l| l.starts_with("a=rtpmap:") && l.contains("/48000/2"))
+            .collect();
+        assert_eq!(rtpmaps.len(), 1, "{rtpmaps:?}");
+        assert!(rtpmaps[0].to_ascii_lowercase().contains("opus"));
+        for gone in ["PCMU", "PCMA", "G722", "CN/"] {
+            assert!(!answer.contains(gone), "{gone} is not offered back");
+        }
     }
 
     #[test]

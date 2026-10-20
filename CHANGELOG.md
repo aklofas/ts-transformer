@@ -777,12 +777,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - New crate `tst-webrtc`: `WhepServer::bind("whep://…")` + `add_mount`;
   browsers pull a mount over WebRTC (WHEP). Elementary mounts take
-  `push_video` and `push_klv`, and `push_audio` (policy
-  `AudioPolicy::Drop`) counts and discards audio. MP2T mounts
+  `push_video` and `push_klv`, and `push_audio`: policy
+  `AudioPolicy::Drop` counts and discards audio, and
+  `AudioPolicy::PassthroughOpus` forwards each pushed Opus packet (RFC 7587,
+  48 kHz clock) to the viewers whose offer carried Opus. MP2T mounts
   (`MountKind::Mp2t`) take `push_ts`: the mount demultiplexes the bytes and
-  feeds the same video and KLV paths. `MountConfig::validate` refuses
-  `AudioPolicy::PassthroughOpus` with `InvalidConfig` until audio
-  pass-through is served in a later change. Video is
+  feeds the same video and KLV paths; demuxed audio is counted and
+  discarded. Video is
   passed through (H.264 RFC 6184, H.265 RFC 7798); KLV rides frame-locked
   as a user-data SEI inside the frame's access unit and as a `klv` data
   channel message (the `sei` module and `KLV_DC_LIMIT` document both

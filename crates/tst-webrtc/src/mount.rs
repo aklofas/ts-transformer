@@ -65,6 +65,9 @@ const _: () = assert!(KLV_DC_LIMIT as usize + KLV_DC_HEADER_BYTES <= SCTP_SEND_B
 /// KLV records waiting for a frame; when full the oldest is dropped.
 const PENDING_KLV_CAP: usize = 1024;
 
+/// The longest Opus packet: three 1275-byte frames (120 ms, RFC 6716 §3.2).
+const OPUS_MAX_PACKET_BYTES: usize = 1275 * 3;
+
 /// A PTS more than this far behind the previous frame rebases the RTP
 /// clock (10 s).
 const REBASE_BACKWARDS_TICKS: i64 = 90_000 * 10;
@@ -104,8 +107,8 @@ pub enum MediaMsg {
     Audio {
         /// The mount it belongs to.
         mount: MountId,
-        /// The audio payloads.
-        packet: Arc<FramePacket>,
+        /// The Opus packet, shared by every viewer.
+        packet: Arc<AudioPacket>,
     },
     /// The mount was removed.
     MountRemoved(MountId),
@@ -130,6 +133,16 @@ pub struct FramePacket {
     /// On a keyframe, the parameter-set NAL units (VPS, SPS, PPS; header
     /// included, no start code) carried in this frame.
     pub parameter_sets: Option<Vec<Vec<u8>>>,
+}
+
+/// One Opus packet (RFC 7587: one packet per RTP payload).
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct AudioPacket {
+    /// The packet's RTP timestamp (48 kHz).
+    pub rtp_ts: u32,
+    /// The Opus packet as pushed.
+    pub payload: Vec<u8>,
 }
 
 /// A KLV record bound to a frame. The media thread builds the
@@ -170,6 +183,8 @@ pub(crate) struct MountState {
     /// is queued: until then the frames that follow would reference the
     /// lost one, so they are dropped too.
     video_gap: AtomicBool,
+    /// Added to the audio's 48 kHz tick count to give its RTP timestamp.
+    audio_rtp_base: u32,
     /// Never held across a queue send.
     inner: Mutex<MountInner>,
     /// The demuxer behind `push_ts`; `Some` on an MP2T mount. Held while
@@ -218,6 +233,7 @@ impl MountState {
             cfg,
             closed: AtomicBool::new(false),
             video_gap: AtomicBool::new(false),
+            audio_rtp_base: random_u32(),
             inner: Mutex::new(MountInner {
                 packetizer,
                 ps: ParameterSets::default(),
@@ -323,7 +339,8 @@ impl MountState {
                     .fetch_add(packet.payloads.len() as u64, Ordering::Relaxed);
             }
             MediaMsg::Klv { .. } => bump(&self.stats.klv_dc_dropped_viewer),
-            MediaMsg::Audio { .. } | MediaMsg::MountRemoved(_) | MediaMsg::Stop => {}
+            MediaMsg::Audio { .. } => bump(&self.stats.viewer_packets_dropped_queue_full),
+            MediaMsg::MountRemoved(_) | MediaMsg::Stop => {}
         }
     }
 }
@@ -613,7 +630,9 @@ impl MountHandle {
                 }
                 if !seis.is_empty() {
                     // Fails only for an access unit without a slice,
-                    // excluded above.
+                    // excluded above. `seis` joins every NAL unit with a
+                    // start code, so this one byte splice inserts all of
+                    // them before the first slice.
                     if let Ok(spliced) = insert_sei_before_first_vcl(&buf, &seis, codec) {
                         buf = spliced;
                     }
@@ -713,29 +732,62 @@ impl MountHandle {
         Ok(())
     }
 
-    /// Push audio frames with their 90 kHz PTS.
+    /// Push one audio packet with its 90 kHz PTS.
     ///
-    /// No audio track is negotiated with viewers in this release (a mount's
-    /// [`AudioPolicy`] is [`AudioPolicy::Drop`]; `validate` refuses
-    /// [`AudioPolicy::PassthroughOpus`]), so every frame is discarded and
-    /// counted in [`MountStats::audio_frames_dropped`].
+    /// Under [`AudioPolicy::Drop`] the packet is discarded and counted in
+    /// [`MountStats::audio_frames_dropped`]; nothing is checked.
+    ///
+    /// Under [`AudioPolicy::PassthroughOpus`] `frames` is exactly one Opus
+    /// packet (RFC 6716 framing, up to three 1275-byte frames, 120 ms). It
+    /// goes to every viewer that offered Opus as one RTP payload
+    /// (RFC 7587), unchanged and counted in
+    /// [`MountStats::audio_frames_pushed`]. The RTP timestamp is the PTS on
+    /// the 48 kHz clock, `floor(pts * 8 / 15)` plus a random per-mount
+    /// origin, computed from each PTS on its own so the rounding never
+    /// accumulates (a 20 ms frame is exactly 960). Unlike video, a PTS jump
+    /// is not rebased: the audio clock follows the PTS. The marker bit is
+    /// never set (RFC 7587 sets it on the first packet after silence; a
+    /// pass-through mount does not detect silence). A viewer whose queue is
+    /// full loses the packet, counted in
+    /// [`MountStats::viewer_packets_dropped_queue_full`]. The call never
+    /// blocks.
     ///
     /// # Errors
     ///
-    /// [`PushError::Closed`] after the mount closed.
+    /// [`PushError::Closed`] after the mount closed,
+    /// [`PushError::WrongMountKind`] on an MP2T mount, and
+    /// [`PushError::InvalidAudioFrame`] under `PassthroughOpus` for an empty
+    /// slice or one longer than 3825 bytes.
     pub fn push_audio(&self, frames: &[u8], pts: Pts90khz) -> Result<(), PushError> {
         self.state.check(MountKind::Elementary)?;
-        self.audio(frames, pts);
-        Ok(())
+        self.audio(frames, pts)
     }
 
-    /// The audio path shared by `push_audio` and the MP2T demuxer.
-    fn audio(&self, frames: &[u8], pts: Pts90khz) {
-        let _ = (frames, pts);
+    /// The audio path of `push_audio`.
+    fn audio(&self, frames: &[u8], pts: Pts90khz) -> Result<(), PushError> {
         let s = &*self.state;
         match s.cfg.audio {
-            AudioPolicy::Drop | AudioPolicy::PassthroughOpus => {
+            AudioPolicy::Drop => {
                 bump(&s.stats.audio_frames_dropped);
+                Ok(())
+            }
+            AudioPolicy::PassthroughOpus => {
+                if frames.is_empty() || frames.len() > OPUS_MAX_PACKET_BYTES {
+                    return Err(PushError::InvalidAudioFrame);
+                }
+                // 48 kHz ticks = 90 kHz ticks * 8 / 15, floored; the
+                // wrapping add and the cast keep the low 32 bits, as RTP does.
+                let ticks = pts.as_ticks().saturating_mul(8).div_euclid(15);
+                let rtp_ts = (ticks as u32).wrapping_add(s.audio_rtp_base);
+                let msg = MediaMsg::Audio {
+                    mount: s.id,
+                    packet: Arc::new(AudioPacket {
+                        rtp_ts,
+                        payload: frames.to_vec(),
+                    }),
+                };
+                bump(&s.stats.audio_frames_pushed);
+                s.send(vec![msg])
             }
         }
     }
@@ -747,10 +799,17 @@ impl MountHandle {
     /// codec takes the [`push_video`](Self::push_video) path with the TS
     /// random-access flag as `key_frame`; each KLV record takes the
     /// [`push_klv`](Self::push_klv) path (the Metadata_AU_cell header is
-    /// already removed by the demuxer); audio takes the
-    /// [`push_audio`](Self::push_audio) path. A KLV record belongs before
-    /// the access unit it describes in the stream: it binds to the first
-    /// frame whose PTS it does not exceed.
+    /// already removed by the demuxer). Audio is discarded and counted in
+    /// [`MountStats::audio_frames_dropped`] whatever the mount's
+    /// [`AudioPolicy`]: the demuxer delivers MPEG audio, AAC and AC-3 (it
+    /// has no Opus mapping), and one event holds several frames, so no
+    /// event is one Opus packet to forward.
+    ///
+    /// The demuxer emits an access unit when the next one starts, so a
+    /// live mount runs one frame behind the bytes pushed, and the last
+    /// access unit waits until more bytes arrive. A KLV record binds to the
+    /// first frame whose PTS is at or after its own, so a record that
+    /// arrives after its frame was emitted binds to the next frame.
     ///
     /// Stream damage never fails the call: a demuxer error, a
     /// non-conformance report, a video access unit of another codec or one
@@ -818,7 +877,11 @@ impl MountHandle {
                 payload: SamplePayload::Audio { frames, .. },
                 ..
             } => {
-                self.audio(&frames, pts);
+                // The demuxer's audio is MPEG-1/2 audio, AAC or AC-3, never
+                // Opus, and one event holds several frames: nothing can be
+                // forwarded as Opus, so it is discarded and counted.
+                let _ = (frames, pts);
+                bump(&s.stats.audio_frames_dropped);
                 Ok(())
             }
             DemuxEvent::Metadata {

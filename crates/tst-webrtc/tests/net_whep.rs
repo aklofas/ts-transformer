@@ -3,6 +3,8 @@
 
 #[path = "fixtures/mod.rs"]
 mod fixtures;
+#[path = "net_whep/audio.rs"]
+mod audio;
 #[path = "net_whep/loopback.rs"]
 mod loopback;
 #[path = "net_whep/shutdown.rs"]
