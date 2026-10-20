@@ -226,3 +226,51 @@ fn a_closed_mount_refuses_ts() {
     m.close_for_test();
     assert!(matches!(m.push_ts(&[0x47; 188]), Err(PushError::Closed)));
 }
+
+/// An ADTS AAC-LC frame (44.1 kHz, stereo) with a zero payload.
+fn adts_frame() -> Vec<u8> {
+    let len = 7 + 64;
+    let mut f = vec![
+        0xFF,
+        0xF1,
+        0x50,
+        0x80 | ((len >> 11) & 0x3) as u8,
+        ((len >> 3) & 0xFF) as u8,
+        (((len & 0x7) << 5) | 0x1F) as u8,
+        0xFC,
+    ];
+    f.extend(std::iter::repeat_n(0u8, 64));
+    f
+}
+
+#[test]
+fn ts_audio_is_counted_and_discarded() {
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+    prog.add_video(0x1011, MuxVideoCodec::H264);
+    prog.add_audio(0x1021, tst_core::codec::AudioCodec::Aac);
+    let mut cfg = MuxerConfig::builder();
+    cfg.add_program(prog.build());
+    let mut mux = Muxer::new(cfg.build().unwrap()).unwrap();
+    for i in 0..3 {
+        mux.push_audio(&adts_frame(), Pts90khz::new(90_000 + i * 1920))
+            .unwrap();
+    }
+    let mut ts = Vec::new();
+    let mut buf = vec![0u8; 188 * 64];
+    loop {
+        let got = mux.pull(&mut buf);
+        if got == 0 {
+            break;
+        }
+        ts.extend_from_slice(&buf[..got]);
+    }
+    let (m, rx) = MountHandle::for_test(mp2t_config());
+    m.push_ts(&ts).unwrap();
+    // Closing the stream is not possible; a later PES start emits the
+    // previous audio, so push the same TS again.
+    m.push_ts(&ts).unwrap();
+    let s = m.stats();
+    assert!(s.audio_frames_dropped >= 1, "{s:?}");
+    assert_eq!(s.audio_frames_pushed, 0);
+    assert!(drain(&rx).frames.is_empty());
+}

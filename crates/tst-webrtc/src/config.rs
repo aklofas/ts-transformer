@@ -96,14 +96,23 @@ impl MountConfig {
     ///
     /// [`WhepServerError::InvalidConfig`] for an H.266 or AV1 video codec, a
     /// `sei_budget_bytes` of 0 or above 1 MiB, or a `viewer_queue_packets`
-    /// below 16.
+    /// below 16, and for [`MountKind::Mp2t`] with
+    /// [`AudioPolicy::PassthroughOpus`] (the TS demuxer has no Opus mapping,
+    /// so the negotiated audio track would never carry a packet).
     pub fn validate(&self) -> Result<(), WhepServerError> {
         let invalid = |detail: String| Err(WhepServerError::InvalidConfig { detail });
         match self.kind {
             MountKind::Elementary | MountKind::Mp2t => {}
         }
-        match self.audio {
-            AudioPolicy::Drop | AudioPolicy::PassthroughOpus => {}
+        match (self.kind, self.audio) {
+            (_, AudioPolicy::Drop) | (MountKind::Elementary, AudioPolicy::PassthroughOpus) => {}
+            (MountKind::Mp2t, AudioPolicy::PassthroughOpus) => {
+                return invalid(
+                    "AudioPolicy::PassthroughOpus needs an elementary mount: the MPEG-TS \
+                     demuxer has no Opus mapping"
+                        .into(),
+                );
+            }
         }
         match self.video {
             VideoCodec::H264 | VideoCodec::H265 => {}

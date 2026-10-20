@@ -327,7 +327,7 @@ pub fn select_audio(rtc: &Rtc, offer: &str) -> Option<(Mid, Pt)> {
 ///
 /// str0m rejects an offered section it has no codec for with port 0 and an
 /// empty format list (`m=audio 0 UDP/TLS/RTP/SAVPF `), which a browser's
-/// SDP parser refuses. The line gets the static payload type `0`, the
+/// SDP parser refuses. Only port-0 lines are touched. The line gets the static payload type `0`, the
 /// placeholder RFC 3264 §6 allows on a rejected stream (the format is
 /// never used, and a static number needs no `a=rtpmap`, so no stray codec
 /// description is added). Every other line is returned as it was.
@@ -337,7 +337,7 @@ pub fn repair_rejected_media(answer: &str) -> String {
         let line = raw.trim_end_matches(['\r', '\n']);
         let ending = &raw[line.len()..];
         let fields: Vec<&str> = line.split(' ').filter(|f| !f.is_empty()).collect();
-        if line.starts_with("m=") && fields.len() == 3 {
+        if line.starts_with("m=") && fields.len() == 3 && fields[1] == "0" {
             out.push_str(&format!("{} 0{ending}", fields.join(" ")));
         } else {
             out.push_str(raw);

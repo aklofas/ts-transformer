@@ -52,9 +52,10 @@ pub struct MountStats {
     /// browser's `max-message-size`, a closed channel). The video behind
     /// such a message is sent regardless.
     pub klv_dc_dropped_viewer: u64,
-    /// Audio frames forwarded to viewers.
+    /// Audio packets accepted by `push_audio` for the viewers.
     pub audio_frames_pushed: u64,
-    /// Audio frames discarded by the mount's audio policy.
+    /// Audio pushes discarded: `push_audio` calls under `AudioPolicy::Drop`
+    /// and demuxed TS audio events (each may hold several frames).
     pub audio_frames_dropped: u64,
     /// Picture loss indications received from viewers.
     pub plis_received: u64,

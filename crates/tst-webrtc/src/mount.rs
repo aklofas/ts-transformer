@@ -80,6 +80,10 @@ const REBASE_FORWARDS_TICKS: i64 = 90_000 * 3600;
 /// per second.
 const REBASE_STEP_TICKS: u32 = 3000;
 
+/// The RTP timestamp step an audio rebase advances by: one 20 ms Opus
+/// frame at 48 kHz.
+const AUDIO_REBASE_STEP_TICKS: u32 = 960;
+
 /// Identifies a mount inside the server.
 #[doc(hidden)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -183,8 +187,6 @@ pub(crate) struct MountState {
     /// is queued: until then the frames that follow would reference the
     /// lost one, so they are dropped too.
     video_gap: AtomicBool,
-    /// Added to the audio's 48 kHz tick count to give its RTP timestamp.
-    audio_rtp_base: u32,
     /// Never held across a queue send.
     inner: Mutex<MountInner>,
     /// The demuxer behind `push_ts`; `Some` on an MP2T mount. Held while
@@ -205,10 +207,42 @@ struct MountInner {
     ps: ParameterSets,
     /// KLV records (PTS, bytes) waiting for a frame, in push order.
     pending_klv: VecDeque<(i64, Vec<u8>)>,
-    /// Added to a PTS (truncated to 32 bits) to give its RTP timestamp.
-    rtp_base: u32,
+    video_clock: RtpClock,
+    audio_clock: RtpClock,
+}
+
+/// One media stream's RTP timestamp clock.
+#[derive(Default)]
+struct RtpClock {
+    /// Added to a tick count (truncated to 32 bits) to give the RTP
+    /// timestamp.
+    base: u32,
     /// The previous frame's PTS and RTP timestamp.
     last: Option<(i64, u32)>,
+}
+
+impl RtpClock {
+    /// The RTP timestamp of a frame at `pts`, whose tick count on this
+    /// stream's clock is `ticks`. A PTS jump of more than 10 s back or 1 h
+    /// ahead rebases the clock so the RTP timestamp moves on by `step`
+    /// ticks; returns whether it rebased.
+    fn ts(&mut self, pts: i64, ticks: u32, step: u32) -> (u32, bool) {
+        let mut rebased = false;
+        match self.last {
+            None => self.base = random_u32().wrapping_sub(ticks),
+            Some((last_pts, last_rtp)) => {
+                if pts < last_pts.saturating_sub(REBASE_BACKWARDS_TICKS)
+                    || pts > last_pts.saturating_add(REBASE_FORWARDS_TICKS)
+                {
+                    self.base = last_rtp.wrapping_add(step).wrapping_sub(ticks);
+                    rebased = true;
+                }
+            }
+        }
+        let rtp = ticks.wrapping_add(self.base);
+        self.last = Some((pts, rtp));
+        (rtp, rebased)
+    }
 }
 
 impl MountState {
@@ -233,13 +267,12 @@ impl MountState {
             cfg,
             closed: AtomicBool::new(false),
             video_gap: AtomicBool::new(false),
-            audio_rtp_base: random_u32(),
             inner: Mutex::new(MountInner {
                 packetizer,
                 ps: ParameterSets::default(),
                 pending_klv: VecDeque::new(),
-                rtp_base: 0,
-                last: None,
+                video_clock: RtpClock::default(),
+                audio_clock: RtpClock::default(),
             }),
             demuxer: Mutex::new(match cfg_kind {
                 MountKind::Mp2t => Some(Demuxer::with_config(DemuxerConfig::default())),
@@ -427,28 +460,6 @@ impl MountInner {
         }
     }
 
-    /// The RTP timestamp of a frame at `pts`. A jump of more than 10 s
-    /// back or 1 h ahead rebases the clock so the RTP timestamp moves on
-    /// by one frame step; returns whether it rebased.
-    fn rtp_ts(&mut self, pts: i64) -> (u32, bool) {
-        let pts32 = pts as u32;
-        let mut rebased = false;
-        match self.last {
-            None => self.rtp_base = random_u32().wrapping_sub(pts32),
-            Some((last_pts, last_rtp)) => {
-                if pts < last_pts.saturating_sub(REBASE_BACKWARDS_TICKS)
-                    || pts > last_pts.saturating_add(REBASE_FORWARDS_TICKS)
-                {
-                    self.rtp_base = last_rtp.wrapping_add(REBASE_STEP_TICKS).wrapping_sub(pts32);
-                    rebased = true;
-                }
-            }
-        }
-        let rtp = pts32.wrapping_add(self.rtp_base);
-        self.last = Some((pts, rtp));
-        (rtp, rebased)
-    }
-
     /// Take the KLV records that bind to a frame at `pts`: every record
     /// at or before it, or every waiting record after a clock rebase
     /// (their PTS belongs to the old timeline).
@@ -589,7 +600,7 @@ impl MountHandle {
                 bump(&s.stats.keyframes_pushed);
             }
 
-            let (rtp_ts, rebased) = inner.rtp_ts(pts);
+            let (rtp_ts, rebased) = inner.video_clock.ts(pts, pts as u32, REBASE_STEP_TICKS);
             if rebased {
                 bump(&s.stats.rtp_clock_rebases);
             }
@@ -744,8 +755,10 @@ impl MountHandle {
     /// [`MountStats::audio_frames_pushed`]. The RTP timestamp is the PTS on
     /// the 48 kHz clock, `floor(pts * 8 / 15)` plus a random per-mount
     /// origin, computed from each PTS on its own so the rounding never
-    /// accumulates (a 20 ms frame is exactly 960). Unlike video, a PTS jump
-    /// is not rebased: the audio clock follows the PTS. The marker bit is
+    /// accumulates (a 20 ms frame is exactly 960). A PTS jump of more than
+    /// 10 s back or 1 h ahead rebases the audio clock on its own, as video's
+    /// is: the timestamp moves on by one 20 ms frame
+    /// ([`MountStats::rtp_clock_rebases`] counts both). The marker bit is
     /// never set (RFC 7587 sets it on the first packet after silence; a
     /// pass-through mount does not detect silence). A viewer whose queue is
     /// full loses the packet, counted in
@@ -776,9 +789,16 @@ impl MountHandle {
                     return Err(PushError::InvalidAudioFrame);
                 }
                 // 48 kHz ticks = 90 kHz ticks * 8 / 15, floored; the
-                // wrapping add and the cast keep the low 32 bits, as RTP does.
-                let ticks = pts.as_ticks().saturating_mul(8).div_euclid(15);
-                let rtp_ts = (ticks as u32).wrapping_add(s.audio_rtp_base);
+                // cast keeps the low 32 bits, as RTP does.
+                let pts = pts.as_ticks();
+                let ticks = pts.saturating_mul(8).div_euclid(15);
+                let (rtp_ts, rebased) =
+                    s.lock()
+                        .audio_clock
+                        .ts(pts, ticks as u32, AUDIO_REBASE_STEP_TICKS);
+                if rebased {
+                    bump(&s.stats.rtp_clock_rebases);
+                }
                 let msg = MediaMsg::Audio {
                     mount: s.id,
                     packet: Arc::new(AudioPacket {
@@ -786,8 +806,9 @@ impl MountHandle {
                         payload: frames.to_vec(),
                     }),
                 };
+                s.send(vec![msg])?;
                 bump(&s.stats.audio_frames_pushed);
-                s.send(vec![msg])
+                Ok(())
             }
         }
     }

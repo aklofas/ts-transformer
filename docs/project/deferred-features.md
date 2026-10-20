@@ -1819,6 +1819,19 @@ and the two below.
   across a rollover who needs to know a re-anchor happened. Additive on every surface (one
   dict key, one record field, one C struct field behind a size bump).
 
+## Opus in MPEG-TS (tst-core has no Opus stream mapping)
+
+- **Status:** Deferred. The WebRTC mount's `AudioPolicy::PassthroughOpus`
+  works on elementary mounts only; `MountConfig::validate` refuses it on a
+  `MountKind::Mp2t` mount, and demuxed TS audio is discarded and counted.
+- **Why deferred:** the TS demuxer maps MPEG audio, AAC and AC-3 only, so no
+  event is one Opus packet to forward. A mount that negotiated an Opus
+  track from a TS feed would show a live audio track that never carries a
+  packet.
+- **Trigger to revisit:** tst-core demuxing Opus in TS (the private-stream
+  registration descriptor mapping), or a consumer needing audio from a TS
+  feed in the browser.
+
 ## Resolved (historical)
 
 Entries whose feature shipped, one line each: the release it landed in and

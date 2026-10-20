@@ -175,3 +175,71 @@ fn an_audio_offer_without_opus_selects_nothing() {
     let rtc = accept(&sdp);
     assert!(select_audio(&rtc, &no_opus).is_none());
 }
+
+#[test]
+fn a_push_the_media_queue_refuses_is_not_counted_as_forwarded() {
+    let (m, rx) = MountHandle::for_test(opus_config());
+    drop(rx);
+    assert!(matches!(
+        m.push_audio(&packet(1), Pts90khz::new(0)),
+        Err(PushError::Closed)
+    ));
+    assert_eq!(m.stats().audio_frames_pushed, 0);
+}
+
+/// A P-slice access unit: one NAL unit, no parameter sets needed.
+const P_FRAME: &[u8] = &[0, 0, 0, 1, 0x41, 0x9A, 0x00, 0x01];
+
+#[test]
+fn a_pts_jump_rebases_the_audio_clock_and_leaves_the_video_clock_alone() {
+    let (m, rx) = MountHandle::for_test(opus_config());
+    let video = |pts: i64| m.push_video(P_FRAME, Pts90khz::new(pts), false).unwrap();
+    video(0);
+    video(3000);
+    m.push_audio(&packet(1), Pts90khz::new(8_000_000_000))
+        .unwrap();
+    // The source wrapped or restarted: the audio PTS falls back by far
+    // more than 10 s.
+    m.push_audio(&packet(2), Pts90khz::new(0)).unwrap();
+    m.push_audio(&packet(3), Pts90khz::new(1800)).unwrap();
+    video(6000);
+    let (mut audio, mut v) = (Vec::new(), Vec::new());
+    for msg in rx.try_iter() {
+        match msg {
+            MediaMsg::Audio { packet, .. } => audio.push(packet.rtp_ts),
+            MediaMsg::Frame { packet, .. } => v.push(packet.rtp_ts),
+            _ => {}
+        }
+    }
+    assert_eq!(audio.len(), 3);
+    assert_eq!(
+        audio[1].wrapping_sub(audio[0]),
+        960,
+        "contiguous across the jump"
+    );
+    assert_eq!(
+        audio[2].wrapping_sub(audio[1]),
+        960,
+        "and continuing from it"
+    );
+    assert_eq!(m.stats().rtp_clock_rebases, 1);
+    // The video clock moved only by its own PTS steps.
+    assert_eq!(v.len(), 3);
+    assert_eq!(
+        (v[1].wrapping_sub(v[0]), v[2].wrapping_sub(v[1])),
+        (3000, 3000)
+    );
+}
+
+#[test]
+fn only_rejected_media_lines_get_a_format() {
+    use tst_webrtc::server::negotiate::repair_rejected_media;
+    let answer = "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nm=audio 0 UDP/TLS/RTP/SAVPF \r\n\
+                  a=mid:1\r\nm=audio 9 UDP/TLS/RTP/SAVPF \r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n";
+    let fixed = repair_rejected_media(answer);
+    assert_eq!(
+        fixed,
+        "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nm=audio 0 UDP/TLS/RTP/SAVPF 0\r\n\
+         a=mid:1\r\nm=audio 9 UDP/TLS/RTP/SAVPF \r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n"
+    );
+}
