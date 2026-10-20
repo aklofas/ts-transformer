@@ -6392,3 +6392,32 @@ pub(crate) mod tests {
         assert!(!r.overall_pass);
     }
 }
+
+#[cfg(test)]
+mod soak_script_literals {
+    use super::{RSS_SLOPE_THRESHOLD_KB_PER_HOUR, WARMUP_FRACTION};
+
+    /// The gate's constants are copies of literals in `soak.sh`; a change on
+    /// either side fails here.
+    #[test]
+    fn the_rss_constants_match_soak_sh() {
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("scripts")
+            .join("interop")
+            .join("soak.sh");
+        let text = std::fs::read_to_string(script).unwrap();
+        let threshold = format!(
+            "RSS_SLOPE_THRESHOLD={}",
+            RSS_SLOPE_THRESHOLD_KB_PER_HOUR as u64
+        );
+        assert_eq!(
+            f64::from(RSS_SLOPE_THRESHOLD_KB_PER_HOUR as u32),
+            RSS_SLOPE_THRESHOLD_KB_PER_HOUR
+        );
+        assert!(text.contains(&threshold), "soak.sh has no {threshold:?}");
+        let warmup = format!("warmup_fraction: {WARMUP_FRACTION}");
+        assert!(text.contains(&warmup), "soak.sh has no {warmup:?}");
+    }
+}

@@ -28,7 +28,11 @@ pub struct ReplayPlan {
     pub budget_seconds: u32,
     /// Recorded as given; the replay stage validates them.
     pub paths: Vec<String>,
-    /// Rare-coverage picks, then shape picks, then largest/longest.
+    /// In replay order: predicted replayed bytes ([`predicted_bytes`])
+    /// descending, ties by sha. The largest allocation each receiver makes
+    /// lands early, inside the RSS gate's warm-up, so a one-time high-water
+    /// step is never read as a slope. Which picks are kept is decided first,
+    /// in priority order (rare coverage, shapes, largest/longest).
     pub picks: Vec<Pick>,
     /// Shas dropped to fit the budget, sorted.
     pub trimmed: Vec<Sha256Hex>,
@@ -161,6 +165,11 @@ pub fn select(inv: &Inventory, paths: &[String], budget_seconds: u32) -> ReplayP
     }
     trimmed.sort();
     skipped.sort();
+    picks.sort_by(|a, b| {
+        predicted[&b.sha256]
+            .cmp(&predicted[&a.sha256])
+            .then_with(|| a.sha256.cmp(&b.sha256))
+    });
     let total_seconds = picks.iter().map(|p| p.seconds).sum();
     let predicted_peak_bytes = picks
         .iter()

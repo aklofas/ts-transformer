@@ -122,7 +122,7 @@ fn ready_url(line: &str, sha: &Sha256Hex) -> String {
 fn receive_over_udp_passes_a_faithful_replay() {
     let (bytes, sha, _, dir) = capture("recv-udp", 2.0, None);
     let mut rx = Receiver::spawn("udp", &dir);
-    rx.say(&format!("file {sha} none 0"));
+    rx.say(&format!("file {sha} none 0 0"));
     let url = ready_url(&rx.line(), &sha);
     assert!(url.starts_with("udp://127.0.0.1:"), "{url}");
 
@@ -156,7 +156,7 @@ fn receive_over_udp_passes_a_faithful_replay() {
 fn receive_over_tcp_fails_a_truncated_replay() {
     let (bytes, sha, _, dir) = capture("recv-tcp-cut", 2.0, None);
     let mut rx = Receiver::spawn("tcp", &dir);
-    rx.say(&format!("file {sha} none 0"));
+    rx.say(&format!("file {sha} none 0 0"));
     let url = ready_url(&rx.line(), &sha);
     assert!(url.starts_with("tcp://127.0.0.1:"), "{url}");
 
@@ -183,7 +183,7 @@ fn receive_over_tcp_fails_a_truncated_replay() {
 fn receive_over_tcp_passes_a_faithful_replay() {
     let (bytes, sha, _, dir) = capture("recv-tcp", 2.0, None);
     let mut rx = Receiver::spawn("tcp", &dir);
-    rx.say(&format!("file {sha} none 0"));
+    rx.say(&format!("file {sha} none 0 0"));
     let url = ready_url(&rx.line(), &sha);
 
     let mut sender = make_send(&url).unwrap();
@@ -212,7 +212,7 @@ fn a_file_without_a_sweep_digest_fails_in_place_of_ready_and_names_no_path() {
     let dir = temp_dir_named("recv-nodigest");
     let sha = sha_of(b"nothing was swept");
     let mut rx = Receiver::spawn("udp", &dir);
-    rx.say(&format!("file {sha} 600 0"));
+    rx.say(&format!("file {sha} 600 0 0"));
     let verdict = rx.line();
     assert!(
         verdict.starts_with(&format!("verdict {sha} FAIL ")),
@@ -266,7 +266,7 @@ fn the_die_after_hook_exits_0_after_the_first_verdict() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    writeln!(child.stdin.as_mut().unwrap(), "file {sha} none 0").unwrap();
+    writeln!(child.stdin.as_mut().unwrap(), "file {sha} none 0 0").unwrap();
     let first = Lines::new(child.stdout.take().unwrap())
         .next()
         .expect("a verdict line");
@@ -290,7 +290,7 @@ fn every_path_binds_a_kernel_picked_port_and_announces_its_sender_url() {
     for (path, prefix) in expect {
         let (_, sha, _, dir) = capture(&format!("recv-ready-{path}"), 1.0, None);
         let mut rx = Receiver::spawn(path, &dir);
-        rx.say(&format!("file {sha} none 0"));
+        rx.say(&format!("file {sha} none 0 0"));
         let url = ready_url(&rx.line(), &sha);
         assert!(url.starts_with(prefix), "{path}: {url}");
         let port: u16 = url[prefix.len()..]
@@ -309,7 +309,7 @@ fn every_path_binds_a_kernel_picked_port_and_announces_its_sender_url() {
 fn receive_over_srt_passes_a_faithful_replay() {
     let (bytes, sha, _, dir) = capture("recv-srt", 2.0, None);
     let mut rx = Receiver::spawn("srt", &dir);
-    rx.say(&format!("file {sha} none 0"));
+    rx.say(&format!("file {sha} none 0 0"));
     let url = ready_url(&rx.line(), &sha);
 
     let mut sender = make_send(&url).unwrap();
@@ -339,7 +339,7 @@ fn receive_over_srt_passes_a_faithful_replay() {
 fn prefixed_replay(path: &str, name: &str) {
     let (bytes, sha, _, dir) = capture(name, 4.0, Some(1));
     let mut rx = Receiver::spawn(path, &dir);
-    rx.say(&format!("file {sha} 1 0"));
+    rx.say(&format!("file {sha} 1 0 0"));
     let url = ready_url(&rx.line(), &sha);
     let mut sender = make_send(&url).unwrap();
     let pacer = PcrPacer::new(&bytes, Some(1)).unwrap();
@@ -377,7 +377,7 @@ fn a_prefixed_replay_over_tcp_passes() {
 fn replaying_the_whole_capture_against_a_prefix_digest_fails() {
     let (bytes, sha, _, dir) = capture("recv-prefix-overshoot", 4.0, Some(1));
     let mut rx = Receiver::spawn("tcp", &dir);
-    rx.say(&format!("file {sha} 1 0"));
+    rx.say(&format!("file {sha} 1 0 0"));
     let url = ready_url(&rx.line(), &sha);
     let mut sender = make_send(&url).unwrap();
     send_in_messages(sender.as_mut(), &bytes).unwrap();
@@ -397,7 +397,7 @@ const FAST_STALL: [(&str, &str); 1] = [("TST_CORPUS_TEST_STALL_SECONDS", "1")];
 fn a_receiver_that_never_gets_a_byte_stalls() {
     let (_, sha, _, dir) = capture("recv-stall-silent", 1.0, None);
     let mut rx = Receiver::spawn_with("udp", &dir, &FAST_STALL);
-    rx.say(&format!("file {sha} none 0"));
+    rx.say(&format!("file {sha} none 0 0"));
     ready_url(&rx.line(), &sha);
     let verdict = rx.line();
     assert!(
@@ -413,7 +413,7 @@ fn a_receiver_that_never_gets_a_byte_stalls() {
 fn a_sender_that_goes_quiet_before_sent_stalls_the_receiver() {
     let (bytes, sha, _, dir) = capture("recv-stall-half", 2.0, None);
     let mut rx = Receiver::spawn_with("udp", &dir, &FAST_STALL);
-    rx.say(&format!("file {sha} none 0"));
+    rx.say(&format!("file {sha} none 0 0"));
     let url = ready_url(&rx.line(), &sha);
     let mut sender = make_send(&url).unwrap();
     send_in_messages(sender.as_mut(), &bytes[..bytes.len() / 2 / 188 * 188]).unwrap();
@@ -429,7 +429,7 @@ fn a_sender_that_goes_quiet_before_sent_stalls_the_receiver() {
 fn a_closing_path_whose_sender_never_closes_stalls_after_sent() {
     let (bytes, sha, _, dir) = capture("recv-stall-open", 2.0, None);
     let mut rx = Receiver::spawn_with("tcp", &dir, &FAST_STALL);
-    rx.say(&format!("file {sha} none 0"));
+    rx.say(&format!("file {sha} none 0 0"));
     let url = ready_url(&rx.line(), &sha);
     let mut sender = make_send(&url).unwrap();
     send_in_messages(sender.as_mut(), &bytes).unwrap();
@@ -445,7 +445,7 @@ fn a_closing_path_whose_sender_never_closes_stalls_after_sent() {
 fn quitting_during_an_srt_accept_ends_the_child() {
     let (_, sha, _, dir) = capture("recv-srt-quit", 1.0, None);
     let mut rx = Receiver::spawn("srt", &dir);
-    rx.say(&format!("file {sha} none 0"));
+    rx.say(&format!("file {sha} none 0 0"));
     ready_url(&rx.line(), &sha);
     rx.say("quit");
     assert_eq!(rx.line(), "bye");
@@ -459,7 +459,7 @@ fn a_large_access_unit_sizes_the_udp_buffer_and_the_replay_still_passes() {
     let mut rx = Receiver::spawn("udp", &dir);
     // Two megabytes: no kernel default holds two bursts of that, so the
     // child binds with a receive buffer.
-    rx.say(&format!("file {sha} none 2000000"));
+    rx.say(&format!("file {sha} none 2000000 0"));
     let url = ready_url(&rx.line(), &sha);
     assert!(url.starts_with("udp://127.0.0.1:"), "{url}");
     assert!(
