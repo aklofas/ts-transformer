@@ -442,6 +442,44 @@ fn preflight_patch_and_unknown_mount() {
     assert_eq!(srv.stats().sessions_total, 0);
 }
 
+/// A `recvonly` offer whose `rtx` payload 125 names both VP8 and VP9 as
+/// its `apt`: two formats would claim one payload number.
+const SHARED_RTX_OFFER: &str = "v=0\r\n\
+o=- 1 0 IN IP4 0.0.0.0\r\n\
+s=-\r\n\
+t=0 0\r\n\
+a=fingerprint:sha-256 AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA\r\n\
+a=group:BUNDLE 0\r\n\
+m=video 9 UDP/TLS/RTP/SAVPF 120 121 125\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=recvonly\r\n\
+a=mid:0\r\n\
+a=ice-ufrag:00000000\r\n\
+a=ice-pwd:00000000000000000000000000000000\r\n\
+a=setup:actpass\r\n\
+a=rtcp-mux\r\n\
+a=rtpmap:120 VP8/90000\r\n\
+a=rtpmap:121 VP9/90000\r\n\
+a=rtpmap:125 rtx/90000\r\n\
+a=fmtp:125 apt=120\r\n\
+a=fmtp:125 apt=121\r\n";
+
+#[test]
+fn an_offer_mapping_one_payload_type_to_two_formats_is_400_and_the_server_keeps_serving() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let (status, _, _) = whep_post(srv.local_addr(), "/cam", SHARED_RTX_OFFER, None);
+    assert_eq!(status, 400);
+    let (status, _, _) = whep_post(
+        srv.local_addr(),
+        "/cam",
+        &TestViewer::new().offer(true),
+        None,
+    );
+    assert_eq!(status, 201);
+    assert_eq!(srv.stats().sessions_total, 1);
+}
+
 #[test]
 fn malformed_and_oversized_requests_are_refused() {
     let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
