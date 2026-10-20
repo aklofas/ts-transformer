@@ -36,6 +36,18 @@ Every file is demuxed three times: with the default configuration, with
 timestamp unwrapping, and with full strict mode. The digests of all three are
 stored, so a change in any of them shows up against the baseline.
 
+The inventory reads each file's PMT from the first program map the demuxer
+emits in its first 4 MiB, so a PMT that spans packets or damaged bytes before
+it never stops a file from being read. A file whose probe or digest panics is
+counted as a parse failure under its SHA-256, and the sweep goes on. On a
+file's PCR PID, a reset or a forward jump of more than one second adds no
+time: the duration, the 600-second cut and the replay's pacing all leave it
+out, so a capture that pauses never makes the replay sleep.
+
+A directory with no `.ts` file exits 2. A `--baseline` directory that does
+not exist exits 2, and a baseline that holds the digest of none of the
+captures fails the sweep. A first run uses no `--baseline` at all.
+
 ## Invariants
 
 A capture fails the sweep when any of these breaks. None needs a baseline.
@@ -45,10 +57,21 @@ A capture fails the sweep when any of these breaks. None needs a baseline.
   it comes out as an unknown kind. An annotation that lists a PID under
   `non_misb_private_pids` excuses a private stream that is not MISB KLV.
 - **accounting:** the file contains packets, and the demuxer's discontinuity
-  count equals the count from an independent walk of the wire.
-- **pts-order:** presentation timestamps on a PID never jump backwards. The
-  annotation `known_discontinuity = true` excuses a capture whose timeline is
-  known to restart.
+  count equals a continuity-counter count from an independent walk of the
+  wire. The walk follows the demuxer's own rules: which PIDs count, PSI
+  adoption, tolerated duplicates, and sync acquisition (after a loss, a
+  candidate needs 5 of the next 7 strides). A PES that outgrows the
+  demuxer's reassembly cap is a discontinuity the wire cannot show, so it is
+  counted apart and left out. The annotation `known_cc_mismatch = true`
+  records a reviewed difference as excused, with its reason. This rule
+  compares continuity counters only: the design's other half, that every
+  packet in is accounted for by the demuxer, needs per-packet counters the
+  demuxer does not keep, and is not checked.
+- **pts-order:** presentation timestamps on a PID never jump backwards. A PES
+  that carries no PTS takes no part: the demuxer reports it as 0, so a
+  timestamp of exactly 0 is counted as absent. The annotation
+  `known_discontinuity = true` excuses a capture whose timeline is known to
+  restart.
 
 Annotations live outside the corpus, one `<sha256>.toml` file per capture with
 flat `key = value` lines and an optional `reason = "..."`. Only a person adds
@@ -58,15 +81,40 @@ them, after reading the finding.
 
 Replaying everything would take days, so the tool picks a subset from the
 inventory: the files that carry a rare codec or a rare KLV set (fewer than
-three files), one file of each PMT shape, and the largest and the longest
-file. A capture longer than ten minutes is replayed as its first 600 seconds.
-The subset is trimmed to fit a budget of two hours of wall-clock time. A pick
-whose replayed bytes would exceed 4 GiB is skipped, and so is a file with no
-usable duration. The plan lists what was trimmed and skipped.
+three files), the longest capture of each PMT shape, and the largest and the
+longest file. A capture longer than ten minutes is replayed as its first 600
+seconds. The subset, other than the rare-coverage picks, is trimmed to fit a
+budget of two hours of wall-clock time. A pick whose replayed bytes would
+exceed 4 GiB is skipped, and so is a file with no usable duration. The plan
+lists what was trimmed and skipped. A pick whose cut turns out longer than
+4 GiB when it is read fails as skipped. A capture that is a symlink resolving
+outside the corpus directory refuses the whole replay.
 
 Replays run over SRT, RIST, UDP, TCP and the RTSP publisher path on loopback,
-one long-lived receiver process per path, so a leak or a slow drift shows in
-that receiver's memory over the whole run.
+one long-lived receiver process per path. Each receiver's memory is gated per
+path by the soak's rule: after the soak's warm-up, a slope above 200 KiB per
+hour fails the replay. A run too short for the rule's sample count records
+the path as not gated, with the reason.
+
+The replay's time rules:
+
+- A receiver that sees no byte for 10 seconds while the sender is still
+  sending is stalled.
+- UDP, RIST and the RTSP publisher path have no end of stream, so a file ends
+  there after 2 seconds of quiet once the sender has finished. TCP and SRT
+  end when the sender closes.
+- A send may take the pick's own PCR seconds plus twice the stall time; one
+  that takes longer is cancelled and the path's receiver is stopped.
+
+The UDP receiver's socket buffer holds two of the capture's largest access
+units whenever the kernel default cannot, the stress harness's rule; the
+replay refuses to start when `net.core.rmem_max` would clamp that buffer. A
+failed verdict names how often the sender lost and recovered the packet
+framing, so a short delivery from a damaged capture is not read as transport
+loss.
+
+The variables named `TST_CORPUS_TEST_*` change these rules for the tool's own
+tests. When one is set, the tool names it on stderr.
 
 ## Running it on your own directory
 
