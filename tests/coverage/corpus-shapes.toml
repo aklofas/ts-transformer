@@ -1,0 +1,17 @@
+# PMT shape classes for `tst-interop corpus` (TEST_CORPUS.md describes each).
+# First match in file order wins; a stream matching none is "other".
+[[shape]]
+key = "b"
+requires_stream_types = [0x15, 0xF0]
+requires_klva = false
+forbids_stream_types = []
+[[shape]]
+key = "c"
+requires_stream_types = [0x24]
+requires_klva = false
+forbids_stream_types = []
+[[shape]]
+key = "a"
+requires_stream_types = [0x1B, 0x06]
+requires_klva = true
+forbids_stream_types = [0x15, 0xF0, 0xF1, 0x24]
