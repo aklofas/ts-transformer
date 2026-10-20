@@ -397,7 +397,7 @@ class ReleaseModeTests(unittest.TestCase):
     def test_release_mode_requires_a_soak_archive_for_the_tree(self):
         rec = collect(release=True, archives=NO_SOAK)
         self.assertEqual(rec["verdict"], "NO-GO")
-        self.assertIn("soak: no 72-hour soak archive for this tree", rec["verdict_reasons"])
+        self.assertIn("soak: no 72-hour soak archive for this tree (%s)" % SHA[:12], rec["verdict_reasons"])
 
     def test_release_mode_passes_with_matching_soak_and_corpus(self):
         with mock.patch.object(q, "changed_paths", side_effect=AssertionError("git called")):
@@ -515,6 +515,12 @@ class ReleaseModeTests(unittest.TestCase):
                 collect(mutate=lambda f: f["context.json"].update(
                     source=dict(CONTEXT["source"], sha="HEAD")), archives=SOAKED_EARLIER)
             self.assertEqual(e.exception.code, 2)
+
+    def test_a_malformed_sha_fails_the_same_way_without_a_soak(self):
+        with self.assertRaises(SystemExit) as e:
+            collect(mutate=lambda f: f["context.json"].update(
+                source=dict(CONTEXT["source"], sha="HEAD")), archives=NO_SOAK)
+        self.assertEqual(e.exception.code, 2)
 
     def test_render_release_gate_lines(self):
         with mock.patch.object(q, "changed_paths", side_effect=AssertionError("git called")):

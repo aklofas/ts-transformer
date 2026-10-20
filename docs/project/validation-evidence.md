@@ -437,7 +437,8 @@ the release qualification accepts no shorter run.
 | `soak-rtsp-publish-2026-10-08` | 2026-10-09 | `b6545e6004ae` | 3 600 s | `overall_pass=false` | The first one-hour run with the `rtsp-publish` leg, which passed every verdict it owns; the three failures were harness defects on the SRT leg's receiver. |
 
 The release qualification reads the same runs from
-`tests/coverage/evidence-archives.toml`.
+`tests/coverage/evidence-archives.toml`, except `soak-run2-2026-08-05`, which
+predates the archive list and has no row there.
 
 ### The elementary publish leg (`rtsp-publish-es`)
 

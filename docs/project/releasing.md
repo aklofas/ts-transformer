@@ -169,7 +169,9 @@ merge commit, and the qualification run checks that nothing under
     also needs a passing soak archive that declares 259 200 seconds and a
     passing corpus archive for the soaked tree, with no change under
     `crates/` or `bindings/` between the soaked tree and this commit. A `v*`
-    tag push applies the same gate. Without the input the record is a
+    tag push applies the same gate. The gate judges the newest 72-hour soak
+    that stands for the commit, so a newer failed run on the same tree
+    shadows an older pass. Without the input the record is a
     mid-cycle one and states that the gate was not applied.
 
     A **NO-GO** record lists its reasons (a failed or missing leg, a stale
