@@ -330,3 +330,51 @@ fn h265_cra_is_a_keyframe_and_a_bare_cra_gets_cached_parameter_sets() {
         ]
     );
 }
+
+#[test]
+fn the_sei_budget_counts_the_escaped_size_of_a_record() {
+    // A record of zero bytes grows by an escape byte every second zero, so
+    // an unescaped size estimate would let it through a tight budget.
+    let record = [0u8; 200];
+    let sei = tst_webrtc::sei::build_klv_sei_nal(VideoCodec::H264, 9000, &record).unwrap();
+    let actual = (sei.len() + 3) as u32;
+    assert!(actual as usize > record.len() + 25 + 8, "escaping grew it");
+
+    let run = |budget: u32| {
+        let mut cfg = MountConfig::default();
+        cfg.sei_budget_bytes = budget;
+        let (m, _rx) = MountHandle::for_test(cfg);
+        m.push_klv(&record, Pts90khz::new(9000), 0).unwrap();
+        m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(9000), true)
+            .unwrap();
+        m.stats()
+    };
+    let tight = run(actual - 1);
+    assert_eq!(
+        (tight.klv_sei_inserted, tight.klv_sei_dropped_oversize),
+        (0, 1)
+    );
+    let exact = run(actual);
+    assert_eq!(
+        (exact.klv_sei_inserted, exact.klv_sei_dropped_oversize),
+        (1, 0)
+    );
+}
+
+#[test]
+fn records_bound_after_a_rebase_share_one_splice() {
+    let (m, rx) = MountHandle::for_test(MountConfig::default());
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(90_000_000), true)
+        .unwrap();
+    let _ = next_frame(&rx);
+    for i in 0..4u8 {
+        m.push_klv(&[i; 8], Pts90khz::new(90_000_000 + 100 * i64::from(i)), 0)
+            .unwrap();
+    }
+    // A PTS far behind rebases the clock and binds every waiting record.
+    m.push_video(&au(&[P]), Pts90khz::new(0), false).unwrap();
+    let f = next_frame(&rx);
+    let seis = tst_webrtc::sei::extract_klv_seis(&rejoin(&f), VideoCodec::H264);
+    assert_eq!(seis.len(), 4);
+    assert_eq!(m.stats().klv_sei_inserted, 4);
+}

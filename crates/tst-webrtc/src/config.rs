@@ -10,8 +10,8 @@ use crate::error::WhepServerError;
 pub enum MountKind {
     /// Encoded access units, KLV records and audio frames pushed one by one.
     Elementary,
-    /// A complete MPEG-TS byte stream, demultiplexed by the mount. Not
-    /// served in this release: [`MountConfig::validate`] refuses it.
+    /// A complete MPEG-TS byte stream, demultiplexed by the mount: feed it
+    /// with [`MountHandle::push_ts`](crate::MountHandle::push_ts).
     Mp2t,
 }
 
@@ -94,17 +94,13 @@ impl MountConfig {
     ///
     /// [`WhepServerError::InvalidConfig`] for an H.266 or AV1 video codec, a
     /// `sei_budget_bytes` of 0 or above 1 MiB, or a `viewer_queue_packets`
-    /// below 16. Also for [`MountKind::Mp2t`] and
-    /// [`AudioPolicy::PassthroughOpus`], which this release does not serve
-    /// yet: an MP2T mount has no demuxer behind it and no audio track is
-    /// negotiated with viewers.
+    /// below 16. Also for [`AudioPolicy::PassthroughOpus`], which this
+    /// release does not serve yet: no audio track is negotiated with
+    /// viewers.
     pub fn validate(&self) -> Result<(), WhepServerError> {
         let invalid = |detail: String| Err(WhepServerError::InvalidConfig { detail });
         match self.kind {
-            MountKind::Elementary => {}
-            MountKind::Mp2t => {
-                return invalid("MountKind::Mp2t is not served in this release".into());
-            }
+            MountKind::Elementary | MountKind::Mp2t => {}
         }
         match self.audio {
             AudioPolicy::Drop => {}

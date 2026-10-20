@@ -776,12 +776,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added — tst-webrtc: WebRTC playback (WHEP server with mounts)
 
 - New crate `tst-webrtc`: `WhepServer::bind("whep://…")` + `add_mount`;
-  browsers pull a mount over WebRTC (WHEP). This release serves elementary
-  mounts: `push_video` and `push_klv` carry video and KLV to viewers, and
-  `push_audio` (policy `AudioPolicy::Drop`) counts and discards audio.
-  `MountConfig::validate` refuses `MountKind::Mp2t` (`push_ts`) and
-  `AudioPolicy::PassthroughOpus` with `InvalidConfig` until MP2T mounts and
-  audio pass-through are served in a later change. Video is
+  browsers pull a mount over WebRTC (WHEP). Elementary mounts take
+  `push_video` and `push_klv`, and `push_audio` (policy
+  `AudioPolicy::Drop`) counts and discards audio. MP2T mounts
+  (`MountKind::Mp2t`) take `push_ts`: the mount demultiplexes the bytes and
+  feeds the same video and KLV paths. `MountConfig::validate` refuses
+  `AudioPolicy::PassthroughOpus` with `InvalidConfig` until audio
+  pass-through is served in a later change. Video is
   passed through (H.264 RFC 6184, H.265 RFC 7798); KLV rides frame-locked
   as a user-data SEI inside the frame's access unit and as a `klv` data
   channel message (the `sei` module and `KLV_DC_LIMIT` document both
