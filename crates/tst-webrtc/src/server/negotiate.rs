@@ -44,7 +44,8 @@ pub enum Negotiated {
 /// codec, str0m lists it among the media's remote payload types, and
 /// str0m's codec list holds the same codec under that number. For H.264
 /// both sides must also say `packetization-mode=1` with the same profile
-/// idc (the first byte of `profile-level-id`); the first such payload
+/// idc (the first byte of `profile-level-id`, Baseline when the offer
+/// names none); the first such payload
 /// in the offer's order whose profile idc equals `sps_profile_level_id[0]`
 /// wins, else the first such payload. For H.265 the first qualifying
 /// payload wins (str0m matches the profile, tier and level itself).
@@ -89,7 +90,7 @@ pub fn select_video(
                         && (codec != Codec::H264
                             || (c.spec().format.packetization_mode == Some(1)
                                 && profile_idc_of(c.spec().format.profile_level_id)
-                                    == p.profile_idc))
+                                    == Some(p.profile_idc.unwrap_or(BASELINE_PROFILE_IDC))))
                 })
         };
         let preferred = match (want, sps_profile_level_id) {
@@ -116,6 +117,10 @@ pub fn select_video(
         },
     }
 }
+
+/// The H.264 profile idc of a payload whose `a=fmtp` names no
+/// `profile-level-id`: Baseline (RFC 6184 §8.1).
+const BASELINE_PROFILE_IDC: u8 = 0x42;
 
 /// The profile idc (first byte) of a str0m `profile-level-id` value.
 fn profile_idc_of(profile_level_id: Option<u32>) -> Option<u8> {

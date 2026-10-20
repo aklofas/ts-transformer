@@ -45,7 +45,8 @@ pub struct MountStats {
     /// limit ([`KLV_DC_LIMIT`](crate::KLV_DC_LIMIT)).
     pub klv_dc_dropped_oversize: u64,
     /// KLV data-channel messages dropped on the way to viewers: once per
-    /// message when the server's media queue was full, and once per viewer
+    /// message when the server's media queue was full or the frame it is
+    /// bound to was dropped waiting for a keyframe, and once per viewer
     /// when that viewer's queue was full or its data channel refused or
     /// failed the write (no room in the send buffer, a message above the
     /// browser's `max-message-size`, a closed channel). The video behind
@@ -60,7 +61,8 @@ pub struct MountStats {
     /// NACKs received from viewers.
     pub nacks_received: u64,
     /// Video RTP payloads dropped because a queue was full: every payload
-    /// of a frame the server's media queue did not take (counted once),
+    /// of a frame the server's media queue did not take, and of each later
+    /// frame the mount then drops until the next keyframe (counted once),
     /// and every payload of a frame a viewer's queue did not take (counted
     /// per viewer). KLV messages dropped the same way are counted in
     /// `klv_dc_dropped_viewer`.

@@ -60,9 +60,13 @@ pub struct MountConfig {
     /// A data-channel record is at most
     /// [`KLV_DC_LIMIT`](crate::KLV_DC_LIMIT) bytes (256 KiB), and the
     /// server's SCTP send buffer is sized for it. A record is dropped for a
-    /// viewer whose send buffer has no room for it, and one above the
-    /// viewer's advertised `max-message-size` (64 KiB when the browser
-    /// states none) is browser-dependent; each drop is counted.
+    /// viewer whose send buffer has no room for it. A record is sent as one
+    /// data-channel message of the record plus a 13-byte header; for a
+    /// viewer whose `max-message-size` is smaller than that message the
+    /// record is dropped. The size is 64 KiB when the viewer states none
+    /// and 256 KiB in current Chrome and Safari, so their largest record is
+    /// 262 131 bytes; Firefox takes any record up to the limit. Each drop
+    /// is counted.
     pub klv: KlvCarriage,
     /// The most KLV bytes carried in SEI per access unit (1 to 1 MiB).
     pub sei_budget_bytes: u32,

@@ -43,10 +43,12 @@ pub(crate) const KLV_DC_HEADER_BYTES: usize = 13;
 /// record at this limit with room for others still in flight. A record is
 /// written only when the viewer's buffer has room for it; otherwise it is
 /// dropped for that viewer and counted, never queued behind the video.
-/// Browsers state the largest message they accept (`max-message-size`,
-/// 64 KiB when unstated, 256 KiB in current Chrome and Safari), so a record
-/// above a viewer's stated size, less the 13-byte message header, is
-/// browser-dependent: it is dropped for that viewer and counted. Drops are
+/// A record is sent as one data-channel message of the record plus a
+/// 13-byte header; for a viewer whose `max-message-size` is smaller than
+/// that message the record is dropped and counted. The size is 64 KiB when
+/// the viewer states none and 256 KiB in current Chrome and Safari, so
+/// their largest record is 262 131 bytes; Firefox takes any record up to
+/// the limit. Drops are
 /// counted in [`MountStats::klv_dc_dropped_viewer`] and
 /// [`SessionStats::dc_messages_dropped`](crate::SessionStats::dc_messages_dropped).
 pub const KLV_DC_LIMIT: u64 = 256 * 1024;
@@ -172,6 +174,10 @@ pub(crate) struct MountState {
     pub(crate) path: String,
     pub(crate) cfg: MountConfig,
     pub(crate) closed: AtomicBool,
+    /// Set when the media queue dropped a frame, cleared when a keyframe
+    /// is queued: until then the frames that follow would reference the
+    /// lost one, so they are dropped too.
+    video_gap: AtomicBool,
     /// Never held across a queue send.
     inner: Mutex<MountInner>,
     pub(crate) tx: SyncSender<MediaMsg>,
@@ -215,6 +221,7 @@ impl MountState {
             path,
             cfg,
             closed: AtomicBool::new(false),
+            video_gap: AtomicBool::new(false),
             inner: Mutex::new(MountInner {
                 packetizer,
                 ps: ParameterSets::default(),
@@ -262,18 +269,38 @@ impl MountState {
     /// dropped frame counts its RTP payloads in
     /// `viewer_packets_dropped_queue_full`, a dropped KLV message counts
     /// one in `klv_dc_dropped_viewer`.
+    ///
+    /// After a dropped frame, every later frame that is not a keyframe is
+    /// dropped and counted the same way, with its KLV messages, until a
+    /// keyframe is queued: viewers resume at a picture they can decode
+    /// rather than at frames that reference the lost one.
     fn send(&self, msgs: Vec<MediaMsg>) -> Result<(), PushError> {
         let mut sent = false;
-        let mut dropping = false;
+        let mut dropping = matches!(
+            msgs.first(),
+            Some(MediaMsg::Frame { packet, .. }) if !packet.keyframe
+        ) && self.video_gap.load(Ordering::Acquire);
         for msg in msgs {
             if dropping {
                 self.count_dropped(&msg);
                 continue;
             }
+            let keyframe = match &msg {
+                MediaMsg::Frame { packet, .. } => Some(packet.keyframe),
+                _ => None,
+            };
             match self.tx.try_send(msg) {
-                Ok(()) => sent = true,
+                Ok(()) => {
+                    sent = true;
+                    if keyframe == Some(true) {
+                        self.video_gap.store(false, Ordering::Release);
+                    }
+                }
                 Err(TrySendError::Full(msg)) => {
                     self.count_dropped(&msg);
+                    if keyframe.is_some() {
+                        self.video_gap.store(true, Ordering::Release);
+                    }
                     dropping = !sent;
                 }
                 Err(TrySendError::Disconnected(_)) => return Err(PushError::Closed),
@@ -470,13 +497,14 @@ impl MountHandle {
     /// data (parameter sets alone, for instance) updates the cache and
     /// sends nothing.
     ///
-    /// A full media queue drops the frame and counts it; the call never
+    /// A full media queue drops the frame and counts it, and later frames
+    /// up to the next keyframe are dropped and counted too (they would
+    /// reference the lost one); the call never
     /// blocks.
     ///
     /// # Errors
     ///
-    /// [`PushError::Closed`] after the mount closed,
-    /// [`PushError::WrongMountKind`] on an MP2T mount, and
+    /// [`PushError::Closed`] after the mount closed, and
     /// [`PushError::InvalidAccessUnit`] when `au` holds no NAL unit.
     pub fn push_video(&self, au: &[u8], pts: Pts90khz, key_frame: bool) -> Result<(), PushError> {
         let s = &*self.state;
@@ -620,17 +648,19 @@ impl MountHandle {
     ///
     /// # Errors
     ///
-    /// [`PushError::Closed`] after the mount closed,
-    /// [`PushError::WrongMountKind`] on an MP2T mount, and
+    /// [`PushError::Closed`] after the mount closed, and
     /// [`PushError::KlvTooLarge`] for a record over [`KLV_DC_LIMIT`]
     /// (256 KiB).
     ///
     /// The server's SCTP send buffer is sized for a record at the limit. A
     /// record is dropped for a viewer, and counted in
     /// [`MountStats::klv_dc_dropped_viewer`], when that viewer's buffer has
-    /// no room for it; a record above the viewer's advertised
-    /// `max-message-size` (64 KiB when the browser states none) depends on
-    /// the browser and may be dropped the same way.
+    /// no room for it. A record is sent as one data-channel message of the
+    /// record plus a 13-byte header; for a viewer whose `max-message-size`
+    /// is smaller than that message the record is dropped the same way. The
+    /// size is 64 KiB when the viewer states none and 256 KiB in current
+    /// Chrome and Safari, so their largest record is 262 131 bytes; Firefox
+    /// takes any record up to the limit.
     pub fn push_klv(
         &self,
         record: &[u8],
@@ -670,8 +700,7 @@ impl MountHandle {
     ///
     /// # Errors
     ///
-    /// [`PushError::Closed`] after the mount closed and
-    /// [`PushError::WrongMountKind`] on an MP2T mount.
+    /// [`PushError::Closed`] after the mount closed.
     pub fn push_audio(&self, frames: &[u8], pts: Pts90khz) -> Result<(), PushError> {
         let _ = (frames, pts);
         let s = &*self.state;
@@ -734,10 +763,10 @@ mod tests {
     const IDR: &[u8] = &[0, 0, 1, 0x65, 0x88, 0x84, 0x00];
     const P: &[u8] = &[0, 0, 1, 0x41, 0x9A, 0x01];
 
-    #[test]
-    fn a_full_media_queue_counts_frames_in_payloads_and_klv_apart() {
+    /// A mount whose media queue holds one message, and that queue's
+    /// receiving end. Data channel only, so a P-frame stays one payload.
+    fn one_slot_mount() -> (MountHandle, Receiver<MediaMsg>) {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        // Data channel only, so the P-frame stays one payload (no SEI).
         let cfg = MountConfig {
             klv: KlvCarriage::DataChannelOnly,
             ..MountConfig::default()
@@ -747,6 +776,48 @@ mod tests {
         let m = MountHandle {
             state: Arc::new(state),
         };
+        (m, rx)
+    }
+
+    /// The keyframe flag of each frame waiting in the queue, draining it.
+    fn drain(rx: &Receiver<MediaMsg>) -> Vec<bool> {
+        rx.try_iter()
+            .filter_map(|msg| match msg {
+                MediaMsg::Frame { packet, .. } => Some(packet.keyframe),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn after_a_media_queue_drop_frames_wait_for_a_keyframe() {
+        let (m, rx) = one_slot_mount();
+        let key = [SPS, PPS, IDR].concat();
+        m.push_video(&key, Pts90khz::new(0), true).unwrap();
+        // The queue is full: this P-frame is dropped.
+        m.push_video(P, Pts90khz::new(3000), false).unwrap();
+        assert!(m.state.video_gap.load(Ordering::Acquire));
+        assert_eq!(drain(&rx), [true]);
+
+        // The queue has room, but the P-frame references the lost one.
+        m.push_klv(b"a", Pts90khz::new(6000), 0).unwrap();
+        m.push_video(P, Pts90khz::new(6000), false).unwrap();
+        assert!(drain(&rx).is_empty());
+        let s = m.stats();
+        assert_eq!(s.viewer_packets_dropped_queue_full, 2);
+        assert_eq!(s.klv_dc_dropped_viewer, 1);
+
+        // A keyframe is queued and ends the wait.
+        m.push_video(&key, Pts90khz::new(9000), true).unwrap();
+        assert!(!m.state.video_gap.load(Ordering::Acquire));
+        assert_eq!(drain(&rx), [true]);
+        m.push_video(P, Pts90khz::new(12000), false).unwrap();
+        assert_eq!(drain(&rx), [false]);
+    }
+
+    #[test]
+    fn a_full_media_queue_counts_frames_in_payloads_and_klv_apart() {
+        let (m, rx) = one_slot_mount();
         m.push_video(&[SPS, PPS, IDR].concat(), Pts90khz::new(0), true)
             .unwrap();
         // The queue holds the keyframe: the next frame (one payload) and
