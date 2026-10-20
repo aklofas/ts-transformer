@@ -118,8 +118,8 @@ access units need, and a pick whose interval needs more fails its UDP
 verdict. When the sender lost and recovered the packet framing, a failed
 verdict says how often, so a short delivery from a damaged capture is not
 read as transport loss. A damaged capture can still arrive short with no
-resync counted: the sender's flush forwards a partial bundle without
-checking its framing, a library limitation noted for a later fix.
+resync counted, because the sender's flush forwards a partial bundle
+without checking its framing.
 
 Picks replay largest first, by the bytes each one sends. Each receiver's
 largest allocation then happens inside the warm-up the RSS gate leaves out,
