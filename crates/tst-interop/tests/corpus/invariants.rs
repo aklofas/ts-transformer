@@ -193,3 +193,166 @@ fn the_discontinuity_indicator_after_a_gap_is_one_event_in_both() {
     assert_eq!(demuxer_discontinuities(&bytes), (1, 1));
     assert!(!rules(&failures(&bytes, &Annotations::default())).contains(&"accounting"));
 }
+
+#[test]
+fn a_payload_without_a_klv_label_fails_unless_annotated() {
+    // No AU-cell header and no SMPTE label: the demuxer hands it out as an
+    // unclassified sample on the KLV PID, never as a KLV record.
+    let bytes = muxed(Some(Some(b"not klv")));
+    let f = failures(&bytes, &Annotations::default());
+    assert_eq!(rules(&f), ["klv-unknown"], "{f:?}");
+    assert_eq!(f[0].pid, Some(KLV_PID));
+    assert!(f[0].detail.contains("unknown sample"), "{f:?}");
+    let ann = Annotations {
+        non_misb_private_pids: vec![KLV_PID],
+        ..Default::default()
+    };
+    assert!(failures(&bytes, &ann).is_empty());
+}
+
+// ---- hand-built PSI, to drive the walk and the demuxer through the same rules
+
+const PMT_PID: u16 = 0x1000;
+
+fn with_crc(mut section: Vec<u8>) -> Vec<u8> {
+    let crc = tst_core::mpegts::common::crc32::crc32_mpeg2(&section);
+    section.extend_from_slice(&crc.to_be_bytes());
+    section
+}
+
+fn long_section(table: u8, id: u16, version: u8, body: &[u8]) -> Vec<u8> {
+    let len = 5 + body.len() + 4;
+    let mut s = vec![table, 0xB0 | (len >> 8) as u8, len as u8];
+    s.extend_from_slice(&id.to_be_bytes());
+    s.extend_from_slice(&[0xC1 | (version << 1), 0, 0]);
+    s.extend_from_slice(body);
+    with_crc(s)
+}
+
+fn pat(version: u8) -> Vec<u8> {
+    let body = [0, 1, 0xE0 | (PMT_PID >> 8) as u8, PMT_PID as u8];
+    long_section(0, 1, version, &body)
+}
+
+/// A PMT for program 1: `streams` are `(stream_type, pid)`, each with a
+/// private descriptor `descriptor_len` bytes long.
+fn pmt(version: u8, streams: &[(u8, u16)], descriptor_len: usize) -> Vec<u8> {
+    let mut body = vec![0xE1, 0x00, 0xF0, 0x00];
+    for (ty, pid) in streams {
+        let info = if descriptor_len == 0 {
+            0
+        } else {
+            descriptor_len + 2
+        };
+        body.extend_from_slice(&[*ty, 0xE0 | (pid >> 8) as u8, *pid as u8]);
+        body.extend_from_slice(&[0xF0 | (info >> 8) as u8, info as u8]);
+        if descriptor_len > 0 {
+            body.extend_from_slice(&[0xC0, descriptor_len as u8]);
+            body.extend(std::iter::repeat_n(0u8, descriptor_len));
+        }
+    }
+    long_section(2, 1, version, &body)
+}
+
+fn packet(pid: u16, cc: u8, pusi: bool, payload: &[u8]) -> Vec<u8> {
+    let mut p = vec![0xFF; 188];
+    p[0] = 0x47;
+    p[1] = (u8::from(pusi) << 6) | (pid >> 8) as u8;
+    p[2] = pid as u8;
+    p[3] = 0x10 | (cc & 0x0F);
+    p[4..4 + payload.len()].copy_from_slice(payload);
+    p
+}
+
+/// A section as consecutive packets from counter `cc`.
+fn section_packets(pid: u16, cc: &mut u8, section: &[u8]) -> Vec<u8> {
+    let mut data = vec![0u8];
+    data.extend_from_slice(section);
+    let mut out = Vec::new();
+    for (i, chunk) in data.chunks(184).enumerate() {
+        out.extend(packet(pid, *cc, i == 0, chunk));
+        *cc = (*cc + 1) & 0x0F;
+    }
+    out
+}
+
+struct Psi {
+    pat_cc: u8,
+    pmt_cc: u8,
+}
+
+impl Psi {
+    fn new() -> Self {
+        Self {
+            pat_cc: 0,
+            pmt_cc: 0,
+        }
+    }
+    fn pat(&mut self, version: u8) -> Vec<u8> {
+        section_packets(0, &mut self.pat_cc, &pat(version))
+    }
+    fn pmt(&mut self, section: &[u8]) -> Vec<u8> {
+        section_packets(PMT_PID, &mut self.pmt_cc, section)
+    }
+}
+
+fn es(pid: u16, ccs: &[u8]) -> Vec<u8> {
+    ccs.iter()
+        .flat_map(|c| packet(pid, *c, false, &[0xAA]))
+        .collect()
+}
+
+fn both(bytes: &[u8]) -> (u64, u64) {
+    (walk(bytes).cc_errors, demuxer_discontinuities(bytes).0)
+}
+
+#[test]
+fn a_pmt_longer_than_one_packet_declares_every_stream() {
+    let streams: Vec<(u8, u16)> = (0..12).map(|i| (0x1B, 0x100 + i)).collect();
+    let section = pmt(0, &streams, 40);
+    assert!(section.len() > 2 * 184, "the PMT spans several packets");
+    let mut psi = Psi::new();
+    let mut bytes = psi.pat(0);
+    bytes.extend(psi.pmt(&section));
+    // The last-listed PID skips counter 2.
+    bytes.extend(es(0x10B, &[0, 1, 3]));
+    assert_eq!(both(&bytes), (1, 1));
+}
+
+#[test]
+fn a_pmt_with_a_bad_checksum_leaves_the_earlier_declaration_in_force() {
+    let mut psi = Psi::new();
+    let mut bytes = psi.pat(0);
+    bytes.extend(psi.pmt(&pmt(0, &[(0x1B, 0x100)], 0)));
+    let mut bad = pmt(1, &[(0x1B, 0x200)], 0);
+    let last = bad.len() - 1;
+    bad[last] ^= 0xFF;
+    bytes.extend(psi.pmt(&bad));
+    bytes.extend(es(0x100, &[0, 1, 3]));
+    bytes.extend(es(0x200, &[0, 1, 3]));
+    assert_eq!(both(&bytes), (1, 1));
+}
+
+#[test]
+fn a_pmt_for_another_program_is_not_adopted() {
+    let mut psi = Psi::new();
+    let mut bytes = psi.pat(0);
+    // The PAT says program 1 lives on this PID; this PMT says program 2.
+    let body = [0xE1, 0x00, 0xF0, 0x00, 0x1B, 0xE2, 0x00, 0xF0, 0x00];
+    bytes.extend(psi.pmt(&long_section(2, 2, 0, &body)));
+    bytes.extend(es(0x200, &[0, 1, 3]));
+    assert_eq!(both(&bytes), (0, 0));
+}
+
+#[test]
+fn a_pid_retired_by_a_new_pmt_starts_over_when_it_returns() {
+    let mut psi = Psi::new();
+    let mut bytes = psi.pat(0);
+    bytes.extend(psi.pmt(&pmt(0, &[(0x1B, 0x100), (0x1B, 0x200)], 0)));
+    bytes.extend(es(0x200, &[0]));
+    bytes.extend(psi.pmt(&pmt(1, &[(0x1B, 0x100)], 0)));
+    bytes.extend(psi.pmt(&pmt(2, &[(0x1B, 0x100), (0x1B, 0x200)], 0)));
+    // Counter 9 after 0 would be a jump had the state survived the retirement.
+    bytes.extend(es(0x200, &[9, 10]));
+    assert_eq!(both(&bytes), (0, 0));
+}

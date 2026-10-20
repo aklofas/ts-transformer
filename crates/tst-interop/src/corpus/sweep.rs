@@ -107,6 +107,20 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         inventory::write(&inv, &args.run)?;
         inv
     };
+    // Annotations are read before any file is digested, so a typo costs
+    // nothing.
+    let mut notes: BTreeMap<String, annotations::Annotations> = BTreeMap::new();
+    if let Some(dir) = &args.annotations {
+        if !dir.is_dir() {
+            return Err("--annotations must name an existing directory".to_string());
+        }
+        for entry in &inv.files {
+            notes.insert(
+                entry.sha256.0.clone(),
+                annotations::load(dir, &entry.sha256)?,
+            );
+        }
+    }
     let next = AtomicUsize::new(0);
     let results: Mutex<Vec<(usize, Result<FileDigest, String>)>> = Mutex::new(Vec::new());
     let workers = std::thread::available_parallelism()
@@ -152,10 +166,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
                 FileOutcome::ParseFailure(e)
             }
             Ok(d) => {
-                let ann = match &args.annotations {
-                    Some(dir) => annotations::load(dir, &entry.sha256)?,
-                    None => annotations::Annotations::default(),
-                };
+                let ann = notes.get(&entry.sha256.0).cloned().unwrap_or_default();
                 let path = entry
                     .paths
                     .first()
