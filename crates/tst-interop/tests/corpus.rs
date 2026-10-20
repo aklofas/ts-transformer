@@ -15,6 +15,8 @@ mod digest;
 mod inventory;
 #[path = "corpus/invariants.rs"]
 mod invariants;
+#[path = "corpus/pace.rs"]
+mod pace;
 #[path = "corpus/shape.rs"]
 mod shape;
 #[path = "corpus/subset.rs"]
