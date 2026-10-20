@@ -7,10 +7,14 @@ use sha2::{Digest, Sha256};
 use tst_interop::corpus::Sha256Hex;
 use tst_interop::fixtures::{AuSizeMode, KlvSet};
 
+#[path = "corpus/annotations.rs"]
+mod annotations;
 #[path = "corpus/digest.rs"]
 mod digest;
 #[path = "corpus/inventory.rs"]
 mod inventory;
+#[path = "corpus/invariants.rs"]
+mod invariants;
 #[path = "corpus/shape.rs"]
 mod shape;
 #[path = "corpus/sweep.rs"]

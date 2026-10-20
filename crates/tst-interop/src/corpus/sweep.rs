@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+use super::annotations;
 use super::digest::{self, CONFIG_KEYS, FileDigest};
-use super::invariants::InvariantFailure;
+use super::invariants::{self, InvariantFailure};
 use super::inventory::{self, FileEntry};
 use super::{RunDir, Sha256Hex};
 
@@ -18,6 +19,8 @@ pub struct SweepArgs {
     pub run: RunDir,
     pub baseline: Option<PathBuf>,
     pub accepts: Vec<(Sha256Hex, String)>,
+    /// Directory of `<sha256>.toml` annotations; none when absent.
+    pub annotations: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -142,12 +145,26 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         pass: false,
     };
     for (i, entry) in inv.files.iter().enumerate() {
+        let mut failures = Vec::new();
         let outcome = match by_index.remove(&i).expect("every file was digested") {
             Err(e) => {
                 summary.parse_failures += 1;
                 FileOutcome::ParseFailure(e)
             }
             Ok(d) => {
+                let ann = match &args.annotations {
+                    Some(dir) => annotations::load(dir, &entry.sha256)?,
+                    None => annotations::Annotations::default(),
+                };
+                let path = entry
+                    .paths
+                    .first()
+                    .ok_or_else(|| "inventory entry has no path".to_string())?;
+                let walked = invariants::walk_file(path)?;
+                failures = invariants::check(&d.configs["default"], &walked, &ann);
+                if !failures.is_empty() {
+                    summary.invariant_failures += 1;
+                }
                 let base = match &args.baseline {
                     None => None,
                     Some(dir) => {
@@ -196,7 +213,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         summary.per_file.push(SweepFile {
             sha256: entry.sha256.clone(),
             outcome,
-            invariant_failures: Vec::new(),
+            invariant_failures: failures,
         });
     }
     for (u, (sha, _)) in used.iter().zip(&args.accepts) {

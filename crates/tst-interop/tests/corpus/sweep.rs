@@ -196,6 +196,7 @@ fn an_unreadable_capture_exits_2_without_naming_it() {
     }
     let run = temp_dir_named("sw-unreadable-run");
     let out = sweep(&dir, &run, &[]);
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -230,4 +231,33 @@ fn a_corrupt_inventory_is_an_error_not_a_rebuild() {
         std::fs::read_to_string(run.join("inventory.json")).unwrap(),
         "{ not json"
     );
+}
+
+#[test]
+fn an_invariant_failure_fails_the_sweep_until_annotated() {
+    let dir = temp_dir_named("sw-invariant");
+    let one = gen_profile_bytes("baseline", 2.0);
+    let twice = [one.clone(), one].concat();
+    std::fs::write(dir.join("restart.ts"), &twice).unwrap();
+    let run = temp_dir_named("sw-invariant-run");
+    let out = sweep(&dir, &run, &[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let v = json(&run.join("sweep.json"));
+    assert_eq!(v["invariant_failures"], 1);
+    assert_eq!(
+        v["per_file"][0]["invariant_failures"][0]["rule"],
+        "pts-order"
+    );
+
+    let ann = temp_dir_named("sw-invariant-ann");
+    let sha = sha_of(&twice);
+    std::fs::write(
+        ann.join(format!("{sha}.toml")),
+        "known_discontinuity = true\nreason = \"two takes joined\"\n",
+    )
+    .unwrap();
+    let run = temp_dir_named("sw-invariant-run2");
+    let out = sweep(&dir, &run, &["--annotations", ann.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(json(&run.join("sweep.json"))["invariant_failures"], 0);
 }

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+pub mod annotations;
 pub mod digest;
 pub mod cli;
 pub mod invariants;
