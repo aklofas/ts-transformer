@@ -26,7 +26,7 @@ pub struct FileVerdict {
 
 /// The first field in which two PID digests differ, as a failure text.
 fn pid_failure(pid: u16, want: &PidDigest, got: &PidDigest) -> Option<String> {
-    if want.samples != got.samples && got.samples < want.samples {
+    if got.samples < want.samples {
         return Some(format!(
             "delivery incomplete: {} sample(s) short on pid {pid}",
             want.samples - got.samples

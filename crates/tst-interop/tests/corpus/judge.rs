@@ -125,3 +125,33 @@ fn a_receiver_that_did_not_complete_fails_with_one_failure() {
     let v = judge("srt", &d, None, &ReceiverOutcome::Completed);
     assert_eq!(v.failures, ["no received digest"]);
 }
+
+#[test]
+fn a_missing_or_extra_pid_and_a_missing_config_fail() {
+    let d = digest();
+    let pid = first_pid(&d);
+    let mut got = d.clone();
+    let moved = got
+        .configs
+        .get_mut("default")
+        .unwrap()
+        .pids
+        .remove(&pid)
+        .unwrap();
+    let v = judge("srt", &d, Some(&got), &ReceiverOutcome::Completed);
+    assert_eq!(v.failures, [format!("pid {pid}: missing")]);
+
+    let mut got = d.clone();
+    got.configs
+        .get_mut("default")
+        .unwrap()
+        .pids
+        .insert(0x1FF1, moved);
+    let v = judge("srt", &d, Some(&got), &ReceiverOutcome::Completed);
+    assert_eq!(v.failures, ["pid 8177: unexpected"]);
+
+    let mut got = d.clone();
+    got.configs.remove("default");
+    let v = judge("srt", &d, Some(&got), &ReceiverOutcome::Completed);
+    assert_eq!(v.failures, ["digest has no default configuration"]);
+}

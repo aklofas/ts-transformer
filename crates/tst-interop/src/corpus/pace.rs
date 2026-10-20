@@ -29,6 +29,8 @@ pub struct PcrPacer<'a> {
     bytes: &'a [u8],
     /// Packet-start offset and due time of each PCR on the pacing PID.
     marks: Vec<(usize, f64)>,
+    /// The first confirmed packet start; bytes before it are never sent.
+    start: usize,
     end: usize,
 }
 
@@ -45,6 +47,7 @@ impl<'a> PcrPacer<'a> {
         let mut marks = Vec::new();
         let mut at = start;
         while at + PKT <= end {
+            // Whole-slice check: more lenient near the end than the chunk-carry scan in `pcr`, which sees fewer bytes at a time.
             if !starts_packet(bytes, at) {
                 at += 1;
                 continue;
@@ -69,15 +72,22 @@ impl<'a> PcrPacer<'a> {
                 marks.len()
             ));
         }
-        Ok(Self { bytes, marks, end })
+        Ok(Self {
+            bytes,
+            marks,
+            start,
+            end,
+        })
     }
 
-    /// Chunks in order. The bytes before the first PCR packet go out with
-    /// the first chunk at offset 0, so the chunks concatenate to the
-    /// stream (to the cut, with a prefix) exactly once.
+    /// Chunks in order. The replay starts at the first confirmed full
+    /// packet (leading partial-packet bytes are never sent); the bytes
+    /// before the first PCR packet go out with the first chunk at offset 0,
+    /// so the chunks concatenate to the stream from that packet (to the
+    /// cut, with a prefix) exactly once.
     pub fn chunks(&self) -> impl Iterator<Item = PacedChunk<'_>> + '_ {
         (0..self.marks.len()).map(move |i| {
-            let from = if i == 0 { 0 } else { self.marks[i].0 };
+            let from = if i == 0 { self.start } else { self.marks[i].0 };
             let to = self.marks.get(i + 1).map_or(self.end, |m| m.0);
             PacedChunk {
                 offset_s: self.marks[i].1,
