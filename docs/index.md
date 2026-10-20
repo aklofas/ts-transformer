@@ -14,7 +14,7 @@ start with [MPEG-TS, KLV, and SRT in plain terms](/docs/start/concepts.md).
 | What you want to do | Start here | Then read |
 |---|---|---|
 | Learn the domain | [Concepts](/docs/start/concepts.md) | [Overview](/docs/start/overview.md), then the [Rust quickstart](/docs/start/quickstart.md) or your [language guide](#which-language-should-i-pick) |
-| Evaluate the library | [Overview](/docs/start/overview.md) | [Feature matrix](/docs/reference/compatibility.md), [validation evidence](/docs/project/validation-evidence.md), [unsupported features](/docs/project/deferred-features.md) |
+| Evaluate the library | [Overview](/docs/start/overview.md) | [Feature matrix](/docs/reference/compatibility.md), [validation evidence](/docs/project/validation-evidence.md), [real-capture testing](/docs/project/real-capture-testing.md), [unsupported features](/docs/project/deferred-features.md) |
 | Add it to your application | [Choose a language](#which-language-should-i-pick) | Installation and first examples in that language's guide |
 | Build a specific workflow | [Cookbook](/docs/cookbook/index.md) | [Muxing](/docs/guides/mpegts-mux.md), [demuxing](/docs/guides/mpegts-demux.md), [KLV](/docs/guides/klv.md), or [HLS](/docs/guides/hls.md) |
 | Understand an API or diagnose a failure | [Architecture](/docs/reference/architecture.md) or [troubleshooting](/docs/troubleshooting.md) | [API stability](/docs/reference/api-stability.md), [resource policy](/docs/reference/resource-policy.md), [STANAG 4609 / MISP conformance](/docs/reference/stanag-4609.md) |
