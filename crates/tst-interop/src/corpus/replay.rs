@@ -15,9 +15,9 @@
 //! sends exactly the cut the digest was made of and no capture path ever
 //! leaves the tool. Its output goes to `logs/`.
 //!
-//! Every wait is bounded. A child gets [`READY_WAIT`] to answer `file` and
-//! [`VERDICT_WAIT`] to answer `sent`; the paced send itself gets the pick's
-//! PCR seconds plus twice the stall time ([`send_deadline`]). A send that
+//! Every wait is bounded. A child gets `READY_WAIT` to answer `file` and
+//! `VERDICT_WAIT` to answer `sent`; the paced send itself gets the pick's
+//! PCR seconds plus twice the stall time (`send_deadline`). A send that
 //! outlives it (a receiver alive but no longer reading, so the sender's
 //! writes never complete) is cancelled, the child is killed, the pick is
 //! judged `Stalled` and the path's later picks `Exited`.

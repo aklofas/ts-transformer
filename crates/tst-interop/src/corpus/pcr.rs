@@ -167,7 +167,7 @@ impl PcrScan {
 /// Absolute offset in `bytes` where a prefix of `seconds` ends: the start of
 /// the first packet whose PCR, on the PMT's PCR PID (else the first PID seen
 /// carrying a PCR), takes that PID's span past `seconds` x 90 000 ticks
-/// (strictly greater; see [`PcrSpan`] for wraps and discontinuities).
+/// (strictly greater; see `PcrSpan` for wraps and discontinuities).
 /// `bytes[..offset]` excludes that packet. `bytes.len()` when the capture
 /// is shorter. The digest and the replay pacer cut at this same point.
 pub fn prefix_end(bytes: &[u8], seconds: u32) -> usize {
