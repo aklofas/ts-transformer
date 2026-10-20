@@ -154,40 +154,68 @@ def _newest(rows):
     return best
 
 
+def _by_date(rows):
+    """Newest first; on equal dates the later row in the file comes first."""
+    return [r for _, r in sorted(enumerate(rows), key=lambda p: (p[1]["date"], p[0]), reverse=True)]
+
+
+def _soak_entry(root, sha, s):
+    e = {"id": s["id"], "tree": s["tree"], "date": s["date"],
+         "overall_pass": s["overall_pass"], "expected_duration_s": s.get("expected_duration_s"),
+         "changed_paths": 0, "git_error": None}
+    if s["tree"] != sha:
+        try:
+            e["changed_paths"] = len(changed_paths(root, s["tree"], sha))
+        except QualificationError as err:
+            e["changed_paths"] = None
+            e["git_error"] = str(err)
+    return e
+
+
+def _pick_soak(root, sha, soaks):
+    """The newest 72-hour soak that stands for `sha` (same tree, or no change under
+    SOAK_PATHS since); else the newest 72-hour soak; else the newest of any
+    duration. Git runs at most once per 72-hour archive."""
+    long = [s for s in _by_date(soaks) if s.get("expected_duration_s") == RELEASE_SOAK_S]
+    first = None
+    for s in long:
+        e = _soak_entry(root, sha, s)
+        if e["git_error"] is None and e["changed_paths"] == 0:
+            return e
+        first = first or e
+    if first is not None:
+        return first
+    return _soak_entry(root, sha, _by_date(soaks)[0])
+
+
 def release_vm(root, sha, archives, release):
-    """The release gate: the newest soak archive must stand for `sha` (same tree,
-    or no change under SOAK_PATHS since), have passed and declared 72 hours, and
-    a passing corpus archive must exist for the soaked tree. Outside release mode
-    the same entries are recorded for information and `reasons` stays empty."""
+    """The release gate: the chosen soak archive (see _pick_soak) must stand for
+    `sha`, have passed and declared 72 hours, and a passing corpus archive must
+    exist for the soaked tree. Outside release mode the same entries are recorded
+    for information and `reasons` stays empty."""
     reasons = []
     soak, corpus = None, None
-    s = _newest([a for a in archives if a["kind"] == "soak"])
-    if s is None:
+    soaks = [a for a in archives if a["kind"] == "soak"]
+    if soaks and not re.fullmatch(r"[0-9a-f]{40}", str(sha)):
+        raise QualificationError("context.json source.sha is not a 40-hex commit: %r" % (sha,))
+    if not soaks:
         reasons.append("soak: no 72-hour soak archive for this tree")
     else:
-        soak = {"id": s["id"], "tree": s["tree"], "date": s["date"],
-                "overall_pass": s["overall_pass"], "expected_duration_s": s.get("expected_duration_s"),
-                "changed_paths": 0, "git_error": None}
-        if s["tree"] != sha:
-            try:
-                soak["changed_paths"] = len(changed_paths(root, s["tree"], sha))
-            except QualificationError as e:
-                soak["changed_paths"] = None
-                soak["git_error"] = str(e)
+        soak = _pick_soak(root, sha, soaks)
         if soak["git_error"] is not None:
-            reasons.append("soak: git could not resolve %s: %s" % (s["tree"], soak["git_error"]))
+            reasons.append("soak: git could not resolve %s: %s" % (soak["tree"], soak["git_error"]))
         else:
             if soak["changed_paths"]:
                 reasons.append("soak: archive %s is superseded by code changes (%d paths under crates/ or bindings/)"
-                               % (s["id"], soak["changed_paths"]))
-            if not s["overall_pass"]:
-                reasons.append("soak: archive %s recorded overall_pass=false" % s["id"])
-            if s.get("expected_duration_s") != RELEASE_SOAK_S:
+                               % (soak["id"], soak["changed_paths"]))
+            if not soak["overall_pass"]:
+                reasons.append("soak: archive %s recorded overall_pass=false" % soak["id"])
+            if soak["expected_duration_s"] != RELEASE_SOAK_S:
                 reasons.append("soak: archive %s declares %s s, not %d"
-                               % (s["id"], s.get("expected_duration_s"), RELEASE_SOAK_S))
-            c = _newest([a for a in archives if a["kind"] == "corpus" and a["tree"] == s["tree"]])
+                               % (soak["id"], soak["expected_duration_s"], RELEASE_SOAK_S))
+            c = _newest([a for a in archives if a["kind"] == "corpus" and a["tree"] == soak["tree"]])
             if c is None:
-                reasons.append("corpus: no corpus archive for the soaked tree %s" % s["tree"][:12])
+                reasons.append("corpus: no corpus archive for the soaked tree %s" % soak["tree"][:12])
             else:
                 corpus = {"id": c["id"], "tree": c["tree"], "date": c["date"], "overall_pass": c["overall_pass"]}
                 if not c["overall_pass"]:
@@ -333,7 +361,10 @@ def collect(art, root, release=False):
         sc.append({"crate": r["crate"], "breaking": r.get("failed_checks", 0),
                    "exit": r["exit"], "analysed": r.get("analysed", False)})
     archives = load_archives(root)
-    gate = release_vm(root, ctx.get("source", {}).get("sha", ""), archives, release)
+    try:
+        gate = release_vm(root, ctx.get("source", {}).get("sha", ""), archives, release)
+    except QualificationError as e:
+        die(str(e))
     v, reasons = verdict(legs, interop, fuzz, bool(ctx.get("source", {}).get("dirty")), abi_in, gate)
     return {
         "schema_version": 0,
