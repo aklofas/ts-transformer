@@ -22,6 +22,7 @@ use tracing::debug;
 use crate::server::Shared;
 use crate::server::http::{self, HeadParse, MAX_HEAD, Request, Response, Route, resp};
 use crate::server::media::{ControlMsg, OfferRequest, RejectReason};
+use crate::server::negotiate::payload_types_are_consistent;
 use crate::stats::bump;
 
 /// How long a client has to send its whole request.
@@ -291,6 +292,10 @@ fn create_session(mount: &str, body: &[u8], peer: SocketAddr, shared: &Shared) -
     else {
         return resp(400, "the body is not an SDP offer");
     };
+    // str0m panics on such an offer instead of refusing it.
+    if !payload_types_are_consistent(&offer.to_sdp_string()) {
+        return resp(400, "the offer maps a payload type to two formats");
+    }
     let outcome = shared.control.request(|reply| {
         ControlMsg::Offer(OfferRequest {
             mount: state.id,

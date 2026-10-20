@@ -12,6 +12,8 @@
 //! format (an offer whose H.264 payloads are all mode 0 leaves a mode-1
 //! entry on one of their numbers).
 
+use std::collections::{BTreeSet, HashMap};
+
 use str0m::Rtc;
 use str0m::format::Codec;
 use str0m::media::{MediaKind, Mid, Pt};
@@ -117,6 +119,70 @@ pub fn select_video(
         },
     }
 }
+
+/// Whether every payload type in `offer` (SDP text) keeps one format.
+///
+/// str0m 0.24 panics on an offer that dictates its payload types
+/// (`recvonly` or `sendrecv`) when two formats claim one payload number:
+/// an `rtx` payload whose `apt` names two formats, or one number mapped to
+/// different formats in two media sections (a BUNDLE shares one
+/// payload-type space, RFC 8843 §9.1). Call this before `accept_offer` and
+/// refuse the offer when it returns `false`. Pass str0m's rendering of the
+/// parsed offer (`SdpOffer::to_sdp_string`), which writes each attribute
+/// it parsed as one canonical line.
+pub fn payload_types_are_consistent(offer: &str) -> bool {
+    // Payload number -> (rtpmap value, fmtp parameters), offer-wide.
+    let mut offer_formats: HashMap<u8, Format> = HashMap::new();
+    let mut section: HashMap<u8, Format> = HashMap::new();
+    for line in offer.lines().chain(["m="]) {
+        let line = line.trim_end();
+        if line.starts_with("m=") {
+            for (pt, format) in section.drain() {
+                let is_rtx = format.0.starts_with("rtx/");
+                if is_rtx && format.1.iter().filter(|p| p.starts_with("apt=")).count() > 1 {
+                    return false;
+                }
+                // Only a mapped payload has a format to compare.
+                if format.0.is_empty() {
+                    continue;
+                }
+                if offer_formats.get(&pt).is_some_and(|seen| *seen != format) {
+                    return false;
+                }
+                offer_formats.insert(pt, format);
+            }
+            continue;
+        }
+        let (rest, is_rtpmap) = if let Some(r) = line.strip_prefix("a=rtpmap:") {
+            (r, true)
+        } else if let Some(r) = line.strip_prefix("a=fmtp:") {
+            (r, false)
+        } else {
+            continue;
+        };
+        let Some((pt, value)) = rest.split_once(' ') else {
+            continue;
+        };
+        let Ok(pt) = pt.parse::<u8>() else {
+            continue;
+        };
+        let format = section.entry(pt).or_default();
+        if is_rtpmap {
+            format.0 = value.trim().to_ascii_lowercase();
+        } else {
+            format.1.extend(
+                value
+                    .split(';')
+                    .map(|p| p.trim().to_ascii_lowercase())
+                    .filter(|p| !p.is_empty()),
+            );
+        }
+    }
+    true
+}
+
+/// A payload type's `a=rtpmap` value and its `a=fmtp` parameters.
+type Format = (String, BTreeSet<String>);
 
 /// The H.264 profile idc of a payload whose `a=fmtp` names no
 /// `profile-level-id`: Baseline (RFC 6184 §8.1).

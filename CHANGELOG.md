@@ -1060,6 +1060,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   streaming the old one, which left that fanout orphaned: the session and the
   shutdown registry named a mount the stream was not serving.
 
+### Fixed — tst-webrtc
+
+- `WhepServer`: an offer that gives one payload type two formats (an `rtx`
+  payload whose `apt` names two codecs, or one number mapped to different
+  formats in two media sections) is answered with 400. It used to panic the
+  server's media thread inside str0m, after which every offer got 503.
+
 ### Docs — project pages
 
 - `docs/project/1.0-exit-criteria.md` records the maintainer's answers to its

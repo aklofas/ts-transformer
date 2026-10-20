@@ -6,7 +6,7 @@ use libfuzzer_sys::fuzz_target;
 use str0m::change::SdpOffer;
 use str0m::{Candidate, Rtc};
 use tst_webrtc::VideoCodec;
-use tst_webrtc::server::negotiate::{Negotiated, select_video};
+use tst_webrtc::server::negotiate::{Negotiated, payload_types_are_consistent, select_video};
 
 fn server() -> Rtc {
     let mut rtc = Rtc::builder()
@@ -40,6 +40,10 @@ fuzz_target!(|data: &[u8]| {
     let Ok(offer) = SdpOffer::from_sdp_string(sdp) else {
         return;
     };
+    // The server refuses these before str0m sees them.
+    if !payload_types_are_consistent(&offer.to_sdp_string()) {
+        return;
+    }
     let mut rtc = server();
     if rtc.sdp_api().accept_offer(offer).is_ok() {
         select_both(&rtc, sdp);
