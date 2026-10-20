@@ -143,6 +143,20 @@ through std. Every other sweep test runs on every platform.
 """
 
 [[platform_skip]]
+file = "crates/tst-interop/tests/corpus/replay.rs"
+platform = "macos-arm64,windows-msvc"
+capability = "so_rcvbuf_accounting"
+class = "portability"
+note = """
+Nothing is skipped: every corpus unit test runs on every platform. One
+assertion in `the_udp_buffer_holds_bursts_of_the_larger_of_the_access_unit_and_the_paced_chunk`
+is cfg-split because the udp receive-buffer factor and floor differ by
+kernel: Linux stores twice the value set (factor 2, 256 KiB floor); macOS
+and Windows store it exactly and macOS charges each datagram's mbuf against
+it (factor 4, 1 MiB floor).
+"""
+
+[[platform_skip]]
 file = "crates/tst-interop/tests/net_corpus/replay.rs"
 platform = "macos-arm64,windows-msvc"
 capability = "proc_vmrss"
