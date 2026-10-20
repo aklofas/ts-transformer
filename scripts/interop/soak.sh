@@ -1380,6 +1380,7 @@ REPORT_RC=0
 {
   echo "=== soak summary ==="
   echo "outdir: $OUTDIR"
+  echo "sample misses: $(grep -c ' SAMPLE-MISS ' "$EVENTS_LOG" 2>/dev/null || true) (live process, empty RSS read, no row written)"
   echo "hours: $HOURS  seed: $SEED  outage_period_s: $OUTAGE_PERIOD_S  outage_dur_s: $OUTAGE_DUR_S"
   echo "profiles: srt=$SRT_PROFILE rist=$RIST_PROFILE rtsp-publish=$PUBLISH_PROFILE rtsp-publish-es=$PUBLISH_ES_PROFILE (--profile $PROFILE)  klv_set: rich (rtsp-publish-es: compact)  au_sizes: realistic"
   if [[ "$RTSP_PUBLISH" -eq 1 ]]; then

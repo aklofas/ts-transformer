@@ -627,9 +627,10 @@ write_provenance() {
 # A missing PID (process already gone) writes an empty rss_kb field,
 # which is exactly report/soak.rs's `soak::RssSample` crash signal — never
 # fails this loop itself, so one dead process doesn't stop sampling the
-# others. A VmRSS read that yields nothing while /proc/<pid> still exists
-# is a missed read, not an exit: that tick writes NO rss.csv row for the
-# pid, and when SAMPLE_EVENTS_LOG names a file a
+# others. Three cases for an empty VmRSS read: /proc/<pid> absent = gone,
+# empty row; state Z (a zombie: exited, not yet reaped, has no VmRSS) =
+# gone, empty row; otherwise a live pid whose read missed = NO rss.csv row
+# for that tick, and when SAMPLE_EVENTS_LOG names a file a
 # `SAMPLE-MISS leg=… process=… pid=… tick=…` line goes there.
 #
 # proc.csv and host.csv are written on the SAME tick with the same
@@ -657,7 +658,7 @@ sample_loop() {
   local -a exclude=("$@")
   local -a entries stat_f
   local pidfile role ex entry leg rest process pid rss_kb elapsed now next
-  local utime stime threads fds load_fields mem_avail key val line l1 l5 l15 rt
+  local pstate utime stime threads fds load_fields mem_avail key val line l1 l5 l15 rt
   printf -v now '%(%s)T' -1
   until [[ $now -ge $deadline ]]; do
     elapsed=$((now - start))
@@ -681,6 +682,7 @@ sample_loop() {
       stime=""
       threads=""
       fds=""
+      pstate=""
       if [[ -r "/proc/$pid/status" ]]; then
         {
           while IFS=$': \t' read -r key val _; do
@@ -696,6 +698,7 @@ sample_loop() {
         read -r line <"/proc/$pid/stat" 2>/dev/null || line=""
         if [[ "$line" == *") "* ]]; then
           read -ra stat_f <<<"${line##*) }" || stat_f=()
+          pstate=${stat_f[0]:-}
           utime=${stat_f[11]:-}
           stime=${stat_f[12]:-}
         fi
@@ -706,7 +709,7 @@ sample_loop() {
         # (every real entry is, even a socket's dangling one).
         if [[ $# -eq 1 && ! -L "$1" ]]; then fds=0; else fds=$#; fi
       fi
-      if [[ -z "$rss_kb" && -d "/proc/$pid" ]]; then
+      if [[ -z "$rss_kb" && "$pstate" != Z && -d "/proc/$pid" ]]; then
         if [[ -n "${SAMPLE_EVENTS_LOG:-}" ]]; then
           event_to "$SAMPLE_EVENTS_LOG" "SAMPLE-MISS leg=$leg process=$process pid=$pid tick=$elapsed" || true
         fi
