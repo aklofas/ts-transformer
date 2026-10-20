@@ -5,7 +5,8 @@ use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
 use tst_interop::corpus::digest::{
-    FileDigest, digest_bytes, digest_config, elementary_sha256, klv_record_digest, load, store,
+    FileDigest, digest_bytes, digest_config, digest_file, elementary_sha256, klv_record_digest,
+    load, store,
 };
 use tst_interop::corpus::pcr::{align_offset, prefix_end};
 use tst_interop::corpus::{FEED_CHUNK, RunDir};
@@ -371,4 +372,25 @@ fn sync_needs_two_confirming_strides() {
     buf.extend_from_slice(&real);
     assert_eq!(align_offset(&buf), 1000);
     assert_eq!(align_offset(&real), 0);
+}
+
+#[test]
+fn the_streaming_digest_of_a_file_equals_the_in_memory_digest() {
+    // Repeated so the file spans several feed chunks.
+    let bytes = gen_profile_bytes("baseline", 10.0).repeat(4);
+    assert!(bytes.len() > 2 * FEED_CHUNK, "{}", bytes.len());
+    let sha = sha_of(&bytes);
+    let dir = temp_dir_named("digest-stream");
+    let path = dir.join("capture.ts");
+    std::fs::write(&path, &bytes).unwrap();
+    for prefix in [None, Some(1)] {
+        let mem = digest_bytes(&sha, &bytes, prefix).unwrap();
+        let known = digest_file(Some(&sha), &path, prefix).unwrap();
+        let unknown = digest_file(None, &path, prefix).unwrap();
+        assert_eq!(mem, known, "prefix {prefix:?}");
+        assert_eq!(mem, unknown, "prefix {prefix:?}");
+        assert_eq!(mem.elementary_sha256, known.elementary_sha256);
+    }
+    let wrong = sha_of(b"other");
+    assert!(digest_file(Some(&wrong), &path, None).is_err());
 }

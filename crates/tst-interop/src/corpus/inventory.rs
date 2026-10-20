@@ -87,13 +87,14 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn collect_ts(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
-    let rd = std::fs::read_dir(dir).map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
+    let rd = std::fs::read_dir(dir)
+        .map_err(|e| format!("cannot read the corpus directory: {}", e.kind()))?;
     for entry in rd {
-        let entry = entry.map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
+        let entry = entry.map_err(|e| format!("cannot read the corpus directory: {}", e.kind()))?;
         let path = entry.path();
         let file_type = entry
             .file_type()
-            .map_err(|e| format!("stat {}: {e}", path.display()))?;
+            .map_err(|e| format!("cannot stat a corpus entry: {}", e.kind()))?;
         // A symlinked directory is skipped so a link loop cannot recurse forever.
         if file_type.is_dir() {
             collect_ts(&path, out)?;
@@ -109,8 +110,7 @@ fn collect_ts(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
 
 /// Hash and probe one file in a single read.
 fn probe(path: &Path) -> Result<FileEntry, String> {
-    let mut file =
-        std::fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+    let mut file = std::fs::File::open(path).map_err(|e| format!("open failed: {}", e.kind()))?;
     let mut hasher = Sha256::new();
     let mut demuxer = Demuxer::with_config(DemuxerConfig::default());
     let mut pcr = PcrScan::default();
@@ -128,7 +128,7 @@ fn probe(path: &Path) -> Result<FileEntry, String> {
     loop {
         let n = file
             .read(&mut buf)
-            .map_err(|e| format!("read {}: {e}", path.display()))?;
+            .map_err(|e| format!("read failed: {}", e.kind()))?;
         if n == 0 {
             break;
         }
@@ -233,7 +233,8 @@ pub fn build(dir: &Path) -> Result<Inventory, String> {
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(path) = paths.get(i) else { break };
-                    let r = probe(path);
+                    let r =
+                        probe(path).map_err(|e| format!("file {} of {}: {e}", i + 1, paths.len()));
                     results.lock().unwrap().push(r);
                 }
             });
@@ -263,17 +264,29 @@ fn inventory_path(run: &RunDir) -> PathBuf {
     run.root.join("inventory.json")
 }
 
+/// Whether the run directory already holds an `inventory.json`.
+pub fn exists(run: &RunDir) -> bool {
+    inventory_path(run).exists()
+}
+
 pub fn write(inv: &Inventory, run: &RunDir) -> Result<(), String> {
     std::fs::create_dir_all(&run.root)
-        .map_err(|e| format!("create {}: {e}", run.root.display()))?;
+        .map_err(|e| format!("cannot create the run directory: {}", e.kind()))?;
     let text = serde_json::to_string_pretty(inv).map_err(|e| format!("inventory json: {e}"))?;
-    let path = inventory_path(run);
-    std::fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
+    std::fs::write(inventory_path(run), text).map_err(|e| {
+        format!(
+            "cannot write inventory.json in the run directory: {}",
+            e.kind()
+        )
+    })
 }
 
 pub fn read(run: &RunDir) -> Result<Inventory, String> {
-    let path = inventory_path(run);
-    let text =
-        std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    serde_json::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))
+    let text = std::fs::read_to_string(inventory_path(run)).map_err(|e| {
+        format!(
+            "cannot read inventory.json in the run directory: {}",
+            e.kind()
+        )
+    })?;
+    serde_json::from_str(&text).map_err(|e| format!("cannot parse inventory.json: {e}"))
 }
