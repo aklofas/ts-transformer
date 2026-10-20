@@ -2062,6 +2062,9 @@ try (WhepServer server = WhepServer.bind("whep://0.0.0.0:8889?advertise=192.0.2.
   `KlvCarriage.SEI_ONLY` / `DATA_CHANNEL_ONLY`, the per-frame SEI budget or
   the per-viewer queue. Pushes never block: a full queue drops the frame and
   counts it in `MountHandle.stats()`.
+- **An MP2T mount runs one frame behind.** Its demuxer emits an access
+  unit when the next one starts, so the last access unit of the bytes
+  pushed waits for more, and a file's last access unit is never played.
 - **Close semantics.** `stop()` closes the server, and is idempotent: every
   mount's pushes then throw `WebrtcException(CLOSED)` and the sessions end.
   `close()` is `stop()` plus freeing the native server, after which every
@@ -2094,8 +2097,9 @@ Gradle build compiles it before the tests run, and runs it with
 //   ./gradlew runServeWhep --args='input.ts whep://0.0.0.0:8080?advertise=192.0.2.10'
 //
 // A WHEP player then POSTs its SDP offer to http://127.0.0.1:8080/live and
-// plays the file's H.264 or H.265 video, with each KLV record frame-locked to
-// its access unit (in an SEI message and on the "klv" data channel).
+// plays the file's H.264 video (set the mount's video codec for H.265), with
+// each KLV record frame-locked to its access unit (in an SEI message and on
+// the "klv" data channel).
 //
 // The shape: one WhepServer, one MP2T mount, and a loop that feeds the file's
 // bytes to the mount at the speed its timestamps say. The mount does the
@@ -2121,13 +2125,21 @@ public final class ServeWhep {
     private static final long PTS_MODULUS = 1L << 33;
     private static final long TICKS_PER_MS = 90;
 
-    // A forward PTS step longer than this is a discontinuity (a spliced or
-    // looped file), not five seconds of real time: the pacer re-anchors on it
-    // instead of sleeping through it.
-    private static final long MAX_STEP_TICKS = 5 * 90_000;
+    // Two PTS steps are discontinuities (a spliced or looped file), not real
+    // time, and make the pacer re-anchor: forward by more than 5 s, which it
+    // must not sleep through, and backward by more than 1 s. A backward step
+    // up to 1 s is B-frame reordering (a few frames on the video PID) and does
+    // not move the pacer. The mount's RTP clock uses wider bounds (10 s back,
+    // 1 h ahead) because it only has to keep RTP timestamps moving forward; a
+    // pacer that let a 3 s file loop back 3 s would push the second pass at
+    // disk speed.
+    private static final long MAX_FORWARD_TICKS = 5 * 90_000;
+    private static final long MAX_REORDER_TICKS = 90_000;
 
     // Set by the Ctrl-C hook; the main loop checks it between packets.
     private static volatile boolean running = true;
+    // Set before System.exit on an error, so the hook does not wait for main.
+    private static volatile boolean exiting = false;
 
     public static void main(String[] args) throws IOException, InterruptedException {
         if (args.length < 1 || args.length > 2) {
@@ -2147,6 +2159,9 @@ public final class ServeWhep {
         Thread mainThread = Thread.currentThread();
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             running = false;
+            if (exiting) {
+                return; // main itself called System.exit and will not return
+            }
             try {
                 mainThread.join(5_000);
             } catch (InterruptedException e) {
@@ -2163,12 +2178,17 @@ public final class ServeWhep {
             System.out.println("serving " + input + " at http://" + server.localAddr()
                 + "/live (media on udp " + server.mediaAddr() + ")");
             serve(in, server, mount);
+            // The mount's demuxer emits an access unit when the next one
+            // starts, so it runs one frame behind the bytes pushed and the
+            // file's last access unit is never played: a 150-frame file
+            // reports frames=149.
             printStats(server, mount);
             System.out.println(running ? "end of file" : "interrupted");
         } catch (WebrtcException e) {
             // URL for a bad bind URL, IO for a port in use, MOUNT for a refused
             // mount, PUSH or CLOSED from a push.
             System.err.println("webrtc error (" + e.kind() + "): " + e.getMessage());
+            exiting = true;
             System.exit(1);
         }
     }
@@ -2193,7 +2213,9 @@ public final class ServeWhep {
     //
     // Why PTS rather than PCR: PTS is the clock the mount and the browser use
     // for the frames themselves, and it is in every PES header, so a file
-    // without PCRs still paces.
+    // without PCRs still paces. Only the first video PID's PTS is used: KLV
+    // and audio PES run on their own PIDs, and a stream that runs behind the
+    // video would otherwise look like a jump back.
     private static void serve(InputStream in, WhepServer server, MountHandle mount)
             throws IOException, InterruptedException, WebrtcException {
         // Push in batches: everything read since the last PTS step goes in one
@@ -2205,6 +2227,7 @@ public final class ServeWhep {
 
         long startNanos = System.nanoTime();
         long lastStats = startNanos;
+        int pacingPid = -1;    // the video PID paced on, once seen
         long lastPts = -1;     // the 33-bit PTS last paced on
         long mediaTicks = 0;   // ticks elapsed since the first PTS, unwrapped
         long anchorTicks = 0;  // mediaTicks at the last re-anchor
@@ -2215,39 +2238,42 @@ public final class ServeWhep {
             // A trailing partial packet is not TS; leave it out.
             n -= n % TS_PACKET;
             for (int off = 0; off < n && running; off += TS_PACKET) {
-                long pts = pesPts(chunk, off);
-                if (pts >= 0) {
-                    if (lastPts < 0) {
-                        lastPts = pts;
-                    }
+                long pts = videoPts(chunk, off);
+                int pid = ((chunk[off + 1] & 0x1F) << 8) | (chunk[off + 2] & 0xFF);
+                if (pts >= 0 && pacingPid < 0) {
+                    pacingPid = pid;
+                    lastPts = pts;
+                }
+                if (pts >= 0 && pid == pacingPid && pts != lastPts) {
                     // Unwrap the 33-bit clock: a step below 2^32 is forward
-                    // (it may cross the wrap); a larger one is backward, the
-                    // reordered PTS of a B-frame or a stream that runs behind
-                    // another, and does not move the pacer.
+                    // (it may cross the wrap), a larger one is backward.
                     long step = Math.floorMod(pts - lastPts, PTS_MODULUS);
-                    if (step > 0 && step < PTS_MODULUS / 2) {
+                    boolean forward = step < PTS_MODULUS / 2;
+                    long back = PTS_MODULUS - step;
+                    if (forward || back > MAX_REORDER_TICKS) {
                         lastPts = pts;
-                        if (step > MAX_STEP_TICKS) {
-                            // A discontinuity: send what is due now and
-                            // restart the timeline here.
-                            anchorTicks = mediaTicks;
-                            anchorNanos = System.nanoTime();
-                        } else {
-                            mediaTicks += step;
-                        }
-                        // Everything before this packet is due by now: push
-                        // it, then wait for this packet's time.
+                        // Everything before this packet is due by now.
                         if (batchLen > 0) {
                             mount.pushTs(Arrays.copyOf(batch, batchLen));
                             batchLen = 0;
                         }
-                        long dueNanos = anchorNanos
-                            + (mediaTicks - anchorTicks) * 1_000_000 / TICKS_PER_MS;
-                        long waitNanos = dueNanos - System.nanoTime();
-                        if (waitNanos > 0) {
-                            Thread.sleep(waitNanos / 1_000_000, (int) (waitNanos % 1_000_000));
+                        if (!forward || step > MAX_FORWARD_TICKS) {
+                            // A discontinuity: restart the timeline here.
+                            anchorTicks = mediaTicks;
+                            anchorNanos = System.nanoTime();
+                        } else {
+                            // Wait for this packet's time.
+                            mediaTicks += step;
+                            long dueNanos = anchorNanos
+                                + (mediaTicks - anchorTicks) * 1_000_000 / TICKS_PER_MS;
+                            long waitNanos = dueNanos - System.nanoTime();
+                            if (waitNanos > 0) {
+                                Thread.sleep(waitNanos / 1_000_000,
+                                    (int) (waitNanos % 1_000_000));
+                            }
                         }
                     }
+                    // else: a reordered B-frame PTS; the pacer stays put.
                 }
                 if (batchLen == batch.length) {
                     mount.pushTs(Arrays.copyOf(batch, batchLen));
@@ -2268,10 +2294,11 @@ public final class ServeWhep {
         }
     }
 
-    // The PTS of the PES packet that starts in the TS packet at buf[off], or -1
-    // when none starts there. Only the fields pacing needs are read: the TS
-    // header, the adaptation field's length, and the PES header's PTS.
-    private static long pesPts(byte[] buf, int off) {
+    // The PTS of the video PES packet (stream_id 0xE0 to 0xEF) that starts in
+    // the TS packet at buf[off], or -1 when none starts there. Only the fields
+    // pacing needs are read: the TS header, the adaptation field's length, and
+    // the PES header's stream_id and PTS.
+    private static long videoPts(byte[] buf, int off) {
         if (buf[off] != 0x47) {
             return -1; // lost sync; the mount's demuxer resynchronises itself
         }
@@ -2290,8 +2317,8 @@ public final class ServeWhep {
         if (p + 14 > end || buf[p] != 0 || buf[p + 1] != 0 || buf[p + 2] != 1) {
             return -1; // a PSI section (PAT, PMT) or a header that is cut short
         }
-        if ((buf[p + 7] & 0x80) == 0) {
-            return -1;
+        if ((buf[p + 3] & 0xF0) != 0xE0 || (buf[p + 7] & 0x80) == 0) {
+            return -1; // not video, or no PTS
         }
         int t = p + 9;
         // PTS[32..30] in bits 3..1 of the first byte, then two 15-bit halves,

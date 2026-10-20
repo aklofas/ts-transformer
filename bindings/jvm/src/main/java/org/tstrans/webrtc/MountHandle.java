@@ -71,7 +71,10 @@ public final class MountHandle extends NativeHandle {
 
     /**
      * Feed MPEG-TS bytes to an MP2T mount, in any chunking: the mount demultiplexes
-     * them into its video and KLV paths.
+     * them into its video and KLV paths. The demuxer emits an access unit when the
+     * next one starts, so the mount runs one frame behind the bytes pushed and the
+     * last access unit waits until more bytes arrive: a file's last access unit is
+     * never played.
      *
      * @throws WebrtcException {@code PUSH} on an elementary mount; {@code CLOSED} once
      *     the mount is closed
