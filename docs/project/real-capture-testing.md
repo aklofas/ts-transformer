@@ -52,7 +52,10 @@ captures fails the sweep. A first run uses no `--baseline` at all.
 
 A capture fails the sweep when any of these breaks. None needs a baseline.
 
-- **feed-error:** the demuxer reported no error while being fed the file.
+- **feed-error:** the demuxer reported no error while being fed the file. A
+  rejection is counted, never a parse failure, so a capture with damage such
+  as a zero-filled recorder dropout is still digested. The annotation
+  `known_feed_errors = true` records reviewed feed errors as excused.
 - **klv-unknown:** every KLV payload on a KLV stream decodes, and no sample on
   it comes out as an unknown kind. An annotation that lists a PID under
   `non_misb_private_pids` excuses a private stream that is not MISB KLV.
@@ -74,8 +77,9 @@ A capture fails the sweep when any of these breaks. None needs a baseline.
   restart.
 
 Annotations live outside the corpus, one `<sha256>.toml` file per capture with
-flat `key = value` lines and an optional `reason = "..."`. Only a person adds
-them, after reading the finding.
+flat `key = value` lines. Every key that excuses a rule needs a
+`reason = "..."` line, or the annotation is refused. Only a person adds them,
+after reading the finding.
 
 ## How the replay subset is chosen
 
@@ -106,12 +110,20 @@ The replay's time rules:
 - A send may take the pick's own PCR seconds plus twice the stall time; one
   that takes longer is cancelled and the path's receiver is stopped.
 
-The UDP receiver's socket buffer holds two of the capture's largest access
-units whenever the kernel default cannot, the stress harness's rule; the
-replay refuses to start when `net.core.rmem_max` would clamp that buffer. A
-failed verdict names how often the sender lost and recovered the packet
-framing, so a short delivery from a damaged capture is not read as transport
-loss.
+The UDP receiver's socket buffer holds two bursts whenever the kernel default
+cannot: a burst is the larger of the capture's largest access unit (the
+stress harness's rule) and the largest interval the pacer writes at once. The
+replay refuses to start when `net.core.rmem_max` would clamp the buffer the
+access units need, and a pick whose interval needs more fails its UDP
+verdict. When the sender lost and recovered the packet framing, a failed
+verdict says how often, so a short delivery from a damaged capture is not
+read as transport loss. A damaged capture can still arrive short with no
+resync counted: the sender's flush forwards a partial bundle without
+checking its framing, a library limitation noted for a later fix.
+
+Picks replay largest first, by the bytes each one sends. Each receiver's
+largest allocation then happens inside the warm-up the RSS gate leaves out,
+so a one-time step in its memory is not read as a slope.
 
 The variables named `TST_CORPUS_TEST_*` change these rules for the tool's own
 tests. When one is set, the tool names it on stderr.

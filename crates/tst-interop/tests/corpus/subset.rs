@@ -139,15 +139,17 @@ fn trimming_drops_group_three_first_then_shape_picks_from_the_end() {
         entry("07", "a", 300.0, 1, &["h264"], &[]),
     ]);
     let full = select(&i, &[], 7200);
+    // Replay order: the 1000-byte pick first, then the rest by sha.
     let order: Vec<_> = full.picks.iter().map(|k| k.why.as_str()).collect();
     assert_eq!(
         order,
-        vec!["shape:a", "shape:b", "shape:c", "shape:other", "largest"]
+        vec!["largest", "shape:b", "shape:c", "shape:other", "shape:a"]
     );
-    // 750 s planned; 400 s needs three pops: largest, shape:other, shape:c
+    // 750 s planned; 400 s needs three pops, in priority order from the
+    // end: largest, shape:other, shape:c.
     let p = select(&i, &[], 400);
     let shas: Vec<_> = p.picks.iter().map(|k| k.sha256.0.as_str()).collect();
-    assert_eq!(shas, vec!["07", "02"]);
+    assert_eq!(shas, vec!["02", "07"]);
     let dropped: Vec<_> = p.trimmed.iter().map(|k| k.0.as_str()).collect();
     assert_eq!(dropped, vec!["03", "04", "06"]);
     assert_eq!(p.total_seconds, 400.0);
@@ -222,4 +224,27 @@ fn the_predicted_peak_is_the_largest_kept_pick() {
     let p = select(&inv(vec![short, long]), &[], 7200);
     assert_eq!(p.picks.len(), 2, "{:?}", whys(&p));
     assert_eq!(p.predicted_peak_bytes, 1_610_612_736);
+}
+
+#[test]
+fn picks_replay_largest_predicted_bytes_first_ties_by_sha() {
+    // Rare picks come first in priority, but the large shape pick replays
+    // first; the two equal-sized picks follow in sha order.
+    let s = |c: char| c.to_string().repeat(64);
+    let plan = select(
+        &inv(vec![
+            entry(&s('c'), "a", 30.0, 1_000, &["h265"], &[]),
+            entry(&s('b'), "b", 30.0, 1_000, &["av1"], &[]),
+            entry(&s('a'), "c", 60.0, 9_000_000, &["h264"], &[]),
+        ]),
+        &["udp".to_string()],
+        7200,
+    );
+    let order: Vec<&str> = plan.picks.iter().map(|p| p.sha256.0.as_str()).collect();
+    assert_eq!(
+        order,
+        [s('a').as_str(), s('b').as_str(), s('c').as_str()],
+        "{plan:?}"
+    );
+    assert_eq!(plan.predicted_peak_bytes, 9_000_000);
 }

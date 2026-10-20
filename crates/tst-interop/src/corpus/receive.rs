@@ -2,7 +2,7 @@
 //! driven over stdin and stdout, one UTF-8 line per message.
 //!
 //! ```text
-//! parent: file <sha256> <prefix_seconds|none> <largest_au_bytes>
+//! parent: file <sha256> <prefix_seconds|none> <largest_au_bytes> <largest_chunk_bytes>
 //! child : ready <sha256> <url the sender uses>
 //! parent: sent <sha256>                (the sender finished and closed)
 //! child : verdict <sha256> PASS|FAIL <FileVerdict as one line of JSON>
@@ -14,8 +14,9 @@
 //! there) and names the digest to judge by; the child digests every byte
 //! that arrives, so a replay that overshoots the prefix fails against the
 //! prefix digest. `largest_au_bytes` is the inventory's largest video
-//! access unit (0 when unknown); the `udp` child sizes its socket buffer
-//! from it ([`udp_rcvbuf_for`]).
+//! access unit and `largest_chunk_bytes` the largest PCR interval the
+//! sender's pacer writes at once (0 when unknown); the `udp` child sizes its
+//! socket buffer from both ([`udp_rcvbuf_for`]).
 //!
 //! The expected digest is read from `<digests>/<sha256>.json`, or from
 //! `<digests>/<sha256>.prefix<seconds>.json` for a `file` with a prefix
@@ -110,16 +111,22 @@ pub const STALL_ENV: &str = "TST_CORPUS_TEST_STALL_SECONDS";
 pub const UDP_RCVBUF_BURST_FACTOR: u64 = 2;
 
 /// The receive buffer, in bytes, a `udp` receiver asks for (`?rcvbuf=`) to
-/// absorb an access unit of `largest_au_bytes` sent at line rate: the
-/// stress harness's rule. The burst is the access unit as 188-byte packets
-/// of 184 payload bytes; `None` when the kernel default (`rmem_default`,
-/// of which about half holds payload) already holds two bursts, or the
-/// size is unknown (0). An unreadable default still sets the buffer.
-pub fn udp_rcvbuf_for(largest_au_bytes: u64, rmem_default: Option<u64>) -> Option<u64> {
-    if largest_au_bytes == 0 {
+/// absorb a burst sent at line rate. The burst is the larger of the access
+/// unit of `largest_au_bytes` as 188-byte packets of 184 payload bytes (the
+/// stress harness's rule) and the `largest_chunk_bytes` the pacer writes in
+/// one go (an access unit plus the audio and KLV beside it). `None` when
+/// the kernel default (`rmem_default`, of which about half holds payload)
+/// already holds two bursts, or both sizes are unknown (0). An unreadable
+/// default still sets the buffer.
+pub fn udp_rcvbuf_for(
+    largest_au_bytes: u64,
+    largest_chunk_bytes: u64,
+    rmem_default: Option<u64>,
+) -> Option<u64> {
+    let burst = (largest_au_bytes.div_ceil(184) * 188).max(largest_chunk_bytes);
+    if burst == 0 {
         return None;
     }
-    let burst = largest_au_bytes.div_ceil(184) * 188;
     if rmem_default.is_some_and(|d| burst * 2 <= d) {
         return None;
     }
@@ -141,7 +148,7 @@ const WIND_DOWN: Duration = Duration::from_secs(5);
 const READ_BUF: usize = 64 * 1024;
 
 enum Cmd {
-    File(Sha256Hex, Option<u32>, u64),
+    File(Sha256Hex, Option<u32>, u64, u64),
     Sent(Sha256Hex),
     Quit,
     /// The parent closed stdin.
@@ -165,23 +172,26 @@ fn parse_sha(s: &str) -> Option<Sha256Hex> {
 }
 
 fn parse_line(line: &str) -> Cmd {
-    let mut it = line.split_whitespace();
-    match (it.next(), it.next(), it.next(), it.next(), it.next()) {
-        (Some("file"), Some(sha), Some(prefix), Some(au), None) => {
-            let prefix = match prefix {
+    let words: Vec<&str> = line.split_whitespace().take(7).collect();
+    match words.as_slice() {
+        ["file", sha, prefix, au, chunk] => {
+            let prefix = match *prefix {
                 "none" => Some(None),
                 n => n.parse::<u32>().ok().map(Some),
             };
-            match (parse_sha(sha), prefix, au.parse::<u64>()) {
-                (Some(sha), Some(p), Ok(au)) => Cmd::File(sha, p, au),
+            match (
+                parse_sha(sha),
+                prefix,
+                au.parse::<u64>(),
+                chunk.parse::<u64>(),
+            ) {
+                (Some(sha), Some(p), Ok(au), Ok(chunk)) => Cmd::File(sha, p, au, chunk),
                 _ => Cmd::Bad("malformed file line"),
             }
         }
-        (Some("file"), ..) => Cmd::Bad("malformed file line"),
-        (Some("sent"), Some(sha), None, None, None) => {
-            parse_sha(sha).map_or(Cmd::Bad("malformed sent line"), Cmd::Sent)
-        }
-        (Some("quit"), None, None, None, None) => Cmd::Quit,
+        ["file", ..] => Cmd::Bad("malformed file line"),
+        ["sent", sha] => parse_sha(sha).map_or(Cmd::Bad("malformed sent line"), Cmd::Sent),
+        ["quit"] => Cmd::Quit,
         _ => Cmd::Bad("unrecognised line"),
     }
 }
@@ -361,7 +371,7 @@ impl Child<'_> {
     }
 
     /// One `file`: bind, announce, receive, judge.
-    fn replay(&mut self, sha: Sha256Hex, prefix: Option<u32>, largest_au: u64) {
+    fn replay(&mut self, sha: Sha256Hex, prefix: Option<u32>, largest_au: u64, largest_chunk: u64) {
         let path = self.path;
         let expected = match load_expected(self.digests, &sha, prefix) {
             Ok(d) => d,
@@ -372,7 +382,7 @@ impl Child<'_> {
         let bind_url = if small_tcp {
             format!("{bind_url}&rcvbuf={STOP_READING_BUF}")
         } else if path == "udp"
-            && let Some(n) = udp_rcvbuf_for(largest_au, net_core("rmem_default"))
+            && let Some(n) = udp_rcvbuf_for(largest_au, largest_chunk, net_core("rmem_default"))
         {
             format!("{bind_url}?rcvbuf={n}")
         } else {
@@ -538,7 +548,9 @@ pub fn run(path: &str, digests: &Path, out: &Path) -> i32 {
             None => child.rx.recv(),
         };
         match next {
-            Ok(Event::Cmd(Cmd::File(sha, prefix, au))) => child.replay(sha, prefix, au),
+            Ok(Event::Cmd(Cmd::File(sha, prefix, au, chunk))) => {
+                child.replay(sha, prefix, au, chunk)
+            }
             // The sender's close can be seen, and judged, before `sent` is read.
             Ok(Event::Cmd(Cmd::Sent(s))) if child.last_verdict.as_ref() == Some(&s) => {}
             Ok(Event::Cmd(Cmd::Sent(_))) => protocol_error("sent before file"),

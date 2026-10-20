@@ -47,3 +47,20 @@ fn a_path_with_too_few_samples_is_recorded_as_not_gated() {
     assert!(j.gate_by_path["tcp"].starts_with("not gated: "), "{j:?}");
     assert!(!j.failed.contains(&"tcp".to_string()), "{j:?}");
 }
+
+#[test]
+fn the_udp_buffer_holds_two_of_the_larger_of_the_access_unit_and_the_paced_chunk() {
+    use tst_interop::corpus::receive::udp_rcvbuf_for;
+    // 184 000 bytes of access unit are 1 000 packets: 188 000 on the wire.
+    assert_eq!(udp_rcvbuf_for(184_000, 0, Some(212_992)), Some(376_000));
+    // A paced chunk larger than the access unit sets the burst.
+    assert_eq!(
+        udp_rcvbuf_for(184_000, 300_000, Some(212_992)),
+        Some(600_000)
+    );
+    // A default that holds two bursts needs nothing; nor does an unknown size.
+    assert_eq!(udp_rcvbuf_for(1_000, 50_000, Some(212_992)), None);
+    assert_eq!(udp_rcvbuf_for(0, 0, None), None);
+    // An unreadable default still sets the buffer.
+    assert_eq!(udp_rcvbuf_for(0, 50_000, None), Some(100_000));
+}

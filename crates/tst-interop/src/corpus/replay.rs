@@ -349,7 +349,31 @@ impl PathRun {
         let prefix = pick
             .prefix_seconds
             .map_or_else(|| "none".to_string(), |p| p.to_string());
-        if !self.say(&format!("file {sha} {prefix} {largest_au_bytes}")) {
+        let largest_chunk = pacer
+            .chunks()
+            .map(|c| c.bytes.len() as u64)
+            .max()
+            .unwrap_or(0);
+        // The pre-flight saw only the access units; the pacer's chunk is
+        // known now, and a buffer the kernel would clamp fails this pick.
+        if path == "udp"
+            && let (Some(max), Some(n)) = (
+                net_core("rmem_max"),
+                udp_rcvbuf_for(largest_au_bytes, largest_chunk, net_core("rmem_default")),
+            )
+            && n > max
+        {
+            return failed(
+                sha,
+                &path,
+                format!(
+                    "the udp path needs a {n}-byte receive buffer but net.core.rmem_max is {max}"
+                ),
+            );
+        }
+        if !self.say(&format!(
+            "file {sha} {prefix} {largest_au_bytes} {largest_chunk}"
+        )) {
             self.alive = false;
             return not_received(sha, &path, ReceiverOutcome::Exited);
         }
@@ -607,7 +631,9 @@ fn check_publisher() -> Result<(), String> {
 
 /// Refuses a udp replay whose receive buffer the kernel would clamp
 /// silently (`setsockopt` caps `SO_RCVBUF` at `net.core.rmem_max`), as the
-/// stress harness does. Unreadable sysctls (not Linux) pass.
+/// stress harness does, judged from the inventory's access units; a pick
+/// whose pacer chunk needs more fails its udp verdict when it is replayed.
+/// Unreadable sysctls (not Linux) pass.
 fn check_rmem_max(
     plan: &ReplayPlan,
     entries: &BTreeMap<&Sha256Hex, &FileEntry>,
@@ -620,7 +646,7 @@ fn check_rmem_max(
         .picks
         .iter()
         .filter_map(|p| entries.get(&p.sha256))
-        .filter_map(|e| udp_rcvbuf_for(e.largest_au_bytes, default))
+        .filter_map(|e| udp_rcvbuf_for(e.largest_au_bytes, 0, default))
         .max();
     match needed {
         Some(n) if n > max => Err(format!(
