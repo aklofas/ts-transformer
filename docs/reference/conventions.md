@@ -416,9 +416,9 @@ rejected by `srt`, `rtp`, `rtsp(s)` and `whep(s)` URLs.
 | `x-recvtimeout` | Receive timeout | milliseconds | `srt` |
 | `x-sendtimeout` | Send timeout | milliseconds | `srt` |
 | `advertise` | Address offered to viewers as the media candidate | literal IP address; default the bind address | `whep(s)` |
-| `cert` | Server certificate | PEM file path; required by `wheps` | `whep(s)` |
+| `cert` | Server certificate | PEM file path; a `wheps` server | `whep(s)` |
 | `cors_origin` | `Access-Control-Allow-Origin` value | origin or `*`; default `*` | `whep(s)` |
-| `key` | Server private key | PEM file path; required by `wheps` | `whep(s)` |
+| `key` | Server private key | PEM file path; a `wheps` server | `whep(s)` |
 | `max_viewers` | Viewers connected at once | count, 1 to 64; default 10 | `whep(s)` |
 | `media_port` | UDP port shared by every viewer's media | port; default the URL's port | `whep(s)` |
 | `token` | Bearer token every WHEP request must carry | text | `whep(s)` |

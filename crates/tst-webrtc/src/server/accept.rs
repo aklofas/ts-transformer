@@ -17,6 +17,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use str0m::change::SdpOffer;
+use subtle::ConstantTimeEq;
 use tracing::debug;
 
 use crate::server::Shared;
@@ -348,7 +349,13 @@ fn answer(request: &Request, body: &[u8], peer: SocketAddr, shared: &Shared) -> 
 /// not carry it.
 fn check_bearer(request: &Request, shared: &Shared) -> Option<Response> {
     let want = shared.url.token.as_deref()?;
-    if request.bearer.as_deref() == Some(want) {
+    // Constant-time, so the response time does not tell how much of a
+    // guessed token matched (a length difference still returns early).
+    let matches = request
+        .bearer
+        .as_deref()
+        .is_some_and(|got| bool::from(got.as_bytes().ct_eq(want.as_bytes())));
+    if matches {
         return None;
     }
     bump(&shared.rejected_auth);
