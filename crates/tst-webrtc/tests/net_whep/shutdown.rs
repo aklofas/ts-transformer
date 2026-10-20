@@ -3,20 +3,16 @@
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_webrtc::{MountConfig, PushError, WhepServer, WhepServerError};
 
-use crate::fixtures::{TestViewer, eventually, h264_gop, join, parse_response};
-
-/// How long the test waits for `stop` to report back. `stop` itself waits
-/// at most 2 s per thread; this is the test's own bound, not a timing
-/// assertion on `stop`.
-const STOP_REPORT: Duration = Duration::from_secs(3);
+use crate::fixtures::{STOP_REPORT, TestViewer, eventually, h264_gop, join, parse_response};
 
 #[test]
 fn stop_returns_within_bound_with_a_connected_viewer_and_a_parked_poster() {
@@ -130,4 +126,59 @@ fn stop_before_any_viewer_is_immediate_and_idempotent() {
         || m.sessions().is_empty(),
         Duration::from_secs(1)
     ));
+}
+
+#[test]
+fn a_mount_added_while_stop_runs_is_refused_or_closed() {
+    const ADDERS: usize = 4;
+    for round in 0..50 {
+        let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+        let added = AtomicUsize::new(0);
+        let start = Barrier::new(ADDERS + 1);
+        let handles = thread::scope(|s| {
+            let adders: Vec<_> = (0..ADDERS)
+                .map(|t| {
+                    let (srv, added, start) = (&srv, &added, &start);
+                    s.spawn(move || {
+                        start.wait();
+                        let mut mine = Vec::new();
+                        for k in 0.. {
+                            match srv.add_mount(&format!("/r{t}-{k}"), MountConfig::default()) {
+                                Ok(m) => {
+                                    mine.push(m);
+                                    added.fetch_add(1, Ordering::Release);
+                                }
+                                Err(WhepServerError::Shutdown) => break,
+                                Err(e) => panic!("unexpected add_mount error: {e}"),
+                            }
+                        }
+                        mine
+                    })
+                })
+                .collect();
+            start.wait();
+            // Stop while every adder is inside its loop, so some add_mount
+            // calls straddle the moment stop begins.
+            while added.load(Ordering::Acquire) < ADDERS {
+                thread::yield_now();
+            }
+            srv.stop();
+            adders
+                .into_iter()
+                .flat_map(|a| a.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        // Every mount add_mount handed out is closed by stop: a push on it
+        // is refused, never buffered for a server that is gone.
+        for m in &handles {
+            assert!(
+                matches!(
+                    m.push_klv(&[0x06], Pts90khz::new(0), 0),
+                    Err(PushError::Closed)
+                ),
+                "round {round}: {} was added during stop and left open",
+                m.mount_path()
+            );
+        }
+    }
 }

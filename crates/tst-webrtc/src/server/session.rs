@@ -111,7 +111,8 @@ pub(crate) struct Viewer {
     /// Writes waiting for str0m.
     pub(crate) queue: VecDeque<Queued>,
     /// The queue's capacity in entries (one per RTP payload or KLV
-    /// message).
+    /// message). A keyframe larger than this is admitted into an empty
+    /// queue, so the queue can briefly hold more.
     pub(crate) queue_cap: usize,
     /// Since when frames have been dropped for lack of room without the
     /// queue draining.
@@ -169,12 +170,18 @@ impl Viewer {
     /// starts the queue-stuck clock. A dropped frame returns the viewer to
     /// waiting for a keyframe: later frames may reference the dropped one,
     /// and the viewer sees no sequence gap to recover from.
+    ///
+    /// The one exception is a keyframe with more payloads than the whole
+    /// queue holds: it is queued whenever the queue is empty. Dropping it
+    /// would drop every later keyframe of the same size too, and the viewer
+    /// would never start.
     pub(crate) fn enqueue_frame(&mut self, packet: &Arc<FramePacket>, now: Instant) -> Enqueued {
         if self.waiting_keyframe && !packet.keyframe {
             return Enqueued::Skipped;
         }
         let n = packet.payloads.len();
-        if self.queue.len() + n > self.queue_cap {
+        let oversize_start = packet.keyframe && self.queue.is_empty();
+        if self.queue.len() + n > self.queue_cap && !oversize_start {
             self.queue_full_since.get_or_insert(now);
             self.waiting_keyframe = true;
             let dropped = n as u64;
@@ -450,12 +457,18 @@ mod tests {
         let mut v = viewer(&clock, 8);
         connect(&mut v, clock.now());
         assert_eq!(
+            v.enqueue_frame(&frame(4, true), clock.now()),
+            Enqueued::Queued
+        );
+        // A keyframe behind a non-empty queue must fit like any frame.
+        assert_eq!(
             v.enqueue_frame(&frame(10, true), clock.now()),
             Enqueued::Dropped(10)
         );
-        assert!(v.queue.is_empty());
+        assert_eq!(v.queue.len(), 4);
         assert_eq!(v.stats.packets_dropped_queue_full, 10);
         assert!(v.queue_full_since.is_some());
+        v.queue.clear();
 
         assert_eq!(
             v.enqueue_frame(&frame(4, true), clock.now()),
@@ -506,6 +519,38 @@ mod tests {
         );
         assert!(!v.waiting_keyframe);
         assert_eq!(v.queue.len(), 8);
+    }
+
+    #[test]
+    fn a_keyframe_larger_than_the_queue_starts_a_viewer_with_an_empty_queue() {
+        let clock = ManualClock::new();
+        let mut v = viewer(&clock, 8);
+        connect(&mut v, clock.now());
+        assert_eq!(
+            v.enqueue_frame(&frame(10, true), clock.now()),
+            Enqueued::Queued
+        );
+        assert!(!v.waiting_keyframe);
+        assert_eq!(v.queue.len(), 10);
+        assert_eq!(v.stats.packets_dropped_queue_full, 0);
+        assert!(v.queue_full_since.is_none());
+        // Over capacity now: a P-frame behind it is dropped as usual.
+        assert_eq!(
+            v.enqueue_frame(&frame(1, false), clock.now()),
+            Enqueued::Dropped(1)
+        );
+        // An oversize P-frame never gets the exception, even into an empty
+        // queue: the viewer waits for the next keyframe.
+        v.queue.clear();
+        assert_eq!(
+            v.enqueue_frame(&frame(2, true), clock.now()),
+            Enqueued::Queued
+        );
+        v.queue.clear();
+        assert_eq!(
+            v.enqueue_frame(&frame(9, false), clock.now()),
+            Enqueued::Dropped(9)
+        );
     }
 
     #[test]

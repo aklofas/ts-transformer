@@ -161,6 +161,13 @@ pub(crate) enum ControlMsg {
         /// The thread's counters and every session's statistics.
         reply: SyncSender<(ServerCounters, Vec<SessionStats>)>,
     },
+    /// Answered once the pass that read it has run to its end (timers,
+    /// reapers, gauges), so a test that moved a manual clock knows the
+    /// thread has acted on the new time.
+    Sync {
+        /// Receives `()` at the end of that pass.
+        reply: SyncSender<()>,
+    },
 }
 
 /// The media thread's configuration.
@@ -210,6 +217,9 @@ pub(crate) struct ServerCounters {
     pub(crate) rtp_bytes_sent: u64,
     /// Datagrams no session accepted.
     pub(crate) datagrams_unrouted: u64,
+    /// Which snapshot this is: every snapshot the thread takes gets the
+    /// next number, so a reader holding two can tell the newer one.
+    pub(crate) snapshot_seq: u64,
 }
 
 impl ServerCounters {
@@ -290,6 +300,7 @@ impl MediaThread {
             counters: ServerCounters::default(),
             gauges_dirty: true,
             busy: false,
+            syncs: Vec::new(),
             buf: vec![0; DATAGRAM_MAX],
         };
         let (done_tx, done) = mpsc::sync_channel::<()>(0);
@@ -476,6 +487,8 @@ struct Media {
     gauges_dirty: bool,
     /// The last pass left mount messages queued; do not wait.
     busy: bool,
+    /// `Sync` requests read this pass, answered at its end.
+    syncs: Vec<SyncSender<()>>,
     buf: Vec<u8>,
 }
 
@@ -512,6 +525,9 @@ impl Media {
             }
             self.reap(now);
             self.update_gauges();
+            for reply in self.syncs.drain(..) {
+                let _ = reply.try_send(());
+            }
         }
         self.finish();
     }
@@ -582,12 +598,14 @@ impl Media {
                 ControlMsg::Stats { reply } => {
                     let _ = reply.try_send(self.snapshot());
                 }
+                ControlMsg::Sync { reply } => self.syncs.push(reply),
             }
         }
     }
 
-    fn snapshot(&self) -> (ServerCounters, Vec<SessionStats>) {
+    fn snapshot(&mut self) -> (ServerCounters, Vec<SessionStats>) {
         let now = self.clock.now();
+        self.counters.snapshot_seq += 1;
         let mut counters = self.counters.clone();
         counters.active_sessions = self.viewers.len() as u64;
         let sessions = self.viewers.iter().map(|v| v.snapshot(now)).collect();
@@ -826,7 +844,13 @@ impl Media {
                 ControlMsg::Stats { reply } => {
                     let _ = reply.try_send(self.snapshot());
                 }
+                ControlMsg::Sync { reply } => {
+                    let _ = reply.try_send(());
+                }
             }
+        }
+        for reply in self.syncs.drain(..) {
+            let _ = reply.try_send(());
         }
     }
 }

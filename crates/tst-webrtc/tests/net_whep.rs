@@ -7,6 +7,8 @@ mod fixtures;
 mod audio;
 #[path = "net_whep/loopback.rs"]
 mod loopback;
+#[path = "net_whep/reaper.rs"]
+mod reaper;
 #[path = "net_whep/shutdown.rs"]
 mod shutdown;
 #[cfg(feature = "tls")]

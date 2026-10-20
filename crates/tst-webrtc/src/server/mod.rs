@@ -102,8 +102,8 @@ pub(crate) struct Shared {
     /// The server session config of a `wheps://` server.
     #[cfg(feature = "tls")]
     pub(crate) tls: Option<Arc<rustls::ServerConfig>>,
-    /// The media thread's counters as `stats` last read them, returned
-    /// after stop.
+    /// The newest of the media thread's snapshots any `stats` call read,
+    /// returned after stop.
     last_counters: Mutex<ServerCounters>,
 }
 
@@ -176,6 +176,8 @@ pub struct WhepServer {
     local: SocketAddr,
     media_addr: SocketAddr,
     threads: Mutex<Option<Threads>>,
+    /// Both threads exited within `stop`'s bound.
+    threads_joined: AtomicBool,
 }
 
 impl std::fmt::Debug for WhepServer {
@@ -272,6 +274,7 @@ impl WhepServer {
             local,
             media_addr,
             threads: Mutex::new(Some(Threads { media, accept })),
+            threads_joined: AtomicBool::new(false),
         })
     }
 
@@ -292,15 +295,18 @@ impl WhepServer {
     /// - [`WhepServerError::MountExists`] when `path` is already mounted.
     /// - [`WhepServerError::Shutdown`] after [`stop`](Self::stop).
     pub fn add_mount(&self, path: &str, cfg: MountConfig) -> Result<MountHandle, WhepServerError> {
-        if self.shared.shutdown.load(Ordering::Acquire) {
-            return Err(WhepServerError::Shutdown);
-        }
-        validate_mount_path(path)?;
         let mut mounts = self
             .shared
             .mounts
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        // Read under the lock `stop` sweeps with: `stop` sets the flag before
+        // it takes the lock, so a mount inserted here is either refused or
+        // already in the map when the sweep marks every mount closed.
+        if self.shared.shutdown.load(Ordering::Acquire) {
+            return Err(WhepServerError::Shutdown);
+        }
+        validate_mount_path(path)?;
         if mounts.values().any(|m| m.path == path) {
             return Err(WhepServerError::MountExists {
                 path: path.to_string(),
@@ -366,17 +372,7 @@ impl WhepServer {
         } else {
             self.shared.control.sessions().map(|(counters, _)| counters)
         };
-        let counters = {
-            let mut last = self
-                .shared
-                .last_counters
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if let Some(counters) = fresh {
-                *last = counters;
-            }
-            last.clone()
-        };
+        let counters = remember_newest(&self.shared.last_counters, fresh);
         let mounts = self
             .shared
             .mounts
@@ -432,14 +428,52 @@ impl WhepServer {
             .unwrap_or_else(PoisonError::into_inner)
             .take();
         if let Some(Threads { media, accept }) = threads {
-            if !media.join(STOP_JOIN_TIMEOUT) {
+            let media_joined = media.join(STOP_JOIN_TIMEOUT);
+            if !media_joined {
                 warn!("WHEP server stop: the media thread did not exit within 2 s");
             }
-            if !accept.join(STOP_JOIN_TIMEOUT) {
+            let accept_joined = accept.join(STOP_JOIN_TIMEOUT);
+            if !accept_joined {
                 warn!("WHEP server stop: the accept thread did not exit within 2 s");
             }
+            self.threads_joined
+                .store(media_joined && accept_joined, Ordering::Release);
         }
     }
+
+    /// Wakes the media thread and waits (at most 2 s) until it has run one
+    /// full pass (timers, reapers, gauges) after this call, so the pass saw
+    /// the clock as it is now. `false` when the thread did not answer. A
+    /// test seam for a server bound with a manual clock; not a supported
+    /// API.
+    #[doc(hidden)]
+    pub fn wake_for_test(&self) -> bool {
+        self.shared
+            .control
+            .request(|reply| ControlMsg::Sync { reply })
+            .is_some()
+    }
+
+    /// `true` once [`stop`](Self::stop) has joined both server threads
+    /// within its bound. A test seam; not a supported API.
+    #[doc(hidden)]
+    pub fn threads_joined_for_test(&self) -> bool {
+        self.threads_joined.load(Ordering::Acquire)
+    }
+}
+
+/// Stores `fresh` in `last` unless `last` already holds a newer snapshot,
+/// and returns what `last` then holds. Two `stats` calls can receive their
+/// snapshots in one order and reach here in the other; the sequence number
+/// keeps the older one from replacing the newer.
+fn remember_newest(last: &Mutex<ServerCounters>, fresh: Option<ServerCounters>) -> ServerCounters {
+    let mut last = last.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(counters) = fresh
+        && counters.snapshot_seq > last.snapshot_seq
+    {
+        *last = counters;
+    }
+    last.clone()
 }
 
 impl Drop for WhepServer {
@@ -497,4 +531,56 @@ pub(crate) fn validate_mount_path(path: &str) -> Result<(), WhepServerError> {
         return invalid(format!("path has an empty segment: '{path}'"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Barrier;
+    use std::thread;
+
+    use super::*;
+
+    fn snapshot(seq: u64) -> ServerCounters {
+        ServerCounters {
+            snapshot_seq: seq,
+            // A value that tells the snapshots apart in a failure message.
+            rtp_packets_sent: seq * 100,
+            ..ServerCounters::default()
+        }
+    }
+
+    #[test]
+    fn an_older_snapshot_arriving_last_does_not_replace_the_newer() {
+        let last = Mutex::new(ServerCounters::default());
+        assert_eq!(remember_newest(&last, Some(snapshot(2))).snapshot_seq, 2);
+        let kept = remember_newest(&last, Some(snapshot(1)));
+        assert_eq!((kept.snapshot_seq, kept.rtp_packets_sent), (2, 200));
+        // A call that read nothing (after stop) returns the newest.
+        assert_eq!(remember_newest(&last, None).snapshot_seq, 2);
+    }
+
+    #[test]
+    fn concurrent_writers_leave_the_newest_snapshot() {
+        const WRITERS: u64 = 8;
+        for _ in 0..50 {
+            let last = Mutex::new(ServerCounters::default());
+            let start = Barrier::new(WRITERS as usize);
+            thread::scope(|s| {
+                // The writers start together, so they reach the cache in
+                // whatever order the scheduler picks.
+                for seq in 1..=WRITERS {
+                    let (last, start) = (&last, &start);
+                    s.spawn(move || {
+                        start.wait();
+                        remember_newest(last, Some(snapshot(seq)));
+                    });
+                }
+            });
+            let got = remember_newest(&last, None);
+            assert_eq!(
+                (got.snapshot_seq, got.rtp_packets_sent),
+                (WRITERS, WRITERS * 100)
+            );
+        }
+    }
 }
