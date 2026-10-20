@@ -266,7 +266,8 @@ impl WhepServer {
     /// A path starts with `/`, names at least one segment, has no empty
     /// segment (no `//`, no trailing `/`), and holds printable ASCII other
     /// than `?` and `#`: the bytes a request target can carry, routed
-    /// without decoding.
+    /// without decoding. These rules are a subset of the RTSP server's
+    /// mount-path rules (printable ASCII, no empty segment).
     ///
     /// # Errors
     ///

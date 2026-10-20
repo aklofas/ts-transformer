@@ -143,8 +143,10 @@ pub(crate) enum RejectReason {
 pub(crate) enum ControlMsg {
     /// Create a session for an offer.
     Offer(OfferRequest),
-    /// Close a session; the reply says whether it existed.
+    /// Close a session; the reply says whether it existed on that mount.
     Delete {
+        /// The mount the request named.
+        mount: MountId,
         /// The session id.
         id: String,
         /// `true` when the session existed.
@@ -551,9 +553,10 @@ impl Media {
         while let Ok(msg) = self.ctrl_rx.try_recv() {
             match msg {
                 ControlMsg::Offer(req) => self.handle_offer(req),
-                ControlMsg::Delete { id, reply } => {
+                ControlMsg::Delete { mount, id, reply } => {
                     let before = self.viewers.len();
-                    self.viewers.retain(|v| v.id != id);
+                    // A session id names a session only on its own mount.
+                    self.viewers.retain(|v| !(v.id == id && v.mount == mount));
                     let found = self.viewers.len() != before;
                     self.gauges_dirty |= found;
                     let _ = reply.try_send(found);

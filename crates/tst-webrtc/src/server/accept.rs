@@ -215,12 +215,13 @@ fn answer(request: &Request, body: &[u8], peer: SocketAddr, shared: &Shared) -> 
             if let Some(refused) = check_bearer(request, shared) {
                 return refused;
             }
-            if shared.mount_by_path(&mount).is_none() {
+            let Some(mount) = shared.mount_by_path(&mount) else {
                 return resp(404, "");
-            }
+            };
+            let mount = mount.id;
             match shared
                 .control
-                .request(|reply| ControlMsg::Delete { id, reply })
+                .request(|reply| ControlMsg::Delete { mount, id, reply })
             {
                 Some(true) => resp(200, ""),
                 Some(false) => resp(404, ""),
