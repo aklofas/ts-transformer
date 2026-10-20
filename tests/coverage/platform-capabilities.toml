@@ -131,6 +131,30 @@ window — CI measured the reap passing and only the FIN wait timing out
 drained-then-quiescent; `#[cfg(not(windows))]` requires FIN/reset.
 """
 
+[[platform_skip]]
+file = "crates/tst-interop/tests/corpus/sweep.rs"
+platform = "windows-msvc"
+capability = "unix_file_permissions"
+class = "portability"
+note = """
+`an_unreadable_capture_exits_2_without_naming_it` is `#[cfg(unix)]`: it makes
+a capture unreadable with a mode-000 chmod, which has no Windows equivalent
+through std. Every other sweep test runs on every platform.
+"""
+
+[[platform_skip]]
+file = "crates/tst-interop/tests/net_corpus/replay.rs"
+platform = "macos-arm64,windows-msvc"
+capability = "proc_vmrss"
+class = "portability"
+note = """
+Nothing is skipped: every replay test runs on every platform. Only the RSS
+row assertion of `replay_over_udp_and_tcp_passes_and_writes_rss_samples` is
+cfg-split. The replay samples a receiver's resident set from
+/proc/<pid>/status, which only Linux has, so on Linux the test requires a
+sample per path and elsewhere it requires a header-only replay-rss.csv.
+"""
+
 # ─── declarative platform capability + CI-promotion state (I4) ──────────────
 
 [[capability]]

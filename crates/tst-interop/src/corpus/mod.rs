@@ -48,5 +48,8 @@ pub const PREFIX_SECONDS: u32 = 600;
 pub const REPLAY_BUDGET_SECONDS: u32 = 7200;
 /// Seconds without progress before a replay is declared stalled.
 pub const STALL_SECONDS: u64 = 10;
+/// The most bytes one pick may replay: a pick is held in memory once
+/// while every path sends it, so a larger one is skipped, not replayed.
+pub const REPLAY_PICK_MAX_BYTES: u64 = 4 << 30;
 /// The transport paths a replay exercises.
 pub const PATHS: [&str; 5] = ["srt", "rist", "udp", "tcp", "rtsp-publish"];
