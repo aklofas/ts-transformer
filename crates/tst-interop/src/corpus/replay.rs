@@ -940,11 +940,14 @@ pub fn run_with(
     Ok(summary)
 }
 
-#[cfg(test)]
+// The only unit test here reads a sparse file's length through the Linux
+// pick-size check, so the whole module is Linux-only; a bare `cfg(test)`
+// would leave `use super::*` unused on macOS and Windows, which clippy
+// rejects under `-D warnings`.
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn a_pick_over_the_size_cap_is_refused_before_it_is_read() {
         let dir = std::env::temp_dir().join(format!("tst-corpus-pickcap-{}", std::process::id()));
