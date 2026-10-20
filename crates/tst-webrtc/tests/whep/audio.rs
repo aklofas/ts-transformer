@@ -6,8 +6,8 @@ use std::time::Instant;
 
 use str0m::change::SdpOffer;
 use str0m::format::Codec;
-use str0m::media::{Direction, MediaKind};
-use str0m::{Candidate, Rtc};
+use str0m::media::{Direction, MediaKind, Mid};
+use str0m::{Candidate, Rtc, RtcConfig};
 use tst_core::mpegts::common::Pts90khz;
 use tst_webrtc::mount::MediaMsg;
 use tst_webrtc::server::negotiate::select_audio;
@@ -118,13 +118,25 @@ fn a_closed_mount_refuses_audio() {
     ));
 }
 
-/// The offer a str0m client makes: video, plus audio when asked.
+/// The offer a str0m client makes: video, plus receive-only audio when
+/// asked.
 fn offer(with_audio: bool) -> String {
-    let mut client = Rtc::builder().build(Instant::now());
+    offer_audio(with_audio.then_some(Direction::RecvOnly))
+}
+
+/// The offer a str0m client makes: video, plus audio in the viewer's
+/// direction `audio` when given.
+fn offer_audio(audio: Option<Direction>) -> String {
+    client_offer(Rtc::builder(), audio)
+}
+
+/// [`offer_audio`] from a client built from `cfg`.
+fn client_offer(cfg: RtcConfig, audio: Option<Direction>) -> String {
+    let mut client = cfg.build(Instant::now());
     let mut api = client.sdp_api();
     api.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
-    if with_audio {
-        api.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
+    if let Some(dir) = audio {
+        api.add_media(MediaKind::Audio, dir, None, None, None);
     }
     let (offer, _pending) = api.apply().expect("an offer");
     offer.to_sdp_string()
@@ -165,15 +177,61 @@ fn an_offer_without_audio_selects_nothing() {
 
 #[test]
 fn an_audio_offer_without_opus_selects_nothing() {
-    // An audio section whose only payload is PCMU.
-    let sdp = offer(true);
-    let no_opus: String = sdp
-        .lines()
-        .filter(|l| !l.to_ascii_lowercase().contains("opus"))
-        .map(|l| format!("{l}\r\n"))
-        .collect();
+    // An audio section whose only payload is PCMU. The server's str0m
+    // accepts the same offer the text describes, so neither has Opus.
+    let client = Rtc::builder()
+        .clear_codecs()
+        .enable_h264(true)
+        .enable_pcmu(true, false);
+    let sdp = client_offer(client, Some(Direction::RecvOnly));
+    assert!(sdp.contains("PCMU/8000") && !sdp.to_ascii_lowercase().contains("opus"));
     let rtc = accept(&sdp);
-    assert!(select_audio(&rtc, &no_opus).is_none());
+    let audio = rtc
+        .media(offer_mid(&sdp, "audio"))
+        .expect("the audio section is accepted");
+    assert_eq!(audio.kind(), MediaKind::Audio);
+    assert!(select_audio(&rtc, &sdp).is_none());
+}
+
+/// The `a=mid` of the offer's first `m=<kind>` section.
+fn offer_mid(sdp: &str, kind: &str) -> Mid {
+    let section = sdp
+        .split(&format!("m={kind} "))
+        .nth(1)
+        .expect("the section exists");
+    let mid = section
+        .lines()
+        .find_map(|l| l.strip_prefix("a=mid:"))
+        .expect("the section has a mid");
+    Mid::from(mid.trim())
+}
+
+/// Whether `select_audio` picks Opus for an audio section the viewer
+/// offered in direction `dir`.
+fn selects_audio_for(dir: Direction) -> bool {
+    let sdp = offer_audio(Some(dir));
+    select_audio(&accept(&sdp), &sdp).is_some()
+}
+
+#[test]
+fn a_recvonly_audio_offer_selects_opus() {
+    assert!(selects_audio_for(Direction::RecvOnly));
+}
+
+#[test]
+fn a_sendrecv_audio_offer_selects_opus() {
+    assert!(selects_audio_for(Direction::SendRecv));
+}
+
+#[test]
+fn a_sendonly_audio_offer_selects_nothing() {
+    // The viewer does not receive audio: the session is video-only.
+    assert!(!selects_audio_for(Direction::SendOnly));
+}
+
+#[test]
+fn an_inactive_audio_offer_selects_nothing() {
+    assert!(!selects_audio_for(Direction::Inactive));
 }
 
 #[test]

@@ -454,7 +454,7 @@ enum Write {
     /// str0m took it.
     Written,
     /// str0m cannot take it now; it stays at the head of the queue. Only
-    /// an RTP write is ever refused (no send stream yet).
+    /// a video RTP write is ever refused (no send stream yet).
     Refused,
     /// It was dropped (and counted); the flush goes on with the next entry.
     Discarded,
@@ -1004,7 +1004,9 @@ fn write_rtp(
 
 /// Writes one Opus packet on the viewer's audio stream: its own sequence
 /// numbers, no marker (RFC 7587 sets it after silence only), not
-/// retransmittable (browsers do not NACK Opus).
+/// retransmittable (browsers do not NACK Opus). A packet with no send
+/// stream to take it is dropped and counted, never re-queued: the video
+/// behind it must not wait on audio.
 fn write_audio(
     v: &mut Viewer,
     packet: &AudioPacket,
@@ -1016,7 +1018,9 @@ fn write_audio(
     };
     let mut api = v.rtc.direct_api();
     let Some(tx) = api.stream_tx_by_mid(mid, None) else {
-        return Write::Refused;
+        debug!(session = %v.id, "opus packet dropped: no audio send stream");
+        bump(&v.mount_state.stats.audio_frames_dropped);
+        return Write::Discarded;
     };
     tx.write_rtp(
         RtpWrite::new(
@@ -1174,6 +1178,73 @@ mod tests {
         assert_eq!(v.stats.dc_messages_dropped, 1);
         assert_eq!(handle.stats().klv_dc_dropped_viewer, 1);
         assert_eq!(v.snapshot(now).dc_messages_dropped, 1);
+    }
+
+    #[test]
+    fn an_opus_packet_without_an_audio_send_stream_never_blocks_the_video_behind_it() {
+        use str0m::format::Codec;
+        use str0m::media::{Direction, MediaKind};
+
+        use crate::MountConfig;
+        use crate::mount::{AudioPacket, MountHandle};
+        use crate::packetize::{DEFAULT_MTU_PAYLOAD, H264Packetizer, Packetizer};
+
+        // The viewer only sends audio, so str0m opens no audio send stream.
+        let now = Instant::now();
+        let mut client = Rtc::builder().build(now);
+        let mut api = client.sdp_api();
+        api.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
+        let audio_mid = api.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
+        let offer = api.apply().expect("an offer").0.to_sdp_string();
+        let mut rtc = accept(server_rtc(now, AudioPolicy::PassthroughOpus), &offer);
+        let Negotiated::Video { mid, pt, .. } = select_video(&rtc, &offer, VideoCodec::H264, None)
+        else {
+            panic!("no H.264 payload");
+        };
+        let opus = rtc
+            .codec_config()
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::Opus)
+            .expect("Opus is configured")
+            .pt();
+        assert!(rtc.direct_api().stream_tx_by_mid(audio_mid, None).is_none());
+
+        let (handle, _rx) = MountHandle::for_test(MountConfig {
+            audio: AudioPolicy::PassthroughOpus,
+            ..MountConfig::default()
+        });
+        let mut v = Viewer::new("0".repeat(32), Arc::clone(&handle.state), rtc, 0, now);
+        v.mid = Some(mid);
+        v.pt = Some(pt);
+        // As if negotiation had chosen the section anyway: the write must
+        // not depend on it never doing so.
+        v.audio = Some((audio_mid, opus));
+        v.connected = true;
+        let frame = Arc::new(FramePacket {
+            rtp_ts: 9000,
+            keyframe: true,
+            codec: VideoCodec::H264,
+            payloads: H264Packetizer.packetize(&[&[0x65, 1], &[0x65, 2]], DEFAULT_MTU_PAYLOAD),
+            parameter_sets: None,
+        });
+        let audio = || {
+            Queued::Audio(Arc::new(AudioPacket {
+                rtp_ts: 480,
+                payload: vec![0xFC, 1, 2],
+            }))
+        };
+        v.queue.push_back(audio());
+        v.queue.push_back(Queued::Rtp(Arc::clone(&frame), 0));
+        v.queue.push_back(audio());
+        v.queue.push_back(Queued::Rtp(frame, 1));
+
+        let mut counters = ServerCounters::default();
+        flush_viewer(&mut v, &CountingSink::default(), now, &mut counters);
+
+        assert!(v.queue.is_empty(), "the queue drained: {:?}", v.queue);
+        assert_eq!(v.stats.rtp_packets, 2, "both video payloads were written");
+        assert_eq!(handle.stats().audio_frames_dropped, 2);
     }
 
     /// The offer of a str0m client asking for video and audio.

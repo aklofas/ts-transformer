@@ -780,7 +780,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `push_video` and `push_klv`, and `push_audio`: policy
   `AudioPolicy::Drop` counts and discards audio, and
   `AudioPolicy::PassthroughOpus` forwards each pushed Opus packet (RFC 7587,
-  48 kHz clock) to the viewers whose offer carried Opus; `PassthroughOpus`
+  48 kHz clock) to the viewers whose offer asks to receive Opus;
+  `PassthroughOpus`
   needs an elementary mount (`MountConfig::validate` refuses it on an MP2T
   mount: the TS demuxer has no Opus mapping). MP2T mounts
   (`MountKind::Mp2t`) take `push_ts`: the mount demultiplexes the bytes and

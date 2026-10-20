@@ -21,10 +21,11 @@ pub enum MountKind {
 pub enum AudioPolicy {
     /// Audio is discarded; viewers get video and KLV only.
     Drop,
-    /// Each pushed buffer is one Opus packet (RFC 6716), forwarded to
-    /// viewers that offered Opus unchanged, one RTP payload per packet at
-    /// the 48 kHz clock (RFC 7587). Viewers that offered no Opus get video
-    /// and KLV only.
+    /// Each pushed buffer is one Opus packet (RFC 6716), forwarded
+    /// unchanged to viewers whose offer asks to receive Opus, one RTP
+    /// payload per packet at the 48 kHz clock (RFC 7587). Other viewers
+    /// (no Opus offered, or an audio section that is `sendonly` or
+    /// `inactive`) get video and KLV only.
     PassthroughOpus,
 }
 

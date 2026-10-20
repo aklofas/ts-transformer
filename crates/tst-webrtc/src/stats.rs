@@ -55,18 +55,21 @@ pub struct MountStats {
     /// Audio packets accepted by `push_audio` for the viewers.
     pub audio_frames_pushed: u64,
     /// Audio pushes discarded: `push_audio` calls under `AudioPolicy::Drop`
-    /// and demuxed TS audio events (each may hold several frames).
+    /// and demuxed TS audio events (each may hold several frames), plus,
+    /// once per viewer, an Opus packet for a viewer that has no audio send
+    /// stream to carry it.
     pub audio_frames_dropped: u64,
     /// Picture loss indications received from viewers.
     pub plis_received: u64,
     /// NACKs received from viewers.
     pub nacks_received: u64,
-    /// Video RTP payloads dropped because a queue was full: every payload
-    /// of a frame the server's media queue did not take, and of each later
-    /// frame the mount then drops until the next keyframe (counted once),
-    /// and every payload of a frame a viewer's queue did not take (counted
-    /// per viewer). KLV messages dropped the same way are counted in
-    /// `klv_dc_dropped_viewer`.
+    /// Video RTP payloads and Opus packets dropped because a queue was
+    /// full: every payload of a frame the server's media queue did not
+    /// take, and of each later frame the mount then drops until the next
+    /// keyframe (counted once), every Opus packet the media queue did not
+    /// take (counted once), and every payload or Opus packet a viewer's
+    /// queue did not take (counted per viewer). KLV messages dropped the
+    /// same way are counted in `klv_dc_dropped_viewer`.
     pub viewer_packets_dropped_queue_full: u64,
     /// Times the RTP clock was rebased after a PTS jump.
     pub rtp_clock_rebases: u64,
