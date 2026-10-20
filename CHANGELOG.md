@@ -802,6 +802,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   channel.
 - An H.265 keyframe is an IRAP picture (BLA, IDR or CRA); an H.264 keyframe
   is an IDR picture.
+- An offer that gives one payload type two formats (an `rtx` payload whose
+  `apt` names two codecs, or one number mapped to different formats in two
+  media sections) is answered with 400 before str0m sees it; str0m asserts
+  on such an offer, which would end the server's media thread.
 - `wheps://` (HTTPS signalling) is refused at bind in this release with
   `WhepServerError::Tls`. With the `tls` feature the certificate and key are
   loaded first, so an unreadable file is what the error reports; serve
@@ -1091,13 +1095,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pointed the session at the new mount while the running fanout kept
   streaming the old one, which left that fanout orphaned: the session and the
   shutdown registry named a mount the stream was not serving.
-
-### Fixed — tst-webrtc
-
-- `WhepServer`: an offer that gives one payload type two formats (an `rtx`
-  payload whose `apt` names two codecs, or one number mapped to different
-  formats in two media sections) is answered with 400. It used to panic the
-  server's media thread inside str0m, after which every offer got 503.
 
 ### Docs — project pages
 
