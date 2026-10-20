@@ -158,8 +158,8 @@ fn poll_corruption_log(
 ///
 /// PCR bases first (they are what resolve a logged coordinate to a
 /// receiver position at all), then any new sync recoveries, then PES
-/// prefix mismatches (judged against the windows those two positioned). Both are
-/// DRAINED, so each event reaches the attribution exactly once and the
+/// prefix mismatches (judged against the windows those two positioned).
+/// All three are DRAINED, so each event reaches the attribution exactly once and the
 /// reader never accumulates a history; `std::mem::take` on an empty
 /// `Vec` does not allocate, so polling per event is as cheap as the
 /// count poll this replaced.
