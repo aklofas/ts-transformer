@@ -4,8 +4,11 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
-use tst_interop::corpus::RunDir;
-use tst_interop::corpus::digest::{FileDigest, digest_bytes, klv_record_digest, load, store};
+use tst_interop::corpus::digest::{
+    FileDigest, digest_bytes, digest_config, elementary_sha256, klv_record_digest, load, store,
+};
+use tst_interop::corpus::pcr::{align_offset, prefix_end};
+use tst_interop::corpus::{FEED_CHUNK, RunDir};
 use tst_interop::fixtures::{KlvSet, klv_record_for};
 use tst_test_helpers::rawts::{self, classify_packet};
 
@@ -200,4 +203,172 @@ fn a_digest_round_trips_through_the_run_dir() {
     );
     assert_eq!(load(&run, &sha).unwrap(), d);
     assert!(load(&run, &sha_of(b"other")).is_err());
+}
+
+/// Sets the PCR base of a PCR-bearing packet, keeping the extension.
+fn set_pcr_base(pkt: &mut [u8], base: u64) {
+    pkt[6] = (base >> 25) as u8;
+    pkt[7] = (base >> 17) as u8;
+    pkt[8] = (base >> 9) as u8;
+    pkt[9] = (base >> 1) as u8;
+    pkt[10] = (pkt[10] & 0x7F) | ((base & 1) as u8) << 7;
+}
+
+/// Calls `f(packet index, packet)` for every PCR packet on the PCR PID.
+fn for_each_pcr_packet(bytes: &mut [u8], mut f: impl FnMut(usize, &mut [u8], u64)) {
+    let pcr_pid = rawts::parsed(bytes).pcr_pid.unwrap();
+    let mut n = 0;
+    for pkt in bytes.chunks_exact_mut(188) {
+        let info = classify_packet((&*pkt).try_into().unwrap()).unwrap();
+        if info.pid == pcr_pid
+            && let Some(base) = info.pcr_base
+        {
+            f(n, pkt, base);
+            n += 1;
+        }
+    }
+}
+
+#[test]
+fn rejections_inside_one_chunk_are_all_counted_whatever_the_chunking() {
+    let mut bytes = gen_profile_bytes("baseline", 2.0);
+    // Zero two PCRs well apart so each rejection sits in the same chunk.
+    for_each_pcr_packet(&mut bytes, |n, pkt, _| {
+        if n == 3 || n == 8 {
+            pkt[6..12].fill(0);
+        }
+    });
+    assert!(
+        bytes.len() < FEED_CHUNK,
+        "one chunk holds the whole capture"
+    );
+    let one = digest_config("strict_full", &bytes, FEED_CHUNK);
+    let pieces = digest_config("strict_full", &bytes, 188);
+    assert!(one.feed_errors >= 2, "{}", one.feed_errors);
+    assert_eq!(one, pieces);
+    // The tail after the last rejection is still demuxed.
+    let default = digest_config("default", &bytes, FEED_CHUNK);
+    let last = |d: &tst_interop::corpus::digest::ConfigDigest| {
+        d.pids.values().filter_map(|p| p.pts_last).max()
+    };
+    assert_eq!(last(&one), last(&default));
+    for key in ["default", "unwrap"] {
+        assert_eq!(
+            digest_config(key, &bytes, FEED_CHUNK),
+            digest_config(key, &bytes, 188 * 7)
+        );
+    }
+}
+
+/// A one-video, one-KLV stream on the given PIDs.
+fn remuxed(pmt: u16, video: u16, klv: u16) -> Vec<u8> {
+    let p = tst_interop::profiles::by_name("baseline").unwrap();
+    let mut prog = MuxerProgramConfigBuilder::new(1, pmt);
+    prog.add_video(video, VideoCodec::H264);
+    prog.add_klv(klv, KlvStreamType::PrivateData, true);
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    let mut mux = Muxer::new(b.build().unwrap()).unwrap();
+    let (vh, kh) = (mux.video_handles()[0], mux.klv_handles()[0]);
+    let mut out = Vec::new();
+    let mut buf = [0u8; 1316];
+    for i in 0..30u32 {
+        let pts = Pts90khz::new(i64::from(i) * 3000);
+        let (au, key) = tst_interop::fixtures::video_au_sized(
+            p.video,
+            i,
+            tst_interop::fixtures::AuSizeMode::Compact,
+        );
+        mux.push_video_to(vh, &au, pts, key).unwrap();
+        let rec = klv_record_for(KlvSet::Compact, 0, i).unwrap();
+        mux.push_klv_to(kh, &rec, pts, 0).unwrap();
+        loop {
+            let n = mux.pull(&mut buf);
+            if n == 0 {
+                break;
+            }
+            out.extend_from_slice(&buf[..n]);
+        }
+    }
+    out
+}
+
+#[test]
+fn the_elementary_hash_ignores_pids_and_timing_only_pids() {
+    let a = remuxed(0x1000, 0x100, 0x101);
+    let b = remuxed(0x0500, 0x0200, 0x0201);
+    let da = digest_bytes(&sha_of(&a), &a, None).unwrap();
+    let db = digest_bytes(&sha_of(&b), &b, None).unwrap();
+    assert_ne!(
+        da.configs["default"].pids.keys().collect::<Vec<_>>(),
+        db.configs["default"].pids.keys().collect::<Vec<_>>()
+    );
+    assert!(da.configs["default"].klv_records > 0);
+    assert_eq!(da.elementary_sha256, db.elementary_sha256);
+
+    // A PID that only raised timing issues does not enter the hash.
+    let mut with_timing_pid = da.configs["default"].clone();
+    let mut ghost = with_timing_pid.pids.values().next().unwrap().clone();
+    (ghost.samples, ghost.metadata) = (0, 0);
+    ghost.kind = "unknown".into();
+    ghost.nonconformant.insert("PcrAnomaly".into(), 9);
+    with_timing_pid.pids.insert(0x1FF0, ghost);
+    assert_eq!(elementary_sha256(&with_timing_pid), da.elementary_sha256);
+}
+
+#[test]
+fn nonconformant_keys_are_variant_names() {
+    let mut bytes = gen_profile_bytes("baseline", 2.0);
+    for_each_pcr_packet(&mut bytes, |n, pkt, _| {
+        if n == 3 {
+            pkt[6..12].fill(0);
+        }
+    });
+    let d = digest_bytes(&sha_of(&bytes), &bytes, None).unwrap();
+    let keys: Vec<&String> = d
+        .configs
+        .values()
+        .flat_map(|c| c.pids.values())
+        .flat_map(|p| p.nonconformant.keys())
+        .collect();
+    assert!(!keys.is_empty(), "a zeroed PCR raises issues");
+    assert!(
+        keys.iter()
+            .all(|k| k.chars().all(|c| c.is_ascii_alphanumeric())),
+        "{keys:?}"
+    );
+}
+
+#[test]
+fn a_small_backwards_pcr_step_does_not_end_the_prefix_early() {
+    let clean = gen_profile_bytes("baseline", 4.0);
+    let mut glitched = clean.clone();
+    let total = {
+        let mut n = 0;
+        for_each_pcr_packet(&mut glitched, |_, _, _| n += 1);
+        n
+    };
+    // First half one second ahead: a backwards step of about a second at the middle.
+    for_each_pcr_packet(&mut glitched, |n, pkt, base| {
+        if n < total / 2 {
+            set_pcr_base(pkt, base + 90_000);
+        }
+    });
+    let at_clean = prefix_end(&clean, 3);
+    let at_glitched = prefix_end(&glitched, 3);
+    assert!(at_clean < clean.len());
+    assert!(at_glitched > at_clean, "{at_glitched} vs {at_clean}");
+    assert_eq!(at_clean % 188, 0);
+}
+
+#[test]
+fn sync_needs_two_confirming_strides() {
+    let mut buf = vec![0u8; 1000];
+    // 0x47 at 3 and 191 but not at 379: not a packet start.
+    buf[3] = 0x47;
+    buf[191] = 0x47;
+    let real = gen_profile_bytes("baseline", 1.0);
+    buf.extend_from_slice(&real);
+    assert_eq!(align_offset(&buf), 1000);
+    assert_eq!(align_offset(&real), 0);
 }
