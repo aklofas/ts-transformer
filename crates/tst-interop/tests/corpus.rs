@@ -3,8 +3,12 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use sha2::{Digest, Sha256};
+use tst_interop::corpus::Sha256Hex;
 use tst_interop::fixtures::{AuSizeMode, KlvSet};
 
+#[path = "corpus/digest.rs"]
+mod digest;
 #[path = "corpus/inventory.rs"]
 mod inventory;
 #[path = "corpus/shape.rs"]
@@ -32,4 +36,14 @@ pub fn gen_profile_bytes(profile: &str, seconds: f64) -> Vec<u8> {
     let bytes = std::fs::read(&path).unwrap();
     let _ = std::fs::remove_file(&path);
     bytes
+}
+
+/// The SHA-256 of `bytes`, as the corpus tool prints it.
+pub fn sha_of(bytes: &[u8]) -> Sha256Hex {
+    Sha256Hex(
+        Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+    )
 }

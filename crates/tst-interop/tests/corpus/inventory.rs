@@ -96,3 +96,19 @@ fn duration_follows_the_declared_pcr_pid_only() {
     let d = inv.files[0].duration_s;
     assert!((1.5..=2.5).contains(&d), "duration {d}");
 }
+
+#[test]
+fn a_capture_that_does_not_start_on_a_packet_is_inventoried() {
+    let dir = temp_dir_named("inv-shifted");
+    let bytes = gen_profile_bytes("baseline", 2.0);
+    std::fs::write(dir.join("shifted.ts"), &bytes[100..]).unwrap();
+    let inv = inventory::build(&dir).unwrap();
+    let f = &inv.files[0];
+    assert_eq!(f.probe_error, None);
+    assert_eq!(f.shape, "a");
+    assert!(
+        (1.5..=2.5).contains(&f.duration_s),
+        "duration {}",
+        f.duration_s
+    );
+}
