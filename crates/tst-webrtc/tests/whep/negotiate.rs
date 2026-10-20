@@ -198,3 +198,19 @@ fn a_payload_str0m_holds_under_another_profile_is_not_chosen() {
     };
     assert_eq!(*pt, 102);
 }
+
+#[test]
+fn an_h264_payload_without_profile_level_id_negotiates_as_baseline() {
+    // Chrome's first mode-1 payload, 102, with its profile-level-id left
+    // out: RFC 6184 reads that as Baseline, and so does str0m.
+    let line = "a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f";
+    assert!(CHROME.contains(line));
+    let offer = CHROME.replace(
+        line,
+        "a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1",
+    );
+    let Negotiated::Video { pt, .. } = select(&offer, VideoCodec::H264, None) else {
+        panic!("no H.264 payload chosen")
+    };
+    assert_eq!(*pt, 102);
+}

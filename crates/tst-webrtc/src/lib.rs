@@ -7,9 +7,12 @@
 //! [`KLV_DC_LIMIT`] bytes (256 KiB); a larger one is refused by
 //! `push_klv`. The server's SCTP send buffer is sized for a record at the
 //! limit. A record is dropped for a viewer whose send buffer has no room
-//! for it, and browsers state the largest message they accept
-//! (`max-message-size`, 64 KiB when unstated), so a record above that size
-//! is browser-dependent. Every such drop is counted in
+//! for it. A record is sent as one data-channel message of the record plus
+//! a 13-byte header; for a viewer whose `max-message-size` is smaller than
+//! that message the record is dropped. The size is 64 KiB when the viewer
+//! states none and 256 KiB in current Chrome and Safari, so their largest
+//! record is 262 131 bytes; Firefox takes any record up to the limit.
+//! Every such drop is counted in
 //! [`MountStats::klv_dc_dropped_viewer`] and
 //! [`SessionStats::dc_messages_dropped`]. The video is never held back for
 //! the data channel.

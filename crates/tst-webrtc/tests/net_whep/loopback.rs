@@ -632,3 +632,44 @@ fn records_above_64_kib_arrive_whole_on_the_data_channel() {
     let ms = m.stats();
     assert_eq!((ms.klv_dc_messages_sent, ms.klv_dc_dropped_viewer), (2, 0));
 }
+
+#[test]
+fn a_record_whose_message_exceeds_the_viewers_max_message_size_is_dropped() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let mut cfg = MountConfig::default();
+    cfg.klv = KlvCarriage::DataChannelOnly;
+    let m = srv.add_mount("/cam", cfg).unwrap();
+    let mut v = TestViewer::new();
+    let offer = v.offer(true);
+    // str0m's viewer advertises a fixed max-message-size of 262144, as
+    // Chrome and Safari do.
+    assert!(offer.contains("a=max-message-size:262144"), "{offer}");
+    let (status, _, answer) = whep_post(srv.local_addr(), "/cam", &offer, None);
+    assert_eq!(status, 201, "{answer}");
+    v.accept_answer(&answer);
+    assert!(
+        v.pump(|v| v.connected && v.dc_open, CONNECT),
+        "{}",
+        v.trace()
+    );
+
+    // The larger record goes first, while the send buffer is empty, so the
+    // message size alone refuses it: 262 132 + 13 = 262 145 bytes.
+    let too_big = vec![0xa5u8; 262_132];
+    let largest = vec![0x5au8; 262_131];
+    let aus = h264_gop();
+    m.push_klv(&too_big, pts(0), 0).unwrap();
+    m.push_video(&aus[0].0, pts(0), aus[0].1).unwrap();
+    m.push_klv(&largest, pts(1), 0).unwrap();
+    m.push_video(&aus[1].0, pts(1), aus[1].1).unwrap();
+
+    let done = v.pump(|v| v.frames.len() >= 2 && !v.dc_msgs.is_empty(), DELIVER);
+    assert!(done, "{} {:?}", v.trace(), m.stats());
+    assert_eq!(v.dc_msgs.len(), 1);
+    assert_eq!(v.dc_msgs[0].len(), 13 + largest.len());
+    assert_eq!(&v.dc_msgs[0][13..], &largest[..]);
+    let ms = m.stats();
+    assert_eq!((ms.klv_dc_messages_sent, ms.klv_dc_dropped_viewer), (1, 1));
+    let session = m.sessions().pop().expect("the session");
+    assert_eq!(session.dc_messages_dropped, 1);
+}
