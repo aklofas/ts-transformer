@@ -157,3 +157,77 @@ fn sweep_output_names_no_path() {
     assert!(!text.contains("junk.ts"), "{text}");
     assert!(!text.contains(dir.to_str().unwrap()), "{text}");
 }
+
+fn assert_no_path(text: &str, dir: &Path) {
+    assert!(!text.contains(dir.to_str().unwrap()), "{text}");
+    for part in dir.components().filter_map(|c| c.as_os_str().to_str()) {
+        if part.len() > 3 && part != "tmp" {
+            assert!(!text.contains(part), "{part} leaked: {text}");
+        }
+    }
+}
+
+#[test]
+fn a_missing_corpus_directory_exits_2_without_naming_it() {
+    let dir = std::env::temp_dir().join(format!("tst-corpus-absent-dir-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let run = temp_dir_named("sw-missing-run");
+    let out = sweep(&dir, &run, &[]);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("corpus directory"), "{text}");
+    assert_no_path(&text, &dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_capture_exits_2_without_naming_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = temp_dir_named("sw-unreadable");
+    let f = dir.join("locked.ts");
+    std::fs::write(&f, gen_profile_bytes("baseline", 1.0)).unwrap();
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::File::open(&f).is_ok() {
+        return; // running as a user the mode does not bind
+    }
+    let run = temp_dir_named("sw-unreadable-run");
+    let out = sweep(&dir, &run, &[]);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("file 1 of 1"), "{text}");
+    assert!(!text.contains("locked.ts"), "{text}");
+    assert_no_path(&text, &dir);
+}
+
+#[test]
+fn a_baseline_that_is_the_runs_own_digests_directory_is_refused() {
+    let (dir, _) = two_files("sw-ownbase");
+    let run = temp_dir_named("sw-ownbase-run");
+    let own = run.join("digests");
+    let out = sweep(&dir, &run, &["--baseline", own.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("own digests directory"));
+    assert!(!run.join("digests").exists());
+}
+
+#[test]
+fn a_corrupt_inventory_is_an_error_not_a_rebuild() {
+    let (dir, _) = two_files("sw-badinv");
+    let run = temp_dir_named("sw-badinv-run");
+    std::fs::write(run.join("inventory.json"), "{ not json").unwrap();
+    let out = sweep(&dir, &run, &[]);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("inventory.json"));
+    assert_eq!(
+        std::fs::read_to_string(run.join("inventory.json")).unwrap(),
+        "{ not json"
+    );
+}

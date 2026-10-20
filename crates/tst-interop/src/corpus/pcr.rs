@@ -164,15 +164,49 @@ impl PcrScan {
 /// `bytes[..offset]` excludes that packet. `bytes.len()` when the capture
 /// is shorter. The digest and the replay pacer cut at this same point.
 pub fn prefix_end(bytes: &[u8], seconds: u32) -> usize {
-    let pcr_pid = parse_prefix(&bytes[align_offset(bytes)..])
+    let mut r = bytes;
+    prefix_end_read(&mut r, seconds).expect("reading a slice cannot fail") as usize
+}
+
+/// [`prefix_end`] over a reader: the same cut, found without holding the
+/// capture in memory. Returns the byte count read when the capture is
+/// shorter than `seconds`.
+pub fn prefix_end_read<R: std::io::Read>(r: &mut R, seconds: u32) -> std::io::Result<u64> {
+    // PMT_PREFIX bytes after alignment, and alignment skips under one packet.
+    use std::io::Read as _;
+    let mut head = Vec::with_capacity(PMT_PREFIX + PKT);
+    std::io::Read::take(&mut *r, (PMT_PREFIX + PKT) as u64).read_to_end(&mut head)?;
+    let pcr_pid = parse_prefix(&head[align_offset(&head)..])
         .ok()
         .and_then(|p| p.pcr_pid);
     let mut scan = PcrScan::with_cut(pcr_pid, u64::from(seconds) * PCR_BASE_HZ);
-    for chunk in bytes.chunks(FEED_CHUNK) {
-        scan.feed(chunk);
-        if let Some(at) = scan.cut_at() {
-            return at as usize;
+    let mut total = 0u64;
+    let mut buf = vec![0u8; FEED_CHUNK];
+    let mut pending: &[u8] = &head;
+    loop {
+        let n = if pending.is_empty() {
+            let mut filled = 0;
+            while filled < buf.len() {
+                let k = r.read(&mut buf[filled..])?;
+                if k == 0 {
+                    break;
+                }
+                filled += k;
+            }
+            filled
+        } else {
+            let k = pending.len().min(FEED_CHUNK);
+            buf[..k].copy_from_slice(&pending[..k]);
+            pending = &pending[k..];
+            k
+        };
+        if n == 0 {
+            return Ok(total);
         }
+        scan.feed(&buf[..n]);
+        if let Some(at) = scan.cut_at() {
+            return Ok(at);
+        }
+        total += n as u64;
     }
-    bytes.len()
 }

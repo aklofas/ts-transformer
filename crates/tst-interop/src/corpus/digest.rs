@@ -13,7 +13,7 @@ use tst_core::mpegts::demux::{
 };
 
 use super::inventory::kind_name;
-use super::pcr::prefix_end;
+use super::pcr::{prefix_end, prefix_end_read};
 use super::{FEED_CHUNK, RunDir, Sha256Hex};
 
 /// The configurations every capture is digested under, in the order run.
@@ -291,12 +291,15 @@ impl Pass {
     }
 }
 
-/// The digest of `bytes` under one configuration, fed `chunk` bytes at a
-/// time. The result does not depend on `chunk`.
-pub fn digest_config(key: &str, bytes: &[u8], chunk: usize) -> ConfigDigest {
+/// One full pass over a capture: calls the sink with each chunk in order.
+type Source<'a> = &'a mut dyn FnMut(&mut dyn FnMut(&[u8])) -> Result<(), String>;
+
+/// The digest of one configuration over whatever `source` delivers. Both
+/// the in-memory and the file-streaming entries run this code.
+fn digest_pass(key: &str, source: Source<'_>) -> Result<ConfigDigest, String> {
     let mut demuxer = Demuxer::with_config(config_for(key));
     let mut pass = Pass::new();
-    for piece in bytes.chunks(chunk) {
+    source(&mut |piece: &[u8]| {
         // A rejection returns at once with the rest of the input still
         // buffered and the issue queued. Empty feeds resume it, one
         // rejection per call, so every one is counted exactly once whatever
@@ -308,11 +311,11 @@ pub fn digest_config(key: &str, bytes: &[u8], chunk: usize) -> ConfigDigest {
             input = &[];
         }
         pass.drain(&mut demuxer);
-    }
+    })?;
     demuxer.flush();
     pass.drain(&mut demuxer);
     let stats = demuxer.stats();
-    ConfigDigest {
+    Ok(ConfigDigest {
         feed_errors: pass.feed_errors,
         feed_error_kinds: pass.feed_error_kinds,
         pids: pass
@@ -335,6 +338,33 @@ pub fn digest_config(key: &str, bytes: &[u8], chunk: usize) -> ConfigDigest {
             programs_seen: stats.programs_seen,
             unwrap_reanchors: stats.unwrap_reanchors,
         },
+    })
+}
+
+/// The digest of `bytes` under one configuration, fed `chunk` bytes at a
+/// time. The result does not depend on `chunk`.
+pub fn digest_config(key: &str, bytes: &[u8], chunk: usize) -> ConfigDigest {
+    digest_pass(key, &mut |sink| {
+        bytes.chunks(chunk).for_each(&mut *sink);
+        Ok(())
+    })
+    .expect("an in-memory pass cannot fail")
+}
+
+fn finish(
+    sha: Sha256Hex,
+    bytes: u64,
+    prefix_seconds: Option<u32>,
+    configs: BTreeMap<String, ConfigDigest>,
+) -> FileDigest {
+    let elementary_sha256 = elementary_sha256(&configs["default"]);
+    FileDigest {
+        schema_version: 1,
+        sha256: sha,
+        bytes,
+        prefix_seconds,
+        configs,
+        elementary_sha256,
     }
 }
 
@@ -353,15 +383,100 @@ pub fn digest_bytes(
         .iter()
         .map(|key| (key.to_string(), digest_config(key, fed, FEED_CHUNK)))
         .collect();
-    let elementary_sha256 = elementary_sha256(&configs["default"]);
-    Ok(FileDigest {
-        schema_version: 1,
-        sha256: sha.clone(),
-        bytes: bytes.len() as u64,
+    Ok(finish(
+        sha.clone(),
+        bytes.len() as u64,
         prefix_seconds,
         configs,
-        elementary_sha256,
-    })
+    ))
+}
+
+/// Fills `buf` from `f`; fewer bytes only at end of file.
+fn fill(f: &mut std::fs::File, buf: &mut [u8]) -> Result<usize, String> {
+    use std::io::Read;
+    let mut filled = 0;
+    while filled < buf.len() {
+        let n = f
+            .read(&mut buf[filled..])
+            .map_err(|e| format!("read failed: {}", e.kind()))?;
+        if n == 0 {
+            break;
+        }
+        filled += n;
+    }
+    Ok(filled)
+}
+
+/// Reads the file in [`FEED_CHUNK`] pieces, hands the first `feed_limit`
+/// bytes to `sink`, and, with a hasher, reads on to the end hashing every
+/// byte. Returns the bytes read. Errors name no path.
+fn stream_file(
+    path: &std::path::Path,
+    feed_limit: u64,
+    mut hasher: Option<&mut Sha256>,
+    sink: &mut dyn FnMut(&[u8]),
+) -> Result<u64, String> {
+    let mut f = std::fs::File::open(path).map_err(|e| format!("open failed: {}", e.kind()))?;
+    let mut buf = vec![0u8; FEED_CHUNK];
+    let mut pos = 0u64;
+    loop {
+        let n = fill(&mut f, &mut buf)?;
+        if n == 0 {
+            break;
+        }
+        if let Some(h) = hasher.as_deref_mut() {
+            h.update(&buf[..n]);
+        }
+        if pos < feed_limit {
+            let take = (feed_limit - pos).min(n as u64) as usize;
+            sink(&buf[..take]);
+        }
+        pos += n as u64;
+        if hasher.is_none() && pos >= feed_limit {
+            break;
+        }
+    }
+    Ok(pos)
+}
+
+/// The streaming twin of [`digest_bytes`]: reads the file chunk by chunk,
+/// once per configuration, never holding it in memory. The first pass also
+/// computes the file's SHA-256; a known `sha` must match it. Errors name no
+/// path.
+pub fn digest_file(
+    sha: Option<&Sha256Hex>,
+    path: &std::path::Path,
+    prefix_seconds: Option<u32>,
+) -> Result<FileDigest, String> {
+    let limit = match prefix_seconds {
+        Some(s) => {
+            let mut f =
+                std::fs::File::open(path).map_err(|e| format!("open failed: {}", e.kind()))?;
+            prefix_end_read(&mut f, s).map_err(|e| format!("read failed: {}", e.kind()))?
+        }
+        None => u64::MAX,
+    };
+    let mut hasher = Sha256::new();
+    let mut total = 0u64;
+    let mut configs = BTreeMap::new();
+    for (i, key) in CONFIG_KEYS.iter().enumerate() {
+        let d = digest_pass(key, &mut |sink| {
+            let h = (i == 0).then_some(&mut hasher);
+            let n = stream_file(path, limit, h, sink)?;
+            if i == 0 {
+                total = n;
+            }
+            Ok(())
+        })?;
+        configs.insert(key.to_string(), d);
+    }
+    let actual = Sha256Hex(hex(&hasher.finalize()));
+    if let Some(expected) = sha
+        && *expected != actual
+    {
+        return Err("content changed since the inventory".to_string());
+    }
+    Ok(finish(actual, total, prefix_seconds, configs))
 }
 
 /// SHA-256 over what a capture carries independent of how it is packetised.
@@ -401,16 +516,21 @@ fn digest_path(run: &RunDir, sha: &Sha256Hex) -> PathBuf {
 }
 
 pub fn load(run: &RunDir, sha: &Sha256Hex) -> Result<FileDigest, String> {
-    let path = digest_path(run, sha);
-    let text =
-        std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    serde_json::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))
+    let text = std::fs::read_to_string(digest_path(run, sha))
+        .map_err(|e| format!("cannot read digest {sha}.json: {}", e.kind()))?;
+    serde_json::from_str(&text).map_err(|e| format!("cannot parse digest {sha}.json: {e}"))
 }
 
 pub fn store(run: &RunDir, d: &FileDigest) -> Result<(), String> {
-    let path = digest_path(run, &d.sha256);
     let dir = run.root.join("digests");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("cannot create digests in the run directory: {}", e.kind()))?;
     let text = serde_json::to_string_pretty(d).map_err(|e| format!("digest json: {e}"))?;
-    std::fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
+    std::fs::write(digest_path(run, &d.sha256), text).map_err(|e| {
+        format!(
+            "cannot write digest {}.json in the run directory: {}",
+            d.sha256,
+            e.kind()
+        )
+    })
 }

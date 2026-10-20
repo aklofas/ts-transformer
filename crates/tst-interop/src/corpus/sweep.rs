@@ -7,7 +7,6 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::digest::{self, CONFIG_KEYS, FileDigest};
 use super::invariants::InvariantFailure;
@@ -39,7 +38,8 @@ pub struct SweepFile {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SweepSummary {
     pub schema_version: u32,
-    /// `git rev-parse HEAD` when run inside a repository, else `None`.
+    /// `git rev-parse HEAD` of the repository the tool ran from (its working
+    /// directory, not the corpus), `None` outside one.
     pub tree: Option<String>,
     pub configs: Vec<String>,
     pub files: u64,
@@ -66,16 +66,7 @@ fn git_head() -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
-fn sha_of_bytes(bytes: &[u8]) -> Sha256Hex {
-    Sha256Hex(
-        Sha256::digest(bytes)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect(),
-    )
-}
-
-/// Digests one distinct capture. Errors name no path.
+/// Digests one distinct capture by streaming it. Errors name no path.
 fn digest_entry(entry: &FileEntry) -> Result<FileDigest, String> {
     if let Some(e) = &entry.probe_error {
         return Err(e.clone());
@@ -84,12 +75,7 @@ fn digest_entry(entry: &FileEntry) -> Result<FileDigest, String> {
         .paths
         .first()
         .ok_or_else(|| "inventory entry has no path".to_string())?;
-    let bytes = std::fs::read(path).map_err(|e| format!("read failed: {}", e.kind()))?;
-    let sha = sha_of_bytes(&bytes);
-    if sha != entry.sha256 {
-        return Err("content changed since the inventory".to_string());
-    }
-    digest::digest_bytes(&sha, &bytes, None)
+    digest::digest_file(Some(&entry.sha256), path, None)
 }
 
 fn same_but_version(a: &FileDigest, b: &FileDigest) -> bool {
@@ -99,13 +85,24 @@ fn same_but_version(a: &FileDigest, b: &FileDigest) -> bool {
 }
 
 pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
-    let inv = match inventory::read(&args.run) {
-        Ok(inv) => inv,
-        Err(_) => {
-            let inv = inventory::build(&args.dir)?;
-            inventory::write(&inv, &args.run)?;
-            inv
+    if let Some(b) = &args.baseline {
+        let own = args.run.root.join("digests");
+        let same =
+            b == &own || matches!((b.canonicalize(), own.canonicalize()), (Ok(x), Ok(y)) if x == y);
+        if same {
+            return Err(
+                "--baseline must not be the run's own digests directory; a sweep would overwrite it"
+                    .to_string(),
+            );
         }
+    }
+    // Only an absent inventory is rebuilt; an unreadable one is an error.
+    let inv = if inventory::exists(&args.run) {
+        inventory::read(&args.run)?
+    } else {
+        let inv = inventory::build(&args.dir)?;
+        inventory::write(&inv, &args.run)?;
+        inv
     };
     let next = AtomicUsize::new(0);
     let results: Mutex<Vec<(usize, Result<FileDigest, String>)>> = Mutex::new(Vec::new());
@@ -151,7 +148,6 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
                 FileOutcome::ParseFailure(e)
             }
             Ok(d) => {
-                digest::store(&args.run, &d)?;
                 let base = match &args.baseline {
                     None => None,
                     Some(dir) => {
@@ -168,6 +164,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
                         }
                     }
                 };
+                digest::store(&args.run, &d)?;
                 match base {
                     None | Some(None) => {
                         summary.new_no_baseline += 1;
@@ -207,6 +204,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
             summary.unused_accepts.push(sha.clone());
         }
     }
+    summary.unused_accepts.sort_by(|a, b| a.0.cmp(&b.0));
     summary.pass = summary.changed_unexplained == 0
         && summary.parse_failures == 0
         && summary.invariant_failures == 0
