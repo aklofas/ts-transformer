@@ -7,9 +7,8 @@ use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
 use tst_webrtc::{AudioPolicy, MountConfig, MountHandle, WhepServer};
 
-use crate::fixtures::{TestViewer, h264_gop, join, join_with_audio, pump_all};
+use crate::fixtures::{TestViewer, connect_all, h264_gop, join, join_with_audio};
 
-const CONNECT: Duration = Duration::from_secs(5);
 const DELIVER: Duration = Duration::from_secs(10);
 
 /// 20 ms of the 90 kHz clock.
@@ -26,24 +25,6 @@ fn opus_packet(i: u8) -> Vec<u8> {
     let mut p = vec![0xFC, 0x01, i];
     p.extend(std::iter::repeat_n(i, 30));
     p
-}
-
-fn connect(m: &MountHandle, viewers: &mut [TestViewer]) {
-    let n = viewers.len();
-    let ok = pump_all(
-        viewers,
-        |vs| {
-            vs.iter().all(|v| v.connected)
-                && m.sessions()
-                    .iter()
-                    .filter(|s| s.connected_for.is_some())
-                    .count()
-                    == n
-        },
-        CONNECT,
-    );
-    let traces: Vec<String> = viewers.iter().map(TestViewer::trace).collect();
-    assert!(ok, "viewers did not connect: {traces:?}");
 }
 
 fn push_gop(m: &MountHandle, frames: usize) {
@@ -63,7 +44,7 @@ fn fifty_opus_packets_arrive_on_the_audio_mid_at_48_khz() {
         !answer.contains("m=audio 0 "),
         "audio is answered: {answer}"
     );
-    connect(&m, std::slice::from_mut(&mut v));
+    connect_all(&m, std::slice::from_mut(&mut v));
 
     push_gop(&m, 3);
     for i in 0..50u8 {
@@ -94,7 +75,7 @@ fn a_viewer_without_audio_gets_video_unaffected_under_passthrough() {
     let m = srv.add_mount("/cam", opus_config()).unwrap();
     let mut v = TestViewer::new();
     join(srv.local_addr(), "/cam", &mut v, false);
-    connect(&m, std::slice::from_mut(&mut v));
+    connect_all(&m, std::slice::from_mut(&mut v));
 
     push_gop(&m, 5);
     for i in 0..10u8 {
@@ -116,7 +97,7 @@ fn a_dropping_mount_rejects_the_audio_section_and_still_serves_video() {
         answer.contains("m=audio 0 "),
         "the audio section is rejected: {answer}"
     );
-    connect(&m, std::slice::from_mut(&mut v));
+    connect_all(&m, std::slice::from_mut(&mut v));
 
     push_gop(&m, 5);
     for i in 0..10u8 {

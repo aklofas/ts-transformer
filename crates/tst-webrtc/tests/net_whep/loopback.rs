@@ -11,12 +11,12 @@ use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
 use tst_webrtc::url::WhepUrl;
 use tst_webrtc::{
-    KlvCarriage, ManualClock, MountConfig, MountHandle, PushError, VideoCodec, WhepServer,
-    WhepServerError,
+    KlvCarriage, ManualClock, MountConfig, PushError, VideoCodec, WhepServer, WhepServerError,
 };
 
 use crate::fixtures::{
-    TestViewer, eventually, h264_gop, http, join, klv_record, pump_all, read_response, whep_post,
+    TestViewer, connect_all, eventually, h264_gop, http, join, klv_record, pump_all, read_response,
+    whep_post,
 };
 
 const CONNECT: Duration = Duration::from_secs(5);
@@ -31,26 +31,6 @@ fn pts(i: usize) -> Pts90khz {
 fn has_idr(au: &[u8]) -> bool {
     au.windows(5)
         .any(|w| w[..4] == [0, 0, 0, 1] && w[4] & 0x1f == 5)
-}
-
-/// Pumps the viewers until each is connected and the server reports every
-/// session on `m` connected.
-fn connect_all(m: &MountHandle, viewers: &mut [TestViewer]) {
-    let n = viewers.len();
-    let ok = pump_all(
-        viewers,
-        |vs| {
-            vs.iter().all(|v| v.connected)
-                && m.sessions()
-                    .iter()
-                    .filter(|s| s.connected_for.is_some())
-                    .count()
-                    == n
-        },
-        CONNECT,
-    );
-    let traces: Vec<String> = viewers.iter().map(TestViewer::trace).collect();
-    assert!(ok, "viewers did not connect: {traces:?}");
 }
 
 #[test]
