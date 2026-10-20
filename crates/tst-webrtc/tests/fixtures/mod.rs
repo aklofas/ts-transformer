@@ -24,6 +24,12 @@ pub mod tls_certs;
 /// How long the viewers get to connect.
 const CONNECT_WAIT: Duration = Duration::from_secs(5);
 
+/// How long a test waits for `WhepServer::stop` to report back: its
+/// contract, a 1 s connect that wakes the accept thread plus at most 2 s
+/// for each of its two threads. The test's own bound, not a timing
+/// assertion on `stop`.
+pub const STOP_REPORT: Duration = Duration::from_secs(5);
+
 /// The 30-frame GOP: IDR first, then 29 P frames, each opened by an AUD.
 const GOP: &[u8] = include_bytes!("h264/gop.h264");
 

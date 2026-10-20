@@ -460,7 +460,7 @@ sha256 = "b9a81ea4c0218d1bea728bf41bf71beb1430443c1e52e5f7b5141e2038aec4ab"
 
 [[file]]
 path = "crates/tst-webrtc/tests/fixtures/mod.rs"
-sha256 = "a2b7eebda1718a65920ad906f68cd469df8e10c3abf4c52bb71e577b4b29f76f"
+sha256 = "39a65d6c3e9bd1a3dad35fc3211d1802cd82899362f497b1fdd5ee00816b8614"
 
 [[file]]
 path = "crates/tst-webrtc/tests/fixtures/offers/README.md"
