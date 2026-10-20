@@ -17,6 +17,9 @@ use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, Input, Output, Rtc, RtcConfig, RtcError};
 use tst_core::klv::st0601::{UasDatalinkLs, encode_to_vec};
 
+#[cfg(feature = "tls")]
+pub mod tls_certs;
+
 /// The 30-frame GOP: IDR first, then 29 P frames, each opened by an AUD.
 const GOP: &[u8] = include_bytes!("h264/gop.h264");
 
@@ -270,6 +273,27 @@ pub fn pump_all(
 /// the body.
 pub type HttpResponse = (u16, HashMap<String, String>, String);
 
+/// The bytes of one HTTP/1.1 request.
+fn request_bytes(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> Vec<u8> {
+    let mut req = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Length: {}\r\n",
+        body.len()
+    );
+    for (name, value) in headers {
+        req.push_str(&format!("{name}: {value}\r\n"));
+    }
+    req.push_str("\r\n");
+    let mut bytes = req.into_bytes();
+    bytes.extend_from_slice(body);
+    bytes
+}
+
 /// One HTTP/1.1 exchange over a fresh connection.
 pub fn http(
     addr: SocketAddr,
@@ -281,18 +305,56 @@ pub fn http(
     let mut s = TcpStream::connect(addr).expect("connect to the signalling port");
     s.set_read_timeout(Some(Duration::from_secs(10)))
         .expect("read timeout");
-    let mut req = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Length: {}\r\n",
-        body.len()
-    );
-    for (name, value) in headers {
-        req.push_str(&format!("{name}: {value}\r\n"));
-    }
-    req.push_str("\r\n");
-    let mut bytes = req.into_bytes();
-    bytes.extend_from_slice(body);
-    s.write_all(&bytes).expect("send the request");
+    s.write_all(&request_bytes(addr, method, path, headers, body))
+        .expect("send the request");
     read_response(&mut s)
+}
+
+/// A TLS client connection to `addr` that trusts `root_pem` and names the
+/// server `localhost`.
+#[cfg(feature = "tls")]
+pub fn tls_client(
+    addr: SocketAddr,
+    root_pem: &str,
+) -> rustls::StreamOwned<rustls::ClientConnection, TcpStream> {
+    use std::sync::Arc;
+    let roots = tst_core::net::tls::load_root_store(root_pem.as_bytes()).expect("trust bundle");
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .expect("protocol versions")
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    let conn = rustls::ClientConnection::new(Arc::new(config), "localhost".try_into().unwrap())
+        .expect("client connection");
+    let sock = TcpStream::connect(addr).expect("connect to the signalling port");
+    sock.set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("read timeout");
+    rustls::StreamOwned::new(conn, sock)
+}
+
+/// [`http`] over TLS.
+#[cfg(feature = "tls")]
+pub fn https(
+    addr: SocketAddr,
+    root_pem: &str,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> HttpResponse {
+    let mut s = tls_client(addr, root_pem);
+    s.write_all(&request_bytes(addr, method, path, headers, body))
+        .expect("send the request");
+    let mut raw = Vec::new();
+    match s.read_to_end(&mut raw) {
+        Ok(_) => {}
+        // A server that closes without close_notify after its response.
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof && !raw.is_empty() => {}
+        Err(e) => panic!("read the response: {e}"),
+    }
+    parse_response(&raw).unwrap_or_else(|| panic!("not an HTTP response: {raw:?}"))
 }
 
 /// Reads a response until the server closes the connection.
@@ -323,6 +385,23 @@ pub fn whep_post(addr: SocketAddr, mount: &str, offer: &str, bearer: Option<&str
         headers.push(("Authorization", a.as_str()));
     }
     http(addr, "POST", mount, &headers, offer.as_bytes())
+}
+
+/// [`whep_post`] over TLS.
+#[cfg(feature = "tls")]
+pub fn whep_post_tls(
+    addr: SocketAddr,
+    root_pem: &str,
+    mount: &str,
+    offer: &str,
+    bearer: Option<&str>,
+) -> HttpResponse {
+    let auth = bearer.map(|t| format!("Bearer {t}"));
+    let mut headers = vec![("Content-Type", "application/sdp")];
+    if let Some(a) = &auth {
+        headers.push(("Authorization", a.as_str()));
+    }
+    https(addr, root_pem, "POST", mount, &headers, offer.as_bytes())
 }
 
 /// POSTs the viewer's offer, applies the answer, and returns the session

@@ -110,3 +110,20 @@ fn an_empty_token_is_refused() {
         "{err:?}"
     );
 }
+
+#[test]
+fn cert_and_key_on_a_plaintext_whep_url_are_refused() {
+    for s in [
+        "whep://127.0.0.1:8889?cert=/c.pem",
+        "whep://127.0.0.1:8889?key=/k.pem",
+        "whep://127.0.0.1:8889?cert=/c.pem&key=/k.pem",
+    ] {
+        match WhepUrl::parse(s) {
+            Err(UrlError::BadQueryValue { key, detail, .. }) => {
+                assert!(key == "cert" || key == "key", "{s}: {key}");
+                assert!(detail.contains("plaintext"), "{detail}");
+            }
+            other => panic!("{s}: expected BadQueryValue, got {other:?}"),
+        }
+    }
+}

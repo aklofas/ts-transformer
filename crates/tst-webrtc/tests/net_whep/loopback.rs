@@ -591,42 +591,13 @@ fn removing_a_mount_closes_its_sessions() {
     assert!(m.sessions().is_empty());
 }
 
-#[cfg(feature = "tls")]
-#[test]
-fn wheps_bind_loads_the_certificate_then_is_refused() {
-    let missing = std::env::temp_dir().join("tst-webrtc-no-such-cert.pem");
-    let url = format!("wheps://127.0.0.1:0?cert={0}&key={0}", missing.display());
-    match WhepServer::bind(&url) {
-        Err(WhepServerError::Tls(detail)) => {
-            assert!(
-                !detail.contains("not served"),
-                "the load failure is reported: {detail}"
-            )
-        }
-        other => panic!("{other:?}"),
-    }
-
-    let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
-    let cert = tempfile::Builder::new().suffix(".pem").tempfile().unwrap();
-    let key = tempfile::Builder::new().suffix(".pem").tempfile().unwrap();
-    std::fs::write(cert.path(), generated.cert.pem()).unwrap();
-    std::fs::write(key.path(), generated.signing_key.serialize_pem()).unwrap();
-    let url = format!(
-        "wheps://127.0.0.1:0?cert={}&key={}",
-        cert.path().display(),
-        key.path().display()
-    );
-    match WhepServer::bind(&url) {
-        Err(WhepServerError::Tls(detail)) => assert!(detail.contains("not served"), "{detail}"),
-        other => panic!("{other:?}"),
-    }
-}
-
 #[cfg(not(feature = "tls"))]
 #[test]
 fn wheps_bind_without_the_tls_feature_is_refused() {
     match WhepServer::bind("wheps://127.0.0.1:0?cert=c.pem&key=k.pem") {
-        Err(WhepServerError::Tls(detail)) => assert!(detail.contains("`tls` feature"), "{detail}"),
+        Err(WhepServerError::Tls(detail)) => {
+            assert!(detail.contains("built without the tls feature"), "{detail}")
+        }
         other => panic!("{other:?}"),
     }
 }

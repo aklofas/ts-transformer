@@ -1,5 +1,5 @@
-//! The server's accept thread: one plain-TCP listener, one WHEP exchange
-//! per connection, handled inline.
+//! The server's accept thread: one TCP listener (wrapped in rustls for
+//! `wheps://`), one WHEP exchange per connection, handled inline.
 //!
 //! An exchange is small (a request head, an SDP offer of a few
 //! kilobytes, the answer), so connections are served one after another on
@@ -42,6 +42,74 @@ const LINGER_BYTES: usize = 64 * 1024;
 
 /// The `Retry-After` value sent with a 503 at the viewer cap, in seconds.
 const RETRY_AFTER_CAP_SECS: &str = "5";
+
+/// An accepted connection: plain TCP, or TCP under a rustls server session.
+/// The TLS handshake runs inside the first read, under the same slice and
+/// deadline as any other read.
+enum Conn {
+    Plain(TcpStream),
+    #[cfg(feature = "tls")]
+    Tls(Box<rustls::StreamOwned<rustls::ServerConnection, TcpStream>>),
+}
+
+impl Conn {
+    fn new(stream: TcpStream, shared: &Shared) -> io::Result<Self> {
+        #[cfg(feature = "tls")]
+        if let Some(config) = &shared.tls {
+            let conn = rustls::ServerConnection::new(Arc::clone(config))
+                .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?;
+            return Ok(Self::Tls(Box::new(rustls::StreamOwned::new(conn, stream))));
+        }
+        let _ = shared;
+        Ok(Self::Plain(stream))
+    }
+
+    fn sock(&self) -> &TcpStream {
+        match self {
+            Self::Plain(s) => s,
+            #[cfg(feature = "tls")]
+            Self::Tls(s) => &s.sock,
+        }
+    }
+
+    /// Tells a TLS peer the response is complete, so it does not take the
+    /// close for a truncation.
+    fn finish(&mut self) {
+        #[cfg(feature = "tls")]
+        if let Self::Tls(s) = self {
+            s.conn.send_close_notify();
+            let _ = s.flush();
+        }
+    }
+}
+
+impl Read for Conn {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Plain(s) => s.read(buf),
+            #[cfg(feature = "tls")]
+            Self::Tls(s) => s.read(buf),
+        }
+    }
+}
+
+impl Write for Conn {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Plain(s) => s.write(buf),
+            #[cfg(feature = "tls")]
+            Self::Tls(s) => s.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::Plain(s) => s.flush(),
+            #[cfg(feature = "tls")]
+            Self::Tls(s) => s.flush(),
+        }
+    }
+}
 
 /// The running accept thread.
 pub(crate) struct AcceptThread {
@@ -129,10 +197,17 @@ fn run(listener: &TcpListener, shared: &Shared) {
 }
 
 /// Serves one connection: reads the request, answers it, closes.
-fn serve(mut stream: TcpStream, peer: SocketAddr, shared: &Shared) {
+fn serve(stream: TcpStream, peer: SocketAddr, shared: &Shared) {
     if let Err(e) = stream.set_write_timeout(Some(WRITE_TIMEOUT)) {
         debug!(%peer, error = %e, "WHEP connection: set_write_timeout failed");
     }
+    let mut stream = match Conn::new(stream, shared) {
+        Ok(c) => c,
+        Err(e) => {
+            debug!(%peer, error = %e, "WHEP connection: TLS session setup failed");
+            return;
+        }
+    };
     let (response, unread) = match read_request(&mut stream, shared) {
         Ok((request, body)) => (answer(&request, &body, peer, shared), false),
         Err(ReadFailure::Respond(r)) => (r, true),
@@ -143,6 +218,7 @@ fn serve(mut stream: TcpStream, peer: SocketAddr, shared: &Shared) {
         debug!(%peer, error = %e, "WHEP response write failed");
         return;
     }
+    stream.finish();
     if unread {
         linger(&mut stream);
     }
@@ -151,14 +227,14 @@ fn serve(mut stream: TcpStream, peer: SocketAddr, shared: &Shared) {
 /// Ends the sending side and reads (and discards) what the client still
 /// sends, briefly. Closing a socket with unread input resets the
 /// connection, which can destroy the response before the client reads it.
-fn linger(stream: &mut TcpStream) {
-    let _ = stream.shutdown(Shutdown::Write);
+fn linger(stream: &mut Conn) {
+    let _ = stream.sock().shutdown(Shutdown::Write);
     let end = Instant::now() + LINGER;
     let mut sink = [0u8; 4096];
     let mut left = LINGER_BYTES;
     while left > 0 {
         let wait = end.saturating_duration_since(Instant::now());
-        if wait.is_zero() || stream.set_read_timeout(Some(wait)).is_err() {
+        if wait.is_zero() || stream.sock().set_read_timeout(Some(wait)).is_err() {
             return;
         }
         match stream.read(&mut sink) {
@@ -177,10 +253,7 @@ enum ReadFailure {
 }
 
 /// Reads a request head and its body within [`REQUEST_DEADLINE`].
-fn read_request(
-    stream: &mut TcpStream,
-    shared: &Shared,
-) -> Result<(Request, Vec<u8>), ReadFailure> {
+fn read_request(stream: &mut Conn, shared: &Shared) -> Result<(Request, Vec<u8>), ReadFailure> {
     let deadline = Instant::now() + REQUEST_DEADLINE;
     let mut buf = Vec::with_capacity(4096);
     let (request, head_len) = loop {
@@ -203,7 +276,7 @@ fn read_request(
 /// Waits in [`READ_SLICE`] steps, checking the shutdown flag between
 /// them.
 fn read_some(
-    stream: &mut TcpStream,
+    stream: &mut Conn,
     buf: &mut Vec<u8>,
     cap: usize,
     deadline: Instant,
@@ -218,7 +291,7 @@ fn read_some(
         if left.is_zero() {
             return Err(ReadFailure::Respond(resp(408, "")));
         }
-        if let Err(e) = stream.set_read_timeout(Some(left.min(READ_SLICE))) {
+        if let Err(e) = stream.sock().set_read_timeout(Some(left.min(READ_SLICE))) {
             debug!(error = %e, "WHEP connection: set_read_timeout failed");
             return Err(ReadFailure::Closed);
         }
