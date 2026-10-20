@@ -628,6 +628,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the certificates that did load. A load with no certificate still fails
   with `TcpError::Tls`.
 
+### Changed — release process
+
+- The real-capture corpus cross-check no longer runs on the maintainer's
+  machine through `release-validation.sh`; it runs on the release VM as
+  `tst-interop corpus`, and `release-validation.sh` has three steps.
+- `qualification.py` validates the eight corpus counts of a corpus archive
+  and renders them as a release-only line in release mode.
+
 ### Changed — dependencies
 
 - rustls-native-certs 0.8 (was 0.7): it reports the certificates that loaded
@@ -951,6 +959,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the evidence for a release was assembled by hand from several runs on several
   commits, so a claim could quietly describe a different tree than the one
   tagged.
+
+### Added — tst-interop
+
+- `tst-interop corpus`, a tool for directories of real captures, named by
+  SHA-256 in every output:
+  - `inventory` catalogues each distinct file (codecs, KLV sets, PMT shape,
+    duration).
+  - `sweep` demuxes every file in three configurations, checks four
+    invariants (feed errors, unknown KLV, packet accounting, PTS order),
+    and compares the digests with a baseline; reviewed changes are accepted
+    with `--accept SHA --because TEXT` and curated annotations excuse
+    known findings.
+  - `replay` sends a budgeted subset, paced by the capture's own clock,
+    through SRT, RIST, UDP, TCP and the RTSP publisher path on loopback, one
+    long-lived receiver per path, and compares each reconstruction with the
+    sent bytes. An internal `receive` subcommand runs the receiver side.
+  - `report` renders the run as Markdown and writes the archive row with its
+    eight counts.
 
 ### Deprecated — tst-core
 

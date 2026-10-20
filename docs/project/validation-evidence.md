@@ -778,6 +778,16 @@ The supervisor fail-fast was armed throughout and never fired. Reproduce
 with `SRT_RECONNECT_MODE=blocking scripts/interop/soak.sh --seed 1`; the
 artifacts are retained offline by the maintainer.
 
+## Real-capture corpus
+
+The demuxer and the transports are also run over a private corpus of real
+captures: an offline sweep of every file against the previous release, and a
+paced replay of a chosen subset over SRT, RIST, UDP, TCP and the RTSP
+publisher path. [Real-capture testing](/docs/project/real-capture-testing.md)
+describes the corpus classes, the invariants and how to run the tool on your
+own captures. The release gate requires a passing corpus archive for the
+soaked tree.
+
 ## Publisher role (RTSP ANNOUNCE/RECORD ingest)
 
 `RtspServer`'s publish mounts accept a publisher's ANNOUNCE, SETUP
