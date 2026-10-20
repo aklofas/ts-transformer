@@ -26,6 +26,7 @@ fn sweep(pass: bool) -> SweepSummary {
         parse_failures: 0,
         invariant_failures: 0,
         unused_accepts: vec![],
+        baseline_matched: Some(12),
         per_file: vec![],
         pass,
     }

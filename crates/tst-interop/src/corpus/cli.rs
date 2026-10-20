@@ -143,6 +143,9 @@ fn print_summary(s: &SweepSummary) {
     for sha in &s.unused_accepts {
         println!("{sha} unused-accept");
     }
+    if s.baseline_matched == Some(0) {
+        println!("baseline matched 0 files");
+    }
     println!("{}", if s.pass { "pass" } else { "fail" });
 }
 
