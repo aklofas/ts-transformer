@@ -8,7 +8,9 @@ use tst_interop::corpus::digest::{
     FileDigest, Incremental, digest_bytes, digest_config, digest_file, elementary_sha256,
     klv_record_digest, load, store,
 };
-use tst_interop::corpus::pcr::{align_offset, prefix_end};
+use tst_interop::corpus::judge::{ReceiverOutcome, judge};
+use tst_interop::corpus::pace::PcrPacer;
+use tst_interop::corpus::pcr::{align_offset, prefix_end, prefix_end_read};
 use tst_interop::corpus::{FEED_CHUNK, RunDir};
 use tst_interop::fixtures::{KlvSet, klv_record_for};
 use tst_test_helpers::rawts::{self, classify_packet};
@@ -412,27 +414,71 @@ fn an_incremental_digest_in_datagram_pieces_equals_the_whole_file_digest() {
     }
 }
 
-#[test]
-fn an_incremental_prefix_cut_beyond_the_pmt_head_lands_on_the_same_packet() {
-    // Long enough that the PCR PID is read from a full head and the scan
-    // then runs block by block; the repeats restart the PCR, which the span
-    // reads as a discontinuity and keeps counting through.
+/// A capture past the PMT head, built by repeating a short one (each repeat
+/// restarts the PCR, which the span reads as a discontinuity and counts
+/// through), and the smallest whole number of seconds whose cut lies past
+/// `beyond` bytes.
+fn long_capture(len: usize, beyond: usize) -> (Vec<u8>, u32) {
     let one = gen_profile_bytes("baseline", 4.0);
     let mut bytes = Vec::new();
-    while bytes.len() < tst_interop::corpus::pcr::PMT_PREFIX + 3 * FEED_CHUNK {
+    while bytes.len() < len {
         bytes.extend_from_slice(&one);
     }
+    let seconds = (1..)
+        .step_by(5)
+        .find(|s| prefix_end(&bytes, *s) > beyond)
+        .expect("a long enough prefix");
+    (bytes, seconds)
+}
+
+#[test]
+fn an_incremental_prefix_cut_beyond_the_pmt_head_lands_on_the_same_packet() {
+    let head = tst_interop::corpus::pcr::PMT_PREFIX;
+    let (bytes, seconds) = long_capture(head + 8 * FEED_CHUNK, head + 2 * FEED_CHUNK);
     let sha = sha_of(&bytes);
-    for prefix in [Some(6), Some(9)] {
-        let want = digest_bytes(&sha, &bytes, prefix).unwrap();
-        let end = prefix_end(&bytes, prefix.unwrap());
-        assert!(end < bytes.len());
-        assert_eq!(
-            want.configs["default"],
-            digest_config("default", &bytes[..end], FEED_CHUNK)
-        );
-        for piece in [188, 1316, FEED_CHUNK + 7] {
-            assert_eq!(incremental(&bytes, piece, prefix), want, "piece {piece}");
-        }
+    let prefix = Some(seconds);
+    let want = digest_bytes(&sha, &bytes, prefix).unwrap();
+    let end = prefix_end(&bytes, seconds);
+    assert!(end > head && end < bytes.len());
+    assert_eq!(
+        want.configs["default"],
+        digest_config("default", &bytes[..end], FEED_CHUNK)
+    );
+    for piece in [188, 1316, FEED_CHUNK + 7] {
+        assert_eq!(incremental(&bytes, piece, prefix), want, "piece {piece}");
     }
+}
+
+#[test]
+fn the_senders_cut_and_the_sweeps_cut_agree_when_junk_sits_at_a_block_boundary() {
+    let head = tst_interop::corpus::pcr::PMT_PREFIX;
+    let (mut bytes, _) = long_capture(head + 8 * FEED_CHUNK, 0);
+    // A run of non-sync bytes just before a block boundary past the head
+    // shifts every later packet off its alignment and forces a resync at the
+    // block tail.
+    let at = 23 * FEED_CHUNK - 60;
+    assert!(at > head);
+    bytes.splice(at..at, vec![0x11u8; 37]);
+    let seconds = (1..)
+        .step_by(5)
+        .find(|s| prefix_end(&bytes, *s) > at + FEED_CHUNK)
+        .unwrap();
+    let sha = sha_of(&bytes);
+    let end = prefix_end_read(&mut bytes.as_slice(), seconds).unwrap() as usize;
+    assert!(
+        end > at && end < bytes.len(),
+        "cut {end} of {}",
+        bytes.len()
+    );
+    assert_eq!(end, prefix_end(&bytes, seconds));
+
+    let sweep = digest_bytes(&sha, &bytes, Some(seconds)).unwrap();
+    let cut = digest_bytes(&sha_of(&bytes[..end]), &bytes[..end], None).unwrap();
+    assert_eq!(sweep.configs, cut.configs);
+
+    let pacer = PcrPacer::new(&bytes, Some(seconds)).unwrap();
+    let joined: Vec<u8> = pacer.chunks().flat_map(|c| c.bytes.to_vec()).collect();
+    let received = digest_bytes(&sha_of(&joined), &joined, None).unwrap();
+    let v = judge("udp", &sweep, Some(&received), &ReceiverOutcome::Completed);
+    assert!(v.pass, "{:?}", v.failures);
 }

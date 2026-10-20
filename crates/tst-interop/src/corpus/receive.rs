@@ -42,13 +42,14 @@
 //! end of stream (a mount stays open across publishers), so after `sent`
 //! they end once [`QUIET_SECONDS`] pass without a byte. A receiver is
 //! `Stalled` when [`STALL_SECONDS`] pass without a byte before `sent`
-//! (including the wait for the first one), or, after `sent`, without a byte
-//! or the close a closing path needs. `Exited` is never set here: only the
+//! (including the wait for the first one), or when, after `sent`, that long
+//! passes without the end the path needs, however many bytes still arrive. `Exited` is never set here: only the
 //! parent knows its child died.
 //!
 //! The receive loop runs on its own thread so a blocking `recv` (`tcp` has
 //! no read timeout) can always be cancelled from the control loop.
 
+use std::collections::VecDeque;
 use std::io::{BufRead, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -70,6 +71,12 @@ pub const QUIET_SECONDS: u64 = 2;
 /// Test hook: with this variable set to `1` the child exits 0 straight
 /// after its first verdict line. Never set outside tests.
 pub const DIE_AFTER_ENV: &str = "TST_CORPUS_TEST_RECEIVE_DIE_AFTER";
+
+/// Test hook: whole seconds that replace [`STALL_SECONDS`] (and cap
+/// [`QUIET_SECONDS`], so the quiet window never outlasts the stall rule),
+/// so a stall can be provoked in a test without a ten-second wait. Never set
+/// outside tests.
+pub const STALL_ENV: &str = "TST_CORPUS_TEST_STALL_SECONDS";
 
 const TICK: Duration = Duration::from_millis(100);
 /// How long a cancelled receiver gets to wind down before it is left behind.
@@ -213,7 +220,8 @@ fn receive(bound: BoundRecv, progress: &Progress) -> Result<FileDigest, String> 
     let mut buf = vec![0u8; READ_BUF];
     while !progress.stop.load(Ordering::Relaxed) {
         match transport.recv_bytes(&mut buf) {
-            Ok(0) => {}
+            // A non-empty buffer never yields `Ok(0)`: it is the end of the stream.
+            Ok(0) => break,
             Ok(n) => {
                 inc.feed(&buf[..n]);
                 progress.bytes.fetch_add(n as u64, Ordering::Relaxed);
@@ -253,6 +261,10 @@ struct Child<'a> {
     tx: Sender<Event>,
     last_verdict: Option<Sha256Hex>,
     replays: u64,
+    stall: Duration,
+    quiet: Duration,
+    /// Commands that arrived while a replay was winding down.
+    pending: VecDeque<Cmd>,
 }
 
 impl Child<'_> {
@@ -317,10 +329,12 @@ impl Child<'_> {
                 Ok(Event::Cmd(Cmd::File(..))) => protocol_error("file while receiving"),
                 Ok(Event::Cmd(Cmd::Bad(kind))) => protocol_error(kind),
                 Ok(Event::Done(..)) => {}
-                Ok(Event::Cmd(Cmd::Quit | Cmd::Eof)) => {
+                Ok(Event::Cmd(Cmd::Quit)) => {
                     quit = true;
                     break self.wind_down(&progress);
                 }
+                // The parent closed stdin: this file is still judged, then the child leaves.
+                Ok(Event::Cmd(Cmd::Eof)) => self.pending.push_back(Cmd::Eof),
                 Err(RecvTimeoutError::Disconnected) => break None,
                 Err(RecvTimeoutError::Timeout) => {}
             }
@@ -329,16 +343,11 @@ impl Child<'_> {
                 None => progress.since_last(),
             };
             let got_bytes = progress.bytes.load(Ordering::Relaxed) > 0;
-            let stall = Duration::from_secs(STALL_SECONDS);
-            if sent_at.is_some()
-                && !has_end(path)
-                && got_bytes
-                && idle >= Duration::from_secs(QUIET_SECONDS)
-            {
+            if sent_at.is_some() && !has_end(path) && got_bytes && idle >= self.quiet {
                 // Quiet long enough: the replay is over.
                 break self.wind_down(&progress);
             }
-            if idle >= stall {
+            if idle >= self.stall || sent_at.is_some_and(|at| at.elapsed() >= self.stall) {
                 stalled = true;
                 break self.wind_down(&progress);
             }
@@ -355,22 +364,22 @@ impl Child<'_> {
         };
         let received = done.and_then(Result::ok);
         let v = judge(path, &expected, received.as_ref(), &outcome);
-        if matches!(outcome, ReceiverOutcome::Stalled) {
-            // The thread may still be parked; it is not waited for.
-        } else {
+        // A thread that did not report is left behind, never waited for.
+        if !stalled && received.is_some() {
             let _ = worker.join();
         }
         self.verdict(&v);
     }
 
     /// Cancels the receiver and takes its result, giving it [`WIND_DOWN`].
-    fn wind_down(&self, progress: &Progress) -> Option<Result<FileDigest, String>> {
+    fn wind_down(&mut self, progress: &Progress) -> Option<Result<FileDigest, String>> {
         progress.cancel_all();
         let until = Instant::now() + WIND_DOWN;
         while let Some(left) = until.checked_duration_since(Instant::now()) {
             match self.rx.recv_timeout(left) {
                 Ok(Event::Done(id, r)) if id == self.replays => return Some(r),
-                Ok(_) => {}
+                Ok(Event::Cmd(c)) => self.pending.push_back(c),
+                Ok(Event::Done(..)) => {}
                 Err(_) => break,
             }
         }
@@ -409,6 +418,12 @@ pub fn run(path: &str, digests: &Path, out: &Path) -> i32 {
         }
         let _ = stdin_tx.send(Event::Cmd(Cmd::Eof));
     });
+    let stall = Duration::from_secs(
+        std::env::var(STALL_ENV)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(STALL_SECONDS),
+    );
     let mut child = Child {
         path,
         digests,
@@ -418,9 +433,16 @@ pub fn run(path: &str, digests: &Path, out: &Path) -> i32 {
         tx,
         last_verdict: None,
         replays: 0,
+        stall,
+        quiet: Duration::from_secs(QUIET_SECONDS).min(stall),
+        pending: VecDeque::new(),
     };
     loop {
-        match child.rx.recv() {
+        let next = match child.pending.pop_front() {
+            Some(c) => Ok(Event::Cmd(c)),
+            None => child.rx.recv(),
+        };
+        match next {
             Ok(Event::Cmd(Cmd::File(sha, _prefix))) => child.replay(sha),
             // The sender's close can be seen, and judged, before `sent` is read.
             Ok(Event::Cmd(Cmd::Sent(s))) if child.last_verdict.as_ref() == Some(&s) => {}

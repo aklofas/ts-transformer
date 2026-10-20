@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use tst_core::transport::Transport;
 use tst_interop::corpus::Sha256Hex;
-use tst_interop::corpus::digest::{FileDigest, digest_bytes};
+use tst_interop::corpus::digest::{FileDigest, digest_file};
 use tst_interop::corpus::pace::{PcrPacer, send_paced};
 use tst_interop::transport::make_send;
 
@@ -24,12 +24,17 @@ struct Receiver {
 
 impl Receiver {
     fn spawn(path: &str, dir: &Path) -> Self {
+        Self::spawn_with(path, dir, &[])
+    }
+
+    fn spawn_with(path: &str, dir: &Path, env: &[(&str, &str)]) -> Self {
         let out_file = dir.join("verdicts.jsonl");
         let mut child = Command::new(env!("CARGO_BIN_EXE_tst-interop"))
             .args(["corpus", "receive", "--path", path, "--digests"])
             .arg(dir)
             .arg("--out")
             .arg(&out_file)
+            .envs(env.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -70,13 +75,21 @@ impl Receiver {
     }
 }
 
-/// A generated capture of `seconds`, its sweep digest stored in a fresh
+/// A generated capture of `seconds`, its sweep digest (of the first
+/// `prefix` seconds, from the file as the sweep reads it) stored in a fresh
 /// directory under the name the child looks for.
-fn capture(name: &str, seconds: f64) -> (Vec<u8>, Sha256Hex, FileDigest, PathBuf) {
+fn capture(
+    name: &str,
+    seconds: f64,
+    prefix: Option<u32>,
+) -> (Vec<u8>, Sha256Hex, FileDigest, PathBuf) {
     let dir = temp_dir_named(name);
     let bytes = gen_profile_bytes("baseline", seconds);
     let sha = sha_of(&bytes);
-    let digest = digest_bytes(&sha, &bytes, None).unwrap();
+    let file = dir.join("capture.ts");
+    std::fs::write(&file, &bytes).unwrap();
+    let digest = digest_file(Some(&sha), &file, prefix).unwrap();
+    std::fs::remove_file(&file).unwrap();
     std::fs::write(
         dir.join(format!("{sha}.json")),
         serde_json::to_string(&digest).unwrap(),
@@ -104,7 +117,7 @@ fn ready_url(line: &str, sha: &Sha256Hex) -> String {
 
 #[test]
 fn receive_over_udp_passes_a_faithful_replay() {
-    let (bytes, sha, _, dir) = capture("recv-udp", 2.0);
+    let (bytes, sha, _, dir) = capture("recv-udp", 2.0, None);
     let mut rx = Receiver::spawn("udp", &dir);
     rx.say(&format!("file {sha} none"));
     let url = ready_url(&rx.line(), &sha);
@@ -138,7 +151,7 @@ fn receive_over_udp_passes_a_faithful_replay() {
 
 #[test]
 fn receive_over_tcp_fails_a_truncated_replay() {
-    let (bytes, sha, _, dir) = capture("recv-tcp-cut", 2.0);
+    let (bytes, sha, _, dir) = capture("recv-tcp-cut", 2.0, None);
     let mut rx = Receiver::spawn("tcp", &dir);
     rx.say(&format!("file {sha} none"));
     let url = ready_url(&rx.line(), &sha);
@@ -165,7 +178,7 @@ fn receive_over_tcp_fails_a_truncated_replay() {
 
 #[test]
 fn receive_over_tcp_passes_a_faithful_replay() {
-    let (bytes, sha, _, dir) = capture("recv-tcp", 2.0);
+    let (bytes, sha, _, dir) = capture("recv-tcp", 2.0, None);
     let mut rx = Receiver::spawn("tcp", &dir);
     rx.say(&format!("file {sha} none"));
     let url = ready_url(&rx.line(), &sha);
@@ -273,7 +286,7 @@ fn every_path_binds_a_kernel_picked_port_and_announces_its_sender_url() {
         ("rtsp-publish", "rtsp-publish://127.0.0.1:"),
     ];
     for (path, prefix) in expect {
-        let (_, sha, _, dir) = capture(&format!("recv-ready-{path}"), 1.0);
+        let (_, sha, _, dir) = capture(&format!("recv-ready-{path}"), 1.0, None);
         let mut rx = Receiver::spawn(path, &dir);
         rx.say(&format!("file {sha} none"));
         let url = ready_url(&rx.line(), &sha);
@@ -292,7 +305,7 @@ fn every_path_binds_a_kernel_picked_port_and_announces_its_sender_url() {
 
 #[test]
 fn receive_over_srt_passes_a_faithful_replay() {
-    let (bytes, sha, _, dir) = capture("recv-srt", 2.0);
+    let (bytes, sha, _, dir) = capture("recv-srt", 2.0, None);
     let mut rx = Receiver::spawn("srt", &dir);
     rx.say(&format!("file {sha} none"));
     let url = ready_url(&rx.line(), &sha);
@@ -317,4 +330,123 @@ fn receive_over_srt_passes_a_faithful_replay() {
     );
     rx.say("quit");
     assert_eq!(rx.line(), "bye");
+}
+
+/// Replays the first `prefix` seconds the way production does: a pacer cut
+/// at the prefix, `file <sha> <prefix>`, a digest made with the same prefix.
+fn prefixed_replay(path: &str, name: &str) {
+    let (bytes, sha, _, dir) = capture(name, 4.0, Some(1));
+    let mut rx = Receiver::spawn(path, &dir);
+    rx.say(&format!("file {sha} 1"));
+    let url = ready_url(&rx.line(), &sha);
+    let mut sender = make_send(&url).unwrap();
+    let pacer = PcrPacer::new(&bytes, Some(1)).unwrap();
+    let start = Instant::now();
+    send_paced(
+        &pacer,
+        &mut || start.elapsed(),
+        &mut |d| std::thread::sleep(d),
+        |chunk| send_in_messages(sender.as_mut(), chunk),
+    )
+    .unwrap();
+    sender.close();
+    drop(sender);
+    rx.say(&format!("sent {sha}"));
+    let verdict = rx.line();
+    assert!(
+        verdict.starts_with(&format!("verdict {sha} PASS ")),
+        "{verdict}"
+    );
+    rx.say("quit");
+    assert_eq!(rx.line(), "bye");
+}
+
+#[test]
+fn a_prefixed_replay_over_udp_passes() {
+    prefixed_replay("udp", "recv-prefix-udp");
+}
+
+#[test]
+fn a_prefixed_replay_over_tcp_passes() {
+    prefixed_replay("tcp", "recv-prefix-tcp");
+}
+
+#[test]
+fn replaying_the_whole_capture_against_a_prefix_digest_fails() {
+    let (bytes, sha, _, dir) = capture("recv-prefix-overshoot", 4.0, Some(1));
+    let mut rx = Receiver::spawn("tcp", &dir);
+    rx.say(&format!("file {sha} 1"));
+    let url = ready_url(&rx.line(), &sha);
+    let mut sender = make_send(&url).unwrap();
+    send_in_messages(sender.as_mut(), &bytes).unwrap();
+    sender.close();
+    drop(sender);
+    rx.say(&format!("sent {sha}"));
+    let verdict = rx.line();
+    assert!(
+        verdict.starts_with(&format!("verdict {sha} FAIL ")),
+        "{verdict}"
+    );
+}
+
+const FAST_STALL: [(&str, &str); 1] = [("TST_CORPUS_TEST_STALL_SECONDS", "1")];
+
+#[test]
+fn a_receiver_that_never_gets_a_byte_stalls() {
+    let (_, sha, _, dir) = capture("recv-stall-silent", 1.0, None);
+    let mut rx = Receiver::spawn_with("udp", &dir, &FAST_STALL);
+    rx.say(&format!("file {sha} none"));
+    ready_url(&rx.line(), &sha);
+    let verdict = rx.line();
+    assert!(
+        verdict.starts_with(&format!("verdict {sha} FAIL ")),
+        "{verdict}"
+    );
+    assert!(verdict.contains("receiver stalled"), "{verdict}");
+    rx.say("quit");
+    assert_eq!(rx.line(), "bye");
+}
+
+#[test]
+fn a_sender_that_goes_quiet_before_sent_stalls_the_receiver() {
+    let (bytes, sha, _, dir) = capture("recv-stall-half", 2.0, None);
+    let mut rx = Receiver::spawn_with("udp", &dir, &FAST_STALL);
+    rx.say(&format!("file {sha} none"));
+    let url = ready_url(&rx.line(), &sha);
+    let mut sender = make_send(&url).unwrap();
+    send_in_messages(sender.as_mut(), &bytes[..bytes.len() / 2 / 188 * 188]).unwrap();
+    // No `sent`: the sender is still "alive" and silent.
+    let verdict = rx.line();
+    assert!(verdict.contains("receiver stalled"), "{verdict}");
+    drop(sender);
+    rx.say("quit");
+    assert_eq!(rx.line(), "bye");
+}
+
+#[test]
+fn a_closing_path_whose_sender_never_closes_stalls_after_sent() {
+    let (bytes, sha, _, dir) = capture("recv-stall-open", 2.0, None);
+    let mut rx = Receiver::spawn_with("tcp", &dir, &FAST_STALL);
+    rx.say(&format!("file {sha} none"));
+    let url = ready_url(&rx.line(), &sha);
+    let mut sender = make_send(&url).unwrap();
+    send_in_messages(sender.as_mut(), &bytes).unwrap();
+    rx.say(&format!("sent {sha}"));
+    let verdict = rx.line();
+    assert!(verdict.contains("receiver stalled"), "{verdict}");
+    drop(sender);
+    rx.say("quit");
+    assert_eq!(rx.line(), "bye");
+}
+
+#[test]
+fn quitting_during_an_srt_accept_ends_the_child() {
+    let (_, sha, _, dir) = capture("recv-srt-quit", 1.0, None);
+    let mut rx = Receiver::spawn("srt", &dir);
+    rx.say(&format!("file {sha} none"));
+    ready_url(&rx.line(), &sha);
+    rx.say("quit");
+    assert_eq!(rx.line(), "bye");
+    let (status, _, _) = rx.finish();
+    assert!(status.success());
 }

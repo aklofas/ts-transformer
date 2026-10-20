@@ -177,45 +177,31 @@ pub fn prefix_end(bytes: &[u8], seconds: u32) -> usize {
 
 /// [`prefix_end`] over a reader: the same cut, found without holding the
 /// capture in memory. Returns the byte count read when the capture is
-/// shorter than `seconds`.
+/// shorter than `seconds`. It drives the [`PrefixCutter`] the digest's
+/// incremental form uses, over [`FEED_CHUNK`] blocks from offset 0, so the
+/// sender's cut and the sweep's cut come from one scanner.
 pub fn prefix_end_read<R: std::io::Read>(r: &mut R, seconds: u32) -> std::io::Result<u64> {
-    // PMT_PREFIX bytes after alignment, and alignment skips under one packet.
-    use std::io::Read as _;
-    let mut head = Vec::with_capacity(PMT_PREFIX + PKT);
-    std::io::Read::take(&mut *r, (PMT_PREFIX + PKT) as u64).read_to_end(&mut head)?;
-    let pcr_pid = parse_prefix(&head[align_offset(&head)..])
-        .ok()
-        .and_then(|p| p.pcr_pid);
-    let mut scan = PcrScan::with_cut(pcr_pid, u64::from(seconds) * PCR_BASE_HZ);
-    let mut total = 0u64;
+    let mut cutter = PrefixCutter::new(seconds);
+    let mut released = 0u64;
     let mut buf = vec![0u8; FEED_CHUNK];
-    let mut pending: &[u8] = &head;
-    loop {
-        let n = if pending.is_empty() {
-            let mut filled = 0;
-            while filled < buf.len() {
-                let k = r.read(&mut buf[filled..])?;
-                if k == 0 {
-                    break;
-                }
-                filled += k;
+    while !cutter.is_done() {
+        let mut filled = 0;
+        while filled < buf.len() {
+            let k = r.read(&mut buf[filled..])?;
+            if k == 0 {
+                break;
             }
-            filled
-        } else {
-            let k = pending.len().min(FEED_CHUNK);
-            buf[..k].copy_from_slice(&pending[..k]);
-            pending = &pending[k..];
-            k
-        };
-        if n == 0 {
-            return Ok(total);
+            filled += k;
         }
-        scan.feed(&buf[..n]);
-        if let Some(at) = scan.cut_at() {
-            return Ok(at);
+        if filled == 0 {
+            break;
         }
-        total += n as u64;
+        cutter.push(&buf[..filled], &mut |p| released += p.len() as u64);
     }
+    if !cutter.is_done() {
+        cutter.finish(&mut |p| released += p.len() as u64);
+    }
+    Ok(released)
 }
 
 /// The streaming form of [`prefix_end_read`]: bytes go in as they arrive and
@@ -250,6 +236,11 @@ impl PrefixCutter {
             seconds,
             state: CutState::Head(Vec::new()),
         }
+    }
+
+    /// Whether the cut has been found; nothing more is released.
+    pub fn is_done(&self) -> bool {
+        matches!(self.state, CutState::Done)
     }
 
     pub fn push(&mut self, chunk: &[u8], out: &mut dyn FnMut(&[u8])) {
