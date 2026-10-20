@@ -10,6 +10,7 @@ tree = "e86dd9ea6d1a3ad8d24af20377b9d5317708f273"
 overall_pass = false
 note = "The SRT leg passed every gating verdict; the RIST leg failed corruption attribution, and all eight of its unexplained events were harness attribution defects, not library defects."
 date = "2026-10-04"
+expected_duration_s = 259200
 
 [[archive]]
 id = "soak-rtsp-publish-2026-10-08"
@@ -18,6 +19,7 @@ tree = "b6545e6004ae2461893779e246938dc293b24e84"
 overall_pass = false
 note = "The publisher leg passed every verdict it owns; the three failures were on the SRT leg's receiver and were harness defects."
 date = "2026-10-09"
+expected_duration_s = 3600
 
 [[archive]]
 id = "stress-2026-10-02"

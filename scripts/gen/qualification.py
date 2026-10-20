@@ -96,6 +96,12 @@ def validate_archives(rows):
             problems.append("%s: overall_pass must be true or false" % i)
         if not r.get("note") or not re.fullmatch(r"\d{4}-\d\d-\d\d", str(r.get("date", ""))):
             problems.append("%s: note and a YYYY-MM-DD date are required" % i)
+        d = r.get("expected_duration_s")
+        if r.get("kind") == "soak":
+            if isinstance(d, bool) or not isinstance(d, int) or d <= 0:
+                problems.append("%s: a soak row needs expected_duration_s, an integer above 0" % i)
+        elif "expected_duration_s" in r:
+            problems.append("%s: expected_duration_s belongs to soak rows only" % i)
     return problems
 
 
@@ -106,7 +112,12 @@ def load_archives(root):
     probs = validate_archives(rows)
     if probs:
         die("evidence-archives.toml: " + "; ".join(probs), 1)
-    return [{k: r[k] for k in ("id", "kind", "tree", "overall_pass", "note", "date")} for r in rows]
+    out = []
+    for r in rows:
+        row = {k: r[k] for k in ("id", "kind", "tree", "overall_pass", "note", "date")}
+        row["expected_duration_s"] = r.get("expected_duration_s")
+        out.append(row)
+    return out
 
 
 # ---- collect ---------------------------------------------------------------
@@ -339,9 +350,10 @@ def render_block(rec):
             for s in rec["semver_checks"]) + ".")
     out += ["", "Cited soak, stress and corpus archives, with the verdicts they recorded:", ""]
     for r in rec["archives"]:
-        out.append("- `%s` (%s, %s, tree `%s`): `overall_pass=%s`. %s" % (
+        declared = (", %d s declared" % r["expected_duration_s"]) if r.get("expected_duration_s") else ""
+        out.append("- `%s` (%s, %s, tree `%s`): `overall_pass=%s`%s. %s" % (
             r["id"], r["kind"], r["date"], r["tree"][:12],
-            "true" if r["overall_pass"] else "false", r["note"]))
+            "true" if r["overall_pass"] else "false", declared, r["note"]))
     out += ["", "Checks that stay with the maintainer and are not part of this record:", ""]
     out.extend("- " + m for m in rec["maintainer_local"])
     return "\n".join(out) + "\n"

@@ -57,6 +57,7 @@ tree = "%s"
 overall_pass = false
 note = "The SRT leg passed; the RIST leg failed attribution."
 date = "2026-10-04"
+expected_duration_s = 259200
 """ % ("d" * 40)
 
 
@@ -332,6 +333,21 @@ class ArchiveTests(unittest.TestCase):
         self.assertTrue(any("kind" in p for p in q.validate_archives(bad_kind)))
         bad_tree = q.parse_archives(ARCHIVES.replace("d" * 40, "abc"))
         self.assertTrue(any("tree" in p for p in q.validate_archives(bad_tree)))
+
+
+    def test_soak_row_requires_expected_duration(self):
+        missing = q.parse_archives(ARCHIVES.replace("expected_duration_s = 259200\n", ""))
+        self.assertTrue(any("expected_duration_s" in p for p in q.validate_archives(missing)))
+        self.assertEqual(q.validate_archives(q.parse_archives(ARCHIVES)), [])
+        zero = q.parse_archives(ARCHIVES.replace("259200", "0"))
+        self.assertTrue(any("expected_duration_s" in p for p in q.validate_archives(zero)))
+        bad = q.parse_archives(ARCHIVES.replace('kind = "soak"', 'kind = "stress"'))
+        self.assertTrue(any("expected_duration_s" in p for p in q.validate_archives(bad)))
+
+    def test_render_names_the_declared_soak_duration(self):
+        rec = collect()
+        line = [l for l in q.render_block(rec).splitlines() if "`soak-x`" in l][0]
+        self.assertIn("259200 s declared", line)
 
 
 class ChecksumTests(unittest.TestCase):
