@@ -99,9 +99,11 @@ fn a_viewer_whose_socket_closes_is_reaped_as_disconnected() {
     let [v] = viewers;
     drop(v);
 
-    // From here nothing reaches the server: its consent check lapses, the
-    // session leaves Connected, and the disconnect timeout (30 s) runs from
-    // that instant. Step a second at a time to find both instants.
+    // From here nothing reaches the server. str0m's ice-lite agent keeps a
+    // candidate pair for 15 s after its last binding request (the private
+    // `RECENT_BINDING_REQUEST` of its ICE crate, `is`), so the session leaves
+    // Connected at 15 s; the server's disconnect timeout (30 s) runs from that
+    // instant. Step a second at a time to find both instants.
     let mut left_connected = None;
     let mut reaped_at = None;
     for second in 1..=60u64 {
@@ -117,7 +119,11 @@ fn a_viewer_whose_socket_closes_is_reaped_as_disconnected() {
     }
     let left = left_connected.expect("the session never left Connected");
     let reaped = reaped_at.expect("the session was never reaped");
-    assert_eq!(reaped, left + 30, "left Connected at {left} s");
+    assert_eq!(
+        (left, reaped),
+        (15, 45),
+        "(left Connected, reaped) in seconds"
+    );
     let s = srv.stats();
     assert_eq!(s.active_sessions, 0);
     assert_eq!(s.sessions_reaped_ice_timeout, 0);
