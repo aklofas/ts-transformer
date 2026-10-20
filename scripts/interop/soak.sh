@@ -47,6 +47,9 @@
 #   PUBLISHER_DROP_PERIOD_S=600  rtsp-publish and rtsp-publish-es legs:
 #                              publisher drop / re-ANNOUNCE period, shared
 #                              (the run must span at least two)
+#   SOAK_MEM_BUDGET=0.70       fraction of MemTotal the run may use; the
+#   SOAK_MEM_HEADROOM=1.5      summed expected RSS of its roles x headroom
+#                              must fit it, else exit 2 before any launch
 #   RUST_LOG=info              passed to every tst-interop process
 #
 # Prerequisites: Linux; a Rust toolchain via rustup; jq, python3,
@@ -651,6 +654,68 @@ if [[ "$RTSP_PUBLISH_ES" -eq 1 ]]; then
 else
   PUBLISH_ES_LEG_DECL=null
 fi
+# ---------------------------------------------------------------------
+# Pre-launch memory gate
+# ---------------------------------------------------------------------
+#
+# The run's expected resident memory, summed over the roles it launches
+# (the plateau figures of the 0.7.0 and 2026-10-08 runs, KiB), times
+# SOAK_MEM_HEADROOM, must fit SOAK_MEM_BUDGET of MemTotal. A host that
+# cannot hold the run refuses it here, before any worker launches, and
+# names the --no-rtsp-publish* flags that would fit. The raw sum, the
+# budget, the headroom and MemTotal go into soak-config.json, which
+# `report soak` holds to the same inequality.
+SOAK_MEM_BUDGET=${SOAK_MEM_BUDGET:-0.70}
+SOAK_MEM_HEADROOM=${SOAK_MEM_HEADROOM:-1.5}
+declare -A ROLE_RSS_KB=(
+  [srt-send]=180000 [rist-send]=190000 [srt-recv]=60000 [rist-recv]=60000
+  [srt-proxy]=20000 [rist-proxy]=20000
+  [rtsp-publish-recv]=60000 [rtsp-publish-publisher]=80000
+  [rtsp-publish-es-recv]=60000 [rtsp-publish-es-publisher]=80000
+  [sampler]=10000
+)
+# gate_predicted_kb <publish 0|1> <publish-es 0|1> — the raw role sum.
+gate_predicted_kb() {
+  local roles=(srt-send rist-send srt-recv rist-recv srt-proxy rist-proxy sampler) r sum=0
+  [[ "$1" -eq 0 ]] || roles+=(rtsp-publish-recv rtsp-publish-publisher)
+  [[ "$2" -eq 0 ]] || roles+=(rtsp-publish-es-recv rtsp-publish-es-publisher)
+  for r in "${roles[@]}"; do sum=$((sum + ROLE_RSS_KB[$r])); done
+  echo "$sum"
+}
+MEM_TOTAL_KB=$(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null)
+if ! [[ "$MEM_TOTAL_KB" =~ ^[0-9]+$ ]] || [[ "$MEM_TOTAL_KB" -eq 0 ]]; then
+  echo "soak: memory gate: MemTotal unreadable" >&2
+  exit 2
+fi
+if ! awk -v b="$SOAK_MEM_BUDGET" -v h="$SOAK_MEM_HEADROOM" \
+  'BEGIN{exit !(b ~ /^[0-9]*\.?[0-9]+$/ && b > 0 && b <= 1 && h ~ /^[0-9]*\.?[0-9]+$/ && h >= 1)}'; then
+  echo "soak: SOAK_MEM_BUDGET must be in (0, 1] and SOAK_MEM_HEADROOM >= 1.0 (got $SOAK_MEM_BUDGET, $SOAK_MEM_HEADROOM)" >&2
+  exit 2
+fi
+GATE_BUDGET_KB=$(awk -v m="$MEM_TOTAL_KB" -v b="$SOAK_MEM_BUDGET" 'BEGIN{printf "%d", m * b}')
+# gate_fits <predicted-kb> — 0 when predicted x headroom <= budget.
+gate_fits() {
+  awk -v p="$1" -v h="$SOAK_MEM_HEADROOM" -v b="$GATE_BUDGET_KB" 'BEGIN{exit !(p * h <= b)}'
+}
+GATE_PREDICTED_KB=$(gate_predicted_kb "$RTSP_PUBLISH" "$RTSP_PUBLISH_ES")
+if ! gate_fits "$GATE_PREDICTED_KB"; then
+  GATE_FIT_FLAGS=""
+  # Fewer legs than the current run, largest first; each that fits is named.
+  for combo in "1 0 --no-rtsp-publish-es" "0 1 --no-rtsp-publish" "0 0 --no-rtsp-publish --no-rtsp-publish-es"; do
+    read -r cp ce cflags <<<"$combo"
+    [[ "$cp" -le "$RTSP_PUBLISH" && "$ce" -le "$RTSP_PUBLISH_ES" ]] || continue
+    [[ "$cp" -ne "$RTSP_PUBLISH" || "$ce" -ne "$RTSP_PUBLISH_ES" ]] || continue
+    gate_fits "$(gate_predicted_kb "$cp" "$ce")" || continue
+    GATE_FIT_FLAGS+="${GATE_FIT_FLAGS:+; or }$cflags"
+  done
+  GATE_FIT_MSG="no combination of --no-rtsp-publish* flags fits this host"
+  [[ -z "$GATE_FIT_FLAGS" ]] || GATE_FIT_MSG="would fit: $GATE_FIT_FLAGS"
+  echo "soak: memory gate: predicted $((GATE_PREDICTED_KB / 1000)) MB x$SOAK_MEM_HEADROOM > budget $((GATE_BUDGET_KB / 1000)) MB ($SOAK_MEM_BUDGET of $((MEM_TOTAL_KB / 1000)) MB MemTotal); $GATE_FIT_MSG" >&2
+  exit 2
+fi
+MEMORY_GATE_DECL=$(jq -n --argjson p "$GATE_PREDICTED_KB" --argjson b "$GATE_BUDGET_KB" \
+  --argjson h "$SOAK_MEM_HEADROOM" --argjson m "$MEM_TOTAL_KB" \
+  '{predicted_kb: $p, budget_kb: $b, headroom: $h, mem_total_kb: $m}')
 jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
   --argjson slack "$SAMPLER_END_SLACK_S" \
   --argjson corruption "$CORRUPTION_DECL" \
@@ -661,7 +726,8 @@ jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
   --arg srt_reconnect_mode "$SRT_RECONNECT_MODE" \
   --argjson publish_leg "$PUBLISH_LEG_DECL" \
   --argjson publish_es_leg "$PUBLISH_ES_LEG_DECL" \
-  '{expected_duration_s: $dur, rss_cadence_s: $cad, warmup_fraction: 0.1667,
+  --argjson memory_gate "$MEMORY_GATE_DECL" \
+  '{expected_duration_s: $dur, memory_gate: $memory_gate, rss_cadence_s: $cad, warmup_fraction: 0.1667,
     sampler_end_slack_s: $slack, expected_worker_exits: {},
     corruption: $corruption, corruption_spec: $corruption_spec,
     legs: ({srt: {profile: $srt_profile, schedule: $schedule,
