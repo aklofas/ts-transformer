@@ -25,6 +25,8 @@ pub mod url;
 
 pub mod server;
 
+mod binding_kind;
+
 #[cfg(feature = "tls")]
 mod tls;
 

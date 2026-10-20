@@ -10,10 +10,10 @@ INPUT_MALFORMED	INPUT_MALFORMED	-3	-3	SrtErrorKind.INPUT_MALFORMED;RtpErrorKind.
 BACKPRESSURE	BACKPRESSURE	-4	-4	SrtErrorKind.BACKPRESSURE;RtpErrorKind.BACKPRESSURE;UdpErrorKind.BACKPRESSURE;TcpErrorKind.BACKPRESSURE;RistErrorKind.BACKPRESSURE;MuxErrorKind.BACKPRESSURE	ok	SrtException.Kind.BACKPRESSURE;RtpException.Kind.BACKPRESSURE;UdpException.Kind.BACKPRESSURE;TcpException.Kind.BACKPRESSURE;RistException.Kind.BACKPRESSURE;MuxException.Kind.BACKPRESSURE	ok
 KLV_TOO_LARGE	KLV_TOO_LARGE	-5	-5	MuxErrorKind.KLV_TOO_LARGE	ok	MuxException.Kind.KLV_TOO_LARGE	ok
 TOO_LARGE	TOO_LARGE	-6	-6	SrtErrorKind.TOO_LARGE;RtpErrorKind.TOO_LARGE;UdpErrorKind.TOO_LARGE;TcpErrorKind.TOO_LARGE;RistErrorKind.TOO_LARGE	ok	SrtException.Kind.TOO_LARGE;RtpException.Kind.TOO_LARGE;UdpException.Kind.TOO_LARGE;TcpException.Kind.TOO_LARGE;RistException.Kind.TOO_LARGE	ok
-CLOSED	CLOSED	-7	-7	SrtErrorKind.CLOSED;RtpErrorKind.CLOSED;RtspErrorKind.CLOSED;UdpErrorKind.CLOSED;TcpErrorKind.CLOSED;HlsErrorKind.CLOSED;RistErrorKind.CLOSED	ok	SrtException.Kind.CLOSED;RtpException.Kind.CLOSED;RtspException.Kind.CLOSED;UdpException.Kind.CLOSED;TcpException.Kind.CLOSED;HlsException.Kind.CLOSED;RistException.Kind.CLOSED	ok
+CLOSED	CLOSED	-7	-7	SrtErrorKind.CLOSED;RtpErrorKind.CLOSED;RtspErrorKind.CLOSED;UdpErrorKind.CLOSED;TcpErrorKind.CLOSED;HlsErrorKind.CLOSED;RistErrorKind.CLOSED;WebrtcErrorKind.CLOSED	ok	SrtException.Kind.CLOSED;RtpException.Kind.CLOSED;RtspException.Kind.CLOSED;UdpException.Kind.CLOSED;TcpException.Kind.CLOSED;HlsException.Kind.CLOSED;RistException.Kind.CLOSED	ok
 BROKEN	BROKEN	-8	-8	SrtErrorKind.BROKEN;RtpErrorKind.BROKEN;UdpErrorKind.BROKEN;TcpErrorKind.BROKEN;RistErrorKind.BROKEN	ok	SrtException.Kind.BROKEN;RtpException.Kind.BROKEN;UdpException.Kind.BROKEN;TcpException.Kind.BROKEN;RistException.Kind.BROKEN	ok
 INVALID_USAGE	INVALID_USAGE	-9	-9	MuxErrorKind.INVALID_USAGE	ok	MuxException.Kind.INVALID_USAGE	ok
-INTERNAL	INTERNAL	-10	-10	HlsErrorKind.INTERNAL;MuxErrorKind.INTERNAL;KlvErrorKind.INTERNAL	ok	HlsException.Kind.INTERNAL;MuxException.Kind.INTERNAL;KlvDecodeException.Kind.INTERNAL	ok
+INTERNAL	INTERNAL	-10	-10	HlsErrorKind.INTERNAL;MuxErrorKind.INTERNAL;KlvErrorKind.INTERNAL;WebrtcErrorKind.INTERNAL	ok	HlsException.Kind.INTERNAL;MuxException.Kind.INTERNAL;KlvDecodeException.Kind.INTERNAL	ok
 PANIC_CAUGHT	PANIC_CAUGHT	-11	-11	-	ok	-	ok
 END_OF_STREAM	END_OF_STREAM	-12	-12	SrtErrorKind.END_OF_STREAM;RtpErrorKind.END_OF_STREAM;UdpErrorKind.END_OF_STREAM;TcpErrorKind.END_OF_STREAM;RistErrorKind.END_OF_STREAM	ok	SrtException.Kind.END_OF_STREAM;RtpException.Kind.END_OF_STREAM;UdpException.Kind.END_OF_STREAM;TcpException.Kind.END_OF_STREAM;RistException.Kind.END_OF_STREAM	ok
 NOT_AVAILABLE	NOT_AVAILABLE	-13	-13	-	ok	-	ok
@@ -99,3 +99,9 @@ CODEC_UNSUPPORTED_FREE_FORMAT	UNSUPPORTED_FREE_FORMAT	-102	-10	CodecErrorKind.UN
 CODEC_INVALID_LENGTH_SIZE	INVALID_LENGTH_SIZE	-103	-1	CodecErrorKind.INVALID_LENGTH_SIZE	ok	CodecParseException.Kind.INVALID_LENGTH_SIZE	ok
 CODEC_NAL_LENGTH_OVERFLOW	NAL_LENGTH_OVERFLOW	-104	-6	CodecErrorKind.NAL_LENGTH_OVERFLOW	ok	CodecParseException.Kind.NAL_LENGTH_OVERFLOW	ok
 CODEC_BUFFER_TOO_SMALL	BUFFER_TOO_SMALL	-105	-4	CodecErrorKind.BUFFER_TOO_SMALL	ok	CodecParseException.Kind.BUFFER_TOO_SMALL	ok
+WEBRTC_URL	URL	-106	-35	WebrtcErrorKind.URL	ok	-	ok
+WEBRTC_IO	IO	-107	-34	WebrtcErrorKind.IO	ok	-	ok
+WEBRTC_TLS	TLS	-108	-37	WebrtcErrorKind.TLS	ok	-	ok
+WEBRTC_MOUNT	MOUNT	-109	-35	WebrtcErrorKind.MOUNT	ok	-	ok
+WEBRTC_SERVER	SERVER	-110	-34	WebrtcErrorKind.SERVER	ok	-	ok
+WEBRTC_PUSH	PUSH	-111	-35	WebrtcErrorKind.PUSH	ok	-	ok

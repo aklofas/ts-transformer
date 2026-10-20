@@ -161,6 +161,16 @@ EXPECTED = {
         ("END_OF_STREAM", 10),
         ("CONFIG_INVALID", 11),
     ],
+    "WebrtcErrorKind": [
+        ("URL", 0),
+        ("IO", 1),
+        ("TLS", 2),
+        ("MOUNT", 3),
+        ("SERVER", 4),
+        ("PUSH", 5),
+        ("INTERNAL", 6),
+        ("CLOSED", 7),
+    ],
 }
 
 

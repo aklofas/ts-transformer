@@ -114,6 +114,8 @@ pub tst_webrtc::error::PushError::KlvTooLarge
 pub tst_webrtc::error::PushError::KlvTooLarge::len: u64
 pub tst_webrtc::error::PushError::KlvTooLarge::limit: u64
 pub tst_webrtc::error::PushError::WrongMountKind
+impl core::convert::From<tst_webrtc::error::PushError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_webrtc::error::PushError) -> Self
 impl core::error::Error for tst_webrtc::error::PushError
 impl core::fmt::Debug for tst_webrtc::error::PushError
 pub fn tst_webrtc::error::PushError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -141,6 +143,8 @@ pub tst_webrtc::error::WhepServerError::Shutdown
 pub tst_webrtc::error::WhepServerError::Tls(alloc::string::String)
 impl core::convert::From<tst_core::url::common::UrlError> for tst_webrtc::error::WhepServerError
 pub fn tst_webrtc::error::WhepServerError::from(tst_core::url::common::UrlError) -> Self
+impl core::convert::From<tst_webrtc::error::WhepServerError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_webrtc::error::WhepServerError) -> Self
 impl core::error::Error for tst_webrtc::error::WhepServerError
 pub fn tst_webrtc::error::WhepServerError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_webrtc::error::WhepServerError
@@ -506,6 +510,8 @@ pub tst_webrtc::PushError::KlvTooLarge
 pub tst_webrtc::PushError::KlvTooLarge::len: u64
 pub tst_webrtc::PushError::KlvTooLarge::limit: u64
 pub tst_webrtc::PushError::WrongMountKind
+impl core::convert::From<tst_webrtc::error::PushError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_webrtc::error::PushError) -> Self
 impl core::error::Error for tst_webrtc::error::PushError
 impl core::fmt::Debug for tst_webrtc::error::PushError
 pub fn tst_webrtc::error::PushError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -533,6 +539,8 @@ pub tst_webrtc::WhepServerError::Shutdown
 pub tst_webrtc::WhepServerError::Tls(alloc::string::String)
 impl core::convert::From<tst_core::url::common::UrlError> for tst_webrtc::error::WhepServerError
 pub fn tst_webrtc::error::WhepServerError::from(tst_core::url::common::UrlError) -> Self
+impl core::convert::From<tst_webrtc::error::WhepServerError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_webrtc::error::WhepServerError) -> Self
 impl core::error::Error for tst_webrtc::error::WhepServerError
 pub fn tst_webrtc::error::WhepServerError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_webrtc::error::WhepServerError

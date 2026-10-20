@@ -1060,8 +1060,8 @@ mod tests {
         use tst_pipeline::binding::BindingErrorKind;
         assert_eq!(
             BindingErrorKind::ALL.len(),
-            95,
-            "the binding error-kind table has 95 variants"
+            101,
+            "the binding error-kind table has 101 variants"
         );
         for k in BindingErrorKind::ALL {
             let v = TstError::from_c_code(k.c_projection()).unwrap_or_else(|| {

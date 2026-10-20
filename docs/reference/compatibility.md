@@ -26,9 +26,13 @@ binds loopback by default, and can keep serving a completed VOD/EVENT playlist
 via `finish_serving`. See the [HLS guide](/docs/guides/hls.md); fMP4/CMAF and
 LL-HLS remain deferred (`deferred-features.md`).
 The JVM binding exposes it as `org.tstrans.hls` (`HlsPublisher` +
-`MuxPublisher`). Other
-containers (MP4 / CMAF), other transports (RTMP / WebRTC), and raw elementary
-streams remain out of scope until a consumer asks. See
+`MuxPublisher`).
+WebRTC playback ships as `tst-webrtc` (Rust only for now): a WHEP server whose
+mounts browsers pull over WebRTC. `wheps://` is refused at bind in this
+release, and the signalling endpoint serves one connection at a time with a
+5 s request deadline, so an idle client delays other requests by up to 5 s.
+Other containers (MP4 / CMAF), other transports (RTMP, WebRTC ingest), and raw
+elementary streams remain out of scope until a consumer asks. See
 `tests/coverage/TEST_CORPUS.md` for the parsing-side compliance ledger
 that this document summarises.
 
@@ -750,7 +754,7 @@ roadmap. They are revisitable on consumer ask — not philosophical refusals.
 
 - Containers other than MPEG-TS (MP4 / fMP4 / CMAF, Matroska / WebM).
 - Metadata sets other than the typed MISB family already shipped (ST 1303 MDAP; ST 0902 MISMMS is an opt-in validator — see [`stanag-4609.md`](/docs/reference/stanag-4609.md)).
-- WebRTC / RTMP transports (UDP, raw TCP / TLS, RTP, SRT, and RIST all ship — see top-of-document scope note).
+- WebRTC ingest / RTMP transports (UDP, raw TCP / TLS, RTP, SRT, and RIST all ship — see top-of-document scope note).
 - ST 1607 segmented multi-PES KLV reassembly.
 - Async / reactor SRT API.
 - Bonded / grouped sockets.

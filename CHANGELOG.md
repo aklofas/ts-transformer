@@ -762,6 +762,40 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `opener::{open_sender, open_recv}`: `rtp://` into a type-erased transport
   for a language binding's shells.
 
+### Added — tst-webrtc: WebRTC playback (WHEP server with mounts)
+
+- New crate `tst-webrtc`: `WhepServer::bind("whep://…")` + `add_mount` with the
+  RTSP mount push family; browsers pull a mount over WebRTC (WHEP). Video is
+  passed through (H.264 RFC 6184, H.265 RFC 7798); KLV rides frame-locked
+  as a user-data SEI inside the frame's access unit and as a `klv` data
+  channel message (the `sei` module and `KLV_DC_LIMIT` document both
+  layouts). ICE-lite, one UDP port for every viewer, RTX on, no TURN/STUN.
+  Builds `aws-lc-sys` (str0m's DTLS certificate path), the first aws-lc in
+  the tree.
+- A data-channel KLV record is at most `KLV_DC_LIMIT` = 131 059 bytes:
+  str0m's 128 KiB SCTP buffer minus the 13-byte message header; `push_klv`
+  refuses a larger one. Browsers accept messages up to their
+  `max-message-size` (64 KiB when unstated), so a record between that size
+  and the limit depends on the browser; a viewer's dropped record is counted
+  in `MountStats::klv_dc_dropped_viewer` and
+  `SessionStats::dc_messages_dropped`. The video never waits for the data
+  channel.
+- An H.265 keyframe is an IRAP picture (BLA, IDR or CRA); an H.264 keyframe
+  is an IDR picture.
+- `wheps://` (HTTPS signalling) is refused at bind in this release with
+  `WhepServerError::Tls`. With the `tls` feature the certificate and key are
+  loaded first, so an unreadable file is what the error reports; serve
+  `whep://` behind a TLS-terminating proxy until then.
+- The signalling endpoint serves one connection at a time on its accept
+  thread, and a request must arrive whole within 5 s (else 408), so a client
+  that holds a connection open delays every other POST and DELETE by up to
+  5 s.
+- Error kinds: six `BindingErrorKind::Webrtc*` rows (`URL`, `IO`, `TLS`,
+  `MOUNT`, `SERVER`, `PUSH`) and `Domain::Webrtc` in tst-pipeline, with
+  `From<WhepServerError>` and `From<PushError>` for `BindingError`; Python's
+  `tstrans.exceptions` gains `WebrtcErrorKind` and `WebrtcError`, which no
+  `tstrans` call raises yet.
+
 ### Added — tst-c
 
 - A `tls` cargo feature (default off): `tcps://`, HTTPS for the HLS
