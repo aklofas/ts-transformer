@@ -44,6 +44,13 @@ Subcommands:
   pick-profiles --seed N --legs K
             Print K distinct profile names, drawn deterministically from
             the seed (soak.sh --profile auto's per-leg selection)
+  corpus    Real-capture corpus tool (maintainer-local; never in CI):
+            inventory <dir> --out RUN · sweep <dir> --out RUN [--baseline DIR]
+            [--accept SHA --because TEXT]... · replay <dir> --out RUN
+            [--paths srt,rist,udp,tcp,rtsp-publish] [--budget-seconds N] ·
+            report RUN [--markdown FILE] [--archive-row FILE]. Files are
+            named by SHA-256 in every output; paths appear only in
+            RUN/inventory.json.
 
 Options:
   -h, --help   Show this help message"
@@ -208,6 +215,7 @@ fn main() {
         "verify" => run_verify(&args[2..]),
         "proxy" => run_proxy(&args[2..]),
         "report" => run_report(&args[2..]),
+        "corpus" => tst_interop::corpus::cli::run(&args[2..]),
         "pick-profiles" => run_pick_profiles(&args[2..]),
         _ => {
             eprintln!("Unknown subcommand: {}", subcommand);
