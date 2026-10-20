@@ -1052,6 +1052,27 @@ pub struct ParsedStream {
     pub pcr_samples: Vec<(u16, u64)>,
 }
 
+/// The PTS and the bytes after the header of a PES that starts in
+/// `payload`; `None` when the header (its fixed part, its PTS or the length
+/// its header-length byte claims) does not fit in the packet.
+fn pes_head(payload: &[u8]) -> Option<(Option<u64>, &[u8])> {
+    let flags = *payload.get(7)?;
+    let body = payload.get(9 + usize::from(*payload.get(8)?)..)?;
+    let pts = if flags & 0x80 != 0 {
+        let b = payload.get(9..14)?;
+        Some(
+            (u64::from((b[0] >> 1) & 7) << 30)
+                | (u64::from(b[1]) << 22)
+                | (u64::from(b[2] >> 1) << 15)
+                | (u64::from(b[3]) << 7)
+                | u64::from(b[4] >> 1),
+        )
+    } else {
+        None
+    };
+    Some((pts, body))
+}
+
 /// Parse a whole buffer of muxer output. Tolerances match the reader this
 /// replaced: a trailing partial packet is dropped, a PCR flag on an
 /// adaptation field too short to hold one is ignored, and the program
@@ -1062,7 +1083,8 @@ pub fn parsed(buf: &[u8]) -> ParsedStream {
 }
 
 /// [`parsed`] that reports a buffer the reader rejects as an `Err` instead
-/// of panicking, for callers fed captures they did not generate.
+/// of panicking, for callers fed captures they did not generate. A PES
+/// header that does not fit in its packet is an `Err` too; no input panics.
 pub fn try_parsed(buf: &[u8]) -> Result<ParsedStream, String> {
     let mut buf = buf[..buf.len() - buf.len() % PKT].to_vec();
     for pkt in buf.chunks_exact_mut(PKT) {
@@ -1077,9 +1099,10 @@ pub fn try_parsed(buf: &[u8]) -> Result<ParsedStream, String> {
         if info.pid != PAT_PID || !info.pusi || !info.has_payload {
             return None;
         }
-        let body = p.get(info.payload_off + 1 + usize::from(p[info.payload_off])..)?;
+        let body = p.get(info.payload_off + 1 + usize::from(*p.get(info.payload_off)?)..)?;
         // PAT entries start 8 bytes into the section, after the 3 header bytes.
-        let end = 3 + ((usize::from(body.get(1)? & 0x0F) << 8) | usize::from(*body.get(2)?)) - 4;
+        let end = (3 + ((usize::from(body.get(1)? & 0x0F) << 8) | usize::from(*body.get(2)?)))
+            .checked_sub(4)?;
         body.get(8..end.min(body.len()))?
             .chunks_exact(4)
             .find(|e| e[0] != 0 || e[1] != 0)
@@ -1119,23 +1142,14 @@ pub fn try_parsed(buf: &[u8]) -> Result<ParsedStream, String> {
         if !info.has_payload || !out.streams.iter().any(|s| s.pid == info.pid) {
             continue;
         }
-        let payload = &pkt[info.payload_off..];
+        let payload = pkt.get(info.payload_off..).unwrap_or(&[]);
         if info.pusi {
             if let Some(done) = open.remove(&info.pid) {
                 out.pes_by_pid.entry(info.pid).or_default().push(done);
             }
-            let pts = (payload[7] & 0x80 != 0).then(|| {
-                let b = &payload[9..14];
-                (u64::from((b[0] >> 1) & 7) << 30)
-                    | (u64::from(b[1]) << 22)
-                    | (u64::from(b[2] >> 1) << 15)
-                    | (u64::from(b[3]) << 7)
-                    | u64::from(b[4] >> 1)
-            });
-            open.insert(
-                info.pid,
-                (pts, payload[9 + usize::from(payload[8])..].to_vec()),
-            );
+            let (pts, body) = pes_head(payload)
+                .ok_or_else(|| format!("PID 0x{:04x}: PES header overruns its packet", info.pid))?;
+            open.insert(info.pid, (pts, body.to_vec()));
         } else if let Some((_, body)) = open.get_mut(&info.pid) {
             body.extend_from_slice(payload);
         }
@@ -1233,5 +1247,33 @@ mod tests {
         let out = parsed(&b);
         assert_eq!(out.pmt_pid, Some(0x200));
         assert_eq!(out.streams[0].pid, 0x201);
+    }
+
+    #[test]
+    fn a_pes_header_length_past_the_packet_is_an_error_not_a_panic() {
+        let mut b = pat(&[(1, 0x100)]);
+        b.extend(pmt(0x100, 1, 0x101));
+        // A PES start whose PES_header_data_length claims 0xFF bytes.
+        b.extend(packet(0x101, &[0, 0, 1, 0xE0, 0, 0, 0x80, 0x80, 0xFF]));
+        assert!(try_parsed(&b).is_err());
+    }
+
+    #[test]
+    fn a_pes_start_with_a_four_byte_payload_is_an_error_not_a_panic() {
+        let mut b = pat(&[(1, 0x100)]);
+        b.extend(pmt(0x100, 1, 0x101));
+        // An adaptation field leaves 4 payload bytes: too few for a PES header.
+        let mut p = vec![SYNC, 0x41, 0x01, 0x30, 179, 0];
+        p.resize(PKT - 4, 0xFF);
+        p.extend([0, 0, 1, 0xE0]);
+        b.extend(p);
+        assert!(try_parsed(&b).is_err());
+    }
+
+    #[test]
+    fn a_pat_with_a_section_length_under_four_does_not_panic() {
+        let mut b = packet(0, &[0, 0, 0xB0, 0x00]);
+        b.extend(pmt(0x100, 1, 0x101));
+        let _ = try_parsed(&b);
     }
 }
