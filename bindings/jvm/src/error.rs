@@ -642,6 +642,7 @@ mod tests {
             (Domain::Udp, 10),
             (Domain::Tcp, 13),
             (Domain::Rist, 13),
+            (Domain::Webrtc, 8),
         ] {
             let members: std::collections::BTreeSet<&str> =
                 d.kinds().iter().map(|k| k.name()).collect();
@@ -657,7 +658,7 @@ mod tests {
                 .iter()
                 .filter(|d| d.java_exception_class().is_some())
                 .count(),
-            12
+            13
         );
     }
 

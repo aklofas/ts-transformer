@@ -28,6 +28,7 @@ mod pipeline;
 mod rtp;
 mod shells;
 mod srt;
+mod webrtc;
 
 #[cfg(feature = "jni-test-hooks")]
 mod test_hooks;

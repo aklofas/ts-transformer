@@ -27,8 +27,8 @@ via `finish_serving`. See the [HLS guide](/docs/guides/hls.md); fMP4/CMAF and
 LL-HLS remain deferred (`deferred-features.md`).
 The JVM binding exposes it as `org.tstrans.hls` (`HlsPublisher` +
 `MuxPublisher`).
-WebRTC playback ships as `tst-webrtc` (Rust only for now): a WHEP server whose
-mounts browsers pull over WebRTC. `wheps://` serves the signalling over rustls
+WebRTC playback ships as `tst-webrtc` (Rust, and the JVM binding as
+`org.tstrans.webrtc`): a WHEP server whose mounts browsers pull over WebRTC. `wheps://` serves the signalling over rustls
 under the `tls` feature (without it, bind returns `Tls("built without the tls
 feature")`), and the signalling endpoint serves one connection at a time with a
 5 s request deadline, so an idle client delays other requests by up to 5 s.
