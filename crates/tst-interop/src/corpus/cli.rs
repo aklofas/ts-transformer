@@ -37,6 +37,7 @@ struct Common {
     out: PathBuf,
     baseline: Option<PathBuf>,
     accepts: Vec<(Sha256Hex, String)>,
+    annotations: Option<PathBuf>,
 }
 
 fn parse(args: &[String], sweep_flags: bool) -> Common {
@@ -44,6 +45,7 @@ fn parse(args: &[String], sweep_flags: bool) -> Common {
     let mut out = None;
     let mut baseline = None;
     let mut accepts: Vec<(Sha256Hex, String)> = Vec::new();
+    let mut annotations = None;
     let mut pending: Option<Sha256Hex> = None;
     let mut i = 0;
     while i < args.len() {
@@ -54,6 +56,10 @@ fn parse(args: &[String], sweep_flags: bool) -> Common {
             }
             "--baseline" if sweep_flags => {
                 baseline = Some(PathBuf::from(value(args, i, "--baseline")));
+                i += 2;
+            }
+            "--annotations" if sweep_flags => {
+                annotations = Some(PathBuf::from(value(args, i, "--annotations")));
                 i += 2;
             }
             "--accept" if sweep_flags => {
@@ -88,6 +94,7 @@ fn parse(args: &[String], sweep_flags: bool) -> Common {
         out: out.unwrap_or_else(|| fail("--out is required")),
         baseline,
         accepts,
+        annotations,
     }
 }
 
@@ -140,6 +147,7 @@ fn run_sweep(args: &[String]) -> ! {
         run: RunDir { root: c.out },
         baseline: c.baseline,
         accepts: c.accepts,
+        annotations: c.annotations,
     };
     match sweep::run(&sweep_args) {
         Ok(s) => {

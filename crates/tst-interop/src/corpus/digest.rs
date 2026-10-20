@@ -52,6 +52,14 @@ pub struct PidDigest {
     pub nonconformant: BTreeMap<String, u64>,
     pub pts_first: Option<i64>,
     pub pts_last: Option<i64>,
+    /// Times a PTS fell more than [`PTS_BACKWARD_TICKS`] below the running
+    /// maximum after 33-bit unwrap; the maximum restarts from that PTS, so a
+    /// timeline restart counts once.
+    pub pts_backward_breaks: u64,
+    /// KLV payloads on this PID that did not decode as ST 0601.
+    pub klv_unknown: u64,
+    /// Why the first of them did not.
+    pub klv_unknown_reason: Option<String>,
     /// Running SHA-256 over every sample and metadata payload, in order.
     pub payload_sha256: Sha256Hex,
 }
@@ -176,9 +184,45 @@ fn issue_key(issue: &NonConformantIssue) -> &'static str {
     }
 }
 
+/// A PTS this far (one second at 90 kHz) below the running maximum is a
+/// backward break.
+pub const PTS_BACKWARD_TICKS: i64 = 90_000;
+const PTS_MODULUS: i64 = 1 << 33;
+
 struct PidAcc {
     digest: PidDigest,
     hasher: Sha256,
+    /// Last PTS modulo 2^33 and the unwrapped timeline built from it.
+    pts_clock: Option<(i64, i64)>,
+    pts_max: i64,
+}
+
+impl PidAcc {
+    fn note_pts(&mut self, ticks: i64) {
+        let raw = ticks.rem_euclid(PTS_MODULUS);
+        let at = match self.pts_clock {
+            None => {
+                self.pts_max = raw;
+                raw
+            }
+            Some((prev_raw, prev_at)) => {
+                let mut delta = raw - prev_raw;
+                if delta > PTS_MODULUS / 2 {
+                    delta -= PTS_MODULUS;
+                } else if delta <= -PTS_MODULUS / 2 {
+                    delta += PTS_MODULUS;
+                }
+                prev_at + delta
+            }
+        };
+        self.pts_clock = Some((raw, at));
+        if at < self.pts_max - PTS_BACKWARD_TICKS {
+            self.digest.pts_backward_breaks += 1;
+            self.pts_max = at;
+        } else {
+            self.pts_max = self.pts_max.max(at);
+        }
+    }
 }
 
 /// Everything one demuxer pass collects.
@@ -215,9 +259,14 @@ impl Pass {
                 nonconformant: BTreeMap::new(),
                 pts_first: None,
                 pts_last: None,
+                pts_backward_breaks: 0,
+                klv_unknown: 0,
+                klv_unknown_reason: None,
                 payload_sha256: Sha256Hex(String::new()),
             },
             hasher: Sha256::new(),
+            pts_clock: None,
+            pts_max: 0,
         });
         // A PID first seen before its PMT has no kind yet.
         if acc.digest.kind == "unknown" && kind != "unknown" {
@@ -246,6 +295,7 @@ impl Pass {
                     acc.digest.samples += 1;
                     acc.digest.pts_first.get_or_insert(pts.as_ticks());
                     acc.digest.pts_last = Some(pts.as_ticks());
+                    acc.note_pts(pts.as_ticks());
                 }
                 DemuxEvent::Metadata {
                     stream,
@@ -258,6 +308,7 @@ impl Pass {
                     acc.digest.metadata += 1;
                     acc.digest.pts_first.get_or_insert(pts.as_ticks());
                     acc.digest.pts_last = Some(pts.as_ticks());
+                    acc.note_pts(pts.as_ticks());
                     if matches!(
                         kind,
                         MetadataKind::KlvSyncAuCell { .. } | MetadataKind::KlvAsync
@@ -268,6 +319,11 @@ impl Pass {
                             self.klv_decoded += 1;
                         } else {
                             self.klv_unknown += 1;
+                            let d = &mut self.pid(stream.pid, kind_name(&stream.kind)).digest;
+                            d.klv_unknown += 1;
+                            if d.klv_unknown_reason.is_none() {
+                                d.klv_unknown_reason = rec.unknown_reason.clone();
+                            }
                         }
                         self.klv_hasher.update(rec.canonical_sha256.0.as_bytes());
                     }
