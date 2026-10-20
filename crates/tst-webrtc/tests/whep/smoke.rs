@@ -63,3 +63,18 @@ fn an_opus_passthrough_mount_is_accepted() {
     cfg.audio = AudioPolicy::PassthroughOpus;
     cfg.validate().unwrap();
 }
+
+#[test]
+fn opus_passthrough_on_an_mp2t_mount_is_refused() {
+    let mut cfg = MountConfig::default();
+    cfg.kind = MountKind::Mp2t;
+    cfg.audio = AudioPolicy::PassthroughOpus;
+    match cfg.validate() {
+        Err(WhepServerError::InvalidConfig { detail }) => {
+            assert!(detail.contains("Opus mapping"), "{detail}");
+        }
+        other => panic!("expected InvalidConfig, got {other:?}"),
+    }
+    cfg.audio = AudioPolicy::Drop;
+    cfg.validate().unwrap();
+}
