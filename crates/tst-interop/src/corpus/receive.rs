@@ -16,7 +16,9 @@
 //! prefix digest. `largest_au_bytes` is the inventory's largest video
 //! access unit and `largest_chunk_bytes` the largest PCR interval the
 //! sender's pacer writes at once (0 when unknown); the `udp` child sizes its
-//! socket buffer from both ([`udp_rcvbuf_for`]).
+//! socket buffer from both ([`udp_rcvbuf_for`]), reads back what the kernel
+//! granted, and, when the granted buffer is smaller than the request, adds
+//! `receive buffer <granted> < requested <requested>` to a failed verdict.
 //!
 //! The expected digest is read from `<digests>/<sha256>.json`, or from
 //! `<digests>/<sha256>.prefix<seconds>.json` for a `file` with a prefix
@@ -34,7 +36,7 @@
 //!
 //! | path | the child binds | `ready` prints |
 //! |---|---|---|
-//! | `udp` | `udp://127.0.0.1:0`, with `?rcvbuf=` per [`udp_rcvbuf_for`] | `udp://127.0.0.1:<port>` |
+//! | `udp` | `udp://127.0.0.1:0?rcvbuf=<n>`, `n` per [`udp_rcvbuf_for`] on every platform | `udp://127.0.0.1:<port>` |
 //! | `tcp` | `tcp://127.0.0.1:0?listen=1` | `tcp://127.0.0.1:<port>` (the sender is the caller) |
 //! | `srt` | `srt://127.0.0.1:0?mode=listener` | `srt://127.0.0.1:<port>` (the sender is the caller) |
 //! | `rist` | `rist://@127.0.0.1:<even port>` | `rist://127.0.0.1:<port>` |
@@ -106,31 +108,44 @@ fn die_after(path: &str, value: &str) -> Option<u64> {
 /// outside tests.
 pub const STALL_ENV: &str = "TST_CORPUS_TEST_STALL_SECONDS";
 
-/// A UDP receiver's socket buffer holds this many keyframe bursts when the
-/// kernel default cannot hold two: the stress harness's rule.
-pub const UDP_RCVBUF_BURST_FACTOR: u64 = 2;
+/// How many bursts a `udp` receiver's socket buffer is asked to hold. Linux
+/// stores twice the value set (the other half pays for bookkeeping), so two
+/// bursts is the stress harness's rule there. macOS stores the value set
+/// exactly and charges each datagram's mbuf (about 2 KB for a 1 316-byte
+/// datagram) against it, and Windows has its own accounting, so elsewhere
+/// the request is four bursts.
+pub const UDP_RCVBUF_BURST_FACTOR: u64 = if cfg!(target_os = "linux") { 2 } else { 4 };
+
+/// The smallest receive buffer a `udp` receiver asks for: 256 KiB on Linux
+/// (stored as 512 KiB), 1 MiB elsewhere. The request never depends on a
+/// platform's default buffer, which differs widely between kernels.
+pub const UDP_RCVBUF_FLOOR: u64 = if cfg!(target_os = "linux") {
+    256 * 1024
+} else {
+    1024 * 1024
+};
+
+/// Test hook: a byte count the `udp` child puts on its socket in place of
+/// [`udp_rcvbuf_for`]'s request, which stays the size the verdict compares
+/// the granted buffer with. A tiny value stands for a kernel that grants
+/// less than the replay needs. Never set outside tests.
+pub const RCVBUF_ENV: &str = "TST_CORPUS_TEST_RCVBUF";
+
+/// The receive buffer, in bytes, the bursts of a capture need: the burst is
+/// the larger of the access unit of `largest_au_bytes` as 188-byte packets
+/// of 184 payload bytes (the stress harness's rule) and the
+/// `largest_chunk_bytes` the pacer writes in one go (an access unit plus
+/// the audio and KLV beside it), times [`UDP_RCVBUF_BURST_FACTOR`]. 0 when
+/// both sizes are unknown (0).
+pub fn udp_rcvbuf_need(largest_au_bytes: u64, largest_chunk_bytes: u64) -> u64 {
+    (largest_au_bytes.div_ceil(184) * 188).max(largest_chunk_bytes) * UDP_RCVBUF_BURST_FACTOR
+}
 
 /// The receive buffer, in bytes, a `udp` receiver asks for (`?rcvbuf=`) to
-/// absorb a burst sent at line rate. The burst is the larger of the access
-/// unit of `largest_au_bytes` as 188-byte packets of 184 payload bytes (the
-/// stress harness's rule) and the `largest_chunk_bytes` the pacer writes in
-/// one go (an access unit plus the audio and KLV beside it). `None` when
-/// the kernel default (`rmem_default`, of which about half holds payload)
-/// already holds two bursts, or both sizes are unknown (0). An unreadable
-/// default still sets the buffer.
-pub fn udp_rcvbuf_for(
-    largest_au_bytes: u64,
-    largest_chunk_bytes: u64,
-    rmem_default: Option<u64>,
-) -> Option<u64> {
-    let burst = (largest_au_bytes.div_ceil(184) * 188).max(largest_chunk_bytes);
-    if burst == 0 {
-        return None;
-    }
-    if rmem_default.is_some_and(|d| burst * 2 <= d) {
-        return None;
-    }
-    Some(burst * UDP_RCVBUF_BURST_FACTOR)
+/// absorb a burst sent at line rate: [`udp_rcvbuf_need`], at least
+/// [`UDP_RCVBUF_FLOOR`]. Every replay sets it, on every platform.
+pub fn udp_rcvbuf_for(largest_au_bytes: u64, largest_chunk_bytes: u64) -> u64 {
+    udp_rcvbuf_need(largest_au_bytes, largest_chunk_bytes).max(UDP_RCVBUF_FLOOR)
 }
 
 /// A `net.core` sysctl in bytes; `None` where it cannot be read (not Linux).
@@ -349,6 +364,8 @@ struct Child<'a> {
     replays: u64,
     stall: Duration,
     quiet: Duration,
+    /// [`RCVBUF_ENV`]: the `udp` socket's buffer in place of the request.
+    rcvbuf_override: Option<u64>,
     /// Commands that arrived while a replay was winding down.
     pending: VecDeque<Cmd>,
 }
@@ -379,12 +396,11 @@ impl Child<'_> {
         };
         let (bind_url, sender_url) = urls(path).expect("the path was checked at start");
         let small_tcp = self.stop_reading && path == "tcp";
+        let udp_request = (path == "udp").then(|| udp_rcvbuf_for(largest_au, largest_chunk));
         let bind_url = if small_tcp {
             format!("{bind_url}&rcvbuf={STOP_READING_BUF}")
-        } else if path == "udp"
-            && let Some(n) = udp_rcvbuf_for(largest_au, largest_chunk, net_core("rmem_default"))
-        {
-            format!("{bind_url}?rcvbuf={n}")
+        } else if let Some(n) = udp_request {
+            format!("{bind_url}?rcvbuf={}", self.rcvbuf_override.unwrap_or(n))
         } else {
             bind_url.to_string()
         };
@@ -392,6 +408,12 @@ impl Child<'_> {
             Ok(b) => b,
             Err(e) => return self.verdict(&failed(&sha, path, format!("cannot listen: {e}"))),
         };
+        // (requested, granted) when the kernel granted less than requested.
+        let short_buffer = udp_request.and_then(|requested| {
+            let granted = bound.recv_buffer_size()?;
+            eprintln!("corpus receive: udp receive buffer requested {requested} granted {granted}");
+            (granted < requested).then_some((requested, granted))
+        });
         let mut announce = sender_url(bound.addr());
         if small_tcp {
             announce.push_str(&format!("?sndbuf={STOP_READING_BUF}"));
@@ -464,7 +486,15 @@ impl Child<'_> {
             (None, false) => ReceiverOutcome::Error("receiver ended without a result".into()),
         };
         let received = done.and_then(Result::ok);
-        let v = judge(path, &expected, received.as_ref(), &outcome);
+        let mut v = judge(path, &expected, received.as_ref(), &outcome);
+        // Attribution, never a pass: a datagram the socket had no room for
+        // is lost without a trace.
+        if !v.pass
+            && let Some((requested, granted)) = short_buffer
+        {
+            v.failures
+                .push(format!("receive buffer {granted} < requested {requested}"));
+        }
         // A thread that did not report is left behind, never waited for.
         if !stalled && received.is_some() {
             let _ = worker.join();
@@ -540,6 +570,10 @@ pub fn run(path: &str, digests: &Path, out: &Path) -> i32 {
         replays: 0,
         stall,
         quiet: Duration::from_secs(QUIET_SECONDS).min(stall),
+        rcvbuf_override: std::env::var(RCVBUF_ENV)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n| n > 0),
         pending: VecDeque::new(),
     };
     loop {

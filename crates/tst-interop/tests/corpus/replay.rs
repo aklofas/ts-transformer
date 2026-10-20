@@ -49,18 +49,24 @@ fn a_path_with_too_few_samples_is_recorded_as_not_gated() {
 }
 
 #[test]
-fn the_udp_buffer_holds_two_of_the_larger_of_the_access_unit_and_the_paced_chunk() {
-    use tst_interop::corpus::receive::udp_rcvbuf_for;
+fn the_udp_buffer_holds_bursts_of_the_larger_of_the_access_unit_and_the_paced_chunk() {
+    use tst_interop::corpus::receive::{
+        UDP_RCVBUF_BURST_FACTOR as F, UDP_RCVBUF_FLOOR, udp_rcvbuf_for, udp_rcvbuf_need,
+    };
+    // Linux stores twice the value set; macOS stores it exactly and charges
+    // each datagram's mbuf against it.
+    #[cfg(target_os = "linux")]
+    assert_eq!((F, UDP_RCVBUF_FLOOR), (2, 256 * 1024));
+    #[cfg(not(target_os = "linux"))]
+    assert_eq!((F, UDP_RCVBUF_FLOOR), (4, 1024 * 1024));
     // 184 000 bytes of access unit are 1 000 packets: 188 000 on the wire.
-    assert_eq!(udp_rcvbuf_for(184_000, 0, Some(212_992)), Some(376_000));
+    assert_eq!(udp_rcvbuf_need(184_000, 0), 188_000 * F);
     // A paced chunk larger than the access unit sets the burst.
-    assert_eq!(
-        udp_rcvbuf_for(184_000, 300_000, Some(212_992)),
-        Some(600_000)
-    );
-    // A default that holds two bursts needs nothing; nor does an unknown size.
-    assert_eq!(udp_rcvbuf_for(1_000, 50_000, Some(212_992)), None);
-    assert_eq!(udp_rcvbuf_for(0, 0, None), None);
-    // An unreadable default still sets the buffer.
-    assert_eq!(udp_rcvbuf_for(0, 50_000, None), Some(100_000));
+    assert_eq!(udp_rcvbuf_need(184_000, 300_000), 300_000 * F);
+    assert_eq!(udp_rcvbuf_need(0, 0), 0);
+    // The request never falls below the floor, whatever the platform's
+    // default, and is the need above it.
+    assert_eq!(udp_rcvbuf_for(0, 0), UDP_RCVBUF_FLOOR);
+    assert_eq!(udp_rcvbuf_for(1_000, 50_000), UDP_RCVBUF_FLOOR);
+    assert_eq!(udp_rcvbuf_for(184_000, 600_000), 600_000 * F);
 }

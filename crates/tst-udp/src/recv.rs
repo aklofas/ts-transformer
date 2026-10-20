@@ -140,6 +140,13 @@ impl UdpRecvTransport {
         self.local
     }
 
+    /// The receive buffer the kernel holds for this socket, in bytes
+    /// (`SO_RCVBUF` read back). Linux reports twice what was set, capped at
+    /// `net.core.rmem_max`; macOS and Windows report the value set.
+    pub fn recv_buffer_size(&self) -> std::io::Result<usize> {
+        socket2::SockRef::from(&self.socket).recv_buffer_size()
+    }
+
     /// Cross-thread cancel handle for this receiver. Cloneable; see
     /// [`UdpCancelHandle`] for the contract. `recv_bytes` observes it at
     /// every ~100 ms poll tick; `recv_timeout` does NOT (it is the

@@ -4136,6 +4136,15 @@ tier = "A"
 
 [[surface]]
 kind = "rust"
+crate = "tst-udp"
+item = "tst_udp::recv::UdpRecvTransport::recv_buffer_size"
+owning_tests = ["crates/tst-udp/tests/net_loopback_unicast.rs"]
+bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
 crate = "tst-tcp"
 item = "tst_tcp::transport::TcpTransport::end_reason_handle"
 owning_tests = ["crates/tst-tcp/tests/net_loopback.rs"]
