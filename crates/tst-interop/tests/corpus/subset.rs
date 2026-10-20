@@ -1,7 +1,7 @@
 use serde_json::json;
 use tst_interop::corpus::inventory::{FileEntry, Inventory};
 use tst_interop::corpus::subset::{ReplayPlan, read, select, write};
-use tst_interop::corpus::{PREFIX_SECONDS, RunDir};
+use tst_interop::corpus::{PREFIX_SECONDS, REPLAY_PICK_MAX_BYTES, RunDir};
 
 use crate::temp_dir_named;
 
@@ -167,4 +167,59 @@ fn a_probe_error_is_never_picked_and_the_plan_round_trips() {
     let back = read(&run).unwrap();
     assert_eq!(back.picks, p.picks);
     assert_eq!(back.total_seconds, p.total_seconds);
+}
+
+#[test]
+fn a_file_without_a_duration_is_never_picked() {
+    let i = inv(vec![
+        entry("00", "a", 0.0, 1 << 40, &["av1"], &[]),
+        entry("01", "a", 10.0, 1, &["h264"], &[]),
+    ]);
+    let p = select(&i, &[], 7200);
+    assert!(p.picks.iter().all(|k| k.sha256.0 != "00"), "{:?}", whys(&p));
+    assert!(p.skipped.is_empty(), "{:?}", p.skipped);
+    assert!(p.picks.iter().any(|k| k.sha256.0 == "01"));
+}
+
+#[test]
+fn a_pick_over_the_size_cap_is_skipped_and_costs_no_budget() {
+    // 10 s and 5 GiB: replayed whole, over the cap.
+    let whole = entry("00", "a", 10.0, 5 << 30, &["av1"], &[]);
+    // 1200 s and 10 GiB: half replayed = 5 GiB, over the cap.
+    let long = entry("01", "b", 1200.0, 10 << 30, &["hevc"], &[]);
+    // 1200 s and 6 GiB: half replayed = 3 GiB, kept.
+    let kept = entry("02", "c", 1200.0, 6 << 30, &["h264"], &[]);
+    let p = select(&inv(vec![whole, long, kept]), &[], 7200);
+    assert_eq!(
+        p.skipped,
+        vec![
+            (
+                tst_interop::corpus::Sha256Hex("00".into()),
+                "over the pick size cap".to_string()
+            ),
+            (
+                tst_interop::corpus::Sha256Hex("01".into()),
+                "over the pick size cap".to_string()
+            ),
+        ]
+    );
+    assert_eq!(
+        p.picks
+            .iter()
+            .map(|k| k.sha256.0.as_str())
+            .collect::<Vec<_>>(),
+        ["02"]
+    );
+    assert_eq!(p.total_seconds, f64::from(PREFIX_SECONDS));
+    assert!(p.predicted_peak_bytes <= REPLAY_PICK_MAX_BYTES);
+}
+
+#[test]
+fn the_predicted_peak_is_the_largest_kept_pick() {
+    let short = entry("00", "a", 10.0, 1000, &["av1"], &[]);
+    // 1200 s of 3 GiB: the 600 s prefix is half of it.
+    let long = entry("01", "b", 1200.0, 3 << 30, &["hevc"], &[]);
+    let p = select(&inv(vec![short, long]), &[], 7200);
+    assert_eq!(p.picks.len(), 2, "{:?}", whys(&p));
+    assert_eq!(p.predicted_peak_bytes, 1_610_612_736);
 }

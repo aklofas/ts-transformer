@@ -6,6 +6,7 @@ use std::process::{Command, Output};
 use std::time::Duration;
 
 use serde_json::Value;
+use tst_interop::fixtures::{AuSizeMode, KlvSet};
 use tst_interop::report::stress::parse_rss_csv;
 
 use crate::{gen_profile_bytes, run_bounded, sha_of, temp_dir_named};
@@ -26,6 +27,25 @@ fn two_files(name: &str) -> (PathBuf, Vec<String>) {
     (dir, vec![sha_of(&a).0, sha_of(&b).0])
 }
 
+/// Two distinct 2 s captures at a real encoder's AU sizes (about 1.7 Mb/s
+/// of video), enough bytes to fill a loopback connection's buffers.
+fn two_realistic_files(name: &str) -> PathBuf {
+    let dir = temp_dir_named(name);
+    for (file, profile) in [("a.ts", "baseline"), ("b.ts", "klv-sync")] {
+        let p = tst_interop::profiles::by_name(profile).unwrap();
+        tst_interop::r#gen::run(
+            p,
+            2.0,
+            &dir.join(file),
+            KlvSet::Compact,
+            0,
+            AuSizeMode::Realistic { scale: 1 },
+        )
+        .unwrap();
+    }
+    dir
+}
+
 fn sweep(dir: &Path, run: &Path) {
     let out = run_bounded(
         bin()
@@ -43,13 +63,17 @@ fn sweep(dir: &Path, run: &Path) {
 }
 
 fn replay(dir: &Path, run: &Path, env: &[(&str, &str)]) -> Output {
+    replay_over(dir, run, "udp,tcp", env)
+}
+
+fn replay_over(dir: &Path, run: &Path, paths: &str, env: &[(&str, &str)]) -> Output {
     run_bounded(
         bin()
             .args(["corpus", "replay"])
             .arg(dir)
             .arg("--out")
             .arg(run)
-            .args(["--paths", "udp,tcp", "--budget-seconds", "7200"])
+            .args(["--paths", paths, "--budget-seconds", "7200"])
             .envs(env.iter().copied()),
         LIMIT,
     )
@@ -92,6 +116,10 @@ fn replay_over_udp_and_tcp_passes_and_writes_rss_samples() {
     assert!(run.join("replay-plan.json").is_file());
     let rows = parse_rss_csv(&std::fs::read_to_string(run.join("replay-rss.csv")).unwrap())
         .expect("replay-rss.csv parses");
+    // VmRSS comes from /proc: elsewhere the file holds only its header.
+    #[cfg(not(target_os = "linux"))]
+    assert!(rows.is_empty(), "{rows:?}");
+    #[cfg(target_os = "linux")]
     for path in ["udp", "tcp"] {
         assert!(
             rows.iter()
@@ -151,4 +179,35 @@ fn replay_output_names_no_path() {
         assert!(all.contains(&format!("{sha} udp PASS")), "{all}");
         assert!(all.contains(&format!("{sha} tcp PASS")), "{all}");
     }
+}
+
+#[test]
+fn a_receiver_that_stops_reading_trips_the_send_deadline() {
+    let dir = two_realistic_files("rp-deadline");
+    let run = dir.join("run");
+    sweep(&dir, &run);
+    // tcp alone: the one-second stall knob would make a loaded udp path's
+    // verdicts timing-dependent, and they prove nothing here.
+    let out = replay_over(
+        &dir,
+        &run,
+        "tcp",
+        &[
+            ("TST_CORPUS_TEST_RECEIVE_STOP_READING", "tcp"),
+            ("TST_CORPUS_TEST_STALL_SECONDS", "1"),
+        ],
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    let summary = json(&run.join("replay.json"));
+    let verdicts = summary["verdicts"].as_array().unwrap();
+    let tcp: Vec<&Value> = verdicts.iter().filter(|v| v["path"] == "tcp").collect();
+    assert_eq!(tcp.len(), 2, "{summary}");
+    let first = tcp[0]["failures"].as_array().unwrap();
+    assert!(
+        first[0].as_str().unwrap().starts_with("sender deadline"),
+        "{summary}"
+    );
+    assert_eq!(first[1], "receiver stalled", "{summary}");
+    assert_eq!(tcp[1]["failures"][0], "receiver exited", "{summary}");
+    assert_eq!(verdicts.len(), 2, "{summary}");
 }

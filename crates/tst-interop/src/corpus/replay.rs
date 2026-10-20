@@ -15,11 +15,20 @@
 //! sends exactly the cut the digest was made of and no capture path ever
 //! leaves the tool. Its output goes to `logs/`.
 //!
+//! Every wait is bounded. A child gets [`READY_WAIT`] to answer `file` and
+//! [`VERDICT_WAIT`] to answer `sent`; the paced send itself gets the pick's
+//! PCR seconds plus twice the stall time ([`send_deadline`]). A send that
+//! outlives it (a receiver alive but no longer reading, so the sender's
+//! writes never complete) is cancelled, the child is killed, the pick is
+//! judged `Stalled` and the path's later picks `Exited`.
+//!
 //! An RSS sampler reads each child's `VmRSS` every `rss_sample_seconds`
 //! into `replay-rss.csv`, in the `rss.csv` shape the soak and stress
 //! reports read (leg = the path, process = `recv`). A tick that reads no
 //! `VmRSS` (a child that has exited, or a read that raced it) records no
-//! row; it is never taken for an exit.
+//! row; it is never taken for an exit. `VmRSS` comes from `/proc`, so the
+//! sampling is Linux-only: elsewhere the CSV holds only its header and the
+//! summary's RSS maps are empty.
 //!
 //! Output, files and errors name captures by SHA-256 only.
 
@@ -28,13 +37,14 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tst_core::transport::Transport;
+use sha2::{Digest, Sha256};
+use tst_core::transport::{Transport, TransportCancel};
 use tst_pipeline::{Sender, SenderConfig, ShellErrorKind};
 
 use super::digest;
@@ -42,6 +52,7 @@ use super::inventory::{self, FileEntry};
 use super::judge::{FileVerdict, ReceiverOutcome, outcome_failure};
 use super::pace::{PcrPacer, send_paced};
 use super::pcr::prefix_end_read;
+use super::receive::STALL_ENV;
 use super::subset::{self, Pick, ReplayPlan};
 use super::{PATHS, RunDir, STALL_SECONDS, Sha256Hex};
 use crate::report::csv::RSS_HEADER;
@@ -49,6 +60,8 @@ use crate::report::soak::linear_regression_slope;
 use crate::transport::make_send;
 
 pub struct ReplayArgs {
+    /// The swept corpus directory; every capture the run's inventory names
+    /// must lie inside it.
     pub dir: PathBuf,
     pub run: RunDir,
     /// Transport paths to replay over; [`PATHS`] for all of them.
@@ -71,8 +84,9 @@ pub struct ReplaySummary {
     pub failed: u64,
     /// Paths with at least one RSS sample only.
     pub rss_max_kb_by_path: BTreeMap<String, u64>,
-    /// Least-squares slope over each path's samples (the soak report's
-    /// arithmetic); 0 with fewer than two samples.
+    /// Least-squares slope over each path's samples but the first (taken
+    /// as the child starts, before it holds anything), the soak report's
+    /// arithmetic; 0 with fewer than two such samples.
     pub rss_slope_kb_per_hour_by_path: BTreeMap<String, f64>,
     /// No verdict failed and every path produced at least one.
     pub pass: bool,
@@ -88,6 +102,25 @@ const QUIT_WAIT: Duration = Duration::from_secs(15);
 /// The pause between two retries of a send the transport refused for now.
 const BACKOFF: Duration = Duration::from_millis(2);
 const TICK: Duration = Duration::from_millis(100);
+
+/// The stall time the receivers use: [`STALL_SECONDS`], or the test knob
+/// [`STALL_ENV`] the children read too.
+fn stall() -> Duration {
+    Duration::from_secs(
+        std::env::var(STALL_ENV)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(STALL_SECONDS),
+    )
+}
+
+/// How long the paced send of `pacer` may take: its PCR seconds, plus the
+/// stall time for a slow start and again for the end.
+fn send_deadline(pacer: &PcrPacer) -> Duration {
+    Duration::from_secs_f64(pacer.total_seconds()) + 2 * stall()
+}
+
+type CancelSlot = Mutex<Option<Arc<dyn TransportCancel + Send + Sync>>>;
 
 fn failed(sha: &Sha256Hex, path: &str, why: String) -> FileVerdict {
     FileVerdict {
@@ -243,7 +276,39 @@ impl PathRun {
             self.kill();
             return failed(sha, &path, "receiver protocol error".into());
         };
-        let sent = send(&path, url, pacer, &logs.join(format!("publish-{sha}.log")));
+        let deadline = send_deadline(pacer);
+        let log = logs.join(format!("publish-{sha}.log"));
+        let cancel: CancelSlot = Mutex::new(None);
+        let sent = std::thread::scope(|s| {
+            let (tx, rx) = mpsc::channel();
+            let (path, cancel, log) = (&path, &cancel, &log);
+            s.spawn(move || {
+                let _ = tx.send(send(path, url, pacer, log, cancel));
+            });
+            match rx.recv_timeout(deadline) {
+                Ok(r) => Some(r),
+                Err(_) => {
+                    // Closing both ends makes a blocked write fail, so the
+                    // send thread returns and the scope can join it.
+                    if let Some(c) = cancel.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                        c.cancel();
+                    }
+                    self.kill();
+                    None
+                }
+            }
+        });
+        let Some(sent) = sent else {
+            let mut v = not_received(sha, &path, ReceiverOutcome::Stalled);
+            v.failures.insert(
+                0,
+                format!(
+                    "sender deadline: the send outlived {} s",
+                    deadline.as_secs()
+                ),
+            );
+            return v;
+        };
         // A path that ends on the sender's close may already have judged
         // the file, and a child told to leave after it may be gone: the
         // verdict is read either way.
@@ -279,12 +344,20 @@ impl PathRun {
     }
 }
 
-/// Sends the paced capture to the URL a child announced.
-fn send(path: &str, url: &str, pacer: &PcrPacer, publish_log: &Path) -> Result<(), String> {
+/// Sends the paced capture to the URL a child announced. The sender's
+/// cancel handle goes into `cancel` as soon as it exists.
+fn send(
+    path: &str,
+    url: &str,
+    pacer: &PcrPacer,
+    publish_log: &Path,
+    cancel: &CancelSlot,
+) -> Result<(), String> {
     if path == "rtsp-publish" {
         return publish(url, pacer, publish_log);
     }
     let mut sender = Sender::new(make_send(url)?, SenderConfig::default());
+    *cancel.lock().unwrap_or_else(|e| e.into_inner()) = sender.cancel_handle();
     let start = Instant::now();
     let r = send_paced(
         pacer,
@@ -298,16 +371,31 @@ fn send(path: &str, url: &str, pacer: &PcrPacer, publish_log: &Path) -> Result<(
 
 /// One chunk through the sender, all of it on the wire before the next
 /// chunk is due. A send the transport refuses for now is retried for up to
-/// [`STALL_SECONDS`].
+/// [`STALL_SECONDS`]: `send_ts` again when the chunk was not taken in
+/// (`input_consumed == Some(false)`), else `flush`, which drains what the
+/// sender kept.
 fn push<T: Transport>(sender: &mut Sender<T>, chunk: &[u8]) -> Result<(), String> {
     let until = Instant::now() + Duration::from_secs(STALL_SECONDS);
-    let mut r = sender.send_ts(chunk).and_then(|()| sender.flush());
+    let mut taken = false;
     loop {
+        let r = if taken {
+            sender.flush()
+        } else {
+            match sender.send_ts(chunk) {
+                Ok(()) => {
+                    taken = true;
+                    sender.flush()
+                }
+                Err(e) => {
+                    taken = e.input_consumed != Some(false);
+                    Err(e)
+                }
+            }
+        };
         match r {
             Ok(()) => return Ok(()),
             Err(e) if e.kind == ShellErrorKind::Backpressure && Instant::now() < until => {
                 std::thread::sleep(BACKOFF);
-                r = sender.flush();
             }
             Err(e) => return Err(e.to_string()),
         }
@@ -375,7 +463,8 @@ fn runs_ok(program: &str, args: &[&str]) -> bool {
 
 /// The publisher's tools, checked once before anything is replayed.
 fn check_publisher() -> Result<(), String> {
-    let needs: [(&str, &[&str], &str); 3] = [
+    let needs: [(&str, &[&str], &str); 4] = [
+        ("timeout", &["--version"], "timeout (package coreutils)"),
         (
             "gst-launch-1.0",
             &["--version"],
@@ -446,19 +535,29 @@ fn sample_rss(
     }
 }
 
-/// Reads a pick's bytes: the whole capture, or up to its prefix cut.
-fn read_pick(file: &Path, prefix_seconds: Option<u32>) -> Result<Vec<u8>, String> {
+/// Reads a pick's bytes, the whole capture or up to its prefix cut, into
+/// one allocation of exactly that size. A whole capture must still have the
+/// sha the plan names (a prefixed one was checked by its prefix digest).
+fn read_pick(file: &Path, sha: &Sha256Hex, prefix_seconds: Option<u32>) -> Result<Vec<u8>, String> {
+    let read_err = |e: std::io::Error| format!("cannot read the capture: {}", e.kind());
     let open = || File::open(file).map_err(|e| format!("cannot open the capture: {}", e.kind()));
-    let mut bytes = Vec::new();
-    let read = match prefix_seconds {
-        Some(s) => {
-            let end = prefix_end_read(&mut open()?, s)
-                .map_err(|e| format!("cannot read the capture: {}", e.kind()))?;
-            open()?.take(end).read_to_end(&mut bytes)
-        }
-        None => open()?.read_to_end(&mut bytes),
+    let mut f = open()?;
+    let end = match prefix_seconds {
+        Some(s) => prefix_end_read(&mut f, s).map_err(read_err)?,
+        None => f.metadata().map_err(read_err)?.len(),
     };
-    read.map_err(|e| format!("cannot read the capture: {}", e.kind()))?;
+    let end = usize::try_from(end).map_err(|_| "the capture does not fit in memory".to_string())?;
+    let mut bytes = vec![0u8; end];
+    open()?.read_exact(&mut bytes).map_err(read_err)?;
+    if prefix_seconds.is_none() {
+        let got: String = Sha256::digest(&bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if got != sha.0 {
+            return Err("content changed since the inventory".into());
+        }
+    }
     Ok(bytes)
 }
 
@@ -484,7 +583,7 @@ fn replay_pick(
             return fail_all(runs, format!("prefix digest: {e}"));
         }
     }
-    let bytes = match read_pick(file, pick.prefix_seconds) {
+    let bytes = match read_pick(file, &pick.sha256, pick.prefix_seconds) {
         Ok(b) => b,
         Err(e) => return fail_all(runs, e),
     };
@@ -530,6 +629,24 @@ pub fn run(args: &ReplayArgs) -> Result<ReplaySummary, String> {
     run_with(args, &mut |_| {})
 }
 
+/// Fails when a capture the inventory names lies outside `dir`: the run
+/// directory was swept from another corpus. A file that cannot be resolved
+/// is left to its pick to report.
+fn check_dir(dir: &Path, inv: &inventory::Inventory) -> Result<(), String> {
+    let dir = dir
+        .canonicalize()
+        .map_err(|e| format!("cannot open the corpus directory: {}", e.kind()))?;
+    let outside = inv
+        .files
+        .iter()
+        .filter_map(|f| f.paths.first()?.canonicalize().ok())
+        .any(|p| !p.starts_with(&dir));
+    if outside {
+        return Err("the run directory was swept from another corpus directory".into());
+    }
+    Ok(())
+}
+
 /// Replays the subset of the swept corpus and writes `replay-plan.json`,
 /// `replay.json` and `replay-rss.csv` into the run directory, calling
 /// `on_verdict` as each verdict lands. Needs the sweep's `digests/` and
@@ -545,6 +662,7 @@ pub fn run_with(
         return Err("the run directory holds no digests: run the sweep first".into());
     }
     let inv = inventory::read(&args.run)?;
+    check_dir(&args.dir, &inv)?;
     if args.paths.iter().any(|p| p == "rtsp-publish") {
         check_publisher()?;
     }
@@ -552,6 +670,16 @@ pub fn run_with(
     subset::write(&plan, &args.run)?;
     let entries: BTreeMap<&Sha256Hex, &FileEntry> =
         inv.files.iter().map(|f| (&f.sha256, f)).collect();
+
+    let csv_path = args.run.root.join("replay-rss.csv");
+    let mut csv = File::create(&csv_path).map_err(|e| {
+        format!(
+            "cannot create replay-rss.csv in the run directory: {}",
+            e.kind()
+        )
+    })?;
+    writeln!(csv, "{RSS_HEADER}")
+        .map_err(|e| format!("cannot write replay-rss.csv: {}", e.kind()))?;
 
     let mut runs: Vec<PathRun> = Vec::new();
     for path in &args.paths {
@@ -563,15 +691,6 @@ pub fn run_with(
             }
         }
     }
-    let csv_path = args.run.root.join("replay-rss.csv");
-    let mut csv = File::create(&csv_path).map_err(|e| {
-        format!(
-            "cannot create replay-rss.csv in the run directory: {}",
-            e.kind()
-        )
-    })?;
-    writeln!(csv, "{RSS_HEADER}")
-        .map_err(|e| format!("cannot write replay-rss.csv: {}", e.kind()))?;
     let stop = Arc::new(AtomicBool::new(false));
     let sampler = {
         let procs = runs
@@ -612,8 +731,9 @@ pub fn run_with(
         }
         let max = points.iter().map(|(_, kb)| *kb as u64).max().unwrap_or(0);
         rss_max_kb_by_path.insert(path.clone(), max);
+        // The first sample is the child at spawn, before it allocates.
         rss_slope_kb_per_hour_by_path
-            .insert(path.clone(), linear_regression_slope(&points) * 3600.0);
+            .insert(path.clone(), linear_regression_slope(&points[1..]) * 3600.0);
     }
     let failed = verdicts.iter().filter(|v| !v.pass).count() as u64;
     let every_path_judged = args

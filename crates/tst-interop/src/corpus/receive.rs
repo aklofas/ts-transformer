@@ -77,6 +77,16 @@ pub const QUIET_SECONDS: u64 = 2;
 /// outside tests.
 pub const DIE_AFTER_ENV: &str = "TST_CORPUS_TEST_RECEIVE_DIE_AFTER";
 
+/// Test hook: set to a path name, that path's child accepts its sender and
+/// then never reads from it, holding the connection open, so the sender's
+/// writes stop completing. On `tcp` it also asks for small socket buffers
+/// (the listener's `rcvbuf`, the announced sender's `sndbuf`), so the
+/// writes block after a few kilobytes. Never set outside tests.
+pub const STOP_READING_ENV: &str = "TST_CORPUS_TEST_RECEIVE_STOP_READING";
+
+/// The socket buffer [`STOP_READING_ENV`] asks for on `tcp`.
+const STOP_READING_BUF: &str = "4096";
+
 /// The verdict count [`DIE_AFTER_ENV`] sets for the child of `path`.
 fn die_after(path: &str, value: &str) -> Option<u64> {
     let n = match value.split_once(':') {
@@ -226,8 +236,18 @@ impl Progress {
 /// Accepts, then drains the transport into an [`Incremental`] until it
 /// ends. Any end the transport reports counts as the stream ending; whether
 /// everything arrived is the digest's to say.
-fn receive(bound: BoundRecv, progress: &Progress) -> Result<FileDigest, String> {
+fn receive(
+    bound: BoundRecv,
+    progress: &Progress,
+    stop_reading: bool,
+) -> Result<FileDigest, String> {
     let mut transport = bound.into_transport()?;
+    if stop_reading {
+        // Hold the connection open and never read, until the process ends.
+        loop {
+            std::thread::park();
+        }
+    }
     if let Some(c) = transport.cancel_handle() {
         progress.register(c);
     }
@@ -275,6 +295,8 @@ struct Child<'a> {
     path: &'a str,
     digests: &'a Path,
     out: std::fs::File,
+    /// [`STOP_READING_ENV`] names this path.
+    stop_reading: bool,
     /// Exit after this many verdicts ([`DIE_AFTER_ENV`]).
     die_after: Option<u64>,
     verdicts: u64,
@@ -313,11 +335,20 @@ impl Child<'_> {
             Err(e) => return self.verdict(&failed(&sha, path, e)),
         };
         let (bind_url, sender_url) = urls(path).expect("the path was checked at start");
-        let bound = match make_recv_bound(bind_url) {
+        let small_tcp = self.stop_reading && path == "tcp";
+        let bind_url = if small_tcp {
+            format!("{bind_url}&rcvbuf={STOP_READING_BUF}")
+        } else {
+            bind_url.to_string()
+        };
+        let bound = match make_recv_bound(&bind_url) {
             Ok(b) => b,
             Err(e) => return self.verdict(&failed(&sha, path, format!("cannot listen: {e}"))),
         };
-        let announce = sender_url(bound.addr());
+        let mut announce = sender_url(bound.addr());
+        if small_tcp {
+            announce.push_str(&format!("?sndbuf={STOP_READING_BUF}"));
+        }
         self.replays += 1;
         let progress = Arc::new(Progress {
             epoch: Instant::now(),
@@ -333,8 +364,9 @@ impl Child<'_> {
             let progress = Arc::clone(&progress);
             let tx = self.tx.clone();
             let id = self.replays;
+            let stop_reading = self.stop_reading;
             std::thread::spawn(move || {
-                let _ = tx.send(Event::Done(id, receive(bound, &progress)));
+                let _ = tx.send(Event::Done(id, receive(bound, &progress, stop_reading)));
             })
         };
         say(&format!("ready {sha} {announce}"));
@@ -454,6 +486,7 @@ pub fn run(path: &str, digests: &Path, out: &Path) -> i32 {
             .ok()
             .and_then(|v| die_after(path, &v)),
         verdicts: 0,
+        stop_reading: std::env::var(STOP_READING_ENV).is_ok_and(|v| v == path),
         rx,
         tx,
         last_verdict: None,

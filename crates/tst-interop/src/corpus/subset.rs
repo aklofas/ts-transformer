@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::inventory::{FileEntry, Inventory};
-use super::{PREFIX_SECONDS, RunDir, Sha256Hex};
+use super::{PREFIX_SECONDS, REPLAY_PICK_MAX_BYTES, RunDir, Sha256Hex};
 
 /// One capture chosen for replay.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -32,13 +32,25 @@ pub struct ReplayPlan {
     pub picks: Vec<Pick>,
     /// Shas dropped to fit the budget, sorted.
     pub trimmed: Vec<Sha256Hex>,
+    /// Shas chosen but not replayed, with the reason, sorted by sha.
+    pub skipped: Vec<(Sha256Hex, String)>,
     pub total_seconds: f64,
+    /// The most bytes any kept pick replays ([`predicted_bytes`]): what the
+    /// replay holds in memory at its peak.
+    pub predicted_peak_bytes: u64,
 }
 
 /// Shape keys in selection order.
 const SHAPES: [&str; 4] = ["a", "b", "c", "other"];
 /// A codec or KLV set carried by fewer files than this is rare.
 const RARE_BELOW: usize = 3;
+
+/// The bytes a replay of `f` sends: the whole file, or the share of it the
+/// prefix covers.
+pub fn predicted_bytes(f: &FileEntry) -> u64 {
+    let share = (f64::from(PREFIX_SECONDS) / f.duration_s).min(1.0);
+    (f.bytes as f64 * share).ceil() as u64
+}
 
 fn make_pick(f: &FileEntry, why: String) -> Pick {
     let long = f.duration_s > f64::from(PREFIX_SECONDS);
@@ -74,19 +86,31 @@ fn best<'a>(
 ///
 /// Rare picks alone may exceed the budget and are never trimmed; the plan
 /// then overruns, and `total_seconds` says so.
+///
+/// A file without a duration (fewer than two PCRs: nothing to pace by) is
+/// never chosen. A chosen file whose [`predicted_bytes`] exceed
+/// [`REPLAY_PICK_MAX_BYTES`] is recorded in `skipped` and costs no budget.
 pub fn select(inv: &Inventory, paths: &[String], budget_seconds: u32) -> ReplayPlan {
     let mut files: Vec<&FileEntry> = inv
         .files
         .iter()
-        .filter(|f| f.probe_error.is_none())
+        .filter(|f| f.probe_error.is_none() && f.duration_s > 0.0)
         .collect();
     files.sort_by(|a, b| a.sha256.cmp(&b.sha256));
 
     let mut picks: Vec<Pick> = Vec::new();
     let mut picked: BTreeSet<Sha256Hex> = BTreeSet::new();
+    let mut skipped: Vec<(Sha256Hex, String)> = Vec::new();
+    let mut predicted: BTreeMap<Sha256Hex, u64> = BTreeMap::new();
     let mut push = |f: &FileEntry, why: String, picks: &mut Vec<Pick>| {
         if picked.insert(f.sha256.clone()) {
-            picks.push(make_pick(f, why));
+            let bytes = predicted_bytes(f);
+            if bytes > REPLAY_PICK_MAX_BYTES {
+                skipped.push((f.sha256.clone(), "over the pick size cap".into()));
+            } else {
+                predicted.insert(f.sha256.clone(), bytes);
+                picks.push(make_pick(f, why));
+            }
         }
     };
 
@@ -136,7 +160,13 @@ pub fn select(inv: &Inventory, paths: &[String], budget_seconds: u32) -> ReplayP
         trimmed.push(p.sha256);
     }
     trimmed.sort();
+    skipped.sort();
     let total_seconds = picks.iter().map(|p| p.seconds).sum();
+    let predicted_peak_bytes = picks
+        .iter()
+        .map(|p| predicted[&p.sha256])
+        .max()
+        .unwrap_or(0);
 
     ReplayPlan {
         schema_version: 1,
@@ -144,7 +174,9 @@ pub fn select(inv: &Inventory, paths: &[String], budget_seconds: u32) -> ReplayP
         paths: paths.to_vec(),
         picks,
         trimmed,
+        skipped,
         total_seconds,
+        predicted_peak_bytes,
     }
 }
 
