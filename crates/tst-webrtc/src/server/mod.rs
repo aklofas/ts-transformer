@@ -99,6 +99,9 @@ pub(crate) struct Shared {
     /// Requests (offers and DELETEs) refused for a missing or wrong
     /// bearer token.
     pub(crate) rejected_auth: AtomicU64,
+    /// The server session config of a `wheps://` server.
+    #[cfg(feature = "tls")]
+    pub(crate) tls: Option<Arc<rustls::ServerConfig>>,
     /// The media thread's counters as `stats` last read them, returned
     /// after stop.
     last_counters: Mutex<ServerCounters>,
@@ -139,9 +142,10 @@ struct Threads {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
-/// A `wheps://` URL is refused at bind in this release (HTTPS signalling
-/// is not served yet); terminate TLS in front of a `whep://` server
-/// instead.
+/// A `wheps://` URL serves the signalling over HTTPS with the certificate
+/// and key named by `cert=` and `key=` (feature `tls`, on by default);
+/// the media stays on UDP, encrypted by DTLS-SRTP as always. Without the
+/// feature a `wheps://` bind is refused.
 ///
 /// # Closing
 ///
@@ -184,7 +188,7 @@ impl std::fmt::Debug for WhepServer {
 }
 
 impl WhepServer {
-    /// Binds a server on a `whep://` URL and starts serving.
+    /// Binds a server on a `whep://` or `wheps://` URL and starts serving.
     ///
     /// The query keys are listed in [`url`](crate::url).
     ///
@@ -200,9 +204,9 @@ impl WhepServer {
     ///
     /// # Errors
     ///
-    /// - [`WhepServerError::Tls`] for a `wheps://` URL: its certificate
-    ///   and key are loaded (so a bad file is reported), then the bind is
-    ///   refused, as HTTPS signalling is not served in this release.
+    /// - [`WhepServerError::Tls`] for a `wheps://` URL whose certificate or
+    ///   key cannot be loaded, or when the crate is built without the `tls`
+    ///   feature. No port is bound in either case.
     /// - [`WhepServerError::Bind`] when the signalling or media port cannot
     ///   be bound, or a server thread cannot be started.
     pub fn bind_with(url: WhepUrl) -> Result<Self, WhepServerError> {
@@ -213,8 +217,12 @@ impl WhepServer {
     /// supplied. A test seam; not a supported API.
     #[doc(hidden)]
     pub fn bind_with_clock(url: WhepUrl, clock: Arc<dyn Clock>) -> Result<Self, WhepServerError> {
+        // Loaded before any socket is bound, so a refused bind holds no port.
+        #[cfg(feature = "tls")]
+        let tls = if url.tls { Some(load_tls(&url)?) } else { None };
+        #[cfg(not(feature = "tls"))]
         if url.tls {
-            return Err(refuse_tls(&url));
+            return Err(WhepServerError::Tls("built without the tls feature".into()));
         }
         crate::ensure_crypto();
 
@@ -246,6 +254,8 @@ impl WhepServer {
             mounts,
             next_mount: AtomicU32::new(0),
             rejected_auth: AtomicU64::new(0),
+            #[cfg(feature = "tls")]
+            tls,
             last_counters: Mutex::new(ServerCounters::default()),
         });
         let accept = match AcceptThread::spawn(listener, Arc::clone(&shared)) {
@@ -449,26 +459,15 @@ fn reachable(local: SocketAddr) -> SocketAddr {
     SocketAddr::new(ip, local.port())
 }
 
-/// The error a `wheps://` bind returns. The certificate and key are
-/// loaded first, so a missing or unreadable file is what gets reported.
-fn refuse_tls(url: &WhepUrl) -> WhepServerError {
-    #[cfg(feature = "tls")]
-    {
-        if let (Some(cert), Some(key)) = (&url.cert, &url.key)
-            && let Err(e) = crate::tls::load_server_config(Path::new(cert), Path::new(key))
-        {
-            return e;
-        }
-        WhepServerError::Tls(
-            "wheps:// (HTTPS signalling) is not served in this release; \
-             serve whep:// behind a TLS-terminating proxy"
-                .into(),
-        )
-    }
-    #[cfg(not(feature = "tls"))]
-    {
-        let _ = url;
-        WhepServerError::Tls("wheps:// needs the crate's `tls` feature".into())
+/// The server certificate and key a `wheps://` URL names. `WhepUrl::parse`
+/// guarantees both are present.
+#[cfg(feature = "tls")]
+fn load_tls(url: &WhepUrl) -> Result<Arc<rustls::ServerConfig>, WhepServerError> {
+    match (&url.cert, &url.key) {
+        (Some(cert), Some(key)) => crate::tls::load_server_config(Path::new(cert), Path::new(key)),
+        _ => Err(WhepServerError::Tls(
+            "wheps:// needs both cert= and key=".into(),
+        )),
     }
 }
 

@@ -9,3 +9,6 @@ mod audio;
 mod loopback;
 #[path = "net_whep/shutdown.rs"]
 mod shutdown;
+#[cfg(feature = "tls")]
+#[path = "net_whep/tls.rs"]
+mod tls;

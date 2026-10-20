@@ -212,7 +212,8 @@ impl WhepUrl {
     /// - [`UrlError::BadQueryValue`] for a value its key cannot use (an empty
     ///   `token` among them), with key
     ///   `path` for a path other than empty or `/`, and with key `cert` for a
-    ///   `wheps://` URL that lacks `cert` or `key`.
+    ///   `wheps://` URL that lacks `cert` or `key` and for a plaintext
+    ///   `whep://` URL that has either.
     /// - [`UrlError::UnknownQueryKey`] for a key [`URL_KEYS`] does not list.
     /// - [`UrlError::Rejected`] when the URL's structure does not parse.
     pub fn parse(s: &str) -> Result<Self, UrlError> {
@@ -255,6 +256,21 @@ impl WhepUrl {
         };
         apply_query(URL_KEYS, &mut url, &parsed.query, UnknownKeys::Reject)?;
 
+        if !tls && (url.cert.is_some() || url.key.is_some()) {
+            // Refuse rather than come up unencrypted when TLS was asked for.
+            let key = if url.cert.is_some() { "cert" } else { "key" };
+            return Err(UrlError::BadQueryValue {
+                key: key.into(),
+                value: url
+                    .cert
+                    .clone()
+                    .or_else(|| url.key.clone())
+                    .unwrap_or_default(),
+                detail: "cert= and key= need a wheps:// URL; this plaintext whep:// URL \
+                         would serve unencrypted"
+                    .into(),
+            });
+        }
         if tls && (url.cert.is_none() || url.key.is_none()) {
             let missing = match (&url.cert, &url.key) {
                 (None, None) => "cert= and key= are",

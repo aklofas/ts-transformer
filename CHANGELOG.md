@@ -810,10 +810,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `apt` names two codecs, or one number mapped to different formats in two
   media sections) is answered with 400 before str0m sees it; str0m asserts
   on such an offer, which would end the server's media thread.
-- `wheps://` (HTTPS signalling) is refused at bind in this release with
-  `WhepServerError::Tls`. With the `tls` feature the certificate and key are
-  loaded first, so an unreadable file is what the error reports; serve
-  `whep://` behind a TLS-terminating proxy until then.
+- `wheps://127.0.0.1:8443?cert=…&key=…` serves the signalling over HTTPS
+  (rustls, feature `tls`, on by default); the bearer token (`token=`) is
+  enforced the same way. A certificate or key that cannot be loaded, or a
+  build without the feature, is `WhepServerError::Tls` at bind with no port
+  held. `cert=` or `key=` on a plaintext `whep://` URL is refused rather than
+  served unencrypted.
 - The signalling endpoint serves one connection at a time on its accept
   thread, and a request must arrive whole within 5 s (else 408), so a client
   that holds a connection open delays every other POST and DELETE by up to
