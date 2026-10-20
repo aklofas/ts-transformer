@@ -10,9 +10,12 @@ use serde::{Deserialize, Serialize};
 
 use super::annotations;
 use super::digest::{self, CONFIG_KEYS, FileDigest};
-use super::invariants::{self, InvariantFailure};
+use super::invariants::{self, InvariantFailure, WireWalk};
 use super::inventory::{self, FileEntry};
 use super::{RunDir, Sha256Hex};
+
+/// What one worker made of one file: its digest and its wire walk.
+type Digested = Result<(FileDigest, WireWalk), String>;
 
 pub struct SweepArgs {
     pub dir: PathBuf,
@@ -53,6 +56,10 @@ pub struct SweepSummary {
     pub parse_failures: u64,
     pub invariant_failures: u64,
     pub unused_accepts: Vec<Sha256Hex>,
+    /// Files whose digest the `--baseline` directory held; `None` without a
+    /// baseline. A baseline that matches no file fails the sweep.
+    #[serde(default)]
+    pub baseline_matched: Option<u64>,
     pub per_file: Vec<SweepFile>,
     pub pass: bool,
 }
@@ -69,8 +76,9 @@ fn git_head() -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
-/// Digests one distinct capture by streaming it. Errors name no path.
-fn digest_entry(entry: &FileEntry) -> Result<FileDigest, String> {
+/// Digests one distinct capture by streaming it, then walks its wire.
+/// Errors name no path.
+fn digest_entry(entry: &FileEntry) -> Result<(FileDigest, WireWalk), String> {
     if let Some(e) = &entry.probe_error {
         return Err(e.clone());
     }
@@ -78,7 +86,8 @@ fn digest_entry(entry: &FileEntry) -> Result<FileDigest, String> {
         .paths
         .first()
         .ok_or_else(|| "inventory entry has no path".to_string())?;
-    digest::digest_file(Some(&entry.sha256), path, None)
+    let d = digest::digest_file(Some(&entry.sha256), path, None)?;
+    Ok((d, invariants::walk_file(path)?))
 }
 
 fn same_but_version(a: &FileDigest, b: &FileDigest) -> bool {
@@ -97,6 +106,11 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
                 "--baseline must not be the run's own digests directory; a sweep would overwrite it"
                     .to_string(),
             );
+        }
+        // A baseline that is not there would turn every file into a new one
+        // and pass: the oracle silently off.
+        if !b.is_dir() {
+            return Err("--baseline must name an existing directory".to_string());
         }
     }
     // Only an absent inventory is rebuilt; an unreadable one is an error.
@@ -122,7 +136,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         }
     }
     let next = AtomicUsize::new(0);
-    let results: Mutex<Vec<(usize, Result<FileDigest, String>)>> = Mutex::new(Vec::new());
+    let results: Mutex<Vec<(usize, Digested)>> = Mutex::new(Vec::new());
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
@@ -133,16 +147,19 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(entry) = inv.files.get(i) else { break };
-                    let r = digest_entry(entry);
+                    // A panic is that file's parse failure; the sweep goes on.
+                    let r = std::panic::catch_unwind(|| digest_entry(entry))
+                        .unwrap_or_else(|_| Err("the digest panicked".to_string()));
                     results.lock().unwrap().push((i, r));
                 }
             });
         }
     });
-    let mut by_index: BTreeMap<usize, Result<FileDigest, String>> =
+    let mut by_index: BTreeMap<usize, Digested> =
         results.into_inner().unwrap().into_iter().collect();
 
     let mut used: Vec<bool> = vec![false; args.accepts.len()];
+    let mut baseline_matched: u64 = 0;
     let mut summary = SweepSummary {
         schema_version: 1,
         tree: git_head(),
@@ -155,6 +172,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         parse_failures: 0,
         invariant_failures: 0,
         unused_accepts: Vec::new(),
+        baseline_matched: None,
         per_file: Vec::new(),
         pass: false,
     };
@@ -165,15 +183,10 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
                 summary.parse_failures += 1;
                 FileOutcome::ParseFailure(e)
             }
-            Ok(d) => {
+            Ok((d, walked)) => {
                 let ann = notes.get(&entry.sha256.0).cloned().unwrap_or_default();
-                let path = entry
-                    .paths
-                    .first()
-                    .ok_or_else(|| "inventory entry has no path".to_string())?;
-                let walked = invariants::walk_file(path)?;
                 failures = invariants::check(&d.configs["default"], &walked, &ann);
-                if !failures.is_empty() {
+                if failures.iter().any(|f| !f.excused) {
                     summary.invariant_failures += 1;
                 }
                 let base = match &args.baseline {
@@ -181,6 +194,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
                     Some(dir) => {
                         let p = dir.join(format!("{}.json", entry.sha256));
                         if p.exists() {
+                            baseline_matched += 1;
                             let text = std::fs::read_to_string(&p).map_err(|e| {
                                 format!("read baseline {}: {}", entry.sha256, e.kind())
                             })?;
@@ -233,7 +247,11 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         }
     }
     summary.unused_accepts.sort_by(|a, b| a.0.cmp(&b.0));
-    summary.pass = summary.changed_unexplained == 0
+    // A baseline that names none of these captures is the wrong baseline;
+    // a first run takes no --baseline at all.
+    summary.baseline_matched = args.baseline.as_ref().map(|_| baseline_matched);
+    summary.pass = summary.baseline_matched != Some(0)
+        && summary.changed_unexplained == 0
         && summary.parse_failures == 0
         && summary.invariant_failures == 0
         && summary.unused_accepts.is_empty();

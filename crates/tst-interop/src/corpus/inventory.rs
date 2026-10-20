@@ -36,8 +36,12 @@ pub struct FileEntry {
     /// Every path with this content; the only path field in the tool.
     pub paths: Vec<PathBuf>,
     pub bytes: u64,
-    /// Last PCR minus first PCR, in seconds; 0.0 with fewer than two PCRs.
+    /// The PCR span of the declared PCR PID in seconds, its discontinuities
+    /// left out (see [`super::pcr::PcrScan`]); 0.0 with fewer than two PCRs.
     pub duration_s: f64,
+    /// PCR resets and jumps over one second on that PID.
+    #[serde(default)]
+    pub pcr_discontinuities: u64,
     /// `ShapeClass::key()`.
     pub shape: String,
     pub pcr_pid: Option<u16>,
@@ -176,13 +180,7 @@ fn probe(path: &Path) -> Result<FileEntry, String> {
         }
     }
 
-    let parsed = match parse_prefix(&prefix) {
-        Ok(p) => p,
-        Err(e) => {
-            probe_error.get_or_insert(format!("wire reader: {e}"));
-            Default::default()
-        }
-    };
+    let parsed = parse_prefix(&prefix);
     if parsed.pmt_pid.is_none() || parsed.streams.is_empty() {
         probe_error = Some(match probe_error {
             Some(e) => format!("no PMT found; {e}"),
@@ -190,12 +188,14 @@ fn probe(path: &Path) -> Result<FileEntry, String> {
         });
     }
     let duration_s = pcr.duration_s(parsed.pcr_pid);
+    let pcr_discontinuities = pcr.discontinuities(parsed.pcr_pid);
     let sha = Sha256Hex(hex(&hasher.finalize()));
     Ok(FileEntry {
         sha256: sha,
         paths: vec![path.to_path_buf()],
         bytes: total,
         duration_s,
+        pcr_discontinuities,
         shape: classify(&parsed).key().to_string(),
         pcr_pid: parsed.pcr_pid,
         programs: programs.len() as u32,
@@ -216,10 +216,50 @@ fn probe(path: &Path) -> Result<FileEntry, String> {
     })
 }
 
+/// The entry of a file whose probe panicked: its hash and size only, with
+/// the panic as its probe error, so the sweep counts it as a parse failure
+/// named by its hash and the rest of the corpus is still read.
+fn panicked_entry(path: &Path) -> Result<FileEntry, String> {
+    let mut file = std::fs::File::open(path).map_err(|e| format!("open failed: {}", e.kind()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; FEED_CHUNK];
+    let mut total: u64 = 0;
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("read failed: {}", e.kind()))?;
+        if n == 0 {
+            break;
+        }
+        total += n as u64;
+        hasher.update(&buf[..n]);
+    }
+    Ok(FileEntry {
+        sha256: Sha256Hex(hex(&hasher.finalize())),
+        paths: vec![path.to_path_buf()],
+        bytes: total,
+        duration_s: 0.0,
+        pcr_discontinuities: 0,
+        shape: "other".to_string(),
+        pcr_pid: None,
+        programs: 0,
+        streams: Vec::new(),
+        codecs: Vec::new(),
+        klv_sets: Vec::new(),
+        largest_au_bytes: 0,
+        probe_error: Some("the probe panicked".to_string()),
+    })
+}
+
 /// Walk `dir` for `*.ts` files recursively and inventory them in parallel.
+/// A directory with no `.ts` file is an error: an empty or unmounted corpus
+/// must not pass.
 pub fn build(dir: &Path) -> Result<Inventory, String> {
     let mut paths = Vec::new();
     collect_ts(dir, &mut paths)?;
+    if paths.is_empty() {
+        return Err("no captures found: the corpus directory holds no .ts file".to_string());
+    }
     paths.sort();
     let next = AtomicUsize::new(0);
     let results: Mutex<Vec<Result<FileEntry, String>>> = Mutex::new(Vec::new());
@@ -233,8 +273,10 @@ pub fn build(dir: &Path) -> Result<Inventory, String> {
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(path) = paths.get(i) else { break };
-                    let r =
-                        probe(path).map_err(|e| format!("file {} of {}: {e}", i + 1, paths.len()));
+                    // A panic in one probe is that file's failure, never the run's.
+                    let r = std::panic::catch_unwind(|| probe(path))
+                        .unwrap_or_else(|_| panicked_entry(path))
+                        .map_err(|e| format!("file {} of {}: {e}", i + 1, paths.len()));
                     results.lock().unwrap().push(r);
                 }
             });

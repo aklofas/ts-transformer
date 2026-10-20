@@ -7,9 +7,11 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tst_core::error::DemuxErrorKind;
 use tst_core::klv::st0601;
 use tst_core::mpegts::demux::{
-    DemuxEvent, Demuxer, DemuxerConfig, MetadataKind, NonConformantIssue, SamplePayload, StrictMode,
+    DemuxEvent, Demuxer, DemuxerConfig, DiscontinuityKind, MetadataKind, NonConformantIssue,
+    SamplePayload, StrictMode,
 };
 
 use super::inventory::kind_name;
@@ -47,11 +49,21 @@ pub struct PidDigest {
     pub kind: String,
     pub samples: u64,
     pub metadata: u64,
+    /// Discontinuities the demuxer reported on this PID other than a PES
+    /// oversize: continuity jumps and discontinuity indicators, the ones
+    /// the wire shows.
     pub discontinuities: u64,
+    /// PES reassembly caps exceeded on this PID (per PID or in total): a
+    /// discontinuity the demuxer reports that the wire cannot show.
+    pub pes_oversize: u64,
     /// `NonConformantIssue` variant name to count.
     pub nonconformant: BTreeMap<String, u64>,
+    /// First and last PTS of a payload that carried one.
     pub pts_first: Option<i64>,
     pub pts_last: Option<i64>,
+    /// Payloads whose PES carried no PTS. The demuxer gives them a PTS of
+    /// 0; they take no part in `pts_first`, `pts_last` or the order rule.
+    pub pts_absent: u64,
     /// Times a PTS fell more than [`PTS_BACKWARD_TICKS`] below the running
     /// maximum after 33-bit unwrap; the maximum restarts from that PTS, so a
     /// timeline restart counts once.
@@ -81,7 +93,7 @@ pub struct StatsDigest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConfigDigest {
     pub feed_errors: u64,
-    /// `DemuxError` display text to count.
+    /// `DemuxError` variant name to count.
     pub feed_error_kinds: BTreeMap<String, u64>,
     pub pids: BTreeMap<u16, PidDigest>,
     pub klv_records: u64,
@@ -188,6 +200,17 @@ fn issue_key(issue: &NonConformantIssue) -> &'static str {
     }
 }
 
+/// The variant name of a feed error, without the values its text embeds,
+/// so rewording an error message changes no digest.
+fn error_key(kind: DemuxErrorKind) -> &'static str {
+    match kind {
+        DemuxErrorKind::Unrecoverable => "Unrecoverable",
+        DemuxErrorKind::StrictRejection => "StrictRejection",
+        DemuxErrorKind::MalformedPes => "MalformedPes",
+        DemuxErrorKind::SyncBufExhausted => "SyncBufExhausted",
+    }
+}
+
 /// A PTS this far (one second at 90 kHz) below the running maximum is a
 /// backward break.
 pub const PTS_BACKWARD_TICKS: i64 = 90_000;
@@ -202,7 +225,16 @@ struct PidAcc {
 }
 
 impl PidAcc {
+    /// Records the PTS of one payload. The demuxer reports a PES without a
+    /// PTS as 0, the value it never stores as a PES's own; such a payload
+    /// is counted in `pts_absent` and judged by no timestamp rule.
     fn note_pts(&mut self, ticks: i64) {
+        if ticks == 0 {
+            self.digest.pts_absent += 1;
+            return;
+        }
+        self.digest.pts_first.get_or_insert(ticks);
+        self.digest.pts_last = Some(ticks);
         let raw = ticks.rem_euclid(PTS_MODULUS);
         let at = match self.pts_clock {
             None => {
@@ -260,9 +292,11 @@ impl Pass {
                 samples: 0,
                 metadata: 0,
                 discontinuities: 0,
+                pes_oversize: 0,
                 nonconformant: BTreeMap::new(),
                 pts_first: None,
                 pts_last: None,
+                pts_absent: 0,
                 pts_backward_breaks: 0,
                 klv_unknown: 0,
                 klv_unknown_reason: None,
@@ -301,8 +335,6 @@ impl Pass {
                     if matches!(payload, SamplePayload::Unknown { .. }) {
                         acc.digest.unknown_samples += 1;
                     }
-                    acc.digest.pts_first.get_or_insert(pts.as_ticks());
-                    acc.digest.pts_last = Some(pts.as_ticks());
                     acc.note_pts(pts.as_ticks());
                 }
                 DemuxEvent::Metadata {
@@ -314,8 +346,6 @@ impl Pass {
                     let acc = self.pid(stream.pid, kind_name(&stream.kind));
                     acc.hasher.update(&payload);
                     acc.digest.metadata += 1;
-                    acc.digest.pts_first.get_or_insert(pts.as_ticks());
-                    acc.digest.pts_last = Some(pts.as_ticks());
                     acc.note_pts(pts.as_ticks());
                     if matches!(
                         kind,
@@ -336,10 +366,15 @@ impl Pass {
                         self.klv_hasher.update(rec.canonical_sha256.0.as_bytes());
                     }
                 }
-                DemuxEvent::Discontinuity { stream, .. } => {
-                    self.pid(stream.pid, kind_name(&stream.kind))
-                        .digest
-                        .discontinuities += 1;
+                DemuxEvent::Discontinuity { stream, kind } => {
+                    let d = &mut self.pid(stream.pid, kind_name(&stream.kind)).digest;
+                    match kind {
+                        DiscontinuityKind::PesOversize { .. }
+                        | DiscontinuityKind::PesTotalOversize => {
+                            d.pes_oversize += 1;
+                        }
+                        _ => d.discontinuities += 1,
+                    }
                 }
                 DemuxEvent::NonConformant { stream, issue } => {
                     *self
@@ -378,7 +413,11 @@ impl ConfigRun {
         let mut input = piece;
         while let Err(e) = self.demuxer.feed(input) {
             self.pass.feed_errors += 1;
-            *self.pass.feed_error_kinds.entry(e.to_string()).or_default() += 1;
+            *self
+                .pass
+                .feed_error_kinds
+                .entry(error_key(e.kind()).to_string())
+                .or_default() += 1;
             input = &[];
         }
         self.pass.drain(&mut self.demuxer);

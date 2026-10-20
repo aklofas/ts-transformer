@@ -282,3 +282,88 @@ fn a_missing_annotations_directory_or_a_bad_annotation_stops_before_digesting() 
     assert!(text.contains(&shas[1]) && text.contains("line 1"), "{text}");
     assert!(!run.join("digests").exists(), "no file was digested");
 }
+
+#[test]
+fn a_baseline_directory_that_does_not_exist_exits_2_without_naming_it() {
+    let (dir, _) = two_files("sw-nobasedir");
+    let absent = temp_dir_named("sw-nobasedir-base").join("absent");
+    let run = temp_dir_named("sw-nobasedir-run");
+    let out = sweep(&dir, &run, &["--baseline", absent.to_str().unwrap()]);
+    let text = String::from_utf8_lossy(&out.stderr).to_string();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("--baseline"), "{text}");
+    assert_no_path(&text, &absent);
+    assert!(!run.join("digests").exists(), "no file was digested");
+}
+
+#[test]
+fn a_baseline_that_matches_no_capture_fails_the_sweep() {
+    let (other, _) = two_files("sw-wrongbase-other");
+    let first = temp_dir_named("sw-wrongbase-first");
+    assert_eq!(sweep(&other, &first, &[]).status.code(), Some(0));
+    let dir = temp_dir_named("sw-wrongbase");
+    std::fs::write(dir.join("c.ts"), gen_profile_bytes("baseline", 4.0)).unwrap();
+    let run = temp_dir_named("sw-wrongbase-run");
+    let base = first.join("digests");
+    let out = sweep(&dir, &run, &["--baseline", base.to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(stdout.contains("baseline matched 0 files"), "{stdout}");
+    let s = json(&run.join("sweep.json"));
+    assert_eq!(s["baseline_matched"], 0);
+    assert_eq!(s["new_no_baseline"], 1);
+    assert_eq!(s["pass"], false);
+}
+
+#[test]
+fn a_corpus_directory_without_captures_exits_2_without_naming_it() {
+    let dir = temp_dir_named("sw-nocaptures");
+    std::fs::write(dir.join("readme.txt"), b"no captures here").unwrap();
+    let run = temp_dir_named("sw-nocaptures-run");
+    let out = sweep(&dir, &run, &[]);
+    let text = String::from_utf8_lossy(&out.stderr).to_string();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("no captures found"), "{text}");
+    assert_no_path(&text, &dir);
+    assert!(!run.join("sweep.json").exists());
+}
+
+#[test]
+fn a_pes_header_that_overruns_its_packet_never_crashes_the_sweep() {
+    let mut bytes = gen_profile_bytes("baseline", 2.0);
+    let probe = tst_test_helpers::rawts::parsed(&bytes);
+    let video = probe
+        .streams
+        .iter()
+        .find(|s| s.stream_type == 0x1B)
+        .unwrap()
+        .pid;
+    // A PES start on the video PID, inside the first 4 MiB, whose
+    // PES_header_data_length claims 0xFF bytes.
+    let header_len_at = (0..bytes.len())
+        .step_by(188)
+        .skip(10)
+        .find_map(|o| {
+            let p = &bytes[o..o + 188];
+            let payload = match (p[3] >> 4) & 3 {
+                1 => 4,
+                3 => 5 + usize::from(p[4]),
+                _ => return None,
+            };
+            let ours = (u16::from(p[1] & 0x1F) << 8 | u16::from(p[2])) == video;
+            (ours && p[1] & 0x40 != 0 && payload + 9 <= 188).then_some(o + payload + 8)
+        })
+        .unwrap();
+    bytes[header_len_at] = 0xFF;
+    assert!(tst_test_helpers::rawts::try_parsed(&bytes).is_err());
+    let dir = temp_dir_named("sw-peshead");
+    std::fs::write(dir.join("damaged.ts"), &bytes).unwrap();
+    let run = temp_dir_named("sw-peshead-run");
+    let out = sweep(&dir, &run, &[]);
+    let code = out.status.code();
+    assert!(matches!(code, Some(0 | 1)), "{out:?}");
+    let s = json(&run.join("sweep.json"));
+    assert_eq!(s["files"], 1);
+    assert_eq!(s["per_file"][0]["sha256"], sha_of(&bytes).0.as_str());
+    assert_eq!(s["parse_failures"], 0, "{s}");
+}

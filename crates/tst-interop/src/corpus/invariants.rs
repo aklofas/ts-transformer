@@ -7,6 +7,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tst_core::mpegts::demux::low_level::{parse_pat, parse_pmt};
+use tst_core::mpegts::sync::TsSync;
 
 use super::FEED_CHUNK;
 use super::annotations::Annotations;
@@ -20,6 +21,11 @@ pub struct InvariantFailure {
     pub rule: String,
     pub pid: Option<u16>,
     pub detail: String,
+    /// A reviewed annotation excuses it: it is recorded, and its detail
+    /// starts with `excused:` and the annotation's reason, but it does not
+    /// fail the capture.
+    #[serde(default)]
+    pub excused: bool,
 }
 
 /// What a packet-level walk of the bytes saw.
@@ -109,10 +115,18 @@ struct Program {
     streams: Vec<(u16, Vec<u8>)>,
 }
 
+/// The demuxer's sync re-acquisition rule: after a byte that is not where a
+/// packet should start, a candidate sync byte needs 5 of the 7 strides from
+/// it to carry the sync byte.
+const REACQUIRE: TsSync = TsSync::n_of_m(5, 7);
+
 /// The incremental form of [`walk`]. Feed it bytes in any chunking.
 #[derive(Default)]
 pub struct Walker {
     carry: Vec<u8>,
+    /// Sync was lost (or never held): the next candidate must pass
+    /// [`REACQUIRE`], as in the demuxer.
+    resyncing: bool,
     state: HashMap<u16, PidCc>,
     assemblers: HashMap<u16, Assembler>,
     pat_version: Option<u8>,
@@ -136,20 +150,29 @@ impl Walker {
         Self::default()
     }
 
+    /// Acquires packets the way the demuxer's `feed` does: a sync byte
+    /// where a packet is due is taken as it is (at the very start too); a
+    /// byte that is not one starts a hunt, and the first candidate after it
+    /// must meet the 5-of-7 rule. A candidate the buffered bytes cannot
+    /// settle waits for the next feed.
     pub fn feed(&mut self, bytes: &[u8]) {
         self.carry.extend_from_slice(bytes);
         let mut at = 0;
-        // A byte is a packet start when 0x47 repeats at the next strides
-        // that are already buffered.
-        let locked = |c: &[u8], at: usize| {
-            [at, at + 188, at + 376]
-                .iter()
-                .all(|&i| c.get(i).is_none_or(|&b| b == 0x47))
-        };
         while self.carry.len() - at >= 188 {
-            if !locked(&self.carry, at) {
+            if self.carry[at] != 0x47 {
+                self.resyncing = true;
                 at += 1;
                 continue;
+            }
+            if self.resyncing {
+                match REACQUIRE.verify(&self.carry, at) {
+                    Some(true) => self.resyncing = false,
+                    Some(false) => {
+                        at += 1;
+                        continue;
+                    }
+                    None => break,
+                }
             }
             let mut pkt = [0u8; 188];
             pkt.copy_from_slice(&self.carry[at..at + 188]);
@@ -376,10 +399,11 @@ impl Walker {
 /// which PIDs count: PAT and PMT sections are reassembled across packets
 /// and adopted only as the demuxer adopts them (checksum, current/next,
 /// program number against the PAT, version change, a retired or re-typed
-/// PID losing its counter state). The one thing the wire cannot show is the
-/// demuxer's PES oversize discontinuity (4 MiB per PID by default); a
-/// capture that trips it reports one more discontinuity than this walk.
-/// Multi-section PATs are not followed.
+/// PID losing its counter state), and acquiring packets by the demuxer's
+/// sync rule. The one thing the wire cannot show is the demuxer's PES
+/// oversize discontinuity (4 MiB per PID by default); the digest counts it
+/// apart (`pes_oversize`) and [`check`] leaves it out. Multi-section PATs
+/// are not followed.
 pub fn walk(bytes: &[u8]) -> WireWalk {
     let mut w = Walker::new();
     w.feed(bytes);
@@ -403,19 +427,28 @@ pub fn walk_file(path: &Path) -> Result<WireWalk, String> {
     }
 }
 
+fn push<'a>(
+    out: &'a mut Vec<InvariantFailure>,
+    rule: &str,
+    pid: Option<u16>,
+    detail: String,
+) -> &'a mut InvariantFailure {
+    out.push(InvariantFailure {
+        rule: rule.to_string(),
+        pid,
+        detail,
+        excused: false,
+    });
+    out.last_mut().expect("just pushed")
+}
+
 /// The invariants broken by a capture whose `default`-configuration digest
 /// and wire walk are given. `ann` excuses what a person has reviewed.
 pub fn check(default: &ConfigDigest, walk: &WireWalk, ann: &Annotations) -> Vec<InvariantFailure> {
     let mut out = Vec::new();
-    let mut fail = |rule: &str, pid: Option<u16>, detail: String| {
-        out.push(InvariantFailure {
-            rule: rule.to_string(),
-            pid,
-            detail,
-        });
-    };
     if default.feed_errors > 0 {
-        fail(
+        push(
+            &mut out,
             "feed-error",
             None,
             format!("{} feed errors", default.feed_errors),
@@ -427,13 +460,15 @@ pub fn check(default: &ConfigDigest, walk: &WireWalk, ann: &Annotations) -> Vec<
             continue;
         }
         if d.klv_unknown > 0 {
-            fail(
+            push(
+                &mut out,
                 "klv-unknown",
                 Some(*pid),
                 d.klv_unknown_reason.clone().unwrap_or_default(),
             );
         } else if d.unknown_samples > 0 {
-            fail(
+            push(
+                &mut out,
                 "klv-unknown",
                 Some(*pid),
                 format!("{} unknown sample(s)", d.unknown_samples),
@@ -441,22 +476,34 @@ pub fn check(default: &ConfigDigest, walk: &WireWalk, ann: &Annotations) -> Vec<
         }
     }
     if walk.packets == 0 {
-        fail("accounting", None, "no packets".to_string());
+        push(&mut out, "accounting", None, "no packets".to_string());
     }
-    if walk.cc_errors != default.stats.discontinuities {
-        fail(
-            "accounting",
-            None,
-            format!(
-                "cc errors {} vs demuxer discontinuities {}",
-                walk.cc_errors, default.stats.discontinuities
-            ),
+    // A PES oversize is a demuxer discontinuity the wire cannot show.
+    let oversize: u64 = default.pids.values().map(|d| d.pes_oversize).sum();
+    let demuxed = default.stats.discontinuities.saturating_sub(oversize);
+    if walk.cc_errors != demuxed {
+        let detail = format!(
+            "cc errors {} vs demuxer discontinuities {demuxed} ({oversize} PES oversize left out)",
+            walk.cc_errors
         );
+        if ann.known_cc_mismatch {
+            let why = ann.reason.as_deref().unwrap_or("");
+            let excused = push(
+                &mut out,
+                "accounting",
+                None,
+                format!("excused: {why}; {detail}"),
+            );
+            excused.excused = true;
+        } else {
+            push(&mut out, "accounting", None, detail);
+        }
     }
     if !ann.known_discontinuity {
         for (pid, d) in &default.pids {
             if d.pts_backward_breaks > 0 {
-                fail(
+                push(
+                    &mut out,
                     "pts-order",
                     Some(*pid),
                     format!("{} backward PTS breaks", d.pts_backward_breaks),

@@ -41,7 +41,7 @@ impl<'a> PcrPacer<'a> {
     pub fn new(bytes: &'a [u8], prefix_seconds: Option<u32>) -> Result<Self, String> {
         let end = prefix_seconds.map_or(bytes.len(), |s| prefix_end(bytes, s));
         let start = align_offset(bytes);
-        let declared = parse_prefix(bytes).ok().and_then(|p| p.pcr_pid);
+        let declared = parse_prefix(bytes).pcr_pid;
         let mut pid = declared;
         let mut span: Option<PcrSpan> = None;
         let mut marks = Vec::new();
@@ -57,10 +57,7 @@ impl<'a> PcrPacer<'a> {
                 && let Some(base) = info.pcr_base
                 && *pid.get_or_insert(info.pid) == info.pid
             {
-                let s = span.get_or_insert(PcrSpan {
-                    last: base,
-                    ticks: 0,
-                });
+                let s = span.get_or_insert_with(|| PcrSpan::at(base));
                 s.advance(base);
                 marks.push((at, s.ticks as f64 / PCR_BASE_HZ as f64));
             }

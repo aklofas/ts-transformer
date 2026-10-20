@@ -4,7 +4,8 @@
 
 use std::collections::BTreeMap;
 
-use tst_test_helpers::rawts::{self, ParsedStream, classify_packet};
+use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig, ProgramMap};
+use tst_test_helpers::rawts::{ParsedStream, PmtStream, classify_packet};
 
 use super::FEED_CHUNK;
 
@@ -40,37 +41,100 @@ pub fn align_offset(bytes: &[u8]) -> usize {
         .unwrap_or(bytes.len())
 }
 
-/// The PMT facts of a capture, read from its first [`PMT_PREFIX`] bytes
-/// after skipping any bytes before the first packet. `buf` may be longer;
-/// a partial trailing packet is ignored.
-pub fn parse_prefix(buf: &[u8]) -> Result<ParsedStream, String> {
+/// The PMT facts of a capture, read by the demuxer from its first
+/// [`PMT_PREFIX`] bytes after skipping any bytes before the first packet:
+/// the first program map the demuxer emits gives the PMT PID, the PCR PID
+/// and the streams. The demuxer reassembles a PMT that spans packets and
+/// resyncs past damaged bytes, so neither keeps a capture from being read.
+/// `buf` may be longer. No PMT in the window leaves `pmt_pid` unset.
+pub fn parse_prefix(buf: &[u8]) -> ParsedStream {
     let buf = &buf[align_offset(buf)..];
-    rawts::try_parsed(&buf[..buf.len().min(PMT_PREFIX)])
+    let buf = &buf[..buf.len().min(PMT_PREFIX)];
+    let mut demuxer = Demuxer::with_config(DemuxerConfig::default());
+    for piece in buf.chunks(FEED_CHUNK) {
+        // As in the digest: a rejection keeps the rest of the input
+        // buffered, and empty feeds resume it. Each consumes at least one
+        // byte, so the bound is never what ends the loop on real input.
+        let mut input = piece;
+        let mut rejections = 0;
+        while demuxer.feed(input).is_err() && rejections <= piece.len() {
+            rejections += 1;
+            input = &[];
+        }
+        while let Some(ev) = demuxer.next_event() {
+            if let DemuxEvent::ProgramMap(pm) = ev {
+                return program_facts(&pm);
+            }
+        }
+    }
+    ParsedStream::default()
 }
+
+/// A program map as the PMT facts the inventory and the pacer read.
+fn program_facts(pm: &ProgramMap) -> ParsedStream {
+    ParsedStream {
+        pmt_pid: Some(pm.pmt_pid),
+        pcr_pid: Some(pm.pcr_pid),
+        streams: pm
+            .streams
+            .iter()
+            .map(|s| PmtStream {
+                pid: s.pid,
+                stream_type: s.stream_type.as_byte(),
+                // The last registration descriptor names the format.
+                klva: s
+                    .raw_descriptors
+                    .iter()
+                    .rfind(|d| d.tag == 0x05 && d.data.len() >= 4)
+                    .is_some_and(|d| d.data[..4] == *b"KLVA"),
+            })
+            .collect(),
+        ..ParsedStream::default()
+    }
+}
+
+/// The largest forward step between two PCRs on one PID that counts as
+/// elapsed time: one second, the demuxer's own PCR anomaly bound.
+pub const PCR_MAX_STEP_TICKS: u64 = PCR_BASE_HZ;
 
 /// How far one PID's clock has advanced, in 90 kHz ticks.
 ///
 /// A backwards step of at least 2^32 base ticks is a 33-bit wrap and the
-/// span keeps counting through it. A smaller backwards step is a PCR
-/// discontinuity: it adds nothing and the span continues from the new value.
-/// The inventory's duration and the prefix cut both read it this way, so a
-/// capture with a PCR reset reports the time of its continuous parts.
+/// span keeps counting through it. A smaller backwards step, or a forward
+/// step (wrap included) of more than [`PCR_MAX_STEP_TICKS`], is a PCR
+/// discontinuity: it adds nothing, it is counted, and the span continues
+/// from the new value. The inventory's duration, the prefix cut and the
+/// pacer all read it this way, so a capture with a PCR reset or a jump
+/// reports the time of its continuous parts, and the pacer never sleeps
+/// across a jump.
 #[derive(Default)]
 pub(crate) struct PcrSpan {
     pub(crate) last: u64,
     pub(crate) ticks: u64,
+    pub(crate) discontinuities: u64,
 }
 
 impl PcrSpan {
+    /// A span starting at `base`.
+    pub(crate) fn at(base: u64) -> Self {
+        Self {
+            last: base,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn advance(&mut self, base: u64) {
         let step = if base >= self.last {
-            base - self.last
+            Some(base - self.last)
         } else if self.last - base >= PCR_BASE_WRAP / 2 {
-            base + PCR_BASE_WRAP - self.last
+            Some(base + PCR_BASE_WRAP - self.last)
         } else {
-            0
+            None
         };
-        self.ticks += step;
+        match step {
+            Some(step) if step <= PCR_MAX_STEP_TICKS => self.ticks += step,
+            _ => self.discontinuities += 1,
+        }
         self.last = base;
     }
 }
@@ -137,10 +201,10 @@ impl PcrScan {
             };
             let Some(base) = info.pcr_base else { continue };
             self.first_pid.get_or_insert(info.pid);
-            let span = self.spans.entry(info.pid).or_insert(PcrSpan {
-                last: base,
-                ticks: 0,
-            });
+            let span = self
+                .spans
+                .entry(info.pid)
+                .or_insert_with(|| PcrSpan::at(base));
             span.advance(base);
             if self.cut_at.is_none()
                 && let Some(cut) = &self.cut
@@ -157,10 +221,20 @@ impl PcrScan {
     /// Seconds spanned by the declared PCR PID, else the first PID seen
     /// carrying a PCR; 0.0 with fewer than two PCRs.
     pub fn duration_s(&self, declared: Option<u16>) -> f64 {
-        let span = declared
+        self.span(declared)
+            .map_or(0.0, |s| s.ticks as f64 / PCR_BASE_HZ as f64)
+    }
+
+    /// PCR discontinuities (see `PcrSpan`) on the same PID as
+    /// [`Self::duration_s`].
+    pub fn discontinuities(&self, declared: Option<u16>) -> u64 {
+        self.span(declared).map_or(0, |s| s.discontinuities)
+    }
+
+    fn span(&self, declared: Option<u16>) -> Option<&PcrSpan> {
+        declared
             .and_then(|pid| self.spans.get(&pid))
-            .or_else(|| self.first_pid.and_then(|pid| self.spans.get(&pid)));
-        span.map_or(0.0, |s| s.ticks as f64 / PCR_BASE_HZ as f64)
+            .or_else(|| self.first_pid.and_then(|pid| self.spans.get(&pid)))
     }
 }
 
@@ -277,9 +351,7 @@ impl PrefixCutter {
             return;
         };
         let pid_window = &head[..head.len().min(PMT_PREFIX + PKT)];
-        let pcr_pid = parse_prefix(&pid_window[align_offset(pid_window)..])
-            .ok()
-            .and_then(|p| p.pcr_pid);
+        let pcr_pid = parse_prefix(&pid_window[align_offset(pid_window)..]).pcr_pid;
         self.state = CutState::Scan {
             scan: PcrScan::with_cut(pcr_pid, u64::from(self.seconds) * PCR_BASE_HZ),
             inbox: head,

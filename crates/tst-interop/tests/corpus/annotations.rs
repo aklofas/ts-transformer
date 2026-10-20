@@ -16,7 +16,7 @@ fn parses_the_three_keys_and_rejects_an_unknown_one() {
     let file = dir.join(format!("{sha}.toml"));
     std::fs::write(
         &file,
-        "# reviewed by hand\nnon_misb_private_pids = [4097, 4101]\n\nknown_discontinuity = true\nreason = \"splice\"\n",
+        "# reviewed by hand\nnon_misb_private_pids = [4097, 4101]\n\nknown_discontinuity = true\nknown_cc_mismatch = true\nreason = \"splice\"\n",
     )
     .unwrap();
     assert_eq!(
@@ -24,6 +24,7 @@ fn parses_the_three_keys_and_rejects_an_unknown_one() {
         Annotations {
             non_misb_private_pids: vec![4097, 4101],
             known_discontinuity: true,
+            known_cc_mismatch: true,
             reason: Some("splice".to_string()),
         }
     );
@@ -33,5 +34,7 @@ fn parses_the_three_keys_and_rejects_an_unknown_one() {
     std::fs::write(&file, "foo = 1\n").unwrap();
     assert!(load(&dir, &sha).unwrap_err().contains("line 1"));
     std::fs::write(&file, "reason = splice\n").unwrap();
+    assert!(load(&dir, &sha).unwrap_err().contains("line 1"));
+    std::fs::write(&file, "known_cc_mismatch = yes\n").unwrap();
     assert!(load(&dir, &sha).unwrap_err().contains("line 1"));
 }

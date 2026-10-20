@@ -161,8 +161,20 @@ fn strict_full_feed_errors_are_counted_not_fatal() {
     let d = digest_bytes(&sha_of(&bytes), &bytes, None).unwrap();
     assert!(d.configs["strict_full"].feed_errors > 0);
     assert_eq!(d.configs["default"].feed_errors, 0);
-    // The strict pass still delivers what it could and records why it stopped.
-    assert!(!d.configs["strict_full"].feed_error_kinds.is_empty());
+    // The strict pass still delivers what it could and records why it
+    // stopped, keyed by the error's variant, never its text.
+    let kinds = &d.configs["strict_full"].feed_error_kinds;
+    assert!(!kinds.is_empty());
+    let variants = [
+        "Unrecoverable",
+        "StrictRejection",
+        "MalformedPes",
+        "SyncBufExhausted",
+    ];
+    assert!(
+        kinds.keys().all(|k| variants.contains(&k.as_str())),
+        "{kinds:?}"
+    );
 }
 
 #[test]

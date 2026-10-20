@@ -140,8 +140,9 @@ fn a_pcr_reset_and_a_33_bit_wrap_still_cover_the_stream_once() {
     assert!(bytes.len() > probe.len());
     let pacer = PcrPacer::new(&bytes, None).unwrap();
     assert_eq!(joined(&pacer), bytes);
-    // Steps: 3 x 90 000, a reset (0), the wrap-bound step, then 90 000 across the wrap.
-    let ticks = (1u64 << 33) + 80_000;
+    // Steps: 2 x 90 000, a reset (0), 90 000, the jump up to the wrap (a
+    // forward step over one second: 0), then 90 000 across the wrap.
+    let ticks = 4 * 90_000;
     assert!((pacer.total_seconds() - ticks as f64 / 90_000.0).abs() < 1e-3);
 }
 
@@ -181,4 +182,50 @@ fn a_single_pcr_stream_is_unpaceable() {
     let (bytes, _) = hand_built(&[(pid, 0)]);
     let e = PcrPacer::new(&bytes, None).err().unwrap();
     assert!(e.starts_with("unpaceable"), "{e}");
+}
+
+#[test]
+fn a_forward_pcr_jump_neither_counts_as_time_nor_makes_the_pacer_sleep() {
+    let (_, pid) = hand_built(&[]);
+    let jump = 60 * 90_000;
+    let bases = [0, 90_000, 90_000 + jump, 180_000 + jump];
+    let marks: Vec<(u16, u64)> = bases.iter().map(|b| (pid, *b)).collect();
+    let (bytes, _) = hand_built(&marks);
+    let pacer = PcrPacer::new(&bytes, None).unwrap();
+    assert!(
+        (pacer.total_seconds() - 2.0).abs() < 1e-6,
+        "{}",
+        pacer.total_seconds()
+    );
+    let now = Cell::new(Duration::ZERO);
+    let longest = Cell::new(Duration::ZERO);
+    send_paced(
+        &pacer,
+        &mut || now.get(),
+        &mut |d| {
+            longest.set(longest.get().max(d));
+            now.set(now.get() + d);
+        },
+        |_| Ok(()),
+    )
+    .unwrap();
+    assert!(
+        longest.get() <= Duration::from_secs(1),
+        "{:?}",
+        longest.get()
+    );
+    // The cut sees the same span: one second is reached at the second PCR,
+    // and the jump adds nothing, so the cut is the packet of the fourth.
+    let fourth = bytes.len() - 188;
+    assert_eq!(tst_interop::corpus::pcr::prefix_end(&bytes, 1), fourth);
+    // So does the inventory's duration.
+    let dir = crate::temp_dir_named("pace-forward-jump");
+    std::fs::write(dir.join("jump.ts"), &bytes).unwrap();
+    let inv = tst_interop::corpus::inventory::build(&dir).unwrap();
+    assert!(
+        (inv.files[0].duration_s - 2.0).abs() < 1e-6,
+        "{}",
+        inv.files[0].duration_s
+    );
+    assert_eq!(inv.files[0].pcr_discontinuities, 1);
 }

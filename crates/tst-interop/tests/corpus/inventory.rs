@@ -84,3 +84,123 @@ fn a_capture_that_does_not_start_on_a_packet_is_inventoried() {
         f.duration_s
     );
 }
+
+fn pid_of(p: &[u8]) -> u16 {
+    (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2])
+}
+
+/// The PID of the generated capture's PMT and the offset of its first packet.
+fn first_pmt(bytes: &[u8]) -> (u16, usize) {
+    let pmt = tst_test_helpers::rawts::parsed(bytes).pmt_pid.unwrap();
+    let at = (0..bytes.len())
+        .step_by(188)
+        .find(|&o| pid_of(&bytes[o..]) == pmt)
+        .unwrap();
+    (pmt, at)
+}
+
+/// Every PMT packet of `bytes` rewritten as a section padded past one
+/// packet (a 200-byte program descriptor), carried in two packets.
+fn with_long_pmt(bytes: &[u8]) -> Vec<u8> {
+    let (pmt_pid, _) = first_pmt(bytes);
+    let mut cc = 0u8;
+    let mut out = Vec::new();
+    for pkt in bytes.chunks_exact(188) {
+        if pid_of(pkt) != pmt_pid {
+            out.extend_from_slice(pkt);
+            continue;
+        }
+        assert_eq!(
+            (pkt[3] >> 4) & 3,
+            1,
+            "a PMT packet without an adaptation field"
+        );
+        assert_eq!(pkt[4], 0, "a PMT section at the start of the payload");
+        let sec = &pkt[5..];
+        let len = (usize::from(sec[1] & 0x0F) << 8) | usize::from(sec[2]);
+        let sec = &sec[..3 + len];
+        let info = (usize::from(sec[10] & 0x0F) << 8) | usize::from(sec[11]);
+        let new_info = info + 202;
+        let mut long = sec[..10].to_vec();
+        long.extend_from_slice(&[0xF0 | (new_info >> 8) as u8, new_info as u8]);
+        long.extend_from_slice(&sec[12..12 + info]);
+        long.extend_from_slice(&[0xC0, 200]);
+        long.extend(std::iter::repeat_n(0u8, 200));
+        long.extend_from_slice(&sec[12 + info..sec.len() - 4]);
+        let new_len = long.len() - 3 + 4;
+        long[1] = (long[1] & 0xF0) | (new_len >> 8) as u8;
+        long[2] = new_len as u8;
+        let crc = tst_core::mpegts::common::crc32::crc32_mpeg2(&long);
+        long.extend_from_slice(&crc.to_be_bytes());
+        let mut data = vec![0u8];
+        data.extend_from_slice(&long);
+        assert!(data.len() > 184, "the section spans two packets");
+        for (i, chunk) in data.chunks(184).enumerate() {
+            let mut p = vec![0xFF; 188];
+            p[..3].copy_from_slice(&pkt[..3]);
+            p[1] = (p[1] & !0x40) | if i == 0 { 0x40 } else { 0 };
+            p[3] = 0x10 | cc;
+            cc = (cc + 1) & 0x0F;
+            p[4..4 + chunk.len()].copy_from_slice(chunk);
+            out.extend_from_slice(&p);
+        }
+    }
+    out
+}
+
+/// The inventory entry of one capture written alone into a fresh directory.
+fn probe_one(name: &str, bytes: &[u8]) -> inventory::FileEntry {
+    let dir = temp_dir_named(name);
+    std::fs::write(dir.join("one.ts"), bytes).unwrap();
+    let mut inv = inventory::build(&dir).unwrap();
+    inv.files.remove(0)
+}
+
+#[test]
+fn a_pmt_that_spans_two_packets_is_read() {
+    let bytes = gen_profile_bytes("baseline", 2.0);
+    let plain = probe_one("inv-pmt-plain", &bytes);
+    let long = probe_one("inv-pmt-long", &with_long_pmt(&bytes));
+    assert_eq!(long.probe_error, None);
+    assert_eq!(long.shape, "a");
+    assert_eq!(long.streams, plain.streams);
+    assert_eq!(long.pcr_pid, plain.pcr_pid);
+}
+
+#[test]
+fn junk_before_the_pmt_is_resynced_past() {
+    let bytes = gen_profile_bytes("baseline", 2.0);
+    let plain = probe_one("inv-junk-plain", &bytes);
+    let (_, at) = first_pmt(&bytes);
+    let mut junk = bytes[..at].to_vec();
+    junk.extend(std::iter::repeat_n(0u8, 50));
+    junk.extend_from_slice(&bytes[at..]);
+    let e = probe_one("inv-junk", &junk);
+    assert_eq!(e.probe_error, None);
+    assert_eq!(e.shape, "a");
+    assert_eq!(e.streams, plain.streams);
+}
+
+#[test]
+fn an_adaptation_field_that_overruns_its_packet_before_the_pmt_is_read_past() {
+    let bytes = gen_profile_bytes("baseline", 2.0);
+    let (_, at) = first_pmt(&bytes);
+    let mut bad = [0xFFu8; 188];
+    bad[..4].copy_from_slice(&[0x47, 0x1F, 0xF0, 0x30]);
+    bad[4] = 200;
+    let mut out = bytes[..at].to_vec();
+    out.extend_from_slice(&bad);
+    out.extend_from_slice(&bytes[at..]);
+    let e = probe_one("inv-af", &out);
+    assert_eq!(e.probe_error, None);
+    assert_eq!(e.shape, "a");
+}
+
+#[test]
+fn an_empty_corpus_directory_is_an_error() {
+    let dir = temp_dir_named("inv-empty");
+    std::fs::write(dir.join("notes.txt"), b"not a capture").unwrap();
+    let e = inventory::build(&dir).unwrap_err();
+    assert!(e.contains("no captures found"), "{e}");
+    assert!(!e.contains(&dir.display().to_string()), "{e}");
+}

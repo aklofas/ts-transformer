@@ -13,6 +13,10 @@ pub struct Annotations {
     pub non_misb_private_pids: Vec<u16>,
     /// The capture is known to restart or jump its timeline.
     pub known_discontinuity: bool,
+    /// A person has reviewed the capture's continuity-counter accounting
+    /// and found the difference between the wire walk and the demuxer
+    /// explained; the `accounting` rule is then recorded as excused.
+    pub known_cc_mismatch: bool,
     pub reason: Option<String>,
 }
 
@@ -22,6 +26,14 @@ fn pids(value: &str) -> Option<Vec<u16>> {
         return Some(Vec::new());
     }
     inner.split(',').map(|n| n.trim().parse().ok()).collect()
+}
+
+fn flag(value: &str) -> Option<bool> {
+    match value {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
 }
 
 fn text(value: &str) -> Option<String> {
@@ -57,11 +69,11 @@ pub fn load(dir: &Path, sha: &Sha256Hex) -> Result<Annotations, String> {
                     pids(value).ok_or_else(|| bad("expected a list like [4097, 4101]"))?;
             }
             "known_discontinuity" => {
-                ann.known_discontinuity = match value {
-                    "true" => true,
-                    "false" => false,
-                    _ => return Err(bad("expected true or false")),
-                };
+                ann.known_discontinuity =
+                    flag(value).ok_or_else(|| bad("expected true or false"))?;
+            }
+            "known_cc_mismatch" => {
+                ann.known_cc_mismatch = flag(value).ok_or_else(|| bad("expected true or false"))?;
             }
             "reason" => {
                 ann.reason = Some(text(value).ok_or_else(|| bad("expected a quoted string"))?);
