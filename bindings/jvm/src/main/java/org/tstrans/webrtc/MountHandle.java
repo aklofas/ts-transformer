@@ -83,10 +83,19 @@ public final class MountHandle extends NativeHandle {
         ensureOpen(); nPushTs(peekHandle(), bytes);
     }
 
-    /** The mount's counters. @throws IllegalStateException if closed. */
+    /**
+     * The mount's counters. Reads them directly and never waits.
+     * @throws IllegalStateException if closed.
+     */
     public MountStats stats() { ensureOpen(); return nStats(peekHandle()); }
 
-    /** One entry per viewer session of the mount. @throws IllegalStateException if closed. */
+    /**
+     * One entry per viewer session of the mount. The sessions live on the media
+     * thread, so this call asks it and can wait up to 2 seconds for the reply when
+     * that thread is busy; pushes and {@link #close()} on this handle do not wait
+     * behind it. Empty once the mount is closed.
+     * @throws IllegalStateException if closed.
+     */
     public List<SessionStats> sessions() {
         ensureOpen(); return List.copyOf(nSessions(peekHandle()));
     }

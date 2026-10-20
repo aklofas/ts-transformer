@@ -2080,6 +2080,10 @@ try (WhepServer server = WhepServer.bind("whep://0.0.0.0:8889?advertise=192.0.2.
 - **Stats.** `WhepServer.stats()`, `MountHandle.stats()` and
   `MountHandle.sessions()` (one `SessionStats` per viewer) are snapshots;
   every counter is the bit pattern of an unsigned 64-bit value.
+  `WhepServer.stats()` and `MountHandle.sessions()` ask the media thread and
+  can wait up to 2 s for its reply when it is busy, so call them from a
+  monitoring thread, not the thread that paces pushes; `MountHandle.stats()`
+  never waits.
 
 ### Example: serve a `.ts` file to browsers
 
@@ -2330,8 +2334,11 @@ public final class ServeWhep {
             | ((long) (buf[t + 4] & 0xFF) >> 1);
     }
 
-    // One line per second. stats() is a snapshot and safe from any thread;
-    // the counters are unsigned 64-bit values carried in a long.
+    // One line per second. server.stats() asks the media thread and can wait
+    // up to 2 s for its reply; calling it inline from the pushing loop is
+    // acceptable here because it runs once a second and the wait is bounded.
+    // mount.stats() never waits. The counters are unsigned 64-bit values
+    // carried in a long.
     private static void printStats(WhepServer server, MountHandle mount) {
         ServerStats s = server.stats();
         MountStats m = mount.stats();

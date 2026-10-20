@@ -235,14 +235,23 @@ fn build_session<'l>(env: &mut Env<'l>, s: &SessionStats) -> jni::errors::Result
 jni_native! {
     /// `MountHandle.nSessions(handle)` → `java.util.ArrayList<SessionStats>`, or
     /// null on a JNI failure.
+    ///
+    /// `sessions()` asks the media thread and can wait up to 2 s for its reply,
+    /// so it runs on a clone taken under a short lease (the handle is one
+    /// `Arc`), never under the lease itself: holding the entry's lock that
+    /// long would make pushes and `close()` on this handle wait behind it.
+    /// The other natives here do not wait (`stats` reads atomics, pushes
+    /// only `try_send`), so they keep the lease.
     fn Java_org_tstrans_webrtc_MountHandle_nSessions<'local>(
         env,
         _class,
         handle: jlong,
     ) -> JObject<'local> = JObject::null() => {
-        let Some(sessions) = with_mount(env, handle, MountHandle::sessions) else {
+        let Some(mount) = with_mount(env, handle, MountHandle::clone) else {
             return JObject::null();
         };
+        let sessions = mount.sessions();
+        drop(mount);
         let built = (|| -> jni::errors::Result<JObject<'local>> {
             let list = env.new_object(
                 FindClass(jni_str!("java/util/ArrayList")),

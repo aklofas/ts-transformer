@@ -87,7 +87,11 @@ public final class WhepServer extends NativeHandle {
         nRemoveMount(peekHandle(), path);
     }
 
-    /** Server-wide counters. @throws IllegalStateException if closed. */
+    /**
+     * Server-wide counters. The counters live on the media thread, so this call
+     * asks it and can wait up to 2 seconds for the reply when that thread is busy;
+     * keep it off a thread that paces pushes. @throws IllegalStateException if closed.
+     */
     public ServerStats stats() { ensureOpen(); return nStats(peekHandle()); }
 
     /**

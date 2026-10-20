@@ -238,8 +238,11 @@ public final class ServeWhep {
             | ((long) (buf[t + 4] & 0xFF) >> 1);
     }
 
-    // One line per second. stats() is a snapshot and safe from any thread;
-    // the counters are unsigned 64-bit values carried in a long.
+    // One line per second. server.stats() asks the media thread and can wait
+    // up to 2 s for its reply; calling it inline from the pushing loop is
+    // acceptable here because it runs once a second and the wait is bounded.
+    // mount.stats() never waits. The counters are unsigned 64-bit values
+    // carried in a long.
     private static void printStats(WhepServer server, MountHandle mount) {
         ServerStats s = server.stats();
         MountStats m = mount.stats();
