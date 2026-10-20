@@ -476,6 +476,46 @@ class ReleaseModeTests(unittest.TestCase):
                 q.changed_paths(d, "f" * 40, b)
             self.assertIn("bad object", str(e.exception))
 
+    def test_a_newer_short_soak_does_not_hide_the_72_hour_one(self):
+        rows = archives_toml(archive_row("soak-72", "soak", SHA, date="2026-10-17"),
+                             archive_row("soak-1h", "soak", SHA, date="2026-10-18", duration=3600),
+                             archive_row("corpus-rel", "corpus", SHA))
+        rec = collect(release=True, archives=rows)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["release_vm"]["soak"]["id"], "soak-72")
+
+    def test_an_older_standing_72_hour_soak_wins_over_a_newer_superseded_one(self):
+        newer, older = "a" * 40, "b" * 40
+        rows = archives_toml(archive_row("soak-new", "soak", newer, date="2026-10-18"),
+                             archive_row("soak-old", "soak", older, date="2026-10-10"),
+                             archive_row("corpus-old", "corpus", older))
+        diffs = {newer: ["crates/tst-core/src/lib.rs"], older: []}
+        with mock.patch.object(q, "changed_paths", side_effect=lambda root, tree, sha: diffs[tree]):
+            rec = collect(release=True, archives=rows)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["release_vm"]["soak"]["id"], "soak-old")
+        self.assertEqual(rec["release_vm"]["corpus"]["id"], "corpus-old")
+
+    def test_only_short_soaks_name_the_declared_duration(self):
+        rows = archives_toml(archive_row("soak-1h", "soak", SHA, duration=3600),
+                             archive_row("soak-2h", "soak", SHA, date="2026-10-10", duration=7200),
+                             archive_row("corpus-rel", "corpus", SHA))
+        rec = collect(release=True, archives=rows)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("soak: archive soak-1h declares 3600 s, not 259200", rec["verdict_reasons"])
+
+    def test_a_malformed_sha_never_reaches_git(self):
+        rows = q.parse_archives(SOAKED_EARLIER)
+        with mock.patch.object(q, "changed_paths", side_effect=AssertionError("git called")):
+            for bad in ("HEAD", "--output=/tmp/x", SHA.upper()):
+                with self.assertRaises(q.QualificationError) as e:
+                    q.release_vm("/nonexistent", bad, rows, True)
+                self.assertIn("source.sha", str(e.exception))
+            with self.assertRaises(SystemExit) as e:
+                collect(mutate=lambda f: f["context.json"].update(
+                    source=dict(CONTEXT["source"], sha="HEAD")), archives=SOAKED_EARLIER)
+            self.assertEqual(e.exception.code, 2)
+
     def test_render_release_gate_lines(self):
         with mock.patch.object(q, "changed_paths", side_effect=AssertionError("git called")):
             rel = q.render_block(collect(release=True, archives=RELEASE_OK))
