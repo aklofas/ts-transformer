@@ -20,6 +20,7 @@ use tst_webrtc::MountHandle;
 
 #[cfg(feature = "tls")]
 pub mod tls_certs;
+pub mod ts;
 
 /// How long the viewers get to connect.
 const CONNECT_WAIT: Duration = Duration::from_secs(5);

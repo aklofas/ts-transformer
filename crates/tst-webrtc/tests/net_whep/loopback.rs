@@ -11,9 +11,11 @@ use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
 use tst_webrtc::url::WhepUrl;
 use tst_webrtc::{
-    KlvCarriage, ManualClock, MountConfig, PushError, VideoCodec, WhepServer, WhepServerError,
+    KlvCarriage, ManualClock, MountConfig, MountKind, PushError, VideoCodec, WhepServer,
+    WhepServerError,
 };
 
+use crate::fixtures::ts::{FIRST_PTS, TICKS_PER_FRAME, build_ts, record};
 use crate::fixtures::{
     TestViewer, connect_all, eventually, h264_gop, http, join, klv_record, pump_all, read_response,
     whep_post,
@@ -661,4 +663,45 @@ fn a_record_whose_message_exceeds_the_viewers_max_message_size_is_dropped() {
     assert_eq!((ms.klv_dc_messages_sent, ms.klv_dc_dropped_viewer), (1, 1));
     let session = m.sessions().pop().expect("the session");
     assert_eq!(session.dc_messages_dropped, 1);
+}
+
+#[test]
+fn an_mp2t_mount_delivers_the_ts_frames_with_their_klv_to_a_viewer() {
+    const FRAMES: usize = 10;
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let mut cfg = MountConfig::default();
+    cfg.kind = MountKind::Mp2t;
+    cfg.klv = KlvCarriage::SeiAndDataChannel;
+    let m = srv.add_mount("/ts", cfg).unwrap();
+    let mut v = TestViewer::new();
+    join(srv.local_addr(), "/ts", &mut v, true);
+    connect_all(&m, std::slice::from_mut(&mut v));
+    assert!(v.pump(|v| v.dc_open, CONNECT), "{}", v.trace());
+
+    // One access unit more than asserted: the demuxer emits an access unit
+    // when the next one starts.
+    for slice in build_ts(FRAMES + 1).chunks(1316) {
+        m.push_ts(slice).unwrap();
+    }
+    let done = v.pump(
+        |v| v.frames.len() >= FRAMES && v.dc_msgs.len() >= FRAMES,
+        DELIVER,
+    );
+    assert!(done, "{}", v.trace());
+    assert_eq!(v.frames.len(), FRAMES);
+    assert!(has_idr(&v.frames[0].1));
+    for (i, (rtp_ts, au)) in v.frames.iter().enumerate() {
+        let pts = (FIRST_PTS + i as i64 * TICKS_PER_FRAME) as u64;
+        let seis = tst_webrtc::sei::extract_klv_seis(au, VideoCodec::H264);
+        assert_eq!(seis.len(), 1, "frame {i}");
+        assert_eq!(seis[0].klv, record(i));
+        assert_eq!(seis[0].klv_pts_90k, pts);
+        let dc = &v.dc_msgs[i];
+        assert_eq!(u32::from_be_bytes(dc[1..5].try_into().unwrap()), *rtp_ts);
+        assert_eq!(&dc[13..], &record(i)[..]);
+    }
+    let ms = m.stats();
+    assert_eq!(ms.frames_pushed, FRAMES as u64);
+    assert_eq!(ms.klv_sei_inserted, FRAMES as u64);
+    assert_eq!(ms.demux_nonconformant, 0);
 }

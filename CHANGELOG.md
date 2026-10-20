@@ -785,8 +785,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   needs an elementary mount (`MountConfig::validate` refuses it on an MP2T
   mount: the TS demuxer has no Opus mapping). MP2T mounts
   (`MountKind::Mp2t`) take `push_ts`: the mount demultiplexes the bytes and
-  feeds the same video and KLV paths; demuxed audio is counted and
-  discarded. Video is
+  feeds the same video and KLV paths with one video stream, the first of
+  the mount's codec, and the KLV of its program (other streams are counted
+  in `MountStats::demux_nonconformant` and dropped); demuxed audio is
+  counted and discarded. Video is
   passed through (H.264 RFC 6184, H.265 RFC 7798); KLV rides frame-locked
   as a user-data SEI inside the frame's access unit and as a `klv` data
   channel message (the `sei` module and `KLV_DC_LIMIT` document both

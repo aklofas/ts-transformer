@@ -460,7 +460,7 @@ sha256 = "b9a81ea4c0218d1bea728bf41bf71beb1430443c1e52e5f7b5141e2038aec4ab"
 
 [[file]]
 path = "crates/tst-webrtc/tests/fixtures/mod.rs"
-sha256 = "39a65d6c3e9bd1a3dad35fc3211d1802cd82899362f497b1fdd5ee00816b8614"
+sha256 = "5dcdf4a4c6b5468a9f3a2ffb4c6b8316f837d81d483209612cc89e0b8a0b902a"
 
 [[file]]
 path = "crates/tst-webrtc/tests/fixtures/offers/README.md"
@@ -485,6 +485,10 @@ sha256 = "6dbb245312fa0b891013a723cdcd3ef325b72f90aae3e7cea8d0a627e07a4889"
 [[file]]
 path = "crates/tst-webrtc/tests/fixtures/tls_certs.rs"
 sha256 = "78358c57f0bd952ccc2e05f69aaeda2c23a215791f20f743d0493e3f3f3a0925"
+
+[[file]]
+path = "crates/tst-webrtc/tests/fixtures/ts.rs"
+sha256 = "5f9735d794b7451cb937ca868fa2273a20bc7ced730d950a58128f5399124931"
 
 [[file]]
 path = "tests/coverage/fuzz-targets.toml"
