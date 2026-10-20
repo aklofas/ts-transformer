@@ -16,6 +16,8 @@ mod inventory;
 mod invariants;
 #[path = "corpus/pace.rs"]
 mod pace;
+#[path = "corpus/replay.rs"]
+mod replay;
 #[path = "corpus/report.rs"]
 mod report;
 #[path = "corpus/shape.rs"]

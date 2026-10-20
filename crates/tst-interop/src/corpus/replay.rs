@@ -30,6 +30,15 @@
 //! sampling is Linux-only: elsewhere the CSV holds only its header and the
 //! summary's RSS maps are empty.
 //!
+//! RSS is gated per path by the soak's rule ([`judge_rss`]): a path whose
+//! post-warm-up slope exceeds the soak's threshold fails the replay. A path
+//! with too few samples for the rule (any short run) is recorded as not
+//! gated, with the reason.
+//!
+//! With `udp` among the paths, the replay refuses to start when
+//! `net.core.rmem_max` would clamp the receive buffer the largest pick's
+//! access units need ([`super::receive::udp_rcvbuf_for`]).
+//!
 //! Output, files and errors name captures by SHA-256 only.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -52,11 +61,14 @@ use super::inventory::{self, FileEntry};
 use super::judge::{FileVerdict, ReceiverOutcome, outcome_failure};
 use super::pace::{PcrPacer, send_paced};
 use super::pcr::prefix_end_read;
-use super::receive::STALL_ENV;
+use super::receive::{STALL_ENV, net_core, udp_rcvbuf_for};
 use super::subset::{self, Pick, ReplayPlan};
-use super::{PATHS, RunDir, STALL_SECONDS, Sha256Hex};
+use super::{PATHS, REPLAY_PICK_MAX_BYTES, RunDir, STALL_SECONDS, Sha256Hex};
 use crate::report::csv::RSS_HEADER;
-use crate::report::soak::linear_regression_slope;
+use crate::report::soak::{
+    MAX_GAP_CADENCES, MAX_WARMUP_S, MIN_SAMPLE_COVERAGE, RSS_SLOPE_THRESHOLD_KB_PER_HOUR,
+    WARMUP_FRACTION, linear_regression_slope, rss_coverage, rss_warmup_s,
+};
 use crate::transport::make_send;
 
 pub struct ReplayArgs {
@@ -80,7 +92,7 @@ pub struct ReplaySummary {
     /// Picks replayed.
     pub files: u64,
     pub paths: Vec<String>,
-    /// Verdicts that did not pass.
+    /// Verdicts that did not pass, plus paths whose RSS gate failed.
     pub failed: u64,
     /// Paths with at least one RSS sample only.
     pub rss_max_kb_by_path: BTreeMap<String, u64>,
@@ -88,8 +100,79 @@ pub struct ReplaySummary {
     /// as the child starts, before it holds anything), the soak report's
     /// arithmetic; 0 with fewer than two such samples.
     pub rss_slope_kb_per_hour_by_path: BTreeMap<String, f64>,
-    /// No verdict failed and every path produced at least one.
+    /// Whether each path's RSS was judged by the soak's slope rule.
+    #[serde(default)]
+    pub rss_gated_by_path: BTreeMap<String, bool>,
+    /// Per path: `PASS …` or `FAIL …` with the judged slope, or
+    /// `not gated: …` with the reason (see [`judge_rss`]).
+    #[serde(default)]
+    pub rss_gate_by_path: BTreeMap<String, String>,
+    /// No verdict failed, no path's RSS gate failed, and every path
+    /// produced a verdict.
     pub pass: bool,
+}
+
+/// What [`judge_rss`] made of each path's RSS samples.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RssJudgement {
+    pub gated_by_path: BTreeMap<String, bool>,
+    pub gate_by_path: BTreeMap<String, String>,
+    /// Gated paths whose slope exceeded the threshold.
+    pub failed: Vec<String>,
+}
+
+/// Judges each path's RSS the soak's way. The run is as long as its last
+/// sample; the soak's warm-up for a run that long is left out; the
+/// post-warm-up points must meet the soak's coverage rule at `cadence_s`
+/// and span at least the soak's longest warm-up (30 minutes of samples),
+/// or the path is recorded as not gated; a gated path fails when its
+/// least-squares slope exceeds the soak's threshold. `samples` are
+/// `(path, elapsed seconds, kB)`.
+pub fn judge_rss(samples: &[(String, f64, u64)], paths: &[String], cadence_s: f64) -> RssJudgement {
+    let run_s = samples.iter().map(|(_, t, _)| *t).fold(0.0, f64::max);
+    let warmup_s = rss_warmup_s(run_s, WARMUP_FRACTION);
+    let expected = ((run_s - warmup_s) / cadence_s).floor().max(0.0) as u64;
+    let min_samples = ((expected as f64 * MIN_SAMPLE_COVERAGE).ceil() as u64)
+        .max((MAX_WARMUP_S / cadence_s).ceil() as u64);
+    let mut out = RssJudgement::default();
+    for path in paths {
+        let mut points: Vec<(f64, f64)> = samples
+            .iter()
+            .filter(|(p, t, _)| p == path && *t >= warmup_s)
+            .map(|(_, t, kb)| (*t, *kb as f64))
+            .collect();
+        points.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let (covered, largest_gap, _) =
+            rss_coverage(&points, min_samples, MAX_GAP_CADENCES * cadence_s);
+        let (gated, text) = if covered {
+            let slope = linear_regression_slope(&points) * 3600.0;
+            let pass = slope <= RSS_SLOPE_THRESHOLD_KB_PER_HOUR;
+            if !pass {
+                out.failed.push(path.clone());
+            }
+            (
+                true,
+                format!(
+                    "{} {slope:.1} KiB/h over {} post-warm-up sample(s) (threshold \
+                     {RSS_SLOPE_THRESHOLD_KB_PER_HOUR:.0})",
+                    if pass { "PASS" } else { "FAIL" },
+                    points.len()
+                ),
+            )
+        } else {
+            (
+                false,
+                format!(
+                    "not gated: {} post-warm-up sample(s), largest gap {largest_gap:.0} s; \
+                     the slope rule needs {min_samples} at a {cadence_s:.0} s cadence",
+                    points.len()
+                ),
+            )
+        };
+        out.gated_by_path.insert(path.clone(), gated);
+        out.gate_by_path.insert(path.clone(), text);
+    }
+    out
 }
 
 /// How long a child may take to answer `file`: it only binds a socket.
@@ -251,7 +334,13 @@ impl PathRun {
 
     /// One pick over this path: `file`, `ready`, the paced send, `sent`,
     /// `verdict`.
-    fn replay(&mut self, pick: &Pick, pacer: &PcrPacer, logs: &Path) -> FileVerdict {
+    fn replay(
+        &mut self,
+        pick: &Pick,
+        pacer: &PcrPacer,
+        logs: &Path,
+        largest_au_bytes: u64,
+    ) -> FileVerdict {
         let sha = &pick.sha256;
         let path = self.path.clone();
         if !self.alive {
@@ -260,7 +349,7 @@ impl PathRun {
         let prefix = pick
             .prefix_seconds
             .map_or_else(|| "none".to_string(), |p| p.to_string());
-        if !self.say(&format!("file {sha} {prefix}")) {
+        if !self.say(&format!("file {sha} {prefix} {largest_au_bytes}")) {
             self.alive = false;
             return not_received(sha, &path, ReceiverOutcome::Exited);
         }
@@ -298,7 +387,7 @@ impl PathRun {
                 }
             }
         });
-        let Some(sent) = sent else {
+        let Some((sent, resyncs)) = sent else {
             let mut v = not_received(sha, &path, ReceiverOutcome::Stalled);
             v.failures.insert(
                 0,
@@ -325,6 +414,14 @@ impl PathRun {
             v.pass = false;
             v.failures.insert(0, format!("sender error: {e}"));
         }
+        // A sender that lost framing dropped what it held: name it, so a
+        // short delivery is not read as transport loss.
+        if !v.pass && resyncs.events > 0 {
+            v.failures.push(format!(
+                "sender resynced {} times, skipped {} bytes",
+                resyncs.events, resyncs.bytes_skipped
+            ));
+        }
         v
     }
 
@@ -344,6 +441,13 @@ impl PathRun {
     }
 }
 
+/// The sender's framing recoveries during one send.
+#[derive(Debug, Clone, Copy, Default)]
+struct Resyncs {
+    events: u64,
+    bytes_skipped: u64,
+}
+
 /// Sends the paced capture to the URL a child announced. The sender's
 /// cancel handle goes into `cancel` as soon as it exists.
 fn send(
@@ -352,11 +456,14 @@ fn send(
     pacer: &PcrPacer,
     publish_log: &Path,
     cancel: &CancelSlot,
-) -> Result<(), String> {
+) -> (Result<(), String>, Resyncs) {
     if path == "rtsp-publish" {
-        return publish(url, pacer, publish_log);
+        return (publish(url, pacer, publish_log), Resyncs::default());
     }
-    let mut sender = Sender::new(make_send(url)?, SenderConfig::default());
+    let mut sender = match make_send(url) {
+        Ok(t) => Sender::new(t, SenderConfig::default()),
+        Err(e) => return (Err(e), Resyncs::default()),
+    };
     *cancel.lock().unwrap_or_else(|e| e.into_inner()) = sender.cancel_handle();
     let start = Instant::now();
     let r = send_paced(
@@ -365,8 +472,15 @@ fn send(
         &mut std::thread::sleep,
         |chunk| push(&mut sender, chunk),
     );
+    let stats = sender.stats();
     sender.close();
-    r
+    (
+        r,
+        Resyncs {
+            events: stats.resync_events,
+            bytes_skipped: stats.bytes_skipped_for_sync,
+        },
+    )
 }
 
 /// One chunk through the sender, all of it on the wire before the next
@@ -491,6 +605,32 @@ fn check_publisher() -> Result<(), String> {
     Ok(())
 }
 
+/// Refuses a udp replay whose receive buffer the kernel would clamp
+/// silently (`setsockopt` caps `SO_RCVBUF` at `net.core.rmem_max`), as the
+/// stress harness does. Unreadable sysctls (not Linux) pass.
+fn check_rmem_max(
+    plan: &ReplayPlan,
+    entries: &BTreeMap<&Sha256Hex, &FileEntry>,
+) -> Result<(), String> {
+    let Some(max) = net_core("rmem_max") else {
+        return Ok(());
+    };
+    let default = net_core("rmem_default");
+    let needed = plan
+        .picks
+        .iter()
+        .filter_map(|p| entries.get(&p.sha256))
+        .filter_map(|e| udp_rcvbuf_for(e.largest_au_bytes, default))
+        .max();
+    match needed {
+        Some(n) if n > max => Err(format!(
+            "the udp path needs a {n}-byte receive buffer but net.core.rmem_max is {max}; run \
+             `sudo sysctl -w net.core.rmem_max={n}` first, or leave udp out of --paths"
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// A child's resident set in kB; `None` when its status has no `VmRSS`.
 fn vm_rss_kb(pid: u32) -> Option<u64> {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
@@ -546,6 +686,12 @@ fn read_pick(file: &Path, sha: &Sha256Hex, prefix_seconds: Option<u32>) -> Resul
         Some(s) => prefix_end_read(&mut f, s).map_err(read_err)?,
         None => f.metadata().map_err(read_err)?.len(),
     };
+    // The plan's cap is on a prediction; the real cut can be longer.
+    if end > REPLAY_PICK_MAX_BYTES {
+        return Err(format!(
+            "skipped: the pick is {end} bytes, over the pick size cap of {REPLAY_PICK_MAX_BYTES}"
+        ));
+    }
     let end = usize::try_from(end).map_err(|_| "the capture does not fit in memory".to_string())?;
     let mut bytes = vec![0u8; end];
     open()?.read_exact(&mut bytes).map_err(read_err)?;
@@ -593,10 +739,11 @@ fn replay_pick(
         Err(e) => return fail_all(runs, e),
     };
     let logs = run.root.join("logs");
+    let largest_au = entry.map_or(0, |e| e.largest_au_bytes);
     std::thread::scope(|s| {
         let threads: Vec<_> = runs
             .iter_mut()
-            .map(|r| s.spawn(|| r.replay(pick, &pacer, &logs)))
+            .map(|r| s.spawn(|| r.replay(pick, &pacer, &logs, largest_au)))
             .collect();
         threads
             .into_iter()
@@ -670,6 +817,9 @@ pub fn run_with(
     subset::write(&plan, &args.run)?;
     let entries: BTreeMap<&Sha256Hex, &FileEntry> =
         inv.files.iter().map(|f| (&f.sha256, f)).collect();
+    if args.paths.iter().any(|p| p == "udp") {
+        check_rmem_max(&plan, &entries)?;
+    }
 
     let csv_path = args.run.root.join("replay-rss.csv");
     let mut csv = File::create(&csv_path).map_err(|e| {
@@ -735,7 +885,8 @@ pub fn run_with(
         rss_slope_kb_per_hour_by_path
             .insert(path.clone(), linear_regression_slope(&points[1..]) * 3600.0);
     }
-    let failed = verdicts.iter().filter(|v| !v.pass).count() as u64;
+    let rss = judge_rss(&samples, &args.paths, args.rss_sample_seconds.max(1) as f64);
+    let failed = verdicts.iter().filter(|v| !v.pass).count() as u64 + rss.failed.len() as u64;
     let every_path_judged = args
         .paths
         .iter()
@@ -750,6 +901,8 @@ pub fn run_with(
         verdicts,
         rss_max_kb_by_path,
         rss_slope_kb_per_hour_by_path,
+        rss_gated_by_path: rss.gated_by_path,
+        rss_gate_by_path: rss.gate_by_path,
     };
     let text = serde_json::to_string_pretty(&summary).map_err(|e| format!("replay json: {e}"))?;
     std::fs::write(args.run.root.join("replay.json"), text).map_err(|e| {
@@ -759,4 +912,26 @@ pub fn run_with(
         )
     })?;
     Ok(summary)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_pick_over_the_size_cap_is_refused_before_it_is_read() {
+        let dir = std::env::temp_dir().join(format!("tst-corpus-pickcap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("big.ts");
+        // Sparse: the length is all the check reads.
+        File::create(&file)
+            .unwrap()
+            .set_len(REPLAY_PICK_MAX_BYTES + 188)
+            .unwrap();
+        let e = read_pick(&file, &Sha256Hex("0".repeat(64)), None).unwrap_err();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(e.starts_with("skipped: "), "{e}");
+        assert!(e.contains("over the pick size cap"), "{e}");
+    }
 }

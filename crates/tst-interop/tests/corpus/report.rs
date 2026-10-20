@@ -62,6 +62,8 @@ fn replay(pass: bool) -> ReplaySummary {
         failed: if pass { 0 } else { 1 },
         rss_max_kb_by_path: max,
         rss_slope_kb_per_hour_by_path: slope,
+        rss_gated_by_path: BTreeMap::new(),
+        rss_gate_by_path: BTreeMap::new(),
         pass,
     }
 }
