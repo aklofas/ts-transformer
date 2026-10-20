@@ -967,14 +967,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - `inventory` catalogues each distinct file (codecs, KLV sets, PMT shape,
     duration).
   - `sweep` demuxes every file in three configurations, checks four
-    invariants (feed errors, unknown KLV, packet accounting, PTS order),
-    and compares the digests with a baseline; reviewed changes are accepted
-    with `--accept SHA --because TEXT` and curated annotations excuse
-    known findings.
+    invariants (feed errors, unknown KLV, a continuity-counter comparison
+    against the demuxer's own rule, PTS order), and compares the digests
+    with a baseline; reviewed changes are accepted with
+    `--accept SHA --because TEXT` and curated annotations excuse known
+    findings. A missing baseline directory, or one that matches no capture,
+    is an error or a failure, never a silent pass.
   - `replay` sends a budgeted subset, paced by the capture's own clock,
     through SRT, RIST, UDP, TCP and the RTSP publisher path on loopback, one
     long-lived receiver per path, and compares each reconstruction with the
-    sent bytes. An internal `receive` subcommand runs the receiver side.
+    sent bytes. Each receiver's RSS is gated per path by the soak's slope
+    rule. An internal `receive` subcommand runs the receiver side.
   - `report` renders the run as Markdown and writes the archive row with its
     eight counts.
 
