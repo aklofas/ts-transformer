@@ -92,3 +92,87 @@ fn a_stream_without_pcr_is_unpaceable() {
     let e = PcrPacer::new(&pkt, None).err().unwrap();
     assert!(e.starts_with("unpaceable"), "{e}");
 }
+
+/// A PAT and PMT (taken from a generated capture) declaring `pcr_pid`, then
+/// one adaptation-field-only packet per `(pid, pcr_base)`.
+fn hand_built(pcr_marks: &[(u16, u64)]) -> (Vec<u8>, u16) {
+    let src = gen_profile_bytes("baseline", 1.0);
+    let probe = tst_test_helpers::rawts::parsed(&src);
+    let pcr_pid = probe.pcr_pid.unwrap();
+    let mut out = Vec::new();
+    // The generator opens with the PAT then the PMT.
+    out.extend_from_slice(&src[..188 * 2]);
+    for (i, (pid, base)) in pcr_marks.iter().enumerate() {
+        let mut p = [0xFFu8; 188];
+        p[0] = 0x47;
+        p[1] = (pid >> 8) as u8 & 0x1F;
+        p[2] = *pid as u8;
+        p[3] = 0x20 | (i as u8 & 0x0F);
+        p[4] = 183;
+        p[5] = 0x10;
+        p[6] = (base >> 25) as u8;
+        p[7] = (base >> 17) as u8;
+        p[8] = (base >> 9) as u8;
+        p[9] = (base >> 1) as u8;
+        p[10] = ((base & 1) as u8) << 7 | 0x7E;
+        p[11] = 0;
+        out.extend_from_slice(&p);
+    }
+    (out, pcr_pid)
+}
+
+fn joined(pacer: &PcrPacer) -> Vec<u8> {
+    pacer.chunks().flat_map(|c| c.bytes.to_vec()).collect()
+}
+
+#[test]
+fn a_pcr_reset_and_a_33_bit_wrap_still_cover_the_stream_once() {
+    let wrap = (1u64 << 33) - 90_000;
+    let (probe, pid) = hand_built(&[]);
+    let marks: Vec<(u16, u64)> = [0, 90_000, 180_000, 100_000, 190_000, wrap, wrap + 90_000]
+        .iter()
+        .map(|b| (pid, b & ((1u64 << 33) - 1)))
+        .collect();
+    let (bytes, _) = hand_built(&marks);
+    assert!(bytes.len() > probe.len());
+    let pacer = PcrPacer::new(&bytes, None).unwrap();
+    assert_eq!(joined(&pacer), bytes);
+}
+
+#[test]
+fn a_misaligned_start_paces_and_keeps_the_leading_bytes_in_the_first_chunk() {
+    let bytes = gen_profile_bytes("baseline", 2.0);
+    let pacer = PcrPacer::new(&bytes[100..], None).unwrap();
+    // The 88 bytes before the first full packet ride with the first chunk,
+    // so the chunks still concatenate to the whole slice.
+    assert_eq!(joined(&pacer), bytes[100..]);
+    assert!(pacer.total_seconds() > 1.0);
+}
+
+#[test]
+fn pcrs_on_two_pids_pace_on_the_declared_one() {
+    let (_, pid) = hand_built(&[]);
+    let other = 0x1FF0;
+    let marks = [
+        (pid, 0),
+        (other, 5_000_000),
+        (pid, 90_000),
+        (other, 9_000_000),
+        (pid, 180_000),
+    ];
+    let (bytes, _) = hand_built(&marks);
+    let pacer = PcrPacer::new(&bytes, None).unwrap();
+    assert!(
+        (pacer.total_seconds() - 2.0).abs() < 1e-6,
+        "{}",
+        pacer.total_seconds()
+    );
+}
+
+#[test]
+fn a_single_pcr_stream_is_unpaceable() {
+    let (_, pid) = hand_built(&[]);
+    let (bytes, _) = hand_built(&[(pid, 0)]);
+    let e = PcrPacer::new(&bytes, None).err().unwrap();
+    assert!(e.starts_with("unpaceable"), "{e}");
+}
