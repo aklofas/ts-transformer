@@ -73,6 +73,7 @@
 //! caveat that this one is unverified — this crate's tests don't
 //! exercise a RIST cell yet).
 
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -190,6 +191,168 @@ pub fn make_recv_probed(
     make_recv(url).map(|t| (t, None))
 }
 
+/// A receive endpoint that is bound, with its address known, but may not
+/// have a peer yet: what [`make_recv_bound`] returns. `tcp://?listen=1` and
+/// `srt://?mode=listener` still have to accept; `udp://`, `rist://` and
+/// `rtsp-publish://` are receiving as soon as they are bound.
+pub struct BoundRecv {
+    addr: SocketAddr,
+    probe: Option<PublishMountProbe>,
+    stage: BoundStage,
+}
+
+enum BoundStage {
+    Ready(Box<dyn RecvTransport>),
+    Tcp(tst_tcp::TcpListener),
+    Srt(tst_srt::SrtListener, Duration),
+}
+
+impl BoundRecv {
+    /// The address a sender connects to (the port the kernel picked for a
+    /// `:0` URL).
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    pub fn probe(&self) -> Option<PublishMountProbe> {
+        self.probe.clone()
+    }
+
+    /// A handle that ends [`Self::into_transport`]'s wait, where the
+    /// scheme has one: the `tcp://` listener's, or the transport's own for
+    /// a scheme with nothing to wait for. `srt://` bounds its accept by the
+    /// URL's `conntimeo` instead.
+    pub fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
+        match &self.stage {
+            BoundStage::Ready(t) => t.cancel_handle(),
+            BoundStage::Tcp(l) => Some(Arc::new(l.cancel_handle())),
+            BoundStage::Srt(..) => None,
+        }
+    }
+
+    /// The transport to receive from. Blocks until a sender has connected
+    /// for `tcp://?listen=1` and `srt://?mode=listener`.
+    pub fn into_transport(self) -> Result<Box<dyn RecvTransport>, String> {
+        match self.stage {
+            BoundStage::Ready(t) => Ok(t),
+            BoundStage::Tcp(l) => l
+                .accept_blocking()
+                .map(|t| Box::new(t) as Box<dyn RecvTransport>)
+                .map_err(|e| format!("tcp accept: {e}")),
+            BoundStage::Srt(mut l, timeout) => l
+                .accept_timeout(timeout)
+                .map(|(socket, _peer)| {
+                    Box::new(tst_srt::SrtTransport::new(socket)) as Box<dyn RecvTransport>
+                })
+                .map_err(|e| format!("srt accept: {e}")),
+        }
+    }
+}
+
+/// The scheme's receive half, bound before anything connects, so the
+/// address a sender must use is known up front. Give `host:0` and read the
+/// port the kernel picked from [`BoundRecv::addr`]: that works for
+/// `udp://`, `tcp://...?listen=1`, `srt://...?mode=listener` and
+/// `rtsp-publish://`. `rist://@host:0` has no readable bound address, so
+/// its port is picked first (a free even UDP port is found, released and
+/// substituted into the URL: another process could in principle take it
+/// in between). The caller-mode forms of tcp and srt are refused; they
+/// have nothing to bind.
+pub fn make_recv_bound(url: &str) -> Result<BoundRecv, String> {
+    match scheme_of(url)? {
+        "udp" => {
+            let t = tst_udp::UdpRecvTransport::listen(url)
+                .map_err(|e| format!("udp listen {url}: {e}"))?;
+            let addr = t.local_addr();
+            Ok(BoundRecv {
+                addr,
+                probe: None,
+                stage: BoundStage::Ready(Box::new(BoundedUdpRecv { inner: t })),
+            })
+        }
+        "tcp" => {
+            let l = tst_tcp::TcpListener::from_url(url)
+                .map_err(|e| format!("tcp listen {url}: {e}"))?;
+            let addr = l
+                .local_addr()
+                .map_err(|e| format!("tcp local address: {e}"))?;
+            Ok(BoundRecv {
+                addr,
+                probe: None,
+                stage: BoundStage::Tcp(l),
+            })
+        }
+        "srt" => {
+            let parsed = tst_srt::SrtUrl::parse(url).map_err(|e| format!("srt url {url}: {e}"))?;
+            if !matches!(parsed.mode, tst_srt::url::Mode::Listener) {
+                return Err(format!("srt url {url}: only mode=listener can be bound"));
+            }
+            let (l, timeout) = srt_listener(&parsed, url)?;
+            let addr = l
+                .local_addr()
+                .map_err(|e| format!("srt local address: {e}"))?;
+            Ok(BoundRecv {
+                addr,
+                probe: None,
+                stage: BoundStage::Srt(l, timeout),
+            })
+        }
+        "rist" => {
+            let (url, addr) = rist_with_free_port(url)?;
+            let t = tst_rist::RistRecvTransport::listen(&url)
+                .map_err(|e| format!("rist listen {url}: {e}"))?;
+            Ok(BoundRecv {
+                addr,
+                probe: None,
+                stage: BoundStage::Ready(Box::new(t)),
+            })
+        }
+        "rtsp-publish" => {
+            let probe = PublishMountProbe::default();
+            let l = RtspPublishListener::start(url, Arc::clone(&probe))?;
+            let addr = l
+                .local_addr()
+                .ok_or_else(|| "rtsp-publish listener has no local address".to_string())?;
+            Ok(BoundRecv {
+                addr,
+                probe: Some(probe),
+                stage: BoundStage::Ready(Box::new(l)),
+            })
+        }
+        other => Err(format!("unsupported scheme for bound recv: {other}://")),
+    }
+}
+
+/// `rist://@host:0...` with its port replaced by a free even one, and the
+/// address that port is on.
+fn rist_with_free_port(url: &str) -> Result<(String, SocketAddr), String> {
+    let rest = url
+        .strip_prefix("rist://@")
+        .ok_or_else(|| format!("rist recv url needs the '@' bind form: {url}"))?;
+    let (authority, query) = rest.split_once('?').map_or((rest, ""), |(a, q)| (a, q));
+    let host = authority
+        .rsplit_once(':')
+        .map(|(h, _)| h)
+        .ok_or_else(|| format!("rist recv url needs host:port: {url}"))?;
+    for _ in 0..50 {
+        let probe = std::net::UdpSocket::bind((host, 0))
+            .map_err(|e| format!("rist port probe on {host}: {e}"))?;
+        let addr = probe
+            .local_addr()
+            .map_err(|e| format!("rist port probe address: {e}"))?;
+        drop(probe);
+        if addr.port() % 2 == 0 {
+            let q = if query.is_empty() {
+                String::new()
+            } else {
+                format!("?{query}")
+            };
+            return Ok((format!("rist://@{host}:{}{q}", addr.port()), addr));
+        }
+    }
+    Err("rist: no free even UDP port found".to_string())
+}
+
 /// Build the receiving (listener/pull) half of `url`'s scheme.
 pub fn make_recv(url: &str) -> Result<Box<dyn RecvTransport>, String> {
     match scheme_of(url)? {
@@ -292,44 +455,56 @@ fn srt_socket(url: &str) -> Result<tst_srt::SrtSocket, String> {
                 .map_err(|e| format!("srt connect {url}: {e}"))
         }
         tst_srt::url::Mode::Listener => {
-            let mut b = tst_srt::SrtListenerBuilder::new();
-            b.recv_timeout(DEFAULT_SRT_RECV_TIMEOUT);
-            // `SrtListenerConfig`'s `linger` is a libsrt PRE option: set on
-            // the listener, inherited by every socket it accepts. It is
-            // needed here too, in case the accepted socket ends up on the
-            // send side (a listener-mode SRT cell where the listener pushes
-            // and the caller receives is just as legal as the reverse).
-            b.linger(SRT_LINGER);
-            b.latency(SRT_LATENCY);
-            let mut cfg = b.config();
-            cfg.socket.merge_from(&parsed.config);
-            // Empty host (`srt://:port?mode=listener`) means "bind every
-            // interface" per `Mode::Listener`'s own doc — `SrtUrl` passes
-            // the raw (possibly empty) host through unresolved, so the
-            // wildcard substitution happens here, at the one call site
-            // that actually binds a socket.
-            let bind_host = if parsed.host.is_empty() {
-                "0.0.0.0"
-            } else {
-                parsed.host.as_str()
-            };
-            let bind_addr = format!("{bind_host}:{}", parsed.port);
-            let mut listener = tst_srt::SrtListener::bind_with(&cfg, bind_addr.as_str())
-                .map_err(|e| format!("srt bind {url}: {e}"))?;
-            // `accept_timeout` (not plain `accept`, which blocks
-            // forever — see `SRT_ACCEPT_TIMEOUT`'s doc comment) so a
-            // sender that never connects fails cleanly instead of
-            // hanging this whole subcommand. `conntimeo`/`connect_timeout`
-            // doubles as the accept bound here — see `SRT_ACCEPT_TIMEOUT`'s
-            // doc comment for why that field is otherwise unused
-            // in listener mode.
-            let accept_timeout = parsed.config.connect_timeout.unwrap_or(SRT_ACCEPT_TIMEOUT);
+            let (mut listener, accept_timeout) = srt_listener(&parsed, url)?;
             let (socket, _peer) = listener
                 .accept_timeout(accept_timeout)
                 .map_err(|e| format!("srt accept {url}: {e}"))?;
             Ok(socket)
         }
     }
+}
+
+/// Bind the listener half of a `mode=listener` SRT URL and work out how
+/// long its first accept may wait. Nothing connects yet: [`srt_socket`]
+/// accepts straight away, [`make_recv_bound`] hands the bound address out
+/// first.
+fn srt_listener(
+    parsed: &tst_srt::SrtUrl,
+    url: &str,
+) -> Result<(tst_srt::SrtListener, Duration), String> {
+    let mut b = tst_srt::SrtListenerBuilder::new();
+    b.recv_timeout(DEFAULT_SRT_RECV_TIMEOUT);
+    // `SrtListenerConfig`'s `linger` is a libsrt PRE option: set on
+    // the listener, inherited by every socket it accepts. It is
+    // needed here too, in case the accepted socket ends up on the
+    // send side (a listener-mode SRT cell where the listener pushes
+    // and the caller receives is just as legal as the reverse).
+    b.linger(SRT_LINGER);
+    b.latency(SRT_LATENCY);
+    let mut cfg = b.config();
+    cfg.socket.merge_from(&parsed.config);
+    // Empty host (`srt://:port?mode=listener`) means "bind every
+    // interface" per `Mode::Listener`'s own doc — `SrtUrl` passes
+    // the raw (possibly empty) host through unresolved, so the
+    // wildcard substitution happens here, at the one call site
+    // that actually binds a socket.
+    let bind_host = if parsed.host.is_empty() {
+        "0.0.0.0"
+    } else {
+        parsed.host.as_str()
+    };
+    let bind_addr = format!("{bind_host}:{}", parsed.port);
+    let listener = tst_srt::SrtListener::bind_with(&cfg, bind_addr.as_str())
+        .map_err(|e| format!("srt bind {url}: {e}"))?;
+    // `accept_timeout` (not plain `accept`, which blocks
+    // forever — see `SRT_ACCEPT_TIMEOUT`'s doc comment) so a
+    // sender that never connects fails cleanly instead of
+    // hanging this whole subcommand. `conntimeo`/`connect_timeout`
+    // doubles as the accept bound here — see `SRT_ACCEPT_TIMEOUT`'s
+    // doc comment for why that field is otherwise unused
+    // in listener mode.
+    let accept_timeout = parsed.config.connect_timeout.unwrap_or(SRT_ACCEPT_TIMEOUT);
+    Ok((listener, accept_timeout))
 }
 
 /// UDP receiver adapter — see the module doc's "Bounded receive"
@@ -419,6 +594,11 @@ struct RtspPublishListener {
 }
 
 impl RtspPublishListener {
+    /// The address the RTSP server bound.
+    fn local_addr(&self) -> Option<SocketAddr> {
+        self._server.local_addr()
+    }
+
     fn start(url: &str, probe: PublishMountProbe) -> Result<Self, String> {
         let rest = url
             .strip_prefix("rtsp-publish://")

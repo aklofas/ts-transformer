@@ -28,6 +28,8 @@ pub fn run(args: &[String]) -> ! {
     match sub.as_str() {
         "inventory" => run_inventory(rest),
         "sweep" => run_sweep(rest),
+        // Internal: the replay stage's child process, not in the usage text.
+        "receive" => run_receive(rest),
         other => fail(&format!("unknown subcommand '{other}'")),
     }
 }
@@ -156,4 +158,27 @@ fn run_sweep(args: &[String]) -> ! {
         }
         Err(e) => fail(&e),
     }
+}
+
+fn run_receive(args: &[String]) -> ! {
+    let (mut path, mut digests, mut out) = (None, None, None);
+    let mut i = 0;
+    while i < args.len() {
+        let slot = match args[i].as_str() {
+            "--path" => &mut path,
+            "--digests" => &mut digests,
+            "--out" => &mut out,
+            _ => fail("unknown option"),
+        };
+        *slot = Some(value(args, i, &args[i]));
+        i += 2;
+    }
+    let (Some(path), Some(digests), Some(out)) = (path, digests, out) else {
+        fail("--path, --digests and --out are required");
+    };
+    std::process::exit(super::receive::run(
+        &path,
+        std::path::Path::new(&digests),
+        std::path::Path::new(&out),
+    ));
 }

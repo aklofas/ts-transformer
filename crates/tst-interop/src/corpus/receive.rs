@@ -1,0 +1,437 @@
+//! The receiving child of a corpus replay: one process per transport path,
+//! driven over stdin and stdout, one UTF-8 line per message.
+//!
+//! ```text
+//! parent: file <sha256> <prefix_seconds|none>
+//! child : ready <sha256> <url the sender uses>
+//! parent: sent <sha256>                (the sender finished and closed)
+//! child : verdict <sha256> PASS|FAIL <FileVerdict as one line of JSON>
+//! parent: quit
+//! child : bye                          (exit 0)
+//! ```
+//!
+//! The prefix on a `file` line is the sender's business (it cuts the replay
+//! there); the child digests every byte that arrives, so a replay that
+//! overshoots the prefix fails against the sweep's digest.
+//!
+//! The expected digest is read from `<digests>/<sha256>.json`. A `file`
+//! that cannot be prepared (no digest, a listener that will not bind)
+//! answers with a FAIL verdict in place of `ready`. Each verdict is also
+//! appended, as the same JSON, to the `--out` file. A protocol error exits 2
+//! and names only the kind of line that was wrong. No path is ever printed:
+//! the digests directory is an argument, the sha names the capture.
+//!
+//! # What the sender uses
+//!
+//! The child listens on a kernel-picked loopback port and prints the URL of
+//! the matching sender, which the parent opens with `transport::make_send`:
+//!
+//! | path | the child binds | `ready` prints |
+//! |---|---|---|
+//! | `udp` | `udp://127.0.0.1:0` | `udp://127.0.0.1:<port>` |
+//! | `tcp` | `tcp://127.0.0.1:0?listen=1` | `tcp://127.0.0.1:<port>` (the sender is the caller) |
+//! | `srt` | `srt://127.0.0.1:0?mode=listener` | `srt://127.0.0.1:<port>` (the sender is the caller) |
+//! | `rist` | `rist://@127.0.0.1:<even port>` | `rist://127.0.0.1:<port>` |
+//! | `rtsp-publish` | `rtsp-publish://127.0.0.1:0/corpus` | `rtsp-publish://127.0.0.1:<port>/corpus` |
+//!
+//! # How a replay ends
+//!
+//! Received bytes feed a [`digest::Incremental`] as they arrive; nothing
+//! accumulates. `tcp` and `srt` end when the sender closes, so after `sent`
+//! the child waits for that close. `udp`, `rist` and `rtsp-publish` have no
+//! end of stream (a mount stays open across publishers), so after `sent`
+//! they end once [`QUIET_SECONDS`] pass without a byte. A receiver is
+//! `Stalled` when [`STALL_SECONDS`] pass without a byte before `sent`
+//! (including the wait for the first one), or, after `sent`, without a byte
+//! or the close a closing path needs. `Exited` is never set here: only the
+//! parent knows its child died.
+//!
+//! The receive loop runs on its own thread so a blocking `recv` (`tcp` has
+//! no read timeout) can always be cancelled from the control loop.
+
+use std::io::{BufRead, Write};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use tst_core::transport::{TransportCancel, TransportError};
+
+use super::digest::{FileDigest, Incremental};
+use super::judge::{FileVerdict, ReceiverOutcome, judge};
+use super::{STALL_SECONDS, Sha256Hex};
+use crate::transport::{BoundRecv, make_recv_bound};
+
+/// After `sent`, how long a path without an end of stream stays quiet
+/// before the replay is over.
+pub const QUIET_SECONDS: u64 = 2;
+
+/// Test hook: with this variable set to `1` the child exits 0 straight
+/// after its first verdict line. Never set outside tests.
+pub const DIE_AFTER_ENV: &str = "TST_CORPUS_TEST_RECEIVE_DIE_AFTER";
+
+const TICK: Duration = Duration::from_millis(100);
+/// How long a cancelled receiver gets to wind down before it is left behind.
+const WIND_DOWN: Duration = Duration::from_secs(5);
+const READ_BUF: usize = 64 * 1024;
+
+enum Cmd {
+    File(Sha256Hex, Option<u32>),
+    Sent(Sha256Hex),
+    Quit,
+    /// The parent closed stdin.
+    Eof,
+    /// A line that is not part of the protocol; names its kind only.
+    Bad(&'static str),
+}
+
+enum Event {
+    Cmd(Cmd),
+    /// A receiver thread's result, tagged with the replay it belongs to so a
+    /// thread left behind by a stalled replay cannot answer a later one.
+    Done(u64, Result<FileDigest, String>),
+}
+
+fn parse_sha(s: &str) -> Option<Sha256Hex> {
+    (s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+    .then(|| Sha256Hex(s.to_string()))
+}
+
+fn parse_line(line: &str) -> Cmd {
+    let mut it = line.split_whitespace();
+    match (it.next(), it.next(), it.next(), it.next()) {
+        (Some("file"), Some(sha), Some(prefix), None) => {
+            let prefix = match prefix {
+                "none" => Some(None),
+                n => n.parse::<u32>().ok().map(Some),
+            };
+            match (parse_sha(sha), prefix) {
+                (Some(sha), Some(p)) => Cmd::File(sha, p),
+                _ => Cmd::Bad("malformed file line"),
+            }
+        }
+        (Some("sent"), Some(sha), None, None) => {
+            parse_sha(sha).map_or(Cmd::Bad("malformed sent line"), Cmd::Sent)
+        }
+        (Some("quit"), None, None, None) => Cmd::Quit,
+        _ => Cmd::Bad("unrecognised line"),
+    }
+}
+
+/// The bind URL and the function that turns the bound address into the sender URL.
+type PathUrls = (&'static str, fn(std::net::SocketAddr) -> String);
+
+fn urls(path: &str) -> Option<PathUrls> {
+    Some(match path {
+        "udp" => ("udp://127.0.0.1:0", |a| format!("udp://{a}")),
+        "tcp" => ("tcp://127.0.0.1:0?listen=1", |a| format!("tcp://{a}")),
+        "srt" => ("srt://127.0.0.1:0?mode=listener&conntimeo=10000", |a| {
+            format!("srt://{a}")
+        }),
+        "rist" => ("rist://@127.0.0.1:0", |a| format!("rist://{a}")),
+        "rtsp-publish" => ("rtsp-publish://127.0.0.1:0/corpus", |a| {
+            format!("rtsp-publish://{a}/corpus")
+        }),
+        _ => return None,
+    })
+}
+
+/// Whether the path signals the end of a stream (the sender closing).
+fn has_end(path: &str) -> bool {
+    matches!(path, "tcp" | "srt")
+}
+
+fn say(line: &str) {
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{line}");
+    let _ = out.flush();
+}
+
+fn protocol_error(kind: &str) -> ! {
+    eprintln!("corpus receive: protocol error: {kind}");
+    std::process::exit(2);
+}
+
+/// Bytes seen so far and when the last arrived, shared with the receiver
+/// thread.
+struct Progress {
+    epoch: Instant,
+    bytes: AtomicU64,
+    last_ms: AtomicU64,
+    stop: AtomicBool,
+    cancels: Mutex<Vec<Arc<dyn TransportCancel + Send + Sync>>>,
+}
+
+impl Progress {
+    fn touch(&self) {
+        self.last_ms
+            .store(self.epoch.elapsed().as_millis() as u64, Ordering::Relaxed);
+    }
+
+    fn since_last(&self) -> Duration {
+        self.epoch
+            .elapsed()
+            .saturating_sub(Duration::from_millis(self.last_ms.load(Ordering::Relaxed)))
+    }
+
+    fn cancel_all(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+        for c in self
+            .cancels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+        {
+            c.cancel();
+        }
+    }
+
+    fn register(&self, c: Arc<dyn TransportCancel + Send + Sync>) {
+        self.cancels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(Arc::clone(&c));
+        // A cancel that came before this handle existed still has to land.
+        if self.stop.load(Ordering::Relaxed) {
+            c.cancel();
+        }
+    }
+}
+
+/// Accepts, then drains the transport into an [`Incremental`] until it
+/// ends. Any end the transport reports counts as the stream ending; whether
+/// everything arrived is the digest's to say.
+fn receive(bound: BoundRecv, progress: &Progress) -> Result<FileDigest, String> {
+    let mut transport = bound.into_transport()?;
+    if let Some(c) = transport.cancel_handle() {
+        progress.register(c);
+    }
+    let mut inc = Incremental::new(None);
+    let mut buf = vec![0u8; READ_BUF];
+    while !progress.stop.load(Ordering::Relaxed) {
+        match transport.recv_bytes(&mut buf) {
+            Ok(0) => {}
+            Ok(n) => {
+                inc.feed(&buf[..n]);
+                progress.bytes.fetch_add(n as u64, Ordering::Relaxed);
+                progress.touch();
+            }
+            Err(TransportError::Backpressure { .. }) => {}
+            Err(TransportError::TooLarge { .. }) => {
+                return Err("a message was larger than the receive buffer".to_string());
+            }
+            Err(_) => break,
+        }
+    }
+    inc.finish()
+}
+
+fn load_expected(digests: &Path, sha: &Sha256Hex) -> Result<FileDigest, String> {
+    let text = std::fs::read_to_string(digests.join(format!("{sha}.json")))
+        .map_err(|e| format!("cannot read the sweep digest: {}", e.kind()))?;
+    serde_json::from_str(&text).map_err(|e| format!("cannot parse the sweep digest: {e}"))
+}
+
+fn failed(sha: &Sha256Hex, path: &str, why: String) -> FileVerdict {
+    FileVerdict {
+        sha256: sha.clone(),
+        path: path.to_string(),
+        pass: false,
+        failures: vec![why],
+    }
+}
+
+struct Child<'a> {
+    path: &'a str,
+    digests: &'a Path,
+    out: std::fs::File,
+    die_after_first: bool,
+    rx: mpsc::Receiver<Event>,
+    tx: Sender<Event>,
+    last_verdict: Option<Sha256Hex>,
+    replays: u64,
+}
+
+impl Child<'_> {
+    fn verdict(&mut self, v: &FileVerdict) {
+        let json = serde_json::to_string(v).expect("a verdict is plain data");
+        say(&format!(
+            "verdict {} {} {json}",
+            v.sha256,
+            if v.pass { "PASS" } else { "FAIL" }
+        ));
+        let _ = writeln!(self.out, "{json}");
+        let _ = self.out.flush();
+        self.last_verdict = Some(v.sha256.clone());
+        if self.die_after_first {
+            std::process::exit(0);
+        }
+    }
+
+    /// One `file`: bind, announce, receive, judge.
+    fn replay(&mut self, sha: Sha256Hex) {
+        let path = self.path;
+        let expected = match load_expected(self.digests, &sha) {
+            Ok(d) => d,
+            Err(e) => return self.verdict(&failed(&sha, path, e)),
+        };
+        let (bind_url, sender_url) = urls(path).expect("the path was checked at start");
+        let bound = match make_recv_bound(bind_url) {
+            Ok(b) => b,
+            Err(e) => return self.verdict(&failed(&sha, path, format!("cannot listen: {e}"))),
+        };
+        let announce = sender_url(bound.addr());
+        self.replays += 1;
+        let progress = Arc::new(Progress {
+            epoch: Instant::now(),
+            bytes: AtomicU64::new(0),
+            last_ms: AtomicU64::new(0),
+            stop: AtomicBool::new(false),
+            cancels: Mutex::new(Vec::new()),
+        });
+        if let Some(c) = bound.cancel_handle() {
+            progress.register(c);
+        }
+        let worker = {
+            let progress = Arc::clone(&progress);
+            let tx = self.tx.clone();
+            let id = self.replays;
+            std::thread::spawn(move || {
+                let _ = tx.send(Event::Done(id, receive(bound, &progress)));
+            })
+        };
+        say(&format!("ready {sha} {announce}"));
+        progress.touch();
+
+        let mut sent_at: Option<Instant> = None;
+        let mut stalled = false;
+        let mut quit = false;
+        let done = loop {
+            match self.rx.recv_timeout(TICK) {
+                Ok(Event::Done(id, r)) if id == self.replays => break Some(r),
+                Ok(Event::Cmd(Cmd::Sent(s))) if s == sha => sent_at = Some(Instant::now()),
+                Ok(Event::Cmd(Cmd::Sent(_))) => protocol_error("sent for another file"),
+                Ok(Event::Cmd(Cmd::File(..))) => protocol_error("file while receiving"),
+                Ok(Event::Cmd(Cmd::Bad(kind))) => protocol_error(kind),
+                Ok(Event::Done(..)) => {}
+                Ok(Event::Cmd(Cmd::Quit | Cmd::Eof)) => {
+                    quit = true;
+                    break self.wind_down(&progress);
+                }
+                Err(RecvTimeoutError::Disconnected) => break None,
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+            let idle = match sent_at {
+                Some(at) => progress.since_last().min(at.elapsed()),
+                None => progress.since_last(),
+            };
+            let got_bytes = progress.bytes.load(Ordering::Relaxed) > 0;
+            let stall = Duration::from_secs(STALL_SECONDS);
+            if sent_at.is_some()
+                && !has_end(path)
+                && got_bytes
+                && idle >= Duration::from_secs(QUIET_SECONDS)
+            {
+                // Quiet long enough: the replay is over.
+                break self.wind_down(&progress);
+            }
+            if idle >= stall {
+                stalled = true;
+                break self.wind_down(&progress);
+            }
+        };
+        if quit {
+            say("bye");
+            std::process::exit(0);
+        }
+        let outcome = match (&done, stalled) {
+            (_, true) => ReceiverOutcome::Stalled,
+            (Some(Ok(_)), false) => ReceiverOutcome::Completed,
+            (Some(Err(e)), false) => ReceiverOutcome::Error(e.clone()),
+            (None, false) => ReceiverOutcome::Error("receiver ended without a result".into()),
+        };
+        let received = done.and_then(Result::ok);
+        let v = judge(path, &expected, received.as_ref(), &outcome);
+        if matches!(outcome, ReceiverOutcome::Stalled) {
+            // The thread may still be parked; it is not waited for.
+        } else {
+            let _ = worker.join();
+        }
+        self.verdict(&v);
+    }
+
+    /// Cancels the receiver and takes its result, giving it [`WIND_DOWN`].
+    fn wind_down(&self, progress: &Progress) -> Option<Result<FileDigest, String>> {
+        progress.cancel_all();
+        let until = Instant::now() + WIND_DOWN;
+        while let Some(left) = until.checked_duration_since(Instant::now()) {
+            match self.rx.recv_timeout(left) {
+                Ok(Event::Done(id, r)) if id == self.replays => return Some(r),
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        None
+    }
+}
+
+/// The child's whole life: reads commands until `quit`. Returns the process
+/// exit code.
+pub fn run(path: &str, digests: &Path, out: &Path) -> i32 {
+    if urls(path).is_none() {
+        eprintln!("corpus receive: unknown path");
+        return 2;
+    }
+    let out = match std::fs::File::create(out) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!(
+                "corpus receive: cannot create the output file: {}",
+                e.kind()
+            );
+            return 2;
+        }
+    };
+    let (tx, rx) = mpsc::channel();
+    let stdin_tx = tx.clone();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            let cmd = match line {
+                Ok(l) => parse_line(&l),
+                Err(_) => break,
+            };
+            if stdin_tx.send(Event::Cmd(cmd)).is_err() {
+                return;
+            }
+        }
+        let _ = stdin_tx.send(Event::Cmd(Cmd::Eof));
+    });
+    let mut child = Child {
+        path,
+        digests,
+        out,
+        die_after_first: std::env::var(DIE_AFTER_ENV).is_ok_and(|v| v == "1"),
+        rx,
+        tx,
+        last_verdict: None,
+        replays: 0,
+    };
+    loop {
+        match child.rx.recv() {
+            Ok(Event::Cmd(Cmd::File(sha, _prefix))) => child.replay(sha),
+            // The sender's close can be seen, and judged, before `sent` is read.
+            Ok(Event::Cmd(Cmd::Sent(s))) if child.last_verdict.as_ref() == Some(&s) => {}
+            Ok(Event::Cmd(Cmd::Sent(_))) => protocol_error("sent before file"),
+            Ok(Event::Cmd(Cmd::Bad(kind))) => protocol_error(kind),
+            Ok(Event::Cmd(Cmd::Quit)) => {
+                say("bye");
+                return 0;
+            }
+            Ok(Event::Cmd(Cmd::Eof)) | Err(_) => return 0,
+            Ok(Event::Done(..)) => {}
+        }
+    }
+}

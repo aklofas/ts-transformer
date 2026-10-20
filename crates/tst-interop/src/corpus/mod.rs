@@ -15,6 +15,7 @@ pub mod judge;
 pub mod inventory;
 pub mod pace;
 pub mod pcr;
+pub mod receive;
 pub mod shape;
 pub mod subset;
 pub mod sweep;
