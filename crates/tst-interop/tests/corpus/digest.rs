@@ -5,8 +5,8 @@ use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
 use tst_interop::corpus::digest::{
-    FileDigest, digest_bytes, digest_config, digest_file, elementary_sha256, klv_record_digest,
-    load, store,
+    FileDigest, Incremental, digest_bytes, digest_config, digest_file, elementary_sha256,
+    klv_record_digest, load, store,
 };
 use tst_interop::corpus::pcr::{align_offset, prefix_end};
 use tst_interop::corpus::{FEED_CHUNK, RunDir};
@@ -393,4 +393,46 @@ fn the_streaming_digest_of_a_file_equals_the_in_memory_digest() {
     }
     let wrong = sha_of(b"other");
     assert!(digest_file(Some(&wrong), &path, None).is_err());
+}
+
+fn incremental(bytes: &[u8], piece: usize, prefix: Option<u32>) -> FileDigest {
+    let mut inc = Incremental::new(prefix);
+    bytes.chunks(piece).for_each(|p| inc.feed(p));
+    assert_eq!(inc.bytes_fed(), bytes.len() as u64);
+    inc.finish().unwrap()
+}
+
+#[test]
+fn an_incremental_digest_in_datagram_pieces_equals_the_whole_file_digest() {
+    let bytes = gen_profile_bytes("baseline", 4.0);
+    let sha = sha_of(&bytes);
+    for prefix in [None, Some(1), Some(600)] {
+        let want = digest_bytes(&sha, &bytes, prefix).unwrap();
+        assert_eq!(incremental(&bytes, 1316, prefix), want, "prefix {prefix:?}");
+    }
+}
+
+#[test]
+fn an_incremental_prefix_cut_beyond_the_pmt_head_lands_on_the_same_packet() {
+    // Long enough that the PCR PID is read from a full head and the scan
+    // then runs block by block; the repeats restart the PCR, which the span
+    // reads as a discontinuity and keeps counting through.
+    let one = gen_profile_bytes("baseline", 4.0);
+    let mut bytes = Vec::new();
+    while bytes.len() < tst_interop::corpus::pcr::PMT_PREFIX + 3 * FEED_CHUNK {
+        bytes.extend_from_slice(&one);
+    }
+    let sha = sha_of(&bytes);
+    for prefix in [Some(6), Some(9)] {
+        let want = digest_bytes(&sha, &bytes, prefix).unwrap();
+        let end = prefix_end(&bytes, prefix.unwrap());
+        assert!(end < bytes.len());
+        assert_eq!(
+            want.configs["default"],
+            digest_config("default", &bytes[..end], FEED_CHUNK)
+        );
+        for piece in [188, 1316, FEED_CHUNK + 7] {
+            assert_eq!(incremental(&bytes, piece, prefix), want, "piece {piece}");
+        }
+    }
 }

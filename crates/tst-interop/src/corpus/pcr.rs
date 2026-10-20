@@ -112,6 +112,13 @@ impl PcrScan {
         self.cut_at
     }
 
+    /// Absolute offset before which every byte fed has been read: whole
+    /// packets and the bytes skipped between them. The cut can never lie
+    /// before it.
+    pub fn settled(&self) -> u64 {
+        self.carry_at
+    }
+
     pub fn feed(&mut self, chunk: &[u8]) {
         self.carry.extend_from_slice(chunk);
         let mut off = 0;
@@ -208,5 +215,114 @@ pub fn prefix_end_read<R: std::io::Read>(r: &mut R, seconds: u32) -> std::io::Re
             return Ok(at);
         }
         total += n as u64;
+    }
+}
+
+/// The streaming form of [`prefix_end_read`]: bytes go in as they arrive and
+/// the bytes known to lie inside the prefix come out, in order, through a
+/// callback. The first `PMT_PREFIX + 188` bytes are held back to read the
+/// PCR PID; after that only the part of a block the scan has not settled
+/// yet (a partial packet) is held. Scanning runs in [`FEED_CHUNK`] blocks,
+/// so the cut does not depend on how small the arriving pieces are. The cut
+/// lands on the same packet as [`prefix_end`] over the whole input.
+pub struct PrefixCutter {
+    seconds: u32,
+    state: CutState,
+}
+
+enum CutState {
+    /// Collecting the head the PCR PID is read from.
+    Head(Vec<u8>),
+    Scan {
+        scan: PcrScan,
+        /// Bytes received but not yet scanned.
+        inbox: Vec<u8>,
+        /// Scanned bytes not yet released; the first is at offset `fed`.
+        held: Vec<u8>,
+        fed: u64,
+    },
+    Done,
+}
+
+impl PrefixCutter {
+    pub fn new(seconds: u32) -> Self {
+        Self {
+            seconds,
+            state: CutState::Head(Vec::new()),
+        }
+    }
+
+    pub fn push(&mut self, chunk: &[u8], out: &mut dyn FnMut(&[u8])) {
+        match &mut self.state {
+            CutState::Done => {}
+            CutState::Head(buf) => {
+                buf.extend_from_slice(chunk);
+                if buf.len() >= PMT_PREFIX + PKT {
+                    self.start(out);
+                }
+            }
+            CutState::Scan { inbox, .. } => {
+                inbox.extend_from_slice(chunk);
+                self.scan_blocks(false, out);
+            }
+        }
+    }
+
+    /// Releases everything still held; call once, after the last `push`.
+    pub fn finish(&mut self, out: &mut dyn FnMut(&[u8])) {
+        if matches!(self.state, CutState::Head(_)) {
+            self.start(out);
+        }
+        self.scan_blocks(true, out);
+        if let CutState::Scan { held, .. } = &mut self.state {
+            out(held);
+            held.clear();
+        }
+    }
+
+    /// Reads the PCR PID from the head and moves to scanning.
+    fn start(&mut self, out: &mut dyn FnMut(&[u8])) {
+        let CutState::Head(head) = std::mem::replace(&mut self.state, CutState::Done) else {
+            return;
+        };
+        let pid_window = &head[..head.len().min(PMT_PREFIX + PKT)];
+        let pcr_pid = parse_prefix(&pid_window[align_offset(pid_window)..])
+            .ok()
+            .and_then(|p| p.pcr_pid);
+        self.state = CutState::Scan {
+            scan: PcrScan::with_cut(pcr_pid, u64::from(self.seconds) * PCR_BASE_HZ),
+            inbox: head,
+            held: Vec::new(),
+            fed: 0,
+        };
+        self.scan_blocks(false, out);
+    }
+
+    /// Scans whole blocks of the inbox (all of it when `flush`), releasing
+    /// the bytes the scan has settled, or everything before the cut.
+    fn scan_blocks(&mut self, flush: bool, out: &mut dyn FnMut(&[u8])) {
+        let CutState::Scan {
+            scan,
+            inbox,
+            held,
+            fed,
+        } = &mut self.state
+        else {
+            return;
+        };
+        while inbox.len() >= FEED_CHUNK || (flush && !inbox.is_empty()) {
+            let block: Vec<u8> = inbox.drain(..inbox.len().min(FEED_CHUNK)).collect();
+            scan.feed(&block);
+            held.extend_from_slice(&block);
+            let upto = scan.cut_at().unwrap_or_else(|| scan.settled());
+            let n = (upto - *fed) as usize;
+            out(&held[..n]);
+            held.drain(..n);
+            *fed = upto;
+            if scan.cut_at().is_some() {
+                self.state = CutState::Done;
+                return;
+            }
+        }
     }
 }
