@@ -1,13 +1,15 @@
 //! `wheps://`: HTTPS signalling over rustls, with the bearer token.
 
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use tst_webrtc::{MountConfig, WhepServer, WhepServerError};
 
 use crate::fixtures::tls_certs::SelfSignedCert;
-use crate::fixtures::{TestViewer, https, tls_client, whep_post_tls};
+use crate::fixtures::{STOP_REPORT, TestViewer, https, tls_client, whep_post_tls};
 
 const CONNECT: Duration = Duration::from_secs(5);
 
@@ -168,4 +170,72 @@ fn a_client_that_stalls_inside_the_client_hello_does_not_block_the_next_post() {
     let mut stalled = TcpStream::connect(srv.local_addr()).unwrap();
     stalled.write_all(&[0x16, 0x03, 0x01, 0x02, 0x00]).unwrap();
     good_post_succeeds_while_open(&srv, &certs, &stalled);
+}
+
+/// The longest a trickling client keeps sending, so a server that never
+/// lets go of it fails the test instead of hanging it.
+const TRICKLE_MAX: Duration = Duration::from_secs(30);
+
+/// A client that sends the header of a TLS record promising 16 KiB, then
+/// one byte every 50 ms until the returned sender is dropped (or
+/// [`TRICKLE_MAX`]). `wrote` receives a message after each byte.
+fn trickle(addr: SocketAddr, wrote: Sender<()>) -> (Sender<()>, JoinHandle<()>) {
+    let mut s = TcpStream::connect(addr).unwrap();
+    s.write_all(&[0x16, 0x03, 0x01, 0x40, 0x00]).unwrap();
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let handle = thread::spawn(move || {
+        let mut sent = Duration::ZERO;
+        while sent < TRICKLE_MAX {
+            // The receive doubles as the pacing wait and the stop signal.
+            match stop_rx.recv_timeout(Duration::from_millis(50)) {
+                Err(RecvTimeoutError::Timeout) => {}
+                _ => return,
+            }
+            sent += Duration::from_millis(50);
+            if s.write_all(&[0]).is_err() {
+                return;
+            }
+            let _ = wrote.send(());
+        }
+    });
+    (stop_tx, handle)
+}
+
+#[test]
+fn a_client_that_trickles_a_record_does_not_hold_the_server_past_the_deadline() {
+    let certs = SelfSignedCert::generate();
+    let srv = WhepServer::bind(&certs.url("")).unwrap();
+    srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let addr = srv.local_addr();
+
+    // Connected before the good POST, so the accept thread serves it first
+    // and must give it up at the request deadline.
+    let (wrote, _) = mpsc::channel();
+    let (first, first_thread) = trickle(addr, wrote);
+    let mut v = TestViewer::new();
+    let offer = v.offer(true);
+    let (status, _, answer) = whep_post_tls(addr, &certs.root_pem, "/cam", &offer, None);
+    assert_eq!(status, 201, "{answer}");
+    v.accept_answer(&answer);
+    assert!(
+        v.pump(|v| v.connected && v.dc_open, CONNECT),
+        "{}",
+        v.trace()
+    );
+    drop(first);
+    first_thread.join().unwrap();
+
+    // A second trickler is being served when the server stops: stop still
+    // joins the accept thread.
+    let (wrote, wrote_rx) = mpsc::channel();
+    let (second, second_thread) = trickle(addr, wrote);
+    for _ in 0..4 {
+        wrote_rx
+            .recv_timeout(STOP_REPORT)
+            .expect("the trickler writes");
+    }
+    srv.stop();
+    assert!(srv.threads_joined_for_test());
+    drop(second);
+    second_thread.join().unwrap();
 }
