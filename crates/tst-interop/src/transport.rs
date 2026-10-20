@@ -218,15 +218,15 @@ impl BoundRecv {
         self.probe.clone()
     }
 
-    /// A handle that ends [`Self::into_transport`]'s wait, where the
-    /// scheme has one: the `tcp://` listener's, or the transport's own for
-    /// a scheme with nothing to wait for. `srt://` bounds its accept by the
-    /// URL's `conntimeo` instead.
+    /// A handle that ends [`Self::into_transport`]'s wait: the listener's
+    /// for `tcp://` and `srt://`, the transport's own for a scheme with
+    /// nothing to wait for. `srt://` also bounds its accept by the URL's
+    /// `conntimeo`.
     pub fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
         match &self.stage {
             BoundStage::Ready(t) => t.cancel_handle(),
             BoundStage::Tcp(l) => Some(Arc::new(l.cancel_handle())),
-            BoundStage::Srt(..) => None,
+            BoundStage::Srt(l, _) => Some(Arc::new(l.cancel_handle())),
         }
     }
 
@@ -298,14 +298,23 @@ pub fn make_recv_bound(url: &str) -> Result<BoundRecv, String> {
             })
         }
         "rist" => {
-            let (url, addr) = rist_with_free_port(url)?;
-            let t = tst_rist::RistRecvTransport::listen(&url)
-                .map_err(|e| format!("rist listen {url}: {e}"))?;
-            Ok(BoundRecv {
-                addr,
-                probe: None,
-                stage: BoundStage::Ready(Box::new(t)),
-            })
+            // The port is picked, released and then bound: another process
+            // can take it in between, so a failed bind picks again.
+            let mut last = String::new();
+            for _ in 0..3 {
+                let (picked, addr) = rist_with_free_port(url)?;
+                match tst_rist::RistRecvTransport::listen(&picked) {
+                    Ok(t) => {
+                        return Ok(BoundRecv {
+                            addr,
+                            probe: None,
+                            stage: BoundStage::Ready(Box::new(t)),
+                        });
+                    }
+                    Err(e) => last = format!("rist listen {picked}: {e}"),
+                }
+            }
+            Err(last)
         }
         "rtsp-publish" => {
             let probe = PublishMountProbe::default();
